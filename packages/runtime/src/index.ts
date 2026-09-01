@@ -34,6 +34,22 @@ export { compatibilityKeys } from "./paths/keys.ts";
 export type { CompatibilityKeys } from "./paths/keys.ts";
 export { sessionTempDir, ensureTasksDir, WinterPathsError } from "./paths/temp.ts";
 export type { SessionTempDirOptions, SessionTempDirPaths } from "./paths/temp.ts";
+// Controller Ruling P1-N: WINTER_PROJECT_DIR_NAME override for the PERSISTENT transcript-project
+// directory name only — never the temp cwd segment above. A store consumer calls this to compute
+// the projectKey it passes as SessionKey.projectKey; recording/reapplying it across resume is
+// Task 9's job (see store/session-store.ts's task-7-report.md seam note).
+export { resolveProjectDirName } from "./paths/project-dir-name.ts";
+
+// The filesystem SessionStore (Task 7, WS-05 §6): the pinned WS-03 §10 SessionStore/SessionKey/
+// SessionStoreEntry/SessionSummaryEntry type family (authored here per Controller Ruling P1-O —
+// Task 10 relocates store+type into the sdk package) plus the concrete filesystem-backed store and
+// its typed errors (leases.ts).
+export {
+  WinterCompatibilitySessionStore,
+  WinterStoreError,
+  WinterStoreLeaseError,
+} from "./store/session-store.ts";
+export type { SessionKey, SessionStoreEntry, SessionSummaryEntry, SessionStore } from "./store/session-store.ts";
 
 // The wire protocol (frames + codec) moved to the sdk (WS-02 §3 dependency inversion, Task 1):
 // this package now depends on it, never the reverse. Re-exported unchanged so existing

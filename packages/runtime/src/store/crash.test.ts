@@ -1,0 +1,235 @@
+// Winter crash tests (Task 7 brief, beyond the official 13-case suite in session-store.test.ts):
+// torn final line, kill-during-append (a REAL spawned+SIGKILLed child), and lease contention (a
+// REAL live foreign pid). Every home here is a fresh mkdtemp — never ~/.winter/~/.norma/~/.claude.
+//
+// The two child-process tests embed the store module path as a JS string literal (safe regardless
+// of spaces in the checkout path — this repo's own path has one) and resolve it to a `file://` URL
+// via pathToFileURL before a dynamic import, rather than a static import specifier string, so a
+// space in the path can never be misparsed as a bare (non-URL) specifier. Children are spawned via
+// process.execPath (matches scripts/verify-protocol-compiled.ts's own convention) and always
+// reaped (kill + awaited `.exited`) in a finally block.
+import { test, expect, describe } from "bun:test";
+import { mkdtempSync, rmSync, statSync, existsSync, readFileSync, writeFileSync, truncateSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+import { WinterCompatibilitySessionStore, WinterStoreLeaseError, type SessionStoreEntry } from "./session-store.ts";
+
+const STORE_MODULE_PATH = fileURLToPath(new URL("./session-store.ts", import.meta.url));
+
+function freshHome(): string {
+  return mkdtempSync(join(tmpdir(), "winter-crash-test-"));
+}
+
+let seq = 0;
+function entry(overrides: Partial<SessionStoreEntry> = {}): SessionStoreEntry {
+  seq += 1;
+  return { type: "test_entry", uuid: `uuid-${seq}`, timestamp: new Date(2020, 0, 1, 0, 0, seq).toISOString(), seq, ...overrides };
+}
+
+type Subprocess = ReturnType<typeof Bun.spawn>;
+
+async function reap(child: Subprocess | undefined): Promise<void> {
+  if (child === undefined) return;
+  child.kill("SIGKILL");
+  await child.exited;
+}
+
+describe("crash: torn final line", () => {
+  test("truncating mid-line leaves earlier entries intact, quarantines the torn tail, repairs the file, and stays clean on re-load and future appends", async () => {
+    const home = freshHome();
+    try {
+      const store = new WinterCompatibilitySessionStore({ winterHome: home });
+      const key = { projectKey: "proj-crash", sessionId: "torn-tail" };
+      const e1 = entry();
+      const e2 = entry();
+      await store.append(key, [e1, e2]);
+
+      const jsonlPath = join(home, "projects", "proj-crash", "torn-tail.jsonl");
+      const fullSize = statSync(jsonlPath).size;
+      truncateSync(jsonlPath, fullSize - 5); // chop mid-way through e2's line — simulates a crash mid-write
+
+      const loaded1 = await store.load(key);
+      expect(loaded1).toEqual([e1]);
+
+      const quarantinePath = `${jsonlPath}.tail-quarantine`;
+      expect(existsSync(quarantinePath)).toBe(true);
+      const quarantineSize1 = statSync(quarantinePath).size;
+      expect(quarantineSize1).toBeGreaterThan(0);
+
+      // idempotent: a second load() must not re-detect corruption or grow the quarantine again
+      const loaded2 = await store.load(key);
+      expect(loaded2).toEqual([e1]);
+      expect(statSync(quarantinePath).size).toBe(quarantineSize1);
+
+      // the repaired file is genuinely clean on disk: a fresh append lands correctly, never
+      // concatenated onto the torn fragment (this is why repair MUST truncate, not just skip it
+      // in memory — an unrepaired file would corrupt e3's own line on the next O_APPEND write)
+      const e3 = entry();
+      await store.append(key, [e3]);
+      expect(await store.load(key)).toEqual([e1, e3]);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test("a file that is ONE single unterminated line (never had a complete entry) quarantines entirely and loads as []", async () => {
+    const home = freshHome();
+    try {
+      const store = new WinterCompatibilitySessionStore({ winterHome: home });
+      const key = { projectKey: "proj-crash", sessionId: "torn-only-line" };
+      await store.append(key, [entry()]);
+      const jsonlPath = join(home, "projects", "proj-crash", "torn-only-line.jsonl");
+      truncateSync(jsonlPath, 3); // leaves only `{"t` or similar — not even the start of valid JSON
+
+      const loaded = await store.load(key);
+      expect(loaded).toEqual([]); // the key IS known (file exists) — [] not null
+      expect(statSync(`${jsonlPath}.tail-quarantine`).size).toBeGreaterThan(0);
+      expect(statSync(jsonlPath).size).toBe(0);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("crash: kill-during-append", () => {
+  test("SIGKILLing a real child mid-loop leaves every complete line intact plus at most one quarantined tail", async () => {
+    const home = freshHome();
+    let child: Subprocess | undefined;
+    try {
+      const projectKey = "proj-crash";
+      const sessionId = "kill-mid-append";
+      const count = 300;
+      const delayMs = 3;
+      const key = { projectKey, sessionId };
+      const code = `(async () => {
+        const { pathToFileURL } = await import("node:url");
+        const mod = await import(pathToFileURL(${JSON.stringify(STORE_MODULE_PATH)}).href);
+        const store = new mod.WinterCompatibilitySessionStore({ winterHome: ${JSON.stringify(home)} });
+        const key = ${JSON.stringify(key)};
+        for (let i = 0; i < ${count}; i++) {
+          await store.append(key, [{ type: "test_entry", uuid: "child-" + i, timestamp: new Date().toISOString(), index: i }]);
+          await new Promise((r) => setTimeout(r, ${delayMs}));
+        }
+      })();`;
+
+      child = Bun.spawn([process.execPath, "-e", code], { stdout: "ignore", stderr: "ignore" });
+      await new Promise((r) => setTimeout(r, 100)); // 100ms < count*delayMs(=900ms) — the loop cannot have finished yet
+      child.kill("SIGKILL");
+      await child.exited;
+
+      const store = new WinterCompatibilitySessionStore({ winterHome: home });
+      const loaded = await store.load(key);
+
+      expect(loaded).not.toBeNull();
+      const entries = loaded ?? [];
+      expect(entries.length).toBeGreaterThan(0); // proves at least some appends landed before the kill
+      expect(entries.length).toBeLessThan(count); // proves the kill actually landed mid-loop
+
+      // every surviving entry is intact and in strict index order — no gaps, no dupes, no corruption
+      const indices = entries.map((e) => e["index"] as number);
+      expect(indices).toEqual(Array.from({ length: entries.length }, (_, i) => i));
+
+      // AT MOST one quarantined tail fragment — never systemic multi-line corruption
+      const quarantinePath = join(home, "projects", projectKey, `${sessionId}.jsonl.tail-quarantine`);
+      if (existsSync(quarantinePath)) {
+        expect(statSync(quarantinePath).size).toBeGreaterThan(0);
+      }
+    } finally {
+      await reap(child);
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("crash: lease contention", () => {
+  test("a live foreign pid holding the lock throws a typed lease error, not a generic one", async () => {
+    const home = freshHome();
+    let dummy: Subprocess | undefined;
+    try {
+      // A genuinely live, otherwise-idle process — its pid is the "foreign live holder" this test
+      // fabricates into the lock file below.
+      dummy = Bun.spawn([process.execPath, "-e", "setInterval(() => {}, 2147483647);"], { stdout: "ignore", stderr: "ignore" });
+
+      const store = new WinterCompatibilitySessionStore({ winterHome: home });
+      const key = { projectKey: "proj-crash", sessionId: "contended" };
+      await store.append(key, [entry()]); // creates the lock, owned by THIS test process
+
+      const lockPath = join(home, "projects", "proj-crash", "contended.lock");
+      writeFileSync(lockPath, JSON.stringify({ pid: dummy.pid, startTimeMs: Date.now() }));
+
+      let caught: unknown;
+      try {
+        await store.append(key, [entry()]);
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBeInstanceOf(WinterStoreLeaseError);
+      expect((caught as WinterStoreLeaseError).heldByPid).toBe(dummy.pid);
+
+      // the main jsonl must be untouched by the rejected append — contention fails BEFORE any
+      // write, so only the ONE entry from the earlier successful append is still there
+      expect(await store.load(key)).toHaveLength(1);
+    } finally {
+      await reap(dummy);
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test("contention is keyed by pid, not by JS store-instance identity: a second same-process instance with no foreign lock succeeds", async () => {
+    const home = freshHome();
+    try {
+      const store1 = new WinterCompatibilitySessionStore({ winterHome: home });
+      const store2 = new WinterCompatibilitySessionStore({ winterHome: home });
+      const key = { projectKey: "proj-crash", sessionId: "same-process" };
+      const e1 = entry();
+      const e2 = entry();
+      await store1.append(key, [e1]);
+      await expect(store2.append(key, [e2])).resolves.toBeUndefined(); // same pid (this test process) — re-entry, not contention
+      expect(await store1.load(key)).toEqual([e1, e2]);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test("stale-steal: once the lock-holding process has genuinely exited, a new writer reclaims the lease (pid-gone detection)", async () => {
+    const home = freshHome();
+    let child: Subprocess | undefined;
+    try {
+      const key = { projectKey: "proj-crash", sessionId: "stale-steal" };
+      // A short-lived child that acquires the lease for one entry, then exits ON ITS OWN — no kill
+      // involved, so its pid becomes CLEANLY gone (genuinely stale), matching P1's pid-gone-only
+      // detection rule rather than the SIGKILL scenario above.
+      const code = `(async () => {
+        const { pathToFileURL } = await import("node:url");
+        const mod = await import(pathToFileURL(${JSON.stringify(STORE_MODULE_PATH)}).href);
+        const store = new mod.WinterCompatibilitySessionStore({ winterHome: ${JSON.stringify(home)} });
+        await store.append(${JSON.stringify(key)}, [{ type: "test_entry", uuid: "child-1", timestamp: new Date().toISOString() }]);
+      })();`;
+      child = Bun.spawn([process.execPath, "-e", code], { stdout: "ignore", stderr: "ignore" });
+      const exitCode = await child.exited;
+      expect(exitCode).toBe(0);
+      const childPid = child.pid;
+
+      const lockPath = join(home, "projects", "proj-crash", "stale-steal.lock");
+      const childLease = JSON.parse(readFileSync(lockPath, "utf8")) as { pid: number };
+      expect(childLease.pid).toBe(childPid);
+
+      const store = new WinterCompatibilitySessionStore({ winterHome: home });
+      const e2 = entry();
+      await store.append(key, [e2]); // must steal the now-stale lease rather than throwing
+
+      const newLease = JSON.parse(readFileSync(lockPath, "utf8")) as { pid: number };
+      expect(newLease.pid).toBe(process.pid);
+      expect(newLease.pid).not.toBe(childPid);
+
+      const loaded = await store.load(key);
+      expect(loaded).toHaveLength(2);
+      expect(loaded![1]).toEqual(e2);
+    } finally {
+      await reap(child);
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+});
