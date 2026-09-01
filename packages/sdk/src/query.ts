@@ -126,6 +126,18 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
       let terminalError: Extract<SdkMessage, { type: "result" }> | null = null;
       let carry = "";
 
+      // Controller Ruling P1-I (Task 4 fix round 1): termination is MODE-AWARE. A single-shot
+      // string prompt is exactly one turn — stopping at its one terminal result is correct and
+      // UNCHANGED below. A streaming-input (AsyncIterable) prompt can carry MULTIPLE user
+      // envelopes, each producing its own terminal result (WS-04 §4.1: idle -> turn_active ->
+      // idle, once per envelope) — unconditionally breaking at the FIRST result silently dropped
+      // every subsequent turn's frames (confirmed empirically: a real two-turn streaming session
+      // through this function yielded only turn 1, with no error, before this fix). In streaming
+      // mode the loop instead runs to the transport's own natural end (stdout EOF, which the
+      // runtime produces only after `end_input` and its last in-flight turn's result — WS-04 §6),
+      // yielding EVERY result along the way.
+      const isStreamingInput = typeof prompt !== "string";
+
       // A plain, unraced drain (review Finding 5): racing `stdout` against an independently
       // resolving `exited` structurally favors `exited` (an already-settled promise's `.then`
       // enqueues before a fresh async-generator resumption), which can cut off frames that are
@@ -162,11 +174,17 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
           }
           if (frame.type !== "data") continue; // other control frames handled in later phases
           const message = (frame as { message: SdkMessage }).message;
-          yield message; // yield EVERY message, including the terminal result…
+          yield message; // yield EVERY message, including every terminal result…
           if (message.type === "result") {
             sawTerminal = true;
+            // An is_error result still ultimately drives error-result-then-throw below (report
+            // §9) — in streaming mode that throw is deferred until the transport's natural EOF
+            // (never mid-stream), so it can never silently cut off a later, still-pending turn's
+            // frames the way an immediate break would. Overwritten on each error result seen, so
+            // with multiple erroring turns the LAST one is what's thrown — a defensible, documented
+            // choice where the spec is silent on which of several errors should win.
             if ((message as { is_error?: boolean }).is_error) terminalError = message as Extract<SdkMessage, { type: "result" }>;
-            break readLoop;
+            if (!isStreamingInput) break readLoop; // single-shot prompt: exactly one turn, unchanged
           }
         }
 

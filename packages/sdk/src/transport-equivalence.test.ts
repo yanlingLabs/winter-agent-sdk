@@ -5,13 +5,22 @@
 // sequences are IDENTICAL. A divergence between the two legs is a release blocker per spec, not a
 // mere test failure.
 //
-// Two scenarios (multi-turn, interrupt) drive the raw SpawnedRuntimeProcess frame stream directly
-// instead of going through query(): query.ts's iterate() stops at the FIRST terminal result
-// (`if (message.type === "result") { ...; break readLoop; }`) and Query.interrupt() is still a
-// documented stub (`proc.stdin.end()` — see query.ts's own comment on gen.interrupt), so neither a
-// second turn nor a real WS-04 §5 interrupt control_request is reachable through the public
-// wrapper today. Both are noted in this task's report as tracked-not-fixed gaps (out of this file
-// list's scope — query.ts belongs to Task 2/3) rather than silently worked around.
+// Three scenarios (multi-turn, interrupt, split-frame-carry) drive the raw SpawnedRuntimeProcess
+// frame stream directly instead of going through query():
+//  - multi-turn: query.ts's iterate() USED to stop at the FIRST terminal result unconditionally,
+//    silently dropping every subsequent streaming-input turn (a real gap this task's first pass
+//    discovered — confirmed empirically, then fixed in query.ts per controller Ruling P1-I:
+//    termination is now mode-aware — a single-shot prompt still stops at its one result unchanged;
+//    a streaming-input prompt runs to the transport's own natural EOF, yielding every turn's
+//    result). `multi-turn (streaming input, 2 envelopes)` below still drives the raw frame stream
+//    directly — it tests the WIRE contract independently of whatever the query() wrapper does —
+//    and a SEPARATE `multi-turn via query()` test now covers the wrapper-level fix directly.
+//  - interrupt: Query.interrupt() is still a documented stub (`proc.stdin.end()` — see query.ts's
+//    own comment on gen.interrupt), so a real WS-04 §5 interrupt control_request isn't reachable
+//    through the public wrapper yet. Noted in this task's report as a tracked-not-fixed gap (out of
+//    this file list's scope) rather than silently worked around.
+//  - split-frame-carry: exercises splitFrames' carry mechanism directly at the transport boundary
+//    (a frame's bytes deliberately split across two stdin writes) — unrelated to query() at all.
 import { describe, test, expect } from "bun:test";
 import { fileURLToPath } from "node:url";
 import { query } from "./query.ts";
@@ -212,87 +221,174 @@ function buildRawProc(leg: LegName, testProviderName: TestProviderName | undefin
 
 async function traceMultiTurn(leg: LegName): Promise<ConformanceTraceEntry[]> {
   const proc = buildRawProc(leg, undefined, "multi-turn-fixture");
-  const driver = createDriver(proc);
-  const entries: ConformanceTraceEntry[] = [];
+  // Exception-safe reaping (review finding 1): the `finally` below is CLEANUP-ONLY —
+  // proc.kill() then await proc.exited, unconditionally — so an assertion failure ANYWHERE in the
+  // body still reaps the process. It does NOT replace the natural `await proc.exited` at the end of
+  // the try block: that in-body await is the proof the engine exits ON ITS OWN after end_input
+  // (WS-04 §6) — folding the only reap into an unconditional kill would mask a real "never exits"
+  // regression by killing it either way. kill() on an already-exited process (the success path,
+  // where the finally's kill() always fires AFTER the natural exit above) is a harmless no-op on
+  // both legs — inMemoryProcess.kill() has its own `if (settled) return;` guard, already idempotent
+  // before this fix round; Bun/Node's ChildProcess.kill() on an already-reaped pid returns `false`
+  // (ESRCH) without throwing (verified empirically for this fix — see the task report).
+  try {
+    const driver = createDriver(proc);
+    const entries: ConformanceTraceEntry[] = [];
 
-  const init = await driver.nextFrame();
-  expect(init?.type).toBe("init");
-  pushFrame(entries, init!);
-  const sys = await driver.nextFrame();
-  expect(sys?.type).toBe("data");
-  pushFrame(entries, sys!);
+    const init = await driver.nextFrame();
+    expect(init?.type).toBe("init");
+    pushFrame(entries, init!);
+    const sys = await driver.nextFrame();
+    expect(sys?.type).toBe("data");
+    pushFrame(entries, sys!);
 
-  // Both envelopes written up front — mirrors engine.test.ts's own multi-turn precedent (the Queue
-  // drains its backlog before honoring end, so both become turns regardless of read timing) and
-  // WS-04 §2's "sequence of envelopes in streaming input mode."
-  driver.send({ type: "user", text: "first" });
-  driver.send({ type: "user", text: "second" });
+    // Both envelopes written up front — mirrors engine.test.ts's own multi-turn precedent (the
+    // Queue drains its backlog before honoring end, so both become turns regardless of read timing)
+    // and WS-04 §2's "sequence of envelopes in streaming input mode."
+    driver.send({ type: "user", text: "first" });
+    driver.send({ type: "user", text: "second" });
 
-  let resultsSeen = 0;
-  while (resultsSeen < 2) {
-    const frame = await driver.nextFrame();
-    if (!frame) throw new Error(`${leg}: unexpected EOF while awaiting the second turn's frames`);
-    pushFrame(entries, frame);
-    if (frame.type === "data" && (frame as { message: { type: string } }).message.type === "result") resultsSeen++;
+    let resultsSeen = 0;
+    while (resultsSeen < 2) {
+      const frame = await driver.nextFrame();
+      if (!frame) throw new Error(`${leg}: unexpected EOF while awaiting the second turn's frames`);
+      pushFrame(entries, frame);
+      if (frame.type === "data" && (frame as { message: { type: string } }).message.type === "result") resultsSeen++;
+    }
+
+    // end_input sent only AFTER both turns' results are observed (never up front alongside the user
+    // frames): the pump acks end_input as soon as it dequeues that control frame, independent of
+    // turn state, so sending it early would race its ack's wire position against turn 1's data
+    // frames — an interleaving that can differ between legs on nothing more than chunk/hop count.
+    // Sequencing it after both results pins its position structurally instead of by timing.
+    driver.send({ type: "control_request", requestId: "end-input-1", subtype: "end_input", payload: undefined });
+    const ack = await driver.nextFrame();
+    expect(ack?.type).toBe("control_response");
+    expect((ack as ControlResponseFrame).ok).toBe(true);
+    pushFrame(entries, ack!);
+
+    const eof = await driver.nextFrame();
+    expect(eof).toBeNull();
+
+    const exitInfo = await proc.exited; // natural exit — proves the engine terminates on its own
+    pushExit(entries, { code: exitInfo.code, signal: exitInfo.signal });
+    return normalizeTrace(entries);
+  } finally {
+    proc.kill();
+    await proc.exited;
   }
-
-  // end_input sent only AFTER both turns' results are observed (never up front alongside the user
-  // frames): the pump acks end_input as soon as it dequeues that control frame, independent of turn
-  // state, so sending it early would race its ack's wire position against turn 1's data frames —
-  // an interleaving that can differ between legs on nothing more than chunk/hop count. Sequencing
-  // it after both results pins its position structurally instead of by timing.
-  driver.send({ type: "control_request", requestId: "end-input-1", subtype: "end_input", payload: undefined });
-  const ack = await driver.nextFrame();
-  expect(ack?.type).toBe("control_response");
-  expect((ack as ControlResponseFrame).ok).toBe(true);
-  pushFrame(entries, ack!);
-
-  const eof = await driver.nextFrame();
-  expect(eof).toBeNull();
-
-  const exitInfo = await proc.exited;
-  pushExit(entries, { code: exitInfo.code, signal: exitInfo.signal });
-  return normalizeTrace(entries);
 }
 
 async function traceInterrupt(leg: LegName): Promise<ConformanceTraceEntry[]> {
   const proc = buildRawProc(leg, "hang", "interrupt-fixture");
-  const driver = createDriver(proc);
-  const entries: ConformanceTraceEntry[] = [];
+  // Exception-safe reaping (review finding 1) — see traceMultiTurn's comment for the full
+  // rationale. This function is the sharper case: the "hang" provider's generate() NEVER resolves
+  // on its own (no stdin-EOF exit — end_input only arrives after we already observed the
+  // interrupted result — and no parent-death exit either), so a body that throws BEFORE reaching
+  // the interrupt/end_input exchange would orphan a child that can never exit by itself. The
+  // `finally` guarantees a kill either way; the natural `await proc.exited` after end_input in the
+  // try block is still what proves the engine returns to a cleanly-terminable idle state post-
+  // interrupt, per WS-04 §5 — the finally's kill() on that already-exited process is then a no-op.
+  try {
+    const driver = createDriver(proc);
+    const entries: ConformanceTraceEntry[] = [];
 
-  const init = await driver.nextFrame();
-  pushFrame(entries, init!);
-  const sys = await driver.nextFrame();
-  pushFrame(entries, sys!);
+    const init = await driver.nextFrame();
+    pushFrame(entries, init!);
+    const sys = await driver.nextFrame();
+    pushFrame(entries, sys!);
 
-  driver.send({ type: "user", text: "please hang" });
-  await sleep(INTERRUPT_SETTLE_MS); // see INTERRUPT_SETTLE_MS's comment above
-  driver.send({ type: "control_request", requestId: "interrupt-1", subtype: "interrupt", payload: { scope: "turn" } });
+    driver.send({ type: "user", text: "please hang" });
+    await sleep(INTERRUPT_SETTLE_MS); // see INTERRUPT_SETTLE_MS's comment above
+    driver.send({ type: "control_request", requestId: "interrupt-1", subtype: "interrupt", payload: { scope: "turn" } });
 
-  const ack = await driver.nextFrame();
-  expect(ack?.type).toBe("control_response");
-  expect((ack as ControlResponseFrame).ok).toBe(true);
-  pushFrame(entries, ack!);
+    const ack = await driver.nextFrame();
+    expect(ack?.type).toBe("control_response");
+    expect((ack as ControlResponseFrame).ok).toBe(true);
+    pushFrame(entries, ack!);
 
-  const result = await driver.nextFrame();
-  expect(result?.type).toBe("data");
-  const resultMessage = (result as { message: unknown }).message;
-  // Direct sanity check on the provisional interrupted-result shape (engine.test.ts's own pin) —
-  // a cross-leg trace diff alone can never catch a bug that affects BOTH legs identically.
-  expect(resultMessage).toEqual({ type: "result", subtype: "success", is_error: false, interrupted: true });
-  pushFrame(entries, result!);
+    const result = await driver.nextFrame();
+    expect(result?.type).toBe("data");
+    const resultMessage = (result as { message: unknown }).message;
+    // Direct sanity check on the provisional interrupted-result shape (engine.test.ts's own pin) —
+    // a cross-leg trace diff alone can never catch a bug that affects BOTH legs identically.
+    expect(resultMessage).toEqual({ type: "result", subtype: "success", is_error: false, interrupted: true });
+    pushFrame(entries, result!);
 
-  driver.send({ type: "control_request", requestId: "end-input-1", subtype: "end_input", payload: undefined });
-  const endAck = await driver.nextFrame();
-  expect((endAck as ControlResponseFrame).ok).toBe(true);
-  pushFrame(entries, endAck!);
+    driver.send({ type: "control_request", requestId: "end-input-1", subtype: "end_input", payload: undefined });
+    const endAck = await driver.nextFrame();
+    expect((endAck as ControlResponseFrame).ok).toBe(true);
+    pushFrame(entries, endAck!);
 
-  const eof = await driver.nextFrame();
-  expect(eof).toBeNull();
+    const eof = await driver.nextFrame();
+    expect(eof).toBeNull();
 
-  const exitInfo = await proc.exited;
-  pushExit(entries, { code: exitInfo.code, signal: exitInfo.signal });
-  return normalizeTrace(entries);
+    const exitInfo = await proc.exited; // natural exit — proves the engine is back to a clean idle state
+    pushExit(entries, { code: exitInfo.code, signal: exitInfo.signal });
+    return normalizeTrace(entries);
+  } finally {
+    proc.kill();
+    await proc.exited;
+  }
+}
+
+// Review finding 2: exercises splitFrames' "carry" mechanism directly — a single frame's ENCODED
+// bytes, deliberately cut mid-line and written via two separate stdin.write() calls, must still
+// decode to exactly one frame once both slices have arrived. Bypasses driver.send() (which always
+// writes one full encoded frame per call) to get raw, sub-frame control over what hits the wire.
+async function traceSplitFrameCarry(leg: LegName): Promise<ConformanceTraceEntry[]> {
+  const proc = buildRawProc(leg, undefined, "split-carry-fixture");
+  try {
+    const driver = createDriver(proc);
+    const entries: ConformanceTraceEntry[] = [];
+
+    const init = await driver.nextFrame();
+    pushFrame(entries, init!);
+    const sys = await driver.nextFrame();
+    pushFrame(entries, sys!);
+
+    const encoded = encodeFrame({ type: "user", text: "carried" });
+    const mid = Math.floor(encoded.length / 2);
+    const firstSlice = encoded.slice(0, mid); // no trailing "\n" yet — must be held in `carry`
+    const secondSlice = encoded.slice(mid); // completes the line
+    proc.stdin.write(firstSlice);
+    if (leg === "child") {
+      // A real OS pipe can coalesce two quick writes into a single read on the receiving end,
+      // which would let this scenario pass trivially without ever exercising the carry path (the
+      // two slices would just arrive pre-joined). A short delay makes the two writes land as
+      // separate reads in practice — but the scenario is correct (and stays green) even on a run
+      // where the OS coalesces them anyway, since a single already-complete line decodes fine too.
+      // The in-memory leg needs no such delay: each stdin.write() is its own Queue entry by
+      // construction (no OS buffering to coalesce across), so it deterministically exercises the
+      // carry path every run regardless.
+      await sleep(20);
+    }
+    proc.stdin.write(secondSlice);
+
+    let resultsSeen = 0;
+    while (resultsSeen < 1) {
+      const frame = await driver.nextFrame();
+      if (!frame) throw new Error(`${leg}: unexpected EOF while awaiting the split-frame turn`);
+      pushFrame(entries, frame);
+      if (frame.type === "data" && (frame as { message: { type: string } }).message.type === "result") resultsSeen++;
+    }
+
+    driver.send({ type: "control_request", requestId: "end-input-1", subtype: "end_input", payload: undefined });
+    const ack = await driver.nextFrame();
+    expect(ack?.type).toBe("control_response");
+    expect((ack as ControlResponseFrame).ok).toBe(true);
+    pushFrame(entries, ack!);
+
+    const eof = await driver.nextFrame();
+    expect(eof).toBeNull();
+
+    const exitInfo = await proc.exited;
+    pushExit(entries, { code: exitInfo.code, signal: exitInfo.signal });
+    return normalizeTrace(entries);
+  } finally {
+    proc.kill();
+    await proc.exited;
+  }
 }
 
 // --- the equivalence suite -----------------------------------------------------------------------
@@ -308,7 +404,7 @@ describe("transport equivalence: inMemoryProcess vs the real winter child (main.
     expect(assistantMsg.message.content).toEqual([{ type: "text", text: "echo: hi" }]);
   });
 
-  test("multi-turn (streaming input, 2 envelopes)", async () => {
+  test("multi-turn (streaming input, 2 envelopes) — raw wire, independent of query()", async () => {
     const a = await traceMultiTurn("inMemory");
     const b = await traceMultiTurn("child");
     expect(compareTraces(a, b)).toEqual([]);
@@ -316,6 +412,27 @@ describe("transport equivalence: inMemoryProcess vs the real winter child (main.
     const first = a[2]!.payload as { message: { content: unknown } };
     expect(first.message.content).toEqual([{ type: "text", text: "echo: first" }]);
     const second = a[4]!.payload as { message: { content: unknown } };
+    expect(second.message.content).toEqual([{ type: "text", text: "echo: second" }]);
+  });
+
+  // Controller Ruling P1-I: query()'s own streaming-input iteration, exercised directly (not the
+  // raw wire above) — this is what actually broke for a real consumer before the query.ts fix in
+  // this round (see this file's header note). RED before the fix (only turn 1 surfaced, no error);
+  // GREEN after (mode-aware termination — see query.ts).
+  test("multi-turn via query() (streaming input, 2 envelopes)", async () => {
+    const twoTurns = () =>
+      (async function* () {
+        yield "first";
+        yield "second";
+      })();
+    const a = await traceViaQuery("inMemory", { prompt: twoTurns() });
+    const b = await traceViaQuery("child", { prompt: twoTurns() });
+    expect(compareTraces(a.trace, b.trace)).toEqual([]);
+    expect(a.thrown).toBeUndefined();
+    expect(a.trace.map((e) => e.kind)).toEqual(["system/init", "assistant", "result", "assistant", "result", "exit"]);
+    const first = a.trace[1]!.payload as { message: { content: unknown } };
+    expect(first.message.content).toEqual([{ type: "text", text: "echo: first" }]);
+    const second = a.trace[3]!.payload as { message: { content: unknown } };
     expect(second.message.content).toEqual([{ type: "text", text: "echo: second" }]);
   });
 
@@ -335,6 +452,15 @@ describe("transport equivalence: inMemoryProcess vs the real winter child (main.
     const b = await traceInterrupt("child");
     expect(compareTraces(a, b)).toEqual([]);
     expect(a.map((e) => e.kind)).toEqual(["init", "system/init", "control_response", "result", "control_response", "exit"]);
+  });
+
+  test("split-frame carry (a frame written across two stdin slices decodes correctly)", async () => {
+    const a = await traceSplitFrameCarry("inMemory");
+    const b = await traceSplitFrameCarry("child");
+    expect(compareTraces(a, b)).toEqual([]);
+    expect(a.map((e) => e.kind)).toEqual(["init", "system/init", "assistant", "result", "control_response", "exit"]);
+    const assistantMsg = a[2]!.payload as { message: { content: unknown } };
+    expect(assistantMsg.message.content).toEqual([{ type: "text", text: "echo: carried" }]);
   });
 
   test("error-result-then-throw (boom)", async () => {
