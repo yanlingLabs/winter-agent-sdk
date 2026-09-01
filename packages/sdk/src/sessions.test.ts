@@ -20,7 +20,7 @@ import {
   getSubagentMessages,
 } from "./sessions.ts";
 import { SessionNotFoundError } from "./errors.ts";
-import { WinterCompatibilitySessionStore } from "./store/session-store.ts";
+import { WinterCompatibilitySessionStore, DIALECT_RECORD_ENTRY_TYPE } from "./store/session-store.ts";
 import { compatibilityKeys } from "./paths/keys.ts";
 
 function freshHome(): string {
@@ -289,6 +289,117 @@ describe("renameSession / tagSession -- merge semantics", () => {
       await seedTwoByTwo(home);
       await expect(renameSession("nope", "x", { winterHome: home })).rejects.toBeInstanceOf(SessionNotFoundError);
       await expect(tagSession("nope", ["x"], { winterHome: home })).rejects.toBeInstanceOf(SessionNotFoundError);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+});
+
+// Fix round 1: mergeSessionMetadata (session-store.ts) and foldSummary (session-store.ts, the
+// dialect-record/mechanical-field folding append() already does) are two INDEPENDENT
+// read-modify-write producers of the exact same <sessionId>.summary.json sidecar. Both directions
+// need proving, mirroring the established template for exactly this risk
+// (session-store.test.ts's "dialect fields survive a later plain append" — same file, same
+// producers, same non-clobbering claim, just approached from the OTHER new producer's side).
+// These are pinning tests: they assert the CURRENT (already-correct-by-construction) spread
+// orders in both functions, run pass-first against unchanged implementation code.
+describe("mergeSessionMetadata vs foldSummary -- two independent producers of the same summary sidecar", () => {
+  test("renameSession/tagSession preserve dialect-record fields a prior append already folded into the summary", async () => {
+    const home = freshHome();
+    try {
+      const { store, projectA } = await seedTwoByTwo(home);
+      // A dialect-record append (Task 8's own sentinel, re-exported unchanged from this same
+      // module) folds producer/dialect fields PLUS a projectDirName-style extension field into the
+      // summary — exactly what dialect.ts's real TranscriptWriter does on every turn.
+      await store.append({ projectKey: projectA, sessionId: "session-a1" }, [
+        {
+          type: DIALECT_RECORD_ENTRY_TYPE,
+          producerRuntime: "winter-agent",
+          producerEngineVersion: "0.0.1",
+          dialectFamily: "claude-code-jsonl",
+          projectDirName: projectA,
+        },
+      ]);
+
+      await renameSession("session-a1", "Renamed", { winterHome: home });
+      await tagSession("session-a1", ["tagged"], { winterHome: home });
+
+      // Round-trip via listSessionSummaries -- the only vantage point that can see the raw
+      // dialect fields at all (getSessionInfo's own shape doesn't surface them).
+      const summaries = await store.listSessionSummaries(projectA);
+      const summary = summaries.find((s) => s.sessionId === "session-a1");
+      expect(summary).toMatchObject({
+        entryCount: 2, // mechanical field from the earlier seedSession append, untouched by either merge
+        producerRuntime: "winter-agent", // NOT clobbered by mergeSessionMetadata's later writes
+        producerEngineVersion: "0.0.1",
+        dialectFamily: "claude-code-jsonl",
+        projectDirName: projectA,
+        name: "Renamed",
+        tags: ["tagged"],
+      });
+
+      // Round-trip via getSessionInfo -- the fields it DOES surface must also be correct and
+      // undisturbed by the dialect-record append that came before the renames.
+      const info = await getSessionInfo("session-a1", { winterHome: home });
+      expect(info.name).toBe("Renamed");
+      expect(info.tags).toEqual(["tagged"]);
+      expect(info.entryCount).toBe(2);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test("a later plain append's foldSummary preserves name/tags set earlier via renameSession/tagSession, while still updating mechanical fields", async () => {
+    const home = freshHome();
+    try {
+      const { store, projectA } = await seedTwoByTwo(home); // session-a1 starts at entryCount:2
+      await renameSession("session-a1", "Live Session", { winterHome: home });
+      await tagSession("session-a1", ["ongoing"], { winterHome: home });
+
+      // A plain, sentinel-less append -- exactly what a live session continuing looks like from
+      // the store's point of view (dialect.ts's real TranscriptWriter does this every turn).
+      await store.append({ projectKey: projectA, sessionId: "session-a1" }, [
+        { type: "user", uuid: "extra-u1", parentUuid: null, sessionId: "session-a1", message: { role: "user", content: "more" } },
+      ]);
+
+      const summaries = await store.listSessionSummaries(projectA);
+      const summary = summaries.find((s) => s.sessionId === "session-a1");
+      expect(summary).toMatchObject({
+        entryCount: 3, // mechanical field kept updating (2 + 1) -- foldSummary's OWN job
+        name: "Live Session", // NOT clobbered by the sentinel-less, name/tags-less append
+        tags: ["ongoing"],
+      });
+
+      const info = await getSessionInfo("session-a1", { winterHome: home });
+      expect(info.entryCount).toBe(3);
+      expect(info.name).toBe("Live Session");
+      expect(info.tags).toEqual(["ongoing"]);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test("renameSession with no summary sidecar yet produces a persisted summary with no entryCount key", async () => {
+    const home = freshHome();
+    try {
+      const { projectA } = await seedTwoByTwo(home);
+      const summaryPath = join(home, "projects", projectA, "session-a1.summary.json");
+      rmSync(summaryPath);
+
+      await renameSession("session-a1", "Fresh Metadata", { winterHome: home });
+
+      // mergeSessionMetadata's patch-then-cast path never re-derives entryCount from scratch --
+      // the same posture the pre-existing foldSummary already has for a dialect-only append with
+      // zero native entries (its own `mechanical` object stays `{}` and contributes no entryCount
+      // key either). Pinning current, correct behavior -- not requesting a change.
+      const raw = JSON.parse(readFileSync(summaryPath, "utf8")) as Record<string, unknown>;
+      expect(raw["name"]).toBe("Fresh Metadata");
+      expect("entryCount" in raw).toBe(false);
+
+      // getSessionInfo's own load()-fallback (see its dedicated test above) is what keeps this
+      // from ever surfacing as a wrong/missing entryCount to a caller.
+      const info = await getSessionInfo("session-a1", { winterHome: home });
+      expect(info.entryCount).toBe(2); // recovered via load(), not the (absent) summary field
     } finally {
       rmSync(home, { recursive: true, force: true });
     }
