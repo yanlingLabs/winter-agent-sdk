@@ -20,3 +20,12 @@ test("normalizes padded VERSION (0.0.001) to unpadded semver (0.0.1)", () => {
   // lockstep: optionalDependencies also get normalized
   expect((result[0]!.json.optionalDependencies as Record<string,string>)["@yanlinglabs/winter-agent-sdk-darwin-arm64"]).toBe("0.0.14");
 });
+
+test("leaves a workspace:* optionalDependency untouched (does not reintroduce the pinned-version break)", () => {
+  const result = computeSyncedManifests("0.0.014", [
+    { path: "packages/sdk/package.json", json: { version: "0.0.1", optionalDependencies: { "@yanlinglabs/winter-agent-sdk-darwin-arm64": "workspace:*" } } },
+  ]);
+  expect(result[0]!.json.version).toBe("0.0.14");
+  // workspace:* is a link protocol, not a semver — must survive sync unchanged (mirrors the dependencies-loop guard)
+  expect((result[0]!.json.optionalDependencies as Record<string,string>)["@yanlinglabs/winter-agent-sdk-darwin-arm64"]).toBe("workspace:*");
+});

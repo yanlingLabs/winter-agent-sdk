@@ -10,7 +10,7 @@ export function computeSyncedManifests(version: string, manifests: Manifest[]): 
   return manifests.map((m) => {
     const json: Record<string, unknown> = { ...m.json, version: semver };
     const opt = json.optionalDependencies as Record<string, string> | undefined;
-    if (opt) for (const k of Object.keys(opt)) if (k.startsWith("@yanlinglabs/")) opt[k] = semver;
+    if (opt) for (const k of Object.keys(opt)) if (k.startsWith("@yanlinglabs/") && opt[k] !== "workspace:*") opt[k] = semver;
     const dep = json.dependencies as Record<string, string> | undefined;
     if (dep) for (const k of Object.keys(dep)) if (k.startsWith("@yanlinglabs/") && dep[k] !== "workspace:*") dep[k] = semver;
     return { path: m.path, json };

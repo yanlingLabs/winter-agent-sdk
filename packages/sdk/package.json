@@ -10,7 +10,7 @@
     ".": "./src/index.ts"
   },
   "optionalDependencies": {
-    "@yanlinglabs/winter-agent-sdk-darwin-arm64": "0.0.1"
+    "@yanlinglabs/winter-agent-sdk-darwin-arm64": "workspace:*"
   },
   "dependencies": {
     "winter-agent-runtime": "workspace:*"
