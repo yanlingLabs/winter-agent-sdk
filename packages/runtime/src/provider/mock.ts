@@ -44,10 +44,14 @@ export const stubExecutor: ToolExecutor = {
 // two legs are byte-identical by construction rather than two hand-copies that could quietly
 // drift apart. This is a documented P1 test affordance, not part of the wire protocol or any
 // production surface: remove alongside main.ts's env read once real providers land (P6).
-export type TestProviderName = "boom" | "tooluse" | "hang";
+// Task 9: "reflect" answers every generate() call with a JSON-encoded copy of the exact messages
+// it received — the only way a resume equivalence scenario can observe "did this run's provider
+// actually see the prior turns" from OUTSIDE a real child/compiled process (transport-
+// equivalence.test.ts's resume scenario uses it on all three legs, via this SAME selector).
+export type TestProviderName = "boom" | "tooluse" | "hang" | "reflect";
 
 export function isTestProviderName(v: string): v is TestProviderName {
-  return v === "boom" || v === "tooluse" || v === "hang";
+  return v === "boom" || v === "tooluse" || v === "hang" || v === "reflect";
 }
 
 export function testProviderByName(name: TestProviderName): Provider {
@@ -76,6 +80,16 @@ export function testProviderByName(name: TestProviderName): Provider {
       return {
         async generate(): Promise<ProviderTurn> {
           return new Promise(() => {});
+        },
+      };
+    // Reflects the exact ProviderMessage[] it was called with back as its text reply, JSON-encoded.
+    // A resumed run's reflected text therefore contains the prior run's own (possibly itself
+    // reflected) text nested inside it — assert containment against the parsed array, not a fixed
+    // string, since the second run's payload is not equal to the first run's in isolation.
+    case "reflect":
+      return {
+        async generate({ messages }) {
+          return { kind: "text", text: JSON.stringify(messages) };
         },
       };
   }

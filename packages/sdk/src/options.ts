@@ -19,4 +19,18 @@ export interface Options {
   // (fetching it to check was ruled out of this task's scope) — a future snapshot pass may need to
   // rename or reshape this field.
   abortController?: AbortController;
+
+  // --- Task 9 (WS-05 §7): continue / resume / fork / resume-at. Pure passthrough into
+  // RuntimeConfig's already-declared fields (packages/sdk/src/protocol/config.ts — pre-declared
+  // since Task 2) via query.ts's --config-json serialization; the actual resolution against the
+  // transcript store happens runtime-side (packages/runtime/src/store/resume.ts +
+  // dialect.ts's resolveEngineSession), never in this package (WS-02 §3: the sdk never imports the
+  // runtime).
+  sessionId?: string; // pre-allocate this run's session id instead of an auto-generated uuid; round-trips into the init frame's sessionId and the transcript filename.
+  continue?: boolean; // resume the newest session in the current directory (WS-05 §7).
+  resume?: string; // resume this session id — current project first, then every other project; an ambiguous foreign match is a typed refusal, never an arbitrary pick.
+  forkSession?: boolean; // combined with continue/resume: copy the resolved target into a fresh session id FIRST, then resume the copy — the original transcript is left untouched.
+  resumeSessionAt?: string; // load only through this message uuid (the transcript is a graph, not a linear buffer — the tail is never deleted, just not part of this run's context).
+  resumeDropsTurn?: boolean; // confirms resumeSessionAt is intentionally discarding entries after the target uuid; validated runtime-side, never a blind trust flag.
+  persistSession?: boolean; // false suppresses transcript persistence entirely; excluded from every resume surface (WS-05 §7).
 }

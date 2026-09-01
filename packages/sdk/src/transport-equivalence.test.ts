@@ -26,6 +26,7 @@ import { fileURLToPath } from "node:url";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { randomUUID } from "node:crypto";
 import { query } from "./query.ts";
 import { defaultSpawn, type SpawnedRuntimeProcess, type SpawnRuntimeOptions, type SpawnClaudeCodeProcess } from "./transport.ts";
 import { ResultError, ProcessError, AbortError, CLIConnectionError } from "./errors.ts";
@@ -33,7 +34,7 @@ import { encodeFrame, splitFrames } from "./protocol/codec.ts";
 import type { WinterFrame, ControlResponseFrame } from "./protocol/frames.ts";
 import type { RuntimeConfig } from "./protocol/config.ts";
 import { inMemoryProcess } from "winter-agent-runtime/testing";
-import { echoProvider, stubExecutor, testProviderByName, type TestProviderName } from "winter-agent-runtime";
+import { echoProvider, stubExecutor, testProviderByName, type TestProviderName, WinterCompatibilitySessionStore, compatibilityKeys } from "winter-agent-runtime";
 import { normalizeTrace, compareTraces, type ConformanceTraceEntry } from "winter-conformance/trace";
 
 // Task 8: every engine run in this file persists by default (RuntimeConfig.persistSession defaults
@@ -176,6 +177,13 @@ interface QueryScenarioOptions {
   prompt: string | AsyncIterable<string>;
   testProviderName?: TestProviderName;
   useAbortController?: boolean;
+  // Task 9 (WS-05 §7): threaded straight into query()'s options — lets a scenario pre-allocate a
+  // session id and/or resume a previously-established one over the SAME leg's spawnHook (which
+  // always merges in the shared TEST_WINTER_HOME below, so two traceViaQuery calls using the same
+  // sessionId genuinely resume across two separate query()/process instances, never merely reuse
+  // in-process state).
+  sessionId?: string;
+  resume?: string;
   // Invoked once per yielded message, AFTER it's recorded into the trace — the kill/abort
   // scenarios use this to act at a precise, OBSERVED point in the stream (WS-04 events), never a
   // real-clock guess (unlike the raw-driven interrupt scenario, which has no such observable event
@@ -201,6 +209,8 @@ async function traceViaQuery(leg: LegName, scenario: QueryScenarioOptions): Prom
         cwd: FIXTURE_CWD,
         spawnClaudeCodeProcess: spawnHook(leg, scenario.testProviderName, capture),
         ...(abortController ? { abortController } : {}),
+        ...(scenario.sessionId !== undefined ? { sessionId: scenario.sessionId } : {}),
+        ...(scenario.resume !== undefined ? { resume: scenario.resume } : {}),
       },
     });
     for await (const msg of gen) {
@@ -430,6 +440,54 @@ async function traceSplitFrameCarry(leg: LegName): Promise<ConformanceTraceEntry
   }
 }
 
+// --- Task 9 (WS-05 §7): resume across a NEW process/instance, same leg -------------------------
+//
+// Two separate query() calls (two separate SpawnedRuntimeProcess instances — a real child/compiled
+// leg genuinely exits between them) sharing the SAME sessionId over the SAME leg's spawnHook, which
+// already merges in TEST_WINTER_HOME for every leg (Task 8's HARD CONSTRAINT) — so this exercises a
+// real cross-process resume, not merely in-process state reuse. The "reflect" test provider
+// (provider/mock.ts) is what lets the SECOND run's assistant reply prove "the provider saw the
+// first run's history" from OUTSIDE the process, on every leg including a real spawned child.
+async function traceResumeScenario(leg: LegName): Promise<{ trace: ConformanceTraceEntry[]; sessionId: string; secondAssistantText: string }> {
+  const sessionId = randomUUID();
+  const entries: ConformanceTraceEntry[] = [];
+  let secondAssistantText = "";
+
+  async function runLeg(prompt: string, extra: { sessionId?: string; resume?: string }): Promise<void> {
+    const capture: { proc?: SpawnedRuntimeProcess } = {};
+    try {
+      const gen = query({
+        prompt,
+        options: {
+          model: FIXTURE_MODEL,
+          cwd: FIXTURE_CWD,
+          spawnClaudeCodeProcess: spawnHook(leg, "reflect", capture),
+          ...(extra.sessionId !== undefined ? { sessionId: extra.sessionId } : {}),
+          ...(extra.resume !== undefined ? { resume: extra.resume } : {}),
+        },
+      });
+      for await (const msg of gen) {
+        entries.push({ sequence: entries.length, direction: "runtime-to-host", kind: kindOfMessage(msg), payload: msg });
+        if (msg.type === "assistant") {
+          const content = (msg as { message: { content: Array<{ type: string; text?: string }> } }).message.content;
+          const textBlock = content.find((b) => b.type === "text");
+          if (textBlock?.text !== undefined) secondAssistantText = textBlock.text;
+        }
+      }
+    } finally {
+      if (capture.proc) await capture.proc.exited;
+    }
+  }
+
+  // Run 1: establishes history under a freshly-minted, pre-allocated sessionId.
+  await runLeg("first", { sessionId });
+  // Run 2: a NEW process/instance resumes that SAME sessionId.
+  await runLeg("second", { resume: sessionId });
+
+  pushExit(entries, describeThrown(undefined));
+  return { trace: normalizeTrace(entries), sessionId, secondAssistantText };
+}
+
 // --- the equivalence suite -----------------------------------------------------------------------
 //
 // Registers the 9 equivalence scenarios (WS-04 §12) comparing `legA` against `legB`. Controller
@@ -549,6 +607,41 @@ function registerEquivalenceScenarios(legA: LegName, legB: LegName): void {
     expect(a.thrown).toBeInstanceOf(AbortError);
     expect(b.thrown).toBeInstanceOf(AbortError);
     expect(a.trace.map((e) => e.kind)).toEqual(["system/init", "exit"]);
+  });
+
+  // Task 9 (WS-05 §7): run a session to completion, then resume the SAME sessionId in a NEW
+  // process/instance over the SAME leg — the provider sees the prior messages (proven via the
+  // "reflect" test provider's JSON-encoded reply) and the transcript chain continues from the last
+  // uuid (proven by inspecting the shared TEST_WINTER_HOME's store directly).
+  test("resume: a new process/instance continues the same session — provider sees prior messages, transcript chain continues", async () => {
+    const a = await traceResumeScenario(legA);
+    const b = await traceResumeScenario(legB);
+    expect(compareTraces(a.trace, b.trace)).toEqual([]);
+    expect(a.trace.map((e) => e.kind)).toEqual(["system/init", "assistant", "result", "system/init", "assistant", "result", "exit"]);
+
+    // The SECOND run's provider call received the FIRST run's history — assert containment (the
+    // second run's reflected JSON necessarily nests the first run's own reflected text inside it),
+    // never equality against a fixed string.
+    for (const result of [a, b]) {
+      const reflected = JSON.parse(result.secondAssistantText) as Array<{ role: string; content: unknown }>;
+      expect(reflected).toContainEqual({ role: "user", content: "first" });
+      expect(reflected.some((m) => m.role === "assistant")).toBe(true); // the first run's OWN reply is present too
+      expect(reflected.at(-1)).toEqual({ role: "user", content: "second" });
+    }
+
+    // Chain continuity: one continuous parentUuid graph, first entry's parent null, every later
+    // entry's parent its immediate predecessor's uuid — spanning BOTH runs, on both legs.
+    for (const [scenarioLeg, result] of [[legA, a] as const, [legB, b] as const]) {
+      const store = new WinterCompatibilitySessionStore({ winterHome: TEST_WINTER_HOME });
+      const projectKey = compatibilityKeys(FIXTURE_CWD).transcriptProjectKey;
+      const loaded = await store.load({ projectKey, sessionId: result.sessionId });
+      expect(loaded, `${scenarioLeg}: expected a persisted transcript for the resumed session`).not.toBeNull();
+      expect(loaded!.length).toBe(4); // user(first) + assistant(reflect) + user(second) + assistant(reflect)
+      expect(loaded![0]!.parentUuid).toBeNull();
+      for (let i = 1; i < loaded!.length; i++) {
+        expect(loaded![i]!.parentUuid).toBe(loaded![i - 1]!.uuid);
+      }
+    }
   });
 }
 

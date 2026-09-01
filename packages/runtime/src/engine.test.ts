@@ -407,6 +407,67 @@ test("FIFO under pressure: an envelope written while the prior one is genuinely 
   expect(code).toBe(0);
 });
 
+// --- Task 9 (WS-05 §7): the initialMessages seam ------------------------------------------------
+//
+// The store layer (dialect.ts's resolveEngineSession) is what actually rebuilds a resumed/
+// continued/forked conversation into ProviderMessage[] — see resume.test.ts for that. This test
+// only pins engine.ts's own half of the contract in isolation, with no store involved at all:
+// whatever EngineOptions.initialMessages carries is seeded into `messages` BEFORE the turn loop
+// starts, so the FIRST provider.generate() call of a NEW envelope already sees it ahead of that
+// envelope's own user message.
+
+test("Task 9: initialMessages seeds the provider context before the first turn, ahead of any new envelope", async () => {
+  const { host, runtime } = createInMemoryChannel();
+  const calls: ProviderMessage[][] = [];
+  const provider: Provider = {
+    async generate({ messages }) {
+      calls.push([...messages]);
+      return { kind: "text", text: "reply" };
+    },
+  };
+  const initialMessages: ProviderMessage[] = [
+    { role: "user", content: "prior turn" },
+    { role: "assistant", content: "prior reply" },
+  ];
+  const done = runEngine({
+    config: baseConfig(),
+    input: runtime.input,
+    output: runtime.output,
+    provider,
+    tools: stubExecutor,
+    initialMessages,
+  });
+
+  host.output.write({ type: "user", text: "new turn" });
+  host.output.write({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined });
+
+  await drain(host.input);
+  const code = await done;
+
+  expect(code).toBe(0);
+  expect(calls.length).toBe(1);
+  expect(calls[0]).toEqual([...initialMessages, { role: "user", content: "new turn" }]);
+});
+
+test("Task 9: omitting initialMessages is byte-identical to today's fresh-session behavior (an empty seed)", async () => {
+  const { host, runtime } = createInMemoryChannel();
+  const calls: ProviderMessage[][] = [];
+  const provider: Provider = {
+    async generate({ messages }) {
+      calls.push([...messages]);
+      return { kind: "text", text: "reply" };
+    },
+  };
+  const done = runEngine({ config: baseConfig(), input: runtime.input, output: runtime.output, provider, tools: stubExecutor });
+
+  host.output.write({ type: "user", text: "hi" });
+  host.output.write({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined });
+  await drain(host.input);
+  await done;
+
+  expect(calls[0]).toEqual([{ role: "user", content: "hi" }]);
+});
+
 test("EOF mid-turn: ending input while a turn is genuinely in flight still lets that turn finish before teardown", async () => {
   const { host, runtime } = createInMemoryChannel();
   let releaseGate!: () => void;

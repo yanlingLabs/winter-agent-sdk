@@ -35,11 +35,22 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
   const { prompt, options } = args;
 
   const config: RuntimeConfig = {
-    sessionId: randomUUID(),
+    // Task 9: a caller-supplied sessionId wins over the default auto-generated uuid — this is what
+    // lets a pre-allocated id round-trip into the init frame and the transcript filename (WS-05
+    // §7). Resume/continue targets are a SEPARATE concept (config.resume/config.continue below):
+    // this field is always "what this RUN's own session id is," which the runtime overrides to the
+    // resolved target when continue/resume actually resolves one (dialect.ts's resolveEngineSession).
+    sessionId: options.sessionId ?? randomUUID(),
     cwd: options.cwd ?? process.cwd(),
     model: options.model ?? "sonnet",
     permissionMode: options.permissionMode ?? "default",
     ...(options.maxTurns !== undefined ? { maxTurns: options.maxTurns } : {}),
+    ...(options.resume !== undefined ? { resume: options.resume } : {}),
+    ...(options.continue !== undefined ? { continue: options.continue } : {}),
+    ...(options.forkSession !== undefined ? { forkSession: options.forkSession } : {}),
+    ...(options.resumeSessionAt !== undefined ? { resumeSessionAt: options.resumeSessionAt } : {}),
+    ...(options.resumeDropsTurn !== undefined ? { resumeDropsTurn: options.resumeDropsTurn } : {}),
+    ...(options.persistSession !== undefined ? { persistSession: options.persistSession } : {}),
   };
 
   // A custom spawnClaudeCodeProcess hook owns process creation entirely (containers, VMs, remote

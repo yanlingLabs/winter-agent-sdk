@@ -3,7 +3,7 @@ import { query } from "./query.ts";
 import { ResultError } from "./errors.ts";
 import { inMemoryProcess } from "winter-agent-runtime/testing";
 import type { ProviderTurn } from "winter-agent-runtime";
-import type { SpawnedRuntimeProcess } from "./transport.ts";
+import type { SpawnedRuntimeProcess, SpawnRuntimeOptions } from "./transport.ts";
 import { encodeFrame } from "./protocol/codec.ts";
 import { PROTOCOL_VERSION } from "./protocol/frames.ts";
 import type { WinterFrame } from "./protocol/frames.ts";
@@ -94,4 +94,75 @@ test("AsyncIterable prompt: the wrapper sends each item as a user frame in arriv
   expect(sent.map((f) => f.type)).toEqual(["user", "user", "user", "control_request"]);
   expect(sent.slice(0, 3).map((f) => (f as { text: string }).text)).toEqual(["a", "b", "c"]);
   expect((sent[3] as { subtype: string }).subtype).toBe("end_input");
+});
+
+// --- Task 9 (WS-05 §7): Options.{continue,resume,forkSession,resumeSessionAt,resumeDropsTurn,
+// persistSession,sessionId} serialize into --config-json ------------------------------------------
+
+function captureConfigJson(): { hook: (opts: SpawnRuntimeOptions) => SpawnedRuntimeProcess; get: () => Record<string, unknown> } {
+  let captured: Record<string, unknown> | undefined;
+  return {
+    hook(opts: SpawnRuntimeOptions) {
+      const idx = opts.args.indexOf("--config-json");
+      captured = JSON.parse(opts.args[idx + 1] as string) as Record<string, unknown>;
+      return inMemoryProcess(opts.args);
+    },
+    get() {
+      if (captured === undefined) throw new Error("captureConfigJson: spawnClaudeCodeProcess was never invoked");
+      return captured;
+    },
+  };
+}
+
+test("Task 9: every resume/continue/fork field is present in --config-json when set on Options", async () => {
+  const capture = captureConfigJson();
+  for await (const _msg of query({
+    prompt: "ping",
+    options: {
+      sessionId: "11111111-1111-4111-8111-111111111111",
+      continue: true,
+      resume: "22222222-2222-4222-8222-222222222222",
+      forkSession: true,
+      resumeSessionAt: "33333333-3333-4333-8333-333333333333",
+      resumeDropsTurn: true,
+      persistSession: false,
+      spawnClaudeCodeProcess: capture.hook,
+    },
+  })) {
+    /* drain */
+  }
+
+  expect(capture.get()).toMatchObject({
+    sessionId: "11111111-1111-4111-8111-111111111111",
+    continue: true,
+    resume: "22222222-2222-4222-8222-222222222222",
+    forkSession: true,
+    resumeSessionAt: "33333333-3333-4333-8333-333333333333",
+    resumeDropsTurn: true,
+    persistSession: false,
+  });
+});
+
+test("Task 9: unset resume/continue/fork fields are OMITTED from --config-json entirely (never sent as undefined/false)", async () => {
+  const capture = captureConfigJson();
+  for await (const _msg of query({ prompt: "ping", options: { spawnClaudeCodeProcess: capture.hook } })) {
+    /* drain */
+  }
+  const config = capture.get();
+  for (const key of ["continue", "resume", "forkSession", "resumeSessionAt", "resumeDropsTurn", "persistSession"]) {
+    expect(config).not.toHaveProperty(key);
+  }
+  expect(typeof config.sessionId).toBe("string"); // still auto-generated when Options.sessionId is unset
+});
+
+test("Task 9: a pre-allocated Options.sessionId round-trips into the init frame's sessionId", async () => {
+  const explicitId = "44444444-4444-4444-8444-444444444444";
+  let sawInitSessionId: string | undefined;
+  for await (const msg of query({
+    prompt: "ping",
+    options: { sessionId: explicitId, persistSession: false, spawnClaudeCodeProcess: (opts) => inMemoryProcess(opts.args) },
+  })) {
+    if (msg.type === "system" && msg.subtype === "init") sawInitSessionId = (msg as { session_id: string }).session_id;
+  }
+  expect(sawInitSessionId).toBe(explicitId);
 });
