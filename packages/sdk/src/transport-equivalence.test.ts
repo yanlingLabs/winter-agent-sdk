@@ -369,15 +369,18 @@ async function traceSplitFrameCarry(leg: LegName): Promise<ConformanceTraceEntry
     const firstSlice = encoded.slice(0, mid); // no trailing "\n" yet — must be held in `carry`
     const secondSlice = encoded.slice(mid); // completes the line
     proc.stdin.write(firstSlice);
-    if (leg === "child") {
+    if (leg !== "inMemory") {
       // A real OS pipe can coalesce two quick writes into a single read on the receiving end,
       // which would let this scenario pass trivially without ever exercising the carry path (the
       // two slices would just arrive pre-joined). A short delay makes the two writes land as
       // separate reads in practice — but the scenario is correct (and stays green) even on a run
       // where the OS coalesces them anyway, since a single already-complete line decodes fine too.
-      // The in-memory leg needs no such delay: each stdin.write() is its own Queue entry by
-      // construction (no OS buffering to coalesce across), so it deterministically exercises the
-      // carry path every run regardless.
+      // Fix round 1 (reviewer Finding B, controller Ruling P1-M): applies to EVERY real-process leg
+      // (child AND compiled — both are real OS pipes), not just "child" — the original `leg ===
+      // "child"` check predates the compiled leg and silently left it never exercising the carry
+      // path at all. The in-memory leg alone needs no such delay: each stdin.write() is its own
+      // Queue entry by construction (no OS buffering to coalesce across), so it deterministically
+      // exercises the carry path every run regardless.
       await sleep(20);
     }
     proc.stdin.write(secondSlice);

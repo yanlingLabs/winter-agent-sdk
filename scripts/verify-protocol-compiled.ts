@@ -39,9 +39,17 @@ if (import.meta.main) {
     const exitCode = await proc.exited;
     if (exitCode !== 0) {
       console.error(`verify:compiled FAILED (bun test exit ${exitCode})`);
-      process.exit(exitCode);
+      // Fix round 1 (reviewer Finding A): process.exit() here would terminate immediately WITHOUT
+      // unwinding, so the `finally` below would never run and every failing run would leak this
+      // temp dir (with the ~60MB compiled binary) into real $TMPDIR. process.exitCode only RECORDS
+      // the code the process exits with once it naturally finishes — the `finally`'s cleanup still
+      // runs first, then the process exits with this code on its own (mirrors build-runtime.ts's
+      // own cleanup-inside-try/finally pattern, which never had this bug because it never calls
+      // process.exit() at all).
+      process.exitCode = exitCode;
+    } else {
+      console.log("verify:compiled OK — the compiled winter binary matches the in-memory transport on every equivalence scenario");
     }
-    console.log("verify:compiled OK — the compiled winter binary matches the in-memory transport on every equivalence scenario");
   } finally {
     rmSync(workDir, { recursive: true, force: true });
   }
