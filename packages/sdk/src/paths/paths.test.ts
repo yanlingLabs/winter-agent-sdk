@@ -36,6 +36,16 @@ describe("resolveWinterHome", () => {
   test("an explicit undefined value in the env map is treated as unset", () => {
     expect(resolveWinterHome({ WINTER_HOME: undefined }).endsWith("/.winter")).toBe(true);
   });
+
+  // T6 fix-wave (low): every test above passes an explicit env object — the zero-arg branch
+  // (`env ?? process.env`, home.ts:15) was never directly exercised. Flake-aware, same accepted
+  // precedent as temp.test.ts's identical resolveTempBase(undefined) case (T6 review): this reads
+  // the REAL process.env, so it assumes WINTER_HOME is unset in whatever environment runs this
+  // suite — true for every CI runner and dev machine this repo's own tooling controls, but not a
+  // guarantee this test itself can enforce.
+  test("the zero-arg branch falls through to the real process.env (flake-aware — assumes WINTER_HOME is unset here, matching resolveTempBase's identical precedent)", () => {
+    expect(resolveWinterHome().endsWith("/.winter")).toBe(true);
+  });
 });
 
 describe("transcriptProjectKey — exact CC project-key algorithm", () => {

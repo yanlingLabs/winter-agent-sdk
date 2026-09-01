@@ -5,5 +5,6 @@
   "wrapperTarballSha256": "207b771f94aab6ffd025b039d6f911e20ad0634c50c09206c0ca7c3601b40d95",
   "wrapperTarballIntegrity": "sha512-qT/1cBZs0+xPsQfqVOnwIk6pNW8XBkTpQS5RAXKHYb2XYCKqYc0UmOaeiYU2WeI6HEZKORa5iCaAZyKWGluShw==",
   "darwinArm64NativeSha256": "506d7362a9c625306044879a9d91d8f33bd2eef963681b56be3295db5fe3e34b",
+  "_darwinArm64NativeSha256Note": "T11 fix-wave: this is the sha256 of the INNER extracted 'claude' native binary itself (verified by extraction, not guessed) — NOT of any darwin-arm64 optional-package TARBALL, unlike wrapperTarballSha256/wrapperTarballIntegrity above, which ARE tarball hashes. Naming trap for a future reader: the parallel field name suggests the same kind of artifact; it is not. Not currently read by any script (fetch-upstream.ts's CHECKSUMS type only picks tarballUrl/wrapperTarballSha256/wrapperTarballIntegrity) — recorded here for the record until a native-binary verification path exists.",
   "claudeCode": "2.1.250"
 }

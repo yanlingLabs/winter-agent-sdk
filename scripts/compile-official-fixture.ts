@@ -14,6 +14,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { fetchAndVerifyUpstream } from "./fetch-upstream.ts";
+import { compile } from "./compile-fixtures.ts";
 
 const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
 const BASE_TSCONFIG = join(REPO_ROOT, "tsconfig.base.json");
@@ -26,11 +27,21 @@ export interface CompileResult {
 }
 
 export async function compileOfficialFixture(): Promise<CompileResult> {
-  // Re-verified here (not merely relied upon from an earlier step) — this function must be safe to
-  // call in isolation (as the CI job and a local ad-hoc run both do).
-  const { tarballPath, ownedDir } = await fetchAndVerifyUpstream();
-  const prefix = mkdtempSync(join(tmpdir(), "winter-official-fixture-"));
+  // T11 review F1 (fix-wave, Minor): both temp-resource acquisitions now happen INSIDE the try,
+  // registering a cleanup closure immediately after each succeeds — the ORIGINAL version acquired
+  // both (fetchAndVerifyUpstream's owned tarball dir, then this mkdtemp) BEFORE the try began, so a
+  // resource-exhaustion failure (ENOSPC/EMFILE — real under sustained CI load) in the SECOND
+  // acquisition would strand the FIRST one, already on disk, with nothing left to clean it up
+  // (the `finally` below never runs for either, since the throw happens before the try is entered).
+  const cleanups: Array<() => void> = [];
   try {
+    // Re-verified here (not merely relied upon from an earlier step) — this function must be safe
+    // to call in isolation (as the CI job and a local ad-hoc run both do).
+    const { tarballPath, ownedDir } = await fetchAndVerifyUpstream();
+    if (ownedDir) cleanups.push(() => rmSync(dirname(tarballPath), { recursive: true, force: true }));
+    const prefix = mkdtempSync(join(tmpdir(), "winter-official-fixture-"));
+    cleanups.push(() => rmSync(prefix, { recursive: true, force: true }));
+
     const install = Bun.spawn(
       ["npm", "install", "--no-save", "--ignore-scripts", "--prefix", prefix, tarballPath],
       { stdout: "pipe", stderr: "pipe" },
@@ -75,15 +86,12 @@ export async function compileOfficialFixture(): Promise<CompileResult> {
     const tsconfigPath = join(prefix, "tsconfig.official.generated.json");
     writeFileSync(tsconfigPath, JSON.stringify(generatedTsconfig, null, 2));
 
-    const tsc = Bun.spawn(["bunx", "tsc", "--noEmit", "-p", tsconfigPath], { stdout: "pipe", stderr: "pipe" });
-    const tscOut = (await new Response(tsc.stdout).text()) + (await new Response(tsc.stderr).text());
-    return { ok: (await tsc.exited) === 0, output: installOut + tscOut };
+    // T11 review F2 (fix-wave, style): reuses compile-fixtures.ts's own compile() helper — the
+    // spawn+read+exit-code logic below was a byte-for-byte duplicate of it.
+    const r = await compile(tsconfigPath);
+    return { ok: r.ok, output: installOut + r.output };
   } finally {
-    rmSync(prefix, { recursive: true, force: true });
-    // Guard (Task 11): fetchAndVerifyUpstream() above never passed a cacheDir, so ownedDir is
-    // always true here — but keying the cleanup off it (not unconditional) keeps this call site
-    // correct if it's ever changed to share a cache directory with another caller.
-    if (ownedDir) rmSync(dirname(tarballPath), { recursive: true, force: true });
+    for (const cleanup of cleanups) cleanup();
   }
 }
 

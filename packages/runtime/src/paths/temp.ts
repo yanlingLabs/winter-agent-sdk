@@ -50,6 +50,13 @@ function ensureValidatedDir(path: string): void {
   try {
     mkdirSync(path, { mode: 0o700 });
   } catch (err) {
+    // T6 fix-wave (doc note): a non-EEXIST failure here (EACCES, a missing/non-directory parent,
+    // resource exhaustion, ...) is deliberately re-thrown UNWRAPPED — the raw Node error, not a
+    // WinterPathsError. This mirrors session-store.ts's identical ensureSecureDir catch (same
+    // shape, same choice): only the conditions this module actually VALIDATES (symlink, wrong
+    // owner, wrong type — see assertOwnedDir below) get this module's own typed error; a plain
+    // filesystem failure it never attempted to interpret is more honestly surfaced as-is than
+    // repackaged into a WinterPathsError that would imply this code understood what went wrong.
     if ((err as { code?: unknown }).code !== "EEXIST") throw err;
   }
   const stat = lstatSync(path); // lstat, never stat — a symlink (dangling or not) must be caught, not followed

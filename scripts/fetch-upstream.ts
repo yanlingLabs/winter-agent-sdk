@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { readFileSync } from "node:fs";
 
 export class ChecksumMismatchError extends Error {
@@ -66,6 +66,20 @@ export async function fetchAndVerifyUpstream(
 }
 
 if (import.meta.main) {
-  fetchAndVerifyUpstream().then(({ sha256 }) => console.log(`verified upstream ${sha256}`))
-    .catch((e) => { console.error(e.message); process.exit(1); });
+  // T11 fix-wave: this CLI entry (the `conformance:fetch` script) never passed a cacheDir, so every
+  // invocation — a plain manual run, and every `bun run conformance:fetch` in CI — got a fresh,
+  // OWNED mkdtemp (resolveCacheDir's `ownedDir: true` branch) that was never cleaned up here,
+  // leaking one throwaway tarball directory into the real OS tmpdir per run (pre-existing, ~1 dir/
+  // run). Mirrors capture-official-golden.ts's and compile-official-fixture.ts's own
+  // `if (ownedDir) rmSync(dirname(tarballPath), ...)` guard — keyed off `ownedDir`, never
+  // unconditional, so a future caller that DOES pass a shared cacheDir here still doesn't delete it.
+  fetchAndVerifyUpstream()
+    .then(({ sha256, tarballPath, ownedDir }) => {
+      console.log(`verified upstream ${sha256}`);
+      if (ownedDir) rmSync(dirname(tarballPath), { recursive: true, force: true });
+    })
+    .catch((e) => {
+      console.error(e.message);
+      process.exit(1);
+    });
 }

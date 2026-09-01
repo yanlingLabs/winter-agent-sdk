@@ -34,15 +34,28 @@ const CANNED_RESPONSE = {
 };
 
 async function runCapture(): Promise<void> {
-  // 1. Checksum-verified ephemeral install (same contract as compile-official-fixture.ts: sha256 +
-  //    the Task-11 sha512 integrity pin, both re-verified here, never trusted from an earlier step).
-  const { tarballPath, ownedDir } = await fetchAndVerifyUpstream();
-  const npmPrefix = mkdtempSync(join(tmpdir(), "winter-official-capture-"));
-  const claudeConfigDir = mkdtempSync(join(tmpdir(), "winter-official-capture-config-"));
-  const fixtureCwd = mkdtempSync(join(tmpdir(), "winter-official-capture-cwd-"));
+  // T11 review F1 (fix-wave, Minor): every temp-resource acquisition now happens INSIDE the try,
+  // registering a cleanup closure immediately after each succeeds — the ORIGINAL version acquired
+  // all four (fetchAndVerifyUpstream's owned tarball dir, plus three mkdtemps) BEFORE the try began,
+  // so a resource-exhaustion failure (ENOSPC/EMFILE — real under sustained CI load) partway through
+  // that sequence would strand every EARLIER acquisition, already on disk, with nothing left to
+  // clean it up (the `finally` below never runs for any of them, since the throw happens before the
+  // try is entered).
+  const cleanups: Array<() => void> = [];
   let server: ReturnType<typeof Bun.serve> | undefined;
 
   try {
+    // 1. Checksum-verified ephemeral install (same contract as compile-official-fixture.ts: sha256 +
+    //    the Task-11 sha512 integrity pin, both re-verified here, never trusted from an earlier step).
+    const { tarballPath, ownedDir } = await fetchAndVerifyUpstream();
+    if (ownedDir) cleanups.push(() => rmSync(dirname(tarballPath), { recursive: true, force: true }));
+    const npmPrefix = mkdtempSync(join(tmpdir(), "winter-official-capture-"));
+    cleanups.push(() => rmSync(npmPrefix, { recursive: true, force: true }));
+    const claudeConfigDir = mkdtempSync(join(tmpdir(), "winter-official-capture-config-"));
+    cleanups.push(() => rmSync(claudeConfigDir, { recursive: true, force: true }));
+    const fixtureCwd = mkdtempSync(join(tmpdir(), "winter-official-capture-cwd-"));
+    cleanups.push(() => rmSync(fixtureCwd, { recursive: true, force: true }));
+
     const install = Bun.spawn(
       ["npm", "install", "--no-save", "--ignore-scripts", "--prefix", npmPrefix, tarballPath],
       { stdout: "pipe", stderr: "pipe" },
@@ -110,12 +123,7 @@ async function runCapture(): Promise<void> {
     console.log(JSON.stringify(normalized, null, 2));
   } finally {
     server?.stop(true);
-    rmSync(npmPrefix, { recursive: true, force: true });
-    rmSync(claudeConfigDir, { recursive: true, force: true });
-    rmSync(fixtureCwd, { recursive: true, force: true });
-    // Guard (Task 11): fetchAndVerifyUpstream() above never passed a cacheDir, so ownedDir is
-    // always true here — keyed off it anyway, matching every other caller in this task.
-    if (ownedDir) rmSync(dirname(tarballPath), { recursive: true, force: true });
+    for (const cleanup of cleanups) cleanup();
   }
 }
 
