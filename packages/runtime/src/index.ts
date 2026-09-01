@@ -11,14 +11,25 @@ export type { Duplex, FrameSource, FrameSink } from "./protocol/channel.ts";
 export { echoProvider } from "./provider/mock.ts";
 export type { Provider } from "./provider/mock.ts";
 
+// The wire protocol (frames + codec) moved to the sdk (WS-02 §3 dependency inversion, Task 1):
+// this package now depends on it, never the reverse. Re-exported unchanged so existing
+// runtime-side imports of `winter-agent-runtime` keep compiling.
+export {
+  PROTOCOL_VERSION,
+  encodeFrame,
+  decodeFrame,
+  splitFrames,
+  ProtocolError,
+} from "@yanlinglabs/winter-agent-sdk";
+
 export type {
   ProtocolVersion,
   WinterFrame,
-  SdkMessage,
+  ProtocolSdkMessage as SdkMessage,
   InitFrame,
   UserFrame,
   DataFrame,
   ControlRequestFrame,
   ControlResponseFrame,
   UnknownFrame,
-} from "./protocol/frames.ts";
+} from "@yanlinglabs/winter-agent-sdk";

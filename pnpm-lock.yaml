@@ -17,6 +17,9 @@ importers:
       typescript:
         specifier: ^5.6.0
         version: 5.9.3
+      winter-agent-runtime:
+        specifier: workspace:*
+        version: link:packages/runtime
       winter-conformance:
         specifier: workspace:*
         version: link:packages/conformance
@@ -25,10 +28,14 @@ importers:
 
   packages/platform/darwin-arm64: {}
 
-  packages/runtime: {}
+  packages/runtime:
+    dependencies:
+      '@yanlinglabs/winter-agent-sdk':
+        specifier: workspace:*
+        version: link:../sdk
 
   packages/sdk:
-    dependencies:
+    devDependencies:
       winter-agent-runtime:
         specifier: workspace:*
         version: link:../runtime

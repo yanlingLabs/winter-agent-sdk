@@ -1,4 +1,4 @@
-import type { WinterFrame } from "./frames.ts";
+import type { WinterFrame } from "@yanlinglabs/winter-agent-sdk";
 export interface FrameSink { write(f: WinterFrame): void; end(): void; }
 export type FrameSource = AsyncIterable<WinterFrame>;
 export interface Duplex { input: FrameSource; output: FrameSink; }

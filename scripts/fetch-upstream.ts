@@ -4,7 +4,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readFileSync } from "node:fs";
 
-export class ChecksumMismatchError extends Error {}
+export class ChecksumMismatchError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ChecksumMismatchError";
+  }
+}
 
 const CHECKSUMS = JSON.parse(
   readFileSync(new URL("../packages/conformance/compat/anthropic/0.3.250/checksums.json", import.meta.url), "utf8"),

@@ -1,8 +1,6 @@
 import type { FrameSource, FrameSink } from "./protocol/channel.ts";
-import type { SdkMessage } from "./protocol/frames.ts";
+import { PROTOCOL_VERSION, type ProtocolSdkMessage as SdkMessage } from "@yanlinglabs/winter-agent-sdk";
 import type { Provider } from "./provider/mock.ts";
-
-export const PROTOCOL_VERSION = "1.0" as const;
 
 export async function runWinterRuntime(opts: {
   input: FrameSource; output: FrameSink; provider: Provider;

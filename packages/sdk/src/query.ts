@@ -1,4 +1,4 @@
-import type { SdkMessage as RuntimeSdkMessage, WinterFrame } from "winter-agent-runtime";
+import type { SdkMessage as RuntimeSdkMessage, WinterFrame } from "./protocol/frames.ts";
 import type { Options } from "./options.ts";
 import { defaultSpawnRuntime } from "./transport.ts";
 import { ResultError, CLIConnectionError } from "./errors.ts";

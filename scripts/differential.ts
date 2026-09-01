@@ -1,4 +1,5 @@
 import { query } from "@yanlinglabs/winter-agent-sdk";
+import { inMemorySpawn } from "winter-agent-runtime/testing";
 import { normalizeTrace, compareTraces, type ConformanceTraceEntry } from "winter-conformance/trace";
 import { readFileSync } from "node:fs";
 
@@ -9,7 +10,7 @@ export async function traceWinterPlainQuery(): Promise<ConformanceTraceEntry[]> 
   // and the committed golden compared against it — is byte-identical across machines and CI
   // runners, whose checkout paths differ. The in-memory runtime never touches the filesystem with
   // it (WS-17 §4: differential traces must be deterministic).
-  for await (const msg of query({ prompt: "hi", options: { model: "sonnet", cwd: "/winter-fixture" } })) {
+  for await (const msg of query({ prompt: "hi", options: { model: "sonnet", cwd: "/winter-fixture", spawnRuntime: inMemorySpawn() } })) {
     const kind = msg.type === "system" ? `system/${(msg as { subtype: string }).subtype}` : msg.type;
     entries.push({ sequence: seq++, direction: "runtime-to-host", kind, payload: msg });
   }

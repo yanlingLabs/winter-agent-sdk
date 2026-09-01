@@ -12,7 +12,7 @@
   "optionalDependencies": {
     "@yanlinglabs/winter-agent-sdk-darwin-arm64": "workspace:*"
   },
-  "dependencies": {
+  "devDependencies": {
     "winter-agent-runtime": "workspace:*"
   }
 }

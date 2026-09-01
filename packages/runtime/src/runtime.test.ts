@@ -2,7 +2,7 @@ import { test, expect } from "bun:test";
 import { createInMemoryChannel } from "./protocol/channel.ts";
 import { runWinterRuntime } from "./runtime.ts";
 import { echoProvider } from "./provider/mock.ts";
-import type { SdkMessage, WinterFrame } from "./protocol/frames.ts";
+import type { ProtocolSdkMessage as SdkMessage, WinterFrame } from "@yanlinglabs/winter-agent-sdk";
 
 async function collect(source: AsyncIterable<WinterFrame>, until: (f: WinterFrame) => boolean): Promise<WinterFrame[]> {
   const out: WinterFrame[] = [];

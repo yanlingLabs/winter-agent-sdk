@@ -1,5 +1,10 @@
 import type { WinterFrame } from "./frames.ts";
-export class ProtocolError extends Error {}
+export class ProtocolError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ProtocolError";
+  }
+}
 
 export function encodeFrame(frame: WinterFrame): string { return JSON.stringify(frame) + "\n"; }
 

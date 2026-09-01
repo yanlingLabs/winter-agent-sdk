@@ -1,4 +1,5 @@
 export type ProtocolVersion = `${number}.${number}`;
+export const PROTOCOL_VERSION = "1.0" as const;
 
 export interface InitFrame { type: "init"; protocolVersion: ProtocolVersion; sessionId: string; cwd: string;
   model: string; permissionMode: string; tools: string[]; [k: string]: unknown; }

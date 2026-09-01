@@ -1,17 +1,7 @@
 import { test, expect } from "bun:test";
 import { query } from "./query.ts";
 import { ResultError } from "./errors.ts";
-import { createInMemoryChannel, runWinterRuntime, echoProvider } from "winter-agent-runtime";
-import type { Duplex } from "winter-agent-runtime";
-
-// A spawnRuntime that boots the in-memory runtime with a chosen provider.
-function inMemorySpawn(provider = echoProvider) {
-  return ({ cwd, model }: { cwd: string; model: string }): Duplex => {
-    const { host, runtime } = createInMemoryChannel();
-    void runWinterRuntime({ input: runtime.input, output: runtime.output, provider, sessionId: "s_test", cwd, model });
-    return host;
-  };
-}
+import { inMemorySpawn } from "winter-agent-runtime/testing";
 
 test("query yields system/init, assistant, result in order", async () => {
   const seen: string[] = [];
