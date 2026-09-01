@@ -20,3 +20,18 @@ jobs:
       - run: bun run verify:compiled                # compiled-transport gate (Task 5, WS-02 §7.4): compiles a
                                                       # linux binary via the direct --out path (not the darwin
                                                       # platform package) and re-runs the equivalence suite against it
+
+  official-fixture-compile:
+    # Task 11 (WS-03 §14 dual-compile, official half): a SEPARATE job (not a step on `build`) so its
+    # ephemeral ~200MB official-package install (native optionalDependency included — accepted here,
+    # not skipped) runs in parallel with `build` rather than adding to its critical path. Mirrors
+    # `build`'s own setup (checkout/bun/pnpm) since compile-official-fixture.ts shells out to `bunx
+    # tsc`, which needs this repo's pinned typescript from the workspace install, not an ad-hoc fetch.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - uses: pnpm/action-setup@v4
+        with: { version: 10 }
+      - run: pnpm install
+      - run: bun run scripts/compile-official-fixture.ts
