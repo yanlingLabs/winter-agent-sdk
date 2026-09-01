@@ -43,9 +43,11 @@ if (import.meta.main) {
       // unwinding, so the `finally` below would never run and every failing run would leak this
       // temp dir (with the ~60MB compiled binary) into real $TMPDIR. process.exitCode only RECORDS
       // the code the process exits with once it naturally finishes — the `finally`'s cleanup still
-      // runs first, then the process exits with this code on its own (mirrors build-runtime.ts's
-      // own cleanup-inside-try/finally pattern, which never had this bug because it never calls
-      // process.exit() at all).
+      // runs first, then the process exits with this code on its own. This mirrors the SAME
+      // cleanup-inside-try/finally PATTERN build-runtime.ts's own exit path already uses — that
+      // pattern never had this bug in the first place, since it never calls process.exit() at all
+      // (T5 fix-wave: reworded — the original "which never had this bug" read as if it named the
+      // FILE build-runtime.ts, not the pattern the two files share).
       process.exitCode = exitCode;
     } else {
       console.log("verify:compiled OK — the compiled winter binary matches the in-memory transport on every equivalence scenario");

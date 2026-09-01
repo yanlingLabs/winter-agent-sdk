@@ -4,7 +4,7 @@
 // moved to packages/runtime/src/paths/temp.test.ts instead of following this file's git-mv. Only
 // the home.ts/project-key.ts/keys.ts coverage remains here, alongside the modules it tests.
 import { test, expect, describe } from "bun:test";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, realpathSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, realpathSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
@@ -118,6 +118,105 @@ describe("compatibilityKeys", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  // Fix-wave follow-up (Ruling P1-P note): a platform-neutral variant of the darwin-only test
+  // above, using a SELF-MADE symlink rather than relying on macOS's system /tmp -> /private/tmp
+  // one — resolveCanonical's realpathSync collapses a symlink to its real target on every POSIX
+  // platform, not just darwin, so this exercises the identical realpath-normalization intent
+  // everywhere, including the linux CI runner the original test could never touch.
+  test("a self-made symlink to a real directory keys identically to the directory itself (platform-neutral realpath normalization)", () => {
+    const parent = mkdtempSync(join(tmpdir(), "winter-paths-symlink-test-"));
+    try {
+      const realDir = join(parent, "real");
+      mkdirSync(realDir);
+      const linkPath = join(parent, "link");
+      symlinkSync(realDir, linkPath, "dir");
+
+      const viaReal = compatibilityKeys(realDir);
+      const viaLink = compatibilityKeys(linkPath);
+      expect(viaLink.transcriptProjectKey).toBe(viaReal.transcriptProjectKey);
+      expect(viaLink.tempProjectKey).toBe(viaReal.tempProjectKey);
+      expect(viaLink.memoryProjectKey).toBe(viaReal.memoryProjectKey);
+
+      // sanity: the two input paths really were spelled differently — this isn't accidentally
+      // testing "the same string against itself"
+      expect(linkPath).not.toBe(realDir);
+    } finally {
+      rmSync(parent, { recursive: true, force: true });
+    }
+  });
+
+  // T6 fix-wave (low): keys.ts's platformNormalize (.normalize("NFC")) is darwin-only, mirroring
+  // the pinned consumer's own platform gate — untested directly until now. Two halves, per the
+  // review's own APFS-variance warning: a pure STRING-level check (no real directory backing
+  // either spelling — exercises resolveCanonical's ENOENT fallback, which is deterministic on
+  // every OS) runs unconditionally, branching its expectation on platform; a second, on-disk check
+  // observes whatever THIS filesystem's realpathSync actually does (APFS unifies NFC/NFD spellings
+  // of the same dirent; most Linux filesystems store/match raw bytes and do not) rather than
+  // assuming one behavior.
+  describe("NFC/NFD path normalization (darwin-only unification)", () => {
+    // Explicit backslash-u escapes, never typed characters: the two are visually indistinguishable in an
+    // editor/terminal/diff, so relying on literal bytes here would risk a future re-save silently
+    // re-normalizing one to match the other and quietly defeating this whole test.
+    const NFC_CHAR = "\u00e9"; // precomposed "e-acute" -- ONE UTF-16 code unit
+    const NFD_CHAR = "e\u0301"; // "e" + combining acute accent -- decomposed, TWO code units
+
+    test("pure string equivalence (no real directory): NFD and NFC spellings key identically on darwin only — never assumed on other platforms", () => {
+      const base = "/winter-fixture-nfd-test";
+      const nfcPath = `${base}/caf${NFC_CHAR}`;
+      const nfdPath = `${base}/caf${NFD_CHAR}`;
+      expect(nfcPath).not.toBe(nfdPath); // sanity: genuinely different byte sequences
+
+      const nfcKey = compatibilityKeys(nfcPath).transcriptProjectKey;
+      const nfdKey = compatibilityKeys(nfdPath).transcriptProjectKey;
+
+      if (process.platform === "darwin") {
+        expect(nfdKey).toBe(nfcKey);
+      } else {
+        // Not a bug on this platform — nothing normalizes the two spellings here, matching
+        // keys.ts's own deliberately darwin-only platformNormalize gate.
+        expect(nfdKey).not.toBe(nfcKey);
+      }
+    });
+
+    test("on-disk: an NFD-named real directory keys consistently with whatever THIS filesystem's own realpath does to the NFC spelling — never a single assumed fs behavior", () => {
+      const parent = mkdtempSync(join(tmpdir(), "winter-nfd-fs-test-"));
+      try {
+        const nfdDir = join(parent, `caf${NFD_CHAR}`);
+        mkdirSync(nfdDir);
+        const nfcDir = join(parent, `caf${NFC_CHAR}`);
+
+        // Ground truth, straight from the filesystem (bypassing keys.ts entirely): does realpath
+        // resolve the NFC spelling to the SAME dirent the NFD spelling created (APFS-style
+        // Unicode-aware lookup), or does it not exist as a distinct path at all (byte-literal,
+        // most-Linux-style)?
+        let fsUnifiesSpellings: boolean;
+        try {
+          realpathSync(nfcDir);
+          fsUnifiesSpellings = true;
+        } catch {
+          fsUnifiesSpellings = false;
+        }
+
+        const keyViaNfd = compatibilityKeys(nfdDir).transcriptProjectKey;
+        const keyViaNfc = compatibilityKeys(nfcDir).transcriptProjectKey;
+
+        if (fsUnifiesSpellings || process.platform === "darwin") {
+          // Either the filesystem itself resolves both spellings to the same dirent, or (darwin)
+          // keys.ts's own NFC normalization step unifies them regardless of what the fs did —
+          // either way the two spellings must key identically.
+          expect(keyViaNfc).toBe(keyViaNfd);
+        } else {
+          // Byte-literal fs, non-darwin: the NFC spelling genuinely does not resolve to this
+          // dirent — resolveCanonical's ENOENT fallback returns it unresolved, so the two
+          // spellings key DIFFERENTLY. Correct behavior on this platform, not a bug.
+          expect(keyViaNfc).not.toBe(keyViaNfd);
+        }
+      } finally {
+        rmSync(parent, { recursive: true, force: true });
+      }
+    });
   });
 
   test("worktree: memory key follows the main repo root; transcript/temp keys follow the worktree cwd (WS-05 §3.2)", () => {

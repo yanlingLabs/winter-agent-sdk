@@ -406,10 +406,12 @@ async function traceSplitFrameCarry(leg: LegName): Promise<ConformanceTraceEntry
       // where the OS coalesces them anyway, since a single already-complete line decodes fine too.
       // Fix round 1 (reviewer Finding B, controller Ruling P1-M): applies to EVERY real-process leg
       // (child AND compiled — both are real OS pipes), not just "child" — the original `leg ===
-      // "child"` check predates the compiled leg and silently left it never exercising the carry
-      // path at all. The in-memory leg alone needs no such delay: each stdin.write() is its own
-      // Queue entry by construction (no OS buffering to coalesce across), so it deterministically
-      // exercises the carry path every run regardless.
+      // "child"` check predates the compiled leg and silently left it far LESS LIKELY to exercise
+      // the carry path on that leg (T5 fix-wave: "never" overstated it — coalescing without the
+      // delay is likely, not guaranteed; REDUCING how often the carry path fires is the accurate
+      // claim, not eliminating it). The in-memory leg alone needs no such delay: each stdin.write()
+      // is its own Queue entry by construction (no OS buffering to coalesce across), so it
+      // deterministically exercises the carry path every run regardless.
       await sleep(20);
     }
     proc.stdin.write(secondSlice);

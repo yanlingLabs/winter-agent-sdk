@@ -9,7 +9,7 @@
 // process.execPath (matches scripts/verify-protocol-compiled.ts's own convention) and always
 // reaped (kill + awaited `.exited`) in a finally block.
 import { test, expect, describe } from "bun:test";
-import { mkdtempSync, rmSync, statSync, existsSync, readFileSync, writeFileSync, truncateSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, statSync, existsSync, readFileSync, writeFileSync, truncateSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -99,6 +99,45 @@ describe("crash: torn final line", () => {
       expect(loaded).toEqual([]); // the key IS known (file exists) — [] not null
       expect(statSync(`${jsonlPath}.tail-quarantine`).size).toBeGreaterThan(0);
       expect(statSync(jsonlPath).size).toBe(0);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  // T7 F3 (fix-wave): parseWithTailRepair's "ends WITH a trailing newline, but the last LINE's
+  // content is unparseable JSON" branch (session-store.ts's `endsWithNewline` true / `isParseableJson`
+  // false path) is implemented but was untested — a truncation (mid-write crash) can only ever
+  // produce a torn tail that DOESN'T end in a newline (the writer was cut off before finishing the
+  // line) or one that's a complete, valid line. The "structurally complete-looking but garbage"
+  // shape needs a hand-written fixture: nothing this store's own append() ever produces gets here
+  // naturally.
+  test("a file whose last line IS newline-terminated but is unparseable JSON quarantines exactly that line, repairs the file, and keeps earlier valid entries", async () => {
+    const home = freshHome();
+    try {
+      const store = new WinterCompatibilitySessionStore({ winterHome: home });
+      const key = { projectKey: "proj-crash", sessionId: "unparseable-last-line" };
+      const projDir = join(home, "projects", "proj-crash");
+      mkdirSync(projDir, { recursive: true });
+      const jsonlPath = join(projDir, "unparseable-last-line.jsonl");
+
+      const e1 = entry();
+      const validLine = JSON.stringify(e1);
+      const garbageLine = "{garbage-not-valid-json"; // newline-terminated, but not valid JSON at all
+      writeFileSync(jsonlPath, `${validLine}\n${garbageLine}\n`);
+
+      const loaded = await store.load(key);
+      expect(loaded).toEqual([e1]); // the earlier valid entry survives untouched
+
+      const quarantinePath = `${jsonlPath}.tail-quarantine`;
+      expect(existsSync(quarantinePath)).toBe(true);
+      expect(readFileSync(quarantinePath, "utf8")).toBe(`${garbageLine}\n`);
+      expect(readFileSync(jsonlPath, "utf8")).toBe(`${validLine}\n`); // repaired: garbage line removed
+
+      // the repaired file is genuinely clean — a fresh append lands correctly, not concatenated
+      // onto the removed garbage
+      const e2 = entry();
+      await store.append(key, [e2]);
+      expect(await store.load(key)).toEqual([e1, e2]);
     } finally {
       rmSync(home, { recursive: true, force: true });
     }

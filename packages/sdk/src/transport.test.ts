@@ -483,8 +483,15 @@ test("defaultSpawn: writing to stdin after the child has already exited never cr
     proc.stdin.write("x\n");
     proc.stdin.end();
     // Settle a few ticks so any async "error" emission (EPIPE surfaces on the writable's own
-    // flush/destroy, not synchronously from write()/end() themselves) has a real chance to fire
-    // and be observed by the handlers above, if the bug were present.
+    // flush/destroy, not synchronously from write()/end() themselves) has a real chance to fire.
+    // CI-fix fix-wave note: the handlers above are defense-in-depth for a plain-Node embedding of
+    // this transport, not the mechanism that actually makes this test a tripwire under bun's own
+    // test runner — bun 1.3.14 attributes an async uncaught exception to whichever test is
+    // currently in flight and fails IT directly, before these process-level handlers ever get a
+    // chance to fire (empirically confirmed: re-review's scratch probes under this repo's pinned
+    // bun 1.3.14). Either way the tripwire property holds — a regression here fails this test, one
+    // way (bun's own crash attribution) or the other (these handlers, under plain Node) — so the
+    // wait and the assertions below stay unchanged; only this comment's causal claim is corrected.
     await new Promise((resolve) => setTimeout(resolve, 50));
   } finally {
     process.off("uncaughtException", onUncaught);

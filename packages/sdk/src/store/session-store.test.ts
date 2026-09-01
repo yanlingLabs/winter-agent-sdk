@@ -8,7 +8,7 @@
 // Every winterHome in this file is a fresh mkdtemp under the OS temp dir — never ~/.winter,
 // ~/.norma, ~/.claude, or a real shared path. No real usernames appear anywhere below.
 import { test, expect, describe } from "bun:test";
-import { mkdtempSync, rmSync, statSync, lstatSync, readFileSync, existsSync } from "node:fs";
+import { mkdtempSync, rmSync, statSync, lstatSync, readFileSync, writeFileSync, existsSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -307,6 +307,42 @@ describe("delete cascade", () => {
       await expect(store.delete({ projectKey: "proj-del3", sessionId: "nope" })).resolves.toBeUndefined();
     } finally {
       rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  // T7 F7 (fix-wave): pins Bun's rmSync symlink semantics SPECIFICALLY (not merely assumed from
+  // Node's documented behavior) — delete()'s cascade (`rmSync(stem, { recursive: true, force: true
+  // })`) relies on a symlink inside the deleted tree being UNLINKED, never FOLLOWED into deleting
+  // whatever it points at. Plants a symlink inside a session's subagent subtree pointing at an
+  // EXTERNAL directory (outside the whole winterHome) with its own marker file, deletes the
+  // session, and asserts: the symlink itself is gone (part of the cascade) but the external
+  // target's content survives completely untouched.
+  test("deleting a session whose subagent tree contains a symlink unlinks the symlink but never follows it into the external target", async () => {
+    const home = freshHome();
+    const external = mkdtempSync(join(tmpdir(), "winter-store-test-external-"));
+    try {
+      const store = new WinterCompatibilitySessionStore({ winterHome: home });
+      const key = { projectKey: "proj-del-symlink", sessionId: "to-delete" };
+      await store.append(key, [entry()]);
+      await store.append({ ...key, subpath: "subagents/agent-a" }, [entry()]);
+
+      const externalMarker = join(external, "marker.txt");
+      writeFileSync(externalMarker, "still here");
+
+      const sessionDir = join(home, "projects", "proj-del-symlink", "to-delete");
+      const plantedLink = join(sessionDir, "escape-link");
+      symlinkSync(external, plantedLink, "dir");
+      expect(lstatSync(plantedLink).isSymbolicLink()).toBe(true);
+
+      await store.delete(key);
+
+      expect(existsSync(sessionDir)).toBe(false); // the whole subagent tree, symlink included, is gone
+      expect(existsSync(external)).toBe(true); // the symlink's TARGET directory was never touched
+      expect(existsSync(externalMarker)).toBe(true); // and never followed into for deletion
+      expect(readFileSync(externalMarker, "utf8")).toBe("still here");
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(external, { recursive: true, force: true });
     }
   });
 });
