@@ -1,0 +1,42 @@
+[
+  {
+    "sequence": 0,
+    "direction": "runtime-to-host",
+    "kind": "system/init",
+    "payload": {
+      "type": "system",
+      "subtype": "init",
+      "cwd": "/winter-fixture",
+      "model": "sonnet",
+      "permissionMode": "default",
+      "tools": []
+    }
+  },
+  {
+    "sequence": 1,
+    "direction": "runtime-to-host",
+    "kind": "assistant",
+    "payload": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "type": "text",
+            "text": "echo: hi"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "sequence": 2,
+    "direction": "runtime-to-host",
+    "kind": "result",
+    "payload": {
+      "type": "result",
+      "subtype": "success",
+      "is_error": false,
+      "result": "echo: hi"
+    }
+  }
+]

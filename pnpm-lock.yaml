@@ -11,9 +11,15 @@ importers:
       '@types/bun':
         specifier: ^1.3.0
         version: 1.4.0
+      '@yanlinglabs/winter-agent-sdk':
+        specifier: workspace:*
+        version: link:packages/sdk
       typescript:
         specifier: ^5.6.0
         version: 5.9.3
+      winter-conformance:
+        specifier: workspace:*
+        version: link:packages/conformance
 
   packages/conformance: {}
 
