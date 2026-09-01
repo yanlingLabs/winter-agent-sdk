@@ -10,6 +10,7 @@
     "conformance:snapshot": "bun run scripts/gen-declaration-snapshot.ts",
     "differential": "bun run scripts/differential.ts",
     "build:runtime": "bun run scripts/build-runtime.ts",
+    "verify:compiled": "bun run scripts/verify-protocol-compiled.ts",
     "test": "bun test"
   },
   "devDependencies": {

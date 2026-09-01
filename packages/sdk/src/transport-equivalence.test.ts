@@ -61,8 +61,15 @@ const mainPath = fileURLToPath(new URL("../../runtime/src/main.ts", import.meta.
 // orders of magnitude past the microtask-scheduling gap it covers. See the task report's Concerns.
 const INTERRUPT_SETTLE_MS = 150;
 
-type LegName = "inMemory" | "child";
-const LEG_NAMES: LegName[] = ["inMemory", "child"];
+// Task 5: "compiled" is a third leg — a real spawned process, like "child", but the binary IS the
+// executable (no `process.execPath main.ts` wrapping) — active only when WINTER_COMPILED_BIN is
+// set (verify-protocol-compiled.ts sets it after building to a temp path). LEG_NAMES only grows to
+// include it when the env var is present, so the Finding-7 loop below (the one thing that iterates
+// LEG_NAMES) picks it up automatically; the main equivalence describe block further down stays
+// hand-written per pair (inMemory vs child) and is untouched by this — its compiled-leg mirror is
+// its own separate, env-gated describe block at the end of this file.
+type LegName = "inMemory" | "child" | "compiled";
+const LEG_NAMES: LegName[] = process.env.WINTER_COMPILED_BIN ? ["inMemory", "child", "compiled"] : ["inMemory", "child"];
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -81,15 +88,25 @@ function sleep(ms: number): Promise<void> {
 // before it starts reading.
 function spawnHook(leg: LegName, testProviderName: TestProviderName | undefined, capture: { proc?: SpawnedRuntimeProcess }): SpawnClaudeCodeProcess {
   return (opts: SpawnRuntimeOptions): SpawnedRuntimeProcess => {
-    const proc =
-      leg === "inMemory"
-        ? inMemoryProcess(opts.args, testProviderName ? testProviderByName(testProviderName) : echoProvider)
-        : defaultSpawn({
-            ...opts,
-            command: process.execPath, // under bun, process.execPath IS bun, which runs .ts directly
-            args: [mainPath, ...opts.args],
-            env: testProviderName ? { ...opts.env, WINTER_TEST_PROVIDER: testProviderName } : opts.env,
-          });
+    const env = testProviderName ? { ...opts.env, WINTER_TEST_PROVIDER: testProviderName } : opts.env;
+    let proc: SpawnedRuntimeProcess;
+    if (leg === "inMemory") {
+      proc = inMemoryProcess(opts.args, testProviderName ? testProviderByName(testProviderName) : echoProvider);
+    } else if (leg === "compiled") {
+      // Task 5: the compiled `winter` binary IS the executable — spawn it directly (no
+      // `process.execPath main.ts` wrapping the way the dev-child leg below needs). Same env
+      // plumbing as the dev-child leg (WINTER_TEST_PROVIDER passthrough), same opts.args untouched.
+      const compiledBin = process.env.WINTER_COMPILED_BIN;
+      if (!compiledBin) throw new Error("spawnHook: leg 'compiled' requires WINTER_COMPILED_BIN to be set");
+      proc = defaultSpawn({ ...opts, command: compiledBin, args: [...opts.args], env });
+    } else {
+      proc = defaultSpawn({
+        ...opts,
+        command: process.execPath, // under bun, process.execPath IS bun, which runs .ts directly
+        args: [mainPath, ...opts.args],
+        env,
+      });
+    }
     capture.proc = proc;
     return proc;
   };
@@ -578,3 +595,127 @@ describe("Finding 7 (T2, tracked — observe only, no fix): abort BEFORE query()
     });
   }
 });
+
+// --- Task 5: the compiled `winter` binary as a third leg (WS-02 §7.4) --------------------------
+//
+// Gated behind WINTER_COMPILED_BIN (verify-protocol-compiled.ts sets it after building to a temp
+// path) so the plain `bun test` job (no env var — CI's default job) registers NOTHING here: a
+// plain `if` around the `describe` call, not `.skip`/`.skipIf`, so there is no skip marker either —
+// the block above this comment is byte-unchanged from before this task, and without the env var it
+// is the ENTIRE suite, exactly as today (brief: "the suite adds the leg when the env var is set").
+//
+// Every test below is a DELIBERATE near-verbatim copy of its counterpart in "transport equivalence:
+// inMemoryProcess vs the real winter child" above, with ONLY the second leg's name changed from
+// "child" to "compiled" — reusing traceViaQuery/traceMultiTurn/traceInterrupt/traceSplitFrameCarry
+// completely unchanged (their only leg-branch point is spawnHook, so they are leg-agnostic by
+// construction; see this file's header note). A parametrized refactor of the original block would
+// touch code a reviewer already approved; a verbatim mirror keeps that block trivially diffable
+// against its pre-Task-5 form and makes this block trivially diffable against IT.
+if (process.env.WINTER_COMPILED_BIN) {
+  describe("transport equivalence: inMemoryProcess vs the compiled winter binary (Task 5)", () => {
+    test("plain query", async () => {
+      const a = await traceViaQuery("inMemory", { prompt: "hi" });
+      const b = await traceViaQuery("compiled", { prompt: "hi" });
+      expect(compareTraces(a.trace, b.trace)).toEqual([]);
+      expect(a.thrown).toBeUndefined();
+      expect(a.trace.map((e) => e.kind)).toEqual(["system/init", "assistant", "result", "exit"]);
+      const assistantMsg = a.trace[1]!.payload as { message: { content: unknown } };
+      expect(assistantMsg.message.content).toEqual([{ type: "text", text: "echo: hi" }]);
+    });
+
+    test("multi-turn (streaming input, 2 envelopes) — raw wire, independent of query()", async () => {
+      const a = await traceMultiTurn("inMemory");
+      const b = await traceMultiTurn("compiled");
+      expect(compareTraces(a, b)).toEqual([]);
+      expect(a.map((e) => e.kind)).toEqual(["init", "system/init", "assistant", "result", "assistant", "result", "control_response", "exit"]);
+      const first = a[2]!.payload as { message: { content: unknown } };
+      expect(first.message.content).toEqual([{ type: "text", text: "echo: first" }]);
+      const second = a[4]!.payload as { message: { content: unknown } };
+      expect(second.message.content).toEqual([{ type: "text", text: "echo: second" }]);
+    });
+
+    test("multi-turn via query() (streaming input, 2 envelopes)", async () => {
+      const twoTurns = () =>
+        (async function* () {
+          yield "first";
+          yield "second";
+        })();
+      const a = await traceViaQuery("inMemory", { prompt: twoTurns() });
+      const b = await traceViaQuery("compiled", { prompt: twoTurns() });
+      expect(compareTraces(a.trace, b.trace)).toEqual([]);
+      expect(a.thrown).toBeUndefined();
+      expect(a.trace.map((e) => e.kind)).toEqual(["system/init", "assistant", "result", "assistant", "result", "exit"]);
+      const first = a.trace[1]!.payload as { message: { content: unknown } };
+      expect(first.message.content).toEqual([{ type: "text", text: "echo: first" }]);
+      const second = a.trace[3]!.payload as { message: { content: unknown } };
+      expect(second.message.content).toEqual([{ type: "text", text: "echo: second" }]);
+    });
+
+    test("tool round", async () => {
+      const a = await traceViaQuery("inMemory", { prompt: "go", testProviderName: "tooluse" });
+      const b = await traceViaQuery("compiled", { prompt: "go", testProviderName: "tooluse" });
+      expect(compareTraces(a.trace, b.trace)).toEqual([]);
+      expect(a.trace.map((e) => e.kind)).toEqual(["system/init", "assistant", "user", "assistant", "result", "exit"]);
+      const toolUseMsg = a.trace[1]!.payload as { message: { content: unknown } };
+      expect(toolUseMsg.message.content).toEqual([{ type: "tool_use", id: "test-call-1", name: "test_tool", input: { probe: true } }]);
+      const toolResultMsg = a.trace[2]!.payload as { message: { content: unknown } };
+      expect(toolResultMsg.message.content).toEqual([{ type: "tool_result", tool_use_id: "test-call-1", content: 'test_tool:{"probe":true}' }]);
+    });
+
+    test("interrupt mid-turn", async () => {
+      const a = await traceInterrupt("inMemory");
+      const b = await traceInterrupt("compiled");
+      expect(compareTraces(a, b)).toEqual([]);
+      expect(a.map((e) => e.kind)).toEqual(["init", "system/init", "control_response", "result", "control_response", "exit"]);
+    });
+
+    test("split-frame carry (a frame written across two stdin slices decodes correctly)", async () => {
+      const a = await traceSplitFrameCarry("inMemory");
+      const b = await traceSplitFrameCarry("compiled");
+      expect(compareTraces(a, b)).toEqual([]);
+      expect(a.map((e) => e.kind)).toEqual(["init", "system/init", "assistant", "result", "control_response", "exit"]);
+      const assistantMsg = a[2]!.payload as { message: { content: unknown } };
+      expect(assistantMsg.message.content).toEqual([{ type: "text", text: "echo: carried" }]);
+    });
+
+    test("error-result-then-throw (boom)", async () => {
+      const a = await traceViaQuery("inMemory", { prompt: "hi", testProviderName: "boom" });
+      const b = await traceViaQuery("compiled", { prompt: "hi", testProviderName: "boom" });
+      expect(compareTraces(a.trace, b.trace)).toEqual([]);
+      // A cross-leg diff alone can't catch a bug shared by both legs — assert the actual contract
+      // directly too (report §9: the error result is yielded, THEN the iterator throws).
+      expect(a.thrown).toBeInstanceOf(ResultError);
+      expect(b.thrown).toBeInstanceOf(ResultError);
+      expect(a.trace.map((e) => e.kind)).toEqual(["system/init", "result", "exit"]);
+      const resultMsg = a.trace[1]!.payload as { is_error?: boolean; result?: string };
+      expect(resultMsg.is_error).toBe(true);
+      expect(resultMsg.result).toContain("boom");
+    });
+
+    test("EOF-without-result (kill mid-turn)", async () => {
+      const killOnSystem = (msg: { type: string }, ctx: { proc: SpawnedRuntimeProcess | undefined }) => {
+        if (msg.type === "system") ctx.proc?.kill();
+      };
+      const a = await traceViaQuery("inMemory", { prompt: "hi", testProviderName: "hang", onMessage: killOnSystem });
+      const b = await traceViaQuery("compiled", { prompt: "hi", testProviderName: "hang", onMessage: killOnSystem });
+      expect(compareTraces(a.trace, b.trace)).toEqual([]);
+      // Both legs must surface the TYPED WS-04 §6.1 error, never a raw stream error (T2-deferred
+      // finding, folded into this scenario per the task brief).
+      expect(a.thrown).toBeInstanceOf(ProcessError);
+      expect(b.thrown).toBeInstanceOf(ProcessError);
+      expect(a.trace.map((e) => e.kind)).toEqual(["system/init", "exit"]);
+    });
+
+    test("abort mid-turn (AbortController -> AbortError after drain)", async () => {
+      const abortOnSystem = (msg: { type: string }, ctx: { abort: () => void }) => {
+        if (msg.type === "system") ctx.abort();
+      };
+      const a = await traceViaQuery("inMemory", { prompt: "hi", testProviderName: "hang", useAbortController: true, onMessage: abortOnSystem });
+      const b = await traceViaQuery("compiled", { prompt: "hi", testProviderName: "hang", useAbortController: true, onMessage: abortOnSystem });
+      expect(compareTraces(a.trace, b.trace)).toEqual([]);
+      expect(a.thrown).toBeInstanceOf(AbortError);
+      expect(b.thrown).toBeInstanceOf(AbortError);
+      expect(a.trace.map((e) => e.kind)).toEqual(["system/init", "exit"]);
+    });
+  });
+}
