@@ -1,0 +1,32 @@
+// Whole-branch review Important 3 / Ruling P1-T (first step — full Node-18 runtime smoke lands
+// with the packaging phase): nothing structurally enforced the sdk package's own documented
+// constraint of never using a Bun-only API (transport.ts's own comment: "Node >=18-safe; no
+// Bun-only APIs — packages/sdk ships to plain Node too") — every gate, including the base
+// tsconfig.typecheck.json, runs under `types: ["bun"]`, so a stray `Bun.spawn`/`Bun.file`/etc. in
+// sdk production code would type-check cleanly there and only ever be caught (if at all) by someone
+// actually running the sdk under plain Node.
+//
+// This config type-checks ONLY packages/sdk/src production code (tests excluded — they legitimately
+// use Bun.spawn/Bun.serve/etc. throughout, e.g. crash.test.ts, and are never shipped to a Node
+// consumer) with NO Bun ambient globals available at all: "node", not "bun", in `types`. Plant-proof
+// (fix-wave report): a deliberately introduced `Bun.version` reference in sdk production code fails
+// this config (TS2868: Cannot find name 'Bun') while leaving tsconfig.typecheck.json's own run
+// green — proving this is a genuinely NEW gate, not a redundant re-check.
+//
+// `typeRoots` points at packages/sdk's OWN node_modules/@types (where its `@types/node`
+// devDependency resolves, pnpm's default per-package-isolated layout — NOT hoisted to the repo
+// root, which has no @types/node at all: every other file in this repo gets Node's ambient globals
+// only transitively, via @types/bun's own internal reference to @types/node from ITS pnpm-isolated
+// location). Without this override, `types: ["node"]` fails closed with TS2688 ("cannot find type
+// definition file for 'node'") rather than silently finding nothing — a config bug here cannot
+// masquerade as a clean pass.
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "typeRoots": ["./packages/sdk/node_modules/@types"],
+    "types": ["node"]
+  },
+  "include": ["packages/sdk/src/**/*.ts"],
+  "exclude": ["packages/sdk/src/**/*.test.ts"]
+}

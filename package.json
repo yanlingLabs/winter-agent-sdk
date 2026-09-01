@@ -11,7 +11,7 @@
     "differential": "bun run scripts/differential.ts",
     "build:runtime": "bun run scripts/build-runtime.ts",
     "verify:compiled": "bun run scripts/verify-protocol-compiled.ts",
-    "typecheck": "tsc --noEmit -p tsconfig.typecheck.json",
+    "typecheck": "tsc --noEmit -p tsconfig.typecheck.json && tsc --noEmit -p tsconfig.sdk-fence.json",
     "test": "bun test"
   },
   "devDependencies": {
