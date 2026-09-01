@@ -437,6 +437,63 @@ test("defaultSpawn: a spawn failure (bad executable) surfaces as a typed lifecyc
   expect(thrown).toBeInstanceOf(CLIConnectionError);
 });
 
+// CI fix round (ubuntu run 33523165941, verify:compiled): "Finding 7 abort BEFORE query() runs
+// still spawns eagerly > child leg" crashed with an unlistened EPIPE on `child.stdin` — a real
+// child_process ChildProcess exposes stdin/stdout/stderr as SEPARATE EventEmitters from `child`
+// itself, so the Finding-1b listener on `child`'s own "error" (above) does not cover any of them.
+// Root cause: killing a still-booting `bun main.ts` dev child (transpiling, has not yet opened its
+// stdin for reading) right before writing+ending its stdin (query.ts's prompt-send IIFE, always
+// concurrent with the read loop) races a write against an already-broken pipe; the resulting EPIPE
+// on the writable's flush/destroy had no listener, and Node's one EventEmitter special case (an
+// unlistened "error" event throws) crashed the host. The compiled leg passed in the same CI run
+// (the compiled binary boots ~instantly and drains stdin before the kill lands) — this is a LINUX
+// pipe-timing race, confirmed NOT reproducible on macOS (see the task report's RED-honesty section:
+// neither the natural abort-before-query() race nor this test's DETERMINISTIC construction below
+// crashes locally, across dozens of runs, pre- or post-fix — the CI log is the only cross-platform
+// RED evidence available).
+//
+// This test constructs the dead-pipe state DIRECTLY instead of racing for it — the real bug is a
+// timing race by definition, so racing for it locally would be exactly as flaky/silent here as it
+// was on macOS in CI. `await proc.exited` first guarantees the child's read end is unambiguously
+// gone before stdin is ever touched, which is a STRONGER condition than the CI race (there, the
+// child merely hadn't finished booting) — if writing into a definitely-dead pipe is safe, the
+// narrower "still booting" case is too.
+test("defaultSpawn: writing to stdin after the child has already exited never crashes the host (unlistened EPIPE)", async () => {
+  let uncaught: unknown;
+  let unhandledRejectionErr: unknown;
+  const onUncaught = (err: unknown) => {
+    uncaught = err;
+  };
+  const onUnhandledRejection = (err: unknown) => {
+    unhandledRejectionErr = err;
+  };
+  process.on("uncaughtException", onUncaught);
+  process.on("unhandledRejection", onUnhandledRejection);
+  try {
+    const proc = defaultSpawn({
+      command: process.execPath,
+      args: ["-e", "process.exit(0)"],
+      cwd: process.cwd(),
+      env: process.env as Record<string, string>,
+    });
+    const info = await proc.exited;
+    expect(info.code).toBe(0);
+    // The pipe's read side is DEFINITELY gone by now (the child has fully exited and been reaped)
+    // — write() then end() against it is the exact dead-pipe operation that raised EPIPE in CI.
+    proc.stdin.write("x\n");
+    proc.stdin.end();
+    // Settle a few ticks so any async "error" emission (EPIPE surfaces on the writable's own
+    // flush/destroy, not synchronously from write()/end() themselves) has a real chance to fire
+    // and be observed by the handlers above, if the bug were present.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  } finally {
+    process.off("uncaughtException", onUncaught);
+    process.off("unhandledRejection", onUnhandledRejection);
+  }
+  expect(uncaught).toBeUndefined();
+  expect(unhandledRejectionErr).toBeUndefined();
+});
+
 // --- defaultSpawn (real child; exercised as a unit here, wired end-to-end in Task 4) -----------
 
 test("defaultSpawn spawns a real child and reads its stdout to completion", async () => {

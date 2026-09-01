@@ -120,6 +120,38 @@ export function defaultSpawn(opts: SpawnRuntimeOptions): SpawnedRuntimeProcess {
     }
   });
 
+  // CI fix round (ubuntu-only crash, run 33523165941): `child.stdin`/`child.stdout`/`child.stderr`
+  // are each a SEPARATE EventEmitter from `child` itself — listening on `child`'s own "error"
+  // above (Finding 1b) does NOT cover any of these. Confirmed root cause: the Finding-7
+  // abort-before-query() test kills a still-transpiling `bun main.ts` dev child, then immediately
+  // writes+ends its stdin (query.ts's prompt-send IIFE, unconditional and concurrent with the read
+  // loop) — a write/end against a pipe whose read side is already gone raises EPIPE on the
+  // writable's flush/destroy, asynchronously, with no listener: Node's one EventEmitter special
+  // case (an unlistened "error" throws) crashes the host. Same class as Finding 1b, one emitter
+  // over. The pipe-write/EPIPE timing itself is linux-specific and does NOT reproduce locally on
+  // macOS even via a deterministic (non-racing) construction of the dead-pipe state — see
+  // transport.test.ts's repro test and the task report's RED-honesty section; the CI log is the
+  // only cross-platform confirmation this bug is real, so this listener's correctness rests on
+  // the documented EventEmitter mechanism (an unlistened "error" always throws), not on a local
+  // repro proving the crash and then proving it gone.
+  //
+  // stdout/stderr get the identical treatment after auditing the SAME class of gap on the read
+  // side: textChunks' `for await` only attaches Node's internal stream listeners once the
+  // WRAPPING async generator is first iterated (`.next()`), which happens whenever query.ts's
+  // consumer starts reading — NOT synchronously when defaultSpawn returns. Between those two
+  // moments, `child.stdout`/`child.stderr` have ZERO "error" listeners (confirmed empirically:
+  // `listenerCount("error")` reads 0 immediately after spawn, and forcing an "error" event on the
+  // raw stream in that window reproduces the identical uncaught-exception crash). A permanent,
+  // do-nothing listener here closes that window for the streams' entire lifetime without
+  // interfering with textChunks' own handling once iteration is under way — EventEmitter supports
+  // multiple listeners per event, so the stream's later internal listener (once `for await` starts)
+  // still funnels errors into that try/catch exactly as before; this one only ever matters for the
+  // otherwise-uncovered pre-iteration gap. query.ts's EOF-based WS-04 §6.1 mapping remains the ONLY
+  // place a lifecycle error is surfaced to a consumer — a raw stream error must never escape.
+  child.stdin!.on("error", () => {});
+  child.stdout!.on("error", () => {});
+  child.stderr!.on("error", () => {});
+
   return {
     stdin: {
       write: (chunk: string) => {
