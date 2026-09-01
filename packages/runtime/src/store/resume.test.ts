@@ -500,6 +500,98 @@ describe("resume wiring end-to-end (temp WINTER_HOME, in-memory leg)", () => {
     }
   });
 
+  // Whole-branch review Important 2: extends the P1-H continuous-vs-split fidelity test above to
+  // P1-G (interrupted, rather than thrown). Persists an interrupted turn (assistant tool_use + a
+  // synthetic interrupted:true tool_result, NO closing assistant — dialect.test.ts's own direct
+  // persisted-transcript test pins that shape on-disk) then resumes it, asserting the resumed run's
+  // provider sees EXACTLY what a continuous, never-resumed run would have accumulated for the same
+  // choreography — the interrupted round's synthetic tool_result must round-trip through
+  // resolveEngineSession's readBack/rebuildProviderMessages chain identically to a real one.
+  test("resume rebuilds provider messages EXACTLY as a continuous run would, including a P1-G synthetic interrupted tool_result", async () => {
+    const home = freshHome();
+    try {
+      const cwd = "/winter-fixture";
+
+      // --- continuous run: both envelopes in ONE process/instance, envelope 1 interrupted ---------
+      const continuousCalls: ProviderMessage[][] = [];
+      let continuousExecuteEntered!: () => void;
+      const continuousEntered = new Promise<void>((resolve) => {
+        continuousExecuteEntered = resolve;
+      });
+      const continuousProvider: Provider = {
+        async generate({ messages }) {
+          continuousCalls.push([...messages]);
+          if (continuousCalls.length === 1) {
+            return { kind: "tool_use", calls: [{ id: "call1", name: "slow_tool", input: {} }] };
+          }
+          return { kind: "text", text: "after interrupt" };
+        },
+      };
+      const blockingTools: ToolExecutor = {
+        execute() {
+          continuousExecuteEntered();
+          return new Promise(() => {}); // never resolves — abandoned on interrupt
+        },
+      };
+      const continuousHome = freshHome();
+      try {
+        const continuousConfig: RuntimeConfig = { sessionId: randomUUID(), cwd, model: "sonnet" };
+        const proc = inMemoryProcess(["--config-json", JSON.stringify(continuousConfig)], continuousProvider, blockingTools, {
+          WINTER_HOME: continuousHome,
+        });
+        proc.stdin.write(encodeFrame({ type: "user", text: "go" }));
+        await continuousEntered; // deterministic: only interrupt once the engine is blocked inside tools.execute()
+        proc.stdin.write(encodeFrame({ type: "control_request", requestId: "int1", subtype: "interrupt", payload: undefined }));
+        proc.stdin.write(encodeFrame({ type: "user", text: "again" }));
+        proc.stdin.write(encodeFrame({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined }));
+        await drainAll(proc);
+        await proc.exited;
+      } finally {
+        rmSync(continuousHome, { recursive: true, force: true });
+      }
+      expect(continuousCalls.length).toBe(2);
+
+      // --- split run: envelope 1 (interrupted) in run A, envelope 2 resumed in a NEW instance (run B)
+      const sessionId = randomUUID();
+      let runAExecuteEntered!: () => void;
+      const runAEntered = new Promise<void>((resolve) => {
+        runAExecuteEntered = resolve;
+      });
+      const runABlockingTools: ToolExecutor = {
+        execute() {
+          runAExecuteEntered();
+          return new Promise(() => {});
+        },
+      };
+      const runAProvider = scriptedProvider([{ kind: "tool_use", calls: [{ id: "call1", name: "slow_tool", input: {} }] }]);
+      await (async () => {
+        const proc = inMemoryProcess(["--config-json", JSON.stringify({ sessionId, cwd, model: "sonnet" })], runAProvider, runABlockingTools, {
+          WINTER_HOME: home,
+        });
+        proc.stdin.write(encodeFrame({ type: "user", text: "go" }));
+        await runAEntered;
+        proc.stdin.write(encodeFrame({ type: "control_request", requestId: "int1", subtype: "interrupt", payload: undefined }));
+        proc.stdin.write(encodeFrame({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined }));
+        await drainAll(proc);
+        await proc.exited;
+      })();
+
+      const splitCalls: ProviderMessage[][] = [];
+      const splitProvider: Provider = {
+        async generate({ messages }) {
+          splitCalls.push([...messages]);
+          return { kind: "text", text: "after interrupt" };
+        },
+      };
+      await runOneEnvelopeCustom({ sessionId: randomUUID(), cwd, model: "sonnet", resume: sessionId }, home, {}, splitProvider, stubExecutor, "again");
+
+      expect(splitCalls.length).toBe(1);
+      expect(splitCalls[0]).toEqual(continuousCalls[1]);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   test("forkSession on resume creates a NEW session first, then resumes into it — the original is untouched", async () => {
     const home = freshHome();
     try {

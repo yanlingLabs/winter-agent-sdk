@@ -104,7 +104,9 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
 
   // Store failures are auxiliary, never turn-fatal (WS-03 §11 — a mirror failure becomes a
   // `mirror_error` event, not a retroactive turn failure). P1 has no such event to emit yet, so
-  // this just swallows; Task 8 is expected to route the catch body to that event.
+  // this just swallows; a future WS-03 §11/WS-16 mirror-layer task is expected to route the catch
+  // body to that event (T8 fix-wave: this comment previously, and now stale-ly, said "Task 8 is
+  // expected to" — Task 8 shipped without adding it; re-pointed at its real future owner).
   const recordUser = async (content: string | ContentBlock[]): Promise<void> => {
     if (!store) return;
     try {
@@ -239,6 +241,9 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
       }
 
       if (turn.kind === "text") {
+        // Sign-off 5 (whole-branch review): this write intentionally precedes its record-await —
+        // the terminal result below is the sole durability barrier for this turn; P6 (partial
+        // streaming) must revisit this ordering once intermediate frames become resumable state.
         output.write({ type: "data", message: { type: "assistant", message: { content: [{ type: "text", text: turn.text }] } } });
         messages.push({ role: "assistant", content: turn.text });
         await recordAssistant([{ type: "text", text: turn.text }]);
@@ -255,6 +260,8 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
       }
 
       const toolUseBlocks: ContentBlock[] = turn.calls.map((c) => ({ type: "tool_use", id: c.id, name: c.name, input: c.input }));
+      // Sign-off 5 (whole-branch review): this write intentionally precedes its record-await — the
+      // terminal result is the sole durability barrier; P6 (partial streaming) must revisit this.
       output.write({ type: "data", message: { type: "assistant", message: { content: toolUseBlocks } } });
       messages.push({ role: "assistant", content: toolUseBlocks });
       await recordAssistant(toolUseBlocks);
@@ -325,6 +332,8 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
       // extended by P1-H to the throw path): previously nothing was emitted here on interrupt (nor,
       // until P1-H, on a throw), which under-delivered relative to WS-04 §5's drain-after-interrupt
       // contract ("buffered data of the interrupted turn, then its terminal result").
+      // Sign-off 5 (whole-branch review): this write intentionally precedes its record-await — the
+      // terminal result is the sole durability barrier; P6 (partial streaming) must revisit this.
       output.write({ type: "data", message: { type: "user", message: { content: resultBlocks } } });
       messages.push({ role: "tool", content: resultBlocks });
       await recordUser(resultBlocks);

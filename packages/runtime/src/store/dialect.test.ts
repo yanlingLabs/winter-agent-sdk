@@ -21,6 +21,7 @@ import { WinterCompatibilitySessionStore, DIALECT_RECORD_ENTRY_TYPE, type Sessio
 import { compatibilityKeys } from "@yanlinglabs/winter-agent-sdk";
 import { inMemoryProcess } from "../testing.ts";
 import { scriptedProvider, stubExecutor } from "../provider/mock.ts";
+import type { ToolExecutor } from "../engine.ts";
 
 function freshHome(): string {
   return mkdtempSync(join(tmpdir(), "winter-dialect-test-"));
@@ -201,6 +202,35 @@ describe("TranscriptWriter", () => {
       rmSync(home, { recursive: true, force: true });
     }
   });
+
+  // T8 fix-wave: validateChain's own filter (`typeof e.uuid === "string"`) is exercised only
+  // INDIRECTLY by every test above (a well-formed chain has a uuid on every entry) — this pins the
+  // SKIP path directly: an entry with no uuid at all (a plain marker, same shape
+  // session-store.test.ts's own "no dedup of UUID-less entries" fixture uses) sits ALONGSIDE a real
+  // chain and must neither be treated as part of the chain (no duplicate/unreachable-parent
+  // complaint) nor be dropped — readBack is a lossless pass-through of every entry it loads.
+  test("readBack never chokes on a no-uuid entry interleaved in an otherwise valid chain, and returns it unchanged", async () => {
+    const home = freshHome();
+    try {
+      const store = new WinterCompatibilitySessionStore({ winterHome: home });
+      const key = { projectKey: "proj-a", sessionId: "sess-1" };
+      const writer = new TranscriptWriter({ store, key, ctx: { sessionId: "sess-1", cwd: "/winter-fixture", version: "0.0.1" } });
+      await writer.recordUserEntry("hi");
+
+      const marker: SessionStoreEntry = { type: "mode_marker" }; // deliberately no uuid, no parentUuid
+      await store.append(key, [marker]);
+
+      await writer.recordAssistantEntry([{ type: "text", text: "hello" }]);
+
+      const entries = await TranscriptWriter.readBack(store, key);
+      expect(entries.length).toBe(3);
+      expect(entries[1]).toEqual(marker); // present, unchanged, in its actual append position
+      // the two REAL chain entries still validated correctly around it
+      expect(entries[2]!.parentUuid).toBe(entries[0]!.uuid);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("dialect record sidecar", () => {
@@ -350,5 +380,145 @@ describe("engine wiring (temp WINTER_HOME, in-memory leg)", () => {
     } finally {
       rmSync(home, { recursive: true, force: true });
     }
+  });
+
+  // Whole-branch review Important 2 (extends the T8 fix-wave item "direct P1-H persisted-transcript
+  // test" to ALSO cover P1-G): both rulings pin an ACCUMULATED-HISTORY invariant (engine.test.ts
+  // exercises it against the in-memory wire/history), but neither had a test proving the SAME
+  // synthetic block actually lands in the PERSISTED jsonl, through the real TranscriptWriter/store
+  // stack, over a temp WINTER_HOME — the two are different code paths (engine.ts's `messages` array
+  // vs. its `recordUser`/`recordAssistant` calls into dialect.ts), and only the persisted shape is
+  // what a later resume ever reads back.
+  test("Ruling P1-H: a thrown tool persists a REAL tool_result alongside the error-marked synthetic one — no closing assistant entry", async () => {
+    const home = freshHome();
+    try {
+      const sessionId = randomUUID();
+      const cwd = "/winter-fixture";
+      const config: RuntimeConfig = { sessionId, cwd, model: "sonnet" };
+      const provider = scriptedProvider([
+        { kind: "tool_use", calls: [{ id: "call1", name: "good_tool", input: {} }, { id: "call2", name: "bad_tool", input: {} }] },
+      ]);
+      const throwingTools: ToolExecutor = {
+        async execute(call) {
+          if (call.id === "call1") return { output: "ok" };
+          throw new Error("tool boom");
+        },
+      };
+
+      const proc = inMemoryProcess(["--config-json", JSON.stringify(config)], provider, throwingTools, { WINTER_HOME: home });
+      proc.stdin.write(encodeFrame({ type: "user", text: "go" }));
+      proc.stdin.write(encodeFrame({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined }));
+      await drainAll(proc);
+      await proc.exited;
+
+      const projectKey = compatibilityKeys(cwd).transcriptProjectKey;
+      const jsonlPath = join(home, "projects", projectKey, `${sessionId}.jsonl`);
+      const rawLines = readFileSync(jsonlPath, "utf8").trim().split("\n");
+      const parsed = rawLines.map((l) => JSON.parse(l) as SessionStoreEntry);
+
+      // A thrown round breaks the loop immediately (finalResult is already set) — generate() is
+      // never called a second time, so there is no closing assistant entry, same shape as P1-G below.
+      expect(parsed.map((e) => e.type)).toEqual(["user", "assistant", "user"]);
+      expect(parsed[0]!.message).toEqual({ role: "user", content: "go" });
+      expect((parsed[1]!.message as { content: unknown }).content).toEqual([
+        { type: "tool_use", id: "call1", name: "good_tool", input: {} },
+        { type: "tool_use", id: "call2", name: "bad_tool", input: {} },
+      ]);
+      expect((parsed[2]!.message as { content: unknown }).content).toEqual([
+        { type: "tool_result", tool_use_id: "call1", content: "ok" },
+        { type: "tool_result", tool_use_id: "call2", content: "[error: tool boom]", error: true },
+      ]);
+
+      // round-trips cleanly through the store's own reader too (validateChain never chokes on it —
+      // the tool_use/tool_result pairing invariant genuinely holds on disk, not just in memory)
+      const store = new WinterCompatibilitySessionStore({ winterHome: home });
+      expect(await store.load({ projectKey, sessionId })).toEqual(parsed);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test("Ruling P1-G: an interrupted round persists assistant(tool_use) + user(tool_result interrupted:true) — no closing assistant entry", async () => {
+    const home = freshHome();
+    try {
+      const sessionId = randomUUID();
+      const cwd = "/winter-fixture";
+      const config: RuntimeConfig = { sessionId, cwd, model: "sonnet" };
+
+      let enteredExecute!: () => void;
+      const entered = new Promise<void>((resolve) => {
+        enteredExecute = resolve;
+      });
+      const blockingTools: ToolExecutor = {
+        execute() {
+          enteredExecute();
+          return new Promise(() => {}); // never resolves — abandoned on interrupt
+        },
+      };
+      const provider = scriptedProvider([{ kind: "tool_use", calls: [{ id: "call1", name: "slow_tool", input: {} }] }]);
+
+      const proc = inMemoryProcess(["--config-json", JSON.stringify(config)], provider, blockingTools, { WINTER_HOME: home });
+      proc.stdin.write(encodeFrame({ type: "user", text: "go" }));
+      await entered; // deterministic: only interrupt once we KNOW the engine is blocked inside tools.execute()
+      proc.stdin.write(encodeFrame({ type: "control_request", requestId: "int1", subtype: "interrupt", payload: undefined }));
+      proc.stdin.write(encodeFrame({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined }));
+      await drainAll(proc);
+      await proc.exited;
+
+      const projectKey = compatibilityKeys(cwd).transcriptProjectKey;
+      const jsonlPath = join(home, "projects", projectKey, `${sessionId}.jsonl`);
+      const rawLines = readFileSync(jsonlPath, "utf8").trim().split("\n");
+      const parsed = rawLines.map((l) => JSON.parse(l) as SessionStoreEntry);
+
+      expect(parsed.map((e) => e.type)).toEqual(["user", "assistant", "user"]); // no closing assistant entry
+      expect(parsed[0]!.message).toEqual({ role: "user", content: "go" });
+      expect((parsed[1]!.message as { content: unknown }).content).toEqual([{ type: "tool_use", id: "call1", name: "slow_tool", input: {} }]);
+      expect((parsed[2]!.message as { content: unknown }).content).toEqual([
+        { type: "tool_result", tool_use_id: "call1", content: "[interrupted]", interrupted: true },
+      ]);
+
+      const store = new WinterCompatibilitySessionStore({ winterHome: home });
+      expect(await store.load({ projectKey, sessionId })).toEqual(parsed);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  // T8 fix-wave carry: proves persistSession's on/off switch is a pure side channel — the WIRE
+  // output a consumer actually sees must never depend on whether a store happens to be recording it.
+  // Compares the raw, still-encoded stdout byte stream across three runs (not just the decoded
+  // frame arrays — a byte-for-byte diff is the stronger, more literal reading of "wire byte-diff
+  // test", and would also catch a hypothetical divergence in framing/encoding, not just payload
+  // shape).
+  test("persistSession true vs explicit false vs default: the raw WIRE bytes are IDENTICAL across all three — persistence is a pure side channel", async () => {
+    const sessionId = randomUUID();
+    const cwd = "/winter-fixture";
+
+    async function traceRawStdout(persistSession?: boolean): Promise<string> {
+      const home = freshHome();
+      try {
+        const config: RuntimeConfig = { sessionId, cwd, model: "sonnet", ...(persistSession !== undefined ? { persistSession } : {}) };
+        const provider = scriptedProvider([
+          { kind: "tool_use", calls: [{ id: "call1", name: "t", input: {} }] },
+          { kind: "text", text: "done" },
+        ]);
+        const proc = inMemoryProcess(["--config-json", JSON.stringify(config)], provider, stubExecutor, { WINTER_HOME: home });
+        proc.stdin.write(encodeFrame({ type: "user", text: "go" }));
+        proc.stdin.write(encodeFrame({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined }));
+        let raw = "";
+        for await (const chunk of proc.stdout) raw += chunk;
+        await proc.exited;
+        return raw;
+      } finally {
+        rmSync(home, { recursive: true, force: true });
+      }
+    }
+
+    const defaultBytes = await traceRawStdout(undefined);
+    const explicitTrueBytes = await traceRawStdout(true);
+    const explicitFalseBytes = await traceRawStdout(false);
+
+    expect(explicitTrueBytes).toBe(defaultBytes);
+    expect(explicitFalseBytes).toBe(defaultBytes);
   });
 });

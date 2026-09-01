@@ -590,4 +590,67 @@ describe("dialect-record sentinel (task 8)", () => {
       rmSync(home, { recursive: true, force: true });
     }
   });
+
+  // T8 fix-wave: foldSummary's spread order is `{...previous, ...dialectExtra, sessionId,
+  // ...mechanical, mtime}` — every existing test only ever sends the SAME dialectExtra twice (or
+  // omits it on the second call), which can't distinguish "later wins" from "field never changes
+  // regardless of order." This sends a GENUINELY DIFFERENT dialect record on the second append and
+  // asserts the fresh one wins, never the stale first one reverse-clobbering it.
+  test("a later append with a DIFFERENT dialect record replaces the earlier one's fields — never reverse-clobbered by the stale first record", async () => {
+    const home = freshHome();
+    try {
+      const store = new WinterCompatibilitySessionStore({ winterHome: home });
+      const key = { projectKey: "proj-dialect-reverse", sessionId: "s1" };
+      await store.append(key, [
+        entry(),
+        { type: DIALECT_RECORD_ENTRY_TYPE, producerRuntime: "winter-agent", producerEngineVersion: "0.0.1", dialectFamily: "claude-code-jsonl" },
+      ]);
+      await store.append(key, [
+        entry(),
+        { type: DIALECT_RECORD_ENTRY_TYPE, producerRuntime: "winter-agent", producerEngineVersion: "0.0.2", dialectFamily: "claude-code-jsonl" },
+      ]);
+
+      const summaries = await store.listSessionSummaries("proj-dialect-reverse");
+      expect(summaries).toHaveLength(1);
+      expect(summaries[0]).toMatchObject({
+        entryCount: 2,
+        producerEngineVersion: "0.0.2", // the SECOND append's value — never the first's stale "0.0.1"
+      });
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  // T8 fix-wave: dialectExtra is folded in BETWEEN `...previous` and the mechanical fields
+  // (`...dialectExtra, sessionId, ...mechanical`) specifically so a colliding key can never shadow
+  // them — every existing dialect-record fixture uses non-colliding field names, so this is
+  // untested. Deliberately sends a dialect record entry whose extra fields collide with BOTH a
+  // mechanical field name (entryCount) and the sessionId key, simulating a malicious/accidental
+  // producer, and asserts the real values win regardless.
+  test("a dialect record's extra fields can never shadow the mechanical fields or sessionId, even when they collide by name", async () => {
+    const home = freshHome();
+    try {
+      const store = new WinterCompatibilitySessionStore({ winterHome: home });
+      const key = { projectKey: "proj-dialect-collide", sessionId: "real-session-id" };
+      await store.append(key, [
+        entry(),
+        entry(),
+        {
+          type: DIALECT_RECORD_ENTRY_TYPE,
+          producerRuntime: "winter-agent",
+          producerEngineVersion: "0.0.1",
+          dialectFamily: "claude-code-jsonl",
+          entryCount: 999999, // collides with a mechanical field
+          sessionId: "spoofed-session-id", // collides with the summary's own identity field
+        } as unknown as SessionStoreEntry,
+      ]);
+
+      const summaries = await store.listSessionSummaries("proj-dialect-collide");
+      expect(summaries).toHaveLength(1);
+      expect(summaries[0]!.entryCount).toBe(2); // the REAL mechanical count, never the injected 999999
+      expect(summaries[0]!.sessionId).toBe("real-session-id"); // never "spoofed-session-id"
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
 });
