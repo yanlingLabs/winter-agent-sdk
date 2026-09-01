@@ -8,6 +8,9 @@
     ".": "./src/index.ts",
     "./testing": "./src/testing.ts"
   },
+  "bin": {
+    "winter": "./src/main.ts"
+  },
   "dependencies": {
     "@yanlinglabs/winter-agent-sdk": "workspace:*"
   }

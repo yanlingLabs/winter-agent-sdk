@@ -33,3 +33,50 @@ export const stubExecutor: ToolExecutor = {
     return { output: `${name}:${JSON.stringify(input)}` };
   },
 };
+
+// --- P1 test-only provider selection (env WINTER_TEST_PROVIDER) --------------------------------
+//
+// Task 4: the CHILD leg of the transport-equivalence suite is a real spawned process — it cannot
+// take an in-process scripted Provider function the way inMemoryProcess can. This is the shared
+// selector both main.ts (reads process.env.WINTER_TEST_PROVIDER) and
+// packages/sdk/src/transport-equivalence.test.ts (calls this directly for the in-memory leg, and
+// sets the env var for the child leg) call — ONE definition, imported by both call sites, so the
+// two legs are byte-identical by construction rather than two hand-copies that could quietly
+// drift apart. This is a documented P1 test affordance, not part of the wire protocol or any
+// production surface: remove alongside main.ts's env read once real providers land (P6).
+export type TestProviderName = "boom" | "tooluse" | "hang";
+
+export function isTestProviderName(v: string): v is TestProviderName {
+  return v === "boom" || v === "tooluse" || v === "hang";
+}
+
+export function testProviderByName(name: TestProviderName): Provider {
+  switch (name) {
+    // error-result-then-throw fixture (WS-03 §11 / report §9): a provider that always throws,
+    // so the engine's catch-and-convert-to-error-result path is reachable from a real child too.
+    case "boom":
+      return {
+        async generate() {
+          throw new Error("boom: WINTER_TEST_PROVIDER=boom scripted failure");
+        },
+      };
+    // One tool_use round, then text — deterministic and dependency-free (paired with the engine's
+    // always-on stubExecutor). Built fresh per call: scriptedProvider's queue is consumed as it's
+    // used, so a fresh instance per process/test keeps repeated selection from sharing state.
+    case "tooluse":
+      return scriptedProvider([
+        { kind: "tool_use", calls: [{ id: "test-call-1", name: "test_tool", input: { probe: true } }] },
+        { kind: "text", text: "tool round done" },
+      ]);
+    // Never resolves — puts the engine into a genuinely in-flight state (blocked inside
+    // provider.generate()) so a later interrupt/kill/abort has something real to act on (WS-04
+    // §5/§6), on a leg (a real child) that has no other way to synchronize with engine-internal
+    // timing the way an in-process test double's callback can.
+    case "hang":
+      return {
+        async generate(): Promise<ProviderTurn> {
+          return new Promise(() => {});
+        },
+      };
+  }
+}

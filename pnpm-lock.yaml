@@ -39,6 +39,9 @@ importers:
       winter-agent-runtime:
         specifier: workspace:*
         version: link:../runtime
+      winter-conformance:
+        specifier: workspace:*
+        version: link:../conformance
     optionalDependencies:
       '@yanlinglabs/winter-agent-sdk-darwin-arm64':
         specifier: workspace:*

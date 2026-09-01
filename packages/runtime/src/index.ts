@@ -22,7 +22,8 @@ export type {
 export { createInMemoryChannel } from "./protocol/channel.ts";
 export type { Duplex, FrameSource, FrameSink } from "./protocol/channel.ts";
 
-export { echoProvider, scriptedProvider, stubExecutor } from "./provider/mock.ts";
+export { echoProvider, scriptedProvider, stubExecutor, isTestProviderName, testProviderByName } from "./provider/mock.ts";
+export type { TestProviderName } from "./provider/mock.ts";
 
 // The wire protocol (frames + codec) moved to the sdk (WS-02 §3 dependency inversion, Task 1):
 // this package now depends on it, never the reverse. Re-exported unchanged so existing
