@@ -30,3 +30,14 @@ export class ProtocolDecodeError extends WinterSDKError {
     this.name = "ProtocolDecodeError";
   }
 }
+// Pinned class per the 0.3.250 exports.json inventory (kind: class) — the cancellation/interrupt
+// taxonomy member of WS-03 §11. Shape/inheritance beyond the name is unverified against the real
+// upstream declaration (fetching it was ruled out of this task's scope); reconciling the full
+// hierarchy against exports.json is parked for a dedicated WS-03 §11 snapshot-mirror pass
+// (plan Task 1 self-review carry note) — this is the in-scope baseline that note presupposes.
+export class AbortError extends WinterSDKError {
+  constructor(message: string) {
+    super(message);
+    this.name = "AbortError";
+  }
+}

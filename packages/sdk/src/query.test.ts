@@ -1,11 +1,14 @@
 import { test, expect } from "bun:test";
 import { query } from "./query.ts";
 import { ResultError } from "./errors.ts";
-import { inMemorySpawn } from "winter-agent-runtime/testing";
+import { inMemoryProcess } from "winter-agent-runtime/testing";
 
 test("query yields system/init, assistant, result in order", async () => {
   const seen: string[] = [];
-  for await (const msg of query({ prompt: "ping", options: { model: "sonnet", spawnRuntime: inMemorySpawn() } })) {
+  for await (const msg of query({
+    prompt: "ping",
+    options: { model: "sonnet", spawnClaudeCodeProcess: (opts) => inMemoryProcess(opts.args) },
+  })) {
     seen.push(msg.type);
   }
   expect(seen).toEqual(["system", "assistant", "result"]);
@@ -16,7 +19,10 @@ test("error-result-then-throw: the terminal error result is yielded, THEN the it
   const yielded: string[] = [];
   let thrown: unknown;
   try {
-    for await (const msg of query({ prompt: "ping", options: { spawnRuntime: inMemorySpawn(boom) } })) {
+    for await (const msg of query({
+      prompt: "ping",
+      options: { spawnClaudeCodeProcess: (opts) => inMemoryProcess(opts.args, boom) },
+    })) {
       yielded.push(msg.type);
       if (msg.type === "result") { /* observe the error result before the throw */ expect((msg as { is_error?: boolean }).is_error).toBe(true); }
     }
