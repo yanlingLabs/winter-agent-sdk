@@ -1,0 +1,10 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "paths": {
+      "@sdk-under-test": ["../sdk/src/index.ts"]
+    }
+  },
+  "include": ["consumer-fixtures/**/*.ts"]
+}

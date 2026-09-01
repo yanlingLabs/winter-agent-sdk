@@ -1,0 +1,10 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "paths": {
+      "@sdk-under-test": ["node_modules/@anthropic-ai/claude-agent-sdk"]
+    }
+  },
+  "include": ["consumer-fixtures/**/*.ts"]
+}
