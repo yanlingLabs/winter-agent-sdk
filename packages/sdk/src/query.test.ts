@@ -114,12 +114,16 @@ function captureConfigJson(): { hook: (opts: SpawnRuntimeOptions) => SpawnedRunt
   };
 }
 
-test("Task 9: every resume/continue/fork field is present in --config-json when set on Options", async () => {
+test("Task 9 + fix-wave Minor 3: every resume/continue/fork field, AND the pre-T9 maxTurns/model/permissionMode/cwd fields, are present in --config-json when set on Options", async () => {
   const capture = captureConfigJson();
   for await (const _msg of query({
     prompt: "ping",
     options: {
       sessionId: "11111111-1111-4111-8111-111111111111",
+      model: "opus",
+      permissionMode: "acceptEdits",
+      cwd: "/winter-fixture-config-round-trip",
+      maxTurns: 7,
       continue: true,
       resume: "22222222-2222-4222-8222-222222222222",
       forkSession: true,
@@ -134,6 +138,10 @@ test("Task 9: every resume/continue/fork field is present in --config-json when 
 
   expect(capture.get()).toMatchObject({
     sessionId: "11111111-1111-4111-8111-111111111111",
+    model: "opus",
+    permissionMode: "acceptEdits",
+    cwd: "/winter-fixture-config-round-trip",
+    maxTurns: 7,
     continue: true,
     resume: "22222222-2222-4222-8222-222222222222",
     forkSession: true,
@@ -143,16 +151,21 @@ test("Task 9: every resume/continue/fork field is present in --config-json when 
   });
 });
 
-test("Task 9: unset resume/continue/fork fields are OMITTED from --config-json entirely (never sent as undefined/false)", async () => {
+test("Task 9 + fix-wave Minor 3: unset resume/continue/fork/maxTurns fields are OMITTED entirely, but model/permissionMode/cwd NEVER are — they always carry a (possibly defaulted) value", async () => {
   const capture = captureConfigJson();
   for await (const _msg of query({ prompt: "ping", options: { spawnClaudeCodeProcess: capture.hook } })) {
     /* drain */
   }
   const config = capture.get();
-  for (const key of ["continue", "resume", "forkSession", "resumeSessionAt", "resumeDropsTurn", "persistSession"]) {
+  for (const key of ["continue", "resume", "forkSession", "resumeSessionAt", "resumeDropsTurn", "persistSession", "maxTurns"]) {
     expect(config).not.toHaveProperty(key);
   }
   expect(typeof config.sessionId).toBe("string"); // still auto-generated when Options.sessionId is unset
+  // Unlike the genuinely-optional fields above, these three are NEVER omitted — query.ts computes
+  // a default for each when Options doesn't set them, so --config-json always carries a value.
+  expect(config.model).toBe("sonnet");
+  expect(config.permissionMode).toBe("default");
+  expect(config.cwd).toBe(process.cwd()); // query() runs in THIS same test process — an exact, non-flaky comparison
 });
 
 test("Task 9: a pre-allocated Options.sessionId round-trips into the init frame's sessionId", async () => {

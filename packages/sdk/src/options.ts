@@ -7,7 +7,13 @@ export interface Options {
   cwd?: string;
   env?: Record<string, string>;     // REPLACES the child env (WS-03 §5); flows into SpawnRuntimeOptions.env
   pathToClaudeCodeExecutable?: string;   // WS-04 §8 resolution seam: explicit path wins over the platform package
-  spawnClaudeCodeProcess?: SpawnClaudeCodeProcess; // WS-04 §8 seam; default is a real child (transport.ts's defaultSpawn)
+  // WS-04 §8 seam; default is a real child (transport.ts's defaultSpawn). Sign-off 2 rider
+  // (whole-branch review): when this hook IS supplied, executable resolution is skipped entirely
+  // (the hook owns process creation — see query.ts's own comment on that ternary) — the
+  // SpawnRuntimeOptions.command it receives is then simply `pathToClaudeCodeExecutable` if also
+  // set, or else the literal string "winter" as an inert placeholder the hook is free to ignore
+  // (it never resolves to a real path or gets spawned by anything in this package).
+  spawnClaudeCodeProcess?: SpawnClaudeCodeProcess;
   stderr?: (chunk: string) => void; // diagnostics callback; stdout frames never route here (WS-04 §6)
   maxBufferSize?: number;           // bounds an unterminated protocol line (WS-04 §2); default is provisional, see transport.ts
   // DEVIATION beyond the brief's literal Options-additions list (pathToClaudeCodeExecutable /

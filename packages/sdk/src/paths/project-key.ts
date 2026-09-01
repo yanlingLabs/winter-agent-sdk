@@ -30,6 +30,15 @@
 // and multiplies by 31 — the same shape as Java's `String.hashCode()`. Because the exact routine
 // was recoverable, the brief's djb2-fallback path was not needed; this is the real algorithm, not
 // a provisional stand-in.
+//
+// CAPTURE-PENDING (Minor 2, whole-branch review — the other standing provisionals in this codebase
+// carry an in-code marker like this one; this recovery lacked one): the recovery above is high-
+// confidence (call-site-traced against the real 0.3.250 artifact, not guessed — task-6-report.md),
+// and a genuine official capture already confirmed the algorithm's SHAPE on a real run (T11's
+// capture-derived observation: memory_paths showed exactly this sanitizer's output on a real cwd).
+// What remains capture-pending specifically is TRUE EQUALITY on a >200-char path — no capture run
+// so far has exercised one. The differential/capture harness should assert winter's >200-char key
+// against a real official run's the first time a fixture actually needs one that long.
 
 const MAX_UNSUFFIXED_LENGTH = 200;
 
