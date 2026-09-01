@@ -253,3 +253,126 @@ describe("crash: lease contention", () => {
     }
   });
 });
+
+// Whole-branch review Important 1 / Ruling P1-S: load()'s tail-repair previously mutated a torn
+// tail UNCONDITIONALLY, never consulting the writer lease first. A reader landing in the middle of
+// a LIVE writer's own append() (a real, non-hypothetical shape now that Task 9's resume/continue
+// can run a read concurrently with another process still appending to the SAME session) would
+// quarantine+truncate the live writer's own half-written line out from under it — corrupting a
+// file that was never actually corrupt, just caught mid-flight. The fix: before repairing, check
+// whether the SAME session's lock names a DIFFERENT, still-live pid; if so, defer repair entirely
+// (return the complete lines only, exactly as parseWithTailRepair already computed them, but touch
+// nothing on disk) — repair happens later, once the real owner appends again (its own next
+// O_APPEND write extends past the "torn" point, so there is nothing left to repair) or once an
+// unleased reader (the dead-pid variant below) finds it.
+//
+// These two cases construct the STATE directly rather than racing a real concurrent writer for it
+// (the ONLY reliable way to hit this deterministically — a real race would be exactly as flaky here
+// as it was for the CI-fix thread's EPIPE bug): a live dummy process's pid is planted into the
+// `.lock` file (same technique as the "lease contention" suite above), and a real torn tail is
+// created the same way the "crash: torn final line" suite already does (truncateSync mid-line).
+describe("crash: lease-aware tail repair (Ruling P1-S)", () => {
+  test("a torn tail with a DIFFERENT LIVE pid in the lease is left completely untouched — no quarantine, no truncate — but complete lines are still returned", async () => {
+    const home = freshHome();
+    let dummy: Subprocess | undefined;
+    try {
+      const store = new WinterCompatibilitySessionStore({ winterHome: home });
+      const key = { projectKey: "proj-crash", sessionId: "live-holder-torn" };
+      const e1 = entry();
+      const e2 = entry();
+      await store.append(key, [e1, e2]); // creates the lock, owned by THIS test process for now
+
+      const jsonlPath = join(home, "projects", "proj-crash", "live-holder-torn.jsonl");
+      const fullSize = statSync(jsonlPath).size;
+      truncateSync(jsonlPath, fullSize - 5); // chop mid-way through e2's line — a real torn tail
+      const tornSize = statSync(jsonlPath).size;
+
+      // A genuinely live, otherwise-idle process — its pid is planted as the lease holder below,
+      // simulating "some other process is (or still could be) the live writer of this session,"
+      // the exact condition load() must defer to rather than repair over.
+      dummy = Bun.spawn([process.execPath, "-e", "setInterval(() => {}, 2147483647);"], { stdout: "ignore", stderr: "ignore" });
+      const lockPath = join(home, "projects", "proj-crash", "live-holder-torn.lock");
+      writeFileSync(lockPath, JSON.stringify({ pid: dummy.pid, startTimeMs: Date.now() }));
+
+      const loaded = await store.load(key);
+      expect(loaded).toEqual([e1]); // complete lines only — same value repair would have produced
+
+      const quarantinePath = `${jsonlPath}.tail-quarantine`;
+      expect(existsSync(quarantinePath)).toBe(false); // NEVER created while the lease pid is alive
+      expect(statSync(jsonlPath).size).toBe(tornSize); // the file itself is byte-for-byte untouched
+
+      // idempotent: a second read while the lease is still live defers again, identically
+      const loaded2 = await store.load(key);
+      expect(loaded2).toEqual([e1]);
+      expect(existsSync(quarantinePath)).toBe(false);
+      expect(statSync(jsonlPath).size).toBe(tornSize);
+    } finally {
+      await reap(dummy);
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test("the SAME torn tail with a DEAD pid in the lease still gets repaired exactly as before", async () => {
+    const home = freshHome();
+    let child: Subprocess | undefined;
+    try {
+      const store = new WinterCompatibilitySessionStore({ winterHome: home });
+      const key = { projectKey: "proj-crash", sessionId: "dead-holder-torn" };
+      const e1 = entry();
+      const e2 = entry();
+      await store.append(key, [e1, e2]);
+
+      const jsonlPath = join(home, "projects", "proj-crash", "dead-holder-torn.jsonl");
+      const fullSize = statSync(jsonlPath).size;
+      truncateSync(jsonlPath, fullSize - 5);
+
+      // A short-lived child that exits ON ITS OWN (never killed) — its pid becomes CLEANLY gone,
+      // matching P1's pid-gone-only detection rule (same technique as the "stale-steal" test above).
+      child = Bun.spawn([process.execPath, "-e", "1"], { stdout: "ignore", stderr: "ignore" });
+      const exitCode = await child.exited;
+      expect(exitCode).toBe(0);
+
+      const lockPath = join(home, "projects", "proj-crash", "dead-holder-torn.lock");
+      writeFileSync(lockPath, JSON.stringify({ pid: child.pid, startTimeMs: Date.now() }));
+
+      const loaded = await store.load(key);
+      expect(loaded).toEqual([e1]);
+
+      const quarantinePath = `${jsonlPath}.tail-quarantine`;
+      expect(existsSync(quarantinePath)).toBe(true); // repair fires normally — the holder is genuinely dead
+      expect(statSync(quarantinePath).size).toBeGreaterThan(0);
+      expect(statSync(jsonlPath).size).toBeLessThan(fullSize); // truncated down to the complete-lines boundary
+      const quarantineSize1 = statSync(quarantinePath).size;
+
+      // idempotent on a second read, same as the pre-existing torn-tail suite — no re-detection,
+      // no quarantine growth
+      const loaded2 = await store.load(key);
+      expect(loaded2).toEqual([e1]);
+      expect(statSync(quarantinePath).size).toBe(quarantineSize1);
+    } finally {
+      await reap(child);
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test("same-pid re-entry (T7): a torn tail whose lease is held by THIS process is repaired normally — a process never defers to its own in-flight lease", async () => {
+    const home = freshHome();
+    try {
+      const store = new WinterCompatibilitySessionStore({ winterHome: home });
+      const key = { projectKey: "proj-crash", sessionId: "self-holder-torn" };
+      const e1 = entry();
+      const e2 = entry();
+      await store.append(key, [e1, e2]); // lease is this test process's own pid — never "foreign"
+
+      const jsonlPath = join(home, "projects", "proj-crash", "self-holder-torn.jsonl");
+      const fullSize = statSync(jsonlPath).size;
+      truncateSync(jsonlPath, fullSize - 5);
+
+      const loaded = await store.load(key);
+      expect(loaded).toEqual([e1]);
+      expect(existsSync(`${jsonlPath}.tail-quarantine`)).toBe(true); // repairs exactly as pre-P1-S
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+});

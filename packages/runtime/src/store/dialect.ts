@@ -23,13 +23,14 @@ import {
   resolveWinterHome,
   compatibilityKeys,
   forkSessionByKey,
+  WinterStoreLeaseError,
   type SessionKey,
   type SessionStore,
   type SessionStoreEntry,
 } from "@yanlinglabs/winter-agent-sdk";
 import type { ContentBlock, ProviderMessage, SessionPersistence } from "../engine.ts";
 import { resolveProjectDirName } from "../paths/project-dir-name.ts";
-import { findContinueTarget, findResumeTarget, truncateAt, toDialectEntries, rebuildProviderMessages } from "./resume.ts";
+import { findContinueTarget, findResumeTarget, truncateAt, toDialectEntries, rebuildProviderMessages, ResumeTargetError } from "./resume.ts";
 
 // The dialect's own name for a content block. Same shapes engine.ts's ContentBlock already
 // produces (text/tool_use/tool_result, P1-G's `interrupted` and P1-H's `error` markers included) —
@@ -351,8 +352,57 @@ export async function resolveEngineSession(opts: {
   if (config.forkSession === true) {
     // "forkSession on resume creates the fork FIRST then resumes the new uuid" (task brief) — the
     // fork lives alongside its source, in the SAME project directory (targetProjectKey unchanged).
+    // forkSessionByKey only ever READS `src` (store.load) and appends to the brand-new forked uuid
+    // — it never writes to the pre-fork target, so forking a snapshot of a session another live
+    // process is still actively using is legitimate and must stay legal; the eager lease claim
+    // below runs AFTER this block, against whichever identity (original or forked) is the ACTUAL
+    // target from here on, so a fork never needs (and never takes) the pre-fork session's lease.
     const forked = await forkSessionByKey(store, { projectKey: targetProjectKey, sessionId: targetSessionId });
     targetSessionId = forked.sessionId;
+  }
+
+  // Whole-branch review Important 1 / Ruling P1-S: claim the writer lease for the resolved target
+  // EAGERLY, here — before readBack/rebuild/init — never implicitly on the FIRST append deep inside
+  // runEngine's turn loop. Without this, resuming/continuing into a session another LIVE process
+  // already holds would sail straight through this function, emit a normal-looking init frame, run
+  // the whole turn... and persist NOTHING: engine.ts's own "store failures are auxiliary, never
+  // turn-fatal" posture (WS-03 §11) SWALLOWS the WinterStoreLeaseError its first recordUserEntry
+  // would hit, so the run looks entirely successful on the wire while silently discarding
+  // everything it thought it was recording. Failing HERE instead means main.ts's/testing.ts's own
+  // pre-runEngine try/catch reports it BEFORE the init frame is ever written (WS-04 §6.1's "exited
+  // before init"), exactly like an ambiguous/not-found resume target already does.
+  //
+  // Ordering matters beyond "as early as possible": acquiring the lease (which STEALS it from a
+  // genuinely dead holder, per leases.ts's own stale-steal rule) strictly BEFORE readBack below is
+  // what makes "repair deferred to the owner" in session-store.ts's load() fall out for free — by
+  // the time readBack's load() runs, either this call already threw (a live foreign pid still holds
+  // it, so load() would have deferred anyway), or this process is now the lock's own recorded pid,
+  // so load() repairs a torn tail as the legitimate new owner rather than a racing bystander.
+  //
+  // Same-pid re-entry (T7's rule, leases.ts's acquireLease): the common case — nothing else holds
+  // this lease, or this SAME process already does (e.g. an earlier turn in this same run) —
+  // succeeds silently and cheaply; every existing resume/continue/fork test in this suite already
+  // exercises exactly that path (create then resume, same test process throughout), so a regression
+  // here would have broken all of them, not just a dedicated new test.
+  //
+  // Deliberately NOT extended to the fresh-session branches above (the early `!wantsContinue &&
+  // !wantsResume` return, and `wantsContinue`'s own found-nothing fallback): both mint a BRAND NEW
+  // sessionId with no pre-existing lease to contend for, so an eager acquire there would only add a
+  // disk side effect (creating the project directory + an uncontended lock file) to every fresh run
+  // for no safety benefit. One acknowledged residual gap this leaves (WS-03 §11 territory, not
+  // fixed here): a CALLER-PRE-ALLOCATED sessionId (Options.sessionId) that happens to collide with
+  // an existing, currently-live-owned session still reaches the silently-unpersisted state via this
+  // fresh path, since it is never resolved as a "resume" at all.
+  try {
+    await store.acquireSessionLease({ projectKey: targetProjectKey, sessionId: targetSessionId });
+  } catch (err) {
+    if (err instanceof WinterStoreLeaseError) {
+      throw new ResumeTargetError(
+        "locked",
+        `session ${targetSessionId} is in use by another live process (pid ${err.heldByPid}); refusing to resume it concurrently`,
+      );
+    }
+    throw err;
   }
 
   const rawEntries = await TranscriptWriter.readBack(store, { projectKey: targetProjectKey, sessionId: targetSessionId });

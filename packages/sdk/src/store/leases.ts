@@ -6,7 +6,7 @@
 // accepted P1 gap the brief explicitly defers). Same-PROCESS re-entry (the same OS pid re-acquiring
 // its own live lease — e.g. two `WinterCompatibilitySessionStore` instances in one process) always
 // succeeds; a DIFFERENT, still-live pid throws WinterStoreLeaseError.
-import { openSync, readFileSync, writeSync, fsyncSync, closeSync, renameSync } from "node:fs";
+import { openSync, readFileSync, writeSync, fsyncSync, closeSync, renameSync, linkSync, unlinkSync } from "node:fs";
 
 export class WinterStoreError extends Error {
   constructor(message: string) {
@@ -59,7 +59,11 @@ export function writeAllSync(fd: number, buf: Buffer): void {
   }
 }
 
-function readLeaseInfo(lockPath: string): LeaseInfo | null {
+// Exported (fix-wave, Ruling P1-S) so a caller that must never MUTATE a lease — session-store.ts's
+// load(), deciding whether a torn tail's repair should defer to a live foreign writer — can peek at
+// who holds it without going through acquireLease's own create-or-steal side effects. Semantics
+// unchanged from its original private form: absent, unparseable, or shape-invalid all read as null.
+export function readLeaseInfo(lockPath: string): LeaseInfo | null {
   let raw: string;
   try {
     raw = readFileSync(lockPath, "utf8");
@@ -78,14 +82,46 @@ function readLeaseInfo(lockPath: string): LeaseInfo | null {
   return null;
 }
 
+// Fix-wave (T7 review F1, MODERATE-LOW): the ORIGINAL version of this function opened `lockPath`
+// itself with O_CREAT|O_EXCL (atomic creation) and only THEN wrote its content — leaving a real,
+// if sub-microsecond, window where the path exists as an EMPTY file. A second acquirer racing in
+// during exactly that window would see EEXIST from its own createExclusive attempt, read back the
+// (still-empty, unparseable) lockPath, conclude "corrupt ⇒ stale," and STEAL it via
+// writeLeaseInfoReplacing's rename — which replaces the DIRECTORY ENTRY at lockPath but does
+// nothing to the first opener's already-open file descriptor, still pointing at the now-orphaned
+// original inode. The first opener's in-flight write/fsync above then lands invisibly, off the
+// path, while genuinely believing (createExclusive never threw) that it holds the lease the second
+// process just replaced — two live holders, silently.
+//
+// Fix (write-then-expose): fully write and fsync the lease's content to a fresh, uniquely-named
+// temp file FIRST — before `lockPath` is ever touched — then atomically EXPOSE it via linkSync,
+// which (like the O_CREAT|O_EXCL it replaces) fails with EEXIST if anything already sits at
+// `lockPath`, but never allows a reader to observe a partially-written state at that path: it is
+// either absent, or already carries its final bytes, with no state in between. A concurrent
+// corrupt-steal is therefore never possible during a fresh acquire — a competitor's steal and this
+// call's expose now race on the SAME atomic linkSync-vs-linkSync (or rename-vs-linkSync) primitive
+// every other path in this file already uses, not on a read of transient empty content.
 function createExclusive(lockPath: string, info: LeaseInfo): void {
-  const fd = openSync(lockPath, "wx", 0o600); // O_CREAT|O_EXCL|O_WRONLY: fails if ANYTHING already
+  const data = Buffer.from(JSON.stringify(info), "utf8");
+  const tmpPath = `${lockPath}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const fd = openSync(tmpPath, "wx", 0o600); // fresh unique name — never collides with a concurrent acquirer
   try {
-    // exists at this path (symlink included) — atomic w.r.t. a second concurrent fresh acquirer.
-    writeAllSync(fd, Buffer.from(JSON.stringify(info), "utf8"));
+    writeAllSync(fd, data);
     fsyncSync(fd);
   } finally {
     closeSync(fd);
+  }
+  try {
+    linkSync(tmpPath, lockPath); // atomic expose; throws EEXIST (propagated to acquireLease's own catch) if beaten
+  } finally {
+    // The temp name is disposable the instant link either succeeds (lockPath now has its own name
+    // for the same inode; the temp name is redundant) or fails (nothing was ever exposed under it).
+    // ENOENT-tolerant only — anything else here would mask the real linkSync outcome above.
+    try {
+      unlinkSync(tmpPath);
+    } catch (err) {
+      if ((err as { code?: unknown }).code !== "ENOENT") throw err;
+    }
   }
 }
 

@@ -27,7 +27,11 @@ import {
 import type { Dirent } from "node:fs";
 import { join } from "node:path";
 
-import { acquireLease, writeAllSync, WinterStoreError, WinterStoreLeaseError } from "./leases.ts";
+// T7 F6 (fix-wave): WinterStoreLeaseError is NOT used by name in this file's own body — it is only
+// re-exported below (a separate `export ... from` binding, which needs no import of its own) — so
+// importing it here too was dead weight (TS6133). isPidAlive/readLeaseInfo are new imports for the
+// lease-aware tail repair below (Ruling P1-S).
+import { acquireLease, isPidAlive, readLeaseInfo, writeAllSync, WinterStoreError } from "./leases.ts";
 
 export { WinterStoreError, WinterStoreLeaseError } from "./leases.ts";
 
@@ -345,6 +349,17 @@ function parseWithTailRepair(buf: Buffer): TailRepairResult {
   return { entries: decodeCompleteLines(buf.subarray(0, keepBytes)), torn: { raw: tornRaw, keepBytes } };
 }
 
+// Whole-branch review Important 1 / Ruling P1-S: true iff `lockPath` names a DIFFERENT process
+// that is still alive. Same-pid is NEVER "foreign" (T7's re-entry rule, leases.ts's own
+// acquireLease semantics) — a process's own in-flight append is not something ITS OWN read should
+// ever defer to, only another process's. No lock file, an unparseable one, or a lease whose pid has
+// genuinely exited are all "no live foreign holder" — the same absent/stale reading leases.ts
+// itself already gives them.
+function hasLiveForeignLeaseHolder(lockPath: string): boolean {
+  const lease = readLeaseInfo(lockPath);
+  return lease !== null && lease.pid !== process.pid && isPidAlive(lease.pid);
+}
+
 // Collects every resource STEM under `dir` — a stem counts as present via EITHER its `.jsonl` or
 // its `.meta.json` sidecar (a metadata-only subagent, per load()'s same fallback, has no jsonl at
 // all yet is still a real, readable subkey — WS-05 §6 requires listSubkeys() for P4 materialization
@@ -416,7 +431,14 @@ export class WinterCompatibilitySessionStore implements SessionStore {
   }
 
   async append(key: SessionKey, entries: SessionStoreEntry[]): Promise<void> {
-    if (entries.length === 0) return; // true no-op — touches nothing on disk, not even validation
+    // T7 F6 (fix-wave, API-consistency note): deliberately returns BEFORE locateResource's own
+    // key-shape validation below — an empty batch never calls it, so append(malformedKey, []) does
+    // NOT throw the way append(malformedKey, [oneEntry]) would. This is intentional, not an
+    // oversight: "true no-op" means true no-op, including no validation side effect, for a call
+    // that by definition touches nothing (no directory created, no lease taken, no bytes written) —
+    // matching this method's own test ("append(key, []) creates nothing on disk"). A caller that
+    // needs a malformed key rejected regardless of batch size should pass a real entry.
+    if (entries.length === 0) return;
 
     const { dirLevels, stem } = locateResource(this.winterHome, key);
     for (const level of dirLevels) ensureSecureDir(level);
@@ -488,8 +510,26 @@ export class WinterCompatibilitySessionStore implements SessionStore {
 
     const { entries, torn } = parseWithTailRepair(raw);
     if (torn !== null) {
-      quarantineTornTail(jsonlPath, torn.raw);
-      repairTruncate(jsonlPath, torn.keepBytes);
+      // Whole-branch review Important 1 / Ruling P1-S: a torn tail does not necessarily mean crash
+      // corruption — it can just as well be a LIVE writer's own append() caught mid-flight, between
+      // its O_APPEND write landing and THIS read's readFileSync above (Task 9's resume/continue can
+      // run a read concurrently with another process still appending to the very same session; the
+      // original WS-05 §13 tail-repair contract was authored assuming the writer was already gone).
+      // Quarantining/truncating in that case would mutate a live writer's file out from under it —
+      // its NEXT O_APPEND lands past a truncation point this reader invented, and the quarantine
+      // copy captures a fragment the writer was never actually finished writing. The session-level
+      // lock (never per-subpath — matching append()'s own lease scope below) is the only signal
+      // available here that isn't itself racy: a DIFFERENT, still-live pid means defer entirely
+      // (repair happens later — either the real owner's own next append naturally extends past the
+      // "torn" point, leaving nothing left to repair, or a later read finds the holder genuinely
+      // gone and repairs normally); a dead or absent holder repairs exactly as before. `entries`
+      // itself is unaffected either way — parseWithTailRepair already computed the complete-lines-
+      // only value above regardless of what happens to the on-disk file next.
+      const lockPath = `${sessionStem(this.winterHome, key.projectKey, key.sessionId)}.lock`;
+      if (!hasLiveForeignLeaseHolder(lockPath)) {
+        quarantineTornTail(jsonlPath, torn.raw);
+        repairTruncate(jsonlPath, torn.keepBytes);
+      }
     }
 
     const meta = readJsonIfExists<SessionStoreEntry>(metaPath);
@@ -509,12 +549,34 @@ export class WinterCompatibilitySessionStore implements SessionStore {
       throw err;
     }
     const result: Array<{ sessionId: string; mtime: number }> = [];
+    const seenSessionIds = new Set<string>();
     for (const name of names) {
       if (!name.endsWith(".jsonl")) continue; // excludes .lock/.summary.json/.meta.json/.tail-quarantine and the bare <sessionId>/ subagent dir
       const full = join(dir, name);
       const stat = statSync(full);
       if (!stat.isFile()) continue;
-      result.push({ sessionId: name.slice(0, -".jsonl".length), mtime: stat.mtimeMs });
+      const sessionId = name.slice(0, -".jsonl".length);
+      seenSessionIds.add(sessionId);
+      result.push({ sessionId, mtime: stat.mtimeMs });
+    }
+    // T7 F2 (fix-wave): a metadata-only MAIN-key session (append() called with ONLY an
+    // agent_metadata entry, under a plain — not subpath — key: no native entry ever created a
+    // jsonl for it) is loadable via load()'s own fallback to the .meta.json sidecar, and WS-05 §6
+    // requires exactly that same "readable before it has ever produced native output" guarantee
+    // 885f7fe already gave the ANALOGOUS subpath surface (load()/listSubkeys, for a subagent that
+    // registers before producing output) — this extends the identical fix to the MAIN-key listing
+    // surface, which 885f7fe's fix did not touch. Order-independent w.r.t. readdirSync (no
+    // guaranteed name ordering): a .jsonl for the same sessionId, seen either before or after this
+    // second pass, always wins over its .meta.json — a session with both is never double-counted.
+    for (const name of names) {
+      if (!name.endsWith(".meta.json")) continue;
+      const sessionId = name.slice(0, -".meta.json".length);
+      if (seenSessionIds.has(sessionId)) continue;
+      const full = join(dir, name);
+      const stat = statSync(full);
+      if (!stat.isFile()) continue;
+      seenSessionIds.add(sessionId);
+      result.push({ sessionId, mtime: stat.mtimeMs });
     }
     return result;
   }
@@ -615,5 +677,25 @@ export class WinterCompatibilitySessionStore implements SessionStore {
       mtime: Date.now(),
     } as SessionSummaryEntry;
     writeJsonAtomically(summaryPath, updated);
+  }
+
+  // Fix-wave, Ruling P1-S — same posture as listProjectKeys/mergeSessionMetadata above:
+  // deliberately NOT part of the exported SessionStore type, lives ONLY on the concrete class.
+  // Claims (or, same-pid, re-verifies — leases.ts's own re-entry rule) the writer lease for `key`
+  // WITHOUT appending anything — dialect.ts's resolveEngineSession calls this on a resolved
+  // continue/resume/fork target BEFORE reading back its transcript, so a session another LIVE
+  // process already holds fails typed here and pre-init, rather than sailing through resolution and
+  // only discovering the conflict on its first append deep inside the turn loop — which
+  // engine.ts's own "store failures are auxiliary, never turn-fatal" posture (WS-03 §11) SWALLOWS
+  // silently, the exact "successful-looking run that persists nothing" state this method exists to
+  // prevent. Mirrors append()'s own opening sequence (ensure every directory level, then acquire)
+  // exactly, so a resume target's already-existing directories are a no-op self-heal, never a
+  // special case.
+  async acquireSessionLease(key: { projectKey: string; sessionId: string }): Promise<void> {
+    const { dirLevels } = locateResource(this.winterHome, key);
+    for (const level of dirLevels) ensureSecureDir(level);
+    const lockPath = `${sessionStem(this.winterHome, key.projectKey, key.sessionId)}.lock`;
+    acquireLease(lockPath);
+    chmodSync(lockPath, 0o600);
   }
 }

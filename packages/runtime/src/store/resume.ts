@@ -30,9 +30,30 @@ import type { ProviderMessage, ContentBlock } from "../engine.ts";
 // header comment above and task-10-report.md).
 import type { SessionStore, SessionStoreEntry } from "@yanlinglabs/winter-agent-sdk";
 
+// Whole-branch review Minor 1 (extends the T9-nit carry, WS-03 §11): official taxonomy-building
+// still needs to check whether the real Anthropic SDK collapses "not_found"/"ambiguous" into one
+// class where this codebase splits them (justified here via WS-03 §11's own error-detail
+// obligation — a caller distinguishing "never existed" from "exists more than once, pick one"
+// needs the split, whatever the official shape does). That obligation runs deeper than the two
+// reasons themselves: WS-03 §11 requires resume-failure DETAIL to eventually reach a caller, and
+// today it only does so as free-text stderr (main.ts's top-level catch: `winter: fatal: ${text}`)
+// or a thrown JS error object a wrapper-side try/catch can inspect (query.ts, inMemoryProcess) —
+// there is no STRUCTURED wire payload carrying `reason` across a real child process boundary today
+// (a real spawned `winter` child's stderr is diagnostics-only, WS-04 §6 — query.ts's `stderr`
+// callback sees text, never a typed object). A future WS-03 §11 taxonomy pass must either put this
+// detail on the wire as a pre-init error payload, or guarantee it is always pre-validated
+// wrapper-side before a real child is ever spawned (so the detail never needs to cross a process
+// boundary at all). Note the SAME duality applies to SessionNotFoundError (sdk/src/errors.ts,
+// Task 10's standalone session-management API) — it mirrors this class's not_found/ambiguous split
+// for exactly the analogous reason, and inherits the identical open obligation.
 export class ResumeTargetError extends Error {
-  readonly reason: "not_found" | "ambiguous";
-  constructor(reason: "not_found" | "ambiguous", message: string) {
+  // "locked" — Ruling P1-S (whole-branch review Important 1): the resolved continue/resume/fork
+  // target's writer lease is held by a DIFFERENT, still-live pid (dialect.ts's resolveEngineSession
+  // claims the lease eagerly, before readBack/rebuild/init — see its own comment). Reuses this
+  // class rather than a new one: same "resume resolution failed, typed, pre-init" shape as
+  // not_found/ambiguous, just a third cause.
+  readonly reason: "not_found" | "ambiguous" | "locked";
+  constructor(reason: "not_found" | "ambiguous" | "locked", message: string) {
     super(message);
     this.name = "ResumeTargetError";
     this.reason = reason;
@@ -257,7 +278,14 @@ export function truncateAt(entries: DialectEntry[], opts: { atUuid: string; drop
 //     the active branch — an abandoned tail is excluded by construction, closing the
 //     merged-context gap this task's own initial report flagged as a concern. Degenerates to file
 //     order for a linear (never-branched) session, so every non-branching test this suite already
-//     had continues to pass unchanged.
+//     had continues to pass unchanged. Whole-branch review Minor 4: this leaf-anchoring is itself
+//     evidence-based — a resumeSessionAt call that appends NOTHING before the process ends (e.g. the
+//     caller disconnects, or the run errors, before ever recording a turn at the new branch point)
+//     leaves no entry anywhere with `parentUuid === atUuid`, so there is no on-disk trace that a
+//     branch choice was ever made. The NEXT plain resume still anchors at the leaf — which, absent
+//     any new entry, is simply whatever the physical file's last entry already was (the old,
+//     possibly unrelated tip), not the abandoned resumeSessionAt target. This is a consequence of
+//     the append-only, graph-not-linear-buffer model (WS-05 §7), not a bug in this function.
 //   - a tool-result batch (including an EMPTY one — reviewer nit: engine.ts can persist
 //     `recordUser([])` when a provider's tool_use turn requests zero calls) is a "user" entry whose
 //     content is an array of tool_result blocks, or an empty array — pushed to engine.ts's

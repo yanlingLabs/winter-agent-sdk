@@ -15,7 +15,7 @@
 // ~/.claude, or a real shared path. cwd fixtures are synthetic ("/winter-fixture") so a derived
 // projectKey never embeds a real username. No real usernames appear anywhere below.
 import { test, expect, describe } from "bun:test";
-import { mkdtempSync, rmSync, readFileSync, existsSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -31,6 +31,7 @@ import {
   ResumeTruncationError,
   type DialectEntry,
 } from "./resume.ts";
+import { resolveEngineSession } from "./dialect.ts";
 // session-store.ts and paths/keys.ts moved to the sdk package (Task 10, WS-05 §6); forkSession's
 // own low-level primitive relocated with the store too (packages/sdk/src/store/fork-session.ts) --
 // its unit tests moved alongside it into packages/sdk/src/store/fork-session.test.ts, so this file
@@ -671,6 +672,111 @@ describe("resume wiring end-to-end (temp WINTER_HOME, in-memory leg)", () => {
       rmSync(home, { recursive: true, force: true });
     }
   });
+});
+
+// --- Whole-branch review Important 1 / Ruling P1-S: eager lease acquisition at resolution --------
+//
+// Before this fix, resolveEngineSession never touched the writer lease until the FIRST
+// recordUserEntry/recordAssistantEntry call deep inside runEngine's turn loop — and engine.ts's own
+// "store failures are auxiliary, never turn-fatal" posture (WS-03 §11) SWALLOWS that failure
+// silently. A resume of a session another LIVE process already held would sail straight through
+// resolution, emit a normal-looking init frame, run the whole turn, and persist NOTHING — a
+// "successful" run that silently threw away everything it thought it was recording. Eagerly
+// claiming the lease here, before readBack/rebuild/init, means the SAME contention that
+// leases.ts's acquireLease has always detected now fails typed and BEFORE any frame is written —
+// exactly like an ambiguous/not-found resume target already does.
+describe("Ruling P1-S: eager lease acquisition at resume resolution", () => {
+  test("resuming a session whose lock is held by a DIFFERENT LIVE pid fails typed (ResumeTargetError, reason 'locked'), pre-init, and appends nothing", async () => {
+    const home = freshHome();
+    let dummy: ReturnType<typeof Bun.spawn> | undefined;
+    try {
+      const cwd = "/winter-fixture";
+      const sessionId = randomUUID();
+      // A real session, genuinely resumable — the failure under test must come from the eager
+      // lease check, never from findResumeTarget's own not-found path.
+      await runOneEnvelope({ sessionId, cwd, model: "sonnet" }, home, {});
+
+      const projectKey = compatibilityKeys(cwd).transcriptProjectKey;
+      const store = new WinterCompatibilitySessionStore({ winterHome: home });
+      const beforeEntries = await store.load({ projectKey, sessionId });
+      const jsonlPath = join(home, "projects", projectKey, `${sessionId}.jsonl`);
+      const bytesBefore = readFileSync(jsonlPath);
+
+      // A genuinely live, otherwise-idle process — its pid is planted as the session's lease
+      // holder below (identical technique to packages/sdk/src/store/crash.test.ts's lease
+      // contention suite: a REAL process, never a guessed pid a real kernel might reuse mid-test).
+      dummy = Bun.spawn([process.execPath, "-e", "setInterval(() => {}, 2147483647);"], { stdout: "ignore", stderr: "ignore" });
+      const lockPath = join(home, "projects", projectKey, `${sessionId}.lock`);
+      writeFileSync(lockPath, JSON.stringify({ pid: dummy.pid, startTimeMs: Date.now() }));
+
+      let thrown: unknown;
+      try {
+        await resolveEngineSession({
+          config: { sessionId: randomUUID(), cwd, model: "sonnet", resume: sessionId },
+          resolveWinterHome: () => home,
+          env: {},
+        });
+      } catch (e) {
+        thrown = e;
+      }
+
+      expect(thrown).toBeInstanceOf(ResumeTargetError);
+      expect((thrown as ResumeTargetError).reason).toBe("locked");
+
+      // nothing was appended — resolution failed before ever touching the transcript
+      expect(readFileSync(jsonlPath).equals(bytesBefore)).toBe(true);
+      expect(await store.load({ projectKey, sessionId })).toEqual(beforeEntries);
+    } finally {
+      if (dummy) {
+        dummy.kill("SIGKILL");
+        await dummy.exited;
+      }
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test("end-to-end over inMemoryProcess: the SAME contention surfaces as a pre-init process failure — zero frames written, nonzero exit, never a silently-unpersisted run", async () => {
+    const home = freshHome();
+    let dummy: ReturnType<typeof Bun.spawn> | undefined;
+    try {
+      const cwd = "/winter-fixture";
+      const sessionId = randomUUID();
+      await runOneEnvelope({ sessionId, cwd, model: "sonnet" }, home, {});
+      const projectKey = compatibilityKeys(cwd).transcriptProjectKey;
+
+      dummy = Bun.spawn([process.execPath, "-e", "setInterval(() => {}, 2147483647);"], { stdout: "ignore", stderr: "ignore" });
+      const lockPath = join(home, "projects", projectKey, `${sessionId}.lock`);
+      writeFileSync(lockPath, JSON.stringify({ pid: dummy.pid, startTimeMs: Date.now() }));
+
+      const proc = inMemoryProcess(
+        ["--config-json", JSON.stringify({ sessionId: randomUUID(), cwd, model: "sonnet", resume: sessionId })],
+        undefined,
+        undefined,
+        { WINTER_HOME: home },
+      );
+      const frames = await drainAll(proc);
+      const result = await proc.exited;
+
+      // testing.ts's own resolveEngineSession try/catch: a pre-runEngine throw ends stdout with
+      // NOTHING ever written and settles exited with a nonzero code — the exact shape main.ts's
+      // top-level catch produces too (WS-04 §6.1 "exited before init"), which the sdk's query()
+      // wrapper already maps to CLIConnectionError("runtime exited before init").
+      expect(frames).toEqual([]);
+      expect(result.code).not.toBe(0);
+    } finally {
+      if (dummy) {
+        dummy.kill("SIGKILL");
+        await dummy.exited;
+      }
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  // Same-pid re-entry (T7's rule, carried by leases.ts's acquireLease): every OTHER test in this
+  // file's "resume wiring end-to-end" describe above already resumes/continues a session it
+  // created itself, all within this SAME test process/pid — if the eager acquire broke same-pid
+  // re-entry, every one of those would fail too. No separate test needed here; recorded so a
+  // reviewer doesn't go looking for one.
 });
 
 // Variant of runOneEnvelope that takes a custom provider/tools and prompt text (used by the
