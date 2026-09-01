@@ -91,7 +91,11 @@ if (import.meta.main) {
     process.exit(1);
   }
   try {
-    const { outPath } = await buildRuntime({ out, platformPackage });
+    // exactOptionalPropertyTypes (tsconfig.base.json): `out?: string` means "omit it or provide a
+    // string", never "provide string | undefined" — so `out` is only spread in when actually set,
+    // matching this file's own `...(opts.platformPackage ? ... )`-style conditional-inclusion idiom
+    // used elsewhere in this codebase (e.g. transport-equivalence.test.ts's spawnHook).
+    const { outPath } = await buildRuntime({ ...(out !== undefined ? { out } : {}), platformPackage });
     console.log(`built winter runtime -> ${outPath}`);
   } catch (err) {
     console.error(err instanceof Error ? err.message : String(err));
