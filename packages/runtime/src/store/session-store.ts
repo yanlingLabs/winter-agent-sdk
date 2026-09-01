@@ -309,7 +309,11 @@ function parseWithTailRepair(buf: Buffer): TailRepairResult {
   return { entries: decodeCompleteLines(buf.subarray(0, keepBytes)), torn: { raw: tornRaw, keepBytes } };
 }
 
-function walkJsonlFiles(dir: string, prefix: string, out: string[]): void {
+// Collects every resource STEM under `dir` — a stem counts as present via EITHER its `.jsonl` or
+// its `.meta.json` sidecar (a metadata-only subagent, per load()'s same fallback, has no jsonl at
+// all yet is still a real, readable subkey — WS-05 §6 requires listSubkeys() for P4 materialization
+// even for exactly that case). `out` is a Set so a subpath with BOTH files is reported once.
+function walkResourceStems(dir: string, prefix: string, out: Set<string>): void {
   let entries: Dirent[];
   try {
     entries = readdirSync(dir, { withFileTypes: true });
@@ -320,9 +324,11 @@ function walkJsonlFiles(dir: string, prefix: string, out: string[]): void {
   for (const dirent of entries) {
     const relPath = prefix === "" ? dirent.name : `${prefix}/${dirent.name}`;
     if (dirent.isDirectory()) {
-      walkJsonlFiles(join(dir, dirent.name), relPath, out);
+      walkResourceStems(join(dir, dirent.name), relPath, out);
     } else if (dirent.isFile() && dirent.name.endsWith(".jsonl")) {
-      out.push(relPath.slice(0, -".jsonl".length));
+      out.add(relPath.slice(0, -".jsonl".length));
+    } else if (dirent.isFile() && dirent.name.endsWith(".meta.json")) {
+      out.add(relPath.slice(0, -".meta.json".length));
     }
   }
 }
@@ -389,13 +395,23 @@ export class WinterCompatibilitySessionStore implements SessionStore {
   async load(key: SessionKey): Promise<SessionStoreEntry[] | null> {
     const { stem } = locateResource(this.winterHome, key); // validates the key even for a pure read
     const jsonlPath = `${stem}.jsonl`;
+    const metaPath = `${stem}.meta.json`;
 
-    let raw: Buffer;
+    let raw: Buffer | null;
     try {
       raw = readFileSync(jsonlPath);
     } catch (err) {
-      if ((err as { code?: unknown }).code === "ENOENT") return null; // unknown key
-      throw err;
+      if ((err as { code?: unknown }).code !== "ENOENT") throw err;
+      raw = null;
+    }
+
+    if (raw === null) {
+      // No native jsonl at all — but the key may still be KNOWN via a metadata-only append (a
+      // subagent registered via its agent_metadata envelope before ever producing native output:
+      // append() never creates a jsonl for a metadata-only batch). Only a sidecar with no jsonl
+      // ever existing distinguishes this from a truly unknown key, which stays null.
+      const meta = readJsonIfExists<SessionStoreEntry>(metaPath);
+      return meta === null ? null : [meta];
     }
 
     const { entries, torn } = parseWithTailRepair(raw);
@@ -404,7 +420,7 @@ export class WinterCompatibilitySessionStore implements SessionStore {
       repairTruncate(jsonlPath, torn.keepBytes);
     }
 
-    const meta = readJsonIfExists<SessionStoreEntry>(`${stem}.meta.json`);
+    const meta = readJsonIfExists<SessionStoreEntry>(metaPath);
     if (meta !== null) entries.push(meta); // re-synthesized AFTER native entries
 
     return entries;
@@ -474,8 +490,8 @@ export class WinterCompatibilitySessionStore implements SessionStore {
 
   async listSubkeys(key: { projectKey: string; sessionId: string }): Promise<string[]> {
     const sessionDir = sessionStem(this.winterHome, key.projectKey, key.sessionId); // no extension = the directory itself
-    const results: string[] = [];
-    walkJsonlFiles(sessionDir, "", results);
-    return results;
+    const results = new Set<string>();
+    walkResourceStems(sessionDir, "", results);
+    return [...results];
   }
 }

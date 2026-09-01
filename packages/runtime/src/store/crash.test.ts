@@ -30,6 +30,18 @@ function entry(overrides: Partial<SessionStoreEntry> = {}): SessionStoreEntry {
 
 type Subprocess = ReturnType<typeof Bun.spawn>;
 
+// Bounded poll for a path to exist, rather than a fixed sleep — a fixed sleep can't distinguish
+// "the loop hasn't gotten far yet" from "the child process/transpile startup itself hasn't
+// finished yet" on a cold or loaded runner (Ruling P1-P is this exact class of darwin-tested
+// assumption failing on a slower CI runner). Throws if `path` never appears within `timeoutMs`.
+async function waitForPath(path: string, timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!existsSync(path)) {
+    if (Date.now() > deadline) throw new Error(`timed out waiting for ${path} to exist`);
+    await new Promise((r) => setTimeout(r, 5));
+  }
+}
+
 async function reap(child: Subprocess | undefined): Promise<void> {
   if (child === undefined) return;
   child.kill("SIGKILL");
@@ -115,7 +127,15 @@ describe("crash: kill-during-append", () => {
       })();`;
 
       child = Bun.spawn([process.execPath, "-e", code], { stdout: "ignore", stderr: "ignore" });
-      await new Promise((r) => setTimeout(r, 100)); // 100ms < count*delayMs(=900ms) — the loop cannot have finished yet
+
+      // Wait for PROOF the child has actually started and completed at least one append (its
+      // jsonl exists), rather than a fixed sleep guessing how long spawn+transpile startup takes —
+      // removes cold/loaded-runner startup time as a flake vector entirely. Then a short further
+      // delay lets a few more iterations land before the kill, so it has a real chance of landing
+      // mid-loop rather than immediately after the first write.
+      const jsonlPath = join(home, "projects", projectKey, `${sessionId}.jsonl`);
+      await waitForPath(jsonlPath, 10_000);
+      await new Promise((r) => setTimeout(r, 50));
       child.kill("SIGKILL");
       await child.exited;
 

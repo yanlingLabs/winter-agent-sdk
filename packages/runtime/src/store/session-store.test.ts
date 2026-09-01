@@ -445,6 +445,27 @@ describe("required behavior beyond the 8 named categories", () => {
     }
   });
 
+  test("a metadata-only append (no native entries yet) is still readable via load() and enumerable via listSubkeys — a subagent that registers before producing any output", async () => {
+    const home = freshHome();
+    try {
+      const store = new WinterCompatibilitySessionStore({ winterHome: home });
+      const parentKey = { projectKey: "proj-a", sessionId: "sess-meta-only" };
+      const key = { ...parentKey, subpath: "subagents/agent-early" };
+      const meta = { type: "agent_metadata", name: "registered-before-any-output" };
+
+      await store.append(key, [meta]);
+
+      expect(await store.load(key)).toEqual([meta]);
+      expect(await store.listSubkeys(parentKey)).toEqual(["subagents/agent-early"]);
+
+      // the jsonl itself must NOT exist — append() never creates one for a metadata-only batch
+      const jsonlPath = join(home, "projects", "proj-a", "sess-meta-only", "subagents", "agent-early.jsonl");
+      expect(existsSync(jsonlPath)).toBe(false);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   test("listSessionSummaries folds a summary on append, keyed by sessionId, updated across calls", async () => {
     const home = freshHome();
     try {
