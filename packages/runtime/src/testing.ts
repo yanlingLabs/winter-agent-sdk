@@ -2,8 +2,8 @@ import type { SpawnedRuntimeProcess, RuntimeConfig, WinterFrame } from "@yanling
 import { encodeFrame, splitFrames } from "@yanlinglabs/winter-agent-sdk";
 import { Queue } from "./protocol/channel.ts";
 import type { FrameSource, FrameSink } from "./protocol/channel.ts";
-import { runWinterRuntime } from "./runtime.ts";
-import { echoProvider, type Provider } from "./provider/mock.ts";
+import { runEngine, type Provider, type ToolExecutor } from "./engine.ts";
+import { echoProvider, stubExecutor } from "./provider/mock.ts";
 
 function parseConfigFromArgv(argv: string[]): RuntimeConfig {
   const idx = argv.indexOf("--config-json");
@@ -12,16 +12,17 @@ function parseConfigFromArgv(argv: string[]): RuntimeConfig {
   return JSON.parse(raw) as RuntimeConfig;
 }
 
-// Byte-level virtual process (WS-04 §1.1): boots the current runWinterRuntime behind the SAME
-// codec path a real spawned `winter` child will use (Task 4) — engine WinterFrames encode to
-// stdout text chunks via encodeFrame, stdin text chunks decode to WinterFrames via splitFrames —
-// so the in-memory and child transports can never diverge on framing (WS-04 §1). Parses the same
-// `--config-json` argv contract the future real binary parses; only sessionId/cwd/model are
-// consumed today (Ruling P1-A) — the remaining RuntimeConfig fields (resume/continue/fork/...)
-// are inert until the turn engine (Task 3) and resume machinery (Task 9) land.
+// Byte-level virtual process (WS-04 §1.1): boots runEngine behind the SAME codec path a real
+// spawned `winter` child will use (Task 4) — engine WinterFrames encode to stdout text chunks via
+// encodeFrame, stdin text chunks decode to WinterFrames via splitFrames — so the in-memory and
+// child transports can never diverge on framing (WS-04 §1). Parses the same `--config-json` argv
+// contract the future real binary parses, and (Task 3) now hands the ENGINE the full parsed
+// RuntimeConfig — not just sessionId/cwd/model — so maxTurns/permissionMode/etc. all flow through;
+// the remaining fields (resume/continue/fork/...) stay inert until resume machinery (Task 9) reads
+// them.
 //
 // Replaces P0's object-level inMemorySpawn (deleted with the spawnRuntime option it served).
-export function inMemoryProcess(argv: string[], provider: Provider = echoProvider): SpawnedRuntimeProcess {
+export function inMemoryProcess(argv: string[], provider: Provider = echoProvider, tools: ToolExecutor = stubExecutor): SpawnedRuntimeProcess {
   const config = parseConfigFromArgv(argv);
 
   const stdin = new Queue<string>();
@@ -50,11 +51,11 @@ export function inMemoryProcess(argv: string[], provider: Provider = echoProvide
   });
   let settled = false;
 
-  void runWinterRuntime({ input, output, provider, sessionId: config.sessionId, cwd: config.cwd, model: config.model })
-    .then(() => {
+  void runEngine({ config, input, output, provider, tools })
+    .then((code) => {
       if (!settled) {
         settled = true;
-        settleExited({ code: 0, signal: null });
+        settleExited({ code, signal: null });
       }
     })
     .catch(() => {

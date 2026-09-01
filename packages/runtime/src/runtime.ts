@@ -1,30 +1,42 @@
 import type { FrameSource, FrameSink } from "./protocol/channel.ts";
-import { PROTOCOL_VERSION, type ProtocolSdkMessage as SdkMessage } from "@yanlinglabs/winter-agent-sdk";
-import type { Provider } from "./provider/mock.ts";
+import type { RuntimeConfig } from "@yanlinglabs/winter-agent-sdk";
+import { runEngine, type Provider, type ToolExecutor, type SessionPersistence } from "./engine.ts";
+import { stubExecutor } from "./provider/mock.ts";
 
+// Thin compatibility adapter over runEngine (Task 3 ledger: kept, rather than deleted, because the
+// P0-era flat-args call shape — sessionId/cwd/model instead of a RuntimeConfig — is still how
+// runtime.test.ts and this package's index.ts barrel expose a "just run it" entry point; the real
+// production entry point is Task 4's main.ts, which calls runEngine directly).
+//
+// Provider's shape changed from prompt-based (`generate({prompt})`) to messages-based
+// (`generate({messages})`) in Task 3, to support multi-turn accumulation and tool rounds — that
+// change is NOT shimmed away here. runtime.test.ts's two P0 tests were migrated onto the new
+// Provider shape (a one-line return-type change each) rather than this adapter keeping the old
+// shape alive: maintaining two parallel Provider interfaces indefinitely for a 2-test legacy
+// surface costs more than that one-line test diff (ledgered in the task-3 report).
+//
+// The old `tools?: string[]` field (tool-catalog names for the init frame) is dropped: it was never
+// exercised by any caller, and engine.ts hardcodes an empty init tool list at P1 (no catalog until
+// WS-06) — keeping a parameter that would now silently do nothing is worse than not accepting it.
+// `tools` is repurposed for the new ToolExecutor capability instead.
 export async function runWinterRuntime(opts: {
   input: FrameSource; output: FrameSink; provider: Provider;
-  sessionId: string; cwd: string; model: string; permissionMode?: string; tools?: string[];
+  sessionId: string; cwd: string; model: string; permissionMode?: string;
+  maxTurns?: number; tools?: ToolExecutor; store?: SessionPersistence;
 }): Promise<void> {
-  const { input, output, provider, sessionId, cwd, model } = opts;
-  const permissionMode = opts.permissionMode ?? "default";
-  const tools = opts.tools ?? [];
-  // init MUST be the first runtime→host frame (WS-04 §3/§4)
-  output.write({ type: "init", protocolVersion: PROTOCOL_VERSION, sessionId, cwd, model, permissionMode, tools });
-  // also project it as the SDK system/init message so the wrapper can surface it
-  const initMsg: SdkMessage = { type: "system", subtype: "init", session_id: sessionId, cwd, model, permissionMode, tools };
-  output.write({ type: "data", message: initMsg });
-
-  for await (const frame of input) {
-    if (frame.type !== "user") continue; // P0: ignore control frames; P2+ handles them
-    const prompt = (frame as { text: string }).text;
-    try {
-      const { text } = await provider.generate({ prompt });
-      output.write({ type: "data", message: { type: "assistant", message: { content: [{ type: "text", text }] } } });
-      output.write({ type: "data", message: { type: "result", subtype: "success", is_error: false, result: text } });
-    } catch (err) {
-      output.write({ type: "data", message: { type: "result", subtype: "error_during_execution", is_error: true, result: String((err as Error).message) } });
-    }
-  }
-  output.end();
+  const config: RuntimeConfig = {
+    sessionId: opts.sessionId,
+    cwd: opts.cwd,
+    model: opts.model,
+    ...(opts.permissionMode !== undefined ? { permissionMode: opts.permissionMode } : {}),
+    ...(opts.maxTurns !== undefined ? { maxTurns: opts.maxTurns } : {}),
+  };
+  await runEngine({
+    config,
+    input: opts.input,
+    output: opts.output,
+    provider: opts.provider,
+    tools: opts.tools ?? stubExecutor,
+    ...(opts.store !== undefined ? { store: opts.store } : {}),
+  });
 }

@@ -2,6 +2,7 @@ import { test, expect } from "bun:test";
 import { createInMemoryChannel } from "./protocol/channel.ts";
 import { runWinterRuntime } from "./runtime.ts";
 import { echoProvider } from "./provider/mock.ts";
+import type { ProviderTurn } from "./engine.ts";
 import type { ProtocolSdkMessage as SdkMessage, WinterFrame } from "@yanlinglabs/winter-agent-sdk";
 
 async function collect(source: AsyncIterable<WinterFrame>, until: (f: WinterFrame) => boolean): Promise<WinterFrame[]> {
@@ -30,7 +31,9 @@ test("runtime emits init, then assistant + success result for a user turn", asyn
 
 test("a provider throw yields a single error result, not a crash", async () => {
   const { host, runtime } = createInMemoryChannel();
-  const boom = { async generate(): Promise<{ text: string }> { throw new Error("provider down"); } };
+  // Task 3: Provider moved from prompt-based to messages-based (ProviderTurn return) — this test's
+  // shape updates to match; its assertions (subtype/is_error, not exact text) are unaffected.
+  const boom = { async generate(): Promise<ProviderTurn> { throw new Error("provider down"); } };
   const done = runWinterRuntime({ input: runtime.input, output: runtime.output, provider: boom, sessionId: "s2", cwd: "/tmp/x", model: "sonnet" });
   host.output.write({ type: "user", text: "ping" });
   const frames = await collect(host.input, (f) => f.type === "data" && (f as { message: SdkMessage }).message.type === "result");

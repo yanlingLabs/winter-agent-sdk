@@ -5,11 +5,24 @@
 
 export { runWinterRuntime } from "./runtime.ts";
 
+// The turn engine (Task 3): state machine, tool rounds, maxTurns, interrupt, streaming input,
+// teardown. This is the real production entry point (Task 4's main.ts calls it directly);
+// runWinterRuntime above is a compatibility adapter over it.
+export { runEngine } from "./engine.ts";
+export type {
+  Provider,
+  ProviderTurn,
+  ProviderMessage,
+  ContentBlock,
+  ToolExecutor,
+  SessionPersistence,
+  EngineOptions,
+} from "./engine.ts";
+
 export { createInMemoryChannel } from "./protocol/channel.ts";
 export type { Duplex, FrameSource, FrameSink } from "./protocol/channel.ts";
 
-export { echoProvider } from "./provider/mock.ts";
-export type { Provider } from "./provider/mock.ts";
+export { echoProvider, scriptedProvider, stubExecutor } from "./provider/mock.ts";
 
 // The wire protocol (frames + codec) moved to the sdk (WS-02 §3 dependency inversion, Task 1):
 // this package now depends on it, never the reverse. Re-exported unchanged so existing
@@ -32,4 +45,5 @@ export type {
   ControlRequestFrame,
   ControlResponseFrame,
   UnknownFrame,
+  RuntimeConfig,
 } from "@yanlinglabs/winter-agent-sdk";

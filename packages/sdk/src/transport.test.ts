@@ -5,6 +5,7 @@ import { WinterSDKError, CLIConnectionError, ProcessError, ProtocolDecodeError, 
 import { encodeFrame } from "./protocol/codec.ts";
 import { PROTOCOL_VERSION } from "./protocol/frames.ts";
 import { inMemoryProcess } from "winter-agent-runtime/testing";
+import type { ProviderTurn } from "winter-agent-runtime";
 
 // --- test doubles -----------------------------------------------------------------------------
 // Hand-scripted SpawnedRuntimeProcess doubles: emit exact byte chunks (encoded frames) so
@@ -153,7 +154,9 @@ test("maxBufferSize: a complete frame followed by an oversized unterminated tail
 
 test("abort signal drains buffered frames then the iterator ends with the pinned cancellation error", async () => {
   const controller = new AbortController();
-  const hangingProvider = { async generate(): Promise<{ text: string }> { return new Promise(() => {}); } };
+  // Task 3: Provider moved from prompt-based to messages-based (ProviderTurn return) — shape
+  // update only; this provider's job is just to hang forever, unchanged.
+  const hangingProvider = { async generate(): Promise<ProviderTurn> { return new Promise(() => {}); } };
   const seen: string[] = [];
   let thrown: unknown;
   try {

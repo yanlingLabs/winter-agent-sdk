@@ -91,12 +91,35 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
     try {
       if (options.abortController?.signal.aborted) onAbort();
 
-      // P0: single-shot prompt. Streaming input (AsyncIterable) is Task 3 — the wrapper's
-      // `prompt: AsyncIterable<string>` sending one `user` envelope per item + `end_input` is
-      // explicitly the plan's Task 3 replacement for this firstOf stub.
-      const text = typeof prompt === "string" ? prompt : await firstOf(prompt);
-      proc.stdin.write(encodeFrame({ type: "user", text }));
-      proc.stdin.end();
+      // Task 3: a string prompt sends one `user` frame then `end_input`; an AsyncIterable<string>
+      // prompt sends each item as a `user` frame AS IT ARRIVES — not waiting for that turn's
+      // result first, true streaming input (WS-04 §3: "stream stays open; end-of-input is
+      // explicit") — then `end_input` once the iterable itself completes. Runs concurrently with
+      // the read loop below (not awaited before it): sequencing it first would serialize "send one
+      // prompt, read its whole response" instead of allowing overlap, defeating streaming input.
+      // Replaces the P0 `firstOf` stub, which sent only the iterable's first item and silently
+      // discarded the rest.
+      //
+      // Policy for a throwing iterable / a write after the child has already exited: swallow here,
+      // matching the stderr-forwarding task above — this detached task cannot itself correct
+      // anything in the read loop, and the ONE place a real failure must surface is the stdout-side
+      // WS-04 §6.1 lifecycle mapping (unexpected death / nonzero exit), not a second, competing
+      // rejection from this side.
+      (async () => {
+        try {
+          if (typeof prompt === "string") {
+            proc.stdin.write(encodeFrame({ type: "user", text: prompt }));
+          } else {
+            for await (const text of prompt) {
+              proc.stdin.write(encodeFrame({ type: "user", text }));
+            }
+          }
+          proc.stdin.write(encodeFrame({ type: "control_request", requestId: randomUUID(), subtype: "end_input", payload: undefined }));
+          proc.stdin.end();
+        } catch {
+          /* see policy note above */
+        }
+      })();
 
       let sawInit = false;
       let sawTerminal = false;
@@ -176,13 +199,13 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
   const gen = iterate() as Query;
   gen.interrupt = async () => {
     proc.stdin.end();
-  }; // honest P0 stub; real interrupt/drain is Task 3/4
+  }; // honest P0 stub still: Task 3 implements interrupt's state machine at the engine level
+  // (control_request{subtype:"interrupt"} → ack → abort the in-flight round → provisional
+  // interrupted result — see engine.test.ts) and tests it by driving frames directly. Wiring
+  // Query.interrupt() itself to send that control frame needs request/response correlation this
+  // wrapper doesn't have yet (setModel/setPermissionMode below are the same kind of stub, for the
+  // same reason) — left for whichever later task builds that plumbing for the other control RPCs.
   gen.setModel = async () => {};
   gen.setPermissionMode = async () => {};
   return gen;
-}
-
-async function firstOf(it: AsyncIterable<string>): Promise<string> {
-  for await (const v of it) return v;
-  return "";
 }
