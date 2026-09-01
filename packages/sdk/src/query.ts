@@ -183,6 +183,12 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
             // frames the way an immediate break would. Overwritten on each error result seen, so
             // with multiple erroring turns the LAST one is what's thrown — a defensible, documented
             // choice where the spec is silent on which of several errors should win.
+            // PROVISIONAL (Ruling P1-J, capture-pending): the whole throw-at-EOF-in-streaming-mode
+            // semantic — including last-error-wins — awaits differential capture against the
+            // official runtime, which plausibly does NOT throw in streaming mode at all (it may
+            // yield erroring results and end cleanly, leaving inspection to the caller). Same
+            // pending-capture class as the interrupted-result shape; pinned or revised at the
+            // capture phase (P1 T11 carries the check).
             if ((message as { is_error?: boolean }).is_error) terminalError = message as Extract<SdkMessage, { type: "result" }>;
             if (!isStreamingInput) break readLoop; // single-shot prompt: exactly one turn, unchanged
           }
