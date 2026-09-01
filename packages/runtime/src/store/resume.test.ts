@@ -23,6 +23,7 @@ import {
   findResumeTarget,
   forkSession,
   truncateAt,
+  rebuildProviderMessages,
   ResumeTargetError,
   ResumeTruncationError,
   type DialectEntry,
@@ -30,7 +31,7 @@ import {
 import { WinterCompatibilitySessionStore, type SessionStoreEntry } from "./session-store.ts";
 import { compatibilityKeys } from "../paths/keys.ts";
 import { inMemoryProcess } from "../testing.ts";
-import { scriptedProvider, stubExecutor } from "../provider/mock.ts";
+import { scriptedProvider, stubExecutor, echoProvider } from "../provider/mock.ts";
 import type { Provider, ProviderMessage, ToolExecutor } from "../engine.ts";
 
 function freshHome(): string {
@@ -245,12 +246,109 @@ describe("truncateAt", () => {
     expect(() => truncateAt(entries, { atUuid: "a", dropsTurn: false })).toThrow(ResumeTruncationError);
   });
 
-  test("throws a typed error when dropsTurn is true but a dropped entry does not descend from atUuid (a divergent branch)", () => {
-    // b and c both descend from a; d is a SEPARATE branch off a (NOT a descendant of b) that
-    // happens to sit after c in array/file order — truncating "through b" must not silently
-    // discard d, since d isn't part of the turn being trimmed.
+  // Fix-round 1, Ruling P1-R: this test's ORIGINAL name/assertion ("throws ... a divergent branch")
+  // encoded the pre-fix, position-based interpretation — b and c descend from a; d is a SEPARATE
+  // branch off a (a sibling of b, NOT a descendant of b) that happens to sit after c in array/file
+  // order. The reviewer's ruling: an off-lineage sibling is neither kept nor dropped — it needs NO
+  // confirmation and triggers NO error, because resuming at b never touches it either way.
+  test("an off-lineage sibling branch is neither kept nor dropped — no confirmation required, no error", () => {
     const entries = [de("a", null), de("b", "a"), de("c", "b"), de("d", "a")];
-    expect(() => truncateAt(entries, { atUuid: "b", dropsTurn: true })).toThrow(ResumeTruncationError);
+    // c genuinely descends from b and IS dropped (needs dropsTurn); d does not and is ignored
+    // entirely — dropsTurn:true must succeed (not throw over d), and kept excludes BOTH c and d.
+    const kept = truncateAt(entries, { atUuid: "b", dropsTurn: true });
+    expect(kept.map((e) => e.uuid)).toEqual(["a", "b"]);
+  });
+
+  test("dropsTurn:false still throws when a real (in-lineage) descendant would be dropped, even in the presence of an unrelated off-lineage sibling", () => {
+    const entries = [de("a", null), de("b", "a"), de("c", "b"), de("d", "a")];
+    expect(() => truncateAt(entries, { atUuid: "b", dropsTurn: false })).toThrow(ResumeTruncationError);
+  });
+
+  // --- Reviewer's pinning scenarios (fix-round 1): a file that branched via an EARLIER
+  // resumeSessionAt — append order A, B, C, then (resumed at B) D, E. So file order is [A,B,C,D,E]
+  // with parentUuid: B->A, C->B, D->B, E->D. C and D are SIBLING branches off B; E further extends
+  // D. `entries` below is built in that exact file order (positionally), never reordered, so a
+  // regression to the old position-based `truncateAt` would be caught by these two tests directly.
+  function branchedFixture(): DialectEntry[] {
+    return [de("A", null), de("B", "A"), de("C", "B"), de("D", "B"), de("E", "D")];
+  }
+
+  test("resumeSessionAt(D) rebuilds A,B,D — C (an off-lineage sibling of D) is excluded, not positionally included", () => {
+    const entries = branchedFixture();
+    const kept = truncateAt(entries, { atUuid: "D", dropsTurn: true }); // E genuinely descends from D
+    expect(kept.map((e) => e.uuid)).toEqual(["A", "B", "D"]);
+  });
+
+  test("resumeSessionAt(D) with dropsTurn:false throws — E is a real descendant of D being discarded", () => {
+    const entries = branchedFixture();
+    expect(() => truncateAt(entries, { atUuid: "D", dropsTurn: false })).toThrow(ResumeTruncationError);
+  });
+
+  test("resumeSessionAt(C) — resuming the ALREADY-ABANDONED tip — succeeds with dropsTurn:false: neither D nor E descends from C", () => {
+    const entries = branchedFixture();
+    const kept = truncateAt(entries, { atUuid: "C", dropsTurn: false });
+    expect(kept.map((e) => e.uuid)).toEqual(["A", "B", "C"]);
+  });
+});
+
+describe("rebuildProviderMessages — Ruling P1-Q (leaf-anchored ancestry, fix-round 1)", () => {
+  // The same branched fixture as truncateAt's reviewer scenarios above, but exercised as a PLAIN
+  // resume (the full, untruncated entries array, as resolveEngineSession passes it when
+  // config.resumeSessionAt is unset) — this is the exact "merged-context" gap this task's own
+  // initial report flagged as a concern, now closed: the rebuilt context must reflect ONLY the
+  // active branch (A, B, D, E), never the abandoned sibling C.
+  // Assistant entries are ALWAYS array-shaped on disk — a single-text-block array for plain text
+  // (assistantEntry's `content: Block[]` contract is array-always; see engine.ts's own
+  // `recordAssistant([{type:"text", text: turn.text}])`) — NEVER a bare string. rebuildProviderMessages
+  // collapses that single-block-array shape BACK to the bare string engine.ts's in-memory
+  // accumulator actually used, so the fixtures below use the real on-disk array shape, not the
+  // collapsed in-memory one (asserted separately, in the `expect(rebuilt)` below).
+  function branchedFixture(): DialectEntry[] {
+    return [
+      { type: "user", uuid: "A", parentUuid: null, message: { role: "user", content: "A" } },
+      { type: "assistant", uuid: "B", parentUuid: "A", message: { role: "assistant", content: [{ type: "text", text: "B" }] } },
+      { type: "user", uuid: "C", parentUuid: "B", message: { role: "user", content: "C-abandoned" } },
+      { type: "user", uuid: "D", parentUuid: "B", message: { role: "user", content: "D-active" } },
+      { type: "assistant", uuid: "E", parentUuid: "D", message: { role: "assistant", content: [{ type: "text", text: "E-active" }] } },
+    ];
+  }
+
+  test("a plain resume after an earlier resume-at branch rebuilds ONLY the active branch — the abandoned sibling is excluded", () => {
+    const rebuilt = rebuildProviderMessages(branchedFixture());
+    expect(rebuilt).toEqual([
+      { role: "user", content: "A" },
+      { role: "assistant", content: "B" }, // collapsed back from the on-disk [{type:"text",...}] shape
+      { role: "user", content: "D-active" },
+      { role: "assistant", content: "E-active" },
+    ]);
+    // the abandoned sibling's content never appears anywhere in the rebuilt context
+    expect(JSON.stringify(rebuilt)).not.toContain("C-abandoned");
+  });
+
+  test("degenerates to file order for a linear (never-branched) session", () => {
+    const entries: DialectEntry[] = [
+      { type: "user", uuid: "u1", parentUuid: null, message: { role: "user", content: "hi" } },
+      { type: "assistant", uuid: "a1", parentUuid: "u1", message: { role: "assistant", content: [{ type: "text", text: "hello" }] } },
+    ];
+    expect(rebuildProviderMessages(entries)).toEqual([
+      { role: "user", content: "hi" },
+      { role: "assistant", content: "hello" },
+    ]);
+  });
+
+  // Reviewer nit 6: an EMPTY tool-result batch (engine.ts can persist `recordUser([])` when a
+  // provider's tool_use turn requests zero calls — see engine.ts's unconditional
+  // `await recordUser(resultBlocks)` after the tool-call loop) is unambiguously the SAME shape as a
+  // non-empty tool-result batch for this engine's own producer (a user entry's content is never a
+  // genuine empty array otherwise) — rebuilds as role "tool", not role "user".
+  test("an empty tool-result batch rebuilds as role:tool, not role:user", () => {
+    const entries: DialectEntry[] = [
+      { type: "user", uuid: "u1", parentUuid: null, message: { role: "user", content: "go" } },
+      { type: "assistant", uuid: "a1", parentUuid: "u1", message: { role: "assistant", content: [{ type: "tool_use", id: "c1", name: "t", input: {} }] } },
+      { type: "user", uuid: "u2", parentUuid: "a1", message: { role: "user", content: [] } },
+    ];
+    const rebuilt = rebuildProviderMessages(entries);
+    expect(rebuilt.at(-1)).toEqual({ role: "tool", content: [] });
   });
 });
 
@@ -329,6 +427,39 @@ describe("P1-N: recorded project dir name (record + apply half)", () => {
 
       const summaries = await new WinterCompatibilitySessionStore({ winterHome: home }).listSessionSummaries!("custom-name");
       expect(summaries[0]).toMatchObject({ projectDirName: "custom-name", entryCount: 4 });
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  // Fix-round 1 coverage rider: the ONLY variant previously tested was the override going from set
+  // -> UNSET. This covers the more general case the ruling's own wording ("env changed/unset") also
+  // names — set -> a DIFFERENT non-empty value — which must be indistinguishable in outcome (neither
+  // "custom-name-original" nor "totally-different-name" is where the session actually lives, so the
+  // fallback cross-project search engages identically either way; asserted directly rather than
+  // assumed).
+  test("resuming by explicit id continues writing under the RECORDED name even when the override has CHANGED to a different value (not just unset)", async () => {
+    const home = freshHome();
+    try {
+      const sessionId = randomUUID();
+      const cwd = "/winter-fixture";
+      const createConfig: RuntimeConfig = { sessionId, cwd, model: "sonnet" };
+      await runOneEnvelope(createConfig, home, { WINTER_PROJECT_DIR_NAME: "custom-name-original" });
+
+      const resumeConfig: RuntimeConfig = { sessionId: randomUUID(), cwd, model: "sonnet", resume: sessionId };
+      await runOneEnvelope(resumeConfig, home, { WINTER_PROJECT_DIR_NAME: "totally-different-name" });
+
+      const originalPath = join(home, "projects", "custom-name-original", `${sessionId}.jsonl`);
+      const loaded = await new WinterCompatibilitySessionStore({ winterHome: home }).load({ projectKey: "custom-name-original", sessionId });
+      expect(existsSync(originalPath)).toBe(true);
+      expect(loaded!.length).toBe(4);
+
+      // never lands under the NEW override name either
+      const newOverridePath = join(home, "projects", "totally-different-name", `${sessionId}.jsonl`);
+      expect(existsSync(newOverridePath)).toBe(false);
+
+      const summaries = await new WinterCompatibilitySessionStore({ winterHome: home }).listSessionSummaries!("custom-name-original");
+      expect(summaries[0]).toMatchObject({ projectDirName: "custom-name-original", entryCount: 4 });
     } finally {
       rmSync(home, { recursive: true, force: true });
     }
@@ -495,6 +626,73 @@ describe("resume wiring end-to-end (temp WINTER_HOME, in-memory leg)", () => {
       expect(after!.length).toBe(6);
       const newBranchEntries = after!.filter((e) => e.parentUuid === atUuid);
       expect(newBranchEntries.length).toBe(2); // the original next entry AND the new branch's first entry
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  // Fix-round 1 regression test (Ruling P1-Q): the ORIGINAL merged-context gap flagged in this
+  // task's own initial report — a PLAIN resume (no resumeSessionAt on THIS call) of a session that
+  // branched EARLIER must rebuild only the active branch, never the abandoned tail, at the full
+  // engine/store stack (not just the pure rebuildProviderMessages unit above).
+  test("REGRESSION: a later plain resume of a branched session rebuilds ONLY the active branch, never the abandoned tail", async () => {
+    const home = freshHome();
+    try {
+      const cwd = "/winter-fixture";
+      const sessionId = randomUUID();
+      const projectKey = compatibilityKeys(cwd).transcriptProjectKey;
+      const store = new WinterCompatibilitySessionStore({ winterHome: home });
+
+      // Two envelopes in ONE process, both echoed deterministically: u1("go")/a1("echo: go"),
+      // u2("again")/a2("echo: again") — entries 0..3.
+      await (async () => {
+        const proc = inMemoryProcess(["--config-json", JSON.stringify({ sessionId, cwd, model: "sonnet" })], echoProvider, stubExecutor, {
+          WINTER_HOME: home,
+        });
+        proc.stdin.write(encodeFrame({ type: "user", text: "go" }));
+        proc.stdin.write(encodeFrame({ type: "user", text: "again" }));
+        proc.stdin.write(encodeFrame({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined }));
+        await drainAll(proc);
+        await proc.exited;
+      })();
+
+      const afterFirstRun = await store.load({ projectKey, sessionId });
+      const u1Uuid = afterFirstRun![0]!.uuid!; // right after the FIRST user entry ("go")
+
+      // Branch off u1: resumeSessionAt(u1Uuid) + one new envelope "rebranched" — abandons u2/a2
+      // ("again"/"echo: again") on disk, grows a new branch off u1.
+      await runOneEnvelopeCustom(
+        { sessionId: randomUUID(), cwd, model: "sonnet", resume: sessionId, resumeSessionAt: u1Uuid, resumeDropsTurn: true },
+        home,
+        {},
+        echoProvider,
+        stubExecutor,
+        "rebranched",
+      );
+
+      // A LATER plain resume (no resumeSessionAt) — the provider must see ONLY the active branch:
+      // u1("go"), the new branch's user("rebranched")/assistant("echo: rebranched") — NEVER the
+      // abandoned "again"/"echo: again" turn.
+      const capturedMessages: ProviderMessage[][] = [];
+      const capturingProvider: Provider = {
+        async generate({ messages }) {
+          capturedMessages.push([...messages]);
+          return { kind: "text", text: "final" };
+        },
+      };
+      await runOneEnvelopeCustom(
+        { sessionId: randomUUID(), cwd, model: "sonnet", resume: sessionId },
+        home,
+        {},
+        capturingProvider,
+        stubExecutor,
+        "final turn",
+      );
+
+      expect(capturedMessages.length).toBe(1);
+      const seen = JSON.stringify(capturedMessages[0]);
+      expect(seen).toContain("rebranched");
+      expect(seen).not.toContain("again");
     } finally {
       rmSync(home, { recursive: true, force: true });
     }

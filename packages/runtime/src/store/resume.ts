@@ -12,8 +12,14 @@
 //   forkSession: true    -> (combined with continue/resume) copies the resolved target into a fresh
 //                           uuid FIRST; the original is left byte-identical; no undo/file-history is
 //                           copied (neither exists yet at P1 — nothing to carry or omit).
-//   resumeSessionAt      -> keep only through the given uuid; resumeDropsTurn confirms (and
-//                           validates) that doing so intentionally discards later entries.
+//   resumeSessionAt      -> keep only atUuid's own ANCESTRY (root..atUuid, graph-defined — Ruling
+//                           P1-R, fix-round 1); resumeDropsTurn confirms (and validates) discarding
+//                           atUuid's DESCENDANTS specifically, never an unrelated sibling branch.
+//
+// Both the message-rebuild below and resumeSessionAt anchor on the parentUuid GRAPH, never on file
+// (append) order — a session can branch (an earlier resumeSessionAt leaves its abandoned tail on
+// disk, WS-05 §7: "the transcript is a graph, not a linear buffer"), so file order alone conflates
+// unrelated branches. See the "ancestry-graph walks" section below (Rulings P1-Q + P1-R).
 import { randomUUID } from "node:crypto";
 import type { ProviderMessage, ContentBlock } from "../engine.ts";
 import type { SessionKey, SessionStore, SessionStoreEntry } from "./session-store.ts";
@@ -44,6 +50,15 @@ async function projectHasSession(store: SessionStore, projectKey: string, sessio
   const sessions = await store.listSessions(projectKey);
   return sessions.some((s) => s.sessionId === sessionId);
 }
+
+// Fix-round 1 (MAJOR finding): WS-03 §10 pins SessionStore as EXACTLY its six documented members —
+// project enumeration is a Winter-only capability that must never widen that exported type (see
+// session-store.ts's own comment on WinterCompatibilitySessionStore.listProjectKeys). Accessed here
+// via a LOCAL intersection type instead, so findResumeTarget's own public signature stays exactly
+// the pinned `store: SessionStore` the brief specifies; a minimal/foreign SessionStore
+// implementation without this capability still type-checks as a valid argument and degrades
+// gracefully at runtime (the `if (!storeExt.listProjectKeys)` guard below).
+type StoreWithProjectEnumeration = SessionStore & { listProjectKeys?(): Promise<string[]> };
 
 /** `continue: true` — the newest session in exactly one directory (WS-05 §7: no cross-project fallback). */
 export async function findContinueTarget(store: SessionStore, cwdKey: string): Promise<string | null> {
@@ -76,10 +91,11 @@ export async function findResumeTarget(store: SessionStore, opts: { sessionId: s
     return { projectKey: opts.cwdKey };
   }
 
-  if (!store.listProjectKeys) {
+  const storeExt = store as StoreWithProjectEnumeration;
+  if (!storeExt.listProjectKeys) {
     throw new ResumeTargetError("not_found", `session not found: ${opts.sessionId} (store cannot enumerate other projects)`);
   }
-  const allProjectKeys = await store.listProjectKeys();
+  const allProjectKeys = await storeExt.listProjectKeys();
   const foreignMatches: string[] = [];
   for (const projectKey of allProjectKeys) {
     if (projectKey === opts.cwdKey) continue; // already checked above
@@ -152,69 +168,109 @@ export function toDialectEntries(raw: SessionStoreEntry[]): DialectEntry[] {
   return result;
 }
 
+// --- ancestry-graph walks (fix-round 1, Rulings P1-Q + P1-R) --------------------------------------
+//
+// A session's loaded entries are a GRAPH, not a linear buffer (WS-05 §7): the store is append-only,
+// so an earlier resumeSessionAt leaves its abandoned tail on disk and grows a new branch alongside
+// it — a later load() can return entries whose FILE ORDER (chronological append order) does not
+// match any single branch's causal ancestry. `rebuildProviderMessages` and `truncateAt` both anchor
+// on one specific node and walk `parentUuid` links — never array position — so an abandoned tail or
+// an unrelated sibling branch is excluded BY CONSTRUCTION rather than by validating file positions
+// after the fact (this task's fix-round-1 review caught the original position-based versions of
+// both functions producing wrong results whenever a session had actually branched; the corpus this
+// task's own initial test suite exercised was entirely linear, so it never observed the bug).
+
+function buildUuidIndex(entries: DialectEntry[]): Map<string, DialectEntry> {
+  return new Map(entries.map((e) => [e.uuid, e] as const));
+}
+
+// Walks parentUuid from `leafUuid` back to the root (parentUuid === null), INCLUSIVE of the leaf,
+// returning root-first (chronological) order. Degenerates to file order whenever `entries` is a
+// single, never-branched lineage.
+function ancestryChain(byUuid: Map<string, DialectEntry>, leafUuid: string): DialectEntry[] {
+  const chain: DialectEntry[] = [];
+  const seen = new Set<string>();
+  let cursor: DialectEntry | undefined = byUuid.get(leafUuid);
+  while (cursor) {
+    if (seen.has(cursor.uuid)) break; // cycle guard — defensive only, never true for a chain that passed validateChain
+    seen.add(cursor.uuid);
+    chain.push(cursor);
+    cursor = cursor.parentUuid === null ? undefined : byUuid.get(cursor.parentUuid);
+  }
+  return chain.reverse();
+}
+
+// Ruling P1-R: "descendant" is graph membership, never file position — entry `candidateUuid`
+// descends from `ancestorUuid` iff walking the CANDIDATE's own ancestry passes through the ancestor.
+// Excludes the ancestor itself (a node is not its own descendant).
+function isDescendant(byUuid: Map<string, DialectEntry>, ancestorUuid: string, candidateUuid: string): boolean {
+  if (candidateUuid === ancestorUuid) return false;
+  return ancestryChain(byUuid, candidateUuid).some((e) => e.uuid === ancestorUuid);
+}
+
 /**
- * `resumeSessionAt` — keep only through `atUuid`; `resumeDropsTurn` confirms the caller intends to
- * discard whatever comes after it. This NEVER mutates or deletes stored entries — the store is
- * append-only (WS-05 §6) and the transcript is a graph, not a linear buffer (WS-05 §7): the tail
- * left out of the returned array stays on disk untouched, and continuing from `atUuid` grows a new
- * branch alongside it.
+ * `resumeSessionAt` — keep only `atUuid`'s own ancestry; `resumeDropsTurn` confirms the caller
+ * intends to discard whatever DESCENDS from it. This NEVER mutates or deletes stored entries — the
+ * store is append-only (WS-05 §6): whatever is excluded stays on disk untouched, and continuing
+ * from `atUuid` grows a new branch alongside it.
  *
- * dropsTurn validation (provisional interpretation, same standing as engine.ts's P1-G/P1-H synthetic
- * tool_result shapes — no official capture pins this yet): every entry AFTER atUuid in the given
- * array must be a descendant of atUuid by walking its OWN parentUuid chain. This is what "validates
- * every dropped entry descends from the target user turn" (the brief's phrasing) buys structurally:
- * a transcript that has previously branched (e.g. an earlier resumeSessionAt) can contain entries
- * positioned after atUuid in file order that are NOT actually part of its lineage — silently
- * dropping those would discard unrelated history, not merely "the tail of this turn," so that case
- * is rejected rather than accepted just because dropsTurn was passed.
+ * Ruling P1-R (fix-round 1 — settles this function's originally-provisional interpretation; see
+ * resume.test.ts for the two scenarios that pin it): both "kept" and "dropped" are graph-defined,
+ * never positional.
+ *   - kept = atUuid's own ancestry (`ancestryChain` above), root to atUuid — independent of where
+ *     atUuid sits in file order, and independent of anything else in the file.
+ *   - dropped = every entry that DESCENDS from atUuid (its ancestry passes through atUuid),
+ *     EXCLUDING atUuid itself. "Every dropped entry descends from the target" (the brief's
+ *     original phrasing) IS the definition of "dropped" here — not a validation performed after
+ *     computing "dropped" some other (positional) way.
+ *   - an entry that is NEITHER an ancestor NOR a descendant of atUuid — an off-lineage sibling
+ *     branch, e.g. one abandoned by an earlier, unrelated resumeSessionAt — is simply not on the
+ *     lineage this operation concerns: it needs NO confirmation and triggers NO error regardless of
+ *     dropsTurn, because resuming at atUuid neither keeps nor discards it; it was never part of
+ *     this operation to begin with. Concretely: resuming at an already-abandoned tip (nothing
+ *     downstream of it survives to be dropped) succeeds with `dropsTurn:false`.
+ *   - dropsTurn:false + real descendants exist -> typed error (silently discarding real turn
+ *     content without acknowledgment is refused); dropsTurn:true -> allowed.
  */
 export function truncateAt(entries: DialectEntry[], opts: { atUuid: string; dropsTurn: boolean }): DialectEntry[] {
-  const idx = entries.findIndex((e) => e.uuid === opts.atUuid);
-  if (idx === -1) {
+  const byUuid = buildUuidIndex(entries);
+  if (!byUuid.has(opts.atUuid)) {
     throw new ResumeTruncationError(`resumeSessionAt target uuid not found in this transcript: ${opts.atUuid}`);
   }
-  const kept = entries.slice(0, idx + 1);
-  const dropped = entries.slice(idx + 1);
-  if (dropped.length === 0) return kept;
 
-  if (!opts.dropsTurn) {
+  const kept = ancestryChain(byUuid, opts.atUuid);
+  const dropped = entries.filter((e) => isDescendant(byUuid, opts.atUuid, e.uuid));
+
+  if (dropped.length > 0 && !opts.dropsTurn) {
     throw new ResumeTruncationError(
-      `resumeSessionAt would drop ${dropped.length} entr${dropped.length === 1 ? "y" : "ies"} after ${opts.atUuid}; pass resumeDropsTurn:true to confirm`,
+      `resumeSessionAt would drop ${dropped.length} entr${dropped.length === 1 ? "y" : "ies"} descending from ${opts.atUuid}; pass resumeDropsTurn:true to confirm`,
     );
   }
 
-  const byUuid = new Map(entries.map((e) => [e.uuid, e] as const));
-  for (const d of dropped) {
-    if (!descendsFrom(d, opts.atUuid, byUuid)) {
-      throw new ResumeTruncationError(
-        `resumeSessionAt: dropped entry ${d.uuid} does not descend from the target turn ${opts.atUuid}; refusing to discard unrelated history`,
-      );
-    }
-  }
   return kept;
-}
-
-function descendsFrom(entry: DialectEntry, ancestorUuid: string, byUuid: Map<string, DialectEntry>): boolean {
-  const seen = new Set<string>();
-  let cursor: DialectEntry | undefined = entry;
-  while (cursor) {
-    if (cursor.uuid === ancestorUuid) return true;
-    if (seen.has(cursor.uuid)) return false; // cycle guard — never true for a chain that passed validateChain; defensive only
-    seen.add(cursor.uuid);
-    cursor = cursor.parentUuid === null ? undefined : byUuid.get(cursor.parentUuid);
-  }
-  return false;
 }
 
 // --- rebuilding provider context from a resumed/continued/forked transcript ----------------------
 //
 // The inverse of engine.ts's own accumulation, which the dialect writer flattens into on-disk
-// content-block arrays. Two shapes need un-flattening to reproduce EXACTLY what a continuous,
-// never-resumed run would have accumulated in memory (pinned by resume.test.ts's
-// continuous-vs-split-run fidelity test):
-//   - a tool_result-only "user" entry was pushed to engine.ts's `messages` as role "tool" (the
-//     dialect has no "tool" role — tool results ride "user" on disk, WS-05 §5.2 — but engine.ts's
-//     OWN in-memory history keeps them on a distinct role for round/pairing bookkeeping);
+// content-block arrays. Three shapes need un-flattening/anchoring to reproduce EXACTLY what a
+// continuous, never-resumed run would have accumulated in memory (pinned by resume.test.ts's
+// continuous-vs-split-run fidelity test, and — for the branch case — its own regression test):
+//   - Ruling P1-Q (fix-round 1): anchor at the LEAF — the last APPENDED entry (file order IS append
+//     order, so this is always the current tip, regardless of any earlier branching) — and walk its
+//     ancestry back to the root via `ancestryChain`, exactly like truncateAt above. A PLAIN resume
+//     (no resumeSessionAt on this call) of a session that branched earlier now reconstructs ONLY
+//     the active branch — an abandoned tail is excluded by construction, closing the
+//     merged-context gap this task's own initial report flagged as a concern. Degenerates to file
+//     order for a linear (never-branched) session, so every non-branching test this suite already
+//     had continues to pass unchanged.
+//   - a tool-result batch (including an EMPTY one — reviewer nit: engine.ts can persist
+//     `recordUser([])` when a provider's tool_use turn requests zero calls) is a "user" entry whose
+//     content is an array of tool_result blocks, or an empty array — pushed to engine.ts's
+//     `messages` as role "tool" (the dialect has no "tool" role — tool results ride "user" on disk,
+//     WS-05 §5.2 — but engine.ts's OWN in-memory history keeps them on a distinct role for
+//     round/pairing bookkeeping). An empty array is unambiguously this shape too: this engine never
+//     produces a genuine user turn with empty array content.
 //   - a plain-text assistant reply was pushed as a bare STRING (`messages.push({role:"assistant",
 //     content: turn.text})`), never as the single-element content-block array the dialect always
 //     persists it as (assistantEntry's `content: Block[]` contract is array-always) — collapsed
@@ -225,21 +281,27 @@ function descendsFrom(entry: DialectEntry, ancestorUuid: string, byUuid: Map<str
 // a real one, and both must round-trip verbatim to preserve the tool_use/tool_result pairing
 // invariant on the very next provider request.
 export function rebuildProviderMessages(entries: DialectEntry[]): ProviderMessage[] {
+  if (entries.length === 0) return [];
+  const byUuid = buildUuidIndex(entries);
+  const leafUuid = entries[entries.length - 1]!.uuid; // file order is append order — the last entry is always the current tip
+  const lineage = ancestryChain(byUuid, leafUuid);
+
   const messages: ProviderMessage[] = [];
-  for (const e of entries) {
+  for (const e of lineage) {
     const message = e.message;
-    if (message === undefined) continue; // not a conversational entry — still counts toward chain continuity elsewhere, never fed to the provider
+    if (message === undefined) continue; // not a conversational entry — never fed to the provider (chain continuity is computed from the full entry array elsewhere, not from this function's output)
     const content = message.content;
 
     if (e.type === "user") {
-      if (Array.isArray(content) && content.length > 0 && content.every((b) => isRecord(b) && b.type === "tool_result")) {
+      if (Array.isArray(content) && (content.length === 0 || content.every((b) => isRecord(b) && b.type === "tool_result"))) {
         messages.push({ role: "tool", content: content as ContentBlock[] });
       } else if (typeof content === "string") {
         messages.push({ role: "user", content });
       } else if (Array.isArray(content)) {
         // Not producible by this engine today (a user entry's content is always either plain text
-        // or all-tool_result blocks), but WS-05 §5.1's wider corpus allows richer user content —
-        // pass through rather than silently dropping an unrecognized-but-real shape.
+        // or a — possibly empty — batch of tool_result blocks), but WS-05 §5.1's wider corpus
+        // allows richer user content — pass through rather than silently dropping an
+        // unrecognized-but-real shape.
         messages.push({ role: "user", content: content as ContentBlock[] });
       }
     } else if (e.type === "assistant") {
@@ -249,9 +311,7 @@ export function rebuildProviderMessages(entries: DialectEntry[]): ProviderMessag
         messages.push({ role: "assistant", content: content as ContentBlock[] });
       }
     }
-    // Unknown entry types are skipped for provider context — never fed to a real provider — but the
-    // caller (dialect.ts's resolveEngineSession) computes chain continuity from the FULL entry
-    // array, not from this function's output, so an unknown trailing entry still anchors the chain.
+    // Unknown entry types are skipped for provider context — never fed to a real provider.
   }
   return messages;
 }

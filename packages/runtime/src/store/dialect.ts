@@ -351,9 +351,20 @@ export async function resolveEngineSession(opts: {
   const rawEntries = await TranscriptWriter.readBack(store, { projectKey: targetProjectKey, sessionId: targetSessionId });
   let chainEntries = toDialectEntries(rawEntries);
   if (config.resumeSessionAt !== undefined) {
+    // Ruling P1-R: truncateAt now returns atUuid's own ANCESTRY (root..atUuid), not a positional
+    // prefix — its last element is always atUuid itself, so `lastEntry` below correctly continues
+    // the chain from atUuid regardless of where atUuid sat in the raw, untruncated file order.
     chainEntries = truncateAt(chainEntries, { atUuid: config.resumeSessionAt, dropsTurn: config.resumeDropsTurn ?? false });
   }
 
+  // Ruling P1-Q: rebuildProviderMessages does its OWN internal ancestry walk (anchored at
+  // chainEntries' last element) to exclude an abandoned tail from a PLAIN resume's provider
+  // context — but `lastEntry` here intentionally stays the raw last-in-array element (never
+  // ancestry-filtered itself): for chain CONTINUATION, the next appended entry must always link to
+  // the actual physical tail of what was loaded (the true current tip), which for the untruncated
+  // case is exactly this same last array element rebuildProviderMessages independently re-derives
+  // as its own leaf — the two never disagree, since both read the identical input array's last
+  // position.
   const initialMessages = rebuildProviderMessages(chainEntries);
   const lastEntry = chainEntries.length > 0 ? chainEntries[chainEntries.length - 1] : undefined;
   const initialParentUuid = lastEntry !== undefined ? lastEntry.uuid : null;

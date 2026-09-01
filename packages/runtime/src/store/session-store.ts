@@ -80,6 +80,13 @@ export type SessionSummaryEntry = {
 // intended producer; exported so it never hand-copies the string.
 export const DIALECT_RECORD_ENTRY_TYPE = "winter_dialect_record";
 
+// WS-03 §10 pins this as EXACTLY these six members — Task 9 fix-round 1 (MAJOR finding) reverted an
+// earlier `listProjectKeys?()` addition here after review: exports.json's lack of field-level detail
+// for SessionStore is not license to widen the pinned surface, only silence about it. The
+// project-enumeration capability resume.ts's findResumeTarget needs for WS-05 §7's "then every other
+// project" fallback stays SOLELY on the concrete WinterCompatibilitySessionStore class below
+// (see its own listProjectKeys method) — resume.ts accesses it through a local intersection type,
+// never through this exported type.
 export type SessionStore = {
   append(key: SessionKey, entries: SessionStoreEntry[]): Promise<void>;
   load(key: SessionKey): Promise<SessionStoreEntry[] | null>;
@@ -87,13 +94,6 @@ export type SessionStore = {
   listSessionSummaries?(projectKey: string): Promise<SessionSummaryEntry[]>;
   delete?(key: SessionKey): Promise<void>;
   listSubkeys?(key: { projectKey: string; sessionId: string }): Promise<string[]>;
-  // Task 9, a WINTER-ONLY EXTENSION — NOT part of the WS-03 §10 pin (exports.json lists no
-  // field-level detail for SessionStore at all; this method exists purely so
-  // resume.ts's findResumeTarget can implement WS-05 §7's "then every other project" fallback,
-  // which has no other way to enumerate projects through the abstract SessionStore surface). Task
-  // 10's relocation of SessionStore into the sdk package must not silently treat this as pinned
-  // official API.
-  listProjectKeys?(): Promise<string[]>;
 };
 
 // ---------------------------------------------------------------------------------------------
@@ -559,9 +559,14 @@ export class WinterCompatibilitySessionStore implements SessionStore {
     return [...results];
   }
 
-  // Task 9, Winter-only extension (see the SessionStore type's own comment) — every top-level
-  // directory directly under <winterHome>/projects/, i.e. every known projectKey. No mtime/sort
-  // guarantee, matching listSessions' own "order not guaranteed" contract.
+  // Task 9, Winter-only extension — deliberately NOT part of the exported SessionStore type (see
+  // its own comment above; fix-round 1 reverted an earlier attempt to declare it there). Lives ONLY
+  // here, on the concrete class — a real TS class is free to carry members beyond what an interface
+  // it implements requires, so `this instanceof WinterCompatibilitySessionStore` callers (main.ts,
+  // testing.ts, resume.ts's local intersection cast) can still reach it while `store: SessionStore`
+  // parameters correctly see only the pinned six. Every top-level directory directly under
+  // <winterHome>/projects/, i.e. every known projectKey. No mtime/sort guarantee, matching
+  // listSessions' own "order not guaranteed" contract.
   async listProjectKeys(): Promise<string[]> {
     const dir = join(this.winterHome, "projects");
     let entries: Dirent[];
