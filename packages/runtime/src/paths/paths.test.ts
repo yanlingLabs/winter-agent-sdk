@@ -98,7 +98,12 @@ describe("compatibilityKeys", () => {
     }
   });
 
-  test("/tmp vs /private/tmp resolve to the identical key (macOS realpath symlink)", () => {
+  // darwin-only by nature: the fixture's premise IS macOS's /tmp -> /private/tmp symlink. On linux
+  // /private/tmp does not exist, realpath cannot unify the two spellings, and the equality below is
+  // legitimately false — first real ubuntu CI run (33529015303) proved it (controller Ruling P1-P).
+  // Follow-up (phase fix-wave): a platform-neutral variant that PLANTS a symlinked dir under mkdtemp
+  // and asserts both spellings key identically would test the same realpath-normalization intent everywhere.
+  test.skipIf(process.platform !== "darwin")("/tmp vs /private/tmp resolve to the identical key (macOS realpath symlink)", () => {
     const dir = mkdtempSync("/tmp/winter-paths-test-");
     try {
       const viaTmp = compatibilityKeys(dir);
