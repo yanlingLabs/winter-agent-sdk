@@ -132,6 +132,23 @@ test("oversized single line beyond maxBufferSize → ProtocolDecodeError, not a 
   expect(thrown).toBeInstanceOf(ProtocolDecodeError);
 });
 
+test("maxBufferSize: a complete frame followed by an oversized unterminated tail in ONE chunk still delivers the complete frame first (review Finding 2)", async () => {
+  const hugeTail = "x".repeat(500); // no trailing \n: stays in carry, never becomes a frame
+  const chunk = initFrame() + systemFrame() + hugeTail;
+  const proc = makeFakeProcess({ stdout: chunksIterable([chunk]) });
+  const seen: string[] = [];
+  let thrown: unknown;
+  try {
+    for await (const msg of query({ prompt: "hi", options: { maxBufferSize: 100, spawnClaudeCodeProcess: () => proc } })) {
+      seen.push(msg.type);
+    }
+  } catch (e) {
+    thrown = e;
+  }
+  expect(seen).toEqual(["system"]);
+  expect(thrown).toBeInstanceOf(ProtocolDecodeError);
+});
+
 // --- abort / kill escalation -----------------------------------------------------------------
 
 test("abort signal drains buffered frames then the iterator ends with the pinned cancellation error", async () => {
@@ -163,16 +180,28 @@ test("abort signal escalates SIGTERM then SIGKILL when the process does not comp
   const exited = new Promise<{ code: number | null; signal: string | null }>((res) => {
     settleExited = res;
   });
+  // "Ignores the first signal" means it doesn't die on SIGTERM — it MUST still die (stream closes)
+  // once truly killed (SIGKILL), matching WS-04 §6's "kill/abort ... same observable sequence (exit
+  // event, then stream termination)" for any compliant transport. A double whose stdout never
+  // completes even after a successful kill would not represent any real transport (review Finding
+  // 5) — releaseHang is what "SIGKILL actually lands" looks like here.
+  let releaseHang: (() => void) | undefined;
+  const hang = new Promise<void>((res) => {
+    releaseHang = res;
+  });
   const proc: SpawnedRuntimeProcess = {
     stdin: { write() {}, end() {} },
     stdout: (async function* () {
       yield initFrame();
       yield systemFrame();
-      await new Promise(() => {}); // simulate a runtime that ignores the first signal
+      await hang;
     })(),
     kill(signal?: string) {
       killSignals.push(signal);
-      if (killSignals.length === 2) settleExited({ code: null, signal: signal ?? null });
+      if (killSignals.length === 2) {
+        settleExited({ code: null, signal: signal ?? null });
+        releaseHang?.();
+      }
     },
     exited,
     pid: 999,
@@ -191,6 +220,151 @@ test("abort signal escalates SIGTERM then SIGKILL when the process does not comp
   expect(thrown).toBeInstanceOf(AbortError);
   expect(killSignals.length).toBe(2);
   expect(killSignals[1]).toBe("SIGKILL");
+});
+
+test("abort with a real backlog: 2+ pre-queued frames are all yielded before the cancellation error (review Finding 5)", async () => {
+  const dataFrame1 = encodeFrame({
+    type: "data",
+    message: { type: "assistant", message: { content: [{ type: "text", text: "one" }] } },
+  });
+  const dataFrame2 = encodeFrame({
+    type: "data",
+    message: { type: "assistant", message: { content: [{ type: "text", text: "two" }] } },
+  });
+  // All frames (including the required init) are ALREADY in the pipe — a real backlog, not one
+  // frame trickled in per read — before the consumer ever asks for anything. Aborting before
+  // iteration even starts is the maximal-pressure version of the race Finding 5 identified: an
+  // already-settled `exited` must never win over frames that are already available to drain.
+  const proc = makeFakeProcess({
+    stdout: chunksIterable([initFrame(), systemFrame(), dataFrame1, dataFrame2]),
+    exited: Promise.resolve({ code: null, signal: "SIGTERM" }),
+  });
+  const controller = new AbortController();
+  controller.abort();
+  const seen: string[] = [];
+  let thrown: unknown;
+  try {
+    for await (const msg of query({ prompt: "hi", options: { spawnClaudeCodeProcess: () => proc, abortController: controller } })) {
+      seen.push(msg.type);
+    }
+  } catch (e) {
+    thrown = e;
+  }
+  expect(seen).toEqual(["system", "assistant", "assistant"]);
+  expect(thrown).toBeInstanceOf(AbortError);
+});
+
+test("a terminal success completes cleanly even when abort fires in the same tick as the result (review Finding 6)", async () => {
+  const successResult = encodeFrame({ type: "data", message: { type: "result", subtype: "success", is_error: false, result: "ok" } });
+  const controller = new AbortController();
+  const proc = makeFakeProcess({
+    stdout: chunksIterable([initFrame(), systemFrame(), successResult]),
+    exited: Promise.resolve({ code: 0, signal: null }),
+  });
+  const seen: string[] = [];
+  let thrown: unknown;
+  try {
+    for await (const msg of query({ prompt: "hi", options: { spawnClaudeCodeProcess: () => proc, abortController: controller } })) {
+      seen.push(msg.type);
+      if (msg.type === "result") controller.abort(); // fires while the terminal result is still being processed
+    }
+  } catch (e) {
+    thrown = e;
+  }
+  expect(seen).toEqual(["system", "result"]);
+  expect(thrown).toBeUndefined();
+});
+
+// --- Options.env resolution (controller Ruling P1-D) --------------------------------------------
+
+test("Options.env omitted: the spawn hook receives the wrapper's own process.env (inherit, Ruling P1-D)", async () => {
+  let capturedEnv: Record<string, string> | undefined;
+  const proc = makeFakeProcess({ stdout: chunksIterable([initFrame(), systemFrame()]) });
+  let thrown: unknown;
+  try {
+    for await (const _msg of query({
+      prompt: "hi",
+      options: {
+        spawnClaudeCodeProcess: (opts) => {
+          capturedEnv = opts.env;
+          return proc;
+        },
+      },
+    })) {
+      /* EOF-without-result is expected here; only the captured env matters for this test */
+    }
+  } catch (e) {
+    thrown = e;
+  }
+  expect(capturedEnv).toBeDefined();
+  expect(capturedEnv!.PATH).toBe(process.env.PATH);
+  expect(capturedEnv!.HOME).toBe(process.env.HOME);
+  expect(thrown).toBeInstanceOf(ProcessError);
+});
+
+test("Options.env supplied: the spawn hook receives EXACTLY that env — no PATH leak (replace, unchanged)", async () => {
+  let capturedEnv: Record<string, string> | undefined;
+  const proc = makeFakeProcess({ stdout: chunksIterable([initFrame(), systemFrame()]) });
+  let thrown: unknown;
+  try {
+    for await (const _msg of query({
+      prompt: "hi",
+      options: {
+        env: { FOO: "1" },
+        spawnClaudeCodeProcess: (opts) => {
+          capturedEnv = opts.env;
+          return proc;
+        },
+      },
+    })) {
+      /* EOF-without-result is expected here; only the captured env matters for this test */
+    }
+  } catch (e) {
+    thrown = e;
+  }
+  expect(capturedEnv).toEqual({ FOO: "1" });
+  expect(thrown).toBeInstanceOf(ProcessError);
+});
+
+// --- defaultSpawn: child-process "error" event must never crash the host (review Finding 1) ----
+
+test("defaultSpawn: aborting a live real child surfaces AbortError, not an uncaught exception", async () => {
+  const controller = new AbortController();
+  setTimeout(() => controller.abort(), 30);
+  let thrown: unknown;
+  try {
+    for await (const _msg of query({
+      prompt: "hi",
+      options: {
+        // A real, harmless sleeping child (never speaks the winter protocol) — the point is to
+        // prove the abort path around a REAL defaultSpawn-backed process survives end to end with
+        // no uncaught "error" event crashing the test runner, not protocol semantics.
+        spawnClaudeCodeProcess: (opts) =>
+          defaultSpawn({ ...opts, command: process.execPath, args: ["-e", "setTimeout(() => {}, 5000)"] }),
+        abortController: controller,
+      },
+    })) {
+      /* the sleeping child never writes a frame */
+    }
+  } catch (e) {
+    thrown = e;
+  }
+  expect(thrown).toBeInstanceOf(AbortError);
+});
+
+test("defaultSpawn: a spawn failure (bad executable) surfaces as a typed lifecycle error, not a crash", async () => {
+  let thrown: unknown;
+  try {
+    for await (const _msg of query({
+      prompt: "hi",
+      options: { pathToClaudeCodeExecutable: "/definitely/does/not/exist/winter-xyz-not-real" },
+    })) {
+      /* never reached */
+    }
+  } catch (e) {
+    thrown = e;
+  }
+  expect(thrown).toBeInstanceOf(CLIConnectionError);
 });
 
 // --- defaultSpawn (real child; exercised as a unit here, wired end-to-end in Task 4) -----------

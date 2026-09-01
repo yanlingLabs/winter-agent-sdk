@@ -53,7 +53,11 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
     command,
     args: ["--run", "--config-json", JSON.stringify(config)],
     cwd: config.cwd,
-    env: options.env ?? {}, // REPLACES the child env (WS-03 §5) — never spread with process.env here
+    // Options.env semantics (WS-03 §5, controller Ruling P1-D): an EXPLICITLY supplied env
+    // REPLACES the child environment entirely (consumers spread ...process.env themselves if they
+    // want to extend it); an OMITTED env means the child INHERITS the wrapper's own process.env —
+    // never a silently empty environment (the prior `?? {}` produced exactly that bug).
+    env: options.env ?? (process.env as Record<string, string>),
     ...(options.abortController ? { signal: options.abortController.signal } : {}),
   };
   const proc: SpawnedRuntimeProcess = (options.spawnClaudeCodeProcess ?? defaultSpawn)(spawnOptions);
@@ -98,36 +102,23 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
       let sawTerminal = false;
       let terminalError: Extract<SdkMessage, { type: "result" }> | null = null;
       let carry = "";
-      const it = proc.stdout[Symbol.asyncIterator]();
 
-      readLoop: while (true) {
-        const nextP = it.next();
-        nextP.catch(() => {}); // avoid an unhandled rejection if the "exited" race branch wins first
-
-        let outcome: { kind: "chunk"; r: IteratorResult<string> } | { kind: "exited"; info: { code: number | null; signal: string | null } };
-        if (aborted) {
-          outcome = await Promise.race([
-            nextP.then((r) => ({ kind: "chunk" as const, r })),
-            proc.exited.then((info) => ({ kind: "exited" as const, info })),
-          ]);
-        } else {
-          outcome = { kind: "chunk", r: await nextP };
-        }
-        if (outcome.kind === "exited") break readLoop;
-        if (outcome.r.done) break readLoop;
-
+      // A plain, unraced drain (review Finding 5): racing `stdout` against an independently
+      // resolving `exited` structurally favors `exited` (an already-settled promise's `.then`
+      // enqueues before a fresh async-generator resumption), which can cut off frames that are
+      // ALREADY available to read — silently losing a backlog on abort. WS-04 §1.1 makes this
+      // loop's simplicity safe: a compliant transport (real child or in-memory) MUST end its
+      // stdout by the time `exited` resolves, so trusting stdout to end on its own — never bailing
+      // out early via a side-channel race — is both simpler and correct. `aborted` still decides
+      // WHICH lifecycle error applies once the loop ends; it no longer decides WHEN it ends.
+      readLoop: for await (const chunk of proc.stdout) {
         let frames: WinterFrame[];
         try {
-          const split = splitFrames(outcome.r.value, carry);
+          const split = splitFrames(chunk, carry);
           frames = split.frames;
           carry = split.carry;
         } catch (e) {
           throw new ProtocolDecodeError(e instanceof ProtocolError ? e.message : String(e));
-        }
-        // Bounds the unterminated (no-newline-yet) buffer — the hang vector for a line that never
-        // completes or a single already-huge line (WS-04 §2's maxBufferSize option).
-        if (carry.length > maxBufferSize) {
-          throw new ProtocolDecodeError(`protocol line exceeds maxBufferSize (${maxBufferSize} bytes)`);
         }
 
         for (const frame of frames) {
@@ -155,16 +146,27 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
             break readLoop;
           }
         }
+
+        // Bounds the unterminated (no-newline-yet) buffer — the hang vector for a line that never
+        // completes or a single already-huge line (WS-04 §2's maxBufferSize option). Checked AFTER
+        // yielding this chunk's already-decoded complete frames (review Finding 2): a chunk can
+        // legitimately carry complete frames followed by an oversized unterminated tail, and those
+        // complete frames must still be delivered before the wrapper surfaces the error.
+        if (carry.length > maxBufferSize) {
+          throw new ProtocolDecodeError(`protocol line exceeds maxBufferSize (${maxBufferSize} bytes)`);
+        }
       }
 
-      // WS-04 §6.1: each row below is one code path.
+      // WS-04 §6.1: each row below is one code path. A seen terminal result (success or error)
+      // takes priority over `aborted` (review Finding 6) — a turn that genuinely completed must
+      // complete cleanly (or via ResultError) even if a cancellation happened to land in the same
+      // tick; only the ABSENCE of a terminal result falls through to the abort/death distinction.
+      if (terminalError) throw new ResultError(terminalError); // …then throw (error-result-then-throw, report §9)
+      if (sawTerminal) return;
       if (aborted) throw new AbortError("query aborted: runtime process killed");
       if (!sawInit) throw new CLIConnectionError("runtime exited before init");
-      if (terminalError) throw new ResultError(terminalError); // …then throw (error-result-then-throw, report §9)
-      if (!sawTerminal) {
-        const exitInfo = await proc.exited;
-        throw new ProcessError("unexpected process death: runtime exited without a terminal result", exitInfo.code, exitInfo.signal);
-      }
+      const exitInfo = await proc.exited;
+      throw new ProcessError("unexpected process death: runtime exited without a terminal result", exitInfo.code, exitInfo.signal);
     } finally {
       options.abortController?.signal.removeEventListener("abort", onAbort);
       if (killTimer) clearTimeout(killTimer);

@@ -64,23 +64,60 @@ export function resolveRuntimeExecutable(opts: { pathToClaudeCodeExecutable?: st
   return join(dirname(pkgJsonPath), relativeBin);
 }
 
+// Wraps a raw Node stream's own async iteration in a try/catch: when the underlying process never
+// truly spawned (or died abruptly), consuming its stdio streams can itself throw a raw stream error
+// (observed: ERR_STREAM_PREMATURE_CLOSE) — that is NOT a protocol/lifecycle condition, it's just
+// "no more data" from the wrapper's perspective. Swallowing it here means query.ts's own EOF-based
+// WS-04 §6.1 mapping is what surfaces a typed error, never an unwrapped raw stream exception
+// (review Finding 1; message-level/other raw-stream-error nuances stay tracked for Task 4, Finding 8).
 function textChunks(stream: NodeJS.ReadableStream): AsyncIterable<string> {
   stream.setEncoding("utf8");
-  return stream as unknown as AsyncIterable<string>;
+  return (async function* () {
+    try {
+      for await (const chunk of stream as AsyncIterable<string>) yield chunk;
+    } catch {
+      return;
+    }
+  })();
 }
 
 // Real child via node:child_process (Node ≥18-safe; no Bun-only APIs — packages/sdk ships to
 // consumers running plain Node, WS-02 global constraints).
 export function defaultSpawn(opts: SpawnRuntimeOptions): SpawnedRuntimeProcess {
+  // opts.signal is intentionally NOT forwarded to node's spawn(): Node/Bun's own signal-triggered
+  // kill also emits an "error" event on the child (observed under abort: AbortError from
+  // abortChildProcess) — with no listener that is an uncaught exception (review Finding 1a). The
+  // wrapper (query.ts) already implements its own explicit SIGTERM→SIGKILL escalation via kill(),
+  // so Node's built-in abort-kill path is redundant here and is the crash trigger being removed. A
+  // custom spawnClaudeCodeProcess hook still receives the field and may choose to honor it itself.
   const child = spawn(opts.command, opts.args, {
     cwd: opts.cwd,
     env: opts.env,
     stdio: ["pipe", "pipe", "pipe"],
-    ...(opts.signal ? { signal: opts.signal } : {}),
   });
 
+  let exitedSettled = false;
+  let resolveExited!: (v: { code: number | null; signal: string | null }) => void;
   const exited = new Promise<{ code: number | null; signal: string | null }>((resolve) => {
-    child.on("close", (code, signal) => resolve({ code, signal }));
+    resolveExited = resolve;
+  });
+  child.on("close", (code, signal) => {
+    if (exitedSettled) return;
+    exitedSettled = true;
+    resolveExited({ code, signal });
+  });
+  // A ChildProcess's "error" event (spawn failure — bad executable, ENOENT/EACCES — or any other
+  // spawn/kill/IPC-level failure) has NO default handling: an unlistened "error" event is Node's
+  // one EventEmitter special case that throws, crashing the host (review Finding 1b). This listener
+  // is the fix; it routes the failure into the existing lifecycle seam rather than rethrowing —
+  // settle `exited` (idempotently: "close" may or may not additionally fire per Node's own docs)
+  // with a synthetic, clearly-non-clean pair so query.ts's exit-before-init / unexpected-death
+  // mapping (WS-04 §6.1) produces the typed error once its stdio streams end (see textChunks above).
+  child.on("error", () => {
+    if (!exitedSettled) {
+      exitedSettled = true;
+      resolveExited({ code: null, signal: null });
+    }
   });
 
   return {
