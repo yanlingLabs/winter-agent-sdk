@@ -25,6 +25,16 @@ export type { Duplex, FrameSource, FrameSink } from "./protocol/channel.ts";
 export { echoProvider, scriptedProvider, stubExecutor, isTestProviderName, testProviderByName } from "./provider/mock.ts";
 export type { TestProviderName } from "./provider/mock.ts";
 
+// Paths (Task 6): WINTER_HOME resolution, the exact CC-compatible project-key algorithm, and the
+// D18 per-session temp resolver — consumed by the store (Task 7), the dialect writer (Task 8), and
+// resume (Task 9).
+export { resolveWinterHome } from "./paths/home.ts";
+export { transcriptProjectKey } from "./paths/project-key.ts";
+export { compatibilityKeys } from "./paths/keys.ts";
+export type { CompatibilityKeys } from "./paths/keys.ts";
+export { sessionTempDir, ensureTasksDir, WinterPathsError } from "./paths/temp.ts";
+export type { SessionTempDirOptions, SessionTempDirPaths } from "./paths/temp.ts";
+
 // The wire protocol (frames + codec) moved to the sdk (WS-02 §3 dependency inversion, Task 1):
 // this package now depends on it, never the reverse. Re-exported unchanged so existing
 // runtime-side imports of `winter-agent-runtime` keep compiling.
