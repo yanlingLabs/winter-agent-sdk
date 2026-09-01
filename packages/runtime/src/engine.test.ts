@@ -1,7 +1,7 @@
 import { test, expect } from "bun:test";
 import type { RuntimeConfig, WinterFrame, ControlResponseFrame, ProtocolSdkMessage as SdkMessage } from "@yanlinglabs/winter-agent-sdk";
 import { createInMemoryChannel } from "./protocol/channel.ts";
-import { runEngine, type Provider, type ProviderMessage } from "./engine.ts";
+import { runEngine, type Provider, type ProviderMessage, type ContentBlock, type ToolExecutor } from "./engine.ts";
 import { echoProvider, scriptedProvider, stubExecutor } from "./provider/mock.ts";
 
 // Drains a WinterFrame source fully — used whenever the test writes ALL of its input frames
@@ -173,4 +173,192 @@ test("a non-Error provider throw produces a result whose text is String(thrown),
   expect(result.subtype).toBe("error_during_execution");
   expect(result.is_error).toBe(true);
   expect(result.result).toBe("boom");
+});
+
+// --- Fix round: controller review findings (base dd82776) ---------------------------------------
+
+test("Ruling P1-F: maxTurns accumulates across the whole run, not per envelope — the exceeding round's tool_use is neither emitted nor executed", async () => {
+  const { host, runtime } = createInMemoryChannel();
+  const provider = scriptedProvider([
+    { kind: "tool_use", calls: [{ id: "c1", name: "t", input: {} }] }, // envelope 1, round 1 — within the maxTurns=1 budget
+    { kind: "text", text: "first done" }, // envelope 1 completes normally
+    { kind: "tool_use", calls: [{ id: "c2", name: "t", input: {} }] }, // envelope 2, round 2 — OVER budget cumulatively
+  ]);
+  let executeCallCount = 0;
+  const countingExecutor: ToolExecutor = {
+    async execute(call) {
+      executeCallCount++;
+      return stubExecutor.execute(call);
+    },
+  };
+  const done = runEngine({ config: baseConfig({ maxTurns: 1 }), input: runtime.input, output: runtime.output, provider, tools: countingExecutor });
+
+  host.output.write({ type: "user", text: "first" });
+  host.output.write({ type: "user", text: "second" });
+  host.output.write({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined });
+
+  const frames = await drain(host.input);
+  await done;
+
+  const msgs = dataMessages(frames);
+  // envelope 1: assistant(tool_use) -> user(tool_result) -> assistant(text) -> result(success)
+  // envelope 2: result(error_max_turns) ONLY — no assistant/tool_use frame for the exceeding round
+  expect(msgs.map((m) => m.type)).toEqual(["system", "assistant", "user", "assistant", "result", "result"]);
+  const secondResult = msgs.at(-1)! as Extract<SdkMessage, { type: "result" }>;
+  expect(secondResult.subtype).toBe("error_max_turns");
+  expect(secondResult.is_error).toBe(true);
+  expect(executeCallCount).toBe(1); // only c1 ever ran; c2 was never executed
+});
+
+test("Ruling P1-G: interrupt mid-tool-execution leaves a paired synthetic tool_result, never a dangling tool_use", async () => {
+  const { host, runtime } = createInMemoryChannel();
+  let enteredExecute!: () => void;
+  const entered = new Promise<void>((resolve) => {
+    enteredExecute = resolve;
+  });
+  const blockingTools: ToolExecutor = {
+    execute() {
+      enteredExecute();
+      return new Promise(() => {}); // never resolves — the interrupt must abandon it
+    },
+  };
+  const calls: ProviderMessage[][] = [];
+  let turnCount = 0;
+  const provider: Provider = {
+    async generate({ messages }) {
+      calls.push([...messages]);
+      turnCount++;
+      if (turnCount === 1) return { kind: "tool_use", calls: [{ id: "call1", name: "slow_tool", input: {} }] };
+      return { kind: "text", text: "after interrupt" };
+    },
+  };
+  const done = runEngine({ config: baseConfig(), input: runtime.input, output: runtime.output, provider, tools: blockingTools });
+
+  host.output.write({ type: "user", text: "go" });
+  await entered; // deterministic: only interrupt once we KNOW the engine is blocked inside tools.execute()
+  host.output.write({ type: "control_request", requestId: "int1", subtype: "interrupt", payload: { scope: "turn" } });
+
+  const seen: WinterFrame[] = [];
+  for await (const f of host.input) {
+    seen.push(f);
+    if (f.type === "data" && (f as { message: SdkMessage }).message.type === "result") break;
+  }
+  // Implementation-shape choice under P1-G: the padded tool_result frame IS emitted on the wire
+  // during interrupt (previously nothing was, since the round broke before reaching that write) —
+  // this matches WS-04 §5 draining ("buffered data of the interrupted turn, then its terminal
+  // result") and keeps wire/history/persistence consistent with each other.
+  const interruptedToolResult = dataMessages(seen).find((m) => m.type === "user");
+  expect(interruptedToolResult).toBeDefined();
+  expect((interruptedToolResult as { message: { content: unknown } }).message.content).toEqual([
+    { type: "tool_result", tool_use_id: "call1", content: "[interrupted]", interrupted: true },
+  ]);
+
+  host.output.write({ type: "user", text: "again" });
+  host.output.write({ type: "control_request", requestId: "r2", subtype: "end_input", payload: undefined });
+  await drain(host.input);
+  await done;
+
+  expect(calls.length).toBe(2);
+  const secondCallMessages = calls[1]!;
+  const toolUseMsg = secondCallMessages.find(
+    (m) => m.role === "assistant" && Array.isArray(m.content) && (m.content as ContentBlock[]).some((b) => b.type === "tool_use"),
+  );
+  expect(toolUseMsg).toBeDefined(); // no dangling tool_use — it's exactly this message, paired below
+  const toolResultMsg = secondCallMessages.find((m) => m.role === "tool");
+  expect(toolResultMsg).toBeDefined();
+  expect(toolResultMsg!.content).toEqual([{ type: "tool_result", tool_use_id: "call1", content: "[interrupted]", interrupted: true }]);
+});
+
+test("unknown control subtype gets a structured ok:false response and the engine keeps running", async () => {
+  const { host, runtime } = createInMemoryChannel();
+  const done = runEngine({ config: baseConfig(), input: runtime.input, output: runtime.output, provider: echoProvider, tools: stubExecutor });
+
+  host.output.write({ type: "control_request", requestId: "r1", subtype: "definitely_not_a_thing", payload: undefined });
+  host.output.write({ type: "user", text: "hi" });
+  host.output.write({ type: "control_request", requestId: "r2", subtype: "end_input", payload: undefined });
+
+  const frames = await drain(host.input);
+  const code = await done;
+
+  const unknownResp = frames.find((f) => f.type === "control_response" && (f as ControlResponseFrame).requestId === "r1") as ControlResponseFrame;
+  expect(unknownResp).toBeDefined();
+  expect(unknownResp.ok).toBe(false);
+  expect(unknownResp.error?.code).toBe("unknown_subtype");
+
+  // the engine kept running: the subsequent envelope still turned normally
+  expect(dataMessages(frames).map((m) => m.type)).toEqual(["system", "assistant", "result"]);
+  expect(code).toBe(0);
+});
+
+test("FIFO under pressure: an envelope written while the prior one is genuinely in flight is queued, never dropped or interleaved", async () => {
+  const { host, runtime } = createInMemoryChannel();
+  let releaseGate!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    releaseGate = resolve;
+  });
+  let enteredFirst!: () => void;
+  const enteredFirstPromise = new Promise<void>((resolve) => {
+    enteredFirst = resolve;
+  });
+  let callCount = 0;
+  const provider: Provider = {
+    async generate() {
+      callCount++;
+      if (callCount === 1) {
+        enteredFirst();
+        await gate; // genuinely in flight — not resolved until the test says so
+        return { kind: "text", text: "first-reply" };
+      }
+      return { kind: "text", text: "second-reply" };
+    },
+  };
+  const done = runEngine({ config: baseConfig(), input: runtime.input, output: runtime.output, provider, tools: stubExecutor });
+
+  host.output.write({ type: "user", text: "one" });
+  await enteredFirstPromise; // envelope 1 is genuinely blocked inside generate() right now
+  host.output.write({ type: "user", text: "two" }); // written WHILE envelope 1 is still in flight
+  host.output.write({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined });
+  releaseGate(); // now let envelope 1 finish
+
+  const frames = await drain(host.input);
+  const code = await done;
+
+  const msgs = dataMessages(frames);
+  expect(msgs.map((m) => m.type)).toEqual(["system", "assistant", "result", "assistant", "result"]);
+  expect((msgs[1] as { message: { content: unknown } }).message.content).toEqual([{ type: "text", text: "first-reply" }]);
+  expect((msgs[3] as { message: { content: unknown } }).message.content).toEqual([{ type: "text", text: "second-reply" }]);
+  expect(code).toBe(0);
+});
+
+test("EOF mid-turn: ending input while a turn is genuinely in flight still lets that turn finish before teardown", async () => {
+  const { host, runtime } = createInMemoryChannel();
+  let releaseGate!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    releaseGate = resolve;
+  });
+  let entered!: () => void;
+  const enteredPromise = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const provider: Provider = {
+    async generate() {
+      entered();
+      await gate; // genuinely in flight when EOF arrives below
+      return { kind: "text", text: "done-after-eof" };
+    },
+  };
+  const done = runEngine({ config: baseConfig(), input: runtime.input, output: runtime.output, provider, tools: stubExecutor });
+
+  host.output.write({ type: "user", text: "one" });
+  await enteredPromise; // genuinely in flight inside generate()
+  host.output.end(); // EOF (no explicit end_input) while the turn is still blocked
+  releaseGate(); // let the in-flight turn finish
+
+  const frames = await drain(host.input);
+  const code = await done;
+
+  const msgs = dataMessages(frames);
+  expect(msgs.map((m) => m.type)).toEqual(["system", "assistant", "result"]);
+  expect((msgs.at(-1) as Extract<SdkMessage, { type: "result" }>).result).toBe("done-after-eof");
+  expect(code).toBe(0);
 });

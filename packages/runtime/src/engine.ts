@@ -12,7 +12,11 @@ import { Queue } from "./protocol/channel.ts";
 export type ContentBlock =
   | { type: "text"; text: string }
   | { type: "tool_use"; id: string; name: string; input: unknown }
-  | { type: "tool_result"; tool_use_id: string; content: string };
+  // `interrupted` is optional and set ONLY on a synthetic tool_result the engine manufactures when
+  // a round is cut short after its tool_use was already pushed into history (Ruling P1-G) —
+  // provisional shape pending official capture, same standing pattern as the interrupted-result
+  // shape below. Never set on a real tool_result.
+  | { type: "tool_result"; tool_use_id: string; content: string; interrupted?: boolean };
 
 // The engine's own turn-history record fed back to Provider.generate() on every call. Distinct
 // from the WIRE shape (assistant/user data frames, below): the wire has no "tool" role (tool
@@ -180,6 +184,13 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   })();
 
   const messages: ProviderMessage[] = [];
+  // Ruling P1-F: maxTurns is the RUN's cumulative agentic tool-use round-trip cap (report §8 /
+  // WS-03 §5) — it never resets per user envelope. Declared here, outside the turn loop, so it
+  // persists for runEngine's whole lifetime; once spent, EVERY subsequent tool_use attempt in this
+  // run fails with error_max_turns (sticky-over-limit — incrementing past the limit is harmless,
+  // there's no need to cap the counter itself). A plain-text turn never touches this counter, so a
+  // text-only envelope always succeeds regardless of how much of the budget prior turns spent.
+  let rounds = 0;
 
   for await (const userFrame of userFrames) {
     // Set BEFORE any await this turn (including recordUser below) so the entire turn — from the
@@ -194,7 +205,6 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
     messages.push({ role: "user", content: userText });
     await recordUser(userText);
 
-    let rounds = 0;
     let finalResult: Extract<SdkMessage, { type: "result" }> | null = null;
     let interrupted = false;
 
@@ -249,11 +259,40 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
           break;
         }
       }
-      if (interrupted || finalResult) break roundLoop;
+      // A tool-executor THROW is deliberately NOT covered below (Ruling P1-G scoped its fix to
+      // interrupt only) — it still breaks out here with a possible dangling tool_use in `messages`,
+      // same as before this fix round. Flagged, not fixed: the right synthetic marker for "this
+      // call's tool errored" is a separate shape decision from "this call was interrupted," and
+      // guessing it risks churn a follow-up ruling would avoid (see task-3 report, Concerns).
+      if (finalResult) break roundLoop;
 
+      if (interrupted) {
+        // Ruling P1-G: the tool_use/tool_result pairing invariant must hold in ACCUMULATED HISTORY
+        // even when a round is cut short — the assistant's tool_use was already pushed into
+        // `messages` above, so every one of its calls needs a matching tool_result or the history
+        // Task 8 persists (and any real provider's next request) carries a dangling tool_use, which
+        // a real provider rejects outright. Provisional shape pending official capture (same
+        // standing pattern as the interrupted-result shape below): content "[interrupted]" +
+        // `interrupted: true` marks a call that never got a real result because the turn was
+        // interrupted — covers both "never started" and "was mid-execution when interrupted" calls.
+        const resultedIds = new Set(resultBlocks.map((b) => (b as { tool_use_id: string }).tool_use_id));
+        for (const call of turn.calls) {
+          if (!resultedIds.has(call.id)) {
+            resultBlocks.push({ type: "tool_result", tool_use_id: call.id, content: "[interrupted]", interrupted: true });
+          }
+        }
+      }
+
+      // Emitted/pushed/recorded unconditionally (normal completion OR padded-after-interrupt) so
+      // the wire, the in-memory history, and persistence never disagree about whether this round's
+      // tool_result exists — an implementation-shape choice under P1-G: previously nothing was
+      // emitted here on interrupt, which under-delivered relative to WS-04 §5's drain-after-
+      // interrupt contract ("buffered data of the interrupted turn, then its terminal result").
       output.write({ type: "data", message: { type: "user", message: { content: resultBlocks } } });
       messages.push({ role: "tool", content: resultBlocks });
       await recordUser(resultBlocks);
+
+      if (interrupted) break roundLoop;
       // loop back for the next provider.generate() call
     }
 
