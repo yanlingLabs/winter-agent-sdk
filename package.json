@@ -9,6 +9,7 @@
     "conformance:fetch": "bun run scripts/fetch-upstream.ts",
     "conformance:snapshot": "bun run scripts/gen-declaration-snapshot.ts",
     "differential": "bun run scripts/differential.ts",
+    "build:runtime": "bun run scripts/build-runtime.ts",
     "test": "bun test"
   },
   "devDependencies": {

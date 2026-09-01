@@ -2,3 +2,8 @@ node_modules
 dist
 *.tgz
 /tmp-upstream
+
+# Task 5: the compiled winter binary staged into the platform package — ships at publish time
+# only, built on demand via `bun run build:runtime -- --platform-package` (or verify:compiled's
+# own ephemeral temp-path build, which never touches this directory at all).
+packages/platform/*/bin/
