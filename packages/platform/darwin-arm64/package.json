@@ -1,0 +1,11 @@
+{
+  "name": "@yanlinglabs/winter-agent-sdk-darwin-arm64",
+  "version": "0.0.001",
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "private": true
+}

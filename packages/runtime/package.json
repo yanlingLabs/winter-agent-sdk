@@ -1,0 +1,11 @@
+{
+  "name": "winter-agent-runtime",
+  "version": "0.0.001",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./protocol": "./src/protocol/frames.ts"
+  }
+}

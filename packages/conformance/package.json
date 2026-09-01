@@ -1,0 +1,9 @@
+{
+  "name": "winter-conformance",
+  "version": "0.0.001",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./trace": "./src/trace.ts"
+  }
+}
