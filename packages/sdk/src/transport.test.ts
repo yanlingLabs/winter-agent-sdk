@@ -1,4 +1,8 @@
 import { test, expect } from "bun:test";
+import { createRequire } from "node:module";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { query } from "./query.ts";
 import { resolveRuntimeExecutable, defaultSpawn, type SpawnedRuntimeProcess } from "./transport.ts";
 import { WinterSDKError, CLIConnectionError, ProcessError, ProtocolDecodeError, AbortError } from "./errors.ts";
@@ -52,10 +56,67 @@ const systemFrame = () =>
 
 // --- resolution order ---------------------------------------------------------------------------
 
-test("resolution order: explicit path wins; nothing configured throws the typed executable-not-found error", () => {
+// Whether "nothing configured" throws depends on whether the darwin-arm64 platform package is
+// resolvable at all in THIS environment — pnpm's os/cpu gating on its `optionalDependencies` entry
+// means that varies by platform (installed on a matching darwin/arm64 machine, absent everywhere
+// else, e.g. CI's ubuntu runner). Probed directly rather than assumed from `process.platform`, so
+// this stays correct regardless of exactly which platforms a given pnpm version chooses to link an
+// os-gated optional dependency on.
+const PLATFORM_PACKAGE_RESOLVABLE = (() => {
+  try {
+    createRequire(import.meta.url).resolve("@yanlinglabs/winter-agent-sdk-darwin-arm64/package.json");
+    return true;
+  } catch {
+    return false;
+  }
+})();
+
+test("resolution order: explicit path wins", () => {
   expect(resolveRuntimeExecutable({ pathToClaudeCodeExecutable: "/custom/winter" })).toBe("/custom/winter");
-  expect(() => resolveRuntimeExecutable({})).toThrow(WinterSDKError);
 });
+
+// Task 5 gave the darwin-arm64 platform package a real "bin" field (packages/platform/darwin-arm64/
+// package.json) — so "nothing configured" only throws where the platform package isn't resolvable
+// at all; where it IS resolvable, resolution now succeeds instead (see the darwin-only test below).
+test.skipIf(PLATFORM_PACKAGE_RESOLVABLE)(
+  "resolution order: nothing configured throws the typed executable-not-found error (platform package not installed here)",
+  () => {
+    expect(() => resolveRuntimeExecutable({})).toThrow(WinterSDKError);
+  },
+);
+
+// Task 5, darwin-only (brief-pinned: test.skipIf(process.platform !== "darwin")): stages a
+// placeholder file at the darwin-arm64 platform package's declared "bin" path and proves
+// resolveRuntimeExecutable finds it via the platform package with NO explicit option — the middle
+// rung of the explicit-option -> platform-package -> typed-error order. A placeholder (not a real
+// compiled binary) is sufficient: resolveRuntimeExecutable only ever joins a path read from
+// package.json's "bin" field — it never touches the filesystem to check the target exists or runs
+// — so a real `bun build --compile` is deliberately NOT exercised in this fast unit test; that
+// end-to-end proof is verify:compiled's job (the transport-equivalence suite's compiled leg), not
+// this one's. Backs up/restores any file that already exists at that path rather than deleting it
+// outright, so a developer's own local `bun run build:runtime -- --platform-package` output
+// survives running this test.
+test.skipIf(process.platform !== "darwin")(
+  "resolution order (darwin): platform package's staged bin resolves with no explicit option",
+  () => {
+    const binPath = fileURLToPath(new URL("../../platform/darwin-arm64/bin/winter", import.meta.url));
+    const binDir = dirname(binPath);
+    const dirPreexisted = existsSync(binDir);
+    const previousContent = existsSync(binPath) ? readFileSync(binPath) : undefined;
+    mkdirSync(binDir, { recursive: true });
+    writeFileSync(binPath, "placeholder binary staged by transport.test.ts (Task 5)\n");
+    try {
+      expect(resolveRuntimeExecutable({})).toBe(binPath);
+    } finally {
+      if (previousContent !== undefined) {
+        writeFileSync(binPath, previousContent);
+      } else {
+        rmSync(binPath, { force: true });
+        if (!dirPreexisted) rmSync(binDir, { recursive: true, force: true });
+      }
+    }
+  },
+);
 
 // --- lifecycle mapping (WS-04 §6.1) ---------------------------------------------------------------
 
