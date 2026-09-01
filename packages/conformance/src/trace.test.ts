@@ -29,3 +29,30 @@ test("compareTraces detects a payload difference at the same kind", () => {
   expect(diffs.length).toBeGreaterThan(0);
   expect(diffs[0]).toContain("payload@0");
 });
+
+// Task 11 (WS-03 §14-adjacent): compareTraces must canonicalize BOTH sides before comparing —
+// two independently-built payloads that are the same value under a different key insertion order
+// (e.g. one leg's JS engine/object-spread order vs. the other's) must never register as a diff.
+// Plain JSON.stringify (the pre-Task-11 implementation) IS key-order-sensitive, so this is a real
+// RED against that implementation, not a vacuous assertion.
+test("compareTraces canonicalizes payload key order — same value, different key order, compares equal", () => {
+  const a = normalizeTrace([
+    { sequence: 0, direction: "runtime-to-host", kind: "assistant", payload: { message: { content: "hi" }, model: "sonnet" } },
+  ]);
+  const b = normalizeTrace([
+    { sequence: 0, direction: "runtime-to-host", kind: "assistant", payload: { model: "sonnet", message: { content: "hi" } } },
+  ]);
+  expect(compareTraces(a, b)).toEqual([]);
+});
+
+test("compareTraces canonicalization still catches a real value difference nested at any depth", () => {
+  const a = normalizeTrace([
+    { sequence: 0, direction: "runtime-to-host", kind: "assistant", payload: { message: { content: "hi" }, model: "sonnet" } },
+  ]);
+  const b = normalizeTrace([
+    { sequence: 0, direction: "runtime-to-host", kind: "assistant", payload: { model: "sonnet", message: { content: "bye" } } },
+  ]);
+  const diffs = compareTraces(a, b);
+  expect(diffs.length).toBeGreaterThan(0);
+  expect(diffs[0]).toContain("payload@0");
+});

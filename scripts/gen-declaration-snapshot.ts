@@ -55,12 +55,16 @@ async function extractDtsFromTarball(tarballPath: string): Promise<Record<string
 
 if (import.meta.main) {
   const check = process.argv.includes("--check");
-  const { tarballPath } = await fetchAndVerifyUpstream();
+  const { tarballPath, ownedDir } = await fetchAndVerifyUpstream();
   let dtsFiles: Record<string, string>;
   try {
     dtsFiles = await extractDtsFromTarball(tarballPath);
   } finally {
-    rmSync(dirname(tarballPath), { recursive: true, force: true }); // ephemeral cleanup — tarball + extracted .d.ts never persist
+    // Task 11 guard: this call never passes a cacheDir, so ownedDir is always true today — but the
+    // cleanup is keyed off it (not unconditional) so this caller stays correct the moment it (or
+    // any future caller copying this pattern) ever does pass one. A caller-supplied cacheDir must
+    // never be deleted out from under its owner (WS-02 §6.1).
+    if (ownedDir) rmSync(dirname(tarballPath), { recursive: true, force: true }); // ephemeral cleanup — tarball + extracted .d.ts never persist
   }
 
   if (Object.keys(dtsFiles).length === 0) {

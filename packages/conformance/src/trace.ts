@@ -18,6 +18,25 @@ function strip(v: unknown): unknown {
   }
   return v;
 }
+// Comparison-time-only canonicalization (Task 11): recursively sorts object keys before
+// stringifying so two payloads built in different key orders (e.g. two independent producers, or
+// the same producer across a refactor that reorders an object literal/spread) never register as a
+// spurious diff. Deliberately NOT used by normalizeTrace or anywhere a golden is written to disk —
+// committed goldens keep whatever key order their producer emitted; only the comparison below is
+// order-insensitive.
+function sortKeysDeep(v: unknown): unknown {
+  if (Array.isArray(v)) return v.map(sortKeysDeep);
+  if (v && typeof v === "object") {
+    const out: Record<string, unknown> = {};
+    for (const k of Object.keys(v as Record<string, unknown>).sort()) out[k] = sortKeysDeep((v as Record<string, unknown>)[k]);
+    return out;
+  }
+  return v;
+}
+function canonicalStringify(v: unknown): string {
+  return JSON.stringify(sortKeysDeep(v));
+}
+
 export function compareTraces(a: ConformanceTraceEntry[], b: ConformanceTraceEntry[]): string[] {
   const diffs: string[] = [];
   const n = Math.max(a.length, b.length);
@@ -25,7 +44,7 @@ export function compareTraces(a: ConformanceTraceEntry[], b: ConformanceTraceEnt
     const x = a[i], y = b[i];
     if (!x || !y) { diffs.push(`length mismatch at ${i}`); continue; }
     if (x.kind !== y.kind) diffs.push(`kind@${i}: ${x.kind} != ${y.kind}`);
-    if (JSON.stringify(x.payload) !== JSON.stringify(y.payload)) diffs.push(`payload@${i} (${x.kind}) differs`);
+    if (canonicalStringify(x.payload) !== canonicalStringify(y.payload)) diffs.push(`payload@${i} (${x.kind}) differs`);
   }
   return diffs;
 }
