@@ -409,11 +409,20 @@ async function traceSplitFrameCarry(leg: LegName): Promise<ConformanceTraceEntry
 }
 
 // --- the equivalence suite -----------------------------------------------------------------------
-
-describe("transport equivalence: inMemoryProcess vs the real winter child (main.ts, dev leg)", () => {
+//
+// Registers the 9 equivalence scenarios (WS-04 §12) comparing `legA` against `legB`. Controller
+// ruling (Task 5 rider): this was previously two hand-copied 9-test lists — the block below, plus a
+// verbatim mirror of it for the compiled leg — rejected as the final shape because two
+// hand-mirrored lists WILL drift (a 10th scenario added to one and forgotten in the other is silent
+// coverage loss — this project's most-burned failure class). Extracting the registrations into one
+// function parameterized on leg names removes the duplication entirely: there is exactly one copy
+// of each scenario's body, assertions, and comments, no matter how many leg pairings call this.
+// This function only registers `test()`s — it does not open its own `describe` scope — so each call
+// site keeps its own title.
+function registerEquivalenceScenarios(legA: LegName, legB: LegName): void {
   test("plain query", async () => {
-    const a = await traceViaQuery("inMemory", { prompt: "hi" });
-    const b = await traceViaQuery("child", { prompt: "hi" });
+    const a = await traceViaQuery(legA, { prompt: "hi" });
+    const b = await traceViaQuery(legB, { prompt: "hi" });
     expect(compareTraces(a.trace, b.trace)).toEqual([]);
     expect(a.thrown).toBeUndefined();
     expect(a.trace.map((e) => e.kind)).toEqual(["system/init", "assistant", "result", "exit"]);
@@ -422,8 +431,8 @@ describe("transport equivalence: inMemoryProcess vs the real winter child (main.
   });
 
   test("multi-turn (streaming input, 2 envelopes) — raw wire, independent of query()", async () => {
-    const a = await traceMultiTurn("inMemory");
-    const b = await traceMultiTurn("child");
+    const a = await traceMultiTurn(legA);
+    const b = await traceMultiTurn(legB);
     expect(compareTraces(a, b)).toEqual([]);
     expect(a.map((e) => e.kind)).toEqual(["init", "system/init", "assistant", "result", "assistant", "result", "control_response", "exit"]);
     const first = a[2]!.payload as { message: { content: unknown } };
@@ -442,8 +451,8 @@ describe("transport equivalence: inMemoryProcess vs the real winter child (main.
         yield "first";
         yield "second";
       })();
-    const a = await traceViaQuery("inMemory", { prompt: twoTurns() });
-    const b = await traceViaQuery("child", { prompt: twoTurns() });
+    const a = await traceViaQuery(legA, { prompt: twoTurns() });
+    const b = await traceViaQuery(legB, { prompt: twoTurns() });
     expect(compareTraces(a.trace, b.trace)).toEqual([]);
     expect(a.thrown).toBeUndefined();
     expect(a.trace.map((e) => e.kind)).toEqual(["system/init", "assistant", "result", "assistant", "result", "exit"]);
@@ -454,8 +463,8 @@ describe("transport equivalence: inMemoryProcess vs the real winter child (main.
   });
 
   test("tool round", async () => {
-    const a = await traceViaQuery("inMemory", { prompt: "go", testProviderName: "tooluse" });
-    const b = await traceViaQuery("child", { prompt: "go", testProviderName: "tooluse" });
+    const a = await traceViaQuery(legA, { prompt: "go", testProviderName: "tooluse" });
+    const b = await traceViaQuery(legB, { prompt: "go", testProviderName: "tooluse" });
     expect(compareTraces(a.trace, b.trace)).toEqual([]);
     expect(a.trace.map((e) => e.kind)).toEqual(["system/init", "assistant", "user", "assistant", "result", "exit"]);
     const toolUseMsg = a.trace[1]!.payload as { message: { content: unknown } };
@@ -465,15 +474,15 @@ describe("transport equivalence: inMemoryProcess vs the real winter child (main.
   });
 
   test("interrupt mid-turn", async () => {
-    const a = await traceInterrupt("inMemory");
-    const b = await traceInterrupt("child");
+    const a = await traceInterrupt(legA);
+    const b = await traceInterrupt(legB);
     expect(compareTraces(a, b)).toEqual([]);
     expect(a.map((e) => e.kind)).toEqual(["init", "system/init", "control_response", "result", "control_response", "exit"]);
   });
 
   test("split-frame carry (a frame written across two stdin slices decodes correctly)", async () => {
-    const a = await traceSplitFrameCarry("inMemory");
-    const b = await traceSplitFrameCarry("child");
+    const a = await traceSplitFrameCarry(legA);
+    const b = await traceSplitFrameCarry(legB);
     expect(compareTraces(a, b)).toEqual([]);
     expect(a.map((e) => e.kind)).toEqual(["init", "system/init", "assistant", "result", "control_response", "exit"]);
     const assistantMsg = a[2]!.payload as { message: { content: unknown } };
@@ -481,8 +490,8 @@ describe("transport equivalence: inMemoryProcess vs the real winter child (main.
   });
 
   test("error-result-then-throw (boom)", async () => {
-    const a = await traceViaQuery("inMemory", { prompt: "hi", testProviderName: "boom" });
-    const b = await traceViaQuery("child", { prompt: "hi", testProviderName: "boom" });
+    const a = await traceViaQuery(legA, { prompt: "hi", testProviderName: "boom" });
+    const b = await traceViaQuery(legB, { prompt: "hi", testProviderName: "boom" });
     expect(compareTraces(a.trace, b.trace)).toEqual([]);
     // A cross-leg diff alone can't catch a bug shared by both legs — assert the actual contract
     // directly too (report §9: the error result is yielded, THEN the iterator throws).
@@ -498,8 +507,8 @@ describe("transport equivalence: inMemoryProcess vs the real winter child (main.
     const killOnSystem = (msg: { type: string }, ctx: { proc: SpawnedRuntimeProcess | undefined }) => {
       if (msg.type === "system") ctx.proc?.kill();
     };
-    const a = await traceViaQuery("inMemory", { prompt: "hi", testProviderName: "hang", onMessage: killOnSystem });
-    const b = await traceViaQuery("child", { prompt: "hi", testProviderName: "hang", onMessage: killOnSystem });
+    const a = await traceViaQuery(legA, { prompt: "hi", testProviderName: "hang", onMessage: killOnSystem });
+    const b = await traceViaQuery(legB, { prompt: "hi", testProviderName: "hang", onMessage: killOnSystem });
     expect(compareTraces(a.trace, b.trace)).toEqual([]);
     // Both legs must surface the TYPED WS-04 §6.1 error, never a raw stream error (T2-deferred
     // finding, folded into this scenario per the task brief).
@@ -512,13 +521,17 @@ describe("transport equivalence: inMemoryProcess vs the real winter child (main.
     const abortOnSystem = (msg: { type: string }, ctx: { abort: () => void }) => {
       if (msg.type === "system") ctx.abort();
     };
-    const a = await traceViaQuery("inMemory", { prompt: "hi", testProviderName: "hang", useAbortController: true, onMessage: abortOnSystem });
-    const b = await traceViaQuery("child", { prompt: "hi", testProviderName: "hang", useAbortController: true, onMessage: abortOnSystem });
+    const a = await traceViaQuery(legA, { prompt: "hi", testProviderName: "hang", useAbortController: true, onMessage: abortOnSystem });
+    const b = await traceViaQuery(legB, { prompt: "hi", testProviderName: "hang", useAbortController: true, onMessage: abortOnSystem });
     expect(compareTraces(a.trace, b.trace)).toEqual([]);
     expect(a.thrown).toBeInstanceOf(AbortError);
     expect(b.thrown).toBeInstanceOf(AbortError);
     expect(a.trace.map((e) => e.kind)).toEqual(["system/init", "exit"]);
   });
+}
+
+describe("transport equivalence: inMemoryProcess vs the real winter child (main.ts, dev leg)", () => {
+  registerEquivalenceScenarios("inMemory", "child");
 });
 
 // --- child-leg-only plumbing: stderr, and the T2 finding-7 observation --------------------------
@@ -604,118 +617,11 @@ describe("Finding 7 (T2, tracked — observe only, no fix): abort BEFORE query()
 // the block above this comment is byte-unchanged from before this task, and without the env var it
 // is the ENTIRE suite, exactly as today (brief: "the suite adds the leg when the env var is set").
 //
-// Every test below is a DELIBERATE near-verbatim copy of its counterpart in "transport equivalence:
-// inMemoryProcess vs the real winter child" above, with ONLY the second leg's name changed from
-// "child" to "compiled" — reusing traceViaQuery/traceMultiTurn/traceInterrupt/traceSplitFrameCarry
-// completely unchanged (their only leg-branch point is spawnHook, so they are leg-agnostic by
-// construction; see this file's header note). A parametrized refactor of the original block would
-// touch code a reviewer already approved; a verbatim mirror keeps that block trivially diffable
-// against its pre-Task-5 form and makes this block trivially diffable against IT.
+// Same 9 scenarios as "transport equivalence: inMemoryProcess vs the real winter child" above —
+// registerEquivalenceScenarios is the ONLY copy of their bodies/assertions (Task 5 rider: a second,
+// hand-copied 9-test list here was rejected specifically because two such lists WILL drift).
 if (process.env.WINTER_COMPILED_BIN) {
   describe("transport equivalence: inMemoryProcess vs the compiled winter binary (Task 5)", () => {
-    test("plain query", async () => {
-      const a = await traceViaQuery("inMemory", { prompt: "hi" });
-      const b = await traceViaQuery("compiled", { prompt: "hi" });
-      expect(compareTraces(a.trace, b.trace)).toEqual([]);
-      expect(a.thrown).toBeUndefined();
-      expect(a.trace.map((e) => e.kind)).toEqual(["system/init", "assistant", "result", "exit"]);
-      const assistantMsg = a.trace[1]!.payload as { message: { content: unknown } };
-      expect(assistantMsg.message.content).toEqual([{ type: "text", text: "echo: hi" }]);
-    });
-
-    test("multi-turn (streaming input, 2 envelopes) — raw wire, independent of query()", async () => {
-      const a = await traceMultiTurn("inMemory");
-      const b = await traceMultiTurn("compiled");
-      expect(compareTraces(a, b)).toEqual([]);
-      expect(a.map((e) => e.kind)).toEqual(["init", "system/init", "assistant", "result", "assistant", "result", "control_response", "exit"]);
-      const first = a[2]!.payload as { message: { content: unknown } };
-      expect(first.message.content).toEqual([{ type: "text", text: "echo: first" }]);
-      const second = a[4]!.payload as { message: { content: unknown } };
-      expect(second.message.content).toEqual([{ type: "text", text: "echo: second" }]);
-    });
-
-    test("multi-turn via query() (streaming input, 2 envelopes)", async () => {
-      const twoTurns = () =>
-        (async function* () {
-          yield "first";
-          yield "second";
-        })();
-      const a = await traceViaQuery("inMemory", { prompt: twoTurns() });
-      const b = await traceViaQuery("compiled", { prompt: twoTurns() });
-      expect(compareTraces(a.trace, b.trace)).toEqual([]);
-      expect(a.thrown).toBeUndefined();
-      expect(a.trace.map((e) => e.kind)).toEqual(["system/init", "assistant", "result", "assistant", "result", "exit"]);
-      const first = a.trace[1]!.payload as { message: { content: unknown } };
-      expect(first.message.content).toEqual([{ type: "text", text: "echo: first" }]);
-      const second = a.trace[3]!.payload as { message: { content: unknown } };
-      expect(second.message.content).toEqual([{ type: "text", text: "echo: second" }]);
-    });
-
-    test("tool round", async () => {
-      const a = await traceViaQuery("inMemory", { prompt: "go", testProviderName: "tooluse" });
-      const b = await traceViaQuery("compiled", { prompt: "go", testProviderName: "tooluse" });
-      expect(compareTraces(a.trace, b.trace)).toEqual([]);
-      expect(a.trace.map((e) => e.kind)).toEqual(["system/init", "assistant", "user", "assistant", "result", "exit"]);
-      const toolUseMsg = a.trace[1]!.payload as { message: { content: unknown } };
-      expect(toolUseMsg.message.content).toEqual([{ type: "tool_use", id: "test-call-1", name: "test_tool", input: { probe: true } }]);
-      const toolResultMsg = a.trace[2]!.payload as { message: { content: unknown } };
-      expect(toolResultMsg.message.content).toEqual([{ type: "tool_result", tool_use_id: "test-call-1", content: 'test_tool:{"probe":true}' }]);
-    });
-
-    test("interrupt mid-turn", async () => {
-      const a = await traceInterrupt("inMemory");
-      const b = await traceInterrupt("compiled");
-      expect(compareTraces(a, b)).toEqual([]);
-      expect(a.map((e) => e.kind)).toEqual(["init", "system/init", "control_response", "result", "control_response", "exit"]);
-    });
-
-    test("split-frame carry (a frame written across two stdin slices decodes correctly)", async () => {
-      const a = await traceSplitFrameCarry("inMemory");
-      const b = await traceSplitFrameCarry("compiled");
-      expect(compareTraces(a, b)).toEqual([]);
-      expect(a.map((e) => e.kind)).toEqual(["init", "system/init", "assistant", "result", "control_response", "exit"]);
-      const assistantMsg = a[2]!.payload as { message: { content: unknown } };
-      expect(assistantMsg.message.content).toEqual([{ type: "text", text: "echo: carried" }]);
-    });
-
-    test("error-result-then-throw (boom)", async () => {
-      const a = await traceViaQuery("inMemory", { prompt: "hi", testProviderName: "boom" });
-      const b = await traceViaQuery("compiled", { prompt: "hi", testProviderName: "boom" });
-      expect(compareTraces(a.trace, b.trace)).toEqual([]);
-      // A cross-leg diff alone can't catch a bug shared by both legs — assert the actual contract
-      // directly too (report §9: the error result is yielded, THEN the iterator throws).
-      expect(a.thrown).toBeInstanceOf(ResultError);
-      expect(b.thrown).toBeInstanceOf(ResultError);
-      expect(a.trace.map((e) => e.kind)).toEqual(["system/init", "result", "exit"]);
-      const resultMsg = a.trace[1]!.payload as { is_error?: boolean; result?: string };
-      expect(resultMsg.is_error).toBe(true);
-      expect(resultMsg.result).toContain("boom");
-    });
-
-    test("EOF-without-result (kill mid-turn)", async () => {
-      const killOnSystem = (msg: { type: string }, ctx: { proc: SpawnedRuntimeProcess | undefined }) => {
-        if (msg.type === "system") ctx.proc?.kill();
-      };
-      const a = await traceViaQuery("inMemory", { prompt: "hi", testProviderName: "hang", onMessage: killOnSystem });
-      const b = await traceViaQuery("compiled", { prompt: "hi", testProviderName: "hang", onMessage: killOnSystem });
-      expect(compareTraces(a.trace, b.trace)).toEqual([]);
-      // Both legs must surface the TYPED WS-04 §6.1 error, never a raw stream error (T2-deferred
-      // finding, folded into this scenario per the task brief).
-      expect(a.thrown).toBeInstanceOf(ProcessError);
-      expect(b.thrown).toBeInstanceOf(ProcessError);
-      expect(a.trace.map((e) => e.kind)).toEqual(["system/init", "exit"]);
-    });
-
-    test("abort mid-turn (AbortController -> AbortError after drain)", async () => {
-      const abortOnSystem = (msg: { type: string }, ctx: { abort: () => void }) => {
-        if (msg.type === "system") ctx.abort();
-      };
-      const a = await traceViaQuery("inMemory", { prompt: "hi", testProviderName: "hang", useAbortController: true, onMessage: abortOnSystem });
-      const b = await traceViaQuery("compiled", { prompt: "hi", testProviderName: "hang", useAbortController: true, onMessage: abortOnSystem });
-      expect(compareTraces(a.trace, b.trace)).toEqual([]);
-      expect(a.thrown).toBeInstanceOf(AbortError);
-      expect(b.thrown).toBeInstanceOf(AbortError);
-      expect(a.trace.map((e) => e.kind)).toEqual(["system/init", "exit"]);
-    });
+    registerEquivalenceScenarios("inMemory", "compiled");
   });
 }
