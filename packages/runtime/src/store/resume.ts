@@ -11,7 +11,10 @@
 //                           typed refusal, never an arbitrary pick.
 //   forkSession: true    -> (combined with continue/resume) copies the resolved target into a fresh
 //                           uuid FIRST; the original is left byte-identical; no undo/file-history is
-//                           copied (neither exists yet at P1 — nothing to carry or omit).
+//                           copied (neither exists yet at P1 — nothing to carry or omit). Task 10:
+//                           the primitive that implements this bullet now lives in
+//                           packages/sdk/src/store/fork-session.ts (forkSessionByKey) — see this
+//                           file's own note further down, where it used to be defined.
 //   resumeSessionAt      -> keep only atUuid's own ANCESTRY (root..atUuid, graph-defined — Ruling
 //                           P1-R, fix-round 1); resumeDropsTurn confirms (and validates) discarding
 //                           atUuid's DESCENDANTS specifically, never an unrelated sibling branch.
@@ -20,9 +23,12 @@
 // (append) order — a session can branch (an earlier resumeSessionAt leaves its abandoned tail on
 // disk, WS-05 §7: "the transcript is a graph, not a linear buffer"), so file order alone conflates
 // unrelated branches. See the "ancestry-graph walks" section below (Rulings P1-Q + P1-R).
-import { randomUUID } from "node:crypto";
 import type { ProviderMessage, ContentBlock } from "../engine.ts";
-import type { SessionKey, SessionStore, SessionStoreEntry } from "./session-store.ts";
+// session-store.ts moved to the sdk package (Task 10, WS-05 §6) — SessionKey is no longer needed
+// here (it was only forkSession's own parameter/return-construction type; forkSession itself
+// relocated to packages/sdk/src/store/fork-session.ts alongside the store, see this file's own
+// header comment above and task-10-report.md).
+import type { SessionStore, SessionStoreEntry } from "@yanlinglabs/winter-agent-sdk";
 
 export class ResumeTargetError extends Error {
   readonly reason: "not_found" | "ambiguous";
@@ -114,26 +120,14 @@ export async function findResumeTarget(store: SessionStore, opts: { sessionId: s
   return { projectKey: foreignMatches[0]! };
 }
 
-/**
- * `resume + forkSession: true` — copies `src`'s entries into a brand-new lowercase RFC4122 v4
- * session id, with each copied entry's OWN `sessionId` field rewritten to the fork's id (uuid/
- * parentUuid/content are otherwise untouched — the fork's conversational identity is byte-for-byte
- * the source's, just re-owned). `src` is never written to: forkSession only reads it (via
- * store.load) and appends to the NEW key, so the source stays byte-identical on disk by
- * construction. No undo/file-history copies (WS-05 §7) — neither exists in this codebase yet, so
- * there is nothing to carry forward or omit; revisit when either lands.
- */
-export async function forkSession(store: SessionStore, src: SessionKey): Promise<{ sessionId: string }> {
-  const entries = await store.load(src);
-  if (entries === null) {
-    throw new ResumeTargetError("not_found", `forkSession: source session not found: ${JSON.stringify(src)}`);
-  }
-  const newSessionId = randomUUID();
-  const rewritten = entries.map((e) => (typeof e.sessionId === "string" ? { ...e, sessionId: newSessionId } : e));
-  const destKey: SessionKey = { projectKey: src.projectKey, sessionId: newSessionId, ...(src.subpath !== undefined ? { subpath: src.subpath } : {}) };
-  await store.append(destKey, rewritten);
-  return { sessionId: newSessionId };
-}
+// Task 10 (WS-05 §6, Controller resolution): the `resume + forkSession: true` store-level
+// primitive that used to live here relocated to packages/sdk/src/store/fork-session.ts, alongside
+// the store it operates on (the store itself moved there in the same task) — ONE implementation,
+// never fork-copied. dialect.ts's resolveEngineSession is this codebase's only production caller of
+// the resumed target's fork step; it now imports the primitive directly from the sdk as
+// `forkSessionByKey`, since this file no longer has any relationship to it. See
+// task-10-report.md for the full relocation writeup, including why its not-found error is now
+// SessionNotFoundError (sdk/src/errors.ts) rather than this file's own ResumeTargetError.
 
 // The narrow slice of a loaded SessionStoreEntry that resume's own algorithms need: a real chain
 // identity (uuid/parentUuid) plus enough of the message to rebuild provider context. Deliberately

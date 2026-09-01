@@ -10,7 +10,8 @@ import { join } from "node:path";
 import { resolveProjectDirName } from "./project-dir-name.ts";
 import { WinterPathsError } from "./temp.ts";
 import { sessionTempDir } from "./temp.ts";
-import { compatibilityKeys } from "./keys.ts";
+// keys.ts moved to the sdk package (Task 10, WS-05 §6).
+import { compatibilityKeys } from "@yanlinglabs/winter-agent-sdk";
 
 describe("resolveProjectDirName (Controller Ruling P1-N)", () => {
   test("defaults to the given projectKey when WINTER_PROJECT_DIR_NAME is unset", () => {

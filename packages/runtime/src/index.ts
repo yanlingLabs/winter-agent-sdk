@@ -27,11 +27,14 @@ export type { TestProviderName } from "./provider/mock.ts";
 
 // Paths (Task 6): WINTER_HOME resolution, the exact CC-compatible project-key algorithm, and the
 // D18 per-session temp resolver — consumed by the store (Task 7), the dialect writer (Task 8), and
-// resume (Task 9).
-export { resolveWinterHome } from "./paths/home.ts";
-export { transcriptProjectKey } from "./paths/project-key.ts";
-export { compatibilityKeys } from "./paths/keys.ts";
-export type { CompatibilityKeys } from "./paths/keys.ts";
+// resume (Task 9). Task 10 moved home.ts/project-key.ts/keys.ts into the sdk package (WS-05 §6) —
+// re-exported here unchanged (pass-through) so existing runtime-side imports of
+// `winter-agent-runtime` (e.g. packages/sdk/src/transport-equivalence.test.ts) keep compiling.
+// temp.ts/project-dir-name.ts stay runtime-private, unaffected.
+export { resolveWinterHome } from "@yanlinglabs/winter-agent-sdk";
+export { transcriptProjectKey } from "@yanlinglabs/winter-agent-sdk";
+export { compatibilityKeys } from "@yanlinglabs/winter-agent-sdk";
+export type { CompatibilityKeys } from "@yanlinglabs/winter-agent-sdk";
 export { sessionTempDir, ensureTasksDir, WinterPathsError } from "./paths/temp.ts";
 export type { SessionTempDirOptions, SessionTempDirPaths } from "./paths/temp.ts";
 // Controller Ruling P1-N: WINTER_PROJECT_DIR_NAME override for the PERSISTENT transcript-project
@@ -41,16 +44,17 @@ export type { SessionTempDirOptions, SessionTempDirPaths } from "./paths/temp.ts
 export { resolveProjectDirName } from "./paths/project-dir-name.ts";
 
 // The filesystem SessionStore (Task 7, WS-05 §6): the pinned WS-03 §10 SessionStore/SessionKey/
-// SessionStoreEntry/SessionSummaryEntry type family (authored here per Controller Ruling P1-O —
-// Task 10 relocates store+type into the sdk package) plus the concrete filesystem-backed store and
-// its typed errors (leases.ts).
+// SessionStoreEntry/SessionSummaryEntry type family plus the concrete filesystem-backed store and
+// its typed errors (leases.ts). Task 10 moved the store+type into the sdk package (Controller
+// Ruling P1-O anticipated exactly this) — re-exported here unchanged (pass-through), same as the
+// paths re-exports above.
 export {
   WinterCompatibilitySessionStore,
   WinterStoreError,
   WinterStoreLeaseError,
   DIALECT_RECORD_ENTRY_TYPE,
-} from "./store/session-store.ts";
-export type { SessionKey, SessionStoreEntry, SessionSummaryEntry, SessionStore } from "./store/session-store.ts";
+} from "@yanlinglabs/winter-agent-sdk";
+export type { SessionKey, SessionStoreEntry, SessionSummaryEntry, SessionStore } from "@yanlinglabs/winter-agent-sdk";
 
 // The Claude-dialect transcript writer/reader (Task 8, WS-05 §5.2): converts engine turn content
 // into Claude-transcript-compatible JSONL entries and appends them through the store above.
@@ -69,9 +73,14 @@ export {
 } from "./store/dialect.ts";
 export type { Block, Chain, SessionCtx, DialectEntryBase, UserEntryOpts, TranscriptWriterOptions, ResolvedEngineSession } from "./store/dialect.ts";
 
-// Resume/continue/fork/resume-at (Task 9, WS-05 §7): the pure store-level primitives resume.ts
-// implements and resolveEngineSession above orchestrates.
-export { findContinueTarget, findResumeTarget, forkSession, truncateAt, toDialectEntries, rebuildProviderMessages, ResumeTargetError, ResumeTruncationError } from "./store/resume.ts";
+// Resume/continue/resume-at (Task 9, WS-05 §7): the pure store-level primitives resume.ts
+// implements and resolveEngineSession above orchestrates. Task 10 relocated the fourth primitive,
+// forkSession, to the sdk package alongside the store (exported above as `forkSessionByKey` is
+// NOT re-exported from here: nothing outside this file imported `forkSession` via this package's
+// own index before the move -- dialect.ts, this index's only internal-ish consumer, now imports it
+// directly from the sdk -- so there is nothing to preserve pass-through compatibility for; see
+// task-10-report.md).
+export { findContinueTarget, findResumeTarget, truncateAt, toDialectEntries, rebuildProviderMessages, ResumeTargetError, ResumeTruncationError } from "./store/resume.ts";
 export type { DialectEntry } from "./store/resume.ts";
 
 // The wire protocol (frames + codec) moved to the sdk (WS-02 §3 dependency inversion, Task 1):

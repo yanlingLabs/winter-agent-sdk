@@ -1,7 +1,10 @@
 import { lstatSync, mkdirSync, chmodSync, realpathSync } from "node:fs";
 import type { Stats } from "node:fs";
 import { join } from "node:path";
-import { isUnset } from "./home.ts";
+// home.ts moved to the sdk package (Task 10, WS-05 §6) — isUnset is the one piece of it this
+// runtime-private module still needs; reused from there rather than re-implemented, preserving
+// the "one shared blank-env-value rule" this file's own resolveTempBase comment documents.
+import { isUnset } from "@yanlinglabs/winter-agent-sdk";
 
 export class WinterPathsError extends Error {
   constructor(message: string) {

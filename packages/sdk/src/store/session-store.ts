@@ -61,6 +61,12 @@ export type SessionStoreEntry = { type: string; uuid?: string; timestamp?: strin
 // resolved (WINTER_PROJECT_DIR_NAME-overridden, or default) directory name this session is actually
 // stored under, so a later resume prefers this recorded value over a fresh env resolution rather
 // than guessing from the CURRENT environment (dialect.ts's resolveEngineSession).
+//
+// Task 10 extends it once more with `name`/`tags` — WS-03 §3.1's own words: "metadata (name, tags)
+// is application-facing storage API, not an implementation artifact." Written by the standalone
+// session-management API's renameSession/tagSession (../sessions.ts) via mergeSessionMetadata
+// below; first-classed here (rather than left to the `[key: string]: unknown` index signature)
+// following the exact precedent Tasks 8/9 set for their own sidecar extensions.
 export type SessionSummaryEntry = {
   sessionId: string;
   entryCount: number;
@@ -71,6 +77,8 @@ export type SessionSummaryEntry = {
   producerEngineVersion?: string;
   dialectFamily?: "claude-code-jsonl";
   projectDirName?: string;
+  name?: string;
+  tags?: string[];
   [key: string]: unknown;
 };
 
@@ -577,5 +585,35 @@ export class WinterCompatibilitySessionStore implements SessionStore {
       throw err;
     }
     return entries.filter((e) => e.isDirectory()).map((e) => e.name);
+  }
+
+  // Task 10, Winter-only extension — same posture as listProjectKeys above: deliberately NOT part
+  // of the exported SessionStore type (WS-03 §10 pins exactly six members), lives ONLY on the
+  // concrete class. A minimal store addition (flagged in task-10-report.md) so the standalone
+  // session-management API's renameSession/tagSession (../sessions.ts) can merge caller-supplied
+  // metadata into the summary sidecar under the SAME writer lease + atomic-write discipline
+  // append()/foldSummary already use for that exact file — rather than a second,
+  // independently-implemented read-modify-write in a different module racing the real one.
+  // Lease-guarded (unlike a bare read+writeJsonAtomically) because foldSummary's own read-modify-
+  // write only ever runs already inside append()'s held lease — an unleased merge here could lose
+  // an update raced against a live engine session actively appending to the same summary file.
+  // `patch`'s own conditional keys naturally implement "only touch the field being set" (an
+  // omitted field spreads nothing, leaving `...previous`'s value for it untouched) — callers pass
+  // exactly one of `name`/`tags` per call today, but this merges any combination correctly.
+  async mergeSessionMetadata(key: { projectKey: string; sessionId: string }, patch: { name?: string; tags?: string[] }): Promise<void> {
+    const stem = sessionStem(this.winterHome, key.projectKey, key.sessionId);
+    const lockPath = `${stem}.lock`;
+    acquireLease(lockPath);
+    chmodSync(lockPath, 0o600);
+
+    const summaryPath = `${stem}.summary.json`;
+    const previous = readJsonIfExists<Partial<SessionSummaryEntry>>(summaryPath) ?? {};
+    const updated = {
+      ...previous,
+      ...patch,
+      sessionId: key.sessionId,
+      mtime: Date.now(),
+    } as SessionSummaryEntry;
+    writeJsonAtomically(summaryPath, updated);
   }
 }

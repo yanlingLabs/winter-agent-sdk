@@ -16,8 +16,9 @@ import { encodeFrame, splitFrames } from "@yanlinglabs/winter-agent-sdk";
 import type { RuntimeConfig, WinterFrame, SpawnedRuntimeProcess } from "@yanlinglabs/winter-agent-sdk";
 
 import { userEntry, assistantEntry, TranscriptWriter, RUNTIME_ENGINE_VERSION, type Chain, type SessionCtx } from "./dialect.ts";
-import { WinterCompatibilitySessionStore, DIALECT_RECORD_ENTRY_TYPE, type SessionStoreEntry } from "./session-store.ts";
-import { compatibilityKeys } from "../paths/keys.ts";
+// session-store.ts and paths/keys.ts moved to the sdk package (Task 10, WS-05 §6).
+import { WinterCompatibilitySessionStore, DIALECT_RECORD_ENTRY_TYPE, type SessionStoreEntry } from "@yanlinglabs/winter-agent-sdk";
+import { compatibilityKeys } from "@yanlinglabs/winter-agent-sdk";
 import { inMemoryProcess } from "../testing.ts";
 import { scriptedProvider, stubExecutor } from "../provider/mock.ts";
 

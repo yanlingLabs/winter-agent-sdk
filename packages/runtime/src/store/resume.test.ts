@@ -1,11 +1,15 @@
 // Task 9 (WS-05 §7): continue/resume/fork/resume-at.
 //
-// This file covers the four pure/store-level primitives in resume.ts directly (findContinueTarget,
-// findResumeTarget, forkSession, truncateAt), the P1-N record/apply mechanics (resolveEngineSession
-// persists+prefers the resolved WINTER_PROJECT_DIR_NAME), and end-to-end engine wiring (resume
-// message-rebuild fidelity, forkSession-on-resume, resumeSessionAt, pre-allocated sessionId,
-// persistSession:false). The cross-process/cross-leg equivalence scenario lives in
-// packages/sdk/src/transport-equivalence.test.ts (extends registerEquivalenceScenarios).
+// This file covers the three pure/store-level primitives still in resume.ts directly
+// (findContinueTarget, findResumeTarget, truncateAt), the P1-N record/apply mechanics
+// (resolveEngineSession persists+prefers the resolved WINTER_PROJECT_DIR_NAME), and end-to-end
+// engine wiring (resume message-rebuild fidelity, forkSession-on-resume, resumeSessionAt,
+// pre-allocated sessionId, persistSession:false). The cross-process/cross-leg equivalence scenario
+// lives in packages/sdk/src/transport-equivalence.test.ts (extends registerEquivalenceScenarios).
+// Task 10: the fourth primitive, forkSession, relocated to the sdk package alongside the store
+// (packages/sdk/src/store/fork-session.ts) -- its own unit tests moved to
+// packages/sdk/src/store/fork-session.test.ts; the "forkSession on resume" end-to-end test below
+// stays here since it's exercising resolveEngineSession's orchestration, not the primitive itself.
 //
 // Every winterHome below is a fresh mkdtemp under the OS temp dir — never ~/.winter, ~/.norma,
 // ~/.claude, or a real shared path. cwd fixtures are synthetic ("/winter-fixture") so a derived
@@ -21,15 +25,19 @@ import type { RuntimeConfig, WinterFrame, SpawnedRuntimeProcess } from "@yanling
 import {
   findContinueTarget,
   findResumeTarget,
-  forkSession,
   truncateAt,
   rebuildProviderMessages,
   ResumeTargetError,
   ResumeTruncationError,
   type DialectEntry,
 } from "./resume.ts";
-import { WinterCompatibilitySessionStore, type SessionStoreEntry } from "./session-store.ts";
-import { compatibilityKeys } from "../paths/keys.ts";
+// session-store.ts and paths/keys.ts moved to the sdk package (Task 10, WS-05 §6); forkSession's
+// own low-level primitive relocated with the store too (packages/sdk/src/store/fork-session.ts) --
+// its unit tests moved alongside it into packages/sdk/src/store/fork-session.test.ts, so this file
+// no longer imports or exercises it directly (its own "forkSession on resume" end-to-end test
+// below only configures RuntimeConfig.forkSession, a same-named but unrelated boolean option).
+import { WinterCompatibilitySessionStore, type SessionStoreEntry } from "@yanlinglabs/winter-agent-sdk";
+import { compatibilityKeys } from "@yanlinglabs/winter-agent-sdk";
 import { inMemoryProcess } from "../testing.ts";
 import { scriptedProvider, stubExecutor, echoProvider } from "../provider/mock.ts";
 import type { Provider, ProviderMessage, ToolExecutor } from "../engine.ts";
@@ -142,75 +150,6 @@ describe("findResumeTarget", () => {
       }
       expect(thrown).toBeInstanceOf(ResumeTargetError);
       expect((thrown as ResumeTargetError).reason).toBe("ambiguous");
-    } finally {
-      rmSync(home, { recursive: true, force: true });
-    }
-  });
-});
-
-// --- forkSession -------------------------------------------------------------------------------
-
-const RFC4122_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
-
-describe("forkSession", () => {
-  test("copies entries into a new session under a fresh lowercase RFC4122 v4 uuid, rewriting each entry's sessionId", async () => {
-    const home = freshHome();
-    try {
-      const store = new WinterCompatibilitySessionStore({ winterHome: home });
-      const src = { projectKey: "proj", sessionId: "src-session" };
-      await store.append(src, [
-        { type: "user", uuid: "u1", parentUuid: null, sessionId: "src-session", message: { role: "user", content: "hi" } },
-        { type: "assistant", uuid: "u2", parentUuid: "u1", sessionId: "src-session", message: { role: "assistant", content: "hello" } },
-      ]);
-
-      const { sessionId: forkedId } = await forkSession(store, src);
-      expect(RFC4122_V4.test(forkedId)).toBe(true);
-      expect(forkedId).not.toBe("src-session");
-
-      const forkedEntries = await store.load({ projectKey: "proj", sessionId: forkedId });
-      expect(forkedEntries).not.toBeNull();
-      expect(forkedEntries!.length).toBe(2);
-      for (const e of forkedEntries!) expect(e.sessionId).toBe(forkedId);
-      // uuid/parentUuid/content are preserved verbatim — only sessionId is rewritten.
-      expect(forkedEntries![0]!.uuid).toBe("u1");
-      expect(forkedEntries![1]!.parentUuid).toBe("u1");
-      expect(forkedEntries![0]!.message).toEqual({ role: "user", content: "hi" });
-    } finally {
-      rmSync(home, { recursive: true, force: true });
-    }
-  });
-
-  test("leaves the source transcript byte-identical on disk", async () => {
-    const home = freshHome();
-    try {
-      const store = new WinterCompatibilitySessionStore({ winterHome: home });
-      const src = { projectKey: "proj", sessionId: "src-session" };
-      await store.append(src, [
-        { type: "user", uuid: "u1", parentUuid: null, sessionId: "src-session", message: { role: "user", content: "hi" } },
-      ]);
-      const srcPath = join(home, "projects", "proj", "src-session.jsonl");
-      const before = readFileSync(srcPath);
-
-      await forkSession(store, src);
-
-      const after = readFileSync(srcPath);
-      expect(after.equals(before)).toBe(true);
-    } finally {
-      rmSync(home, { recursive: true, force: true });
-    }
-  });
-
-  test("throws a typed not-found error when the source session doesn't exist", async () => {
-    const home = freshHome();
-    try {
-      const store = new WinterCompatibilitySessionStore({ winterHome: home });
-      let thrown: unknown;
-      try {
-        await forkSession(store, { projectKey: "proj", sessionId: "never-existed" });
-      } catch (e) {
-        thrown = e;
-      }
-      expect(thrown).toBeInstanceOf(ResumeTargetError);
     } finally {
       rmSync(home, { recursive: true, force: true });
     }

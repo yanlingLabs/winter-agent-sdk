@@ -11,18 +11,25 @@
 // frames, no subagent transcripts, no resume (Task 9).
 import { randomUUID } from "node:crypto";
 import type { RuntimeConfig } from "@yanlinglabs/winter-agent-sdk";
-import type { ContentBlock, ProviderMessage, SessionPersistence } from "../engine.ts";
-import { resolveWinterHome } from "../paths/home.ts";
-import { compatibilityKeys } from "../paths/keys.ts";
-import { resolveProjectDirName } from "../paths/project-dir-name.ts";
+// Task 10 (WS-05 §6): the store, path-key helpers, and the store-level fork primitive all moved to
+// the sdk package — this file imports them from there now, same dependency direction as the
+// Task-1 protocol inversion (runtime -> sdk, never the reverse). forkSessionByKey is the relocated
+// store-level primitive (packages/sdk/src/store/fork-session.ts): the ONLY caller left in this
+// file, so it is imported directly here rather than re-exported through resume.ts (which no longer
+// has any relationship to it — see task-10-report.md).
 import {
   WinterCompatibilitySessionStore,
   DIALECT_RECORD_ENTRY_TYPE,
+  resolveWinterHome,
+  compatibilityKeys,
+  forkSessionByKey,
   type SessionKey,
   type SessionStore,
   type SessionStoreEntry,
-} from "./session-store.ts";
-import { findContinueTarget, findResumeTarget, forkSession, truncateAt, toDialectEntries, rebuildProviderMessages } from "./resume.ts";
+} from "@yanlinglabs/winter-agent-sdk";
+import type { ContentBlock, ProviderMessage, SessionPersistence } from "../engine.ts";
+import { resolveProjectDirName } from "../paths/project-dir-name.ts";
+import { findContinueTarget, findResumeTarget, truncateAt, toDialectEntries, rebuildProviderMessages } from "./resume.ts";
 
 // The dialect's own name for a content block. Same shapes engine.ts's ContentBlock already
 // produces (text/tool_use/tool_result, P1-G's `interrupted` and P1-H's `error` markers included) —
@@ -344,7 +351,7 @@ export async function resolveEngineSession(opts: {
   if (config.forkSession === true) {
     // "forkSession on resume creates the fork FIRST then resumes the new uuid" (task brief) — the
     // fork lives alongside its source, in the SAME project directory (targetProjectKey unchanged).
-    const forked = await forkSession(store, { projectKey: targetProjectKey, sessionId: targetSessionId });
+    const forked = await forkSessionByKey(store, { projectKey: targetProjectKey, sessionId: targetSessionId });
     targetSessionId = forked.sessionId;
   }
 

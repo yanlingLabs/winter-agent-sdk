@@ -41,3 +41,19 @@ export class AbortError extends WinterSDKError {
     this.name = "AbortError";
   }
 }
+// Task 10 (WS-03 §3.1, §11): the "session-not-found" taxonomy member for the standalone
+// session-management API (packages/sdk/src/sessions.ts) — an unknown sessionId, or one that
+// exists in more than one project when no `directory` was supplied to disambiguate. Shape mirrors
+// resume.ts's ResumeTargetError (Task 9's identical ambiguity-refusal precedent: "not_found" for
+// zero matches, "ambiguous" for more than one, never an arbitrary pick) rather than errors.ts's
+// other, field-less classes, since that precedent is what this error's own semantics come from.
+// The relocated store-level forkSession primitive (store/fork-session.ts) also throws this for its
+// own source-not-found case, rather than ResumeTargetError, since it now lives in this package.
+export class SessionNotFoundError extends WinterSDKError {
+  readonly reason: "not_found" | "ambiguous";
+  constructor(reason: "not_found" | "ambiguous", message: string) {
+    super(message);
+    this.name = "SessionNotFoundError";
+    this.reason = reason;
+  }
+}
