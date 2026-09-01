@@ -1,0 +1,8 @@
+{
+  "package": "@anthropic-ai/claude-agent-sdk",
+  "version": "0.3.250",
+  "tarballUrl": "https://registry.npmjs.org/@anthropic-ai/claude-agent-sdk/-/claude-agent-sdk-0.3.250.tgz",
+  "wrapperTarballSha256": "207b771f94aab6ffd025b039d6f911e20ad0634c50c09206c0ca7c3601b40d95",
+  "darwinArm64NativeSha256": "506d7362a9c625306044879a9d91d8f33bd2eef963681b56be3295db5fe3e34b",
+  "claudeCode": "2.1.250"
+}
