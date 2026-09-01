@@ -11,3 +11,12 @@ test("stamps every workspace manifest with the VERSION value", () => {
   expect((result[0]!.json.optionalDependencies as Record<string,string>)["@yanlinglabs/winter-agent-sdk-darwin-arm64"]).toBe("1.2.345");
   expect(result[1]!.json.version).toBe("1.2.345");
 });
+
+test("normalizes padded VERSION (0.0.001) to unpadded semver (0.0.1)", () => {
+  const result = computeSyncedManifests("0.0.014", [
+    { path: "packages/sdk/package.json", json: { version: "0.0.1", optionalDependencies: { "@yanlinglabs/winter-agent-sdk-darwin-arm64": "0.0.1" } } },
+  ]);
+  expect(result[0]!.json.version).toBe("0.0.14");
+  // lockstep: optionalDependencies also get normalized
+  expect((result[0]!.json.optionalDependencies as Record<string,string>)["@yanlinglabs/winter-agent-sdk-darwin-arm64"]).toBe("0.0.14");
+});

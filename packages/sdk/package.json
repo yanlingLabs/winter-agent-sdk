@@ -1,6 +1,6 @@
 {
   "name": "@yanlinglabs/winter-agent-sdk",
-  "version": "0.0.001",
+  "version": "0.0.1",
   "type": "module",
   "engines": {
     "node": ">=18"
@@ -10,7 +10,7 @@
     ".": "./src/index.ts"
   },
   "optionalDependencies": {
-    "@yanlinglabs/winter-agent-sdk-darwin-arm64": "0.0.001"
+    "@yanlinglabs/winter-agent-sdk-darwin-arm64": "0.0.1"
   },
   "dependencies": {
     "winter-agent-runtime": "workspace:*"

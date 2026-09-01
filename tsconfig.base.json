@@ -2,6 +2,6 @@
   "compilerOptions": {
     "target": "ES2022", "module": "ESNext", "moduleResolution": "bundler",
     "strict": true, "noUncheckedIndexedAccess": true, "exactOptionalPropertyTypes": true,
-    "declaration": true, "skipLibCheck": true, "types": ["bun"]
+    "declaration": true, "skipLibCheck": true, "types": ["bun"], "allowImportingTsExtensions": true
   }
 }

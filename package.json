@@ -10,5 +10,9 @@
     "conformance:snapshot": "bun run scripts/gen-declaration-snapshot.ts",
     "differential": "bun run scripts/differential.ts",
     "test": "bun test"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.0",
+    "typescript": "^5.6.0"
   }
 }
