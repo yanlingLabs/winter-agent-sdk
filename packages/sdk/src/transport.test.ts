@@ -361,8 +361,14 @@ test("Options.env omitted: the spawn hook receives the wrapper's own process.env
     thrown = e;
   }
   expect(capturedEnv).toBeDefined();
-  expect(capturedEnv!.PATH).toBe(process.env.PATH);
-  expect(capturedEnv!.HOME).toBe(process.env.HOME);
+  // Assert definedness before comparing (Task 5 rider): process.env.PATH/HOME are `string |
+  // undefined` — asserting each is actually set FIRST makes a genuine "PATH is unset in this
+  // environment" failure fail loudly and specifically here, rather than risk two `undefined`s
+  // quietly comparing equal and passing without ever proving inheritance carried a real value.
+  expect(process.env.PATH).toBeDefined();
+  expect(process.env.HOME).toBeDefined();
+  expect(capturedEnv!.PATH).toBe(process.env.PATH!);
+  expect(capturedEnv!.HOME).toBe(process.env.HOME!);
   expect(thrown).toBeInstanceOf(ProcessError);
 });
 

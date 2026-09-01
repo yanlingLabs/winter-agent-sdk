@@ -10,6 +10,9 @@ jobs:
         with: { version: 10 }
       - run: pnpm install
       - run: bun test                              # all unit tests (codec, runtime, wrapper, trace, version)
+      - run: bun run typecheck                     # whole-repo tsc --noEmit incl. test files (sdk, runtime,
+                                                     # conformance/src, scripts) — Task 5 rider; `bun test` only
+                                                     # type-strips, so this is the repo's one real tsc gate
       - run: bun run conformance:fetch             # ephemeral pinned-tarball fetch + checksum verify (Task 2)
       - run: bun run conformance:snapshot -- --check  # declaration drift gate (Task 3)
       - run: bunx tsc --noEmit -p packages/conformance/tsconfig.winter.json   # consumer fixture (winter)
