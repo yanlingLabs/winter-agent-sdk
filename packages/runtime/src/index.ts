@@ -48,8 +48,16 @@ export {
   WinterCompatibilitySessionStore,
   WinterStoreError,
   WinterStoreLeaseError,
+  DIALECT_RECORD_ENTRY_TYPE,
 } from "./store/session-store.ts";
 export type { SessionKey, SessionStoreEntry, SessionSummaryEntry, SessionStore } from "./store/session-store.ts";
+
+// The Claude-dialect transcript writer/reader (Task 8, WS-05 §5.2): converts engine turn content
+// into Claude-transcript-compatible JSONL entries and appends them through the store above.
+// createTranscriptPersistence/resolveProductionWinterHome are the shared wiring main.ts and
+// testing.ts both call to honor RuntimeConfig.persistSession.
+export { userEntry, assistantEntry, TranscriptWriter, TranscriptWriterError, RUNTIME_ENGINE_VERSION, createTranscriptPersistence, resolveProductionWinterHome } from "./store/dialect.ts";
+export type { Block, Chain, SessionCtx, DialectEntryBase, UserEntryOpts, TranscriptWriterOptions } from "./store/dialect.ts";
 
 // The wire protocol (frames + codec) moved to the sdk (WS-02 §3 dependency inversion, Task 1):
 // this package now depends on it, never the reverse. Re-exported unchanged so existing

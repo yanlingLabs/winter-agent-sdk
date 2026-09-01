@@ -16,6 +16,7 @@ import { splitFrames, encodeFrame } from "@yanlinglabs/winter-agent-sdk";
 import type { FrameSource, FrameSink } from "./protocol/channel.ts";
 import { runEngine, type Provider } from "./engine.ts";
 import { echoProvider, stubExecutor, isTestProviderName, testProviderByName } from "./provider/mock.ts";
+import { createTranscriptPersistence, resolveProductionWinterHome } from "./store/dialect.ts";
 
 // Same argv contract as winter-agent-runtime/testing's inMemoryProcess (Task 2): find the flag by
 // NAME, never by position. Position-based parsing would silently break between the two ways this
@@ -89,12 +90,18 @@ const stdoutFrameSink: FrameSink = {
 try {
   const config = parseConfigFromArgv(process.argv);
   const provider = resolveProvider();
+  // Task 8: persists by default (RuntimeConfig.persistSession defaults ON) to config.winterHome, or
+  // else the real WINTER_HOME|~/.winter (resolveProductionWinterHome) — this is the REAL production
+  // entrypoint, so unlike testing.ts's inMemoryProcess it deliberately DOES fall through to the
+  // real environment/homedir when nothing overrides it.
+  const store = createTranscriptPersistence({ config, resolveWinterHome: () => resolveProductionWinterHome(config, process.env) });
   const code = await runEngine({
     config,
     input: stdinFrameSource(),
     output: stdoutFrameSink,
     provider,
     tools: stubExecutor,
+    ...(store !== undefined ? { store } : {}),
   });
   process.exit(code);
 } catch (err) {

@@ -50,14 +50,29 @@ export type SessionStoreEntry = { type: string; uuid?: string; timestamp?: strin
 // mechanical shape (just enough for listSessionSummaries to be real and testable now): folded
 // purely from entry COUNT/TYPE/TIMESTAMP on every append, never interpreting entry semantics.
 // Recorded as an explicit Open question in task-7-report.md rather than silently invented.
+//
+// Task 8 EXTENDS this (never removes the mechanical fields above) with the dialect writer's
+// Winter-private producer/dialect metadata (WS-05 §5.4, narrowed to what P1 needs — the full
+// TranscriptDialectRecord shape there is later-task scope). Delivered via DIALECT_RECORD_ENTRY_TYPE
+// below, never a transcript line; optional because a summary folded before Task 8 (or any plain,
+// non-dialect append) may not carry them.
 export type SessionSummaryEntry = {
   sessionId: string;
   entryCount: number;
   mtime: number;
   lastEntryType?: string;
   lastTimestamp?: string;
+  producerRuntime?: "claude-agent" | "winter-agent";
+  producerEngineVersion?: string;
+  dialectFamily?: "claude-code-jsonl";
   [key: string]: unknown;
 };
+
+// Task 8: a reserved SessionStoreEntry.type recognized by append() alongside "agent_metadata" —
+// its fields are folded into the summary sidecar (see foldSummary) and it is NEVER written to the
+// jsonl or returned by load(). dialect.ts (packages/runtime/src/store/dialect.ts) is the only
+// intended producer; exported so it never hand-copies the string.
+export const DIALECT_RECORD_ENTRY_TYPE = "winter_dialect_record";
 
 export type SessionStore = {
   append(key: SessionKey, entries: SessionStoreEntry[]): Promise<void>;
@@ -333,17 +348,42 @@ function walkResourceStems(dir: string, prefix: string, out: Set<string>): void 
   }
 }
 
-function foldSummary(summaryPath: string, sessionId: string, newEntries: SessionStoreEntry[]): void {
+// Task 8: `dialectExtra` (when given) is the DIALECT_RECORD_ENTRY_TYPE entry's own fields, minus
+// its `type` discriminator — folded in ALONGSIDE the mechanical fields below, never replacing them.
+// Spread order is load-bearing: `...previous` first (so anything not touched this call — dialect
+// fields included — survives untouched), then `...dialectExtra` (a fresh dialect record always
+// wins over a stale previous one), then the mechanical fields LAST and unconditionally (they must
+// never be shadowed by a caller-supplied `dialectExtra`, even a maliciously/accidentally colliding
+// one — hence computing `mechanical` into its own object rather than trusting spread order alone
+// across three sources). `newEntries` can be empty here (a dialect-only append, append()'s guard
+// allows calling this with zero native entries) — guarded so a dialect-only fold neither derefs a
+// nonexistent lastEntry nor bumps entryCount/lastEntryType/lastTimestamp for entries that don't
+// exist.
+function foldSummary(
+  summaryPath: string,
+  sessionId: string,
+  newEntries: SessionStoreEntry[],
+  dialectExtra?: Record<string, unknown>,
+): void {
   const previous = readJsonIfExists<Partial<SessionSummaryEntry>>(summaryPath) ?? {};
-  const lastEntry = newEntries[newEntries.length - 1]!; // guarded by newEntries.length > 0 at the call site
-  const updated: SessionSummaryEntry = {
+  const mechanical: Partial<SessionSummaryEntry> = {};
+  if (newEntries.length > 0) {
+    const lastEntry = newEntries[newEntries.length - 1]!;
+    mechanical.entryCount = (previous.entryCount ?? 0) + newEntries.length;
+    mechanical.lastEntryType = lastEntry.type;
+    if (lastEntry.timestamp !== undefined) mechanical.lastTimestamp = lastEntry.timestamp;
+  }
+  // `dialectExtra`'s values are runtime-arbitrary (Record<string, unknown> — append() partitions it
+  // generically, without statically knowing dialect.ts's specific field names) — an `as` cast here
+  // mirrors readJsonIfExists's own "trust the runtime shape" cast just above in this file, rather
+  // than fighting exactOptionalPropertyTypes over an assignment TS cannot verify structurally.
+  const updated = {
     ...previous,
+    ...dialectExtra,
     sessionId,
-    entryCount: (previous.entryCount ?? 0) + newEntries.length,
-    lastEntryType: lastEntry.type,
-    ...(lastEntry.timestamp !== undefined ? { lastTimestamp: lastEntry.timestamp } : {}),
+    ...mechanical,
     mtime: Date.now(),
-  };
+  } as SessionSummaryEntry;
   writeJsonAtomically(summaryPath, updated);
 }
 
@@ -370,12 +410,19 @@ export class WinterCompatibilitySessionStore implements SessionStore {
 
     // agent_metadata envelopes are partitioned OUT of the native jsonl stream (WS-05 §6): only
     // the latest one survives, written atomically to the .meta.json sidecar; load() re-synthesizes
-    // it after native entries. Every other entry is a normal native jsonl line.
+    // it after native entries. Task 8's DIALECT_RECORD_ENTRY_TYPE is partitioned the same way, but
+    // never written anywhere on its own — its fields (minus the `type` discriminator) are folded
+    // into the summary sidecar below instead (WS-05 §5.2: Winter-private metadata is never a
+    // transcript line). Every other entry is a normal native jsonl line.
     const nativeEntries: SessionStoreEntry[] = [];
     let latestMetadata: SessionStoreEntry | undefined;
+    let dialectExtra: Record<string, unknown> | undefined;
     for (const e of entries) {
       if (e.type === "agent_metadata") {
         latestMetadata = e;
+      } else if (e.type === DIALECT_RECORD_ENTRY_TYPE) {
+        const { type: _type, ...fields } = e;
+        dialectExtra = fields;
       } else {
         nativeEntries.push(e);
       }
@@ -387,8 +434,12 @@ export class WinterCompatibilitySessionStore implements SessionStore {
     if (latestMetadata !== undefined) {
       writeJsonAtomically(metaPath, latestMetadata);
     }
-    if (key.subpath === undefined && nativeEntries.length > 0) {
-      foldSummary(`${sessionStem(this.winterHome, key.projectKey, key.sessionId)}.summary.json`, key.sessionId, nativeEntries);
+    // Summary folding (mechanical fields AND the dialect record) is main-key only — a subpath key
+    // (a subagent transcript) has no summary sidecar of its own (WS-05 §6), so a dialect-record
+    // entry sent on a subpath key is partitioned out of its jsonl above and then silently dropped
+    // here, same as it would be for any other summary-only metadata on a subkey.
+    if (key.subpath === undefined && (nativeEntries.length > 0 || dialectExtra !== undefined)) {
+      foldSummary(`${sessionStem(this.winterHome, key.projectKey, key.sessionId)}.summary.json`, key.sessionId, nativeEntries, dialectExtra);
     }
   }
 

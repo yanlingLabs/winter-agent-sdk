@@ -269,6 +269,83 @@ test("Ruling P1-G: interrupt mid-tool-execution leaves a paired synthetic tool_r
   expect(toolResultMsg!.content).toEqual([{ type: "tool_result", tool_use_id: "call1", content: "[interrupted]", interrupted: true }]);
 });
 
+test("Ruling P1-H: a tool-executor throw leaves a paired synthetic tool_result, never a dangling tool_use", async () => {
+  const { host, runtime } = createInMemoryChannel();
+  const throwingTools: ToolExecutor = {
+    async execute(call) {
+      if (call.id === "call1") return { output: "ok" };
+      throw new Error("tool boom");
+    },
+  };
+  const calls: ProviderMessage[][] = [];
+  let turnCount = 0;
+  const provider: Provider = {
+    async generate({ messages }) {
+      calls.push([...messages]);
+      turnCount++;
+      if (turnCount === 1) {
+        return {
+          kind: "tool_use",
+          calls: [
+            { id: "call1", name: "good_tool", input: {} },
+            { id: "call2", name: "bad_tool", input: {} },
+          ],
+        };
+      }
+      return { kind: "text", text: "after throw" };
+    },
+  };
+  const done = runEngine({ config: baseConfig(), input: runtime.input, output: runtime.output, provider, tools: throwingTools });
+
+  host.output.write({ type: "user", text: "go" });
+
+  const seen: WinterFrame[] = [];
+  for await (const f of host.input) {
+    seen.push(f);
+    if (f.type === "data" && (f as { message: SdkMessage }).message.type === "result") break;
+  }
+
+  // call1's REAL result is preserved; call2 (the one that threw) gets a synthetic error marker —
+  // implementation-shape choice under P1-H, same class as P1-G's "[interrupted]" shape: content
+  // "[error: <thrown>]" + `error: true`, using the SAME Error-message-or-String(err) rendering the
+  // engine already uses for the top-level error result text (see this test's `result.result`
+  // assertion below) rather than a bare, unconditional `String(thrown)` — a deliberate reading of
+  // the ruling's literal wording, documented in the task-8 report.
+  const toolResultMsg = dataMessages(seen).find((m) => m.type === "user") as { message: { content: unknown } } | undefined;
+  expect(toolResultMsg).toBeDefined();
+  expect(toolResultMsg!.message.content).toEqual([
+    { type: "tool_result", tool_use_id: "call1", content: "ok" },
+    { type: "tool_result", tool_use_id: "call2", content: "[error: tool boom]", error: true },
+  ]);
+
+  // the terminal result is still the real error_during_execution result — P1-H pads history/wire,
+  // it does not invent a different terminal outcome
+  const result = dataMessages(seen).at(-1) as Extract<SdkMessage, { type: "result" }>;
+  expect(result.type).toBe("result");
+  expect(result.subtype).toBe("error_during_execution");
+  expect(result.is_error).toBe(true);
+  expect(result.result).toBe("tool boom");
+
+  // back to idle: a follow-up turn's history has no dangling tool_use — it's fully paired
+  host.output.write({ type: "user", text: "again" });
+  host.output.write({ type: "control_request", requestId: "r2", subtype: "end_input", payload: undefined });
+  await drain(host.input);
+  await done;
+
+  expect(calls.length).toBe(2);
+  const secondCallMessages = calls[1]!;
+  const toolUseMsg = secondCallMessages.find(
+    (m) => m.role === "assistant" && Array.isArray(m.content) && (m.content as ContentBlock[]).some((b) => b.type === "tool_use"),
+  );
+  expect(toolUseMsg).toBeDefined(); // no dangling tool_use — it's exactly this message, paired below
+  const toolResultHistoryMsg = secondCallMessages.find((m) => m.role === "tool");
+  expect(toolResultHistoryMsg).toBeDefined();
+  expect(toolResultHistoryMsg!.content).toEqual([
+    { type: "tool_result", tool_use_id: "call1", content: "ok" },
+    { type: "tool_result", tool_use_id: "call2", content: "[error: tool boom]", error: true },
+  ]);
+});
+
 test("unknown control subtype gets a structured ok:false response and the engine keeps running", async () => {
   const { host, runtime } = createInMemoryChannel();
   const done = runEngine({ config: baseConfig(), input: runtime.input, output: runtime.output, provider: echoProvider, tools: stubExecutor });

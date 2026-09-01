@@ -21,8 +21,11 @@
 //    this file list's scope) rather than silently worked around.
 //  - split-frame-carry: exercises splitFrames' carry mechanism directly at the transport boundary
 //    (a frame's bytes deliberately split across two stdin writes) — unrelated to query() at all.
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect, afterAll } from "bun:test";
 import { fileURLToPath } from "node:url";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { query } from "./query.ts";
 import { defaultSpawn, type SpawnedRuntimeProcess, type SpawnRuntimeOptions, type SpawnClaudeCodeProcess } from "./transport.ts";
 import { ResultError, ProcessError, AbortError, CLIConnectionError } from "./errors.ts";
@@ -30,8 +33,19 @@ import { encodeFrame, splitFrames } from "./protocol/codec.ts";
 import type { WinterFrame, ControlResponseFrame } from "./protocol/frames.ts";
 import type { RuntimeConfig } from "./protocol/config.ts";
 import { inMemoryProcess } from "winter-agent-runtime/testing";
-import { echoProvider, testProviderByName, type TestProviderName } from "winter-agent-runtime";
+import { echoProvider, stubExecutor, testProviderByName, type TestProviderName } from "winter-agent-runtime";
 import { normalizeTrace, compareTraces, type ConformanceTraceEntry } from "winter-conformance/trace";
+
+// Task 8: every engine run in this file persists by default (RuntimeConfig.persistSession defaults
+// ON) — a SHARED per-file temp WINTER_HOME keeps every leg (inMemory/child/compiled) off the real
+// ~/.winter regardless of the running user's environment, per the HARD CONSTRAINT that no test/gate
+// code path may ever touch it. One shared value for the whole file is fine: persistence has no
+// observable effect on the wire trace (task-8 report), and every assertion in this file compares
+// wire frames only, never transcript file contents. Removed at the end of the run.
+const TEST_WINTER_HOME = mkdtempSync(join(tmpdir(), "winter-transport-equivalence-"));
+afterAll(() => {
+  rmSync(TEST_WINTER_HOME, { recursive: true, force: true });
+});
 
 // --- fixtures / constants -----------------------------------------------------------------------
 
@@ -88,10 +102,15 @@ function sleep(ms: number): Promise<void> {
 // before it starts reading.
 function spawnHook(leg: LegName, testProviderName: TestProviderName | undefined, capture: { proc?: SpawnedRuntimeProcess }): SpawnClaudeCodeProcess {
   return (opts: SpawnRuntimeOptions): SpawnedRuntimeProcess => {
-    const env = testProviderName ? { ...opts.env, WINTER_TEST_PROVIDER: testProviderName } : opts.env;
+    // WINTER_HOME merged in for every leg (Task 8 HARD CONSTRAINT) — ahead of the
+    // WINTER_TEST_PROVIDER merge, which stays conditional exactly as before.
+    const env = { ...opts.env, WINTER_HOME: TEST_WINTER_HOME, ...(testProviderName ? { WINTER_TEST_PROVIDER: testProviderName } : {}) };
     let proc: SpawnedRuntimeProcess;
     if (leg === "inMemory") {
-      proc = inMemoryProcess(opts.args, testProviderName ? testProviderByName(testProviderName) : echoProvider);
+      // The in-memory leg has no real child env to merge into — inMemoryProcess's own 4th `env`
+      // param controls where (if anywhere) it persists (Task 8); passed the SAME env object so all
+      // three legs share one WINTER_HOME.
+      proc = inMemoryProcess(opts.args, testProviderName ? testProviderByName(testProviderName) : echoProvider, stubExecutor, env);
     } else if (leg === "compiled") {
       // Task 5: the compiled `winter` binary IS the executable — spawn it directly (no
       // `process.execPath main.ts` wrapping the way the dev-child leg below needs). Same env
@@ -552,7 +571,9 @@ describe("child leg: stderr plumbing", () => {
         ...opts,
         command: process.execPath,
         args: [mainPath, ...opts.args],
-        env: { ...opts.env, WINTER_TEST_PROVIDER: "definitely-not-a-real-provider" },
+        // WINTER_HOME included defensively (Task 8 HARD CONSTRAINT) even though this scenario's
+        // child exits in main.ts's resolveProvider() throw, before a store is ever constructed.
+        env: { ...opts.env, WINTER_HOME: TEST_WINTER_HOME, WINTER_TEST_PROVIDER: "definitely-not-a-real-provider" },
       });
       capture.proc = proc;
       return proc;

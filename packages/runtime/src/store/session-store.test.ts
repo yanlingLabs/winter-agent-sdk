@@ -12,7 +12,7 @@ import { mkdtempSync, rmSync, statSync, lstatSync, readFileSync, existsSync } fr
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { WinterCompatibilitySessionStore, WinterStoreError, type SessionStoreEntry } from "./session-store.ts";
+import { WinterCompatibilitySessionStore, WinterStoreError, DIALECT_RECORD_ENTRY_TYPE, type SessionStoreEntry } from "./session-store.ts";
 
 function freshHome(): string {
   return mkdtempSync(join(tmpdir(), "winter-store-test-"));
@@ -495,6 +495,99 @@ describe("required behavior beyond the 8 named categories", () => {
       expect(stat.mode & 0o777).toBe(0o700);
     } finally {
       rmSync(parent, { recursive: true, force: true });
+    }
+  });
+});
+
+// Task 8: the dialect writer's Winter-private producer/dialect metadata (WS-05 §5.4, narrowed to
+// what P1 needs) is never a transcript line — it rides an entry of the reserved
+// DIALECT_RECORD_ENTRY_TYPE, recognized here alongside "agent_metadata", folded into the summary
+// sidecar's fields, and never written to the jsonl or returned by load(). dialect.ts is the only
+// intended producer of this entry type; these tests exercise the store's side of that contract
+// directly (with plain fixture entries, not a real TranscriptWriter) so it's provable independent
+// of Task 8's own dialect.test.ts.
+describe("dialect-record sentinel (task 8)", () => {
+  test("a dialect-record entry is folded into the summary and absent from the raw jsonl and load()", async () => {
+    const home = freshHome();
+    try {
+      const store = new WinterCompatibilitySessionStore({ winterHome: home });
+      const key = { projectKey: "proj-dialect", sessionId: "s1" };
+      const real = entry();
+      await store.append(key, [
+        real,
+        { type: DIALECT_RECORD_ENTRY_TYPE, producerRuntime: "winter-agent", producerEngineVersion: "0.0.1", dialectFamily: "claude-code-jsonl" },
+      ]);
+
+      const loaded = await store.load(key);
+      expect(loaded).toEqual([real]);
+
+      const jsonlPath = join(home, "projects", "proj-dialect", "s1.jsonl");
+      const rawLines = readFileSync(jsonlPath, "utf8").trim().split("\n");
+      expect(rawLines).toHaveLength(1);
+      expect(rawLines.some((l) => l.includes(DIALECT_RECORD_ENTRY_TYPE))).toBe(false);
+
+      const summaries = await store.listSessionSummaries("proj-dialect");
+      expect(summaries).toHaveLength(1);
+      expect(summaries[0]).toMatchObject({
+        sessionId: "s1",
+        entryCount: 1,
+        producerRuntime: "winter-agent",
+        producerEngineVersion: "0.0.1",
+        dialectFamily: "claude-code-jsonl",
+      });
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test("dialect fields survive a later plain append that does not resend them, and mechanical fields still update", async () => {
+    const home = freshHome();
+    try {
+      const store = new WinterCompatibilitySessionStore({ winterHome: home });
+      const key = { projectKey: "proj-dialect2", sessionId: "s1" };
+      await store.append(key, [
+        entry(),
+        { type: DIALECT_RECORD_ENTRY_TYPE, producerRuntime: "winter-agent", producerEngineVersion: "0.0.1", dialectFamily: "claude-code-jsonl" },
+      ]);
+      // second append carries NO sentinel at all — a normal message-boundary append
+      await store.append(key, [entry(), entry()]);
+
+      const summaries = await store.listSessionSummaries("proj-dialect2");
+      expect(summaries).toHaveLength(1);
+      expect(summaries[0]).toMatchObject({
+        entryCount: 3, // mechanical field kept updating
+        producerRuntime: "winter-agent", // dialect field NOT clobbered by the second, sentinel-less append
+        producerEngineVersion: "0.0.1",
+        dialectFamily: "claude-code-jsonl",
+      });
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test("a dialect-record entry on a subpath key never reaches the subagent jsonl (and is not folded anywhere — no subpath summary exists)", async () => {
+    const home = freshHome();
+    try {
+      const store = new WinterCompatibilitySessionStore({ winterHome: home });
+      const key = { projectKey: "proj-dialect3", sessionId: "s1", subpath: "subagents/agent-1" };
+      const real = entry();
+      await store.append(key, [
+        real,
+        { type: DIALECT_RECORD_ENTRY_TYPE, producerRuntime: "winter-agent", producerEngineVersion: "0.0.1", dialectFamily: "claude-code-jsonl" },
+      ]);
+
+      const loaded = await store.load(key);
+      expect(loaded).toEqual([real]);
+
+      const jsonlPath = join(home, "projects", "proj-dialect3", "s1", "subagents", "agent-1.jsonl");
+      const rawLines = readFileSync(jsonlPath, "utf8").trim().split("\n");
+      expect(rawLines).toHaveLength(1);
+
+      // no summary sidecar exists at all for a subpath append
+      const summaryPath = join(home, "projects", "proj-dialect3", "s1.summary.json");
+      expect(existsSync(summaryPath)).toBe(false);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
     }
   });
 });

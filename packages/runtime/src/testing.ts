@@ -1,9 +1,29 @@
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { SpawnedRuntimeProcess, RuntimeConfig, WinterFrame } from "@yanlinglabs/winter-agent-sdk";
 import { encodeFrame, splitFrames } from "@yanlinglabs/winter-agent-sdk";
 import { Queue } from "./protocol/channel.ts";
 import type { FrameSource, FrameSink } from "./protocol/channel.ts";
 import { runEngine, type Provider, type ToolExecutor } from "./engine.ts";
 import { echoProvider, stubExecutor } from "./provider/mock.ts";
+import { createTranscriptPersistence } from "./store/dialect.ts";
+
+// inMemoryProcess is a TESTING-ONLY entry point (winter-agent-runtime/testing — never used by real
+// production code; main.ts is the real entrypoint) — so unlike main.ts's resolveProductionWinterHome,
+// which correctly falls all the way back to the real user's ~/.winter, this resolver must NEVER
+// reach that fallback: `config.winterHome` wins if set; otherwise a non-blank `env.WINTER_HOME`
+// (the HARD CONSTRAINT's injection point — see transport-equivalence.test.ts's spawnHook and
+// scripts/differential.ts, which relies on omitting BOTH to land here); otherwise a fresh per-call
+// mkdtemp. It never even LOOKS at process.env, let alone falls through to resolveWinterHome's
+// homedir default — every caller of inMemoryProcess that doesn't explicitly opt in is safe by
+// construction, including test files this task never had to touch.
+function resolveInMemoryWinterHome(config: RuntimeConfig, env: Record<string, string | undefined> | undefined): string {
+  if (config.winterHome !== undefined) return config.winterHome;
+  const override = env?.WINTER_HOME;
+  if (override !== undefined && override.trim() !== "") return override;
+  return mkdtempSync(join(tmpdir(), "winter-inmemory-"));
+}
 
 function parseConfigFromArgv(argv: string[]): RuntimeConfig {
   const idx = argv.indexOf("--config-json");
@@ -22,8 +42,20 @@ function parseConfigFromArgv(argv: string[]): RuntimeConfig {
 // them.
 //
 // Replaces P0's object-level inMemorySpawn (deleted with the spawnRuntime option it served).
-export function inMemoryProcess(argv: string[], provider: Provider = echoProvider, tools: ToolExecutor = stubExecutor): SpawnedRuntimeProcess {
+//
+// `env` (Task 8) controls ONLY where a persisted transcript lands when config.persistSession !==
+// false (see resolveInMemoryWinterHome above) — it is NOT the child's process.env in any other
+// sense (there is no real child process here). Omit it and persistence still activates by default
+// (RuntimeConfig.persistSession defaults ON) but writes to an isolated, disposable temp directory,
+// never a real shared path.
+export function inMemoryProcess(
+  argv: string[],
+  provider: Provider = echoProvider,
+  tools: ToolExecutor = stubExecutor,
+  env?: Record<string, string | undefined>,
+): SpawnedRuntimeProcess {
   const config = parseConfigFromArgv(argv);
+  const store = createTranscriptPersistence({ config, resolveWinterHome: () => resolveInMemoryWinterHome(config, env) });
 
   const stdin = new Queue<string>();
   const stdout = new Queue<string>();
@@ -51,7 +83,7 @@ export function inMemoryProcess(argv: string[], provider: Provider = echoProvide
   });
   let settled = false;
 
-  void runEngine({ config, input, output, provider, tools })
+  void runEngine({ config, input, output, provider, tools, ...(store !== undefined ? { store } : {}) })
     .then((code) => {
       if (!settled) {
         settled = true;

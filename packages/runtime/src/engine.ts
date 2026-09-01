@@ -12,11 +12,13 @@ import { Queue } from "./protocol/channel.ts";
 export type ContentBlock =
   | { type: "text"; text: string }
   | { type: "tool_use"; id: string; name: string; input: unknown }
-  // `interrupted` is optional and set ONLY on a synthetic tool_result the engine manufactures when
-  // a round is cut short after its tool_use was already pushed into history (Ruling P1-G) —
-  // provisional shape pending official capture, same standing pattern as the interrupted-result
-  // shape below. Never set on a real tool_result.
-  | { type: "tool_result"; tool_use_id: string; content: string; interrupted?: boolean };
+  // `interrupted`/`error` are optional and set ONLY on a synthetic tool_result the engine
+  // manufactures when a round is cut short after its tool_use was already pushed into history —
+  // `interrupted` for an abandoned-mid-interrupt call (Ruling P1-G), `error` for a call whose tool
+  // executor threw (Ruling P1-H). Both are provisional shapes pending official capture. Never set
+  // on a real tool_result; never both set on the same block (a single call is either interrupted or
+  // errored, never both, since each round's execute loop stops at the first of either).
+  | { type: "tool_result"; tool_use_id: string; content: string; interrupted?: boolean; error?: boolean };
 
 // The engine's own turn-history record fed back to Provider.generate() on every call. Distinct
 // from the WIRE shape (assistant/user data frames, below): the wire has no "tool" role (tool
@@ -245,6 +247,12 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
       await recordAssistant(toolUseBlocks);
 
       const resultBlocks: ContentBlock[] = [];
+      // Set (alongside `finalResult`) exactly when a call in THIS round throws — kept as its own
+      // variable, rather than re-deriving from `finalResult`, because `finalResult` can ALSO be set
+      // by the provider.generate() catch above, which already does its own `break roundLoop` and
+      // never reaches this point in the same iteration; this flag only ever reflects a throw from
+      // the loop directly below it.
+      let toolThrowText: string | null = null;
       for (const call of turn.calls) {
         try {
           const raced = await raceInterrupt(tools.execute(call), interruptSignal);
@@ -256,15 +264,30 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
         } catch (err) {
           const text = err instanceof Error ? err.message : String(err);
           finalResult = { type: "result", subtype: "error_during_execution", is_error: true, result: text };
+          toolThrowText = text;
           break;
         }
       }
-      // A tool-executor THROW is deliberately NOT covered below (Ruling P1-G scoped its fix to
-      // interrupt only) — it still breaks out here with a possible dangling tool_use in `messages`,
-      // same as before this fix round. Flagged, not fixed: the right synthetic marker for "this
-      // call's tool errored" is a separate shape decision from "this call was interrupted," and
-      // guessing it risks churn a follow-up ruling would avoid (see task-3 report, Concerns).
-      if (finalResult) break roundLoop;
+
+      if (toolThrowText !== null) {
+        // Ruling P1-H: the tool_use/tool_result pairing invariant must hold in ACCUMULATED HISTORY
+        // (and on the wire, and in persistence) even when a tool executor THROWS mid-round — the
+        // assistant's tool_use was already pushed into `messages` above, so every one of its calls
+        // needs a matching tool_result or the history a real provider's next request (and Task 8's
+        // persistence) would carry a dangling tool_use, which a real provider rejects outright.
+        // Provisional shape pending official capture (same class as the interrupted-result shape
+        // below, whose comment this mirrors): content "[error: <thrown>]" + `error: true` marks a
+        // call that never got a real result because its round's tool executor threw — covers both
+        // the call that threw and any calls after it in this round that never got to run. Uses the
+        // SAME Error-message-or-String(err) rendering as `finalResult.result` above (`text`) rather
+        // than an unconditional `String(thrown)` — see the task-8 report's deviations for why.
+        const resultedIds = new Set(resultBlocks.map((b) => (b as { tool_use_id: string }).tool_use_id));
+        for (const call of turn.calls) {
+          if (!resultedIds.has(call.id)) {
+            resultBlocks.push({ type: "tool_result", tool_use_id: call.id, content: `[error: ${toolThrowText}]`, error: true });
+          }
+        }
+      }
 
       if (interrupted) {
         // Ruling P1-G: the tool_use/tool_result pairing invariant must hold in ACCUMULATED HISTORY
@@ -283,15 +306,17 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
         }
       }
 
-      // Emitted/pushed/recorded unconditionally (normal completion OR padded-after-interrupt) so
-      // the wire, the in-memory history, and persistence never disagree about whether this round's
-      // tool_result exists — an implementation-shape choice under P1-G: previously nothing was
-      // emitted here on interrupt, which under-delivered relative to WS-04 §5's drain-after-
-      // interrupt contract ("buffered data of the interrupted turn, then its terminal result").
+      // Emitted/pushed/recorded unconditionally (normal completion, padded-after-interrupt, OR
+      // padded-after-throw) so the wire, the in-memory history, and persistence never disagree about
+      // whether this round's tool_result exists — an implementation-shape choice under P1-G (later
+      // extended by P1-H to the throw path): previously nothing was emitted here on interrupt (nor,
+      // until P1-H, on a throw), which under-delivered relative to WS-04 §5's drain-after-interrupt
+      // contract ("buffered data of the interrupted turn, then its terminal result").
       output.write({ type: "data", message: { type: "user", message: { content: resultBlocks } } });
       messages.push({ role: "tool", content: resultBlocks });
       await recordUser(resultBlocks);
 
+      if (finalResult) break roundLoop; // relocated below the emit/push/record (Ruling P1-H) — see comment above
       if (interrupted) break roundLoop;
       // loop back for the next provider.generate() call
     }
