@@ -1,0 +1,1428 @@
+{
+  "symbols": [
+    {
+      "name": "AbortError",
+      "kind": "class"
+    },
+    {
+      "name": "AccountInfo",
+      "kind": "type"
+    },
+    {
+      "name": "AgentDefinition",
+      "kind": "type"
+    },
+    {
+      "name": "AgentInfo",
+      "kind": "type"
+    },
+    {
+      "name": "AgentInput",
+      "kind": "interface"
+    },
+    {
+      "name": "AgentMcpServerSpec",
+      "kind": "type"
+    },
+    {
+      "name": "AgentOutput",
+      "kind": "type"
+    },
+    {
+      "name": "AnyZodRawShape",
+      "kind": "type"
+    },
+    {
+      "name": "ApiKeySource",
+      "kind": "type"
+    },
+    {
+      "name": "ArtifactInput",
+      "kind": "interface"
+    },
+    {
+      "name": "ArtifactOutput",
+      "kind": "type"
+    },
+    {
+      "name": "AskUserQuestionInput",
+      "kind": "interface"
+    },
+    {
+      "name": "AskUserQuestionOutput",
+      "kind": "interface"
+    },
+    {
+      "name": "AsyncHookJSONOutput",
+      "kind": "type"
+    },
+    {
+      "name": "attachBridgeSession",
+      "kind": "function"
+    },
+    {
+      "name": "AttachBridgeSessionOptions",
+      "kind": "type"
+    },
+    {
+      "name": "AuthMessage",
+      "kind": "type"
+    },
+    {
+      "name": "BackgroundTaskSummary",
+      "kind": "type"
+    },
+    {
+      "name": "BaseHookInput",
+      "kind": "type"
+    },
+    {
+      "name": "BaseOutputFormat",
+      "kind": "type"
+    },
+    {
+      "name": "BashInput",
+      "kind": "interface"
+    },
+    {
+      "name": "BashOutput",
+      "kind": "interface"
+    },
+    {
+      "name": "BranchDropLogDedup",
+      "kind": "type"
+    },
+    {
+      "name": "BridgeSessionHandle",
+      "kind": "type"
+    },
+    {
+      "name": "BrowserQueryOptions",
+      "kind": "type"
+    },
+    {
+      "name": "CanUseTool",
+      "kind": "type"
+    },
+    {
+      "name": "ClaudeDesignInput",
+      "kind": "interface"
+    },
+    {
+      "name": "ClaudeDesignOutput",
+      "kind": "interface"
+    },
+    {
+      "name": "CodeSessionGitContext",
+      "kind": "type"
+    },
+    {
+      "name": "ConfigChangeHookInput",
+      "kind": "type"
+    },
+    {
+      "name": "ConfigScope",
+      "kind": "type"
+    },
+    {
+      "name": "createCodeSession",
+      "kind": "function"
+    },
+    {
+      "name": "createSdkMcpServer",
+      "kind": "function"
+    },
+    {
+      "name": "CreateSessionFailure",
+      "kind": "type"
+    },
+    {
+      "name": "CredentialsFailure",
+      "kind": "type"
+    },
+    {
+      "name": "CredentialsRejection",
+      "kind": "type"
+    },
+    {
+      "name": "CronCreateInput",
+      "kind": "interface"
+    },
+    {
+      "name": "CronCreateOutput",
+      "kind": "interface"
+    },
+    {
+      "name": "CronDeleteInput",
+      "kind": "interface"
+    },
+    {
+      "name": "CronDeleteOutput",
+      "kind": "interface"
+    },
+    {
+      "name": "CronListInput",
+      "kind": "interface"
+    },
+    {
+      "name": "CronListOutput",
+      "kind": "interface"
+    },
+    {
+      "name": "CwdChangedHookInput",
+      "kind": "type"
+    },
+    {
+      "name": "CwdChangedHookSpecificOutput",
+      "kind": "type"
+    },
+    {
+      "name": "deleteSession",
+      "kind": "function"
+    },
+    {
+      "name": "DirectoryAddedHookInput",
+      "kind": "type"
+    },
+    {
+      "name": "EffortLevel",
+      "kind": "type"
+    },
+    {
+      "name": "ElicitationHookInput",
+      "kind": "type"
+    },
+    {
+      "name": "ElicitationHookSpecificOutput",
+      "kind": "type"
+    },
+    {
+      "name": "ElicitationRequest",
+      "kind": "type"
+    },
+    {
+      "name": "ElicitationResult",
+      "kind": "type"
+    },
+    {
+      "name": "ElicitationResultHookInput",
+      "kind": "type"
+    },
+    {
+      "name": "ElicitationResultHookSpecificOutput",
+      "kind": "type"
+    },
+    {
+      "name": "EnterPlanModeInput",
+      "kind": "interface"
+    },
+    {
+      "name": "EnterPlanModeOutput",
+      "kind": "interface"
+    },
+    {
+      "name": "EnterWorktreeInput",
+      "kind": "interface"
+    },
+    {
+      "name": "EnterWorktreeOutput",
+      "kind": "interface"
+    },
+    {
+      "name": "EXIT_REASONS",
+      "kind": "const"
+    },
+    {
+      "name": "ExitPlanModeInput",
+      "kind": "interface"
+    },
+    {
+      "name": "ExitPlanModeOutput",
+      "kind": "interface"
+    },
+    {
+      "name": "ExitReason",
+      "kind": "type"
+    },
+    {
+      "name": "ExitWorktreeInput",
+      "kind": "interface"
+    },
+    {
+      "name": "ExitWorktreeOutput",
+      "kind": "interface"
+    },
+    {
+      "name": "extractFromBunfs",
+      "kind": "function"
+    },
+    {
+      "name": "FastModeDisabledReason",
+      "kind": "type"
+    },
+    {
+      "name": "FastModeState",
+      "kind": "type"
+    },
+    {
+      "name": "fetchRemoteCredentials",
+      "kind": "function"
+    },
+    {
+      "name": "FileChangedHookInput",
+      "kind": "type"
+    },
+    {
+      "name": "FileChangedHookSpecificOutput",
+      "kind": "type"
+    },
+    {
+      "name": "FileEditInput",
+      "kind": "interface"
+    },
+    {
+      "name": "FileEditOutput",
+      "kind": "interface"
+    },
+    {
+      "name": "FileReadInput",
+      "kind": "interface"
+    },
+    {
+      "name": "FileReadOutput",
+      "kind": "type"
+    },
+    {
+      "name": "FileWriteInput",
+      "kind": "interface"
+    },
+    {
+      "name": "FileWriteOutput",
+      "kind": "interface"
+    },
+    {
+      "name": "filterEscalatingDefaultMode",
+      "kind": "function"
+    },
+    {
+      "name": "foldSessionSummary",
+      "kind": "function"
+    },
+    {
+      "name": "forkSession",
+      "kind": "function"
+    },
+    {
+      "name": "ForkSessionOptions",
+      "kind": "type"
+    },
+    {
+      "name": "ForkSessionResult",
+      "kind": "type"
+    },
+    {
+      "name": "G4_TEXT_ENVELOPE_ARM_PORTED",
+      "kind": "const"
+    },
+    {
+      "name": "getSessionInfo",
+      "kind": "function"
+    },
+    {
+      "name": "GetSessionInfoOptions",
+      "kind": "type"
+    },
+    {
+      "name": "getSessionMessages",
+      "kind": "function"
+    },
+    {
+      "name": "GetSessionMessagesOptions",
+      "kind": "type"
+    },
+    {
+      "name": "getSseDropCounts",
+      "kind": "function"
+    },
+    {
+      "name": "getSubagentMessages",
+      "kind": "function"
+    },
+    {
+      "name": "GetSubagentMessagesOptions",
+      "kind": "type"
+    },
+    {
+      "name": "GlobInput",
+      "kind": "interface"
+    },
+    {
+      "name": "GlobOutput",
+      "kind": "interface"
+    },
+    {
+      "name": "GrepInput",
+      "kind": "interface"
+    },
+    {
+      "name": "GrepOutput",
+      "kind": "interface"
+    },
+    {
+      "name": "HOOK_EVENTS",
+      "kind": "const"
+    },
+    {
+      "name": "HookCallback",
+      "kind": "type"
+    },
+    {
+      "name": "HookCallbackMatcher",
+      "kind": "interface"
+    },
+    {
+      "name": "HookEvent",
+      "kind": "type"
+    },
+    {
+      "name": "HookInput",
+      "kind": "type"
+    },
+    {
+      "name": "HookJSONOutput",
+      "kind": "type"
+    },
+    {
+      "name": "HookPermissionDecision",
+      "kind": "type"
+    },
+    {
+      "name": "importSessionToStore",
+      "kind": "function"
+    },
+    {
+      "name": "ImportSessionToStoreOptions",
+      "kind": "type"
+    },
+    {
+      "name": "InferShape",
+      "kind": "type"
+    },
+    {
+      "name": "InMemorySessionStore",
+      "kind": "class"
+    },
+    {
+      "name": "InstructionsLoadedHookInput",
+      "kind": "type"
+    },
+    {
+      "name": "isCreateSessionFailure",
+      "kind": "function"
+    },
+    {
+      "name": "isCredentialsFailure",
+      "kind": "function"
+    },
+    {
+      "name": "isCredentialsRejection",
+      "kind": "function"
+    },
+    {
+      "name": "JsonSchemaOutputFormat",
+      "kind": "type"
+    },
+    {
+      "name": "ListMcpResourcesInput",
+      "kind": "interface"
+    },
+    {
+      "name": "ListMcpResourcesOutput",
+      "kind": "type"
+    },
+    {
+      "name": "listSessions",
+      "kind": "function"
+    },
+    {
+      "name": "ListSessionsOptions",
+      "kind": "type"
+    },
+    {
+      "name": "listSubagents",
+      "kind": "function"
+    },
+    {
+      "name": "ListSubagentsOptions",
+      "kind": "type"
+    },
+    {
+      "name": "McpClaudeAIProxyServerConfig",
+      "kind": "type"
+    },
+    {
+      "name": "McpHttpServerConfig",
+      "kind": "type"
+    },
+    {
+      "name": "McpInput",
+      "kind": "interface"
+    },
+    {
+      "name": "McpOutput",
+      "kind": "type"
+    },
+    {
+      "name": "McpSdkServerConfig",
+      "kind": "type"
+    },
+    {
+      "name": "McpSdkServerConfigWithInstance",
+      "kind": "type"
+    },
+    {
+      "name": "McpServerConfig",
+      "kind": "type"
+    },
+    {
+      "name": "McpServerConfigForProcessTransport",
+      "kind": "type"
+    },
+    {
+      "name": "McpServerStatus",
+      "kind": "type"
+    },
+    {
+      "name": "McpServerStatusConfig",
+      "kind": "type"
+    },
+    {
+      "name": "McpServerToolPolicy",
+      "kind": "type"
+    },
+    {
+      "name": "McpSetServersResult",
+      "kind": "type"
+    },
+    {
+      "name": "McpSSEServerConfig",
+      "kind": "type"
+    },
+    {
+      "name": "McpStdioServerConfig",
+      "kind": "type"
+    },
+    {
+      "name": "MessageDisplayHookInput",
+      "kind": "type"
+    },
+    {
+      "name": "MessageDisplayHookSpecificOutput",
+      "kind": "type"
+    },
+    {
+      "name": "meta",
+      "kind": "const"
+    },
+    {
+      "name": "ModelInfo",
+      "kind": "type"
+    },
+    {
+      "name": "ModelUsage",
+      "kind": "type"
+    },
+    {
+      "name": "MonitorInput",
+      "kind": "interface"
+    },
+    {
+      "name": "MonitorOutput",
+      "kind": "interface"
+    },
+    {
+      "name": "NonNullableUsage",
+      "kind": "type"
+    },
+    {
+      "name": "NotebookEditInput",
+      "kind": "interface"
+    },
+    {
+      "name": "NotebookEditOutput",
+      "kind": "interface"
+    },
+    {
+      "name": "NotificationHookInput",
+      "kind": "type"
+    },
+    {
+      "name": "NotificationHookSpecificOutput",
+      "kind": "type"
+    },
+    {
+      "name": "OAuthCredential",
+      "kind": "type"
+    },
+    {
+      "name": "OnElicitation",
+      "kind": "type"
+    },
+    {
+      "name": "OnUserDialog",
+      "kind": "type"
+    },
+    {
+      "name": "Options",
+      "kind": "type"
+    },
+    {
+      "name": "ORG_POLICY_LIMIT_PREFIXES",
+      "kind": "const"
+    },
+    {
+      "name": "OutputFormat",
+      "kind": "type"
+    },
+    {
+      "name": "OutputFormatType",
+      "kind": "type"
+    },
+    {
+      "name": "PermissionBehavior",
+      "kind": "type"
+    },
+    {
+      "name": "PermissionDecisionClassification",
+      "kind": "type"
+    },
+    {
+      "name": "PermissionDeniedHookInput",
+      "kind": "type"
+    },
+    {
+      "name": "PermissionDeniedHookSpecificOutput",
+      "kind": "type"
+    },
+    {
+      "name": "PermissionMode",
+      "kind": "type"
+    },
+    {
+      "name": "PermissionRequestHookInput",
+      "kind": "type"
+    },
+    {
+      "name": "PermissionRequestHookSpecificOutput",
+      "kind": "type"
+    },
+    {
+      "name": "PermissionResult",
+      "kind": "type"
+    },
+    {
+      "name": "PermissionRuleValue",
+      "kind": "type"
+    },
+    {
+      "name": "PermissionUpdate",
+      "kind": "type"
+    },
+    {
+      "name": "PermissionUpdateDestination",
+      "kind": "type"
+    },
+    {
+      "name": "PolicySettingsOrigin",
+      "kind": "type"
+    },
+    {
+      "name": "PostCompactHookInput",
+      "kind": "type"
+    },
+    {
+      "name": "PostToolBatchHookInput",
+      "kind": "type"
+    },
+    {
+      "name": "PostToolBatchHookSpecificOutput",
+      "kind": "type"
+    },
+    {
+      "name": "PostToolBatchToolCall",
+      "kind": "type"
+    },
+    {
+      "name": "PostToolUseFailureHookInput",
+      "kind": "type"
+    },
+    {
+      "name": "PostToolUseFailureHookSpecificOutput",
+      "kind": "type"
+    },
+    {
+      "name": "PostToolUseHookInput",
+      "kind": "type"
+    },
+    {
+      "name": "PostToolUseHookSpecificOutput",
+      "kind": "type"
+    },
+    {
+      "name": "PreCompactHookInput",
+      "kind": "type"
+    },
+    {
+      "name": "PreToolUseHookInput",
+      "kind": "type"
+    },
+    {
+      "name": "PreToolUseHookSpecificOutput",
+      "kind": "type"
+    },
+    {
+      "name": "ProjectsInput",
+      "kind": "interface"
+    },
+    {
+      "name": "ProjectsOutput",
+      "kind": "type"
+    },
+    {
+      "name": "ProposeGoalInput",
+      "kind": "interface"
+    },
+    {
+      "name": "ProposeGoalOutput",
+      "kind": "interface"
+    },
+    {
+      "name": "ProposeSkillsInput",
+      "kind": "interface"
+    },
+    {
+      "name": "ProposeSkillsOutput",
+      "kind": "interface"
+    },
+    {
+      "name": "ProvenanceEntry",
+      "kind": "type"
+    },
+    {
+      "name": "PushNotificationInput",
+      "kind": "interface"
+    },
+    {
+      "name": "PushNotificationOutput",
+      "kind": "interface"
+    },
+    {
+      "name": "query",
+      "kind": "function"
+    },
+    {
+      "name": "query",
+      "kind": "function"
+    },
+    {
+      "name": "Query",
+      "kind": "interface"
+    },
+    {
+      "name": "ReadMcpResourceDirInput",
+      "kind": "interface"
+    },
+    {
+      "name": "ReadMcpResourceDirOutput",
+      "kind": "interface"
+    },
+    {
+      "name": "ReadMcpResourceInput",
+      "kind": "interface"
+    },
+    {
+      "name": "ReadMcpResourceOutput",
+      "kind": "interface"
+    },
+    {
+      "name": "ReadNotificationsInput",
+      "kind": "interface"
+    },
+    {
+      "name": "ReadNotificationsOutput",
+      "kind": "interface"
+    },
+    {
+      "name": "RefreshMcpToolsInput",
+      "kind": "interface"
+    },
+    {
+      "name": "RefreshMcpToolsOutput",
+      "kind": "type"
+    },
+    {
+      "name": "RemoteCredentials",
+      "kind": "type"
+    },
+    {
+      "name": "RemoteTriggerInput",
+      "kind": "interface"
+    },
+    {
+      "name": "RemoteTriggerOutput",
+      "kind": "interface"
+    },
+    {
+      "name": "renameSession",
+      "kind": "function"
+    },
+    {
+      "name": "REPLInput",
+      "kind": "interface"
+    },
+    {
+      "name": "REPLOutput",
+      "kind": "interface"
+    },
+    {
+      "name": "ReportFindingsInput",
+      "kind": "interface"
+    },
+    {
+      "name": "ReportFindingsOutput",
+      "kind": "interface"
+    },
+    {
+      "name": "ResolvedSettings",
+      "kind": "type"
+    },
+    {
+      "name": "ResolvedSettingSource",
+      "kind": "type"
+    },
+    {
+      "name": "resolveSettings",
+      "kind": "function"
+    },
+    {
+      "name": "ResolveSettingsOptions",
+      "kind": "type"
+    },
+    {
+      "name": "RewindFilesResult",
+      "kind": "type"
+    },
+    {
+      "name": "SandboxCredentialsConfig",
+      "kind": "type"
+    },
+    {
+      "name": "SandboxFilesystemConfig",
+      "kind": "type"
+    },
+    {
+      "name": "SandboxIgnoreViolations",
+      "kind": "type"
+    },
+    {
+      "name": "SandboxNetworkConfig",
+      "kind": "type"
+    },
+    {
+      "name": "SandboxSettings",
+      "kind": "type"
+    },
+    {
+      "name": "ScheduleWakeupInput",
+      "kind": "interface"
+    },
+    {
+      "name": "ScheduleWakeupOutput",
+      "kind": "interface"
+    },
+    {
+      "name": "SDKActiveGoalMessage",
+      "kind": "type"
+    },
+    {
+      "name": "SDKAPIRetryMessage",
+      "kind": "type"
+    },
+    {
+      "name": "SDKAssistantMessage",
+      "kind": "type"
+    },
+    {
+      "name": "SDKAssistantMessageError",
+      "kind": "type"
+    },
+    {
+      "name": "SDKAuthStatusMessage",
+      "kind": "type"
+    },
+    {
+      "name": "SDKBackgroundTasksChangedMessage",
+      "kind": "type"
+    },
+    {
+      "name": "SdkBeta",
+      "kind": "type"
+    },
+    {
+      "name": "SDKCommandsChangedMessage",
+      "kind": "type"
+    },
+    {
+      "name": "SDKCompactBoundaryMessage",
+      "kind": "type"
+    },
+    {
+      "name": "SDKContextUsage",
+      "kind": "type"
+    },
+    {
+      "name": "SDKContextUsageCategory",
+      "kind": "type"
+    },
+    {
+      "name": "SDKControlGetContextUsageResponse",
+      "kind": "type"
+    },
+    {
+      "name": "SDKControlGetUsageResponse",
+      "kind": "type"
+    },
+    {
+      "name": "SDKControlInitializeResponse",
+      "kind": "type"
+    },
+    {
+      "name": "SDKControlInterruptResponse",
+      "kind": "type"
+    },
+    {
+      "name": "SDKControlReadFileResponse",
+      "kind": "type"
+    },
+    {
+      "name": "SDKControlReloadPluginsResponse",
+      "kind": "type"
+    },
+    {
+      "name": "SDKControlReloadSkillsResponse",
+      "kind": "type"
+    },
+    {
+      "name": "SDKControlRequest",
+      "kind": "type"
+    },
+    {
+      "name": "SDKControlRequestProgressMessage",
+      "kind": "type"
+    },
+    {
+      "name": "SDKControlResponse",
+      "kind": "type"
+    },
+    {
+      "name": "SDKConversationResetMessage",
+      "kind": "type"
+    },
+    {
+      "name": "SDKDeferredToolUse",
+      "kind": "type"
+    },
+    {
+      "name": "SDKElicitationCompleteMessage",
+      "kind": "type"
+    },
+    {
+      "name": "SDKFilesPersistedEvent",
+      "kind": "type"
+    },
+    {
+      "name": "SDKHookProgressMessage",
+      "kind": "type"
+    },
+    {
+      "name": "SDKHookResponseMessage",
+      "kind": "type"
+    },
+    {
+      "name": "SDKHookStartedMessage",
+      "kind": "type"
+    },
+    {
+      "name": "SDKInformationalMessage",
+      "kind": "type"
+    },
+    {
+      "name": "SDKLocalCommandOutputMessage",
+      "kind": "type"
+    },
+    {
+      "name": "SdkMcpToolDefinition",
+      "kind": "type"
+    },
+    {
+      "name": "SDKMemoryRecallMessage",
+      "kind": "type"
+    },
+    {
+      "name": "SDKMessage",
+      "kind": "type"
+    },
+    {
+      "name": "SDKMessageOrigin",
+      "kind": "type"
+    },
+    {
+      "name": "SDKMirrorErrorMessage",
+      "kind": "type"
+    },
+    {
+      "name": "SDKModelRefusalFallbackMessage",
+      "kind": "type"
+    },
+    {
+      "name": "SDKModelRefusalNoFallbackMessage",
+      "kind": "type"
+    },
+    {
+      "name": "SDKNotificationMessage",
+      "kind": "type"
+    },
+    {
+      "name": "SDKPartialAssistantMessage",
+      "kind": "type"
+    },
+    {
+      "name": "SDKPermissionDenial",
+      "kind": "type"
+    },
+    {
+      "name": "SDKPermissionDeniedMessage",
+      "kind": "type"
+    },
+    {
+      "name": "SdkPluginConfig",
+      "kind": "type"
+    },
+    {
+      "name": "SDKPluginInstallMessage",
+      "kind": "type"
+    },
+    {
+      "name": "SDKPromptSuggestionMessage",
+      "kind": "type"
+    },
+    {
+      "name": "SDKRateLimitEvent",
+      "kind": "type"
+    },
+    {
+      "name": "SDKRateLimitInfo",
+      "kind": "type"
+    },
+    {
+      "name": "SDKResultError",
+      "kind": "type"
+    },
+    {
+      "name": "SDKResultMessage",
+      "kind": "type"
+    },
+    {
+      "name": "SDKResultSuccess",
+      "kind": "type"
+    },
+    {
+      "name": "SDKSessionInfo",
+      "kind": "type"
+    },
+    {
+      "name": "SDKSessionStateChangedMessage",
+      "kind": "type"
+    },
+    {
+      "name": "SDKSettingsParseError",
+      "kind": "type"
+    },
+    {
+      "name": "SDKStatus",
+      "kind": "type"
+    },
+    {
+      "name": "SDKStatusMessage",
+      "kind": "type"
+    },
+    {
+      "name": "SDKSystemMessage",
+      "kind": "type"
+    },
+    {
+      "name": "SDKTaskNotificationMessage",
+      "kind": "type"
+    },
+    {
+      "name": "SDKTaskProgressMessage",
+      "kind": "type"
+    },
+    {
+      "name": "SDKTaskStartedMessage",
+      "kind": "type"
+    },
+    {
+      "name": "SDKTaskUpdatedMessage",
+      "kind": "type"
+    },
+    {
+      "name": "SDKThinkingTokensMessage",
+      "kind": "type"
+    },
+    {
+      "name": "SDKToolProgressMessage",
+      "kind": "type"
+    },
+    {
+      "name": "SDKToolUseSummaryMessage",
+      "kind": "type"
+    },
+    {
+      "name": "SDKUserMessage",
+      "kind": "type"
+    },
+    {
+      "name": "SDKUserMessageReplay",
+      "kind": "type"
+    },
+    {
+      "name": "SDKWorkerShuttingDownMessage",
+      "kind": "type"
+    },
+    {
+      "name": "SendFeedbackInput",
+      "kind": "interface"
+    },
+    {
+      "name": "SendFeedbackOutput",
+      "kind": "interface"
+    },
+    {
+      "name": "SessionCronSummary",
+      "kind": "type"
+    },
+    {
+      "name": "SessionEndHookInput",
+      "kind": "type"
+    },
+    {
+      "name": "SessionKey",
+      "kind": "type"
+    },
+    {
+      "name": "SessionMessage",
+      "kind": "type"
+    },
+    {
+      "name": "SessionMutationOptions",
+      "kind": "type"
+    },
+    {
+      "name": "SessionStartHookInput",
+      "kind": "type"
+    },
+    {
+      "name": "SessionStartHookSpecificOutput",
+      "kind": "type"
+    },
+    {
+      "name": "SessionState",
+      "kind": "type"
+    },
+    {
+      "name": "SessionStore",
+      "kind": "type"
+    },
+    {
+      "name": "SessionStoreEntry",
+      "kind": "type"
+    },
+    {
+      "name": "SessionStoreFlush",
+      "kind": "type"
+    },
+    {
+      "name": "SessionSummaryEntry",
+      "kind": "type"
+    },
+    {
+      "name": "Settings",
+      "kind": "interface"
+    },
+    {
+      "name": "SettingSource",
+      "kind": "type"
+    },
+    {
+      "name": "SetupHookInput",
+      "kind": "type"
+    },
+    {
+      "name": "SetupHookSpecificOutput",
+      "kind": "type"
+    },
+    {
+      "name": "ShowOnboardingRolePickerInput",
+      "kind": "interface"
+    },
+    {
+      "name": "ShowOnboardingRolePickerOutput",
+      "kind": "interface"
+    },
+    {
+      "name": "SlashCommand",
+      "kind": "type"
+    },
+    {
+      "name": "SpawnedProcess",
+      "kind": "interface"
+    },
+    {
+      "name": "SpawnOptions",
+      "kind": "interface"
+    },
+    {
+      "name": "SSEOptions",
+      "kind": "type"
+    },
+    {
+      "name": "startup",
+      "kind": "function"
+    },
+    {
+      "name": "StopFailureHookInput",
+      "kind": "type"
+    },
+    {
+      "name": "StopHookInput",
+      "kind": "type"
+    },
+    {
+      "name": "StopHookSpecificOutput",
+      "kind": "type"
+    },
+    {
+      "name": "SubagentStartHookInput",
+      "kind": "type"
+    },
+    {
+      "name": "SubagentStartHookSpecificOutput",
+      "kind": "type"
+    },
+    {
+      "name": "SubagentStopHookInput",
+      "kind": "type"
+    },
+    {
+      "name": "SubagentStopHookSpecificOutput",
+      "kind": "type"
+    },
+    {
+      "name": "SyncHookJSONOutput",
+      "kind": "type"
+    },
+    {
+      "name": "SYSTEM_PROMPT_DYNAMIC_BOUNDARY",
+      "kind": "const"
+    },
+    {
+      "name": "tagSession",
+      "kind": "function"
+    },
+    {
+      "name": "TaskCompletedHookInput",
+      "kind": "type"
+    },
+    {
+      "name": "TaskCreatedHookInput",
+      "kind": "type"
+    },
+    {
+      "name": "TaskCreateInput",
+      "kind": "interface"
+    },
+    {
+      "name": "TaskCreateOutput",
+      "kind": "interface"
+    },
+    {
+      "name": "TaskGetInput",
+      "kind": "interface"
+    },
+    {
+      "name": "TaskGetOutput",
+      "kind": "interface"
+    },
+    {
+      "name": "TaskListInput",
+      "kind": "interface"
+    },
+    {
+      "name": "TaskListOutput",
+      "kind": "interface"
+    },
+    {
+      "name": "TaskOutputInput",
+      "kind": "interface"
+    },
+    {
+      "name": "TaskStopInput",
+      "kind": "interface"
+    },
+    {
+      "name": "TaskStopOutput",
+      "kind": "interface"
+    },
+    {
+      "name": "TaskUpdateInput",
+      "kind": "interface"
+    },
+    {
+      "name": "TaskUpdateOutput",
+      "kind": "interface"
+    },
+    {
+      "name": "TeammateIdleHookInput",
+      "kind": "type"
+    },
+    {
+      "name": "TerminalReason",
+      "kind": "type"
+    },
+    {
+      "name": "ThinkingAdaptive",
+      "kind": "type"
+    },
+    {
+      "name": "ThinkingConfig",
+      "kind": "type"
+    },
+    {
+      "name": "ThinkingDisabled",
+      "kind": "type"
+    },
+    {
+      "name": "ThinkingEnabled",
+      "kind": "type"
+    },
+    {
+      "name": "TodoWriteInput",
+      "kind": "interface"
+    },
+    {
+      "name": "TodoWriteOutput",
+      "kind": "interface"
+    },
+    {
+      "name": "tool",
+      "kind": "function"
+    },
+    {
+      "name": "ToolConfig",
+      "kind": "type"
+    },
+    {
+      "name": "ToolInputSchemas",
+      "kind": "type"
+    },
+    {
+      "name": "ToolOutputSchemas",
+      "kind": "type"
+    },
+    {
+      "name": "Transport",
+      "kind": "interface"
+    },
+    {
+      "name": "USAGE_LIMIT_ERROR_PREFIXES",
+      "kind": "const"
+    },
+    {
+      "name": "USAGE_TRANSITION_PREFIXES",
+      "kind": "const"
+    },
+    {
+      "name": "USAGE_WARNING_PREFIXES",
+      "kind": "const"
+    },
+    {
+      "name": "UserDialogRequest",
+      "kind": "type"
+    },
+    {
+      "name": "UserDialogResult",
+      "kind": "type"
+    },
+    {
+      "name": "UserPromptExpansionHookInput",
+      "kind": "type"
+    },
+    {
+      "name": "UserPromptExpansionHookSpecificOutput",
+      "kind": "type"
+    },
+    {
+      "name": "UserPromptSubmitHookInput",
+      "kind": "type"
+    },
+    {
+      "name": "UserPromptSubmitHookSpecificOutput",
+      "kind": "type"
+    },
+    {
+      "name": "WarmQuery",
+      "kind": "interface"
+    },
+    {
+      "name": "WebFetchInput",
+      "kind": "interface"
+    },
+    {
+      "name": "WebFetchOutput",
+      "kind": "interface"
+    },
+    {
+      "name": "WebSearchInput",
+      "kind": "interface"
+    },
+    {
+      "name": "WebSearchOutput",
+      "kind": "interface"
+    },
+    {
+      "name": "WebSocketOptions",
+      "kind": "type"
+    },
+    {
+      "name": "WorkflowInput",
+      "kind": "interface"
+    },
+    {
+      "name": "WorkflowOutput",
+      "kind": "interface"
+    },
+    {
+      "name": "WorktreeCreateHookInput",
+      "kind": "type"
+    },
+    {
+      "name": "WorktreeCreateHookSpecificOutput",
+      "kind": "type"
+    },
+    {
+      "name": "WorktreeRemoveHookInput",
+      "kind": "type"
+    }
+  ]
+}
