@@ -21,3 +21,11 @@ test("compareTraces detects an ordering/discriminator difference", () => {
   const swapped = [raw[0]!, raw[2]!, raw[1]!].map((e, i) => ({ ...e, sequence: i }));
   expect(compareTraces(a, normalizeTrace(swapped)).length).toBeGreaterThan(0);
 });
+
+test("compareTraces detects a payload difference at the same kind", () => {
+  const a = normalizeTrace([{ sequence: 0, direction: "runtime-to-host", kind: "result", payload: { subtype: "success" } }]);
+  const b = normalizeTrace([{ sequence: 0, direction: "runtime-to-host", kind: "result", payload: { subtype: "error_during_execution" } }]);
+  const diffs = compareTraces(a, b);
+  expect(diffs.length).toBeGreaterThan(0);
+  expect(diffs[0]).toContain("payload@0");
+});
