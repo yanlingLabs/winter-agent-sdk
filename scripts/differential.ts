@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { query, encodeFrame, splitFrames, type RuntimeConfig, type WinterFrame } from "@yanlinglabs/winter-agent-sdk";
@@ -222,11 +222,38 @@ const SCENARIOS: Scenario[] = [
   { name: "resume", trace: traceWinterResume, goldenFile: "resume.trace.json" },
 ];
 
+// Sign-off 3 directive (whole-branch review): `--update` turns this script from a comparator into
+// checked-in golden-regeneration tooling — the project had none (T11 review F5 closed the loop: an
+// earlier "gen-goldens.ts" reference was an ephemeral-editor-view artifact of an earlier session,
+// never a real committed file). Writes every scenario's freshly-traced output straight over its
+// golden file, UNCONDITIONALLY, with no comparison step at all — a deliberate "last write wins"
+// regeneration, not a merge or a diff-and-ask.
+//
+// Byte format matches the committed goldens EXACTLY: `JSON.stringify(winter, null, 2) + "\n"` —
+// verified byte-for-byte against the committed plain-query.trace.json before this flag was written
+// (parsing it and re-serializing this exact way round-trips to the identical bytes). `winter` here
+// is ALREADY normalizeTrace()'d (every traceWinter* function above returns it pre-normalized) — the
+// exact same shape every committed golden already holds serialized, never sortKeysDeep'd (that
+// canonicalization is comparison-time-only, per trace.ts's own comment — a committed golden keeps
+// whatever key order its producer emitted).
+//
+// The acceptance test for this flag is behavioral, not a unit test: running `--update` against an
+// UNCHANGED runtime must produce a completely EMPTY `git diff --stat` on every golden it touches —
+// see the fix-wave report for that proof. The byte-frozen plain-query golden is not specially
+// exempted from being rewritten here (an --update run always writes all five) — it only ever stays
+// byte-frozen in practice because nothing about its own scenario's traced output has changed.
 if (import.meta.main) {
+  const update = process.argv.includes("--update");
   let anyFail = false;
   for (const scenario of SCENARIOS) {
     const winter = await scenario.trace();
-    const golden = JSON.parse(readFileSync(new URL(`../packages/conformance/goldens/${scenario.goldenFile}`, import.meta.url), "utf8"));
+    const goldenUrl = new URL(`../packages/conformance/goldens/${scenario.goldenFile}`, import.meta.url);
+    if (update) {
+      writeFileSync(goldenUrl, JSON.stringify(winter, null, 2) + "\n");
+      console.log(`differential --update: wrote ${scenario.name} -> ${scenario.goldenFile}`);
+      continue;
+    }
+    const golden = JSON.parse(readFileSync(goldenUrl, "utf8"));
     const diffs = compareTraces(winter, golden);
     if (diffs.length) {
       anyFail = true;
