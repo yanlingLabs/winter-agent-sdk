@@ -56,6 +56,11 @@ export type SessionStoreEntry = { type: string; uuid?: string; timestamp?: strin
 // TranscriptDialectRecord shape there is later-task scope). Delivered via DIALECT_RECORD_ENTRY_TYPE
 // below, never a transcript line; optional because a summary folded before Task 8 (or any plain,
 // non-dialect append) may not carry them.
+//
+// Task 9 extends it again with `projectDirName` — Ruling P1-N's persisted half (WS-05 §3.2): the
+// resolved (WINTER_PROJECT_DIR_NAME-overridden, or default) directory name this session is actually
+// stored under, so a later resume prefers this recorded value over a fresh env resolution rather
+// than guessing from the CURRENT environment (dialect.ts's resolveEngineSession).
 export type SessionSummaryEntry = {
   sessionId: string;
   entryCount: number;
@@ -65,6 +70,7 @@ export type SessionSummaryEntry = {
   producerRuntime?: "claude-agent" | "winter-agent";
   producerEngineVersion?: string;
   dialectFamily?: "claude-code-jsonl";
+  projectDirName?: string;
   [key: string]: unknown;
 };
 
@@ -81,6 +87,13 @@ export type SessionStore = {
   listSessionSummaries?(projectKey: string): Promise<SessionSummaryEntry[]>;
   delete?(key: SessionKey): Promise<void>;
   listSubkeys?(key: { projectKey: string; sessionId: string }): Promise<string[]>;
+  // Task 9, a WINTER-ONLY EXTENSION — NOT part of the WS-03 §10 pin (exports.json lists no
+  // field-level detail for SessionStore at all; this method exists purely so
+  // resume.ts's findResumeTarget can implement WS-05 §7's "then every other project" fallback,
+  // which has no other way to enumerate projects through the abstract SessionStore surface). Task
+  // 10's relocation of SessionStore into the sdk package must not silently treat this as pinned
+  // official API.
+  listProjectKeys?(): Promise<string[]>;
 };
 
 // ---------------------------------------------------------------------------------------------
@@ -544,5 +557,20 @@ export class WinterCompatibilitySessionStore implements SessionStore {
     const results = new Set<string>();
     walkResourceStems(sessionDir, "", results);
     return [...results];
+  }
+
+  // Task 9, Winter-only extension (see the SessionStore type's own comment) — every top-level
+  // directory directly under <winterHome>/projects/, i.e. every known projectKey. No mtime/sort
+  // guarantee, matching listSessions' own "order not guaranteed" contract.
+  async listProjectKeys(): Promise<string[]> {
+    const dir = join(this.winterHome, "projects");
+    let entries: Dirent[];
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch (err) {
+      if ((err as { code?: unknown }).code === "ENOENT") return [];
+      throw err;
+    }
+    return entries.filter((e) => e.isDirectory()).map((e) => e.name);
   }
 }

@@ -54,10 +54,25 @@ export type { SessionKey, SessionStoreEntry, SessionSummaryEntry, SessionStore }
 
 // The Claude-dialect transcript writer/reader (Task 8, WS-05 §5.2): converts engine turn content
 // into Claude-transcript-compatible JSONL entries and appends them through the store above.
-// createTranscriptPersistence/resolveProductionWinterHome are the shared wiring main.ts and
-// testing.ts both call to honor RuntimeConfig.persistSession.
-export { userEntry, assistantEntry, TranscriptWriter, TranscriptWriterError, RUNTIME_ENGINE_VERSION, createTranscriptPersistence, resolveProductionWinterHome } from "./store/dialect.ts";
-export type { Block, Chain, SessionCtx, DialectEntryBase, UserEntryOpts, TranscriptWriterOptions } from "./store/dialect.ts";
+// resolveEngineSession/resolveProductionWinterHome are the shared wiring main.ts and testing.ts
+// both call to honor RuntimeConfig.persistSession and (Task 9) continue/resume/forkSession/
+// resumeSessionAt — resolveEngineSession replaces Task 8's createTranscriptPersistence, which did
+// only the persistSession/store-construction half of what it now does.
+export {
+  userEntry,
+  assistantEntry,
+  TranscriptWriter,
+  TranscriptWriterError,
+  RUNTIME_ENGINE_VERSION,
+  resolveEngineSession,
+  resolveProductionWinterHome,
+} from "./store/dialect.ts";
+export type { Block, Chain, SessionCtx, DialectEntryBase, UserEntryOpts, TranscriptWriterOptions, ResolvedEngineSession } from "./store/dialect.ts";
+
+// Resume/continue/fork/resume-at (Task 9, WS-05 §7): the pure store-level primitives resume.ts
+// implements and resolveEngineSession above orchestrates.
+export { findContinueTarget, findResumeTarget, forkSession, truncateAt, toDialectEntries, rebuildProviderMessages, ResumeTargetError, ResumeTruncationError } from "./store/resume.ts";
+export type { DialectEntry } from "./store/resume.ts";
 
 // The wire protocol (frames + codec) moved to the sdk (WS-02 §3 dependency inversion, Task 1):
 // this package now depends on it, never the reverse. Re-exported unchanged so existing

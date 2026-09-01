@@ -7,7 +7,7 @@ import { Queue } from "./protocol/channel.ts";
 import type { FrameSource, FrameSink } from "./protocol/channel.ts";
 import { runEngine, type Provider, type ToolExecutor } from "./engine.ts";
 import { echoProvider, stubExecutor } from "./provider/mock.ts";
-import { createTranscriptPersistence } from "./store/dialect.ts";
+import { resolveEngineSession } from "./store/dialect.ts";
 
 // inMemoryProcess is a TESTING-ONLY entry point (winter-agent-runtime/testing — never used by real
 // production code; main.ts is the real entrypoint) — so unlike main.ts's resolveProductionWinterHome,
@@ -55,7 +55,6 @@ export function inMemoryProcess(
   env?: Record<string, string | undefined>,
 ): SpawnedRuntimeProcess {
   const config = parseConfigFromArgv(argv);
-  const store = createTranscriptPersistence({ config, resolveWinterHome: () => resolveInMemoryWinterHome(config, env) });
 
   const stdin = new Queue<string>();
   const stdout = new Queue<string>();
@@ -83,19 +82,48 @@ export function inMemoryProcess(
   });
   let settled = false;
 
-  void runEngine({ config, input, output, provider, tools, ...(store !== undefined ? { store } : {}) })
-    .then((code) => {
+  // Task 9: resolveEngineSession is ASYNC (continue/resume/forkSession/resumeSessionAt all need to
+  // await store I/O) — wrapped in its own async IIFE rather than making inMemoryProcess itself
+  // async, preserving its synchronous "returns a SpawnedRuntimeProcess immediately" contract
+  // (WS-04 §1.1's virtual handle): stdin writes issued by a caller before this resolves just buffer
+  // harmlessly in the `stdin` Queue above, exactly as they would while runEngine itself is merely
+  // slow to start reading.
+  //
+  // The try/catch here is NOT redundant with runEngine's own always-resolves design (runEngine
+  // never throws) — resolveEngineSession CAN throw before runEngine ever starts (an ambiguous or
+  // not-found resume target, ResumeTargetError/ResumeTruncationError). Without this catch, such a
+  // throw would leave `stdout` never ended: a consumer draining `proc.stdout` would hang forever
+  // waiting for an EOF that never comes. Ending stdout with nothing ever written mirrors a real
+  // child process exiting before writing its init frame (WS-04 §6.1) — the same lifecycle query.ts
+  // already maps to CLIConnectionError("runtime exited before init") on the child leg.
+  void (async () => {
+    try {
+      const { config: effectiveConfig, store, initialMessages } = await resolveEngineSession({
+        config,
+        resolveWinterHome: () => resolveInMemoryWinterHome(config, env),
+        env: env ?? {},
+      });
+      const code = await runEngine({
+        config: effectiveConfig,
+        input,
+        output,
+        provider,
+        tools,
+        ...(store !== undefined ? { store } : {}),
+        ...(initialMessages.length > 0 ? { initialMessages } : {}),
+      });
       if (!settled) {
         settled = true;
         settleExited({ code, signal: null });
       }
-    })
-    .catch(() => {
+    } catch {
       if (!settled) {
         settled = true;
+        stdout.end();
         settleExited({ code: 1, signal: null });
       }
-    });
+    }
+  })();
 
   return {
     stdin: {

@@ -16,7 +16,7 @@ import { splitFrames, encodeFrame } from "@yanlinglabs/winter-agent-sdk";
 import type { FrameSource, FrameSink } from "./protocol/channel.ts";
 import { runEngine, type Provider } from "./engine.ts";
 import { echoProvider, stubExecutor, isTestProviderName, testProviderByName } from "./provider/mock.ts";
-import { createTranscriptPersistence, resolveProductionWinterHome } from "./store/dialect.ts";
+import { resolveEngineSession, resolveProductionWinterHome } from "./store/dialect.ts";
 
 // Same argv contract as winter-agent-runtime/testing's inMemoryProcess (Task 2): find the flag by
 // NAME, never by position. Position-based parsing would silently break between the two ways this
@@ -93,15 +93,26 @@ try {
   // Task 8: persists by default (RuntimeConfig.persistSession defaults ON) to config.winterHome, or
   // else the real WINTER_HOME|~/.winter (resolveProductionWinterHome) — this is the REAL production
   // entrypoint, so unlike testing.ts's inMemoryProcess it deliberately DOES fall through to the
-  // real environment/homedir when nothing overrides it.
-  const store = createTranscriptPersistence({ config, resolveWinterHome: () => resolveProductionWinterHome(config, process.env) });
-  const code = await runEngine({
+  // real environment/homedir when nothing overrides it. Task 9: resolveEngineSession ALSO resolves
+  // continue/resume/forkSession/resumeSessionAt against `process.env` (WINTER_PROJECT_DIR_NAME) —
+  // the same deliberate real-environment fallback policy as resolveProductionWinterHome above, on
+  // the same real production entrypoint. A resolution failure (e.g. an ambiguous or not-found
+  // resume target) throws here, before any frame is written — caught by this function's own
+  // top-level catch below, exiting nonzero with the detail on stderr (matching WS-04 §6.1's "exited
+  // before init" lifecycle on the wrapper side).
+  const { config: effectiveConfig, store, initialMessages } = await resolveEngineSession({
     config,
+    resolveWinterHome: () => resolveProductionWinterHome(config, process.env),
+    env: process.env,
+  });
+  const code = await runEngine({
+    config: effectiveConfig,
     input: stdinFrameSource(),
     output: stdoutFrameSink,
     provider,
     tools: stubExecutor,
     ...(store !== undefined ? { store } : {}),
+    ...(initialMessages.length > 0 ? { initialMessages } : {}),
   });
   process.exit(code);
 } catch (err) {

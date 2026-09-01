@@ -60,6 +60,19 @@ export interface EngineOptions {
   provider: Provider;
   tools: ToolExecutor;
   store?: SessionPersistence;
+  // Task 9 (WS-05 §7): the resumed/continued/forked conversation's prior turns, already rebuilt
+  // into this engine's own ProviderMessage shapes by the store layer (dialect.ts's
+  // resolveEngineSession, via resume.ts's rebuildProviderMessages) — seeded into `messages` before
+  // the turn loop starts, so the FIRST provider.generate() call of this run already sees the
+  // resumed history exactly as if the conversation had never left memory. Omitted (or empty) for a
+  // fresh, non-resumed session — byte-identical to pre-Task-9 behavior.
+  //
+  // engine.ts cannot resolve this itself: dialect.ts already imports types from this module, so the
+  // reverse import (this module reading SessionStore/resume.ts) would be circular. Resolution
+  // happens once, before runEngine is even called, at the two call sites that already own store
+  // construction (main.ts, testing.ts) — Ruling P1-B's storage-agnostic engine holds exactly as
+  // before; it just gains one more plain-data input.
+  initialMessages?: ProviderMessage[];
 }
 
 type RaceOutcome<T> = { kind: "ok"; value: T } | { kind: "interrupted" };
@@ -86,7 +99,7 @@ function raceInterrupt<T>(p: Promise<T>, interrupted: Promise<void>): Promise<Ra
  * always ends the turn loop below.
  */
 export async function runEngine(opts: EngineOptions): Promise<number> {
-  const { config, input, output, provider, tools, store } = opts;
+  const { config, input, output, provider, tools, store, initialMessages } = opts;
   const permissionMode = config.permissionMode ?? "default";
 
   // Store failures are auxiliary, never turn-fatal (WS-03 §11 — a mirror failure becomes a
@@ -185,7 +198,7 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
     }
   })();
 
-  const messages: ProviderMessage[] = [];
+  const messages: ProviderMessage[] = initialMessages ? [...initialMessages] : [];
   // Ruling P1-F: maxTurns is the RUN's cumulative agentic tool-use round-trip cap (report §8 /
   // WS-03 §5) — it never resets per user envelope. Declared here, outside the turn loop, so it
   // persists for runEngine's whole lifetime; once spent, EVERY subsequent tool_use attempt in this

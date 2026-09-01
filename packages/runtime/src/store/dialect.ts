@@ -11,9 +11,10 @@
 // frames, no subagent transcripts, no resume (Task 9).
 import { randomUUID } from "node:crypto";
 import type { RuntimeConfig } from "@yanlinglabs/winter-agent-sdk";
-import type { ContentBlock, SessionPersistence } from "../engine.ts";
+import type { ContentBlock, ProviderMessage, SessionPersistence } from "../engine.ts";
 import { resolveWinterHome } from "../paths/home.ts";
 import { compatibilityKeys } from "../paths/keys.ts";
+import { resolveProjectDirName } from "../paths/project-dir-name.ts";
 import {
   WinterCompatibilitySessionStore,
   DIALECT_RECORD_ENTRY_TYPE,
@@ -21,6 +22,7 @@ import {
   type SessionStore,
   type SessionStoreEntry,
 } from "./session-store.ts";
+import { findContinueTarget, findResumeTarget, forkSession, truncateAt, toDialectEntries, rebuildProviderMessages } from "./resume.ts";
 
 // The dialect's own name for a content block. Same shapes engine.ts's ContentBlock already
 // produces (text/tool_use/tool_result, P1-G's `interrupted` and P1-H's `error` markers included) —
@@ -44,6 +46,12 @@ export interface SessionCtx {
   sessionId: string;
   cwd: string;
   version: string; // engineVersion — see RUNTIME_ENGINE_VERSION below for Task 8's chosen source
+  // Task 9 / Ruling P1-N (WS-05 §3.2): the resolved (WINTER_PROJECT_DIR_NAME-overridden, or
+  // default) persistent projectKey this session is actually stored under — carried into the
+  // dialect record's summary sidecar extension fields so a later resume can prefer this RECORDED
+  // value over a fresh env resolution (resolveEngineSession below). Optional so existing callers
+  // that predate Task 9 (and tests constructing a bare SessionCtx) keep compiling unchanged.
+  projectDirName?: string;
 }
 
 export interface DialectEntryBase {
@@ -144,6 +152,10 @@ export interface TranscriptWriterOptions {
   store: SessionStore;
   key: SessionKey;
   ctx: SessionCtx;
+  // Task 9: resume/continue/fork continue an EXISTING chain — the first entry this writer appends
+  // must link to the resumed target's last entry, not start a fresh chain. Omitted/undefined ->
+  // null, i.e. exactly P1's pre-Task-9 behavior (every writer starts a fresh chain).
+  initialParentUuid?: string | null;
 }
 
 // Holds the chain head for one session and appends dialect entries through the Task-7 store — the
@@ -161,7 +173,10 @@ export class TranscriptWriter implements SessionPersistence {
     this.store = opts.store;
     this.key = opts.key;
     this.ctx = opts.ctx;
-    this.parentUuid = null; // P1 never resumes an existing chain (Task 9) — every writer starts fresh
+    // Task 9: a resumed/continued/forked session seeds this with the target's last entry's uuid so
+    // the very next append continues the SAME chain; every pre-Task-9 caller (and every fresh
+    // session) omits it, preserving the original "every writer starts fresh" behavior exactly.
+    this.parentUuid = opts.initialParentUuid ?? null;
   }
 
   async recordUserEntry(content: string | Block[]): Promise<void> {
@@ -196,6 +211,12 @@ export class TranscriptWriter implements SessionPersistence {
       producerRuntime: "winter-agent",
       producerEngineVersion: this.ctx.version,
       dialectFamily: "claude-code-jsonl",
+      // Ruling P1-N (2): persist the resolved projectKey alongside the session on every append —
+      // stateless and self-healing exactly like the fields above (see this method's own header
+      // comment), so a resumed session's recorded name is refreshed, never staled, on its very next
+      // turn. Conditional spread: a caller predating Task 9 (or a bare test SessionCtx) simply omits
+      // the field, matching exactOptionalPropertyTypes.
+      ...(this.ctx.projectDirName !== undefined ? { projectDirName: this.ctx.projectDirName } : {}),
     };
     await this.store.append(this.key, [entry, dialectRecord]);
   }
@@ -226,22 +247,125 @@ export class TranscriptWriter implements SessionPersistence {
 // the real compiled binary unchanged.
 export const RUNTIME_ENGINE_VERSION = "0.0.1";
 
+// Task 9: what runEngine actually needs once resume/continue/fork/resumeSessionAt (or none of them)
+// have been resolved — a persistence sink (or none, when persistSession:false), the prior
+// conversation rebuilt into the engine's own ProviderMessage shape (empty for a fresh session), and
+// the EFFECTIVE RuntimeConfig the engine should run with (sessionId overridden to the resolved
+// continue/resume/fork target — see the header comment on resolveEngineSession below for why this
+// lives here rather than inside engine.ts itself).
+export interface ResolvedEngineSession {
+  config: RuntimeConfig;
+  store: SessionPersistence | undefined;
+  initialMessages: ProviderMessage[];
+}
+
+function buildWriter(opts: { store: SessionStore; projectKey: string; sessionId: string; cwd: string; initialParentUuid: string | null }): TranscriptWriter {
+  return new TranscriptWriter({
+    store: opts.store,
+    key: { projectKey: opts.projectKey, sessionId: opts.sessionId },
+    ctx: { sessionId: opts.sessionId, cwd: opts.cwd, version: RUNTIME_ENGINE_VERSION, projectDirName: opts.projectKey },
+    initialParentUuid: opts.initialParentUuid,
+  });
+}
+
 // Ruling from task-8's brief: "wire store when persistSession !== false", shared by both main.ts
 // (real production entrypoint) and testing.ts (inMemoryProcess) so the ON-by-default decision lives
 // in exactly one place. `resolveWinterHome` is a THUNK, not an eagerly-resolved string: it is
 // called ONLY when persistence is actually active, so a caller that wants to guarantee "never touch
 // the real environment unless a session actually persists" (testing.ts) can defer even constructing
 // a fallback temp directory until it's known to be needed.
-export function createTranscriptPersistence(opts: { config: RuntimeConfig; resolveWinterHome: () => string }): SessionPersistence | undefined {
-  if (opts.config.persistSession === false) return undefined;
+//
+// Task 9 (WS-05 §7) extends this into the full continue/resume/fork/resumeSessionAt resolution —
+// renamed from createTranscriptPersistence because it now does much more than construct a
+// persistence sink. It replaces createTranscriptPersistence's exact two call sites (main.ts,
+// testing.ts) rather than adding a third: engine.ts CANNOT do this resolution itself without
+// importing this module, which would be circular (dialect.ts already imports types FROM engine.ts)
+// — so the caller resolves the whole session BEFORE runEngine starts, and hands it an already-
+// rebuilt `initialMessages` seed plus a `config` whose `sessionId` already reflects the resolved
+// target (engine.ts's own init-frame/persistence code needs zero changes beyond that seam: it
+// already writes `config.sessionId` verbatim into the init frame and the TranscriptWriter key).
+//
+// `env` is required (not defaulted to `process.env` internally) so every caller states explicitly
+// which environment governs WINTER_PROJECT_DIR_NAME resolution — main.ts passes the real
+// `process.env` (its own deliberate, documented policy); testing.ts passes its own `env` parameter
+// (or `{}` when omitted), mirroring resolveInMemoryWinterHome's existing "never silently fall
+// through to the real process.env" discipline.
+export async function resolveEngineSession(opts: {
+  config: RuntimeConfig;
+  resolveWinterHome: () => string;
+  env: Record<string, string | undefined>;
+}): Promise<ResolvedEngineSession> {
+  const { config } = opts;
+  if (config.persistSession === false) {
+    // WS-05 §7: "Non-persistent sessions ... are excluded from every resume surface." No store to
+    // search or write — continue/resume/forkSession/resumeSessionAt are silently inert, exactly as
+    // they would be if never set; never an error (sessionStore-style combination validation is
+    // explicitly deferred to a later task, per this task's brief).
+    return { config, store: undefined, initialMessages: [] };
+  }
+
   const winterHome = opts.resolveWinterHome();
   const store = new WinterCompatibilitySessionStore({ winterHome });
-  const projectKey = compatibilityKeys(opts.config.cwd).transcriptProjectKey;
-  return new TranscriptWriter({
-    store,
-    key: { projectKey, sessionId: opts.config.sessionId },
-    ctx: { sessionId: opts.config.sessionId, cwd: opts.config.cwd, version: RUNTIME_ENGINE_VERSION },
-  });
+  const defaultProjectKey = compatibilityKeys(config.cwd).transcriptProjectKey;
+  // Ruling P1-N (1): resolve the persistent projectKey (WINTER_PROJECT_DIR_NAME override applied,
+  // if any) up front — every branch below (fresh session AND continue's single-directory scope)
+  // uses this SAME resolved value, never the raw default.
+  const cwdKey = resolveProjectDirName(defaultProjectKey, opts.env);
+
+  const wantsContinue = config.continue === true;
+  const wantsResume = config.resume !== undefined;
+
+  if (!wantsContinue && !wantsResume) {
+    const writer = buildWriter({ store, projectKey: cwdKey, sessionId: config.sessionId, cwd: config.cwd, initialParentUuid: null });
+    return { config, store: writer, initialMessages: [] };
+  }
+
+  let targetSessionId: string;
+  let targetProjectKey: string;
+
+  if (wantsContinue) {
+    const found = await findContinueTarget(store, cwdKey);
+    if (found === null) {
+      // WS-05 §7 doesn't specify behavior for "continue with nothing to continue" — starting a
+      // fresh session under the same resolved project key is the least-surprising fallback (never
+      // silently picks an unrelated session, never blocks the run on a typed error for what is, in
+      // effect, just an empty project).
+      const writer = buildWriter({ store, projectKey: cwdKey, sessionId: config.sessionId, cwd: config.cwd, initialParentUuid: null });
+      return { config, store: writer, initialMessages: [] };
+    }
+    targetSessionId = found;
+    targetProjectKey = cwdKey; // continue is single-project by construction (WS-05 §7) — no search needed
+  } else {
+    targetSessionId = config.resume as string; // wantsResume guarantees this
+    const found = await findResumeTarget(store, { sessionId: targetSessionId, cwdKey });
+    targetProjectKey = found.projectKey;
+  }
+
+  if (config.forkSession === true) {
+    // "forkSession on resume creates the fork FIRST then resumes the new uuid" (task brief) — the
+    // fork lives alongside its source, in the SAME project directory (targetProjectKey unchanged).
+    const forked = await forkSession(store, { projectKey: targetProjectKey, sessionId: targetSessionId });
+    targetSessionId = forked.sessionId;
+  }
+
+  const rawEntries = await TranscriptWriter.readBack(store, { projectKey: targetProjectKey, sessionId: targetSessionId });
+  let chainEntries = toDialectEntries(rawEntries);
+  if (config.resumeSessionAt !== undefined) {
+    chainEntries = truncateAt(chainEntries, { atUuid: config.resumeSessionAt, dropsTurn: config.resumeDropsTurn ?? false });
+  }
+
+  const initialMessages = rebuildProviderMessages(chainEntries);
+  const lastEntry = chainEntries.length > 0 ? chainEntries[chainEntries.length - 1] : undefined;
+  const initialParentUuid = lastEntry !== undefined ? lastEntry.uuid : null;
+
+  // Ruling P1-N (3): continued writes target targetProjectKey — the value the search ABOVE
+  // actually discovered the session under — never a second, independently fresh-resolved key. This
+  // is what "prefer the recorded value over a fresh env resolution" buys concretely: even though
+  // `cwdKey` was computed from THIS run's current environment, a resumed session already living
+  // under a different (possibly now-stale) resolved name keeps writing there.
+  const writer = buildWriter({ store, projectKey: targetProjectKey, sessionId: targetSessionId, cwd: config.cwd, initialParentUuid });
+  const effectiveConfig: RuntimeConfig = { ...config, sessionId: targetSessionId };
+  return { config: effectiveConfig, store: writer, initialMessages };
 }
 
 // main.ts's own production policy: config.winterHome (an explicit per-run override — RuntimeConfig
