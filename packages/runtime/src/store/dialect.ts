@@ -387,6 +387,25 @@ export async function resolveEngineSession(opts: {
   const wantsContinue = config.continue === true;
   const wantsResume = config.resume !== undefined;
 
+  // Task 11 fix round 1 (apparent-safety-is-accident-not-policy note, per this project's own
+  // vocabulary for exactly this shape of finding — see e.g. the CEF 30fps-cap investigation):
+  // constructing an approvalStore HERE, for a sessionId this branch treats as brand-new, is safe
+  // in effect ONLY because `initialMessages: []` below means engine.ts's own resume-consumption
+  // scan (runEngine, before the turn loop) has nothing to match ANY record against — it looks for
+  // a tool_result whose tool_use_id equals a pending/allowed record's own toolUseID, and an empty
+  // history can never contain one. That is an ACCIDENT of this branch never rebuilding history, not
+  // a deliberate collision guard: dialect.ts's own pre-existing Ruling P1-S comment (above,
+  // `resolveEngineSession`'s eager-lease-claim paragraph) already documents the one acknowledged
+  // gap this shares — a CALLER-PRE-ALLOCATED `config.sessionId` that happens to COLLIDE with an
+  // existing, already-deferred session reaches this "fresh" path unchanged (continue/resume are
+  // both false, so it is never resolved as a resume at all), and this branch would then construct
+  // an approvalStore pointed at that COLLIDING session's real approvals file. Today, nothing bad
+  // happens: any pending/allowed record already there is simply never touched, because there is no
+  // history to substitute into. If a FUTURE change ever made this branch populate `initialMessages`
+  // for any reason, this accidental protection disappears and the collision becomes a live
+  // executable path with no deliberate guard behind it at all. Not fixed here (out of this fix
+  // round's scope — the real fix is presumably at session-identity allocation, not here); flagged
+  // so the accident is never mistaken for a policy.
   if (!wantsContinue && !wantsResume) {
     const writer = buildWriter({ store, projectKey: cwdKey, sessionId: config.sessionId, cwd: config.cwd, initialParentUuid: null, winterHome });
     return {
@@ -407,7 +426,8 @@ export async function resolveEngineSession(opts: {
       // WS-05 §7 doesn't specify behavior for "continue with nothing to continue" — starting a
       // fresh session under the same resolved project key is the least-surprising fallback (never
       // silently picks an unrelated session, never blocks the run on a typed error for what is, in
-      // effect, just an empty project).
+      // effect, just an empty project). Same accidental-not-deliberate collision safety as the
+      // `!wantsContinue && !wantsResume` branch above — see that branch's own comment.
       const writer = buildWriter({ store, projectKey: cwdKey, sessionId: config.sessionId, cwd: config.cwd, initialParentUuid: null, winterHome });
       return {
         config,
