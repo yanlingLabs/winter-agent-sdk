@@ -92,3 +92,6 @@ export type { PermissionMode, PermissionBehavior, PermissionRuleValue } from "./
 // barrel (WS-02 §3: the runtime imports sdk types, never the reverse; no deep subpath import exists
 // — the sdk package's own package.json "exports" is closed to ".").
 export type { PermissionUpdate, PermissionUpdateDestination, RuleSource } from "./permissions/types.ts";
+// Task 8 (WS-07 §7.1/§7.2): canUseTool's verbatim callback/result contracts, plus Winter's own
+// "permission" control-request wire payload shape (see permissions/types.ts's own Task 8 banners).
+export type { CanUseTool, PermissionResult, PermissionDecisionClassification, PermissionRequestPayload } from "./permissions/types.ts";

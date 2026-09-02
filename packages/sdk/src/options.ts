@@ -1,5 +1,5 @@
 import type { SpawnClaudeCodeProcess } from "./transport.ts";
-import type { RuleSource, PermissionMode } from "./permissions/types.ts";
+import type { RuleSource, PermissionMode, CanUseTool } from "./permissions/types.ts";
 
 export interface Options {
   model?: string;
@@ -73,4 +73,13 @@ export interface Options {
   // (packages/runtime/src/permissions/policy-state.ts's checkBypassGate). Absent/false is the
   // default; `permissions.disableBypassPermissionsMode` above overrides even an explicit `true`.
   allowDangerouslySkipPermissions?: boolean;
+
+  // Task 8 (WS-07 §7.1): the product-facing prompt handler. Never serialized into RuntimeConfig
+  // (--config-json) — it's a JS function, not wire-safe data; the runtime knows nothing about
+  // whether one exists, only that a "permission" control_request either gets an answer or the
+  // wrapper's own generic "no handler registered" fallback fires (query.ts registers a "permission"
+  // handler ONLY when this is set — see that file's own comment on why the two are equivalent from
+  // the runtime's point of view: no callback and "no handler answered it" collapse to the identical
+  // wire outcome). §7.3: paired with a static shadow-warning check at query() construction time.
+  canUseTool?: CanUseTool;
 }

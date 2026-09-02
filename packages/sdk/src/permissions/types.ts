@@ -74,3 +74,77 @@ export type PermissionUpdateDestination = "userSettings" | "projectSettings" | "
 // disallowedTools/permissions respectively feed those two), never by applying a live
 // PermissionUpdate.
 export type RuleSource = "managed" | "user" | "project" | "local" | "cliArg" | "session" | "sdk";
+
+// --- Task 8 (WS-07 §7.1/§7.2, verbatim; derived-shapes-p2.md item (c) cross-checked field-for-field) ---
+//
+// `CanUseTool`'s `options` object matches the pinned 0.3.250 declaration EXACTLY: all 11 fields,
+// identical names/types/optionality, including the nested `matchedAskRule` shape (derived-shapes
+// item (c)'s own verdict: "MATCHES WS-07 §7.1's verbatim block exactly"). Note `matchedAskRule.source`
+// is a bare `string` here — NOT `RuleSource` — matching the pinned declaration precisely; the
+// runtime's own internal seam (evaluator.ts's PromptStageMeta) is free to be more specific
+// (RuleSource narrows to string, so assigning a RuleSource value into this field is always valid).
+export type CanUseTool = (
+  toolName: string,
+  input: Record<string, unknown>,
+  options: {
+    signal: AbortSignal;
+    suggestions?: PermissionUpdate[];
+    blockedPath?: string;
+    decisionReason?: string;
+    title?: string;
+    displayName?: string;
+    description?: string;
+    toolUseID: string;
+    agentID?: string;
+    requestId: string;
+    matchedAskRule?: { source: string; toolName: string; ruleContent?: string };
+  },
+) => Promise<PermissionResult | null>;
+
+// The `null` escape (WS-07 §7.2): valid ONLY after the consumer already sent the matching control
+// response out of band (query.__internal.respondPermission, sdk/src/query.ts) echoing `requestId` —
+// the SDK then suppresses its own response write. An unaccompanied `null` fails closed (a pending
+// permission RPC has no park timeout, WS-04 §3 — an accidental `null` could otherwise block the
+// tool indefinitely) rather than hanging.
+export type PermissionDecisionClassification = "user_temporary" | "user_permanent" | "user_reject";
+
+export type PermissionResult =
+  | {
+      behavior: "allow";
+      updatedInput?: Record<string, unknown>;
+      updatedPermissions?: PermissionUpdate[];
+      toolUseID?: string;
+      decisionClassification?: PermissionDecisionClassification;
+    }
+  | {
+      behavior: "deny";
+      message: string;
+      interrupt?: boolean;
+      toolUseID?: string;
+      decisionClassification?: PermissionDecisionClassification;
+    };
+
+// --- Task 8 (WS-04 §3's "permission" control-request row; Winter-owned WIRE shape — NOT part of
+// the pinned upstream surface, unlike everything above this banner) ---
+//
+// The full canUseTool argument set, flattened into one JSON-safe control_request payload: every
+// CanUseTool `options` field MINUS `signal` (a wrapper-local AbortSignal — never serializable; the
+// wrapper mints its own per-request AbortController instead, see query.ts) PLUS `policyVersion`
+// (Winter's own addition, WS-07 §2's stale-policy-rejection contract: a permission answer computed
+// against a mode/rule snapshot that has since moved on must be discardable and re-evaluated under
+// the current policy — every pending decision carries the version it was computed under).
+export interface PermissionRequestPayload {
+  toolName: string;
+  input: Record<string, unknown>;
+  suggestions?: PermissionUpdate[];
+  blockedPath?: string;
+  decisionReason?: string;
+  title?: string;
+  displayName?: string;
+  description?: string;
+  toolUseID: string;
+  agentID?: string;
+  requestId: string;
+  matchedAskRule?: { source: string; toolName: string; ruleContent?: string };
+  policyVersion: number;
+}
