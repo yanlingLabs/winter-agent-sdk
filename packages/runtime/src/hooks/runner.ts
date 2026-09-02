@@ -150,6 +150,25 @@ export function isGatingHookEvent(event: HookEvent): boolean {
 // turn... a defer return is a hook contract error." PermissionRequest is T10's own firing
 // responsibility, but the check lives here (shared/general) so T10 inherits it for free rather than
 // re-deriving it.
+//
+// SCOPE NOTE (T10, closing the T9 reviewer's own "misleading until the interpreter exists" flag on
+// this set's PermissionRequest membership): this set governs ONLY `hasInvalidDefer`'s universal
+// check below, which reads the flat `permissionDecision` field -- PreToolUse's shape, not
+// PermissionRequest's. PermissionRequest doesn't have a `permissionDecision` field at all (its
+// pinned shape is `hookSpecificOutput.decision.behavior`), so this set's practical effect for
+// PermissionRequest is narrow: it merely EXEMPTS that event from a flat-field check that could never
+// fire true for it on its own real shape anyway. PermissionRequest's actual, stricter defer-rejection
+// -- §7's prose notwithstanding -- lives entirely in `interpretPermissionRequest`'s own T9-CARRY-3
+// reconciliation below (any `decision.behavior` other than "allow"/"deny", including "defer", is that
+// hook's own §8 error). Net effect, documented rather than silently left as an exercise for the next
+// reader: a hook that smuggles the WRONG field name -- `permissionDecision: "defer"` instead of
+// `decision: { behavior: "defer" }` -- onto a PermissionRequest output is caught by NEITHER check
+// (hasInvalidDefer ignores it because this set exempts the event; interpretPermissionRequest ignores
+// it because it only ever reads `decision`, never `permissionDecision`) and resolves to a silent
+// `{kind:"none"}`, identical to every other interpreter's own absent-field posture. Chosen, not
+// missed: consistent with this runner's general lenient-on-absent/strict-on-malformed-present split,
+// and no narrower than PreToolUse's own interpreter, which is equally silent on a field it doesn't
+// recognize under a name it doesn't expect.
 const DEFER_CAPABLE_HOOK_EVENTS: ReadonlySet<HookEvent> = new Set(["PreToolUse", "PermissionRequest"]);
 
 // --- runHooks -----------------------------------------------------------------------------------
