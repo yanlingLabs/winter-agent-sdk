@@ -87,3 +87,8 @@ export {
 // Task 3 (WS-07 §3.3/§4): permissions surface, pinned-types home. See permissions/types.ts's own
 // header for the section boundaries later tasks (5, 8) extend.
 export type { PermissionMode, PermissionBehavior, PermissionRuleValue } from "./permissions/types.ts";
+// Task 5 (WS-07 §3.2/§3.3): PermissionUpdate/PermissionUpdateDestination (verbatim) + RuleSource
+// (Winter-original) — packages/runtime/src/permissions/ruleset.ts imports all three from this
+// barrel (WS-02 §3: the runtime imports sdk types, never the reverse; no deep subpath import exists
+// — the sdk package's own package.json "exports" is closed to ".").
+export type { PermissionUpdate, PermissionUpdateDestination, RuleSource } from "./permissions/types.ts";

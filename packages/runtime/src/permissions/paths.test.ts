@@ -13,7 +13,14 @@ import { mkdtempSync, mkdirSync, symlinkSync, writeFileSync, rmSync, realpathSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { matchFileRule, checkSymlinkBothEnds, readDenyBlocksEdit, MAX_DOUBLE_STARS, type FileRuleEntry } from "./paths.ts";
+import {
+  matchFileRule,
+  checkSymlinkBothEnds,
+  readDenyBlocksEdit,
+  MAX_DOUBLE_STARS,
+  exceedsDoubleStarCap,
+  type FileRuleEntry,
+} from "./paths.ts";
 
 // Shared synthetic (never-real) context for the pure-string fixture groups below.
 const CWD = "/synthetic/proj";
@@ -459,5 +466,40 @@ describe("readDenyBlocksEdit (WS-07 §3.1: 'a Read deny also blocks current Edit
   test("a `/`-anchored deny rule with no sourceDir never blocks (same sourceDir-absent rule as matchFileRule)", () => {
     const rules: FileRuleEntry[] = [{ toolName: "Read", pattern: "/config.json", behavior: "deny" }];
     expect(readDenyBlocksEdit(rules, "/synthetic/settings-src/config.json", ctx)).toBe(false);
+  });
+});
+
+// Task 5 (Ruling P2-E): a rule-add-time probe for the SAME cap compileFsGlobToRegex enforces at
+// match time, so a Read/Edit rule store (packages/runtime/src/permissions/ruleset.ts) can reject an
+// over-cap pattern when it is ADDED rather than let it silently compile to `null` (never-matching,
+// including for deny/ask -- a fail-open gap for those two directions) at match time. Deliberately
+// operates on the RAW, pre-anchor pattern text -- see exceedsDoubleStarCap's own header comment for
+// why prepending an anchor's literal base segments never changes the "**" segment count.
+describe("exceedsDoubleStarCap (Ruling P2-E: rule-add-time probe for compileFsGlobToRegex's own cap)", () => {
+  test("a pattern at exactly MAX_DOUBLE_STARS does not exceed the cap", () => {
+    const pattern = Array.from({ length: MAX_DOUBLE_STARS }, () => "**").join("/a/");
+    expect(exceedsDoubleStarCap(pattern)).toBe(false);
+  });
+
+  test("a pattern with one more than MAX_DOUBLE_STARS exceeds the cap", () => {
+    const pattern = Array.from({ length: MAX_DOUBLE_STARS + 1 }, () => "**").join("/a/");
+    expect(exceedsDoubleStarCap(pattern)).toBe(true);
+  });
+
+  test("adjacent '**' segments collapse before counting, mirroring compileFsGlobToRegex's own mitigation", () => {
+    // MAX_DOUBLE_STARS+1 adjacent "**" segments collapse to ONE -- not over the cap.
+    const pattern = Array.from({ length: MAX_DOUBLE_STARS + 1 }, () => "**").join("/");
+    expect(exceedsDoubleStarCap(pattern)).toBe(false);
+  });
+
+  test("a pattern with no '**' at all never exceeds the cap", () => {
+    expect(exceedsDoubleStarCap("build/dist/*.js")).toBe(false);
+  });
+
+  test("anchor-independence: prepending a literal absolute base never changes the count", () => {
+    const bare = Array.from({ length: MAX_DOUBLE_STARS + 1 }, () => "**").join("/a/");
+    const anchored = `/synthetic/settings-src/${bare}`;
+    expect(exceedsDoubleStarCap(bare)).toBe(true);
+    expect(exceedsDoubleStarCap(anchored)).toBe(true);
   });
 });

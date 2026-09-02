@@ -37,3 +37,40 @@ export type PermissionMode = "default" | "acceptEdits" | "bypassPermissions" | "
 // tools that use the parenthetical-specifier grammar.
 export type PermissionBehavior = "allow" | "deny" | "ask";
 export type PermissionRuleValue = { toolName: string; ruleContent?: string };
+
+// --- Task 5 (WS-07 §3.3, verbatim) ---
+//
+// The six-variant PermissionUpdate union + its destination enum, quoted verbatim from WS-07 §3.3
+// (itself citing report §28.3). `canUseTool` (Task 8) receives these as ready-made `suggestions`
+// and may echo selected entries back as `updatedPermissions` — Winter's engine (Task 6) is the only
+// intended PRODUCER of a `suggestions` array; this file only pins the shape. Every member's
+// `destination` is a `PermissionUpdateDestination` — note there is no "managed" member: managed
+// policy is never a live-update destination (it is provisioned wholesale, out of band, and re-fed
+// into a `SourcedRuleSet` only as an INJECTED source per ruling 1 below) — this is load-bearing for
+// packages/runtime/src/permissions/ruleset.ts's authority-validation design (see that file's own
+// header for the consequence).
+export type PermissionUpdate =
+  | { type: "addRules"; rules: PermissionRuleValue[]; behavior: PermissionBehavior; destination: PermissionUpdateDestination }
+  | { type: "replaceRules"; rules: PermissionRuleValue[]; behavior: PermissionBehavior; destination: PermissionUpdateDestination }
+  | { type: "removeRules"; rules: PermissionRuleValue[]; behavior: PermissionBehavior; destination: PermissionUpdateDestination }
+  | { type: "setMode"; mode: PermissionMode; destination: PermissionUpdateDestination }
+  | { type: "addDirectories"; directories: string[]; destination: PermissionUpdateDestination }
+  | { type: "removeDirectories"; directories: string[]; destination: PermissionUpdateDestination };
+
+export type PermissionUpdateDestination = "userSettings" | "projectSettings" | "localSettings" | "session" | "cliArg";
+
+// --- Task 5 (WS-07 §3.2 — Winter-original; NOT part of the pinned upstream type surface) ---
+//
+// Models WS-07 §3.2's prose source list ("managed policy, SDK-managed settings, CLI arguments,
+// user settings, project settings, local settings, session updates") as a discriminated string
+// union. Deliberately kept in its own block, separate from the verbatim §3.3 shapes just above, so
+// a future conformance sweep that treats this file as "everything here is a pinned upstream type"
+// never mistakes a Winter-only modeling choice for a divergence from the artifact. Every
+// `SourcedRuleSet` entry (packages/runtime/src/permissions/ruleset.ts) carries exactly one of
+// these; `PermissionUpdateDestination` above maps onto the five of these it can reach live
+// (userSettings->user, projectSettings->project, localSettings->local, session->session,
+// cliArg->cliArg) — "managed" and "sdk" are only ever produced by injection (ruling 1: P2 rule
+// sources are injected, source-tagged inputs; P5's file loader and Options.allowedTools/
+// disallowedTools/permissions respectively feed those two), never by applying a live
+// PermissionUpdate.
+export type RuleSource = "managed" | "user" | "project" | "local" | "cliArg" | "session" | "sdk";

@@ -203,6 +203,17 @@ function compileFsGlobToRegex(absPattern: string): RegExp | null {
   return new RegExp(`^${out}$`);
 }
 
+// Task 5 (Ruling P2-E), RED-phase stub: real body lands with ruleset.ts's implementation. Reuses
+// collapseConsecutiveDoubleStars + MAX_DOUBLE_STARS (this module's own mitigation) rather than
+// letting a caller re-derive the collapse/count algorithm independently, which would drift the
+// moment either changes here. Anchor-independent: prepending an anchor's literal absolute base
+// segments (never "**" themselves) never changes a pattern's own "**" segment count, so the caller
+// may pass the RAW, pre-anchor rule pattern exactly as authored — see paths.test.ts's
+// anchor-independence fixture.
+export function exceedsDoubleStarCap(_pattern: string): boolean {
+  throw new Error("not implemented");
+}
+
 export function matchFileRule(pattern: string, opts: MatchFileRuleOptions): boolean {
   const anchor = resolveAnchor(pattern, opts);
   if (anchor === null) return false;

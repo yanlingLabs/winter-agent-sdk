@@ -7,6 +7,12 @@
 // Task 2 (this file's origin) only populates/consumes sessionId/cwd/model; the remaining fields
 // are the full shape Task 3 (turn engine) and Task 9 (resume/continue/fork) will read — declared
 // now so every producer/consumer across tasks compiles against one definition from the start.
+//
+// Task 5 (WS-07 §3.3 / phase ruling 1): allowedTools/disallowedTools/permissions/settingSources
+// mirror Options' own fields (options.ts) exactly — same optional raw-string-grammar shapes, same
+// serialize-only posture. The runtime engine (a later task) is the actual consumer.
+import type { RuleSource } from "../permissions/types.ts";
+
 export interface RuntimeConfig {
   sessionId: string;
   cwd: string;
@@ -20,4 +26,8 @@ export interface RuntimeConfig {
   resumeDropsTurn?: boolean;
   persistSession?: boolean;
   winterHome?: string;
+  allowedTools?: string[];
+  disallowedTools?: string[];
+  permissions?: { allow?: string[]; ask?: string[]; deny?: string[] };
+  settingSources?: RuleSource[];
 }

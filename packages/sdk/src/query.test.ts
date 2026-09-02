@@ -169,6 +169,44 @@ test("Task 9 + fix-wave Minor 3: unset resume/continue/fork/maxTurns fields are 
   expect(config.cwd).toBe(process.cwd()); // query() runs in THIS same test process — an exact, non-flaky comparison
 });
 
+// --- Task 5 (WS-07 §3.3 / phase ruling 1): Options.{allowedTools,disallowedTools,permissions,
+// settingSources} serialize into --config-json exactly like every prior field above (T9's own
+// precedent, same captureConfigJson helper) --------------------------------------------------
+
+test("Task 5: allowedTools/disallowedTools/permissions/settingSources are present in --config-json when set on Options", async () => {
+  const capture = captureConfigJson();
+  for await (const _msg of query({
+    prompt: "ping",
+    options: {
+      allowedTools: ["Read", "Bash(ls *)"],
+      disallowedTools: ["Bash(rm *)"],
+      permissions: { allow: ["WebFetch(domain:example.com)"], ask: ["Bash(git push*)"], deny: ["Bash(curl *)"] },
+      settingSources: ["user", "local"],
+      spawnClaudeCodeProcess: capture.hook,
+    },
+  })) {
+    /* drain */
+  }
+
+  expect(capture.get()).toMatchObject({
+    allowedTools: ["Read", "Bash(ls *)"],
+    disallowedTools: ["Bash(rm *)"],
+    permissions: { allow: ["WebFetch(domain:example.com)"], ask: ["Bash(git push*)"], deny: ["Bash(curl *)"] },
+    settingSources: ["user", "local"],
+  });
+});
+
+test("Task 5: unset allowedTools/disallowedTools/permissions/settingSources are OMITTED entirely from --config-json", async () => {
+  const capture = captureConfigJson();
+  for await (const _msg of query({ prompt: "ping", options: { spawnClaudeCodeProcess: capture.hook } })) {
+    /* drain */
+  }
+  const config = capture.get();
+  for (const key of ["allowedTools", "disallowedTools", "permissions", "settingSources"]) {
+    expect(config).not.toHaveProperty(key);
+  }
+});
+
 test("Task 9: a pre-allocated Options.sessionId round-trips into the init frame's sessionId", async () => {
   const explicitId = "44444444-4444-4444-8444-444444444444";
   let sawInitSessionId: string | undefined;

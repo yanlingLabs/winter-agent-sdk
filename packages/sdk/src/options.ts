@@ -1,4 +1,5 @@
 import type { SpawnClaudeCodeProcess } from "./transport.ts";
+import type { RuleSource } from "./permissions/types.ts";
 
 export interface Options {
   model?: string;
@@ -39,4 +40,20 @@ export interface Options {
   resumeSessionAt?: string; // load only through this message uuid (the transcript is a graph, not a linear buffer — the tail is never deleted, just not part of this run's context).
   resumeDropsTurn?: boolean; // confirms resumeSessionAt is intentionally discarding entries after the target uuid; validated runtime-side, never a blind trust flag.
   persistSession?: boolean; // false suppresses transcript persistence entirely; excluded from every resume surface (WS-05 §7).
+
+  // --- Task 5 (WS-07 §3.3 / phase ruling 1): declarative authorization inputs, serialized through
+  // --config-json exactly like every field above (conditional spreads in query.ts; RuntimeConfig
+  // mirrors these fields verbatim — protocol/config.ts). These are raw `Tool`/`Tool(specifier)`
+  // grammar strings (WS-07 §3), NOT PermissionUpdate's `PermissionRuleValue` object shape. query.ts
+  // never interprets them — they are pure passthrough; a future runtime-side consumer
+  // (packages/runtime/src/permissions/ruleset.ts's buildSdkSourcedEntries, wired into the engine by
+  // a later task) turns them into `source: "sdk"` entries of a `SourcedRuleSet`, applying the same
+  // add-time grammar validation every other rule source gets.
+  allowedTools?: string[]; // allow rules, source "sdk". Advertisement-layer note (WS-07 §1): this pre-approves, it does not by itself hide other tools.
+  disallowedTools?: string[]; // deny rules, source "sdk". Bare vs scoped both flow through parseRule unchanged (WS-07 §3's schema-removal-as-deny distinction, carried via ParsedRule.isBareEquivalent).
+  permissions?: { allow?: string[]; ask?: string[]; deny?: string[] }; // same raw-string grammar, one array per PermissionBehavior, all tagged source "sdk".
+  // Winter-original (WS-07 §3.2's prose source list, not a pinned upstream field): which rule
+  // sources a host wants loaded at all — e.g. omitting "project" avoids loading project rules
+  // entirely (WS-07 §3.2). Serialize-only for this task: P5's file loader is the actual consumer.
+  settingSources?: RuleSource[];
 }
