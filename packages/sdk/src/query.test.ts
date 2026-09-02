@@ -339,6 +339,50 @@ test("an unregistered control subtype from the runtime is auto-answered ok:false
   expect(response!.error?.code).toBe("unhandled_subtype");
 });
 
+// --- Task 8: T2's own control-request-handler mechanism had two branches no existing test ever
+// exercised (both predate this task; T8's brief calls them out by name). Neither is
+// permission-specific — makePermissionHandler (this task's own "permission" handler) never takes
+// either path itself, since it always resolves a determinate {ok:true, payload} (see that
+// function's own header) — these two prove the GENERIC registerControlRequestHandler mechanism
+// any future subtype's handler shares.
+
+test("T2: a registered handler resolving {ok:false, error} writes that exact error verbatim", async () => {
+  const requestId = "probe-3";
+  const { proc, writes } = recordingProcessWithControlRequest("test_subtype", requestId);
+  const gen = query({ prompt: "hi", options: { spawnClaudeCodeProcess: () => proc } });
+
+  const internal = (gen as unknown as { __internal?: QueryInternal }).__internal;
+  internal!.registerControlRequestHandler("test_subtype", async () => ({ ok: false, error: { code: "custom_rejection", message: "no thanks" } }));
+
+  for await (const _msg of gen) {
+    /* drain */
+  }
+
+  const response = decodeControlResponse(writes, requestId);
+  expect(response?.ok).toBe(false);
+  expect(response?.error).toEqual({ code: "custom_rejection", message: "no thanks" });
+});
+
+test("T2: a registered handler that THROWS fails closed — ok:false, code handler_threw, never a dropped request or a wrapper crash", async () => {
+  const requestId = "probe-4";
+  const { proc, writes } = recordingProcessWithControlRequest("test_subtype", requestId);
+  const gen = query({ prompt: "hi", options: { spawnClaudeCodeProcess: () => proc } });
+
+  const internal = (gen as unknown as { __internal?: QueryInternal }).__internal;
+  internal!.registerControlRequestHandler("test_subtype", async () => {
+    throw new Error("handler exploded");
+  });
+
+  const seen: string[] = [];
+  for await (const msg of gen) seen.push(msg.type);
+  expect(seen).toContain("result"); // the throw never crashed the wrapper/query
+
+  const response = decodeControlResponse(writes, requestId);
+  expect(response?.ok).toBe(false);
+  expect(response?.error?.code).toBe("handler_threw");
+  expect(response?.error?.message).toBe("handler exploded");
+});
+
 // --- Task 2: real setPermissionMode()/interrupt() — replacing the P0/P1 stubs. Both send a real
 // control_request and resolve/reject on the runtime's ack, correlated by requestId
 // (pendingHostRequests in query.ts). Driven against the REAL engine (inMemoryProcess), never a

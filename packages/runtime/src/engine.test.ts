@@ -852,6 +852,62 @@ test("Task 8: a real canUseTool allow with updatedPermissions applies LIVE (a se
   }
 });
 
+// WS-07 §2's stale-policy-rejection contract, exercised for the first time with a GENUINE async
+// window: evaluateWithFreshPolicy (T6, unchanged by Task 8) already re-evaluates when
+// policyStateStore's version moved on while an evaluate() call was in flight — but with the T6/T7
+// stub PromptStage (a synchronous null, no real await), there was no real-world window during which
+// a permission RPC specifically could straddle a policy change. The real, bridge-backed PromptStage
+// is what makes this scenario possible to construct at all.
+test("Task 8/WS-07 §2: a permission answer computed under a policy that changed WHILE the RPC was in flight is discarded and re-evaluated fresh", async () => {
+  const { host, runtime } = createInMemoryChannel();
+  const provider = scriptedProvider([{ kind: "tool_use", calls: [{ id: "call1", name: "mystery_tool", input: {} }] }]);
+  const done = runEngine({ config: baseConfig(), input: runtime.input, output: runtime.output, provider, tools: stubExecutor });
+
+  host.output.write({ type: "user", text: "go" });
+
+  const seen: WinterFrame[] = [];
+  let permissionReq: ControlRequestFrame | undefined;
+  for await (const f of host.input) {
+    seen.push(f);
+    if (f.type === "control_request" && (f as ControlRequestFrame).subtype === "permission") {
+      permissionReq = f as ControlRequestFrame;
+      break;
+    }
+  }
+  expect(permissionReq).toBeDefined();
+
+  // WHILE the permission RPC is still unanswered, switch the live mode — this bumps policyVersion.
+  // Its own ack is awaited before answering the stale RPC, so the version bump is guaranteed to
+  // have already landed by the time the late answer arrives.
+  host.output.write({ type: "control_request", requestId: "m1", subtype: "set_permission_mode", payload: "dontAsk" });
+  for await (const f of host.input) {
+    seen.push(f);
+    if (f.type === "control_response" && (f as ControlResponseFrame).requestId === "m1") break;
+  }
+
+  // NOW answer the original (now-stale) request with an allow — it must be discarded, never executed.
+  const staleResult: PermissionResult = { behavior: "allow" };
+  host.output.write({ type: "control_response", requestId: permissionReq!.requestId, ok: true, payload: staleResult });
+  host.output.write({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined });
+
+  const rest = await drain(host.input);
+  seen.push(...rest);
+  const code = await done;
+  expect(code).toBe(0);
+
+  // Never a second "permission" RPC: dontAsk's re-evaluation denies outright at stage 4/5's own
+  // fallback, mechanism "mode" — it never reaches canUseTool again (WS-07 §6.3).
+  const firstReqIndex = seen.indexOf(permissionReq!);
+  const secondPermissionReq = seen
+    .slice(firstReqIndex + 1)
+    .find((f) => f.type === "control_request" && (f as ControlRequestFrame).subtype === "permission");
+  expect(secondPermissionReq).toBeUndefined();
+
+  const msgs = dataMessages(seen);
+  const toolResult = msgs.find((m) => m.type === "user") as { message: { content: unknown } };
+  expect(toolResult.message.content).toEqual([{ type: "tool_result", tool_use_id: "call1", content: expect.any(String), denied: true }]);
+});
+
 test("Task 6: bypassPermissions at startup without allowDangerouslySkipPermissions is a typed config error before init is ever written", async () => {
   const { runtime } = createInMemoryChannel();
   // A synchronous throw at the very top of runEngine (before the pump/turn-loop ever starts) settles
