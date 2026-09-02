@@ -166,6 +166,12 @@ Per-event table — columns are the fields **beyond** `BaseHookInput` / beyond t
 | DirectoryAdded | 565-575 | `directory: string; source: 'slash_command'\|'register_repo_root'` | — none — | generic envelope only |
 | MessageDisplay | 1223-1245 | `turn_id; message_id: string; index: number; final: boolean; delta: string` | 1250-1256 | `displayContent?: string` |
 
+**Table footnote**: every row's "Extra input fields" column omits one field every single
+`XHookInput` type carries beyond `BaseHookInput` — its own literal `hook_event_name: 'EventName'`
+discriminant (e.g. `hook_event_name: 'PreToolUse'` on `PreToolUseHookInput`). It's left out of
+each cell only because the row label already names it; it is a real field beyond `BaseHookInput`
+on all 31 types, not an omission from the count.
+
 **Event-name inventory verdict**: the pinned `HookEvent` union / `HOOK_EVENTS` const (31 members)
 match WS-08 §1.1 + §1.2's combined inventory **exactly, 31/31**, member for member. No addition,
 omission, or spelling difference in either direction.
@@ -268,7 +274,34 @@ type SDKPermissionDeniedMessage = {
   decision_reason_type?: string; decision_reason?: string;
   message: string; uuid: UUID; session_id: string;
 };
+
+type SDKPermissionDenial = {                    // array-element shape, sdk.d.ts:4560-4564
+  tool_name: string;
+  tool_use_id: string;
+  tool_input: Record<string, unknown>;
+};
 ```
+
+`SDKPermissionDenial` is a **different, smaller shape than `SDKPermissionDeniedMessage`** and the
+two must not be conflated despite being cited from the same source line above: the denial-array
+element (3 fields) carries `tool_input`; the stream message (8 fields beyond its `type`/`subtype`
+discriminant — `tool_name`, `tool_use_id`, `agent_id?`, `decision_reason_type?`,
+`decision_reason?`, `message`, `uuid`, `session_id`) has **no `tool_input` field at all**. Neither
+shape is a subset or superset of the other in the field sense — they overlap only on `tool_name`
+and `tool_use_id`.
+
+**Load-bearing finding (doc-asserted, `sdk.d.ts:4566`-`4568` — `SDKPermissionDeniedMessage`'s own
+comment)**: that comment describes the stream message itself as best-effort, not authoritative —
+restated here rather than quoted: a rare race can leave a denial with no matching
+`permission_denied` stream frame, or produce a frame with no corresponding booking. So
+`SDKResultMessage.permission_denials` — the array of `SDKPermissionDenial` entries carried on the
+result message — is the record to trust for what was actually denied, while the stream message
+stays advisory/UI-facing only. The same comment also scopes what this message family does *not*
+cover: a denial that resolves before `canUseTool` even runs (a PreToolUse hook deny, or a deny
+rule overriding an earlier hook allow/ask) is not represented here, and neither is the separate
+MCP `--permission-prompt-tool` surface. **This is why T11's durable-approval/reconciliation work
+should anchor on `permission_denials`, not on having observed every `permission_denied` stream
+message** — the stream is a convenience projection, the array is the ledger.
 
 **Verdict**: item (d) has no verbatim block in this task's prescribed check-set (WS-07 §3.3/§7,
 WS-08 §1/§6) — these shapes are newly pinned here. Two tensions against WS-08 §9's *generic*
@@ -305,9 +338,16 @@ at `Settings.permissions.defaultMode` (`sdk.d.ts:5559`, plus `'manual'` NOT pres
 and at `SDKControlSetPermissionModeRequest.mode` (`sdk.d.ts:4193`-`4198`, via the internal
 `coreTypes.PermissionMode` alias) — consistent everywhere it appears, no drift between sites.
 
-`'manual'` does not appear anywhere in the pinned type surface (as a `PermissionMode` member or
-otherwise) — consistent with WS-07 §4's "`manual` is a CLI/UI alias for `default`, not a seventh
-value": an alias implemented at the CLI/UI layer would not need a type-level member.
+`'manual'` is absent as a **type-level** `PermissionMode` union member — but the stronger support
+for WS-07 §4's claim (`'manual'` is a CLI/UI alias for `default`, not a seventh value) isn't that
+absence, it's positive evidence sitting right next to it: the JSDoc directly above
+`Settings.permissions.defaultMode` (doc-asserted, `sdk.d.ts:5556`-`5558`, immediately preceding
+the field at `5559`) states outright, in its own words, that the settings layer treats
+`'manual'` as an accepted input alias resolving to `'default'` — even though `'manual'` never
+appears as a member of the 6-value union typed at that same field. An alias documented as
+accepted, on a field whose own type excludes it, is direct confirmation that the resolution
+happens at the parsing/CLI layer before the typed value is ever produced — stronger evidence than
+inferring the same conclusion from `'manual'`'s mere absence elsewhere in the type surface.
 
 ---
 
@@ -370,25 +410,27 @@ runs) and `statusMessage?`/`once?`. Adjacent managed-settings controls in the sa
 
 ## Open Questions
 
-These are genuine tensions between the pinned declaration and spec *text* — none is silently
-resolved here, per this task's instructions. 1-2 are against WS-08 §9, which is outside this
-task's prescribed §1/§6 check-set; they are recorded because item (d) required pinning these
-exact shapes and the tension is directly visible in doing so.
+These were genuine tensions between the pinned declaration and spec *text* when first raised;
+none was silently resolved — where a controller ruling has since settled one (item 1), that
+ruling is cited rather than assumed. 1-2 are against WS-08 §9, which is outside this task's
+prescribed §1/§6 check-set; they are recorded because item (d) required pinning these exact
+shapes and the tension is directly visible in doing so.
 
-1. **No `toolUseID` correlation on hook-lifecycle messages.** WS-08 §9's minimum-fields table
-   requires `started`/`progress`/`completed` lifecycle messages to carry `toolUseID?` "for
-   tool-scoped events" so a host can correlate a lifecycle row to the triggering tool call. The
-   pinned `SDKHookStartedMessage`/`SDKHookProgressMessage`/`SDKHookResponseMessage`
-   (`sdk.d.ts:4278`-`4314`) carry no `toolUseID`/`tool_use_id` field at all — only `hook_id`,
-   `hook_name`, `hook_event`, `session_id`, `uuid` (confirmed by a second, independent targeted
-   search across all 6 `.d.ts` files: no such field exists on any of the three types). Winter's
-   engine has the real `toolUseID` available internally (it's part of the §10 hook RPC request
-   payload), but the *public* SDK message a host receives does not carry it. Does Winter's own
-   public hook-lifecycle message shape deliberately add a `toolUseID` field (a hardening beyond
-   exact parity, consistent with WS-07 §9's durable-approval-record precedent of adding official
-   `requestId`/`toolUseID`/`agentID` beyond what a bare port would have), or does Winter match the
-   pinned shape as-is and let a host correlate only via `hook_id` + ordering? This is load-bearing
-   for WS-15's host projector and for [WS-08] §9's own correlation table.
+1. **No `toolUseID`/`requestId` correlation on hook-lifecycle messages — RESOLVED (ruling
+   P2-A; WS-08 §9 has since been amended to the pinned shape).** WS-08 §9's minimum-fields table
+   (as it read prior to that amendment) required `started`/`progress`/`completed` lifecycle
+   messages to carry a `toolUseID?` correlator for tool-scoped events. A full field-by-field
+   read of the pinned `SDKHookStartedMessage`/`SDKHookProgressMessage`/`SDKHookResponseMessage`
+   (`sdk.d.ts:4278`-`4314`) shows they carry **neither** `toolUseID`/`tool_use_id` **nor**
+   `requestId`/`request_id` — the only identity/correlation fields present on all three are
+   `hook_id`, `hook_name`, `hook_event`, `session_id`, `uuid` (confirmed by an independent
+   targeted search across all 6 `.d.ts` files for every spelling of both field names: none
+   exists on any of the three types). Winter's engine has both the real `toolUseID` and a
+   `requestId` available internally (part of the §10 hook RPC request payload), but neither
+   reaches the public SDK message a host receives. **Ruling**: `hook_id` is the public
+   correlation key for hook-lifecycle messages; `toolUseID` and `requestId` stay
+   audit-stream-only and are not part of the public message shape. WS-15's host projector
+   correlates lifecycle rows on `hook_id` alone.
 
 2. **`outcome` enum is coarser than WS-08 §9's taxonomy.** WS-08 §9 describes lifecycle-message
    outcome as `decision`/`none`, `error`, `timeout`, `skipped`. The pinned
