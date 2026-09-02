@@ -25,7 +25,7 @@
 // synchronous opinion) — it does NOT wait up to `asyncTimeout` for a later answer. Flagged as an
 // open item in the task report; not resolved here.
 import { randomUUID } from "node:crypto";
-import type { HookEvent, HookPermissionDecision } from "@yanlinglabs/winter-agent-sdk";
+import type { HookEvent, HookPermissionDecision, PermissionUpdate } from "@yanlinglabs/winter-agent-sdk";
 import type { HookRegistry, SourcedHookEntry } from "./registry.ts";
 import { reduceHookOutcomes, type HookComposite, type HookOutcome, type HookOutcomeEntry } from "./reducer.ts";
 
@@ -34,6 +34,18 @@ import { reduceHookOutcomes, type HookComposite, type HookOutcome, type HookOutc
 // `policyVersion` is a STRING here (WS-08 §10's own pinned field) even though Winter's internal
 // PolicyState.version is a `number` (policy-state.ts) — callers convert with `String(...)`; this is
 // the one place that conversion happens (buildRequest below), so it never needs re-deriving.
+//
+// `hookId`/`hookName` (T10): the ONE addition beyond WS-08 §10's own pinned semantic contract — not
+// a divergence from it (that contract is scoped to "what a filesystem hook SCRIPT reads on stdin,"
+// where there is never any ambiguity about which script is running, since Winter itself spawned that
+// one process). A bridge-backed SDK-callback invoker (bridge-invoker.ts) has no such luxury: many
+// `HookCallback` functions can share one process, and this is the field the wrapper's "hook" handler
+// uses to route an inbound request back to the exact one to call — protocol/config.ts's own
+// `RuntimeHookMatcherGroup` header already anticipates this positional identity
+// (`${event}:${source}:${groupIndex}:${hookIndex}`), deterministic on both sides of the wire without
+// exchanging anything at config time; this is simply where that identity gets attached to the
+// per-invocation request that actually needs it. `hookId` is always present (every SourcedHookEntry
+// has a non-optional `.id`); `hookName` mirrors the audit record's own optional field exactly.
 export interface HookInvocationRequest {
   event: HookEvent;
   matchedMatcher?: string;
@@ -45,6 +57,8 @@ export interface HookInvocationRequest {
   payload?: unknown;
   policyVersion: string;
   requestId: string;
+  hookId: string;
+  hookName?: string;
 }
 
 // The pinned HookCallback signature (derived-shapes item (a)) takes `{signal: AbortSignal}` as its
@@ -258,6 +272,77 @@ function interpretGeneric(sync: Record<string, unknown>): HookOutcome {
   return { kind: "none", ...(extraContext !== undefined ? { extraContext } : {}) };
 }
 
+// PermissionRequest (T10, WS-08 §6): decision-capable with its OWN NARROWER pinned shape --
+// `hookSpecificOutput.decision.{behavior:"allow"|"deny", ...}` -- structurally DIFFERENT from
+// PreToolUse's flat `permissionDecision` field. REQUIRED as a dedicated interpreter: without one,
+// this event falls through to interpretGeneric (reads only `additionalContext`, a field this shape
+// doesn't even have) and every hook's real answer would silently resolve to {kind:"none"} -- no
+// error, no audit distinction, a genuine under-enforcement bug caught by T9's own review before this
+// task wired PermissionRequest at all (a hook that means to ANSWER would be silently ignored, and
+// evaluate() would fall through to canUseTool as though no hook had opined).
+function interpretPermissionRequest(sync: Record<string, unknown>): HookOutcome {
+  const hso = hookSpecificOutputOf(sync);
+  const pr = hso !== undefined && hso["hookEventName"] === "PermissionRequest" ? hso : undefined;
+  // Mismatched/absent hookEventName -- "none", matching every other interpreter's own silent-none
+  // posture for this case (PreToolUse/PostToolUse/PostToolUseFailure above all do the identical
+  // `hso["hookEventName"] === "X" ? hso : undefined` gate).
+  if (pr === undefined) return { kind: "none" };
+
+  const rawDecision = pr["decision"];
+  // ABSENT `decision` -- a pure observer, legitimate per WS-08 §3's own "(none) no opinion" (a hook
+  // that wants to observe PermissionRequest without answering simply omits hookSpecificOutput's
+  // `decision`, matching the pattern every other event uses for "no opinion"). PRESENT but not an
+  // object is a different, stronger claim: the hook clearly TRIED to answer with a malformed shape
+  // -- that hook's own §8 contract error, mirroring interpretPreToolUse's identical
+  // present-but-wrong-type-is-an-error / absent-is-none split for `permissionDecision`.
+  if (rawDecision === undefined) return { kind: "none" };
+  if (!isObject(rawDecision)) return { kind: "error", reason: "PermissionRequest decision is not an object" };
+
+  const behavior = rawDecision["behavior"];
+  if (behavior === "allow") {
+    const rawUpdatedInput = rawDecision["updatedInput"];
+    let transformedInput: Record<string, unknown> | undefined;
+    if (rawUpdatedInput !== undefined) {
+      if (!isObject(rawUpdatedInput)) return { kind: "error", reason: "PermissionRequest decision.updatedInput is not an object" };
+      transformedInput = rawUpdatedInput;
+    }
+    const rawUpdatedPermissions = rawDecision["updatedPermissions"];
+    let updatedPermissions: PermissionUpdate[] | undefined;
+    if (rawUpdatedPermissions !== undefined) {
+      if (!Array.isArray(rawUpdatedPermissions)) return { kind: "error", reason: "PermissionRequest decision.updatedPermissions is not an array" };
+      updatedPermissions = rawUpdatedPermissions as PermissionUpdate[];
+    }
+    return {
+      kind: "decision",
+      decision: "allow",
+      ...(transformedInput !== undefined ? { transformedInput } : {}),
+      ...(updatedPermissions !== undefined ? { updatedPermissions } : {}),
+    };
+  }
+  if (behavior === "deny") {
+    const rawMessage = rawDecision["message"];
+    const rawInterrupt = rawDecision["interrupt"];
+    return {
+      kind: "decision",
+      decision: "deny",
+      ...(typeof rawMessage === "string" ? { message: rawMessage } : {}),
+      ...(typeof rawInterrupt === "boolean" ? { interrupt: rawInterrupt } : {}),
+    };
+  }
+  // T9-CARRY 3 reconciliation (task-9-report.md Concern 3 / types.ts's own PermissionRequestHookSpecificOutput
+  // comment): the PINNED PermissionRequestHookSpecificOutput (derived-shapes item (b)) has ONLY
+  // "allow"/"deny" -- no "defer" arm -- despite WS-08 §7's prose ("Defer is valid for PreToolUse AND
+  // PermissionRequest"). Per Ruling P2-A's own precedent (the pinned declaration amends spec prose
+  // where the two disagree), an unrecognized `behavior` (including "defer", or "ask" -- this event's
+  // pinned union has neither) is a MALFORMED output -- that hook's own §8 error, never silently an
+  // allow, a deny, or a no-opinion. This is also WS-08 §11's own "answer authority" floor made
+  // concrete: a hook cannot smuggle a decision shape this event's pinned contract doesn't recognize
+  // and have it treated as legitimate input. PreToolUse's OWN separate ask/defer machinery (T10-CARRY
+  // 1; runner.ts's own defer->ask resolution above) is untouched by this -- this is PermissionRequest's
+  // narrower, independently-pinned surface, reconciled on its own terms.
+  return { kind: "error", reason: `PermissionRequest decision.behavior is not "allow" or "deny": ${JSON.stringify(behavior)}` };
+}
+
 function interpretSyncOutput(event: HookEvent, sync: Record<string, unknown>, opts: { validator: ToolInputValidator; toolName?: string }): HookOutcome {
   if (hasInvalidDefer(hookSpecificOutputOf(sync), event)) {
     return { kind: "error", reason: `defer is invalid on ${event} (non-suspendable event, WS-08 §7)` };
@@ -265,6 +350,7 @@ function interpretSyncOutput(event: HookEvent, sync: Record<string, unknown>, op
   if (event === "PreToolUse") return interpretPreToolUse(sync, { validator: opts.validator, toolName: opts.toolName ?? "" });
   if (event === "PostToolUse") return interpretPostToolUse(sync);
   if (event === "PostToolUseFailure") return interpretPostToolUseFailure(sync);
+  if (event === "PermissionRequest") return interpretPermissionRequest(sync);
   return interpretGeneric(sync);
 }
 
@@ -280,6 +366,8 @@ function buildRequest(entry: SourcedHookEntry, event: HookEvent, call: RunHooksC
     ...(call.payload !== undefined ? { payload: call.payload } : {}),
     policyVersion: String(ctx.policyVersion),
     requestId: randomUUID(),
+    hookId: entry.id,
+    ...(entry.name !== undefined ? { hookName: entry.name } : {}),
   };
 }
 

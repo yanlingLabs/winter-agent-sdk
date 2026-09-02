@@ -3,7 +3,7 @@
 // T10's own job) and TINY injected timeouts throughout (never a real 60s/30s wait — the stall
 // watchdog killed a predecessor on exactly this class of mistake).
 import { describe, test, expect } from "bun:test";
-import type { HookEvent } from "@yanlinglabs/winter-agent-sdk";
+import type { HookEvent, PermissionUpdate } from "@yanlinglabs/winter-agent-sdk";
 import type { SourcedHookEntry, HookRegistry } from "./registry.ts";
 import {
   runHooks,
@@ -97,7 +97,7 @@ describe("runHooks -- basic shape", () => {
 });
 
 describe("runHooks -- §10 request payload shape", () => {
-  test("built request carries event/sessionId/policyVersion(string)/requestId/toolName/toolUseID/input/matchedMatcher", async () => {
+  test("built request carries event/sessionId/policyVersion(string)/requestId/toolName/toolUseID/input/matchedMatcher/hookId", async () => {
     const { invoker, requests } = fixedInvoker({});
     await runHooks(
       "PreToolUse",
@@ -115,6 +115,12 @@ describe("runHooks -- §10 request payload shape", () => {
     expect(req.matchedMatcher).toBe("Bash");
     expect(req.agentID).toBe("agent-1");
     expect(typeof req.requestId).toBe("string");
+    // T10: the ONE additive field beyond WS-08 §10's own pinned semantic contract -- Winter's own
+    // wire concern (not a divergence, see runner.ts's own comment on this field): the bridge-backed
+    // invoker (T10) needs an identity to route an inbound "hook" control_request back to the correct
+    // Options.hooks callback, and the pinned request shape has no such field (it targets a
+    // filesystem hook SCRIPT's stdin, invoked directly with no ambiguity about which script runs).
+    expect(req.hookId).toBe("h1");
   });
 
   test("optional fields absent from the call are absent from the request (not present-as-undefined)", async () => {
@@ -164,6 +170,119 @@ describe("runHooks -- PreToolUse decisions + invocation-time transform chaining"
     const composite = await runHooks("PreToolUse", { toolName: "Bash", input: {} }, ctxWith({ registry: fakeRegistry([entry("h1", "PreToolUse")]), invoker, audit }));
     expect(composite.decision).toBe("ask");
     expect(records[0]!.decision).toBe("ask");
+  });
+});
+
+// T10 (WS-08 §6): PermissionRequest's OWN narrower pinned shape --
+// `hookSpecificOutput.decision.{behavior:"allow"|"deny", ...}` -- structurally different from
+// PreToolUse's flat `permissionDecision` field. Without a DEDICATED interpreter this event falls
+// through to interpretGeneric (which reads only `additionalContext`, a field this shape doesn't
+// even have) and EVERY answer silently becomes {kind:"none"} -- a genuine under-enforcement trap
+// caught by T9's own review before this task started wiring PermissionRequest at all.
+describe("runHooks -- PermissionRequest decisions (WS-08 §6; T9-CARRY-3 reconciliation)", () => {
+  test("allow with updatedInput + updatedPermissions -- both surface on the composite", async () => {
+    const suggestion: PermissionUpdate[] = [{ type: "addRules", rules: [{ toolName: "Bash", ruleContent: "ls *" }], behavior: "allow", destination: "session" }];
+    const { invoker } = fixedInvoker({
+      hookSpecificOutput: {
+        hookEventName: "PermissionRequest",
+        decision: { behavior: "allow", updatedInput: { command: "ls -la" }, updatedPermissions: suggestion },
+      },
+    });
+    const composite = await runHooks(
+      "PermissionRequest",
+      { toolName: "Bash", input: { command: "ls" } },
+      ctxWith({ registry: fakeRegistry([entry("h1", "PermissionRequest")]), invoker }),
+    );
+    expect(composite.decision).toBe("allow");
+    expect(composite.transformedInput).toEqual({ command: "ls -la" });
+    expect(composite.updatedPermissions).toEqual(suggestion);
+  });
+
+  test("allow with neither updatedInput nor updatedPermissions -- bare allow", async () => {
+    const { invoker } = fixedInvoker({ hookSpecificOutput: { hookEventName: "PermissionRequest", decision: { behavior: "allow" } } });
+    const composite = await runHooks("PermissionRequest", { toolName: "Bash", input: {} }, ctxWith({ registry: fakeRegistry([entry("h1", "PermissionRequest")]), invoker }));
+    expect(composite.decision).toBe("allow");
+    expect(composite.transformedInput).toBeUndefined();
+    expect(composite.updatedPermissions).toBeUndefined();
+  });
+
+  test("deny with message + interrupt", async () => {
+    const { invoker } = fixedInvoker({ hookSpecificOutput: { hookEventName: "PermissionRequest", decision: { behavior: "deny", message: "no way", interrupt: true } } });
+    const { audit, records } = recordingAudit();
+    const composite = await runHooks(
+      "PermissionRequest",
+      { toolName: "Bash", input: {} },
+      ctxWith({ registry: fakeRegistry([entry("h1", "PermissionRequest")]), invoker, audit }),
+    );
+    expect(composite.decision).toBe("deny");
+    expect(composite.message).toBe("no way");
+    expect(composite.interrupt).toBe(true);
+    expect(records[0]!.outcome).toBe("decision");
+    expect(records[0]!.decision).toBe("deny");
+  });
+
+  test("no hookSpecificOutput at all (pure observer) -- 'none', not an error", async () => {
+    const { invoker } = fixedInvoker({});
+    const { audit, records } = recordingAudit();
+    const composite = await runHooks("PermissionRequest", { toolName: "Bash", input: {} }, ctxWith({ registry: fakeRegistry([entry("h1", "PermissionRequest")]), invoker, audit }));
+    expect(composite.decision).toBeUndefined();
+    expect(records[0]!.outcome).toBe("none");
+  });
+
+  test("hookEventName mismatch (e.g. a hook that answered as if it were PreToolUse) -- 'none', not an error, matching every other interpreter's own silent-none posture", async () => {
+    const { invoker } = fixedInvoker({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "allow" } });
+    const composite = await runHooks("PermissionRequest", { toolName: "Bash", input: {} }, ctxWith({ registry: fakeRegistry([entry("h1", "PermissionRequest")]), invoker }));
+    expect(composite.decision).toBeUndefined();
+  });
+
+  test("§11 answer authority negative fixture: decision.behavior:'defer' is a malformed output (that hook's own §8 error), never silently an allow -- PermissionRequest's pinned shape has NO defer arm despite WS-08 §7's prose (T9-CARRY-3)", async () => {
+    const { invoker } = fixedInvoker({ hookSpecificOutput: { hookEventName: "PermissionRequest", decision: { behavior: "defer" } } });
+    const { audit, records } = recordingAudit();
+    const composite = await runHooks(
+      "PermissionRequest",
+      { toolName: "Bash", input: {} },
+      ctxWith({ registry: fakeRegistry([entry("h1", "PermissionRequest")]), invoker, audit }),
+    );
+    expect(composite.decision).toBeUndefined(); // never silently treated as an opinion of any kind
+    expect(records[0]!.outcome).toBe("error");
+  });
+
+  test("an unrecognized behavior value is likewise a contract error, not silently ignored or allowed", async () => {
+    const { invoker } = fixedInvoker({ hookSpecificOutput: { hookEventName: "PermissionRequest", decision: { behavior: "maybe" } } });
+    const { audit, records } = recordingAudit();
+    await runHooks("PermissionRequest", { toolName: "Bash", input: {} }, ctxWith({ registry: fakeRegistry([entry("h1", "PermissionRequest")]), invoker, audit }));
+    expect(records[0]!.outcome).toBe("error");
+  });
+
+  test("decision present but not an object -- malformed, that hook's error (distinct from decision ABSENT, which is 'none')", async () => {
+    const { invoker } = fixedInvoker({ hookSpecificOutput: { hookEventName: "PermissionRequest", decision: "allow" } });
+    const { audit, records } = recordingAudit();
+    await runHooks("PermissionRequest", { toolName: "Bash", input: {} }, ctxWith({ registry: fakeRegistry([entry("h1", "PermissionRequest")]), invoker, audit }));
+    expect(records[0]!.outcome).toBe("error");
+  });
+
+  test("allow with a non-object updatedInput -- that hook's error; allow with a non-array updatedPermissions -- that hook's error", async () => {
+    const { invoker: badInput } = fixedInvoker({ hookSpecificOutput: { hookEventName: "PermissionRequest", decision: { behavior: "allow", updatedInput: "not an object" } } });
+    const r1 = await runHooks("PermissionRequest", { toolName: "Bash", input: {} }, ctxWith({ registry: fakeRegistry([entry("h1", "PermissionRequest")]), invoker: badInput }));
+    expect(r1.decision).toBeUndefined();
+
+    const { invoker: badPerms } = fixedInvoker({ hookSpecificOutput: { hookEventName: "PermissionRequest", decision: { behavior: "allow", updatedPermissions: "not an array" } } });
+    const r2 = await runHooks("PermissionRequest", { toolName: "Bash", input: {} }, ctxWith({ registry: fakeRegistry([entry("h1", "PermissionRequest")]), invoker: badPerms }));
+    expect(r2.decision).toBeUndefined();
+  });
+
+  test("multiple PermissionRequest hooks reduce deterministically (deny beats allow)", async () => {
+    const { invoker } = sequenceInvoker([
+      { hookSpecificOutput: { hookEventName: "PermissionRequest", decision: { behavior: "allow" } } },
+      { hookSpecificOutput: { hookEventName: "PermissionRequest", decision: { behavior: "deny", message: "second hook vetoes" } } },
+    ]);
+    const composite = await runHooks(
+      "PermissionRequest",
+      { toolName: "Bash", input: {} },
+      ctxWith({ registry: fakeRegistry([entry("h1", "PermissionRequest"), entry("h2", "PermissionRequest")]), invoker }),
+    );
+    expect(composite.decision).toBe("deny");
+    expect(composite.message).toBe("second hook vetoes");
   });
 });
 
