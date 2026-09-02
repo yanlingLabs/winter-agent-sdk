@@ -1,0 +1,390 @@
+// Task 9 (WS-08 §3, §5, §7, §8, §10; P2-A audit recording): the async hook-invocation loop.
+// `runHooks` is the ONE entry point: given an event + call info, it (1) asks the registry for the
+// merged-order, matcher-filtered participant list (WS-08 §2), (2) invokes each in order through the
+// injected `HookInvoker` seam — DIRECT in-process callbacks/test doubles at T9; T10 swaps in a
+// bridge-backed implementation (control-RPC `hook` subtype) without touching anything else in this
+// file, because the seam's shape is exactly the §10 request/response contract — (3) interprets each
+// raw response into a `HookOutcome` per event and the §8 failure matrix, (4) records an audit entry
+// per invocation (P2-A) via the injected `HookAuditRecorder` seam, and (5) folds everything through
+// reducer.ts's pure `reduceHookOutcomes`.
+//
+// INVOCATION-TIME vs. COMPOSITE TRANSFORM CHAIN (see reducer.ts's own header for the full
+// rationale): WS-08 §4 rule 3's first sentence — "each hook sees the previous hook's transformed
+// value" — is THIS file's responsibility, not the reducer's. `currentInput` below advances
+// optimistically, forward, as each hook runs, regardless of whether that hook's own decision will
+// later be excluded from the reducer's RETROSPECTIVE composite (which needs the final winning rank
+// before it can decide what survives). This split means a hook can genuinely be INVOKED with an
+// input that differs from what the composite ultimately reports — an inherent consequence of WS-08's
+// own rule, not a bug (see the task report's Concerns for the corner case this produces: a
+// sanitizing hook's transform can be excluded from the final composite if a LATER hook's decision
+// outranks it, even though a still-later hook already evaluated against the sanitized value).
+//
+// A SECOND, UNMODELED ASYNC MECHANISM (derived-shapes-p2.md Open Question 3): `{async: true,
+// asyncTimeout?}` is a top-level alternative to every synchronous hook output, distinct from
+// `permissionDecision: "defer"`. This runner treats it as a `{kind:"none"}` contribution (ran, no
+// synchronous opinion) — it does NOT wait up to `asyncTimeout` for a later answer. Flagged as an
+// open item in the task report; not resolved here.
+import { randomUUID } from "node:crypto";
+import type { HookEvent, HookPermissionDecision } from "@yanlinglabs/winter-agent-sdk";
+import type { HookRegistry, SourcedHookEntry } from "./registry.ts";
+import { reduceHookOutcomes, type HookComposite, type HookOutcome, type HookOutcomeEntry } from "./reducer.ts";
+
+// --- HookInvoker — the T10 swap point (WS-08 §10, verbatim request shape) -------------------------
+
+// `policyVersion` is a STRING here (WS-08 §10's own pinned field) even though Winter's internal
+// PolicyState.version is a `number` (policy-state.ts) — callers convert with `String(...)`; this is
+// the one place that conversion happens (buildRequest below), so it never needs re-deriving.
+export interface HookInvocationRequest {
+  event: HookEvent;
+  matchedMatcher?: string;
+  sessionId: string;
+  agentID?: string;
+  toolUseID?: string;
+  toolName?: string;
+  input?: Record<string, unknown>;
+  payload?: unknown;
+  policyVersion: string;
+  requestId: string;
+}
+
+// The pinned HookCallback signature (derived-shapes item (a)) takes `{signal: AbortSignal}` as its
+// third argument — this seam mirrors that exactly so a real SDK-callback invoker (T10) and this
+// runner's own timeout enforcement compose correctly: the runner always races the invoker's promise
+// against its own timer AND aborts the shared signal on timeout, regardless of whether the eventual
+// real callback honors abort (a backstop, not a trust assumption).
+export interface HookInvoker {
+  invoke(request: HookInvocationRequest, opts: { signal: AbortSignal }): Promise<unknown>;
+}
+
+// --- HookAuditRecorder — the P2-A audit seam (WS-08 §9's Amended text) -----------------------------
+//
+// Per invocation: {hook_id, hook_name, hook_event, session_id, uuid, toolUseID?, requestId?,
+// fine-grained outcome (decision/none/error/timeout/skipped), duration}. T10 routes this to the
+// journal/audit stream; this runner only guarantees the data is faithfully recorded, once per
+// participant, for every event this phase's engine fires (including `skipped` participants, which
+// are recorded WITHOUT ever being invoked — WS-08 §4 rule 2's own short-circuit clause).
+export type HookAuditOutcome = "decision" | "none" | "error" | "timeout" | "skipped";
+
+export interface HookAuditRecord {
+  hookId: string;
+  hookName?: string;
+  hookEvent: HookEvent;
+  sessionId: string;
+  uuid: string;
+  toolUseID?: string;
+  requestId?: string;
+  outcome: HookAuditOutcome;
+  decision?: HookPermissionDecision;
+  durationMs?: number;
+}
+
+export interface HookAuditRecorder {
+  record(entry: HookAuditRecord): void | Promise<void>;
+}
+
+// --- ToolInputValidator — the P3 schema-validation seam (WS-07 §10.6-2 / WS-08 §3) -----------------
+//
+// "A transformed input MUST still validate against the tool's input schema... an invalid transform
+// is a contract error of that hook, and the ORIGINAL input proceeds." No schemas exist anywhere at
+// P2 (WS-06's tool registry is P3) — NO_SCHEMAS_YET_VALIDATOR is the deliberate, documented no-op
+// production default; a rejecting double proves the contract-error path (runner.test.ts).
+export interface ToolInputValidator {
+  validate(toolName: string, input: Record<string, unknown>): { valid: true } | { valid: false; reason?: string };
+}
+
+export const NO_SCHEMAS_YET_VALIDATOR: ToolInputValidator = {
+  validate(): { valid: true } {
+    return { valid: true };
+  },
+};
+
+// --- Per-hook timeout (WS-08 §8 / open Q2: "60s gating / 30s observational" proposed defaults,
+// config-plumbed, hot-swappable) -----------------------------------------------------------------
+
+export interface HookTimeoutConfig {
+  gatingTimeoutMs?: number;
+  observationalTimeoutMs?: number;
+}
+
+export const DEFAULT_GATING_TIMEOUT_MS = 60_000;
+export const DEFAULT_OBSERVATIONAL_TIMEOUT_MS = 30_000;
+
+// WS-08 §8's own failure-matrix row grouping, verbatim: gating = PreToolUse/PermissionRequest/
+// UserPromptSubmit/Stop/PreCompact; everything else (PostToolUse family, Notification, SessionStart/
+// End, and every other lifecycle event) is observational. Exported so a caller/fixture can assert
+// against the exact set without re-deriving it.
+export const GATING_HOOK_EVENTS: ReadonlySet<HookEvent> = new Set(["PreToolUse", "PermissionRequest", "UserPromptSubmit", "Stop", "PreCompact"]);
+
+export function isGatingHookEvent(event: HookEvent): boolean {
+  return GATING_HOOK_EVENTS.has(event);
+}
+
+// WS-08 §7: "Defer is valid for PreToolUse and PermissionRequest; for events that cannot suspend a
+// turn... a defer return is a hook contract error." PermissionRequest is T10's own firing
+// responsibility, but the check lives here (shared/general) so T10 inherits it for free rather than
+// re-deriving it.
+const DEFER_CAPABLE_HOOK_EVENTS: ReadonlySet<HookEvent> = new Set(["PreToolUse", "PermissionRequest"]);
+
+// --- runHooks -----------------------------------------------------------------------------------
+
+export interface RunHooksCallInfo {
+  toolUseID?: string;
+  toolName?: string;
+  input?: Record<string, unknown>;
+  payload?: unknown;
+}
+
+export interface RunHooksContext {
+  registry: HookRegistry;
+  invoker: HookInvoker;
+  audit: HookAuditRecorder;
+  sessionId: string;
+  policyVersion: string | number;
+  agentID?: string;
+  timeouts?: HookTimeoutConfig;
+  validator?: ToolInputValidator;
+}
+
+function isObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null;
+}
+
+type ClassifiedOutput = { kind: "malformed" } | { kind: "async" } | { kind: "sync"; value: Record<string, unknown> };
+
+function classifyRawOutput(raw: unknown): ClassifiedOutput {
+  if (!isObject(raw)) return { kind: "malformed" };
+  if ((raw as { async?: unknown }).async === true) return { kind: "async" };
+  return { kind: "sync", value: raw };
+}
+
+function hookSpecificOutputOf(sync: Record<string, unknown>): Record<string, unknown> | undefined {
+  const hso = sync["hookSpecificOutput"];
+  return isObject(hso) ? hso : undefined;
+}
+
+// §7's contract-error check, applied UNIVERSALLY (any event) rather than only inside the PreToolUse
+// interpreter — a hook is host code and can return whatever bytes it wants regardless of which
+// event's shape it was actually invoked for; this defensively catches a `permissionDecision:"defer"`
+// value appearing anywhere it structurally shouldn't. PreToolUse itself is exempted (defer-capable).
+function hasInvalidDefer(hso: Record<string, unknown> | undefined, event: HookEvent): boolean {
+  if (hso === undefined) return false;
+  return hso["permissionDecision"] === "defer" && !DEFER_CAPABLE_HOOK_EVENTS.has(event);
+}
+
+const VALID_PERMISSION_DECISIONS: ReadonlySet<string> = new Set(["allow", "ask", "deny", "defer"]);
+
+// PreToolUse (WS-08 §3, derived-shapes item (b)): decision-capable, transform-capable, context-
+// capable. The only event this runner resolves `defer` for (TODO(T11): remove this resolution once
+// durable-approval/resume support lands; see WS-08 §7 and this task's controller ruling).
+function interpretPreToolUse(sync: Record<string, unknown>, opts: { validator: ToolInputValidator; toolName: string }): HookOutcome {
+  const hso = hookSpecificOutputOf(sync);
+  const pre = hso !== undefined && hso["hookEventName"] === "PreToolUse" ? hso : undefined;
+
+  const rawDecision = pre?.["permissionDecision"];
+  if (rawDecision !== undefined && (typeof rawDecision !== "string" || !VALID_PERMISSION_DECISIONS.has(rawDecision))) {
+    return { kind: "error", reason: `malformed permissionDecision: ${JSON.stringify(rawDecision)}` };
+  }
+  let decision = rawDecision as HookPermissionDecision | undefined;
+  if (decision === "defer") {
+    // TODO(T11): resolves a P2 defer to "ask" — durable-approval/resume wiring (WS-08 §7) is out of
+    // this task's scope; see reducer.ts's own header for why the reducer itself still models the
+    // full 5-rank vocabulary verbatim rather than baking this resolution in permanently.
+    decision = "ask";
+  }
+
+  const rawUpdatedInput = pre?.["updatedInput"];
+  let transformedInput: Record<string, unknown> | undefined;
+  if (rawUpdatedInput !== undefined) {
+    if (!isObject(rawUpdatedInput)) return { kind: "error", reason: "updatedInput is not an object" };
+    const check = opts.validator.validate(opts.toolName, rawUpdatedInput);
+    if (!check.valid) {
+      // WS-07 §10.6-2 / WS-08 §3: an invalid transform is THIS HOOK's contract error (§8's
+      // "malformed output" row) — no decision, no transform survives; the caller (runHooks) simply
+      // never adopts anything from an "error" outcome, so the ORIGINAL input proceeds untouched.
+      return { kind: "error", reason: check.reason ?? "transformed input failed schema validation" };
+    }
+    transformedInput = rawUpdatedInput;
+  }
+
+  const extraContext = typeof pre?.["additionalContext"] === "string" ? (pre["additionalContext"] as string) : undefined;
+  const message = typeof pre?.["permissionDecisionReason"] === "string" ? (pre["permissionDecisionReason"] as string) : undefined;
+
+  if (decision === undefined) {
+    return { kind: "none", ...(transformedInput !== undefined ? { transformedInput } : {}), ...(extraContext !== undefined ? { extraContext } : {}) };
+  }
+  return {
+    kind: "decision",
+    decision,
+    ...(transformedInput !== undefined ? { transformedInput } : {}),
+    ...(extraContext !== undefined ? { extraContext } : {}),
+    ...(message !== undefined ? { message } : {}),
+  };
+}
+
+// PostToolUse (WS-08 §5, derived-shapes item (b)): contribution-capable ONLY — structurally, this
+// interpreter never returns `{kind:"decision"}`, because PostToolUse's pinned output shape has no
+// decision-shaped field at all. This IS the "a PostToolUse hook can never un-run the tool" property,
+// enforced by construction rather than by a runtime check (runner.test.ts pins it even against a
+// hook that tries to smuggle a `permissionDecision` field in anyway).
+function interpretPostToolUse(sync: Record<string, unknown>): HookOutcome {
+  const hso = hookSpecificOutputOf(sync);
+  const post = hso !== undefined && hso["hookEventName"] === "PostToolUse" ? hso : undefined;
+  const transformedOutput = post?.["updatedToolOutput"] ?? post?.["updatedMCPToolOutput"];
+  const extraContext = typeof post?.["additionalContext"] === "string" ? (post["additionalContext"] as string) : undefined;
+  const classifierContext = typeof post?.["classifierContext"] === "string" ? (post["classifierContext"] as string) : undefined;
+  return {
+    kind: "none",
+    ...(transformedOutput !== undefined ? { transformedOutput } : {}),
+    ...(extraContext !== undefined ? { extraContext } : {}),
+    ...(classifierContext !== undefined ? { classifierContext } : {}),
+  };
+}
+
+function interpretPostToolUseFailure(sync: Record<string, unknown>): HookOutcome {
+  const hso = hookSpecificOutputOf(sync);
+  const post = hso !== undefined && hso["hookEventName"] === "PostToolUseFailure" ? hso : undefined;
+  const extraContext = typeof post?.["additionalContext"] === "string" ? (post["additionalContext"] as string) : undefined;
+  return { kind: "none", ...(extraContext !== undefined ? { extraContext } : {}) };
+}
+
+// Every other event (UserPromptSubmit/Stop/SessionStart/SessionEnd/Notification and the 21 never
+// fired at P2): declaration-owned, observational (WS-08 §1.3) — this runner forwards `additionalContext`
+// losslessly (every one of these events' own pinned shape carries that one field) and invents no
+// further semantics, per §1.3's own instruction ("Winter forwards those payloads losslessly and MUST
+// NOT invent field-level semantics this spec does not state").
+function interpretGeneric(sync: Record<string, unknown>): HookOutcome {
+  const hso = hookSpecificOutputOf(sync);
+  const extraContext = typeof hso?.["additionalContext"] === "string" ? (hso["additionalContext"] as string) : undefined;
+  return { kind: "none", ...(extraContext !== undefined ? { extraContext } : {}) };
+}
+
+function interpretSyncOutput(event: HookEvent, sync: Record<string, unknown>, opts: { validator: ToolInputValidator; toolName?: string }): HookOutcome {
+  if (hasInvalidDefer(hookSpecificOutputOf(sync), event)) {
+    return { kind: "error", reason: `defer is invalid on ${event} (non-suspendable event, WS-08 §7)` };
+  }
+  if (event === "PreToolUse") return interpretPreToolUse(sync, { validator: opts.validator, toolName: opts.toolName ?? "" });
+  if (event === "PostToolUse") return interpretPostToolUse(sync);
+  if (event === "PostToolUseFailure") return interpretPostToolUseFailure(sync);
+  return interpretGeneric(sync);
+}
+
+function buildRequest(entry: SourcedHookEntry, event: HookEvent, call: RunHooksCallInfo, ctx: RunHooksContext, currentInput: Record<string, unknown> | undefined): HookInvocationRequest {
+  return {
+    event,
+    ...(entry.matcher !== undefined ? { matchedMatcher: entry.matcher } : {}),
+    sessionId: ctx.sessionId,
+    ...(ctx.agentID !== undefined ? { agentID: ctx.agentID } : {}),
+    ...(call.toolUseID !== undefined ? { toolUseID: call.toolUseID } : {}),
+    ...(call.toolName !== undefined ? { toolName: call.toolName } : {}),
+    ...(currentInput !== undefined ? { input: currentInput } : {}),
+    ...(call.payload !== undefined ? { payload: call.payload } : {}),
+    policyVersion: String(ctx.policyVersion),
+    requestId: randomUUID(),
+  };
+}
+
+type InvocationResult = { kind: "resolved"; value: unknown } | { kind: "rejected" } | { kind: "timeout" };
+
+// Races the invoker against a hard timer that ALWAYS resolves (never rejects) — the invoker's own
+// promise is defensively `.catch()`-ed into a determinate value too, so this function itself never
+// throws; a caller that ignores an eventual real answer arriving after the timeout does so safely
+// (mirrors engine.ts's own raceInterrupt/rejectAllPending "abandoned promise" precedent). The signal
+// is aborted on timeout regardless of whether the real invoker respects AbortSignal — a backstop,
+// not a trust assumption (see HookInvoker's own header).
+async function invokeWithTimeout(invoker: HookInvoker, request: HookInvocationRequest, timeoutMs: number): Promise<InvocationResult> {
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeoutPromise = new Promise<InvocationResult>((resolve) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      resolve({ kind: "timeout" });
+    }, timeoutMs);
+    timer.unref?.();
+  });
+  const invokePromise: Promise<InvocationResult> = invoker
+    .invoke(request, { signal: controller.signal })
+    .then((value): InvocationResult => ({ kind: "resolved", value }))
+    .catch((): InvocationResult => ({ kind: "rejected" }));
+  try {
+    return await Promise.race([invokePromise, timeoutPromise]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+function defaultTimeoutMsFor(event: HookEvent, entry: SourcedHookEntry, timeouts: HookTimeoutConfig | undefined): number {
+  if (entry.timeoutMs !== undefined) return entry.timeoutMs; // per-hook override always wins (HookCallbackMatcher.timeout, already ms — see registry.ts)
+  const gating = timeouts?.gatingTimeoutMs ?? DEFAULT_GATING_TIMEOUT_MS;
+  const observational = timeouts?.observationalTimeoutMs ?? DEFAULT_OBSERVATIONAL_TIMEOUT_MS;
+  return isGatingHookEvent(event) ? gating : observational;
+}
+
+function buildAuditRecord(entry: SourcedHookEntry, event: HookEvent, ctx: RunHooksContext, call: RunHooksCallInfo, fields: { outcome: HookAuditOutcome; decision?: HookPermissionDecision; requestId?: string; durationMs?: number }): HookAuditRecord {
+  return {
+    hookId: entry.id,
+    ...(entry.name !== undefined ? { hookName: entry.name } : {}),
+    hookEvent: event,
+    sessionId: ctx.sessionId,
+    uuid: randomUUID(),
+    ...(call.toolUseID !== undefined ? { toolUseID: call.toolUseID } : {}),
+    ...(fields.requestId !== undefined ? { requestId: fields.requestId } : {}),
+    outcome: fields.outcome,
+    ...(fields.decision !== undefined ? { decision: fields.decision } : {}),
+    ...(fields.durationMs !== undefined ? { durationMs: fields.durationMs } : {}),
+  };
+}
+
+export async function runHooks(event: HookEvent, call: RunHooksCallInfo, ctx: RunHooksContext): Promise<HookComposite> {
+  const matched = ctx.registry.matching(event, call.toolName);
+  const validator = ctx.validator ?? NO_SCHEMAS_YET_VALIDATOR;
+  const results: HookOutcomeEntry[] = [];
+  let denied = false;
+  // Invocation-time chaining (rule 3 sentence 1) -- see this file's own header for the split from
+  // the reducer's retrospective discard.
+  let currentInput = call.input;
+
+  for (const entry of matched) {
+    if (denied) {
+      // WS-08 §4 rule 2: a committed deny short-circuits — never invoked, recorded `skipped`.
+      results.push({ participant: entry, outcome: { kind: "skipped" } });
+      await ctx.audit.record(buildAuditRecord(entry, event, ctx, call, { outcome: "skipped" }));
+      continue;
+    }
+
+    const request = buildRequest(entry, event, call, ctx, currentInput);
+    const timeoutMs = defaultTimeoutMsFor(event, entry, ctx.timeouts);
+    const started = Date.now();
+    const invocation = await invokeWithTimeout(ctx.invoker, request, timeoutMs);
+    const durationMs = Date.now() - started;
+
+    let outcome: HookOutcome;
+    if (invocation.kind === "timeout") {
+      outcome = { kind: "timeout" };
+    } else if (invocation.kind === "rejected") {
+      outcome = { kind: "error" };
+    } else {
+      const classified = classifyRawOutput(invocation.value);
+      if (classified.kind === "malformed") outcome = { kind: "error", reason: "malformed hook output" };
+      else if (classified.kind === "async") outcome = { kind: "none" }; // Open Question 3 -- see this file's own header
+      else outcome = interpretSyncOutput(event, classified.value, { validator, ...(call.toolName !== undefined ? { toolName: call.toolName } : {}) });
+    }
+
+    if ((outcome.kind === "decision" || outcome.kind === "none") && outcome.transformedInput !== undefined) {
+      currentInput = outcome.transformedInput; // invocation-time chain advances regardless of the reducer's later, retrospective decision
+    }
+
+    await ctx.audit.record(
+      buildAuditRecord(entry, event, ctx, call, {
+        outcome: outcome.kind,
+        ...(outcome.kind === "decision" ? { decision: outcome.decision } : {}),
+        requestId: request.requestId,
+        durationMs,
+      }),
+    );
+
+    results.push({ participant: entry, outcome });
+    if (outcome.kind === "decision" && outcome.decision === "deny") denied = true;
+  }
+
+  return reduceHookOutcomes(results);
+}
