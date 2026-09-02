@@ -104,6 +104,39 @@ export async function traceWinterToolRound(): Promise<ConformanceTraceEntry[]> {
   }
 }
 
+// Task 10 (WS-08 §1/§9/§10): the SAME "tooluse" tool round as traceWinterToolRound above, but with
+// a real SDK-callback PreToolUse hook (allow, advisory-only per WS-07 §2.1 — allowedTools still
+// does the actual authorizing, exactly like that scenario) and includeHookEvents:true, so the
+// committed golden also pins the public hook_started/hook_response lifecycle frames byte-for-byte
+// (hookId is positional/deterministic; uuid/session_id are already normalizeTrace's own VOLATILE
+// fields — see transport-equivalence.test.ts's own identical scenario, which this mirrors, for the
+// full design rationale).
+export async function traceWinterHookedToolRound(): Promise<ConformanceTraceEntry[]> {
+  const winterHome = mkdtempSync(join(tmpdir(), "winter-differential-hookedtoolround-"));
+  try {
+    const entries: ConformanceTraceEntry[] = [];
+    for await (const msg of query({
+      prompt: "go",
+      options: {
+        model: FIXTURE_MODEL,
+        cwd: FIXTURE_CWD,
+        allowedTools: ["test_tool"],
+        includeHookEvents: true,
+        hooks: {
+          PreToolUse: [{ hooks: [async () => ({ hookSpecificOutput: { hookEventName: "PreToolUse" as const, permissionDecision: "allow" as const } })] }],
+        },
+        spawnClaudeCodeProcess: (opts) =>
+          inMemoryProcess(opts.args, testProviderByName("tooluse"), undefined, { ...opts.env, WINTER_HOME: winterHome }),
+      },
+    })) {
+      entries.push({ sequence: entries.length, direction: "runtime-to-host", kind: kindOf(msg), payload: msg });
+    }
+    return normalizeTrace(entries);
+  } finally {
+    rmSync(winterHome, { recursive: true, force: true });
+  }
+}
+
 // Matches transport-equivalence.test.ts's own settle window (its INTERRUPT_SETTLE_MS): a real-clock
 // wait is the only mechanism available to synchronize with "the engine has genuinely started the
 // turn and is blocked inside provider.generate()" — a provider-level hang emits no observable frame
@@ -225,6 +258,10 @@ const SCENARIOS: Scenario[] = [
   { name: "tool-round", trace: traceWinterToolRound, goldenFile: "tool-round.trace.json" },
   { name: "interrupt", trace: traceWinterInterrupt, goldenFile: "interrupt.trace.json" },
   { name: "resume", trace: traceWinterResume, goldenFile: "resume.trace.json" },
+  // Task 10: NEW golden — hooks are default-off in every scenario above (none sets config.hooks),
+  // so none of them could have exercised this code path; this is the one scenario in this file that
+  // opts into includeHookEvents + a real SDK-callback hook.
+  { name: "hooked-tool-round", trace: traceWinterHookedToolRound, goldenFile: "hooked-tool-round.trace.json" },
 ];
 
 // Sign-off 3 directive (whole-branch review): `--update` turns this script from a comparator into
