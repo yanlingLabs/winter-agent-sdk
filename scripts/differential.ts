@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { query, encodeFrame, splitFrames, type RuntimeConfig, type WinterFrame } from "@yanlinglabs/winter-agent-sdk";
 import { inMemoryProcess } from "winter-agent-runtime/testing";
-import { testProviderByName } from "winter-agent-runtime";
+import { testProviderByName, scriptedProvider } from "winter-agent-runtime";
 import { normalizeTrace, compareTraces, type ConformanceTraceEntry } from "winter-conformance/trace";
 
 // A pinned, synthetic cwd (never process.cwd()) so every recorded trace — and the committed golden
@@ -209,6 +209,163 @@ export async function traceWinterInterrupt(): Promise<ConformanceTraceEntry[]> {
   }
 }
 
+// Task 13 (Carry 1 / WS-07 §6.1, Ruling P2-I): ZERO permission configuration at all -- no rules, no
+// canUseTool, no hooks, no allowedTools. The "tooluse" provider's own unmatched tool call has no
+// prompt handler to resolve it, so it is DENIED under the spec-literal "never implicitly allowed"
+// outcome (the T6 interim-allow fallback Ruling P2-I retired) -- and the run CONTINUES to a second
+// provider turn and a normal completion, never hanging and never throwing. This differential golden
+// pins the exact wire shape of that outcome (the denied tool_result AND the unconditional
+// system/permission_denied stream message, WS-08 §6 / derived-shapes-p2.md item (d)) byte-for-byte.
+// The INTEGRATION-level proof that this composes correctly through the full query() wrapper lives in
+// transport-equivalence.test.ts's own "Carry 1" scenario (registered on all three legs); this
+// scenario is the frozen, hermetic, in-memory-only golden half of the same finding.
+export async function traceWinterDeniedToolRound(): Promise<ConformanceTraceEntry[]> {
+  const winterHome = mkdtempSync(join(tmpdir(), "winter-differential-deniedtoolround-"));
+  try {
+    const entries: ConformanceTraceEntry[] = [];
+    for await (const msg of query({
+      prompt: "go",
+      options: {
+        model: FIXTURE_MODEL,
+        cwd: FIXTURE_CWD,
+        // Deliberately NOTHING else -- no allowedTools/disallowedTools/permissions/canUseTool/hooks.
+        spawnClaudeCodeProcess: (opts) =>
+          inMemoryProcess(opts.args, testProviderByName("tooluse"), undefined, { ...opts.env, WINTER_HOME: winterHome }),
+      },
+    })) {
+      entries.push({ sequence: entries.length, direction: "runtime-to-host", kind: kindOf(msg), payload: msg });
+    }
+    return normalizeTrace(entries);
+  } finally {
+    rmSync(winterHome, { recursive: true, force: true });
+  }
+}
+
+// Task 13 (WS-07 §12 "canUseTool"): the SAME unmatched "tooluse" call as the denied round above, but
+// this time a REAL canUseTool callback answers it directly (allow) -- zero allowedTools/rules, so
+// the callback is the ONLY thing resolving the call. Distinct from Task 8's own equivalence-suite
+// "Ruling P2-B" scenario (which additionally proves updatedInput's transform channel across three
+// real transports): this is the frozen, hermetic, in-memory-only golden for the plain-allow shape.
+export async function traceWinterCanUseToolApprovedRound(): Promise<ConformanceTraceEntry[]> {
+  const winterHome = mkdtempSync(join(tmpdir(), "winter-differential-canusetoolapproved-"));
+  try {
+    const entries: ConformanceTraceEntry[] = [];
+    for await (const msg of query({
+      prompt: "go",
+      options: {
+        model: FIXTURE_MODEL,
+        cwd: FIXTURE_CWD,
+        canUseTool: async () => ({ behavior: "allow" }),
+        spawnClaudeCodeProcess: (opts) =>
+          inMemoryProcess(opts.args, testProviderByName("tooluse"), undefined, { ...opts.env, WINTER_HOME: winterHome }),
+      },
+    })) {
+      entries.push({ sequence: entries.length, direction: "runtime-to-host", kind: kindOf(msg), payload: msg });
+    }
+    return normalizeTrace(entries);
+  } finally {
+    rmSync(winterHome, { recursive: true, force: true });
+  }
+}
+
+// Task 13 (WS-08 §12 items 1/8: "hooked round w/ lifecycle"): deliberately the DENY half of the
+// hooked-lifecycle shape, not a duplicate of Task 10's existing hooked-tool-round golden (which
+// pins a PreToolUse hook ALLOW). A PreToolUse hook that denies, with includeHookEvents:true, pins a
+// genuinely different wire path: the public hook_started/hook_response lifecycle pair (outcome
+// "success" -- the HOOK ran successfully and produced a decision; the DECISION it produced was
+// "deny") immediately followed by the denied tool_result and the unconditional
+// system/permission_denied message, and the run still continues to completion. Task 10's own golden
+// stays cited for the allow half; this one is cited for the deny half -- see this task's report for
+// the one-line justification.
+export async function traceWinterHookDeniedRound(): Promise<ConformanceTraceEntry[]> {
+  const winterHome = mkdtempSync(join(tmpdir(), "winter-differential-hookdeniedround-"));
+  try {
+    const entries: ConformanceTraceEntry[] = [];
+    for await (const msg of query({
+      prompt: "go",
+      options: {
+        model: FIXTURE_MODEL,
+        cwd: FIXTURE_CWD,
+        includeHookEvents: true,
+        hooks: {
+          PreToolUse: [
+            {
+              hooks: [
+                async () => ({
+                  hookSpecificOutput: { hookEventName: "PreToolUse" as const, permissionDecision: "deny" as const, permissionDecisionReason: "differential: hook says no" },
+                }),
+              ],
+            },
+          ],
+        },
+        spawnClaudeCodeProcess: (opts) =>
+          inMemoryProcess(opts.args, testProviderByName("tooluse"), undefined, { ...opts.env, WINTER_HOME: winterHome }),
+      },
+    })) {
+      entries.push({ sequence: entries.length, direction: "runtime-to-host", kind: kindOf(msg), payload: msg });
+    }
+    return normalizeTrace(entries);
+  } finally {
+    rmSync(winterHome, { recursive: true, force: true });
+  }
+}
+
+// Task 13 (WS-07 §2 / §12 "stale-policy-version"; mirrors engine.test.ts's own raw-engine Task 6
+// fixture, driven here through the full query() wrapper): ONE session, two turns, a LIVE
+// setPermissionMode() call between them. Turn 1 runs under bypassPermissions (an unmatched call
+// executes unconditionally, WS-07 §6.4); the mode is switched to dontAsk once turn 1's result is
+// observed and its ack awaited; turn 2's IDENTICAL unmatched call is now denied outright, canUseTool
+// never invoked (WS-07 §6.3). Streaming-input prompt, gated on the mode-switch ack, so the second
+// envelope can never race ahead of the switch actually taking effect.
+export async function traceWinterModeSwitchMidSession(): Promise<ConformanceTraceEntry[]> {
+  const winterHome = mkdtempSync(join(tmpdir(), "winter-differential-modeswitch-"));
+  try {
+    const entries: ConformanceTraceEntry[] = [];
+    let releaseSecondTurn!: () => void;
+    const secondTurnGate = new Promise<void>((resolve) => {
+      releaseSecondTurn = resolve;
+    });
+    async function* twoTurns() {
+      yield "first";
+      await secondTurnGate;
+      yield "second";
+    }
+    const gen = query({
+      prompt: twoTurns(),
+      options: {
+        model: FIXTURE_MODEL,
+        cwd: FIXTURE_CWD,
+        permissionMode: "bypassPermissions",
+        allowDangerouslySkipPermissions: true,
+        spawnClaudeCodeProcess: (opts) =>
+          inMemoryProcess(
+            opts.args,
+            scriptedProvider([
+              { kind: "tool_use", calls: [{ id: "c1", name: "mystery_tool", input: {} }] },
+              { kind: "text", text: "first done" },
+              { kind: "tool_use", calls: [{ id: "c2", name: "mystery_tool", input: {} }] },
+              { kind: "text", text: "second done" },
+            ]),
+            undefined,
+            { ...opts.env, WINTER_HOME: winterHome },
+          ),
+      },
+    });
+    let modeSwitchPromise: Promise<void> | undefined;
+    for await (const msg of gen) {
+      entries.push({ sequence: entries.length, direction: "runtime-to-host", kind: kindOf(msg), payload: msg });
+      if (msg.type === "result" && modeSwitchPromise === undefined) {
+        modeSwitchPromise = gen.setPermissionMode("dontAsk");
+        modeSwitchPromise.then(releaseSecondTurn);
+      }
+    }
+    await modeSwitchPromise;
+    return normalizeTrace(entries);
+  } finally {
+    rmSync(winterHome, { recursive: true, force: true });
+  }
+}
+
 // Task 9 (WS-05 §7): two SEPARATE query() calls sharing one sessionId over the SAME (shared, this
 // time load-bearing) temp WINTER_HOME — a real cross-process-shaped resume in spirit, even though
 // the in-memory transport never spawns a second OS process the way the child/compiled legs of
@@ -262,6 +419,12 @@ const SCENARIOS: Scenario[] = [
   // so none of them could have exercised this code path; this is the one scenario in this file that
   // opts into includeHookEvents + a real SDK-callback hook.
   { name: "hooked-tool-round", trace: traceWinterHookedToolRound, goldenFile: "hooked-tool-round.trace.json" },
+  // Task 13: four new goldens closing the phase's own conformance sweep (Carry 1 + the brief's own
+  // scenario list) — see this task's report for the one-line justification of each.
+  { name: "denied-tool-round", trace: traceWinterDeniedToolRound, goldenFile: "denied-tool-round.trace.json" },
+  { name: "canusetool-approved-round", trace: traceWinterCanUseToolApprovedRound, goldenFile: "canusetool-approved-round.trace.json" },
+  { name: "hook-denied-round", trace: traceWinterHookDeniedRound, goldenFile: "hook-denied-round.trace.json" },
+  { name: "mode-switch-mid-session", trace: traceWinterModeSwitchMidSession, goldenFile: "mode-switch-mid-session.trace.json" },
 ];
 
 // Sign-off 3 directive (whole-branch review): `--update` turns this script from a comparator into
