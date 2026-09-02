@@ -725,6 +725,20 @@ test("shadow warning: a SCOPED allowedTools entry (has a specifier) does NOT war
   }
 });
 
+// WS-07 §3 pins `Tool(*)` as bare-equivalent ("treated like bare Bash, including schema removal") —
+// found missing from the static check by review: it initially only matched entries with NO
+// parenthesized specifier at all, so a wildcard specifier slipped through as "scoped."
+test("shadow warning: an allowedTools entry with a bare wildcard specifier, e.g. 'Bash(*)', warns exactly like the truly-bare form (WS-07 §3: bare-equivalent)", () => {
+  const errSpy = spyOn(console, "error").mockImplementation(() => {});
+  try {
+    query({ prompt: "hi", options: { allowedTools: ["Bash(*)"], canUseTool: async () => null, spawnClaudeCodeProcess: () => neverIteratedProc() } });
+    expect(errSpy).toHaveBeenCalledTimes(1);
+    expect(String(errSpy.mock.calls[0]?.[0])).toContain("WINTER_SDK_CAN_USE_TOOL_SHADOWED");
+  } finally {
+    errSpy.mockRestore();
+  }
+});
+
 test("shadow warning: canUseTool alone, default mode, no allowedTools -> never warns", () => {
   const errSpy = spyOn(console, "error").mockImplementation(() => {});
   try {
@@ -768,6 +782,42 @@ test("default mode: an unmatched tool call reaches canUseTool through the REAL e
     /* drain */
   }
   expect(called).toBe(true);
+});
+
+test("the null escape through the REAL engine+bridge (Task 8 review fix regression net): respondPermission's answer is correlated correctly even though the RUNTIME's own bridge mints the wire envelope id, not this test's fixture", async () => {
+  // The wrapper-isolated "null escape" test above uses a hand-rolled scripted process where the
+  // envelope id and payload.requestId happen to be constructed as the SAME string by the test
+  // fixture itself — it never exercises whether the REAL runtime actually keeps them aligned.
+  // Before the review fix, rpc/bridge.ts's `request()` always minted its OWN fresh envelope id,
+  // independent of `payload.requestId` (the only id this callback ever sees) — so this exact
+  // scenario, driven through the real engine, either hung (bridge.request() never resolving) or
+  // threw (an ok:true-with-no-payload fallback write resolving it to `undefined`). This test is
+  // the genuine end-to-end proof the ids are now forced to match.
+  let called = false;
+  const internalRef: { current?: QueryInternal } = {};
+  const gen = query({
+    prompt: "go",
+    options: {
+      canUseTool: async (_toolName, _input, opts) => {
+        called = true;
+        internalRef.current!.respondPermission(opts.requestId, { behavior: "allow" });
+        return null; // the legitimate null escape: already answered out of band, above
+      },
+      spawnClaudeCodeProcess: (opts) => inMemoryProcess(opts.args, testProviderByName("tooluse")),
+    },
+  });
+  internalRef.current = (gen as unknown as { __internal: QueryInternal }).__internal;
+  const userMessages: Array<{ content: Array<{ type: string; denied?: boolean; content?: string }> }> = [];
+  for await (const msg of gen) {
+    const raw = msg as unknown as { type: string; message?: { content: Array<{ type: string; denied?: boolean; content?: string }> } };
+    if (raw.type === "user" && raw.message) userMessages.push(raw.message);
+  }
+  expect(called).toBe(true);
+  const resultBlock = userMessages.flatMap((m) => m.content).find((b) => b.type === "tool_result");
+  // Genuine execution, not a fail-closed denial and not a hang: proves the out-of-band allow
+  // actually reached the waiting bridge.request() promise.
+  expect(resultBlock?.denied).toBeUndefined();
+  expect(resultBlock?.content).toBe('test_tool:{"probe":true}');
 });
 
 test("dontAsk mode: canUseTool is NEVER invoked through the REAL engine, even for a call that would otherwise reach it (WS-07 §6.3 cross-check)", async () => {

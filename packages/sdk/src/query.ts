@@ -71,12 +71,15 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
   // made. Two "obviously shadowed" cases only, per the spec's own scope: `bypassPermissions` (the
   // engine auto-allows nearly everything under it, WS-07 §6.4 — canUseTool is reached only for
   // PreToolUse-hook denial, explicit deny/ask rules, AskUserQuestion, and the critical-rm circuit
-  // breaker) and a BARE `allowedTools` entry (an unscoped tool name always pre-approves at stage 5,
-  // before canUseTool is ever reached, WS-07 §2 stage 6). No promise of catching every
-  // runtime/path-specific case (WS-07 §7.3's own text) — e.g. a SCOPED entry like `Bash(ls:*)`
-  // still lets other Bash invocations reach the callback, so it does not warn.
+  // breaker) and a BARE-OR-BARE-EQUIVALENT `allowedTools` entry (an unscoped tool name, OR a
+  // wildcard specifier of exactly `(*)` — WS-07 §3 pins `Bash(*)` as "treated like bare Bash,
+  // including schema removal," so it pre-approves at stage 5 exactly like the bare form, before
+  // canUseTool is ever reached at stage 6; found missing by review). No promise of catching every
+  // runtime/path-specific case (WS-07 §7.3's own text) — e.g. a genuinely scoped entry like
+  // `Bash(ls:*)` still lets other Bash invocations reach the callback, so it does not warn.
   if (options.canUseTool) {
-    const hasBareAllowedTool = options.allowedTools?.some((rule) => !rule.includes("(")) ?? false;
+    const isBareOrBareEquivalent = (rule: string): boolean => !rule.includes("(") || /\(\*\)$/.test(rule);
+    const hasBareAllowedTool = options.allowedTools?.some(isBareOrBareEquivalent) ?? false;
     if (options.permissionMode === "bypassPermissions" || hasBareAllowedTool) {
       const cause = options.permissionMode === "bypassPermissions" ? "permissionMode is 'bypassPermissions'" : "an allowedTools entry is bare (unscoped)";
       console.error(`winter: WINTER_SDK_CAN_USE_TOOL_SHADOWED: canUseTool is configured but ${cause} — some or all tool calls will never reach it`);
