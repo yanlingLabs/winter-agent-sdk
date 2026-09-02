@@ -69,7 +69,7 @@
 // are Winter's normative contract"), not a verbatim upstream wire pin — extending it for what real
 // integration needs is in scope; the five numbered PRECEDENCE rules above are what must never be
 // deviated from.
-import type { HookEvent, HookSource, HookPermissionDecision } from "@yanlinglabs/winter-agent-sdk";
+import type { HookEvent, HookSource, HookPermissionDecision, PermissionUpdate } from "@yanlinglabs/winter-agent-sdk";
 
 // --- The per-hook outcome vocabulary the runner produces (P2-A's audit outcome set, minus the
 // audit-only bookkeeping — duration/requestId/etc. live on the audit record, hooks/runner.ts) ---
@@ -81,6 +81,15 @@ export interface HookOutcomeFields {
   classifierContext?: string; // WS-08 §5: PostToolUse's own contract-bound field is string-typed.
   message?: string;
   interrupt?: boolean;
+  // T10 (WS-08 §6): PermissionRequest's own allow-arm field (derived-shapes item (b)) — an
+  // ADDITIVE field beyond WS-08 §4's own illustrative composite sketch (this file's header already
+  // documents that the sketch is Winter's own normative contract, extensible for what real
+  // integration needs, unlike the five numbered PRECEDENCE rules). Attributed like the scalar
+  // decision/message/interrupt slots below (the WINNING decision's own value), never like the
+  // transform chain — WS-08 §4 rule 3's "compose in evaluation order" language is specific to
+  // transformedInput/transformedOutput; a suggested permission update is not a value multiple hooks
+  // incrementally refine the way an input/output transform is.
+  updatedPermissions?: PermissionUpdate[];
 }
 
 export type HookOutcome =
@@ -144,6 +153,9 @@ export interface HookComposite {
   classifierContext?: AttributedContext[];
   message?: string;
   interrupt?: boolean;
+  // T10: see HookOutcomeFields.updatedPermissions's own comment — scalar-slot attribution (the
+  // WINNING decision's own value), not transform-chain composition.
+  updatedPermissions?: PermissionUpdate[];
   lifecycleMessages: HookLifecycleRecord[];
 }
 
@@ -168,6 +180,7 @@ export function reduceHookOutcomes(results: HookOutcomeEntry[]): HookComposite {
   let winnerRank = -1; // below every real rank (allow=0) so the FIRST decision-bearing outcome always wins its own comparison
   let message: string | undefined;
   let interrupt: boolean | undefined;
+  let updatedPermissions: PermissionUpdate[] | undefined;
   const extraContext: AttributedContext[] = [];
   const classifierContext: AttributedContext[] = [];
   const lifecycleMessages: HookLifecycleRecord[] = [];
@@ -202,6 +215,7 @@ export function reduceHookOutcomes(results: HookOutcomeEntry[]): HookComposite {
         decision = outcome.decision;
         message = outcome.message;
         interrupt = outcome.interrupt;
+        updatedPermissions = outcome.updatedPermissions;
       }
     }
   }
@@ -235,6 +249,7 @@ export function reduceHookOutcomes(results: HookOutcomeEntry[]): HookComposite {
     ...(classifierContext.length > 0 ? { classifierContext } : {}),
     ...(message !== undefined ? { message } : {}),
     ...(interrupt !== undefined ? { interrupt } : {}),
+    ...(updatedPermissions !== undefined ? { updatedPermissions } : {}),
     lifecycleMessages,
   };
 }

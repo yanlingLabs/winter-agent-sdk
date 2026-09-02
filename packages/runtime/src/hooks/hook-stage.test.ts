@@ -85,21 +85,42 @@ describe("createHookStage -- allow/deny/none map directly onto the existing 3-va
   });
 });
 
-describe("createHookStage -- 'ask'/'defer' fail closed at the seam boundary (documented interim limitation)", () => {
-  test("a hook 'ask' maps to seam 'deny' (the existing 3-value contract has no force-interactive outcome yet)", async () => {
+describe("T10-CARRY 1: a hook 'ask' now forces seam 'ask' (was: fail-closed to 'deny')", () => {
+  test("a hook 'ask' maps to seam 'ask', carrying message and hookId", async () => {
     const stage = createHookStage({
       registry: fakeRegistry([entry("h1")]),
-      invoker: fixedInvoker({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "ask" } }),
+      invoker: fixedInvoker({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "ask", permissionDecisionReason: "needs a human" } }),
       audit: noopAudit(),
       sessionId: "s1",
     });
     const decision = await stage.preToolUse(CALL, CTX);
-    expect(decision.decision).toBe("deny");
-    expect(decision.hookId).toBe("h1");
-    expect(decision.message).toMatch(/interactive approval/i);
+    expect(decision).toEqual({ decision: "ask", hookId: "h1", message: "needs a human" });
   });
 
-  test("a hook 'defer' resolves to ask (runner.ts) and then STILL fails closed to seam 'deny' (adapter) -- both interim resolutions compose", async () => {
+  test("a hook 'ask' with a transform still carries the transform (evaluate() applies it regardless of decision)", async () => {
+    const stage = createHookStage({
+      registry: fakeRegistry([entry("h1")]),
+      invoker: fixedInvoker({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "ask", updatedInput: { command: "ls -la" } } }),
+      audit: noopAudit(),
+      sessionId: "s1",
+    });
+    const decision = await stage.preToolUse(CALL, CTX);
+    expect(decision).toEqual({ decision: "ask", hookId: "h1", transformedInput: { command: "ls -la" } });
+  });
+});
+
+// T10-CARRY 1 correction: runner.ts's interpretPreToolUse UNCONDITIONALLY resolves a raw
+// `permissionDecision: "defer"` to `"ask"` before the outcome ever reaches the reducer (see that
+// function's own TODO(T11) comment) -- so a composite built from a REAL PreToolUse invocation can
+// never actually carry `decision: "defer"`; what this fixture exercises is genuinely "ask" (the
+// resolved value), same as the block above. Before CARRY 1, that didn't matter observably (ask and
+// defer were combined into ONE fail-closed-to-deny branch); now that "ask" gets its own seam
+// outcome, this fixture's real value flows through the SAME "ask" branch as a directly-returned
+// ask, which is the CORRECT behavior -- a hook that returns "defer" for a call that can't yet be
+// durably parked (TODO(T11)) still gets the interactive path instead of silently under- or
+// over-enforcing.
+describe("createHookStage -- a hook 'defer' resolves to 'ask' via runner.ts, which now forces seam 'ask' too", () => {
+  test("a hook 'defer' ends up at seam 'ask' (both interim resolutions now connect end-to-end)", async () => {
     const stage = createHookStage({
       registry: fakeRegistry([entry("h1")]),
       invoker: fixedInvoker({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "defer" } }),
@@ -107,9 +128,20 @@ describe("createHookStage -- 'ask'/'defer' fail closed at the seam boundary (doc
       sessionId: "s1",
     });
     const decision = await stage.preToolUse(CALL, CTX);
-    expect(decision.decision).toBe("deny");
+    expect(decision.decision).toBe("ask");
+    expect(decision.hookId).toBe("h1");
   });
 });
+
+// The adapter's OWN `composite.decision === "defer"` branch (hook-stage.ts) is therefore DEFENSIVE,
+// CURRENTLY UNREACHABLE via createHookStage's real pipeline (PreToolUse is the only decision-capable
+// event wired at P2, and its interpreter always pre-resolves defer->ask, above) -- kept for type
+// completeness against HookComposite.decision's full HookPermissionDecision union (a hypothetical
+// future producer that does NOT pre-resolve) and against reducer.ts's own spec-faithful 5-rank
+// vocabulary. Its coverage lives at the reducer level (reducer.test.ts's synthetic "defer"-rank
+// fixtures construct HookOutcomeEntry[] directly, bypassing runner.ts's resolution entirely) -- not
+// exercisable here without doing the same, which would test the adapter's dead branch rather than
+// its real integration behavior.
 
 describe("createHookStage -- multi-hook composite flows through end to end", () => {
   test("h1 allow then h2 deny -- seam sees the reducer's strictest-wins deny", async () => {

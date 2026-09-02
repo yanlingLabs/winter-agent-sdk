@@ -48,6 +48,7 @@ import {
   type PromptDecision,
   type HookStage,
   type HookDecision,
+  type PermissionRequestHookDecision,
 } from "./evaluator.ts";
 import { PolicyStateStore, WinterPermissionError, type PolicyState } from "./policy-state.ts";
 import { emptyRuleSet, resolveRules, sourceRule, type SourcedRuleEntry, type SourcedRuleSet } from "./ruleset.ts";
@@ -107,7 +108,14 @@ function spyPromptStage(
   };
 }
 
-function spyHookStage(impl: (call: PermissionCall) => HookDecision): { stage: HookStage; calls: PermissionCall[] } {
+function spyHookStage(
+  impl: (call: PermissionCall) => HookDecision,
+  // T10: optional PermissionRequest opinion — every EXISTING caller of this helper is testing
+  // stage-1 PreToolUse behavior only and never wants a PermissionRequest hook to answer in place of
+  // the spied PromptStage, so the default (omitted) always returns null (no opinion, falls through
+  // to promptStage.prompt exactly as before this task).
+  permissionRequestImpl?: (call: PermissionCall, meta: PromptStageMeta) => PermissionRequestHookDecision | null,
+): { stage: HookStage; calls: PermissionCall[] } {
   const calls: PermissionCall[] = [];
   return {
     calls,
@@ -115,6 +123,9 @@ function spyHookStage(impl: (call: PermissionCall) => HookDecision): { stage: Ho
       async preToolUse(c) {
         calls.push(c);
         return impl(c);
+      },
+      async permissionRequest(c, _ctx, meta) {
+        return permissionRequestImpl ? permissionRequestImpl(c, meta) : null;
       },
     },
   };
@@ -178,6 +189,88 @@ describe("stage 1: PreToolUse hooks", () => {
     expect(record.decision).toBe("deny");
     expect(record.mechanism).toBe("canUseTool");
     expect(record.message).toBe("human said no");
+  });
+});
+
+// --- T10-CARRY 1 (WS-08 §3): a PreToolUse hook's "ask" forces the interactive path -----------------
+
+describe("T10-CARRY 1: a PreToolUse hook 'ask' forces stage 3's prompt path", () => {
+  test("hook ask (no rule) reaches promptStage with no matchedAskRule, and a real answer resolves normally", async () => {
+    const promptSpy = spyPromptStage(() => ({ decision: "allow" }));
+    const ctx = baseCtx({
+      hookStage: spyHookStage(() => ({ decision: "ask", hookId: "h1", message: "please review" })).stage,
+      promptStage: promptSpy.stage,
+    });
+    const record = await evaluate(call("Bash", { command: "curl evil.example" }), ctx);
+    expect(promptSpy.calls.length).toBe(1);
+    expect(promptSpy.calls[0]!.meta.matchedAskRule).toBeUndefined();
+    expect(promptSpy.calls[0]!.meta.decisionReason).toBe("please review");
+    expect(record.decision).toBe("allow");
+    expect(record.mechanism).toBe("canUseTool");
+  });
+
+  test("a stage-2 deny rule still wins over a hook-forced ask (deny > ask, WS-08 §4 rank order one level up)", async () => {
+    const promptSpy = spyPromptStage(() => ({ decision: "allow" }));
+    const ctx = baseCtx({
+      hookStage: spyHookStage(() => ({ decision: "ask", hookId: "h1" })).stage,
+      promptStage: promptSpy.stage,
+      policy: policy({ rules: withRules(rule("Bash(curl *)", "deny")) }),
+    });
+    const record = await evaluate(call("Bash", { command: "curl evil.example" }), ctx);
+    expect(promptSpy.calls.length).toBe(0); // never reached — stage 2 already returned
+    expect(record.decision).toBe("deny");
+    expect(record.mechanism).toBe("rule");
+  });
+
+  test("dontAsk converts a hook-forced ask into denial (mechanism 'hook'), never invoking canUseTool", async () => {
+    const promptSpy = spyPromptStage(() => ({ decision: "allow" }));
+    const ctx = baseCtx({
+      hookStage: spyHookStage(() => ({ decision: "ask", hookId: "h1", message: "needs review" })).stage,
+      promptStage: promptSpy.stage,
+      policy: policy({ mode: "dontAsk" }),
+    });
+    const record = await evaluate(call("Bash", { command: "curl evil.example" }), ctx);
+    expect(promptSpy.calls.length).toBe(0);
+    expect(record.decision).toBe("deny");
+    expect(record.mechanism).toBe("hook");
+    expect(record.hookId).toBe("h1");
+    expect(record.message).toBe("needs review");
+  });
+
+  test("a null prompt answer to a hook-forced ask fails closed (mechanism 'hook', never implicitly allowed)", async () => {
+    const ctx = baseCtx({
+      hookStage: spyHookStage(() => ({ decision: "ask", hookId: "h1" })).stage,
+      promptStage: NO_OPINION_PROMPT_STAGE, // always returns null
+    });
+    const record = await evaluate(call("Bash", { command: "curl evil.example" }), ctx);
+    expect(record.decision).toBe("deny");
+    expect(record.mechanism).toBe("hook");
+    expect(record.hookId).toBe("h1");
+    expect(record.message).toMatch(/no prompt handler answered/i);
+  });
+
+  test("a hook-forced ask still carries the hook's own transformedInput into the prompt call and the final record", async () => {
+    const promptSpy = spyPromptStage(() => ({ decision: "allow" }));
+    const ctx = baseCtx({
+      hookStage: spyHookStage(() => ({ decision: "ask", hookId: "h1", transformedInput: { command: "curl safe.example" } })).stage,
+      promptStage: promptSpy.stage,
+    });
+    const record = await evaluate(call("Bash", { command: "curl evil.example" }), ctx);
+    expect(promptSpy.calls[0]!.call.input).toEqual({ command: "curl safe.example" });
+    expect(record.transformedInput).toEqual({ command: "curl safe.example" });
+  });
+
+  test("bypassPermissions does not exempt a hook-forced ask (it must still prompt, unlike an ordinary unmatched action)", async () => {
+    const promptSpy = spyPromptStage(() => ({ decision: "deny", message: "still asked under bypass" }));
+    const ctx = baseCtx({
+      hookStage: spyHookStage(() => ({ decision: "ask", hookId: "h1" })).stage,
+      promptStage: promptSpy.stage,
+      policy: policy({ mode: "bypassPermissions" }),
+    });
+    const record = await evaluate(call("Bash", { command: "curl evil.example" }), ctx);
+    expect(promptSpy.calls.length).toBe(1);
+    expect(record.decision).toBe("deny");
+    expect(record.message).toBe("still asked under bypass");
   });
 });
 

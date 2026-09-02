@@ -77,23 +77,60 @@ export const ASK_USER_QUESTION_TOOL_NAME = "AskUserQuestion";
 
 // --- Stage 1 seam: PreToolUse hooks (T9/T10 fill) --------------------------------------------------
 
+// T10-CARRY 1 (WS-08 §3): widened from the T9-era 3-value union ("allow"|"deny"|"no_opinion") to
+// add "ask" — a PreToolUse hook's `ask` (or a `defer`, which runner.ts's own interim resolution
+// already turns into `ask` before this seam is ever called, TODO(T11)) now FORCES the interactive
+// path at stage 3, exactly like a matched ask rule, instead of failing closed to a synthesized
+// denial. See evaluate()'s own stage-1/stage-3 comments for how "ask" threads through: it is
+// captured at stage 1 but NOT resolved there — a later, stronger stage-2 deny rule still wins
+// (WS-08 §3's own "allow does not override a later deny" floor extends naturally to "ask", which is
+// itself weaker than deny in the §4 rank table) before stage 3 ever prompts.
 export interface HookDecision {
-  decision: "allow" | "deny" | "no_opinion";
+  decision: "allow" | "deny" | "ask" | "no_opinion";
   transformedInput?: Record<string, unknown>;
   message?: string;
   interrupt?: boolean;
   hookId?: string;
 }
+
+// T10 (WS-08 §6): PermissionRequest's own, narrower decision shape — allow/deny only (derived-shapes
+// item (b) pins NO "defer" arm on PermissionRequestHookSpecificOutput despite WS-08 §7's prose; see
+// runner.ts's interpretPermissionRequest for the T9-CARRY-3 reconciliation). `updatedPermissions`
+// mirrors canUseTool's own PromptDecision field (WS-07 §7.2) — reused by evaluate()'s
+// buildRecordFromPromptResult-adjacent PermissionRequest handling below via the SAME
+// PermissionDecisionRecord shape, mechanism "hook" instead of "canUseTool".
+export interface PermissionRequestHookDecision {
+  decision: "allow" | "deny";
+  transformedInput?: Record<string, unknown>;
+  updatedPermissions?: PermissionUpdate[];
+  message?: string;
+  interrupt?: boolean;
+  hookId?: string;
+}
+
 export interface HookStage {
   // SEAM CONTRACT: an "allow" result is ADVISORY ONLY for this stage (WS-07 §2.1: "An allow does NOT
   // override later deny/ask rules, interaction-required metadata, ... or the critical-removal
   // circuit breaker") — evaluate() below continues the pipeline regardless of an "allow" here; only
-  // "deny" short-circuits everything downstream. `transformedInput`, if present, becomes the
-  // effective call for every later stage (rule matching included), mirroring canUseTool's own
-  // updatedInput semantics (WS-07 §7.2). T9's real multi-hook reducer composes several hooks into
-  // ONE HookDecision before this seam is even called; this interface is the reducer's OUTPUT shape,
-  // not a per-hook shape.
+  // "deny" short-circuits everything downstream. An "ask" (T10-CARRY 1) is similarly non-terminal
+  // HERE — it is captured and forces stage 3's prompt path, but a stage-2 deny rule reached in
+  // between still wins first. `transformedInput`, if present, becomes the effective call for every
+  // later stage (rule matching included), mirroring canUseTool's own updatedInput semantics
+  // (WS-07 §7.2). T9's real multi-hook reducer composes several hooks into ONE HookDecision before
+  // this seam is even called; this interface is the reducer's OUTPUT shape, not a per-hook shape.
   preToolUse(call: PermissionCall, ctx: EvaluationContext): Promise<HookDecision>;
+  // T10 (WS-08 §6): fires immediately before EVERY promptStage.prompt() call site in this file — "a
+  // decision is about to be requested." Returns null when no PermissionRequest hook is
+  // registered/answers (evaluate() then falls through to ctx.promptStage.prompt() exactly as
+  // before, mechanism "canUseTool"); a non-null answer takes canUseTool's place ENTIRELY for that
+  // one decision point (mechanism "hook", canUseTool never invoked — WS-08 §6: "can answer it in
+  // place"). The §3 non-override floor (a PermissionRequest allow can never retroactively clear a
+  // deny/ask rule or the critical-removal breaker) holds STRUCTURALLY, not by a runtime check here:
+  // every call site below only ever reaches this method AFTER stage 2's deny rules, the
+  // Read-deny-blocks-Edit check, and (at the standing-exception sites) the critical/protected checks
+  // have already run and already decided this call needs a prompt — there is no later stage left
+  // for an allow returned here to bypass (T7's own structural-guarantee precedent, extended).
+  permissionRequest(call: PermissionCall, ctx: EvaluationContext, meta: PromptStageMeta): Promise<PermissionRequestHookDecision | null>;
 }
 
 // --- Stage 6 seam: canUseTool (T8 fills) ------------------------------------------------------------
@@ -228,6 +265,9 @@ export interface PermissionDecisionRecord {
 export const NO_OPINION_HOOK_STAGE: HookStage = {
   async preToolUse() {
     return { decision: "no_opinion" };
+  },
+  async permissionRequest() {
+    return null;
   },
 };
 
@@ -688,7 +728,18 @@ export async function evaluate(call: PermissionCall, ctx: EvaluationContext): Pr
       ...(hookResult.interrupt !== undefined ? { interrupt: hookResult.interrupt } : {}),
     };
   }
-  // See HookStage's own interface comment: "allow" is advisory only; downstream stages still run.
+  // See HookStage's own interface comment: "allow"/"ask" are advisory-in-POSITION only here --
+  // "allow" never overrides a later stage (unchanged). T10-CARRY 1 (WS-08 §3): "ask" is captured
+  // but NOT resolved yet -- it forces stage 3's prompt path below UNLESS stage 2's deny rules (next)
+  // fire first, mirroring the §4 reducer's own deny > ask rank one level up this pipeline. A
+  // hook-forced ask reaching stage 3 is checked BEFORE stage 4's standing exceptions (critical
+  // removal / protected write) by construction — both paths only ever end in a genuine prompt or a
+  // fail-closed denial, never an auto-allow, so there is no security gap in letting stage 3's
+  // (textually earlier) ask-handling claim it first; WS-07 §2's own stage order already places "ask"
+  // ahead of "mode" (stage 4), which is exactly where a hook's forced ask semantically belongs.
+  const hookForcedAsk = hookResult.decision === "ask";
+  const hookAskId = hookForcedAsk ? hookResult.hookId : undefined;
+  const hookAskMessage = hookForcedAsk ? hookResult.message : undefined;
   const effectiveCall: PermissionCall = hookResult.transformedInput !== undefined ? { ...call, input: hookResult.transformedInput } : call;
   const carriedTransform = hookResult.transformedInput;
 
@@ -732,11 +783,17 @@ export async function evaluate(call: PermissionCall, ctx: EvaluationContext): Pr
   // it's keyed on `policy.mode`, not on `askEntry` specifically). A DENY rule targeting the tool
   // still wins outright — stage 2 already returned before this stage ever runs.
   const isMandatoryAskUserQuestion = effectiveCall.toolName === ASK_USER_QUESTION_TOOL_NAME;
-  if (askEntry || isMandatoryAskUserQuestion) {
+  // T10-CARRY 1: a hook-forced ask (no rule matched) joins this gate as a THIRD reason to reach the
+  // prompt path — priority among the three, when more than one applies simultaneously, is
+  // askEntry > isMandatoryAskUserQuestion > hookForcedAsk (a documented judgment call: the more
+  // specific attribution's own message/mechanism wins; every case still ends in the identical
+  // "prompt, then fail closed on no answer" behavior regardless of which one is picked).
+  if (askEntry || isMandatoryAskUserQuestion || hookForcedAsk) {
     if (policy.mode === "dontAsk") {
       // WS-07 §6.3: "dontAsk converts all of these into denial." An actual ask-RULE match keeps its
-      // own rule-denial message/mechanism; AskUserQuestion with no matching rule gets its own
-      // dedicated mode-level denial (mechanism "mode" — no rule was involved).
+      // own rule-denial message/mechanism; AskUserQuestion / a hook-forced ask with no matching rule
+      // each get their own dedicated denial (mechanism "mode" / "hook" respectively — no rule was
+      // involved).
       if (askEntry) {
         return {
           decision: "deny",
@@ -745,6 +802,19 @@ export async function evaluate(call: PermissionCall, ctx: EvaluationContext): Pr
           source: askEntry.source,
           ruleRef: formatRuleRef(askEntry),
           message: ruleDenialMessage(askEntry),
+          ...(carriedTransform !== undefined ? { transformedInput: carriedTransform } : {}),
+        };
+      }
+      if (hookForcedAsk) {
+        // mechanism "hook" (not "mode"): a hook is the actual, attributable reason this needed
+        // asking, unlike AskUserQuestion's tool-identity-driven mandate just below, which has no
+        // more specific mechanism to point to.
+        return {
+          decision: "deny",
+          mechanism: "hook",
+          policyVersion,
+          ...(hookAskId !== undefined ? { hookId: hookAskId } : {}),
+          message: hookAskMessage ?? "Denied: dontAsk mode denies a PreToolUse hook's forced interactive approval (WS-07 §6.3/WS-08 §3)",
           ...(carriedTransform !== undefined ? { transformedInput: carriedTransform } : {}),
         };
       }
@@ -759,9 +829,10 @@ export async function evaluate(call: PermissionCall, ctx: EvaluationContext): Pr
     // "a matching ask forces human/application approval even when a narrower allow also matches and
     // even in auto/bypassPermissions" (WS-07 §2) — skip stages 4/5 entirely, straight to the prompt.
     // `matchedAskRule` is present ONLY when an actual rule matched — AskUserQuestion alone (no rule)
-    // is a mandatory-interaction requirement, not a rule-forced one, so it stays absent (§7.1: it
-    // "distinguishes an explicit human-required policy from an ordinary safety prompt" — this IS the
-    // ordinary-safety-prompt case, just one the tool itself makes unconditional).
+    // and a hook-forced ask (no rule) are both mandatory-interaction requirements, not rule-forced
+    // ones, so it stays absent for both (§7.1: it "distinguishes an explicit human-required policy
+    // from an ordinary safety prompt" — these ARE the ordinary-safety-prompt case, just forced
+    // unconditionally by the tool's own identity or by a hook's own decision, rather than by a rule).
     const matchedAskRule = askEntry
       ? {
           source: askEntry.source,
@@ -769,13 +840,18 @@ export async function evaluate(call: PermissionCall, ctx: EvaluationContext): Pr
           ...(askEntry.ruleValue.ruleContent !== undefined ? { ruleContent: askEntry.ruleValue.ruleContent } : {}),
         }
       : undefined;
-    const decisionReason = askEntry ? `matched ask rule ${formatRuleRef(askEntry)}` : "AskUserQuestion requires mandatory interaction (WS-07 §8)";
-    const result = await ctx.promptStage.prompt(effectiveCall, ctx, {
+    const decisionReason = askEntry
+      ? `matched ask rule ${formatRuleRef(askEntry)}`
+      : isMandatoryAskUserQuestion
+        ? "AskUserQuestion requires mandatory interaction (WS-07 §8)"
+        : (hookAskMessage ?? "a PreToolUse hook requested interactive approval (WS-08 §3)");
+    const meta: PromptStageMeta = {
       decisionReason,
       ...(matchedAskRule !== undefined ? { matchedAskRule } : {}),
       ...(effectiveCall.toolUseId !== undefined ? { toolUseID: effectiveCall.toolUseId } : {}),
       ...(effectiveCall.agentId !== undefined ? { agentID: effectiveCall.agentId } : {}),
-    });
+    };
+    const result = await ctx.promptStage.prompt(effectiveCall, ctx, meta);
     if (result === null) {
       // No real host answered a mandatory/rule-forced request — fails CLOSED, unlike stage 6's
       // generic fallback (WS-07 §7.1: "never silently clear a rule-forced request"; §6.1: "never
@@ -788,6 +864,16 @@ export async function evaluate(call: PermissionCall, ctx: EvaluationContext): Pr
           source: askEntry.source,
           ruleRef: formatRuleRef(askEntry),
           message: ruleAskUnresolvedMessage(askEntry),
+          ...(carriedTransform !== undefined ? { transformedInput: carriedTransform } : {}),
+        };
+      }
+      if (hookForcedAsk) {
+        return {
+          decision: "deny",
+          mechanism: "hook",
+          policyVersion,
+          ...(hookAskId !== undefined ? { hookId: hookAskId } : {}),
+          message: "Denied: a PreToolUse hook requested interactive approval and no prompt handler answered it (WS-08 §3)",
           ...(carriedTransform !== undefined ? { transformedInput: carriedTransform } : {}),
         };
       }
