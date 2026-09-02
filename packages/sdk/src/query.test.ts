@@ -1084,3 +1084,69 @@ test("dontAsk mode: canUseTool is NEVER invoked through the REAL engine, even fo
   const deniedBlock = userMessages.flatMap((m) => m.content).find((b) => b.type === "tool_result");
   expect(deniedBlock?.denied).toBe(true);
 });
+
+// Item 1 (P2 fix-wave): a control call issued AFTER the generator has already completed used to
+// register a promise nothing could ever settle (the runtime connection is torn down; stdin may
+// already be silently no-op-ing post-.end()) -- hanging the caller forever with no diagnostic.
+// Mirrors rpc/bridge.ts's own `closed` latch (runtime side) on the wrapper side.
+test("Item 1: a control call issued AFTER the generator completes rejects immediately with a typed error, instead of hanging forever", async () => {
+  const gen = query({ prompt: "hi", options: { spawnClaudeCodeProcess: (opts) => inMemoryProcess(opts.args) } });
+  for await (const _msg of gen) {
+    /* drain to natural completion (sawTerminal) */
+  }
+
+  let caught: unknown;
+  try {
+    await gen.interrupt();
+  } catch (e) {
+    caught = e;
+  }
+  expect(caught).toBeInstanceOf(WinterRpcError);
+  expect((caught as WinterRpcError).code).toBe("connection_closed");
+});
+
+test("Item 1: setPermissionMode issued AFTER the generator completes ALSO rejects immediately (the guard is not interrupt-specific)", async () => {
+  const gen = query({ prompt: "hi", options: { spawnClaudeCodeProcess: (opts) => inMemoryProcess(opts.args) } });
+  for await (const _msg of gen) {
+    /* drain to natural completion */
+  }
+
+  let caught: unknown;
+  try {
+    await gen.setPermissionMode("plan");
+  } catch (e) {
+    caught = e;
+  }
+  expect(caught).toBeInstanceOf(WinterRpcError);
+});
+
+test("Item 1: a control call issued an early consumer .return() away from the generator (never drained to sawTerminal) ALSO rejects, not just the natural-completion path", async () => {
+  const gen = query({ prompt: "hi", options: { spawnClaudeCodeProcess: (opts) => inMemoryProcess(opts.args) } });
+  for await (const _msg of gen) {
+    break; // an early exit -- triggers the generator's own finally via an implicit .return()
+  }
+
+  let caught: unknown;
+  try {
+    await gen.interrupt();
+  } catch (e) {
+    caught = e;
+  }
+  expect(caught).toBeInstanceOf(WinterRpcError);
+});
+
+test("Item 1: BEFORE the generator has ever been iterated, a control call still proceeds normally (the guard only trips AFTER completion)", async () => {
+  const { proc, writes } = recordingProcess(3); // user + end_input (sent once iteration starts) + this interrupt call
+  const gen = query({ prompt: "hi", options: { spawnClaudeCodeProcess: () => proc } });
+  // Deliberately NOT iterating `gen` before this call -- an async generator's BODY (and therefore
+  // its own `finally`, which is what actually sets generatorTerminated) never runs until first
+  // advanced, so the guard cannot have tripped yet purely from construction. `sendControlRequest`
+  // itself lives OUTSIDE iterate()'s body, so this write happens immediately regardless.
+  const interruptPromise = gen.interrupt();
+  interruptPromise.catch(() => {}); // never actually acked in this fixture -- avoid an unhandled rejection
+  for await (const _msg of gen) {
+    /* drives iterate()'s own body, which sends user+end_input -- together with the interrupt
+       write above, this reaches recordingProcess's own expectedWrites=3 gate and lets it complete. */
+  }
+  expect(decodeWrites(writes).some((f) => f.type === "control_request" && (f as { subtype: string }).subtype === "interrupt")).toBe(true);
+});

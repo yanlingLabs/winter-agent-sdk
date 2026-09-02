@@ -292,7 +292,20 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
   // the correlation idea is identical. No timeout support here: nothing in this task's scope needs
   // one (interrupt/setPermissionMode both just await their ack).
   const pendingHostRequests = new Map<string, { resolve(payload: unknown): void; reject(err: unknown): void }>();
+  // Item 1 (P2 fix-wave): mirrors rpc/bridge.ts's own `closed` latch on the runtime side (a
+  // deliberate parity, not a coincidence — the two are the SAME correlation idea in opposite
+  // directions, see this const's own header). Set once, in iterate()'s own `finally` below,
+  // reached by every generator-completion path (return, throw, or an external early
+  // `.return()`/`.throw()`). Pre-fix, a control call issued AFTER completion (e.g. a consumer that
+  // kept a `Query` reference and called `.interrupt()` well after its `for await` loop had already
+  // ended) registered a fresh promise in `pendingHostRequests` and wrote to a stdin that may already
+  // be silently no-op-ing post-`.end()` — nothing left could ever settle it, hanging the caller
+  // forever with no diagnostic.
+  let generatorTerminated = false;
   function sendControlRequest(subtype: string, payload: unknown): Promise<unknown> {
+    if (generatorTerminated) {
+      return Promise.reject(new WinterRpcError("connection_closed", `query() has already completed: cannot issue a '${subtype}' control request`));
+    }
     const requestId = randomUUID();
     return new Promise((resolve, reject) => {
       pendingHostRequests.set(requestId, { resolve, reject });
@@ -625,6 +638,11 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
       const exitInfo = await proc.exited;
       throw new ProcessError("unexpected process death: runtime exited without a terminal result", exitInfo.code, exitInfo.signal);
     } finally {
+      // Item 1 (P2 fix-wave): set FIRST, before anything else in this finally block — every control
+      // call issued from this point forward (including one racing this very teardown) sees the
+      // generator as terminated and fails fast instead of registering a promise nothing will ever
+      // settle.
+      generatorTerminated = true;
       options.abortController?.signal.removeEventListener("abort", onAbort);
       if (killTimer) clearTimeout(killTimer);
       // Ruling P2-B (wrapper side): stdin closes HERE — at this generator's own teardown — for
