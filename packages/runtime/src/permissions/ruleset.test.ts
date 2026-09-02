@@ -6,7 +6,7 @@
 // Fixture privacy (name-guard): every real-fs fixture below is a fresh mkdtemp root; no real
 // usernames or personal paths appear anywhere in this file.
 import { describe, test, expect } from "bun:test";
-import { mkdtempSync, readFileSync, existsSync, statSync, realpathSync } from "node:fs";
+import { mkdtempSync, mkdirSync, symlinkSync, readFileSync, existsSync, statSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -20,6 +20,7 @@ import {
   appendPermissionJournal,
   PermissionRuleValidationError,
   PermissionUpdateAuthorityError,
+  PermissionJournalDirError,
   type SourcedRuleSet,
   type SourcedRuleEntry,
 } from "./ruleset.ts";
@@ -55,6 +56,19 @@ function readJournalLines(winterHome: string, projectKey: string, sessionId: str
     .split("\n")
     .filter((l) => l.length > 0)
     .map((l) => JSON.parse(l));
+}
+
+// Fix round 1, MAJOR: every journal line is now an envelope `{ authority, at, update }`, never the
+// bare update (see appendPermissionJournal's own header comment for why). `update` is checked with
+// an exact `toEqual` (byte-preserved, including for unknown future variants) and `at` is checked
+// for SHAPE (a parseable ISO string), never an exact value -- asserting an exact timestamp would be
+// flaky by construction.
+function expectJournalLine(actual: unknown, expected: { authority: string; update: unknown }): void {
+  const env = actual as { authority?: unknown; at?: unknown; update?: unknown };
+  expect(env.authority).toBe(expected.authority);
+  expect(env.update).toEqual(expected.update);
+  expect(typeof env.at).toBe("string");
+  expect(Number.isNaN(Date.parse(env.at as string))).toBe(false);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -157,15 +171,24 @@ describe("add-time validation carry (b), Ruling P2-E: Read/Edit rules over the g
     expect(() => sourceRule(rv("Read", "build/**"), "allow", "user")).not.toThrow();
   });
 
-  test("the cap check runs on the RAW ruleContent regardless of how grammar.ts classifies it (e.g. a colon makes it parse as a 'param' specifier, not 'pattern')", () => {
-    // "a:x/**/**/.../**" contains a literal ":" so grammar.ts's generic FIELD_VALUE dispatch
-    // classifies it as a `param` specifier (field "a", value "x/**/**/...") rather than `pattern` --
-    // the cap check must still fire because it is keyed on toolName===Read/Edit + the raw
-    // ruleContent string, never on parsed.specifier.kind (see grammar.ts's own generic-params-
-    // dispatch comment). The literal "x" segment between "a:" and the first "**" is deliberate: it
-    // keeps the "a:" prefix from fusing with a "**" token when exceedsDoubleStarCap does its own
-    // "/"-split, which would otherwise undercount by one and defeat the very thing this fixture is
-    // trying to prove.
+  test("the cap check runs on the RAW ruleContent independent of how grammar.ts classifies the specifier -- defense in depth, not reliant on Ruling P2-G's fix staying in place", () => {
+    // Fix round 1, item 5 (stale-prose correction): as of fix round 2's Ruling P2-G, grammar.ts's
+    // FILE_RULE_TOOLS dispatch already classifies THIS EXACT shape as a `pattern` specifier (a
+    // colon-bearing Read/Edit rule is never generic-param-dispatched anymore) -- so this fixture no
+    // longer demonstrates a LIVE misclassification. It stays as a defense-in-depth / regression pin:
+    // this module's own check is keyed on toolName===Read/Edit + the raw ruleContent string, NEVER
+    // on parsed.specifier.kind, so the check remains correct even if grammar.ts's classification
+    // choice ever changes again in the future -- its correctness must never depend on staying in
+    // sync with a downstream module's internal dispatch logic.
+    //
+    // (Historical note, no longer current behavior: before Ruling P2-G, "a:x/**/**/..." -- a
+    // colon-bearing Read/Edit pattern -- parsed as a generic `param` specifier, field "a" value
+    // "x/**/**/...", via grammar.ts's FIELD_VALUE dispatch. That was the original fail-open class
+    // Ruling P2-E's own carry was written to survive regardless of grammar.ts's classification.)
+    //
+    // The literal "x" segment between "a:" and the first "**" is deliberate: it keeps the "a:"
+    // prefix from fusing with a "**" token when exceedsDoubleStarCap does its own "/"-split, which
+    // would otherwise undercount by one and defeat the very thing this fixture is trying to prove.
     const pattern = `a:x/${overCapPattern()}`;
     expect(() => sourceRule(rv("Read", pattern), "deny", "project")).toThrow(PermissionRuleValidationError);
   });
@@ -411,6 +434,47 @@ describe("authority validation: managed rules are unweakenable — 'session→ma
     const next = applyPermissionUpdate(set, update, { authority: "managed" });
     expect(next.directories).toHaveLength(0);
   });
+
+  // Review fix round 1, CRITICAL: the authority check must inspect EVERY entry that would actually
+  // be removed, not just whichever one `.find()` happens to return first. A duplicate-content
+  // non-managed entry sitting BEFORE the managed one in array order previously masked it entirely --
+  // the check passed against the non-managed "hit", then the `kept` filter removed BOTH entries
+  // (it matches by rule identity alone, regardless of source). Both orderings are pinned so the fix
+  // can never regress into being order-dependent again.
+  test("removeRules: a managed AND a non-managed entry share identical rule content (managed FIRST in array order) -- the managed one must survive an unauthorized attempt", () => {
+    const set = seed([
+      sourceRule(rv("Bash", "rm -rf /"), "deny", "managed"),
+      sourceRule(rv("Bash", "rm -rf /"), "deny", "user"),
+    ]);
+    const update: PermissionUpdate = { type: "removeRules", rules: [rv("Bash", "rm -rf /")], behavior: "deny", destination: "session" };
+    expect(() => applyPermissionUpdate(set, update, { authority: "session" })).toThrow(PermissionUpdateAuthorityError);
+    // never a silent drop, and never a PARTIAL one: both entries survive the rejected attempt.
+    expect(set.entries).toHaveLength(2);
+    expect(set.entries.some((e) => e.source === "managed")).toBe(true);
+    expect(set.entries.some((e) => e.source === "user")).toBe(true);
+  });
+
+  test("removeRules: same duplicate-content pair, managed SECOND in array order -- the bug this review found (order must never matter)", () => {
+    const set = seed([
+      sourceRule(rv("Bash", "rm -rf /"), "deny", "user"),
+      sourceRule(rv("Bash", "rm -rf /"), "deny", "managed"),
+    ]);
+    const update: PermissionUpdate = { type: "removeRules", rules: [rv("Bash", "rm -rf /")], behavior: "deny", destination: "session" };
+    expect(() => applyPermissionUpdate(set, update, { authority: "session" })).toThrow(PermissionUpdateAuthorityError);
+    expect(set.entries).toHaveLength(2);
+    expect(set.entries.some((e) => e.source === "managed")).toBe(true);
+    expect(set.entries.some((e) => e.source === "user")).toBe(true);
+  });
+
+  test("removeRules: with a managed authority, BOTH the managed entry and its non-managed duplicate are removed (removeRules still matches by rule identity, not by source)", () => {
+    const set = seed([
+      sourceRule(rv("Bash", "rm -rf /"), "deny", "user"),
+      sourceRule(rv("Bash", "rm -rf /"), "deny", "managed"),
+    ]);
+    const update: PermissionUpdate = { type: "removeRules", rules: [rv("Bash", "rm -rf /")], behavior: "deny", destination: "session" };
+    const next = applyPermissionUpdate(set, update, { authority: "managed" });
+    expect(next.entries).toHaveLength(0);
+  });
 });
 
 // ---------------------------------------------------------------------------------------------
@@ -527,12 +591,45 @@ describe("resolveRules: project allow rules require workspace trust; project den
     expect(untrusted.ask?.source).toBe("project");
   });
 
-  test("allow rules from every OTHER source are never trust-gated", () => {
-    for (const source of ["user", "local", "cliArg", "session", "sdk", "managed"] as const) {
+  test("allow rules from every OTHER source are never trust-gated (local is now EXCLUDED from this list -- Ruling P2-H, see the sibling describe block below)", () => {
+    for (const source of ["user", "cliArg", "session", "sdk", "managed"] as const) {
       const set = seed([sourceRule(rv("Bash", "ls *"), "allow", source)]);
       const result = resolveRules(set, call("Bash", { command: "ls -la" }), { trustedWorkspace: false });
       expect(result.allow?.source).toBe(source);
     }
+  });
+});
+
+describe("resolveRules: local rules require workspace trust too, exactly like project (fix round 1, Ruling P2-H)", () => {
+  // Ruling P2-H basis: .winter/settings.local.json is repo-committable (WS-07 §3.2 never says it
+  // isn't), so it carries the identical untrusted-clone self-grant risk project settings do -- this
+  // codebase's own history rates that shape Critical. The spec's silence on local's trust posture
+  // resolves to the safe direction here (this is a controller ruling, not a differential capture --
+  // see the report's fix-round section: it may loosen later, but never starts fail-open).
+  test("a local-sourced allow rule is INERT when the workspace is untrusted", () => {
+    const set = seed([sourceRule(rv("Bash", "ls *"), "allow", "local")]);
+    const result = resolveRules(set, call("Bash", { command: "ls -la" }), { trustedWorkspace: false });
+    expect(result.allow).toBeUndefined();
+  });
+
+  test("the SAME local-sourced allow rule is ACTIVE when the workspace is trusted", () => {
+    const set = seed([sourceRule(rv("Bash", "ls *"), "allow", "local")]);
+    const result = resolveRules(set, call("Bash", { command: "ls -la" }), { trustedWorkspace: true });
+    expect(result.allow?.source).toBe("local");
+  });
+
+  test("a local-sourced DENY rule applies regardless of trust", () => {
+    const set = seed([sourceRule(rv("Bash", "rm *"), "deny", "local")]);
+    const untrusted = resolveRules(set, call("Bash", { command: "rm -rf x" }), { trustedWorkspace: false });
+    const trusted = resolveRules(set, call("Bash", { command: "rm -rf x" }), { trustedWorkspace: true });
+    expect(untrusted.deny?.source).toBe("local");
+    expect(trusted.deny?.source).toBe("local");
+  });
+
+  test("a local-sourced ASK rule applies regardless of trust", () => {
+    const set = seed([sourceRule(rv("Bash", "git push*"), "ask", "local")]);
+    const untrusted = resolveRules(set, call("Bash", { command: "git push" }), { trustedWorkspace: false });
+    expect(untrusted.ask?.source).toBe("local");
   });
 });
 
@@ -555,6 +652,30 @@ describe("effectiveDirectories: project-sourced directory grants require workspa
 
   test("a user-sourced directory is always included, regardless of trust", () => {
     const set = seed([], [{ path: "/home/extra", source: "user" }]);
+    expect(effectiveDirectories(set, { trustedWorkspace: false })).toEqual(["/home/extra"]);
+  });
+});
+
+describe("effectiveDirectories: local-sourced directory grants require workspace trust too (fix round 1, Ruling P2-H)", () => {
+  test("a local-sourced directory is excluded when untrusted", () => {
+    const set = seed([], [{ path: "/repo/.winter-local-extra", source: "local" }]);
+    expect(effectiveDirectories(set, { trustedWorkspace: false })).toEqual([]);
+  });
+
+  test("a local-sourced directory is included when trusted", () => {
+    const set = seed([], [{ path: "/repo/.winter-local-extra", source: "local" }]);
+    expect(effectiveDirectories(set, { trustedWorkspace: true })).toEqual(["/repo/.winter-local-extra"]);
+  });
+
+  test("project and local sources are BOTH excluded when untrusted, but a user-sourced entry among them survives", () => {
+    const set = seed(
+      [],
+      [
+        { path: "/repo/vendor", source: "project" },
+        { path: "/repo/.winter-local-extra", source: "local" },
+        { path: "/home/extra", source: "user" },
+      ],
+    );
     expect(effectiveDirectories(set, { trustedWorkspace: false })).toEqual(["/home/extra"]);
   });
 });
@@ -609,78 +730,99 @@ describe("buildSdkSourcedEntries: Options fields become source:'sdk' entries wit
 // immediately AND append to <sessionId>.permission-journal.jsonl for P5 replay.
 // ---------------------------------------------------------------------------------------------
 
-describe("appendPermissionJournal: file-destination updates are journaled (Ruling 2)", () => {
-  test("a userSettings-destined update is appended as one JSONL line", () => {
+describe("appendPermissionJournal: file-destination updates are journaled as an envelope (Ruling 2 + fix round 1 MAJOR)", () => {
+  test("a userSettings-destined update is appended as one JSONL line, wrapped in an {authority,at,update} envelope", () => {
     const home = freshHome();
     const update: PermissionUpdate = { type: "addRules", rules: [rv("Bash", "ls *")], behavior: "allow", destination: "userSettings" };
-    appendPermissionJournal({ winterHome: home, projectKey: "proj", sessionId: "sess-1" }, update);
+    appendPermissionJournal({ winterHome: home, projectKey: "proj", sessionId: "sess-1" }, update, { authority: "session" });
     const lines = readJournalLines(home, "proj", "sess-1");
-    expect(lines).toEqual([update]);
+    expect(lines).toHaveLength(1);
+    expectJournalLine(lines[0], { authority: "session", update });
   });
 
-  test("projectSettings and localSettings destinations are also journaled", () => {
+  test("projectSettings and localSettings destinations are also journaled, each envelope carrying its OWN call's authority", () => {
     const home = freshHome();
     const u1: PermissionUpdate = { type: "setMode", mode: "acceptEdits", destination: "projectSettings" };
     const u2: PermissionUpdate = { type: "addDirectories", directories: ["/tmp/x"], destination: "localSettings" };
-    appendPermissionJournal({ winterHome: home, projectKey: "proj", sessionId: "sess-1" }, u1);
-    appendPermissionJournal({ winterHome: home, projectKey: "proj", sessionId: "sess-1" }, u2);
-    expect(readJournalLines(home, "proj", "sess-1")).toEqual([u1, u2]);
+    appendPermissionJournal({ winterHome: home, projectKey: "proj", sessionId: "sess-1" }, u1, { authority: "user" });
+    appendPermissionJournal({ winterHome: home, projectKey: "proj", sessionId: "sess-1" }, u2, { authority: "local" });
+    const lines = readJournalLines(home, "proj", "sess-1");
+    expect(lines).toHaveLength(2);
+    expectJournalLine(lines[0], { authority: "user", update: u1 });
+    expectJournalLine(lines[1], { authority: "local", update: u2 });
   });
 
   test("a session-destined update is NOT journaled (session is ephemeral, not a file)", () => {
     const home = freshHome();
     const update: PermissionUpdate = { type: "addRules", rules: [rv("Bash")], behavior: "allow", destination: "session" };
-    appendPermissionJournal({ winterHome: home, projectKey: "proj", sessionId: "sess-1" }, update);
+    appendPermissionJournal({ winterHome: home, projectKey: "proj", sessionId: "sess-1" }, update, { authority: "session" });
     expect(existsSync(journalPath(home, "proj", "sess-1"))).toBe(false);
   });
 
   test("a cliArg-destined update is NOT journaled", () => {
     const home = freshHome();
     const update: PermissionUpdate = { type: "addRules", rules: [rv("Bash")], behavior: "allow", destination: "cliArg" };
-    appendPermissionJournal({ winterHome: home, projectKey: "proj", sessionId: "sess-1" }, update);
+    appendPermissionJournal({ winterHome: home, projectKey: "proj", sessionId: "sess-1" }, update, { authority: "cliArg" });
     expect(existsSync(journalPath(home, "proj", "sess-1"))).toBe(false);
   });
 
-  test("an unrecognized update TYPE is journaled regardless of its claimed destination -- lossless wins (WS-07 §3.3)", () => {
+  test("an unrecognized update TYPE is journaled regardless of its claimed destination -- the inner `update` deep-equals byte-preserved (WS-07 §3.3)", () => {
     const home = freshHome();
     const future = { type: "futureUpdateKind", destination: "session", payload: { nested: [1, 2, 3] } } as unknown as PermissionUpdate;
-    appendPermissionJournal({ winterHome: home, projectKey: "proj", sessionId: "sess-1" }, future);
-    expect(readJournalLines(home, "proj", "sess-1")).toEqual([future]);
+    appendPermissionJournal({ winterHome: home, projectKey: "proj", sessionId: "sess-1" }, future, { authority: "session" });
+    const lines = readJournalLines(home, "proj", "sess-1");
+    expect(lines).toHaveLength(1);
+    expectJournalLine(lines[0], { authority: "session", update: future });
   });
 
   test("an unrecognized update TYPE with no destination field at all is still journaled", () => {
     const home = freshHome();
     const future = { type: "futureUpdateKind" } as unknown as PermissionUpdate;
-    appendPermissionJournal({ winterHome: home, projectKey: "proj", sessionId: "sess-1" }, future);
-    expect(readJournalLines(home, "proj", "sess-1")).toEqual([future]);
+    appendPermissionJournal({ winterHome: home, projectKey: "proj", sessionId: "sess-1" }, future, { authority: "session" });
+    const lines = readJournalLines(home, "proj", "sess-1");
+    expect(lines).toHaveLength(1);
+    expectJournalLine(lines[0], { authority: "session", update: future });
   });
 
-  test("multiple appends accumulate as separate JSONL lines, in order", () => {
+  test("a future update variant that itself defines an 'authority' field is never shadowed by the envelope's own authority -- never spread, always a sibling", () => {
+    const home = freshHome();
+    const future = { type: "futureUpdateKind", authority: "some-inner-value-not-a-RuleSource", destination: "userSettings" } as unknown as PermissionUpdate;
+    appendPermissionJournal({ winterHome: home, projectKey: "proj", sessionId: "sess-1" }, future, { authority: "cliArg" });
+    const lines = readJournalLines(home, "proj", "sess-1");
+    const envelope = lines[0] as { authority: unknown; update: { authority: unknown } };
+    expect(envelope.authority).toBe("cliArg"); // the envelope's own authority -- who called appendPermissionJournal
+    expect(envelope.update.authority).toBe("some-inner-value-not-a-RuleSource"); // the update's own field, untouched
+  });
+
+  test("multiple appends accumulate as separate JSONL lines, in order, each with its own envelope", () => {
     const home = freshHome();
     const u1: PermissionUpdate = { type: "addRules", rules: [rv("Bash")], behavior: "allow", destination: "userSettings" };
     const u2: PermissionUpdate = { type: "addRules", rules: [rv("Read")], behavior: "deny", destination: "userSettings" };
-    appendPermissionJournal({ winterHome: home, projectKey: "proj", sessionId: "sess-1" }, u1);
-    appendPermissionJournal({ winterHome: home, projectKey: "proj", sessionId: "sess-1" }, u2);
-    expect(readJournalLines(home, "proj", "sess-1")).toEqual([u1, u2]);
+    appendPermissionJournal({ winterHome: home, projectKey: "proj", sessionId: "sess-1" }, u1, { authority: "session" });
+    appendPermissionJournal({ winterHome: home, projectKey: "proj", sessionId: "sess-1" }, u2, { authority: "session" });
+    const lines = readJournalLines(home, "proj", "sess-1");
+    expect(lines).toHaveLength(2);
+    expectJournalLine(lines[0], { authority: "session", update: u1 });
+    expectJournalLine(lines[1], { authority: "session", update: u2 });
   });
 
   test("the journal lives store-adjacent: <home>/projects/<projectKey>/<sessionId>.permission-journal.jsonl", () => {
     const home = freshHome();
     const update: PermissionUpdate = { type: "setMode", mode: "auto", destination: "userSettings" };
-    appendPermissionJournal({ winterHome: home, projectKey: "my-proj", sessionId: "my-sess" }, update);
+    appendPermissionJournal({ winterHome: home, projectKey: "my-proj", sessionId: "my-sess" }, update, { authority: "session" });
     expect(existsSync(join(home, "projects", "my-proj", "my-sess.permission-journal.jsonl"))).toBe(true);
   });
 
   test("the journal directory is created fresh -- no pre-existing structure required", () => {
     const home = freshHome(); // brand-new mkdtemp: no projects/ dir exists yet
     const update: PermissionUpdate = { type: "setMode", mode: "auto", destination: "userSettings" };
-    expect(() => appendPermissionJournal({ winterHome: home, projectKey: "proj", sessionId: "sess" }, update)).not.toThrow();
+    expect(() => appendPermissionJournal({ winterHome: home, projectKey: "proj", sessionId: "sess" }, update, { authority: "session" })).not.toThrow();
   });
 
   test("the journal file is written with a restrictive mode, mirroring the session store's own discipline", () => {
     const home = freshHome();
     const update: PermissionUpdate = { type: "setMode", mode: "auto", destination: "userSettings" };
-    appendPermissionJournal({ winterHome: home, projectKey: "proj", sessionId: "sess" }, update);
+    appendPermissionJournal({ winterHome: home, projectKey: "proj", sessionId: "sess" }, update, { authority: "session" });
     const mode = statSync(journalPath(home, "proj", "sess")).mode & 0o777;
     expect(mode).toBe(0o600);
   });
@@ -688,8 +830,41 @@ describe("appendPermissionJournal: file-destination updates are journaled (Rulin
   test("different sessionIds under the same project get independent journal files", () => {
     const home = freshHome();
     const update: PermissionUpdate = { type: "setMode", mode: "auto", destination: "userSettings" };
-    appendPermissionJournal({ winterHome: home, projectKey: "proj", sessionId: "sess-a" }, update);
+    appendPermissionJournal({ winterHome: home, projectKey: "proj", sessionId: "sess-a" }, update, { authority: "session" });
     expect(existsSync(journalPath(home, "proj", "sess-b"))).toBe(false);
     expect(existsSync(journalPath(home, "proj", "sess-a"))).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// appendPermissionJournal — directory-chain hardening (fix round 1, MINOR): mirrors
+// session-store.ts's own ensureSecureDir (per-level symlink lstat + ownership + idempotent chmod)
+// for the SAME <winterHome>/projects/<projectKey>/ tree the session store itself creates.
+// ---------------------------------------------------------------------------------------------
+
+describe("appendPermissionJournal: directory-chain hardening (fix round 1, MINOR)", () => {
+  test("a symlink planted at the project-directory level is refused, not silently followed", () => {
+    const home = freshHome();
+    const projectsDir = join(home, "projects");
+    mkdirSync(projectsDir); // pre-create so a symlink can be planted INSIDE it before the journal ever runs
+    const outside = realpathSync(mkdtempSync(join(tmpdir(), "winter-permissions-journal-outside-")));
+    symlinkSync(outside, join(projectsDir, "proj"));
+    const update: PermissionUpdate = { type: "setMode", mode: "auto", destination: "userSettings" };
+    expect(() =>
+      appendPermissionJournal({ winterHome: home, projectKey: "proj", sessionId: "sess" }, update, { authority: "session" }),
+    ).toThrow(PermissionJournalDirError);
+  });
+
+  test("a pre-existing, ordinary directory chain is accepted (idempotent self-heal, not just a fresh-create path)", () => {
+    const home = freshHome();
+    // Prime the exact chain by appending once, then append again through the SAME already-existing
+    // directories -- proves ensureSecureJournalDir's EEXIST branch (re-validate, don't recreate) is
+    // exercised, not just the fresh-mkdir branch the "created fresh" test above already covers.
+    const update: PermissionUpdate = { type: "setMode", mode: "auto", destination: "userSettings" };
+    appendPermissionJournal({ winterHome: home, projectKey: "proj", sessionId: "sess" }, update, { authority: "session" });
+    expect(() =>
+      appendPermissionJournal({ winterHome: home, projectKey: "proj", sessionId: "sess" }, update, { authority: "session" }),
+    ).not.toThrow();
+    expect(readJournalLines(home, "proj", "sess")).toHaveLength(2);
   });
 });

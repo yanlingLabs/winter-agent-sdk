@@ -39,6 +39,7 @@ import {
   closeSync,
   chmodSync,
   mkdirSync,
+  lstatSync,
   constants as fsConstants,
 } from "node:fs";
 import { join } from "node:path";
@@ -185,13 +186,18 @@ function validateNewRule(value: PermissionRuleValue, behavior: PermissionBehavio
   // (b) Ruling P2-E: a Read/Edit pattern over the glob-depth cap silently compiles to a
   // never-matching regex at match time (paths.ts's compileFsGlobToRegex returns null), a fail-open
   // gap for deny/ask. Checked on the RAW ruleContent string directly — never on
-  // parsed.specifier.source — because grammar.ts's generic param-dispatch can classify a
-  // colon-bearing Read/Edit pattern as a "param" specifier instead of "pattern" (Read/Edit have no
-  // param-field allowlist of their own, unlike Bash's `run_in_background`), which would let an
-  // over-cap pattern slip past a check keyed on specifier.kind. Read/Edit only (Ruling P2-E's own
-  // scope; paths.ts's module boundary is Read/Edit-only by construction) and only when a
-  // ruleContent exists at all (a bare Read/Edit rule has no pattern to measure — out of scope by
-  // construction, matching paths.ts's own module-header note).
+  // parsed.specifier.source — as defense-in-depth: this check's correctness must never depend on
+  // which Specifier `kind` grammar.ts's own parseRule happens to classify a Read/Edit rule into;
+  // reading the untouched original string is no harder and stays correct regardless of any future
+  // change to that classification. (Fix round 1, item 5 — stale-prose correction: earlier prose
+  // here justified this by describing a colon-bearing Read/Edit pattern being misclassified as a
+  // generic "param" specifier. Fix round 2's Ruling P2-G has since fixed that misclassification
+  // directly in grammar.ts — FILE_RULE_TOOLS now dispatches Read/Edit content to `pattern` always —
+  // so that specific claim is no longer current behavior. This check was never actually reliant on
+  // it: it was, and remains, keyed on toolName===Read/Edit + the raw ruleContent string alone.)
+  // Read/Edit only (Ruling P2-E's own scope; paths.ts's module boundary is Read/Edit-only by
+  // construction) and only when a ruleContent exists at all (a bare Read/Edit rule has no pattern to
+  // measure — out of scope by construction, matching paths.ts's own module-header note).
   if ((parsed.toolName === "Read" || parsed.toolName === "Edit") && value.ruleContent !== undefined) {
     if (exceedsDoubleStarCap(value.ruleContent)) {
       throw new PermissionRuleValidationError(
@@ -345,9 +351,22 @@ export function applyPermissionUpdate(set: SourcedRuleSet, update: PermissionUpd
       // This asymmetry with replaceRules (destination-scoped) is a deliberate judgment call —
       // flagged in the report.
       const targets = update.rules.map((r) => parseRule(ruleValueToRaw(r)));
+      // Review fix round 1, CRITICAL: for EACH target, ask "does a MANAGED entry match this?"
+      // directly — never "grab whichever entry .find() returns first, then check ITS source".
+      // The `kept` filter below removes EVERY structurally-matching entry regardless of source, so
+      // checking only the first hit let a non-managed duplicate of a managed rule's exact content
+      // (in either array position) mask the managed entry entirely: the authority check would pass
+      // against the non-managed "hit" while the managed entry was silently swept away by the same
+      // filter. Mirrors removeDirectories' own predicate below (a `source === "managed"` term
+      // INSIDE the find/some call), which never had this bug because it already asks the direct
+      // question instead of inspecting one arbitrary match's source after the fact.
       for (let i = 0; i < update.rules.length; i++) {
-        const hit = set.entries.find((e) => e.behavior === update.behavior && sameRule(e.rule, targets[i]!));
-        if (hit) assertMayTouchManagedSource(hit.source, opts.authority, () => `rule ${JSON.stringify(ruleValueToRaw(update.rules[i]!))}`);
+        const matchesManagedEntry = set.entries.some(
+          (e) => e.behavior === update.behavior && e.source === "managed" && sameRule(e.rule, targets[i]!),
+        );
+        if (matchesManagedEntry) {
+          assertMayTouchManagedSource("managed", opts.authority, () => `rule ${JSON.stringify(ruleValueToRaw(update.rules[i]!))}`);
+        }
       }
       const kept = set.entries.filter((e) => {
         if (e.behavior !== update.behavior) return true;
@@ -395,7 +414,13 @@ export function resolveRules(
       if (entry.behavior !== behavior) continue;
       // WS-07 §3.2: project ALLOW rules require workspace trust; project deny/ask "restrict and
       // apply without it" — so the trust gate applies to the allow behavior only, never deny/ask.
-      if (behavior === "allow" && entry.source === "project" && !opts.trustedWorkspace) continue;
+      // Fix round 1, Ruling P2-H: `local` is gated identically to `project` (not just `project`
+      // alone) — `.winter/settings.local.json` is repo-committable, carrying the same
+      // untrusted-clone self-grant risk WS-07 §3.2 explicitly calls out for project settings; the
+      // spec's silence on local's own trust posture resolves to the safe (gated) direction here,
+      // per controller ruling — see the report's fix-round section (this supersedes the original
+      // report's Open Question 2, which had left `local` ungated).
+      if (behavior === "allow" && (entry.source === "project" || entry.source === "local") && !opts.trustedWorkspace) continue;
       if (matchesRule(entry.rule, call, { direction })) return entry;
     }
     return undefined;
@@ -429,8 +454,10 @@ export function resolveRules(
 // isn't about one tool call), so this is a small sibling helper — the ready-made consumption point
 // a later task's evaluator (checking whether a path falls inside cwd/additionalDirectories) can use
 // directly, rather than leaving `SourcedRuleSet.directories`' source-tagging inert and untested.
+// Fix round 1, Ruling P2-H: `local` is gated exactly like `project`, for the identical reason
+// resolveRules' own trust gate now covers both (see that function's comment).
 export function effectiveDirectories(set: SourcedRuleSet, opts: { trustedWorkspace: boolean }): string[] {
-  return set.directories.filter((d) => d.source !== "project" || opts.trustedWorkspace).map((d) => d.path);
+  return set.directories.filter((d) => (d.source !== "project" && d.source !== "local") || opts.trustedWorkspace).map((d) => d.path);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -483,8 +510,7 @@ function assertSafePathSegment(value: string, label: string): void {
 // — mirrors packages/sdk/src/store/leases.ts's own writeAllSync exactly (that function is not
 // reachable from this package: the sdk's package.json "exports" is closed to "." with no subpath,
 // and no runtime file does a deep import today — see leases.ts for the original). A small,
-// deliberate duplication of a ~6-line loop, not the store's own directory/lease/uid hardening,
-// which this runtime-private sidecar file does not need at the same level (flagged in the report).
+// deliberate duplication of a ~6-line loop.
 function writeAllSync(fd: number, buf: Buffer): void {
   let written = 0;
   while (written < buf.length) {
@@ -494,18 +520,65 @@ function writeAllSync(fd: number, buf: Buffer): void {
 
 const APPEND_FLAGS = fsConstants.O_WRONLY | fsConstants.O_APPEND | fsConstants.O_CREAT | fsConstants.O_NOFOLLOW;
 
-function journalPath(location: { winterHome: string; projectKey: string; sessionId: string }): string {
+export class PermissionJournalDirError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "PermissionJournalDirError";
+  }
+}
+
+// Fix round 1, MINOR: mirrors session-store.ts's own ensureSecureDir exactly (per-level symlink
+// lstat + ownership check + idempotent chmod) for the SAME <winterHome>/projects/<projectKey>/
+// chain the session store itself creates and validates — a plain recursive mkdir (this function's
+// pre-fix-round-1 behavior) has none of these checks, leaving the journal's own directory levels
+// open to a planted symlink or a foreign-uid directory the way the store's own module explicitly
+// guards against for every OTHER file under this same tree. Reimplemented locally rather than
+// imported: session-store.ts's ensureSecureDir/realUid are private (unexported) even within the
+// sdk package's own barrel, and the sdk's package.json "exports" has no subpath for a deep import
+// either — see writeAllSync's own comment for the identical reachability note.
+function realUid(): number {
+  return process.getuid!(); // POSIX-only, Bun-only + macOS-first runtime (session-store.ts's own precedent)
+}
+
+function ensureSecureJournalDir(path: string): void {
+  try {
+    mkdirSync(path, { mode: 0o700 });
+  } catch (err) {
+    if ((err as { code?: unknown }).code !== "EEXIST") throw err;
+  }
+  const stat = lstatSync(path); // lstat, never stat — a symlink (dangling or not) must be caught
+  if (stat.isSymbolicLink()) throw new PermissionJournalDirError(`refusing a symlink at a level the permission journal must own: ${path}`);
+  if (!stat.isDirectory()) throw new PermissionJournalDirError(`expected a directory, found something else at: ${path}`);
+  if (stat.uid !== realUid()) throw new PermissionJournalDirError(`refusing a directory owned by a different uid: ${path}`);
+  chmodSync(path, 0o700); // idempotent self-heal, umask-proof
+}
+
+function projectDir(location: { winterHome: string; projectKey: string }): string {
   assertSafePathSegment(location.projectKey, "projectKey");
+  return join(location.winterHome, "projects", location.projectKey);
+}
+
+function journalPath(location: { winterHome: string; projectKey: string; sessionId: string }): string {
   assertSafePathSegment(location.sessionId, "sessionId");
-  return join(location.winterHome, "projects", location.projectKey, `${location.sessionId}.permission-journal.jsonl`);
+  return join(projectDir(location), `${location.sessionId}.permission-journal.jsonl`);
+}
+
+// Validates+creates every directory LEVEL top-down (winterHome itself, its projects/ child, and
+// the specific projectKey/ grandchild) — mirrors session-store.ts's own locateResource/dirLevels
+// walk exactly, applying ensureSecureJournalDir to each rather than a single opaque
+// `mkdirSync(dir, {recursive:true})` call, which validates nothing about any level it silently
+// creates or reuses.
+function ensureJournalDirChain(location: { winterHome: string; projectKey: string }): void {
+  const projectsDir = join(location.winterHome, "projects");
+  const projDir = projectDir(location);
+  for (const level of [location.winterHome, projectsDir, projDir]) ensureSecureJournalDir(level);
 }
 
 // Appends one JSONL line, mirroring session-store.ts's own appendLinesAtomically discipline exactly
 // (O_APPEND|O_CREAT|O_WRONLY|O_NOFOLLOW, full write, fsync, close, then a self-healing chmod 0600 —
-// see that function for the identical shape). "runtime-private, store-adjacent" per the phase
-// ruling: same <home>/projects/<projectKey>/ directory the session transcript itself lives in.
-function appendJsonLine(path: string, dir: string, value: unknown): void {
-  mkdirSync(dir, { recursive: true, mode: 0o700 });
+// see that function for the identical shape). Directory creation/validation happens separately, in
+// ensureJournalDirChain, before this is ever called.
+function appendJsonLine(path: string, value: unknown): void {
   const data = Buffer.from(JSON.stringify(value) + "\n", "utf8");
   const fd = openSync(path, APPEND_FLAGS, 0o600);
   try {
@@ -517,6 +590,23 @@ function appendJsonLine(path: string, dir: string, value: unknown): void {
   chmodSync(path, 0o600);
 }
 
+// Fix round 1, MAJOR: every journal line is an ENVELOPE, never the bare update. Serializing the
+// bare update destroys WHO authored it — P5's replay would then have nothing but the update's own
+// `destination` field to infer provenance from, and destination alone is not authority (this
+// module's design note above: source is destination-derived, but authority is a separate
+// question). Concretely, without this envelope: a session-authored "remember this" targeting
+// `userSettings` would replay identically to one a real user-settings FILE EDIT produced, silently
+// promoting a one-off live decision into durable, globally-trusted `source:"user"` policy on every
+// future session. `authority` is a SIBLING field, never spread into `update` — a future
+// PermissionUpdate variant that happens to define its own `authority` key must never be shadowed
+// or corrupted by the envelope's own; the payload inside `update` stays byte-preserved no matter
+// what wraps around it (see the "never shadowed" fixture in ruleset.test.ts).
+export interface PermissionJournalEnvelope {
+  authority: RuleSource;
+  at: string; // ISO 8601, via Date.prototype.toISOString()
+  update: PermissionUpdate;
+}
+
 // Phase ruling 2: "a PermissionUpdate with a file destination (userSettings/projectSettings/
 // localSettings) applies session-effective immediately AND appends to
 // <sessionId>.permission-journal.jsonl... for P5 replay." A `session`/`cliArg`-destined update is
@@ -524,13 +614,20 @@ function appendJsonLine(path: string, dir: string, value: unknown): void {
 // always journaled regardless of its claimed destination (including a missing/malformed one): WS-07
 // §3.3's lossless mandate means Winter cannot safely interpret an unknown shape well enough to
 // decide it does NOT need persisting, so the conservative default — always record it — is the only
-// one that cannot silently drop a future host's real update.
-export function appendPermissionJournal(location: { winterHome: string; projectKey: string; sessionId: string }, update: PermissionUpdate): void {
+// one that cannot silently drop a future host's real update. `opts.authority` identifies who is
+// making THIS call (the same provenance `applyPermissionUpdate`'s own `opts.authority` carries —
+// a caller wiring both together passes the identical value to each).
+export function appendPermissionJournal(
+  location: { winterHome: string; projectKey: string; sessionId: string },
+  update: PermissionUpdate,
+  opts: { authority: RuleSource },
+): void {
   const isKnownType = typeof (update as { type?: unknown }).type === "string" && KNOWN_UPDATE_TYPES.has((update as { type: string }).type);
   if (isKnownType) {
     const destination = (update as { destination?: unknown }).destination;
     if (typeof destination !== "string" || !FILE_DESTINATIONS.has(destination)) return;
   }
-  const path = journalPath(location);
-  appendJsonLine(path, join(location.winterHome, "projects", location.projectKey), update);
+  ensureJournalDirChain(location);
+  const envelope: PermissionJournalEnvelope = { authority: opts.authority, at: new Date().toISOString(), update };
+  appendJsonLine(journalPath(location), envelope);
 }
