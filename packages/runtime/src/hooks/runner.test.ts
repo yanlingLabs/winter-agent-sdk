@@ -3,7 +3,7 @@
 // T10's own job) and TINY injected timeouts throughout (never a real 60s/30s wait — the stall
 // watchdog killed a predecessor on exactly this class of mistake).
 import { describe, test, expect } from "bun:test";
-import type { HookEvent, PermissionUpdate } from "@yanlinglabs/winter-agent-sdk";
+import { HOOK_EVENTS, type HookEvent, type PermissionUpdate } from "@yanlinglabs/winter-agent-sdk";
 import type { SourcedHookEntry, HookRegistry } from "./registry.ts";
 import {
   runHooks,
@@ -588,4 +588,23 @@ describe("runHooks -- HookLifecycleSink (WS-08 §9)", () => {
     const composite = await runHooks("PreToolUse", { toolName: "Bash", input: {} }, ctxWith({ registry: fakeRegistry([entry("h1", "PreToolUse")]), invoker }));
     expect(composite.decision).toBe("allow"); // no throw, no behavior change from the absent sink
   });
+});
+
+// Item 9 (P2 fix-wave): the RUNTIME complement to the compile-time exhaustiveness guard
+// (HOOK_EVENT_INTERPRETERS, runner.ts) -- every one of the 31 HOOK_EVENTS members dispatches to
+// SOME interpreter without throwing, one lifecycle record each. This can never by itself catch a
+// FUTURE 32nd event (that's the compile-time guard's own job, enforced by `tsc`, not by a
+// `bun test` assertion) -- what it locks in is that today's full inventory is genuinely wired,
+// exercised end-to-end through runHooks, not merely present in the dispatch table on paper.
+describe("Item 9: every HOOK_EVENTS member dispatches through runHooks without throwing", () => {
+  for (const event of HOOK_EVENTS) {
+    test(`${event}: a well-formed (but event-mismatched, i.e. generic-shaped) response never throws, and produces exactly one lifecycle record`, async () => {
+      const { invoker } = fixedInvoker({ hookSpecificOutput: { hookEventName: event, additionalContext: "hi" } });
+      const { audit, records } = recordingAudit();
+      const composite = await runHooks(event, { toolName: "Bash", input: {} }, ctxWith({ registry: fakeRegistry([entry("h1", event)]), invoker, audit }));
+      expect(records).toHaveLength(1);
+      expect(["decision", "none"]).toContain(records[0]!.outcome);
+      expect(composite.lifecycleMessages).toHaveLength(1);
+    });
+  }
 });

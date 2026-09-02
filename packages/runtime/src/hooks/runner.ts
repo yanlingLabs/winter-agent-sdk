@@ -452,15 +452,67 @@ function interpretPermissionRequest(sync: Record<string, unknown>): HookOutcome 
   return { kind: "error", reason: `PermissionRequest decision.behavior is not "allow" or "deny": ${JSON.stringify(behavior)}` };
 }
 
+type HookInterpreterFn = (sync: Record<string, unknown>, opts: { validator: ToolInputValidator; toolName?: string }) => HookOutcome;
+
+// Item 9 (P2 fix-wave): a structural exhaustiveness guard at the interpretGeneric boundary. Distinct
+// from Finding 2 (a PINNED envelope field on an event — PreToolUse's legacy top-level `decision` —
+// that already HAS a dedicated interpreter; that fix lives inside interpretPreToolUse itself, not
+// here): this guards against a FUTURE event type gaining decision-capable (or otherwise
+// specially-shaped) semantics with NO dedicated interpreter written for it at all, which would
+// otherwise silently fall through to interpretGeneric (reads only `additionalContext`) — the
+// identical fail-open shape, one dispatch layer up.
+//
+// This table IS the dispatch (interpretSyncOutput below just calls into it) — not a separate,
+// independently-maintained `if` chain a future reader would have to remember to keep in sync. Being
+// a full, non-partial `Record<HookEvent, HookInterpreterFn>` (checked via `satisfies`, mirroring the
+// codebase's own subagent-transcript.ts precedent for SessionEvent variants) means adding a 32nd
+// member to HOOK_EVENTS without ALSO adding a row here fails core's own `tsc` — a future author is
+// FORCED to make a deliberate choice (a new dedicated interpreter, or an explicit `interpretGeneric`
+// entry) rather than silently inheriting the fallback by omission. Every event not named
+// individually below maps EXPLICITLY to `interpretGeneric`, recorded once, here — never an implicit
+// "whatever's left" default.
+const HOOK_EVENT_INTERPRETERS = {
+  PreToolUse: (sync, opts) => interpretPreToolUse(sync, { validator: opts.validator, toolName: opts.toolName ?? "" }),
+  PostToolUse: interpretPostToolUse,
+  PostToolUseFailure: interpretPostToolUseFailure,
+  PermissionRequest: interpretPermissionRequest,
+  // WS-08 §1.3: declaration-owned, observational -- forwards `additionalContext` losslessly and
+  // invents no further semantics for every one of these (the 6 named at P2's own firing scope, plus
+  // the 21 "typed but inert" events HOOK_EVENTS also carries).
+  UserPromptSubmit: interpretGeneric,
+  Stop: interpretGeneric,
+  SubagentStart: interpretGeneric,
+  SubagentStop: interpretGeneric,
+  PreCompact: interpretGeneric,
+  Notification: interpretGeneric,
+  PostToolBatch: interpretGeneric,
+  UserPromptExpansion: interpretGeneric,
+  MessageDisplay: interpretGeneric,
+  StopFailure: interpretGeneric,
+  PostCompact: interpretGeneric,
+  PermissionDenied: interpretGeneric,
+  SessionStart: interpretGeneric,
+  SessionEnd: interpretGeneric,
+  Setup: interpretGeneric,
+  TeammateIdle: interpretGeneric,
+  TaskCreated: interpretGeneric,
+  TaskCompleted: interpretGeneric,
+  Elicitation: interpretGeneric,
+  ElicitationResult: interpretGeneric,
+  ConfigChange: interpretGeneric,
+  InstructionsLoaded: interpretGeneric,
+  WorktreeCreate: interpretGeneric,
+  WorktreeRemove: interpretGeneric,
+  CwdChanged: interpretGeneric,
+  FileChanged: interpretGeneric,
+  DirectoryAdded: interpretGeneric,
+} satisfies Record<HookEvent, HookInterpreterFn>;
+
 function interpretSyncOutput(event: HookEvent, sync: Record<string, unknown>, opts: { validator: ToolInputValidator; toolName?: string }): HookOutcome {
   if (hasInvalidDefer(hookSpecificOutputOf(sync), event)) {
     return { kind: "error", reason: `defer is invalid on ${event} (non-suspendable event, WS-08 §7)` };
   }
-  if (event === "PreToolUse") return interpretPreToolUse(sync, { validator: opts.validator, toolName: opts.toolName ?? "" });
-  if (event === "PostToolUse") return interpretPostToolUse(sync);
-  if (event === "PostToolUseFailure") return interpretPostToolUseFailure(sync);
-  if (event === "PermissionRequest") return interpretPermissionRequest(sync);
-  return interpretGeneric(sync);
+  return HOOK_EVENT_INTERPRETERS[event](sync, opts);
 }
 
 function buildRequest(entry: SourcedHookEntry, event: HookEvent, call: RunHooksCallInfo, ctx: RunHooksContext, currentInput: Record<string, unknown> | undefined): HookInvocationRequest {
