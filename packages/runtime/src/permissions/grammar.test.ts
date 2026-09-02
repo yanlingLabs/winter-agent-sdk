@@ -13,6 +13,7 @@ import {
   READ_ONLY_COMMANDS,
   PARSE_LIMIT,
   DANGEROUS_ASSIGNMENT_NAMES,
+  FILE_RULE_TOOLS,
 } from "./grammar.ts";
 
 function call(toolName: string, input: Record<string, unknown>) {
@@ -46,6 +47,46 @@ describe("parseRule -- bare vs Tool(*) equivalence (WS-07 §3: 'Bash(*) is treat
 
   test("a scoped specifier is NOT bare-equivalent", () => {
     expect(parseRule("Bash(ls *)").isBareEquivalent).toBe(false);
+  });
+});
+
+describe("parseRule -- fix round 2, Ruling P2-G (file-rule tools are never generic param rules)", () => {
+  test("Read(a:b/**) parses as a pattern specifier with the colon-bearing path intact, NOT a param rule", () => {
+    const rule = parseRule("Read(a:b/**)");
+    expect(rule.specifier).toEqual({ kind: "pattern", source: "a:b/**" });
+  });
+
+  test("Edit-family case: a Windows-drive-letter-style colon path also parses as a pattern specifier", () => {
+    const rule = parseRule("Edit(C:/Users/x/**)");
+    expect(rule.specifier).toEqual({ kind: "pattern", source: "C:/Users/x/**" });
+  });
+
+  test("Read(*) remains bare-equivalent wildcardAll, not a file pattern of the literal '*'", () => {
+    const rule = parseRule("Read(*)");
+    expect(rule.specifier).toEqual({ kind: "wildcardAll" });
+    expect(rule.isBareEquivalent).toBe(true);
+  });
+
+  test("negative control: Agent(model:opus) is still a param rule -- Agent is not a file-rule tool", () => {
+    const rule = parseRule("Agent(model:opus)");
+    expect(rule.specifier).toEqual({ kind: "param", field: "model", value: "opus" });
+  });
+
+  test("negative control: Bash(ls:*) is still the trailing-wildcard sugar -- Bash is not a file-rule tool", () => {
+    const rule = parseRule("Bash(ls:*)");
+    expect(rule.specifier).toEqual({ kind: "pattern", source: "ls:*" });
+  });
+
+  test("negative control: WebFetch(domain:example.com) still parses as the dedicated domain family", () => {
+    const rule = parseRule("WebFetch(domain:example.com)");
+    expect(rule.specifier).toEqual({ kind: "webFetchDomain", source: "example.com" });
+  });
+
+  test("FILE_RULE_TOOLS is exported data (not a scattered conditional) and contains Read and Edit", () => {
+    expect(FILE_RULE_TOOLS.has("Read")).toBe(true);
+    expect(FILE_RULE_TOOLS.has("Edit")).toBe(true);
+    expect(FILE_RULE_TOOLS.has("Bash")).toBe(false);
+    expect(FILE_RULE_TOOLS.has("Agent")).toBe(false);
   });
 });
 

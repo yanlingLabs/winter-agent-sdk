@@ -48,7 +48,7 @@
 // on grammar.ts to reject it at match time.
 export type Specifier =
   | { kind: "wildcardAll" } // `Tool(*)` -- WS-07 §3: treated like bare `Tool`, including schema removal as a deny (that half is a registry/T6 concern; this module only carries the flag).
-  | { kind: "pattern"; source: string } // Bash-style command glob/prefix grammar (WS-07 §3's general `*`/`:*` rule). Matched against `call.input.command` by `matchesRule`; see that function's comment for why non-Bash tools fail closed here.
+  | { kind: "pattern"; source: string } // Bash-style command glob/prefix grammar (WS-07 §3's general `*`/`:*` rule), matched against `call.input.command` by `matchesRule` (see that function's comment for why non-Bash tools fail closed there). ALSO used verbatim (fix round 2, Ruling P2-G) for `FILE_RULE_TOOLS` (Read/Edit) content, where `source` carries the untouched WS-07 §3.1 gitignore-like pattern for Task 4's matchFileRule to consume directly -- `matchesRule` is never the file-rule dispatch point, so its command-matching semantics are simply inert (not consulted) for that case.
   | { kind: "param"; field: string; value: string | boolean } // top-level scalar rule, e.g. `Agent(model:opus)`, `Bash(run_in_background:true)` (WS-07 §3).
   | { kind: "webFetchDomain"; source: string } // `WebFetch(domain:...)` -- WS-07 §3's own "native" content-field grammar, NOT a generic param rule (see matchesRule).
   | { kind: "invalid"; reason: string }; // syntactically parsed, never matches -- see the type-level comment above.
@@ -170,6 +170,18 @@ const WRAPPERS_WITH_POSITIONAL_ARG: ReadonlySet<string> = new Set(["timeout"]);
 // trailing-wildcard sugar (`Bash(ls:*)`) from ever being misread as a param rule on a field named
 // "ls" -- pinned by its own fixture.
 const BASH_PARAM_FIELDS: ReadonlySet<string> = new Set(["run_in_background"]);
+
+// Fix round 2, Ruling P2-G: file-rule tools (WS-07 §3.1's gitignore-like Read/Edit patterns) --
+// for these, the specifier content ALWAYS parses as a file pattern; the generic param branch below
+// must NEVER apply, because a file path can legitimately contain a colon (a Windows drive letter
+// in `Edit(C:/Users/x/**)`, or any other path segment in `Read(a:b/**)`) that would otherwise be
+// misread as a `field:value` param rule -- silently turning a deny/ask rule into one that can
+// never match (the same fail-open class as this phase's other findings). Expressed as DATA (this
+// exported set), not a scattered per-tool conditional, so extending it is a one-line addition:
+// TODO(P3): add "Write", "NotebookEdit", and any other file-surface tool once the tool catalog
+// lands. Task 4's matchFileRule (paths.ts) is the actual file-glob engine; this table only decides
+// DISPATCH -- which Specifier kind a given tool's parenthetical content becomes at parse time.
+export const FILE_RULE_TOOLS: ReadonlySet<string> = new Set(["Read", "Edit"]);
 
 // ---------------------------------------------------------------------------------------------
 // Shared low-level shell-like scanner
@@ -588,9 +600,19 @@ export function parseRule(raw: string): ParsedRule {
     return { toolName, specifier: { kind: "pattern", source: content }, isBareEquivalent: false };
   }
 
+  if (FILE_RULE_TOOLS.has(toolName)) {
+    // Ruling P2-G: a file-rule tool's specifier is a file pattern, full stop -- never attempt the
+    // generic field:value param parse below. A colon here is part of the path (a drive letter, or
+    // any other legitimate path character), never a param-rule separator. `content` is passed
+    // through untouched; Task 4/5's evaluator reads it back off `specifier.source` for
+    // matchFileRule, never through this module's own matchesRule (which has no file-glob logic).
+    return { toolName, specifier: { kind: "pattern", source: content }, isBareEquivalent: false };
+  }
+
   // Generic params dispatch (WS-07 §3: "top-level scalar rules such as Agent(model:opus)... one
   // field per rule"). Not scoped out here to Bash's allowlist trick since other tools don't share
-  // Bash's "primary grammar can itself contain colons" problem.
+  // Bash's "primary grammar can itself contain colons" problem. File-rule tools (Read/Edit) never
+  // reach this branch -- see the FILE_RULE_TOOLS check immediately above.
   const generic = FIELD_VALUE.exec(content);
   if (generic) {
     return {
