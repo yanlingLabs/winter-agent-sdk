@@ -760,6 +760,17 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // never proves the call is still safe to run against a session/mode/path/runtime that has since
   // moved on.
   //
+  // Fix round 1, Ruling P2-L: the pre-fix-round-1 version of this design was "executes exactly
+  // once" in NAME only — a hard process kill between tools.execute() returning and markConsumed()
+  // persisting left the record "allowed" with no consumedAt, indistinguishable from "never
+  // attempted" to a later resume, which would re-execute (at LEAST once, not EXACTLY once, for a
+  // possibly non-idempotent side effect). `approvalStore.markConsuming()` closes this: a durable
+  // "about to execute" fact written BEFORE the risky call, so a later resume that finds intent
+  // without a result fails closed to "expired" rather than guessing. This sequential
+  // crash-recovery guarantee itself assumes no SECOND live process is doing the identical thing for
+  // the same session CONCURRENTLY — see the "allowed" branch's own comment, below, for the eager
+  // writer-lease dependency (dialect.ts's Ruling P1-S) that provides that assumption.
+  //
   // "denied"/"cancelled"/"expired" never execute and are recomputed fresh on every resume (pure
   // data, no side effect, so no consumedAt bookkeeping is needed for them at all).
   if (approvalStore) {
@@ -797,7 +808,33 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
         continue;
       }
 
+      // Fix round 1, Ruling P2-L (write-ahead consumption intent): a "consuming" marker with NO
+      // matching "consumed" outcome is the crash signature — a PRIOR resume already called
+      // approvalStore.markConsuming() (below) and then died somewhere between that write and
+      // tools.execute() returning (or between execute() returning and markConsumed() persisting).
+      // Whether the side effect actually ran is now UNKNOWABLE from persisted state alone. Fail
+      // closed: expire, never re-execute — "executes exactly once" would otherwise silently become
+      // "executes at least once" for a non-idempotent tool. This check runs BEFORE the state-based
+      // branching below (and therefore before revalidation) because it is not a context-drift
+      // question at all — an intent-without-result is disqualifying regardless of whether the
+      // current context would otherwise still revalidate cleanly.
+      if (record.consumingAt !== undefined) {
+        const reason = "a prior execution attempt for this approval did not record its outcome (the process may have been interrupted mid-execution); re-approval is required";
+        approvalStore.expire(record.requestId, reason);
+        substitute({ content: `Approval expired: ${reason}`, denied: true });
+        continue;
+      }
+
       if (record.state === "pending" || record.state === "allowed") {
+        // Ruling P2-K/P1-S dependency (documented here, not merely in the report): this
+        // revalidate-then-execute window assumes no SECOND live process can be doing the identical
+        // thing for the SAME session concurrently — that guarantee is NOT provided by anything in
+        // this function. It comes from dialect.ts's resolveEngineSession eagerly claiming the
+        // session's writer lease (Ruling P1-S) before this code ever runs: a second resume attempt
+        // against the same session fails outright at session-resolution time (ResumeTargetError
+        // "locked"), long before it could reach this loop. Without that eager claim, two concurrent
+        // resumes could both revalidate successfully and both execute — a race markConsuming()
+        // alone does not close (it protects sequential crash-recovery, not concurrent execution).
         const revalidationCtx = {
           runtimeKind: WINTER_RUNTIME_KIND,
           sessionId: config.sessionId,
@@ -822,6 +859,9 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
         // canUseTool path already documents for its own updatedInput (no tool registry/schema exists
         // at P2 to re-check against).
         const inputToExecute = record.resolution?.transformedInput ?? record.originalInput;
+        // Ruling P2-L: the write-ahead marker, persisted BEFORE the risky operation — see
+        // markConsuming's own interface comment (approvals.ts) for the full rationale.
+        approvalStore.markConsuming(record.requestId);
         try {
           const result = await tools.execute({ id: record.toolUseID, name: record.toolName, input: inputToExecute });
           approvalStore.markConsumed(record.requestId, { output: result.output });

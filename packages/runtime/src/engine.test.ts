@@ -1,5 +1,5 @@
 import { test, expect, spyOn } from "bun:test";
-import { mkdtempSync, rmSync, existsSync, readFileSync } from "node:fs";
+import { mkdtempSync, rmSync, existsSync, readFileSync, mkdirSync, writeFileSync, symlinkSync, unlinkSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -19,7 +19,7 @@ import { runEngine, type Provider, type ProviderMessage, type ContentBlock, type
 import { echoProvider, scriptedProvider, stubExecutor } from "./provider/mock.ts";
 import { inMemoryProcess } from "./testing.ts";
 import { WinterPermissionError } from "./permissions/policy-state.ts";
-import { createInMemoryApprovalStore, createFileDurableApprovalStore, type DurableApprovalStore } from "./permissions/approvals.ts";
+import { createInMemoryApprovalStore, createFileDurableApprovalStore, WINTER_RUNTIME_KIND, type DurableApprovalStore, type DurableApprovalRecord } from "./permissions/approvals.ts";
 
 // Drains a WinterFrame source fully — used whenever the test writes ALL of its input frames
 // (including end_input/EOF) up front, so there's no ping-pong race between the writer and the
@@ -1764,4 +1764,179 @@ test("Task 11: a policyMode mismatch on resume expires the pending approval inst
     role: "tool",
     content: [{ type: "tool_result", tool_use_id: "call1", content: expect.stringMatching(/Approval expired/), denied: true }],
   });
+});
+
+// --- Fix round 1 (reviewer findings) --------------------------------------------------------------
+
+test("Fix round 1, Ruling P2-K: a symlink retargeted DURING the defer window is caught on resume -- never executed", async () => {
+  const home = freshHome();
+  const sessionId = randomUUID();
+  // A REAL directory structure outside winterHome, realpath-wrapped (macOS's own /tmp -> /private/tmp
+  // symlink would otherwise confuse the comparison this test is specifically about) -- mirrors
+  // approvals.test.ts's own established convention for symlink-sensitive fixtures.
+  const workDir = realpathSync(mkdtempSync(join(tmpdir(), "winter-defer-symlink-")));
+  mkdirSync(join(workDir, "real-a"));
+  writeFileSync(join(workDir, "real-a", "target.txt"), "original");
+  symlinkSync(join(workDir, "real-a"), join(workDir, "link"));
+  const projectKey = compatibilityKeys(workDir).transcriptProjectKey;
+
+  let executionCount = 0;
+  const countingExecutor: ToolExecutor = {
+    async execute() {
+      executionCount++;
+      return { output: "should never run" };
+    },
+  };
+
+  const config1: RuntimeConfig = { sessionId, cwd: workDir, model: "sonnet", winterHome: home, hooks: { PreToolUse: [{ hookCount: 1, source: "sdk" }] } };
+  const provider1 = scriptedProvider([
+    { kind: "tool_use", calls: [{ id: "call1", name: "Edit", input: { file_path: "link/target.txt", old_string: "original", new_string: "changed" } }] },
+    { kind: "text", text: "waiting" },
+  ]);
+  const proc1 = inMemoryProcess(["--config-json", JSON.stringify(config1)], provider1, countingExecutor);
+  const nextFrame1 = frameReader(proc1);
+  proc1.stdin.write(encodeFrame({ type: "user", text: "go" }));
+  proc1.stdin.write(encodeFrame({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined }));
+  while (true) {
+    const frame = await nextFrame1();
+    if (!frame) break;
+    if (frame.type === "control_request" && (frame as ControlRequestFrame).subtype === "hook") {
+      const cf = frame as ControlRequestFrame;
+      proc1.stdin.write(
+        encodeFrame({ type: "control_response", requestId: cf.requestId, ok: true, payload: { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "defer" } } }),
+      );
+    }
+  }
+  await proc1.exited;
+
+  const storeBetweenRuns = createFileDurableApprovalStore({ winterHome: home, projectKey, sessionId });
+  const requestId = storeBetweenRuns.pendingFor({ sessionId })[0]!.requestId;
+  storeBetweenRuns.respond(requestId, { outcome: "allowed", mechanism: "canUseTool" });
+
+  // Retarget the symlink DURING the (simulated) defer window -- same "link/target.txt" string,
+  // same cwd, DIFFERENT real destination. This is exactly what defer's own core window (an
+  // intentionally long wait) exists to make possible for an attacker to attempt.
+  unlinkSync(join(workDir, "link"));
+  mkdirSync(join(workDir, "real-b"));
+  writeFileSync(join(workDir, "real-b", "target.txt"), "attacker-controlled");
+  symlinkSync(join(workDir, "real-b"), join(workDir, "link"));
+
+  const capturedMessages: ProviderMessage[][] = [];
+  const capturingProvider: Provider = {
+    async generate({ messages }) {
+      capturedMessages.push([...messages]);
+      return { kind: "text", text: "ok" };
+    },
+  };
+  const config2: RuntimeConfig = { sessionId, resume: sessionId, cwd: workDir, model: "sonnet", winterHome: home };
+  const proc2 = inMemoryProcess(["--config-json", JSON.stringify(config2)], capturingProvider, countingExecutor);
+  proc2.stdin.write(encodeFrame({ type: "user", text: "how did it go?" }));
+  proc2.stdin.write(encodeFrame({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined }));
+  await drainProcess(proc2);
+  await proc2.exited;
+
+  expect(executionCount).toBe(0); // NEVER executed -- the retarget was caught before tools.execute()
+  const finalRecord = createFileDurableApprovalStore({ winterHome: home, projectKey, sessionId }).get(requestId);
+  expect(finalRecord?.state).toBe("expired");
+  expect(capturedMessages[0]).toContainEqual({
+    role: "tool",
+    content: [{ type: "tool_result", tool_use_id: "call1", content: expect.stringMatching(/Approval expired/), denied: true }],
+  });
+});
+
+test("Fix round 1, Ruling P2-L: a crashed mid-execution attempt (consumingAt with no consumedAt) expires on the next resume, never re-executes", async () => {
+  const { host, runtime } = createInMemoryChannel();
+  const approvalStore = createInMemoryApprovalStore();
+  const approval: DurableApprovalRecord = {
+    runtimeKind: WINTER_RUNTIME_KIND,
+    sessionId: "s",
+    backendSessionId: "s",
+    requestId: "req-1",
+    toolUseID: "call1",
+    toolName: "long_task",
+    originalInput: {},
+    displayMetadata: { decisionReason: "x" },
+    policyMode: "default",
+    policyVersion: 0,
+    issuedAt: new Date().toISOString(),
+    state: "pending",
+    issuedCwd: "/tmp/x",
+    issuedHome: "/synthetic/home",
+  };
+  approvalStore.record(approval);
+  approvalStore.respond("req-1", { outcome: "allowed", mechanism: "hook" });
+  // Simulates: a PRIOR resume already started executing this call and died before persisting an
+  // outcome -- exactly the write-ahead marker markConsuming() leaves behind for this reason.
+  approvalStore.markConsuming("req-1");
+  expect(approvalStore.get("req-1")!.consumedAt).toBeUndefined(); // sanity: genuinely no result recorded
+
+  let executionCount = 0;
+  const countingExecutor: ToolExecutor = {
+    async execute() {
+      executionCount++;
+      return { output: "should never run" };
+    },
+  };
+  const initialMessages: ProviderMessage[] = [
+    { role: "assistant", content: [{ type: "tool_use", id: "call1", name: "long_task", input: {} }] },
+    { role: "tool", content: [{ type: "tool_result", tool_use_id: "call1", content: "[deferred]", deferred: true }] },
+  ];
+  const config = baseConfig({ cwd: "/tmp/x" });
+  const done = runEngine({ config, input: runtime.input, output: runtime.output, provider: echoProvider, tools: countingExecutor, approvalStore, initialMessages });
+
+  host.output.write({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined });
+  await drain(host.input);
+  await done;
+
+  expect(executionCount).toBe(0); // never re-executed despite the record being "allowed"
+  expect(approvalStore.get("req-1")!.state).toBe("expired");
+});
+
+test("Fix round 1 coverage rider: a still-PENDING record also revalidates and expires on a mismatch (shares the allowed+mismatch branch)", async () => {
+  const { host, runtime } = createInMemoryChannel();
+  const approvalStore = createInMemoryApprovalStore();
+  const approval: DurableApprovalRecord = {
+    runtimeKind: WINTER_RUNTIME_KIND,
+    sessionId: "s",
+    backendSessionId: "s",
+    requestId: "req-1",
+    toolUseID: "call1",
+    toolName: "long_task",
+    originalInput: {},
+    displayMetadata: { decisionReason: "x" },
+    policyMode: "default", // the recorded mode -- config below resumes under a DIFFERENT one
+    policyVersion: 0,
+    issuedAt: new Date().toISOString(),
+    state: "pending",
+    issuedCwd: "/tmp/x",
+    issuedHome: "/synthetic/home",
+  };
+  approvalStore.record(approval);
+  // Deliberately NEVER responded to -- still "pending" when this "resume" runs, unlike every other
+  // mismatch fixture in this file (which all respond "allowed" first). The mismatch-handling branch
+  // is SHARED between "pending" and "allowed" in engine.ts's own resume-consumption step; this
+  // fixture pins the "pending" half specifically, which no other test in this suite exercises.
+
+  let executionCount = 0;
+  const countingExecutor: ToolExecutor = {
+    async execute() {
+      executionCount++;
+      return { output: "should never run" };
+    },
+  };
+  const initialMessages: ProviderMessage[] = [
+    { role: "assistant", content: [{ type: "tool_use", id: "call1", name: "long_task", input: {} }] },
+    { role: "tool", content: [{ type: "tool_result", tool_use_id: "call1", content: "[deferred]", deferred: true }] },
+  ];
+  // bypassPermissions !== the recorded "default" -- a clean, single-axis (policy) mismatch.
+  const config = baseConfig({ cwd: "/tmp/x", permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true });
+  const done = runEngine({ config, input: runtime.input, output: runtime.output, provider: echoProvider, tools: countingExecutor, approvalStore, initialMessages });
+
+  host.output.write({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined });
+  await drain(host.input);
+  await done;
+
+  expect(executionCount).toBe(0);
+  const finalRecord = approvalStore.get("req-1")!;
+  expect(finalRecord.state).toBe("expired"); // NOT left "pending" -- the mismatch was caught even though it never reached "allowed"
 });
