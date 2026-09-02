@@ -32,6 +32,7 @@ import {
   type DialectEntry,
 } from "./resume.ts";
 import { resolveEngineSession } from "./dialect.ts";
+import type { HookAuditRecord } from "../hooks/runner.ts";
 // session-store.ts and paths/keys.ts moved to the sdk package (Task 10, WS-05 §6); forkSession's
 // own low-level primitive relocated with the store too (packages/sdk/src/store/fork-session.ts) --
 // its unit tests moved alongside it into packages/sdk/src/store/fork-session.test.ts, so this file
@@ -927,6 +928,85 @@ describe("Task 8: resolveEngineSession's store journals PermissionUpdates (WS-07
   });
 
   test("persistSession:false: no store at all, so there is nothing to journal (matches every other SessionPersistence method's own contract)", async () => {
+    const { store } = await resolveEngineSession({
+      config: { sessionId: randomUUID(), cwd: "/winter-fixture", model: "sonnet", persistSession: false },
+      resolveWinterHome: () => {
+        throw new Error("must not be called when persistSession is false");
+      },
+      env: {},
+    });
+    expect(store).toBeUndefined();
+  });
+});
+
+// Task 10 (WS-08 §9 Amended / P2-A: "the AUDIT stream ... MUST carry all of it per invocation"):
+// resolveEngineSession's own store now ALSO carries recordHookAudit (dialect.ts's
+// withPermissionJournal, wrapping the SAME buildWriter result recordPermissionUpdate uses above) —
+// isolated from the full engine+bridge round trip (engine.test.ts's own hooked-tool-round tests
+// cover that end-to-end); this describes ONLY the wiring: does the store resolveEngineSession hands
+// back actually journal a hook audit record, at the SAME journal file recordPermissionUpdate uses,
+// as the distinguishable sibling envelope kind appendHookAuditJournal's own header documents.
+describe("Task 10: resolveEngineSession's store journals hook audit records (WS-08 §9 Amended / P2-A)", () => {
+  test("a hook audit record is journaled as a {kind:'hookAudit', at, entry} envelope at the SAME <winterHome>/projects/<projectKey>/<sessionId>.permission-journal.jsonl path", async () => {
+    const home = freshHome();
+    try {
+      const sessionId = randomUUID();
+      const cwd = "/winter-fixture";
+      const { store } = await resolveEngineSession({ config: { sessionId, cwd, model: "sonnet" }, resolveWinterHome: () => home, env: {} });
+      expect(store?.recordHookAudit).toBeDefined();
+
+      const entry: HookAuditRecord = {
+        hookId: "PreToolUse:sdk:0:0",
+        hookEvent: "PreToolUse",
+        sessionId,
+        uuid: randomUUID(),
+        toolUseID: "call-1",
+        outcome: "decision",
+        decision: "allow",
+      };
+      await store!.recordHookAudit!(entry);
+
+      const projectKey = compatibilityKeys(cwd).transcriptProjectKey;
+      const journalPath = join(home, "projects", projectKey, `${sessionId}.permission-journal.jsonl`);
+      expect(existsSync(journalPath)).toBe(true);
+      const envelope = JSON.parse(readFileSync(journalPath, "utf8").trim()) as { kind: string; entry: HookAuditRecord; at: string };
+      expect(envelope.kind).toBe("hookAudit");
+      expect(envelope.entry).toEqual(entry);
+      expect(typeof envelope.at).toBe("string");
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test("a hook audit record and a PermissionUpdate coexist in the SAME journal file across the SAME resolveEngineSession store, in append order", async () => {
+    const home = freshHome();
+    try {
+      const sessionId = randomUUID();
+      const cwd = "/winter-fixture";
+      const { store } = await resolveEngineSession({ config: { sessionId, cwd, model: "sonnet" }, resolveWinterHome: () => home, env: {} });
+
+      const update: PermissionUpdate = { type: "addRules", rules: [{ toolName: "Bash", ruleContent: "ls *" }], behavior: "allow", destination: "userSettings" };
+      await store!.recordPermissionUpdate!(update, "session");
+      const entry: HookAuditRecord = { hookId: "Stop:sdk:0:0", hookEvent: "Stop", sessionId, uuid: randomUUID(), outcome: "none" };
+      await store!.recordHookAudit!(entry);
+
+      const projectKey = compatibilityKeys(cwd).transcriptProjectKey;
+      const journalPath = join(home, "projects", projectKey, `${sessionId}.permission-journal.jsonl`);
+      const lines = readFileSync(journalPath, "utf8")
+        .split("\n")
+        .filter((l) => l.length > 0)
+        .map((l) => JSON.parse(l) as { kind?: string; update?: PermissionUpdate; entry?: HookAuditRecord });
+      expect(lines).toHaveLength(2);
+      expect(lines[0]!.kind).toBeUndefined();
+      expect(lines[0]!.update).toEqual(update);
+      expect(lines[1]!.kind).toBe("hookAudit");
+      expect(lines[1]!.entry).toEqual(entry);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test("persistSession:false: no store at all, so there is nothing to journal (matches recordPermissionUpdate's own identical contract)", async () => {
     const { store } = await resolveEngineSession({
       config: { sessionId: randomUUID(), cwd: "/winter-fixture", model: "sonnet", persistSession: false },
       resolveWinterHome: () => {

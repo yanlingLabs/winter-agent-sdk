@@ -18,11 +18,13 @@ import {
   effectiveDirectories,
   buildSdkSourcedEntries,
   appendPermissionJournal,
+  appendHookAuditJournal,
   PermissionRuleValidationError,
   PermissionUpdateAuthorityError,
   PermissionJournalDirError,
   type SourcedRuleSet,
   type SourcedRuleEntry,
+  type HookAuditJournalRecord,
 } from "./ruleset.ts";
 import { MAX_DOUBLE_STARS } from "./paths.ts";
 import type { PermissionUpdate, PermissionRuleValue } from "@yanlinglabs/winter-agent-sdk";
@@ -833,6 +835,80 @@ describe("appendPermissionJournal: file-destination updates are journaled as an 
     appendPermissionJournal({ winterHome: home, projectKey: "proj", sessionId: "sess-a" }, update, { authority: "session" });
     expect(existsSync(journalPath(home, "proj", "sess-b"))).toBe(false);
     expect(existsSync(journalPath(home, "proj", "sess-a"))).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// appendHookAuditJournal — Task 10 (WS-08 §9 Amended text / P2-A: "the AUDIT stream ... MUST
+// carry all of it per invocation"). Same journal file as appendPermissionJournal above, a
+// DISTINGUISHABLE sibling envelope kind ("hookAudit") — proves lines actually land on a real
+// filesystem (a temp home, never touching ~/.norma/~/.winter) and that the two envelope kinds can
+// coexist in one file without a P5 replay confusing one for the other.
+// ---------------------------------------------------------------------------------------------
+
+describe("appendHookAuditJournal: hook audit records land in the SAME journal file, as a distinguishable sibling envelope kind", () => {
+  test("one hook audit record is appended as a {kind:'hookAudit', at, entry} envelope", () => {
+    const home = freshHome();
+    const entry: HookAuditJournalRecord = {
+      hookId: "PreToolUse:sdk:0:0",
+      hookName: "myHook",
+      hookEvent: "PreToolUse",
+      sessionId: "sess-1",
+      uuid: "11111111-1111-1111-1111-111111111111",
+      toolUseID: "call-1",
+      requestId: "req-1",
+      outcome: "decision",
+      decision: "allow",
+      durationMs: 12,
+    };
+    appendHookAuditJournal({ winterHome: home, projectKey: "proj", sessionId: "sess-1" }, entry);
+    const lines = readJournalLines(home, "proj", "sess-1");
+    expect(lines).toHaveLength(1);
+    const line = lines[0] as { kind?: unknown; at?: unknown; entry?: unknown };
+    expect(line.kind).toBe("hookAudit");
+    expect(typeof line.at).toBe("string");
+    expect(Number.isNaN(Date.parse(line.at as string))).toBe(false);
+    expect(line.entry).toEqual(entry);
+  });
+
+  test("a minimal record (only the required fields) round-trips without stray undefined-valued keys", () => {
+    const home = freshHome();
+    const entry: HookAuditJournalRecord = { hookId: "Stop:sdk:0:0", hookEvent: "Stop", sessionId: "sess-1", uuid: "u1", outcome: "skipped" };
+    appendHookAuditJournal({ winterHome: home, projectKey: "proj", sessionId: "sess-1" }, entry);
+    const lines = readJournalLines(home, "proj", "sess-1");
+    const line = lines[0] as { entry: HookAuditJournalRecord };
+    expect(line.entry).toEqual(entry);
+    expect("hookName" in line.entry).toBe(false);
+    expect("toolUseID" in line.entry).toBe(false);
+  });
+
+  test("hookAudit lines and permission-update envelopes coexist in the SAME file, each distinguishable by their own shape -- a P5 replay reading for PermissionUpdate history can trivially skip the audit lines", () => {
+    const home = freshHome();
+    const update: PermissionUpdate = { type: "addRules", rules: [rv("Bash", "ls *")], behavior: "allow", destination: "userSettings" };
+    const entry: HookAuditJournalRecord = { hookId: "PreToolUse:sdk:0:0", hookEvent: "PreToolUse", sessionId: "sess-1", uuid: "u1", outcome: "none" };
+    appendPermissionJournal({ winterHome: home, projectKey: "proj", sessionId: "sess-1" }, update, { authority: "session" });
+    appendHookAuditJournal({ winterHome: home, projectKey: "proj", sessionId: "sess-1" }, entry);
+    const lines = readJournalLines(home, "proj", "sess-1") as Array<{ kind?: unknown; update?: unknown; entry?: unknown }>;
+    expect(lines).toHaveLength(2);
+    expect(lines[0]!.kind).toBeUndefined();
+    expect(lines[0]!.update).toEqual(update);
+    expect(lines[1]!.kind).toBe("hookAudit");
+    expect(lines[1]!.entry).toEqual(entry);
+  });
+
+  test("the journal directory is created fresh for a hook-audit-only session -- no pre-existing structure or prior permission update required", () => {
+    const home = freshHome();
+    const entry: HookAuditJournalRecord = { hookId: "SessionStart:sdk:0:0", hookEvent: "SessionStart", sessionId: "sess", uuid: "u1", outcome: "none" };
+    expect(() => appendHookAuditJournal({ winterHome: home, projectKey: "proj", sessionId: "sess" }, entry)).not.toThrow();
+    expect(existsSync(journalPath(home, "proj", "sess"))).toBe(true);
+  });
+
+  test("the journal file is written with the SAME restrictive mode as a permission-update-only file", () => {
+    const home = freshHome();
+    const entry: HookAuditJournalRecord = { hookId: "SessionStart:sdk:0:0", hookEvent: "SessionStart", sessionId: "sess", uuid: "u1", outcome: "none" };
+    appendHookAuditJournal({ winterHome: home, projectKey: "proj", sessionId: "sess" }, entry);
+    const mode = statSync(journalPath(home, "proj", "sess")).mode & 0o777;
+    expect(mode).toBe(0o600);
   });
 });
 
