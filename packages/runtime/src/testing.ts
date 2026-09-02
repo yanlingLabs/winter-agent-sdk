@@ -98,7 +98,7 @@ export function inMemoryProcess(
   // already maps to CLIConnectionError("runtime exited before init") on the child leg.
   void (async () => {
     try {
-      const { config: effectiveConfig, store, initialMessages, approvalStore } = await resolveEngineSession({
+      const { config: effectiveConfig, store, initialMessages, approvalStore, autoStateStore } = await resolveEngineSession({
         config,
         resolveWinterHome: () => resolveInMemoryWinterHome(config, env),
         env: env ?? {},
@@ -113,6 +113,8 @@ export function inMemoryProcess(
         ...(initialMessages.length > 0 ? { initialMessages } : {}),
         // Task 11 (WS-07 §9): threaded exactly like `store`/`initialMessages` above.
         ...(approvalStore !== undefined ? { approvalStore } : {}),
+        // Task 12 (WS-07 §10.5): same precedent, same resolved triple.
+        ...(autoStateStore !== undefined ? { autoStateStore } : {}),
       });
       if (!settled) {
         settled = true;

@@ -44,6 +44,12 @@ import { appendPermissionJournal, appendHookAuditJournal, type HookAuditJournalR
 // the session store itself). engine.ts imports the TYPE only from this same module too — no
 // circularity, since permissions/approvals.ts has no dependency on either file.
 import { createFileDurableApprovalStore, type DurableApprovalStore } from "../permissions/approvals.ts";
+// Task 12 (WS-07 §10.5): the 3-consecutive/20-total auto-mode fallback counters, restart-durable —
+// same rationale, same (winterHome, projectKey, sessionId) triple, same construction sites as
+// approvalStore immediately above (T11's own precedent, extended). auto/caches.ts has no
+// dependency on this module (or on engine.ts) — no circularity concern beyond what approvalStore's
+// own import already established.
+import { createFileAutoCounterStore, type AutoCounterStore } from "../permissions/auto/caches.ts";
 
 // The dialect's own name for a content block. Same shapes engine.ts's ContentBlock already
 // produces (text/tool_use/tool_result, P1-G's `interrupted` and P1-H's `error` markers included) —
@@ -282,6 +288,10 @@ export interface ResolvedEngineSession {
   // durable approval has nowhere to survive a process exit without a real session store either, so
   // the two are deliberately tied to the same condition rather than independently configurable.
   approvalStore?: DurableApprovalStore;
+  // Task 12 (WS-07 §10.5): SAME tied-to-`store` condition as approvalStore immediately above — a
+  // non-persistent session's fallback counters live for the life of the process only (engine.ts
+  // falls back to an in-memory AutoCounterStore when this is undefined).
+  autoStateStore?: AutoCounterStore;
 }
 
 // Task 8: wraps a TranscriptWriter with the ONE extra SessionPersistence method engine.ts's
@@ -379,7 +389,13 @@ export async function resolveEngineSession(opts: {
 
   if (!wantsContinue && !wantsResume) {
     const writer = buildWriter({ store, projectKey: cwdKey, sessionId: config.sessionId, cwd: config.cwd, initialParentUuid: null, winterHome });
-    return { config, store: writer, initialMessages: [], approvalStore: createFileDurableApprovalStore({ winterHome, projectKey: cwdKey, sessionId: config.sessionId }) };
+    return {
+      config,
+      store: writer,
+      initialMessages: [],
+      approvalStore: createFileDurableApprovalStore({ winterHome, projectKey: cwdKey, sessionId: config.sessionId }),
+      autoStateStore: createFileAutoCounterStore({ winterHome, projectKey: cwdKey, sessionId: config.sessionId }),
+    };
   }
 
   let targetSessionId: string;
@@ -393,7 +409,13 @@ export async function resolveEngineSession(opts: {
       // silently picks an unrelated session, never blocks the run on a typed error for what is, in
       // effect, just an empty project).
       const writer = buildWriter({ store, projectKey: cwdKey, sessionId: config.sessionId, cwd: config.cwd, initialParentUuid: null, winterHome });
-      return { config, store: writer, initialMessages: [], approvalStore: createFileDurableApprovalStore({ winterHome, projectKey: cwdKey, sessionId: config.sessionId }) };
+      return {
+        config,
+        store: writer,
+        initialMessages: [],
+        approvalStore: createFileDurableApprovalStore({ winterHome, projectKey: cwdKey, sessionId: config.sessionId }),
+        autoStateStore: createFileAutoCounterStore({ winterHome, projectKey: cwdKey, sessionId: config.sessionId }),
+      };
     }
     targetSessionId = found;
     targetProjectKey = cwdKey; // continue is single-project by construction (WS-05 §7) — no search needed
@@ -492,7 +514,8 @@ export async function resolveEngineSession(opts: {
   // file right there, store-adjacent; engine.ts's own resume-consumption step (runEngine, before the
   // turn loop) is what actually reads it back and folds a resolution into `initialMessages`.
   const approvalStore = createFileDurableApprovalStore({ winterHome, projectKey: targetProjectKey, sessionId: targetSessionId });
-  return { config: effectiveConfig, store: writer, initialMessages, approvalStore };
+  const autoStateStore = createFileAutoCounterStore({ winterHome, projectKey: targetProjectKey, sessionId: targetSessionId });
+  return { config: effectiveConfig, store: writer, initialMessages, approvalStore, autoStateStore };
 }
 
 // main.ts's own production policy: config.winterHome (an explicit per-run override — RuntimeConfig

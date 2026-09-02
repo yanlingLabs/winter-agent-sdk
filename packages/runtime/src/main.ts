@@ -100,7 +100,7 @@ try {
   // resume target) throws here, before any frame is written — caught by this function's own
   // top-level catch below, exiting nonzero with the detail on stderr (matching WS-04 §6.1's "exited
   // before init" lifecycle on the wrapper side).
-  const { config: effectiveConfig, store, initialMessages, approvalStore } = await resolveEngineSession({
+  const { config: effectiveConfig, store, initialMessages, approvalStore, autoStateStore } = await resolveEngineSession({
     config,
     resolveWinterHome: () => resolveProductionWinterHome(config, process.env),
     env: process.env,
@@ -116,6 +116,8 @@ try {
     // Task 11 (WS-07 §9): threaded exactly like `store`/`initialMessages` above -- resolveEngineSession
     // already constructed it against the resolved winterHome/projectKey/sessionId.
     ...(approvalStore !== undefined ? { approvalStore } : {}),
+    // Task 12 (WS-07 §10.5): same precedent, same resolved triple.
+    ...(autoStateStore !== undefined ? { autoStateStore } : {}),
   });
   process.exit(code);
 } catch (err) {

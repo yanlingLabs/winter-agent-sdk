@@ -19,12 +19,21 @@ import { emptyRuleSet, buildSdkSourcedEntries } from "./permissions/ruleset.ts";
 import { createBridgePromptStage } from "./permissions/prompt-stage.ts";
 import {
   evaluate,
-  NO_OPINION_AUTO_ENGINE,
   REAL_SPECIAL_CHECKS,
   type PermissionCall,
   type EvaluationContext,
   type PermissionDecisionRecord,
 } from "./permissions/evaluator.ts";
+// Task 12 (WS-07 §6.6/§10): the real AutoEngine (T6's NO_OPINION_AUTO_ENGINE stub retired here —
+// the one production call site, exactly like T7/T8/T10 retired their own stubs above; every other
+// reference left in the codebase is test-only). `createInMemoryAutoCounterStore` is the fallback
+// for a non-persistent session (autoStateStore undefined below), mirroring how `approvalStore`
+// being undefined already means "no durable approval machinery this run."
+import { createAutoEngine, NO_OP_AUTO_AUDIT_RECORDER } from "./permissions/auto/engine.ts";
+import { createInMemoryAutoCounterStore, type AutoCounterStore } from "./permissions/auto/caches.ts";
+// T9's PostToolUse-accumulated classifierContext (WS-07 §10.4/§10.6-8) — reducer.ts's own
+// AttributedContext type, threaded into the auto engine's getClassifierContext closure below.
+import type { AttributedContext } from "./hooks/reducer.ts";
 // Task 10 (WS-08 §1/§2/§6/§9/§10): the real hooks engine wiring — registry+invoker+audit build,
 // the real HookStage (retiring T6's NO_OPINION_HOOK_STAGE stub, the one production call site,
 // exactly like T7/T8 retired their own stubs above), and the direct runHooks() call sites this
@@ -151,6 +160,13 @@ export interface EngineOptions {
   // `store`/`initialMessages` already are. Omitted (or a non-persistent session) means no durable
   // approval store exists — see this task's report for what a `defer` does in that case.
   approvalStore?: DurableApprovalStore;
+  // Task 12 (WS-07 §10.5): the SAME precedent as `approvalStore` immediately above, for the auto-
+  // mode 3-consecutive/20-total fallback counters — constructed by dialect.ts's resolveEngineSession
+  // against the identical (winterHome, projectKey, sessionId) triple. Omitted (or a non-persistent
+  // session) falls back to an in-memory AutoCounterStore (createAutoEngine's own call site below) —
+  // the fallback still counts correctly for the life of THIS process, it just does not survive a
+  // restart, exactly as WS-07 §10.5 says a non-persistent session need not.
+  autoStateStore?: AutoCounterStore;
 }
 
 type RaceOutcome<T> = { kind: "ok"; value: T } | { kind: "interrupted" };
@@ -179,7 +195,7 @@ function raceInterrupt<T>(p: Promise<T>, interrupted: Promise<void>): Promise<Ra
  * definition further down for the full re-argued termination guarantee.
  */
 export async function runEngine(opts: EngineOptions): Promise<number> {
-  const { config, input, output, provider, tools, store, initialMessages, approvalStore } = opts;
+  const { config, input, output, provider, tools, store, initialMessages, approvalStore, autoStateStore } = opts;
 
   // Task 6 (WS-07 §2/§6.4, Ruling 8): permission startup validation — deliberately the very FIRST
   // thing runEngine does, before any `await` and before the `init` frame is written. A throw here
@@ -331,14 +347,37 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // every other reference left in the codebase is test-only) — stateless across calls (the registry
   // never changes mid-run; `runHooks` itself is what reads the live policy version fresh per
   // invocation via `ctx.policy.version` below), so it is built ONCE, outside this factory, unlike
-  // the fresh-per-call EvaluationContext this factory itself produces. The remaining seam (the auto
-  // classifier) is still the T6/T12 no-opinion stub.
+  // the fresh-per-call EvaluationContext this factory itself produces. Task 12: `autoEngine` is now
+  // the REAL createAutoEngine implementation (T6's NO_OPINION_AUTO_ENGINE stub retired here — the
+  // one production call site; every other reference left in the codebase is test-only) — stateless
+  // across calls (its own counters/cache live inside the closure below, session-scoped, exactly
+  // like realHookStage's own registry), so it too is built ONCE, outside this factory.
   const realHookStage = createHookStage({
     registry: hookRegistry,
     invoker: hookInvoker,
     audit: hookAuditRecorder,
     sessionId: config.sessionId,
     lifecycle: hookLifecycleSink,
+  });
+  // Task 12 (WS-07 §10.4/§10.6-8): T9's PostToolUse-accumulated classifierContext, threaded to the
+  // auto engine below. Appended to, never cleared, for the life of this run (reducer.ts's own
+  // "accumulate unconditionally" posture) — see the PostToolUse call site further down for where
+  // this actually gets pushed to.
+  const accumulatedClassifierContext: AttributedContext[] = [];
+  // Task 12 (WS-07 §10.5): P2 ships ONLY alwaysNoVerdictClassifier (createAutoEngine's own default
+  // when `classifier` is omitted) — the real model-routed classifier is P6/D13's job. Audit
+  // PERSISTENCE is intentionally NOT wired to any store yet: WS-07 §10.6-12 itself says "public-
+  // stream variants are NOT P2's; the projector work is WS-15's" — the seam is real and fully
+  // unit-tested (auto/engine.test.ts) but has no durable sink at P2, mirroring how this run's own
+  // hookAuditRecorder ALSO simply drops everything when `store.recordHookAudit` is absent. Flagged
+  // in this task's report as a deliberate, scoped deviation from full T11 parity (T11's approval
+  // journal DOES have a durable sink; this audit trail does not, yet).
+  const realAutoEngine = createAutoEngine({
+    sessionId: config.sessionId,
+    runtimeKind: WINTER_RUNTIME_KIND,
+    counters: autoStateStore ?? createInMemoryAutoCounterStore(),
+    audit: NO_OP_AUTO_AUDIT_RECORDER,
+    getClassifierContext: () => accumulatedClassifierContext,
   });
   const makeEvalCtx = (): EvaluationContext => ({
     policy: policyStateStore.getState(),
@@ -348,7 +387,7 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
     sessionBypassEnabled: config.allowDangerouslySkipPermissions === true,
     hookStage: realHookStage,
     promptStage: realPromptStage,
-    autoEngine: NO_OPINION_AUTO_ENGINE,
+    autoEngine: realAutoEngine,
     specialChecks: REAL_SPECIAL_CHECKS,
   });
 
@@ -384,8 +423,11 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // evaluateWithFreshPolicy's own stale-policy retry loop (there is no DECISION here to go stale;
   // an observational hook's audit record is a historical fact about whatever policy was live the
   // moment it fired, not a pending answer that can be invalidated by a later mode switch).
-  async function fireObservationalHook(event: HookEvent, call: RunHooksCallInfo): Promise<void> {
-    await runHooks(event, call, {
+  // Task 12: now RETURNS the composite (was `Promise<void>`, discarding it) — every existing call
+  // site below still just `await`s this without using the result (unaffected, a widening); the
+  // PostToolUse call site is the one new consumer (its own `classifierContext` accumulation).
+  async function fireObservationalHook(event: HookEvent, call: RunHooksCallInfo) {
+    return runHooks(event, call, {
       registry: hookRegistry,
       invoker: hookInvoker,
       audit: hookAuditRecorder,
@@ -1112,18 +1154,24 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
           }
           resultBlocks.push({ type: "tool_result", tool_use_id: call.id, content: raced.value.output });
           // Task 10 (WS-08 §5; PreToolUse/PostToolUse/PostToolUseFailure "fire at the tool round"):
-          // contribution-capable, observational at P2 — its own transformedOutput/classifierContext/
-          // extraContext fields (WS-07 §10.4/WS-08 §5's own auto-mode-classifier channel) have no
-          // consumer yet (T12's job); fired + audited + streamed regardless, per the SAME
-          // "declaration-owned... not silently assumed" posture as every other ad hoc call site in
-          // this function. Fires ONLY after a genuinely successful execution — never for a denied
-          // call (never executed at all) or an interrupted one (abandoned mid-flight, not completed).
-          await fireObservationalHook("PostToolUse", {
+          // contribution-capable, observational at P2 — its own transformedOutput/extraContext
+          // fields still have no consumer (a future WS-08 task's job); `classifierContext` DOES have
+          // a consumer now (Task 12, WS-07 §10.4/§10.6-8) — see the accumulation immediately below.
+          // Fired + audited + streamed regardless, per the SAME "declaration-owned... not silently
+          // assumed" posture as every other ad hoc call site in this function. Fires ONLY after a
+          // genuinely successful execution — never for a denied call (never executed at all) or an
+          // interrupted one (abandoned mid-flight, not completed).
+          const postToolUseComposite = await fireObservationalHook("PostToolUse", {
             toolUseID: call.id,
             toolName: call.name,
             input: executedCall.input as Record<string, unknown>,
             payload: { tool_response: raced.value.output },
           });
+          // Task 12: T9's own accumulation contract (reducer.ts's Rule 4) is "unconditional, never
+          // override-discard" — mirrored here at the one place this composite is actually consumed.
+          if (postToolUseComposite.classifierContext !== undefined) {
+            accumulatedClassifierContext.push(...postToolUseComposite.classifierContext);
+          }
         } catch (err) {
           const text = err instanceof Error ? err.message : String(err);
           finalResult = { type: "result", subtype: "error_during_execution", is_error: true, result: text };
