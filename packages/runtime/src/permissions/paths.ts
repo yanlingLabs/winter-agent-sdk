@@ -55,32 +55,26 @@ export interface MatchFileRuleOptions {
 interface AnchorResolution {
   base: string;
   rest: string;
-  // True only for the bare/`./`-prefixed family -- WS-07 §3.1's table literally calls this row
-  // "current directory", and in standard Unix terminology "a relative path" specifically means one
-  // with none of the other three prefixes. The single-segment depth-asymmetry clause below reads
-  // "single-segment RELATIVE directory pattern" as pinned to exactly this row (see that section's
-  // own comment for the full judgment call and its flagged consequence for the other three anchors).
-  isCwdAnchored: boolean;
 }
 
 function resolveAnchor(pattern: string, opts: Pick<MatchFileRuleOptions, "cwd" | "home" | "sourceDir">): AnchorResolution | null {
   if (pattern.startsWith("//")) {
-    return { base: "/", rest: pattern.slice(2), isCwdAnchored: false };
+    return { base: "/", rest: pattern.slice(2) };
   }
   if (pattern === "~") {
-    return { base: opts.home, rest: "", isCwdAnchored: false };
+    return { base: opts.home, rest: "" };
   }
   if (pattern.startsWith("~/")) {
-    return { base: opts.home, rest: pattern.slice(2), isCwdAnchored: false };
+    return { base: opts.home, rest: pattern.slice(2) };
   }
   if (pattern.startsWith("/")) {
     if (opts.sourceDir === undefined) return null; // see MatchFileRuleOptions.sourceDir's comment
-    return { base: opts.sourceDir, rest: pattern.slice(1), isCwdAnchored: false };
+    return { base: opts.sourceDir, rest: pattern.slice(1) };
   }
   if (pattern.startsWith("./")) {
-    return { base: opts.cwd, rest: pattern.slice(2), isCwdAnchored: true };
+    return { base: opts.cwd, rest: pattern.slice(2) };
   }
-  return { base: opts.cwd, rest: pattern, isCwdAnchored: true };
+  return { base: opts.cwd, rest: pattern };
 }
 
 function stripTrailingSlash(s: string): string {
@@ -99,13 +93,28 @@ function joinBaseAndRest(base: string, rest: string): string {
   return (cleanBase === "/" ? "" : cleanBase) + "/" + cleanRest;
 }
 
-// A pattern's rest is "single relative segment" only when it is cwd-anchored AND, once a trailing
-// slash is trimmed, contains neither `/` nor `*` -- i.e. a bare literal name like "build", not
-// "src/build" (multi-segment -- ordinary glob applies) and not "build*"/"build/**" (an explicit
-// wildcard means the author already said how far the rule reaches; the asymmetry only exists to
-// resolve what an UNADORNED bare name silently means).
-function isSingleRelativeSegment(anchor: AnchorResolution): boolean {
-  if (!anchor.isCwdAnchored) return false;
+// A pattern's rest is a "single segment directory pattern" when, once a trailing slash is trimmed,
+// it contains neither `/` nor `*` -- i.e. a bare literal name like "build", not "src/build"
+// (multi-segment -- ordinary glob applies) and not "build*"/"build/**" (an explicit wildcard means
+// the author already said how far the rule reaches; the asymmetry only exists to resolve what an
+// UNADORNED bare name silently means).
+//
+// Ruling P2-D (fix round 1): this check is deliberately ANCHOR-AGNOSTIC -- it used to gate on the
+// anchor being bare/`./`-anchored (cwd), on the reading that WS-07 §3.1's "single-segment RELATIVE
+// directory pattern" wording was scoped to that one row. The review's fixture-gap sweep found that
+// reading left `~/`, `//`, and `/`(sourceDir)-anchored bare segments fail-open on the denyAsk side
+// (e.g. `deny Read(~/secrets)` did not reach `~/secrets/key.pem`) -- a real security gap, not a
+// cosmetic inconsistency. Ruling P2-D: the denyAsk deep-reach behavior applies to a bare segment
+// under ANY anchor. `allow` is unaffected for every NON-trailing-slash pattern -- it was already
+// exact-only for every anchor (a non-cwd single segment with no wildcard degenerates to an exact
+// literal match on the general glob path too). One edge DOES move on the allow side: a
+// trailing-slash pattern text (e.g. `~/secrets/`) under a non-cwd anchor previously fell to the
+// general path, where the trailing slash survives into the compiled regex (`.../secrets/$`) and
+// can never match a `resolveTargetPath`-normalized target (which never carries a trailing slash) --
+// so it matched NOTHING. Now it exact-matches the directory, like its non-trailing-slash spelling
+// always did. Strictly more correct and still shallow (never widens past the exact entry), not a
+// security-relevant change -- flagged here for honesty, not because it needs a different fix.
+function isSingleSegmentDirectoryPattern(anchor: AnchorResolution): boolean {
   const trimmed = stripTrailingSlash(anchor.rest);
   return trimmed.length > 0 && !trimmed.includes("/") && !trimmed.includes("*");
 }
@@ -163,6 +172,15 @@ function globSegmentToRegexBody(segment: string): string {
 //       task's own corpus never exceeds one or two) while keeping the worst-case backtracking
 //       exponent fixed and small regardless of how an untrusted rule author crafts the pattern. A
 //       pattern over the cap is treated as never-matching (fails closed) rather than compiled.
+//
+// Residual, explicitly NOT addressed by either mitigation (review fix round 1 finding; P2 fix-wave
+// tracks it, no code change here): a SINGLE segment carrying many `*` tokens (e.g.
+// "a*a*a*a*a*a*a*b") compiles, via globSegmentToRegexBody, to that many sequential "[^/]*" groups
+// WITHIN one segment's own regex body -- untouched by MAX_DOUBLE_STARS, which only counts whole
+// "**" segment tokens, never `*` occurrences inside a segment. Matched against a long, non-matching
+// candidate segment this is the same shape of ambiguous-partition backtracking (polynomial in the
+// star count), under the identical untrusted-rule threat model (WS-07 §3.2: project deny/ask rules
+// apply without workspace trust). Deliberately deferred, not fixed in this pass.
 export const MAX_DOUBLE_STARS = 8;
 
 function collapseConsecutiveDoubleStars(segments: string[]): string[] {
@@ -191,14 +209,15 @@ export function matchFileRule(pattern: string, opts: MatchFileRuleOptions): bool
 
   const targetPath = resolveTargetPath(opts.path, opts.cwd);
 
-  if (isSingleRelativeSegment(anchor)) {
-    // WS-07 §3.1: "a single-segment relative directory pattern has deliberately different depth
-    // behavior for allow vs ask/deny." Conservative reading (provisional, capture-verification-
-    // pending -- see paths.test.ts's PAIR fixtures): allow reaches LESS (the exact entry only, so a
-    // bare `Read(build)` allow can't silently widen into everything nested under build/ that the
+  if (isSingleSegmentDirectoryPattern(anchor)) {
+    // WS-07 §3.1: "a single-segment directory pattern has deliberately different depth behavior
+    // for allow vs ask/deny." Direction reading (provisional, capture-verification-pending -- see
+    // paths.test.ts's PAIR fixtures): allow reaches LESS (the exact entry only, so a bare
+    // `Read(build)` allow can't silently widen into everything nested under build/ that the
     // settings author never explicitly reviewed); denyAsk reaches MORE (the entry AND everything
     // beneath it at any depth, so a bare `Read(build)` deny/ask can't be defeated by writing one
-    // directory deeper than the author pictured).
+    // directory deeper than the author pictured) -- ANCHOR-AGNOSTIC per Ruling P2-D (see
+    // isSingleSegmentDirectoryPattern's own comment).
     const exact = resolveTargetPath(joinBaseAndRest(anchor.base, stripTrailingSlash(anchor.rest)), opts.cwd);
     if (opts.direction === "allow") return targetPath === exact;
     return targetPath === exact || targetPath.startsWith(exact + "/");
@@ -206,6 +225,12 @@ export function matchFileRule(pattern: string, opts: MatchFileRuleOptions): bool
 
   const fullPattern = normalize(joinBaseAndRest(anchor.base, anchor.rest));
   const regex = compileFsGlobToRegex(fullPattern);
+  // Ruling P2-E (deferred to T5, NOT changed here): an over-cap pattern (compileFsGlobToRegex
+  // returned null) is inert here for EVERY direction, including deny/ask -- itself a fail-open gap
+  // (a too-complex deny rule silently never fires, rather than being rejected). The real fix is
+  // LOADER-side rejection at rule-*add* time (T5's rule store), using this module's exported
+  // MAX_DOUBLE_STARS as the pre-check threshold, so an over-complex rule is refused before it ever
+  // reaches match-time semantics -- deliberately not match-time behavior, so not touched here.
   return regex !== null && regex.test(targetPath);
 }
 

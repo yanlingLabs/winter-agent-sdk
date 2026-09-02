@@ -155,6 +155,29 @@ describe("matchFileRule -- glob semantics (WS-07 §3.1: `*` stays within one seg
     }
   });
 
+  test("boundary (review fix round 1): EXACTLY MAX_DOUBLE_STARS distinct, non-adjacent `**` groups still compiles and matches -- pins the cap check is `>`, not an accidental `>=`", () => {
+    // N segments joined by "/**/" produce N-1 "**" separators; MAX_DOUBLE_STARS+1 segments yields
+    // exactly MAX_DOUBLE_STARS stars -- AT the cap, not over it.
+    const segments = Array.from({ length: MAX_DOUBLE_STARS + 1 }, (_, i) => `seg${i}`);
+    const pattern = segments.join("/**/");
+    expect((pattern.match(/\*\*/g) ?? []).length).toBe(MAX_DOUBLE_STARS);
+
+    const zeroRepPath = "/synthetic/proj/" + segments.join("/"); // every "**" matches zero segments
+    expect(matchFileRule(pattern, opts({ path: zeroRepPath, direction: "allow" }))).toBe(true);
+
+    const withGapsPath = "/synthetic/proj/" + segments.join("/gap/"); // every "**" matches one segment
+    expect(matchFileRule(pattern, opts({ path: withGapsPath, direction: "allow" }))).toBe(true);
+  });
+
+  test("hardening (review fix round 1): adjacent `**` collapse also agrees on a NON-matching case -- collapsed and uncollapsed forms fail identically", () => {
+    const path = "/synthetic/proj/a/x/c"; // doesn't end in "b" -- neither form should match
+    const collapsed = matchFileRule("a/**/b", opts({ path, direction: "allow" }));
+    const uncollapsed = matchFileRule("a/**/**/b", opts({ path, direction: "allow" }));
+    expect(collapsed).toBe(false);
+    expect(uncollapsed).toBe(false);
+    expect(collapsed).toBe(uncollapsed);
+  });
+
   test("a literal multi-segment pattern with no wildcard matches only that exact path, identically on both directions (no depth asymmetry outside the single-segment case)", () => {
     for (const direction of ["allow", "denyAsk"] as const) {
       expect(matchFileRule("src/config.json", opts({ path: "/synthetic/proj/src/config.json", direction }))).toBe(
@@ -167,13 +190,18 @@ describe("matchFileRule -- glob semantics (WS-07 §3.1: `*` stays within one seg
   });
 });
 
-describe("matchFileRule -- single-segment relative directory pattern depth asymmetry (WS-07 §3.1: 'deliberately different depth behavior for allow vs ask/deny'; provisional reading, capture-verification-pending)", () => {
-  // Judgment call (paths.ts header): WS-07 §3.1 pins the ASYMMETRY but not which side is deeper,
-  // nor which anchor family it applies to. Conservative reading pinned here: allow reaches LESS
-  // (exact entry only -- an allow rule can't silently widen), denyAsk reaches MORE (the entry and
-  // everany depth beneath it -- a deny/ask rule can't be defeated by one extra directory level).
-  // Scoped to the bare/`./`-anchored ("relative", in the standard Unix sense: no `~/`, `/`, or `//`
-  // prefix) family only -- see the contrasting `~`-anchored fixture below.
+describe("matchFileRule -- single-segment directory pattern depth asymmetry (WS-07 §3.1: 'deliberately different depth behavior for allow vs ask/deny'; direction still capture-verification-pending; ANCHOR SCOPE now settled by Ruling P2-D)", () => {
+  // Judgment call (paths.ts header): WS-07 §3.1 pins the ASYMMETRY but not which side is deeper --
+  // conservative reading pinned here: allow reaches LESS (exact entry only -- an allow rule can't
+  // silently widen), denyAsk reaches MORE (the entry and any depth beneath it -- a deny/ask rule
+  // can't be defeated by one extra directory level). STILL capture-verification-pending.
+  //
+  // Ruling P2-D (fix round 1, superseding this task's original anchor-scope judgment call): the
+  // denyAsk deep-reach side applies REGARDLESS of anchor -- `~/`, `//`, and `/`(sourceDir) bare
+  // segments all get it too, not just bare/`./`-anchored ones. The original per-anchor reading left
+  // `deny Read(~/secrets)` (and the `//`/`/`-anchored equivalents) fail-open against a nested path;
+  // the reviewer's fixture gap enumeration caught all three. `allow` is UNCHANGED (was already
+  // exact-only for every anchor either way, so P2-D has no observable effect on that side).
   test("PAIR (capture-verification-pending): cwd-anchored bare segment -- allow is exact-only", () => {
     expect(matchFileRule("build", opts({ path: "/synthetic/proj/build", direction: "allow" }))).toBe(true);
     expect(matchFileRule("build", opts({ path: "/synthetic/proj/build/output.txt", direction: "allow" }))).toBe(
@@ -201,11 +229,43 @@ describe("matchFileRule -- single-segment relative directory pattern depth asymm
     }
   });
 
-  test("ALSO capture-verification-pending: a `~`-anchored bare segment is NOT scoped into the depth-asymmetry family -- exact-only on BOTH directions. Security consequence (flagged in the report): `deny Read(~/secrets)` does NOT block `~/secrets/key.pem` under this reading.", () => {
-    for (const direction of ["allow", "denyAsk"] as const) {
-      expect(matchFileRule("~/secrets", opts({ path: "/synthetic/home/secrets", direction }))).toBe(true);
-      expect(matchFileRule("~/secrets", opts({ path: "/synthetic/home/secrets/key.pem", direction }))).toBe(false);
-    }
+  test("Ruling P2-D: a `~`-anchored bare segment -- allow stays exact-only (unchanged); denyAsk NOW reaches any depth beneath it (previously fail-open, flipped by this fix round)", () => {
+    expect(matchFileRule("~/secrets", opts({ path: "/synthetic/home/secrets", direction: "allow" }))).toBe(true);
+    expect(matchFileRule("~/secrets", opts({ path: "/synthetic/home/secrets/key.pem", direction: "allow" }))).toBe(
+      false,
+    );
+    expect(matchFileRule("~/secrets", opts({ path: "/synthetic/home/secrets", direction: "denyAsk" }))).toBe(true);
+    expect(
+      matchFileRule("~/secrets", opts({ path: "/synthetic/home/secrets/key.pem", direction: "denyAsk" })),
+    ).toBe(true);
+  });
+
+  test("Ruling P2-D: a `//`-anchored (filesystem root) bare segment -- allow stays exact-only; denyAsk reaches any depth beneath it", () => {
+    expect(matchFileRule("//etc", opts({ path: "/etc", direction: "allow" }))).toBe(true);
+    expect(matchFileRule("//etc", opts({ path: "/etc/hostname", direction: "allow" }))).toBe(false);
+    expect(matchFileRule("//etc", opts({ path: "/etc", direction: "denyAsk" }))).toBe(true);
+    expect(matchFileRule("//etc", opts({ path: "/etc/hostname", direction: "denyAsk" }))).toBe(true);
+  });
+
+  test("Ruling P2-D: a `/`-anchored (settings-source) bare segment -- allow stays exact-only; denyAsk reaches any depth beneath it", () => {
+    expect(
+      matchFileRule("/config", opts({ path: "/synthetic/settings-src/config", direction: "allow", sourceDir: SOURCE_DIR })),
+    ).toBe(true);
+    expect(
+      matchFileRule(
+        "/config",
+        opts({ path: "/synthetic/settings-src/config/secret.txt", direction: "allow", sourceDir: SOURCE_DIR }),
+      ),
+    ).toBe(false);
+    expect(
+      matchFileRule("/config", opts({ path: "/synthetic/settings-src/config", direction: "denyAsk", sourceDir: SOURCE_DIR })),
+    ).toBe(true);
+    expect(
+      matchFileRule(
+        "/config",
+        opts({ path: "/synthetic/settings-src/config/secret.txt", direction: "denyAsk", sourceDir: SOURCE_DIR }),
+      ),
+    ).toBe(true);
   });
 
   test("a single-segment pattern WITH a wildcard is never treated as the special depth case -- ordinary glob rules apply symmetrically", () => {
