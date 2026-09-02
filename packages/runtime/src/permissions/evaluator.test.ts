@@ -244,6 +244,76 @@ describe("ask-beats-allow (WS-07 §2 stage 3)", () => {
   });
 });
 
+// --- Task 8 (WS-07 §8): AskUserQuestion as mandatory interaction -----------------------------------
+//
+// "AskUserQuestion routes through canUseTool ... mandatory interaction in the pipeline: allow
+// rules, acceptEdits, auto, and bypassPermissions never invent an answer ... dontAsk denies it."
+// Routed at stage 3, alongside (but independent of) an actual matched ask RULE — no ask rule need
+// be configured for this tool to force the prompt path. The tool itself is P3 (no real schema/
+// answer-application logic here); this only proves the EVALUATOR routes it correctly.
+describe("Task 8 — AskUserQuestion as mandatory interaction (WS-07 §8)", () => {
+  for (const mode of ["default", "acceptEdits", "auto", "bypassPermissions"] as const) {
+    test(`mode=${mode}: AskUserQuestion reaches the prompt stage even with NO matching ask rule and NO allow rule ever invents an answer`, async () => {
+      const promptSpy = spyPromptStage(() => ({ decision: "allow", transformedInput: { answers: ["blue"] } }));
+      const ctx = baseCtx({
+        promptStage: promptSpy.stage,
+        policy: policy({ mode, rules: withRules(rule("AskUserQuestion", "allow")) }), // even a BARE allow rule must not shadow this
+        specialChecks: REAL_SPECIAL_CHECKS,
+      });
+      const record = await evaluate(call("AskUserQuestion", { question: "which color?" }), ctx);
+      expect(promptSpy.calls.length).toBe(1);
+      expect(record.mechanism).toBe("canUseTool");
+      expect(record).toMatchObject({ decision: "allow", transformedInput: { answers: ["blue"] } });
+    });
+  }
+
+  test("dontAsk: AskUserQuestion is denied outright, the prompt stage is NEVER invoked", async () => {
+    const promptSpy = spyPromptStage(() => ({ decision: "allow" }));
+    const ctx = baseCtx({ promptStage: promptSpy.stage, policy: policy({ mode: "dontAsk" }) });
+    const record = await evaluate(call("AskUserQuestion", { question: "which color?" }), ctx);
+    expect(promptSpy.calls.length).toBe(0);
+    expect(record.decision).toBe("deny");
+  });
+
+  test("no answering host (no-opinion prompt stage) fails CLOSED — never implicitly allowed (WS-07 §6.1)", async () => {
+    const ctx = baseCtx({ policy: policy({ mode: "default" }) }); // NO_OPINION_PROMPT_STAGE
+    const record = await evaluate(call("AskUserQuestion", { question: "which color?" }), ctx);
+    expect(record.decision).toBe("deny");
+  });
+
+  test("an explicit ask RULE matching AskUserQuestion still populates matchedAskRule (the mandatory-interaction path does not clobber an actual rule match)", async () => {
+    const promptSpy = spyPromptStage(() => ({ decision: "deny" }));
+    const ctx = baseCtx({
+      promptStage: promptSpy.stage,
+      policy: policy({ mode: "default", rules: withRules(rule("AskUserQuestion", "ask")) }),
+    });
+    const record = await evaluate(call("AskUserQuestion", { question: "which color?" }), ctx);
+    expect(promptSpy.calls.length).toBe(1);
+    expect(promptSpy.calls[0]!.meta.matchedAskRule).toEqual({ source: "sdk", toolName: "AskUserQuestion" });
+  });
+
+  test("no matching rule: matchedAskRule is absent, but decisionReason still names the mandatory interaction", async () => {
+    const promptSpy = spyPromptStage(() => ({ decision: "deny" }));
+    const ctx = baseCtx({ promptStage: promptSpy.stage, policy: policy({ mode: "default" }) });
+    const record = await evaluate(call("AskUserQuestion", { question: "which color?" }), ctx);
+    expect(promptSpy.calls.length).toBe(1);
+    expect(promptSpy.calls[0]!.meta.matchedAskRule).toBeUndefined();
+    expect(promptSpy.calls[0]!.meta.decisionReason).toContain("AskUserQuestion");
+  });
+
+  test("a deny rule targeting AskUserQuestion still wins outright (stage 2 runs before stage 3's mandatory interaction)", async () => {
+    const promptSpy = spyPromptStage(() => ({ decision: "allow" }));
+    const ctx = baseCtx({
+      promptStage: promptSpy.stage,
+      policy: policy({ mode: "default", rules: withRules(rule("AskUserQuestion", "deny")) }),
+    });
+    const record = await evaluate(call("AskUserQuestion", { question: "which color?" }), ctx);
+    expect(promptSpy.calls.length).toBe(0);
+    expect(record.decision).toBe("deny");
+    expect(record.mechanism).toBe("rule");
+  });
+});
+
 // --- read-only allowed; unmatched -> mode-specific outcome -----------------------------------------
 
 describe("§5 baseline matrix — read-only work and unmatched actions", () => {
@@ -282,10 +352,10 @@ describe("§5 baseline matrix — read-only work and unmatched actions", () => {
     expect(record.mechanism).toBe("canUseTool");
   });
 
-  test("default: unmatched + a genuinely no-opinion prompt stage resolves ALLOW (T6 interim decision — see evaluator.ts header)", async () => {
+  test("default: unmatched + a genuinely no-opinion prompt stage resolves DENIED (Ruling P2-I — flips the T6 interim allow fallback, WS-07 §6.1 'never implicitly allowed')", async () => {
     const ctx = baseCtx({ policy: policy({ mode: "default" }) }); // NO_OPINION_PROMPT_STAGE
     const record = await evaluate(call("Bash", { command: "curl https://example.com" }), ctx);
-    expect(record.decision).toBe("allow");
+    expect(record.decision).toBe("deny");
     expect(record.mechanism).toBe("mode");
   });
 
@@ -447,9 +517,9 @@ describe("Task 7 — acceptEdits real semantics (WS-07 §6.2)", () => {
   test("unrecognized Bash (not one of the seven verbs, no redirect) falls to the ordinary pipeline, same as default's own 'other unmatched action'", async () => {
     const ctx = baseCtx({ policy: policy({ mode: "acceptEdits" }), specialChecks: REAL_SPECIAL_CHECKS });
     const record = await evaluate(call("Bash", { command: "npm test" }), ctx);
-    // NO_OPINION_PROMPT_STAGE (default in baseCtx) -> T6's generic bottom-of-pipeline interim
-    // resolves this to allow, mechanism "mode" -- IDENTICAL to how `default` mode treats it today.
-    expect(record).toMatchObject({ decision: "allow", mechanism: "mode" });
+    // NO_OPINION_PROMPT_STAGE (default in baseCtx) -> post-Ruling-P2-I, the generic bottom-of-
+    // pipeline fallback denies, mechanism "mode" -- IDENTICAL to how `default` mode treats it now.
+    expect(record).toMatchObject({ decision: "deny", mechanism: "mode" });
   });
 
   test("a redirect (kind:'other') never auto-approves even though it's write-shaped", async () => {
@@ -502,7 +572,7 @@ describe("Task 7 — plan mode real semantics (WS-07 §6.5, phase ruling 6)", ()
   test("a non-write exploratory action falls to the ordinary pipeline (classifier borrow OFF at P2)", async () => {
     const ctx = baseCtx({ policy: policy({ mode: "plan" }), specialChecks: REAL_SPECIAL_CHECKS });
     const record = await evaluate(call("Bash", { command: "npm test" }), ctx);
-    expect(record).toMatchObject({ decision: "allow", mechanism: "mode" }); // same T6 interim as default's own "other unmatched action"
+    expect(record).toMatchObject({ decision: "deny", mechanism: "mode" }); // post-Ruling-P2-I, same as default's own "other unmatched action"
   });
 
   test("bypass-relaxation: session bypass-enabled + plan = writes execute (§6.4/§6.5) — an unconditional auto-allow at stage 4, deliberately NOT routed through stage 5/6 (advisor-reviewed: must survive T8's future flip of the generic bottom-of-pipeline fallback)", async () => {
@@ -775,13 +845,16 @@ describe("Task 7 — T6-review obligation: Read-deny-blocks-Edit enforced genera
     expect(record.mechanism).not.toBe("rule"); // the ask rule is Read-scoped and never matches an Edit call at all
   });
 
-  test("a non-matching Read deny does not block an unrelated path", async () => {
+  test("a non-matching Read deny does not block an unrelated path (falls through to the ordinary pipeline, denied post-Ruling-P2-I absent a real prompt handler)", async () => {
     const ctx = baseCtx({
       cwd: "/work",
       policy: policy({ mode: "default", rules: withRules(rule("Read(secrets/**)", "deny")) }),
     });
     const record = await evaluate(call("Edit", { file_path: "/work/public/readme.txt" }), ctx);
-    expect(record).toMatchObject({ decision: "allow", mechanism: "mode" });
+    // "does not block" means the Read-deny-blocks-Edit primitive never fires (mechanism is never
+    // "rule") -- an ordinary Edit in `default` mode still reaches the (here, no-opinion) prompt
+    // stage exactly like any other unmatched action, which now denies rather than allows.
+    expect(record).toMatchObject({ decision: "deny", mechanism: "mode" });
   });
 
   // Fix round 1, item 1 (MAJOR, reviewer-caught): WS-07 §3.1 says outright "Recognized Bash file

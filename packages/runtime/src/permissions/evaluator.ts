@@ -8,33 +8,34 @@
 // recognition. `evaluate()` runs to completion with all four stubbed (NO_OPINION_HOOK_STAGE,
 // NO_OPINION_PROMPT_STAGE, NO_OPINION_AUTO_ENGINE, NO_SPECIAL_CHECKS below).
 //
-// *** THE T6 INTERIM DECISION (read before touching stage 6's fallback) ***
-// WS-07 §6.1 is explicit: an unmatched action in `default` mode "reach[es] canUseTool when
-// supplied; without an applicable prompt handler they remain unresolved/denied — never implicitly
-// allowed." Taken literally, a genuinely no-opinion PromptStage (i.e. no real host/canUseTool wired
-// at all — every T6 caller, since T8 hasn't landed) would have to DENY every unmatched action. That
-// would flip several of Phase 1's existing differential-golden scenarios (e.g. the "tooluse" scenario
-// in scripts/differential.ts, and the equivalence scenario at packages/sdk/src/
-// transport-equivalence.test.ts:619) from "the tool executes" to "the tool is denied" — and this
-// task's own gate is explicit: "the default path with no rules configured must not alter existing
-// scenarios' wire" (task-6-brief.md Step 4). No P2-x ruling covers this — WS-07 pins no exception to
-// its own §6.1 text. The resolution below is advisor-reviewed and mandated by the task's own
-// byte-unchanged-goldens gate, not controller-approved; a controller ruling is requested in the
-// task-6 report so this stops being an implementer-level call before T8 inherits it:
-//   - The PromptStage stub stays GENUINELY no-opinion (returns null) — never secretly opinionated.
-//   - ONLY the generic "nothing matched anything, mode is prompt-capable" fallback at the very
-//     bottom of evaluate() resolves a null PromptStage answer to ALLOW, so a session with zero
-//     permission configuration and no host wired behaves exactly as it did before this task landed.
-//   - The ask-rule-matched path (stage 3) does NOT get this treatment: a null answer there resolves
-//     to DENY instead, because a matched ask rule is a RULE-FORCED request (WS-07 §7.1: "auto-
-//     approval logic must never silently clear a rule-forced request") and no existing golden
-//     configures an ask rule, so nothing pins that path to backward-compat.
-// T8 inherits this exact tension when it wires the real PromptStage: WS-07 §6.1's literal text is
-// still the long-term target, and T8 is free to flip the generic fallback to "deny" once a real host
-// is reachable (with a justified `--update` to whichever goldens that touches) — this comment is the
-// pointer for that implementer.
+// *** RULING P2-I — the spec-literal flip (SUPERSEDES the former T6 interim decision) ***
+// T6 landed the PromptStage stub as GENUINELY no-opinion, but temporarily resolved a null answer at
+// the generic bottom-of-pipeline fallback to ALLOW rather than WS-07 §6.1's literal "never
+// implicitly allowed" — because at T6 time no real PromptStage existed anywhere yet, and denying by
+// default would have flipped Phase 1's existing differential/equivalence goldens for no
+// host-visible reason (that decision was advisor-reviewed, not controller-approved, and explicitly
+// flagged for T8 to revisit once a real host was reachable). T8 wires the REAL PromptStage
+// (bridge-backed canUseTool RPC — prompt-stage.ts) and, per Ruling P2-I, retires that interim
+// allow: with a real prompt path reachable, "no applicable prompt handler" (no canUseTool
+// configured host-side, or the runtime's own bridge request is rejected for any reason) now means
+// exactly what WS-07 §6.1 says — unresolved, denied, never implicitly allowed. The affected
+// differential/equivalence scenarios were fixed by adding explicit `allowedTools`/
+// `permissions.allow` to their harness configs (see this task's report for the golden ledger),
+// never by carving out a second spec exception.
+//   - The PromptStage stays GENUINELY no-opinion on a null answer (the REAL implementation,
+//     prompt-stage.ts, returns null when the bridge request is rejected — e.g. no handler
+//     registered host-side; see that file's own header).
+//   - The generic "nothing matched anything, mode is prompt-capable" fallback at the very bottom of
+//     evaluate() now resolves a null PromptStage answer to DENY, mechanism "mode" — the identical
+//     shape every other "mode"-mechanism denial in this file already has (a normal tool_result,
+//     `denied: true`, per engine.ts's own cross-task pin), never a hang.
+//   - The ask-rule-matched path (stage 3) already denied on null (a matched ask rule is a
+//     RULE-FORCED request, WS-07 §7.1: "auto-approval logic must never silently clear a rule-forced
+//     request") — unchanged by this ruling, since it was never the interim-allow branch.
+//   - The standing-exception (critical-removal/protected-write/plan-write) "mustPrompt" null branch
+//     was ALSO already deny-on-null (T7) — also unchanged by this ruling.
 import { resolve } from "node:path";
-import type { PermissionBehavior, PermissionMode, PermissionUpdate, RuleSource } from "@yanlinglabs/winter-agent-sdk";
+import type { PermissionBehavior, PermissionMode, PermissionUpdate, RuleSource, PermissionDecisionClassification } from "@yanlinglabs/winter-agent-sdk";
 import { FILE_RULE_TOOLS, matchesRule, splitCompound, isRecognizedReadOnly, type ParsedRule } from "./grammar.ts";
 import { matchFileRuleAtBothEnds, checkSymlinkBothEnds } from "./paths.ts";
 import type { SourcedRuleEntry, SourcedRuleSet } from "./ruleset.ts";
@@ -50,11 +51,11 @@ import { isProtectedWrite as isProtectedPath, isCriticalRemoval as classifyCriti
 
 export type { AutoModeConfig };
 
-// Verbatim WS-07 §7.2 pin. T8's own file-sectioning banner convention (sdk/permissions/types.ts)
-// formally owns this; defined here now, byte-identical to the pinned union, purely so
-// PermissionDecisionRecord (below) can reference it before T8 lands — T8 either re-exports this or
-// relocates the declaration; the literal member set does not change either way.
-export type PermissionDecisionClassification = "user_temporary" | "user_permanent" | "user_reject";
+// Task 8: re-exported from its canonical home (sdk/permissions/types.ts, verbatim WS-07 §7.2 pin)
+// now that it exists there — this module's own pre-T8 placeholder declaration (byte-identical to
+// the pinned union) is retired; every consumer of this file's own `PermissionDecisionClassification`
+// export (PermissionDecisionRecord below, evaluator.test.ts) is unaffected by the relocation.
+export type { PermissionDecisionClassification };
 
 // The normalized shape every evaluator stage operates on. `toolUseId`/`agentId` are optional at T6
 // (the engine has both readily available per call — engine.ts's own `{id, name, input}` — but no
@@ -65,6 +66,14 @@ export interface PermissionCall {
   toolUseId?: string;
   agentId?: string;
 }
+
+// Task 8 (WS-07 §8): the one magic tool name this phase's evaluator recognizes by identity — the
+// tool itself (schema, real answer-application via `updatedInput.answers`) is P3's job (WS-06); this
+// evaluator only needs to know its NAME to route it through stage 3 as mandatory interaction,
+// exactly the way it already knows "AskUserQuestion" is the string a matched ask rule's own
+// `toolName` might equally spell. Exported (mirroring PLAN_WRITE_WITHHELD_MESSAGE's own precedent
+// for an otherwise-internal literal) so callers/fixtures never need to hand-copy the string.
+export const ASK_USER_QUESTION_TOOL_NAME = "AskUserQuestion";
 
 // --- Stage 1 seam: PreToolUse hooks (T9/T10 fill) --------------------------------------------------
 
@@ -699,44 +708,78 @@ export async function evaluate(call: PermissionCall, ctx: EvaluationContext): Pr
 
   // --- Stage 3: ask rules + mandatory interaction -----------------------------------------------
   const askEntry = findMatchingRuleEntry(policy.rules, effectiveCall, "ask", ctx);
-  if (askEntry) {
+  // Task 8 (WS-07 §8): AskUserQuestion is MANDATORY interaction in every prompt-capable mode, with
+  // or without a configured ask rule — "allow rules, acceptEdits, auto, and bypassPermissions never
+  // invent an answer" (checked here, at stage 3, strictly BEFORE stage 4's mode baseline and stage
+  // 5's allow-rule lookup, so no allow rule or mode-level auto-approval can ever reach it first) and
+  // "dontAsk denies it" (the SAME dontAsk-converts-to-denial branch below already covers this, since
+  // it's keyed on `policy.mode`, not on `askEntry` specifically). A DENY rule targeting the tool
+  // still wins outright — stage 2 already returned before this stage ever runs.
+  const isMandatoryAskUserQuestion = effectiveCall.toolName === ASK_USER_QUESTION_TOOL_NAME;
+  if (askEntry || isMandatoryAskUserQuestion) {
     if (policy.mode === "dontAsk") {
-      // WS-07 §6.3: "dontAsk converts all of these into denial."
+      // WS-07 §6.3: "dontAsk converts all of these into denial." An actual ask-RULE match keeps its
+      // own rule-denial message/mechanism; AskUserQuestion with no matching rule gets its own
+      // dedicated mode-level denial (mechanism "mode" — no rule was involved).
+      if (askEntry) {
+        return {
+          decision: "deny",
+          mechanism: "rule",
+          policyVersion,
+          source: askEntry.source,
+          ruleRef: formatRuleRef(askEntry),
+          message: ruleDenialMessage(askEntry),
+          ...(carriedTransform !== undefined ? { transformedInput: carriedTransform } : {}),
+        };
+      }
       return {
         decision: "deny",
-        mechanism: "rule",
+        mechanism: "mode",
         policyVersion,
-        source: askEntry.source,
-        ruleRef: formatRuleRef(askEntry),
-        message: ruleDenialMessage(askEntry),
+        message: "Denied: dontAsk mode denies AskUserQuestion (WS-07 §6.3/§8)",
         ...(carriedTransform !== undefined ? { transformedInput: carriedTransform } : {}),
       };
     }
     // "a matching ask forces human/application approval even when a narrower allow also matches and
     // even in auto/bypassPermissions" (WS-07 §2) — skip stages 4/5 entirely, straight to the prompt.
-    const matchedAskRule = {
-      source: askEntry.source,
-      toolName: askEntry.ruleValue.toolName,
-      ...(askEntry.ruleValue.ruleContent !== undefined ? { ruleContent: askEntry.ruleValue.ruleContent } : {}),
-    };
+    // `matchedAskRule` is present ONLY when an actual rule matched — AskUserQuestion alone (no rule)
+    // is a mandatory-interaction requirement, not a rule-forced one, so it stays absent (§7.1: it
+    // "distinguishes an explicit human-required policy from an ordinary safety prompt" — this IS the
+    // ordinary-safety-prompt case, just one the tool itself makes unconditional).
+    const matchedAskRule = askEntry
+      ? {
+          source: askEntry.source,
+          toolName: askEntry.ruleValue.toolName,
+          ...(askEntry.ruleValue.ruleContent !== undefined ? { ruleContent: askEntry.ruleValue.ruleContent } : {}),
+        }
+      : undefined;
+    const decisionReason = askEntry ? `matched ask rule ${formatRuleRef(askEntry)}` : "AskUserQuestion requires mandatory interaction (WS-07 §8)";
     const result = await ctx.promptStage.prompt(effectiveCall, ctx, {
-      decisionReason: `matched ask rule ${formatRuleRef(askEntry)}`,
-      matchedAskRule,
+      decisionReason,
+      ...(matchedAskRule !== undefined ? { matchedAskRule } : {}),
       ...(effectiveCall.toolUseId !== undefined ? { toolUseID: effectiveCall.toolUseId } : {}),
       ...(effectiveCall.agentId !== undefined ? { agentID: effectiveCall.agentId } : {}),
     });
     if (result === null) {
-      // No real host answered a RULE-FORCED request (WS-07 §7.1: "never silently clear a
-      // rule-forced request") — fails CLOSED, unlike stage 6's generic fallback below. No existing
-      // golden configures an ask rule, so this carve-out never touches the byte-unchanged gate; see
-      // this module's header for the contrasting generic-fallback decision.
+      // No real host answered a mandatory/rule-forced request — fails CLOSED, unlike stage 6's
+      // generic fallback (WS-07 §7.1: "never silently clear a rule-forced request"; §6.1: "never
+      // implicitly allowed" applies just as much to a mandatory interaction with no rule behind it).
+      if (askEntry) {
+        return {
+          decision: "deny",
+          mechanism: "rule",
+          policyVersion,
+          source: askEntry.source,
+          ruleRef: formatRuleRef(askEntry),
+          message: ruleAskUnresolvedMessage(askEntry),
+          ...(carriedTransform !== undefined ? { transformedInput: carriedTransform } : {}),
+        };
+      }
       return {
         decision: "deny",
-        mechanism: "rule",
+        mechanism: "mode",
         policyVersion,
-        source: askEntry.source,
-        ruleRef: formatRuleRef(askEntry),
-        message: ruleAskUnresolvedMessage(askEntry),
+        message: "Denied: AskUserQuestion requires interaction and no prompt handler answered it (WS-07 §8)",
         ...(carriedTransform !== undefined ? { transformedInput: carriedTransform } : {}),
       };
     }
@@ -812,8 +855,18 @@ export async function evaluate(call: PermissionCall, ctx: EvaluationContext): Pr
     ...(effectiveCall.agentId !== undefined ? { agentID: effectiveCall.agentId } : {}),
   });
   if (result === null) {
-    // *** T6 INTERIM DECISION — see this module's header comment for the full rationale ***
-    return { decision: "allow", mechanism: "mode", policyVersion, ...(carriedTransform !== undefined ? { transformedInput: carriedTransform } : {}) };
+    // *** Ruling P2-I — see this module's header comment for the full rationale ***
+    // WS-07 §6.1: "without an applicable prompt handler they remain unresolved/denied — never
+    // implicitly allowed." mechanism "mode" (not "canUseTool") because this evaluator is the one
+    // making the fallback call, not a real host that actually answered — mirrors the ask-rule-null
+    // and mustPrompt-null branches above, both of which already denied on a null answer.
+    return {
+      decision: "deny",
+      mechanism: "mode",
+      policyVersion,
+      message: "Denied: no canUseTool handler answered this unmatched action (WS-07 §6.1 — never implicitly allowed)",
+      ...(carriedTransform !== undefined ? { transformedInput: carriedTransform } : {}),
+    };
   }
   return buildRecordFromPromptResult(result, policyVersion, carriedTransform);
 }
