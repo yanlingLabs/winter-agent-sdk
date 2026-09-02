@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { query, encodeFrame, splitFrames, type RuntimeConfig, type WinterFrame } from "@yanlinglabs/winter-agent-sdk";
 import { inMemoryProcess } from "winter-agent-runtime/testing";
-import { testProviderByName, scriptedProvider } from "winter-agent-runtime";
+import { testProviderByName } from "winter-agent-runtime";
 import { normalizeTrace, compareTraces, type ConformanceTraceEntry } from "winter-conformance/trace";
 
 // A pinned, synthetic cwd (never process.cwd()) so every recorded trace — and the committed golden
@@ -337,18 +337,11 @@ export async function traceWinterModeSwitchMidSession(): Promise<ConformanceTrac
         cwd: FIXTURE_CWD,
         permissionMode: "bypassPermissions",
         allowDangerouslySkipPermissions: true,
+        // "modeswitch" (provider/mock.ts, added by this task): the SAME fixed 4-step script
+        // (tool_use c1 -> text -> tool_use c2 -> text) transport-equivalence.test.ts's own
+        // mode-switch scenario selects by name on the child/compiled legs -- one source of truth.
         spawnClaudeCodeProcess: (opts) =>
-          inMemoryProcess(
-            opts.args,
-            scriptedProvider([
-              { kind: "tool_use", calls: [{ id: "c1", name: "mystery_tool", input: {} }] },
-              { kind: "text", text: "first done" },
-              { kind: "tool_use", calls: [{ id: "c2", name: "mystery_tool", input: {} }] },
-              { kind: "text", text: "second done" },
-            ]),
-            undefined,
-            { ...opts.env, WINTER_HOME: winterHome },
-          ),
+          inMemoryProcess(opts.args, testProviderByName("modeswitch"), undefined, { ...opts.env, WINTER_HOME: winterHome }),
       },
     });
     let modeSwitchPromise: Promise<void> | undefined;

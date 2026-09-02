@@ -42,7 +42,7 @@ import { ResultError, ProcessError, AbortError, CLIConnectionError } from "./err
 import { encodeFrame, splitFrames } from "./protocol/codec.ts";
 import type { WinterFrame, ControlRequestFrame, ControlResponseFrame } from "./protocol/frames.ts";
 import type { RuntimeConfig } from "./protocol/config.ts";
-import type { CanUseTool } from "./permissions/types.ts";
+import type { CanUseTool, PermissionMode } from "./permissions/types.ts";
 import type { Options } from "./options.ts";
 import { inMemoryProcess } from "winter-agent-runtime/testing";
 import { echoProvider, stubExecutor, testProviderByName, type TestProviderName, WinterCompatibilitySessionStore, compatibilityKeys } from "winter-agent-runtime";
@@ -210,11 +210,20 @@ interface QueryScenarioOptions {
   // round-trips end-to-end on every leg, including a REAL spawned child process.
   hooks?: Options["hooks"];
   includeHookEvents?: boolean;
+  // Task 13 (WS-07 §2 / §12 "stale-policy-version" / mode-switch-mid-session equivalence): lets a
+  // scenario start a session in a non-default mode — needed to observe a LIVE setPermissionMode()
+  // switch away from it mid-session (permissionMode alone would only prove two SEPARATE sessions'
+  // own configured-at-startup behavior, not the live-switch mechanic WS-07 §2 promises).
+  permissionMode?: PermissionMode;
+  allowDangerouslySkipPermissions?: boolean;
   // Invoked once per yielded message, AFTER it's recorded into the trace — the kill/abort
   // scenarios use this to act at a precise, OBSERVED point in the stream (WS-04 events), never a
   // real-clock guess (unlike the raw-driven interrupt scenario, which has no such observable event
-  // to key off — see INTERRUPT_SETTLE_MS above).
-  onMessage?: (msg: { type: string }, ctx: { proc: SpawnedRuntimeProcess | undefined; abort: () => void }) => void;
+  // to key off — see INTERRUPT_SETTLE_MS above). `setPermissionMode` (Task 13) is the SAME live
+  // method query.test.ts's own setPermissionMode() test drives — exposed here so a scenario can
+  // fire a genuine mid-stream mode switch from an OBSERVED point (e.g. "the first round's result"),
+  // never a real-clock guess.
+  onMessage?: (msg: { type: string }, ctx: { proc: SpawnedRuntimeProcess | undefined; abort: () => void; setPermissionMode: (mode: PermissionMode) => Promise<void> }) => void;
 }
 
 interface ScenarioResult {
@@ -241,11 +250,13 @@ async function traceViaQuery(leg: LegName, scenario: QueryScenarioOptions): Prom
         ...(scenario.canUseTool !== undefined ? { canUseTool: scenario.canUseTool } : {}),
         ...(scenario.hooks !== undefined ? { hooks: scenario.hooks } : {}),
         ...(scenario.includeHookEvents !== undefined ? { includeHookEvents: scenario.includeHookEvents } : {}),
+        ...(scenario.permissionMode !== undefined ? { permissionMode: scenario.permissionMode } : {}),
+        ...(scenario.allowDangerouslySkipPermissions !== undefined ? { allowDangerouslySkipPermissions: scenario.allowDangerouslySkipPermissions } : {}),
       },
     });
     for await (const msg of gen) {
       entries.push({ sequence: entries.length, direction: "runtime-to-host", kind: kindOfMessage(msg), payload: msg });
-      scenario.onMessage?.(msg, { proc: capture.proc, abort: () => abortController?.abort() });
+      scenario.onMessage?.(msg, { proc: capture.proc, abort: () => abortController?.abort(), setPermissionMode: (mode) => gen.setPermissionMode(mode) });
     }
   } catch (e) {
     thrown = e;
@@ -642,6 +653,101 @@ function registerEquivalenceScenarios(legA: LegName, legB: LegName): void {
     expect(toolUseMsg.message.content).toEqual([{ type: "tool_use", id: "test-call-1", name: "test_tool", input: { probe: true } }]);
     const toolResultMsg = a.trace[2]!.payload as { message: { content: unknown } };
     expect(toolResultMsg.message.content).toEqual([{ type: "tool_result", tool_use_id: "test-call-1", content: 'test_tool:{"probe":true}' }]);
+  });
+
+  // Task 13 (Carry 1, WS-07 §6.1 / Ruling P2-I): the COMPOSED, integration-level proof that a
+  // query() with ZERO permission configuration at all (no rules, no canUseTool, no hooks) denies an
+  // unmatched tool call under the spec-literal deny-when-unresolved outcome, and the run CONTINUES
+  // to completion — never hangs, never throws. The mechanism composes structurally from pieces
+  // already proven individually elsewhere in this codebase: no canUseTool means query.ts never
+  // registers a "permission" handler, so the runtime's own bridge.request("permission", ...) lands
+  // on T2's unconditional per-subtype auto-answer (`{ok:false, code:"unhandled_subtype"}` — the SAME
+  // fallback this file's "an unregistered control subtype from the runtime is auto-answered" sibling
+  // in query.test.ts proves for the "hook" subtype), which resolves promptStage.ts to a genuine
+  // `null` ("no opinion", never a throw), which evaluate() then maps to a denial per Ruling P2-I.
+  // scripts/differential.ts's "denied-tool-round" golden pins this exact scenario's frozen wire
+  // shape; this is the SAME scenario proven equivalent across REAL transports instead.
+  test("Carry 1: a query() with ZERO permission config denies an unmatched tool call (spec-literal deny-when-unresolved), and the run continues to a normal completion", async () => {
+    const a = await traceViaQuery(legA, { prompt: "go", testProviderName: "tooluse" });
+    const b = await traceViaQuery(legB, { prompt: "go", testProviderName: "tooluse" });
+    expect(compareTraces(a.trace, b.trace)).toEqual([]);
+    expect(a.thrown).toBeUndefined();
+    expect(b.thrown).toBeUndefined();
+    expect(a.trace.map((e) => e.kind)).toEqual(["system/init", "assistant", "system/permission_denied", "user", "assistant", "result", "exit"]);
+    const permissionDeniedMsg = a.trace[2]!.payload as { decision_reason_type?: string; tool_use_id?: string };
+    expect(permissionDeniedMsg.decision_reason_type).toBe("mode"); // no rule, no hook -- the mode stage's own fail-closed floor resolved it
+    expect(permissionDeniedMsg.tool_use_id).toBe("test-call-1");
+    const toolResultMsg = a.trace[3]!.payload as { message: { content: Array<{ denied?: boolean }> } };
+    expect(toolResultMsg.message.content[0]?.denied).toBe(true);
+    // The run genuinely continued past the denial to a SECOND provider turn and a clean completion.
+    const result = a.trace[5]!.payload as { subtype?: string; is_error?: boolean; result?: string };
+    expect(result.subtype).toBe("success");
+    expect(result.is_error).toBe(false);
+    expect(result.result).toBe("tool round done");
+  });
+
+  // Task 13 (WS-07 §2 / §12 "stale-policy-version rejection" / "equivalence completeness check"):
+  // ONE session, two turns, a LIVE setPermissionMode() call between them, proven identical across a
+  // REAL spawned child process (and, on the "inMemory"/"compiled" pairing above, the compiled
+  // binary) — not just the in-memory-only differential golden of the same scenario
+  // (scripts/differential.ts's "mode-switch-mid-session"). Turn 1 runs under bypassPermissions (an
+  // unmatched call executes unconditionally, WS-07 §6.4); the mode is switched to dontAsk once turn
+  // 1's result is OBSERVED and the switch's ack is awaited (never a real-clock guess); turn 2's
+  // IDENTICAL unmatched call is then denied outright, canUseTool never invoked (WS-07 §6.3). The
+  // "modeswitch" provider (provider/mock.ts, added by this task) supplies the fixed 4-step script
+  // both rounds need — "tooluse"'s own 2-step script cannot serve a second round.
+  test("mode-switch mid-session: a live setPermissionMode() between two turns changes behavior — bypassPermissions executes an unmatched call unconditionally, dontAsk then denies the identical call", async () => {
+    async function runLeg(leg: LegName): Promise<ScenarioResult> {
+      let releaseSecondTurn!: () => void;
+      const secondTurnGate = new Promise<void>((resolve) => {
+        releaseSecondTurn = resolve;
+      });
+      async function* twoTurns() {
+        yield "first";
+        await secondTurnGate;
+        yield "second";
+      }
+      let modeSwitchRequested = false;
+      return traceViaQuery(leg, {
+        prompt: twoTurns(),
+        testProviderName: "modeswitch",
+        permissionMode: "bypassPermissions",
+        allowDangerouslySkipPermissions: true,
+        onMessage: (msg, ctx) => {
+          if (msg.type === "result" && !modeSwitchRequested) {
+            modeSwitchRequested = true;
+            ctx.setPermissionMode("dontAsk").then(releaseSecondTurn);
+          }
+        },
+      });
+    }
+    const a = await runLeg(legA);
+    const b = await runLeg(legB);
+    expect(compareTraces(a.trace, b.trace)).toEqual([]);
+    expect(a.thrown).toBeUndefined();
+    expect(b.thrown).toBeUndefined();
+    expect(a.trace.map((e) => e.kind)).toEqual([
+      "system/init",
+      "assistant",
+      "user",
+      "assistant",
+      "result",
+      "assistant",
+      "system/permission_denied",
+      "user",
+      "assistant",
+      "result",
+      "exit",
+    ]);
+    // Round 1 (bypassPermissions): the unmatched call executes unconditionally, no rule needed.
+    const firstToolResult = a.trace[2]!.payload as { message: { content: unknown } };
+    expect(firstToolResult.message.content).toEqual([{ type: "tool_result", tool_use_id: "c1", content: "mystery_tool:{}" }]);
+    // Round 2 (dontAsk, live-switched): the SAME unmatched shape is now denied, never executed.
+    const permissionDeniedMsg = a.trace[6]!.payload as { decision_reason_type?: string; tool_use_id?: string };
+    expect(permissionDeniedMsg.decision_reason_type).toBe("mode");
+    expect(permissionDeniedMsg.tool_use_id).toBe("c2");
+    const secondToolResult = a.trace[7]!.payload as { message: { content: Array<{ type: string; tool_use_id: string; content: string; denied?: boolean }> } };
+    expect(secondToolResult.message.content).toEqual([{ type: "tool_result", tool_use_id: "c2", content: expect.any(String), denied: true }]);
   });
 
   // Task 10 (WS-08 §1/§9/§10): a hooked tool round with includeHookEvents — proves the ENTIRE

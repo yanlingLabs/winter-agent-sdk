@@ -52,10 +52,10 @@ export const stubExecutor: ToolExecutor = {
 // "rpc_probe" ProviderTurn kind (engine.ts), proving the runtime-originated control-RPC bridge
 // round trip (WS-04 §3.1) identically on every transport leg (transport-equivalence.test.ts's
 // rpcprobe scenario is its only consumer). REMOVE at P6 alongside the rest of this file.
-export type TestProviderName = "boom" | "tooluse" | "hang" | "reflect" | "rpcprobe";
+export type TestProviderName = "boom" | "tooluse" | "hang" | "reflect" | "rpcprobe" | "modeswitch";
 
 export function isTestProviderName(v: string): v is TestProviderName {
-  return v === "boom" || v === "tooluse" || v === "hang" || v === "reflect" || v === "rpcprobe";
+  return v === "boom" || v === "tooluse" || v === "hang" || v === "reflect" || v === "rpcprobe" || v === "modeswitch";
 }
 
 export function testProviderByName(name: TestProviderName): Provider {
@@ -107,5 +107,19 @@ export function testProviderByName(name: TestProviderName): Provider {
           return { kind: "rpc_probe", subtype: "test_rpc_probe", payload: { probe: "ping" } };
         },
       };
+    // Task 13 (WS-07 §2 / §12 "stale-policy-version"): a fixed 4-step script for a two-ROUND
+    // mode-switch scenario -- turn 1 (round A) needs its own tool_use + text, turn 2 (round B, run
+    // under a DIFFERENT live-switched mode) needs a SECOND, otherwise-identical tool_use + text.
+    // "tooluse"'s own 2-step script is exhausted after one round (scriptedProvider throws once its
+    // queue is empty), so it cannot serve a second round -- this is a plain extension of the same
+    // fixed-script idiom (identical to why "rpcprobe" exists), needed because the CHILD/compiled
+    // transport-equivalence legs can only select a provider by name, never an in-process closure.
+    case "modeswitch":
+      return scriptedProvider([
+        { kind: "tool_use", calls: [{ id: "c1", name: "mystery_tool", input: {} }] },
+        { kind: "text", text: "first done" },
+        { kind: "tool_use", calls: [{ id: "c2", name: "mystery_tool", input: {} }] },
+        { kind: "text", text: "second done" },
+      ]);
   }
 }
