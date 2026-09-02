@@ -1,5 +1,5 @@
 import type { SpawnClaudeCodeProcess } from "./transport.ts";
-import type { RuleSource, PermissionMode, CanUseTool } from "./permissions/types.ts";
+import type { RuleSource, PermissionMode, CanUseTool, HookEvent, HookCallbackMatcher } from "./permissions/types.ts";
 
 export interface Options {
   model?: string;
@@ -82,4 +82,16 @@ export interface Options {
   // the runtime's point of view: no callback and "no handler answered it" collapse to the identical
   // wire outcome). §7.3: paired with a static shadow-warning check at query() construction time.
   canUseTool?: CanUseTool;
+
+  // --- Task 9 (WS-08 §1/§2; derived-shapes-p2.md item (a), verbatim): the SDK-callback hooks
+  // registration surface. Like `canUseTool` immediately above, this is NEVER serialized wholesale
+  // into RuntimeConfig (--config-json) — `HookCallback` values are JS functions, not wire-safe data.
+  // What DOES cross the wire (WS-08 §2's "the config carries the source-tagged registration list" /
+  // phase ruling 1) is a STRUCTURE-ONLY shape with the functions stripped out — see
+  // protocol/config.ts's `RuntimeConfig.hooks` for that wire shape and its own header for why it is
+  // deliberately NOT keyed by the closed `HookEvent` union this field uses. Wiring the actual
+  // Options.hooks -> RuntimeConfig.hooks conversion (and the reverse: dispatching an inbound `hook`
+  // control_request back to the matching callback here) is query.ts's job, owned by a later task —
+  // this field only pins the verbatim public shape a host program writes against.
+  hooks?: Partial<Record<HookEvent, HookCallbackMatcher[]>>;
 }

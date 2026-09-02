@@ -21,7 +21,7 @@ export {
 // child transport and winter-agent-runtime/testing's in-memory transport (Task 2).
 export { resolveRuntimeExecutable, defaultSpawn } from "./transport.ts";
 export type { SpawnedRuntimeProcess, SpawnRuntimeOptions, SpawnClaudeCodeProcess } from "./transport.ts";
-export type { RuntimeConfig } from "./protocol/config.ts";
+export type { RuntimeConfig, RuntimeHooksConfig, RuntimeHookMatcherGroup } from "./protocol/config.ts";
 
 // Wire protocol (WS-02 §3: owned by the sdk, the runtime depends on it — never the reverse).
 // Previously reachable only via the runtime; now the sdk's own public surface.
