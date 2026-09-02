@@ -100,14 +100,14 @@ export function createScriptedClassifier(
 
 // ---------------------------------------------------------------------------------------------
 // Audit seam (WS-07 §10.6-12): permission_evaluated / classifier_started / classifier_result /
-// classifier_cache_hit / fallback_state. Mirrors HookAuditRecorder's OWN "auxiliary, never fails
-// the decision it accompanies" pattern (hooks/runner.ts) rather than reusing that exact type —
-// these are PERMISSION events (hookId/hookEvent make no sense here), not hook events. Public-
-// stream projection is explicitly NOT this task's job (WS-15's projector work); this is the same
-// private-audit-journal shape class as the hook audit journal.
+// classifier_cache_hit / permission_denied / fallback_state. Mirrors HookAuditRecorder's OWN
+// "auxiliary, never fails the decision it accompanies" pattern (hooks/runner.ts) rather than
+// reusing that exact type — these are PERMISSION events (hookId/hookEvent make no sense here), not
+// hook events. Public-stream projection is explicitly NOT this task's job (WS-15's projector
+// work); this is the same private-audit-journal shape class as the hook audit journal.
 // ---------------------------------------------------------------------------------------------
 
-export type AutoAuditEventType = "permission_evaluated" | "classifier_started" | "classifier_result" | "classifier_cache_hit" | "fallback_state";
+export type AutoAuditEventType = "permission_evaluated" | "classifier_started" | "classifier_result" | "classifier_cache_hit" | "permission_denied" | "fallback_state";
 
 export interface AutoAuditRecord {
   type: AutoAuditEventType;
@@ -126,6 +126,22 @@ export interface AutoAuditRecord {
   fallbackActive?: boolean;
   consecutive?: number;
   total?: number;
+  // Fix round 1 (§10.6-12, VERBATIM: "policy/version/model/latency fields"). `policyVersion`/
+  // `policyHash` are REQUIRED, not optional — every classify() call has `ctx.policy` in hand, and
+  // both are computed exactly ONCE per call and reused for every record it emits (see classify()'s
+  // own hoisted `policyVersion`/`policyHash` consts — the cache-key site reuses the same
+  // `policyHash` too, never a second computePolicyHash call). `latencyMs` is likewise always
+  // measurable (Date.now() at classify() entry vs. at record time) — the SAME precedent as
+  // hooks/runner.ts's own `durationMs` (ruleset.ts:667's HookAuditJournalRecord mirrors it too).
+  policyVersion: number;
+  policyHash: string;
+  latencyMs: number;
+  // `model` is typed-optional and UNPOPULATED at P2 — no classifier ships a model identity until
+  // the real model-routed classifier lands (P6/D13, WS-07 §10.6-4); alwaysNoVerdictClassifier and
+  // ScriptedClassifier both have no such concept to report. Field exists now so a P6 producer needs
+  // no interface change — the SAME field-exists-unpopulated discipline envelope.ts's own
+  // provenance/networkDestinations already use.
+  model?: string;
 }
 
 export interface AutoAuditRecorder {
@@ -194,14 +210,33 @@ export function createAutoEngine(options: AutoEngineOptions): AutoEngine {
 
   return {
     async classify(call: PermissionCall, ctx: EvaluationContext): Promise<AutoEngineVerdict> {
-      const startedAt = new Date().toISOString();
+      const startedAtMs = Date.now();
+      const startedAt = new Date(startedAtMs).toISOString();
+      // Fix round 1 (§10.6-12, VERBATIM: "policy/version/model/latency fields"): computed ONCE,
+      // here, and reused by EVERY record this call emits below — never recomputed per event (the
+      // cache-key site further down reuses this same `policyHash`, it does not call
+      // computePolicyHash a second time). `ctx.policy` is a fixed snapshot for the lifetime of one
+      // classify() call, mirroring evaluate()'s own "stamped once, at evaluation start" discipline
+      // for policyVersion.
+      const policyVersion = ctx.policy.version;
+      const policyHash = computePolicyHash(ctx.policy);
+      // Fix round 1: stamped on EVERY record below (not just permission_evaluated), so a consumer
+      // can correlate classifier_started/classifier_result/etc. back to their originating call
+      // without relying on emission order alone.
+      const callIdentity = {
+        ...(call.toolUseId !== undefined ? { toolUseId: call.toolUseId } : {}),
+        ...(call.agentId !== undefined ? { agentId: call.agentId } : {}),
+      };
+
       await recordAudit({
         type: "permission_evaluated",
         sessionId: options.sessionId,
         at: startedAt,
         toolName: call.toolName,
-        ...(call.toolUseId !== undefined ? { toolUseId: call.toolUseId } : {}),
-        ...(call.agentId !== undefined ? { agentId: call.agentId } : {}),
+        policyVersion,
+        policyHash,
+        latencyMs: Date.now() - startedAtMs,
+        ...callIdentity,
       });
 
       // WS-07 §10.5/§10.6-11: fallback check runs BEFORE any classifier consultation at all --
@@ -217,9 +252,13 @@ export function createAutoEngine(options: AutoEngineOptions): AutoEngine {
           sessionId: options.sessionId,
           at: startedAt,
           toolName: call.toolName,
+          policyVersion,
+          policyHash,
+          latencyMs: Date.now() - startedAtMs,
           fallbackActive: true,
           consecutive: counterState.consecutive,
           total: counterState.total,
+          ...callIdentity,
         });
         return { verdict: "no_verdict", category: "fallback", reasonCode: "auto_fallback_active", fallbackToPrompt: true };
       }
@@ -233,7 +272,7 @@ export function createAutoEngine(options: AutoEngineOptions): AutoEngine {
       const classifierContext: ClassifierContext = { autoConfig: normalizedConfig, classifierContext: envelope.classifierContext };
 
       const cacheKey: AutoVerdictCacheKey = {
-        policyHash: computePolicyHash(ctx.policy),
+        policyHash,
         envHash: computeEnvHash(ctx),
         sessionId: options.sessionId,
         generation: options.getGeneration?.() ?? 0,
@@ -247,13 +286,45 @@ export function createAutoEngine(options: AutoEngineOptions): AutoEngine {
           sessionId: options.sessionId,
           at: new Date().toISOString(),
           toolName: call.toolName,
+          policyVersion,
+          policyHash,
+          latencyMs: Date.now() - startedAtMs,
           verdict: cached.verdict.verdict,
           ...(cached.verdict.category !== undefined ? { category: cached.verdict.category } : {}),
+          ...callIdentity,
         });
+        // Fix round 1: a cache hit is STILL a genuine denial-as-tool_result outcome for THIS call
+        // -- evaluate() treats a cached verdict identically to a freshly-computed one
+        // (resolveAutoDecision, evaluator.ts) -- so a consumer watching for `permission_denied`
+        // alone must see it here too, not only on the classifier-consulted path below.
+        if (cached.verdict.verdict !== "allow") {
+          await recordAudit({
+            type: "permission_denied",
+            sessionId: options.sessionId,
+            at: new Date().toISOString(),
+            toolName: call.toolName,
+            policyVersion,
+            policyHash,
+            latencyMs: Date.now() - startedAtMs,
+            verdict: cached.verdict.verdict,
+            ...(cached.verdict.category !== undefined ? { category: cached.verdict.category } : {}),
+            ...(cached.verdict.reasonCode !== undefined ? { reasonCode: cached.verdict.reasonCode } : {}),
+            ...callIdentity,
+          });
+        }
         return cached.verdict; // a cache hit replays a PRIOR decision -- never touches the counters again
       }
 
-      await recordAudit({ type: "classifier_started", sessionId: options.sessionId, at: new Date().toISOString(), toolName: call.toolName });
+      await recordAudit({
+        type: "classifier_started",
+        sessionId: options.sessionId,
+        at: new Date().toISOString(),
+        toolName: call.toolName,
+        policyVersion,
+        policyHash,
+        latencyMs: Date.now() - startedAtMs,
+        ...callIdentity,
+      });
       const raw = await classifier.classify(envelope, classifierContext);
       const redactedReason = redactAuditReason(raw.auditReason, { cwd: ctx.cwd, home: ctx.home });
       await recordAudit({
@@ -261,11 +332,15 @@ export function createAutoEngine(options: AutoEngineOptions): AutoEngine {
         sessionId: options.sessionId,
         at: new Date().toISOString(),
         toolName: call.toolName,
+        policyVersion,
+        policyHash,
+        latencyMs: Date.now() - startedAtMs,
         verdict: raw.verdict,
         ...(raw.category !== undefined ? { category: raw.category } : {}),
         ...(raw.severity !== undefined ? { severity: raw.severity } : {}),
         ...(raw.reasonCode !== undefined ? { reasonCode: raw.reasonCode } : {}),
         ...(redactedReason !== undefined ? { auditReason: redactedReason } : {}),
+        ...callIdentity,
       });
 
       // Tier backstop (WS-07 §10.2/§10.6-7, defense in depth): a hard_deny/uncleared-soft_deny
@@ -289,6 +364,27 @@ export function createAutoEngine(options: AutoEngineOptions): AutoEngine {
       // cached alongside allow/deny (the cache key's own generation component is exactly that
       // "until new content" boundary).
       cache.set(cacheKey, { verdict: result, cachedAt: new Date().toISOString() });
+
+      // Fix round 1 (§10.6-12): the auto arm's own denial-as-tool_result outcome — evaluate()'s
+      // resolveAutoDecision (evaluator.ts) maps any non-"allow" verdict straight to a denied
+      // tool_result carrying the stable BLOCKED_BY_CLASSIFIER_MESSAGE string, never a prompt. This
+      // is the ONE first-class event a consumer can watch for "was this call denied" without also
+      // having to inspect classifier_result/classifier_cache_hit's own `verdict` sub-field.
+      if (verdict !== "allow") {
+        await recordAudit({
+          type: "permission_denied",
+          sessionId: options.sessionId,
+          at: new Date().toISOString(),
+          toolName: call.toolName,
+          policyVersion,
+          policyHash,
+          latencyMs: Date.now() - startedAtMs,
+          verdict,
+          ...(raw.category !== undefined ? { category: raw.category } : {}),
+          ...(raw.reasonCode !== undefined ? { reasonCode: raw.reasonCode } : {}),
+          ...callIdentity,
+        });
+      }
       return result;
     },
 

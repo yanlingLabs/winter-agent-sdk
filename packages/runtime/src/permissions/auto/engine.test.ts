@@ -226,18 +226,49 @@ describe("createAutoEngine -- audit records (WS-07 §10.6-12)", () => {
     return { records, audit: { record: (entry: AutoAuditRecord) => void records.push(entry) } };
   }
 
-  test("a fresh classifier consultation emits permission_evaluated, classifier_started, classifier_result in order", async () => {
+  test("a fresh classifier consultation emits permission_evaluated, classifier_started, classifier_result, permission_denied in order", async () => {
     const { records, audit } = collectingAudit();
     const engine = createAutoEngine({ sessionId: "s1", classifier: createScriptedClassifier({ verdict: "deny", category: "cat1" }), audit });
     await engine.classify(call("cmd"), ctx());
-    expect(records.map((r) => r.type)).toEqual(["permission_evaluated", "classifier_started", "classifier_result"]);
+    // Fix round 1: a genuine classifier "deny" is ALSO a denial-as-tool_result outcome -- the auto
+    // arm's own permission_denied fires as the fourth, final record.
+    expect(records.map((r) => r.type)).toEqual(["permission_evaluated", "classifier_started", "classifier_result", "permission_denied"]);
     expect(records[2]).toMatchObject({ verdict: "deny", category: "cat1" });
+    expect(records[3]).toMatchObject({ verdict: "deny", category: "cat1" });
   });
 
-  test("a cache hit emits classifier_cache_hit instead of classifier_started/classifier_result", async () => {
+  test("a fresh classifier 'allow' does NOT emit permission_denied", async () => {
+    const { records, audit } = collectingAudit();
+    const engine = createAutoEngine({ sessionId: "s1", classifier: createScriptedClassifier({ verdict: "allow" }), audit });
+    await engine.classify(call("cmd"), ctx());
+    expect(records.map((r) => r.type)).toEqual(["permission_evaluated", "classifier_started", "classifier_result"]);
+  });
+
+  test("P2's real production path -- alwaysNoVerdictClassifier's no_verdict ALSO emits permission_denied (fail-closed denial-as-tool_result, WS-07 §10.6-5)", async () => {
+    const { records, audit } = collectingAudit();
+    const engine = createAutoEngine({ sessionId: "s1", classifier: alwaysNoVerdictClassifier, audit });
+    await engine.classify(call("cmd"), ctx());
+    expect(records.map((r) => r.type)).toEqual(["permission_evaluated", "classifier_started", "classifier_result", "permission_denied"]);
+    expect(records[3]).toMatchObject({ verdict: "no_verdict", reasonCode: "p2_no_real_classifier" });
+  });
+
+  test("a cache hit REPLAYING a denial emits classifier_cache_hit THEN permission_denied", async () => {
     const { records, audit } = collectingAudit();
     const cache = createInMemoryVerdictCache();
     const engine = createAutoEngine({ sessionId: "s1", classifier: createScriptedClassifier({ verdict: "deny" }), cache, audit });
+    const c = call("same");
+    await engine.classify(c, ctx());
+    records.length = 0;
+    await engine.classify(c, ctx());
+    // Fix round 1: the cache-hit path produces a genuine denial-as-tool_result for THIS call too --
+    // a consumer watching permission_denied alone must not miss cache-served denials.
+    expect(records.map((r) => r.type)).toEqual(["permission_evaluated", "classifier_cache_hit", "permission_denied"]);
+  });
+
+  test("a cache hit REPLAYING an allow does NOT emit permission_denied", async () => {
+    const { records, audit } = collectingAudit();
+    const cache = createInMemoryVerdictCache();
+    const engine = createAutoEngine({ sessionId: "s1", classifier: createScriptedClassifier({ verdict: "allow" }), cache, audit });
     const c = call("same");
     await engine.classify(c, ctx());
     records.length = 0;
@@ -269,6 +300,62 @@ describe("createAutoEngine -- audit records (WS-07 §10.6-12)", () => {
     await engine.classify(call("cmd"), ctx({ cwd: "/work" }));
     const resultRecord = records.find((r) => r.type === "classifier_result")!;
     expect(resultRecord.auditReason).toBe("wrote a secret under <redacted-cwd>/.env");
+  });
+
+  test("Fix round 1: every record carries policyVersion/policyHash/latencyMs, computed ONCE and reused; model stays absent (§10.6-12 pinned fields)", async () => {
+    const { records, audit } = collectingAudit();
+    const policy: PolicyState = { mode: "auto", version: 7, rules: emptyRuleSet() };
+    const engine = createAutoEngine({ sessionId: "s1", classifier: createScriptedClassifier({ verdict: "deny" }), audit });
+    await engine.classify(call("cmd"), ctx({ policy }));
+    expect(records.map((r) => r.type)).toEqual(["permission_evaluated", "classifier_started", "classifier_result", "permission_denied"]);
+    for (const record of records) {
+      expect(record.policyVersion).toBe(7);
+      expect(typeof record.policyHash).toBe("string");
+      expect(record.policyHash.length).toBeGreaterThan(0);
+      expect(typeof record.latencyMs).toBe("number");
+      expect(record.latencyMs).toBeGreaterThanOrEqual(0);
+      expect(record.model).toBeUndefined(); // typed-optional, unpopulated until P6/D13
+    }
+    // Reused, never recomputed per event: identical policyHash on every record from this ONE call.
+    expect(new Set(records.map((r) => r.policyHash)).size).toBe(1);
+  });
+
+  test("Fix round 1: toolUseId/agentId are stamped on EVERY record kind a single call produces, not just permission_evaluated", async () => {
+    const { records, audit } = collectingAudit();
+    const engine = createAutoEngine({ sessionId: "s1", classifier: createScriptedClassifier({ verdict: "deny" }), audit });
+    const identifiedCall: PermissionCall = { toolName: "Bash", input: { command: "cmd" }, toolUseId: "tu-1", agentId: "agent-1" };
+    await engine.classify(identifiedCall, ctx());
+    expect(records.length).toBe(4); // permission_evaluated, classifier_started, classifier_result, permission_denied
+    for (const record of records) {
+      expect(record.toolUseId).toBe("tu-1");
+      expect(record.agentId).toBe("agent-1");
+    }
+  });
+
+  test("Fix round 1: toolUseId/agentId are stamped on fallback_state and on a cache-hit's classifier_cache_hit + permission_denied too", async () => {
+    const { records: fallbackRecords, audit: fallbackAudit } = collectingAudit();
+    const fallbackEngine = createAutoEngine({ sessionId: "s1", classifier: createScriptedClassifier({ verdict: "deny" }), audit: fallbackAudit });
+    for (let i = 0; i < AUTO_FALLBACK_CONSECUTIVE_THRESHOLD; i++) {
+      await fallbackEngine.classify({ toolName: "Bash", input: { command: `cmd${i}` }, toolUseId: `tu-${i}`, agentId: "agent-1" }, ctx());
+    }
+    fallbackRecords.length = 0;
+    await fallbackEngine.classify({ toolName: "Bash", input: { command: "cmd-after" }, toolUseId: "tu-after", agentId: "agent-1" }, ctx());
+    const fallbackStateRecord = fallbackRecords.find((r) => r.type === "fallback_state")!;
+    expect(fallbackStateRecord.toolUseId).toBe("tu-after");
+    expect(fallbackStateRecord.agentId).toBe("agent-1");
+
+    const { records: cacheRecords, audit: cacheAudit } = collectingAudit();
+    const cache = createInMemoryVerdictCache();
+    const cacheEngine = createAutoEngine({ sessionId: "s1", classifier: createScriptedClassifier({ verdict: "deny" }), cache, audit: cacheAudit });
+    const identifiedCall: PermissionCall = { toolName: "Bash", input: { command: "same" }, toolUseId: "tu-cache", agentId: "agent-2" };
+    await cacheEngine.classify(identifiedCall, ctx());
+    cacheRecords.length = 0;
+    await cacheEngine.classify(identifiedCall, ctx());
+    expect(cacheRecords.map((r) => r.type)).toEqual(["permission_evaluated", "classifier_cache_hit", "permission_denied"]);
+    for (const record of cacheRecords) {
+      expect(record.toolUseId).toBe("tu-cache");
+      expect(record.agentId).toBe("agent-2");
+    }
   });
 });
 
