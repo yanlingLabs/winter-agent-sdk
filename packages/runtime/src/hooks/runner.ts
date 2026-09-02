@@ -46,6 +46,19 @@ import { reduceHookOutcomes, type HookComposite, type HookOutcome, type HookOutc
 // exchanging anything at config time; this is simply where that identity gets attached to the
 // per-invocation request that actually needs it. `hookId` is always present (every SourcedHookEntry
 // has a non-optional `.id`); `hookName` mirrors the audit record's own optional field exactly.
+//
+// §10 REDACTION (WS-08 §10: "opaque provider blobs (encrypted_content / reasoning-item payloads)
+// are excluded from every hook payload — their only sink is the transcript store"). Structurally
+// true by construction at P2, not by an explicit filter here: `input`/`payload` above are built
+// exclusively from `PermissionCall.input` (tool-call input, engine.ts's own plain-object coercion)
+// and small literal shapes this runner's callers construct by hand (e.g. `{prompt}`, `{tool_response}`,
+// `{error}`, `{reason}` — see engine.ts's own fireObservationalHook call sites). Winter's
+// ProviderTurn/ProviderMessage types (engine.ts) carry NO encrypted_content/reasoning_item field at
+// all at this phase — that surface belongs to a later provider-integration phase (WS-13-adjacent) —
+// so there is nothing of that shape for any code path here to accidentally forward. This comment is
+// the structural assertion the task instructions ask for, not a runtime check: the day a future
+// phase's ProviderMessage grows such a field, whoever wires it into a hook payload must re-derive
+// this guarantee rather than assume this comment still holds.
 export interface HookInvocationRequest {
   event: HookEvent;
   matchedMatcher?: string;
