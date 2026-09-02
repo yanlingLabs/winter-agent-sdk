@@ -1631,6 +1631,33 @@ describe("Task 12 — auto mode arm: 3-consecutive/20-total fallback, end-to-end
     expect(record.decision).toBe("deny");
     expect(record.mechanism).toBe("autoEngine");
   });
+
+  // Item 11 (P2 fix-wave): the SAME "headless during fallback" scenario above, now also proving the
+  // audit gap is closed -- the real createAutoEngine's own noteHeadlessFallbackDenial seam method
+  // (auto/engine.ts) fires exactly once, for the FINAL (headless-denied) call only, never for the
+  // AUTO_FALLBACK_CONSECUTIVE_THRESHOLD calls that tripped the fallback in the first place (those
+  // were genuine classifier denials, already separately audited via classify()'s own
+  // "permission_denied" emission).
+  test("Item 11: headless during fallback emits a permission_denied AUDIT record via the real AutoEngine seam, exactly once, for the headless call only", async () => {
+    const auditRecords: Array<{ type: string; toolUseId?: string }> = [];
+    const scripted = createScriptedClassifier({ verdict: "deny" });
+    const autoEngine = createAutoEngine({
+      sessionId: "s1",
+      classifier: scripted,
+      audit: { record: (entry) => void auditRecords.push(entry) },
+    });
+    for (let i = 0; i < AUTO_FALLBACK_CONSECUTIVE_THRESHOLD; i++) {
+      await evaluate(call("Bash", { command: `curl https://example.com/${i}` }), baseCtx({ policy: policy({ mode: "auto" }), autoEngine }));
+    }
+    const headlessPermissionDeniedBefore = auditRecords.filter((r) => r.type === "permission_denied").length;
+
+    const record = await evaluate({ toolName: "Bash", input: { command: "curl https://example.com/after" }, toolUseId: "headless-call" }, baseCtx({ policy: policy({ mode: "auto" }), autoEngine }));
+    expect(record.decision).toBe("deny");
+
+    const headlessPermissionDeniedRecords = auditRecords.filter((r) => r.type === "permission_denied").slice(headlessPermissionDeniedBefore);
+    expect(headlessPermissionDeniedRecords).toHaveLength(1);
+    expect(headlessPermissionDeniedRecords[0]!.toolUseId).toBe("headless-call");
+  });
 });
 
 // --- Task 12 (WS-07 §6.5): plan mode's classifier borrow -- BOTH the wiring and the practical

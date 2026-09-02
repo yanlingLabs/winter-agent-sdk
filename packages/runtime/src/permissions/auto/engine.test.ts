@@ -404,6 +404,41 @@ describe("createAutoEngine -- audit records (WS-07 §10.6-12)", () => {
       expect(record.agentId).toBe("agent-2");
     }
   });
+
+  // Item 11 (P2 fix-wave): the headless-fallback audit gap. A fallback trip's own "fallback_state"
+  // record (above) fires BEFORE any human involvement is even attempted -- it does NOT itself mean
+  // the call was denied, only that the classifier was skipped. The actual denial only happens later,
+  // in evaluator.ts's resolveAutoDecision, once NEITHER a PermissionRequest hook NOR canUseTool
+  // answers -- structurally outside classify()'s own call, which already returned. Pre-fix, that
+  // denial had no matching AutoAuditRecord anywhere.
+  test("Item 11: noteHeadlessFallbackDenial emits a permission_denied audit record carrying the pinned policy/latency shape", async () => {
+    const { records, audit } = collectingAudit();
+    const engine = createAutoEngine({ sessionId: "s1", audit });
+    const policy: PolicyState = { mode: "auto", version: 3, rules: emptyRuleSet() };
+    const evalCtx = ctx({ policy });
+    const identifiedCall: PermissionCall = { toolName: "Bash", input: { command: "long-task" }, toolUseId: "tu-headless", agentId: "agent-3" };
+
+    await engine.noteHeadlessFallbackDenial?.(identifiedCall, evalCtx);
+
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({
+      type: "permission_denied",
+      sessionId: "s1",
+      toolName: "Bash",
+      toolUseId: "tu-headless",
+      agentId: "agent-3",
+      policyVersion: 3,
+      reasonCode: "auto_fallback_no_prompt_handler",
+    });
+    expect(typeof records[0]!.policyHash).toBe("string");
+    expect(records[0]!.policyHash.length).toBeGreaterThan(0);
+    expect(typeof records[0]!.at).toBe("string");
+  });
+
+  test("Item 11: the NO_OP audit sink (createAutoEngine's own default) makes noteHeadlessFallbackDenial a safe no-op -- never throws", async () => {
+    const engine = createAutoEngine({ sessionId: "s1" }); // no `audit` option -- defaults to NO_OP_AUTO_AUDIT_RECORDER
+    await expect(engine.noteHeadlessFallbackDenial?.(call("cmd"), ctx())).resolves.toBeUndefined();
+  });
 });
 
 describe("redactAuditReason -- unit", () => {

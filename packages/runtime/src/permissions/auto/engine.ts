@@ -410,5 +410,29 @@ export function createAutoEngine(options: AutoEngineOptions): AutoEngine {
     noteFallbackResolution(outcome: "allow" | "deny"): void {
       if (outcome === "allow") counters.recordAllow(options.sessionId);
     },
+
+    // Item 11 (P2 fix-wave): closes the headless-fallback audit gap. Ratified concern from Task
+    // 12's own fix round 1: "headless-fallback synthesized deny emits no permission_denied." The
+    // denial this accompanies never went through classify() at all for THIS call (the fallback
+    // trip that routed it here already happened, and already emitted its own "fallback_state"
+    // record, on a PRIOR classify() call — possibly for a different tool call entirely, since the
+    // fallback stays tripped across calls until an allow un-trips it) — so there is no in-flight
+    // classify()-scoped policyVersion/policyHash/latencyMs to reuse; both are recomputed fresh here,
+    // and latencyMs is 0 (no classifier round-trip happened for this specific denial — it never
+    // reached the classifier at all, per WS-07 §10.5's own "auto pauses" semantics).
+    async noteHeadlessFallbackDenial(call: PermissionCall, ctx: EvaluationContext): Promise<void> {
+      await recordAudit({
+        type: "permission_denied",
+        sessionId: options.sessionId,
+        at: new Date().toISOString(),
+        toolName: call.toolName,
+        policyVersion: ctx.policy.version,
+        policyHash: computePolicyHash(ctx.policy),
+        latencyMs: 0,
+        reasonCode: "auto_fallback_no_prompt_handler",
+        ...(call.toolUseId !== undefined ? { toolUseId: call.toolUseId } : {}),
+        ...(call.agentId !== undefined ? { agentId: call.agentId } : {}),
+      });
+    },
   };
 }

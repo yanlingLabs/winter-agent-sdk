@@ -214,6 +214,23 @@ export interface AutoEngine {
   // resolves — see AutoEngineVerdict.fallbackToPrompt's own comment. Optional: NO_OPINION_AUTO_ENGINE
   // has no counters to update, so omitting it is a safe no-op there.
   noteFallbackResolution?(outcome: "allow" | "deny"): void;
+  // Item 11 (P2 fix-wave): a NARROW, single-purpose seam method — deliberately NOT a widening of
+  // noteFallbackResolution's own signature (that method's whole job is the "allow" un-trip counter
+  // update per WS-07 §10.5; folding an audit emission into it would conflate two independent
+  // concerns behind one boolean-ish outcome). resolveAutoDecision (below) calls this exactly once,
+  // at its own headless-fallback SYNTHESIZED deny site — no PermissionRequest hook and no
+  // canUseTool answered a fallback-routed prompt at all. That denial previously had NO matching
+  // AutoAuditRecord anywhere: classify()'s own "fallback_state" emission fires BEFORE the fallback
+  // prompt is even attempted (WS-07 §10.5's own "auto pauses" check, before ANY human involvement),
+  // and classify()'s own "permission_denied" emission is scoped to a GENUINE classifier verdict —
+  // structurally unreachable for this case, since classify() already returned once fallback tripped.
+  // This seam method is what closes that gap; it must live on AutoEngine (not be inlined into
+  // evaluator.ts itself) because the audit recorder + sessionId are createAutoEngine's OWN closure
+  // state, invisible to evaluator.ts by design (mirrors classify()'s own seam-not-call-site
+  // reasoning — see AutoEngineVerdict.fallbackToPrompt's comment for the identical precedent one
+  // level up). Optional: NO_OPINION_AUTO_ENGINE has no audit sink to write to, so omitting it is a
+  // safe no-op there.
+  noteHeadlessFallbackDenial?(call: PermissionCall, ctx: EvaluationContext): void | Promise<void>;
 }
 
 // --- SpecialChecks seam (T7 fills) --------------------------------------------------------------------
@@ -916,16 +933,23 @@ async function resolveAutoDecision(
     record = hookAnswer;
   } else {
     const result = await ctx.promptStage.prompt(call, ctx, meta);
-    record =
-      result === null
-        ? {
-            decision: "deny",
-            mechanism: "autoEngine",
-            policyVersion,
-            message: "Denied: auto-mode fallback requires human approval and no prompt handler answered (WS-07 §10.5)",
-            ...(carriedTransform !== undefined ? { transformedInput: carriedTransform } : {}),
-          }
-        : buildRecordFromPromptResult(result, policyVersion, carriedTransform);
+    if (result === null) {
+      // Item 11 (P2 fix-wave): the headless-fallback synthesized deny — no PermissionRequest hook
+      // (checked above) and no canUseTool answered this fallback-routed prompt at all. See
+      // AutoEngine.noteHeadlessFallbackDenial's own header for why this must be a seam call, not an
+      // audit record built inline here (evaluator.ts has no access to createAutoEngine's own audit
+      // recorder/sessionId closure state).
+      await ctx.autoEngine.noteHeadlessFallbackDenial?.(call, ctx);
+      record = {
+        decision: "deny",
+        mechanism: "autoEngine",
+        policyVersion,
+        message: "Denied: auto-mode fallback requires human approval and no prompt handler answered (WS-07 §10.5)",
+        ...(carriedTransform !== undefined ? { transformedInput: carriedTransform } : {}),
+      };
+    } else {
+      record = buildRecordFromPromptResult(result, policyVersion, carriedTransform);
+    }
   }
   ctx.autoEngine.noteFallbackResolution?.(record.decision === "allow" ? "allow" : "deny");
   return record;
