@@ -283,6 +283,39 @@ function interpretPreToolUse(sync: Record<string, unknown>, opts: { validator: T
   const message = typeof pre?.["permissionDecisionReason"] === "string" ? (pre["permissionDecisionReason"] as string) : undefined;
 
   if (decision === undefined) {
+    // Finding 2 (P2 fix-wave, IMPORTANT): the pinned `SyncHookJSONOutput.decision?: "approve" |
+    // "block"` top-level channel — the classic pre-hookSpecificOutput legacy API, still a typed
+    // member of the envelope every event shares (sdk/src/permissions/types.ts). `permissionDecision`
+    // (above) wins when both are present — this branch is reached ONLY on its absence, so there is
+    // no runtime conflict to resolve, just a fallback.
+    //
+    // Capture-verified, not assumed (P2 fix-wave capture check — a RUN_OFFICIAL_CAPTURE loopback
+    // probe against the pinned 0.3.250 release, results in the fix-wave report): a PreToolUse hook
+    // returning `{decision:"block", reason:"…"}` with NO hookSpecificOutput at all IS honored by the
+    // official runtime — the tool never executes, its tool_result carries the hook's own `reason`
+    // string verbatim (tagged `non_execution_kind:"permission-rule"` on the wire), and the denial
+    // lands in `result.permission_denials` (Finding 3's own ledger — the SAME capture independently
+    // confirmed that array's 3-field shape). Pre-fix, Winter's silence here resolved this exact
+    // input toward permission (a well-formed, typed, present field whose absent reader compiles
+    // clean and executes the call) — the phase's signature fail-open shape, now closed.
+    //
+    // Distinct from interpretGeneric's own exhaustiveness guard (a SEPARATE fix-wave item covering
+    // FUTURE decision-capable events falling through to the generic interpreter, never wired here):
+    // this is a pinned envelope field on an event that already has its own dedicated interpreter.
+    const rawLegacyDecision = sync["decision"];
+    if (rawLegacyDecision !== undefined) {
+      if (rawLegacyDecision !== "approve" && rawLegacyDecision !== "block") {
+        return { kind: "error", reason: `malformed top-level decision: ${JSON.stringify(rawLegacyDecision)}` };
+      }
+      const legacyMessage = typeof sync["reason"] === "string" ? sync["reason"] : undefined;
+      return {
+        kind: "decision",
+        decision: rawLegacyDecision === "block" ? "deny" : "allow",
+        ...(transformedInput !== undefined ? { transformedInput } : {}),
+        ...(extraContext !== undefined ? { extraContext } : {}),
+        ...(legacyMessage !== undefined ? { message: legacyMessage } : {}),
+      };
+    }
     return { kind: "none", ...(transformedInput !== undefined ? { transformedInput } : {}), ...(extraContext !== undefined ? { extraContext } : {}) };
   }
   return {

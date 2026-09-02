@@ -62,6 +62,22 @@ describe("createHookStage -- allow/deny/none map directly onto the existing 3-va
     expect(decision).toEqual({ decision: "deny", hookId: "h1", message: "no way" });
   });
 
+  // Finding 2 (P2 fix-wave, IMPORTANT): the pinned legacy top-level SyncHookJSONOutput.decision
+  // channel ("approve"/"block", no hookSpecificOutput at all) — capture-verified against the pinned
+  // 0.3.250 official runtime (see runner.ts's interpretPreToolUse for the full trace). Proves this
+  // reaches evaluator.ts's own seam end-to-end through the adapter, exactly like the
+  // hookSpecificOutput-shaped deny just above.
+  test("Finding 2: a PreToolUse hook's legacy top-level {decision:\"block\"} (no hookSpecificOutput) maps to seam 'deny', carrying the reason as message", async () => {
+    const stage = createHookStage({
+      registry: fakeRegistry([entry("h1")]),
+      invoker: fixedInvoker({ decision: "block", reason: "nope" }),
+      audit: noopAudit(),
+      sessionId: "s1",
+    });
+    const decision = await stage.preToolUse(CALL, CTX);
+    expect(decision).toEqual({ decision: "deny", hookId: "h1", message: "nope" });
+  });
+
   test("a 'none' outcome with a transform maps to seam 'no_opinion' but STILL carries the transform (evaluate() applies it regardless of decision)", async () => {
     const stage = createHookStage({
       registry: fakeRegistry([entry("h1")]),

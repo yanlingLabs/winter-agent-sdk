@@ -173,6 +173,64 @@ describe("runHooks -- PreToolUse decisions + invocation-time transform chaining"
   });
 });
 
+// Finding 2 (P2 fix-wave, IMPORTANT): the pinned SyncHookJSONOutput.decision top-level legacy
+// channel ("approve"/"block") — capture-verified against the pinned 0.3.250 official runtime (see
+// interpretPreToolUse's own comment, and the fix-wave report, for the full loopback trace): a
+// PreToolUse hook returning `{decision:"block", reason:"…"}` with NO hookSpecificOutput at all IS
+// honored (the tool never executes; the denial lands in result.permission_denials).
+describe("runHooks -- Finding 2: PreToolUse's legacy top-level {decision} channel (no hookSpecificOutput)", () => {
+  test("{decision:\"block\", reason:\"nope\"} composes to a deny, message carries the reason verbatim", async () => {
+    const { invoker } = fixedInvoker({ decision: "block", reason: "nope" });
+    const { audit, records } = recordingAudit();
+    const composite = await runHooks("PreToolUse", { toolName: "Bash", input: { command: "rm -rf /" } }, ctxWith({ registry: fakeRegistry([entry("h1", "PreToolUse")]), invoker, audit }));
+    expect(composite.decision).toBe("deny");
+    expect(composite.message).toBe("nope");
+    expect(records[0]).toMatchObject({ outcome: "decision", decision: "deny" });
+  });
+
+  test("{decision:\"approve\"} (sibling) composes to an allow-shaped composite — composes with Finding 1's own new hook-allow resolution", async () => {
+    const { invoker } = fixedInvoker({ decision: "approve" });
+    const composite = await runHooks("PreToolUse", { toolName: "Bash", input: {} }, ctxWith({ registry: fakeRegistry([entry("h1", "PreToolUse")]), invoker }));
+    expect(composite.decision).toBe("allow");
+  });
+
+  test("permissionDecision wins over the legacy top-level channel when BOTH are present (newer API takes precedence)", async () => {
+    const { invoker } = fixedInvoker({ decision: "block", reason: "legacy says no", hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "allow" } });
+    const composite = await runHooks("PreToolUse", { toolName: "Bash", input: {} }, ctxWith({ registry: fakeRegistry([entry("h1", "PreToolUse")]), invoker }));
+    expect(composite.decision).toBe("allow");
+    expect(composite.message).toBeUndefined(); // the legacy reason never surfaces once permissionDecision wins
+  });
+
+  test("a malformed top-level decision value (not \"approve\"/\"block\") is a hook contract error, not a silent none", async () => {
+    const { invoker } = fixedInvoker({ decision: "yes-please" });
+    const { audit, records } = recordingAudit();
+    const composite = await runHooks("PreToolUse", { toolName: "Bash", input: {} }, ctxWith({ registry: fakeRegistry([entry("h1", "PreToolUse")]), invoker, audit }));
+    expect(composite.decision).toBeUndefined();
+    expect(records[0]).toMatchObject({ outcome: "error" });
+  });
+
+  test("absent decision entirely (neither top-level nor hookSpecificOutput) stays a genuine no-opinion 'none', unaffected", async () => {
+    const { invoker } = fixedInvoker({});
+    const composite = await runHooks("PreToolUse", { toolName: "Bash", input: {} }, ctxWith({ registry: fakeRegistry([entry("h1", "PreToolUse")]), invoker }));
+    expect(composite.decision).toBeUndefined();
+  });
+
+  test("a top-level {decision:\"block\"} still composes correctly alongside a later, stricter hook (WS-08 §4 rank order applies identically)", async () => {
+    const { invoker } = sequenceInvoker([
+      { decision: "block", reason: "legacy block from h1" },
+      { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: "h2's own deny" } },
+    ]);
+    const composite = await runHooks(
+      "PreToolUse",
+      { toolName: "Bash", input: {} },
+      ctxWith({ registry: fakeRegistry([entry("h1", "PreToolUse"), entry("h2", "PreToolUse")]), invoker }),
+    );
+    // both are "deny" rank -- earliest-of-tie wins the scalar slot (reducer.ts's own documented rule).
+    expect(composite.decision).toBe("deny");
+    expect(composite.message).toBe("legacy block from h1");
+  });
+});
+
 // T10 (WS-08 §6): PermissionRequest's OWN narrower pinned shape --
 // `hookSpecificOutput.decision.{behavior:"allow"|"deny", ...}` -- structurally different from
 // PreToolUse's flat `permissionDecision` field. Without a DEDICATED interpreter this event falls
