@@ -19,6 +19,7 @@ import { runEngine, type Provider, type ProviderMessage, type ContentBlock, type
 import { echoProvider, scriptedProvider, stubExecutor } from "./provider/mock.ts";
 import { inMemoryProcess } from "./testing.ts";
 import { WinterPermissionError } from "./permissions/policy-state.ts";
+import { createInMemoryApprovalStore, type DurableApprovalStore } from "./permissions/approvals.ts";
 
 // Drains a WinterFrame source fully — used whenever the test writes ALL of its input frames
 // (including end_input/EOF) up front, so there's no ping-pong race between the writer and the
@@ -891,6 +892,176 @@ test("Task 10 / WS-08 §11: a PermissionRequest hook's updatedPermissions cannot
   // exactly as it already does for an equivalent canUseTool answer (policy-state.ts's own gate is
   // mechanism-agnostic by construction — this fixture exercises the "hook" mechanism specifically).
   expect(permissionRequestCount).toBe(2);
+});
+
+// --- Task 11 (WS-07 §9 / WS-08 §7): defer parks the call durably -----------------------------------
+
+// Answers every "hook" control_request generically EXCEPT PreToolUse, which gets `hookOutput` —
+// mirrors the "hooks" describe block's own generic-answer loop above.
+async function drainAnsweringPreToolUse(host: { input: AsyncIterable<WinterFrame>; output: { write(f: WinterFrame): void } }, hookOutput: unknown): Promise<WinterFrame[]> {
+  const collected: WinterFrame[] = [];
+  for await (const f of host.input) {
+    collected.push(f);
+    if (f.type === "control_request" && (f as ControlRequestFrame).subtype === "hook") {
+      const cf = f as ControlRequestFrame;
+      const payload = cf.payload as { event: string };
+      host.output.write({
+        type: "control_response",
+        requestId: cf.requestId,
+        ok: true,
+        payload: payload.event === "PreToolUse" ? hookOutput : {},
+      });
+    }
+  }
+  return collected;
+}
+
+test("Task 11: a PreToolUse hook 'defer' parks the call -- [deferred] tool_result, permission_deferred message, pending approval record", async () => {
+  const { host, runtime } = createInMemoryChannel();
+  const approvalStore = createInMemoryApprovalStore();
+  const scripted = scriptedProvider([{ kind: "tool_use", calls: [{ id: "call1", name: "long_task", input: { x: 1 } }] }, { kind: "text", text: "done" }]);
+  const config = baseConfig({ hooks: { PreToolUse: [{ hookCount: 1, source: "sdk" }] } });
+  const done = runEngine({ config, input: runtime.input, output: runtime.output, provider: scripted, tools: stubExecutor, approvalStore });
+
+  host.output.write({ type: "user", text: "go" });
+  host.output.write({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined });
+
+  const frames = await drainAnsweringPreToolUse(host, {
+    hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "defer", permissionDecisionReason: "needs durable approval" },
+  });
+  const code = await done;
+  expect(code).toBe(0);
+
+  const msgs = dataMessages(frames);
+  const userMsg = msgs.find((m) => m.type === "user") as { message: { content: ContentBlock[] } };
+  expect(userMsg.message.content).toEqual([{ type: "tool_result", tool_use_id: "call1", content: "[deferred]", deferred: true }]);
+
+  const deferredMsg = msgs.find((m) => m.type === "system" && (m as { subtype?: string }).subtype === "permission_deferred") as { tool_use_id: string; message: string } | undefined;
+  expect(deferredMsg).toBeDefined();
+  expect(deferredMsg!.tool_use_id).toBe("call1");
+  expect(deferredMsg!.message).toBe("needs durable approval");
+
+  // The turn's terminal result still emits (the brief's own "the run can END cleanly with the
+  // record persisted") -- the round never gets to "done" (there was only ever one call, and it
+  // deferred rather than executed), but a result frame is unconditionally written every turn.
+  const resultMsg = msgs.find((m) => m.type === "result");
+  expect(resultMsg).toBeDefined();
+
+  const pending = approvalStore.pendingFor({ sessionId: "s" });
+  expect(pending).toHaveLength(1);
+  expect(pending[0]!.toolUseID).toBe("call1");
+  expect(pending[0]!.toolName).toBe("long_task");
+  expect(pending[0]!.originalInput).toEqual({ x: 1 });
+  expect(pending[0]!.state).toBe("pending");
+});
+
+test("Task 11: no approvalStore reachable -- defer fails closed to a denial, never emits [deferred]", async () => {
+  const { host, runtime } = createInMemoryChannel();
+  const scripted = scriptedProvider([{ kind: "tool_use", calls: [{ id: "call1", name: "long_task", input: {} }] }]);
+  const config = baseConfig({ hooks: { PreToolUse: [{ hookCount: 1, source: "sdk" }] } });
+  // approvalStore deliberately OMITTED.
+  const done = runEngine({ config, input: runtime.input, output: runtime.output, provider: scripted, tools: stubExecutor });
+
+  host.output.write({ type: "user", text: "go" });
+  host.output.write({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined });
+
+  const frames = await drainAnsweringPreToolUse(host, { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "defer" } });
+  await done;
+
+  const msgs = dataMessages(frames);
+  const userMsg = msgs.find((m) => m.type === "user") as { message: { content: ContentBlock[] } };
+  const block = userMsg.message.content[0]!;
+  expect(block).toMatchObject({ type: "tool_result", tool_use_id: "call1", denied: true });
+  expect((block as { content: string }).content).toMatch(/cannot defer/i);
+  expect((block as { deferred?: boolean }).deferred).toBeUndefined();
+});
+
+test("Task 11: approvalStore.record() throwing fails closed to a denial naming the store failure", async () => {
+  const { host, runtime } = createInMemoryChannel();
+  const throwingStore: DurableApprovalStore = {
+    ...createInMemoryApprovalStore(),
+    record() {
+      throw new Error("disk full");
+    },
+  };
+  const scripted = scriptedProvider([{ kind: "tool_use", calls: [{ id: "call1", name: "long_task", input: {} }] }]);
+  const config = baseConfig({ hooks: { PreToolUse: [{ hookCount: 1, source: "sdk" }] } });
+  const done = runEngine({ config, input: runtime.input, output: runtime.output, provider: scripted, tools: stubExecutor, approvalStore: throwingStore });
+
+  host.output.write({ type: "user", text: "go" });
+  host.output.write({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined });
+
+  const frames = await drainAnsweringPreToolUse(host, { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "defer" } });
+  await done;
+
+  const msgs = dataMessages(frames);
+  const userMsg = msgs.find((m) => m.type === "user") as { message: { content: ContentBlock[] } };
+  const block = userMsg.message.content[0]! as { content: string; denied?: boolean; deferred?: boolean };
+  expect(block.denied).toBe(true);
+  expect(block.deferred).toBeUndefined();
+  expect(block.content).toMatch(/disk full/);
+});
+
+test("Task 11: dontAsk denies a hook-forced defer immediately -- no pending record is ever created", async () => {
+  const { host, runtime } = createInMemoryChannel();
+  const approvalStore = createInMemoryApprovalStore();
+  const scripted = scriptedProvider([{ kind: "tool_use", calls: [{ id: "call1", name: "long_task", input: {} }] }]);
+  const config = baseConfig({ permissionMode: "dontAsk", hooks: { PreToolUse: [{ hookCount: 1, source: "sdk" }] } });
+  const done = runEngine({ config, input: runtime.input, output: runtime.output, provider: scripted, tools: stubExecutor, approvalStore });
+
+  host.output.write({ type: "user", text: "go" });
+  host.output.write({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined });
+
+  const frames = await drainAnsweringPreToolUse(host, { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "defer" } });
+  await done;
+
+  const msgs = dataMessages(frames);
+  const userMsg = msgs.find((m) => m.type === "user") as { message: { content: ContentBlock[] } };
+  expect(userMsg.message.content[0]).toMatchObject({ denied: true });
+  expect(approvalStore.listFor({ sessionId: "s" })).toHaveLength(0);
+});
+
+test("Task 11: a mode switch (either door) cancels every still-pending durable approval for the session", async () => {
+  const { host, runtime } = createInMemoryChannel();
+  const approvalStore = createInMemoryApprovalStore();
+  const scripted = scriptedProvider([{ kind: "tool_use", calls: [{ id: "call1", name: "long_task", input: {} }] }]);
+  const config = baseConfig({ hooks: { PreToolUse: [{ hookCount: 1, source: "sdk" }] } });
+  const done = runEngine({ config, input: runtime.input, output: runtime.output, provider: scripted, tools: stubExecutor, approvalStore });
+
+  host.output.write({ type: "user", text: "go" });
+
+  // Sequenced by OBSERVATION, not timing: only write the mode-switch control_request (door 1, the
+  // direct set_permission_mode control request) once this turn's OWN terminal `result` frame has
+  // been seen on the wire -- by then approvalStore.record() has unconditionally already run (it
+  // happens synchronously earlier in the same per-call code path, well before the round's result
+  // frame is written), so there is no race between "the approval exists" and "the switch fires".
+  let sawResult = false;
+  const collected: WinterFrame[] = [];
+  for await (const f of host.input) {
+    collected.push(f);
+    if (f.type === "control_request" && (f as ControlRequestFrame).subtype === "hook") {
+      const cf = f as ControlRequestFrame;
+      host.output.write({
+        type: "control_response",
+        requestId: cf.requestId,
+        ok: true,
+        payload: { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "defer" } },
+      });
+    }
+    if (f.type === "data" && (f as { message: SdkMessage }).message.type === "result" && !sawResult) {
+      sawResult = true;
+      expect(approvalStore.pendingFor({ sessionId: "s" })).toHaveLength(1); // the record already exists by now
+      host.output.write({ type: "control_request", requestId: "r2", subtype: "set_permission_mode", payload: "plan" });
+      host.output.write({ type: "control_request", requestId: "r3", subtype: "end_input", payload: undefined });
+    }
+  }
+  await done;
+
+  expect(sawResult).toBe(true);
+  const all = approvalStore.listFor({ sessionId: "s" });
+  expect(all).toHaveLength(1);
+  expect(all[0]!.state).toBe("cancelled");
+  expect(all[0]!.resolution?.reason).toMatch(/mode switched from default to plan/);
 });
 
 // --- Task 6 (WS-07 §2/§6.1/§6.3/§6.4): the permission gate — engine integration --------------------

@@ -35,19 +35,29 @@ import { buildHookRegistry } from "./hooks/registry.ts";
 import { buildHookEntriesFromConfig } from "./hooks/from-config.ts";
 import { createBridgeHookInvoker } from "./hooks/bridge-invoker.ts";
 import { runHooks, type HookAuditRecord, type HookAuditRecorder, type HookInvoker, type RunHooksContext, type RunHooksCallInfo } from "./hooks/runner.ts";
+// Task 11 (WS-07 §9 / WS-08 §7): the durable approval store a `defer` decision parks into, and the
+// pure revalidation function the resume-consumption step (this file, below) uses.
+import {
+  revalidateApproval,
+  WINTER_RUNTIME_KIND,
+  type DurableApprovalStore,
+  type DurableApprovalRecord,
+} from "./permissions/approvals.ts";
 
 export type ContentBlock =
   | { type: "text"; text: string }
   | { type: "tool_use"; id: string; name: string; input: unknown }
-  // `interrupted`/`error`/`denied` are optional and set ONLY on a synthetic tool_result the engine
-  // manufactures instead of actually executing the call — `interrupted` for an abandoned-mid-
-  // interrupt call (Ruling P1-G), `error` for a call whose tool executor threw (Ruling P1-H),
-  // `denied` for a call the six-stage permission evaluator (Task 6, WS-07 §2) refused to execute at
-  // all (cross-task pin: "a normal tool_result ... same provisional-marker class as interrupted/
-  // error"). All three are provisional shapes pending official capture. Never set on a real
-  // tool_result; never two of the three set on the same block (a single call reaches at most one of
-  // denied-before-execution, interrupted-during-execution, or errored-during-execution).
-  | { type: "tool_result"; tool_use_id: string; content: string; interrupted?: boolean; error?: boolean; denied?: boolean };
+  // `interrupted`/`error`/`denied`/`deferred` are optional and set ONLY on a synthetic tool_result
+  // the engine manufactures instead of actually executing the call — `interrupted` for an
+  // abandoned-mid-interrupt call (Ruling P1-G), `error` for a call whose tool executor threw
+  // (Ruling P1-H), `denied` for a call the six-stage permission evaluator (Task 6, WS-07 §2)
+  // refused to execute at all, `deferred` for a call a PreToolUse hook parked into a durable
+  // approval record instead of resolving now (Task 11, WS-08 §7) (cross-task pin: "a normal
+  // tool_result ... same provisional-marker class as interrupted/error/denied"). All four are
+  // provisional shapes pending official capture. Never set on a real tool_result; never two of the
+  // four set on the same block (a single call reaches at most one of denied-before-execution,
+  // deferred-before-execution, interrupted-during-execution, or errored-during-execution).
+  | { type: "tool_result"; tool_use_id: string; content: string; interrupted?: boolean; error?: boolean; denied?: boolean; deferred?: boolean };
 
 // The engine's own turn-history record fed back to Provider.generate() on every call. Distinct
 // from the WIRE shape (assistant/user data frames, below): the wire has no "tool" role (tool
@@ -127,6 +137,20 @@ export interface EngineOptions {
   // construction (main.ts, testing.ts) — Ruling P1-B's storage-agnostic engine holds exactly as
   // before; it just gains one more plain-data input.
   initialMessages?: ProviderMessage[];
+  // Task 11 (WS-07 §9): where a `defer` decision parks (record/respond/pendingFor/revalidate/...)
+  // and where this run's own resume-consumption step (below) looks for a matching allowed/denied/
+  // expired/cancelled record to fold back into a deferred marker it finds in `initialMessages`.
+  // Passed as a CONCRETE value-level interface (like `provider`/`tools`), not routed through the
+  // storage-agnostic `SessionPersistence` seam: unlike recordPermissionUpdate/recordHookAudit (pure
+  // auxiliary write sinks with no read/query surface a caller here would ever need back),
+  // DurableApprovalStore's own methods (pendingFor/get/revalidate/respond) are things THIS
+  // function's own resume-consumption logic actively calls, and `permissions/approvals.ts` has no
+  // dependency on this module — no circularity concern the way dialect.ts's own SessionPersistence
+  // indirection exists to avoid. Constructed by dialect.ts's resolveEngineSession (it already
+  // resolves winterHome/projectKey/sessionId) and threaded here by main.ts/testing.ts exactly like
+  // `store`/`initialMessages` already are. Omitted (or a non-persistent session) means no durable
+  // approval store exists — see this task's report for what a `defer` does in that case.
+  approvalStore?: DurableApprovalStore;
 }
 
 type RaceOutcome<T> = { kind: "ok"; value: T } | { kind: "interrupted" };
@@ -155,7 +179,7 @@ function raceInterrupt<T>(p: Promise<T>, interrupted: Promise<void>): Promise<Ra
  * definition further down for the full re-argued termination guarantee.
  */
 export async function runEngine(opts: EngineOptions): Promise<number> {
-  const { config, input, output, provider, tools, store, initialMessages } = opts;
+  const { config, input, output, provider, tools, store, initialMessages, approvalStore } = opts;
 
   // Task 6 (WS-07 §2/§6.4, Ruling 8): permission startup validation — deliberately the very FIRST
   // thing runEngine does, before any `await` and before the `init` frame is written. A throw here
@@ -413,6 +437,27 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
     }
   };
 
+  // Task 11 (WS-07 §2's mode-switch semantics): "a mode switch mid-park discards incompatible
+  // pending records." A durable approval is issued under a specific policyMode/policyVersion
+  // (evaluate()'s own stamp) — ANY genuine mode switch invalidates every record still "pending" for
+  // this session (they were never going to revalidate cleanly against the new mode anyway; this is
+  // a proactive cleanup, not a correctness requirement the resume-revalidation step doesn't already
+  // enforce on its own). Called from BOTH mode-switch doors this engine has (policy-state.ts's own
+  // header names the equivalence explicitly: "a SECOND DOOR into the same room" — `updatedPermissions`
+  // can carry a `type:"setMode"` update mid-turn just as easily as a direct `set_permission_mode`
+  // control request) — see both call sites below. `previousMode === nextMode` is a no-op (a
+  // same-mode setMode call, or a rejected/gated switch that left the mode unchanged, is not a
+  // "switch" at all). Auxiliary — a cancellation failure never fails the mode switch itself, same
+  // policy as every other store side effect in this function.
+  const cancelPendingApprovalsOnModeSwitch = (previousMode: string, nextMode: string): void => {
+    if (!approvalStore || previousMode === nextMode) return;
+    try {
+      approvalStore.cancelPendingFor({ sessionId: config.sessionId }, `permission mode switched from ${previousMode} to ${nextMode}`);
+    } catch {
+      /* auxiliary — see comment above */
+    }
+  };
+
   // `init` MUST be the first runtime→host frame (WS-04 §4.1 `initializing`), from resolved runtime
   // state. P1 has no tool catalog yet (WS-06) so the advertised tool list is always empty.
   output.write({
@@ -569,11 +614,14 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
               });
               continue;
             }
+            const previousMode = policyStateStore.getState().mode;
             const result = policyStateStore.setMode(mode);
             if (!result.ok) {
               output.write({ type: "control_response", requestId: cf.requestId, ok: false, error: result.error });
               continue;
             }
+            // Task 11: door 1 of 2 — see cancelPendingApprovalsOnModeSwitch's own header.
+            cancelPendingApprovalsOnModeSwitch(previousMode, result.effectiveMode);
             output.write({ type: "control_response", requestId: cf.requestId, ok: true, payload: { effectiveMode: result.effectiveMode } });
             continue;
           }
@@ -763,31 +811,29 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
             break;
           }
           const decision = decisionRaced.value;
-          if (decision.decision !== "allow") {
-            // decision.decision === "deny" at T6 — evaluate() never returns "ask"/"defer" yet (T11
-            // wires defer-parking here; a matched ask rule is already resolved to a terminal
-            // allow/deny by the prompt stage inside evaluate() itself, never surfaced as its own
-            // pending state). Cross-task pin: a denial is a NORMAL tool_result, `denied: true`,
-            // flowing through the SAME emit/push/record cluster below as every other result — this
-            // is what makes dontAsk's deny-not-hang fall out structurally (WS-07 §6.3).
-            const deniedMessage = decision.message ?? "Permission denied";
-            resultBlocks.push({
-              type: "tool_result",
-              tool_use_id: call.id,
-              content: deniedMessage,
-              denied: true,
-            });
+
+          // Denial emission, factored out (Task 11) so BOTH a real evaluate()-driven denial AND a
+          // fail-closed-defer denial (this call's own new branch, below — no durable approval store
+          // reachable, or persisting the record itself failed) share the identical tool_result +
+          // permission_denied system message + PermissionDenied hook triple. `interrupt` stays OUT
+          // of this helper deliberately: only a REAL PermissionDecisionRecord ever carries it
+          // (WS-07 §7.2's own union) — an engine-originated fail-closed denial invents no such
+          // signal, so the one real call site below still handles it inline, after calling this.
+          const denyCall = async (message: string, mechanism: string, ruleRef?: string): Promise<void> => {
+            resultBlocks.push({ type: "tool_result", tool_use_id: call.id, content: message, denied: true });
             // Task 10 (WS-08 §6 / derived-shapes-p2.md item (d)): the public SDKPermissionDeniedMessage
             // is UNCONDITIONAL — never gated by includeHookEvents (that item's own "Correction to
             // this task's own brief framing": only the hook_started/hook_progress/hook_response
             // trio is gated) — and fires on ANY-stage denial regardless of `mechanism` (hook/rule/
-            // mode/canUseTool/autoEngine all reach this one call site). Best-effort/advisory per
-            // that same item's own load-bearing finding — the tool_result block above (and
-            // eventually `result.permission_denials`, T11 territory) is the authoritative record;
+            // mode/canUseTool/autoEngine all reach this one call site, plus Task 11's own two
+            // engine-originated fail-closed-defer cases). Best-effort/advisory per that same item's
+            // own load-bearing finding — the tool_result block above is the authoritative record;
             // this stream message is UX/telemetry only. `decision_reason_type`/`decision_reason`
             // are Winter's own mapping of PermissionDecisionRecord's mechanism/ruleRef — the pinned
             // declaration names the fields without pinning their exact semantics beyond
-            // advisory/UI-facing.
+            // advisory/UI-facing. (NOTE, spotted but NOT built here: an engine.ts comment from an
+            // earlier task speculated a future `result.permission_denials` field on the terminal
+            // result — that is not part of this task's brief and is left exactly as speculative.)
             output.write({
               type: "data",
               message: {
@@ -796,9 +842,9 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
                 tool_name: call.name,
                 tool_use_id: call.id,
                 ...(permissionCall.agentId !== undefined ? { agent_id: permissionCall.agentId } : {}),
-                decision_reason_type: decision.mechanism,
-                ...(decision.ruleRef !== undefined ? { decision_reason: decision.ruleRef } : {}),
-                message: deniedMessage,
+                decision_reason_type: mechanism,
+                ...(ruleRef !== undefined ? { decision_reason: ruleRef } : {}),
+                message,
                 session_id: config.sessionId,
                 uuid: randomUUID(),
               },
@@ -813,8 +859,90 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
               toolUseID: call.id,
               toolName: call.name,
               input: permissionCall.input,
-              payload: { reason: deniedMessage },
+              payload: { reason: message },
             });
+          };
+
+          // --- Task 11 (WS-07 §9 / WS-08 §7): a `defer` decision parks the call durably ----------
+          if (decision.decision === "defer") {
+            const deferMessage = decision.message ?? "a PreToolUse hook deferred this call for durable approval";
+            // Fail-closed case 1: no durable approval store reachable for this run (e.g.
+            // persistSession:false — there is nowhere to durably park a call that, by definition,
+            // needs to survive this process exiting). WS-07 §6.1's "never implicitly allowed" floor
+            // applies just as much to an un-parkable park as to an unresolved prompt — a phantom
+            // "[deferred]" marker nothing could ever resume would be strictly worse than a denial.
+            if (!approvalStore) {
+              await denyCall(`Denied: cannot defer -- no durable approval store is available for this session (${deferMessage})`, "hook");
+              continue;
+            }
+            const requestId = randomUUID();
+            const executedInput = decision.transformedInput ?? permissionCall.input;
+            const approval: DurableApprovalRecord = {
+              runtimeKind: WINTER_RUNTIME_KIND,
+              sessionId: config.sessionId,
+              backendSessionId: config.sessionId,
+              requestId,
+              toolUseID: call.id,
+              ...(permissionCall.agentId !== undefined ? { agentID: permissionCall.agentId } : {}),
+              toolName: call.name,
+              originalInput: executedInput,
+              displayMetadata: { decisionReason: deferMessage },
+              policyMode: policyStateStore.getState().mode,
+              policyVersion: decision.policyVersion,
+              issuedAt: new Date().toISOString(),
+              state: "pending",
+              issuedCwd: config.cwd,
+              issuedHome: permissionHome,
+            };
+            // Fail-closed case 2: the store exists but persisting THIS record threw. Unlike
+            // recordUser/recordPermissionUpdate/recordHookAudit (auxiliary mirrors of in-memory
+            // truth the turn is already correct without), the persisted approval record IS the
+            // feature here — "the run can END cleanly with the record persisted" (this task's own
+            // brief) presumes persistence succeeded. A park whose record failed to write is
+            // unresolvable forever (worse than a denial, which the agent can at least react to) —
+            // so this is its own denial, never a swallowed auxiliary failure, and the synthetic
+            // "[deferred]" marker below is never emitted for a record that was never actually
+            // durable.
+            try {
+              approvalStore.record(approval);
+            } catch (err) {
+              const text = err instanceof Error ? err.message : String(err);
+              await denyCall(`Denied: failed to persist the durable approval record (${text})`, "hook");
+              continue;
+            }
+            resultBlocks.push({ type: "tool_result", tool_use_id: call.id, content: "[deferred]", deferred: true });
+            // Winter-original public system message (no pinned upstream shape exists for a durable
+            // defer — WS-07 §9 itself frames the durable-approval layer as a Winter product
+            // addition over the SDK-compatible surface, not an upstream wire pin, unlike
+            // permission_denied's own derived-shapes provenance). Mirrors permission_denied's own
+            // field shape/spirit; `request_id` is this record's own correlator for a later
+            // out-of-band respond().
+            output.write({
+              type: "data",
+              message: {
+                type: "system",
+                subtype: "permission_deferred",
+                tool_name: call.name,
+                tool_use_id: call.id,
+                ...(permissionCall.agentId !== undefined ? { agent_id: permissionCall.agentId } : {}),
+                request_id: requestId,
+                message: deferMessage,
+                session_id: config.sessionId,
+                uuid: randomUUID(),
+              },
+            });
+            continue;
+          }
+
+          if (decision.decision !== "allow") {
+            // decision.decision === "deny" here (defer is handled above; a matched ask rule is
+            // already resolved to a terminal allow/deny by the prompt stage inside evaluate() itself,
+            // never surfaced as its own pending state). Cross-task pin: a denial is a NORMAL
+            // tool_result, `denied: true`, flowing through the SAME emit/push/record cluster below
+            // as every other result — this is what makes dontAsk's deny-not-hang fall out
+            // structurally (WS-07 §6.3).
+            const deniedMessage = decision.message ?? "Permission denied";
+            await denyCall(deniedMessage, decision.mechanism, decision.ruleRef);
             // Task 8 (WS-07 §7.2): a deny's `interrupt: true` ADDITIONALLY triggers the engine's
             // existing interrupt path — "interrupt can stop more than the individual call." Mirrors
             // every other in-round interrupt trigger: mark `interrupted`, fire the SAME turn-wide
@@ -840,7 +968,14 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
           // permission decision resolved" together, before moving on to "now run the tool."
           if (decision.updatedPermissions) {
             for (const update of decision.updatedPermissions) {
+              // Task 11: door 2 of 2 (policy-state.ts's own "second door into the same room" —
+              // `applyUpdate` can carry a `type:"setMode"` update just as easily as a direct
+              // set_permission_mode control request) — see cancelPendingApprovalsOnModeSwitch's own
+              // header. Captured/compared around applyUpdate regardless of update type; a no-op for
+              // every non-"setMode" update since the mode value cannot have moved.
+              const previousMode = policyStateStore.getState().mode;
               policyStateStore.applyUpdate(update, { authority: "session" });
+              cancelPendingApprovalsOnModeSwitch(previousMode, policyStateStore.getState().mode);
               // Phase ruling 2: "applies session-effective immediately AND appends to the
               // permission journal" — the live application above and the durability journal below
               // are two independent effects of the SAME update, not a fallback chain; journaling
