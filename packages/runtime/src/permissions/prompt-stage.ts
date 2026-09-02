@@ -86,6 +86,19 @@ function buildPayload(call: PermissionCall, ctx: EvaluationContext, meta: Prompt
   };
 }
 
+// Defensive runtime check on a value that TypeScript trusts as PermissionResult only via the
+// generic type parameter on bridge.request — the actual bytes crossed a wire and were JSON-parsed
+// with no schema validation. A malformed answer (wrong shape, a client bug, a stale/foreign
+// protocol version) must fail closed exactly like a rejected request, not throw out of
+// toPromptDecision and surface as an unrelated `error_during_execution` (found by review).
+function isValidPermissionResult(value: unknown): value is PermissionResult {
+  if (typeof value !== "object" || value === null) return false;
+  const behavior = (value as { behavior?: unknown }).behavior;
+  if (behavior === "allow") return true;
+  if (behavior === "deny") return typeof (value as { message?: unknown }).message === "string";
+  return false;
+}
+
 function toPromptDecision(result: PermissionResult): PromptDecision {
   if (result.behavior === "allow") {
     return {
@@ -111,10 +124,18 @@ export function createBridgePromptStage(bridge: RpcBridge): PromptStage {
       let result: PermissionResult;
       try {
         // WS-04 §3: NO `opts.timeoutMs` — the permission RPC has no park timeout by design.
-        result = await bridge.request<PermissionResult>("permission", payload);
+        // `requestId` MUST be the same value embedded in `payload.requestId` (bridge.request's own
+        // `opts.requestId` override, not its default freshly-minted one): the payload's copy is what
+        // a canUseTool callback reads back out of its options and hands to
+        // query.__internal.respondPermission for the out-of-band "null now, answer later" escape, and
+        // that call writes a control_response keyed by WHATEVER id it was given — if the envelope used
+        // a different one, handleResponse would never find this pending entry and this promise would
+        // never settle (bug found by review; see bridge.ts's own header for the full mechanism).
+        result = await bridge.request<PermissionResult>("permission", payload, { requestId });
       } catch {
         return null; // genuinely no opinion — see this file's own header for every reason this fires
       }
+      if (!isValidPermissionResult(result)) return null; // malformed answer — fail closed, WS-07 §6.1
       return toPromptDecision(result);
     },
   };

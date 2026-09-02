@@ -908,6 +908,93 @@ test("Task 8/WS-07 §2: a permission answer computed under a policy that changed
   expect(toolResult.message.content).toEqual([{ type: "tool_result", tool_use_id: "call1", content: expect.any(String), denied: true }]);
 });
 
+// Termination re-argument, the gap found by review: P2-B's own header argues "the pump always
+// ends" via stopReading() — but that argument only fires once the turn loop has ALREADY drained,
+// which cannot happen while a turn is genuinely blocked awaiting a no-park-timeout bridge.request()
+// (WS-04 §3). True EOF (host death, or a consumer that stops reading/writing without an explicit
+// end_input) races ahead of that instead: `input` ends on its own while the permission RPC is still
+// pending, and nothing can ever deliver its control_response. Without bridge.rejectAllPending(...)
+// in the pump's own `finally`, this specific request — and therefore runEngine itself — would park
+// forever. This test is the proof: it deliberately never answers the permission RPC at all.
+test("Task 8 (termination edge, review finding): true EOF with a permission RPC still in flight resolves the RPC to a denial and lets runEngine return, instead of parking forever", async () => {
+  const { host, runtime } = createInMemoryChannel();
+  const provider = scriptedProvider([{ kind: "tool_use", calls: [{ id: "call1", name: "mystery_tool", input: {} }] }]);
+  const done = runEngine({ config: baseConfig(), input: runtime.input, output: runtime.output, provider, tools: stubExecutor });
+
+  host.output.write({ type: "user", text: "go" });
+
+  const seen: WinterFrame[] = [];
+  let sawPermissionReq = false;
+  for await (const f of host.input) {
+    seen.push(f);
+    if (f.type === "control_request" && (f as ControlRequestFrame).subtype === "permission") {
+      sawPermissionReq = true;
+      break;
+    }
+  }
+  expect(sawPermissionReq).toBe(true);
+
+  // True EOF: no end_input, and — the whole point — NO control_response for the pending permission
+  // request either. Pre-fix this is exactly the shape that parks `done` forever.
+  host.output.end();
+
+  const rest = await drain(host.input);
+  seen.push(...rest);
+  const code = await done; // must actually resolve — this await is the test
+  expect(code).toBe(0);
+
+  const msgs = dataMessages(seen);
+  const toolResult = msgs.find((m) => m.type === "user") as { message: { content: unknown } };
+  expect(toolResult.message.content).toEqual([{ type: "tool_result", tool_use_id: "call1", content: expect.any(String), denied: true }]);
+});
+
+// WS-07 §7.2: deny.interrupt === true means "more than just this call is refused" — it additionally
+// fires the SAME turn-wide interrupt signal a host-originated `interrupt` control request fires.
+// Wired in engine.ts's tool loop (the deny branch, right after the denied call's own tool_result is
+// pushed) but — found by review — never previously exercised by a test; this is that dedicated
+// coverage, modeled on the file's own host-originated-interrupt test above (same provisional-result
+// shape, same "back to idle cleanly afterward" follow-up).
+test("Task 8 (WS-07 §7.2): a deny answer with interrupt:true stops the round AND produces the same provisional interrupted result as a host-originated interrupt", async () => {
+  const { host, runtime } = createInMemoryChannel();
+  const provider = scriptedProvider([
+    { kind: "tool_use", calls: [{ id: "call1", name: "mystery_tool", input: {} }] },
+    { kind: "text", text: "unreachable — the round was interrupted before a second provider call" },
+  ]);
+  const done = runEngine({ config: baseConfig(), input: runtime.input, output: runtime.output, provider, tools: stubExecutor });
+
+  host.output.write({ type: "user", text: "go" });
+
+  let permissionReq: ControlRequestFrame | undefined;
+  const seen: WinterFrame[] = [];
+  for await (const f of host.input) {
+    seen.push(f);
+    if (f.type === "control_request" && (f as ControlRequestFrame).subtype === "permission") {
+      permissionReq = f as ControlRequestFrame;
+      break;
+    }
+  }
+  expect(permissionReq).toBeDefined();
+
+  const denyInterrupt: PermissionResult = { behavior: "deny", message: "blocked, and stop the turn", interrupt: true };
+  host.output.write({ type: "control_response", requestId: permissionReq!.requestId, ok: true, payload: denyInterrupt });
+
+  for await (const f of host.input) {
+    seen.push(f);
+    if (f.type === "data" && (f as { message: SdkMessage }).message.type === "result") break;
+  }
+
+  const msgs = dataMessages(seen);
+  const toolResultMsg = msgs.find((m) => m.type === "user") as { message: { content: unknown } };
+  expect(toolResultMsg.message.content).toEqual([{ type: "tool_result", tool_use_id: "call1", content: "blocked, and stop the turn", denied: true }]);
+  const result = msgs.at(-1);
+  expect(result).toEqual({ type: "result", subtype: "success", is_error: false, interrupted: true });
+
+  // Back to idle cleanly afterward — a deny-triggered interrupt is not a stuck/half-torn-down state.
+  host.output.write({ type: "control_request", requestId: "r2", subtype: "end_input", payload: undefined });
+  const code = await done;
+  expect(code).toBe(0);
+});
+
 test("Task 6: bypassPermissions at startup without allowDangerouslySkipPermissions is a typed config error before init is ever written", async () => {
   const { runtime } = createInMemoryChannel();
   // A synchronous throw at the very top of runEngine (before the pump/turn-loop ever starts) settles

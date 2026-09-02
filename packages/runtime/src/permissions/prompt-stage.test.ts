@@ -14,19 +14,20 @@ import { NO_OPINION_HOOK_STAGE, NO_OPINION_PROMPT_STAGE, NO_OPINION_AUTO_ENGINE,
 import { emptyRuleSet } from "./ruleset.ts";
 import type { PolicyState } from "./policy-state.ts";
 
-function fakeBridge(impl: (subtype: string, payload: unknown, opts?: { timeoutMs?: number }) => Promise<unknown>): {
+function fakeBridge(impl: (subtype: string, payload: unknown, opts?: { timeoutMs?: number; requestId?: string }) => Promise<unknown>): {
   bridge: RpcBridge;
-  calls: Array<{ subtype: string; payload: unknown; opts?: { timeoutMs?: number } }>;
+  calls: Array<{ subtype: string; payload: unknown; opts?: { timeoutMs?: number; requestId?: string } }>;
 } {
-  const calls: Array<{ subtype: string; payload: unknown; opts?: { timeoutMs?: number } }> = [];
+  const calls: Array<{ subtype: string; payload: unknown; opts?: { timeoutMs?: number; requestId?: string } }> = [];
   return {
     calls,
     bridge: {
-      request: (async (subtype: string, payload: unknown, opts?: { timeoutMs?: number }) => {
+      request: (async (subtype: string, payload: unknown, opts?: { timeoutMs?: number; requestId?: string }) => {
         calls.push({ subtype, payload, ...(opts !== undefined ? { opts } : {}) });
         return impl(subtype, payload, opts);
       }) as RpcBridge["request"],
       handleResponse: () => false,
+      rejectAllPending: () => {},
     },
   };
 }
@@ -56,7 +57,7 @@ test("builds the full WS-07 §7.1 payload: toolName, input, decisionReason, tool
 
   expect(calls.length).toBe(1);
   expect(calls[0]!.subtype).toBe("permission");
-  expect(calls[0]!.opts).toBeUndefined(); // WS-04 §3: no park timeout for this subtype
+  expect(calls[0]!.opts?.timeoutMs).toBeUndefined(); // WS-04 §3: no park timeout for this subtype
   const payload = calls[0]!.payload as PermissionRequestPayload;
   expect(payload.toolName).toBe("Bash");
   expect(payload.input).toEqual({ command: "rm -rf /tmp/x" });
@@ -69,6 +70,13 @@ test("builds the full WS-07 §7.1 payload: toolName, input, decisionReason, tool
   expect(payload.matchedAskRule).toBeUndefined();
   expect(typeof payload.requestId).toBe("string");
   expect(payload.requestId.length).toBeGreaterThan(0);
+  // Review-caught correlation bug: bridge.request() mints its OWN envelope requestId by default,
+  // independent of anything in the payload. A canUseTool callback reads `opts.requestId` (the
+  // payload's copy) and hands it straight to query.__internal.respondPermission for the
+  // out-of-band escape — if the envelope used a DIFFERENT id, that out-of-band response would be
+  // written under an id this bridge never issued and would be silently dropped, parking the
+  // request forever (no timeout). createBridgePromptStage MUST force the envelope id to match.
+  expect(calls[0]!.opts?.requestId).toBe(payload.requestId);
 });
 
 test("agentID/blockedPath thread through verbatim when present on the call/meta", async () => {
@@ -161,6 +169,20 @@ test("a rejected bridge request for ANY reason resolves to null, not just unhand
   const { bridge } = fakeBridge(async () => {
     throw new Error("connection closed");
   });
+  const stage = createBridgePromptStage(bridge);
+  const decision = await stage.prompt(baseCall, ctx(), baseMeta);
+  expect(decision).toBeNull();
+});
+
+test("a RESOLVED but malformed answer (wrong shape crossed the wire) resolves to null — fails closed, never throws", async () => {
+  const { bridge } = fakeBridge(async () => ({ nonsense: true }));
+  const stage = createBridgePromptStage(bridge);
+  const decision = await stage.prompt(baseCall, ctx(), baseMeta);
+  expect(decision).toBeNull();
+});
+
+test("a RESOLVED deny with a non-string message resolves to null — fails closed, never throws", async () => {
+  const { bridge } = fakeBridge(async () => ({ behavior: "deny", message: 42 }));
   const stage = createBridgePromptStage(bridge);
   const decision = await stage.prompt(baseCall, ctx(), baseMeta);
   expect(decision).toBeNull();

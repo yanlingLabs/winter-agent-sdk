@@ -123,3 +123,47 @@ test("an unmatched control_response (no such requestId was ever issued) is dropp
     errSpy.mockRestore();
   }
 });
+
+// Task 8 / review finding: prompt-stage.ts's PermissionRequestPayload carries its OWN `requestId`
+// field (read back by a canUseTool callback and handed to query.__internal.respondPermission for
+// the out-of-band escape) — that value MUST become the envelope's own correlation id, or an
+// out-of-band response keyed by the payload's id is unroutable (handleResponse only knows the
+// envelope id it itself issued). `opts.requestId` is the caller-supplied override that makes the
+// two the same value; omitting it keeps the pre-existing freshly-minted-UUID default.
+test("opts.requestId lets the caller pin the envelope's correlation id (Task 8 review fix: payload.requestId and the envelope id must be the SAME value)", async () => {
+  const { sink, written } = recordingSink();
+  const bridge = createRpcBridge(sink);
+
+  const p = bridge.request("permission", { requestId: "caller-chosen-id" }, { requestId: "caller-chosen-id" });
+  const req = written[0] as ControlRequestFrame;
+  expect(req.requestId).toBe("caller-chosen-id");
+
+  // An out-of-band responder that only ever sees the PAYLOAD's requestId (never the envelope
+  // directly, exactly like a canUseTool callback) can still correlate correctly.
+  expect(bridge.handleResponse({ type: "control_response", requestId: "caller-chosen-id", ok: true, payload: { behavior: "allow" } })).toBe(true);
+  expect(await p).toEqual({ behavior: "allow" });
+});
+
+test("rejectAllPending rejects every still-pending request and clears them (Task 8: the pump's true-EOF teardown, no-park-timeout RPCs would otherwise hang forever)", async () => {
+  const { sink, written } = recordingSink();
+  const bridge = createRpcBridge(sink);
+
+  const p1 = bridge.request("permission", { a: 1 }); // no timeoutMs — would otherwise park forever
+  const p2 = bridge.request("permission", { b: 2 });
+  const teardownError = new Error("winter: input ended before this control request could be answered");
+
+  bridge.rejectAllPending(teardownError);
+
+  await expect(p1).rejects.toThrow(teardownError.message);
+  await expect(p2).rejects.toThrow(teardownError.message);
+
+  // The map is cleared: a response that arrives AFTER teardown for one of those same ids is now
+  // "unknown," not "double-settled" — same safe fallback as a late post-timeout response.
+  const errSpy = spyOn(console, "error").mockImplementation(() => {});
+  try {
+    const req1 = written[0] as ControlRequestFrame;
+    expect(bridge.handleResponse({ type: "control_response", requestId: req1.requestId, ok: true, payload: {} })).toBe(false);
+  } finally {
+    errSpy.mockRestore();
+  }
+});

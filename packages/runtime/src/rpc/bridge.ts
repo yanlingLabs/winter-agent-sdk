@@ -3,15 +3,31 @@ import { WinterRpcError, WinterRpcTimeoutError, type ControlRequestFrame, type C
 import type { FrameSink } from "../protocol/channel.ts";
 
 export interface RpcBridge {
-  // Writes { type: "control_request", requestId: randomUUID(), subtype, payload } to `output`
-  // (runtime->host, WS-04 §3.1) and resolves with the correlated response's payload. `opts.timeoutMs`
-  // omitted means NO park timeout — WS-04 §3's permission-class RPCs wait indefinitely by design;
-  // only pass a timeout for a subtype the spec actually pins a bound for.
-  request<T = unknown>(subtype: string, payload: unknown, opts?: { timeoutMs?: number }): Promise<T>;
+  // Writes { type: "control_request", requestId, subtype, payload } to `output` (runtime->host,
+  // WS-04 §3.1) and resolves with the correlated response's payload. `requestId` defaults to a
+  // fresh randomUUID(); pass `opts.requestId` when the caller's payload ITSELF carries a requestId
+  // field the far side will echo back out-of-band (Task 8: PermissionRequestPayload.requestId,
+  // read by a canUseTool callback and handed to query.__internal.respondPermission) — the envelope
+  // id and the payload's own id must be the SAME value, or a correctly-behaving out-of-band
+  // responder writes a control_response keyed by an id this bridge never issued, `handleResponse`
+  // drops it as unknown, and this promise never settles (found by review: two independently-minted
+  // UUIDs looked fine until a test used a REAL bridge instead of a hand-rolled fake that happened
+  // to reuse one id for both). `opts.timeoutMs` omitted means NO park timeout — WS-04 §3's
+  // permission-class RPCs wait indefinitely by design; only pass a timeout for a subtype the spec
+  // actually pins a bound for.
+  request<T = unknown>(subtype: string, payload: unknown, opts?: { timeoutMs?: number; requestId?: string }): Promise<T>;
   // Routes a host->runtime control_response to its correlated pending request. Returns false (and
   // never throws) for a requestId this bridge never issued, or one that already settled (a
   // timed-out request's late answer) — a stale response must never kill the run (WS-04).
   handleResponse(frame: ControlResponseFrame): boolean;
+  // Task 8 (termination edge, WS-04 §3's no-park-timeout combined with P2-B's inverted pump
+  // direction): rejects every still-pending request. Call this when the underlying transport is
+  // PROVABLY dead (the pump's input hit true EOF, not just end_input) — a no-timeout RPC like
+  // "permission" would otherwise park runEngine forever, since no control_response can physically
+  // arrive once nothing is left to route one. A rejected request already means "no opinion" to its
+  // caller (prompt-stage.ts's catch maps ANY rejection to null → deny, WS-07 §6.1), so this turns an
+  // unreachable hang into a clean, spec-consistent denial and lets the run exit.
+  rejectAllPending(err: unknown): void;
 }
 
 interface PendingRpc {
@@ -35,8 +51,8 @@ export function createRpcBridge(output: FrameSink): RpcBridge {
   const pending = new Map<string, PendingRpc>();
 
   return {
-    request<T = unknown>(subtype: string, payload: unknown, opts?: { timeoutMs?: number }): Promise<T> {
-      const requestId = randomUUID();
+    request<T = unknown>(subtype: string, payload: unknown, opts?: { timeoutMs?: number; requestId?: string }): Promise<T> {
+      const requestId = opts?.requestId ?? randomUUID();
       return new Promise<T>((resolve, reject) => {
         const entry: PendingRpc = { resolve: resolve as (payload: unknown) => void, reject };
         if (opts?.timeoutMs !== undefined) {
@@ -69,6 +85,13 @@ export function createRpcBridge(output: FrameSink): RpcBridge {
         entry.reject(new WinterRpcError(frame.error?.code ?? "unknown_error", frame.error?.message ?? "control request failed"));
       }
       return true;
+    },
+    rejectAllPending(err: unknown): void {
+      for (const entry of pending.values()) {
+        if (entry.timer !== undefined) clearTimeout(entry.timer);
+        entry.reject(err);
+      }
+      pending.clear();
     },
   };
 }

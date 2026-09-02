@@ -364,6 +364,16 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   //      end_input, true EOF — path (a) above), the pump has already exited by then and the later
   //      `stopReading()` call is a harmless, already-redundant no-op (resolving an unobserved
   //      promise).
+  //   4. Point 3 is where "the pump ends" is proven; it is NOT yet where "runEngine returns" is
+  //      proven, because a no-park-timeout bridge.request() (WS-04 §3, Task 8's permission RPC) can
+  //      be mid-flight precisely on path (a) — true EOF racing ahead of the turn loop, rather than
+  //      end_input's own turn-loop-drains-first sequencing. The pump's own `finally` (below) closes
+  //      this: it calls `bridge.rejectAllPending(...)` unconditionally on every exit. On the `stop`
+  //      path this is a verified no-op (point 3's invariant already guarantees no request is
+  //      pending); on the true-EOF path it is what turns an otherwise-permanent hang into a clean
+  //      denial (prompt-stage.ts's rejection handling + Ruling P2-I), letting the stuck turn — and
+  //      therefore runEngine itself — complete. (Found by review — see the `finally` block's own
+  //      comment for the full mechanism.)
   // Manually driving the iterator (rather than `for await`) is what makes racing it against
   // `stopSignal` possible at all — `for await` offers no hook to await "the next value OR a stop
   // signal, whichever comes first."
@@ -463,6 +473,20 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
       // garbage-collected once nothing references it any longer (a real child process exits via
       // main.ts's own process.exit() regardless; the in-memory Queue has no other resource to
       // release) — never a hang, just a resolver reference sitting inert.
+      //
+      // Termination re-argument, the remaining gap (found by review): step 3 above shows
+      // `stopReading()` is only ever called after the turn loop has no more work — so on the `stop`
+      // exit path, `bridge`'s pending map is already empty by that same invariant, and the call below
+      // is a no-op. But on the TRUE-EOF exit path (`outcome.result.done`, or the loop's other early
+      // returns), `input` itself is what ended — independent of whether the turn loop has finished —
+      // so a turn can still be genuinely mid-flight, awaiting a no-park-timeout `bridge.request()`
+      // (WS-04 §3, e.g. Task 8's permission RPC) that can now NEVER be answered: nothing is left to
+      // route a `control_response` even if one existed. Without this call, THAT specific request
+      // parks forever and runEngine never returns. `rejectAllPending` turns that unreachable hang
+      // into a clean resolution: prompt-stage.ts's `catch` already maps ANY bridge rejection to "no
+      // opinion" (null), and Ruling P2-I already maps "no opinion" to a denial — so the stuck turn
+      // completes with a denied tool_result, exactly as if the (now-impossible) answer had been "no."
+      bridge.rejectAllPending(new Error("winter: input ended before this control request could be answered"));
     }
   })();
 
@@ -635,6 +659,11 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
           // WS-07 §7.2: updatedInput/transformedInput sanitizes/narrows/redirects the EXECUTED call
           // — the tool_use block already emitted above keeps the model's ORIGINAL input; only what
           // actually runs (and therefore the tool_result that comes back) reflects the transform.
+          // SEAM (P3, no tool registry/schema yet at P2): a host-supplied updatedInput is taken
+          // verbatim, with no re-validation against the tool's own input schema before execution —
+          // P3's tool registry (WS-06) is where that re-check belongs; until then a canUseTool
+          // callback that returns a shape the target tool cannot handle surfaces as that tool's own
+          // execution error, not a permission-layer one.
           const executedCall = decision.transformedInput !== undefined ? { ...call, input: decision.transformedInput } : call;
           const raced = await raceInterrupt(tools.execute(executedCall), interruptSignal);
           if (raced.kind === "interrupted") {
