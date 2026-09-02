@@ -12,6 +12,7 @@ import {
   isRecognizedReadOnly,
   READ_ONLY_COMMANDS,
   PARSE_LIMIT,
+  DANGEROUS_ASSIGNMENT_NAMES,
 } from "./grammar.ts";
 
 function call(toolName: string, input: Record<string, unknown>) {
@@ -218,6 +219,44 @@ describe("stripWrappers -- leading env-assignment direction asymmetry (WS-07 §3
   });
 });
 
+describe("stripWrappers -- fix round 1, Finding B / Ruling P2-C (dangerous assignment NAMES)", () => {
+  test("a dangerous assignment NAME is not stripped on the allow side even with an innocuous-looking value", () => {
+    const cmd = "LD_PRELOAD=/tmp/evil.so cat /etc/passwd";
+    expect(stripWrappers(cmd, "allow")).toBe(cmd);
+  });
+
+  test("deny/ask conservatism is unaffected -- it already looks through any assignment, dangerous or not", () => {
+    const cmd = "LD_PRELOAD=/tmp/evil.so cat /etc/passwd";
+    expect(stripWrappers(cmd, "denyAsk")).toBe("cat /etc/passwd");
+  });
+
+  test("a benign assignment name is still stripped on the allow side", () => {
+    expect(stripWrappers("FOO=bar cat x", "allow")).toBe("cat x");
+  });
+
+  test("env-name matching is case-exact -- a differently-cased name is not in the denylist", () => {
+    expect(stripWrappers("ld_preload=/tmp/evil.so cat x", "allow")).toBe("cat x");
+  });
+
+  test("DANGEROUS_ASSIGNMENT_NAMES carries the pinned Ruling P2-C list", () => {
+    for (const name of [
+      "LD_PRELOAD",
+      "LD_LIBRARY_PATH",
+      "DYLD_INSERT_LIBRARIES",
+      "DYLD_LIBRARY_PATH",
+      "PATH",
+      "BASH_ENV",
+      "ENV",
+      "IFS",
+      "PERL5LIB",
+      "PYTHONPATH",
+      "NODE_OPTIONS",
+    ]) {
+      expect(DANGEROUS_ASSIGNMENT_NAMES.has(name)).toBe(true);
+    }
+  });
+});
+
 describe("extractRedirectTargets (WS-07 §3)", () => {
   test("extracts a simple overwrite redirect", () => {
     expect(extractRedirectTargets("echo hi > /tmp/out.txt")).toEqual(["/tmp/out.txt"]);
@@ -282,6 +321,11 @@ describe("parameter rules (WS-07 §3: 'available for deny/ask decisions')", () =
   test("judgment call: a param rule NEVER matches on the allow side (WS-07 §3 scopes it to deny/ask)", () => {
     const rule = parseRule("Agent(model:opus)");
     expect(matchesRule(rule, call("Agent", { model: "opus" }), { direction: "allow" })).toBe(false);
+  });
+
+  test("cosmetic rider: Bash(run_in_background:true) never matches on the allow side either -- the asymmetry pair's missing half", () => {
+    const rule = parseRule("Bash(run_in_background:true)");
+    expect(matchesRule(rule, call("Bash", { run_in_background: true }), { direction: "allow" })).toBe(false);
   });
 
   test("one field per rule: a colon inside the value is part of the value, not a second field", () => {
@@ -400,5 +444,20 @@ describe("isRecognizedReadOnly (WS-07 §3, brief's minimum list)", () => {
   test("READ_ONLY_COMMANDS is exported so P3's tool work can extend it", () => {
     expect(READ_ONLY_COMMANDS.has("ls")).toBe(true);
     expect(READ_ONLY_COMMANDS.has("cat")).toBe(true);
+  });
+});
+
+describe("isRecognizedReadOnly -- fix round 1 (Findings A + B)", () => {
+  test("Finding A: an unparseable command (unterminated quote) with a recognized-looking prefix is not treated as read-only", () => {
+    expect(isRecognizedReadOnly("cat 'foo && rm -rf /")).toBe(false);
+  });
+
+  test("Finding A: an over-limit command is not treated as read-only", () => {
+    const huge = "cat " + "a".repeat(PARSE_LIMIT + 1);
+    expect(isRecognizedReadOnly(huge)).toBe(false);
+  });
+
+  test("Finding B: a command hidden behind a dangerous assignment name is not recognized as read-only", () => {
+    expect(isRecognizedReadOnly("LD_PRELOAD=/tmp/evil.so cat /etc/passwd")).toBe(false);
   });
 });

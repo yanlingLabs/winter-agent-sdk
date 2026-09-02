@@ -78,6 +78,15 @@ export const PARSE_LIMIT = 50_000;
 
 // WS-07 §3's minimum read-only recognition list, verbatim from the task brief. Exported (named
 // constant, not inlined) so P3's tool work can extend it per the brief's own instruction.
+//
+// TODO(P3): WS-07 §3's same sentence also names "remote daemon selectors" and "certain glob forms"
+// as read-only fallback categories (falling back to permission handling, like write-capable
+// flags) -- e.g. an ssh/kubectl/docker-style remote-target selector mixed into an otherwise-
+// recognized command, or a glob shape broad enough that "read-only" stops being a safe
+// characterization of its effect. Neither is in Task 3's fixture corpus (the brief's own minimum
+// list never exercises them) and none of the base commands above take a remote-selector argument
+// today, so there is nothing to plug in yet -- P3's tool work should re-check this the moment any
+// added command *can* take one, rather than assuming the current minimum list stays selector-free.
 export const READ_ONLY_COMMANDS: ReadonlySet<string> = new Set([
   "ls",
   "cat",
@@ -88,6 +97,31 @@ export const READ_ONLY_COMMANDS: ReadonlySet<string> = new Set([
   "find",
   "pwd",
   "echo",
+]);
+
+// Fix round 1, Finding B / Ruling P2-C: env-variable NAMES whose assignment can change what a
+// subsequent command actually does regardless of how innocuous the ASSIGNED VALUE looks
+// syntactically -- e.g. `LD_PRELOAD=/tmp/evil.so cat /etc/passwd` has a value with no `$(`/
+// backtick/`${` in it, so `isSafeAssignmentValue` alone would call it safe and strip it, but a
+// real shell still loads the preload library before `cat` ever runs. A NAME match makes the
+// assignment un-strippable on the ALLOW side regardless of its value; denyAsk's existing "look
+// through ANY leading assignment" is unaffected (dangerous-by-name is a strict subset of "any").
+// Matching is case-exact (env var names are case-sensitive in every shell/OS environ this targets)
+// -- deliberately NOT normalized to upper/lower case before the `.has()` check. Exported,
+// independently curated, and capture-noted: this list is not confirmed exhaustive against any
+// pinned runtime, and P3/a future WS-17 differential capture may extend it.
+export const DANGEROUS_ASSIGNMENT_NAMES: ReadonlySet<string> = new Set([
+  "LD_PRELOAD",
+  "LD_LIBRARY_PATH",
+  "DYLD_INSERT_LIBRARIES",
+  "DYLD_LIBRARY_PATH",
+  "PATH",
+  "BASH_ENV",
+  "ENV",
+  "IFS",
+  "PERL5LIB",
+  "PYTHONPATH",
+  "NODE_OPTIONS",
 ]);
 
 // git's read-only subcommand allowlist (WS-07 §3: "git status, git log, git diff... git push not").
@@ -202,6 +236,20 @@ function scanShellLike(s: string): ScanInfo {
   return { topLevel, ok };
 }
 
+// Fix round 1, Finding A: the shared "is this command parseable at all" gate (WS-07 §3:
+// "unparseable commands, commands over the parser limit... fall back to permission handling").
+// Threads ONE scan result out to both `splitCompound` (structural decomposition) and
+// `isRecognizedReadOnly` (a pre-approval shortcut that must not fire on text it can't confidently
+// analyze) rather than each re-deriving the same length-check-then-scan inline, which would mean
+// two full rescans of the same string for two callers checking the identical precondition. Returns
+// `null` for "not parseable" (over limit, or scanShellLike reports unterminated
+// quote/unbalanced parens); the caller never needs to call scanShellLike a second time on success.
+function scanIfParseable(command: string): ScanInfo | null {
+  if (command.length > PARSE_LIMIT) return null;
+  const info = scanShellLike(command);
+  return info.ok ? info : null;
+}
+
 // Reads one whitespace-delimited "word" starting from the first top-level, non-whitespace
 // character in `s` (skipping any leading top-level whitespace first). A word may itself contain
 // top-level whitespace's OPPOSITE -- non-top-level spans (quoted/parenthesized) -- without ending;
@@ -223,9 +271,9 @@ function leadingWord(s: string): { word: string | undefined; afterWord: string }
 // ---------------------------------------------------------------------------------------------
 
 export function splitCompound(command: string): string[] | null {
-  if (command.length > PARSE_LIMIT) return null;
-  const { topLevel, ok } = scanShellLike(command);
-  if (!ok) return null;
+  const info = scanIfParseable(command);
+  if (!info) return null;
+  const { topLevel } = info;
 
   const parts: string[] = [];
   let segStart = 0;
@@ -295,11 +343,15 @@ function stripLeadingAssignments(cmd: string, direction: "allow" | "denyAsk"): s
     if (pos >= cmd.length || !topLevel[pos]) break;
     const nameMatch = /^[A-Za-z_][A-Za-z0-9_]*=/.exec(cmd.slice(pos));
     if (!nameMatch) break;
+    const name = nameMatch[0]!.slice(0, -1); // strip the trailing "="
     const eqEnd = pos + nameMatch[0]!.length;
     let vEnd = eqEnd;
     while (vEnd < cmd.length && !(topLevel[vEnd] && /\s/.test(cmd[vEnd]!))) vEnd++;
     const value = cmd.slice(eqEnd, vEnd);
-    if (direction !== "denyAsk" && !isSafeAssignmentValue(value)) break; // stop BEFORE this assignment; leave it and everything after intact
+    // Fix round 1, Finding B / Ruling P2-C: a dangerous NAME is un-strippable on allow regardless
+    // of its value's syntax; stop BEFORE this assignment either way, leaving it and everything
+    // after it intact (denyAsk is unaffected -- it never reaches this branch at all).
+    if (direction !== "denyAsk" && (DANGEROUS_ASSIGNMENT_NAMES.has(name) || !isSafeAssignmentValue(value))) break;
     pos = vEnd;
   }
   return cmd.slice(pos);
@@ -403,6 +455,16 @@ export function extractRedirectTargets(command: string): string[] {
 // ---------------------------------------------------------------------------------------------
 
 export function isRecognizedReadOnly(command: string): boolean {
+  // Fix round 1, Finding A: WS-07 §3's read-only bullet ends with the SAME fallback clause as the
+  // write-capable-flags one -- "unparseable commands, commands over the parser limit... fall back
+  // to permission handling". Without this gate, an unterminated quote (or an over-limit input)
+  // makes `stripLeadingAssignments`/`leadingWord` fall back to a naive whitespace split (their own
+  // defensive "malformed fragment" behavior), which can extract a recognized-looking leading word
+  // from text this function can't actually confidently analyze -- e.g.
+  // `cat 'foo && rm -rf /` (unterminated quote) previously returned true. Must run before any
+  // wrapper-stripping is attempted.
+  if (!scanIfParseable(command)) return false;
+
   // Judgment call: this function's signature (per the brief) has no `direction` parameter, so
   // wrapper-stripping needs one internal choice. "allow" (the narrow/safe-only stripping) is used
   // because read-only recognition is itself an allow-shaped decision (WS-07 §6.1: pre-approve
