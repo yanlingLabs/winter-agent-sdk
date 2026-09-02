@@ -42,6 +42,7 @@ import { ResultError, ProcessError, AbortError, CLIConnectionError } from "./err
 import { encodeFrame, splitFrames } from "./protocol/codec.ts";
 import type { WinterFrame, ControlRequestFrame, ControlResponseFrame } from "./protocol/frames.ts";
 import type { RuntimeConfig } from "./protocol/config.ts";
+import type { CanUseTool } from "./permissions/types.ts";
 import { inMemoryProcess } from "winter-agent-runtime/testing";
 import { echoProvider, stubExecutor, testProviderByName, type TestProviderName, WinterCompatibilitySessionStore, compatibilityKeys } from "winter-agent-runtime";
 import { normalizeTrace, compareTraces, type ConformanceTraceEntry } from "winter-conformance/trace";
@@ -198,6 +199,10 @@ interface QueryScenarioOptions {
   // the retired T6 interim-allow fallback — scenarios that need a tool call to actually EXECUTE
   // (this file's own point is transport/wire equivalence, not permissions) pre-approve it here.
   allowedTools?: string[];
+  // Ruling P2-B / Task 8: lets a scenario register a real canUseTool callback, exercised through
+  // query()'s own wrapper handler — the ONLY way to prove the runtime-originated "permission"
+  // control_request round-trips end-to-end on every leg.
+  canUseTool?: CanUseTool;
   // Invoked once per yielded message, AFTER it's recorded into the trace — the kill/abort
   // scenarios use this to act at a precise, OBSERVED point in the stream (WS-04 events), never a
   // real-clock guess (unlike the raw-driven interrupt scenario, which has no such observable event
@@ -226,6 +231,7 @@ async function traceViaQuery(leg: LegName, scenario: QueryScenarioOptions): Prom
         ...(scenario.sessionId !== undefined ? { sessionId: scenario.sessionId } : {}),
         ...(scenario.resume !== undefined ? { resume: scenario.resume } : {}),
         ...(scenario.allowedTools !== undefined ? { allowedTools: scenario.allowedTools } : {}),
+        ...(scenario.canUseTool !== undefined ? { canUseTool: scenario.canUseTool } : {}),
       },
     });
     for await (const msg of gen) {
@@ -627,6 +633,58 @@ function registerEquivalenceScenarios(legA: LegName, legB: LegName): void {
     expect(toolUseMsg.message.content).toEqual([{ type: "tool_use", id: "test-call-1", name: "test_tool", input: { probe: true } }]);
     const toolResultMsg = a.trace[2]!.payload as { message: { content: unknown } };
     expect(toolResultMsg.message.content).toEqual([{ type: "tool_result", tool_use_id: "test-call-1", content: 'test_tool:{"probe":true}' }]);
+  });
+
+  // Ruling P2-B's own proof, plus Task 8's equivalence-scenario requirement (allow WITH
+  // updatedInput) — combined deliberately: answering this RPC at all is only possible once BOTH
+  // sides of P2-B are fixed, and the answer's updatedInput is what proves the whole canUseTool
+  // result-mapping chain (query.ts -> bridge -> evaluator -> engine execution -> persistence).
+  //
+  // Deliberately configures ZERO allowedTools — the tool_use call is genuinely unmatched, so it
+  // reaches canUseTool for real. Before Ruling P2-B, this exact scenario could not complete AT ALL:
+  // the single-shot prompt's wrapper closed stdin immediately after sending end_input, so by the
+  // time the tool call needed a permission decision, there was no way left to answer it — the
+  // runtime's bridge.request("permission", ...) (no park timeout, WS-04 §3) would park forever and
+  // this test would time out rather than fail an assertion. (Contrast the "tool round" scenario
+  // just above, which never reaches canUseTool at all — its allowedTools entry pre-approves the
+  // call at stage 5, so it could never have exposed this bug or proven this fix.)
+  test("Ruling P2-B: a single-shot query's tool call reaches a real permission RPC the host ANSWERS, approved WITH updatedInput — the transformed input executes and persists", async () => {
+    const sessionId = randomUUID();
+    const approvedInput = { probe: false, approvedVia: "canUseTool" };
+    const canUseTool: CanUseTool = async (toolName, input, opts) => {
+      expect(toolName).toBe("test_tool");
+      expect(input).toEqual({ probe: true });
+      expect(opts.toolUseID).toBe("test-call-1");
+      return { behavior: "allow", updatedInput: approvedInput };
+    };
+
+    const a = await traceViaQuery(legA, { prompt: "go", testProviderName: "tooluse", canUseTool, sessionId });
+    const b = await traceViaQuery(legB, { prompt: "go", testProviderName: "tooluse", canUseTool });
+    expect(compareTraces(a.trace, b.trace)).toEqual([]);
+    expect(a.thrown).toBeUndefined();
+    expect(b.thrown).toBeUndefined();
+    expect(a.trace.map((e) => e.kind)).toEqual(["system/init", "assistant", "user", "assistant", "result", "exit"]);
+
+    // the MODEL-visible tool_use still shows the ORIGINAL input (WS-07 §7.2: "the model sees the
+    // tool result but is not separately told the input was transformed").
+    const toolUseMsg = a.trace[1]!.payload as { message: { content: unknown } };
+    expect(toolUseMsg.message.content).toEqual([{ type: "tool_use", id: "test-call-1", name: "test_tool", input: { probe: true } }]);
+
+    // execution reflects the TRANSFORMED input.
+    const expectedResultContent = [{ type: "tool_result", tool_use_id: "test-call-1", content: `test_tool:${JSON.stringify(approvedInput)}` }];
+    const toolResultMsg = a.trace[2]!.payload as { message: { content: unknown } };
+    expect(toolResultMsg.message.content).toEqual(expectedResultContent);
+
+    // persisted transcript (temp WINTER_HOME) shows the SAME transformed execution.
+    const store = new WinterCompatibilitySessionStore({ winterHome: TEST_WINTER_HOME });
+    const projectKey = compatibilityKeys(FIXTURE_CWD).transcriptProjectKey;
+    const loaded = await store.load({ projectKey, sessionId });
+    expect(loaded).not.toBeNull();
+    const persistedToolResult = loaded!.find(
+      (e) => e.type === "user" && Array.isArray((e as { message?: { content?: unknown } }).message?.content),
+    ) as { message: { content: unknown } } | undefined;
+    expect(persistedToolResult).toBeDefined();
+    expect(persistedToolResult!.message.content).toEqual(expectedResultContent);
   });
 
   test("interrupt mid-turn", async () => {
