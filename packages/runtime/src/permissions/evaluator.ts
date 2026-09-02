@@ -185,6 +185,16 @@ export interface AutoEngineVerdict {
   verdict: "allow" | "deny" | "no_verdict";
   category?: string;
   reasonCode?: string;
+  // Task 12 (WS-07 §10.5/§10.6-11): true when the 3-consecutive/20-total fallback counters have
+  // tripped and this action should route to the SAME human-prompt pathway as any other
+  // would-prompt action (PermissionRequest hook, then canUseTool) instead of a classifier
+  // consultation. `verdict` is "no_verdict" by convention on this branch (a fallback trip is not
+  // itself a classifier opinion) — evaluate() never inspects `verdict` when this flag is true.
+  // evaluate() remains the SOLE owner of "when do we call promptStage" (every other seam already
+  // follows this rule — see tryPermissionRequestHook's own header); the concrete AutoEngine
+  // implementation (auto/engine.ts) signals the NEED here rather than calling ctx.promptStage
+  // itself, so mechanism attribution (canUseTool vs. hook vs. autoEngine) stays correct.
+  fallbackToPrompt?: boolean;
 }
 export interface AutoEngine {
   // T6 never calls this (the `auto` mode arm is a placeholder identical to `default`'s own baseline
@@ -192,6 +202,10 @@ export interface AutoEngine {
   // complete for T12 to wire against, and so "the evaluator runs fully with all four stubbed"
   // (task-6 brief) is true by construction, not by accident.
   classify(call: PermissionCall, ctx: EvaluationContext): Promise<AutoEngineVerdict>;
+  // Task 12 (WS-07 §10.5): called by evaluate() after a fallback-routed prompt/hook decision
+  // resolves — see AutoEngineVerdict.fallbackToPrompt's own comment. Optional: NO_OPINION_AUTO_ENGINE
+  // has no counters to update, so omitting it is a safe no-op there.
+  noteFallbackResolution?(outcome: "allow" | "deny"): void;
 }
 
 // --- SpecialChecks seam (T7 fills) --------------------------------------------------------------------
@@ -312,7 +326,11 @@ export const NO_SPECIAL_CHECKS: SpecialChecks = {
 // `isCriticalRemoval`'s own "additionalDirectories" input (§6.8's "dangerous additional-directory
 // glob shapes") — the two checks share exactly the same notion of "a directory this session may
 // freely operate in," so computing it once and threading it to both is structural, not incidental.
-function boundedRoots(ctx: EvaluationContext): string[] {
+// Exported for Task 12's auto/envelope.ts, which needs the IDENTICAL "cwd or additionalDirectories"
+// notion for the action envelope's own `roots` field (WS-07 §10.6-1) — reusing this rather than
+// re-deriving `effectiveDirectories(...)` a second time keeps the two notions of "in-bounds" from
+// ever drifting apart.
+export function boundedRoots(ctx: EvaluationContext): string[] {
   const ruleDerived = effectiveDirectories(ctx.policy.rules, { trustedWorkspace: ctx.trustedWorkspace });
   return [ctx.cwd, ...ruleDerived, ...(ctx.additionalDirectories ?? [])];
 }
@@ -338,7 +356,11 @@ function isWithinBounds(path: string, ctx: EvaluationContext): boolean {
 // `echo` is nowhere near the seven blessed verbs (this task's own instruction: "redirect targets
 // count as write paths for the SpecialChecks seam ... but do not widen §6.2's auto-approve set" —
 // the "do not widen" half is `evaluateModeStage`'s job, by checking `kind`, not this function's).
-function extractCandidateWritePaths(call: PermissionCall): string[] {
+// Exported for Task 12's auto/envelope.ts (the action envelope's own resolved-paths field, WS-07
+// §10.6-1) — reused rather than duplicated, per this function's own header precedent of being
+// shared internally; a second copy would be exactly the kind of drift risk this whole phase's
+// review lens exists to catch.
+export function extractCandidateWritePaths(call: PermissionCall): string[] {
   if (call.toolName === "Edit" || call.toolName === "Write") {
     const path = call.input["file_path"];
     return typeof path === "string" ? [path] : [];
