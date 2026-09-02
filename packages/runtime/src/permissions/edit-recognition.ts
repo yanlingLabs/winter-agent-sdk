@@ -9,7 +9,7 @@
 //   - `Edit`/`Write` tool calls are direct: one call, one `file_path` input, one recognized path.
 //   - A `Bash` call is decomposed via T3's `splitCompound` (never treating raw, unsplit compound
 //     text as one command -- the exact "lens item 1" trap T6's own tests pin) and EVERY subcommand
-//     is independently classified. A subcommand is "blessed" (part of WS-07 §6.2's exact six-verb
+//     is independently classified. A subcommand is "blessed" (part of WS-07 §6.2's exact seven-verb
 //     list: mkdir/touch/rm/rmdir/mv/cp/sed) only if it has NO redirect target of its own -- a
 //     redirect is a separate file write WS-07 §3 says a command's own authorization never covers
 //     (T3's `extractRedirectTargets` module comment), so it must not silently ride along inside
@@ -21,7 +21,7 @@
 //     subcommand mixed with an unblessed/redirecting one) but the call as a whole is NOT eligible
 //     for acceptEdits auto-approval. Returned (not `null`) specifically so `isProtectedWrite`'s
 //     path extraction (evaluator.ts) can see `echo x > .git/config`'s redirect target even though
-//     `echo` is nowhere near the blessed six -- "redirect targets count as write paths for the
+//     `echo` is nowhere near the blessed seven -- "redirect targets count as write paths for the
 //     SpecialChecks seam... but do not widen §6.2's auto-approve set" (this task's own instruction).
 //   - `null` -- nothing write-shaped recognized at all (a plain read-only or unrelated command, or
 //     an unparseable/empty command) -- WS-07 §6.2: "ambiguous/unparseable ... fall back to a
@@ -50,7 +50,7 @@ export interface RecognizedEditOperation {
   paths: string[];
 }
 
-// WS-07 §6.2, verbatim six-verb list. Exported so protected.ts/tests can reference the exact set
+// WS-07 §6.2, verbatim seven-verb list. Exported so protected.ts/tests can reference the exact set
 // without re-deriving it, mirroring grammar.ts's own READ_ONLY_COMMANDS precedent.
 export const RECOGNIZED_BASH_FS_OPS: ReadonlySet<string> = new Set(["mkdir", "touch", "rm", "rmdir", "mv", "cp", "sed"]);
 
@@ -202,7 +202,7 @@ function sedOperandPaths(rest: string[]): string[] | null {
 }
 
 // Classifies ONE already-stripped subcommand string. Returns `null` when the leading word isn't
-// one of the blessed six verbs (including when there's no leading word at all -- an empty string).
+// one of the blessed seven verbs (including when there's no leading word at all -- an empty string).
 function recognizeBashFsOpPaths(stripped: string): string[] | null {
   const tokens = tokenizeWords(stripped);
   if (tokens.length === 0) return null;

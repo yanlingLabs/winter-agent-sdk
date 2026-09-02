@@ -168,7 +168,12 @@ function classifyRemovalTarget(rawToken: string, ctx: { cwd: string; home: strin
 
   const globParent = trailingGlobParent(resolved);
   if (globParent !== null) {
-    const grantedRoots = [ctx.cwd, ctx.home, ...(ctx.additionalDirectories ?? [])].map((d) => resolveToken(d, ctx));
+    // `ctx.cwd` is listed explicitly because a direct caller of isCriticalRemoval (e.g. this
+    // module's own unit tests) may pass no `additionalDirectories` at all -- but the SEAM caller
+    // (evaluator.ts's REAL_SPECIAL_CHECKS.isCriticalRemoval) already threads `boundedRoots(ctx)` in
+    // as `additionalDirectories`, which itself starts with cwd -- deduped via Set so cwd is never
+    // checked twice (cosmetic only; `.includes()` is idempotent to duplicates either way).
+    const grantedRoots = [...new Set([ctx.cwd, ctx.home, ...(ctx.additionalDirectories ?? [])])].map((d) => resolveToken(d, ctx));
     if (globParent === "/" || isRootOrDirectChild(globParent) || grantedRoots.includes(globParent)) {
       return { critical: true, reason: `broad glob at the top of a working/granted directory: ${rawToken}` };
     }

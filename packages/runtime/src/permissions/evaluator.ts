@@ -265,7 +265,7 @@ function isWithinBounds(path: string, ctx: EvaluationContext): boolean {
 // acceptEdits caller (evaluateModeStage below) and `REAL_SPECIAL_CHECKS.isProtectedWrite` — a Bash
 // call's candidate paths are recognizeEditOperation's UNION of blessed-fs-op paths and redirect
 // targets regardless of `kind`, so `echo x > .git/config` surfaces `.git/config` here even though
-// `echo` is nowhere near the six blessed verbs (this task's own instruction: "redirect targets
+// `echo` is nowhere near the seven blessed verbs (this task's own instruction: "redirect targets
 // count as write paths for the SpecialChecks seam ... but do not widen §6.2's auto-approve set" —
 // the "do not widen" half is `evaluateModeStage`'s job, by checking `kind`, not this function's).
 function extractCandidateWritePaths(call: PermissionCall): string[] {
@@ -407,29 +407,40 @@ export function findMatchingRuleEntry(rules: SourcedRuleSet, call: PermissionCal
   return undefined;
 }
 
-// Task 7 (WS-07 §3.1: "a Read deny also blocks current Edit/Write operations on the same path") —
-// T6-review obligation: this lands at STAGE 2 generally (every mode), not merely inside the
-// acceptEdits arm the original brief text named. `matchesRuleForCall`'s FILE_RULE_TOOLS branch
-// above can never surface this by itself — a rule entry with `toolName: "Read"` never matches a
-// call with `toolName: "Edit"` (`rule.toolName !== call.toolName` returns false immediately) — so
-// this is a SEPARATE lookup, scoped to Edit/Write calls specifically (WS-07 §3.1's own examples are
-// "every editing surface," i.e. tools, not arbitrary Bash writes — a Bash fs-op/redirect touching a
-// Read-denied path is caught by the ordinary Bash deny-rule stage instead, plus T7's own
-// protected/critical checks; scoped this way deliberately, flagged in the report).
+// Task 7 (WS-07 §3.1: "a Read deny also blocks current Edit/Write operations on the same path" —
+// AND, same section: "Recognized Bash file operations consult these rules") — T6-review obligation,
+// extended in fix round 1 (reviewer-caught MAJOR): this lands at STAGE 2 generally (every mode,
+// every write-shaped call), not merely inside the acceptEdits arm the original brief text named,
+// and not merely Edit/Write tool calls. `matchesRuleForCall`'s FILE_RULE_TOOLS branch above can
+// never surface this by itself — a rule entry with `toolName: "Read"` never matches a call with
+// `toolName: "Edit"` OR `"Bash"` (`rule.toolName !== call.toolName` returns false immediately, the
+// very first check) — so this is a SEPARATE lookup. Pre-fix-round-1, this function only checked
+// Edit/Write calls; its own comment claimed a compensating control ("caught by the ordinary Bash
+// deny-rule stage instead") that does NOT exist — no rule-matching path ever lets a `Read`-toolName
+// entry match a `Bash`-toolName call, so `Read(secrets/**) deny` + acceptEdits + `sed -i 's/x/y/'
+// secrets/key.pem` was silently auto-approved. Fixed by reusing `extractCandidateWritePaths`
+// (above, the SAME per-tool path extraction driving `REAL_SPECIAL_CHECKS.isProtectedWrite`) instead
+// of a bespoke Edit/Write-only `file_path` read: Edit/Write's own path, or a Bash call's
+// `recognizeEditOperation(call)?.paths` — the UNION of blessed-fs-op operands AND redirect targets,
+// so `sed -i 's/x/y/' secrets/key.pem` and `echo x > secrets/out` are both covered for free, with
+// no separate Bash-specific extraction to drift out of sync with `isProtectedWrite`'s own.
 // A BARE Read deny (no specifier, or `Tool(*)`) is out of scope by construction (same SCOPE
 // BOUNDARY paths.ts's own readDenyBlocksEdit documents) — it is an advertisement-layer schema
 // removal (WS-07 §1), not a path-pattern block.
 function findReadDenyBlockingEdit(call: PermissionCall, ctx: EvaluationContext): SourcedRuleEntry | undefined {
-  if (call.toolName !== "Edit" && call.toolName !== "Write") return undefined;
-  const path = call.input["file_path"];
-  if (typeof path !== "string") return undefined;
+  const candidatePaths = extractCandidateWritePaths(call);
+  if (candidatePaths.length === 0) return undefined;
   const pool = ctx.allowManagedPermissionRulesOnly ? ctx.policy.rules.entries.filter((e) => e.source === "managed") : ctx.policy.rules.entries;
   for (const entry of pool) {
     if (entry.rule.toolName !== "Read" || entry.behavior !== "deny") continue;
-    if (entry.rule.specifier?.kind !== "pattern") continue;
+    const specifier = entry.rule.specifier;
+    if (specifier?.kind !== "pattern") continue;
+    const pattern = specifier.source;
     // Ruling P2-J (rider 2): symlink-both-ends composed here too, for the identical reason
-    // paths.ts's own readDenyBlocksEdit primitive now is.
-    if (matchFileRuleAtBothEnds(entry.rule.specifier.source, { path, cwd: ctx.cwd, home: ctx.home, direction: "denyAsk" })) {
+    // paths.ts's own readDenyBlocksEdit primitive now is. ANY candidate path matching is enough —
+    // deny is a safety check (mirrors isCriticalRemoval/isProtectedWrite's own "any candidate path"
+    // looping, and matchesRuleForCall's own "ANY dangerous subcommand taints the whole compound").
+    if (candidatePaths.some((path) => matchFileRuleAtBothEnds(pattern, { path, cwd: ctx.cwd, home: ctx.home, direction: "denyAsk" }))) {
       return entry;
     }
   }

@@ -32,8 +32,8 @@ describe("recognizeEditOperation -- Edit/Write direct (WS-07 §6.2)", () => {
   });
 });
 
-describe("recognizeEditOperation -- Bash recognized fs-op subset (WS-07 §6.2 verbatim six verbs)", () => {
-  test("RECOGNIZED_BASH_FS_OPS is exactly the WS-07 §6.2 six-verb list", () => {
+describe("recognizeEditOperation -- Bash recognized fs-op subset (WS-07 §6.2 verbatim seven verbs)", () => {
+  test("RECOGNIZED_BASH_FS_OPS is exactly the WS-07 §6.2 seven-verb list", () => {
     expect([...RECOGNIZED_BASH_FS_OPS].sort()).toEqual(["cp", "mkdir", "mv", "rm", "rmdir", "sed", "touch"]);
   });
 

@@ -444,7 +444,7 @@ describe("Task 7 — acceptEdits real semantics (WS-07 §6.2)", () => {
     expect(record.decision).toBe("deny");
   });
 
-  test("unrecognized Bash (not one of the six verbs, no redirect) falls to the ordinary pipeline, same as default's own 'other unmatched action'", async () => {
+  test("unrecognized Bash (not one of the seven verbs, no redirect) falls to the ordinary pipeline, same as default's own 'other unmatched action'", async () => {
     const ctx = baseCtx({ policy: policy({ mode: "acceptEdits" }), specialChecks: REAL_SPECIAL_CHECKS });
     const record = await evaluate(call("Bash", { command: "npm test" }), ctx);
     // NO_OPINION_PROMPT_STAGE (default in baseCtx) -> T6's generic bottom-of-pipeline interim
@@ -602,16 +602,31 @@ describe("Task 7 — §6.7 protected-path write matrix (mode × protected write,
     expect(record.decision).toBe("deny");
   });
 
-  test("an explicit allow rule does NOT clear this check, in ANY mode (WS-07 §6.7: 'an ordinary settings allow rule does NOT clear this check')", async () => {
-    const promptSpy = spyPromptStage(() => ({ decision: "deny" }));
-    const ctx = baseCtx({
-      promptStage: promptSpy.stage,
-      policy: policy({ mode: "default", rules: withRules(rule("Edit(**)", "allow")) }),
-      specialChecks: REAL_SPECIAL_CHECKS,
-    });
-    const record = await evaluate(protectedCall, ctx);
-    expect(promptSpy.calls.length).toBe(1); // never resolved via mechanism "rule"
-    expect(record.decision).toBe("deny");
+  test("an explicit allow rule does NOT clear this check, in ANY mode (WS-07 §6.7: 'an ordinary settings allow rule does NOT clear this check') — fix round 1, item 2: the loop now actually covers all six modes, matching this test's own title", async () => {
+    // Per-mode expected shape differs (bypassPermissions' OWN §6.7 cell is "allow"; dontAsk never
+    // calls the prompt stage at all) -- the universal invariant this test exists to prove is
+    // `mechanism !== "rule"` in every case: the explicit `Edit(**)` allow rule never wins, whatever
+    // the mode's own baseline otherwise resolves to.
+    const cases: Array<{ mode: PermissionMode; expectPromptCalls: number; expectDecision: "allow" | "deny" }> = [
+      { mode: "default", expectPromptCalls: 1, expectDecision: "deny" },
+      { mode: "acceptEdits", expectPromptCalls: 1, expectDecision: "deny" },
+      { mode: "dontAsk", expectPromptCalls: 0, expectDecision: "deny" },
+      { mode: "bypassPermissions", expectPromptCalls: 0, expectDecision: "allow" },
+      { mode: "plan", expectPromptCalls: 1, expectDecision: "deny" },
+      { mode: "auto", expectPromptCalls: 1, expectDecision: "deny" },
+    ];
+    for (const { mode, expectPromptCalls, expectDecision } of cases) {
+      const promptSpy = spyPromptStage(() => ({ decision: "deny" }));
+      const ctx = baseCtx({
+        promptStage: promptSpy.stage,
+        policy: policy({ mode, rules: withRules(rule("Edit(**)", "allow")) }),
+        specialChecks: REAL_SPECIAL_CHECKS,
+      });
+      const record = await evaluate(protectedCall, ctx);
+      expect(promptSpy.calls.length).toBe(expectPromptCalls);
+      expect(record.decision).toBe(expectDecision);
+      expect(record.mechanism).not.toBe("rule");
+    }
   });
 
   test("reads are unaffected — a plain Read of a protected path is untouched by this primitive (write-shaped only)", async () => {
@@ -663,8 +678,16 @@ describe("Task 7 — §6.8 critical-removal matrix (mode × critical rm, cell-by
     expect(record.decision).toBe("deny");
   });
 
-  test("T6-review obligation: a broad `Bash(rm *)` allow rule does NOT rescue a critical rm at stage 5, in EVERY mode", async () => {
-    for (const mode of ["default", "acceptEdits", "bypassPermissions", "auto"] as const) {
+  test("T6-review obligation: a broad `Bash(rm *)` allow rule does NOT rescue a critical rm at stage 5, in EVERY mode — fix round 1, item 2: dontAsk and plan added, the loop now covers all six", async () => {
+    const cases: Array<{ mode: PermissionMode; expectPromptCalls: number }> = [
+      { mode: "default", expectPromptCalls: 1 },
+      { mode: "acceptEdits", expectPromptCalls: 1 },
+      { mode: "dontAsk", expectPromptCalls: 0 }, // canUseTool is NEVER called in dontAsk (WS-07 §6.3)
+      { mode: "bypassPermissions", expectPromptCalls: 1 },
+      { mode: "plan", expectPromptCalls: 1 },
+      { mode: "auto", expectPromptCalls: 1 },
+    ];
+    for (const { mode, expectPromptCalls } of cases) {
       const promptSpy = spyPromptStage(() => ({ decision: "deny" }));
       const ctx = baseCtx({
         promptStage: promptSpy.stage,
@@ -673,7 +696,9 @@ describe("Task 7 — §6.8 critical-removal matrix (mode × critical rm, cell-by
       });
       const record = await evaluate(criticalCall, ctx);
       expect(record.mechanism).not.toBe("rule"); // never resolved by the allow rule
-      expect(promptSpy.calls.length).toBe(1); // routed to the standing exception instead
+      expect(promptSpy.calls.length).toBe(expectPromptCalls);
+      // critical NEVER auto-allows in ANY mode (unlike protected-write's own bypassPermissions cell)
+      expect(record.decision).toBe("deny");
     }
   });
 
@@ -756,6 +781,49 @@ describe("Task 7 — T6-review obligation: Read-deny-blocks-Edit enforced genera
       policy: policy({ mode: "default", rules: withRules(rule("Read(secrets/**)", "deny")) }),
     });
     const record = await evaluate(call("Edit", { file_path: "/work/public/readme.txt" }), ctx);
+    expect(record).toMatchObject({ decision: "allow", mechanism: "mode" });
+  });
+
+  // Fix round 1, item 1 (MAJOR, reviewer-caught): WS-07 §3.1 says outright "Recognized Bash file
+  // operations consult these rules," and §6.2 lists "Read/Edit deny rules" in acceptEdits' own
+  // bounding sequence — the pre-fix `findReadDenyBlockingEdit` only ever looked at Edit/Write calls,
+  // and its own comment's claimed compensating control ("caught by the ordinary Bash deny-rule
+  // stage instead") does not exist: a `Read`-toolName rule can never match a `Bash`-toolName call
+  // through matchesRuleForCall (tool-name mismatch, checked first). Concretely, before this fix,
+  // `Read(secrets/**) deny` + acceptEdits + `sed -i 's/x/y/' secrets/key.pem` was silently
+  // auto-approved. These three fixtures were run and CONFIRMED FAILING against the pre-fix
+  // Edit/Write-only findReadDenyBlockingEdit before the fix below was applied (task-7-report.md
+  // fix-round section has the transcript).
+  test("MAJOR fix round 1: a recognized Bash fs-op (sed -i) touching a Read-denied path is blocked, not silently auto-approved by acceptEdits", async () => {
+    const promptSpy = spyPromptStage(() => ({ decision: "allow" })); // proves the denial happens BEFORE the prompt stage
+    const ctx = baseCtx({
+      promptStage: promptSpy.stage,
+      cwd: "/work",
+      policy: policy({ mode: "acceptEdits", rules: withRules(rule("Read(secrets/**)", "deny")) }),
+      specialChecks: REAL_SPECIAL_CHECKS,
+    });
+    const record = await evaluate(call("Bash", { command: "sed -i 's/x/y/' secrets/key.pem" }), ctx);
+    expect(promptSpy.calls.length).toBe(0);
+    expect(record).toMatchObject({ decision: "deny", mechanism: "rule" });
+  });
+
+  test("a redirect target touching a Read-denied path is ALSO blocked (redirect targets come free via recognizeEditOperation's own path union)", async () => {
+    const ctx = baseCtx({
+      cwd: "/work",
+      policy: policy({ mode: "acceptEdits", rules: withRules(rule("Read(secrets/**)", "deny")) }),
+      specialChecks: REAL_SPECIAL_CHECKS,
+    });
+    const record = await evaluate(call("Bash", { command: "echo x > secrets/out" }), ctx);
+    expect(record).toMatchObject({ decision: "deny", mechanism: "rule" });
+  });
+
+  test("negative control: the SAME sed -i command with no matching Read-deny rule is still auto-approved (the fix doesn't over-block)", async () => {
+    const ctx = baseCtx({
+      cwd: "/work",
+      policy: policy({ mode: "acceptEdits" }),
+      specialChecks: REAL_SPECIAL_CHECKS,
+    });
+    const record = await evaluate(call("Bash", { command: "sed -i 's/x/y/' secrets/key.pem" }), ctx);
     expect(record).toMatchObject({ decision: "allow", mechanism: "mode" });
   });
 });
