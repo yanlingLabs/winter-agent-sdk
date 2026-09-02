@@ -6,6 +6,8 @@ import {
   type ControlResponseFrame,
   type UserFrame,
   type ProtocolSdkMessage as SdkMessage,
+  type PermissionUpdate,
+  type RuleSource,
 } from "@yanlinglabs/winter-agent-sdk";
 import type { FrameSource, FrameSink } from "./protocol/channel.ts";
 import { Queue } from "./protocol/channel.ts";
@@ -75,6 +77,14 @@ export interface SessionPersistence {
   recordUserEntry(content: string | ContentBlock[]): void | Promise<void>;
   recordAssistantEntry(content: ContentBlock[]): void | Promise<void>;
   flush?(): void | Promise<void>;
+  // Task 8 (WS-07 §3.3 / phase ruling 2): "a PermissionUpdate with a file destination applies
+  // session-effective immediately AND appends to <sessionId>.permission-journal.jsonl for P5
+  // replay." Optional, matching this whole interface's own "entirely optional" contract — the
+  // engine runs fine without a store, and a store that predates this field (or a bare test double)
+  // simply never gets asked. `authority` is always "session" from this engine's own call site (a
+  // canUseTool answer is a live session interaction, never a direct settings-file edit) — typed as
+  // the general RuleSource anyway so a future non-"session" caller isn't foreclosed.
+  recordPermissionUpdate?(update: PermissionUpdate, authority: RuleSource): void | Promise<void>;
 }
 
 export interface EngineOptions {
@@ -251,6 +261,18 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
     if (!store?.flush) return;
     try {
       await store.flush();
+    } catch {
+      /* auxiliary — see comment above */
+    }
+  };
+  // Task 8 (WS-07 §3.3 / phase ruling 2): same auxiliary-failure policy as recordUser/recordAssistant
+  // above — a journal write failing must never fail the turn or block the tool call it accompanies
+  // (the live PolicyStateStore.applyUpdate already succeeded by the time this runs; the journal is a
+  // durability side channel for P5 replay, not the source of truth for THIS run's own live policy).
+  const recordPermissionUpdate = async (update: PermissionUpdate, authority: RuleSource): Promise<void> => {
+    if (!store?.recordPermissionUpdate) return;
+    try {
+      await store.recordPermissionUpdate(update, authority);
     } catch {
       /* auxiliary — see comment above */
     }
@@ -602,6 +624,12 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
           if (decision.updatedPermissions) {
             for (const update of decision.updatedPermissions) {
               policyStateStore.applyUpdate(update, { authority: "session" });
+              // Phase ruling 2: "applies session-effective immediately AND appends to the
+              // permission journal" — the live application above and the durability journal below
+              // are two independent effects of the SAME update, not a fallback chain; journaling
+              // failure (auxiliary, see recordPermissionUpdate's own comment) never undoes or
+              // blocks the live application that already happened.
+              await recordPermissionUpdate(update, "session");
             }
           }
           // WS-07 §7.2: updatedInput/transformedInput sanitizes/narrows/redirects the EXECUTED call

@@ -1,9 +1,17 @@
 import { test, expect, spyOn } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import type { RuntimeConfig, WinterFrame, ControlRequestFrame, ControlResponseFrame, ProtocolSdkMessage as SdkMessage } from "@yanlinglabs/winter-agent-sdk";
+import type {
+  RuntimeConfig,
+  WinterFrame,
+  ControlRequestFrame,
+  ControlResponseFrame,
+  ProtocolSdkMessage as SdkMessage,
+  PermissionUpdate,
+  PermissionResult,
+} from "@yanlinglabs/winter-agent-sdk";
 import { WinterCompatibilitySessionStore, splitFrames, encodeFrame, compatibilityKeys } from "@yanlinglabs/winter-agent-sdk";
 import type { SpawnedRuntimeProcess } from "@yanlinglabs/winter-agent-sdk";
 import { createInMemoryChannel } from "./protocol/channel.ts";
@@ -754,6 +762,91 @@ test("Task 6: a denied tool call produces a synthetic tool_result with denied:tr
     const internalToolMsg = secondCallMessages.find((m) => m.role === "tool");
     expect(internalToolMsg).toBeDefined();
     expect(internalToolMsg!.content).toEqual(toolResultMsg.message.content as string | ContentBlock[]);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+// --- Task 8 (WS-07 §7.2): a real canUseTool allow with updatedPermissions ---------------------------
+
+test("Task 8: a real canUseTool allow with updatedPermissions applies LIVE (a second matching call is auto-approved, no second RPC) and journals durably", async () => {
+  const home = freshHome();
+  try {
+    const sessionId = randomUUID();
+    const cwd = "/winter-fixture-permissions-journal";
+    const config: RuntimeConfig = { sessionId, cwd, model: "sonnet" }; // zero rules: BOTH calls start unmatched
+    const provider = scriptedProvider([
+      { kind: "tool_use", calls: [{ id: "call1", name: "mystery_tool", input: {} }] },
+      { kind: "tool_use", calls: [{ id: "call2", name: "mystery_tool", input: {} }] },
+      { kind: "text", text: "done" },
+    ]);
+    const proc = inMemoryProcess(["--config-json", JSON.stringify(config)], provider, stubExecutor, { WINTER_HOME: home });
+
+    // A manual, per-frame driver (mirrors transport-equivalence.test.ts's own createDriver) — needed
+    // here (unlike drainProcess above) because this test must ANSWER a runtime-originated
+    // "permission" control_request mid-drain, not just read everything to EOF.
+    const pending: WinterFrame[] = [];
+    let carry = "";
+    const it = proc.stdout[Symbol.asyncIterator]();
+    async function nextFrame(): Promise<WinterFrame | null> {
+      while (pending.length === 0) {
+        const { value, done } = await it.next();
+        if (done) return null;
+        const split = splitFrames(value, carry);
+        carry = split.carry;
+        pending.push(...split.frames);
+      }
+      return pending.shift() ?? null;
+    }
+
+    // "userSettings" deliberately, not "localSettings"/"projectSettings": those map to
+    // source:"local"/"project", which resolveRules'/findMatchingRuleEntry's own trust gate excludes
+    // from ALLOW resolution while trustedWorkspace is false (a P2-wide constant — no settings-file
+    // loader exists yet to have established real trust, P5) — an update landing there would be
+    // journaled but stay LIVE-INERT, silently defeating this test's own "applies LIVE" claim.
+    // "userSettings" (source "user") is untrusted-gate-exempt AND still a FILE_DESTINATIONS member
+    // (ruleset.ts), so it is both durably journaled and immediately effective — proving both halves
+    // of Phase ruling 2 ("applies session-effective immediately AND appends to the journal") at once.
+    const suggestedRule: PermissionUpdate = { type: "addRules", rules: [{ toolName: "mystery_tool" }], behavior: "allow", destination: "userSettings" };
+
+    proc.stdin.write(encodeFrame({ type: "user", text: "go" }));
+    proc.stdin.write(encodeFrame({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined }));
+
+    const seen: WinterFrame[] = [];
+    let permissionRequestCount = 0;
+    while (true) {
+      const frame = await nextFrame();
+      if (!frame) break; // natural EOF — the engine terminated on its own (P2-B's own termination proof, reused here)
+      seen.push(frame);
+      if (frame.type === "control_request" && (frame as ControlRequestFrame).subtype === "permission") {
+        permissionRequestCount++;
+        const cf = frame as ControlRequestFrame;
+        // call2 must NEVER reach here — that's the whole "applies LIVE" claim under test.
+        expect((cf.payload as { toolUseID: string }).toolUseID).toBe("call1");
+        const result: PermissionResult = { behavior: "allow", updatedPermissions: [suggestedRule] };
+        proc.stdin.write(encodeFrame({ type: "control_response", requestId: cf.requestId, ok: true, payload: result }));
+      }
+    }
+    await proc.exited;
+
+    expect(permissionRequestCount).toBe(1); // call2 was auto-approved via the LIVE rule — never a second RPC
+
+    const msgs = seen.filter((f) => f.type === "data").map((f) => (f as { message: SdkMessage }).message);
+    expect(msgs.map((m) => m.type)).toEqual(["system", "assistant", "user", "assistant", "user", "assistant", "result"]);
+    const firstToolResult = msgs[2] as { message: { content: unknown } };
+    expect(firstToolResult.message.content).toEqual([{ type: "tool_result", tool_use_id: "call1", content: "mystery_tool:{}" }]);
+    // call2: ALSO executed — resolved via the newly-added rule, not a second canUseTool round trip.
+    const secondToolResult = msgs[4] as { message: { content: unknown } };
+    expect(secondToolResult.message.content).toEqual([{ type: "tool_result", tool_use_id: "call2", content: "mystery_tool:{}" }]);
+
+    // Phase ruling 2: the SAME update durably journaled, envelope-wrapped with authority "session".
+    const projectKey = compatibilityKeys(cwd).transcriptProjectKey;
+    const journalPath = join(home, "projects", projectKey, `${sessionId}.permission-journal.jsonl`);
+    expect(existsSync(journalPath)).toBe(true);
+    const envelope = JSON.parse(readFileSync(journalPath, "utf8").trim()) as { authority: string; update: PermissionUpdate; at: string };
+    expect(envelope.authority).toBe("session");
+    expect(envelope.update).toEqual(suggestedRule);
+    expect(typeof envelope.at).toBe("string");
   } finally {
     rmSync(home, { recursive: true, force: true });
   }

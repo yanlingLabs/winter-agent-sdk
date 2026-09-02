@@ -10,7 +10,7 @@
 // P1 scope: only the MAIN chain (isSidechain: false) at message boundaries — no init/lifecycle
 // frames, no subagent transcripts, no resume (Task 9).
 import { randomUUID } from "node:crypto";
-import type { RuntimeConfig } from "@yanlinglabs/winter-agent-sdk";
+import type { RuntimeConfig, PermissionUpdate, RuleSource } from "@yanlinglabs/winter-agent-sdk";
 // Task 10 (WS-05 §6): the store, path-key helpers, and the store-level fork primitive all moved to
 // the sdk package — this file imports them from there now, same dependency direction as the
 // Task-1 protocol inversion (runtime -> sdk, never the reverse). forkSessionByKey is the relocated
@@ -31,6 +31,9 @@ import {
 import type { ContentBlock, ProviderMessage, SessionPersistence } from "../engine.ts";
 import { resolveProjectDirName } from "../paths/project-dir-name.ts";
 import { findContinueTarget, findResumeTarget, truncateAt, toDialectEntries, rebuildProviderMessages, ResumeTargetError } from "./resume.ts";
+// Task 8 (WS-07 §3.3 / phase ruling 2): the permission journal — ruleset.ts's own header names this
+// task ("T8's canUseTool wiring") as its first real caller with something to journal.
+import { appendPermissionJournal } from "../permissions/ruleset.ts";
 
 // The dialect's own name for a content block. Same shapes engine.ts's ContentBlock already
 // produces (text/tool_use/tool_result, P1-G's `interrupted` and P1-H's `error` markers included) —
@@ -267,13 +270,43 @@ export interface ResolvedEngineSession {
   initialMessages: ProviderMessage[];
 }
 
-function buildWriter(opts: { store: SessionStore; projectKey: string; sessionId: string; cwd: string; initialParentUuid: string | null }): TranscriptWriter {
-  return new TranscriptWriter({
+// Task 8: wraps a TranscriptWriter with the ONE extra SessionPersistence method engine.ts's
+// canUseTool wiring needs — recordPermissionUpdate — as a thin delegator rather than a
+// TranscriptWriter constructor field/subclass: the journal's own location primitives (winterHome/
+// projectKey/sessionId) are exactly this module's own already-resolved values at the ONE place
+// (buildWriter, below) that constructs a writer, so there is nothing to gain from threading
+// `winterHome` further into TranscriptWriterOptions itself, and every existing direct
+// TranscriptWriter fixture (dialect.test.ts) stays unaffected — it never gains a journal capability
+// (nor needs one) unless it goes through buildWriter/resolveEngineSession.
+function withPermissionJournal(writer: TranscriptWriter, location: { winterHome: string; projectKey: string; sessionId: string }): SessionPersistence {
+  return {
+    recordUserEntry: (content) => writer.recordUserEntry(content),
+    recordAssistantEntry: (content) => writer.recordAssistantEntry(content),
+    flush: () => writer.flush(),
+    // Synchronous, matching appendPermissionJournal's own synchronous fs calls (openSync et al.,
+    // ruleset.ts) — SessionPersistence's own `void | Promise<void>` return type accepts either, and
+    // engine.ts's caller awaits unconditionally regardless (a no-op await on a non-promise).
+    recordPermissionUpdate(update: PermissionUpdate, authority: RuleSource): void {
+      appendPermissionJournal(location, update, { authority });
+    },
+  };
+}
+
+function buildWriter(opts: {
+  store: SessionStore;
+  projectKey: string;
+  sessionId: string;
+  cwd: string;
+  initialParentUuid: string | null;
+  winterHome: string;
+}): SessionPersistence {
+  const writer = new TranscriptWriter({
     store: opts.store,
     key: { projectKey: opts.projectKey, sessionId: opts.sessionId },
     ctx: { sessionId: opts.sessionId, cwd: opts.cwd, version: RUNTIME_ENGINE_VERSION, projectDirName: opts.projectKey },
     initialParentUuid: opts.initialParentUuid,
   });
+  return withPermissionJournal(writer, { winterHome: opts.winterHome, projectKey: opts.projectKey, sessionId: opts.sessionId });
 }
 
 // Ruling from task-8's brief: "wire store when persistSession !== false", shared by both main.ts
@@ -324,7 +357,7 @@ export async function resolveEngineSession(opts: {
   const wantsResume = config.resume !== undefined;
 
   if (!wantsContinue && !wantsResume) {
-    const writer = buildWriter({ store, projectKey: cwdKey, sessionId: config.sessionId, cwd: config.cwd, initialParentUuid: null });
+    const writer = buildWriter({ store, projectKey: cwdKey, sessionId: config.sessionId, cwd: config.cwd, initialParentUuid: null, winterHome });
     return { config, store: writer, initialMessages: [] };
   }
 
@@ -338,7 +371,7 @@ export async function resolveEngineSession(opts: {
       // fresh session under the same resolved project key is the least-surprising fallback (never
       // silently picks an unrelated session, never blocks the run on a typed error for what is, in
       // effect, just an empty project).
-      const writer = buildWriter({ store, projectKey: cwdKey, sessionId: config.sessionId, cwd: config.cwd, initialParentUuid: null });
+      const writer = buildWriter({ store, projectKey: cwdKey, sessionId: config.sessionId, cwd: config.cwd, initialParentUuid: null, winterHome });
       return { config, store: writer, initialMessages: [] };
     }
     targetSessionId = found;
@@ -431,7 +464,7 @@ export async function resolveEngineSession(opts: {
   // is what "prefer the recorded value over a fresh env resolution" buys concretely: even though
   // `cwdKey` was computed from THIS run's current environment, a resumed session already living
   // under a different (possibly now-stale) resolved name keeps writing there.
-  const writer = buildWriter({ store, projectKey: targetProjectKey, sessionId: targetSessionId, cwd: config.cwd, initialParentUuid });
+  const writer = buildWriter({ store, projectKey: targetProjectKey, sessionId: targetSessionId, cwd: config.cwd, initialParentUuid, winterHome });
   const effectiveConfig: RuntimeConfig = { ...config, sessionId: targetSessionId };
   return { config: effectiveConfig, store: writer, initialMessages };
 }

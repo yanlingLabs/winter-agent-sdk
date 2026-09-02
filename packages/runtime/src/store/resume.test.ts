@@ -38,6 +38,7 @@ import { resolveEngineSession } from "./dialect.ts";
 // no longer imports or exercises it directly (its own "forkSession on resume" end-to-end test
 // below only configures RuntimeConfig.forkSession, a same-named but unrelated boolean option).
 import { WinterCompatibilitySessionStore, type SessionStoreEntry } from "@yanlinglabs/winter-agent-sdk";
+import type { PermissionUpdate } from "@yanlinglabs/winter-agent-sdk";
 import { compatibilityKeys } from "@yanlinglabs/winter-agent-sdk";
 import { inMemoryProcess } from "../testing.ts";
 import { scriptedProvider, stubExecutor, echoProvider } from "../provider/mock.ts";
@@ -876,6 +877,65 @@ describe("Ruling P1-S: eager lease acquisition at resume resolution", () => {
   // created itself, all within this SAME test process/pid — if the eager acquire broke same-pid
   // re-entry, every one of those would fail too. No separate test needed here; recorded so a
   // reviewer doesn't go looking for one.
+});
+
+// Task 8 (WS-07 §3.3 / phase ruling 2): resolveEngineSession's own store now carries
+// recordPermissionUpdate (dialect.ts's withPermissionJournal, wrapping buildWriter's result) —
+// isolated from the full engine+bridge round trip (engine.test.ts's own "a real canUseTool allow
+// with updatedPermissions..." covers that end-to-end); this describes ONLY the wiring: does the
+// store resolveEngineSession hands back actually journal what it's told to, at the right path,
+// and correctly skip an ephemeral (session/cliArg) destination.
+describe("Task 8: resolveEngineSession's store journals PermissionUpdates (WS-07 §3.3 / phase ruling 2)", () => {
+  test("a file-destined update is journaled as an envelope at <winterHome>/projects/<projectKey>/<sessionId>.permission-journal.jsonl", async () => {
+    const home = freshHome();
+    try {
+      const sessionId = randomUUID();
+      const cwd = "/winter-fixture";
+      const { store } = await resolveEngineSession({ config: { sessionId, cwd, model: "sonnet" }, resolveWinterHome: () => home, env: {} });
+      expect(store?.recordPermissionUpdate).toBeDefined();
+
+      const update: PermissionUpdate = { type: "addRules", rules: [{ toolName: "Bash", ruleContent: "rm -rf /tmp/x" }], behavior: "allow", destination: "userSettings" };
+      await store!.recordPermissionUpdate!(update, "session");
+
+      const projectKey = compatibilityKeys(cwd).transcriptProjectKey;
+      const journalPath = join(home, "projects", projectKey, `${sessionId}.permission-journal.jsonl`);
+      expect(existsSync(journalPath)).toBe(true);
+      const envelope = JSON.parse(readFileSync(journalPath, "utf8").trim()) as { authority: string; update: PermissionUpdate; at: string };
+      expect(envelope.authority).toBe("session");
+      expect(envelope.update).toEqual(update);
+      expect(typeof envelope.at).toBe("string");
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test("a session-destined update is NOT journaled (ephemeral by construction, ruleset.ts's own rule)", async () => {
+    const home = freshHome();
+    try {
+      const sessionId = randomUUID();
+      const cwd = "/winter-fixture";
+      const { store } = await resolveEngineSession({ config: { sessionId, cwd, model: "sonnet" }, resolveWinterHome: () => home, env: {} });
+      const update: PermissionUpdate = { type: "setMode", mode: "acceptEdits", destination: "session" };
+      await store!.recordPermissionUpdate!(update, "session");
+
+      const projectKey = compatibilityKeys(cwd).transcriptProjectKey;
+      const journalPath = join(home, "projects", projectKey, `${sessionId}.permission-journal.jsonl`);
+      expect(existsSync(journalPath)).toBe(false);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test("persistSession:false: no store at all, so there is nothing to journal (matches every other SessionPersistence method's own contract)", async () => {
+    const { store } = await resolveEngineSession({
+      config: { sessionId: randomUUID(), cwd: "/winter-fixture", model: "sonnet", persistSession: false },
+      resolveWinterHome: () => {
+        throw new Error("must not be called when persistSession is false");
+      },
+      env: {},
+    });
+    expect(store).toBeUndefined();
+  });
 });
 
 // Variant of runOneEnvelope that takes a custom provider/tools and prompt text (used by the
