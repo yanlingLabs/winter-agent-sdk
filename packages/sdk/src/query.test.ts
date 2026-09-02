@@ -8,6 +8,7 @@ import type { SpawnedRuntimeProcess, SpawnRuntimeOptions } from "./transport.ts"
 import { encodeFrame } from "./protocol/codec.ts";
 import { PROTOCOL_VERSION } from "./protocol/frames.ts";
 import type { WinterFrame, ControlResponseFrame } from "./protocol/frames.ts";
+import type { PermissionMode } from "./permissions/types.ts";
 
 test("query yields system/init, assistant, result in order", async () => {
   const seen: string[] = [];
@@ -207,6 +208,36 @@ test("Task 5: unset allowedTools/disallowedTools/permissions/settingSources are 
   }
 });
 
+// --- Task 6 (WS-07 §6.4): allowDangerouslySkipPermissions + permissions.disableBypassPermissionsMode
+// serialize into --config-json exactly like every prior field above (same captureConfigJson helper).
+
+test("Task 6: allowDangerouslySkipPermissions and permissions.disableBypassPermissionsMode are present in --config-json when set on Options", async () => {
+  const capture = captureConfigJson();
+  for await (const _msg of query({
+    prompt: "ping",
+    options: {
+      allowDangerouslySkipPermissions: true,
+      permissions: { disableBypassPermissionsMode: true },
+      spawnClaudeCodeProcess: capture.hook,
+    },
+  })) {
+    /* drain */
+  }
+
+  expect(capture.get()).toMatchObject({
+    allowDangerouslySkipPermissions: true,
+    permissions: { disableBypassPermissionsMode: true },
+  });
+});
+
+test("Task 6: unset allowDangerouslySkipPermissions is OMITTED entirely from --config-json", async () => {
+  const capture = captureConfigJson();
+  for await (const _msg of query({ prompt: "ping", options: { spawnClaudeCodeProcess: capture.hook } })) {
+    /* drain */
+  }
+  expect(capture.get()).not.toHaveProperty("allowDangerouslySkipPermissions");
+});
+
 test("Task 9: a pre-allocated Options.sessionId round-trips into the init frame's sessionId", async () => {
   const explicitId = "44444444-4444-4444-8444-444444444444";
   let sawInitSessionId: string | undefined;
@@ -336,7 +367,11 @@ test("setPermissionMode(): sends a real control request mid-iteration; an invali
     // promises are awaited after the loop ends instead (already settled by then).
     if (msg.type === "system" && validPromise === undefined) {
       validPromise = gen.setPermissionMode("plan");
-      invalidPromise = gen.setPermissionMode("not_a_real_mode");
+      // Ruling 8 tightened setPermissionMode's TS param to the six-value union — this cast simulates
+      // a caller who bypasses the type system (a plain-JS consumer, or a stale/foreign client) so the
+      // test can still exercise the RUNTIME's own invalid_mode rejection, which is unaffected by the
+      // wrapper's compile-time type.
+      invalidPromise = gen.setPermissionMode("not_a_real_mode" as PermissionMode);
     }
     if (msg.type === "result") releasePrompt();
   }

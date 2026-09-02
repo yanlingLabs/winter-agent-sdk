@@ -1,9 +1,12 @@
 import type { SpawnClaudeCodeProcess } from "./transport.ts";
-import type { RuleSource } from "./permissions/types.ts";
+import type { RuleSource, PermissionMode } from "./permissions/types.ts";
 
 export interface Options {
   model?: string;
-  permissionMode?: string;          // full union arrives with WS-07; P0 accepts any string
+  // Ruling 8 (phase plan): tightened to the six-value union — the wire (RuntimeConfig.permissionMode,
+  // protocol/config.ts) stays an open string; the runtime is what turns an unknown value into a
+  // typed startup error (packages/runtime/src/permissions/policy-state.ts's assertKnownPermissionMode).
+  permissionMode?: PermissionMode;
   maxTurns?: number;
   cwd?: string;
   env?: Record<string, string>;     // REPLACES the child env (WS-03 §5); flows into SpawnRuntimeOptions.env
@@ -51,9 +54,23 @@ export interface Options {
   // add-time grammar validation every other rule source gets.
   allowedTools?: string[]; // allow rules, source "sdk". Advertisement-layer note (WS-07 §1): this pre-approves, it does not by itself hide other tools.
   disallowedTools?: string[]; // deny rules, source "sdk". Bare vs scoped both flow through parseRule unchanged (WS-07 §3's schema-removal-as-deny distinction, carried via ParsedRule.isBareEquivalent).
-  permissions?: { allow?: string[]; ask?: string[]; deny?: string[] }; // same raw-string grammar, one array per PermissionBehavior, all tagged source "sdk".
+  // Task 6 (WS-07 §6.4): `disableBypassPermissionsMode` nests INSIDE `permissions` rather than sitting
+  // top-level — WS-07 §6.4's own prose spells it `permissions.disableBypassPermissionsMode` verbatim
+  // (managed policy's veto over the mode), so this mirrors the spec's own naming rather than
+  // inventing a flatter shape. A plain boolean for now — source-tagged managed-only enforcement
+  // arrives with real managed settings at P5 (phase-boundary ruling 1); nothing here validates WHO
+  // set it. Judgment call, flagged in the report. query.ts's existing `permissions` passthrough
+  // spread carries this field automatically — no serialization code changes needed for it.
+  permissions?: { allow?: string[]; ask?: string[]; deny?: string[]; disableBypassPermissionsMode?: boolean };
   // Winter-original (WS-07 §3.2's prose source list, not a pinned upstream field): which rule
   // sources a host wants loaded at all — e.g. omitting "project" avoids loading project rules
   // entirely (WS-07 §3.2). Serialize-only for this task: P5's file loader is the actual consumer.
   settingSources?: RuleSource[];
+
+  // Task 6 (WS-07 §6.4): explicit, top-level, and named to be impossible to set by accident — the
+  // ONLY thing that lets a session SELECT bypassPermissions (at startup, or via a later
+  // setPermissionMode into it): both paths are gated identically
+  // (packages/runtime/src/permissions/policy-state.ts's checkBypassGate). Absent/false is the
+  // default; `permissions.disableBypassPermissionsMode` above overrides even an explicit `true`.
+  allowDangerouslySkipPermissions?: boolean;
 }

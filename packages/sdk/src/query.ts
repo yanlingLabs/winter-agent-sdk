@@ -4,6 +4,7 @@ import { PROTOCOL_VERSION } from "./protocol/frames.ts";
 import { splitFrames, encodeFrame, ProtocolError } from "./protocol/codec.ts";
 import type { RuntimeConfig } from "./protocol/config.ts";
 import type { Options } from "./options.ts";
+import type { PermissionMode } from "./permissions/types.ts";
 import { resolveRuntimeExecutable, defaultSpawn, type SpawnRuntimeOptions, type SpawnedRuntimeProcess } from "./transport.ts";
 import { ResultError, CLIConnectionError, ProtocolDecodeError, ProcessError, AbortError, WinterRpcError } from "./errors.ts";
 
@@ -35,7 +36,11 @@ export interface QueryInternal {
 export interface Query extends AsyncGenerator<SdkMessage> {
   interrupt(): Promise<void>;
   setModel(model?: string): Promise<void>;
-  setPermissionMode(mode: string): Promise<void>;
+  // Ruling 8 (phase plan): tightened from `string` to the six-value public union. The WIRE payload
+  // (sendControlRequest below) stays the bare value — an invalid string can still reach the runtime
+  // (e.g. a non-TS caller, or a deliberately-cast test value) and gets a typed `invalid_mode`
+  // control-response rejection there, unchanged from before this tightening.
+  setPermissionMode(mode: PermissionMode): Promise<void>;
   // Optional (not every hand-built Query-shaped test double needs to carry it) — query() itself
   // always sets it.
   __internal?: QueryInternal;
@@ -77,6 +82,8 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
     ...(options.disallowedTools !== undefined ? { disallowedTools: options.disallowedTools } : {}),
     ...(options.permissions !== undefined ? { permissions: options.permissions } : {}),
     ...(options.settingSources !== undefined ? { settingSources: options.settingSources } : {}),
+    // Task 6 (WS-07 §6.4): same pure-passthrough convention as every field above.
+    ...(options.allowDangerouslySkipPermissions !== undefined ? { allowDangerouslySkipPermissions: options.allowDangerouslySkipPermissions } : {}),
   };
 
   // A custom spawnClaudeCodeProcess hook owns process creation entirely (containers, VMs, remote
@@ -383,7 +390,7 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
   // Still a stub: no engine-side `set_model` control-request handler exists yet (a future task adds
   // it — the correlation plumbing this stub would need now exists, unlike at P1).
   gen.setModel = async () => {};
-  gen.setPermissionMode = async (mode: string) => {
+  gen.setPermissionMode = async (mode: PermissionMode) => {
     await sendControlRequest("set_permission_mode", mode); // WS-04 §3.1: bare PermissionMode value
   };
   gen.__internal = {

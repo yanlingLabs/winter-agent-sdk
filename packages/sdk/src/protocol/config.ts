@@ -28,6 +28,15 @@ export interface RuntimeConfig {
   winterHome?: string;
   allowedTools?: string[];
   disallowedTools?: string[];
-  permissions?: { allow?: string[]; ask?: string[]; deny?: string[] };
+  // Task 6 (WS-07 §6.4): disableBypassPermissionsMode nests inside `permissions`, mirroring
+  // Options' own field exactly (see options.ts's comment for the naming rationale) — a plain
+  // boolean at P2; managed source-tagging arrives at P5.
+  permissions?: { allow?: string[]; ask?: string[]; deny?: string[]; disableBypassPermissionsMode?: boolean };
   settingSources?: RuleSource[];
+  // Task 6 (WS-07 §6.4, Ruling 8): the wire's own permissionMode field ABOVE stays an open string —
+  // only this new field is added here. Selecting/switching into "bypassPermissions" requires this to
+  // be `true`; the runtime engine gates both the initial config value and every later
+  // set_permission_mode control request against it (packages/runtime/src/permissions/
+  // policy-state.ts).
+  allowDangerouslySkipPermissions?: boolean;
 }
