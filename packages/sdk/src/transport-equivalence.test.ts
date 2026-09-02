@@ -1095,9 +1095,15 @@ describe("Finding 7 (T2, tracked — observe only, no fix): abort BEFORE query()
 // the block above this comment is byte-unchanged from before this task, and without the env var it
 // is the ENTIRE suite, exactly as today (brief: "the suite adds the leg when the env var is set").
 //
-// Same 9 scenarios as "transport equivalence: inMemoryProcess vs the real winter child" above —
-// registerEquivalenceScenarios is the ONLY copy of their bodies/assertions (Task 5 rider: a second,
-// hand-copied 9-test list here was rejected specifically because two such lists WILL drift).
+// Item 7 (P2 fix-wave) staleness correction: this used to say "Same 9 scenarios" -- true when Task
+// 5 wrote it, false since (16 as of this fix wave, after Task 13's own Carry-1/mode-switch
+// additions and others along the way). Deliberately NOT re-pinning a fresh number here either --
+// that would just go stale again the next time a scenario is added. The load-bearing fact is
+// count-independent: EVERY scenario "transport equivalence: inMemoryProcess vs the real winter
+// child" (above) registers via registerEquivalenceScenarios ALSO runs here, against the
+// compiled-binary leg — registerEquivalenceScenarios is the ONLY copy of their bodies/assertions
+// (Task 5 rider: a second, hand-copied test list here was rejected specifically because two such
+// lists WILL drift).
 if (process.env.WINTER_COMPILED_BIN) {
   describe("transport equivalence: inMemoryProcess vs the compiled winter binary (Task 5)", () => {
     registerEquivalenceScenarios("inMemory", "compiled");

@@ -1421,7 +1421,18 @@ test("Finding 8(b): a real canUseTool allow suggesting a MALFORMED addRules entr
 // is what makes this scenario possible to construct at all.
 test("Task 8/WS-07 §2: a permission answer computed under a policy that changed WHILE the RPC was in flight is discarded and re-evaluated fresh", async () => {
   const { host, runtime } = createInMemoryChannel();
-  const provider = scriptedProvider([{ kind: "tool_use", calls: [{ id: "call1", name: "mystery_tool", input: {} }] }]);
+  // Item 7 (P2 fix-wave) narrative fix: a SECOND scripted turn is required here -- a deny does not
+  // stop the round loop (only a throw/interrupt does), so this run's real second provider.generate()
+  // call is NOT hypothetical: pre-fix, a single-item script left it unscripted, and
+  // scriptedProvider's own exhaustion throw silently became this run's ACTUAL terminal result
+  // (error_during_execution), papered over because runEngine always returns code 0 either way and
+  // neither this test's own assertions (nor the deny-check below) ever looked at `finalResult`'s own
+  // subtype. This test's real claim -- "discarded and re-evaluated fresh," a CLEAN outcome -- is now
+  // actually verified via the explicit "success" assertion further down, not merely assumed.
+  const provider = scriptedProvider([
+    { kind: "tool_use", calls: [{ id: "call1", name: "mystery_tool", input: {} }] },
+    { kind: "text", text: "done" },
+  ]);
   const done = runEngine({ config: baseConfig(), input: runtime.input, output: runtime.output, provider, tools: stubExecutor });
 
   host.output.write({ type: "user", text: "go" });
@@ -1467,6 +1478,11 @@ test("Task 8/WS-07 §2: a permission answer computed under a policy that changed
   const msgs = dataMessages(seen);
   const toolResult = msgs.find((m) => m.type === "user") as { message: { content: unknown } };
   expect(toolResult.message.content).toEqual([{ type: "tool_result", tool_use_id: "call1", content: expect.any(String), denied: true }]);
+  // Item 7: the run's REAL terminal result is a clean success (the second scripted turn), not the
+  // scriptedProvider-exhaustion error_during_execution the pre-fix single-item script silently produced.
+  const result = msgs.find((m) => m.type === "result") as Extract<SdkMessage, { type: "result" }>;
+  expect(result.subtype).toBe("success");
+  expect(result.is_error).toBe(false);
 });
 
 // Termination re-argument, the gap found by review: P2-B's own header argues "the pump always
@@ -1479,7 +1495,16 @@ test("Task 8/WS-07 §2: a permission answer computed under a policy that changed
 // forever. This test is the proof: it deliberately never answers the permission RPC at all.
 test("Task 8 (termination edge, review finding): true EOF with a permission RPC still in flight resolves the RPC to a denial and lets runEngine return, instead of parking forever", async () => {
   const { host, runtime } = createInMemoryChannel();
-  const provider = scriptedProvider([{ kind: "tool_use", calls: [{ id: "call1", name: "mystery_tool", input: {} }] }]);
+  // Item 7 (P2 fix-wave) narrative fix: a SECOND scripted turn is required here too, for the
+  // identical reason as the fixture above -- the round loop calls provider.generate() again after
+  // the deny (nothing about a plain deny stops the round), and pre-fix that second, unscripted call
+  // silently threw scriptedProvider's own exhaustion error, becoming this run's REAL terminal result
+  // (error_during_execution) rather than the clean completion this test's own title claims ("lets
+  // runEngine return" reads as success, and code 0 alone cannot distinguish the two).
+  const provider = scriptedProvider([
+    { kind: "tool_use", calls: [{ id: "call1", name: "mystery_tool", input: {} }] },
+    { kind: "text", text: "done" },
+  ]);
   const done = runEngine({ config: baseConfig(), input: runtime.input, output: runtime.output, provider, tools: stubExecutor });
 
   host.output.write({ type: "user", text: "go" });
@@ -1507,6 +1532,11 @@ test("Task 8 (termination edge, review finding): true EOF with a permission RPC 
   const msgs = dataMessages(seen);
   const toolResult = msgs.find((m) => m.type === "user") as { message: { content: unknown } };
   expect(toolResult.message.content).toEqual([{ type: "tool_result", tool_use_id: "call1", content: expect.any(String), denied: true }]);
+  // Item 7: the run's REAL terminal result is a clean success (the second scripted turn), not the
+  // scriptedProvider-exhaustion error_during_execution the pre-fix single-item script silently produced.
+  const result = msgs.find((m) => m.type === "result") as Extract<SdkMessage, { type: "result" }>;
+  expect(result.subtype).toBe("success");
+  expect(result.is_error).toBe(false);
 });
 
 // WS-07 §7.2: deny.interrupt === true means "more than just this call is refused" — it additionally
