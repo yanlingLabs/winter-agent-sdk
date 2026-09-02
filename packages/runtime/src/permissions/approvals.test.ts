@@ -498,3 +498,66 @@ describe("createFileDurableApprovalStore — real fs (mirrors ruleset.ts's permi
     expect(store.get("anything")).toBeUndefined();
   });
 });
+
+// Finding 5 (P2 fix-wave, IMPORTANT): the exact crash window this sidecar exists to survive is a
+// hard process kill mid-appendJsonLine — see loadExisting's own header for the full write-ordering
+// argument (a partial trailing line is always a transition whose effects never happened; a
+// malformed line anywhere earlier is a completely different, non-tolerated situation).
+describe("createFileDurableApprovalStore — Finding 5: asymmetric tolerance for a truncated final line", () => {
+  function seedRaw(home: string, content: string): string {
+    const dir = join(home, "projects", "proj");
+    mkdirSync(dir, { recursive: true });
+    const path = join(dir, "sess-1.approvals.jsonl");
+    writeFileSync(path, content);
+    return path;
+  }
+
+  test("(a) a valid record + a half-written trailing line — the store constructs, the record loads as pending", () => {
+    const home = tmpHome();
+    const recordLine = JSON.stringify({ kind: "record", approval: approval() });
+    // A crash signature: appendJsonLine was mid-write on a SECOND record when the process died —
+    // no trailing newline, a syntactically incomplete JSON value.
+    seedRaw(home, `${recordLine}\n{"kind":"record","approval":{"requestId":"req-2","toolNa`);
+    const store = createFileDurableApprovalStore({ winterHome: home, projectKey: "proj", sessionId: "sess-1" });
+    expect(store.get("req-1")?.state).toBe("pending");
+    expect(store.get("req-2")).toBeUndefined(); // the truncated second record never landed
+  });
+
+  test("(b) a malformed line that is NOT the last line throws a typed DurableApprovalStoreError — never a silent skip of the later, valid response line", () => {
+    const home = tmpHome();
+    const recordLine = JSON.stringify({ kind: "record", approval: approval() });
+    const responseLine = JSON.stringify({ kind: "response", requestId: "req-1", response: { outcome: "allowed", mechanism: "hook" }, at: "2026-09-02T00:00:01.000Z" });
+    seedRaw(home, `${recordLine}\nthis line is not JSON at all\n${responseLine}\n`);
+    expect(() => createFileDurableApprovalStore({ winterHome: home, projectKey: "proj", sessionId: "sess-1" })).toThrow(DurableApprovalStoreError);
+  });
+
+  test("(c) a half-written trailing 'consuming' line is dropped — the record loads as allowed, without the intent marker (the drop is what preserves exactly-once execution, per loadExisting's own header)", () => {
+    const home = tmpHome();
+    const recordLine = JSON.stringify({ kind: "record", approval: approval() });
+    const responseLine = JSON.stringify({ kind: "response", requestId: "req-1", response: { outcome: "allowed", mechanism: "hook" }, at: "2026-09-02T00:00:01.000Z" });
+    // The genuine Ruling P2-L crash signature: markConsuming() appended its own envelope and the
+    // process died mid-write on that very line.
+    seedRaw(home, `${recordLine}\n${responseLine}\n{"kind":"consuming","requestId":"req-1","at":"2026-09-02T00:00:0`);
+    const store = createFileDurableApprovalStore({ winterHome: home, projectKey: "proj", sessionId: "sess-1" });
+    const record = store.get("req-1")!;
+    expect(record.state).toBe("allowed");
+    expect(record.consumingAt).toBeUndefined();
+    expect(record.consumedAt).toBeUndefined();
+  });
+
+  test("a malformed line that happens to be the ONLY line is tolerated (it is trivially both first and last)", () => {
+    const home = tmpHome();
+    seedRaw(home, `{"kind":"record","approval":{"requestId":"req-1","toolNa`);
+    const store = createFileDurableApprovalStore({ winterHome: home, projectKey: "proj", sessionId: "sess-1" });
+    expect(store.listFor({ sessionId: "sess-1" })).toEqual([]);
+  });
+
+  test("a fully well-formed file (every line ends in a real trailing newline) is completely unaffected — the natural trailing empty split-artifact is never mistaken for 'the last line'", () => {
+    const home = tmpHome();
+    const recordLine = JSON.stringify({ kind: "record", approval: approval() });
+    const responseLine = JSON.stringify({ kind: "response", requestId: "req-1", response: { outcome: "denied", mechanism: "canUseTool", message: "no" }, at: "2026-09-02T00:00:01.000Z" });
+    seedRaw(home, `${recordLine}\n${responseLine}\n`);
+    const store = createFileDurableApprovalStore({ winterHome: home, projectKey: "proj", sessionId: "sess-1" });
+    expect(store.get("req-1")?.state).toBe("denied");
+  });
+});

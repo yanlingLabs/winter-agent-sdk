@@ -530,6 +530,28 @@ function appendJsonLine(path: string, value: unknown): void {
 // Missing file/dir -> empty map (a session that never deferred anything has no approvals file at
 // all — the same "nothing there yet" posture SessionStore.load() gives for a session with no
 // transcript). Any OTHER read failure (permissions, a real I/O error) is not swallowed.
+//
+// Finding 5 (P2 fix-wave, IMPORTANT): asymmetric tolerance. A hard process kill mid-`appendJsonLine`
+// is exactly the crash window this whole sidecar exists to survive (Ruling P2-L's design), and it
+// leaves a partial trailing line — the pre-fix version's unconditional `JSON.parse(line)` turned
+// that ordinary, expected crash shape into an untyped `SyntaxError` that bricked session resolution
+// (dialect.ts's resolveEngineSession constructs this store in every fresh/continue/resume branch),
+// permanently, until someone hand-edited a runtime-private 0600 file.
+//
+// A malformed line is tolerated ONLY when it is the file's own LAST real (non-blank) line — this is
+// safe BY CONSTRUCTION, not a guess: `appendJsonLine` fsyncs before returning, and every action that
+// depends on a line having actually landed (the `[deferred]` marker write in engine.ts, `tools.
+// execute()` after `markConsuming`) happens only AFTER that specific append call returns — so a
+// partially-written trailing line is always a transition whose real-world effects never happened;
+// dropping it is what PRESERVES "exactly once," not a compromise of it (see markConsuming's own
+// header, and the dedicated fixture below, for the `consuming`-line instance of this argument).
+//
+// A malformed line ANYWHERE EARLIER is a completely different situation — real corruption, or a bug
+// — and silently skipping it would reintroduce Ruling P2-L's own at-least-once hazard (dropping a
+// mid-file `consuming` intent line resurrects an `allowed`-unconsumed record that then re-executes,
+// and dropping a `response` line would un-resolve an already-answered approval). That case throws a
+// typed, legible `DurableApprovalStoreError` naming the file and the 1-based line number — fail
+// closed and diagnosable, distinguishable from a plain ENOENT.
 function loadExisting(path: string): Map<string, DurableApprovalRecord> {
   const map = new Map<string, DurableApprovalRecord>();
   let raw: string;
@@ -539,9 +561,28 @@ function loadExisting(path: string): Map<string, DurableApprovalRecord> {
     if ((err as { code?: unknown }).code === "ENOENT") return map;
     throw err;
   }
-  for (const line of raw.split("\n")) {
-    if (line.trim() === "") continue;
-    const envelope = JSON.parse(line) as ApprovalEnvelope;
+  const rawLines = raw.split("\n");
+  // Every real (non-blank) line's index, in file order — a blank line (including the trailing ""
+  // a well-formed file's own final "\n" always produces via split) carries no data and can never
+  // itself be "the last line" for tolerance purposes.
+  const realIndices: number[] = [];
+  for (let i = 0; i < rawLines.length; i++) {
+    if (rawLines[i]!.trim() !== "") realIndices.push(i);
+  }
+  const lastRealIndex = realIndices.length > 0 ? realIndices[realIndices.length - 1] : undefined;
+  for (const i of realIndices) {
+    const line = rawLines[i]!;
+    let envelope: ApprovalEnvelope;
+    try {
+      envelope = JSON.parse(line) as ApprovalEnvelope;
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      if (i === lastRealIndex) {
+        console.error(`winter: durable approval store: dropping a malformed final line in ${path} (line ${i + 1}, likely a crash mid-write): ${reason}`);
+        break; // the last real line, by construction -- nothing further to fold.
+      }
+      throw new DurableApprovalStoreError(`malformed line ${i + 1} in ${path} (not the final line -- refusing to silently skip it): ${reason}`);
+    }
     applyEnvelope(map, envelope);
   }
   return map;

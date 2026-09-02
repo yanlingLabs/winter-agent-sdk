@@ -240,9 +240,30 @@ function ensureDirChain(location: { winterHome: string; projectKey: string }): v
   for (const level of [location.winterHome, projectsDir, projectDir(location)]) ensureSecureDir(level);
 }
 
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null;
+}
+
+function isValidCount(v: unknown): v is number {
+  return typeof v === "number" && Number.isFinite(v) && Number.isInteger(v) && v >= 0;
+}
+
 // Missing file -> zero state (a session that never triggered auto has no sidecar at all) -- ANY
 // other read failure (permissions, real I/O error, corrupt JSON) is not swallowed, mirroring
 // approvals.ts's own loadExisting posture.
+//
+// Finding 9 (P2 fix-wave, MINOR; fail-open at P6, production-inert at P2): "corrupt JSON is not
+// swallowed" (this function's OWN pre-fix comment) only ever covered a JSON.parse SYNTAX error --
+// valid JSON with the WRONG SHAPE (`{}`, `null`, a bare string, a missing/non-numeric field)
+// silently loaded as `{consecutive: undefined, total: undefined}`: `isFallbackActive(undefined,
+// undefined)` reads false forever (the SS10.5 fallback-to-human brake never engages again), and
+// `recordDeny`'s own `prev.consecutive + 1` produces `NaN` from that point on. This is the ONE
+// corruption branch in the phase where damage resolves toward PERMISSIVENESS rather than denial --
+// every other sidecar in this phase fails closed on a shape it doesn't recognize. Both fields are
+// validated as non-negative integers (Number.isFinite + Number.isInteger + >= 0, mirroring
+// AutoCounterState's own contract -- a count can never be negative, fractional, or non-finite);
+// anything else throws the SAME typed AutoCounterStoreError this function already uses for a real
+// I/O error, naming the offending file.
 function loadExisting(path: string): AutoCounterState {
   let raw: string;
   try {
@@ -251,8 +272,16 @@ function loadExisting(path: string): AutoCounterState {
     if ((err as { code?: unknown }).code === "ENOENT") return ZERO_STATE;
     throw err;
   }
-  const parsed = JSON.parse(raw) as AutoCounterState;
-  return { consecutive: parsed.consecutive, total: parsed.total };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    throw new AutoCounterStoreError(`malformed JSON in ${path}: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  if (!isPlainObject(parsed) || !isValidCount(parsed["consecutive"]) || !isValidCount(parsed["total"])) {
+    throw new AutoCounterStoreError(`expected an AutoCounterState shape ({consecutive, total} as non-negative integers) in ${path}, got ${JSON.stringify(parsed)}`);
+  }
+  return { consecutive: parsed["consecutive"] as number, total: parsed["total"] as number };
 }
 
 // Whole-file atomic write: write to a uniquely-named sibling temp file (O_CREAT|O_EXCL|O_NOFOLLOW,

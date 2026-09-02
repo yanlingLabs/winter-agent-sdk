@@ -1,7 +1,7 @@
 // Task 12 (WS-07 §10.5/§10.6-10/§10.6-11): verdict cache invalidation matrix + fallback counters,
 // including restart-durability of the file-backed counter store.
 import { describe, test, expect } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -14,6 +14,7 @@ import {
   isFallbackActive,
   AUTO_FALLBACK_CONSECUTIVE_THRESHOLD,
   AUTO_FALLBACK_TOTAL_THRESHOLD,
+  AutoCounterStoreError,
   type AutoVerdictCacheKey,
 } from "./caches.ts";
 import { emptyRuleSet, sourceRule } from "../ruleset.ts";
@@ -209,6 +210,79 @@ describe("createFileAutoCounterStore -- restart-durable (WS-07 §10.5: 'a daemon
       const filePath = join(winterHome, "projects", "proj1", "sess1.auto-state.json");
       expect(statSync(filePath).mode & 0o777).toBe(0o600);
       expect(statSync(join(winterHome, "projects", "proj1")).mode & 0o777).toBe(0o700);
+    });
+  });
+
+  // Finding 9 (P2 fix-wave, MINOR; fail-open at P6, production-inert at P2): shape-corrupt (VALID
+  // JSON, WRONG shape) silently disabled the SS10.5 fallback-to-human brake forever, pre-fix -- see
+  // caches.ts's own loadExisting header for the full mechanism (undefined counters -> isFallbackActive
+  // reads false forever -> recordDeny produces NaN from then on).
+  describe("Finding 9: shape-corrupt sidecar fails closed (typed), never silently disables the fallback brake", () => {
+    function seedRaw(winterHome: string, content: string): string {
+      const dir = join(winterHome, "projects", "proj1");
+      mkdirSync(dir, { recursive: true });
+      const path = join(dir, "sess1.auto-state.json");
+      writeFileSync(path, content);
+      return path;
+    }
+
+    test("an empty object ({}) throws a typed AutoCounterStoreError naming the file", () => {
+      withTempHome((winterHome) => {
+        seedRaw(winterHome, "{}");
+        expect(() => createFileAutoCounterStore({ winterHome, projectKey: "proj1", sessionId: "sess1" })).toThrow(AutoCounterStoreError);
+      });
+    });
+
+    test("null throws a typed AutoCounterStoreError", () => {
+      withTempHome((winterHome) => {
+        seedRaw(winterHome, "null");
+        expect(() => createFileAutoCounterStore({ winterHome, projectKey: "proj1", sessionId: "sess1" })).toThrow(AutoCounterStoreError);
+      });
+    });
+
+    test("a bare string throws a typed AutoCounterStoreError", () => {
+      withTempHome((winterHome) => {
+        seedRaw(winterHome, '"not-a-state-object"');
+        expect(() => createFileAutoCounterStore({ winterHome, projectKey: "proj1", sessionId: "sess1" })).toThrow(AutoCounterStoreError);
+      });
+    });
+
+    test("negative/non-integer/non-numeric field values are all rejected", () => {
+      withTempHome((winterHome) => {
+        seedRaw(winterHome, '{"consecutive":-1,"total":5}');
+        expect(() => createFileAutoCounterStore({ winterHome, projectKey: "proj1", sessionId: "sess1" })).toThrow(AutoCounterStoreError);
+      });
+      withTempHome((winterHome) => {
+        seedRaw(winterHome, '{"consecutive":1.5,"total":5}');
+        expect(() => createFileAutoCounterStore({ winterHome, projectKey: "proj1", sessionId: "sess1" })).toThrow(AutoCounterStoreError);
+      });
+      withTempHome((winterHome) => {
+        seedRaw(winterHome, '{"consecutive":"2","total":19}');
+        expect(() => createFileAutoCounterStore({ winterHome, projectKey: "proj1", sessionId: "sess1" })).toThrow(AutoCounterStoreError);
+      });
+    });
+
+    test("malformed (non-JSON) content still throws AutoCounterStoreError, unchanged from before (syntax errors were already caught)", () => {
+      withTempHome((winterHome) => {
+        seedRaw(winterHome, "{not json");
+        expect(() => createFileAutoCounterStore({ winterHome, projectKey: "proj1", sessionId: "sess1" })).toThrow(AutoCounterStoreError);
+      });
+    });
+
+    test("a well-shaped state loads verbatim -- the restart-durability pin, which previously existed only for the happy path", () => {
+      withTempHome((winterHome) => {
+        seedRaw(winterHome, '{"consecutive":2,"total":19}');
+        const store = createFileAutoCounterStore({ winterHome, projectKey: "proj1", sessionId: "sess1" });
+        expect(store.get("sess1")).toEqual({ consecutive: 2, total: 19 });
+      });
+    });
+
+    test("zero values are valid (the boundary case of >= 0)", () => {
+      withTempHome((winterHome) => {
+        seedRaw(winterHome, '{"consecutive":0,"total":0}');
+        const store = createFileAutoCounterStore({ winterHome, projectKey: "proj1", sessionId: "sess1" });
+        expect(store.get("sess1")).toEqual({ consecutive: 0, total: 0 });
+      });
     });
   });
 });
