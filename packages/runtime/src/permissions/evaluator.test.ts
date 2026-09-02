@@ -274,6 +274,93 @@ describe("T10-CARRY 1: a PreToolUse hook 'ask' forces stage 3's prompt path", ()
   });
 });
 
+// --- Task 11 (WS-08 §7): a PreToolUse hook 'defer' resolves between stage 2 and stage 3 -------------
+//
+// Mirrors the T10-CARRY 1 "ask" block above fixture-for-fixture (deny-rule precedence, dontAsk
+// conversion, bypass non-exemption, transform carry) plus two fixtures unique to defer: it never
+// reaches promptStage at all (a genuinely different resolution, not a shared interactive path), and
+// it outranks a matched ask rule (WS-08 §4's rank table generalized one level up this pipeline —
+// evaluator.ts's own comment at this branch).
+describe("Task 11: a PreToolUse hook 'defer' resolves before stage 3, never reaching promptStage", () => {
+  test("hook defer (no rule) resolves directly to decision 'defer', mechanism 'hook' -- promptStage never invoked", async () => {
+    const promptSpy = spyPromptStage(() => ({ decision: "allow" }));
+    const ctx = baseCtx({
+      hookStage: spyHookStage(() => ({ decision: "defer", hookId: "h1", message: "needs durable approval" })).stage,
+      promptStage: promptSpy.stage,
+    });
+    const record = await evaluate(call("Bash", { command: "long-running-thing" }), ctx);
+    expect(promptSpy.calls.length).toBe(0);
+    expect(record.decision).toBe("defer");
+    expect(record.mechanism).toBe("hook");
+    expect(record.hookId).toBe("h1");
+    expect(record.message).toBe("needs durable approval");
+  });
+
+  test("a stage-2 deny rule still wins over a hook-forced defer (deny > defer, WS-08 §4 rank order one level up)", async () => {
+    const ctx = baseCtx({
+      hookStage: spyHookStage(() => ({ decision: "defer", hookId: "h1" })).stage,
+      policy: policy({ rules: withRules(rule("Bash(long-running-thing)", "deny")) }),
+    });
+    const record = await evaluate(call("Bash", { command: "long-running-thing" }), ctx);
+    expect(record.decision).toBe("deny");
+    expect(record.mechanism).toBe("rule");
+  });
+
+  test("a hook-forced defer OUTRANKS a matched ask rule -- resolves to 'defer', never reaching the prompt path", async () => {
+    const promptSpy = spyPromptStage(() => ({ decision: "allow" }));
+    const ctx = baseCtx({
+      hookStage: spyHookStage(() => ({ decision: "defer", hookId: "h1" })).stage,
+      promptStage: promptSpy.stage,
+      policy: policy({ rules: withRules(rule("Bash(long-running-thing)", "ask")) }),
+    });
+    const record = await evaluate(call("Bash", { command: "long-running-thing" }), ctx);
+    expect(promptSpy.calls.length).toBe(0);
+    expect(record.decision).toBe("defer");
+    expect(record.mechanism).toBe("hook");
+  });
+
+  test("dontAsk converts a hook-forced defer into an immediate denial (mechanism 'hook'), never parking it", async () => {
+    const ctx = baseCtx({
+      hookStage: spyHookStage(() => ({ decision: "defer", hookId: "h1", message: "needs durable approval" })).stage,
+      policy: policy({ mode: "dontAsk" }),
+    });
+    const record = await evaluate(call("Bash", { command: "long-running-thing" }), ctx);
+    expect(record.decision).toBe("deny");
+    expect(record.mechanism).toBe("hook");
+    expect(record.hookId).toBe("h1");
+    expect(record.message).toBe("needs durable approval");
+  });
+
+  test("dontAsk supplies its own message when the hook gave none", async () => {
+    const ctx = baseCtx({
+      hookStage: spyHookStage(() => ({ decision: "defer", hookId: "h1" })).stage,
+      policy: policy({ mode: "dontAsk" }),
+    });
+    const record = await evaluate(call("Bash", { command: "long-running-thing" }), ctx);
+    expect(record.decision).toBe("deny");
+    expect(record.message).toMatch(/dontAsk mode denies/i);
+  });
+
+  test("bypassPermissions does not exempt a hook-forced defer (it must still park, unlike an ordinary unmatched action)", async () => {
+    const ctx = baseCtx({
+      hookStage: spyHookStage(() => ({ decision: "defer", hookId: "h1" })).stage,
+      policy: policy({ mode: "bypassPermissions" }),
+    });
+    const record = await evaluate(call("Bash", { command: "long-running-thing" }), ctx);
+    expect(record.decision).toBe("defer");
+    expect(record.mechanism).toBe("hook");
+  });
+
+  test("a hook-forced defer carries the hook's own transformedInput into the final record", async () => {
+    const ctx = baseCtx({
+      hookStage: spyHookStage(() => ({ decision: "defer", hookId: "h1", transformedInput: { command: "sanitized-long-running-thing" } })).stage,
+    });
+    const record = await evaluate(call("Bash", { command: "long-running-thing" }), ctx);
+    expect(record.decision).toBe("defer");
+    expect(record.transformedInput).toEqual({ command: "sanitized-long-running-thing" });
+  });
+});
+
 // --- T10 (WS-08 §6): PermissionRequest answers in place of canUseTool, at all three prompt sites ---
 //
 // One decision record, two mechanisms: PermissionRequest's answer and canUseTool's answer normalize

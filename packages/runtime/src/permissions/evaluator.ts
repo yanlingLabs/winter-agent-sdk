@@ -78,15 +78,24 @@ export const ASK_USER_QUESTION_TOOL_NAME = "AskUserQuestion";
 // --- Stage 1 seam: PreToolUse hooks (T9/T10 fill) --------------------------------------------------
 
 // T10-CARRY 1 (WS-08 §3): widened from the T9-era 3-value union ("allow"|"deny"|"no_opinion") to
-// add "ask" — a PreToolUse hook's `ask` (or a `defer`, which runner.ts's own interim resolution
-// already turns into `ask` before this seam is ever called, TODO(T11)) now FORCES the interactive
-// path at stage 3, exactly like a matched ask rule, instead of failing closed to a synthesized
-// denial. See evaluate()'s own stage-1/stage-3 comments for how "ask" threads through: it is
-// captured at stage 1 but NOT resolved there — a later, stronger stage-2 deny rule still wins
-// (WS-08 §3's own "allow does not override a later deny" floor extends naturally to "ask", which is
-// itself weaker than deny in the §4 rank table) before stage 3 ever prompts.
+// add "ask" — a PreToolUse hook's `ask` now FORCES the interactive path at stage 3, exactly like a
+// matched ask rule, instead of failing closed to a synthesized denial. See evaluate()'s own
+// stage-1/stage-3 comments for how "ask" threads through: it is captured at stage 1 but NOT
+// resolved there — a later, stronger stage-2 deny rule still wins (WS-08 §3's own "allow does not
+// override a later deny" floor extends naturally to "ask", which is itself weaker than deny in the
+// §4 rank table) before stage 3 ever prompts.
+//
+// Task 11 (WS-08 §7) widens this AGAIN to add "defer": runner.ts no longer resolves a raw
+// PreToolUse `defer` to `ask` (that interim resolution is retired — see runner.ts's own updated
+// header). A hook-forced `defer` is captured at stage 1 exactly like `ask` (non-terminal here; a
+// stage-2 deny rule still wins first) but resolves DIFFERENTLY once past stage 2: WS-08 §4's own
+// rank table (deny > defer > ask > allow > none) generalizes one level up this pipeline, the same
+// move T10-CARRY 1 already made for ask — a hook-forced defer OUTRANKS a matched ask rule, so it
+// short-circuits directly to a durable-approval park (evaluate()'s own new branch, right after
+// stage 2) rather than ever reaching stage 3's prompt machinery. See evaluate()'s own comment at
+// that branch for the dontAsk/bypassPermissions treatment (mirrors ask's own precedent).
 export interface HookDecision {
-  decision: "allow" | "deny" | "ask" | "no_opinion";
+  decision: "allow" | "deny" | "ask" | "defer" | "no_opinion";
   transformedInput?: Record<string, unknown>;
   message?: string;
   interrupt?: boolean;
@@ -114,10 +123,13 @@ export interface HookStage {
   // circuit breaker") — evaluate() below continues the pipeline regardless of an "allow" here; only
   // "deny" short-circuits everything downstream. An "ask" (T10-CARRY 1) is similarly non-terminal
   // HERE — it is captured and forces stage 3's prompt path, but a stage-2 deny rule reached in
-  // between still wins first. `transformedInput`, if present, becomes the effective call for every
-  // later stage (rule matching included), mirroring canUseTool's own updatedInput semantics
-  // (WS-07 §7.2). T9's real multi-hook reducer composes several hooks into ONE HookDecision before
-  // this seam is even called; this interface is the reducer's OUTPUT shape, not a per-hook shape.
+  // between still wins first. A "defer" (Task 11) is ALSO non-terminal here for the identical
+  // reason — a stage-2 deny still wins first — but once past stage 2 it resolves to a durable park
+  // rather than stage 3's prompt path (see evaluate()'s own comment at that branch).
+  // `transformedInput`, if present, becomes the effective call for every later stage (rule matching
+  // included), mirroring canUseTool's own updatedInput semantics (WS-07 §7.2). T9's real multi-hook
+  // reducer composes several hooks into ONE HookDecision before this seam is even called; this
+  // interface is the reducer's OUTPUT shape, not a per-hook shape.
   preToolUse(call: PermissionCall, ctx: EvaluationContext): Promise<HookDecision>;
   // T10 (WS-08 §6): fires immediately before EVERY promptStage.prompt() call site in this file — "a
   // decision is about to be requested." Returns null when no PermissionRequest hook is
@@ -794,6 +806,12 @@ export async function evaluate(call: PermissionCall, ctx: EvaluationContext): Pr
   const hookForcedAsk = hookResult.decision === "ask";
   const hookAskId = hookForcedAsk ? hookResult.hookId : undefined;
   const hookAskMessage = hookForcedAsk ? hookResult.message : undefined;
+  // Task 11 (WS-08 §7): a hook-forced "defer" is captured the SAME way "ask" is (non-terminal here
+  // — a stage-2 deny rule, checked next, still wins first) but is resolved on ITS OWN, stronger
+  // terms once past stage 2 — see the new branch immediately after stage 2 below.
+  const hookForcedDefer = hookResult.decision === "defer";
+  const hookDeferId = hookForcedDefer ? hookResult.hookId : undefined;
+  const hookDeferMessage = hookForcedDefer ? hookResult.message : undefined;
   const effectiveCall: PermissionCall = hookResult.transformedInput !== undefined ? { ...call, input: hookResult.transformedInput } : call;
   const carriedTransform = hookResult.transformedInput;
 
@@ -823,6 +841,56 @@ export async function evaluate(call: PermissionCall, ctx: EvaluationContext): Pr
       source: readBlockEntry.source,
       ruleRef: formatRuleRef(readBlockEntry),
       message: `Denied: Read deny rule ${formatRuleRef(readBlockEntry)} blocks Edit/Write on this path (WS-07 §3.1)`,
+      ...(carriedTransform !== undefined ? { transformedInput: carriedTransform } : {}),
+    };
+  }
+
+  // --- A hook-forced "defer" resolves HERE, between stage 2 and stage 3 (Task 11, WS-08 §7) -------
+  //
+  // No stage-2 deny rule fired (this function would already have returned above) — defer's own
+  // rank (WS-08 §4: deny > defer > ask > allow > none) generalizes one level up this pipeline, the
+  // SAME move T10-CARRY 1 already made for "ask": a hook-forced defer OUTRANKS a matched ask rule
+  // (stage 3, next), so it is resolved HERE, unconditionally, rather than joining stage 3's
+  // askEntry/isMandatoryAskUserQuestion/hookForcedAsk gate. Judgment call (documented, not spec-
+  // literal — WS-08 §4's rank table is scoped to composing several hooks for ONE event into one
+  // decision; nothing in WS-07/WS-08 states how a stage-1 hook decision ranks against a stage-3
+  // RULE decision) — consistent with the ask precedent one stage earlier and with "never silently
+  // under-enforce a stronger signal with a weaker one."
+  //
+  // `dontAsk` converts this into an immediate denial, mirroring its own "ask" precedent (T10-CARRY
+  // 1) one level further: WS-07 §6.3's "every would-prompt outcome becomes a denial... canUseTool is
+  // NEVER called" applies at least as strongly to defer as to ask — defer's whole purpose is a LATER
+  // synchronous resolution, which is fundamentally incompatible with dontAsk's "resolve everything
+  // now, deterministically" contract (WS-07 §6.3: "never a pending approval nobody can answer" is
+  // closer to verbatim support for this than to a stretch). Critically, this happens BEFORE any
+  // durable record is ever created — a dontAsk session must never park an approval nobody in that
+  // mode is ever allowed to answer.
+  //
+  // `bypassPermissions` does NOT exempt a hook-forced defer (mirrors the identical ask-under-bypass
+  // precedent below in stage 3) — it still parks; only the mode-4/5 auto-allow arms this call would
+  // otherwise reach are what bypass widens, and those are never reached here at all.
+  //
+  // The actual durable-approval RECORD (persistence, lifecycle/audit events, the synthetic
+  // `[deferred]` tool_result) is engine.ts's job, not this pure decision function's — mirrors how
+  // this function never itself builds a denied tool_result either; it only ever reports what
+  // *decision* was reached. `mechanism: "hook"` mirrors deny/ask's own hook-mechanism attribution.
+  if (hookForcedDefer) {
+    if (policy.mode === "dontAsk") {
+      return {
+        decision: "deny",
+        mechanism: "hook",
+        policyVersion,
+        ...(hookDeferId !== undefined ? { hookId: hookDeferId } : {}),
+        message: hookDeferMessage ?? "Denied: dontAsk mode denies a PreToolUse hook's forced durable approval (WS-07 §6.3/WS-08 §7)",
+        ...(carriedTransform !== undefined ? { transformedInput: carriedTransform } : {}),
+      };
+    }
+    return {
+      decision: "defer",
+      mechanism: "hook",
+      policyVersion,
+      ...(hookDeferId !== undefined ? { hookId: hookDeferId } : {}),
+      ...(hookDeferMessage !== undefined ? { message: hookDeferMessage } : {}),
       ...(carriedTransform !== undefined ? { transformedInput: carriedTransform } : {}),
     };
   }

@@ -109,39 +109,37 @@ describe("T10-CARRY 1: a hook 'ask' now forces seam 'ask' (was: fail-closed to '
   });
 });
 
-// T10-CARRY 1 correction: runner.ts's interpretPreToolUse UNCONDITIONALLY resolves a raw
-// `permissionDecision: "defer"` to `"ask"` before the outcome ever reaches the reducer (see that
-// function's own TODO(T11) comment) -- so a composite built from a REAL PreToolUse invocation can
-// never actually carry `decision: "defer"`; what this fixture exercises is genuinely "ask" (the
-// resolved value), same as the block above. Before CARRY 1, that didn't matter observably (ask and
-// defer were combined into ONE fail-closed-to-deny branch); now that "ask" gets its own seam
-// outcome, this fixture's real value flows through the SAME "ask" branch as a directly-returned
-// ask, which is the CORRECT behavior -- a hook that returns "defer" for a call that can't yet be
-// durably parked (TODO(T11)) still gets the interactive path instead of silently under- or
-// over-enforcing.
-describe("createHookStage -- a hook 'defer' resolves to 'ask' via runner.ts, which now forces seam 'ask' too", () => {
-  test("a hook 'defer' ends up at seam 'ask' (both interim resolutions now connect end-to-end)", async () => {
+// Task 11 (WS-08 §7): runner.ts no longer resolves a raw `permissionDecision: "defer"` to `"ask"` —
+// a composite built from a REAL PreToolUse invocation now genuinely carries `decision: "defer"`,
+// and this adapter maps it to seam "defer" (no longer the old fail-closed "deny"). This is the
+// genuine RED->GREEN flip this task's brief calls for: before this task, the assertion below was
+// `toBe("ask")` and passed; after retiring the interim resolution (runner.ts) and wiring the real
+// seam branch (hook-stage.ts), only `toBe("defer")` passes.
+describe("createHookStage -- a hook 'defer' now reaches seam 'defer' end-to-end (Task 11)", () => {
+  test("a hook 'defer' ends up at seam 'defer', carrying hookId/message/transform like every other decision", async () => {
     const stage = createHookStage({
       registry: fakeRegistry([entry("h1")]),
-      invoker: fixedInvoker({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "defer" } }),
+      invoker: fixedInvoker({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "defer", permissionDecisionReason: "needs durable approval" } }),
       audit: noopAudit(),
       sessionId: "s1",
     });
     const decision = await stage.preToolUse(CALL, CTX);
-    expect(decision.decision).toBe("ask");
+    expect(decision.decision).toBe("defer");
     expect(decision.hookId).toBe("h1");
+    expect(decision.message).toBe("needs durable approval");
+  });
+
+  test("a hook 'defer' with a transform still carries the transform through the seam", async () => {
+    const stage = createHookStage({
+      registry: fakeRegistry([entry("h1")]),
+      invoker: fixedInvoker({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "defer", updatedInput: { command: "ls -la" } } }),
+      audit: noopAudit(),
+      sessionId: "s1",
+    });
+    const decision = await stage.preToolUse(CALL, CTX);
+    expect(decision).toEqual({ decision: "defer", hookId: "h1", transformedInput: { command: "ls -la" } });
   });
 });
-
-// The adapter's OWN `composite.decision === "defer"` branch (hook-stage.ts) is therefore DEFENSIVE,
-// CURRENTLY UNREACHABLE via createHookStage's real pipeline (PreToolUse is the only decision-capable
-// event wired at P2, and its interpreter always pre-resolves defer->ask, above) -- kept for type
-// completeness against HookComposite.decision's full HookPermissionDecision union (a hypothetical
-// future producer that does NOT pre-resolve) and against reducer.ts's own spec-faithful 5-rank
-// vocabulary. Its coverage lives at the reducer level (reducer.test.ts's synthetic "defer"-rank
-// fixtures construct HookOutcomeEntry[] directly, bypassing runner.ts's resolution entirely) -- not
-// exercisable here without doing the same, which would test the adapter's dead branch rather than
-// its real integration behavior.
 
 describe("createHookStage -- multi-hook composite flows through end to end", () => {
   test("h1 allow then h2 deny -- seam sees the reducer's strictest-wins deny", async () => {

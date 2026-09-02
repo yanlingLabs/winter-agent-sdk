@@ -164,12 +164,12 @@ describe("runHooks -- PreToolUse decisions + invocation-time transform chaining"
     expect(composite.lifecycleMessages.map((m) => m.outcome)).toEqual(["decision", "skipped", "skipped"]);
   });
 
-  test("defer resolves to 'ask' (controller ruling, TODO(T11))", async () => {
+  test("Task 11: defer flows through as a real, distinct decision (interim ask-resolution retired)", async () => {
     const { invoker } = fixedInvoker({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "defer" } });
     const { audit, records } = recordingAudit();
     const composite = await runHooks("PreToolUse", { toolName: "Bash", input: {} }, ctxWith({ registry: fakeRegistry([entry("h1", "PreToolUse")]), invoker, audit }));
-    expect(composite.decision).toBe("ask");
-    expect(records[0]!.decision).toBe("ask");
+    expect(composite.decision).toBe("defer");
+    expect(records[0]!.decision).toBe("defer");
   });
 });
 

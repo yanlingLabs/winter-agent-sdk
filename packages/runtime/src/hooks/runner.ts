@@ -250,8 +250,11 @@ function hasInvalidDefer(hso: Record<string, unknown> | undefined, event: HookEv
 const VALID_PERMISSION_DECISIONS: ReadonlySet<string> = new Set(["allow", "ask", "deny", "defer"]);
 
 // PreToolUse (WS-08 §3, derived-shapes item (b)): decision-capable, transform-capable, context-
-// capable. The only event this runner resolves `defer` for (TODO(T11): remove this resolution once
-// durable-approval/resume support lands; see WS-08 §7 and this task's controller ruling).
+// capable. Task 11 (WS-08 §7): a raw `defer` now flows through UNRESOLVED — it is a real, distinct
+// HookOutcome decision, exactly like allow/ask/deny, all the way to the reducer and beyond
+// (hook-stage.ts's own adapter, evaluator.ts's stage 1). Durable-approval parking is engine.ts's
+// job once evaluate() reports "defer"; this function's only remaining responsibility for the value
+// is the malformed-shape/invalid-defer checks already above/below it (unchanged).
 function interpretPreToolUse(sync: Record<string, unknown>, opts: { validator: ToolInputValidator; toolName: string }): HookOutcome {
   const hso = hookSpecificOutputOf(sync);
   const pre = hso !== undefined && hso["hookEventName"] === "PreToolUse" ? hso : undefined;
@@ -260,13 +263,7 @@ function interpretPreToolUse(sync: Record<string, unknown>, opts: { validator: T
   if (rawDecision !== undefined && (typeof rawDecision !== "string" || !VALID_PERMISSION_DECISIONS.has(rawDecision))) {
     return { kind: "error", reason: `malformed permissionDecision: ${JSON.stringify(rawDecision)}` };
   }
-  let decision = rawDecision as HookPermissionDecision | undefined;
-  if (decision === "defer") {
-    // TODO(T11): resolves a P2 defer to "ask" — durable-approval/resume wiring (WS-08 §7) is out of
-    // this task's scope; see reducer.ts's own header for why the reducer itself still models the
-    // full 5-rank vocabulary verbatim rather than baking this resolution in permanently.
-    decision = "ask";
-  }
+  const decision = rawDecision as HookPermissionDecision | undefined;
 
   const rawUpdatedInput = pre?.["updatedInput"];
   let transformedInput: Record<string, unknown> | undefined;

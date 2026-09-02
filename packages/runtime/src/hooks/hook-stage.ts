@@ -5,23 +5,21 @@
 // HookDecision before this seam is even called; this interface is the reducer's OUTPUT shape" — the
 // seam was designed to be filled, not reshaped, and this file is that fill.
 //
-// *** T10-CARRY 1 (WS-08 §3): the "ask" gap is now CLOSED ***
-// T9 left `composite.decision === "ask"` (which also covers a `defer` a PreToolUse hook returned —
-// runner.ts's own interim resolution turns defer into ask before this file is ever called,
-// TODO(T11)) mapped to seam `"deny"` — fail-closed, because evaluator.ts's `HookDecision.decision`
-// had no fourth "force the interactive path" outcome. T10 extends `HookDecision` with a real `"ask"`
-// value (evaluator.ts's own header) and evaluate() now routes it into stage 3's prompt path exactly
-// like a matched ask rule — so `composite.decision === "ask"` maps to seam `"ask"` here, genuinely
-// forcing interactive approval instead of silently failing the call closed.
+// *** T10-CARRY 1 (WS-08 §3): the "ask" gap is CLOSED ***
+// T9 left `composite.decision === "ask"` mapped to seam `"deny"` — fail-closed, because
+// evaluator.ts's `HookDecision.decision` had no fourth "force the interactive path" outcome. T10
+// extends `HookDecision` with a real `"ask"` value (evaluator.ts's own header) and evaluate() now
+// routes it into stage 3's prompt path exactly like a matched ask rule — so `composite.decision ===
+// "ask"` maps to seam `"ask"` here, genuinely forcing interactive approval instead of silently
+// failing the call closed.
 //
-// `composite.decision === "defer"` on its own STILL maps to the old fail-closed `"deny"` — kept as
-// a DEFENSIVE, type-complete branch for HookComposite's full HookPermissionDecision union, but it is
-// UNREACHABLE via this adapter's real pipeline today: PreToolUse is the only decision-capable event
-// wired here, and runner.ts's own interpretPreToolUse unconditionally resolves a raw "defer" to
-// "ask" before the reducer ever sees it (see that function's own TODO(T11) comment) — so a genuine
-// "defer" composite can only be constructed by a test that bypasses runHooks entirely (reducer.
-// test.ts's own synthetic fixtures). Real durable-approval support (T11) is what would give "defer"
-// a distinct, non-fail-closed seam outcome of its own.
+// *** Task 11 (WS-08 §7): the "defer" gap is CLOSED too ***
+// runner.ts no longer resolves a raw PreToolUse `defer` to `ask` (that interim resolution is
+// retired — see runner.ts's own updated header). `composite.decision === "defer"` is now genuinely
+// REACHABLE via this adapter's real pipeline and maps to seam `"defer"` — evaluator.ts's own
+// HookDecision union gained a real "defer" member for exactly this (see that file's own header for
+// how evaluate() resolves it: it outranks a matched ask rule, loses to a stage-2 deny rule, and
+// dontAsk converts it to an immediate denial before any durable record is created).
 import type { PermissionUpdate } from "@yanlinglabs/winter-agent-sdk";
 import type { PermissionCall, EvaluationContext, HookStage, HookDecision, PromptStageMeta, PermissionRequestHookDecision } from "../permissions/evaluator.ts";
 import { runHooks, type HookInvoker, type HookAuditRecorder, type HookTimeoutConfig, type ToolInputValidator, type HookLifecycleSink } from "./runner.ts";
@@ -96,15 +94,12 @@ export function createHookStage(deps: HookStageDeps): HookStage {
       }
 
       if (composite.decision === "defer") {
-        // See this file's own header — defensive, currently unreachable via this adapter's real
-        // pipeline (TODO(T11) for real durable-approval support).
+        // Task 11: genuinely forces the durable-approval park now (evaluator.ts's own stage-1
+        // comment) — no longer a fail-closed denial. See this file's own header for the full story.
         return {
-          decision: "deny",
+          decision: "defer",
           ...(hookId !== undefined ? { hookId } : {}),
-          message:
-            `Denied: a PreToolUse hook requested interactive approval ("defer"), but this phase's ` +
-            `HookStage seam cannot yet park a durable approval (TODO(T11)) -- failing closed (WS-07 §6.1: never ` +
-            `implicitly allowed)`,
+          ...(composite.message !== undefined ? { message: composite.message } : {}),
           ...(composite.transformedInput !== undefined ? { transformedInput: composite.transformedInput } : {}),
         };
       }
