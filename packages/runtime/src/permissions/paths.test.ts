@@ -13,7 +13,7 @@ import { mkdtempSync, mkdirSync, symlinkSync, writeFileSync, rmSync, realpathSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { matchFileRule, checkSymlinkBothEnds, readDenyBlocksEdit, type FileRuleEntry } from "./paths.ts";
+import { matchFileRule, checkSymlinkBothEnds, readDenyBlocksEdit, MAX_DOUBLE_STARS, type FileRuleEntry } from "./paths.ts";
 
 // Shared synthetic (never-real) context for the pure-string fixture groups below.
 const CWD = "/synthetic/proj";
@@ -132,6 +132,27 @@ describe("matchFileRule -- glob semantics (WS-07 §3.1: `*` stays within one seg
       true,
     );
     expect(matchFileRule("logs/**", opts({ path: "/synthetic/proj/other", direction: "allow" }))).toBe(false);
+  });
+
+  test("hardening: adjacent `**` segments collapse and behave identically to a single `**` (semantics-preserving)", () => {
+    expect(matchFileRule("a/**/**/b", opts({ path: "/synthetic/proj/a/b", direction: "allow" }))).toBe(
+      matchFileRule("a/**/b", opts({ path: "/synthetic/proj/a/b", direction: "allow" })),
+    );
+    expect(matchFileRule("a/**/**/b", opts({ path: "/synthetic/proj/a/x/y/b", direction: "allow" }))).toBe(
+      matchFileRule("a/**/b", opts({ path: "/synthetic/proj/a/x/y/b", direction: "allow" })),
+    );
+    expect(matchFileRule("a/**/**/b", opts({ path: "/synthetic/proj/a/x/y/b", direction: "allow" }))).toBe(true);
+  });
+
+  test("hardening: a pattern with more `**` segments than MAX_DOUBLE_STARS fails closed (never matches) instead of compiling", () => {
+    // N segments joined by "/**/" produce N-1 "**" separators; MAX_DOUBLE_STARS+2 segments yields
+    // MAX_DOUBLE_STARS+1 stars, one over the cap.
+    const segmentCount = MAX_DOUBLE_STARS + 2;
+    const overCapRest = Array.from({ length: segmentCount }, (_, i) => `seg${i}`).join("/**/");
+    expect((overCapRest.match(/\*\*/g) ?? []).length).toBe(MAX_DOUBLE_STARS + 1);
+    for (const direction of ["allow", "denyAsk"] as const) {
+      expect(matchFileRule(overCapRest, opts({ path: "/synthetic/proj/anything", direction }))).toBe(false);
+    }
   });
 
   test("a literal multi-segment pattern with no wildcard matches only that exact path, identically on both directions (no depth asymmetry outside the single-segment case)", () => {

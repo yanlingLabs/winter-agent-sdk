@@ -146,8 +146,38 @@ function globSegmentToRegexBody(segment: string): string {
 // rule rather than three positional variants, since WS-07 §3.1 pins "`**` crosses directories" as
 // one general fact, not gitignore's own fuller grammar. Flagged in the report; a one-line change
 // (require 1+ reps only when the "**" is the LAST segment) if a differential capture disagrees.
-function compileFsGlobToRegex(absPattern: string): RegExp {
-  const segments = absPattern.slice(1).split("/"); // absPattern always starts with "/"
+// Hardening (not spec-mandated; added after a security-lens pass mirroring T3's own matcher-safety
+// review of grammar.ts). WS-07 §3.2: project deny/ask rules apply WITHOUT workspace trust -- a
+// hostile checked-in .winter/settings.json is a semi-trusted PATTERN source feeding this compiler
+// on every file-op evaluation. Two adjacent "**" segments each compile to their own
+// "(?:/[^/]+)*" group; several such groups (adjacent OR merely un-anchored by literal segments
+// between them) create the classic catastrophic-backtracking shape against a sufficiently deep,
+// non-matching target path. Two cheap, independent mitigations:
+//   (1) collapse adjacent "**" segments into one before compiling -- semantics-preserving (zero-or-
+//       more directories followed by zero-or-more directories is exactly zero-or-more directories)
+//       and removes the most naive "a/**/**/**/.../b" shape for free.
+//   (2) cap the total number of "**" segments (after collapsing) a single pattern may use --
+//       mirrors grammar.ts's own PARSE_LIMIT precedent (T3) for bounding pathological input rather
+//       than attempting to process it. Exported so the exact boundary is a named, testable
+//       decision, not a magic number. 8 is generous headroom over any legitimate rule (this
+//       task's own corpus never exceeds one or two) while keeping the worst-case backtracking
+//       exponent fixed and small regardless of how an untrusted rule author crafts the pattern. A
+//       pattern over the cap is treated as never-matching (fails closed) rather than compiled.
+export const MAX_DOUBLE_STARS = 8;
+
+function collapseConsecutiveDoubleStars(segments: string[]): string[] {
+  const out: string[] = [];
+  for (const seg of segments) {
+    if (seg === "**" && out[out.length - 1] === "**") continue;
+    out.push(seg);
+  }
+  return out;
+}
+
+function compileFsGlobToRegex(absPattern: string): RegExp | null {
+  const segments = collapseConsecutiveDoubleStars(absPattern.slice(1).split("/")); // absPattern always starts with "/"
+  const doubleStarCount = segments.filter((seg) => seg === "**").length;
+  if (doubleStarCount > MAX_DOUBLE_STARS) return null;
   let out = "";
   for (const seg of segments) {
     out += seg === "**" ? "(?:/[^/]+)*" : "/" + globSegmentToRegexBody(seg);
@@ -175,7 +205,8 @@ export function matchFileRule(pattern: string, opts: MatchFileRuleOptions): bool
   }
 
   const fullPattern = normalize(joinBaseAndRest(anchor.base, anchor.rest));
-  return compileFsGlobToRegex(fullPattern).test(targetPath);
+  const regex = compileFsGlobToRegex(fullPattern);
+  return regex !== null && regex.test(targetPath);
 }
 
 // ---------------------------------------------------------------------------------------------
