@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import {
   PROTOCOL_VERSION,
@@ -8,6 +9,7 @@ import {
   type ProtocolSdkMessage as SdkMessage,
   type PermissionUpdate,
   type RuleSource,
+  type HookEvent,
 } from "@yanlinglabs/winter-agent-sdk";
 import type { FrameSource, FrameSink } from "./protocol/channel.ts";
 import { Queue } from "./protocol/channel.ts";
@@ -17,12 +19,22 @@ import { emptyRuleSet, buildSdkSourcedEntries } from "./permissions/ruleset.ts";
 import { createBridgePromptStage } from "./permissions/prompt-stage.ts";
 import {
   evaluate,
-  NO_OPINION_HOOK_STAGE,
   NO_OPINION_AUTO_ENGINE,
   REAL_SPECIAL_CHECKS,
   type PermissionCall,
   type EvaluationContext,
+  type PermissionDecisionRecord,
 } from "./permissions/evaluator.ts";
+// Task 10 (WS-08 §1/§2/§6/§9/§10): the real hooks engine wiring — registry+invoker+audit build,
+// the real HookStage (retiring T6's NO_OPINION_HOOK_STAGE stub, the one production call site,
+// exactly like T7/T8 retired their own stubs above), and the direct runHooks() call sites this
+// engine owns itself for the events that are NOT stage-1 PreToolUse/PermissionRequest (those two
+// flow through createHookStage; everything else here fires ad hoc, at its own lifecycle point).
+import { createHookStage } from "./hooks/hook-stage.ts";
+import { buildHookRegistry } from "./hooks/registry.ts";
+import { buildHookEntriesFromConfig } from "./hooks/from-config.ts";
+import { createBridgeHookInvoker } from "./hooks/bridge-invoker.ts";
+import { runHooks, type HookAuditRecord, type HookAuditRecorder, type HookInvoker, type RunHooksContext, type RunHooksCallInfo } from "./hooks/runner.ts";
 
 export type ContentBlock =
   | { type: "text"; text: string }
@@ -85,6 +97,14 @@ export interface SessionPersistence {
   // canUseTool answer is a live session interaction, never a direct settings-file edit) — typed as
   // the general RuleSource anyway so a future non-"session" caller isn't foreclosed.
   recordPermissionUpdate?(update: PermissionUpdate, authority: RuleSource): void | Promise<void>;
+  // Task 10 (WS-08 §9 Amended text / P2-A: "Winter's AUDIT stream ... MUST carry all of it per
+  // invocation"). Optional, matching every other method on this interface's own "entirely
+  // optional" contract — a store that predates this field (or a bare test double) simply never
+  // gets asked, and the audit recorder this engine builds (below) still exists and is still passed
+  // to every hooks call site regardless; it just has nowhere durable to write without a store.
+  // dialect.ts's withPermissionJournal is the one production implementation (same journal file as
+  // recordPermissionUpdate, a distinguishable sibling line kind — see that file's own comment).
+  recordHookAudit?(entry: HookAuditRecord): void | Promise<void>;
 }
 
 export interface EngineOptions {
@@ -186,6 +206,81 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // every evaluate() call the way makeEvalCtx's own per-call PolicyState snapshot must be.
   const realPromptStage = createBridgePromptStage(bridge);
 
+  // Task 10 (WS-08 §1/§2/§10): the hooks engine's three shared, run-lifetime pieces — a registry
+  // built ONCE from config.hooks (source:"sdk" groups only have a real producer at P2; filesystem
+  // sources are typed-but-inert, phase ruling 1 — buildHookEntriesFromConfig is source-agnostic and
+  // will pick those up for free the moment a P5 loader exists), the SAME bridge every other
+  // runtime->host RPC uses, and an audit recorder that forwards to the store's optional
+  // recordHookAudit (auxiliary — see recordHookAudit's own definition below, alongside
+  // recordUser/recordAssistant/recordPermissionUpdate).
+  const hookRegistry = buildHookRegistry(buildHookEntriesFromConfig(config.hooks));
+  const hookInvoker: HookInvoker = createBridgeHookInvoker(bridge);
+  // Auxiliary, exactly like recordUser/recordAssistant/recordPermissionUpdate further down (same
+  // "a store failure never fails the turn or blocks the hook it accompanies" policy) — defined here
+  // rather than alongside its siblings because hookAuditRecorder (right below) needs it before
+  // makeEvalCtx is built. dialect.ts's withPermissionJournal is the one production implementation
+  // (same journal file as recordPermissionUpdate, a distinguishable sibling line kind).
+  const recordHookAudit = async (entry: HookAuditRecord): Promise<void> => {
+    if (!store?.recordHookAudit) return;
+    try {
+      await store.recordHookAudit(entry);
+    } catch {
+      /* auxiliary — never fails the hook invocation it accompanies */
+    }
+  };
+  const hookAuditRecorder: HookAuditRecorder = { record: recordHookAudit };
+
+  // Task 10 (WS-08 §9 Amended / Ruling P2-A): the public lifecycle sink — ALWAYS constructed and
+  // ALWAYS passed to every hooks call site below; the includeHookEvents GATE lives entirely inside
+  // this closure (never at a call site), because the doc-asserted SessionStart/Setup exception
+  // (derived-shapes-p2.md item (d): those two events' own hook_started/hook_progress/hook_response
+  // messages emit UNCONDITIONALLY, regardless of the flag) needs to see every invocation's event
+  // name to decide whether to honor the gate or bypass it — a call-site-level "only pass a sink when
+  // the flag is on" design could never express that per-event exception. `hook_name` falls back to
+  // "" for an unnamed hook (frames.ts's own SDKHookStartedMessage/SDKHookResponseMessage comment);
+  // `stdout`/`stderr`/`output` are always "" (no SDK-callback hook has a concept of subprocess
+  // stdio — those fields exist on the wire only for a future filesystem command-hook, P5).
+  const includeHookEvents = config.includeHookEvents === true;
+  function shouldEmitHookLifecycle(hookEvent: HookEvent): boolean {
+    return includeHookEvents || hookEvent === "SessionStart" || hookEvent === "Setup";
+  }
+  const hookLifecycleSink = {
+    started(info: { hookId: string; hookName?: string; hookEvent: HookEvent; sessionId: string }): void {
+      if (!shouldEmitHookLifecycle(info.hookEvent)) return;
+      output.write({
+        type: "data",
+        message: {
+          type: "system",
+          subtype: "hook_started",
+          hook_id: info.hookId,
+          hook_name: info.hookName ?? "",
+          hook_event: info.hookEvent,
+          session_id: info.sessionId,
+          uuid: randomUUID(),
+        },
+      });
+    },
+    response(info: { hookId: string; hookName?: string; hookEvent: HookEvent; sessionId: string; outcome: "success" | "error" | "cancelled" }): void {
+      if (!shouldEmitHookLifecycle(info.hookEvent)) return;
+      output.write({
+        type: "data",
+        message: {
+          type: "system",
+          subtype: "hook_response",
+          hook_id: info.hookId,
+          hook_name: info.hookName ?? "",
+          hook_event: info.hookEvent,
+          output: "",
+          stdout: "",
+          stderr: "",
+          outcome: info.outcome,
+          session_id: info.sessionId,
+          uuid: randomUUID(),
+        },
+      });
+    },
+  };
+
   // Task 6: builds a FRESH EvaluationContext — always reading policyStateStore.getState() at the
   // moment of the call, never cached — so every evaluate() call sees the live mode/rules/version.
   // `trustedWorkspace: false` (constant, P2-wide): no settings-file loader exists yet to have
@@ -207,15 +302,27 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // evaluator.ts's own `boundedRoots`, independent of this field. Task 8: `promptStage` is now the
   // REAL bridge-backed implementation (T6's NO_OPINION_PROMPT_STAGE stub retired here — the one
   // production call site, exactly like T7 retired NO_SPECIAL_CHECKS above; every other reference
-  // left in the codebase is test-only). The remaining two seams (hooks, auto classifier) are still
-  // the T6/T9/T12 no-opinion stubs.
+  // left in the codebase is test-only). Task 10: `hookStage` is now the REAL registry+bridge-backed
+  // implementation (T6's NO_OPINION_HOOK_STAGE stub retired here — the one production call site;
+  // every other reference left in the codebase is test-only) — stateless across calls (the registry
+  // never changes mid-run; `runHooks` itself is what reads the live policy version fresh per
+  // invocation via `ctx.policy.version` below), so it is built ONCE, outside this factory, unlike
+  // the fresh-per-call EvaluationContext this factory itself produces. The remaining seam (the auto
+  // classifier) is still the T6/T12 no-opinion stub.
+  const realHookStage = createHookStage({
+    registry: hookRegistry,
+    invoker: hookInvoker,
+    audit: hookAuditRecorder,
+    sessionId: config.sessionId,
+    lifecycle: hookLifecycleSink,
+  });
   const makeEvalCtx = (): EvaluationContext => ({
     policy: policyStateStore.getState(),
     cwd: config.cwd,
     home: permissionHome,
     trustedWorkspace: false,
     sessionBypassEnabled: config.allowDangerouslySkipPermissions === true,
-    hookStage: NO_OPINION_HOOK_STAGE,
+    hookStage: realHookStage,
     promptStage: realPromptStage,
     autoEngine: NO_OPINION_AUTO_ENGINE,
     specialChecks: REAL_SPECIAL_CHECKS,
@@ -234,6 +341,34 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
       record = await evaluate(call, makeEvalCtx());
     }
     return record;
+  }
+
+  // Task 10 (T9-CARRY 2, reassigned; WS-08 §1.3): fires an event OBSERVATIONALLY through the SAME
+  // registry/invoker/audit/lifecycle trio realHookStage itself is built from — used for every
+  // engine-lifecycle event that is NOT stage-1 PreToolUse/PermissionRequest (those two flow through
+  // evaluate()'s own HookStage seam because their composite genuinely GATES the pipeline; every
+  // event fired here is "declaration-owned... observational at P2" per §1.3's own classification —
+  // fired, audited, and streamed if includeHookEvents is on, but its own SyncHookJSONOutput fields
+  // (additionalContext, sessionTitle, etc.) are read by NOBODY downstream yet. Consuming those is
+  // real future work (§13 Open Question 4 for the turn-lifecycle events specifically), not silently
+  // assumed here — this comment is the flag). Always AWAITED, never raced against a turn's own
+  // interrupt signal — the SAME deliberate choice engine.ts's own pre-existing rpc_probe turn kind
+  // makes ("a real permission/hook RPC will need to decide its own interrupt-during-wait semantics,
+  // which may differ from this"); a future task may revisit.
+  //
+  // `policyVersion` is read fresh, once, per call — these events don't participate in
+  // evaluateWithFreshPolicy's own stale-policy retry loop (there is no DECISION here to go stale;
+  // an observational hook's audit record is a historical fact about whatever policy was live the
+  // moment it fired, not a pending answer that can be invalidated by a later mode switch).
+  async function fireObservationalHook(event: HookEvent, call: RunHooksCallInfo): Promise<void> {
+    await runHooks(event, call, {
+      registry: hookRegistry,
+      invoker: hookInvoker,
+      audit: hookAuditRecorder,
+      sessionId: config.sessionId,
+      policyVersion: policyStateStore.getState().version,
+      lifecycle: hookLifecycleSink,
+    });
   }
 
   // Store failures are auxiliary, never turn-fatal (WS-03 §11 — a mirror failure becomes a
@@ -490,6 +625,16 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
     }
   })();
 
+  // T9-CARRY 2 (reassigned to T10; WS-08 §1.1): "engine start, after init." Fired here — AFTER the
+  // pump has started running (the `const pump = ...` assignment above has already invoked its IIFE;
+  // by the time control reaches this line the pump's own `while(true)` loop is actively listening
+  // for control_response frames) and BEFORE the turn loop begins — never any earlier: a hook RPC
+  // issued before the pump exists would have nothing routing its eventual answer back to the
+  // bridge, and would need to rely solely on the runner's own per-hook timeout to ever resolve.
+  await fireObservationalHook("SessionStart", {
+    payload: { source: config.forkSession === true ? "fork" : config.resume !== undefined || config.continue === true ? "resume" : "startup" },
+  });
+
   const messages: ProviderMessage[] = initialMessages ? [...initialMessages] : [];
   // Ruling P1-F: maxTurns is the RUN's cumulative agentic tool-use round-trip cap (report §8 /
   // WS-03 §5) — it never resets per user envelope. Declared here, outside the turn loop, so it
@@ -511,6 +656,15 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
     const userText = userFrame.text;
     messages.push({ role: "user", content: userText });
     await recordUser(userText);
+
+    // T9-CARRY 2 (reassigned to T10; WS-08 §1.1): "user envelope accepted, BEFORE the turn's
+    // provider call" — fired here, after the envelope is durably recorded but before
+    // provider.generate() is ever invoked. Its own output shape (additionalContext/sessionTitle/
+    // suppressOriginalPrompt) is declaration-owned and OBSERVATIONAL at P2 (WS-08 §1.3 / open
+    // question 4: "any gating behavior beyond the declaration is ... never assumed") — nothing here
+    // consumes it; a future task that wants UserPromptSubmit to actually suppress/rewrite the
+    // prompt has a real seam to build against (this call site), not a gap to discover.
+    await fireObservationalHook("UserPromptSubmit", { payload: { prompt: userText } });
 
     let finalResult: Extract<SdkMessage, { type: "result" }> | null = null;
     let interrupted = false;
@@ -616,11 +770,50 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
             // pending state). Cross-task pin: a denial is a NORMAL tool_result, `denied: true`,
             // flowing through the SAME emit/push/record cluster below as every other result — this
             // is what makes dontAsk's deny-not-hang fall out structurally (WS-07 §6.3).
+            const deniedMessage = decision.message ?? "Permission denied";
             resultBlocks.push({
               type: "tool_result",
               tool_use_id: call.id,
-              content: decision.message ?? "Permission denied",
+              content: deniedMessage,
               denied: true,
+            });
+            // Task 10 (WS-08 §6 / derived-shapes-p2.md item (d)): the public SDKPermissionDeniedMessage
+            // is UNCONDITIONAL — never gated by includeHookEvents (that item's own "Correction to
+            // this task's own brief framing": only the hook_started/hook_progress/hook_response
+            // trio is gated) — and fires on ANY-stage denial regardless of `mechanism` (hook/rule/
+            // mode/canUseTool/autoEngine all reach this one call site). Best-effort/advisory per
+            // that same item's own load-bearing finding — the tool_result block above (and
+            // eventually `result.permission_denials`, T11 territory) is the authoritative record;
+            // this stream message is UX/telemetry only. `decision_reason_type`/`decision_reason`
+            // are Winter's own mapping of PermissionDecisionRecord's mechanism/ruleRef — the pinned
+            // declaration names the fields without pinning their exact semantics beyond
+            // advisory/UI-facing.
+            output.write({
+              type: "data",
+              message: {
+                type: "system",
+                subtype: "permission_denied",
+                tool_name: call.name,
+                tool_use_id: call.id,
+                ...(permissionCall.agentId !== undefined ? { agent_id: permissionCall.agentId } : {}),
+                decision_reason_type: decision.mechanism,
+                ...(decision.ruleRef !== undefined ? { decision_reason: decision.ruleRef } : {}),
+                message: deniedMessage,
+                session_id: config.sessionId,
+                uuid: randomUUID(),
+              },
+            });
+            // WS-08's own PermissionDenied HOOK EVENT (distinct from the stream message above) —
+            // purely observational (§6: "observes denials ... for logging/telemetry/UX; it cannot
+            // reverse them"), fired for the SAME every-mechanism denial. Not raced against
+            // interruptSignal (this whole call-info-building/firing step is synchronous-cheap and
+            // deliberately unraced, matching the rpc_probe turn kind's own precedent elsewhere in
+            // this file).
+            await fireObservationalHook("PermissionDenied", {
+              toolUseID: call.id,
+              toolName: call.name,
+              input: permissionCall.input,
+              payload: { reason: deniedMessage },
             });
             // Task 8 (WS-07 §7.2): a deny's `interrupt: true` ADDITIONALLY triggers the engine's
             // existing interrupt path — "interrupt can stop more than the individual call." Mirrors
@@ -671,10 +864,35 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
             break;
           }
           resultBlocks.push({ type: "tool_result", tool_use_id: call.id, content: raced.value.output });
+          // Task 10 (WS-08 §5; PreToolUse/PostToolUse/PostToolUseFailure "fire at the tool round"):
+          // contribution-capable, observational at P2 — its own transformedOutput/classifierContext/
+          // extraContext fields (WS-07 §10.4/WS-08 §5's own auto-mode-classifier channel) have no
+          // consumer yet (T12's job); fired + audited + streamed regardless, per the SAME
+          // "declaration-owned... not silently assumed" posture as every other ad hoc call site in
+          // this function. Fires ONLY after a genuinely successful execution — never for a denied
+          // call (never executed at all) or an interrupted one (abandoned mid-flight, not completed).
+          await fireObservationalHook("PostToolUse", {
+            toolUseID: call.id,
+            toolName: call.name,
+            input: executedCall.input as Record<string, unknown>,
+            payload: { tool_response: raced.value.output },
+          });
         } catch (err) {
           const text = err instanceof Error ? err.message : String(err);
           finalResult = { type: "result", subtype: "error_during_execution", is_error: true, result: text };
           toolThrowText = text;
+          // Task 10 (WS-08 §5): the failure-arm sibling of PostToolUse above — fires when this
+          // call's own tool executor threw (or, less commonly, when an earlier step in this SAME
+          // try block threw first, e.g. evaluateWithFreshPolicy or the updatedPermissions loop —
+          // `executedCall`/`decision` are try-block-scoped and not reachable from `catch`, so this
+          // uses `call`'s own raw, untransformed input, the one value guaranteed available
+          // regardless of which line inside the try actually threw).
+          await fireObservationalHook("PostToolUseFailure", {
+            toolUseID: call.id,
+            toolName: call.name,
+            input: typeof call.input === "object" && call.input !== null ? (call.input as Record<string, unknown>) : {},
+            payload: { error: text },
+          });
           break;
         }
       }
@@ -733,6 +951,17 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
       // loop back for the next provider.generate() call
     }
 
+    // T9-CARRY 2 (reassigned to T10; WS-08 §1.1): "when the main agent is about to stop" — fired
+    // HERE, deliberately BEFORE the turn's terminal result is written below (advisor-confirmed
+    // placement, not merely tidy): the single-shot wrapper's own readLoop only breaks out once it
+    // observes the terminal `result` data frame (query.ts), so it is STILL actively reading stdout
+    // at this exact point — a Stop hook RPC issued here is genuinely answerable on every prompt
+    // shape. Firing it any later (e.g. after the result write) would make it unanswerable in
+    // single-shot mode for the identical structural reason SessionEnd needed the bridge's
+    // closed-flag fix (see that call site's own comment, further down this function). Declaration-
+    // owned/observational output (WS-08 §1.3, §13 open question 4) — not consumed here.
+    await fireObservationalHook("Stop", { payload: { stop_hook_active: false } });
+
     interruptCurrentTurn.current = null;
 
     // Terminal-over-abort (WS-04 §5 drain-after-interrupt; the same principle query.ts's wrapper
@@ -748,6 +977,24 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
     }
     await flushStore();
   }
+
+  // T9-CARRY 2 (reassigned to T10; WS-08 §1.1): "teardown" — fired HERE, after the turn loop has
+  // fully drained but strictly BEFORE `stopReading()` below, so the pump (still alive at this exact
+  // point per Ruling P2-B's own guarantee, point 2) can still route this hook RPC's eventual
+  // control_response. This is the ONE lifecycle call site genuinely at risk of racing a dead
+  // connection even with correct placement: a single-shot wrapper's own readLoop has ALREADY broken
+  // out (it stops reading stdout entirely the instant it sees the turn's terminal `result` frame,
+  // written well before this point) and closes its stdin shortly after — meaning THIS runtime's own
+  // `input` can hit true EOF (triggering the pump's `bridge.rejectAllPending`, see that call site's
+  // own comment) before or immediately after this request is even issued, regardless of how this
+  // call site is placed. Structurally unanswerable in single-shot mode, not a race to win — which is
+  // exactly why the bridge itself was extended (this task, rpc/bridge.ts) to reject a request
+  // immediately once closed, rather than letting it sit until the 30s observational timeout: without
+  // that fix, EVERY single-shot query with any hook configured would stall SessionEnd for up to 30s
+  // before runEngine could return. With it, this call resolves promptly either way — a genuine
+  // answer in streaming mode (the wrapper is still reading), or an immediate rejection (folded by
+  // runHooks into a normal {kind:"error"} audit outcome, never a hang) in single-shot mode.
+  await fireObservationalHook("SessionEnd", { payload: { reason: "other" } });
 
   // Ruling P2-B: the turn loop's own `for await (const userFrame of userFrames)` above has now
   // exited — every queued turn has fully drained (see the pump's own header, point 2) — so it is

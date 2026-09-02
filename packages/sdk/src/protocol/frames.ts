@@ -11,8 +11,82 @@ export interface ControlResponseFrame { type: "control_response"; requestId: str
 export interface UnknownFrame { type: string; [k: string]: unknown; }
 export type WinterFrame = InitFrame | UserFrame | DataFrame | ControlRequestFrame | ControlResponseFrame | UnknownFrame;
 
+// Task 10 (WS-08 §9; derived-shapes-p2.md item (d), the frozen pin-time 0.3.250 declaration; Ruling
+// P2-A): the public hook-lifecycle trio + PermissionDenied — Ruling-9 PUBLIC UNION GROWTH. Each is
+// its own "system" subtype (not a widening of "init"'s own shape) so `Extract<SdkMessage,
+// {type:"system"}>` on the query.ts side correctly discriminates all five by `subtype`, rather than
+// silently mistyping a lifecycle message as carrying "init"'s own fields (cwd/model/tools/etc.).
+//
+// hook_started/hook_progress/hook_response carry ONLY the P2-A-pinned public field set — hook_id,
+// hook_name, hook_event, session_id, uuid, plus the coarse `outcome` on hook_response — never
+// toolUseID/requestId/fine-grained outcome/duration, which stay audit-stream-only (WS-08 §9 Amended
+// text). `hook_name` is pinned non-optional in the real declaration; engine.ts falls back to ""
+// for an unnamed hook rather than widening this type to optional (prompt-stage.ts's own toolUseID
+// precedent). `hook_progress` is typed for completeness (the closed union WS-08 §9 describes) but
+// has NO producer at P2 — an SDK-callback hook has no stdout/stderr streaming concept; only
+// filesystem command-hooks (P5) would ever have "progress" to report.
+export interface SDKHookStartedMessage {
+  type: "system";
+  subtype: "hook_started";
+  hook_id: string;
+  hook_name: string;
+  hook_event: string;
+  session_id: string;
+  uuid: string;
+}
+export interface SDKHookProgressMessage {
+  type: "system";
+  subtype: "hook_progress";
+  hook_id: string;
+  hook_name: string;
+  hook_event: string;
+  stdout: string;
+  stderr: string;
+  output: string;
+  session_id: string;
+  uuid: string;
+}
+export interface SDKHookResponseMessage {
+  type: "system";
+  subtype: "hook_response";
+  hook_id: string;
+  hook_name: string;
+  hook_event: string;
+  output: string;
+  stdout: string;
+  stderr: string;
+  exit_code?: number;
+  outcome: "success" | "error" | "cancelled";
+  session_id: string;
+  uuid: string;
+}
+// SDKPermissionDeniedMessage (derived-shapes item (d)): observational, fires on ANY-stage denial —
+// UNCONDITIONAL, never gated by includeHookEvents (that doc-asserted item's own "Correction to this
+// task's own brief framing" note: only the hook_started/hook_progress/hook_response trio is gated).
+// `decision_reason_type`/`decision_reason` are Winter's own mapping of PermissionDecisionRecord's
+// `mechanism`/`ruleRef` — the pinned declaration names the fields but not their exact semantics
+// beyond "advisory/UI-facing" (that same item's own load-bearing finding: this message is
+// best-effort, not authoritative — a future task's durable-approval reconciliation anchors on
+// `result.permission_denials`, not on having observed every one of these).
+export interface SDKPermissionDeniedMessage {
+  type: "system";
+  subtype: "permission_denied";
+  tool_name: string;
+  tool_use_id: string;
+  agent_id?: string;
+  decision_reason_type?: string;
+  decision_reason?: string;
+  message: string;
+  uuid: string;
+  session_id: string;
+}
+
 export type SdkMessage =
   | { type: "system"; subtype: "init"; session_id: string; cwd: string; model: string; permissionMode: string; tools: string[]; [k: string]: unknown }
+  | SDKHookStartedMessage
+  | SDKHookProgressMessage
+  | SDKHookResponseMessage
+  | SDKPermissionDeniedMessage
   | { type: "assistant"; message: { content: Array<{ type: "text"; text: string } | { type: string; [k: string]: unknown }> }; [k: string]: unknown }
   | { type: "result"; subtype: "success" | "error_max_turns" | "error_during_execution" | "error_max_budget_usd" | "error_max_structured_output_retries" | string; is_error?: boolean; result?: string; [k: string]: unknown }
   | { type: string; [k: string]: unknown };

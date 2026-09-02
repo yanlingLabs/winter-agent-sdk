@@ -33,7 +33,10 @@ import { resolveProjectDirName } from "../paths/project-dir-name.ts";
 import { findContinueTarget, findResumeTarget, truncateAt, toDialectEntries, rebuildProviderMessages, ResumeTargetError } from "./resume.ts";
 // Task 8 (WS-07 §3.3 / phase ruling 2): the permission journal — ruleset.ts's own header names this
 // task ("T8's canUseTool wiring") as its first real caller with something to journal.
-import { appendPermissionJournal } from "../permissions/ruleset.ts";
+// Task 10 (WS-08 §9 Amended / P2-A): the SAME journal file also carries hook audit records — see
+// appendHookAuditJournal's own header (ruleset.ts) for why this reuses one file rather than a
+// second sidecar.
+import { appendPermissionJournal, appendHookAuditJournal, type HookAuditJournalRecord } from "../permissions/ruleset.ts";
 
 // The dialect's own name for a content block. Same shapes engine.ts's ContentBlock already
 // produces (text/tool_use/tool_result, P1-G's `interrupted` and P1-H's `error` markers included) —
@@ -288,6 +291,13 @@ function withPermissionJournal(writer: TranscriptWriter, location: { winterHome:
     // engine.ts's caller awaits unconditionally regardless (a no-op await on a non-promise).
     recordPermissionUpdate(update: PermissionUpdate, authority: RuleSource): void {
       appendPermissionJournal(location, update, { authority });
+    },
+    // Task 10 (WS-08 §9 Amended / P2-A): same journal file, sibling envelope kind — see
+    // appendHookAuditJournal's own header (ruleset.ts) for the full rationale. `entry` arrives here
+    // typed as engine.ts's own (richer) HookAuditRecord; HookAuditJournalRecord's wider field types
+    // (plain `string` where runner.ts's own type has a literal union) accept it with no cast needed.
+    recordHookAudit(entry: HookAuditJournalRecord): void {
+      appendHookAuditJournal(location, entry);
     },
   };
 }

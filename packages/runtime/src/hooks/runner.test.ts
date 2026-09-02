@@ -418,3 +418,84 @@ describe("runHooks -- classifierContext accumulation (WS-08 §5, T12-consumed)",
     expect(composite.classifierContext).toEqual([{ hookId: "h1", context: "wrote outside the workspace" }]);
   });
 });
+
+// T10 (WS-08 §9): the public lifecycle sink -- optional, gating lives entirely in the CALLER's own
+// concrete sink (engine.ts), not here; this file only proves runner.ts calls it at the right times
+// with the right (coarse, P2-A-pinned) fields.
+describe("runHooks -- HookLifecycleSink (WS-08 §9)", () => {
+  function recordingLifecycle(): {
+    lifecycle: import("./runner.ts").HookLifecycleSink;
+    events: Array<{ kind: "started" | "response"; hookId: string; hookName?: string; hookEvent: string; sessionId: string; outcome?: string }>;
+  } {
+    const events: Array<{ kind: "started" | "response"; hookId: string; hookName?: string; hookEvent: string; sessionId: string; outcome?: string }> = [];
+    return {
+      events,
+      lifecycle: {
+        started: (info) => events.push({ kind: "started", ...info }),
+        response: (info) => events.push({ kind: "response", ...info }),
+      },
+    };
+  }
+
+  test("started then response fire, in order, for an invoked hook -- decision/none outcomes map to 'success'", async () => {
+    const { invoker } = fixedInvoker({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "allow" } });
+    const { lifecycle, events } = recordingLifecycle();
+    await runHooks(
+      "PreToolUse",
+      { toolName: "Bash", input: {} },
+      ctxWith({ registry: fakeRegistry([entry("h1", "PreToolUse", { name: "myHook" })]), invoker, lifecycle }),
+    );
+    expect(events).toEqual([
+      { kind: "started", hookId: "h1", hookName: "myHook", hookEvent: "PreToolUse", sessionId: "sess-1" },
+      { kind: "response", hookId: "h1", hookName: "myHook", hookEvent: "PreToolUse", sessionId: "sess-1", outcome: "success" },
+    ]);
+  });
+
+  test("a hook with no name omits hookName from the lifecycle events too (mirrors the audit record's own optionality)", async () => {
+    const { invoker } = fixedInvoker({});
+    const { lifecycle, events } = recordingLifecycle();
+    await runHooks("PreToolUse", { toolName: "Bash", input: {} }, ctxWith({ registry: fakeRegistry([entry("h1", "PreToolUse")]), invoker, lifecycle }));
+    expect("hookName" in events[0]!).toBe(false);
+    expect("hookName" in events[1]!).toBe(false);
+  });
+
+  test("error and timeout outcomes both map to the public 'error' outcome (WS-08 §9 Open Question 2's own speculation)", async () => {
+    const { lifecycle, events } = recordingLifecycle();
+    await runHooks(
+      "PreToolUse",
+      { toolName: "Bash", input: {} },
+      ctxWith({ registry: fakeRegistry([entry("h1", "PreToolUse")]), invoker: rejectingInvoker(), lifecycle }),
+    );
+    expect(events[1]!.outcome).toBe("error");
+
+    const { lifecycle: lifecycle2, events: events2 } = recordingLifecycle();
+    await runHooks(
+      "PreToolUse",
+      { toolName: "Bash", input: {} },
+      ctxWith({ registry: fakeRegistry([entry("h1", "PreToolUse")]), invoker: neverResolvingInvoker().invoker, timeouts: { gatingTimeoutMs: 10, observationalTimeoutMs: 10 }, lifecycle: lifecycle2 }),
+    );
+    expect(events2[1]!.outcome).toBe("error");
+  });
+
+  test("a SKIPPED hook (deny short-circuit) never fires started/response at all -- it was never invoked", async () => {
+    const { invoker } = sequenceInvoker([
+      { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny" } },
+      { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "allow" } },
+    ]);
+    const { lifecycle, events } = recordingLifecycle();
+    await runHooks(
+      "PreToolUse",
+      { toolName: "Bash", input: {} },
+      ctxWith({ registry: fakeRegistry([entry("h1", "PreToolUse"), entry("h2", "PreToolUse")]), invoker, lifecycle }),
+    );
+    // h1 (the deny) fires started+response; h2 (skipped) fires NEITHER.
+    expect(events).toHaveLength(2);
+    expect(events.every((e) => e.hookId === "h1")).toBe(true);
+  });
+
+  test("omitted lifecycle sink is a complete no-op -- runHooks behaves identically with or without one", async () => {
+    const { invoker } = fixedInvoker({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "allow" } });
+    const composite = await runHooks("PreToolUse", { toolName: "Bash", input: {} }, ctxWith({ registry: fakeRegistry([entry("h1", "PreToolUse")]), invoker }));
+    expect(composite.decision).toBe("allow"); // no throw, no behavior change from the absent sink
+  });
+});

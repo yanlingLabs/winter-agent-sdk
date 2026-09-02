@@ -40,6 +40,12 @@ export type {
   ControlRequestFrame,
   ControlResponseFrame,
   UnknownFrame,
+  // Task 10 (WS-08 §9 / Ruling P2-A; Ruling-9 public union growth): the hook-lifecycle trio +
+  // PermissionDenied — new named SdkMessage variants a host can discriminate on `.subtype`.
+  SDKHookStartedMessage,
+  SDKHookProgressMessage,
+  SDKHookResponseMessage,
+  SDKPermissionDeniedMessage,
 } from "./protocol/frames.ts";
 
 // Paths (Task 6, moved here Task 10 -- WS-05 §6): WINTER_HOME resolution, the exact CC-compatible

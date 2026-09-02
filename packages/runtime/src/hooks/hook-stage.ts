@@ -24,7 +24,7 @@
 // a distinct, non-fail-closed seam outcome of its own.
 import type { PermissionUpdate } from "@yanlinglabs/winter-agent-sdk";
 import type { PermissionCall, EvaluationContext, HookStage, HookDecision, PromptStageMeta, PermissionRequestHookDecision } from "../permissions/evaluator.ts";
-import { runHooks, type HookInvoker, type HookAuditRecorder, type HookTimeoutConfig, type ToolInputValidator } from "./runner.ts";
+import { runHooks, type HookInvoker, type HookAuditRecorder, type HookTimeoutConfig, type ToolInputValidator, type HookLifecycleSink } from "./runner.ts";
 import type { HookRegistry } from "./registry.ts";
 
 export interface HookStageDeps {
@@ -35,6 +35,9 @@ export interface HookStageDeps {
   agentID?: string;
   timeouts?: HookTimeoutConfig;
   validator?: ToolInputValidator;
+  // T10 (WS-08 §9): forwarded verbatim into every runHooks() call this adapter makes (PreToolUse
+  // AND PermissionRequest) — see runner.ts's own HookLifecycleSink header for the gating contract.
+  lifecycle?: HookLifecycleSink;
 }
 
 // The lifecycle entry that produced the composite's own WINNING decision, for HookDecision.hookId
@@ -65,6 +68,7 @@ export function createHookStage(deps: HookStageDeps): HookStage {
           ...(deps.agentID !== undefined ? { agentID: deps.agentID } : call.agentId !== undefined ? { agentID: call.agentId } : {}),
           ...(deps.timeouts !== undefined ? { timeouts: deps.timeouts } : {}),
           ...(deps.validator !== undefined ? { validator: deps.validator } : {}),
+          ...(deps.lifecycle !== undefined ? { lifecycle: deps.lifecycle } : {}),
         },
       );
 
@@ -170,6 +174,7 @@ export function createHookStage(deps: HookStageDeps): HookStage {
           ...(deps.agentID !== undefined ? { agentID: deps.agentID } : call.agentId !== undefined ? { agentID: call.agentId } : {}),
           ...(deps.timeouts !== undefined ? { timeouts: deps.timeouts } : {}),
           ...(deps.validator !== undefined ? { validator: deps.validator } : {}),
+          ...(deps.lifecycle !== undefined ? { lifecycle: deps.lifecycle } : {}),
         },
       );
 

@@ -730,8 +730,15 @@ test("Task 6: a denied tool call produces a synthetic tool_result with denied:tr
     await proc.exited;
 
     const msgs = frames.filter((f) => f.type === "data").map((f) => (f as { message: SdkMessage }).message);
-    expect(msgs.map((m) => m.type)).toEqual(["system", "assistant", "user", "assistant", "result"]);
-    const toolResultMsg = msgs[2] as { message: { content: unknown } };
+    // T10: the unconditional PermissionDenied "system"/permission_denied message (WS-08 §6 /
+    // derived-shapes-p2.md item (d)) now lands between the assistant's tool_use batch and the
+    // user's tool_result batch — it fires for call1's denial before call2 is even evaluated.
+    expect(msgs.map((m) => m.type)).toEqual(["system", "assistant", "system", "user", "assistant", "result"]);
+    const permissionDeniedMsg = msgs[2] as { subtype: string; tool_name: string; tool_use_id: string };
+    expect(permissionDeniedMsg.subtype).toBe("permission_denied");
+    expect(permissionDeniedMsg.tool_name).toBe("test_tool");
+    expect(permissionDeniedMsg.tool_use_id).toBe("call1");
+    const toolResultMsg = msgs[3] as { message: { content: unknown } };
     expect(toolResultMsg.message.content).toEqual([
       { type: "tool_result", tool_use_id: "call1", content: expect.any(String), denied: true },
       { type: "tool_result", tool_use_id: "call2", content: "other_tool:{\"x\":1}" }, // never denied — the round continues past the deny

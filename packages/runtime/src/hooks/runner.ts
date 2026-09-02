@@ -148,6 +148,35 @@ export interface RunHooksCallInfo {
   payload?: unknown;
 }
 
+// --- HookLifecycleSink — the T10 public-lifecycle-stream seam (WS-08 §9, P2-A-pinned public shape) -
+//
+// Optional: WHETHER a sink exists at all is the caller's own `includeHookEvents` decision (engine.ts
+// builds one unconditionally and gates emission INSIDE it, per that file's own comment — the
+// SessionStart/Setup unconditional-emission exception from derived-shapes-p2.md item (d) needs to
+// see every invocation regardless of the flag, so the gate can't live at the call-site level here).
+// Fires ONLY for hooks that are actually INVOKED — never for a `skipped` short-circuited participant
+// (WS-08 §9's own "hook_started -> ... -> hook_response" wording describes one real invocation's
+// lifecycle; a skipped hook never started at all). The audit stream (HookAuditRecorder) still
+// records skipped participants regardless, per its own unconditional "every participant" contract —
+// the two seams are deliberately NOT symmetric in this one respect.
+export interface HookLifecycleSink {
+  started(info: { hookId: string; hookName?: string; hookEvent: HookEvent; sessionId: string }): void;
+  response(info: { hookId: string; hookName?: string; hookEvent: HookEvent; sessionId: string; outcome: "success" | "error" | "cancelled" }): void;
+}
+
+// WS-08 §9 Open Question 2 (derived-shapes-p2.md): the pinned `outcome` enum (success/error/
+// cancelled) is coarser than this runner's own fine-grained HookAuditOutcome (decision/none/error/
+// timeout/skipped). This mapping is a DOCUMENTED, NOT spec-resolving, judgment call for what IS
+// reachable through a real invocation: decision/none both genuinely "succeeded" (the hook ran to
+// completion, with or without an opinion) -> "success"; error/timeout both -> "error" (Open
+// Question 2's own speculation: "presumably folded into 'error'?"). "cancelled" has no reachable
+// producer at P2 (no mechanism here distinguishes a genuinely aborted invocation from a timed-out
+// one) — never emitted, not resolved, exactly like the spec's own open question stays open.
+// "skipped" never reaches this function at all (see HookLifecycleSink's own header).
+function publicLifecycleOutcomeOf(kind: "decision" | "none" | "error" | "timeout"): "success" | "error" | "cancelled" {
+  return kind === "decision" || kind === "none" ? "success" : "error";
+}
+
 export interface RunHooksContext {
   registry: HookRegistry;
   invoker: HookInvoker;
@@ -157,6 +186,7 @@ export interface RunHooksContext {
   agentID?: string;
   timeouts?: HookTimeoutConfig;
   validator?: ToolInputValidator;
+  lifecycle?: HookLifecycleSink;
 }
 
 function isObject(v: unknown): v is Record<string, unknown> {
@@ -441,6 +471,10 @@ export async function runHooks(event: HookEvent, call: RunHooksCallInfo, ctx: Ru
 
     const request = buildRequest(entry, event, call, ctx, currentInput);
     const timeoutMs = defaultTimeoutMsFor(event, entry, ctx.timeouts);
+    // T10 (WS-08 §9): "hook_started" fires for every hook actually invoked (never a skipped one,
+    // handled above) — BEFORE the invocation, so a slow/hanging hook shows up in-flight on the
+    // public stream, not just retroactively once it settles.
+    ctx.lifecycle?.started({ hookId: entry.id, ...(entry.name !== undefined ? { hookName: entry.name } : {}), hookEvent: event, sessionId: ctx.sessionId });
     const started = Date.now();
     const invocation = await invokeWithTimeout(ctx.invoker, request, timeoutMs);
     const durationMs = Date.now() - started;
@@ -469,6 +503,15 @@ export async function runHooks(event: HookEvent, call: RunHooksCallInfo, ctx: Ru
         durationMs,
       }),
     );
+    // T10 (WS-08 §9): "hook_response" closes the row this hook's own "hook_started" opened, with
+    // the P2-A-pinned coarse outcome (see publicLifecycleOutcomeOf's own header for the mapping).
+    ctx.lifecycle?.response({
+      hookId: entry.id,
+      ...(entry.name !== undefined ? { hookName: entry.name } : {}),
+      hookEvent: event,
+      sessionId: ctx.sessionId,
+      outcome: publicLifecycleOutcomeOf(outcome.kind === "decision" || outcome.kind === "none" || outcome.kind === "error" || outcome.kind === "timeout" ? outcome.kind : "error"),
+    });
 
     results.push({ participant: entry, outcome });
     if (outcome.kind === "decision" && outcome.decision === "deny") denied = true;

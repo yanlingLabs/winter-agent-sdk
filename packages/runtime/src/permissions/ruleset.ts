@@ -631,3 +631,50 @@ export function appendPermissionJournal(
   const envelope: PermissionJournalEnvelope = { authority: opts.authority, at: new Date().toISOString(), update };
   appendJsonLine(journalPath(location), envelope);
 }
+
+// ---------------------------------------------------------------------------------------------
+// appendHookAuditJournal — Task 10 (WS-08 §9 Amended text / P2-A: "the AUDIT stream ... MUST carry
+// all of it per invocation")
+// ---------------------------------------------------------------------------------------------
+//
+// The SAME journal file (<sessionId>.permission-journal.jsonl) also carries hook audit records, as
+// a DISTINGUISHABLE line kind (`kind: "hookAudit"`) — a SIBLING shape to PermissionJournalEnvelope's
+// own `{authority, at, update}`, never spread into it, so a future P5 replay reading this file for
+// PermissionUpdate history can trivially skip audit lines (`kind !== "hookAudit"`, or simply "no
+// `update` field") without misinterpreting one as an update, and vice versa. Reuses this module's
+// same directory-hardening/atomic-append machinery (ensureJournalDirChain/journalPath/appendJsonLine)
+// — deliberately NOT a second file: the brief's own instruction is "journaled to the audit line OF
+// THE PERMISSION JOURNAL," not a new sidecar.
+//
+// A minimal, LOCAL mirror of hooks/runner.ts's own HookAuditRecord field shape, rather than an
+// import of that type: permissions/ruleset.ts has never imported from hooks/ (hooks/hook-stage.ts
+// and hooks/registry.ts both import FROM permissions/, the opposite direction), and this is
+// deliberately not the place that starts that coupling — engine.ts (which already depends on both
+// packages) is where the real HookAuditRecord value gets produced and handed in here; this type is
+// intentionally WIDER (plain `string` where runner.ts's own type has a literal union) so passing a
+// real HookAuditRecord value here type-checks with no cast (a narrower source type is always
+// assignable to this wider parameter shape).
+export interface HookAuditJournalRecord {
+  hookId: string;
+  hookName?: string;
+  hookEvent: string;
+  sessionId: string;
+  uuid: string;
+  toolUseID?: string;
+  requestId?: string;
+  outcome: string;
+  decision?: string;
+  durationMs?: number;
+}
+
+export interface HookAuditJournalEnvelope {
+  kind: "hookAudit";
+  at: string; // ISO 8601, via Date.prototype.toISOString()
+  entry: HookAuditJournalRecord;
+}
+
+export function appendHookAuditJournal(location: { winterHome: string; projectKey: string; sessionId: string }, entry: HookAuditJournalRecord): void {
+  ensureJournalDirChain(location);
+  const envelope: HookAuditJournalEnvelope = { kind: "hookAudit", at: new Date().toISOString(), entry };
+  appendJsonLine(journalPath(location), envelope);
+}
