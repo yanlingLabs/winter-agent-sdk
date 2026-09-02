@@ -655,10 +655,30 @@ describe("WS-07 §12 + WS-08 §12 fixture matrix (P2-scoped per phase ruling 3)"
       }
       return content;
     };
+    const countOccurrences = (haystack: string, needle: string): number => {
+      let count = 0;
+      let from = 0;
+      for (;;) {
+        const at = haystack.indexOf(needle, from);
+        if (at === -1) return count;
+        count++;
+        from = at + 1; // overlap-tolerant; these substrings are long enough that overlap never matters in practice
+      }
+    };
     for (const row of [...WS07_12, ...WS08_12]) {
       for (const c of row.citations ?? []) {
         const content = readCited(c.file);
-        expect(content.includes(c.testName), `${row.id}: citation not found -- ${c.file} does not contain a test/describe title matching "${c.testName}"`).toBe(true);
+        // Self-citation loophole guard: a row citing THIS file has its own `testName` string
+        // literal sitting right here in the table, which would trivially satisfy a plain
+        // `.includes()` check even if the real `test(...)` block below were renamed or deleted
+        // entirely (the check would then be verifying the table against itself, not against
+        // reality). Requiring TWO occurrences when self-citing -- one is this citation's own
+        // literal, the other must be the actual test title -- closes that hole; every other file
+        // keeps the original single-occurrence check.
+        const isSelfCitation = c.file === "./conformance.test.ts";
+        const occurrences = countOccurrences(content, c.testName);
+        const required = isSelfCitation ? 2 : 1;
+        expect(occurrences >= required, `${row.id}: citation not found -- ${c.file} does not contain ${required} occurrence(s) of a test/describe title matching "${c.testName}" (found ${occurrences})`).toBe(true);
       }
     }
   });
