@@ -71,6 +71,12 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
     ...(options.resumeSessionAt !== undefined ? { resumeSessionAt: options.resumeSessionAt } : {}),
     ...(options.resumeDropsTurn !== undefined ? { resumeDropsTurn: options.resumeDropsTurn } : {}),
     ...(options.persistSession !== undefined ? { persistSession: options.persistSession } : {}),
+    // Task 5 (WS-07 §3.3 / phase ruling 1): pure passthrough, same conditional-spread convention as
+    // every field above — query.ts never interprets these, it only serializes them.
+    ...(options.allowedTools !== undefined ? { allowedTools: options.allowedTools } : {}),
+    ...(options.disallowedTools !== undefined ? { disallowedTools: options.disallowedTools } : {}),
+    ...(options.permissions !== undefined ? { permissions: options.permissions } : {}),
+    ...(options.settingSources !== undefined ? { settingSources: options.settingSources } : {}),
   };
 
   // A custom spawnClaudeCodeProcess hook owns process creation entirely (containers, VMs, remote

@@ -158,11 +158,15 @@ describe("add-time validation carry (b), Ruling P2-E: Read/Edit rules over the g
   });
 
   test("the cap check runs on the RAW ruleContent regardless of how grammar.ts classifies it (e.g. a colon makes it parse as a 'param' specifier, not 'pattern')", () => {
-    // "a:**/**/**/**/**/**/**/**/**" contains a literal ":" so grammar.ts's generic FIELD_VALUE
-    // dispatch classifies it as a `param` specifier, not `pattern` -- the cap check must still fire
-    // because it is keyed on toolName===Read/Edit + the raw ruleContent string, never on
-    // parsed.specifier.kind (see grammar.ts's own generic-params-dispatch comment).
-    const pattern = `a:${overCapPattern()}`;
+    // "a:x/**/**/.../**" contains a literal ":" so grammar.ts's generic FIELD_VALUE dispatch
+    // classifies it as a `param` specifier (field "a", value "x/**/**/...") rather than `pattern` --
+    // the cap check must still fire because it is keyed on toolName===Read/Edit + the raw
+    // ruleContent string, never on parsed.specifier.kind (see grammar.ts's own generic-params-
+    // dispatch comment). The literal "x" segment between "a:" and the first "**" is deliberate: it
+    // keeps the "a:" prefix from fusing with a "**" token when exceedsDoubleStarCap does its own
+    // "/"-split, which would otherwise undercount by one and defeat the very thing this fixture is
+    // trying to prove.
+    const pattern = `a:x/${overCapPattern()}`;
     expect(() => sourceRule(rv("Read", pattern), "deny", "project")).toThrow(PermissionRuleValidationError);
   });
 
@@ -226,11 +230,15 @@ describe("applyPermissionUpdate: replaceRules", () => {
     const set = baseSet();
     const update: PermissionUpdate = { type: "replaceRules", rules: [rv("Bash", "new *")], behavior: "allow", destination: "userSettings" };
     const next = applyPermissionUpdate(set, update, { authority: "session" });
-    const bashAllow = next.entries.filter((e) => e.rule.toolName === "Bash" && e.behavior === "allow");
-    expect(bashAllow.map((e) => e.rule.specifier)).toEqual([{ kind: "pattern", source: "new *" }]);
+    // the OLD "user"+"allow" entry ("old *") is gone; the NEW one ("new *") is present -- scoped
+    // strictly to source==="user" so this assertion doesn't also swallow the "project"-sourced
+    // survivor below (which shares the same toolName+behavior but a DIFFERENT source).
+    const userAllow = next.entries.filter((e) => e.rule.toolName === "Bash" && e.behavior === "allow" && e.source === "user");
+    expect(userAllow.map((e) => e.rule.specifier)).toEqual([{ kind: "pattern", source: "new *" }]);
     // untouched: different source, and different behavior at the same source
-    expect(next.entries.some((e) => e.source === "project" && e.behavior === "allow")).toBe(true);
+    expect(next.entries.some((e) => e.source === "project" && e.behavior === "allow" && e.rule.specifier?.kind === "pattern" && (e.rule.specifier as { source: string }).source === "keep *")).toBe(true);
     expect(next.entries.some((e) => e.source === "user" && e.behavior === "deny")).toBe(true);
+    expect(next.entries).toHaveLength(3); // keep(project,allow) + keep-deny(user,deny) + new(user,allow)
   });
 
   test("replaceRules can never remove a managed entry, structurally -- destination never maps to 'managed'", () => {

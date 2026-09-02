@@ -203,15 +203,21 @@ function compileFsGlobToRegex(absPattern: string): RegExp | null {
   return new RegExp(`^${out}$`);
 }
 
-// Task 5 (Ruling P2-E), RED-phase stub: real body lands with ruleset.ts's implementation. Reuses
-// collapseConsecutiveDoubleStars + MAX_DOUBLE_STARS (this module's own mitigation) rather than
-// letting a caller re-derive the collapse/count algorithm independently, which would drift the
-// moment either changes here. Anchor-independent: prepending an anchor's literal absolute base
-// segments (never "**" themselves) never changes a pattern's own "**" segment count, so the caller
-// may pass the RAW, pre-anchor rule pattern exactly as authored — see paths.test.ts's
-// anchor-independence fixture.
-export function exceedsDoubleStarCap(_pattern: string): boolean {
-  throw new Error("not implemented");
+// Task 5 (Ruling P2-E): rule-add-time probe for the SAME cap compileFsGlobToRegex enforces at match
+// time, so a Read/Edit rule store (packages/runtime/src/permissions/ruleset.ts) can reject an
+// over-cap pattern when it is ADDED rather than let it silently compile to `null` (never-matching,
+// including for deny/ask -- a fail-open gap for those two directions, see compileFsGlobToRegex's
+// call site comment above) at match time. Reuses collapseConsecutiveDoubleStars + MAX_DOUBLE_STARS
+// rather than letting a caller re-derive the collapse/count algorithm independently, which would
+// drift the moment either changes here. Anchor-independent: an absolute pattern's segments are
+// exactly [...anchor's literal base segments, ...this raw pattern's own segments], and a literal
+// base segment is by definition never "**" -- so prepending it can never change the "**" count.
+// The caller may therefore pass the RAW, pre-anchor rule pattern exactly as authored (this
+// function does not require -- and must not require -- a leading "/", unlike
+// compileFsGlobToRegex's own `absPattern` parameter).
+export function exceedsDoubleStarCap(pattern: string): boolean {
+  const segments = collapseConsecutiveDoubleStars(pattern.split("/"));
+  return segments.filter((seg) => seg === "**").length > MAX_DOUBLE_STARS;
 }
 
 export function matchFileRule(pattern: string, opts: MatchFileRuleOptions): boolean {
