@@ -691,6 +691,60 @@ function evaluateModeStage(call: PermissionCall, ctx: EvaluationContext, mode: P
 // The main evaluator
 // ---------------------------------------------------------------------------------------------------
 
+// T10 (WS-08 §6): fires immediately before EVERY ctx.promptStage.prompt() call site below (stage
+// 3's ask-match/mandatory-interaction/hook-forced-ask gate; the mustPrompt standing-exception site;
+// stage 6's generic fallback) — "a decision is about to be requested." A non-null answer here takes
+// canUseTool's place ENTIRELY for that one decision point (mechanism "hook", canUseTool never
+// invoked); a null answer (no PermissionRequest hook registered, or every matched hook stayed
+// silent) means the CALLER falls through to its own existing ctx.promptStage.prompt() call,
+// unchanged, mechanism "canUseTool" — the two mechanisms normalize into the SAME
+// PermissionDecisionRecord shape (T6's own cross-task pin), provenance preserved via `mechanism`.
+//
+// The §3 non-override floor ("a PermissionRequest allow is subject to the same non-override floor
+// as any hook allow") holds STRUCTURALLY here, not via a runtime check: every call site below only
+// ever reaches this helper AFTER stage 2's deny rules, the Read-deny-blocks-Edit check, and (at the
+// standing-exception site) the critical-removal/protected-write checks have already run and already
+// decided this exact call needs a prompt — there is no later stage left for an allow returned here
+// to retroactively bypass (T7's own structural-guarantee precedent for stage-5's standing
+// exceptions, extended one seam further).
+async function tryPermissionRequestHook(
+  call: PermissionCall,
+  ctx: EvaluationContext,
+  meta: PromptStageMeta,
+  policyVersion: number,
+  carriedTransform: Record<string, unknown> | undefined,
+): Promise<PermissionDecisionRecord | undefined> {
+  const hookResult = await ctx.hookStage.permissionRequest(call, ctx, meta);
+  if (hookResult === null) return undefined;
+  const transformedInput = hookResult.transformedInput ?? carriedTransform;
+  if (hookResult.decision === "deny") {
+    return {
+      decision: "deny",
+      mechanism: "hook",
+      policyVersion,
+      ...(hookResult.hookId !== undefined ? { hookId: hookResult.hookId } : {}),
+      ...(hookResult.message !== undefined ? { message: hookResult.message } : {}),
+      ...(hookResult.interrupt !== undefined ? { interrupt: hookResult.interrupt } : {}),
+      ...(transformedInput !== undefined ? { transformedInput } : {}),
+    };
+  }
+  return {
+    decision: "allow",
+    mechanism: "hook",
+    policyVersion,
+    ...(hookResult.hookId !== undefined ? { hookId: hookResult.hookId } : {}),
+    ...(transformedInput !== undefined ? { transformedInput } : {}),
+    // WS-07 §7.2 / WS-08 §6: a PermissionRequest allow's updatedPermissions applies through the
+    // IDENTICAL downstream machinery as canUseTool's own (engine.ts's updatedPermissions loop reads
+    // `decision.updatedPermissions` off the record regardless of `mechanism` — reuse, not a new
+    // code path) — policy-state.ts's own authority gate (applyUpdate) still governs whether a
+    // suggested destination is actually permitted, exactly as it does for a canUseTool answer
+    // (WS-08 §11: "a hook response ... can never ... change permission settings beyond its
+    // documented output shape").
+    ...(hookResult.updatedPermissions !== undefined ? { updatedPermissions: hookResult.updatedPermissions } : {}),
+  };
+}
+
 function buildRecordFromPromptResult(
   result: PromptDecision,
   policyVersion: number,
@@ -851,6 +905,8 @@ export async function evaluate(call: PermissionCall, ctx: EvaluationContext): Pr
       ...(effectiveCall.toolUseId !== undefined ? { toolUseID: effectiveCall.toolUseId } : {}),
       ...(effectiveCall.agentId !== undefined ? { agentID: effectiveCall.agentId } : {}),
     };
+    const hookAnswer = await tryPermissionRequestHook(effectiveCall, ctx, meta, policyVersion, carriedTransform);
+    if (hookAnswer !== undefined) return hookAnswer;
     const result = await ctx.promptStage.prompt(effectiveCall, ctx, meta);
     if (result === null) {
       // No real host answered a mandatory/rule-forced request — fails CLOSED, unlike stage 6's
@@ -910,12 +966,15 @@ export async function evaluate(call: PermissionCall, ctx: EvaluationContext): Pr
     // fallback (both deny on null), not the opposite T6-era pairing this comment used to describe.
     // A non-null answer here (T8's real PromptStage) is used exactly like any other prompt result
     // (mechanism "canUseTool").
-    const result = await ctx.promptStage.prompt(effectiveCall, ctx, {
+    const mustPromptMeta: PromptStageMeta = {
       decisionReason: modeResult.message,
       ...(modeResult.blockedPath !== undefined ? { blockedPath: modeResult.blockedPath } : {}),
       ...(effectiveCall.toolUseId !== undefined ? { toolUseID: effectiveCall.toolUseId } : {}),
       ...(effectiveCall.agentId !== undefined ? { agentID: effectiveCall.agentId } : {}),
-    });
+    };
+    const hookAnswer = await tryPermissionRequestHook(effectiveCall, ctx, mustPromptMeta, policyVersion, carriedTransform);
+    if (hookAnswer !== undefined) return hookAnswer;
+    const result = await ctx.promptStage.prompt(effectiveCall, ctx, mustPromptMeta);
     if (result === null) {
       return { decision: "deny", mechanism: "mode", policyVersion, message: modeResult.message, ...(carriedTransform !== undefined ? { transformedInput: carriedTransform } : {}) };
     }
@@ -948,11 +1007,14 @@ export async function evaluate(call: PermissionCall, ctx: EvaluationContext): Pr
   }
 
   // --- Stage 6: canUseTool -------------------------------------------------------------------
-  const result = await ctx.promptStage.prompt(effectiveCall, ctx, {
+  const stage6Meta: PromptStageMeta = {
     decisionReason: "unmatched action reached the prompt stage",
     ...(effectiveCall.toolUseId !== undefined ? { toolUseID: effectiveCall.toolUseId } : {}),
     ...(effectiveCall.agentId !== undefined ? { agentID: effectiveCall.agentId } : {}),
-  });
+  };
+  const stage6HookAnswer = await tryPermissionRequestHook(effectiveCall, ctx, stage6Meta, policyVersion, carriedTransform);
+  if (stage6HookAnswer !== undefined) return stage6HookAnswer;
+  const result = await ctx.promptStage.prompt(effectiveCall, ctx, stage6Meta);
   if (result === null) {
     // *** Ruling P2-I — see this module's header comment for the full rationale ***
     // WS-07 §6.1: "without an applicable prompt handler they remain unresolved/denied — never

@@ -274,6 +274,143 @@ describe("T10-CARRY 1: a PreToolUse hook 'ask' forces stage 3's prompt path", ()
   });
 });
 
+// --- T10 (WS-08 §6): PermissionRequest answers in place of canUseTool, at all three prompt sites ---
+//
+// One decision record, two mechanisms: PermissionRequest's answer and canUseTool's answer normalize
+// into the IDENTICAL PermissionDecisionRecord shape (T6's own cross-task pin) with `mechanism`
+// preserved ("hook" vs "canUseTool") — the tests below prove both directions: a non-null
+// PermissionRequest answer takes canUseTool's place ENTIRELY (canUseTool/promptStage never called),
+// and a null answer (no hook opinion) falls through to the SAME promptStage call site exactly as
+// before this task, unchanged, mechanism "canUseTool".
+describe("T10: PermissionRequest fires before every promptStage.prompt() call site and can answer in place of canUseTool", () => {
+  test("stage 6 (generic unmatched action): a PermissionRequest hook 'allow' answers in place of canUseTool -- canUseTool never invoked", async () => {
+    const promptSpy = spyPromptStage(() => ({ decision: "deny", message: "canUseTool should never see this" }));
+    const ctx = baseCtx({
+      hookStage: spyHookStage(
+        () => ({ decision: "no_opinion" }),
+        () => ({ decision: "allow", hookId: "pr-1" }),
+      ).stage,
+      promptStage: promptSpy.stage,
+    });
+    const record = await evaluate(call("Bash", { command: "curl example.com" }), ctx);
+    expect(promptSpy.calls.length).toBe(0);
+    expect(record.decision).toBe("allow");
+    expect(record.mechanism).toBe("hook");
+    expect(record.hookId).toBe("pr-1");
+  });
+
+  test("stage 6: a PermissionRequest hook 'deny' answers in place of canUseTool, carrying message/interrupt/hookId", async () => {
+    const promptSpy = spyPromptStage(() => ({ decision: "allow" }));
+    const ctx = baseCtx({
+      hookStage: spyHookStage(
+        () => ({ decision: "no_opinion" }),
+        () => ({ decision: "deny", hookId: "pr-1", message: "hook says no", interrupt: true }),
+      ).stage,
+      promptStage: promptSpy.stage,
+    });
+    const record = await evaluate(call("Bash", { command: "curl example.com" }), ctx);
+    expect(promptSpy.calls.length).toBe(0);
+    expect(record.decision).toBe("deny");
+    expect(record.mechanism).toBe("hook");
+    expect(record.hookId).toBe("pr-1");
+    expect(record.message).toBe("hook says no");
+    expect(record.interrupt).toBe(true);
+  });
+
+  test("stage 6: a PermissionRequest hook returning null (no opinion) falls through to the REAL promptStage/canUseTool, mechanism 'canUseTool' -- the SAME record shape as the hook-answered case, just a different mechanism", async () => {
+    const promptSpy = spyPromptStage(() => ({ decision: "allow" }));
+    const ctx = baseCtx({
+      hookStage: spyHookStage(
+        () => ({ decision: "no_opinion" }),
+        () => null,
+      ).stage,
+      promptStage: promptSpy.stage,
+    });
+    const record = await evaluate(call("Bash", { command: "curl example.com" }), ctx);
+    expect(promptSpy.calls.length).toBe(1); // canUseTool WAS reached this time
+    expect(record.decision).toBe("allow");
+    expect(record.mechanism).toBe("canUseTool");
+  });
+
+  test("stage 3 (matched ask rule): a PermissionRequest hook answers in place of canUseTool -- the ask rule forced the prompt, the HOOK answered it", async () => {
+    const promptSpy = spyPromptStage(() => ({ decision: "deny", message: "canUseTool should never see this" }));
+    const ctx = baseCtx({
+      hookStage: spyHookStage(
+        () => ({ decision: "no_opinion" }),
+        (_call, meta) => {
+          // The ask rule's own matchedAskRule metadata is still visible to the PermissionRequest
+          // hook via `meta` (same object the real promptStage.prompt call would have received).
+          expect(meta.matchedAskRule).toEqual({ source: "sdk", toolName: "Bash", ruleContent: "git push" });
+          return { decision: "allow", hookId: "pr-1" };
+        },
+      ).stage,
+      promptStage: promptSpy.stage,
+      policy: policy({ rules: withRules(rule("Bash(git push)", "ask")) }),
+    });
+    const record = await evaluate(call("Bash", { command: "git push" }), ctx);
+    expect(promptSpy.calls.length).toBe(0);
+    expect(record.decision).toBe("allow");
+    expect(record.mechanism).toBe("hook");
+  });
+
+  test("the mustPrompt standing-exception site (critical removal): a PermissionRequest hook answers in place of canUseTool", async () => {
+    const promptSpy = spyPromptStage(() => ({ decision: "deny", message: "canUseTool should never see this" }));
+    const ctx = baseCtx({
+      specialChecks: { isProtectedWrite: () => false, isCriticalRemoval: () => ({ critical: true, reason: "targets a filesystem root" }) },
+      hookStage: spyHookStage(
+        () => ({ decision: "no_opinion" }),
+        () => ({ decision: "deny", hookId: "pr-1", message: "critical removal denied by hook" }),
+      ).stage,
+      promptStage: promptSpy.stage,
+    });
+    const record = await evaluate(call("Bash", { command: "rm -rf /" }), ctx);
+    expect(promptSpy.calls.length).toBe(0);
+    expect(record.decision).toBe("deny");
+    expect(record.mechanism).toBe("hook");
+    expect(record.message).toBe("critical removal denied by hook");
+  });
+
+  test("a PermissionRequest allow's updatedInput/updatedPermissions surface on the record exactly like canUseTool's own (WS-07 §7.2's shape, reused)", async () => {
+    const suggestion: PermissionUpdate[] = [{ type: "addRules", rules: [{ toolName: "Bash", ruleContent: "curl *" }], behavior: "allow", destination: "session" }];
+    const ctx = baseCtx({
+      hookStage: spyHookStage(
+        () => ({ decision: "no_opinion" }),
+        () => ({ decision: "allow", hookId: "pr-1", transformedInput: { command: "curl safe.example" }, updatedPermissions: suggestion }),
+      ).stage,
+      promptStage: NO_OPINION_PROMPT_STAGE,
+    });
+    const record = await evaluate(call("Bash", { command: "curl example.com" }), ctx);
+    expect(record.decision).toBe("allow");
+    expect(record.mechanism).toBe("hook");
+    expect(record.transformedInput).toEqual({ command: "curl safe.example" });
+    expect(record.updatedPermissions).toEqual(suggestion);
+  });
+
+  test("stale-policy-during-hook-RPC: the SAME re-evaluation loop that already covers canUseTool also covers a PermissionRequest hook -- a policy change mid-flight is caught by the CALLER re-deriving policyVersion, not by anything new here", async () => {
+    // This proves the structural claim, not a new mechanism: evaluate()'s own `policyVersion` is
+    // stamped from `ctx.policy.version` at the TOP of the function (before stage 1 even runs) --
+    // engine.ts's evaluateWithFreshPolicy (untouched by this task) already re-evaluates whenever the
+    // returned record's policyVersion no longer matches the live store, uniformly regardless of
+    // WHICH stage/mechanism produced the record. A PermissionRequest-answered record is exactly as
+    // stale-checkable as a canUseTool-answered one, since both stamp policyVersion the identical way.
+    let currentVersion = 1;
+    const ctx = baseCtx({
+      policy: policy({ version: 1 }),
+      hookStage: spyHookStage(
+        () => ({ decision: "no_opinion" }),
+        () => {
+          currentVersion = 2; // simulates a concurrent set_permission_mode landing WHILE this hook RPC is in flight
+          return { decision: "allow", hookId: "pr-1" };
+        },
+      ).stage,
+      promptStage: NO_OPINION_PROMPT_STAGE,
+    });
+    const record = await evaluate(call("Bash", { command: "curl example.com" }), ctx);
+    expect(record.policyVersion).toBe(1); // stamped from the snapshot at evaluation START
+    expect(record.policyVersion).not.toBe(currentVersion); // the caller (engine.ts) is what detects this mismatch and re-evaluates
+  });
+});
+
 // --- Task 9 (WS-08 §4/§5): the REAL hooks engine (registry+reducer+runner), not a spy ---------------
 //
 // Every other "stage 1" fixture above uses `spyHookStage` to pin the SEAM CONTRACT in isolation; this
