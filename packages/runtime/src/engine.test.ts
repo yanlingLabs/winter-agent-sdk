@@ -109,7 +109,17 @@ test("maxTurns: a script needing 2 tool rounds under maxTurns=1 fails with error
     { kind: "tool_use", calls: [{ id: "c2", name: "t", input: {} }] },
     { kind: "text", text: "unreachable" },
   ]);
-  const done = runEngine({ config: baseConfig({ maxTurns: 1 }), input: runtime.input, output: runtime.output, provider, tools: stubExecutor });
+  const done = runEngine({
+    // Ruling P2-I/Task 8: with the real PromptStage now wired, an unmatched call sends a genuine
+    // "permission" control_request over the bridge and waits (no park timeout) — this raw
+    // engine-level test never answers one, so it would hang forever without allowedTools. This
+    // test is about the maxTurns budget, not permissions.
+    config: baseConfig({ maxTurns: 1, allowedTools: ["t"] }),
+    input: runtime.input,
+    output: runtime.output,
+    provider,
+    tools: stubExecutor,
+  });
 
   host.output.write({ type: "user", text: "go" });
   host.output.write({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined });

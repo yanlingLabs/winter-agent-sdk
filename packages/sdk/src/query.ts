@@ -330,14 +330,17 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
           // detached sender task has nowhere useful to surface a rejection (e.g. the connection
           // closing before the ack arrives), matching the policy note above for the writes just above.
           sendControlRequest("end_input", undefined).catch(() => {});
-          // Ruling P2-B (T2 review, lands in Task 8): this stdin.end() makes single-shot mode
-          // structurally unable to ANSWER a runtime-originated control_request (permission/hook RPC)
-          // — the write side is already closed when the request arrives. The pinned fix is two-sided
-          // and must land together or the topologies diverge (WS-04 §1): the wrapper keeps stdin
-          // open until terminal handling completes, AND the engine pump treats end_input as "no more
-          // USER envelopes" (not "stop reading frames") so control_responses still route to the
-          // bridge until the turn loop drains. Do not fix one side without the other.
-          proc.stdin.end();
+          // Ruling P2-B (WS-04 §1, wrapper side — see the engine-side half in packages/runtime/src/
+          // engine.ts's pump): stdin no longer closes HERE, immediately after sending. Closing it
+          // this early made single-shot mode structurally unable to ANSWER a runtime-originated
+          // control_request (a permission RPC, T8) that arrives after end_input — the child's read
+          // side would have nothing left to read (a real pipe EOFs; the in-memory leg's own wrapping
+          // generator, testing.ts's `input`, ends its own `for await (const chunk of stdin)` the
+          // moment the Queue itself ends, REGARDLESS of whether the runtime-side pump would still
+          // want more) — no answer could ever land no matter how fast the host replied. stdin now
+          // closes at `iterate()`'s own `finally` below (this generator's teardown): the same point
+          // for every prompt shape (single-shot or streaming), reached only once the whole exchange
+          // — including any permission RPC the runtime still needed answered — is truly over.
         } catch {
           /* see policy note above */
         }
@@ -463,6 +466,20 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
     } finally {
       options.abortController?.signal.removeEventListener("abort", onAbort);
       if (killTimer) clearTimeout(killTimer);
+      // Ruling P2-B (wrapper side): stdin closes HERE — at this generator's own teardown — for
+      // every prompt shape alike, reached only via return (sawTerminal), throw (every error path
+      // above), or an external `.return()`/`.throw()` (a consumer walking away early via `break`/
+      // `for await` early exit). By this point either the whole exchange is genuinely over, or the
+      // consumer has stopped caring — either way it is now safe to stop writing. Never called any
+      // earlier (see the sender IIFE's own comment on the call site this replaced) so a runtime-
+      // originated permission RPC arriving after end_input can still be answered while this
+      // generator is still actively being iterated. Swallowed like every other write/end on a
+      // possibly-already-exited child (established policy throughout this file).
+      try {
+        proc.stdin.end();
+      } catch {
+        /* see policy note above */
+      }
       // Task 2: a still-pending host-originated request (interrupt/setPermissionMode) whose ack
       // will now never arrive — the connection is torn down — must not hang its caller forever.
       if (pendingHostRequests.size > 0) {

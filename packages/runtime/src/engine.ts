@@ -12,10 +12,10 @@ import { Queue } from "./protocol/channel.ts";
 import { createRpcBridge } from "./rpc/bridge.ts";
 import { PolicyStateStore, assertKnownPermissionMode, isPermissionMode } from "./permissions/policy-state.ts";
 import { emptyRuleSet, buildSdkSourcedEntries } from "./permissions/ruleset.ts";
+import { createBridgePromptStage } from "./permissions/prompt-stage.ts";
 import {
   evaluate,
   NO_OPINION_HOOK_STAGE,
-  NO_OPINION_PROMPT_STAGE,
   NO_OPINION_AUTO_ENGINE,
   REAL_SPECIAL_CHECKS,
   type PermissionCall,
@@ -118,9 +118,11 @@ function raceInterrupt<T>(p: Promise<T>, interrupted: Promise<void>): Promise<Ra
  * closing`). A "turn" is one user envelope through its terminal result; a "tool round" is one
  * provider tool_use → execute → results-appended → provider-again cycle. Always terminates when
  * input ends (stdin EOF or an explicit `end_input` control request) — the P0 dangling-loop bug
- * class is structurally impossible here: the pump below is the ONLY reader of `input`, and it
- * always reaches its own teardown (`finally`) exactly once, which always ends `userFrames`, which
- * always ends the turn loop below.
+ * class is structurally impossible here, though the SHAPE of that guarantee inverted under Ruling
+ * P2-B: `end_input` no longer ends the pump's own read (it only ends `userFrames`, so a runtime-
+ * originated permission RPC arriving after end_input can still be answered) — engine completion now
+ * explicitly cancels the pump instead, once the turn loop has fully drained. See the pump's own
+ * definition further down for the full re-argued termination guarantee.
  */
 export async function runEngine(opts: EngineOptions): Promise<number> {
   const { config, input, output, provider, tools, store, initialMessages } = opts;
@@ -161,6 +163,19 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // exercising this real value).
   const permissionHome = homedir();
 
+  // Task 2 (WS-04 §3.1, direction inversion): the runtime's own half of the control-RPC envelope —
+  // declared here (moved up from its original T2 spot, further down this function, so T8's
+  // makeEvalCtx below can close over it) so it's reachable by the pump (which routes incoming
+  // control_response frames to it), makeEvalCtx's real PromptStage (T8: permission RPCs), and the
+  // round loop further down (rpc_probe). Exactly one bridge instance per run, built from the SAME
+  // `output` every other runtime->host frame goes through — there is no second writer to race
+  // against.
+  const bridge = createRpcBridge(output);
+  // Task 8: one stateless instance for the whole run — createBridgePromptStage's own closure only
+  // ever reads `bridge` (constant for the run), so there is nothing to gain from rebuilding it on
+  // every evaluate() call the way makeEvalCtx's own per-call PolicyState snapshot must be.
+  const realPromptStage = createBridgePromptStage(bridge);
+
   // Task 6: builds a FRESH EvaluationContext — always reading policyStateStore.getState() at the
   // moment of the call, never cached — so every evaluate() call sees the live mode/rules/version.
   // `trustedWorkspace: false` (constant, P2-wide): no settings-file loader exists yet to have
@@ -179,9 +194,11 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // `additionalDirectories` is deliberately NOT set here: no RuntimeConfig/Options wire field for it
   // exists yet at P2 (EvaluationContext's own comment) — acceptEdits' path-bounding still gets T5's
   // rule-derived grants via `effectiveDirectories(ctx.policy.rules, ...)`, computed inside
-  // evaluator.ts's own `boundedRoots`, independent of this field. The remaining two seams (hooks,
-  // canUseTool) and the auto classifier are still the T6 no-opinion stubs (T8/T9/T10/T12 each fill
-  // one, per the plan's seam list).
+  // evaluator.ts's own `boundedRoots`, independent of this field. Task 8: `promptStage` is now the
+  // REAL bridge-backed implementation (T6's NO_OPINION_PROMPT_STAGE stub retired here — the one
+  // production call site, exactly like T7 retired NO_SPECIAL_CHECKS above; every other reference
+  // left in the codebase is test-only). The remaining two seams (hooks, auto classifier) are still
+  // the T6/T9/T12 no-opinion stubs.
   const makeEvalCtx = (): EvaluationContext => ({
     policy: policyStateStore.getState(),
     cwd: config.cwd,
@@ -189,7 +206,7 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
     trustedWorkspace: false,
     sessionBypassEnabled: config.allowDangerouslySkipPermissions === true,
     hookStage: NO_OPINION_HOOK_STAGE,
-    promptStage: NO_OPINION_PROMPT_STAGE,
+    promptStage: realPromptStage,
     autoEngine: NO_OPINION_AUTO_ENGINE,
     specialChecks: REAL_SPECIAL_CHECKS,
   });
@@ -263,15 +280,6 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
     },
   });
 
-  // Task 2 (WS-04 §3.1, direction inversion): the runtime's own half of the control-RPC envelope —
-  // declared here, in runEngine's OUTER scope, so it's reachable by both the pump below (which
-  // routes incoming control_response frames to it) and the round loop further down (rpc_probe;
-  // Tasks 8/10's permission/hook RPCs will reach it the same way, whether called directly from here
-  // or threaded into a helper this function calls). Exactly one bridge instance per run, built from
-  // the SAME `output` every other runtime->host frame goes through — there is no second writer to
-  // race against.
-  const bridge = createRpcBridge(output);
-
   const userFrames = new Queue<UserFrame>();
   // Non-null exactly while a turn is turn_active; the pump calls it (a no-op while idle) when an
   // `interrupt` control request arrives. Kept as a plain callback rather than an AbortController
@@ -282,22 +290,84 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // -running closure) — `.current` on an object sidesteps that narrowing.
   const interruptCurrentTurn: { current: (() => void) | null } = { current: null };
 
+  // Ruling P2-B: an explicit, engine-controlled shutdown signal for the pump — resolved exactly
+  // once, from OUTSIDE the pump (after the turn loop below fully drains; see that call site's own
+  // comment) — because a `for await` loop can only be `break`-ed by code physically inside it, and
+  // "stop reading, from outside, once we know it's safe" has no other expression. See the pump's
+  // own header comment (just below) for the full re-argued termination guarantee this replaces.
+  let stopReading!: () => void;
+  const stopSignal = new Promise<void>((resolve) => {
+    stopReading = resolve;
+  });
+
   // The ONLY reader of `input` (WS-04 §4.1). Decoupling "read a frame" from "process a turn" is
   // what lets `interrupt`/`end_input` land WHILE a turn is blocked awaiting the provider or a tool
   // — a single sequential `for await` over `input` could never observe a new frame until the
   // blocked call happened to settle on its own, which would make interrupt meaningless.
+  //
+  // *** Ruling P2-B — the two-sided end_input fix, engine side (WS-04 §1: fix BOTH sides together
+  // or the topologies diverge; see query.ts's own stdin.end() relocation for the wrapper side) ***
+  // Before this ruling, `end_input` made the pump `break` outright — the ONLY reader of `input`
+  // stopped reading ANY further frame, including a `control_response` answering a runtime-
+  // originated permission RPC (T8). A single-shot query sends its one prompt, then `end_input`,
+  // essentially immediately — almost always BEFORE the tool call that needs a permission decision
+  // has even run. With the old `break`, that permission RPC's `bridge.request()` (no park timeout,
+  // WS-04 §3) then awaited a `control_response` the pump had already stopped listening for: a
+  // structural deadlock, not a timing accident — the RPC could not have been answered no matter how
+  // fast the host replied, because engine.ts itself was no longer reading.
+  //
+  // The fix inverts what `end_input` means to this loop: it now means "no more USER envelopes" —
+  // `userFrames.end()`, below — NOT "stop reading frames." The pump keeps routing every other frame
+  // kind (control_response above all) for as long as the turn loop might still need one delivered.
+  //
+  // Termination, RE-ARGUED for the new direction (P1's own guarantee — "the pump always reaches its
+  // own teardown, which always ends userFrames, which always ends the turn loop" — assumed end_input
+  // ended the pump, which is exactly the assumption this ruling retires):
+  //   1. `userFrames` ending is now guaranteed by TWO independent paths, either sufficient on its
+  //      own: (a) `input` truly ends on its own (real stdin EOF / process death — unchanged from
+  //      P1; the pump's own `finally` below still runs on ANY exit, ending userFrames exactly as
+  //      before), or (b) an explicit `end_input` frame arrives, calling `userFrames.end()` directly
+  //      — independent of whether `input` itself ever ends.
+  //   2. Given `userFrames` ends, the turn loop (`for await (const userFrame of userFrames)`,
+  //      further down) is GUARANTEED to eventually finish draining every already-queued turn and
+  //      exit its own for-await — each turn's processing is fully awaited in sequence before the
+  //      loop advances, so "the loop exits" and "no turn is still mid-flight, awaiting anything
+  //      (including a bridge response)" are the same fact.
+  //   3. What NOW guarantees the pump itself ends (the piece P1's argument no longer supplies):
+  //      engine completion EXPLICITLY cancels the pump's read — `stopReading()` is called (see its
+  //      call site below) ONLY after the turn loop's own for-await has exited, i.e. only once (2)
+  //      already holds. There is no cycle: stopping the pump is strictly sequenced to happen after
+  //      the turn loop provably has no more work, so cancelling it can never orphan an in-flight
+  //      bridge request. If `input` already ended on its own before the turn loop drains (no
+  //      end_input, true EOF — path (a) above), the pump has already exited by then and the later
+  //      `stopReading()` call is a harmless, already-redundant no-op (resolving an unobserved
+  //      promise).
+  // Manually driving the iterator (rather than `for await`) is what makes racing it against
+  // `stopSignal` possible at all — `for await` offers no hook to await "the next value OR a stop
+  // signal, whichever comes first."
   const pump = (async () => {
+    const iterator = input[Symbol.asyncIterator]();
     try {
-      for await (const frame of input) {
+      while (true) {
+        const outcome = await Promise.race([
+          iterator.next().then((result) => ({ kind: "frame" as const, result })),
+          stopSignal.then(() => ({ kind: "stop" as const })),
+        ]);
+        if (outcome.kind === "stop") return; // engine completion cancelled the pump's read — see header above
+        if (outcome.result.done) return; // true input EOF (path (a) above)
+        const frame = outcome.result.value;
+
         if (frame.type === "user") {
           userFrames.write(frame as UserFrame);
           continue;
         }
         if (frame.type === "control_response") {
           // Task 2 direction inversion: this is the ACK for a request the RUNTIME originated
-          // (bridge.request() — rpc_probe today, permission/hook RPCs in Tasks 8/10), arriving
+          // (bridge.request() — rpc_probe, and now T8's real permission RPC), arriving
           // host->runtime. handleResponse itself never throws and logs+drops an unmatched/stale
           // requestId (WS-04: a stale response must never kill the run) — nothing more to do here.
+          // Ruling P2-B: reachable AFTER end_input too now — this is the exact frame kind the fix
+          // exists to keep delivering.
           bridge.handleResponse(frame as ControlResponseFrame);
           continue;
         }
@@ -305,7 +375,10 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
           const cf = frame as ControlRequestFrame;
           if (cf.subtype === "end_input") {
             output.write({ type: "control_response", requestId: cf.requestId, ok: true });
-            break; // WS-04 §6: explicit end of streaming input — stop pumping, let the turn loop drain
+            // Ruling P2-B: "no more USER envelopes," NOT "stop reading frames" — see this const's
+            // own header. `continue`, never `break`: the pump keeps pumping past this point.
+            userFrames.end();
+            continue;
           }
           if (cf.subtype === "interrupt") {
             output.write({ type: "control_response", requestId: cf.requestId, ok: true });
@@ -348,12 +421,26 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
           output.write(resp);
           continue;
         }
-        // Other/unknown top-level frame types (permission/hook/MCP RPCs, other control subtypes)
-        // land in later phases; ignored here, matching the P0 precedent of skipping non-"user"
-        // frames rather than erroring.
+        // Other/unknown top-level frame types (hook/MCP RPCs, other control subtypes) land in later
+        // phases; ignored here, matching the P0 precedent of skipping non-"user" frames rather than
+        // erroring.
       }
     } finally {
       userFrames.end();
+      // Deliberately NOT calling iterator.return() here: at the moment the pump is cancelled via
+      // stopSignal, the LOSING `iterator.next()` call is typically still pending, with the
+      // underlying generator (a real stdin read, or the in-memory Queue's own generator) suspended
+      // INSIDE an await on a promise that legitimately never settles again (no more writes are
+      // coming — that's exactly why we're stopping). Calling `.return()` on a generator suspended at
+      // an unsettled internal await does NOT unwind immediately (unlike calling it at a `yield`
+      // point, which `for await...of`'s own `break` handling relies on, safely, for the OTHER exit
+      // path here — true EOF) — it waits for that internal await to settle first, which in this
+      // exact situation never happens. An earlier version of this fix called `iterator.return()`
+      // here as a "harmless courtesy cleanup" and it deadlocked runEngine's own returned promise
+      // (confirmed empirically — see the task report). The abandoned generator is simply left to be
+      // garbage-collected once nothing references it any longer (a real child process exits via
+      // main.ts's own process.exit() regardless; the in-memory Queue has no other resource to
+      // release) — never a hang, just a resolver reference sitting inert.
     }
   })();
 
@@ -489,7 +576,33 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
               content: decision.message ?? "Permission denied",
               denied: true,
             });
+            // Task 8 (WS-07 §7.2): a deny's `interrupt: true` ADDITIONALLY triggers the engine's
+            // existing interrupt path — "interrupt can stop more than the individual call." Mirrors
+            // every other in-round interrupt trigger: mark `interrupted`, fire the SAME turn-wide
+            // signal a host-originated `interrupt` control request fires (so any later await in this
+            // turn also observes it), and stop processing further calls in this round — the
+            // post-loop padding logic below fills in synthetic `[interrupted]` results for any call
+            // this round never got to. `allow` never carries `interrupt` (WS-07 §7.2's own union),
+            // so this check is scoped to the deny branch by construction, not by an extra guard.
+            if (decision.interrupt === true) {
+              interrupted = true;
+              interruptCurrentTurn.current?.();
+              break;
+            }
             continue;
+          }
+          // Task 8 (WS-07 §7.2): updatedPermissions applies each suggested update to the LIVE
+          // policy, bumping policyVersion (authority "session" — a canUseTool answer is a live
+          // session interaction, never a direct settings-file edit; policy-state.ts's own authority
+          // gate still governs whether a file-destined suggestion may actually land there). Applied
+          // BEFORE executing this call: the update affects FUTURE calls only (this call's own
+          // decision is already final), so ordering relative to tools.execute() below is not
+          // observable either way — applying it here simply keeps every side effect of "the
+          // permission decision resolved" together, before moving on to "now run the tool."
+          if (decision.updatedPermissions) {
+            for (const update of decision.updatedPermissions) {
+              policyStateStore.applyUpdate(update, { authority: "session" });
+            }
           }
           // WS-07 §7.2: updatedInput/transformedInput sanitizes/narrows/redirects the EXECUTED call
           // — the tool_use block already emitted above keeps the model's ORIGINAL input; only what
@@ -579,6 +692,13 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
     await flushStore();
   }
 
+  // Ruling P2-B: the turn loop's own `for await (const userFrame of userFrames)` above has now
+  // exited — every queued turn has fully drained (see the pump's own header, point 2) — so it is
+  // now safe to explicitly cancel the pump's read. This is the NEW guarantee that ends the pump in
+  // the inverted direction: if `input` already ended on its own (no end_input was ever sent), the
+  // pump is already resolved and this is a harmless no-op; if the pump is still alive (end_input
+  // was seen but `input` itself never closed), this is what actually stops it.
+  stopReading();
   await pump.catch(() => {}); // the pump only throws on a truly unexpected input-source error; never let that crash teardown
   output.end();
   return 0;

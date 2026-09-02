@@ -503,7 +503,10 @@ describe("engine wiring (temp WINTER_HOME, in-memory leg)", () => {
     async function traceRawStdout(persistSession?: boolean): Promise<string> {
       const home = freshHome();
       try {
-        const config: RuntimeConfig = { sessionId, cwd, model: "sonnet", ...(persistSession !== undefined ? { persistSession } : {}) };
+        // Ruling P2-I/Task 8: allowedTools:["t"] pre-approves the tool call so it executes (and this
+        // wire-equivalence assertion has something real to compare) instead of parking on a real
+        // "permission" control_request nobody in this raw-stdout test ever answers.
+        const config: RuntimeConfig = { sessionId, cwd, model: "sonnet", allowedTools: ["t"], ...(persistSession !== undefined ? { persistSession } : {}) };
         const provider = scriptedProvider([
           { kind: "tool_use", calls: [{ id: "call1", name: "t", input: {} }] },
           { kind: "text", text: "done" },
