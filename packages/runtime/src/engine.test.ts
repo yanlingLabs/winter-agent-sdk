@@ -667,6 +667,159 @@ test("Task 2: a rpc_probe turn writes a runtime-originated control_request; the 
   expect(code).toBe(0);
 });
 
+// --- Task 10 (WS-08 §1/§9/§10): the real hooks engine wired into engine.ts --------------------
+//
+// Proves each of the seven engine-lifecycle call sites actually fires a REAL "hook"
+// control_request through the real registry (built from config.hooks) + the real bridge — not
+// merely at the runner.ts/hook-stage.ts layer, which already covers interpretation of a hook's
+// ANSWER exhaustively. One hook per event, answered generically ({ok:true, payload:{}}); this
+// test's own job is "did the right RPC fire, in the right order, with the right identity."
+
+test("Task 10: SessionStart/UserPromptSubmit/PostToolUse/PermissionDenied/Stop/SessionEnd all fire real 'hook' control_requests, in order, through the real registry+bridge", async () => {
+  const { host, runtime } = createInMemoryChannel();
+  const scripted = scriptedProvider([
+    {
+      kind: "tool_use",
+      calls: [
+        { id: "call1", name: "allowed_tool", input: { x: 1 } },
+        { id: "call2", name: "denied_tool", input: {} },
+      ],
+    },
+    { kind: "text", text: "done" },
+  ]);
+  const config = baseConfig({
+    allowedTools: ["allowed_tool"], // pre-approve call1 (stage 5, resolves before any prompt)
+    disallowedTools: ["denied_tool"], // deny call2 via a STAGE-2 rule -- never reaches canUseTool/PermissionRequest's own "permission" RPC (no park timeout, WS-04 §3), which this test does not answer
+    hooks: {
+      SessionStart: [{ hookCount: 1, source: "sdk" }],
+      UserPromptSubmit: [{ hookCount: 1, source: "sdk" }],
+      PostToolUse: [{ hookCount: 1, source: "sdk" }],
+      PermissionDenied: [{ hookCount: 1, source: "sdk" }],
+      Stop: [{ hookCount: 1, source: "sdk" }],
+      SessionEnd: [{ hookCount: 1, source: "sdk" }],
+    },
+  });
+  const done = runEngine({ config, input: runtime.input, output: runtime.output, provider: scripted, tools: stubExecutor });
+
+  host.output.write({ type: "user", text: "go" });
+  host.output.write({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined });
+
+  // Answers EVERY "hook" control_request generically, for as long as `host.input` has anything left
+  // to read — this loop's own natural end (true EOF, once runEngine calls output.end()) is what
+  // proves SessionEnd's own late-firing hook RPC got a chance to be answered at all: a test that
+  // stopped reading at the turn's terminal result (the way a single-shot query() WOULD) could never
+  // observe or answer it, for the identical structural reason that call site's own engine.ts
+  // comment documents.
+  const seenHookRequests: Array<{ event: string; hookId: string; toolName?: string; toolUseID?: string }> = [];
+  for await (const f of host.input) {
+    if (f.type === "control_request" && (f as ControlRequestFrame).subtype === "hook") {
+      const cf = f as ControlRequestFrame;
+      const payload = cf.payload as { event: string; hookId: string; toolName?: string; toolUseID?: string };
+      seenHookRequests.push({ event: payload.event, hookId: payload.hookId, ...(payload.toolName !== undefined ? { toolName: payload.toolName } : {}), ...(payload.toolUseID !== undefined ? { toolUseID: payload.toolUseID } : {}) });
+      host.output.write({ type: "control_response", requestId: cf.requestId, ok: true, payload: {} });
+    }
+  }
+  const code = await done;
+
+  expect(code).toBe(0);
+  expect(seenHookRequests.map((r) => r.event)).toEqual(["SessionStart", "UserPromptSubmit", "PostToolUse", "PermissionDenied", "Stop", "SessionEnd"]);
+  // Positional hookId (protocol/config.ts's own formula) — one group, one hook, per event.
+  expect(seenHookRequests.map((r) => r.hookId)).toEqual([
+    "SessionStart:sdk:0:0",
+    "UserPromptSubmit:sdk:0:0",
+    "PostToolUse:sdk:0:0",
+    "PermissionDenied:sdk:0:0",
+    "Stop:sdk:0:0",
+    "SessionEnd:sdk:0:0",
+  ]);
+  const postToolUse = seenHookRequests.find((r) => r.event === "PostToolUse")!;
+  expect(postToolUse.toolName).toBe("allowed_tool");
+  expect(postToolUse.toolUseID).toBe("call1");
+  const permissionDenied = seenHookRequests.find((r) => r.event === "PermissionDenied")!;
+  expect(permissionDenied.toolName).toBe("denied_tool");
+  expect(permissionDenied.toolUseID).toBe("call2");
+});
+
+test("Task 10: includeHookEvents gates the public hook_started/hook_response messages; the audit trail (store.recordHookAudit) fires either way", async () => {
+  const auditEntries: Array<{ hookEvent: string; outcome: string }> = [];
+  const store = {
+    recordUserEntry: () => {},
+    recordAssistantEntry: () => {},
+    recordHookAudit: (entry: { hookEvent: string; outcome: string }) => {
+      auditEntries.push({ hookEvent: entry.hookEvent, outcome: entry.outcome });
+    },
+  };
+
+  async function runOnce(includeHookEvents: boolean | undefined): Promise<SdkMessage[]> {
+    const { host, runtime } = createInMemoryChannel();
+    const config = baseConfig({
+      ...(includeHookEvents !== undefined ? { includeHookEvents } : {}),
+      hooks: { UserPromptSubmit: [{ hookCount: 1, source: "sdk" }] },
+    });
+    const done = runEngine({
+      config,
+      input: runtime.input,
+      output: runtime.output,
+      provider: echoProvider,
+      tools: stubExecutor,
+      store,
+    });
+    host.output.write({ type: "user", text: "hi" });
+    host.output.write({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined });
+    // `host.input` can only be iterated ONCE — collect the data frames in the SAME loop that
+    // answers "hook" control_requests, rather than trying to re-drain an already-exhausted
+    // iterable afterward.
+    const collected: WinterFrame[] = [];
+    for await (const f of host.input) {
+      collected.push(f);
+      if (f.type === "control_request" && (f as ControlRequestFrame).subtype === "hook") {
+        const cf = f as ControlRequestFrame;
+        host.output.write({ type: "control_response", requestId: cf.requestId, ok: true, payload: {} });
+      }
+    }
+    await done;
+    return dataMessages(collected);
+  }
+
+  auditEntries.length = 0;
+  const withFlag = await runOnce(true);
+  expect(withFlag.map((m) => m.type)).toContain("system");
+  const lifecycleSubtypes = withFlag.filter((m) => m.type === "system").map((m) => (m as { subtype: string }).subtype);
+  expect(lifecycleSubtypes).toContain("hook_started");
+  expect(lifecycleSubtypes).toContain("hook_response");
+  expect(auditEntries.some((e) => e.hookEvent === "UserPromptSubmit")).toBe(true);
+
+  auditEntries.length = 0;
+  const withoutFlag = await runOnce(undefined);
+  const lifecycleSubtypesOff = withoutFlag.filter((m) => m.type === "system").map((m) => (m as { subtype: string }).subtype);
+  expect(lifecycleSubtypesOff).not.toContain("hook_started");
+  expect(lifecycleSubtypesOff).not.toContain("hook_response");
+  // The AUDIT trail is UNCONDITIONAL (WS-08 §9 Amended: "MUST carry all of it per invocation")
+  // regardless of includeHookEvents — this is the whole point of the two-stream split.
+  expect(auditEntries.some((e) => e.hookEvent === "UserPromptSubmit")).toBe(true);
+});
+
+test("Task 10: SessionStart's own lifecycle messages emit UNCONDITIONALLY, even with includeHookEvents absent/false (derived-shapes-p2.md item (d)'s doc-asserted exception)", async () => {
+  const { host, runtime } = createInMemoryChannel();
+  const config = baseConfig({ hooks: { SessionStart: [{ hookCount: 1, source: "sdk" }] } }); // includeHookEvents deliberately OMITTED
+  const done = runEngine({ config, input: runtime.input, output: runtime.output, provider: echoProvider, tools: stubExecutor });
+  host.output.write({ type: "user", text: "hi" });
+  host.output.write({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined });
+  const collected: WinterFrame[] = [];
+  for await (const f of host.input) {
+    collected.push(f);
+    if (f.type === "control_request" && (f as ControlRequestFrame).subtype === "hook") {
+      const cf = f as ControlRequestFrame;
+      host.output.write({ type: "control_response", requestId: cf.requestId, ok: true, payload: {} });
+    }
+  }
+  await done;
+  const msgs = dataMessages(collected);
+  const subtypes = msgs.filter((m) => m.type === "system").map((m) => (m as { subtype: string }).subtype);
+  expect(subtypes).toContain("hook_started");
+  expect(subtypes).toContain("hook_response");
+});
+
 // --- Task 6 (WS-07 §2/§6.1/§6.3/§6.4): the permission gate — engine integration --------------------
 //
 // Unlike every test above, these drive `inMemoryProcess` (winter-agent-runtime/testing) rather than
