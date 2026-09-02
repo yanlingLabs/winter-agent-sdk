@@ -614,19 +614,18 @@ const WS08_12: ConformanceRow[] = [
   {
     id: "WS08-10",
     spec: "WS-08 §12 item 10",
-    bullet: "unknown-event configuration accepted-and-inert; unknown output fields round-tripped losslessly",
+    bullet: "unknown-event configuration accepted-and-inert; unknown output fields tolerated without surfacing (accepted-and-inert -- HookOutcome has no passthrough slot, so nothing is forwarded)",
     status: "covered",
     citations: [
       { file: "../hooks/from-config.test.ts", testName: `an unrecognized event name is silently skipped -- accepted+preserved+INERT` },
-      // Item 8(b) (P2 fix-wave): the cited test's own title was reframed (it never actually proved
-      // "preserved losslessly" -- see its own updated comment) to state what it genuinely proves:
-      // an unrecognized field's mere presence never itself causes a hook contract error. Re-synced
-      // here so the citation mechanism keeps matching the renamed test; the possible tension between
-      // this row's own "round-tripped losslessly" bullet wording (which may describe a DIFFERENT
-      // mechanism -- additionalContext forwarding for generically-handled/unknown EVENT TYPES, WS-08
-      // §1.3 -- rather than arbitrary unrecognized JSON keys within a recognized event's output) is
-      // flagged in this fix wave's own report as a discovered, out-of-scope-for-this-item concern,
-      // not silently resolved here.
+      // Item 8(b) (P2 fix-wave) reframed the cited test to state what it genuinely proves: an
+      // unrecognized field's mere presence never itself causes a hook contract error, and the field
+      // does NOT surface in the composite. The whole-branch re-review then resolved the row-wording
+      // tension the wave had flagged: the old "round-tripped losslessly" clause described behavior
+      // this runtime deliberately does not have (HookOutcome carries no passthrough for unrecognized
+      // keys), so the bullet above now claims tolerance-without-forwarding -- which is exactly what
+      // the citation proves. If WS-08 §1.3's additionalContext forwarding for unknown EVENT TYPES is
+      // ever implemented, that is a different mechanism and gets its own row.
       { file: "../hooks/runner.test.ts", testName: `an unrecognized field's mere presence never causes an error` },
     ],
   },
