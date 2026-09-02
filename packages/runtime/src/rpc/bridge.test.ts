@@ -167,3 +167,36 @@ test("rejectAllPending rejects every still-pending request and clears them (Task
     errSpy.mockRestore();
   }
 });
+
+// T10 (WS-08 §10 lifecycle wiring, controller advisor correction): a request ISSUED AFTER
+// rejectAllPending has already fired must reject IMMEDIATELY, never registering in `pending` or
+// writing a frame — without this, a hook RPC (e.g. SessionEnd, fired right after the turn loop
+// drains but potentially racing the pump's own true-EOF teardown in single-shot mode, where the
+// wrapper's readLoop has already stopped reading stdout entirely) would sit unanswered until the
+// RUNNER's own 30s observational-hook timeout fires, turning an ordinary single-shot query into a
+// 30-second stall whenever ANY hook is configured. A closed bridge behaves exactly like any other
+// "no opinion" rejection this whole phase already handles uniformly (prompt-stage.ts's catch, and
+// now runner.ts's own invocation-rejection classification) — never a hang, never a crash.
+test("T10: request() issued AFTER rejectAllPending rejects immediately, writes nothing, and never registers as pending", async () => {
+  const { sink, written } = recordingSink();
+  const bridge = createRpcBridge(sink);
+
+  bridge.rejectAllPending(new Error("connection already torn down"));
+  expect(written.length).toBe(0); // nothing was ever pending yet — this is just arming the closed flag
+
+  let caught: unknown;
+  try {
+    await bridge.request("hook", { some: "payload" });
+  } catch (e) {
+    caught = e;
+  }
+  expect(caught).toBeInstanceOf(WinterRpcError);
+  expect(written.length).toBe(0); // the post-close request never wrote a frame at all
+});
+
+test("T10: rejectAllPending is idempotent — calling it again after the bridge is already closed is a harmless no-op", () => {
+  const { sink } = recordingSink();
+  const bridge = createRpcBridge(sink);
+  bridge.rejectAllPending(new Error("first"));
+  expect(() => bridge.rejectAllPending(new Error("second"))).not.toThrow();
+});

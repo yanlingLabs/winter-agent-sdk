@@ -27,6 +27,13 @@ export interface RpcBridge {
   // arrive once nothing is left to route one. A rejected request already means "no opinion" to its
   // caller (prompt-stage.ts's catch maps ANY rejection to null → deny, WS-07 §6.1), so this turns an
   // unreachable hang into a clean, spec-consistent denial and lets the run exit.
+  //
+  // T10 addition: also latches the bridge CLOSED — every `request()` call from this point forward
+  // rejects immediately instead of registering and parking (see that method's own comment). Once the
+  // transport is provably dead, a NEW request issued after this call (e.g. a SessionEnd hook RPC
+  // that races the pump's teardown) is exactly as unanswerable as one that was already pending when
+  // this fired; there is no reason to make it wait out its own per-hook timeout to find that out.
+  // Idempotent — safe to call more than once.
   rejectAllPending(err: unknown): void;
 }
 
@@ -49,9 +56,22 @@ interface PendingRpc {
 // never imports the runtime (WS-02 §3), even though the shape rhymes.
 export function createRpcBridge(output: FrameSink): RpcBridge {
   const pending = new Map<string, PendingRpc>();
+  // T10 (WS-08 §10 lifecycle wiring): once rejectAllPending has fired, the transport is PROVABLY
+  // dead (per that method's own doc comment) — any request issued AFTER that point (e.g. a
+  // SessionEnd hook RPC racing the pump's true-EOF teardown in single-shot mode, where the
+  // wrapper's readLoop has already stopped reading stdout entirely once it saw the turn's terminal
+  // result) can NEVER be answered no matter how long it waits. Without this flag such a request
+  // would sit in `pending` until the RUNNER's own per-hook timeout eventually fires it (up to the
+  // 30s observational default) — turning an ordinary single-shot query into a multi-second stall
+  // whenever any hook is configured. Rejecting immediately is strictly correct, not just faster:
+  // the outcome (a rejected bridge.request) is identical to what would eventually happen anyway.
+  let closed = false;
 
   return {
     request<T = unknown>(subtype: string, payload: unknown, opts?: { timeoutMs?: number; requestId?: string }): Promise<T> {
+      if (closed) {
+        return Promise.reject(new WinterRpcError("connection_closed", `rpc bridge is closed: cannot issue a '${subtype}' request`));
+      }
       const requestId = opts?.requestId ?? randomUUID();
       return new Promise<T>((resolve, reject) => {
         const entry: PendingRpc = { resolve: resolve as (payload: unknown) => void, reject };
@@ -87,6 +107,7 @@ export function createRpcBridge(output: FrameSink): RpcBridge {
       return true;
     },
     rejectAllPending(err: unknown): void {
+      closed = true; // idempotent: a second call finds an already-empty `pending` and is a no-op
       for (const entry of pending.values()) {
         if (entry.timer !== undefined) clearTimeout(entry.timer);
         entry.reject(err);
