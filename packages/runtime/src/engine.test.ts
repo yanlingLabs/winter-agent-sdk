@@ -1021,7 +1021,7 @@ test("Task 11: dontAsk denies a hook-forced defer immediately -- no pending reco
   expect(approvalStore.listFor({ sessionId: "s" })).toHaveLength(0);
 });
 
-test("Task 11: a mode switch (either door) cancels every still-pending durable approval for the session", async () => {
+test("Task 11: a mode switch (door 1: the direct set_permission_mode control request) cancels every still-pending durable approval", async () => {
   const { host, runtime } = createInMemoryChannel();
   const approvalStore = createInMemoryApprovalStore();
   const scripted = scriptedProvider([{ kind: "tool_use", calls: [{ id: "call1", name: "long_task", input: {} }] }]);
@@ -1030,11 +1030,11 @@ test("Task 11: a mode switch (either door) cancels every still-pending durable a
 
   host.output.write({ type: "user", text: "go" });
 
-  // Sequenced by OBSERVATION, not timing: only write the mode-switch control_request (door 1, the
-  // direct set_permission_mode control request) once this turn's OWN terminal `result` frame has
-  // been seen on the wire -- by then approvalStore.record() has unconditionally already run (it
-  // happens synchronously earlier in the same per-call code path, well before the round's result
-  // frame is written), so there is no race between "the approval exists" and "the switch fires".
+  // Sequenced by OBSERVATION, not timing: only write the mode-switch control_request once this
+  // turn's OWN terminal `result` frame has been seen on the wire -- by then approvalStore.record()
+  // has unconditionally already run (it happens synchronously earlier in the same per-call code
+  // path, well before the round's result frame is written), so there is no race between "the
+  // approval exists" and "the switch fires".
   let sawResult = false;
   const collected: WinterFrame[] = [];
   for await (const f of host.input) {
@@ -1062,6 +1062,53 @@ test("Task 11: a mode switch (either door) cancels every still-pending durable a
   expect(all).toHaveLength(1);
   expect(all[0]!.state).toBe("cancelled");
   expect(all[0]!.resolution?.reason).toMatch(/mode switched from default to plan/);
+});
+
+test("Task 11: a mode switch (door 2: updatedPermissions' own type:'setMode', reached mid-turn via a PermissionRequest hook answer) also cancels every still-pending durable approval", async () => {
+  const { host, runtime } = createInMemoryChannel();
+  const approvalStore = createInMemoryApprovalStore();
+  // call1 defers (parks); call2 is unmatched and its own PermissionRequest hook answers "allow"
+  // WITH a setMode suggestion -- policy-state.ts's own "second door into the same room." Per-call
+  // evaluation within one round is SEQUENTIAL (engine.ts's own comment on this loop), so call1's
+  // approvalStore.record() has already completed by the time call2's updatedPermissions applies.
+  const scripted = scriptedProvider([
+    { kind: "tool_use", calls: [{ id: "call1", name: "long_task", input: {} }, { id: "call2", name: "unmatched_tool", input: {} }] },
+    { kind: "text", text: "done" },
+  ]);
+  const config = baseConfig({ hooks: { PreToolUse: [{ hookCount: 1, source: "sdk" }], PermissionRequest: [{ hookCount: 1, source: "sdk" }] } });
+  const done = runEngine({ config, input: runtime.input, output: runtime.output, provider: scripted, tools: stubExecutor, approvalStore });
+
+  host.output.write({ type: "user", text: "go" });
+  host.output.write({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined });
+
+  for await (const f of host.input) {
+    if (f.type !== "control_request" || (f as ControlRequestFrame).subtype !== "hook") continue;
+    const cf = f as ControlRequestFrame;
+    const payload = cf.payload as { event: string; toolUseID?: string };
+    if (payload.event === "PreToolUse" && payload.toolUseID === "call1") {
+      host.output.write({ type: "control_response", requestId: cf.requestId, ok: true, payload: { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "defer" } } });
+    } else if (payload.event === "PermissionRequest") {
+      host.output.write({
+        type: "control_response",
+        requestId: cf.requestId,
+        ok: true,
+        payload: {
+          hookSpecificOutput: {
+            hookEventName: "PermissionRequest",
+            decision: { behavior: "allow", updatedPermissions: [{ type: "setMode", mode: "acceptEdits", destination: "session" }] },
+          },
+        },
+      });
+    } else {
+      host.output.write({ type: "control_response", requestId: cf.requestId, ok: true, payload: {} }); // call2's own PreToolUse: no opinion
+    }
+  }
+  await done;
+
+  const all = approvalStore.listFor({ sessionId: "s" });
+  expect(all).toHaveLength(1);
+  expect(all[0]!.state).toBe("cancelled");
+  expect(all[0]!.resolution?.reason).toMatch(/default to acceptEdits/);
 });
 
 // --- Task 6 (WS-07 §2/§6.1/§6.3/§6.4): the permission gate — engine integration --------------------
