@@ -55,7 +55,7 @@ hooks?: Partial<Record<HookEvent, HookCallbackMatcher[]>>;
 interface HookCallbackMatcher {
   matcher?: string;      // tool-identity matcher (WS-08 §2.1 grammar); absent = matches every occurrence of the event
   hooks: HookCallback[];
-  timeout?: number;      // doc-asserted: "Timeout in seconds for all hooks in this matcher" (sdk.d.ts:864-865) — see item (f)
+  timeout?: number;      // doc-asserted: unit is seconds, scope is every hook in this matcher (sdk.d.ts:864-865) — see item (f)
 }
 
 type HookCallback = (
@@ -283,10 +283,10 @@ doc comment (doc-asserted, `1702`-`1710`) names exactly those three subtypes and
 `@default false`. `SDKPermissionDeniedMessage`'s doc comment (doc-asserted, `4566`-`4568`)
 mentions no such gate — it appears to be part of the unconditional message stream.
 
-**Additional doc-asserted finding**: the same `includeHookEvents` comment states "SessionStart
-and Setup hook events are always emitted regardless of this setting" — i.e. those two events'
-`hook_started`/`hook_progress`/`hook_response` messages bypass the gate that suppresses every
-other event's lifecycle messages when `includeHookEvents` is absent/false.
+**Additional doc-asserted finding**: the same `includeHookEvents` comment carves out an exception
+for two specific events — SessionStart's and Setup's `hook_started`/`hook_progress`/
+`hook_response` messages are emitted unconditionally. Every other event's lifecycle messages are
+suppressed unless `includeHookEvents` is `true`; SessionStart's and Setup's are not.
 
 ---
 
@@ -316,9 +316,9 @@ value": an alias implemented at the CLI/UI layer would not need a type-level mem
 | Field | file:line | Pinned? |
 | --- | --- | --- |
 | `Options.includeHookEvents?: boolean` | 1711 (doc `1702`-`1710`) | **Pinned**: doc-asserted `@default false` |
-| `HookCallbackMatcher.timeout?: number` | 864-865 | Unit pinned (doc-asserted "seconds"); **numeric default NOT pinned in types** |
+| `HookCallbackMatcher.timeout?: number` | 864-865 | Unit pinned as seconds (doc-asserted); **numeric default NOT pinned in types** |
 | Filesystem `settings.json` hook-entry `timeout?: number` — `command`/`prompt`/`http`/`mcp_tool` handlers | 5732, 5768, 5830, 5876 | **Not pinned in types** (unit doc-asserted as seconds each time; no default number) |
-| Filesystem `settings.json` hook-entry `timeout?: number` — `agent` handler specifically | 5801 | **Pinned**: doc-asserted "Timeout in seconds for agent execution (default 60)" — scoped to this one filesystem hook-handler type only, not to `HookCallbackMatcher.timeout` or the other four handler kinds |
+| Filesystem `settings.json` hook-entry `timeout?: number` — `agent` handler specifically | 5801 | **Pinned**: doc-asserted default of 60 seconds for this handler's own execution — scoped to this one filesystem hook-handler type only, not to `HookCallbackMatcher.timeout` or the other four handler kinds |
 | `Options.permissionMode?: PermissionMode` | 1824 | **Not pinned in types** (no `@default` tag; WS-07 §4's "starts in `default`" is a report-sourced behavioral claim about the runtime, not visible in this declaration) |
 | `Options.allowDangerouslySkipPermissions?: boolean` | 1836 | **Not pinned in types** (no `@default` tag; implicit falsy/undefined) |
 | `Options.permissionPromptToolName?: string` | 1841 | **Not pinned in types** (no default of any kind) |
