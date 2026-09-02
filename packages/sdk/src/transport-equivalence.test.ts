@@ -399,7 +399,8 @@ async function traceInterrupt(leg: LegName): Promise<ConformanceTraceEntry[]> {
     const resultMessage = (result as { message: unknown }).message;
     // Direct sanity check on the provisional interrupted-result shape (engine.test.ts's own pin) —
     // a cross-leg trace diff alone can never catch a bug that affects BOTH legs identically.
-    expect(resultMessage).toEqual({ type: "result", subtype: "success", is_error: false, interrupted: true });
+    // Finding 3 (P2 fix-wave): permission_denials is now always present -- [] here, this turn denied nothing.
+    expect(resultMessage).toEqual({ type: "result", subtype: "success", is_error: false, interrupted: true, permission_denials: [] });
     pushFrame(entries, result!);
 
     driver.send({ type: "control_request", requestId: "end-input-1", subtype: "end_input", payload: undefined });

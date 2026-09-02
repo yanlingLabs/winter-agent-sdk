@@ -36,7 +36,8 @@
       "type": "result",
       "subtype": "success",
       "is_error": false,
-      "result": "echo: hi"
+      "result": "echo: hi",
+      "permission_denials": []
     }
   }
 ]

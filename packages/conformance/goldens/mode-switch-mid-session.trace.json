@@ -71,7 +71,8 @@
       "type": "result",
       "subtype": "success",
       "is_error": false,
-      "result": "first done"
+      "result": "first done",
+      "permission_denials": []
     }
   },
   {
@@ -147,7 +148,14 @@
       "type": "result",
       "subtype": "success",
       "is_error": false,
-      "result": "second done"
+      "result": "second done",
+      "permission_denials": [
+        {
+          "tool_name": "mystery_tool",
+          "tool_use_id": "c2",
+          "tool_input": {}
+        }
+      ]
     }
   }
 ]

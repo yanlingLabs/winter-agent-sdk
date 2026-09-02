@@ -87,4 +87,11 @@ export interface RuntimeConfig {
   // Task 10 (WS-08 §9): Options.includeHookEvents's own wire mirror -- see that field's comment
   // (options.ts) for the gate's exact semantics and the SessionStart/Setup exemption.
   includeHookEvents?: boolean;
+  // Finding 6 (P2 fix-wave): Options.permissionPromptToolName's own wire mirror -- serialized,
+  // read by nothing (phase ruling 7; see options.ts's own comment).
+  permissionPromptToolName?: string;
+  // Finding 6 (P2 fix-wave): Options.additionalDirectories's own wire mirror -- engine.ts threads
+  // this into EvaluationContext.additionalDirectories (see options.ts's own comment for the real
+  // behavior this unlocks via evaluator.ts's boundedRoots()).
+  additionalDirectories?: string[];
 }

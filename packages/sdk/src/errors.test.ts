@@ -16,7 +16,7 @@ test("every error class carries its own name", () => {
   expect(new WinterSDKError("x").name).toBe("WinterSDKError");
   expect(new CLIConnectionError("x").name).toBe("CLIConnectionError");
   expect(new ProcessError("x").name).toBe("ProcessError");
-  expect(new ResultError({ type: "result", subtype: "error_during_execution", is_error: true }).name).toBe("ResultError");
+  expect(new ResultError({ type: "result", subtype: "error_during_execution", is_error: true, permission_denials: [] }).name).toBe("ResultError");
   expect(new ProtocolDecodeError("x").name).toBe("ProtocolDecodeError");
   expect(new ProtocolError("x").name).toBe("ProtocolError");
   expect(new AbortError("x").name).toBe("AbortError");

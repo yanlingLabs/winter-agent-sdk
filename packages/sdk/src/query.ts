@@ -248,6 +248,11 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
     ...(options.disallowedTools !== undefined ? { disallowedTools: options.disallowedTools } : {}),
     ...(options.permissions !== undefined ? { permissions: options.permissions } : {}),
     ...(options.settingSources !== undefined ? { settingSources: options.settingSources } : {}),
+    // Finding 6 (P2 fix-wave): pure passthrough, same conditional-spread convention as every field
+    // above -- query.ts never interprets either field, it only serializes them (options.ts's own
+    // comment on each field for what does/doesn't consume it runtime-side).
+    ...(options.permissionPromptToolName !== undefined ? { permissionPromptToolName: options.permissionPromptToolName } : {}),
+    ...(options.additionalDirectories !== undefined ? { additionalDirectories: options.additionalDirectories } : {}),
     // Task 6 (WS-07 §6.4): same pure-passthrough convention as every field above.
     ...(options.allowDangerouslySkipPermissions !== undefined ? { allowDangerouslySkipPermissions: options.allowDangerouslySkipPermissions } : {}),
     // Task 10 (WS-08 §1/§2/§9): the hooks structure-only wire shape (functions stripped -- see

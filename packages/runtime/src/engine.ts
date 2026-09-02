@@ -10,6 +10,7 @@ import {
   type PermissionUpdate,
   type RuleSource,
   type HookEvent,
+  type SDKPermissionDenial,
 } from "@yanlinglabs/winter-agent-sdk";
 import type { FrameSource, FrameSink } from "./protocol/channel.ts";
 import { Queue } from "./protocol/channel.ts";
@@ -344,10 +345,13 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // did not enable bypass at startup cannot casually switch into it later" fact, needed by plan
   // mode's own bypass-relaxation carve-out (§6.4/§6.5), which is a SESSION-scoped constant, not the
   // CURRENT policy.mode (a session can be bypass-enabled while sitting in `plan` right now).
-  // `additionalDirectories` is deliberately NOT set here: no RuntimeConfig/Options wire field for it
-  // exists yet at P2 (EvaluationContext's own comment) — acceptEdits' path-bounding still gets T5's
-  // rule-derived grants via `effectiveDirectories(ctx.policy.rules, ...)`, computed inside
-  // evaluator.ts's own `boundedRoots`, independent of this field. Task 8: `promptStage` is now the
+  // `additionalDirectories` (Finding 6, P2 fix-wave): now threaded straight from
+  // `config.additionalDirectories` — the RuntimeConfig/Options wire field this comment used to say
+  // did not exist yet. `boundedRoots()` (evaluator.ts) already unions cwd + T5's rule-derived grants
+  // (`effectiveDirectories(ctx.policy.rules, ...)`) + this field; real behavior lands for free
+  // through every one of boundedRoots' existing consumers (acceptEdits/auto edit bounding,
+  // critical-removal input, and Finding 7's Read-bounding fix, same wave) with no changes needed at
+  // any of those call sites. Task 8: `promptStage` is now the
   // REAL bridge-backed implementation (T6's NO_OPINION_PROMPT_STAGE stub retired here — the one
   // production call site, exactly like T7 retired NO_SPECIAL_CHECKS above; every other reference
   // left in the codebase is test-only). Task 10: `hookStage` is now the REAL registry+bridge-backed
@@ -396,6 +400,7 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
     home: permissionHome,
     trustedWorkspace,
     sessionBypassEnabled: config.allowDangerouslySkipPermissions === true,
+    ...(config.additionalDirectories !== undefined ? { additionalDirectories: config.additionalDirectories } : {}),
     hookStage: realHookStage,
     promptStage: realPromptStage,
     autoEngine: realAutoEngine,
@@ -906,6 +911,15 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
     });
     interruptCurrentTurn.current = interruptResolve;
 
+    // Finding 3 (P2 fix-wave, IMPORTANT): result.permission_denials, the array the frozen
+    // derived-shapes doc calls "the record to trust ... the array is the ledger" (permission_denied
+    // stream messages are best-effort/advisory only, per that same doc's own load-bearing finding).
+    // Reset PER USER TURN (never across turns) — this is "what did THIS turn deny," mirroring how
+    // each turn gets exactly one terminal result. Pushed to from the ONE denyCall site below, which
+    // both fail-closed-defer denials (no durable approval store; persisting the record itself
+    // failed) already route through — nothing else needs separate instrumentation.
+    const turnPermissionDenials: SDKPermissionDenial[] = [];
+
     const userText = userFrame.text;
     messages.push({ role: "user", content: userText });
     await recordUser(userText);
@@ -919,7 +933,11 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
     // prompt has a real seam to build against (this call site), not a gap to discover.
     await fireObservationalHook("UserPromptSubmit", { payload: { prompt: userText } });
 
-    let finalResult: Extract<SdkMessage, { type: "result" }> | null = null;
+    // Finding 3 (P2 fix-wave): `permission_denials` is deliberately OMITTED from this variable's own
+    // type — every one of the several construction sites below builds a plain result shape exactly
+    // as before this fix wave; the field is stamped exactly once, at the single terminal-write site
+    // (via a spread), rather than repeated at each `finalResult = {...}` assignment.
+    let finalResult: Omit<Extract<SdkMessage, { type: "result" }>, "permission_denials"> | null = null;
     let interrupted = false;
 
     roundLoop: while (true) {
@@ -1026,19 +1044,25 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
           // signal, so the one real call site below still handles it inline, after calling this.
           const denyCall = async (message: string, mechanism: string, ruleRef?: string): Promise<void> => {
             resultBlocks.push({ type: "tool_result", tool_use_id: call.id, content: message, denied: true });
+            // Finding 3 (P2 fix-wave, IMPORTANT): the ONE accumulation site — every denial reaches
+            // here (hook/rule/mode/canUseTool/autoEngine, plus both fail-closed-defer cases below),
+            // so this single push is the array's complete producer. `tool_input` is `permissionCall.
+            // input` — the ORIGINAL, un-hook-transformed input the call was evaluated against
+            // (matching the pinned 3-field shape's own semantics, and the tool_use block the model
+            // itself already saw), never `executedCall.input`, which a canUseTool answer's own
+            // updatedInput may have since narrowed/redirected.
+            turnPermissionDenials.push({ tool_name: call.name, tool_use_id: call.id, tool_input: permissionCall.input });
             // Task 10 (WS-08 §6 / derived-shapes-p2.md item (d)): the public SDKPermissionDeniedMessage
             // is UNCONDITIONAL — never gated by includeHookEvents (that item's own "Correction to
             // this task's own brief framing": only the hook_started/hook_progress/hook_response
             // trio is gated) — and fires on ANY-stage denial regardless of `mechanism` (hook/rule/
             // mode/canUseTool/autoEngine all reach this one call site, plus Task 11's own two
             // engine-originated fail-closed-defer cases). Best-effort/advisory per that same item's
-            // own load-bearing finding — the tool_result block above is the authoritative record;
-            // this stream message is UX/telemetry only. `decision_reason_type`/`decision_reason`
-            // are Winter's own mapping of PermissionDecisionRecord's mechanism/ruleRef — the pinned
-            // declaration names the fields without pinning their exact semantics beyond
-            // advisory/UI-facing. (NOTE, spotted but NOT built here: an engine.ts comment from an
-            // earlier task speculated a future `result.permission_denials` field on the terminal
-            // result — that is not part of this task's brief and is left exactly as speculative.)
+            // own load-bearing finding — the tool_result block above (and, since this fix wave,
+            // `result.permission_denials`) is the authoritative record; this stream message is
+            // UX/telemetry only. `decision_reason_type`/`decision_reason` are Winter's own mapping
+            // of PermissionDecisionRecord's mechanism/ruleRef — the pinned declaration names the
+            // fields without pinning their exact semantics beyond advisory/UI-facing.
             output.write({
               type: "data",
               message: {
@@ -1315,11 +1339,18 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
     // interrupt landed in the same tick as completion (e.g., during the recordAssistant/recordUser
     // await just before this check). Only the ABSENCE of a terminal result falls through to the
     // provisional interrupted shape.
+    //
+    // Finding 3 (P2 fix-wave): `permission_denials` is stamped HERE, once, regardless of which of
+    // the several `finalResult = {...}` construction sites above (or the provisional
+    // interrupted-result fallback below) produced this turn's terminal shape — a single seam rather
+    // than instrumenting every construction site individually. Pin-verified ALWAYS PRESENT (never
+    // optional) on the real declaration, so every result carries it, `[]` when this turn denied
+    // nothing.
     if (finalResult) {
-      output.write({ type: "data", message: finalResult });
+      output.write({ type: "data", message: { ...finalResult, permission_denials: turnPermissionDenials } });
     } else {
       // Provisional shape pending official capture (standing controller ruling) — no `result` text.
-      output.write({ type: "data", message: { type: "result", subtype: "success", is_error: false, interrupted: true } });
+      output.write({ type: "data", message: { type: "result", subtype: "success", is_error: false, interrupted: true, permission_denials: turnPermissionDenials } });
     }
     await flushStore();
   }

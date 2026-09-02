@@ -36,7 +36,8 @@
       "type": "result",
       "subtype": "success",
       "is_error": false,
-      "result": "[{\"role\":\"user\",\"content\":\"first\"}]"
+      "result": "[{\"role\":\"user\",\"content\":\"first\"}]",
+      "permission_denials": []
     }
   },
   {
@@ -76,7 +77,8 @@
       "type": "result",
       "subtype": "success",
       "is_error": false,
-      "result": "[{\"role\":\"user\",\"content\":\"first\"},{\"role\":\"assistant\",\"content\":\"[{\\\"role\\\":\\\"user\\\",\\\"content\\\":\\\"first\\\"}]\"},{\"role\":\"user\",\"content\":\"second\"}]"
+      "result": "[{\"role\":\"user\",\"content\":\"first\"},{\"role\":\"assistant\",\"content\":\"[{\\\"role\\\":\\\"user\\\",\\\"content\\\":\\\"first\\\"}]\"},{\"role\":\"user\",\"content\":\"second\"}]",
+      "permission_denials": []
     }
   }
 ]

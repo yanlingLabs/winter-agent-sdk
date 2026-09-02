@@ -67,6 +67,24 @@ export interface Options {
   // entirely (WS-07 §3.2). Serialize-only for this task: P5's file loader is the actual consumer.
   settingSources?: RuleSource[];
 
+  // Finding 6 (P2 fix-wave, IMPORTANT): pinned upstream Options member (derived-shapes item (g),
+  // sdk.d.ts:1841) — omitting it is a drop-in Options-parity break under strict object-literal
+  // checking, even though nothing in-repo referenced the gap. Phase ruling 7: "assigned to P4 (it
+  // names an MCP permission-prompt tool — meaningless before MCP exists). Typed on Options ...
+  // plumbed, ignored with a documented no-op." Serialized (query.ts) and read by NOTHING — no MCP
+  // surface exists yet at P2 for a "which tool answers permission prompts" selector to mean
+  // anything against.
+  permissionPromptToolName?: string;
+
+  // Finding 6 (P2 fix-wave, IMPORTANT) / T7 plan text ("new config field additionalDirectories?:
+  // string[]"): the §6.2 bounding input the official Options carries, quietly landed as a ctx-only
+  // evaluator field with no SDK-facing wire member at all — the orphaned-carry shape this fix wave
+  // closes. Unlike permissionPromptToolName above, this ONE has real behavior waiting for it:
+  // engine.ts threads it into evaluator.ts's `EvaluationContext.additionalDirectories`, which
+  // `boundedRoots()` already unions with cwd + rule-derived grants for acceptEdits/auto edit
+  // bounding, critical-removal input, AND (Finding 7, same fix wave) ordinary Reads.
+  additionalDirectories?: string[];
+
   // Task 6 (WS-07 §6.4): explicit, top-level, and named to be impossible to set by accident — the
   // ONLY thing that lets a session SELECT bypassPermissions (at startup, or via a later
   // setPermissionMode into it): both paths are gated identically

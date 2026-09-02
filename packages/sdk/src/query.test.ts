@@ -238,6 +238,40 @@ test("Task 6: unset allowDangerouslySkipPermissions is OMITTED entirely from --c
   expect(capture.get()).not.toHaveProperty("allowDangerouslySkipPermissions");
 });
 
+// --- Finding 6 (P2 fix-wave, IMPORTANT): Options.{permissionPromptToolName,additionalDirectories}
+// serialize into --config-json exactly like every prior field above (same captureConfigJson
+// helper) -- the drop-in Options-parity gap this fix wave closes (a consumer passing either field
+// under strict object-literal checking previously got a compile error).
+
+test("Finding 6: permissionPromptToolName and additionalDirectories are present in --config-json when set on Options (a compile-level fixture: both fields exist on the Options type at all)", async () => {
+  const capture = captureConfigJson();
+  for await (const _msg of query({
+    prompt: "ping",
+    options: {
+      permissionPromptToolName: "mcp__approvals__prompt",
+      additionalDirectories: ["/extra/one", "/extra/two"],
+      spawnClaudeCodeProcess: capture.hook,
+    },
+  })) {
+    /* drain */
+  }
+
+  expect(capture.get()).toMatchObject({
+    permissionPromptToolName: "mcp__approvals__prompt",
+    additionalDirectories: ["/extra/one", "/extra/two"],
+  });
+});
+
+test("Finding 6: unset permissionPromptToolName/additionalDirectories are OMITTED entirely from --config-json", async () => {
+  const capture = captureConfigJson();
+  for await (const _msg of query({ prompt: "ping", options: { spawnClaudeCodeProcess: capture.hook } })) {
+    /* drain */
+  }
+  const config = capture.get();
+  expect(config).not.toHaveProperty("permissionPromptToolName");
+  expect(config).not.toHaveProperty("additionalDirectories");
+});
+
 test("Task 9: a pre-allocated Options.sessionId round-trips into the init frame's sessionId", async () => {
   const explicitId = "44444444-4444-4444-8444-444444444444";
   let sawInitSessionId: string | undefined;

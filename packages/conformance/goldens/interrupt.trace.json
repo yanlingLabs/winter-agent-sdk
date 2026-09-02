@@ -42,7 +42,8 @@
       "type": "result",
       "subtype": "success",
       "is_error": false,
-      "interrupted": true
+      "interrupted": true,
+      "permission_denials": []
     }
   },
   {

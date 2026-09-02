@@ -115,7 +115,16 @@
       "type": "result",
       "subtype": "success",
       "is_error": false,
-      "result": "tool round done"
+      "result": "tool round done",
+      "permission_denials": [
+        {
+          "tool_name": "test_tool",
+          "tool_use_id": "test-call-1",
+          "tool_input": {
+            "probe": true
+          }
+        }
+      ]
     }
   }
 ]

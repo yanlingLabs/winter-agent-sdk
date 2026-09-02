@@ -36,7 +36,8 @@
       "type": "result",
       "subtype": "success",
       "is_error": false,
-      "result": "echo: first"
+      "result": "echo: first",
+      "permission_denials": []
     }
   },
   {
@@ -63,7 +64,8 @@
       "type": "result",
       "subtype": "success",
       "is_error": false,
-      "result": "echo: second"
+      "result": "echo: second",
+      "permission_denials": []
     }
   }
 ]

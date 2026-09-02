@@ -73,7 +73,8 @@
       "type": "result",
       "subtype": "success",
       "is_error": false,
-      "result": "tool round done"
+      "result": "tool round done",
+      "permission_denials": []
     }
   }
 ]

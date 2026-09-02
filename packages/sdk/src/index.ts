@@ -46,6 +46,8 @@ export type {
   SDKHookProgressMessage,
   SDKHookResponseMessage,
   SDKPermissionDeniedMessage,
+  // Finding 3 (P2 fix-wave): the array-element shape of SDKResultMessage.permission_denials.
+  SDKPermissionDenial,
 } from "./protocol/frames.ts";
 
 // Paths (Task 6, moved here Task 10 -- WS-05 §6): WINTER_HOME resolution, the exact CC-compatible

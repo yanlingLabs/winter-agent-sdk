@@ -81,6 +81,21 @@ export interface SDKPermissionDeniedMessage {
   session_id: string;
 }
 
+// Finding 3 (P2 fix-wave, IMPORTANT): the array-element shape carried on `SDKResultMessage.
+// permission_denials` (derived-shapes-p2.md item (d), sdk.d.ts:4560-4564) — a DIFFERENT, SMALLER
+// shape than `SDKPermissionDeniedMessage` above despite being cited from the same source line (see
+// that type's own comment: the two must not be conflated, they overlap only on tool_name/
+// tool_use_id). Pinned ALWAYS-PRESENT — never optional, on EITHER `SDKResultMessage` member
+// (`SDKResultSuccess`/`SDKResultError`) — verified directly against the pinned 0.3.250 release's own
+// declaration (ephemeral, checksum-verified read of the already-installed package for this fix
+// wave's own capture check; see the fix-wave report). `tool_input` is the one field the stream
+// message deliberately lacks.
+export interface SDKPermissionDenial {
+  tool_name: string;
+  tool_use_id: string;
+  tool_input: Record<string, unknown>;
+}
+
 export type SdkMessage =
   | { type: "system"; subtype: "init"; session_id: string; cwd: string; model: string; permissionMode: string; tools: string[]; [k: string]: unknown }
   | SDKHookStartedMessage
@@ -88,5 +103,7 @@ export type SdkMessage =
   | SDKHookResponseMessage
   | SDKPermissionDeniedMessage
   | { type: "assistant"; message: { content: Array<{ type: "text"; text: string } | { type: string; [k: string]: unknown }> }; [k: string]: unknown }
-  | { type: "result"; subtype: "success" | "error_max_turns" | "error_during_execution" | "error_max_budget_usd" | "error_max_structured_output_retries" | string; is_error?: boolean; result?: string; [k: string]: unknown }
+  // Finding 3: `permission_denials` is ALWAYS present (pin-verified) — every result the engine
+  // constructs carries it, `[]` when this turn denied nothing.
+  | { type: "result"; subtype: "success" | "error_max_turns" | "error_during_execution" | "error_max_budget_usd" | "error_max_structured_output_retries" | string; is_error?: boolean; result?: string; permission_denials: SDKPermissionDenial[]; [k: string]: unknown }
   | { type: string; [k: string]: unknown };

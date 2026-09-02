@@ -170,7 +170,8 @@ test("interrupt: ack + provisional interrupted result, back to idle; a later end
   expect(ack.requestId).toBe("int1");
   expect(ack.ok).toBe(true);
   const result = dataMessages(seen).at(-1);
-  expect(result).toEqual({ type: "result", subtype: "success", is_error: false, interrupted: true });
+  // Finding 3 (P2 fix-wave): permission_denials is now always present -- [] here, this turn denied nothing.
+  expect(result).toEqual({ type: "result", subtype: "success", is_error: false, interrupted: true, permission_denials: [] });
 
   // back to idle: a later end_input exits cleanly (no dangling turn, no hang)
   host.output.write({ type: "control_request", requestId: "r2", subtype: "end_input", payload: undefined });
@@ -664,7 +665,8 @@ test("Task 2: a rpc_probe turn writes a runtime-originated control_request; the 
   const assistantMsg = msgs.find((m) => m.type === "assistant") as { message: { content: unknown } };
   expect(assistantMsg.message.content).toEqual([{ type: "text", text: "rpc reply: pong" }]);
   const result = msgs.find((m) => m.type === "result");
-  expect(result).toEqual({ type: "result", subtype: "success", is_error: false, result: "rpc reply: pong" });
+  // Finding 3 (P2 fix-wave): permission_denials is now always present -- [] here, this turn denied nothing.
+  expect(result).toEqual({ type: "result", subtype: "success", is_error: false, result: "rpc reply: pong", permission_denials: [] });
   expect(code).toBe(0);
 });
 
@@ -1438,7 +1440,14 @@ test("Task 8 (WS-07 §7.2): a deny answer with interrupt:true stops the round AN
   const toolResultMsg = msgs.find((m) => m.type === "user") as { message: { content: unknown } };
   expect(toolResultMsg.message.content).toEqual([{ type: "tool_result", tool_use_id: "call1", content: "blocked, and stop the turn", denied: true }]);
   const result = msgs.at(-1);
-  expect(result).toEqual({ type: "result", subtype: "success", is_error: false, interrupted: true });
+  // Finding 3 (P2 fix-wave): this turn's one real denial (the interrupt-triggering deny above) lands here.
+  expect(result).toEqual({
+    type: "result",
+    subtype: "success",
+    is_error: false,
+    interrupted: true,
+    permission_denials: [{ tool_name: "mystery_tool", tool_use_id: "call1", tool_input: {} }],
+  });
 
   // Back to idle cleanly afterward — a deny-triggered interrupt is not a stuck/half-torn-down state.
   host.output.write({ type: "control_request", requestId: "r2", subtype: "end_input", payload: undefined });
@@ -1939,4 +1948,146 @@ test("Fix round 1 coverage rider: a still-PENDING record also revalidates and ex
   expect(executionCount).toBe(0);
   const finalRecord = approvalStore.get("req-1")!;
   expect(finalRecord.state).toBe("expired"); // NOT left "pending" -- the mismatch was caught even though it never reached "allowed"
+});
+
+// Finding 3 (P2 fix-wave, IMPORTANT): result.permission_denials -- the array the frozen
+// derived-shapes doc calls "the record to trust ... the array is the ledger." Pin-verified
+// ALWAYS-PRESENT on the real declaration (ephemeral fetch, this fix wave's own capture check) --
+// every terminal result carries it, [] when this turn denied nothing.
+test("Finding 3: a denied-tool round's terminal result carries permission_denials with the exact {tool_name, tool_use_id, tool_input} triple", async () => {
+  const { host, runtime } = createInMemoryChannel();
+  const provider = scriptedProvider([
+    { kind: "tool_use", calls: [{ id: "test-call-1", name: "test_tool", input: { probe: true } }] },
+    { kind: "text", text: "tool round done" },
+  ]);
+  // Zero permission config: the real bridge-backed promptStage sends a genuine "permission" RPC and
+  // waits (no park timeout, WS-04 §3) -- true EOF (never end_input alone) is what makes
+  // bridge.rejectAllPending resolve it to Ruling P2-I's fail-closed denial, mirroring this file's
+  // own "termination edge" precedent (never answering the permission RPC at all).
+  const done = runEngine({ config: baseConfig(), input: runtime.input, output: runtime.output, provider, tools: stubExecutor });
+
+  host.output.write({ type: "user", text: "go" });
+  const seen: WinterFrame[] = [];
+  for await (const f of host.input) {
+    seen.push(f);
+    if (f.type === "control_request" && (f as ControlRequestFrame).subtype === "permission") break;
+  }
+  host.output.end();
+  const rest = await drain(host.input);
+  seen.push(...rest);
+  await done;
+
+  const msgs = dataMessages(seen);
+  const result = msgs.find((m) => m.type === "result") as Extract<SdkMessage, { type: "result" }>;
+  expect((result as { permission_denials?: unknown }).permission_denials).toEqual([{ tool_name: "test_tool", tool_use_id: "test-call-1", tool_input: { probe: true } }]);
+});
+
+test("Finding 3: a fully-approved round's terminal result carries permission_denials: [] -- the empty form, not absent, per the verified always-present pin", async () => {
+  const { host, runtime } = createInMemoryChannel();
+  const provider = scriptedProvider([
+    { kind: "tool_use", calls: [{ id: "test-call-1", name: "test_tool", input: { probe: true } }] },
+    { kind: "text", text: "tool round done" },
+  ]);
+  const done = runEngine({
+    config: baseConfig({ allowedTools: ["test_tool"] }),
+    input: runtime.input,
+    output: runtime.output,
+    provider,
+    tools: stubExecutor,
+  });
+
+  host.output.write({ type: "user", text: "go" });
+  host.output.write({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined });
+
+  const frames = await drain(host.input);
+  await done;
+
+  const msgs = dataMessages(frames);
+  const result = msgs.find((m) => m.type === "result") as Extract<SdkMessage, { type: "result" }>;
+  expect((result as { permission_denials?: unknown }).permission_denials).toEqual([]);
+});
+
+test("Finding 3: multiple denials within the SAME turn all accumulate, in call order; a SUBSEQUENT turn starts a fresh array (per-turn, never cross-turn)", async () => {
+  const { host, runtime } = createInMemoryChannel();
+  const provider = scriptedProvider([
+    { kind: "tool_use", calls: [
+      { id: "call-a", name: "mystery_a", input: { x: 1 } },
+      { id: "call-b", name: "mystery_b", input: { y: 2 } },
+    ] },
+    { kind: "text", text: "first done" },
+    { kind: "text", text: "second done" },
+  ]);
+  const done = runEngine({ config: baseConfig(), input: runtime.input, output: runtime.output, provider, tools: stubExecutor });
+
+  const seen: WinterFrame[] = [];
+  host.output.write({ type: "user", text: "go" });
+
+  // Explicitly deny both of turn 1's permission RPCs (rather than relying on true EOF, this file's
+  // own "termination edge" precedent) -- this test wants turn 2 to complete NORMALLY afterward, not
+  // be cut off.
+  for (let i = 0; i < 2; i++) {
+    for await (const f of host.input) {
+      seen.push(f);
+      if (f.type === "control_request" && (f as ControlRequestFrame).subtype === "permission") {
+        const req = f as ControlRequestFrame;
+        const deny: PermissionResult = { behavior: "deny", message: "no" };
+        host.output.write({ type: "control_response", requestId: req.requestId, ok: true, payload: deny });
+        break;
+      }
+    }
+  }
+
+  host.output.write({ type: "user", text: "again" });
+  host.output.write({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined });
+
+  const rest = await drain(host.input);
+  seen.push(...rest);
+  await done;
+
+  const results = dataMessages(seen).filter((m) => m.type === "result") as Array<Extract<SdkMessage, { type: "result" }>>;
+  expect(results).toHaveLength(2);
+  expect((results[0] as { permission_denials?: unknown }).permission_denials).toEqual([
+    { tool_name: "mystery_a", tool_use_id: "call-a", tool_input: { x: 1 } },
+    { tool_name: "mystery_b", tool_use_id: "call-b", tool_input: { y: 2 } },
+  ]);
+  // Turn 2 denied nothing of its own -- turn 1's denials must never leak forward.
+  expect((results[1] as { permission_denials?: unknown }).permission_denials).toEqual([]);
+});
+
+// Finding 6 (P2 fix-wave, IMPORTANT): config.additionalDirectories (RuntimeConfig's own wire mirror
+// of Options.additionalDirectories) threads into EvaluationContext.additionalDirectories, which
+// evaluator.ts's boundedRoots() already unions into acceptEdits' own edit-bounding check --
+// evaluator.test.ts's own "additionalDirectories (EvaluationContext's own config field) widen the
+// bound" fixture already proves boundedRoots' OWN logic; this proves the ENGINE-LEVEL wiring that
+// makes a real config field reach it at all (pre-fix-wave, no such wire field existed to configure).
+test("Finding 6: config.additionalDirectories threads into the evaluator -- acceptEdits + an Edit inside a granted directory OUTSIDE cwd auto-approves", async () => {
+  const { host, runtime } = createInMemoryChannel();
+  const tmpB = realpathSync(mkdtempSync(join(tmpdir(), "winter-engine-additional-dir-")));
+  try {
+    const provider = scriptedProvider([
+      { kind: "tool_use", calls: [{ id: "call1", name: "Edit", input: { file_path: join(tmpB, "file.txt") } }] },
+      { kind: "text", text: "done" },
+    ]);
+    let executed = false;
+    const tools: ToolExecutor = {
+      async execute() {
+        executed = true;
+        return { output: "ok" };
+      },
+    };
+    const config = baseConfig({ permissionMode: "acceptEdits", additionalDirectories: [tmpB] });
+    const done = runEngine({ config, input: runtime.input, output: runtime.output, provider, tools });
+
+    host.output.write({ type: "user", text: "go" });
+    host.output.write({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined });
+    const frames = await drain(host.input);
+    await done;
+
+    const msgs = dataMessages(frames);
+    const toolResult = msgs.find((m) => m.type === "user") as { message: { content: Array<{ denied?: boolean }> } };
+    expect(toolResult.message.content[0]?.denied).toBeUndefined();
+    expect(executed).toBe(true);
+  } finally {
+    rmSync(tmpB, { recursive: true, force: true });
+  }
 });
