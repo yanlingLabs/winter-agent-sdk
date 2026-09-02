@@ -365,6 +365,16 @@ function matchesRuleForCall(rule: ParsedRule, call: PermissionCall, direction: "
     const command = typeof raw === "string" ? raw : "";
     const parts = splitCompound(command);
     if (parts === null) return false; // unparseable/over-limit -> route the WHOLE command to permission handling; never fall back to raw-text matching
+    // Fix round 1, item 1 (IMPORTANT, reviewer-caught): splitCompound("") returns `[]`, not null —
+    // an empty/all-separator/missing command scans OK, it just has zero non-empty subcommands.
+    // `[].every(...)` is vacuously TRUE, which would report this rule as matching ANY configured
+    // Bash allow rule regardless of its pattern; `[].some(...)` is already vacuously false, so only
+    // the allow/"every" direction was ever actually exploitable, but both directions are guarded
+    // uniformly here (mirrors isBashCallReadOnly's own `parts.length > 0 && ...` guard immediately
+    // below in this file, and matches ruleset.ts's resolveRules(), whose own matchesRule() call —
+    // no compound-splitting at all — was already correctly fail-closed on this exact input; see the
+    // parity test in evaluator.test.ts).
+    if (parts.length === 0) return false;
     const matchesSub = (sub: string): boolean => matchesRule(rule, { toolName: call.toolName, input: { ...call.input, command: sub } }, { direction });
     // WS-07 §3: "every subcommand MUST be independently permitted." Deny/ask are safety checks — ANY
     // dangerous subcommand taints the whole compound. Allow is a grant — this ONE rule only
