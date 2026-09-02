@@ -2,26 +2,42 @@
 // package and network egress). Behind RUN_OFFICIAL_CAPTURE=1 only.
 //
 // Procedure (WS-17 §4, report §5 probe): checksum-verify + ephemerally install
-// @anthropic-ai/claude-agent-sdk@0.3.250 into a throwaway npm prefix, run its own real query()
-// against a loopback HTTP server that returns ONE canned Anthropic-shaped Messages API response,
-// capture the yielded SDK message stream, normalizeTrace() it, and PRINT the result — never write a
-// golden file, never auto-compare against the winter golden, never auto-commit anything. A human
-// (the controller) diffs the printed output against packages/conformance/goldens/plain-query.trace.json
-// by eye. This is the project's first real official-vs-winter differential signal, not a pass/fail gate.
+// @anthropic-ai/claude-agent-sdk@0.3.250 into a throwaway npm prefix ONCE, then run its own real
+// query() against TWO SEPARATE loopback HTTP servers (one per scenario, each returning canned
+// Anthropic-shaped Messages API responses tailored to that scenario), capture the yielded SDK
+// message stream, normalizeTrace() it, and PRINT the result for each — never write a golden file,
+// never auto-compare against a winter golden, never auto-commit anything. A human (the controller)
+// diffs the printed output by eye. This is a differential SIGNAL, not a pass/fail gate.
+//
+// Scenario A (plain query): unchanged from the original capture — a single canned text reply.
+// Scenario B (Task 13, permissions+hooks): a canUseTool callback, includeHookEvents:true, one
+// observer-only PreToolUse hook, and a SessionEnd hook — driving the SAME single-shot query() shape
+// T10 proved is structurally unable to observe SessionEnd's own hook body/lifecycle frames on
+// Winter's side, so this scenario doubles as the official-runtime comparison T10's own WS-17
+// capture-note asked for (does the OFFICIAL SDK invoke a SessionEnd hook / emit lifecycle frames in
+// single-shot mode?). The canUseTool callback's received field set is captured and printed
+// separately for controller eyeballing, exactly as this task's brief specifies.
 //
 // Hermeticity (hard rule, non-negotiable): the official runtime must never read or write the real
 // ~/.claude (or ~/.winter/~/.norma). Achieved by handing it the MINIMAL env an empirical probe
 // proved sufficient — exactly {ANTHROPIC_BASE_URL, ANTHROPIC_API_KEY, CLAUDE_CONFIG_DIR} with NO
 // process.env spread — plus settingSources: [] (reads no real settings.json at any level) and a
-// fresh mkdtemp cwd. Every request the official runtime makes is logged to stderr below as direct
-// evidence that the loopback is the only endpoint it ever contacts.
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+// fresh mkdtemp cwd. Every request either scenario's loopback receives is logged to stderr below as
+// direct evidence that the loopback is the only endpoint it ever contacts. Both scenarios' own
+// working files (the Scenario B dummy read target included) live under fresh mkdtemp dirs — never a
+// real path, never real user data — and every acquired resource is cleaned up in a `finally`,
+// mirroring the T11 review's own resource-exhaustion-safety fix (acquire-then-register-cleanup,
+// never a batch of acquisitions ahead of one shared try).
+import { mkdtempSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fetchAndVerifyUpstream } from "./fetch-upstream.ts";
 import { normalizeTrace, type ConformanceTraceEntry } from "winter-conformance/trace";
 
-const CANNED_RESPONSE = {
+type OfficialQueryFn = (args: { prompt: unknown; options: Record<string, unknown> }) => AsyncIterable<{ type: string; subtype?: string }>;
+type OfficialSdk = { query: OfficialQueryFn };
+
+const CANNED_TEXT_RESPONSE = {
   id: "msg_capture_canned_01",
   type: "message",
   role: "assistant",
@@ -33,49 +49,88 @@ const CANNED_RESPONSE = {
   usage: { input_tokens: 10, output_tokens: 5 },
 };
 
-async function runCapture(): Promise<void> {
-  // T11 review F1 (fix-wave, Minor): every temp-resource acquisition now happens INSIDE the try,
-  // registering a cleanup closure immediately after each succeeds — the ORIGINAL version acquired
-  // all four (fetchAndVerifyUpstream's owned tarball dir, plus three mkdtemps) BEFORE the try began,
-  // so a resource-exhaustion failure (ENOSPC/EMFILE — real under sustained CI load) partway through
-  // that sequence would strand every EARLIER acquisition, already on disk, with nothing left to
-  // clean it up (the `finally` below never runs for any of them, since the throw happens before the
-  // try is entered).
+// Scenario B's own two canned responses — a tool_use turn, then (once the loopback observes a
+// tool_result in the conversation) a closing text turn. Standard PUBLIC Anthropic Messages API wire
+// shapes (the same family CANNED_TEXT_RESPONSE above already uses) — not an Anthropic SDK-internal
+// declaration, so this is not the "verbatim upstream artifact" the phase's hermeticity rule forbids.
+function cannedToolUseResponse(readTargetPath: string): unknown {
+  return {
+    id: "msg_capture_canned_tooluse_01",
+    type: "message",
+    role: "assistant",
+    model: "claude-sonnet-4-5-20250929",
+    content: [{ type: "tool_use", id: "toolu_capture_01", name: "Read", input: { file_path: readTargetPath } }],
+    stop_reason: "tool_use",
+    stop_sequence: null,
+    usage: { input_tokens: 10, output_tokens: 5 },
+  };
+}
+const CANNED_TEXT_AFTER_TOOL_RESPONSE = {
+  id: "msg_capture_canned_02",
+  type: "message",
+  role: "assistant",
+  model: "claude-sonnet-4-5-20250929",
+  content: [{ type: "text", text: "capture: tool round complete" }],
+  stop_reason: "end_turn",
+  stop_sequence: null,
+  usage: { input_tokens: 12, output_tokens: 6 },
+};
+
+// True once ANY message in the request body's `messages` array carries a `tool_result` content
+// block — i.e. the wrapper has already sent the tool's result back, so the NEXT model turn should
+// be the closing text reply rather than another tool_use. Defensive: any parse failure (a request
+// shape this probe didn't anticipate — e.g. a non-completions endpoint) reports "no tool_result
+// seen", which routes to the tool_use response — the same conservative default the original
+// single-response capture already relied on for every non-completions request it received.
+function requestAlreadySawToolResult(body: unknown): boolean {
+  try {
+    const messages = (body as { messages?: unknown }).messages;
+    if (!Array.isArray(messages)) return false;
+    for (const m of messages) {
+      const content = (m as { content?: unknown }).content;
+      if (Array.isArray(content) && content.some((block) => (block as { type?: string }).type === "tool_result")) return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+async function installOfficialSdk(cleanups: Array<() => void>): Promise<OfficialSdk> {
+  // Checksum-verified ephemeral install (same contract as compile-official-fixture.ts: sha256 + the
+  // Task-11 sha512 integrity pin, both re-verified here, never trusted from an earlier step).
+  const { tarballPath, ownedDir } = await fetchAndVerifyUpstream();
+  if (ownedDir) cleanups.push(() => rmSync(dirname(tarballPath), { recursive: true, force: true }));
+  const npmPrefix = mkdtempSync(join(tmpdir(), "winter-official-capture-"));
+  cleanups.push(() => rmSync(npmPrefix, { recursive: true, force: true }));
+
+  const install = Bun.spawn(
+    ["npm", "install", "--no-save", "--ignore-scripts", "--prefix", npmPrefix, tarballPath],
+    { stdout: "pipe", stderr: "pipe" },
+  );
+  const installOut = (await new Response(install.stdout).text()) + (await new Response(install.stderr).text());
+  if ((await install.exited) !== 0) {
+    throw new Error(`npm install --prefix ${npmPrefix} failed:\n${installOut}`);
+  }
+
+  const officialPkgDir = join(npmPrefix, "node_modules", "@anthropic-ai", "claude-agent-sdk");
+  const officialPkgJson = JSON.parse(readFileSync(join(officialPkgDir, "package.json"), "utf8")) as { main?: string };
+  if (!officialPkgJson.main) throw new Error('installed @anthropic-ai/claude-agent-sdk package.json has no "main" field');
+  const entryPath = join(officialPkgDir, officialPkgJson.main);
+  return (await import(entryPath)) as OfficialSdk;
+}
+
+// --- Scenario A: plain query (unchanged from the original capture) -----------------------------
+
+async function runPlainQueryCapture(officialSdk: OfficialSdk): Promise<void> {
   const cleanups: Array<() => void> = [];
   let server: ReturnType<typeof Bun.serve> | undefined;
-
   try {
-    // 1. Checksum-verified ephemeral install (same contract as compile-official-fixture.ts: sha256 +
-    //    the Task-11 sha512 integrity pin, both re-verified here, never trusted from an earlier step).
-    const { tarballPath, ownedDir } = await fetchAndVerifyUpstream();
-    if (ownedDir) cleanups.push(() => rmSync(dirname(tarballPath), { recursive: true, force: true }));
-    const npmPrefix = mkdtempSync(join(tmpdir(), "winter-official-capture-"));
-    cleanups.push(() => rmSync(npmPrefix, { recursive: true, force: true }));
     const claudeConfigDir = mkdtempSync(join(tmpdir(), "winter-official-capture-config-"));
     cleanups.push(() => rmSync(claudeConfigDir, { recursive: true, force: true }));
     const fixtureCwd = mkdtempSync(join(tmpdir(), "winter-official-capture-cwd-"));
     cleanups.push(() => rmSync(fixtureCwd, { recursive: true, force: true }));
 
-    const install = Bun.spawn(
-      ["npm", "install", "--no-save", "--ignore-scripts", "--prefix", npmPrefix, tarballPath],
-      { stdout: "pipe", stderr: "pipe" },
-    );
-    const installOut = (await new Response(install.stdout).text()) + (await new Response(install.stderr).text());
-    if ((await install.exited) !== 0) {
-      throw new Error(`npm install --prefix ${npmPrefix} failed:\n${installOut}`);
-    }
-
-    const officialPkgDir = join(npmPrefix, "node_modules", "@anthropic-ai", "claude-agent-sdk");
-    const officialPkgJson = JSON.parse(readFileSync(join(officialPkgDir, "package.json"), "utf8")) as { main?: string };
-    if (!officialPkgJson.main) throw new Error("installed @anthropic-ai/claude-agent-sdk package.json has no \"main\" field");
-    const entryPath = join(officialPkgDir, officialPkgJson.main);
-    const officialSdk = (await import(entryPath)) as { query: (args: { prompt: unknown; options: Record<string, unknown> }) => AsyncIterable<{ type: string; subtype?: string }> };
-
-    // 2. Loopback: ONE canned response for every request, whatever the method/path/body — proven
-    //    sufficient by direct probing (the official runtime issues more than one HTTP call for even
-    //    a trivial single-turn prompt; the SAME static response satisfies every one of them and the
-    //    yielded SDK message stream still comes out exactly right). Every request is logged to
-    //    stderr — this log IS the hermeticity evidence: nothing else is ever contacted.
     let requestCount = 0;
     server = Bun.serve({
       port: 0,
@@ -83,14 +138,14 @@ async function runCapture(): Promise<void> {
       fetch(req) {
         requestCount++;
         const url = new URL(req.url);
-        console.error(`[loopback] #${requestCount} ${req.method} ${url.pathname}${url.search} host=${req.headers.get("host")}`);
-        return new Response(JSON.stringify(CANNED_RESPONSE), { status: 200, headers: { "content-type": "application/json" } });
+        console.error(`[loopback A] #${requestCount} ${req.method} ${url.pathname}${url.search} host=${req.headers.get("host")}`);
+        return new Response(JSON.stringify(CANNED_TEXT_RESPONSE), { status: 200, headers: { "content-type": "application/json" } });
       },
     });
-    console.error(`[capture] loopback listening on ${server.url.href} (the ONLY endpoint the official runtime is given)`);
-    console.error(`[capture] CLAUDE_CONFIG_DIR=${claudeConfigDir} (fresh mkdtemp — never the real ~/.claude)`);
+    console.error(`\n=== Scenario A: plain query ===`);
+    console.error(`[capture A] loopback listening on ${server.url.href} (the ONLY endpoint the official runtime is given)`);
+    console.error(`[capture A] CLAUDE_CONFIG_DIR=${claudeConfigDir} (fresh mkdtemp — never the real ~/.claude)`);
 
-    // 3. The official SDK's own query(), hermetically configured.
     const entries: ConformanceTraceEntry[] = [];
     let thrown: unknown;
     try {
@@ -99,10 +154,8 @@ async function runCapture(): Promise<void> {
         options: {
           model: "sonnet",
           cwd: fixtureCwd,
-          settingSources: [], // reads no real user/project/local settings.json (WS-03 §5-adjacent)
+          settingSources: [],
           env: {
-            // Deliberately NOT a process.env spread — an empirical probe (this task's report)
-            // proved the official runtime needs nothing else to complete a full turn.
             ANTHROPIC_BASE_URL: server.url.href.replace(/\/$/, ""),
             ANTHROPIC_API_KEY: "test",
             CLAUDE_CONFIG_DIR: claudeConfigDir,
@@ -116,13 +169,158 @@ async function runCapture(): Promise<void> {
       thrown = e;
     }
 
-    console.error(`[capture] official runtime made ${requestCount} request(s) to the loopback; ${entries.length} message(s) yielded`);
-    if (thrown) console.error(`[capture] query() threw: ${thrown instanceof Error ? thrown.stack ?? thrown.message : String(thrown)}`);
+    console.error(`[capture A] official runtime made ${requestCount} request(s) to the loopback; ${entries.length} message(s) yielded`);
+    if (thrown) console.error(`[capture A] query() threw: ${thrown instanceof Error ? (thrown.stack ?? thrown.message) : String(thrown)}`);
 
-    const normalized = normalizeTrace(entries);
-    console.log(JSON.stringify(normalized, null, 2));
+    console.log(`\n--- Scenario A normalized trace ---`);
+    console.log(JSON.stringify(normalizeTrace(entries), null, 2));
   } finally {
     server?.stop(true);
+    for (const cleanup of cleanups) cleanup();
+  }
+}
+
+// --- Scenario B (Task 13): canUseTool + includeHookEvents + PreToolUse + SessionEnd -------------
+
+async function runPermissionsAndHooksCapture(officialSdk: OfficialSdk): Promise<void> {
+  const cleanups: Array<() => void> = [];
+  let server: ReturnType<typeof Bun.serve> | undefined;
+  try {
+    const claudeConfigDir = mkdtempSync(join(tmpdir(), "winter-official-capture-config-b-"));
+    cleanups.push(() => rmSync(claudeConfigDir, { recursive: true, force: true }));
+    const fixtureCwd = mkdtempSync(join(tmpdir(), "winter-official-capture-cwd-b-"));
+    cleanups.push(() => rmSync(fixtureCwd, { recursive: true, force: true }));
+    // A dedicated dummy read target, OUTSIDE fixtureCwd (so it's genuinely promptable, never
+    // baseline-auto-approved as "routine read-only work in cwd") — no real file, no real content,
+    // never read for real either: canUseTool denies before execution ever reaches it.
+    const readTargetDir = mkdtempSync(join(tmpdir(), "winter-official-capture-readtarget-"));
+    cleanups.push(() => rmSync(readTargetDir, { recursive: true, force: true }));
+    const readTargetPath = join(readTargetDir, "capture-dummy.txt");
+    writeFileSync(readTargetPath, "winter capture fixture -- not real data\n");
+
+    let requestCount = 0;
+    server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      async fetch(req) {
+        requestCount++;
+        const url = new URL(req.url);
+        let sawToolResult = false;
+        try {
+          const bodyText = await req.clone().text();
+          sawToolResult = bodyText.length > 0 && requestAlreadySawToolResult(JSON.parse(bodyText));
+        } catch {
+          // non-JSON or unreadable body — conservative default (tool_use response) below.
+        }
+        console.error(`[loopback B] #${requestCount} ${req.method} ${url.pathname}${url.search} host=${req.headers.get("host")} sawToolResult=${sawToolResult}`);
+        const body = sawToolResult ? CANNED_TEXT_AFTER_TOOL_RESPONSE : cannedToolUseResponse(readTargetPath);
+        return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+      },
+    });
+    console.error(`\n=== Scenario B: canUseTool + includeHookEvents + PreToolUse (observer) + SessionEnd ===`);
+    console.error(`[capture B] loopback listening on ${server.url.href} (the ONLY endpoint the official runtime is given)`);
+    console.error(`[capture B] CLAUDE_CONFIG_DIR=${claudeConfigDir} (fresh mkdtemp); read target=${readTargetPath} (fresh mkdtemp, dummy content, never read for real)`);
+
+    // Captured for the report's own "callback field set" printout. `signal` (an AbortSignal) is
+    // recorded by TYPE only, never JSON.stringify'd (it doesn't serialize meaningfully); every other
+    // field is recorded verbatim — none of WS-07 §7.1's fields are ever secret-shaped.
+    let canUseToolCallCount = 0;
+    let canUseToolFieldSet: string[] = [];
+    let canUseToolPrintableSnapshot: Record<string, unknown> = {};
+    let sessionEndHookRan = false;
+    const preToolUseHookInvocations: unknown[] = [];
+
+    const entries: ConformanceTraceEntry[] = [];
+    let thrown: unknown;
+    try {
+      const q = officialSdk.query({
+        prompt: "please read the capture fixture file",
+        options: {
+          model: "sonnet",
+          cwd: fixtureCwd,
+          settingSources: [],
+          includeHookEvents: true,
+          env: {
+            ANTHROPIC_BASE_URL: server.url.href.replace(/\/$/, ""),
+            ANTHROPIC_API_KEY: "test",
+            CLAUDE_CONFIG_DIR: claudeConfigDir,
+          },
+          // Denies immediately — the point of this scenario is observing the callback's received
+          // fields and the hook lifecycle stream, never actually letting Read execute.
+          canUseTool: async (toolName: string, input: Record<string, unknown>, opts: Record<string, unknown>) => {
+            canUseToolCallCount++;
+            canUseToolFieldSet = Object.keys(opts);
+            canUseToolPrintableSnapshot = {
+              toolName,
+              input,
+              ...Object.fromEntries(Object.entries(opts).map(([k, v]) => [k, k === "signal" ? `<${typeof v}>` : v])),
+            };
+            return { behavior: "deny", message: "capture: denied by canUseTool (Task 13 official capture)" };
+          },
+          // Pure OBSERVER (no opinion) -- deliberately never "allow", so this scenario does not
+          // entangle "does a hook-allow shadow canUseTool in the official runtime" with this
+          // capture's primary goal (the canUseTool field set + lifecycle frames). That question is
+          // recorded as a recommended FOLLOW-UP capture in the report, not risked here.
+          hooks: {
+            PreToolUse: [
+              {
+                hooks: [
+                  async (input: unknown) => {
+                    preToolUseHookInvocations.push(input);
+                    return {};
+                  },
+                ],
+              },
+            ],
+            SessionEnd: [
+              {
+                hooks: [
+                  async () => {
+                    sessionEndHookRan = true;
+                    return {};
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      });
+      for await (const msg of q) {
+        entries.push({ sequence: entries.length, direction: "runtime-to-host", kind: msg.type === "system" ? `system/${msg.subtype}` : msg.type, payload: msg });
+      }
+    } catch (e) {
+      thrown = e;
+    }
+
+    console.error(`[capture B] official runtime made ${requestCount} request(s) to the loopback; ${entries.length} message(s) yielded`);
+    if (thrown) console.error(`[capture B] query() threw: ${thrown instanceof Error ? (thrown.stack ?? thrown.message) : String(thrown)}`);
+    console.error(`[capture B] canUseTool invoked ${canUseToolCallCount} time(s); PreToolUse hook invoked ${preToolUseHookInvocations.length} time(s); SessionEnd hook body ran: ${sessionEndHookRan}`);
+
+    const normalized = normalizeTrace(entries);
+    const lifecycleKinds = normalized.map((e) => e.kind).filter((k) => k.startsWith("system/hook_"));
+    console.error(`[capture B] lifecycle-family messages observed on the stream: ${lifecycleKinds.length ? lifecycleKinds.join(", ") : "(none)"}`);
+
+    console.log(`\n--- Scenario B normalized trace ---`);
+    console.log(JSON.stringify(normalized, null, 2));
+    console.log(`\n--- Scenario B: canUseTool's received field set (WS-07 §7.1 comparison) ---`);
+    console.log(JSON.stringify(canUseToolFieldSet, null, 2));
+    console.log(`\n--- Scenario B: canUseTool's received values (signal recorded by type only) ---`);
+    console.log(JSON.stringify(canUseToolPrintableSnapshot, null, 2));
+    console.log(`\n--- Scenario B: Carry 3 (WS-17 capture-note) signals ---`);
+    console.log(JSON.stringify({ sessionEndHookBodyRan: sessionEndHookRan, lifecycleMessagesObserved: lifecycleKinds }, null, 2));
+  } finally {
+    server?.stop(true);
+    for (const cleanup of cleanups) cleanup();
+  }
+}
+
+async function runCapture(): Promise<void> {
+  const cleanups: Array<() => void> = [];
+  try {
+    const officialSdk = await installOfficialSdk(cleanups);
+    await runPlainQueryCapture(officialSdk);
+    await runPermissionsAndHooksCapture(officialSdk);
+  } finally {
     for (const cleanup of cleanups) cleanup();
   }
 }
