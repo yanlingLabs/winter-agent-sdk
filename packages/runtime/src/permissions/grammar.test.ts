@@ -502,3 +502,67 @@ describe("isRecognizedReadOnly -- fix round 1 (Findings A + B)", () => {
     expect(isRecognizedReadOnly("LD_PRELOAD=/tmp/evil.so cat /etc/passwd")).toBe(false);
   });
 });
+
+// P2 fix-wave item 2 (Finding C / "O(n^2) worst case in stripWrappers/stripLeadingAssignments/
+// extractRedirectTargets", refused at the trivial-bar during T3's own round): regression coverage
+// for the threading fix (leadingWordAt/stripLeadingAssignmentsAt, grammar.ts). Each fixture below
+// sizes its adversarial input so the PRE-FIX rescan-per-word shape (O(n) re-scans, each O(remaining
+// length)) would take many seconds; the threaded O(n) implementation completes in well under a
+// second even on a loaded CI runner. A generous 2s bound (not a tight micro-benchmark) is
+// deliberate -- this is a regression tripwire against reintroducing the quadratic shape, not a
+// performance SLO.
+describe("P2 fix-wave item 2: the threading fix is linear, not quadratic, in adversarial inputs", () => {
+  test("many chained single-char flags after a fixed wrapper (stripWrappers' own inner flag loop)", () => {
+    // `timeout` also consumes exactly one trailing positional (its own duration argument, per
+    // WRAPPERS_WITH_POSITIONAL_ARG) AFTER the flag loop -- the literal "30" here plays that role,
+    // mirroring the established "timeout 30 ls -la" -> "ls -la" fixture above, just with many flags
+    // prepended so this test actually exercises the inner flag-stripping loop's own iteration count.
+    const manyFlags = Array.from({ length: 20_000 }, (_, i) => `-${i % 10}`).join(" ");
+    const cmd = `timeout ${manyFlags} 30 realcmd`;
+    const start = performance.now();
+    const result = stripWrappers(cmd, "allow");
+    const elapsedMs = performance.now() - start;
+    expect(result).toBe("realcmd");
+    expect(elapsedMs).toBeLessThan(2000);
+  });
+
+  test("many chained xargs wrappers (stripWrappers' own outer loop, each iteration re-deriving afterAssignments pre-fix)", () => {
+    const cmd = "xargs ".repeat(20_000) + "realcmd";
+    const start = performance.now();
+    const result = stripWrappers(cmd, "allow");
+    const elapsedMs = performance.now() - start;
+    expect(result).toBe("realcmd");
+    expect(elapsedMs).toBeLessThan(2000);
+  });
+
+  test("many chained leading assignments (stripLeadingAssignmentsAt's own loop)", () => {
+    const manyAssignments = Array.from({ length: 20_000 }, (_, i) => `V${i}=x`).join(" ");
+    const cmd = `${manyAssignments} realcmd`;
+    const start = performance.now();
+    const result = stripWrappers(cmd, "allow");
+    const elapsedMs = performance.now() - start;
+    expect(result).toBe("realcmd");
+    expect(elapsedMs).toBeLessThan(2000);
+  });
+
+  test("many chained redirects (extractRedirectTargets' own loop)", () => {
+    const cmd = Array.from({ length: 20_000 }, (_, i) => `a${i}>f${i}`).join(" ");
+    const start = performance.now();
+    const targets = extractRedirectTargets(cmd);
+    const elapsedMs = performance.now() - start;
+    expect(targets).toHaveLength(20_000);
+    expect(targets[0]).toBe("f0");
+    expect(targets[19_999]).toBe("f19999");
+    expect(elapsedMs).toBeLessThan(2000);
+  });
+
+  // Behavior-preservation spot checks alongside the perf regressions above -- the threading change
+  // must never alter WHAT is stripped/extracted, only how fast.
+  test("behavior is byte-identical to the pre-threading implementation on ordinary, non-adversarial inputs", () => {
+    expect(stripWrappers("timeout 30 ls -la", "allow")).toBe("ls -la");
+    expect(stripWrappers("FOO=bar BAZ=qux ls", "allow")).toBe("ls");
+    expect(stripWrappers("xargs -0 rm", "allow")).toBe("xargs -0 rm"); // not flag-free -- stops stripping
+    expect(stripWrappers("xargs rm -rf", "allow")).toBe("rm -rf");
+    expect(extractRedirectTargets("echo hi > out.txt 2>> err.log")).toEqual(["out.txt", "err.log"]);
+  });
+});

@@ -69,11 +69,24 @@ export interface ParsedRule {
 
 // Provisional parser input-length cap (WS-07 §3: "commands over the parser limit... fall back to
 // permission handling"). No public value is pinned anywhere in scope for this task; 50k chars is
-// comfortably above any realistic single shell invocation while still bounding the O(n) scan cost
-// of a pathological input. Revisit if a differential capture (WS-17) pins a real number. Scoped to
-// `splitCompound` only (the one function whose contract has a null "unparseable" escape) -- the
-// other functions here have no such escape hatch and simply do proportionally more linear work on
-// a long input rather than needing their own cap.
+// comfortably above any realistic single shell invocation while still bounding the scan cost of a
+// pathological input. Revisit if a differential capture (WS-17) pins a real number.
+//
+// Fix round 1, Finding A / P2 fix-wave item 2 correction: this comment used to claim TWO things
+// that are no longer (and, for the second, were never actually) true. (1) "Scoped to splitCompound
+// only" -- false since fix round 1's own isRecognizedReadOnly guard (scanIfParseable, above) also
+// consults it; both of scanIfParseable's two callers share this one cap. (2) "the other functions
+// here ... simply do proportionally more linear work" -- also false as originally stated:
+// stripWrappers/stripLeadingAssignments/extractRedirectTargets each had an internal loop that
+// re-derived a fresh scanShellLike over an ever-shrinking SLICED substring once per
+// wrapper/flag/redirect, making their worst case polynomial, not linear, for an input with many of
+// those (e.g. many single-char flags, or many chained redirects) -- PARSE_LIMIT alone never bounded
+// that cost, since it only bounds the INITIAL scan's own starting length, not how many times a
+// downstream loop re-scans a shrinking tail of it. The fix-wave's own threading change
+// (leadingWordAt/stripLeadingAssignmentsAt below, sharing ONE scan across a whole call via a plain
+// integer offset into the unchanging original string, never a re-scanned slice) is what actually
+// makes those three functions linear; this cap remains a separate, complementary bound on the
+// scan's own starting length, orthogonal to that fix.
 export const PARSE_LIMIT = 50_000;
 
 // WS-07 §3's minimum read-only recognition list, verbatim from the task brief. Exported (named
@@ -262,20 +275,38 @@ function scanIfParseable(command: string): ScanInfo | null {
   return info.ok ? info : null;
 }
 
-// Reads one whitespace-delimited "word" starting from the first top-level, non-whitespace
-// character in `s` (skipping any leading top-level whitespace first). A word may itself contain
-// top-level whitespace's OPPOSITE -- non-top-level spans (quoted/parenthesized) -- without ending;
-// it only stops at whitespace that is itself top-level. Returns `undefined` word when `s` has no
-// more top-level content.
-function leadingWord(s: string): { word: string | undefined; afterWord: string } {
-  const { topLevel, ok } = scanShellLike(s);
-  const isTop = (i: number) => (ok ? topLevel[i] === true : true); // defensive fallback: plain whitespace split if the fragment itself is malformed
-  let i = 0;
+// P2 fix-wave item 2 (Finding C / "O(n^2) worst case in stripWrappers/stripLeadingAssignments/
+// extractRedirectTargets", refused at the trivial-bar during T3's own round): reads one
+// whitespace-delimited "word" starting at `start` within `s`, using an ALREADY-COMPUTED ScanInfo
+// for the FULL string `s` -- never re-scanned here. Returns the END index (exclusive), never a
+// sliced "rest of string", so a caller walking `s` left-to-right in a loop (stripWrappers' own
+// wrapper/flag-stripping loop, extractRedirectTargets' own operator loop) shares ONE scan across
+// every word it reads, via a plain integer offset into the SAME unchanging string, instead of each
+// call re-deriving topLevel/ok from scratch over an ever-shrinking SLICED tail substring. That
+// repeated re-derivation was the actual O(n^2) shape: k words/flags/redirects in a command of
+// length n cost O(n) each to (re)scan, O(n*k) total, k ~ n in the worst case (many chained
+// single-char flags, or many chained "xargs xargs xargs ... cmd" wrappers, or many redirects).
+//
+// A word may itself contain top-level whitespace's OPPOSITE -- non-top-level spans (quoted/
+// parenthesized) -- without ending; it only stops at whitespace that is itself top-level. Returns
+// `undefined` word when nothing top-level remains from `start` onward.
+function leadingWordAt(s: string, info: ScanInfo, start: number): { word: string | undefined; end: number } {
+  const isTop = (i: number) => (info.ok ? info.topLevel[i] === true : true); // defensive fallback: plain whitespace split if the fragment itself is malformed
+  let i = start;
   while (i < s.length && isTop(i) && /\s/.test(s[i]!)) i++;
-  if (i >= s.length) return { word: undefined, afterWord: s };
-  const start = i;
+  if (i >= s.length) return { word: undefined, end: i };
+  const wordStart = i;
   while (i < s.length && !(isTop(i) && /\s/.test(s[i]!))) i++;
-  return { word: s.slice(start, i), afterWord: s.slice(i) };
+  return { word: s.slice(wordStart, i), end: i };
+}
+
+// Single-shot convenience wrapper for a caller that reads AT MOST one or two words and never loops
+// (isRecognizedReadOnly's own two call sites, below) -- scans once, reads once. Byte-identical
+// public contract to the pre-fix-wave `leadingWord` this replaces; a looping caller should use
+// `leadingWordAt` directly against one shared, precomputed ScanInfo instead of this wrapper.
+function leadingWord(s: string): { word: string | undefined; afterWord: string } {
+  const { word, end } = leadingWordAt(s, scanShellLike(s), 0);
+  return { word, afterWord: s.slice(end) };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -346,56 +377,68 @@ function isSafeAssignmentValue(value: string): boolean {
   return !/\$\(|`|\$\{/.test(value);
 }
 
-function stripLeadingAssignments(cmd: string, direction: "allow" | "denyAsk"): string {
-  const { topLevel, ok } = scanShellLike(cmd);
-  if (!ok) return cmd;
-  let pos = 0;
+// P2 fix-wave item 2: threaded sibling of stripLeadingAssignments (below) -- operates on `s`/`info`
+// (the SAME string and precomputed scan stripWrappers' own loop shares across every wrapper/
+// assignment/flag it strips) starting at `start`, returning the new offset rather than a sliced
+// string. A STICKY (non-global, `y` flag) regex anchors the assignment-name match at exactly
+// `start` without a fresh `.slice(pos)` allocation on every iteration, closing the identical rescan
+// shape one level down (many chained leading assignments, e.g. "A=1 B=2 C=3 ... cmd").
+const ASSIGNMENT_NAME_RE = /[A-Za-z_][A-Za-z0-9_]*=/y;
+function stripLeadingAssignmentsAt(s: string, info: ScanInfo, start: number, direction: "allow" | "denyAsk"): number {
+  const isTop = (i: number) => (info.ok ? info.topLevel[i] === true : true);
+  let pos = start;
   for (;;) {
-    while (pos < cmd.length && topLevel[pos] && /\s/.test(cmd[pos]!)) pos++;
-    if (pos >= cmd.length || !topLevel[pos]) break;
-    const nameMatch = /^[A-Za-z_][A-Za-z0-9_]*=/.exec(cmd.slice(pos));
+    while (pos < s.length && isTop(pos) && /\s/.test(s[pos]!)) pos++;
+    if (pos >= s.length || !isTop(pos)) break;
+    ASSIGNMENT_NAME_RE.lastIndex = pos;
+    const nameMatch = ASSIGNMENT_NAME_RE.exec(s);
     if (!nameMatch) break;
     const name = nameMatch[0]!.slice(0, -1); // strip the trailing "="
     const eqEnd = pos + nameMatch[0]!.length;
     let vEnd = eqEnd;
-    while (vEnd < cmd.length && !(topLevel[vEnd] && /\s/.test(cmd[vEnd]!))) vEnd++;
-    const value = cmd.slice(eqEnd, vEnd);
+    while (vEnd < s.length && !(isTop(vEnd) && /\s/.test(s[vEnd]!))) vEnd++;
+    const value = s.slice(eqEnd, vEnd);
     // Fix round 1, Finding B / Ruling P2-C: a dangerous NAME is un-strippable on allow regardless
     // of its value's syntax; stop BEFORE this assignment either way, leaving it and everything
     // after it intact (denyAsk is unaffected -- it never reaches this branch at all).
     if (direction !== "denyAsk" && (DANGEROUS_ASSIGNMENT_NAMES.has(name) || !isSafeAssignmentValue(value))) break;
     pos = vEnd;
   }
-  return cmd.slice(pos);
+  return pos;
 }
 
 export function stripWrappers(cmd: string, direction: "allow" | "denyAsk"): string {
-  let rest = cmd;
+  // P2 fix-wave item 2: ONE scan for this whole call, threaded through every helper below via a
+  // plain integer offset into this SAME, unchanging `cmd` string -- never a re-scan of a
+  // progressively-sliced substring (see leadingWordAt/stripLeadingAssignmentsAt's own headers for
+  // the O(n^2) shape this closes).
+  const info = scanShellLike(cmd);
+  let pos = 0;
   for (;;) {
-    const afterAssignments = stripLeadingAssignments(rest, direction);
-    const { word, afterWord } = leadingWord(afterAssignments);
-    if (word === undefined) return afterAssignments;
+    pos = stripLeadingAssignmentsAt(cmd, info, pos, direction);
+    const { word, end: afterWordEnd } = leadingWordAt(cmd, info, pos);
+    if (word === undefined) return cmd.slice(pos);
 
     if (word === XARGS) {
-      const { word: next } = leadingWord(afterWord);
-      if (next !== undefined && next.startsWith("-")) return afterAssignments; // not flag-free -- stop stripping
-      rest = afterWord;
+      const { word: next } = leadingWordAt(cmd, info, afterWordEnd);
+      if (next !== undefined && next.startsWith("-")) return cmd.slice(pos); // not flag-free -- stop stripping
+      pos = afterWordEnd;
       continue;
     }
 
-    if (!FIXED_WRAPPERS.has(word)) return afterAssignments;
+    if (!FIXED_WRAPPERS.has(word)) return cmd.slice(pos);
 
-    let remainder = afterWord;
+    let remainderPos = afterWordEnd;
     for (;;) {
-      const { word: flag, afterWord: afterFlag } = leadingWord(remainder);
+      const { word: flag, end: afterFlagEnd } = leadingWordAt(cmd, info, remainderPos);
       if (flag === undefined || !flag.startsWith("-")) break;
-      remainder = afterFlag;
+      remainderPos = afterFlagEnd;
     }
     if (WRAPPERS_WITH_POSITIONAL_ARG.has(word)) {
-      const { word: posArg, afterWord: afterPos } = leadingWord(remainder);
-      if (posArg !== undefined && !posArg.startsWith("-")) remainder = afterPos;
+      const { word: posArg, end: afterPosEnd } = leadingWordAt(cmd, info, remainderPos);
+      if (posArg !== undefined && !posArg.startsWith("-")) remainderPos = afterPosEnd;
     }
-    rest = remainder;
+    pos = remainderPos;
   }
 }
 
@@ -413,7 +456,8 @@ function stripQuotes(word: string): string {
 }
 
 export function extractRedirectTargets(command: string): string[] {
-  const { topLevel, ok } = scanShellLike(command);
+  const info = scanShellLike(command);
+  const { topLevel, ok } = info;
   if (!ok) return [];
 
   const targets: string[] = [];
@@ -450,11 +494,14 @@ export function extractRedirectTargets(command: string): string[] {
       continue;
     }
 
-    const rest = command.slice(i + opLen);
-    const lw = leadingWord(rest);
+    // P2 fix-wave item 2: leadingWordAt reads directly off the ONE scan (`info`) computed at this
+    // function's own top, at the absolute index right past this operator -- never a fresh
+    // scanShellLike over a freshly-sliced tail substring (the pre-fix O(n^2) shape: many redirect
+    // operators, each re-scanning the remaining command from scratch).
+    const lw = leadingWordAt(command, info, i + opLen);
     if (lw.word !== undefined) {
       targets.push(stripQuotes(lw.word));
-      i = i + opLen + (rest.length - lw.afterWord.length);
+      i = lw.end;
     } else {
       i += opLen;
     }
