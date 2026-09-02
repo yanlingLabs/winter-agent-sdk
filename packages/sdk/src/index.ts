@@ -83,3 +83,7 @@ export {
   listSubagents,
   getSubagentMessages,
 } from "./sessions.ts";
+
+// Task 3 (WS-07 §3.3/§4): permissions surface, pinned-types home. See permissions/types.ts's own
+// header for the section boundaries later tasks (5, 8) extend.
+export type { PermissionMode, PermissionBehavior, PermissionRuleValue } from "./permissions/types.ts";
