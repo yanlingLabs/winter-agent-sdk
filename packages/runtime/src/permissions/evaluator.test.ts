@@ -51,6 +51,12 @@ import {
 } from "./evaluator.ts";
 import { PolicyStateStore, WinterPermissionError, type PolicyState } from "./policy-state.ts";
 import { emptyRuleSet, resolveRules, sourceRule, type SourcedRuleEntry, type SourcedRuleSet } from "./ruleset.ts";
+// Task 9 (WS-08 §4): the real hooks engine, for the "Task 9 -- the real hooks engine wired through
+// createHookStage" describe block below — every OTHER fixture in this file uses spyHookStage to pin
+// the seam contract in isolation; this is the one place the actual registry/reducer/runner run.
+import { createHookStage } from "../hooks/hook-stage.ts";
+import { buildHookRegistry, type SourcedHookEntry } from "../hooks/registry.ts";
+import { runHooks, type HookInvoker, type HookAuditRecorder } from "../hooks/runner.ts";
 
 // --- fixture helpers -----------------------------------------------------------------------------
 
@@ -172,6 +178,103 @@ describe("stage 1: PreToolUse hooks", () => {
     expect(record.decision).toBe("deny");
     expect(record.mechanism).toBe("canUseTool");
     expect(record.message).toBe("human said no");
+  });
+});
+
+// --- Task 9 (WS-08 §4/§5): the REAL hooks engine (registry+reducer+runner), not a spy ---------------
+//
+// Every other "stage 1" fixture above uses `spyHookStage` to pin the SEAM CONTRACT in isolation; this
+// block instead wires the REAL `createHookStage` (packages/runtime/src/hooks/hook-stage.ts) backed by
+// a real `buildHookRegistry` + `runHooks`, to prove the actual T9 engine composes correctly with
+// evaluate()'s stage order — exactly the task brief's own Step 3 list: deny stops before rules, allow
+// + a later deny rule still denies, and a hook's transform is visible to rule matching. PostToolUse
+// never runs inside evaluate() at all (it fires after a tool executes — engine.ts's round loop, wired
+// by T10 alongside the lifecycle stream); the last describe block below proves the SAME registry
+// composes correctly for a genuine post-execution `runHooks("PostToolUse", ...)` call, with the
+// structural no-retroactive-denial property re-asserted at this integration layer.
+describe("Task 9 — the real hooks engine wired through createHookStage (WS-08 §4)", () => {
+  function fixedInvoker(raw: unknown): HookInvoker {
+    return { invoke: async () => raw };
+  }
+  function noopAudit(): HookAuditRecorder {
+    return { record: () => {} };
+  }
+  function preToolUseEntry(id: string, overrides?: Partial<SourcedHookEntry>): SourcedHookEntry {
+    return { id, event: "PreToolUse", source: "sdk", ...overrides };
+  }
+
+  test("a real hook 'deny' stops the call before stage 2 ever runs — an allow rule that WOULD have matched never gets the chance", async () => {
+    const registry = buildHookRegistry([preToolUseEntry("h1")]);
+    const invoker = fixedInvoker({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: "hook says no" } });
+    const ctx = baseCtx({
+      hookStage: createHookStage({ registry, invoker, audit: noopAudit(), sessionId: "s1" }),
+      policy: policy({ rules: withRules(rule("Bash(ls *)", "allow")) }),
+    });
+    const record = await evaluate(call("Bash", { command: "ls" }), ctx);
+    expect(record.decision).toBe("deny");
+    expect(record.mechanism).toBe("hook");
+    expect(record.hookId).toBe("h1");
+    expect(record.message).toBe("hook says no");
+  });
+
+  test("a real hook 'allow' is advisory only — a later, unrelated deny rule still wins (matches an EARLIER spy-based fixture, now through the real engine)", async () => {
+    const registry = buildHookRegistry([preToolUseEntry("h1")]);
+    const invoker = fixedInvoker({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "allow" } });
+    const ctx = baseCtx({
+      hookStage: createHookStage({ registry, invoker, audit: noopAudit(), sessionId: "s1" }),
+      policy: policy({ rules: withRules(rule("Bash(rm *)", "deny")) }),
+    });
+    const record = await evaluate(call("Bash", { command: "rm -rf x" }), ctx);
+    expect(record.decision).toBe("deny");
+    expect(record.mechanism).toBe("rule");
+  });
+
+  test("a real hook's transform is visible to rule matching — a transformed command matching a deny rule denies, even though the ORIGINAL command matched nothing", async () => {
+    const registry = buildHookRegistry([preToolUseEntry("h1")]);
+    const invoker = fixedInvoker({ hookSpecificOutput: { hookEventName: "PreToolUse", updatedInput: { command: "rm -rf x" } } });
+    const ctx = baseCtx({
+      hookStage: createHookStage({ registry, invoker, audit: noopAudit(), sessionId: "s1" }),
+      policy: policy({ rules: withRules(rule("Bash(rm *)", "deny")) }),
+    });
+    const record = await evaluate(call("Bash", { command: "echo harmless" }), ctx);
+    expect(record.decision).toBe("deny");
+    expect(record.mechanism).toBe("rule");
+    expect(record.transformedInput).toEqual({ command: "rm -rf x" });
+  });
+
+  test("multiple real hooks across sources still resolve deterministically through evaluate() (managed observes, sdk denies)", async () => {
+    const registry = buildHookRegistry([preToolUseEntry("managed-1", { source: "managed" }), preToolUseEntry("sdk-1", { source: "sdk" })]);
+    let calls = 0;
+    const invoker: HookInvoker = {
+      invoke: async () => {
+        calls++;
+        if (calls === 1) return { hookSpecificOutput: { hookEventName: "PreToolUse", additionalContext: "observed" } }; // managed: no opinion
+        return { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: "sdk hook denies" } };
+      },
+    };
+    const ctx = baseCtx({ hookStage: createHookStage({ registry, invoker, audit: noopAudit(), sessionId: "s1" }) });
+    const record = await evaluate(call("Bash", { command: "ls" }), ctx);
+    expect(calls).toBe(2); // managed ran BEFORE sdk (WS-08 §2 merge order), and its no-opinion did not short-circuit anything
+    expect(record.decision).toBe("deny");
+    expect(record.hookId).toBe("sdk-1");
+  });
+
+  test("PostToolUse: the SAME registry mechanism fires post-execution with transformedOutput/classifierContext accumulated -- contribution-capable only, structurally incapable of a retroactive denial", async () => {
+    const registry = buildHookRegistry([{ id: "post-1", event: "PostToolUse", source: "sdk" }]);
+    const invoker = fixedInvoker({
+      hookSpecificOutput: {
+        hookEventName: "PostToolUse",
+        updatedToolOutput: "sanitized output",
+        classifierContext: "wrote outside the workspace",
+        // A buggy/malicious hook trying to sneak a decision-shaped field into PostToolUse's output —
+        // structurally ignored (PostToolUse's own interpreter never produces a "decision" outcome).
+        permissionDecision: "deny",
+      },
+    });
+    const composite = await runHooks("PostToolUse", { toolName: "Bash", input: { command: "ls" } }, { registry, invoker, audit: noopAudit(), sessionId: "s1", policyVersion: 1 });
+    expect(composite.decision).toBeUndefined(); // no retroactive denial is even representable
+    expect(composite.transformedOutput).toBe("sanitized output");
+    expect(composite.classifierContext).toEqual([{ hookId: "post-1", context: "wrote outside the workspace" }]);
   });
 });
 
