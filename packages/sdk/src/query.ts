@@ -219,6 +219,13 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
           // detached sender task has nowhere useful to surface a rejection (e.g. the connection
           // closing before the ack arrives), matching the policy note above for the writes just above.
           sendControlRequest("end_input", undefined).catch(() => {});
+          // Ruling P2-B (T2 review, lands in Task 8): this stdin.end() makes single-shot mode
+          // structurally unable to ANSWER a runtime-originated control_request (permission/hook RPC)
+          // — the write side is already closed when the request arrives. The pinned fix is two-sided
+          // and must land together or the topologies diverge (WS-04 §1): the wrapper keeps stdin
+          // open until terminal handling completes, AND the engine pump treats end_input as "no more
+          // USER envelopes" (not "stop reading frames") so control_responses still route to the
+          // bridge until the turn loop drains. Do not fix one side without the other.
           proc.stdin.end();
         } catch {
           /* see policy note above */
