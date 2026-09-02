@@ -17,7 +17,10 @@
 // in scripts/differential.ts, and the equivalence scenario at packages/sdk/src/
 // transport-equivalence.test.ts:619) from "the tool executes" to "the tool is denied" — and this
 // task's own gate is explicit: "the default path with no rules configured must not alter existing
-// scenarios' wire" (task-6-brief.md Step 4). The controller-approved resolution (advisor-reviewed):
+// scenarios' wire" (task-6-brief.md Step 4). No P2-x ruling covers this — WS-07 pins no exception to
+// its own §6.1 text. The resolution below is advisor-reviewed and mandated by the task's own
+// byte-unchanged-goldens gate, not controller-approved; a controller ruling is requested in the
+// task-6 report so this stops being an implementer-level call before T8 inherits it:
 //   - The PromptStage stub stays GENUINELY no-opinion (returns null) — never secretly opinionated.
 //   - ONLY the generic "nothing matched anything, mode is prompt-capable" fallback at the very
 //     bottom of evaluate() resolves a null PromptStage answer to ALLOW, so a session with zero
