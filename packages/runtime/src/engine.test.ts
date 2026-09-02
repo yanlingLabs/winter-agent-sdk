@@ -73,7 +73,13 @@ test("tool rounds: tool_use then text — the engine executes the tool and the s
       return scripted.generate(input);
     },
   };
-  const done = runEngine({ config: baseConfig(), input: runtime.input, output: runtime.output, provider, tools: stubExecutor });
+  const done = runEngine({
+    config: baseConfig({ allowedTools: ["echo_tool"] }), // Ruling P2-I: an unmatched call now denies absent a real host — this test is about tool EXECUTION, not permissions, so pre-approve it
+    input: runtime.input,
+    output: runtime.output,
+    provider,
+    tools: stubExecutor,
+  });
 
   host.output.write({ type: "user", text: "go" });
   host.output.write({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined });
@@ -199,7 +205,13 @@ test("Ruling P1-F: maxTurns accumulates across the whole run, not per envelope �
       return stubExecutor.execute(call);
     },
   };
-  const done = runEngine({ config: baseConfig({ maxTurns: 1 }), input: runtime.input, output: runtime.output, provider, tools: countingExecutor });
+  const done = runEngine({
+    config: baseConfig({ maxTurns: 1, allowedTools: ["t"] }), // Ruling P2-I: pre-approve so c1 actually reaches tools.execute() — this test is about the maxTurns budget, not permissions
+    input: runtime.input,
+    output: runtime.output,
+    provider,
+    tools: countingExecutor,
+  });
 
   host.output.write({ type: "user", text: "first" });
   host.output.write({ type: "user", text: "second" });
@@ -240,7 +252,13 @@ test("Ruling P1-G: interrupt mid-tool-execution leaves a paired synthetic tool_r
       return { kind: "text", text: "after interrupt" };
     },
   };
-  const done = runEngine({ config: baseConfig(), input: runtime.input, output: runtime.output, provider, tools: blockingTools });
+  const done = runEngine({
+    config: baseConfig({ allowedTools: ["slow_tool"] }), // Ruling P2-I: pre-approve so execution genuinely starts (this test is about interrupt-during-execution, not permissions)
+    input: runtime.input,
+    output: runtime.output,
+    provider,
+    tools: blockingTools,
+  });
 
   host.output.write({ type: "user", text: "go" });
   await entered; // deterministic: only interrupt once we KNOW the engine is blocked inside tools.execute()
@@ -303,7 +321,13 @@ test("Ruling P1-H: a tool-executor throw leaves a paired synthetic tool_result, 
       return { kind: "text", text: "after throw" };
     },
   };
-  const done = runEngine({ config: baseConfig(), input: runtime.input, output: runtime.output, provider, tools: throwingTools });
+  const done = runEngine({
+    config: baseConfig({ allowedTools: ["good_tool", "bad_tool"] }), // Ruling P2-I: pre-approve both so execution genuinely runs (this test is about a mid-round throw, not permissions)
+    input: runtime.input,
+    output: runtime.output,
+    provider,
+    tools: throwingTools,
+  });
 
   host.output.write({ type: "user", text: "go" });
 
@@ -653,7 +677,11 @@ test("Task 6: a denied tool call produces a synthetic tool_result with denied:tr
   try {
     const sessionId = randomUUID();
     const cwd = "/winter-fixture-permissions";
-    const config: RuntimeConfig = { sessionId, cwd, model: "sonnet", disallowedTools: ["test_tool"] };
+    // Ruling P2-I: allowedTools:["other_tool"] added so call2 keeps executing normally (an
+    // UNMATCHED call now denies absent a real host too) — this test's own point is that call1's
+    // EXPLICIT disallow-rule denial does not stop the round from reaching call2, which this fixture
+    // change preserves exactly as originally intended.
+    const config: RuntimeConfig = { sessionId, cwd, model: "sonnet", disallowedTools: ["test_tool"], allowedTools: ["other_tool"] };
     // Fix round 1, item 3 (LOW — history-leg direct capture): the established P1-G/P1-H-pattern
     // capturing provider, in place of scriptedProvider's plain queue, so the SECOND generate()
     // call's `messages` snapshot (the engine's own internal history accumulator) can be inspected
@@ -794,7 +822,7 @@ test("Task 6: switching INTO bypassPermissions mid-run without allowDangerouslyS
   expect(code).toBe(0);
 });
 
-test("Task 6: live set_permission_mode flips behavior between two rounds — default allows an unmatched call (interim fallback), dontAsk then denies the same shape", async () => {
+test("Task 6: live set_permission_mode flips behavior between two rounds — bypassPermissions allows an unmatched call, dontAsk then denies the same shape (Ruling P2-I retired the old default-allows contrast: default now denies unmatched actions too, absent a real host)", async () => {
   const { host, runtime } = createInMemoryChannel();
   const provider = scriptedProvider([
     { kind: "tool_use", calls: [{ id: "c1", name: "mystery_tool", input: {} }] },
@@ -802,7 +830,13 @@ test("Task 6: live set_permission_mode flips behavior between two rounds — def
     { kind: "tool_use", calls: [{ id: "c2", name: "mystery_tool", input: {} }] },
     { kind: "text", text: "unreachable — c2 is denied before a second provider call would matter" },
   ]);
-  const done = runEngine({ config: baseConfig(), input: runtime.input, output: runtime.output, provider, tools: stubExecutor });
+  const done = runEngine({
+    config: baseConfig({ permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true }),
+    input: runtime.input,
+    output: runtime.output,
+    provider,
+    tools: stubExecutor,
+  });
 
   // Sequenced deliberately (NOT all written up front): writing every frame synchronously would let
   // the pump race the mode switch and envelope 2 ahead of envelope 1 ever reaching its own
@@ -810,7 +844,7 @@ test("Task 6: live set_permission_mode flips behavior between two rounds — def
   // round loop consumes `userFrames`) — the SAME class of race the file's own "FIFO under pressure"
   // test above exists to guard against, just triggered from the opposite direction here. Round 1
   // must OBSERVABLY complete (its result frame seen) before the mode switch is even sent.
-  host.output.write({ type: "user", text: "first" }); // round 1: default mode
+  host.output.write({ type: "user", text: "first" }); // round 1: bypassPermissions
 
   const round1Frames: WinterFrame[] = [];
   for await (const f of host.input) {
@@ -818,7 +852,7 @@ test("Task 6: live set_permission_mode flips behavior between two rounds — def
     if (f.type === "data" && (f as { message: SdkMessage }).message.type === "result") break;
   }
   const firstToolResult = dataMessages(round1Frames).find((m) => m.type === "user") as { message: { content: unknown } };
-  // envelope 1 (default): mystery_tool executes (interim no-opinion-prompt-stage fallback -> allow)
+  // envelope 1 (bypassPermissions): mystery_tool executes unconditionally, no rule needed (WS-07 §6.4)
   expect(firstToolResult.message.content).toEqual([{ type: "tool_result", tool_use_id: "c1", content: "mystery_tool:{}" }]);
 
   host.output.write({ type: "control_request", requestId: "m1", subtype: "set_permission_mode", payload: "dontAsk" });

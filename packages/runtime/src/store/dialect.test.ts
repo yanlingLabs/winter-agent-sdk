@@ -287,7 +287,9 @@ describe("engine wiring (temp WINTER_HOME, in-memory leg)", () => {
     try {
       const sessionId = randomUUID();
       const cwd = "/winter-fixture";
-      const config: RuntimeConfig = { sessionId, cwd, model: "sonnet" };
+      // Ruling P2-I: allowedTools:["t"] pre-approves the tool call so it actually executes — this
+      // test is about persistence shape, not permissions.
+      const config: RuntimeConfig = { sessionId, cwd, model: "sonnet", allowedTools: ["t"] };
       const provider = scriptedProvider([
         { kind: "tool_use", calls: [{ id: "call1", name: "t", input: {} }] },
         { kind: "text", text: "done" },
@@ -394,7 +396,9 @@ describe("engine wiring (temp WINTER_HOME, in-memory leg)", () => {
     try {
       const sessionId = randomUUID();
       const cwd = "/winter-fixture";
-      const config: RuntimeConfig = { sessionId, cwd, model: "sonnet" };
+      // Ruling P2-I: allowedTools pre-approves both calls so they actually execute — this test is
+      // about a mid-round throw's persisted shape, not permissions.
+      const config: RuntimeConfig = { sessionId, cwd, model: "sonnet", allowedTools: ["good_tool", "bad_tool"] };
       const provider = scriptedProvider([
         { kind: "tool_use", calls: [{ id: "call1", name: "good_tool", input: {} }, { id: "call2", name: "bad_tool", input: {} }] },
       ]);
@@ -443,7 +447,9 @@ describe("engine wiring (temp WINTER_HOME, in-memory leg)", () => {
     try {
       const sessionId = randomUUID();
       const cwd = "/winter-fixture";
-      const config: RuntimeConfig = { sessionId, cwd, model: "sonnet" };
+      // Ruling P2-I: allowedTools:["slow_tool"] pre-approves so execution genuinely starts — this
+      // test is about an interrupted round's persisted shape, not permissions.
+      const config: RuntimeConfig = { sessionId, cwd, model: "sonnet", allowedTools: ["slow_tool"] };
 
       let enteredExecute!: () => void;
       const entered = new Promise<void>((resolve) => {

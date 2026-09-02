@@ -193,6 +193,11 @@ interface QueryScenarioOptions {
   // in-process state).
   sessionId?: string;
   resume?: string;
+  // Ruling P2-I: with the real PromptStage wired, an unmatched tool call with zero permission
+  // configuration now denies (WS-07 §6.1 "never implicitly allowed") rather than falling through
+  // the retired T6 interim-allow fallback — scenarios that need a tool call to actually EXECUTE
+  // (this file's own point is transport/wire equivalence, not permissions) pre-approve it here.
+  allowedTools?: string[];
   // Invoked once per yielded message, AFTER it's recorded into the trace — the kill/abort
   // scenarios use this to act at a precise, OBSERVED point in the stream (WS-04 events), never a
   // real-clock guess (unlike the raw-driven interrupt scenario, which has no such observable event
@@ -220,6 +225,7 @@ async function traceViaQuery(leg: LegName, scenario: QueryScenarioOptions): Prom
         ...(abortController ? { abortController } : {}),
         ...(scenario.sessionId !== undefined ? { sessionId: scenario.sessionId } : {}),
         ...(scenario.resume !== undefined ? { resume: scenario.resume } : {}),
+        ...(scenario.allowedTools !== undefined ? { allowedTools: scenario.allowedTools } : {}),
       },
     });
     for await (const msg of gen) {
@@ -611,8 +617,10 @@ function registerEquivalenceScenarios(legA: LegName, legB: LegName): void {
   });
 
   test("tool round", async () => {
-    const a = await traceViaQuery(legA, { prompt: "go", testProviderName: "tooluse" });
-    const b = await traceViaQuery(legB, { prompt: "go", testProviderName: "tooluse" });
+    // Ruling P2-I: allowedTools:["test_tool"] pre-approves the "tooluse" provider's own call so it
+    // executes as before — this scenario proves wire/transport equivalence, not permissions.
+    const a = await traceViaQuery(legA, { prompt: "go", testProviderName: "tooluse", allowedTools: ["test_tool"] });
+    const b = await traceViaQuery(legB, { prompt: "go", testProviderName: "tooluse", allowedTools: ["test_tool"] });
     expect(compareTraces(a.trace, b.trace)).toEqual([]);
     expect(a.trace.map((e) => e.kind)).toEqual(["system/init", "assistant", "user", "assistant", "result", "exit"]);
     const toolUseMsg = a.trace[1]!.payload as { message: { content: unknown } };

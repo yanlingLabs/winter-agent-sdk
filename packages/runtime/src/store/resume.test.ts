@@ -459,7 +459,9 @@ describe("resume wiring end-to-end (temp WINTER_HOME, in-memory leg)", () => {
       };
       const continuousHome = freshHome();
       try {
-        const continuousConfig: RuntimeConfig = { sessionId: randomUUID(), cwd, model: "sonnet" };
+        // Ruling P2-I: allowedTools pre-approves both tool names so they execute — this test is
+        // about resume fidelity, not permissions.
+        const continuousConfig: RuntimeConfig = { sessionId: randomUUID(), cwd, model: "sonnet", allowedTools: ["good", "bad"] };
         const proc = inMemoryProcess(["--config-json", JSON.stringify(continuousConfig)], continuousProvider, throwingTools, {
           WINTER_HOME: continuousHome,
         });
@@ -476,7 +478,7 @@ describe("resume wiring end-to-end (temp WINTER_HOME, in-memory leg)", () => {
       // --- split run: envelope 1 in run A, envelope 2 resumed in a NEW instance (run B) -----------
       const sessionId = randomUUID();
       await runOneEnvelopeCustom(
-        { sessionId, cwd, model: "sonnet" },
+        { sessionId, cwd, model: "sonnet", allowedTools: ["good", "bad"] }, // Ruling P2-I: same pre-approval as the continuous run above
         home,
         {},
         scriptedProvider([{ kind: "tool_use", calls: [{ id: "call1", name: "good", input: {} }, { id: "call2", name: "bad", input: {} }] }]),
@@ -535,7 +537,8 @@ describe("resume wiring end-to-end (temp WINTER_HOME, in-memory leg)", () => {
       };
       const continuousHome = freshHome();
       try {
-        const continuousConfig: RuntimeConfig = { sessionId: randomUUID(), cwd, model: "sonnet" };
+        // Ruling P2-I: allowedTools:["slow_tool"] pre-approves so execution genuinely starts.
+        const continuousConfig: RuntimeConfig = { sessionId: randomUUID(), cwd, model: "sonnet", allowedTools: ["slow_tool"] };
         const proc = inMemoryProcess(["--config-json", JSON.stringify(continuousConfig)], continuousProvider, blockingTools, {
           WINTER_HOME: continuousHome,
         });
@@ -565,9 +568,13 @@ describe("resume wiring end-to-end (temp WINTER_HOME, in-memory leg)", () => {
       };
       const runAProvider = scriptedProvider([{ kind: "tool_use", calls: [{ id: "call1", name: "slow_tool", input: {} }] }]);
       await (async () => {
-        const proc = inMemoryProcess(["--config-json", JSON.stringify({ sessionId, cwd, model: "sonnet" })], runAProvider, runABlockingTools, {
-          WINTER_HOME: home,
-        });
+        // Ruling P2-I: allowedTools:["slow_tool"] pre-approves so execution genuinely starts.
+        const proc = inMemoryProcess(
+          ["--config-json", JSON.stringify({ sessionId, cwd, model: "sonnet", allowedTools: ["slow_tool"] })],
+          runAProvider,
+          runABlockingTools,
+          { WINTER_HOME: home },
+        );
         proc.stdin.write(encodeFrame({ type: "user", text: "go" }));
         await runAEntered;
         proc.stdin.write(encodeFrame({ type: "control_request", requestId: "int1", subtype: "interrupt", payload: undefined }));

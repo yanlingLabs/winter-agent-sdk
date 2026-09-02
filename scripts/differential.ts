@@ -87,6 +87,11 @@ export async function traceWinterToolRound(): Promise<ConformanceTraceEntry[]> {
       options: {
         model: FIXTURE_MODEL,
         cwd: FIXTURE_CWD,
+        // Ruling P2-I: with the real PromptStage wired, an unmatched tool call with zero permission
+        // configuration now denies (WS-07 §6.1 "never implicitly allowed") instead of falling
+        // through the retired T6 interim-allow fallback — allowedTools pre-approves the "tooluse"
+        // provider's own call so this scenario's traced wire stays byte-identical to before.
+        allowedTools: ["test_tool"],
         spawnClaudeCodeProcess: (opts) =>
           inMemoryProcess(opts.args, testProviderByName("tooluse"), undefined, { ...opts.env, WINTER_HOME: winterHome }),
       },
