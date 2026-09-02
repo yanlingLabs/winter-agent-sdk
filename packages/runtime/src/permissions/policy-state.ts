@@ -12,18 +12,14 @@
 import type { PermissionMode, PermissionUpdate, RuleSource } from "@yanlinglabs/winter-agent-sdk";
 import { applyPermissionUpdate, type SourcedRuleSet } from "./ruleset.ts";
 
-// T12 (WS-07 §10.2) owns the FULL AutoModeConfig module (packages/runtime/src/permissions/auto/
-// config.ts — `$defaults` splice/replace mechanics, validation, user/managed/inline-only source
-// restriction). This is a minimal structural placeholder — byte-identical to the spec's own field
-// list — so PolicyState can carry the pinned `autoConfig?` field now; T12 is free to relocate this
-// declaration (a one-line import-path change here, not a redesign) once it lands.
-export interface AutoModeConfig {
-  environment?: string[];
-  allow?: string[];
-  soft_deny?: string[];
-  hard_deny?: string[];
-  classifyAllShell?: boolean;
-}
+// Task 12 (WS-07 §10.2): relocated to the FULL AutoModeConfig module
+// (packages/runtime/src/permissions/auto/config.ts — `$defaults` splice/replace mechanics,
+// validation, user/managed/inline-only source restriction) — exactly the "one-line import-path
+// change here, not a redesign" T6's own placeholder comment invited. Re-exported so every existing
+// consumer of `./policy-state.ts`'s own `AutoModeConfig` name (evaluator.ts's own re-export
+// included) keeps working unchanged.
+export type { AutoModeConfig } from "./auto/config.ts";
+import type { AutoModeConfig } from "./auto/config.ts";
 
 export interface PolicyState {
   mode: PermissionMode;

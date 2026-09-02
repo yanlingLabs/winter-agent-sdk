@@ -9,6 +9,11 @@
 // classifier this file ships is `alwaysNoVerdictClassifier` — a deliberate, permanent fail-closed
 // stub. The real model-routed classifier is P6/D13's job (WS-07 §10.6-4).
 import type { PermissionCall, EvaluationContext, AutoEngine, AutoEngineVerdict } from "../evaluator.ts";
+// Re-exported (not re-defined) — evaluator.ts is the canonical, single source of truth for this
+// exact string (it is what evaluate() itself attaches to every classifier-driven denial); kept
+// importable from here too so a consumer of the auto/ package never needs to reach into
+// evaluator.ts just for this one constant.
+export { BLOCKED_BY_CLASSIFIER_MESSAGE } from "../evaluator.ts";
 import { buildActionEnvelope, type ActionEnvelope } from "./envelope.ts";
 import { normalizeAutoModeConfig, resolveAutoTier, type NormalizedAutoModeConfig } from "./config.ts";
 import {
@@ -57,11 +62,6 @@ export interface ClassifierContext {
 export interface ClassifierInterface {
   classify(envelope: ActionEnvelope, context: ClassifierContext): Promise<ClassifierRawResult>;
 }
-
-// WS-07 §10.6-5, VERBATIM, stable: "Model-visible denial is a stable short string ('Blocked by
-// classifier')" — exported as a constant so evaluator.ts (and every fixture) uses this exact
-// string rather than a hand-copy that could drift.
-export const BLOCKED_BY_CLASSIFIER_MESSAGE = "Blocked by classifier";
 
 // P2's ENTIRE production classifier (Phase ruling 5 / WS-07 §10.6-4): fail-closed, permanent,
 // never consults `envelope`/`context` at all. The real model-routed classifier is P6/D13's job.

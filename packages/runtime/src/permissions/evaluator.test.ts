@@ -41,6 +41,7 @@ import {
   NO_SPECIAL_CHECKS,
   REAL_SPECIAL_CHECKS,
   PLAN_WRITE_WITHHELD_MESSAGE,
+  BLOCKED_BY_CLASSIFIER_MESSAGE,
   type EvaluationContext,
   type PermissionCall,
   type PromptStage,
@@ -58,6 +59,13 @@ import { emptyRuleSet, resolveRules, sourceRule, type SourcedRuleEntry, type Sou
 import { createHookStage } from "../hooks/hook-stage.ts";
 import { buildHookRegistry, type SourcedHookEntry } from "../hooks/registry.ts";
 import { runHooks, type HookInvoker, type HookAuditRecorder } from "../hooks/runner.ts";
+// Task 12 (WS-07 §6.6/§10): the real AutoEngine, for the "Task 12 — auto mode arm" and "Task 12 —
+// plan classifier borrow" describe blocks below — every OTHER fixture in this file uses the
+// NO_OPINION_AUTO_ENGINE stub (always no_verdict) to pin the seam contract in isolation, exactly
+// like NO_SPECIAL_CHECKS/NO_OPINION_PROMPT_STAGE/NO_OPINION_HOOK_STAGE's own precedent elsewhere in
+// this file.
+import { createAutoEngine, createScriptedClassifier } from "./auto/engine.ts";
+import { AUTO_FALLBACK_CONSECUTIVE_THRESHOLD } from "./auto/caches.ts";
 
 // --- fixture helpers -----------------------------------------------------------------------------
 
@@ -812,7 +820,7 @@ describe("§5 baseline matrix — read-only work and unmatched actions", () => {
 
 // --- acceptEdits / plan / auto: T6 placeholder arm (identical to default's own baseline) ----------
 
-describe("acceptEdits/plan/auto — the shared baseline invariant (T6 origin; still true after T7's real acceptEdits/plan semantics land below; `auto` remains T12's placeholder)", () => {
+describe("acceptEdits/plan — the shared baseline invariant (T6 origin; still true after T7's real acceptEdits/plan semantics land below)", () => {
   // Task 7: acceptEdits/plan get REAL semantics in their own describe blocks further down. This
   // block is retained (not deleted) because BOTH assertions below still hold true under the real
   // implementation — an out-of-root Edit is still not auto-approved by acceptEdits (WS-07 §2's
@@ -822,7 +830,16 @@ describe("acceptEdits/plan/auto — the shared baseline invariant (T6 origin; st
   // see evaluateModeStage's own comments) and `pwd` is still built-in-read-only in every mode. A
   // future replacement of either invariant is therefore still a deliberate, reviewed diff here, not
   // a silent regression — exactly the property this block existed to protect under T6.
-  for (const mode of ["acceptEdits", "plan", "auto"] as const) {
+  //
+  // Task 12: `auto` is DELIBERATELY REMOVED from this loop's first test — see the dedicated "Task
+  // 12 — auto mode arm" describe block below for its own (now real) out-of-root-Edit behavior: an
+  // out-of-root Edit is not built-in-read-only/bounded-edit at stage 4, not rescued by any allow
+  // rule at stage 5 (none configured here), so it now reaches ctx.autoEngine.classify() — with the
+  // default NO_OPINION_AUTO_ENGINE returning no_verdict, the call fails closed WITHOUT ever
+  // reaching promptStage at all (mechanism "autoEngine", not "mode"), unlike acceptEdits/plan. The
+  // read-only invariant (this block's second test) is UNCHANGED for `auto` — see that same describe
+  // block for its own dedicated coverage.
+  for (const mode of ["acceptEdits", "plan"] as const) {
     test(`mode=${mode}: never auto-approves MORE than default would (an ordinary out-of-root Edit still reaches the prompt stage)`, async () => {
       const promptSpy = spyPromptStage(() => ({ decision: "deny" }));
       const ctx = baseCtx({ promptStage: promptSpy.stage, policy: policy({ mode }) });
@@ -830,7 +847,9 @@ describe("acceptEdits/plan/auto — the shared baseline invariant (T6 origin; st
       expect(promptSpy.calls.length).toBe(1);
       expect(record.decision).toBe("deny");
     });
+  }
 
+  for (const mode of ["acceptEdits", "plan", "auto"] as const) {
     test(`mode=${mode}: still recognizes built-in read-only work (shares default's own baseline)`, async () => {
       const ctx = baseCtx({ policy: policy({ mode }) });
       const record = await evaluate(call("Bash", { command: "pwd" }), ctx);
@@ -1078,7 +1097,7 @@ describe("Task 7 — §6.7 protected-path write matrix (mode × protected write,
     expect(record).toMatchObject({ decision: "allow", mechanism: "mode" });
   });
 
-  test("plan (no session bypass): prompt (classifier-active branch never applies at P2)", async () => {
+  test("plan (no session bypass): prompt -- the Task 12 classifier borrow is attempted (real wiring) but the default NO_OPINION_AUTO_ENGINE answers no_verdict, so it falls through to the identical pre-existing prompt path unchanged (see the dedicated 'Task 12 — plan classifier borrow' describe block below for the borrow's OWN wiring+outcome fixtures)", async () => {
     const promptSpy = spyPromptStage(() => ({ decision: "deny" }));
     const ctx = baseCtx({ promptStage: promptSpy.stage, policy: policy({ mode: "plan" }), specialChecks: REAL_SPECIAL_CHECKS });
     const record = await evaluate(protectedCall, ctx);
@@ -1092,12 +1111,21 @@ describe("Task 7 — §6.7 protected-path write matrix (mode × protected write,
     expect(record).toMatchObject({ decision: "allow", mechanism: "mode" });
   });
 
-  test("auto: prompt (classifier not yet wired at P2 — T12's job; never silently allow)", async () => {
-    const promptSpy = spyPromptStage(() => ({ decision: "deny" }));
+  test("auto (Task 12, default NO_OPINION_AUTO_ENGINE): routes to the classifier, never canUseTool -- fails closed with the stable 'Blocked by classifier' string", async () => {
+    const promptSpy = spyPromptStage(() => ({ decision: "allow" })); // even if it WOULD allow, `auto`'s protected-write cell is "classifier", never canUseTool
     const ctx = baseCtx({ promptStage: promptSpy.stage, policy: policy({ mode: "auto" }), specialChecks: REAL_SPECIAL_CHECKS });
     const record = await evaluate(protectedCall, ctx);
-    expect(promptSpy.calls.length).toBe(1);
-    expect(record.decision).toBe("deny");
+    expect(promptSpy.calls.length).toBe(0);
+    expect(record).toMatchObject({ decision: "deny", mechanism: "autoEngine", message: BLOCKED_BY_CLASSIFIER_MESSAGE });
+  });
+
+  test("auto with a scripted classifier ALLOW: the classifier genuinely gets consulted for a protected write (WS-07 §6.7's 'auto: classifier' cell)", async () => {
+    const scripted = createScriptedClassifier({ verdict: "allow" });
+    const autoEngine = createAutoEngine({ sessionId: "s1", classifier: scripted });
+    const ctx = baseCtx({ policy: policy({ mode: "auto" }), specialChecks: REAL_SPECIAL_CHECKS, autoEngine });
+    const record = await evaluate(protectedCall, ctx);
+    expect(scripted.calls.length).toBe(1);
+    expect(record).toMatchObject({ decision: "allow", mechanism: "autoEngine" });
   });
 
   test("an explicit allow rule does NOT clear this check, in ANY mode (WS-07 §6.7: 'an ordinary settings allow rule does NOT clear this check') — fix round 1, item 2: the loop now actually covers all six modes, matching this test's own title", async () => {
@@ -1111,7 +1139,9 @@ describe("Task 7 — §6.7 protected-path write matrix (mode × protected write,
       { mode: "dontAsk", expectPromptCalls: 0, expectDecision: "deny" },
       { mode: "bypassPermissions", expectPromptCalls: 0, expectDecision: "allow" },
       { mode: "plan", expectPromptCalls: 1, expectDecision: "deny" },
-      { mode: "auto", expectPromptCalls: 1, expectDecision: "deny" },
+      // Task 12: `auto` now routes to the classifier (mechanism "autoEngine"), never canUseTool --
+      // 0 prompt calls, not 1, with the default NO_OPINION_AUTO_ENGINE (no_verdict -> fail closed).
+      { mode: "auto", expectPromptCalls: 0, expectDecision: "deny" },
     ];
     for (const { mode, expectPromptCalls, expectDecision } of cases) {
       const promptSpy = spyPromptStage(() => ({ decision: "deny" }));
@@ -1137,7 +1167,7 @@ describe("Task 7 — §6.7 protected-path write matrix (mode × protected write,
 describe("Task 7 — §6.8 critical-removal matrix (mode × critical rm, cell-by-cell) — the brief's own `rm -rf /` fixture, every mode", () => {
   const criticalCall = call("Bash", { command: "rm -rf /" });
 
-  for (const mode of ["default", "acceptEdits", "bypassPermissions", "plan", "auto"] as const) {
+  for (const mode of ["default", "acceptEdits", "bypassPermissions", "plan"] as const) {
     test(`${mode}: never silently allowed — reaches the prompt stage, fails closed absent a real answer`, async () => {
       const promptSpy = spyPromptStage(() => ({ decision: "deny" }));
       const ctx = baseCtx({ promptStage: promptSpy.stage, policy: policy({ mode }), specialChecks: REAL_SPECIAL_CHECKS });
@@ -1146,6 +1176,17 @@ describe("Task 7 — §6.8 critical-removal matrix (mode × critical rm, cell-by
       expect(record.decision).toBe("deny");
     });
   }
+
+  // Task 12: `auto` pulled out of the loop above -- §6.8's own "auto: classifier" cell routes to
+  // ctx.autoEngine.classify(), never canUseTool (0 prompt calls, not 1), same shape as the §6.7
+  // protected-write matrix's own dedicated auto tests above.
+  test("auto: never silently allowed — reaches the classifier (never canUseTool), fails closed with the stable 'Blocked by classifier' string", async () => {
+    const promptSpy = spyPromptStage(() => ({ decision: "allow" }));
+    const ctx = baseCtx({ promptStage: promptSpy.stage, policy: policy({ mode: "auto" }), specialChecks: REAL_SPECIAL_CHECKS });
+    const record = await evaluate(criticalCall, ctx);
+    expect(promptSpy.calls.length).toBe(0);
+    expect(record).toMatchObject({ decision: "deny", mechanism: "autoEngine", message: BLOCKED_BY_CLASSIFIER_MESSAGE });
+  });
 
   test("dontAsk: deny outright, canUseTool never called", async () => {
     const promptSpy = spyPromptStage(() => ({ decision: "allow" }));
@@ -1176,6 +1217,22 @@ describe("Task 7 — §6.8 critical-removal matrix (mode × critical rm, cell-by
     expect(record.decision).toBe("deny");
   });
 
+  test("Task 12 (WS-07 §6.8's own 'bypass unavailable' gate): plan + session bypass enabled NEVER even consults the classifier for critical removal, unlike plan without bypass", async () => {
+    const scripted = createScriptedClassifier({ verdict: "allow" }); // would allow if consulted -- proving it ISN'T
+    const promptSpy = spyPromptStage(() => ({ decision: "deny" }));
+    const ctx = baseCtx({
+      promptStage: promptSpy.stage,
+      policy: policy({ mode: "plan" }),
+      specialChecks: REAL_SPECIAL_CHECKS,
+      sessionBypassEnabled: true,
+      autoEngine: createAutoEngine({ sessionId: "s1", classifier: scripted }),
+    });
+    const record = await evaluate(criticalCall, ctx);
+    expect(scripted.calls.length).toBe(0); // the classifier borrow is gated off entirely here
+    expect(promptSpy.calls.length).toBe(1); // falls straight through to the ordinary prompt path
+    expect(record.decision).toBe("deny");
+  });
+
   test("T6-review obligation: a broad `Bash(rm *)` allow rule does NOT rescue a critical rm at stage 5, in EVERY mode — fix round 1, item 2: dontAsk and plan added, the loop now covers all six", async () => {
     const cases: Array<{ mode: PermissionMode; expectPromptCalls: number }> = [
       { mode: "default", expectPromptCalls: 1 },
@@ -1183,7 +1240,8 @@ describe("Task 7 — §6.8 critical-removal matrix (mode × critical rm, cell-by
       { mode: "dontAsk", expectPromptCalls: 0 }, // canUseTool is NEVER called in dontAsk (WS-07 §6.3)
       { mode: "bypassPermissions", expectPromptCalls: 1 },
       { mode: "plan", expectPromptCalls: 1 },
-      { mode: "auto", expectPromptCalls: 1 },
+      // Task 12: `auto` routes to the classifier, never canUseTool -- 0 prompt calls, not 1.
+      { mode: "auto", expectPromptCalls: 0 },
     ];
     for (const { mode, expectPromptCalls } of cases) {
       const promptSpy = spyPromptStage(() => ({ decision: "deny" }));
@@ -1220,6 +1278,287 @@ describe("Task 7 — §6.8 critical-removal matrix (mode × critical rm, cell-by
     const record = await evaluate(call("Bash", { command: "rm -rf $SOME_DIR/sub" }), ctx);
     expect(promptSpy.calls.length).toBe(1);
     expect(record.decision).toBe("deny");
+  });
+});
+
+// --- Task 12 (WS-07 §6.6/§10): the real AutoEngine seam fill -----------------------------------------
+
+describe("Task 12 — auto mode arm: pipeline order (WS-07 §10.1 — deterministic deny/ask stay ahead of the classifier)", () => {
+  test("a stage-2 deny rule wins outright -- the classifier is never even consulted", async () => {
+    const scripted = createScriptedClassifier({ verdict: "allow" }); // would allow if consulted -- proving it ISN'T
+    const ctx = baseCtx({
+      policy: policy({ mode: "auto", rules: withRules(rule("Bash(rm -rf /)", "deny")) }),
+      autoEngine: createAutoEngine({ sessionId: "s1", classifier: scripted }),
+    });
+    const record = await evaluate(call("Bash", { command: "rm -rf /" }), ctx);
+    expect(scripted.calls.length).toBe(0);
+    expect(record).toMatchObject({ decision: "deny", mechanism: "rule" });
+  });
+
+  test("a matched ask rule forces the prompt path -- the classifier is never consulted, even in `auto`", async () => {
+    const scripted = createScriptedClassifier({ verdict: "allow" });
+    const promptSpy = spyPromptStage(() => ({ decision: "deny" }));
+    const ctx = baseCtx({
+      promptStage: promptSpy.stage,
+      policy: policy({ mode: "auto", rules: withRules(rule("Bash(curl *)", "ask")) }),
+      autoEngine: createAutoEngine({ sessionId: "s1", classifier: scripted }),
+    });
+    const record = await evaluate(call("Bash", { command: "curl https://example.com" }), ctx);
+    expect(scripted.calls.length).toBe(0);
+    expect(promptSpy.calls.length).toBe(1);
+    expect(record.decision).toBe("deny");
+  });
+});
+
+describe("Task 12 — auto mode arm: read-only + ordinary in-cwd edits skip the classifier entirely (WS-07 §10.1 step 4)", () => {
+  test("a built-in read-only Bash command resolves via mode, never reaching the classifier", async () => {
+    const scripted = createScriptedClassifier({ verdict: "deny" }); // would deny if consulted -- proving it ISN'T
+    const ctx = baseCtx({ policy: policy({ mode: "auto" }), autoEngine: createAutoEngine({ sessionId: "s1", classifier: scripted }) });
+    const record = await evaluate(call("Bash", { command: "pwd" }), ctx);
+    expect(scripted.calls.length).toBe(0);
+    expect(record).toMatchObject({ decision: "allow", mechanism: "mode" });
+  });
+
+  test("an ordinary in-cwd Edit resolves via mode, never reaching the classifier", async () => {
+    const scripted = createScriptedClassifier({ verdict: "deny" });
+    const ctx = baseCtx({ cwd: "/work", policy: policy({ mode: "auto" }), autoEngine: createAutoEngine({ sessionId: "s1", classifier: scripted }) });
+    const record = await evaluate(call("Edit", { file_path: "/work/src/a.ts" }), ctx);
+    expect(scripted.calls.length).toBe(0);
+    expect(record).toMatchObject({ decision: "allow", mechanism: "mode" });
+  });
+
+  test("an in-cwd recognized Bash fs-op resolves via mode, never reaching the classifier", async () => {
+    const scripted = createScriptedClassifier({ verdict: "deny" });
+    const ctx = baseCtx({ cwd: "/work", policy: policy({ mode: "auto" }), autoEngine: createAutoEngine({ sessionId: "s1", classifier: scripted }) });
+    const record = await evaluate(call("Bash", { command: "touch ./notes.txt" }), ctx);
+    expect(scripted.calls.length).toBe(0);
+    expect(record).toMatchObject({ decision: "allow", mechanism: "mode" });
+  });
+
+  test("an OUT-OF-ROOT edit is NOT auto-approved -- it reaches the classifier", async () => {
+    const scripted = createScriptedClassifier({ verdict: "allow" });
+    const ctx = baseCtx({ cwd: "/work", policy: policy({ mode: "auto" }), autoEngine: createAutoEngine({ sessionId: "s1", classifier: scripted }) });
+    const record = await evaluate(call("Edit", { file_path: "/etc/x" }), ctx);
+    expect(scripted.calls.length).toBe(1);
+    expect(record).toMatchObject({ decision: "allow", mechanism: "autoEngine" });
+  });
+});
+
+describe("Task 12 — auto mode arm: broad-allow suspension at stage 5 (WS-07 §10.1 steps 2/3)", () => {
+  test("a blanket Bash(*) allow does NOT rescue an arbitrary command -- suspended, reaches the classifier instead", async () => {
+    const scripted = createScriptedClassifier({ verdict: "deny" });
+    const ctx = baseCtx({
+      policy: policy({ mode: "auto", rules: withRules(rule("Bash(*)", "allow")) }),
+      autoEngine: createAutoEngine({ sessionId: "s1", classifier: scripted }),
+    });
+    const record = await evaluate(call("Bash", { command: "curl https://example.com" }), ctx);
+    expect(scripted.calls.length).toBe(1);
+    expect(record).toMatchObject({ decision: "deny", mechanism: "autoEngine" });
+  });
+
+  test("a NARROW shell allow (Bash(npm test)) survives -- resolves as a rule, classifier never consulted", async () => {
+    const scripted = createScriptedClassifier({ verdict: "deny" });
+    const ctx = baseCtx({
+      policy: policy({ mode: "auto", rules: withRules(rule("Bash(npm test)", "allow")) }),
+      autoEngine: createAutoEngine({ sessionId: "s1", classifier: scripted }),
+    });
+    const record = await evaluate(call("Bash", { command: "npm test" }), ctx);
+    expect(scripted.calls.length).toBe(0);
+    expect(record).toMatchObject({ decision: "allow", mechanism: "rule" });
+  });
+
+  test("classifyAllShell: true suspends even the narrow survivor above -- now reaches the classifier", async () => {
+    const scripted = createScriptedClassifier({ verdict: "allow" });
+    const ctx = baseCtx({
+      policy: policy({ mode: "auto", rules: withRules(rule("Bash(npm test)", "allow")), autoConfig: { classifyAllShell: true } }),
+      autoEngine: createAutoEngine({ sessionId: "s1", classifier: scripted }),
+    });
+    const record = await evaluate(call("Bash", { command: "npm test" }), ctx);
+    expect(scripted.calls.length).toBe(1);
+    expect(record).toMatchObject({ decision: "allow", mechanism: "autoEngine" });
+  });
+
+  test("an Agent allow rule is suspended regardless of specifier", async () => {
+    const scripted = createScriptedClassifier({ verdict: "deny" });
+    const ctx = baseCtx({
+      policy: policy({ mode: "auto", rules: withRules(rule("Agent(Explore)", "allow")) }),
+      autoEngine: createAutoEngine({ sessionId: "s1", classifier: scripted }),
+    });
+    const record = await evaluate(call("Agent", { subagent_type: "Explore", prompt: "x" }), ctx);
+    expect(scripted.calls.length).toBe(1);
+    expect(record.mechanism).not.toBe("rule");
+  });
+
+  test("a non-shell allow rule (Read) is UNAFFECTED by auto's suspension matcher -- still resolves as a rule", async () => {
+    // /synthetic/... (not /etc -- a REAL macOS symlink to /private/etc, this file's own documented
+    // landmine at its header) avoids a spurious allow-direction symlink mismatch.
+    const ctx = baseCtx({
+      cwd: "/work",
+      policy: policy({ mode: "auto", rules: withRules(rule("Read(//synthetic/protected/**)", "allow")) }),
+      specialChecks: REAL_SPECIAL_CHECKS,
+    });
+    const record = await evaluate(call("Read", { file_path: "/synthetic/protected/x" }), ctx);
+    expect(record).toMatchObject({ decision: "allow", mechanism: "rule" });
+  });
+});
+
+describe("Task 12 — auto mode arm: 3-consecutive/20-total fallback, end-to-end through evaluate() (WS-07 §10.5)", () => {
+  test("3 consecutive classifier denies trip fallback; the next call routes to the SAME hook/canUseTool pathway, never the classifier again", async () => {
+    const scripted = createScriptedClassifier({ verdict: "deny" });
+    const autoEngine = createAutoEngine({ sessionId: "s1", classifier: scripted });
+    const ctxFor = (promptStage: PromptStage) => baseCtx({ promptStage, policy: policy({ mode: "auto" }), autoEngine });
+    for (let i = 0; i < AUTO_FALLBACK_CONSECUTIVE_THRESHOLD; i++) {
+      const record = await evaluate(call("Bash", { command: `curl https://example.com/${i}` }), ctxFor(NO_OPINION_PROMPT_STAGE));
+      expect(record.decision).toBe("deny");
+    }
+    expect(scripted.calls.length).toBe(AUTO_FALLBACK_CONSECUTIVE_THRESHOLD);
+
+    const promptSpy = spyPromptStage(() => ({ decision: "allow" }));
+    const record = await evaluate(call("Bash", { command: "curl https://example.com/after" }), ctxFor(promptSpy.stage));
+    expect(scripted.calls.length).toBe(AUTO_FALLBACK_CONSECUTIVE_THRESHOLD); // classifier never consulted again
+    expect(promptSpy.calls.length).toBe(1); // routed to the ordinary prompt path instead
+    expect(record).toMatchObject({ decision: "allow", mechanism: "canUseTool" }); // correct attribution: a HUMAN answered, not the classifier
+  });
+
+  test("headless during fallback (no prompt handler answers) -- denied and the run continues, never a hang", async () => {
+    const scripted = createScriptedClassifier({ verdict: "deny" });
+    const autoEngine = createAutoEngine({ sessionId: "s1", classifier: scripted });
+    for (let i = 0; i < AUTO_FALLBACK_CONSECUTIVE_THRESHOLD; i++) {
+      await evaluate(call("Bash", { command: `curl https://example.com/${i}` }), baseCtx({ policy: policy({ mode: "auto" }), autoEngine }));
+    }
+    const record = await evaluate(call("Bash", { command: "curl https://example.com/after" }), baseCtx({ policy: policy({ mode: "auto" }), autoEngine }));
+    expect(record.decision).toBe("deny");
+    expect(record.mechanism).toBe("autoEngine");
+  });
+});
+
+// --- Task 12 (WS-07 §6.5): plan mode's classifier borrow -- BOTH the wiring and the practical
+// outcome are fixtured here. `useAutoModeDuringPlan` defaults to true (§6.5's own "current
+// default"), so a scripted classifier proves the wiring is real; the default NO_OPINION_AUTO_ENGINE
+// classifier (used everywhere else in this file's plan-mode fixtures, unchanged) proves the
+// PRACTICAL P2 outcome is still "prompt" (a no_verdict falls through to the identical pre-existing
+// hook/canUseTool path).
+
+describe("Task 12 — plan classifier borrow: standing exceptions (WS-07 §6.7/§6.8's own plan rows)", () => {
+  const protectedCall = call("Edit", { file_path: "/work/.git/config" });
+
+  test("wiring: a scripted classifier ALLOW resolves a protected write in plan mode, without ever reaching canUseTool", async () => {
+    const scripted = createScriptedClassifier({ verdict: "allow" });
+    const promptSpy = spyPromptStage(() => ({ decision: "deny" }));
+    const ctx = baseCtx({
+      promptStage: promptSpy.stage,
+      policy: policy({ mode: "plan" }),
+      specialChecks: REAL_SPECIAL_CHECKS,
+      autoEngine: createAutoEngine({ sessionId: "s1", classifier: scripted }),
+    });
+    const record = await evaluate(protectedCall, ctx);
+    expect(scripted.calls.length).toBe(1);
+    expect(promptSpy.calls.length).toBe(0);
+    expect(record).toMatchObject({ decision: "allow", mechanism: "autoEngine" });
+  });
+
+  test("wiring: a scripted classifier DENY resolves a protected write in plan mode with the stable classifier message, without reaching canUseTool", async () => {
+    const scripted = createScriptedClassifier({ verdict: "deny" });
+    const promptSpy = spyPromptStage(() => ({ decision: "allow" }));
+    const ctx = baseCtx({
+      promptStage: promptSpy.stage,
+      policy: policy({ mode: "plan" }),
+      specialChecks: REAL_SPECIAL_CHECKS,
+      autoEngine: createAutoEngine({ sessionId: "s1", classifier: scripted }),
+    });
+    const record = await evaluate(protectedCall, ctx);
+    expect(scripted.calls.length).toBe(1);
+    expect(promptSpy.calls.length).toBe(0);
+    expect(record).toMatchObject({ decision: "deny", mechanism: "autoEngine", message: BLOCKED_BY_CLASSIFIER_MESSAGE });
+  });
+
+  test("practical outcome: a no_verdict from the classifier falls through to the IDENTICAL pre-existing prompt path, unchanged", async () => {
+    const scripted = createScriptedClassifier({ verdict: "no_verdict" });
+    const promptSpy = spyPromptStage(() => ({ decision: "deny" }));
+    const ctx = baseCtx({
+      promptStage: promptSpy.stage,
+      policy: policy({ mode: "plan" }),
+      specialChecks: REAL_SPECIAL_CHECKS,
+      autoEngine: createAutoEngine({ sessionId: "s1", classifier: scripted }),
+    });
+    const record = await evaluate(protectedCall, ctx);
+    expect(scripted.calls.length).toBe(1); // the borrow WAS attempted (real wiring) ...
+    expect(promptSpy.calls.length).toBe(1); // ... but fell through to the ordinary path (practical outcome)
+    expect(record.decision).toBe("deny");
+  });
+
+  test("EXCLUSION: an ordinary plan-write-withheld Edit NEVER consults the classifier -- §6.5's borrow names 'exploratory commands', never writes", async () => {
+    const scripted = createScriptedClassifier({ verdict: "allow" }); // would allow if consulted -- proving it ISN'T
+    const promptSpy = spyPromptStage(() => null); // no real host answers -- the fallback synthesizes modeResult.message verbatim
+    const ctx = baseCtx({
+      promptStage: promptSpy.stage,
+      policy: policy({ mode: "plan" }),
+      autoEngine: createAutoEngine({ sessionId: "s1", classifier: scripted }),
+    });
+    const record = await evaluate(call("Edit", { file_path: "/work/src/a.ts" }), ctx);
+    expect(scripted.calls.length).toBe(0); // the borrow was never even attempted
+    expect(promptSpy.calls.length).toBe(1); // fell straight through to the ordinary (pre-Task-12) prompt path
+    expect(record.message).toBe(PLAN_WRITE_WITHHELD_MESSAGE);
+  });
+
+  test("useAutoModeDuringPlan: false disables the borrow entirely -- the classifier is never consulted", async () => {
+    const scripted = createScriptedClassifier({ verdict: "allow" });
+    const promptSpy = spyPromptStage(() => ({ decision: "deny" }));
+    const ctx = baseCtx({
+      promptStage: promptSpy.stage,
+      policy: policy({ mode: "plan", autoConfig: { useAutoModeDuringPlan: false } }),
+      specialChecks: REAL_SPECIAL_CHECKS,
+      autoEngine: createAutoEngine({ sessionId: "s1", classifier: scripted }),
+    });
+    const record = await evaluate(protectedCall, ctx);
+    expect(scripted.calls.length).toBe(0);
+    expect(promptSpy.calls.length).toBe(1);
+    expect(record.decision).toBe("deny");
+  });
+});
+
+describe("Task 12 — plan classifier borrow: the exploratory-shell bucket (WS-07 §6.5's own stage-6 fallback)", () => {
+  const exploratoryCall = call("Bash", { command: "curl https://example.com" }); // not read-only, not write-shaped
+
+  test("wiring: a scripted classifier ALLOW resolves an exploratory shell command, without reaching canUseTool", async () => {
+    const scripted = createScriptedClassifier({ verdict: "allow" });
+    const promptSpy = spyPromptStage(() => ({ decision: "deny" }));
+    const ctx = baseCtx({ promptStage: promptSpy.stage, policy: policy({ mode: "plan" }), autoEngine: createAutoEngine({ sessionId: "s1", classifier: scripted }) });
+    const record = await evaluate(exploratoryCall, ctx);
+    expect(scripted.calls.length).toBe(1);
+    expect(promptSpy.calls.length).toBe(0);
+    expect(record).toMatchObject({ decision: "allow", mechanism: "autoEngine" });
+  });
+
+  test("wiring: a scripted classifier DENY resolves with the stable classifier message, without reaching canUseTool", async () => {
+    const scripted = createScriptedClassifier({ verdict: "deny" });
+    const promptSpy = spyPromptStage(() => ({ decision: "allow" }));
+    const ctx = baseCtx({ promptStage: promptSpy.stage, policy: policy({ mode: "plan" }), autoEngine: createAutoEngine({ sessionId: "s1", classifier: scripted }) });
+    const record = await evaluate(exploratoryCall, ctx);
+    expect(scripted.calls.length).toBe(1);
+    expect(promptSpy.calls.length).toBe(0);
+    expect(record).toMatchObject({ decision: "deny", mechanism: "autoEngine", message: BLOCKED_BY_CLASSIFIER_MESSAGE });
+  });
+
+  test("practical outcome: a no_verdict falls through to the ordinary prompt path, unchanged (this is the DEFAULT shape every other plan-mode fixture in this file already relies on)", async () => {
+    const promptSpy = spyPromptStage(() => ({ decision: "deny" }));
+    const ctx = baseCtx({ promptStage: promptSpy.stage, policy: policy({ mode: "plan" }) }); // NO_OPINION_AUTO_ENGINE default
+    const record = await evaluate(exploratoryCall, ctx);
+    expect(promptSpy.calls.length).toBe(1);
+    expect(record.decision).toBe("deny");
+  });
+
+  test("useAutoModeDuringPlan: false disables the exploratory-shell borrow too", async () => {
+    const scripted = createScriptedClassifier({ verdict: "allow" });
+    const promptSpy = spyPromptStage(() => ({ decision: "deny" }));
+    const ctx = baseCtx({
+      promptStage: promptSpy.stage,
+      policy: policy({ mode: "plan", autoConfig: { useAutoModeDuringPlan: false } }),
+      autoEngine: createAutoEngine({ sessionId: "s1", classifier: scripted }),
+    });
+    const record = await evaluate(exploratoryCall, ctx);
+    expect(scripted.calls.length).toBe(0);
+    expect(promptSpy.calls.length).toBe(1);
   });
 });
 

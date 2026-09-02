@@ -48,6 +48,14 @@ import type { PolicyState, AutoModeConfig } from "./policy-state.ts";
 // path/command; see REAL_SPECIAL_CHECKS below for the adaptation).
 import { recognizeEditOperation } from "./edit-recognition.ts";
 import { isProtectedWrite as isProtectedPath, isCriticalRemoval as classifyCriticalRemoval } from "./protected.ts";
+// Task 12 (WS-07 §10.1 step 2 / §6.5): the two auto/config.ts primitives evaluator.ts's own `auto`
+// mode arm and plan's classifier borrow need. This is the ONLY dependency evaluator.ts takes on
+// the auto/ package — the concrete AutoEngine implementation (auto/engine.ts) is never imported
+// here at all; it arrives purely through the already-injected `ctx.autoEngine` seam, exactly like
+// every other T12-filled stub (REAL_SPECIAL_CHECKS/realPromptStage/realHookStage's own precedent
+// in engine.ts, one level up). auto/config.ts itself imports nothing from this file, so there is no
+// cycle in either direction.
+import { isAutoSuspendedAllowRule, AUTO_MODE_DEFAULT_USE_AUTO_MODE_DURING_PLAN } from "./auto/config.ts";
 
 export type { AutoModeConfig };
 
@@ -486,11 +494,24 @@ function matchesRuleForCall(rule: ParsedRule, call: PermissionCall, direction: "
 // this copy directly and compare it against ruleset.ts's resolveRules() for the same rules/call —
 // mirroring PLAN_WRITE_WITHHELD_MESSAGE's own precedent of exporting an otherwise-internal symbol
 // purely for fixture use. Not part of any other module's intended surface.
-export function findMatchingRuleEntry(rules: SourcedRuleSet, call: PermissionCall, behavior: PermissionBehavior, ctx: EvaluationContext): SourcedRuleEntry | undefined {
+//
+// Task 12 addition: the optional `opts.skip` predicate lets a caller treat an otherwise-matching
+// entry as though it never matched, WITHOUT duplicating this function's own trust-gate/matching
+// loop. The one production caller is evaluate()'s own stage 5, for `policy.mode === "auto"`
+// (WS-07 §10.1 step 2: broad-allow suspension) — every OTHER call site (stage 2/3's deny/ask
+// lookups, every non-auto mode's stage 5) passes no `opts` at all and is completely unaffected.
+export function findMatchingRuleEntry(
+  rules: SourcedRuleSet,
+  call: PermissionCall,
+  behavior: PermissionBehavior,
+  ctx: EvaluationContext,
+  opts?: { skip?: (entry: SourcedRuleEntry) => boolean },
+): SourcedRuleEntry | undefined {
   const direction: "allow" | "denyAsk" = behavior === "allow" ? "allow" : "denyAsk";
   const pool = ctx.allowManagedPermissionRulesOnly ? rules.entries.filter((e) => e.source === "managed") : rules.entries;
   for (const entry of pool) {
     if (entry.behavior !== behavior) continue;
+    if (opts?.skip?.(entry)) continue;
     // Mirrors ruleset.ts's resolveRules() trust gate exactly: project/local ALLOW rules require
     // workspace trust; deny/ask apply without it (WS-07 §3.2; Ruling P2-H extends this to `local`).
     if (behavior === "allow" && (entry.source === "project" || entry.source === "local") && !ctx.trustedWorkspace) continue;
@@ -585,16 +606,32 @@ function isBuiltInReadOnly(call: PermissionCall, ctx: EvaluationContext): boolea
 // NEVER fall through to stage 5's allow-rule lookup — see this type's four members' own uses in
 // evaluate() below. "deny"/"mustPrompt" both carry a message so the eventual denial (immediate, or
 // the fail-closed synthesized one when the still-stubbed PromptStage answers null) is legible.
+// Task 12 addition: `mustPrompt` now carries WHICH standing exception produced it. Required (not
+// optional) so every construction site must say so explicitly — evaluate()'s own auto/plan-borrow
+// routing (§6.7/§6.8's "auto: classifier" cells; §6.5's plan-write EXCLUSION from the classifier
+// borrow) depends on telling these apart, and a silently-omitted origin would be a fail-OPEN bug
+// class (a plan write silently gaining classifier review it was never supposed to get).
+type MustPromptOrigin = "critical" | "protected" | "planWrite";
+
 type ModeStageResult =
   | { kind: "allow" }
   | { kind: "deny"; message: string }
-  | { kind: "mustPrompt"; message: string; blockedPath?: string }
+  | { kind: "mustPrompt"; message: string; blockedPath?: string; origin: MustPromptOrigin }
   | { kind: "unresolved" };
 
 // WS-07 §6.5 / this task's own phase-ruling-6 instruction, verbatim: "writes withheld ... with a
 // plan-specific message." Exported so fixtures can assert the exact string rather than a substring
 // guess, mirroring ruleDenialMessage's own callers.
 export const PLAN_WRITE_WITHHELD_MESSAGE = "Denied: plan mode withholds file/shell writes until the plan is approved or session bypass is enabled (WS-07 §6.5)";
+
+// Task 12 (WS-07 §10.6-5, VERBATIM, stable): "Model-visible denial is a stable short string
+// ('Blocked by classifier')" — deliberately NOT following this file's own house style of a
+// "Denied: ... (WS-07 §n)" prefix/suffix: the whole point is that the model cannot distinguish a
+// genuine classifier "deny" from a "no_verdict" fail-closed denial from any other classifier
+// failure mode. Detailed reasoning goes to the AUDIT stream only (auto/engine.ts's own
+// AutoAuditRecord.auditReason, redacted) — never here. Re-exported (not re-defined) from
+// auto/engine.ts so there is exactly one source of truth.
+export const BLOCKED_BY_CLASSIFIER_MESSAGE = "Blocked by classifier";
 
 // --- Standing exceptions (WS-07 §2 stage 5's own list; §6.7/§6.8 matrices) ---------------------------
 //
@@ -610,7 +647,7 @@ function resolveCriticalRemoval(mode: PermissionMode, reason: string | undefined
   // auto-allow, not even bypassPermissions ("still prompts/callback", §6.4/§6.8) and not even plan
   // with session bypass enabled (§6.8's plan row carries no bypass carve-out, unlike §6.7's).
   if (mode === "dontAsk") return { kind: "deny", message };
-  return { kind: "mustPrompt", message };
+  return { kind: "mustPrompt", message, origin: "critical" };
 }
 
 function resolveProtectedWrite(mode: PermissionMode, ctx: EvaluationContext, call: PermissionCall): ModeStageResult {
@@ -619,8 +656,10 @@ function resolveProtectedWrite(mode: PermissionMode, ctx: EvaluationContext, cal
   if (mode === "dontAsk") return { kind: "deny", message };
   if (mode === "bypassPermissions") return { kind: "allow" };
   // "allowed when bypass enabled for that session" — the §6.4/§6.5 relaxation carve-out this
-  // task's own instruction names; `plan`'s classifier-active branch never applies at P2 (classifier
-  // borrow OFF).
+  // task's own instruction names. `plan`'s classifier-active branch (Task 12) is handled by
+  // evaluate()'s own mustPrompt-routing, below — by the time this function returns "mustPrompt",
+  // sessionBypassEnabled is ALREADY guaranteed false for `plan` (this line just intercepted the
+  // true case), so evaluate()'s own borrow-gate never needs to re-check bypass for THIS origin.
   if (mode === "plan" && ctx.sessionBypassEnabled === true) return { kind: "allow" };
   // Task 8 (WS-07 §7.1's `blockedPath`): the SAME per-tool path extraction driving
   // REAL_SPECIAL_CHECKS.isProtectedWrite itself (this function's own caller already confirmed
@@ -629,7 +668,7 @@ function resolveProtectedWrite(mode: PermissionMode, ctx: EvaluationContext, cal
   // a judgment call (no ordering guarantee is documented anywhere in scope).
   const candidatePaths = extractCandidateWritePaths(call);
   const blockedPath = candidatePaths[0] !== undefined ? resolve(ctx.cwd, candidatePaths[0]) : undefined;
-  return { kind: "mustPrompt", message, ...(blockedPath !== undefined ? { blockedPath } : {}) };
+  return { kind: "mustPrompt", message, origin: "protected", ...(blockedPath !== undefined ? { blockedPath } : {}) };
 }
 
 function isBashRecognizedWrite(call: PermissionCall): boolean {
@@ -703,22 +742,35 @@ function evaluateModeStage(call: PermissionCall, ctx: EvaluationContext, mode: P
     if (isBuiltInReadOnly(call, ctx)) return { kind: "allow" };
     if (isPlanWriteShaped(call)) {
       if (ctx.sessionBypassEnabled === true) return { kind: "allow" };
-      return { kind: "mustPrompt", message: PLAN_WRITE_WITHHELD_MESSAGE };
+      // origin "planWrite" — deliberately EXCLUDED from the plan classifier borrow (Task 12, WS-07
+      // §6.5): "source edits are withheld" is unconditional prose, not "withheld unless the
+      // classifier says otherwise" — §6.5's own borrow sentence names "exploratory commands," never
+      // writes. evaluate() checks this origin tag specifically to skip the borrow for exactly this
+      // case (see its own mustPrompt-handling comment).
+      return { kind: "mustPrompt", message: PLAN_WRITE_WITHHELD_MESSAGE, origin: "planWrite" };
     }
     // Non-write, non-read-only exploratory action (e.g. an arbitrary shell command with no
-    // filesystem-write shape) — WS-07 §5's plan row: "Prompt or classifier for exploratory shell";
-    // classifier borrow is OFF at P2 (this task's own instruction), so this falls to the ordinary
-    // pipeline exactly like `default`'s own "other unmatched action" bucket, rather than a THIRD
-    // bespoke terminal outcome this task was not asked to invent.
+    // filesystem-write shape) — WS-07 §5's plan row: "Prompt or classifier for exploratory shell".
+    // Task 12: the classifier borrow for THIS bucket is applied by evaluate() itself, at the
+    // generic post-stage-5 fallback (this "unresolved" result reaches stage 5's ordinary allow-rule
+    // lookup first, unaffected by auto's own suspension matcher since mode !== "auto" here, exactly
+    // as before) — never a third bespoke terminal outcome invented in this function.
     return { kind: "unresolved" };
   }
 
-  // mode === "auto": T6's own placeholder baseline (identical to default's), UNCHANGED beyond the
-  // standing-exceptions check above — T12 owns the real classifier pipeline (WS-07 §6.6). Guarding
-  // critical/protected here too (rather than leaving auto exempt) is required by the §6.7/§6.8
-  // matrices' own "auto: classifier" cells — never observably "silently allow," even before T12
-  // wires the real classifier route.
-  return isBuiltInReadOnly(call, ctx) ? { kind: "allow" } : { kind: "unresolved" };
+  // mode === "auto" (WS-07 §6.6/§10.1 step 4): built-in read-only PLUS "ordinary in-cwd edits" —
+  // the SAME bounded-edit recognition acceptEdits' own arm above uses. Standing exceptions
+  // (critical/protected) already ran above and would have returned before this line for anything
+  // they flag. Anything else (out-of-root edits, unrecognized/"other"-kind Bash, unmatched actions)
+  // is "unresolved" here — stage 5's own auto-aware allow-rule lookup (suspension-filtered, see
+  // evaluate()'s own stage-5 comment) and then the real classifier (ctx.autoEngine, via
+  // evaluate()'s resolveAutoDecision) get a chance next, never a silent allow.
+  if (isBuiltInReadOnly(call, ctx)) return { kind: "allow" };
+  const recognizedForAuto = recognizeEditOperation(call);
+  if (recognizedForAuto !== null && (recognizedForAuto.kind === "edit" || recognizedForAuto.kind === "bashFsOp") && recognizedForAuto.paths.every((p) => isWithinBounds(p, ctx))) {
+    return { kind: "allow" };
+  }
+  return { kind: "unresolved" };
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -795,6 +847,84 @@ function buildRecordFromPromptResult(
     ...(result.updatedPermissions !== undefined ? { updatedPermissions: result.updatedPermissions } : {}),
     ...(result.decisionClassification !== undefined ? { decisionClassification: result.decisionClassification } : {}),
   };
+}
+
+// Task 12 (WS-07 §6.5): "when auto is available and useAutoModeDuringPlan is enabled (current
+// default)". `ctx.policy.autoConfig` is `undefined` in the overwhelming majority of P2 fixtures/
+// callers (no settings-file loader exists to populate it yet) — absence reads as "use the §6.5
+// default," never as "the borrow is off," so every pre-Task-12 plan-mode fixture that never set
+// autoConfig at all keeps attempting the borrow (and, with the only classifier P2 ships being
+// alwaysNoVerdictClassifier, keeps falling through to the identical pre-existing prompt path —
+// see resolveAutoDecision's own two call sites in evaluate() for exactly where "wiring" and
+// "practical outcome" diverge).
+function isAutoModeDuringPlanEnabled(ctx: EvaluationContext): boolean {
+  return ctx.policy.autoConfig?.useAutoModeDuringPlan ?? AUTO_MODE_DEFAULT_USE_AUTO_MODE_DURING_PLAN;
+}
+
+// Task 12 (WS-07 §10.1 steps 5-8 / §6.6): the ONLY place evaluate() ever calls ctx.autoEngine for
+// a genuine `auto`-mode decision. Shared by TWO call sites below: the standing-exception
+// "mustPrompt" branch (critical removal / protected write under `auto` — the §6.7/§6.8 "auto:
+// classifier" cells) and the generic post-stage-5 fallback (everything else `auto` never
+// auto-approved above, and no surviving narrow allow rescued at stage 5).
+//
+// `fallbackToPrompt` reuses the EXACT hook-then-canUseTool pathway every other mode's own
+// mustPrompt/stage-6 branches already use — mechanism ends up "hook" or "canUseTool" (never
+// "autoEngine") when a human genuinely answers, which is the CORRECT attribution (a human, not the
+// classifier, made this call); `ctx.autoEngine.noteFallbackResolution` is invoked afterward so an
+// allowed action here can un-trip a purely-consecutive-triggered fallback (WS-07 §10.5), the SAME
+// place a real host's canUseTool answer would naturally land for any other mode. Otherwise `allow`
+// and `deny`/`no_verdict` map directly, the latter with the stable model-visible string (§10.6-5) —
+// evaluate() never invents a richer message for a classifier-driven denial.
+async function resolveAutoDecision(
+  call: PermissionCall,
+  ctx: EvaluationContext,
+  policyVersion: number,
+  carriedTransform: Record<string, unknown> | undefined,
+): Promise<PermissionDecisionRecord> {
+  const verdict = await ctx.autoEngine.classify(call, ctx);
+
+  if (!verdict.fallbackToPrompt) {
+    if (verdict.verdict === "allow") {
+      return { decision: "allow", mechanism: "autoEngine", policyVersion, ...(carriedTransform !== undefined ? { transformedInput: carriedTransform } : {}) };
+    }
+    // "deny" or "no_verdict" — both fail closed with the IDENTICAL stable string (WS-07 §10.6-5:
+    // the model must never be able to distinguish a genuine block from a classifier failure mode).
+    return {
+      decision: "deny",
+      mechanism: "autoEngine",
+      policyVersion,
+      message: BLOCKED_BY_CLASSIFIER_MESSAGE,
+      ...(carriedTransform !== undefined ? { transformedInput: carriedTransform } : {}),
+    };
+  }
+
+  // Fallback active (WS-07 §10.5): route through the SAME hook-then-canUseTool pathway every other
+  // would-prompt call uses — a null promptStage answer still fails closed here, exactly like every
+  // other mode's own generic fallback (headless = denied-and-continue, never a hang).
+  const meta: PromptStageMeta = {
+    decisionReason: "auto-mode fallback: the classifier is paused after repeated blocks (WS-07 §10.5)",
+    ...(call.toolUseId !== undefined ? { toolUseID: call.toolUseId } : {}),
+    ...(call.agentId !== undefined ? { agentID: call.agentId } : {}),
+  };
+  const hookAnswer = await tryPermissionRequestHook(call, ctx, meta, policyVersion, carriedTransform);
+  let record: PermissionDecisionRecord;
+  if (hookAnswer !== undefined) {
+    record = hookAnswer;
+  } else {
+    const result = await ctx.promptStage.prompt(call, ctx, meta);
+    record =
+      result === null
+        ? {
+            decision: "deny",
+            mechanism: "autoEngine",
+            policyVersion,
+            message: "Denied: auto-mode fallback requires human approval and no prompt handler answered (WS-07 §10.5)",
+            ...(carriedTransform !== undefined ? { transformedInput: carriedTransform } : {}),
+          }
+        : buildRecordFromPromptResult(result, policyVersion, carriedTransform);
+  }
+  ctx.autoEngine.noteFallbackResolution?.(record.decision === "allow" ? "allow" : "deny");
+  return record;
 }
 
 export async function evaluate(call: PermissionCall, ctx: EvaluationContext): Promise<PermissionDecisionRecord> {
@@ -1056,6 +1186,45 @@ export async function evaluate(call: PermissionCall, ctx: EvaluationContext): Pr
     // fallback (both deny on null), not the opposite T6-era pairing this comment used to describe.
     // A non-null answer here (T8's real PromptStage) is used exactly like any other prompt result
     // (mechanism "canUseTool").
+
+    // Task 12 (WS-07 §6.7/§6.8's own "auto: classifier" cells): under `auto`, a standing exception
+    // is the ONLY way this branch is reached (evaluateModeStage's own auto arm never returns
+    // "mustPrompt" for anything else) — route to the classifier instead of the generic canUseTool
+    // path below.
+    if (policy.mode === "auto") {
+      return await resolveAutoDecision(effectiveCall, ctx, policyVersion, carriedTransform);
+    }
+
+    // Task 12 (WS-07 §6.5's plan classifier borrow, applied to its own §6.7/§6.8 table rows):
+    // "classifier when plan-auto active, otherwise prompt" (protected write) / "prompt, or
+    // classifier when plan-auto is active and bypass unavailable" (critical removal). `origin
+    // !== "planWrite"` is the §6.5 exclusion (source edits are withheld unconditionally — the
+    // borrow sentence names "exploratory commands," never writes; see evaluateModeStage's own
+    // plan-write branch). `sessionBypassEnabled !== true` covers §6.8's own explicit
+    // bypass-unavailable gate for critical removal; it is a no-op (already vacuously true) for
+    // protected-write's own mustPrompt case, since resolveProtectedWrite already returned "allow"
+    // directly, above this branch, whenever plan + session bypass was already true.
+    if (policy.mode === "plan" && modeResult.origin !== "planWrite" && ctx.sessionBypassEnabled !== true && isAutoModeDuringPlanEnabled(ctx)) {
+      const verdict = await ctx.autoEngine.classify(effectiveCall, ctx);
+      if (verdict.verdict === "allow") {
+        return { decision: "allow", mechanism: "autoEngine", policyVersion, ...(carriedTransform !== undefined ? { transformedInput: carriedTransform } : {}) };
+      }
+      if (verdict.verdict === "deny") {
+        return {
+          decision: "deny",
+          mechanism: "autoEngine",
+          policyVersion,
+          message: BLOCKED_BY_CLASSIFIER_MESSAGE,
+          ...(carriedTransform !== undefined ? { transformedInput: carriedTransform } : {}),
+        };
+      }
+      // "no_verdict" (P2's ONLY shipped classifier, alwaysNoVerdictClassifier, always lands here,
+      // as does a genuine fallback signal) — falls through to the EXACT pre-existing hook/prompt
+      // code below, unchanged. This is what makes the borrow's PRACTICAL P2 outcome "prompt"
+      // (Ruling/controller dispatch) even though the WIRING above is real (fixtured with a
+      // scripted classifier double).
+    }
+
     const mustPromptMeta: PromptStageMeta = {
       decisionReason: modeResult.message,
       ...(modeResult.blockedPath !== undefined ? { blockedPath: modeResult.blockedPath } : {}),
@@ -1072,7 +1241,20 @@ export async function evaluate(call: PermissionCall, ctx: EvaluationContext): Pr
   }
 
   // --- Stage 5: allow rules ------------------------------------------------------------------
-  const allowEntry = findMatchingRuleEntry(policy.rules, effectiveCall, "allow", ctx);
+  // Task 12 (WS-07 §10.1 steps 2/3): under `auto`, a broad allow (blanket Bash(*)/PowerShell(*),
+  // wildcarded interpreter/package-manager rules, any Agent/Monitor rule) is SUSPENDED — treated as
+  // though it never matched — so it can never resolve this call; a surviving NARROW allow still
+  // resolves here exactly like every other mode (mechanism "rule", unchanged attribution).
+  // `classifyAllShell` widens suspension to every shell allow, narrow ones included
+  // (auto/config.ts's own isAutoSuspendedAllowRule owns the exact matcher). Every other mode is
+  // entirely unaffected — `opts` is only ever supplied for `policy.mode === "auto"`.
+  const allowEntry = findMatchingRuleEntry(
+    policy.rules,
+    effectiveCall,
+    "allow",
+    ctx,
+    policy.mode === "auto" ? { skip: (entry) => isAutoSuspendedAllowRule(entry.rule, { classifyAllShell: policy.autoConfig?.classifyAllShell === true }) } : undefined,
+  );
   if (allowEntry) {
     return {
       decision: "allow",
@@ -1085,6 +1267,13 @@ export async function evaluate(call: PermissionCall, ctx: EvaluationContext): Pr
   }
 
   // --- Post-allow-stage fallback (mode-specific) --------------------------------------------------
+  // Task 12 (WS-07 §10.1 steps 5-8): nothing else resolved this `auto` call — not built-in-read-
+  // only/bounded-edit at stage 4, no surviving (unsuspended) narrow allow at stage 5 — send it to
+  // the classifier.
+  if (policy.mode === "auto") {
+    return await resolveAutoDecision(effectiveCall, ctx, policyVersion, carriedTransform);
+  }
+
   if (policy.mode === "dontAsk") {
     // WS-07 §6.3: "Every would-prompt outcome becomes a denial ... canUseTool is NEVER called."
     return {
@@ -1094,6 +1283,32 @@ export async function evaluate(call: PermissionCall, ctx: EvaluationContext): Pr
       message: "Denied: dontAsk mode denies unmatched actions",
       ...(carriedTransform !== undefined ? { transformedInput: carriedTransform } : {}),
     };
+  }
+
+  // Task 12 (WS-07 §6.5): plan's own classifier borrow for the "exploratory shell" bucket —
+  // evaluateModeStage's own plan arm already returned "unresolved" here for exactly this case (a
+  // non-write, non-read-only action; a plan-mode WRITE never reaches this point at all — it is
+  // ALWAYS a "mustPrompt" from that same arm, handled above, never "unresolved"). `no_verdict`
+  // falls through to the identical stage-6 canUseTool path below, unchanged — see resolveAutoDecision's
+  // own sibling call site (above) for the fuller "wiring vs. practical outcome" framing, which
+  // applies here identically. No `sessionBypassEnabled` gate here (judgment call, documented):
+  // unlike §6.8's critical-removal row, WS-07 §6.5's own exploratory-shell sentence names no
+  // bypass carve-out for this specific bucket.
+  if (policy.mode === "plan" && isAutoModeDuringPlanEnabled(ctx)) {
+    const verdict = await ctx.autoEngine.classify(effectiveCall, ctx);
+    if (verdict.verdict === "allow") {
+      return { decision: "allow", mechanism: "autoEngine", policyVersion, ...(carriedTransform !== undefined ? { transformedInput: carriedTransform } : {}) };
+    }
+    if (verdict.verdict === "deny") {
+      return {
+        decision: "deny",
+        mechanism: "autoEngine",
+        policyVersion,
+        message: BLOCKED_BY_CLASSIFIER_MESSAGE,
+        ...(carriedTransform !== undefined ? { transformedInput: carriedTransform } : {}),
+      };
+    }
+    // "no_verdict" -- falls through to stage 6 below, unchanged.
   }
 
   // --- Stage 6: canUseTool -------------------------------------------------------------------
