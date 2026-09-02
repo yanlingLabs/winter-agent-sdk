@@ -84,11 +84,45 @@ function matcherApplies(matcher: string | undefined, toolName: string | undefine
   return matchesRule(parsed, { toolName, input: {} }, { direction: "denyAsk" });
 }
 
-export function buildHookRegistry(entries: SourcedHookEntry[]): HookRegistry {
+// Finding 4 (P2 fix-wave, IMPORTANT): WS-08 §2's own table binds project-sourced hooks to "the same
+// settingSources/trust discipline as project rules" — for RULES, Ruling P2-H put that gate
+// structurally INSIDE the engine (resolveRules/effectiveDirectories/evaluator.ts's own
+// findMatchingRuleEntry), precisely so a future loader can feed entries without being trusted to
+// remember the gate itself. Hooks had the opposite architecture at P2: no gate at registration, none
+// at matching, none at invocation — the entire §2 trust obligation rode on a P5 loader that phase
+// ruling 1 describes as a pure FEEDER ("does not reshape" what it feeds), and from-config.ts's own
+// header used to steer that future loader AWAY from adding one ("no changes needed here"). This is
+// the untrusted-clone self-grant shape one level up from rules: a checked-in `.winter/settings.json`
+// PreToolUse hook in an untrusted clone would otherwise be host-machine code execution PLUS a
+// permission-gating participant, fed by a loader with no gate to hit.
+//
+// Unlike rules, there is no safe "deny-side stays active" half here: a permission rule's deny/ask
+// direction is a SAFETY CHECK that applies without trust by design (WS-07 §3.2), but every hook —
+// including a purely observational one — is configured CODE EXECUTION (WS-08 §2's own note) that can
+// exfiltrate whatever payload it observes; there is no hook "direction" that is safe to leave active
+// for an untrusted source. So `project`/`local` sourced entries are excluded WHOLESALE (every hook
+// kind, not just decision-capable ones) when the workspace is untrusted — never partially gated the
+// way rules are. `managed`/`user`/`sdk` are unaffected either way (WS-08 §2's own two-source-family
+// table: only the filesystem project/local pair carries this obligation at all).
+//
+// Filtered ONCE, at build time (not per `matching()` call) — a registry is immutable for the life of
+// a run (engine.ts builds it once, outside the per-call EvaluationContext factory), so there is
+// nothing to gain from re-deriving the same exclusion on every lookup. Unreachable today (only
+// `source:"sdk"` groups have a real producer — from-config.ts's own header; `trustedWorkspace` is
+// hard-false at engine.ts's one call site) — this closes the gate structurally BEFORE P5's
+// settings-file loader exists, so that loader inherits a wired gate instead of an unwritten
+// obligation, exactly like P2-H's own rule-side precedent.
+export interface HookRegistryOptions {
+  trustedWorkspace?: boolean;
+}
+
+export function buildHookRegistry(entries: SourcedHookEntry[], opts?: HookRegistryOptions): HookRegistry {
+  const trustedWorkspace = opts?.trustedWorkspace === true;
+  const gated = trustedWorkspace ? entries : entries.filter((e) => e.source !== "project" && e.source !== "local");
   // Explicit index-tiebreak stable sort (rather than relying on Array.prototype.sort's ES2019+
   // stability guarantee implicitly) — self-documents "registration order within one source" as an
   // intentional invariant, not an accident of engine behavior.
-  const sorted = entries
+  const sorted = gated
     .map((entry, index) => ({ entry, index }))
     .sort((a, b) => SOURCE_RANK[a.entry.source] - SOURCE_RANK[b.entry.source] || a.index - b.index)
     .map(({ entry }) => entry);

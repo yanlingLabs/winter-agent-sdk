@@ -15,7 +15,16 @@
 // Only "sdk"-sourced groups have a real producer at P2 (query.ts's own Options.hooks conversion) —
 // filesystem-configured (managed/user/project/local) sources are typed but inert until P5's settings
 // loader exists (phase ruling 1); this function is source-agnostic and will pick those up for free
-// the moment such a producer exists, with no changes needed here.
+// the moment such a producer exists.
+//
+// Finding 4 (P2 fix-wave) correction: this comment used to end "...with no changes needed here" —
+// true of THIS function (it stays a pure, trust-blind converter), but that phrasing steered a future
+// P5 loader away from the fact that a trust gate now exists, one call further downstream. Project/
+// local sourced entries this function builds are NOT filtered here — they are excluded wholesale by
+// hooks/registry.ts's `buildHookRegistry(entries, { trustedWorkspace })` the moment the workspace is
+// untrusted (see that function's own header for why the exclusion is wholesale, not partial, unlike
+// the rule-side precedent it otherwise mirrors). A P5 loader feeding this function's OUTPUT into
+// buildHookRegistry inherits that gate automatically; it must NOT re-implement its own filter here.
 import { HOOK_EVENTS, type HookEvent, type RuntimeHooksConfig } from "@yanlinglabs/winter-agent-sdk";
 import type { SourcedHookEntry } from "./registry.ts";
 

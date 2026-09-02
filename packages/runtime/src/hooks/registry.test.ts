@@ -33,13 +33,20 @@ describe("buildHookRegistry -- merged deterministic order (WS-08 §2: managed ->
   });
 
   test("all five sources sort into managed, user, project, local, sdk order", () => {
-    const registry = buildHookRegistry([
-      reg("sdk1", "Stop", "sdk"),
-      reg("local1", "Stop", "local"),
-      reg("project1", "Stop", "project"),
-      reg("user1", "Stop", "user"),
-      reg("managed1", "Stop", "managed"),
-    ]);
+    // Finding 4 (P2 fix-wave): trustedWorkspace:true here -- this test's own purpose is the
+    // five-source ORDERING, not the (separate, new) project/local trust gate; that gate has its own
+    // dedicated describe block below, including the untrusted-by-default case this call would
+    // otherwise silently start exercising instead of what it says on the tin.
+    const registry = buildHookRegistry(
+      [
+        reg("sdk1", "Stop", "sdk"),
+        reg("local1", "Stop", "local"),
+        reg("project1", "Stop", "project"),
+        reg("user1", "Stop", "user"),
+        reg("managed1", "Stop", "managed"),
+      ],
+      { trustedWorkspace: true },
+    );
     expect(registry.matching("Stop").map((e) => e.id)).toEqual(["managed1", "user1", "project1", "local1", "sdk1"]);
   });
 
@@ -126,5 +133,54 @@ describe("buildHookRegistry -- per-entry timeout carried through unchanged", () 
   test("timeoutMs on an entry round-trips through matching()", () => {
     const registry = buildHookRegistry([{ ...reg("h1", "PreToolUse", "sdk"), timeoutMs: 5000 }]);
     expect(registry.matching("PreToolUse", "Bash")[0]?.timeoutMs).toBe(5000);
+  });
+});
+
+// Finding 4 (P2 fix-wave, IMPORTANT): WS-08 §2's "the same settingSources/trust discipline as
+// project rules" obligation, wired structurally at the registry -- see this module's own header on
+// buildHookRegistry for the full rationale (wholesale exclusion, every hook kind, no safe deny-side
+// half unlike rules).
+describe("buildHookRegistry -- Finding 4: project/local sourced hooks require workspace trust (WS-08 §2)", () => {
+  test("a project-sourced entry is excluded entirely when the workspace is untrusted (the default -- opts omitted)", () => {
+    const registry = buildHookRegistry([reg("proj-1", "PreToolUse", "project")]);
+    expect(registry.matching("PreToolUse", "Bash")).toEqual([]);
+  });
+
+  test("a project-sourced entry is excluded when trustedWorkspace is explicitly false", () => {
+    const registry = buildHookRegistry([reg("proj-1", "PreToolUse", "project")], { trustedWorkspace: false });
+    expect(registry.matching("PreToolUse", "Bash")).toEqual([]);
+  });
+
+  test("the SAME entry is included once the workspace is trusted", () => {
+    const registry = buildHookRegistry([reg("proj-1", "PreToolUse", "project")], { trustedWorkspace: true });
+    expect(registry.matching("PreToolUse", "Bash").map((e) => e.id)).toEqual(["proj-1"]);
+  });
+
+  test("a local-sourced entry is gated identically to project (Ruling P2-H's own precedent, extended)", () => {
+    const untrusted = buildHookRegistry([reg("local-1", "PreToolUse", "local")], { trustedWorkspace: false });
+    expect(untrusted.matching("PreToolUse", "Bash")).toEqual([]);
+    const trusted = buildHookRegistry([reg("local-1", "PreToolUse", "local")], { trustedWorkspace: true });
+    expect(trusted.matching("PreToolUse", "Bash").map((e) => e.id)).toEqual(["local-1"]);
+  });
+
+  test("the exclusion is wholesale across every hook kind, not just decision-capable ones -- an OBSERVATIONAL Stop hook is excluded too", () => {
+    const registry = buildHookRegistry([reg("proj-stop", "Stop", "project")], { trustedWorkspace: false });
+    expect(registry.matching("Stop")).toEqual([]);
+  });
+
+  test("managed/user/sdk sourced entries are unaffected either way -- only project/local carry this obligation", () => {
+    const entries = [reg("managed-1", "PreToolUse", "managed"), reg("user-1", "PreToolUse", "user"), reg("sdk-1", "PreToolUse", "sdk")];
+    const untrusted = buildHookRegistry(entries, { trustedWorkspace: false });
+    expect(untrusted.matching("PreToolUse", "Bash").map((e) => e.id).sort()).toEqual(["managed-1", "sdk-1", "user-1"]);
+    const trusted = buildHookRegistry(entries, { trustedWorkspace: true });
+    expect(trusted.matching("PreToolUse", "Bash").map((e) => e.id).sort()).toEqual(["managed-1", "sdk-1", "user-1"]);
+  });
+
+  test("an untrusted project entry is excluded from the merged-order output alongside a trusted-tier sibling -- the managed/user/sdk ordering is unaffected by the exclusion", () => {
+    const registry = buildHookRegistry(
+      [reg("sdk-1", "Stop", "sdk"), reg("proj-1", "Stop", "project"), reg("managed-1", "Stop", "managed")],
+      { trustedWorkspace: false },
+    );
+    expect(registry.matching("Stop").map((e) => e.id)).toEqual(["managed-1", "sdk-1"]);
   });
 });

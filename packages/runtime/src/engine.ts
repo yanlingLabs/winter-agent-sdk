@@ -253,7 +253,15 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // runtime->host RPC uses, and an audit recorder that forwards to the store's optional
   // recordHookAudit (auxiliary — see recordHookAudit's own definition below, alongside
   // recordUser/recordAssistant/recordPermissionUpdate).
-  const hookRegistry = buildHookRegistry(buildHookEntriesFromConfig(config.hooks));
+  // Finding 4 (P2 fix-wave): the SAME trust signal makeEvalCtx's own `trustedWorkspace` field
+  // (below) already threads to the permission-rule side — declared once, here, so the hook registry
+  // and the evaluation context can never independently drift on what "this session's workspace
+  // trust" means. Constant `false` for the identical reason makeEvalCtx's own comment gives: no
+  // settings-file loader exists yet to have actually established trust (P5); this is the SAFE
+  // direction (project/local rules stay gated; project/local hooks are now excluded wholesale, per
+  // registry.ts's own header) and P5 is the one that wires a real signal in, at both call sites.
+  const trustedWorkspace = false;
+  const hookRegistry = buildHookRegistry(buildHookEntriesFromConfig(config.hooks), { trustedWorkspace });
   const hookInvoker: HookInvoker = createBridgeHookInvoker(bridge);
   // Auxiliary, exactly like recordUser/recordAssistant/recordPermissionUpdate further down (same
   // "a store failure never fails the turn or blocks the hook it accompanies" policy) — defined here
@@ -386,7 +394,7 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
     policy: policyStateStore.getState(),
     cwd: config.cwd,
     home: permissionHome,
-    trustedWorkspace: false,
+    trustedWorkspace,
     sessionBypassEnabled: config.allowDangerouslySkipPermissions === true,
     hookStage: realHookStage,
     promptStage: realPromptStage,
