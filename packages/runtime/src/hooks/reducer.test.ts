@@ -5,6 +5,7 @@
 // and no invoker/audit doubles at all (per the task brief's own Step 1 instruction).
 import { describe, test, expect } from "bun:test";
 import { reduceHookOutcomes, type HookOutcome, type HookParticipant } from "./reducer.ts";
+import type { PermissionUpdate } from "@yanlinglabs/winter-agent-sdk";
 
 function participant(overrides: Partial<HookParticipant> & Pick<HookParticipant, "id" | "event" | "source">): HookParticipant {
   return { ...overrides };
@@ -96,6 +97,21 @@ describe("reduceHookOutcomes -- strictest-wins precedence (WS-08 §4 rule 2, ver
     ]);
     expect(composite.decision).toBe("deny");
     expect(composite.message).toBe("final no");
+  });
+
+  test("H1 allow+updatedPermissions overridden by H2's stricter deny -- H1's updatedPermissions is discarded, same scalar-slot rule as message/interrupt (controller-advisor-flagged gap)", () => {
+    // HookOutcomeFields.updatedPermissions's own comment (T10): "the same earliest-of-tie /
+    // override-discard rule as message/interrupt, not the transform-composition chain." H1's allow
+    // (carrying a PermissionRequest permission-suggestion) loses to H2's later, stricter deny; H2
+    // contributes no updatedPermissions of its own, so the slot is overwritten to `undefined` right
+    // along with the decision -- never left dangling from the overridden winner.
+    const suggestion: PermissionUpdate[] = [{ type: "addRules", rules: [{ toolName: "Bash", ruleContent: "ls *" }], behavior: "allow", destination: "session" }];
+    const composite = reduceHookOutcomes([
+      entry("h1", "PermissionRequest", "sdk", { kind: "decision", decision: "allow", updatedPermissions: suggestion }),
+      entry("h2", "PermissionRequest", "sdk", { kind: "decision", decision: "deny", message: "blocked" }),
+    ]);
+    expect(composite.decision).toBe("deny");
+    expect(composite.updatedPermissions).toBeUndefined();
   });
 });
 
