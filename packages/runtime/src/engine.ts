@@ -31,7 +31,7 @@ import {
 // for a non-persistent session (autoStateStore undefined below), mirroring how `approvalStore`
 // being undefined already means "no durable approval machinery this run."
 import { createAutoEngine, NO_OP_AUTO_AUDIT_RECORDER } from "./permissions/auto/engine.ts";
-import { createInMemoryAutoCounterStore, type AutoCounterStore } from "./permissions/auto/caches.ts";
+import { createInMemoryAutoCounterStore, computePolicyHash, type AutoCounterStore } from "./permissions/auto/caches.ts";
 // T9's PostToolUse-accumulated classifierContext (WS-07 §10.4/§10.6-8) — reducer.ts's own
 // AttributedContext type, threaded into the auto engine's getClassifierContext closure below.
 import type { AttributedContext } from "./hooks/reducer.ts";
@@ -858,6 +858,10 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
           toolUseID: record.toolUseID,
           policyMode: policyStateStore.getState().mode,
           policyVersion: policyStateStore.getState().version,
+          // Item 10 (P2 fix-wave): the LIVE content hash this resume's own current policy computes
+          // to — compared against the record's own frozen, issuance-time hash (see approvals.ts's
+          // own revalidateApproval comment for the full rationale).
+          policyHash: computePolicyHash(policyStateStore.getState()),
           cwd: config.cwd,
           home: permissionHome,
         };
@@ -1118,6 +1122,14 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
               displayMetadata: { decisionReason: deferMessage },
               policyMode: policyStateStore.getState().mode,
               policyVersion: decision.policyVersion,
+              // Item 10 (P2 fix-wave): the content-based hash a later resume's own revalidation
+              // compares against (see approvals.ts's own revalidateApproval comment). Computed from
+              // the SAME live policyStateStore.getState() `decision.policyVersion` was itself
+              // stamped from -- evaluateWithFreshPolicy's own re-evaluation loop guarantees the two
+              // already agree by the time this branch runs, so this is exactly the policy the
+              // deferred decision was actually made under, not a later, possibly-already-moved-on
+              // snapshot.
+              policyHash: computePolicyHash(policyStateStore.getState()),
               issuedAt: new Date().toISOString(),
               state: "pending",
               issuedCwd: config.cwd,

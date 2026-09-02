@@ -75,7 +75,17 @@ export interface DurableApprovalRecord {
   permissionSuggestions?: PermissionUpdate[];
   matchedAskRule?: { source: RuleSource; toolName: string; ruleContent?: string };
   policyMode: PermissionMode;
+  // Item 10 (P2 fix-wave): kept for PROVENANCE/debugging only as of this fix wave — see
+  // revalidateApproval's own comment (the former Finding-3 cliff) for why the live comparison now
+  // uses `policyHash` below instead.
   policyVersion: number;
+  // Item 10 (P2 fix-wave): content-based policy hash at issuance (permissions/auto/caches.ts's own
+  // computePolicyHash — mode + rules + autoConfig, excluding the per-process version counter).
+  // Optional on this shape for the SAME reason `issuedResolvedTargets` is: a caller never has to
+  // compute it (a hand-built fixture, or a record persisted before this field existed), but every
+  // record engine.ts actually issues carries it, and revalidateApproval fails an absent hash closed
+  // (never a vacuous match) rather than treating it as an exemption.
+  policyHash?: string;
   issuedAt: string; // ISO 8601
   expiresAt?: string;
   state: "pending" | "allowed" | "denied" | "cancelled" | "expired";
@@ -144,7 +154,15 @@ export interface RevalidationContext {
   backendSessionId: string;
   toolUseID: string;
   policyMode: PermissionMode;
+  // Item 10 (P2 fix-wave): retained for PROVENANCE/debugging only — no longer part of the
+  // comparison (see revalidateApproval's own comment, the former Finding-3 cliff, now closed).
   policyVersion: number;
+  // Item 10 (P2 fix-wave): the ACTUAL policy-drift axis now compared — content-based (mode + rules
+  // + autoConfig, explicitly excluding the per-process version counter), via
+  // permissions/auto/caches.ts's own computePolicyHash. The caller (engine.ts) computes this fresh,
+  // the SAME way it already computes `policyMode`/`policyVersion` here, from the live
+  // PolicyStateStore at the moment of revalidation.
+  policyHash: string;
   cwd: string;
   home: string;
 }
@@ -206,32 +224,56 @@ export function revalidateApproval(approval: DurableApprovalRecord, ctx: Revalid
   if (approval.toolUseID !== ctx.toolUseID) {
     return { ok: false, axis: "toolCall", reason: `tool call mismatch: approval is for toolUseID ${approval.toolUseID}, current toolUseID is ${ctx.toolUseID}` };
   }
-  // Fix round 1, Finding 3 (MINOR — documented here, not fixed here): `ctx.policyVersion` comes
-  // from a FRESH PolicyStateStore that resets to 0 on every process construction (policy-state.ts's
-  // own constructor) — nothing in P2 persists policyVersion across a process boundary at all.
-  // USABILITY CLIFF, stated plainly: an approval issued at policyVersion > 0 (something bumped the
-  // version — a rule change, a mode switch — before the defer happened, within the SAME original
-  // run) can NEVER successfully consume on ANY later resume, ever, even if the effective policy is
-  // conceptually unchanged, because every freshly-resumed process's policyVersion starts back at 0
-  // and can never equal that approval's own recorded value again. This FAILS SAFE (an approval that
-  // can never match never wrongly executes) but is SILENTLY DEAD (a legitimate approval becomes
-  // permanently un-executable, with no signal to the user beyond an "expired" denial they may never
-  // connect to this cause). A future fix-wave's policy-CONTENT-hash candidate (comparing actual
-  // rule/mode content rather than an incrementing per-process counter) is expected to absorb this;
-  // out of this fix round's own scope.
-  if (approval.policyMode !== ctx.policyMode || approval.policyVersion !== ctx.policyVersion) {
+  // Fix round 1, Finding 3 (MINOR) — CLOSED by item 10 (P2 fix-wave). As originally stated: `ctx.
+  // policyVersion` comes from a FRESH PolicyStateStore that resets to 0 on every process
+  // construction (policy-state.ts's own constructor) — nothing in P2 persists policyVersion across
+  // a process boundary at all. USABILITY CLIFF: an approval issued at policyVersion > 0 (something
+  // bumped the version — a rule change, a mode switch — before the defer happened, within the SAME
+  // original run) could NEVER successfully consume on ANY later resume, ever, even if the effective
+  // policy was conceptually unchanged, because every freshly-resumed process's own policyVersion
+  // starts back at 0 and can never equal that approval's own recorded value again. That failed safe
+  // (an approval that can never match never wrongly executes) but was silently dead (a legitimate
+  // approval became permanently un-executable, with no signal beyond an "expired" denial the user
+  // might never connect to this cause).
+  //
+  // Closed by comparing POLICY CONTENT instead of the counter: `computePolicyHash` (permissions/
+  // auto/caches.ts — mode + rules + autoConfig, explicitly EXCLUDING the per-process version
+  // counter) gives two sessions — or a session and its own later resume — with identical policy
+  // CONTENT the identical hash, regardless of what their own, unrelated version counters happen to
+  // read. `policyVersion` is retained on the record and on RevalidationContext purely as
+  // PROVENANCE/debugging metadata from here on; it is no longer part of this comparison.
+  //
+  // Migration posture: a record persisted BEFORE this fix wave carries no `policyHash` field at all
+  // (`undefined`) — such a record fails this axis CLOSED here, exactly like a genuine drift would,
+  // never treated as vacuously matching. This is the SAME fail-safe direction the pre-fix cliff
+  // already had (an approval that can never match never wrongly executes); the fix is that a LIVE,
+  // still-genuinely-valid session's own future approvals are no longer permanently dead the moment
+  // any version bump happens to precede their defer.
+  if (approval.policyMode !== ctx.policyMode) {
     return {
       ok: false,
       axis: "policy",
-      reason: `policy drift: approval issued under mode=${approval.policyMode}/version=${approval.policyVersion}, current mode=${ctx.policyMode}/version=${ctx.policyVersion}`,
+      reason: `policy drift: approval issued under mode=${approval.policyMode}, current mode=${ctx.policyMode}`,
+    };
+  }
+  if (approval.policyHash === undefined || approval.policyHash !== ctx.policyHash) {
+    return {
+      ok: false,
+      axis: "policy",
+      reason: `policy drift: approval issued under policyHash=${approval.policyHash ?? "(absent -- pre-P2-fix-wave record, fails closed)"}, current policyHash=${ctx.policyHash}`,
     };
   }
   // Fix round 1, Ruling P2-K: compares the FROZEN, issuance-time-resolved value (stamped once by
   // record(), see withIssuedResolvedTargets) against a FRESH resolution computed NOW — never two
   // revalidation-time computations (see extractNormalizedTargets's own header for why that was
-  // fail-open). The `??` fallback only ever fires for a record some OTHER path constructed without
-  // going through record() (e.g. a fixture building a raw object) — every real approval has this
-  // pre-stamped.
+  // fail-open). The `??` fallback has TWO possible triggers, not one: (1) a record some OTHER path
+  // constructed without going through record() at all (e.g. a fixture building a raw object) —
+  // every real approval built via record() has this pre-stamped; and (2), per item 10's own
+  // migration-posture precedent above, a record PERSISTED BEFORE Ruling P2-K introduced this field
+  // (loaded from an on-disk file written by an older Winter version) — `loadExisting`'s own
+  // `JSON.parse` never invents a field absent from the file, so an old record replays with
+  // `issuedResolvedTargets: undefined` exactly like a hand-built fixture does, and hits this same
+  // fallback, recomputing from the (already-live, un-frozen) issuedCwd/issuedHome instead.
   const issuedTargets = approval.issuedResolvedTargets ?? extractNormalizedTargets(approval.toolName, approval.originalInput, { cwd: approval.issuedCwd, home: approval.issuedHome });
   const currentTargets = extractNormalizedTargets(approval.toolName, approval.originalInput, { cwd: ctx.cwd, home: ctx.home });
   if (issuedTargets.join(" ") !== currentTargets.join(" ")) {

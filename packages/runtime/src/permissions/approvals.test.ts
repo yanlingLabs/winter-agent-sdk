@@ -23,6 +23,12 @@ function tmpHome(): string {
   return realpathSync(mkdtempSync(join(tmpdir(), "winter-approvals-")));
 }
 
+// Item 10 (P2 fix-wave): a fixed, arbitrary default hash shared by approval()'s own record and
+// ctxFor()'s own derived context (mirroring how both already default-share policyMode/policyVersion)
+// -- every EXISTING "successful revalidation" fixture keeps working unchanged; a test that wants to
+// exercise policyHash drift specifically overrides one side or the other explicitly.
+const DEFAULT_TEST_POLICY_HASH = "test-policy-hash-v1";
+
 function approval(overrides: Partial<DurableApprovalRecord> = {}): DurableApprovalRecord {
   return {
     runtimeKind: WINTER_RUNTIME_KIND,
@@ -35,6 +41,7 @@ function approval(overrides: Partial<DurableApprovalRecord> = {}): DurableApprov
     displayMetadata: { decisionReason: "a PreToolUse hook deferred this call" },
     policyMode: "default",
     policyVersion: 0,
+    policyHash: DEFAULT_TEST_POLICY_HASH,
     issuedAt: "2026-09-02T00:00:00.000Z",
     state: "pending",
     issuedCwd: "/work",
@@ -51,6 +58,7 @@ function ctxFor(a: DurableApprovalRecord, overrides: Partial<RevalidationContext
     toolUseID: a.toolUseID,
     policyMode: a.policyMode,
     policyVersion: a.policyVersion,
+    policyHash: a.policyHash ?? DEFAULT_TEST_POLICY_HASH,
     cwd: a.issuedCwd,
     home: a.issuedHome,
     ...overrides,
@@ -355,15 +363,51 @@ describe("revalidateApproval — the 5 revalidation axes", () => {
     expect(v).toMatchObject({ axis: "toolCall" });
   });
 
-  test("axis: mode+policyVersion mismatch (mode differs)", () => {
+  test("axis: policy mismatch (mode differs)", () => {
     const a = approval();
     const v = revalidateApproval(a, ctxFor(a, { policyMode: "bypassPermissions" }));
     expect(v).toMatchObject({ ok: false, axis: "policy" });
   });
 
-  test("axis: mode+policyVersion mismatch (version differs)", () => {
+  // Item 10 (P2 fix-wave): the former Finding-3 cliff, CLOSED. policyVersion is now PROVENANCE
+  // ONLY -- differing alone, with the SAME policyHash, must no longer fail revalidation (this is
+  // the exact "a live, still-genuinely-valid session's approval is no longer permanently dead the
+  // moment any version bump happens to precede its defer" fix, positively verified).
+  test("Item 10: policyVersion differing ALONE (same policyHash) no longer fails revalidation -- the former usability cliff is closed", () => {
     const a = approval();
     const v = revalidateApproval(a, ctxFor(a, { policyVersion: 7 }));
+    expect(v).toEqual({ ok: true });
+  });
+
+  test("Item 10: policyHash differing (same mode, same policyVersion) DOES fail revalidation -- content, not the counter, is the live axis now", () => {
+    const a = approval();
+    const v = revalidateApproval(a, ctxFor(a, { policyHash: "a-completely-different-hash" }));
+    expect(v).toMatchObject({ ok: false, axis: "policy" });
+  });
+
+  test("Item 10: a record with NO policyHash at all (a pre-fix-wave, migrated record) fails closed -- never a vacuous match", () => {
+    // Built WITHOUT going through approval() (which always stamps a default policyHash) -- the key
+    // is entirely absent, exactly like a record persisted before this field existed and simply
+    // replayed via JSON.parse (which never invents a field the file never had).
+    const legacyRecord: DurableApprovalRecord = {
+      runtimeKind: WINTER_RUNTIME_KIND,
+      sessionId: "sess-1",
+      backendSessionId: "sess-1",
+      requestId: "req-1",
+      toolUseID: "tool-1",
+      toolName: "Bash",
+      originalInput: { command: "long-running-thing" },
+      displayMetadata: { decisionReason: "a PreToolUse hook deferred this call" },
+      policyMode: "default",
+      policyVersion: 0,
+      issuedAt: "2026-09-02T00:00:00.000Z",
+      state: "pending",
+      issuedCwd: "/work",
+      issuedHome: "/synthetic/home/tester",
+    };
+    // The context's own live hash is whatever it would genuinely be -- irrelevant here, since an
+    // absent record-side hash must fail regardless of what the live side computes to.
+    const v = revalidateApproval(legacyRecord, ctxFor(legacyRecord, { policyHash: DEFAULT_TEST_POLICY_HASH }));
     expect(v).toMatchObject({ ok: false, axis: "policy" });
   });
 
