@@ -34,6 +34,7 @@ import { join } from "node:path";
 import type { PermissionMode, PermissionRuleValue, PermissionUpdate, RuleSource } from "@yanlinglabs/winter-agent-sdk";
 import {
   evaluate,
+  findMatchingRuleEntry,
   NO_OPINION_HOOK_STAGE,
   NO_OPINION_PROMPT_STAGE,
   NO_OPINION_AUTO_ENGINE,
@@ -49,7 +50,7 @@ import {
   type HookDecision,
 } from "./evaluator.ts";
 import { PolicyStateStore, WinterPermissionError, type PolicyState } from "./policy-state.ts";
-import { emptyRuleSet, sourceRule, type SourcedRuleEntry, type SourcedRuleSet } from "./ruleset.ts";
+import { emptyRuleSet, resolveRules, sourceRule, type SourcedRuleEntry, type SourcedRuleSet } from "./ruleset.ts";
 
 // --- fixture helpers -----------------------------------------------------------------------------
 
@@ -151,6 +152,26 @@ describe("stage 1: PreToolUse hooks", () => {
     const record = await evaluate(call("Bash", { command: "ls" }), ctx);
     expect(record.decision).toBe("deny");
     expect(record.mechanism).toBe("rule");
+  });
+
+  // Fix round 1, item 4 (LOW — pin against future refactors): "allow" is advisory ONLY — the
+  // existing test above already proves a downstream DENY RULE still wins over it; this proves the
+  // OTHER downstream stage a hook-allow must never suppress: a matching ASK rule (stage 3) still
+  // forces the prompt path even though stage 1 already said "allow". There must be no early
+  // return anywhere in evaluate() for hookResult.decision === "allow".
+  test("hook allow is advisory only — a matching ASK rule still forces the prompt path (no early return on hook-allow)", async () => {
+    const promptSpy = spyPromptStage(() => ({ decision: "deny", message: "human said no" }));
+    const ctx = baseCtx({
+      hookStage: spyHookStage(() => ({ decision: "allow" })).stage,
+      promptStage: promptSpy.stage,
+      policy: policy({ rules: withRules(rule("Bash(git push)", "ask")) }),
+    });
+    const record = await evaluate(call("Bash", { command: "git push" }), ctx);
+    expect(promptSpy.calls.length).toBe(1);
+    expect(promptSpy.calls[0]!.meta.matchedAskRule).toEqual({ source: "sdk", toolName: "Bash", ruleContent: "git push" });
+    expect(record.decision).toBe("deny");
+    expect(record.mechanism).toBe("canUseTool");
+    expect(record.message).toBe("human said no");
   });
 });
 
@@ -928,6 +949,46 @@ describe("compound Bash commands — split before recognition/matching (lens ite
     expect(record.mechanism).toBe("rule");
     expect(record.deniedBareSchemaRemoval).toBe(true);
   });
+
+  // Fix round 1, item 1 (IMPORTANT — vacuous allow-match): splitCompound("") returns `[]`, not
+  // null (empty/all-separator/missing-command input scans OK, it just has zero non-empty
+  // subcommands) — so `parts.every(matchesSub)`, unguarded, is vacuously TRUE for ANY configured
+  // Bash allow rule regardless of what it says, falsely attributing mechanism:"rule"/ruleRef and
+  // defeating dontAsk's own deny-unmatched fallback for this whole input class. Mirrors the
+  // guard `isBashCallReadOnly` (above in evaluator.ts) already has: `parts.length > 0 && ...`.
+  describe("empty/degenerate Bash commands never vacuously match an allow rule (fix round 1, item 1)", () => {
+    const degenerateInputs: Array<{ label: string; input: Record<string, unknown> }> = [
+      { label: "input: {} (no command field at all)", input: {} },
+      { label: 'command: ""', input: { command: "" } },
+      { label: 'command: ";" (splits to zero non-empty subcommands)', input: { command: ";" } },
+    ];
+
+    for (const { label, input } of degenerateInputs) {
+      test(`default mode: ${label} does NOT match a configured Bash(npm test) allow rule`, async () => {
+        const promptSpy = spyPromptStage(() => ({ decision: "deny", message: "no" }));
+        const ctx = baseCtx({
+          promptStage: promptSpy.stage,
+          policy: policy({ mode: "default", rules: withRules(rule("Bash(npm test)", "allow")) }),
+        });
+        const record = await evaluate(call("Bash", input), ctx);
+        // Must NOT be silently allowed via the allow rule — falls through to the prompt stage
+        // instead, exactly like any other unmatched action in default mode.
+        expect(record.mechanism).not.toBe("rule");
+        expect(promptSpy.calls.length).toBe(1);
+      });
+
+      test(`dontAsk mode: ${label} does NOT match a configured Bash(npm test) allow rule — resolves via dontAsk's own deny-unmatched fallback`, async () => {
+        const ctx = baseCtx({
+          policy: policy({ mode: "dontAsk", rules: withRules(rule("Bash(npm test)", "allow")) }),
+        });
+        const record = await evaluate(call("Bash", input), ctx);
+        // The vacuous bug would report decision:"allow"/mechanism:"rule" here. Correct behavior:
+        // dontAsk's generic unmatched-action fallback denies it, mechanism "mode" — never "rule".
+        expect(record.decision).toBe("deny");
+        expect(record.mechanism).toBe("mode");
+      });
+    }
+  });
 });
 
 // --- Lens item 2: FILE_RULE_TOOLS (Read/Edit) route to matchFileRule, never matchesRule ------------
@@ -1002,6 +1063,101 @@ describe("file-rule routing — Read/Edit scoped rules route to matchFileRule (l
     const record = await evaluate(call("Read", { file_path: "/anything/at/all" }), ctx);
     expect(record.decision).toBe("deny");
     expect(record.deniedBareSchemaRemoval).toBe(true);
+  });
+});
+
+// --- Fix round 1, item 2 (MODERATE): parity between the two rule-lookup copies --------------------
+//
+// evaluator.ts's own header comment ("Rule lookup — deliberately NOT ruleset.ts's resolveRules()")
+// already documents WHY findMatchingRuleEntry/matchesRuleForCall duplicate resolveRules()'s
+// precedence loop (trust gate + allowManagedPermissionRulesOnly filter) instead of calling it:
+// resolveRules() cannot correctly evaluate FILE_RULE_TOOLS patterns or compound Bash commands.
+// That duplication stopped being hypothetical risk the moment item 1's vacuous-allow-match bug
+// was found: resolveRules() (via plain matchesRule, no compound-splitting) was ALREADY fail-closed
+// on an empty Bash command, while this file's own copy was fail-open. This table pins agreement
+// between the two copies on every case that is NOT one of the two structurally-necessary
+// divergences (a FILE_RULE_TOOLS pattern rule, or a Bash pattern rule against a genuinely compound
+// command) — i.e. every specifier kind resolveRules' own matchesRule call already handles
+// correctly on its own, plus the shared precedence-loop mechanics (trust gate, managed-only
+// filter), plus the degenerate-Bash-command case item 1 just fixed. If this table ever fails, one
+// copy drifted from the other: treat ruleset.ts's resolveRules() as ground truth for these
+// specifier kinds (it is the ORIGINAL, undisputed implementation T5 built and T6/T7 never had
+// authorization to edit) and re-align findMatchingRuleEntry/matchesRuleForCall in THIS file to
+// match — never the reverse, and never by making the evaluator call resolveRules() directly (see
+// this file's own header for why that still can't work generally).
+//
+// NOTE for a future editor of ruleset.ts specifically: this file (evaluator.test.ts) is the one
+// place that pins cross-copy agreement — Task 6/7's edit authorization never extended to
+// ruleset.ts itself, so no equivalent pointer could be left there. If you change resolveRules()'s
+// precedence-loop mechanics, run this describe block.
+describe("parity: findMatchingRuleEntry (evaluator.ts) vs. resolveRules (ruleset.ts) agree on every case that routes through both", () => {
+  function compare(
+    entries: SourcedRuleEntry[],
+    theCall: PermissionCall,
+    opts: { trustedWorkspace: boolean; allowManagedPermissionRulesOnly?: boolean },
+  ): void {
+    const rules = withRules(...entries);
+    const resolved = resolveRules(rules, theCall, opts);
+    const ctx = baseCtx({
+      trustedWorkspace: opts.trustedWorkspace,
+      ...(opts.allowManagedPermissionRulesOnly !== undefined ? { allowManagedPermissionRulesOnly: opts.allowManagedPermissionRulesOnly } : {}),
+      policy: policy({ rules }),
+    });
+    // Referential equality (toBe), not just presence: both copies must find the exact SAME entry
+    // object by walking the identical pool in the identical order — a stronger guarantee than "both
+    // say yes/no", and it degrades gracefully to `undefined === undefined` when neither matches.
+    expect(findMatchingRuleEntry(rules, theCall, "deny", ctx)).toBe(resolved.deny);
+    expect(findMatchingRuleEntry(rules, theCall, "ask", ctx)).toBe(resolved.ask);
+    expect(findMatchingRuleEntry(rules, theCall, "allow", ctx)).toBe(resolved.allow);
+  }
+
+  test("bare rule", () => {
+    compare([rule("Bash", "deny")], call("Bash", { command: "anything" }), { trustedWorkspace: false });
+  });
+
+  test("wildcardAll rule — Tool(*)", () => {
+    compare([rule("Bash(*)", "allow")], call("Bash", { command: "anything" }), { trustedWorkspace: true });
+  });
+
+  test("param rule — denyAsk direction matches on equal scalar value", () => {
+    compare([rule("Agent(model:opus)", "ask")], call("Agent", { model: "opus" }), { trustedWorkspace: false });
+  });
+
+  test("param rule — allow direction never matches (WS-07 §3: param rules cannot pre-approve)", () => {
+    compare([rule("Agent(model:opus)", "allow")], call("Agent", { model: "opus" }), { trustedWorkspace: true });
+  });
+
+  test("webFetchDomain rule", () => {
+    compare([rule("WebFetch(domain:example.com)", "deny")], call("WebFetch", { domain: "example.com" }), { trustedWorkspace: false });
+  });
+
+  for (const source of ["project", "local"] as const) {
+    for (const trustedWorkspace of [false, true]) {
+      test(`trust gate (Ruling P2-H) — ${source}-sourced allow rule (wildcardAll), trustedWorkspace=${trustedWorkspace}`, () => {
+        compare([rule("Bash(*)", "allow", source)], call("Bash", { command: "anything" }), { trustedWorkspace });
+      });
+    }
+  }
+
+  test("allowManagedPermissionRulesOnly filters BOTH copies identically (managed entry found, sdk-sourced sibling excluded)", () => {
+    compare(
+      [rule("Bash", "allow", "sdk"), rule("Bash", "allow", "managed")],
+      call("Bash", { command: "anything" }),
+      { trustedWorkspace: true, allowManagedPermissionRulesOnly: true },
+    );
+  });
+
+  describe("empty-command Bash pattern rule (item 1's fix) — both copies agree post-fix", () => {
+    const degenerateInputs: Record<string, Record<string, unknown>> = {
+      "input: {}": {},
+      'command: ""': { command: "" },
+      'command: ";"': { command: ";" },
+    };
+    for (const [label, input] of Object.entries(degenerateInputs)) {
+      test(label, () => {
+        compare([rule("Bash(npm test)", "allow")], call("Bash", input), { trustedWorkspace: true });
+      });
+    }
   });
 });
 

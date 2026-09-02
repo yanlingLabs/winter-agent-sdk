@@ -380,7 +380,11 @@ function matchesRuleForCall(rule: ParsedRule, call: PermissionCall, direction: "
   return matchesRule(rule, call, { direction });
 }
 
-function findMatchingRuleEntry(rules: SourcedRuleSet, call: PermissionCall, behavior: PermissionBehavior, ctx: EvaluationContext): SourcedRuleEntry | undefined {
+// Exported ONLY so evaluator.test.ts's resolveRules-parity table (fix round 1, item 2) can call
+// this copy directly and compare it against ruleset.ts's resolveRules() for the same rules/call —
+// mirroring PLAN_WRITE_WITHHELD_MESSAGE's own precedent of exporting an otherwise-internal symbol
+// purely for fixture use. Not part of any other module's intended surface.
+export function findMatchingRuleEntry(rules: SourcedRuleSet, call: PermissionCall, behavior: PermissionBehavior, ctx: EvaluationContext): SourcedRuleEntry | undefined {
   const direction: "allow" | "denyAsk" = behavior === "allow" ? "allow" : "denyAsk";
   const pool = ctx.allowManagedPermissionRulesOnly ? rules.entries.filter((e) => e.source === "managed") : rules.entries;
   for (const entry of pool) {

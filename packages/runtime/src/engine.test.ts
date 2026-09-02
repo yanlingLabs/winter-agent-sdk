@@ -654,16 +654,28 @@ test("Task 6: a denied tool call produces a synthetic tool_result with denied:tr
     const sessionId = randomUUID();
     const cwd = "/winter-fixture-permissions";
     const config: RuntimeConfig = { sessionId, cwd, model: "sonnet", disallowedTools: ["test_tool"] };
-    const provider = scriptedProvider([
-      {
-        kind: "tool_use",
-        calls: [
-          { id: "call1", name: "test_tool", input: { probe: true } },
-          { id: "call2", name: "other_tool", input: { x: 1 } },
-        ],
+    // Fix round 1, item 3 (LOW — history-leg direct capture): the established P1-G/P1-H-pattern
+    // capturing provider, in place of scriptedProvider's plain queue, so the SECOND generate()
+    // call's `messages` snapshot (the engine's own internal history accumulator) can be inspected
+    // directly — not just inferred from wire/persistence agreement.
+    const calls: ProviderMessage[][] = [];
+    let turnCount = 0;
+    const provider: Provider = {
+      async generate({ messages }) {
+        calls.push([...messages]);
+        turnCount++;
+        if (turnCount === 1) {
+          return {
+            kind: "tool_use",
+            calls: [
+              { id: "call1", name: "test_tool", input: { probe: true } },
+              { id: "call2", name: "other_tool", input: { x: 1 } },
+            ],
+          };
+        }
+        return { kind: "text", text: "done" };
       },
-      { kind: "text", text: "done" },
-    ]);
+    };
     const proc = inMemoryProcess(["--config-json", JSON.stringify(config)], provider, stubExecutor, { WINTER_HOME: home });
     proc.stdin.write(encodeFrame({ type: "user", text: "go" }));
     proc.stdin.write(encodeFrame({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined }));
@@ -693,6 +705,17 @@ test("Task 6: a denied tool call produces a synthetic tool_result with denied:tr
     ) as { message: { content: unknown } } | undefined;
     expect(persistedUserEntry).toBeDefined();
     expect(persistedUserEntry!.message.content).toEqual(toolResultMsg.message.content);
+
+    // Fix round 1, item 3: the INTERNAL history leg — the denied tool_result appears in the
+    // engine's own `messages` accumulator (what the NEXT provider.generate() call actually sees)
+    // exactly as it appeared on the wire and in persistence above. Mirrors the P1-G/P1-H tests'
+    // own toolResultMsg-in-calls[1] pattern (role "tool", not "user" — internal history keeps tool
+    // results on their own role; see engine.ts's ProviderMessage comment).
+    expect(calls.length).toBe(2);
+    const secondCallMessages = calls[1]!;
+    const internalToolMsg = secondCallMessages.find((m) => m.role === "tool");
+    expect(internalToolMsg).toBeDefined();
+    expect(internalToolMsg!.content).toEqual(toolResultMsg.message.content as string | ContentBlock[]);
   } finally {
     rmSync(home, { recursive: true, force: true });
   }
