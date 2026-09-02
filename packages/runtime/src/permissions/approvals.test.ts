@@ -5,7 +5,7 @@
 // dedicated describe block, mirroring ruleset.test.ts's own real-fs regime for the permission
 // journal (mkdtempSync + realpathSync, for the identical macOS-symlink reason documented there).
 import { describe, test, expect } from "bun:test";
-import { mkdtempSync, statSync, readFileSync, realpathSync } from "node:fs";
+import { mkdtempSync, statSync, readFileSync, realpathSync, mkdirSync, writeFileSync, symlinkSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -247,6 +247,93 @@ withEachStore("markConsumed — exactly-once execution bookkeeping", (make) => {
   });
 });
 
+// --- Fix round 1, Ruling P2-L: markConsuming — the write-ahead consumption-intent marker -------------
+
+withEachStore("markConsuming — write-ahead consumption intent (Ruling P2-L)", (make) => {
+  test("stamps consumingAt on an allowed record", () => {
+    const store = make();
+    store.record(approval());
+    store.respond("req-1", { outcome: "allowed", mechanism: "hook" });
+    store.markConsuming("req-1");
+    expect(store.get("req-1")!.consumingAt).toBeDefined();
+    expect(store.get("req-1")!.consumedAt).toBeUndefined(); // intent only -- no result yet
+  });
+
+  test("is a no-op on a still-pending record (never allowed yet)", () => {
+    const store = make();
+    store.record(approval());
+    store.markConsuming("req-1"); // never responded -- still "pending"
+    expect(store.get("req-1")!.consumingAt).toBeUndefined();
+    expect(store.get("req-1")!.state).toBe("pending");
+  });
+
+  test("first-intent-wins: a second markConsuming call is a no-op (never re-stamps the timestamp)", () => {
+    const store = make();
+    store.record(approval());
+    store.respond("req-1", { outcome: "allowed", mechanism: "hook" });
+    store.markConsuming("req-1");
+    const first = store.get("req-1")!.consumingAt;
+    store.markConsuming("req-1");
+    expect(store.get("req-1")!.consumingAt).toBe(first!);
+  });
+
+  test("the crash signature: consumingAt set with no consumedAt survives independently of markConsumed", () => {
+    const store = make();
+    store.record(approval());
+    store.respond("req-1", { outcome: "allowed", mechanism: "hook" });
+    store.markConsuming("req-1"); // simulates: about to execute...
+    // ...and the process died here, before markConsumed ever ran. A later resume finds exactly
+    // this combination -- engine.ts's own resume-consumption step is what turns it into "expired"
+    // (see engine.test.ts's dedicated crash-window fixture); this test only pins the STORE's own
+    // half: the marker persists, unaccompanied, and is never silently cleared or auto-completed.
+    const record = store.get("req-1")!;
+    expect(record.consumingAt).toBeDefined();
+    expect(record.consumedAt).toBeUndefined();
+    expect(record.state).toBe("allowed");
+  });
+
+  test("expire() still applies to a consuming-but-not-consumed record (never retroactively blocked by the intent marker alone)", () => {
+    const store = make();
+    store.record(approval());
+    store.respond("req-1", { outcome: "allowed", mechanism: "hook" });
+    store.markConsuming("req-1");
+    store.expire("req-1", "policy drift discovered mid-flight");
+    expect(store.get("req-1")!.state).toBe("expired");
+  });
+
+  test("expire() is a no-op once markConsumed has actually recorded a result, even if markConsuming ran first", () => {
+    const store = make();
+    store.record(approval());
+    store.respond("req-1", { outcome: "allowed", mechanism: "hook" });
+    store.markConsuming("req-1");
+    store.markConsumed("req-1", { output: "done" });
+    store.expire("req-1", "too late");
+    expect(store.get("req-1")!.state).toBe("allowed"); // NOT expired -- already genuinely completed
+  });
+});
+
+// --- Fix round 1, Ruling P2-K: record() stamps issuedResolvedTargets automatically, exactly once ----
+
+withEachStore("record() stamps issuedResolvedTargets (Ruling P2-K)", (make) => {
+  test("a path-bearing call gets its resolved target stamped at record() time", () => {
+    const store = make();
+    store.record(approval({ toolName: "Edit", originalInput: { file_path: "notes.txt" }, issuedCwd: "/work/a", issuedHome: "/synthetic/home/tester" }));
+    expect(store.get("req-1")!.issuedResolvedTargets).toEqual(["/work/a/notes.txt"]);
+  });
+
+  test("a non-path-bearing call still gets stamped, with an empty array", () => {
+    const store = make();
+    store.record(approval({ toolName: "Bash", originalInput: { command: "ls" } }));
+    expect(store.get("req-1")!.issuedResolvedTargets).toEqual([]);
+  });
+
+  test("a caller-supplied issuedResolvedTargets is never overwritten", () => {
+    const store = make();
+    store.record(approval({ issuedResolvedTargets: ["/pre-stamped/value"] }));
+    expect(store.get("req-1")!.issuedResolvedTargets).toEqual(["/pre-stamped/value"]);
+  });
+});
+
 // --- revalidateApproval — the 5 axes, each its own fixture (WS-07 §9) --------------------------------
 
 describe("revalidateApproval — the 5 revalidation axes", () => {
@@ -289,6 +376,52 @@ describe("revalidateApproval — the 5 revalidation axes", () => {
   test("axis: paths do NOT drift when cwd is unchanged, even for a path-bearing tool", () => {
     const a = approval({ toolName: "Edit", originalInput: { file_path: "notes.txt" }, issuedCwd: "/work/a" });
     expect(revalidateApproval(a, ctxFor(a))).toEqual({ ok: true });
+  });
+
+  // Fix round 1, Ruling P2-K (the actual security fix — real fs, a genuine RED before it landed):
+  // a symlink COMPONENT retargeted DURING the defer window is invisible to a lexical-only resolve()
+  // — the cwd/path STRINGS never change, only what they point to on disk. This is the SOLE gate
+  // standing between a resumed "allowed" record and tools.execute() (no second evaluate() pass, no
+  // deny-rule re-check happens on the resume path), so a fail-open here is a genuine security hole
+  // in defer's own core window (an intentionally long wait). The fix compares FROZEN
+  // issuance-time-resolved targets (stamped once by record()) against a FRESH resolution at
+  // revalidation time — see extractNormalizedTargets's/withIssuedResolvedTargets's own headers.
+  test("axis: paths — a symlink retargeted after issuance is caught even though the cwd/path strings never changed", () => {
+    const workDir = realpathSync(mkdtempSync(join(tmpdir(), "winter-approvals-symlink-")));
+    mkdirSync(join(workDir, "real-a"));
+    writeFileSync(join(workDir, "real-a", "target.txt"), "original");
+    symlinkSync(join(workDir, "real-a"), join(workDir, "link"));
+
+    const store = createInMemoryApprovalStore();
+    const a = approval({ toolName: "Edit", originalInput: { file_path: "link/target.txt" }, issuedCwd: workDir });
+    store.record(a); // stamps issuedResolvedTargets against the CURRENT (real-a) target
+    const stamped = store.get("req-1")!;
+    expect(stamped.issuedResolvedTargets).toEqual([join(workDir, "real-a", "target.txt")]);
+
+    // Retarget the symlink -- same link name, same cwd, same relative path string, DIFFERENT
+    // real destination. A lexical-only check would see "link/target.txt" under "workDir" both
+    // times and report no drift at all.
+    unlinkSync(join(workDir, "link"));
+    mkdirSync(join(workDir, "real-b"));
+    writeFileSync(join(workDir, "real-b", "target.txt"), "retargeted");
+    symlinkSync(join(workDir, "real-b"), join(workDir, "link"));
+
+    const verdict = revalidateApproval(stamped, ctxFor(stamped)); // ctxFor reuses the SAME issuedCwd/issuedHome -- nothing else about the context changed
+    expect(verdict).toMatchObject({ ok: false, axis: "paths" });
+  });
+
+  test("axis: paths — an UNCHANGED symlink still validates ok (no false positive from the fix)", () => {
+    const workDir = realpathSync(mkdtempSync(join(tmpdir(), "winter-approvals-symlink-stable-")));
+    mkdirSync(join(workDir, "real-a"));
+    writeFileSync(join(workDir, "real-a", "target.txt"), "original");
+    symlinkSync(join(workDir, "real-a"), join(workDir, "link"));
+
+    const store = createInMemoryApprovalStore();
+    const a = approval({ toolName: "Edit", originalInput: { file_path: "link/target.txt" }, issuedCwd: workDir });
+    store.record(a);
+    const stamped = store.get("req-1")!;
+
+    expect(revalidateApproval(stamped, ctxFor(stamped))).toEqual({ ok: true });
   });
 
   test("axis: runtime ownership mismatch (backendSessionId differs)", () => {

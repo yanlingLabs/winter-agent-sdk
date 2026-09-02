@@ -30,6 +30,11 @@
 import { mkdirSync, lstatSync, chmodSync, openSync, writeSync, fsyncSync, closeSync, readFileSync, constants as fsConstants } from "node:fs";
 import { join, resolve } from "node:path";
 import type { PermissionMode, PermissionUpdate, RuleSource, PermissionDecisionClassification } from "@yanlinglabs/winter-agent-sdk";
+// Fix round 1, Ruling P2-K: the SAME symlink-chasing primitive the rest of the permission engine
+// already uses (checkSymlinkBothEnds/matchFileRuleAtBothEnds) — reused, not duplicated, so this
+// store's own "normalized paths" revalidation axis can never silently drift from it. See
+// extractNormalizedTargets's own comment for why a lexical-only resolve() was fail-open here.
+import { resolveRealTarget } from "./paths.ts";
 
 // --- WS-07 §9 verbatim minimum shape, plus this task's documented extensions (see header) ----------
 
@@ -78,10 +83,26 @@ export interface DurableApprovalRecord {
   // --- Winter P2 extensions (this file's header) ---
   issuedCwd: string;
   issuedHome: string;
+  // Fix round 1, Ruling P2-K: the SYMLINK-RESOLVED (real) targets this call's own input pointed at,
+  // computed and stamped EXACTLY ONCE, by record() itself (never by a caller, never re-derived on
+  // replay) at the instant the record is actually created — see withIssuedResolvedTargets's own
+  // header for why "computed once, frozen" is load-bearing, not merely tidy. Optional on the INPUT
+  // shape (a caller never has to compute it) but always present on any record that has actually
+  // gone through record(); revalidateApproval falls back to a defensive on-the-fly recomputation
+  // only for a record constructed some OTHER way (e.g. directly in a fixture).
+  issuedResolvedTargets?: string[];
   resolution?: ApprovalResolution;
   consumedAt?: string;
   consumedResult?: string;
   consumedIsError?: boolean;
+  // Fix round 1, Ruling P2-L (write-ahead consumption intent): stamped by markConsuming(), BEFORE
+  // engine.ts ever calls tools.execute() for an allowed, revalidated record — the durable "I am
+  // about to run this" fact a crash-recovering LATER resume needs. `consumingAt !== undefined &&
+  // consumedAt === undefined` means a prior resume started executing this call and never recorded
+  // an outcome (the process died somewhere in that window) — engine.ts's own resume-consumption
+  // step treats that combination as fail-closed "expired," never a re-execution trigger. See
+  // markConsuming's own interface comment for the full rationale.
+  consumingAt?: string;
 }
 
 // The constant this runtime stamps into every record it issues (WS-15's own naming: "runtimeKind
@@ -139,15 +160,43 @@ export type RevalidationVerdict = { ok: true } | { ok: false; axis: Revalidation
 // signal for the tool shapes P2 actually defers). A tool with no recognized target here always
 // compares equal (vacuously "unchanged") — never a false mismatch for a shape this function does
 // not understand yet; documented scope limitation, capture-noted in the task report.
+//
+// Fix round 1, Ruling P2-K: SYMLINK-SAFE, not merely lexical. The pre-fix version called plain
+// `resolve()` — a lexical join, never touching the real filesystem. This axis is the SOLE gate
+// standing between a resumed "allowed" record and `tools.execute()` (resume-consumption calls
+// tools.execute() directly: no second evaluate() pass, no deny-rule re-check, no
+// matchFileRuleAtBothEnds composition happens on that path) — a symlink COMPONENT retargeted
+// during defer's own core window (an intentionally long wait; that window is the whole point of
+// defer existing at all) was therefore invisible to it, the identical fail-open class P2-J/P2-D
+// already closed for the LIVE evaluation path. `resolveRealTarget` (paths.ts) is reused, not
+// duplicated, so this axis's symlink-chasing can never independently drift from the rest of the
+// permission engine's own.
 function extractNormalizedTargets(toolName: string, input: Record<string, unknown>, ctx: { cwd: string; home: string }): string[] {
   if ((toolName === "Edit" || toolName === "Write") && typeof input["file_path"] === "string") {
-    return [resolve(ctx.cwd, input["file_path"])];
+    return [resolveRealTarget(resolve(ctx.cwd, input["file_path"]))];
   }
   if (toolName === "WebFetch" && typeof input["url"] === "string") {
     return [input["url"].toLowerCase()];
   }
   void ctx.home; // reserved for a future `~`-anchored target shape; unused today, kept for symmetry with cwd
   return [];
+}
+
+// Fix round 1, Ruling P2-K: computed ONCE, by record() itself, at the instant a record is actually
+// created — NEVER re-derived on replay (applyEnvelope's own "record" case stores the envelope's
+// approval verbatim, precisely so a reload on a LATER day can never recompute this against
+// meanwhile-changed disk state and silently get a different answer than issuance time did).
+// `issuedResolvedTargets` freezes what extractNormalizedTargets resolves to AGAINST THE REAL
+// FILESYSTEM at issuance; revalidation later compares this FROZEN value against a FRESH resolution
+// — comparing two revalidation-TIME computations instead (this file's own pre-fix-round-1 design)
+// is blind to a symlink retargeted in between, since both computations would resolve against the
+// SAME (already-retargeted) disk state and silently agree with each other.
+function withIssuedResolvedTargets(approval: DurableApprovalRecord): DurableApprovalRecord {
+  if (approval.issuedResolvedTargets !== undefined) return approval; // never overwrite an already-stamped value
+  return {
+    ...approval,
+    issuedResolvedTargets: extractNormalizedTargets(approval.toolName, approval.originalInput, { cwd: approval.issuedCwd, home: approval.issuedHome }),
+  };
 }
 
 export function revalidateApproval(approval: DurableApprovalRecord, ctx: RevalidationContext): RevalidationVerdict {
@@ -157,6 +206,19 @@ export function revalidateApproval(approval: DurableApprovalRecord, ctx: Revalid
   if (approval.toolUseID !== ctx.toolUseID) {
     return { ok: false, axis: "toolCall", reason: `tool call mismatch: approval is for toolUseID ${approval.toolUseID}, current toolUseID is ${ctx.toolUseID}` };
   }
+  // Fix round 1, Finding 3 (MINOR — documented here, not fixed here): `ctx.policyVersion` comes
+  // from a FRESH PolicyStateStore that resets to 0 on every process construction (policy-state.ts's
+  // own constructor) — nothing in P2 persists policyVersion across a process boundary at all.
+  // USABILITY CLIFF, stated plainly: an approval issued at policyVersion > 0 (something bumped the
+  // version — a rule change, a mode switch — before the defer happened, within the SAME original
+  // run) can NEVER successfully consume on ANY later resume, ever, even if the effective policy is
+  // conceptually unchanged, because every freshly-resumed process's policyVersion starts back at 0
+  // and can never equal that approval's own recorded value again. This FAILS SAFE (an approval that
+  // can never match never wrongly executes) but is SILENTLY DEAD (a legitimate approval becomes
+  // permanently un-executable, with no signal to the user beyond an "expired" denial they may never
+  // connect to this cause). A future fix-wave's policy-CONTENT-hash candidate (comparing actual
+  // rule/mode content rather than an incrementing per-process counter) is expected to absorb this;
+  // out of this fix round's own scope.
   if (approval.policyMode !== ctx.policyMode || approval.policyVersion !== ctx.policyVersion) {
     return {
       ok: false,
@@ -164,7 +226,13 @@ export function revalidateApproval(approval: DurableApprovalRecord, ctx: Revalid
       reason: `policy drift: approval issued under mode=${approval.policyMode}/version=${approval.policyVersion}, current mode=${ctx.policyMode}/version=${ctx.policyVersion}`,
     };
   }
-  const issuedTargets = extractNormalizedTargets(approval.toolName, approval.originalInput, { cwd: approval.issuedCwd, home: approval.issuedHome });
+  // Fix round 1, Ruling P2-K: compares the FROZEN, issuance-time-resolved value (stamped once by
+  // record(), see withIssuedResolvedTargets) against a FRESH resolution computed NOW — never two
+  // revalidation-time computations (see extractNormalizedTargets's own header for why that was
+  // fail-open). The `??` fallback only ever fires for a record some OTHER path constructed without
+  // going through record() (e.g. a fixture building a raw object) — every real approval has this
+  // pre-stamped.
+  const issuedTargets = approval.issuedResolvedTargets ?? extractNormalizedTargets(approval.toolName, approval.originalInput, { cwd: approval.issuedCwd, home: approval.issuedHome });
   const currentTargets = extractNormalizedTargets(approval.toolName, approval.originalInput, { cwd: ctx.cwd, home: ctx.home });
   if (issuedTargets.join(" ") !== currentTargets.join(" ")) {
     return {
@@ -202,6 +270,21 @@ export interface DurableApprovalStore {
   // requestId is not). Synchronous (matching ruleset.ts's own permission/hook journal convention,
   // which this store mirrors) on BOTH implementations below — a future async-backed store is a
   // signature change for whichever task actually needs one, not hedged here.
+  //
+  // Fix round 1 (concurrent-responders snapshot race — flagged, not fixed): `applied` is decided
+  // from THIS STORE INSTANCE's own in-memory snapshot (loaded once, at construction, for the
+  // file-backed implementation below) — it never re-reads the on-disk file immediately beforehand.
+  // Two SEPARATE store instances (e.g. two host processes) each constructed BEFORE either one
+  // responds, both still seeing the record as "pending," can BOTH compute `applied: true` and BOTH
+  // append their own "response" envelope. On replay, applyEnvelope's own first-wins guard still
+  // ensures only the FIRST envelope in FILE order actually takes effect — the ON-DISK TRUTH stays
+  // correct — but the SECOND responder's own in-process RETURN VALUE incorrectly reports
+  // `applied: true` for an answer that did not, in fact, win. Inert today: P2 has no live
+  // multi-process "respond to this approval" RPC surface (this task's own report, Concern 4) —
+  // nothing in this codebase constructs two concurrent stores over the same file and calls
+  // respond() on both. Flagged for whichever future task adds that RPC surface, which will need
+  // either a read-modify-write file lock or an atomic compare-and-swap on the append; neither is
+  // implemented here.
   respond(requestId: string, response: ApprovalResponseInput): RespondResult;
   // Every record currently in state "pending" for this session — literal to the method's own name;
   // `listFor` (below) is the broader "every state" accessor a resume scan needs.
@@ -227,6 +310,19 @@ export interface DurableApprovalStore {
   // requestId is a no-op (the FIRST recorded result wins, mirroring respond()'s own first-wins
   // posture) so a resumed run can call this unconditionally after executing.
   markConsumed(requestId: string, result: ConsumedResultInput): void;
+  // Fix round 1, Ruling P2-L (write-ahead consumption intent): MUST be called BEFORE tools.execute()
+  // for an allowed, revalidated record — the durable "I am about to run this" fact. Applies only
+  // from state "allowed" with neither `consumedAt` nor `consumingAt` already set (first-intent-wins,
+  // the identical idiom every other transition here uses) — a second call for the same requestId
+  // (e.g. a retry within the SAME still-alive process) is a no-op, never a re-stamp. Without this,
+  // "executes exactly once" is actually "at least once": a hard kill between tools.execute()
+  // returning and markConsumed() persisting its result leaves the record "allowed" with no
+  // consumedAt at all — indistinguishable, to a later resume, from "never attempted" — and that
+  // later resume would re-execute a possibly non-idempotent side effect a second time. With this
+  // marker persisted first, a later resume instead finds `consumingAt` set with no `consumedAt` —
+  // engine.ts's own resume-consumption step treats that combination as fail-closed "expired" (the
+  // user must re-approve; NEVER a re-execution trigger) rather than silently retrying.
+  markConsuming(requestId: string): void;
 }
 
 // --- Shared envelope-fold core (both implementations replay the SAME envelope shapes) ---------------
@@ -236,7 +332,12 @@ type ApprovalEnvelope =
   | { kind: "response"; requestId: string; response: ApprovalResponseInput; at: string }
   | { kind: "cancel"; requestId: string; reason: string; at: string }
   | { kind: "expire"; requestId: string; reason: string; at: string }
-  | { kind: "consumed"; requestId: string; result: ConsumedResultInput; at: string };
+  | { kind: "consumed"; requestId: string; result: ConsumedResultInput; at: string }
+  // Fix round 1, Ruling P2-L: the write-ahead intent marker — see markConsuming's own interface
+  // comment. A distinct envelope kind (not a field silently folded into "consumed") so the on-disk
+  // history itself shows the two-step shape plainly: "consuming" alone (no matching "consumed"
+  // later in the file) is the crash signature engine.ts's resume-consumption step looks for.
+  | { kind: "consuming"; requestId: string; at: string };
 
 // Applies ONE envelope to the in-memory map, honoring every "first transition wins" / "already
 // consumed" guard described on DurableApprovalStore's own method comments above. Shared by BOTH the
@@ -275,6 +376,15 @@ function applyEnvelope(map: Map<string, DurableApprovalRecord>, envelope: Approv
     map.set(envelope.requestId, { ...current, state: "expired", resolution: { mechanism: "system", at: envelope.at, reason: envelope.reason } });
     return;
   }
+  if (envelope.kind === "consuming") {
+    // Ruling P2-L: only a genuinely "allowed" record is ever about to execute; first-intent-wins
+    // (never re-stamp, mirroring every other transition's own idiom) — see markConsuming's own
+    // interface comment.
+    if (current.state !== "allowed") return;
+    if (current.consumedAt !== undefined || current.consumingAt !== undefined) return;
+    map.set(envelope.requestId, { ...current, consumingAt: envelope.at });
+    return;
+  }
   // "consumed"
   if (current.consumedAt !== undefined) return; // first-execution-wins -- see markConsumed's own comment
   map.set(envelope.requestId, {
@@ -305,7 +415,8 @@ export function createInMemoryApprovalStore(): DurableApprovalStore {
 
   return {
     record(approval) {
-      apply({ kind: "record", approval });
+      // Ruling P2-K: stamp BEFORE storing, exactly once — see withIssuedResolvedTargets's own header.
+      apply({ kind: "record", approval: withIssuedResolvedTargets(approval) });
     },
     respond(requestId, response) {
       const before = map.get(requestId);
@@ -337,6 +448,9 @@ export function createInMemoryApprovalStore(): DurableApprovalStore {
     },
     markConsumed(requestId, result) {
       apply({ kind: "consumed", requestId, result, at: new Date().toISOString() });
+    },
+    markConsuming(requestId) {
+      apply({ kind: "consuming", requestId, at: new Date().toISOString() });
     },
   };
 }
@@ -450,7 +564,8 @@ export function createFileDurableApprovalStore(location: ApprovalStoreLocation):
 
   return {
     record(approval) {
-      persistAndApply({ kind: "record", approval });
+      // Ruling P2-K: stamp BEFORE storing, exactly once — see withIssuedResolvedTargets's own header.
+      persistAndApply({ kind: "record", approval: withIssuedResolvedTargets(approval) });
     },
     respond(requestId, response) {
       const before = map.get(requestId);
@@ -482,6 +597,9 @@ export function createFileDurableApprovalStore(location: ApprovalStoreLocation):
     },
     markConsumed(requestId, result) {
       persistAndApply({ kind: "consumed", requestId, result, at: new Date().toISOString() });
+    },
+    markConsuming(requestId) {
+      persistAndApply({ kind: "consuming", requestId, at: new Date().toISOString() });
     },
   };
 }

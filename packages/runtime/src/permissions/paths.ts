@@ -298,7 +298,15 @@ export interface SymlinkBothEndsResult {
 // more nor less permissive than an ordinary non-symlink path (both formulas below collapse to the
 // plain single-path check). Not spec-mandated (WS-07 §3.1 never mentions dangling links); pinned
 // as a documented, deliberately conservative-by-neutrality choice rather than left to crash.
-function resolveRealTarget(path: string): string {
+//
+// Task 11 fix-round 1 (Ruling P2-K): exported for permissions/approvals.ts's own "normalized
+// paths/destinations" revalidation axis, reused rather than duplicated -- a durable approval's
+// execution-time gate is the SOLE check standing between a resumed "allowed" record and
+// `tools.execute()` (no second evaluate() pass, no deny-rule re-check, no
+// matchFileRuleAtBothEnds composition happens on that path), so it needs the IDENTICAL
+// symlink-chasing behavior this file's own callers already get, not a second, independently-
+// maintained copy that could silently drift from it.
+export function resolveRealTarget(path: string): string {
   try {
     return realpathSync(path);
   } catch (err) {
