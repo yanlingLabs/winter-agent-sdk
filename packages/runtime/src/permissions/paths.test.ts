@@ -200,8 +200,11 @@ describe("matchFileRule -- single-segment directory pattern depth asymmetry (WS-
   // denyAsk deep-reach side applies REGARDLESS of anchor -- `~/`, `//`, and `/`(sourceDir) bare
   // segments all get it too, not just bare/`./`-anchored ones. The original per-anchor reading left
   // `deny Read(~/secrets)` (and the `//`/`/`-anchored equivalents) fail-open against a nested path;
-  // the reviewer's fixture gap enumeration caught all three. `allow` is UNCHANGED (was already
-  // exact-only for every anchor either way, so P2-D has no observable effect on that side).
+  // the reviewer's fixture gap enumeration caught all three. `allow` is UNCHANGED for every
+  // non-trailing-slash pattern (exact-only for every anchor either way, so P2-D has no observable
+  // effect on that side) -- the one exception: a TRAILING-SLASH pattern under a non-cwd anchor
+  // moved never-matching -> exact-matching (still shallow, a bug fix not a widening; see
+  // paths.ts's own P2-D comment for the full accounting).
   test("PAIR (capture-verification-pending): cwd-anchored bare segment -- allow is exact-only", () => {
     expect(matchFileRule("build", opts({ path: "/synthetic/proj/build", direction: "allow" }))).toBe(true);
     expect(matchFileRule("build", opts({ path: "/synthetic/proj/build/output.txt", direction: "allow" }))).toBe(
