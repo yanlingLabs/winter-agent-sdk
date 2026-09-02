@@ -410,7 +410,19 @@ export function applyPermissionUpdate(set: SourcedRuleSet, update: PermissionUpd
 // ---------------------------------------------------------------------------------------------
 // resolveRules — precedence lookup (WS-07 §2/§3.2). A lookup, not a verdict: see module header.
 // ---------------------------------------------------------------------------------------------
-
+//
+// Item 6 (P2 fix-wave) reciprocal pointer: this function has ZERO production callers — the real
+// evaluator-side lookup is evaluator.ts's own findMatchingRuleEntry, whose header explains WHY it
+// duplicates this function's precedence loop (trust gate + allowManagedPermissionRulesOnly filter)
+// rather than calling it: this function always dispatches a specifier match through grammar.ts's
+// matchesRule(), which cannot correctly evaluate a FILE_RULE_TOOLS pattern specifier or a Bash
+// pattern against a compound command — findMatchingRuleEntry's own matchesRuleForCall routes those
+// two cases correctly first, falling back to plain matchesRule for everything else. The two loops'
+// shared trust-gate/filter logic is accepted duplication for this wave, not dead code to merge —
+// see findMatchingRuleEntry's own header for the parity table this file's own loop must stay
+// byte-for-byte aligned with (evaluator.test.ts's own resolveRules-parity fixture pins the two
+// against each other for exactly this reason). Deduplicating the two loops is explicitly OUT of
+// scope for this fix wave.
 export function resolveRules(
   set: SourcedRuleSet,
   call: { toolName: string; input: Record<string, unknown> },
