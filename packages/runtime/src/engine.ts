@@ -1197,20 +1197,42 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
           // permission decision resolved" together, before moving on to "now run the tool."
           if (decision.updatedPermissions) {
             for (const update of decision.updatedPermissions) {
-              // Task 11: door 2 of 2 (policy-state.ts's own "second door into the same room" —
-              // `applyUpdate` can carry a `type:"setMode"` update just as easily as a direct
-              // set_permission_mode control request) — see cancelPendingApprovalsOnModeSwitch's own
-              // header. Captured/compared around applyUpdate regardless of update type; a no-op for
-              // every non-"setMode" update since the mode value cannot have moved.
-              const previousMode = policyStateStore.getState().mode;
-              policyStateStore.applyUpdate(update, { authority: "session" });
-              cancelPendingApprovalsOnModeSwitch(previousMode, policyStateStore.getState().mode);
-              // Phase ruling 2: "applies session-effective immediately AND appends to the
-              // permission journal" — the live application above and the durability journal below
-              // are two independent effects of the SAME update, not a fallback chain; journaling
-              // failure (auxiliary, see recordPermissionUpdate's own comment) never undoes or
-              // blocks the live application that already happened.
-              await recordPermissionUpdate(update, "session");
+              // Finding 8 (P2 fix-wave, MINOR): (a) applyUpdate's OWN {ok:false} result (the bypass
+              // gate rejecting a setMode suggestion) was previously discarded — the update was
+              // journaled as APPLIED regardless, so a bypass-gated setMode suggestion was rejected
+              // LIVE but journaled as though it had succeeded (P5's replay would faithfully write a
+              // mutation the live gate refused — the P2-H envelope work exists precisely so the
+              // journal never misleads replay). (b) applyUpdate's OWN typed throws (an invalid rule
+              // inside addRules/replaceRules -> PermissionRuleValidationError; a forged destination
+              // -> PermissionUpdateAuthorityError) previously escaped uncaught into this round's own
+              // try/catch, turning an ALREADY-APPROVED call into a whole-turn error_during_execution
+              // over nothing worse than one bad suggestion string — policy-state.ts's own applyUpdate
+              // comment flagged this exact caller as needing its own try/catch, never honored until
+              // now. Both failure modes below drop ONLY the suggestion (stderr note, journal
+              // untouched) — the call itself was already approved and proceeds regardless.
+              try {
+                // Task 11: door 2 of 2 (policy-state.ts's own "second door into the same room" —
+                // `applyUpdate` can carry a `type:"setMode"` update just as easily as a direct
+                // set_permission_mode control request) — see cancelPendingApprovalsOnModeSwitch's own
+                // header. Captured/compared around applyUpdate regardless of update type; a no-op for
+                // every non-"setMode" update since the mode value cannot have moved.
+                const previousMode = policyStateStore.getState().mode;
+                const applied = policyStateStore.applyUpdate(update, { authority: "session" });
+                if (!applied.ok) {
+                  console.error(`winter: dropped a canUseTool/hook-suggested permission update rejected by the bypass gate (${applied.error.code}): ${applied.error.message}`);
+                  continue;
+                }
+                cancelPendingApprovalsOnModeSwitch(previousMode, policyStateStore.getState().mode);
+                // Phase ruling 2: "applies session-effective immediately AND appends to the
+                // permission journal" — the live application above and the durability journal below
+                // are two independent effects of the SAME update, not a fallback chain; journaling
+                // failure (auxiliary, see recordPermissionUpdate's own comment) never undoes or
+                // blocks the live application that already happened.
+                await recordPermissionUpdate(update, "session");
+              } catch (err) {
+                const text = err instanceof Error ? err.message : String(err);
+                console.error(`winter: dropped a malformed canUseTool/hook-suggested permission update: ${text}`);
+              }
             }
           }
           // WS-07 §7.2: updatedInput/transformedInput sanitizes/narrows/redirects the EXECUTED call

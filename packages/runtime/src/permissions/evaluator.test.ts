@@ -1051,6 +1051,94 @@ describe("Task 7 — acceptEdits real semantics (WS-07 §6.2)", () => {
   });
 });
 
+// Finding 7 (P2 fix-wave, MINOR): WS-07 §6.1's "Reads within working OR ADDITIONAL directories ...
+// run without prompting" — isReadWithinBounds (evaluator.ts, renamed from isReadWithinCwd) now
+// reuses isWithinBounds instead of hard-coding `cwd: ctx.cwd`, closing the asymmetry against
+// acceptEdits' own edit-bounding (which already honored the identical grant).
+describe("Finding 7 (P2 fix-wave): Reads inside an addDirectories/additionalDirectories grant run without prompting, in every built-in-read-only mode", () => {
+  test("default mode + an addDirectories rule grant (session-sourced, no trust needed) + a Read inside it -> allow, mechanism 'mode'", async () => {
+    const ctx = baseCtx({
+      policy: policy({
+        mode: "default",
+        rules: { ...emptyRuleSet(), directories: [{ path: "/rule-granted", source: "session" }] },
+      }),
+    });
+    const record = await evaluate(call("Read", { file_path: "/rule-granted/notes.txt" }), ctx);
+    expect(record).toMatchObject({ decision: "allow", mechanism: "mode" });
+  });
+
+  test("dontAsk mode + ctx.additionalDirectories (direct config field, Finding 6) + a Read inside it -> allow, mechanism 'mode', canUseTool never invoked", async () => {
+    const promptSpy = spyPromptStage(() => ({ decision: "deny" })); // would deny if ever reached -- proving it ISN'T
+    const ctx = baseCtx({
+      promptStage: promptSpy.stage,
+      policy: policy({ mode: "dontAsk" }),
+      additionalDirectories: ["/extra/grant"],
+    });
+    const record = await evaluate(call("Read", { file_path: "/extra/grant/notes.txt" }), ctx);
+    expect(record).toMatchObject({ decision: "allow", mechanism: "mode" });
+    expect(promptSpy.calls.length).toBe(0);
+  });
+
+  test("an UNTRUSTED project-sourced directory grant is inert for Reads too (effectiveDirectories' own trust gate, unaffected by this fix)", async () => {
+    const promptSpy = spyPromptStage(() => ({ decision: "deny" }));
+    const ctx = baseCtx({
+      promptStage: promptSpy.stage,
+      trustedWorkspace: false,
+      policy: policy({
+        mode: "default",
+        rules: { ...emptyRuleSet(), directories: [{ path: "/rule-granted", source: "project" }] },
+      }),
+    });
+    const record = await evaluate(call("Read", { file_path: "/rule-granted/notes.txt" }), ctx);
+    expect(promptSpy.calls.length).toBe(1); // never auto-approved via the untrusted grant
+  });
+
+  test("a Read outside every granted directory (and outside cwd) is unaffected -- still falls through to the ordinary pipeline", async () => {
+    const promptSpy = spyPromptStage(() => ({ decision: "deny" }));
+    const ctx = baseCtx({
+      promptStage: promptSpy.stage,
+      policy: policy({ mode: "default" }),
+      additionalDirectories: ["/extra/grant"],
+    });
+    const record = await evaluate(call("Read", { file_path: "/somewhere/else/notes.txt" }), ctx);
+    expect(promptSpy.calls.length).toBe(1);
+    expect(record.decision).toBe("deny");
+  });
+
+  test("Ruling P2-J preserved: a symlink INSIDE a granted directory whose target resolves OUTSIDE every root is NOT routine-read-only -- still prompts", async () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "winter-evaluator-f7-symlink-")));
+    const grantedDir = join(root, "granted");
+    mkdirSync(grantedDir);
+    try {
+      const outsideFile = join(root, "outside-secret.txt");
+      writeFileSync(outsideFile, "secret");
+      const linkPath = join(grantedDir, "escape-link"); // sits INSIDE the grant, resolves OUTSIDE every root
+      symlinkSync(outsideFile, linkPath);
+
+      const promptSpy = spyPromptStage(() => ({ decision: "deny" }));
+      const ctx = baseCtx({
+        promptStage: promptSpy.stage,
+        cwd: join(root, "unrelated-cwd"),
+        policy: policy({ mode: "default" }),
+        additionalDirectories: [grantedDir],
+      });
+      const record = await evaluate(call("Read", { file_path: linkPath }), ctx);
+      // If this regressed to a plain (non-symlink-aware) cwd/bounds check, this would resolve
+      // {decision:"allow", mechanism:"mode"} WITHOUT ever calling promptStage.
+      expect(promptSpy.calls.length).toBe(1);
+      expect(record.mechanism).toBe("canUseTool");
+
+      // An ORDINARY (non-symlink) file actually inside the grant is unaffected.
+      const ordinary = join(grantedDir, "ordinary.txt");
+      writeFileSync(ordinary, "fine");
+      const ordinaryRecord = await evaluate(call("Read", { file_path: ordinary }), ctx);
+      expect(ordinaryRecord).toMatchObject({ decision: "allow", mechanism: "mode" });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("Task 7 — plan mode real semantics (WS-07 §6.5, phase ruling 6)", () => {
   test("reads proceed: built-in read-only work is still allowed", async () => {
     const ctx = baseCtx({ policy: policy({ mode: "plan" }), specialChecks: REAL_SPECIAL_CHECKS });

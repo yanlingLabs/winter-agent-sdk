@@ -585,21 +585,25 @@ function isBashCallReadOnly(call: PermissionCall): boolean {
   return parts.length > 0 && parts.every((sub) => isRecognizedReadOnly(sub));
 }
 
-function isReadWithinCwd(call: PermissionCall, ctx: EvaluationContext): boolean {
+// Finding 7 (P2 fix-wave, MINOR; renamed from isReadWithinCwd): WS-07 §6.1 says "Reads within
+// working OR ADDITIONAL directories ... run without prompting" — the pre-fix version hard-coded
+// `cwd: ctx.cwd` and checked ONLY cwd, silently ignoring every `addDirectories`/`additionalDirectories`
+// grant (live today via `updatedPermissions`, T5; wired via config, Finding 6, same wave). A session
+// granted extra directories still prompted/denied for every Read inside them in every mode, while
+// acceptEdits already auto-approved an EDIT in the identical directory — a visibly inverted
+// asymmetry this fix closes by reusing `isWithinBounds` (below) instead of a bespoke single-cwd
+// check: the SAME "cwd or additionalDirectories" notion acceptEdits' own edit-bounding already
+// applies, including its symlink-both-ends composition (Ruling P2-J, rider 2 — "a granted-directory
+// symlink pointing outside every root is NOT routine read-only," unchanged by this fix).
+function isReadWithinBounds(call: PermissionCall, ctx: EvaluationContext): boolean {
   if (call.toolName !== "Read") return false;
   const path = call.input["file_path"];
   if (typeof path !== "string") return false;
-  // WS-07 §6.1: "Reads within working ... directories ... run without prompting." Ruling P2-J
-  // (Task 7, rider 2): resolved through the symlink TARGET, not just the link path — "a cwd symlink
-  // pointing outside cwd is NOT 'routine read-only in cwd'" (this task's own instruction). `"**"` is
-  // the same bare-anchor primitive T4 documents as matching the base directory itself and
-  // everything beneath it; `matchFileRuleAtBothEnds`'s "allow" direction requires BOTH the link and
-  // its resolved target to fall inside cwd.
-  return matchFileRuleAtBothEnds("**", { path, cwd: ctx.cwd, home: ctx.home, direction: "allow" });
+  return isWithinBounds(path, ctx);
 }
 
 function isBuiltInReadOnly(call: PermissionCall, ctx: EvaluationContext): boolean {
-  return isBashCallReadOnly(call) || isReadWithinCwd(call, ctx);
+  return isBashCallReadOnly(call) || isReadWithinBounds(call, ctx);
 }
 
 // Task 7 extends the T6 two-member union with two new terminal outcomes that, unlike "unresolved",

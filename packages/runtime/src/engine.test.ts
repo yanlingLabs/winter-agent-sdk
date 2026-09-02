@@ -15,7 +15,7 @@ import type {
 import { WinterCompatibilitySessionStore, splitFrames, encodeFrame, compatibilityKeys } from "@yanlinglabs/winter-agent-sdk";
 import type { SpawnedRuntimeProcess } from "@yanlinglabs/winter-agent-sdk";
 import { createInMemoryChannel } from "./protocol/channel.ts";
-import { runEngine, type Provider, type ProviderMessage, type ContentBlock, type ToolExecutor } from "./engine.ts";
+import { runEngine, type Provider, type ProviderMessage, type ContentBlock, type ToolExecutor, type SessionPersistence } from "./engine.ts";
 import { echoProvider, scriptedProvider, stubExecutor } from "./provider/mock.ts";
 import { inMemoryProcess } from "./testing.ts";
 import { WinterPermissionError } from "./permissions/policy-state.ts";
@@ -853,7 +853,18 @@ test("Task 10 / WS-08 §11: a PermissionRequest hook's updatedPermissions cannot
     },
     { kind: "text", text: "done" },
   ]);
-  const done = runEngine({ config, input: runtime.input, output: runtime.output, provider: scripted, tools: stubExecutor });
+  // Finding 8 (P2 fix-wave, MINOR): the journal-absence half of this fixture -- a store spy proving
+  // the REJECTED setMode suggestion is never journaled as though it had been applied (pre-fix, it
+  // was journaled unconditionally, regardless of applyUpdate's own {ok:false} bypass-gate result).
+  const journaled: Array<{ update: PermissionUpdate; authority: string }> = [];
+  const store: SessionPersistence = {
+    recordUserEntry: async () => {},
+    recordAssistantEntry: async () => {},
+    recordPermissionUpdate: async (update, authority) => {
+      journaled.push({ update, authority });
+    },
+  };
+  const done = runEngine({ config, input: runtime.input, output: runtime.output, provider: scripted, tools: stubExecutor, store });
 
   host.output.write({ type: "user", text: "go" });
   host.output.write({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined });
@@ -894,6 +905,9 @@ test("Task 10 / WS-08 §11: a PermissionRequest hook's updatedPermissions cannot
   // exactly as it already does for an equivalent canUseTool answer (policy-state.ts's own gate is
   // mechanism-agnostic by construction — this fixture exercises the "hook" mechanism specifically).
   expect(permissionRequestCount).toBe(2);
+  // Finding 8: the gate holding is only half the story -- the rejected suggestion must never be
+  // journaled either (pre-fix, it was, unconditionally, regardless of applyUpdate's own result).
+  expect(journaled).toEqual([]);
 });
 
 // --- Task 11 (WS-07 §9 / WS-08 §7): defer parks the call durably -----------------------------------
@@ -1303,6 +1317,100 @@ test("Task 8: a real canUseTool allow with updatedPermissions applies LIVE (a se
   } finally {
     rmSync(home, { recursive: true, force: true });
   }
+});
+
+// Finding 8 (P2 fix-wave, MINOR): the engine ignored policyStateStore.applyUpdate's own {ok:false}
+// result and journaled the update anyway; a malformed suggestion's typed throw escaped uncaught,
+// converting an ALREADY-APPROVED call into a whole-turn error_during_execution. Both fixed: the
+// approved call always executes; only the suggestion is ever dropped.
+
+test("Finding 8(a): a real canUseTool allow suggesting bypassPermissions (bypass gate OFF) executes the call, journals NOTHING, and leaves the live mode unchanged", async () => {
+  const { host, runtime } = createInMemoryChannel();
+  const journaled: Array<{ update: PermissionUpdate; authority: string }> = [];
+  const store: SessionPersistence = {
+    recordUserEntry: async () => {},
+    recordAssistantEntry: async () => {},
+    recordPermissionUpdate: async (update, authority) => {
+      journaled.push({ update, authority });
+    },
+  };
+  // allowDangerouslySkipPermissions deliberately OMITTED -- the bypass gate this fixture proves still holds.
+  // TWO unmatched calls in the SAME round -- if the malicious setMode actually flipped the live
+  // mode, call2 would sail through stage 4's bypass auto-allow without a second canUseTool RPC.
+  const provider = scriptedProvider([
+    { kind: "tool_use", calls: [
+      { id: "call1", name: "unmatched_tool", input: {} },
+      { id: "call2", name: "unmatched_tool", input: {} },
+    ] },
+    { kind: "text", text: "done" },
+  ]);
+  const done = runEngine({ config: baseConfig(), input: runtime.input, output: runtime.output, provider, tools: stubExecutor, store });
+
+  host.output.write({ type: "user", text: "go" });
+  host.output.write({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined });
+
+  let permissionRequestCount = 0;
+  for await (const f of host.input) {
+    if (f.type === "control_request" && (f as ControlRequestFrame).subtype === "permission") {
+      permissionRequestCount++;
+      const cf = f as ControlRequestFrame;
+      const updatedPermissions: PermissionUpdate[] | undefined =
+        permissionRequestCount === 1 ? [{ type: "setMode", mode: "bypassPermissions", destination: "userSettings" }] : undefined;
+      const result: PermissionResult = { behavior: "allow", ...(updatedPermissions !== undefined ? { updatedPermissions } : {}) };
+      host.output.write({ type: "control_response", requestId: cf.requestId, ok: true, payload: result });
+    }
+  }
+  const code = await done;
+
+  expect(code).toBe(0);
+  // 2, not 1 -- the mode switch never took effect (mirrors the PermissionRequest-hook smuggle
+  // fixture's own discriminating trick, exercised here via canUseTool instead).
+  expect(permissionRequestCount).toBe(2);
+  expect(journaled).toEqual([]);
+});
+
+test("Finding 8(b): a real canUseTool allow suggesting a MALFORMED addRules entry (an MCP tool with a rejected parenthetical specifier) still executes the call and ends the turn 'success' -- the bad suggestion is dropped, not a whole-turn error_during_execution", async () => {
+  const { host, runtime } = createInMemoryChannel();
+  let executed = false;
+  const tools: ToolExecutor = {
+    async execute() {
+      executed = true;
+      return { output: "ok" };
+    },
+  };
+  const provider = scriptedProvider([
+    { kind: "tool_use", calls: [{ id: "call1", name: "unmatched_tool", input: {} }] },
+    { kind: "text", text: "done" },
+  ]);
+  const done = runEngine({ config: baseConfig(), input: runtime.input, output: runtime.output, provider, tools });
+
+  host.output.write({ type: "user", text: "go" });
+  host.output.write({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined });
+
+  const seen: WinterFrame[] = [];
+  for await (const f of host.input) {
+    seen.push(f);
+    if (f.type === "control_request" && (f as ControlRequestFrame).subtype === "permission") {
+      const cf = f as ControlRequestFrame;
+      // WS-07 §3: "parenthetical parameter rules ... are rejected" for MCP tools -- ruleset.ts's
+      // validateNewRule (via sourceRule) throws PermissionRuleValidationError for this exact shape.
+      const badRule: PermissionUpdate = {
+        type: "addRules",
+        rules: [{ toolName: "mcp__github__get_issue", ruleContent: "anything" }],
+        behavior: "allow",
+        destination: "userSettings",
+      };
+      const result: PermissionResult = { behavior: "allow", updatedPermissions: [badRule] };
+      host.output.write({ type: "control_response", requestId: cf.requestId, ok: true, payload: result });
+    }
+  }
+  await done;
+
+  expect(executed).toBe(true); // the already-approved call still ran
+  const msgs = dataMessages(seen);
+  const result = msgs.find((m) => m.type === "result") as Extract<SdkMessage, { type: "result" }>;
+  expect(result.subtype).toBe("success"); // NOT error_during_execution
+  expect(result.is_error).toBe(false);
 });
 
 // WS-07 §2's stale-policy-rejection contract, exercised for the first time with a GENUINE async
