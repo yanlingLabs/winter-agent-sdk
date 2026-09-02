@@ -103,9 +103,18 @@ export interface PromptStageMeta {
   toolUseID?: string;
   agentID?: string;
   matchedAskRule?: { source: RuleSource; toolName: string; ruleContent?: string };
-  // T8 (WS-07 §7.1) extends this with the remaining verbatim canUseTool option-object fields this
-  // task cannot populate yet: signal, suggestions, blockedPath, title, displayName, description,
-  // requestId — none of those exist without the real bridge/T7-blockedPath-classification wiring.
+  // Task 8 (WS-07 §7.1): the path boundary that forced this prompt, when T7's protected-write check
+  // is what forced it — populated ONLY at the resolveProtectedWrite mustPrompt call site (the first
+  // candidate write path, resolved against cwd). Deliberately absent for the critical-removal
+  // standing exception: T7's CriticalRemovalResult (protected.ts) exposes only a prose `reason`
+  // string (already carried via `decisionReason`), not a structured path — extending that sealed
+  // shape is out of this task's scope; see the task report's Deviations.
+  blockedPath?: string;
+  // The remaining verbatim canUseTool option-object fields (signal, suggestions, title, displayName,
+  // description, requestId) are NOT threaded through this meta shape — they are either wrapper-local
+  // (signal), constructed by the REAL PromptStage itself from `meta`/`call` (suggestions, requestId),
+  // or unavailable at P2 with no tool registry to source them from (title/displayName/description —
+  // WS-06's job, P3). See prompt-stage.ts's own header for exactly how each is built.
 }
 export interface PromptDecision {
   decision: "allow" | "deny";
@@ -505,7 +514,7 @@ function isBuiltInReadOnly(call: PermissionCall, ctx: EvaluationContext): boolea
 type ModeStageResult =
   | { kind: "allow" }
   | { kind: "deny"; message: string }
-  | { kind: "mustPrompt"; message: string }
+  | { kind: "mustPrompt"; message: string; blockedPath?: string }
   | { kind: "unresolved" };
 
 // WS-07 §6.5 / this task's own phase-ruling-6 instruction, verbatim: "writes withheld ... with a
@@ -530,7 +539,7 @@ function resolveCriticalRemoval(mode: PermissionMode, reason: string | undefined
   return { kind: "mustPrompt", message };
 }
 
-function resolveProtectedWrite(mode: PermissionMode, ctx: EvaluationContext): ModeStageResult {
+function resolveProtectedWrite(mode: PermissionMode, ctx: EvaluationContext, call: PermissionCall): ModeStageResult {
   const message = "Denied: protected path write requires approval (WS-07 §6.7)";
   // WS-07 §6.7 matrix, verbatim per mode:
   if (mode === "dontAsk") return { kind: "deny", message };
@@ -539,7 +548,14 @@ function resolveProtectedWrite(mode: PermissionMode, ctx: EvaluationContext): Mo
   // task's own instruction names; `plan`'s classifier-active branch never applies at P2 (classifier
   // borrow OFF).
   if (mode === "plan" && ctx.sessionBypassEnabled === true) return { kind: "allow" };
-  return { kind: "mustPrompt", message };
+  // Task 8 (WS-07 §7.1's `blockedPath`): the SAME per-tool path extraction driving
+  // REAL_SPECIAL_CHECKS.isProtectedWrite itself (this function's own caller already confirmed
+  // isProtectedWrite is true, so at least one candidate path exists) — the first candidate is
+  // reported; a compound Bash command touching several protected paths at once reports only one,
+  // a judgment call (no ordering guarantee is documented anywhere in scope).
+  const candidatePaths = extractCandidateWritePaths(call);
+  const blockedPath = candidatePaths[0] !== undefined ? resolve(ctx.cwd, candidatePaths[0]) : undefined;
+  return { kind: "mustPrompt", message, ...(blockedPath !== undefined ? { blockedPath } : {}) };
 }
 
 function isBashRecognizedWrite(call: PermissionCall): boolean {
@@ -564,7 +580,7 @@ function evaluateModeStage(call: PermissionCall, ctx: EvaluationContext, mode: P
   // first as the narrower, stronger circuit breaker.
   const critical = ctx.specialChecks.isCriticalRemoval(call, ctx);
   if (critical.critical) return resolveCriticalRemoval(mode, critical.reason);
-  if (ctx.specialChecks.isProtectedWrite(call, ctx)) return resolveProtectedWrite(mode, ctx);
+  if (ctx.specialChecks.isProtectedWrite(call, ctx)) return resolveProtectedWrite(mode, ctx, call);
 
   if (mode === "bypassPermissions") {
     // Standing exceptions above already intercepted anything critical/protected; everything else
@@ -803,17 +819,14 @@ export async function evaluate(call: PermissionCall, ctx: EvaluationContext): Pr
     // own "standing exceptions" list for stage 5; §6.7/§6.8: "an ordinary settings allow rule does
     // NOT clear this check" / "even if an allow rule ... approves it"). Mirrors stage 3's own
     // ask-rule-null handling: a null PromptStage answer fails CLOSED here (mechanism "mode", not
-    // "canUseTool" — this evaluator is the one making the fallback call, not a real host) — the
-    // OPPOSITE of stage 6's generic bottom-of-pipeline fallback (which stays "allow" for backward
-    // compat with a zero-config session, per the T6 interim decision this module's header
-    // documents). No existing golden exercises a standing exception, so this new fail-closed
-    // default never touches the byte-unchanged gate. Once T8 wires a real PromptStage, a non-null
-    // answer here is used exactly like any other prompt result (mechanism "canUseTool") — this
-    // fail-closed branch simply stops being reached in practice; assert on `mechanism`/`decision`
-    // here, not on "the tool executed," so a fixture survives that flip (this task's own
-    // instruction).
+    // "canUseTool" — this evaluator is the one making the fallback call, not a real host) — since
+    // Ruling P2-I, this is now the SAME direction as stage 6's own generic bottom-of-pipeline
+    // fallback (both deny on null), not the opposite T6-era pairing this comment used to describe.
+    // A non-null answer here (T8's real PromptStage) is used exactly like any other prompt result
+    // (mechanism "canUseTool").
     const result = await ctx.promptStage.prompt(effectiveCall, ctx, {
       decisionReason: modeResult.message,
+      ...(modeResult.blockedPath !== undefined ? { blockedPath: modeResult.blockedPath } : {}),
       ...(effectiveCall.toolUseId !== undefined ? { toolUseID: effectiveCall.toolUseId } : {}),
       ...(effectiveCall.agentId !== undefined ? { agentID: effectiveCall.agentId } : {}),
     });

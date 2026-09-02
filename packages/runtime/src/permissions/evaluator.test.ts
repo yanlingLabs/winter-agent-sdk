@@ -628,6 +628,14 @@ describe("Task 7 — §6.7 protected-path write matrix (mode × protected write,
     expect(record).toMatchObject({ decision: "deny", mechanism: "canUseTool" });
   });
 
+  test("Task 8 (WS-07 §7.1 blockedPath): the prompt meta carries the resolved candidate path that made isProtectedWrite fire", async () => {
+    const promptSpy = spyPromptStage(() => ({ decision: "deny" }));
+    const ctx = baseCtx({ promptStage: promptSpy.stage, cwd: "/work", policy: policy({ mode: "default" }), specialChecks: REAL_SPECIAL_CHECKS });
+    await evaluate(protectedCall, ctx);
+    expect(promptSpy.calls.length).toBe(1);
+    expect(promptSpy.calls[0]!.meta.blockedPath).toBe("/work/.git/config");
+  });
+
   test("acceptEdits: prompt/callback — never silently auto-approved just because Edit is 'recognized'", async () => {
     const promptSpy = spyPromptStage(() => ({ decision: "deny" }));
     const ctx = baseCtx({ promptStage: promptSpy.stage, policy: policy({ mode: "acceptEdits" }), specialChecks: REAL_SPECIAL_CHECKS });
