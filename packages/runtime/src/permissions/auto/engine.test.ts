@@ -244,7 +244,7 @@ describe("createAutoEngine -- audit records (WS-07 §10.6-12)", () => {
     expect(records.map((r) => r.type)).toEqual(["permission_evaluated", "classifier_started", "classifier_result"]);
   });
 
-  test("P2's real production path -- alwaysNoVerdictClassifier's no_verdict ALSO emits permission_denied (fail-closed denial-as-tool_result, WS-07 §10.6-5)", async () => {
+  test("P2's real production path -- alwaysNoVerdictClassifier's no_verdict ALSO emits permission_denied under auto (fail-closed denial-as-tool_result, WS-07 §10.6-5)", async () => {
     const { records, audit } = collectingAudit();
     const engine = createAutoEngine({ sessionId: "s1", classifier: alwaysNoVerdictClassifier, audit });
     await engine.classify(call("cmd"), ctx());
@@ -252,17 +252,55 @@ describe("createAutoEngine -- audit records (WS-07 §10.6-12)", () => {
     expect(records[3]).toMatchObject({ verdict: "no_verdict", reasonCode: "p2_no_real_classifier" });
   });
 
-  test("a cache hit REPLAYING a denial emits classifier_cache_hit THEN permission_denied", async () => {
+  test("Fix round 1 (advisor review): under PLAN mode, a no_verdict result does NOT emit permission_denied -- classify() cannot know the plan classifier borrow (evaluator.ts) will fall through to a human prompt that may still allow", async () => {
+    const { records, audit } = collectingAudit();
+    const planPolicy: PolicyState = { mode: "plan", version: 0, rules: emptyRuleSet() };
+    const engine = createAutoEngine({ sessionId: "s1", classifier: alwaysNoVerdictClassifier, audit });
+    await engine.classify(call("cmd"), ctx({ policy: planPolicy }));
+    expect(records.map((r) => r.type)).toEqual(["permission_evaluated", "classifier_started", "classifier_result"]);
+  });
+
+  test("Fix round 1 (advisor review): under PLAN mode, a genuine classifier 'deny' STILL emits permission_denied -- deny is terminal in every mode classify() is ever called from", async () => {
+    const { records, audit } = collectingAudit();
+    const planPolicy: PolicyState = { mode: "plan", version: 0, rules: emptyRuleSet() };
+    const engine = createAutoEngine({ sessionId: "s1", classifier: createScriptedClassifier({ verdict: "deny" }), audit });
+    await engine.classify(call("cmd"), ctx({ policy: planPolicy }));
+    expect(records.map((r) => r.type)).toEqual(["permission_evaluated", "classifier_started", "classifier_result", "permission_denied"]);
+  });
+
+  test("a cache hit REPLAYING a denial emits classifier_cache_hit THEN permission_denied, both carrying the full pinned shape", async () => {
     const { records, audit } = collectingAudit();
     const cache = createInMemoryVerdictCache();
+    const policy: PolicyState = { mode: "auto", version: 3, rules: emptyRuleSet() };
     const engine = createAutoEngine({ sessionId: "s1", classifier: createScriptedClassifier({ verdict: "deny" }), cache, audit });
     const c = call("same");
-    await engine.classify(c, ctx());
+    await engine.classify(c, ctx({ policy }));
     records.length = 0;
-    await engine.classify(c, ctx());
+    await engine.classify(c, ctx({ policy }));
     // Fix round 1: the cache-hit path produces a genuine denial-as-tool_result for THIS call too --
     // a consumer watching permission_denied alone must not miss cache-served denials.
     expect(records.map((r) => r.type)).toEqual(["permission_evaluated", "classifier_cache_hit", "permission_denied"]);
+    for (const record of records) {
+      expect(record.policyVersion).toBe(3);
+      expect(typeof record.policyHash).toBe("string");
+      expect(record.policyHash.length).toBeGreaterThan(0);
+      expect(typeof record.latencyMs).toBe("number");
+      expect(record.latencyMs).toBeGreaterThanOrEqual(0);
+      expect(record.model).toBeUndefined();
+    }
+    expect(new Set(records.map((r) => r.policyHash)).size).toBe(1);
+  });
+
+  test("Fix round 1 (advisor review): a cache hit REPLAYING a plan-mode no_verdict does NOT emit permission_denied", async () => {
+    const { records, audit } = collectingAudit();
+    const cache = createInMemoryVerdictCache();
+    const planPolicy: PolicyState = { mode: "plan", version: 0, rules: emptyRuleSet() };
+    const engine = createAutoEngine({ sessionId: "s1", classifier: alwaysNoVerdictClassifier, cache, audit });
+    const c = call("same");
+    await engine.classify(c, ctx({ policy: planPolicy }));
+    records.length = 0;
+    await engine.classify(c, ctx({ policy: planPolicy }));
+    expect(records.map((r) => r.type)).toEqual(["permission_evaluated", "classifier_cache_hit"]);
   });
 
   test("a cache hit REPLAYING an allow does NOT emit permission_denied", async () => {
@@ -276,14 +314,23 @@ describe("createAutoEngine -- audit records (WS-07 §10.6-12)", () => {
     expect(records.map((r) => r.type)).toEqual(["permission_evaluated", "classifier_cache_hit"]);
   });
 
-  test("fallback-active emits fallback_state instead of consulting the classifier", async () => {
+  test("fallback-active emits fallback_state instead of consulting the classifier, carrying the full pinned shape", async () => {
     const { records, audit } = collectingAudit();
+    const policy: PolicyState = { mode: "auto", version: 5, rules: emptyRuleSet() };
     const engine = createAutoEngine({ sessionId: "s1", classifier: createScriptedClassifier({ verdict: "deny" }), audit });
-    for (let i = 0; i < AUTO_FALLBACK_CONSECUTIVE_THRESHOLD; i++) await engine.classify(call(`cmd${i}`), ctx());
+    for (let i = 0; i < AUTO_FALLBACK_CONSECUTIVE_THRESHOLD; i++) await engine.classify(call(`cmd${i}`), ctx({ policy }));
     records.length = 0;
-    await engine.classify(call("cmd-after"), ctx());
+    await engine.classify(call("cmd-after"), ctx({ policy }));
     expect(records.map((r) => r.type)).toEqual(["permission_evaluated", "fallback_state"]);
     expect(records[1]).toMatchObject({ fallbackActive: true, consecutive: AUTO_FALLBACK_CONSECUTIVE_THRESHOLD });
+    for (const record of records) {
+      expect(record.policyVersion).toBe(5);
+      expect(typeof record.policyHash).toBe("string");
+      expect(record.policyHash.length).toBeGreaterThan(0);
+      expect(typeof record.latencyMs).toBe("number");
+      expect(record.latencyMs).toBeGreaterThanOrEqual(0);
+      expect(record.model).toBeUndefined();
+    }
   });
 
   test("an audit recorder that throws never fails the permission decision (auxiliary, mirrors HookAuditRecorder)", async () => {

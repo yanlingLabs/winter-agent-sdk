@@ -296,8 +296,13 @@ export function createAutoEngine(options: AutoEngineOptions): AutoEngine {
         // Fix round 1: a cache hit is STILL a genuine denial-as-tool_result outcome for THIS call
         // -- evaluate() treats a cached verdict identically to a freshly-computed one
         // (resolveAutoDecision, evaluator.ts) -- so a consumer watching for `permission_denied`
-        // alone must see it here too, not only on the classifier-consulted path below.
-        if (cached.verdict.verdict !== "allow") {
+        // alone must see it here too, not only on the classifier-consulted path below. SAME
+        // mode-aware terminal-denial gate as the fresh-computation path below -- see that site's
+        // own comment for why "no_verdict" is only terminal under `auto`, never under `plan`'s own
+        // borrow. `ctx.policy.mode` (not a mode stored on the cached entry) is safe to read here:
+        // `mode` is itself part of what `computePolicyHash` hashes, so a cache HIT already proves
+        // this call's current mode matches whatever mode the cached verdict was computed under.
+        if (cached.verdict.verdict === "deny" || (cached.verdict.verdict !== "allow" && ctx.policy.mode === "auto")) {
           await recordAudit({
             type: "permission_denied",
             sessionId: options.sessionId,
@@ -365,12 +370,20 @@ export function createAutoEngine(options: AutoEngineOptions): AutoEngine {
       // "until new content" boundary).
       cache.set(cacheKey, { verdict: result, cachedAt: new Date().toISOString() });
 
-      // Fix round 1 (§10.6-12): the auto arm's own denial-as-tool_result outcome — evaluate()'s
-      // resolveAutoDecision (evaluator.ts) maps any non-"allow" verdict straight to a denied
-      // tool_result carrying the stable BLOCKED_BY_CLASSIFIER_MESSAGE string, never a prompt. This
-      // is the ONE first-class event a consumer can watch for "was this call denied" without also
-      // having to inspect classifier_result/classifier_cache_hit's own `verdict` sub-field.
-      if (verdict !== "allow") {
+      // Fix round 1 (§10.6-12): the auto arm's own denial-as-tool_result outcome. NOT simply
+      // `verdict !== "allow"` — classify() has THREE production callers (evaluator.ts) and they do
+      // not treat "no_verdict" identically: `resolveAutoDecision` (real `auto` mode) maps BOTH
+      // "deny" and "no_verdict" straight to a denied tool_result carrying the stable
+      // BLOCKED_BY_CLASSIFIER_MESSAGE string, never a prompt -- terminal either way. Both plan-mode
+      // classifier-borrow call sites (WS-07 §6.5) map "no_verdict" DIFFERENTLY: it falls through to
+      // the ordinary hook/prompt path, which can still end in a human "allow" -- classify() cannot
+      // see that outcome from here, so asserting `permission_denied` for a plan-mode "no_verdict"
+      // would be a false claim (P2's only classifier, alwaysNoVerdictClassifier, always returns
+      // "no_verdict" -- this is not a corner case, it is what every plan-mode exploratory command
+      // does today). A genuine "deny" IS terminal in every mode classify() is ever called from
+      // (both plan-borrow sites map it to the identical denied tool_result too) -- only the
+      // "no_verdict" case needs the mode check.
+      if (verdict === "deny" || (verdict !== "allow" && ctx.policy.mode === "auto")) {
         await recordAudit({
           type: "permission_denied",
           sessionId: options.sessionId,
