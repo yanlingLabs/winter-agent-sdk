@@ -144,6 +144,22 @@ describe("reduceHookOutcomes -- transform composition + discard-on-override (WS-
     expect(composite.transformedInput).toBeUndefined();
   });
 
+  // Item 8(a) (P2 fix-wave): the IDENTICAL rule 3 discard, dedicated to DENY specifically as the
+  // overriding decision -- every existing fixture above/below this one uses "ask" as the stricter
+  // override; deny is worth its own pin since it is the ONE decision runner.ts's own §4 rule 2
+  // short-circuit can also produce (a committed deny marks every LATER hook "skipped" before it
+  // ever runs), so this is the composition a real deny-wins-with-an-earlier-allow's-transform round
+  // actually exercises end-to-end, not merely a reducer-internal curiosity.
+  test("Item 8(a): H1 allow+transformX overridden by H2's stricter DENY (no transform of its own) -- H1's transform is discarded", () => {
+    const composite = reduceHookOutcomes([
+      entry("h1", "PreToolUse", "sdk", { kind: "decision", decision: "allow", transformedInput: { command: "X" } }),
+      entry("h2", "PreToolUse", "sdk", { kind: "decision", decision: "deny", message: "no" }),
+    ]);
+    expect(composite.decision).toBe("deny");
+    expect(composite.message).toBe("no");
+    expect(composite.transformedInput).toBeUndefined();
+  });
+
   test("H1 ask+transformX (wins) then H2 allow+transformY (overridden) -- composite carries X, not Y (the reviewer-probe case)", () => {
     // The exact scenario the advisor review flagged as the one a reviewer will probe: H2's own
     // transform is discarded along with its overridden decision, so the composite reverts to the

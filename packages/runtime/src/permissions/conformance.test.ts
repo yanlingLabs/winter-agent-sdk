@@ -618,7 +618,16 @@ const WS08_12: ConformanceRow[] = [
     status: "covered",
     citations: [
       { file: "../hooks/from-config.test.ts", testName: `an unrecognized event name is silently skipped -- accepted+preserved+INERT` },
-      { file: "../hooks/runner.test.ts", testName: `unknown fields on an otherwise well-formed output are preserved losslessly` },
+      // Item 8(b) (P2 fix-wave): the cited test's own title was reframed (it never actually proved
+      // "preserved losslessly" -- see its own updated comment) to state what it genuinely proves:
+      // an unrecognized field's mere presence never itself causes a hook contract error. Re-synced
+      // here so the citation mechanism keeps matching the renamed test; the possible tension between
+      // this row's own "round-tripped losslessly" bullet wording (which may describe a DIFFERENT
+      // mechanism -- additionalContext forwarding for generically-handled/unknown EVENT TYPES, WS-08
+      // §1.3 -- rather than arbitrary unrecognized JSON keys within a recognized event's output) is
+      // flagged in this fix wave's own report as a discovered, out-of-scope-for-this-item concern,
+      // not silently resolved here.
+      { file: "../hooks/runner.test.ts", testName: `an unrecognized field's mere presence never causes an error` },
     ],
   },
   {

@@ -384,6 +384,17 @@ function interpretPermissionRequest(sync: Record<string, unknown>): HookOutcome 
   // Mismatched/absent hookEventName -- "none", matching every other interpreter's own silent-none
   // posture for this case (PreToolUse/PostToolUse/PostToolUseFailure above all do the identical
   // `hso["hookEventName"] === "X" ? hso : undefined` gate).
+  //
+  // Item 8(d) (P2 fix-wave) pairing note: this "none" is NOT the same shape as registry.ts's own
+  // malformed-matcher posture, though both are "inert" in the loose sense. A malformed TOOL matcher
+  // (registry.ts's own matcherApplies) excludes the entry from `matching()`'s returned list
+  // entirely -- the hook is never invoked at all, and carries NO audit record for this call, not
+  // even "skipped" (runHooks never iterates over it). A mismatched hookEventName, by contrast, means
+  // the hook WAS invoked (it passed the tool-matcher check and ran) and DOES get an audit record
+  // (outcome:"none", via buildAuditRecord/runHooks) -- only its response's event-specific fields are
+  // ignored. So: a malformed matcher is invisible to the audit trail by construction; a mismatched
+  // hookEventName is audit-surfaced (the fact "this hook ran and said nothing usable" is always
+  // preserved), even though neither one influences the composite decision.
   if (pr === undefined) return { kind: "none" };
 
   const rawDecision = pr["decision"];

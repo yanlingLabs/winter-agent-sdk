@@ -450,13 +450,28 @@ describe("runHooks -- §8 failure matrix, row by row", () => {
     expect(records[0]!.outcome).toBe("error");
   });
 
-  test("unknown fields on an otherwise well-formed output are preserved losslessly -- i.e. never cause an error, and known fields still interpret correctly", async () => {
+  // Item 8(b) (P2 fix-wave) reframe: this fixture's OLD title said unknown fields are "preserved
+  // losslessly" -- inaccurate, and not what the assertion below actually checks. HookOutcome has no
+  // generic passthrough slot for an arbitrary unknown key, so an unknown field is never forwarded
+  // anywhere in the composite; it is simply IGNORED, silently, by every interpreter here (which only
+  // ever reads the specific field names it recognizes off the raw object). What this fixture
+  // actually proves -- and all it is meant to prove -- is narrower: an unrecognized field's mere
+  // PRESENCE alongside a well-formed, recognized one does not itself trigger a hook contract error;
+  // recognized-field interpretation proceeds exactly as if the unknown field were absent. This is
+  // NOT an endorsement that Winter forwards/round-trips unknown fields anywhere (contrast WS-08
+  // §1.3's own "unknown EVENT NAMES are accepted, preserved, inert" — a different claim, about a
+  // different layer, that this fixture does not test).
+  test("Item 8(b): an unrecognized field's mere presence never causes an error -- a known field alongside it still interprets correctly (NOT a claim that unknown fields are forwarded/preserved anywhere)", async () => {
     const { invoker } = fixedInvoker({
       hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "allow", someFutureFieldNobodyKnowsYet: { nested: true } },
       anotherUnknownTopLevelField: 42,
     });
     const composite = await runHooks("PreToolUse", { toolName: "Bash", input: {} }, ctxWith({ registry: fakeRegistry([entry("h1", "PreToolUse")]), invoker }));
     expect(composite.decision).toBe("allow");
+    // The unknown fields themselves never surface anywhere on the composite -- there is no slot for
+    // them to land in, which is precisely the point this fixture's own reframed title makes.
+    expect("someFutureFieldNobodyKnowsYet" in composite).toBe(false);
+    expect("anotherUnknownTopLevelField" in composite).toBe(false);
   });
 
   test("invalid defer on a non-suspendable event (Notification) = hook contract error", async () => {
