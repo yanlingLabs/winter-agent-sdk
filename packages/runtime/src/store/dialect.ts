@@ -37,6 +37,13 @@ import { findContinueTarget, findResumeTarget, truncateAt, toDialectEntries, reb
 // appendHookAuditJournal's own header (ruleset.ts) for why this reuses one file rather than a
 // second sidecar.
 import { appendPermissionJournal, appendHookAuditJournal, type HookAuditJournalRecord } from "../permissions/ruleset.ts";
+// Task 11 (WS-07 §9): the durable approval store lives store-adjacent (SAME <winterHome>/projects/
+// <projectKey>/ directory the session's own <sessionId>.jsonl and permission journal already use) —
+// this module already resolves that exact (winterHome, projectKey, sessionId) triple on every
+// branch below, so it is the natural, single construction site (mirrors buildWriter's own role for
+// the session store itself). engine.ts imports the TYPE only from this same module too — no
+// circularity, since permissions/approvals.ts has no dependency on either file.
+import { createFileDurableApprovalStore, type DurableApprovalStore } from "../permissions/approvals.ts";
 
 // The dialect's own name for a content block. Same shapes engine.ts's ContentBlock already
 // produces (text/tool_use/tool_result, P1-G's `interrupted` and P1-H's `error` markers included) —
@@ -271,6 +278,10 @@ export interface ResolvedEngineSession {
   config: RuntimeConfig;
   store: SessionPersistence | undefined;
   initialMessages: ProviderMessage[];
+  // Task 11 (WS-07 §9): undefined exactly when `store` is undefined (persistSession:false) — a
+  // durable approval has nowhere to survive a process exit without a real session store either, so
+  // the two are deliberately tied to the same condition rather than independently configurable.
+  approvalStore?: DurableApprovalStore;
 }
 
 // Task 8: wraps a TranscriptWriter with the ONE extra SessionPersistence method engine.ts's
@@ -368,7 +379,7 @@ export async function resolveEngineSession(opts: {
 
   if (!wantsContinue && !wantsResume) {
     const writer = buildWriter({ store, projectKey: cwdKey, sessionId: config.sessionId, cwd: config.cwd, initialParentUuid: null, winterHome });
-    return { config, store: writer, initialMessages: [] };
+    return { config, store: writer, initialMessages: [], approvalStore: createFileDurableApprovalStore({ winterHome, projectKey: cwdKey, sessionId: config.sessionId }) };
   }
 
   let targetSessionId: string;
@@ -382,7 +393,7 @@ export async function resolveEngineSession(opts: {
       // silently picks an unrelated session, never blocks the run on a typed error for what is, in
       // effect, just an empty project).
       const writer = buildWriter({ store, projectKey: cwdKey, sessionId: config.sessionId, cwd: config.cwd, initialParentUuid: null, winterHome });
-      return { config, store: writer, initialMessages: [] };
+      return { config, store: writer, initialMessages: [], approvalStore: createFileDurableApprovalStore({ winterHome, projectKey: cwdKey, sessionId: config.sessionId }) };
     }
     targetSessionId = found;
     targetProjectKey = cwdKey; // continue is single-project by construction (WS-05 §7) — no search needed
@@ -476,7 +487,12 @@ export async function resolveEngineSession(opts: {
   // under a different (possibly now-stale) resolved name keeps writing there.
   const writer = buildWriter({ store, projectKey: targetProjectKey, sessionId: targetSessionId, cwd: config.cwd, initialParentUuid, winterHome });
   const effectiveConfig: RuntimeConfig = { ...config, sessionId: targetSessionId };
-  return { config: effectiveConfig, store: writer, initialMessages };
+  // Task 11 (WS-07 §9): the SAME (winterHome, targetProjectKey, targetSessionId) triple the writer
+  // above just used — a deferred call from an EARLIER run of this exact session has its approvals
+  // file right there, store-adjacent; engine.ts's own resume-consumption step (runEngine, before the
+  // turn loop) is what actually reads it back and folds a resolution into `initialMessages`.
+  const approvalStore = createFileDurableApprovalStore({ winterHome, projectKey: targetProjectKey, sessionId: targetSessionId });
+  return { config: effectiveConfig, store: writer, initialMessages, approvalStore };
 }
 
 // main.ts's own production policy: config.winterHome (an explicit per-run override — RuntimeConfig

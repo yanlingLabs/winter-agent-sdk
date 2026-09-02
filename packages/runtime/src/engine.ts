@@ -684,6 +684,118 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   });
 
   const messages: ProviderMessage[] = initialMessages ? [...initialMessages] : [];
+
+  // --- Task 11 (WS-07 §9): resume-consumption ------------------------------------------------------
+  //
+  // DESIGN (this task's own documented judgment call — the spec states WHAT must hold ["the call
+  // executes exactly once"] but not HOW a later resume finds and applies a resolution; capture-noted
+  // per the brief). Runs ONCE, here, before the turn loop starts (mirrors SessionStart's own "after
+  // pump start, before turn loop" placement) — a fresh, never-deferred session has nothing to do
+  // (`approvalStore.listFor` returns `[]`, or `approvalStore` itself is undefined).
+  //
+  // Locating the candidate: resume.ts's own rebuildProviderMessages comment already establishes that
+  // a synthetic marker (interrupted/error, and now `deferred`) round-trips VERBATIM through
+  // persist->readBack->rebuild, identically to a real tool_result — this scan keys off
+  // `record.toolUseID` matching a tool_result's own `tool_use_id` (the store's own authority on
+  // which calls are outstanding), treating the `deferred` flag as corroboration only, per this
+  // task's own advisor-reviewed robustness note — a hypothetical future dialect change that stopped
+  // persisting that one boolean would not silently break this scan.
+  //
+  // The PERSISTED "[deferred]" line is NEVER rewritten (the store is append-only, WS-05 §6) — only
+  // THIS RUN's in-memory `messages` (and therefore the very next provider.generate() call) sees the
+  // corrected value. A real tool_use_id has at most one tool_result in valid provider history; this
+  // REPLACES the one block already there, never appends a second (appending a second would be
+  // provider-invalid — a duplicate tool_result for one tool_use_id).
+  //
+  // EXACTLY-ONCE EXECUTION (the correctness core of this design): an "allowed" record is executed
+  // via `tools.execute()` at most once across its ENTIRE lifetime, regardless of how many times this
+  // session is later resumed — `approvalStore.markConsumed` persists the output (or error) the FIRST
+  // time, and every later resume substitutes the CACHED result without revalidating or executing
+  // again (the `consumedAt` fast path below) — re-validating an already-executed call protects
+  // nothing, since the side effect already happened. Revalidation instead runs on the FIRST resume
+  // that finds a "pending" or "allowed"-not-yet-consumed record — WS-07 §9's own "ANY mismatch ->
+  // expired, never execute" applies to allowed just as much as to pending, since "allowed" alone
+  // never proves the call is still safe to run against a session/mode/path/runtime that has since
+  // moved on.
+  //
+  // "denied"/"cancelled"/"expired" never execute and are recomputed fresh on every resume (pure
+  // data, no side effect, so no consumedAt bookkeeping is needed for them at all).
+  if (approvalStore) {
+    for (const record of approvalStore.listFor({ sessionId: config.sessionId })) {
+      let foundAt: { mi: number; bi: number } | undefined;
+      outer: for (let mi = 0; mi < messages.length; mi++) {
+        const message = messages[mi]!;
+        if (message.role !== "tool" || !Array.isArray(message.content)) continue;
+        for (let bi = 0; bi < message.content.length; bi++) {
+          const block = message.content[bi]!;
+          if (block.type === "tool_result" && block.tool_use_id === record.toolUseID) {
+            foundAt = { mi, bi };
+            break outer;
+          }
+        }
+      }
+      if (foundAt === undefined) continue; // no on-disk trace of this record's own [deferred] marker in THIS run's rebuilt history
+
+      const { mi, bi } = foundAt;
+      const substitute = (fields: { content: string; denied?: boolean; error?: boolean }): void => {
+        const current = messages[mi]!;
+        const blocks = (current.content as ContentBlock[]).slice();
+        blocks[bi] = {
+          type: "tool_result",
+          tool_use_id: record.toolUseID,
+          content: fields.content,
+          ...(fields.denied === true ? { denied: true } : {}),
+          ...(fields.error === true ? { error: true } : {}),
+        };
+        messages[mi] = { ...current, content: blocks };
+      };
+
+      if (record.consumedAt !== undefined) {
+        substitute({ content: record.consumedResult ?? "", ...(record.consumedIsError === true ? { error: true } : {}) });
+        continue;
+      }
+
+      if (record.state === "pending" || record.state === "allowed") {
+        const revalidationCtx = {
+          runtimeKind: WINTER_RUNTIME_KIND,
+          sessionId: config.sessionId,
+          backendSessionId: config.sessionId,
+          toolUseID: record.toolUseID,
+          policyMode: policyStateStore.getState().mode,
+          policyVersion: policyStateStore.getState().version,
+          cwd: config.cwd,
+          home: permissionHome,
+        };
+        const verdict = revalidateApproval(record, revalidationCtx);
+        if (!verdict.ok) {
+          approvalStore.expire(record.requestId, verdict.reason);
+          substitute({ content: `Approval expired: ${verdict.reason}`, denied: true });
+          continue;
+        }
+        if (record.state === "pending") continue; // genuinely still pending and still valid -- leave the [deferred] marker as is
+
+        // "allowed" + revalidated -- execute exactly once. A responder's own transformedInput (the
+        // durable analog of canUseTool's updatedInput, WS-07 §7.2) wins over the original input when
+        // present, taken verbatim with no re-validation — the SAME posture engine.ts's real-time
+        // canUseTool path already documents for its own updatedInput (no tool registry/schema exists
+        // at P2 to re-check against).
+        const inputToExecute = record.resolution?.transformedInput ?? record.originalInput;
+        try {
+          const result = await tools.execute({ id: record.toolUseID, name: record.toolName, input: inputToExecute });
+          approvalStore.markConsumed(record.requestId, { output: result.output });
+          substitute({ content: result.output });
+        } catch (err) {
+          const text = err instanceof Error ? err.message : String(err);
+          approvalStore.markConsumed(record.requestId, { output: `[error: ${text}]`, isError: true });
+          substitute({ content: `[error: ${text}]`, error: true });
+        }
+        continue;
+      }
+
+      // "denied" / "cancelled" -- never executes; recomputed fresh every resume (pure data).
+      substitute({ content: record.resolution?.message ?? record.resolution?.reason ?? `Approval ${record.state}`, denied: true });
+    }
+  }
   // Ruling P1-F: maxTurns is the RUN's cumulative agentic tool-use round-trip cap (report §8 /
   // WS-03 §5) — it never resets per user envelope. Declared here, outside the turn loop, so it
   // persists for runEngine's whole lifetime; once spent, EVERY subsequent tool_use attempt in this

@@ -19,7 +19,7 @@ import { runEngine, type Provider, type ProviderMessage, type ContentBlock, type
 import { echoProvider, scriptedProvider, stubExecutor } from "./provider/mock.ts";
 import { inMemoryProcess } from "./testing.ts";
 import { WinterPermissionError } from "./permissions/policy-state.ts";
-import { createInMemoryApprovalStore, type DurableApprovalStore } from "./permissions/approvals.ts";
+import { createInMemoryApprovalStore, createFileDurableApprovalStore, type DurableApprovalStore } from "./permissions/approvals.ts";
 
 // Drains a WinterFrame source fully — used whenever the test writes ALL of its input frames
 // (including end_input/EOF) up front, so there's no ping-pong race between the writer and the
@@ -1543,4 +1543,178 @@ test("Task 2: a control_response with no matching pending request is dropped (br
   } finally {
     errSpy.mockRestore();
   }
+});
+
+// --- Task 11 (WS-07 §9): resume-consumption — a deferred call resolved on a LATER run --------------
+//
+// Drives `inMemoryProcess` across MULTIPLE separate calls against the SAME temp WINTER_HOME (never
+// sharing engine state) — each call is its own independent "process," exactly like a real
+// `winter --resume <id>` invocation after the first one exited. Between runs, `respond()` is called
+// directly against a freshly-constructed FileDurableApprovalStore over the same location, exactly
+// as an out-of-band host mechanism would (this task's own documented resume design).
+
+function frameReader(proc: SpawnedRuntimeProcess): () => Promise<WinterFrame | null> {
+  const it = proc.stdout[Symbol.asyncIterator]();
+  let carry = "";
+  const pending: WinterFrame[] = [];
+  return async function nextFrame(): Promise<WinterFrame | null> {
+    while (pending.length === 0) {
+      const { value, done } = await it.next();
+      if (done) return null;
+      const split = splitFrames(value, carry);
+      carry = split.carry;
+      pending.push(...split.frames);
+    }
+    return pending.shift() ?? null;
+  };
+}
+
+test("Task 11: a deferred call's approval, consumed 'allowed' on a LATER run, executes exactly once across two resumes", async () => {
+  const home = freshHome();
+  const sessionId = randomUUID();
+  const cwd = "/winter-fixture-defer-resume";
+  const projectKey = compatibilityKeys(cwd).transcriptProjectKey;
+
+  let executionCount = 0;
+  const countingExecutor: ToolExecutor = {
+    async execute({ name, input }) {
+      if (name === "slow_task") executionCount++;
+      return { output: `executed:${JSON.stringify(input)}` };
+    },
+  };
+
+  // --- Run 1: defers the call, exits with the record "pending" -----------------------------------
+  const config1: RuntimeConfig = { sessionId, cwd, model: "sonnet", winterHome: home, hooks: { PreToolUse: [{ hookCount: 1, source: "sdk" }] } };
+  const provider1 = scriptedProvider([
+    { kind: "tool_use", calls: [{ id: "call1", name: "slow_task", input: { payload: "x" } }] },
+    { kind: "text", text: "waiting for approval" },
+  ]);
+  const proc1 = inMemoryProcess(["--config-json", JSON.stringify(config1)], provider1, countingExecutor);
+  const nextFrame1 = frameReader(proc1);
+  proc1.stdin.write(encodeFrame({ type: "user", text: "go" }));
+  proc1.stdin.write(encodeFrame({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined }));
+  while (true) {
+    const frame = await nextFrame1();
+    if (!frame) break;
+    if (frame.type === "control_request" && (frame as ControlRequestFrame).subtype === "hook") {
+      const cf = frame as ControlRequestFrame;
+      const payload = cf.payload as { event: string };
+      proc1.stdin.write(
+        encodeFrame({
+          type: "control_response",
+          requestId: cf.requestId,
+          ok: true,
+          payload: payload.event === "PreToolUse" ? { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "defer", permissionDecisionReason: "needs durable approval" } } : {},
+        }),
+      );
+    }
+  }
+  await proc1.exited;
+  expect(executionCount).toBe(0); // never executed while merely deferred
+
+  // --- Out-of-band: a host answers the pending approval while no engine process is running -------
+  const storeBetweenRuns = createFileDurableApprovalStore({ winterHome: home, projectKey, sessionId });
+  const pending = storeBetweenRuns.pendingFor({ sessionId });
+  expect(pending).toHaveLength(1);
+  expect(pending[0]!.toolName).toBe("slow_task");
+  const requestId = pending[0]!.requestId;
+  const respondResult = storeBetweenRuns.respond(requestId, { outcome: "allowed", mechanism: "canUseTool", decisionClassification: "user_temporary" });
+  expect(respondResult.applied).toBe(true);
+
+  // --- Run 2 (first resume): the allowed record is revalidated and executed exactly once ----------
+  const config2: RuntimeConfig = { sessionId, resume: sessionId, cwd, model: "sonnet", winterHome: home };
+  const proc2 = inMemoryProcess(["--config-json", JSON.stringify(config2)], echoProvider, countingExecutor);
+  proc2.stdin.write(encodeFrame({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined }));
+  await drainProcess(proc2);
+  await proc2.exited;
+  expect(executionCount).toBe(1); // executed exactly once, on this first resume
+
+  const afterRun2 = createFileDurableApprovalStore({ winterHome: home, projectKey, sessionId }).get(requestId);
+  expect(afterRun2?.consumedResult).toBe('executed:{"payload":"x"}');
+
+  // --- Run 3 (second resume): NEVER re-executes; a fresh turn's own provider call sees the cached
+  // result substituted into history, not the original "[deferred]" marker -------------------------
+  const capturedMessages: ProviderMessage[][] = [];
+  const capturingProvider: Provider = {
+    async generate({ messages }) {
+      capturedMessages.push([...messages]);
+      return { kind: "text", text: "ok" };
+    },
+  };
+  const config3: RuntimeConfig = { sessionId, resume: sessionId, cwd, model: "sonnet", winterHome: home };
+  const proc3 = inMemoryProcess(["--config-json", JSON.stringify(config3)], capturingProvider, countingExecutor);
+  proc3.stdin.write(encodeFrame({ type: "user", text: "how did it go?" }));
+  proc3.stdin.write(encodeFrame({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined }));
+  await drainProcess(proc3);
+  await proc3.exited;
+
+  expect(executionCount).toBe(1); // STILL 1 -- the second resume never re-executes
+  expect(capturedMessages[0]).toContainEqual({
+    role: "tool",
+    content: [{ type: "tool_result", tool_use_id: "call1", content: 'executed:{"payload":"x"}' }],
+  });
+  // The deferred marker itself never survives into the resumed run's live context -- only the
+  // corrected value does (the persisted "[deferred]" line stays on disk, untouched, as history).
+  expect(JSON.stringify(capturedMessages[0])).not.toContain("[deferred]");
+});
+
+test("Task 11: a policyMode mismatch on resume expires the pending approval instead of executing it", async () => {
+  const home = freshHome();
+  const sessionId = randomUUID();
+  const cwd = "/winter-fixture-defer-resume-mismatch";
+  const projectKey = compatibilityKeys(cwd).transcriptProjectKey;
+
+  let executionCount = 0;
+  const countingExecutor: ToolExecutor = {
+    async execute() {
+      executionCount++;
+      return { output: "should never run" };
+    },
+  };
+
+  const config1: RuntimeConfig = { sessionId, cwd, model: "sonnet", winterHome: home, hooks: { PreToolUse: [{ hookCount: 1, source: "sdk" }] } };
+  const provider1 = scriptedProvider([{ kind: "tool_use", calls: [{ id: "call1", name: "slow_task", input: {} }] }, { kind: "text", text: "waiting" }]);
+  const proc1 = inMemoryProcess(["--config-json", JSON.stringify(config1)], provider1, countingExecutor);
+  const nextFrame1 = frameReader(proc1);
+  proc1.stdin.write(encodeFrame({ type: "user", text: "go" }));
+  proc1.stdin.write(encodeFrame({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined }));
+  while (true) {
+    const frame = await nextFrame1();
+    if (!frame) break;
+    if (frame.type === "control_request" && (frame as ControlRequestFrame).subtype === "hook") {
+      const cf = frame as ControlRequestFrame;
+      proc1.stdin.write(
+        encodeFrame({ type: "control_response", requestId: cf.requestId, ok: true, payload: { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "defer" } } }),
+      );
+    }
+  }
+  await proc1.exited;
+
+  const storeBetweenRuns = createFileDurableApprovalStore({ winterHome: home, projectKey, sessionId });
+  const requestId = storeBetweenRuns.pendingFor({ sessionId })[0]!.requestId;
+  storeBetweenRuns.respond(requestId, { outcome: "allowed", mechanism: "canUseTool" });
+
+  // Resumes under a DIFFERENT permissionMode than the original run used (default) -- the "policy"
+  // revalidation axis mismatches even though policyVersion itself is 0 in both runs.
+  const capturedMessages: ProviderMessage[][] = [];
+  const capturingProvider: Provider = {
+    async generate({ messages }) {
+      capturedMessages.push([...messages]);
+      return { kind: "text", text: "ok" };
+    },
+  };
+  const config2: RuntimeConfig = { sessionId, resume: sessionId, cwd, model: "sonnet", winterHome: home, permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true };
+  const proc2 = inMemoryProcess(["--config-json", JSON.stringify(config2)], capturingProvider, countingExecutor);
+  proc2.stdin.write(encodeFrame({ type: "user", text: "resuming" }));
+  proc2.stdin.write(encodeFrame({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined }));
+  await drainProcess(proc2);
+  await proc2.exited;
+
+  expect(executionCount).toBe(0); // never executed -- the mismatch was caught before tools.execute()
+  const finalRecord = createFileDurableApprovalStore({ winterHome: home, projectKey, sessionId }).get(requestId);
+  expect(finalRecord?.state).toBe("expired");
+  expect(capturedMessages[0]).toContainEqual({
+    role: "tool",
+    content: [{ type: "tool_result", tool_use_id: "call1", content: expect.stringMatching(/Approval expired/), denied: true }],
+  });
 });
