@@ -43,6 +43,7 @@ import { encodeFrame, splitFrames } from "./protocol/codec.ts";
 import type { WinterFrame, ControlRequestFrame, ControlResponseFrame } from "./protocol/frames.ts";
 import type { RuntimeConfig } from "./protocol/config.ts";
 import type { CanUseTool } from "./permissions/types.ts";
+import type { Options } from "./options.ts";
 import { inMemoryProcess } from "winter-agent-runtime/testing";
 import { echoProvider, stubExecutor, testProviderByName, type TestProviderName, WinterCompatibilitySessionStore, compatibilityKeys } from "winter-agent-runtime";
 import { normalizeTrace, compareTraces, type ConformanceTraceEntry } from "winter-conformance/trace";
@@ -203,6 +204,12 @@ interface QueryScenarioOptions {
   // query()'s own wrapper handler — the ONLY way to prove the runtime-originated "permission"
   // control_request round-trips end-to-end on every leg.
   canUseTool?: CanUseTool;
+  // Task 10 (WS-08 §1/§9/§10): lets a scenario register real SDK-callback hooks, exercised through
+  // query()'s own "hook" wrapper handler — the ONLY way to prove the runtime-originated "hook"
+  // control_request (and the public hook_started/hook_response lifecycle stream it can trigger)
+  // round-trips end-to-end on every leg, including a REAL spawned child process.
+  hooks?: Options["hooks"];
+  includeHookEvents?: boolean;
   // Invoked once per yielded message, AFTER it's recorded into the trace — the kill/abort
   // scenarios use this to act at a precise, OBSERVED point in the stream (WS-04 events), never a
   // real-clock guess (unlike the raw-driven interrupt scenario, which has no such observable event
@@ -232,6 +239,8 @@ async function traceViaQuery(leg: LegName, scenario: QueryScenarioOptions): Prom
         ...(scenario.resume !== undefined ? { resume: scenario.resume } : {}),
         ...(scenario.allowedTools !== undefined ? { allowedTools: scenario.allowedTools } : {}),
         ...(scenario.canUseTool !== undefined ? { canUseTool: scenario.canUseTool } : {}),
+        ...(scenario.hooks !== undefined ? { hooks: scenario.hooks } : {}),
+        ...(scenario.includeHookEvents !== undefined ? { includeHookEvents: scenario.includeHookEvents } : {}),
       },
     });
     for await (const msg of gen) {
@@ -632,6 +641,63 @@ function registerEquivalenceScenarios(legA: LegName, legB: LegName): void {
     const toolUseMsg = a.trace[1]!.payload as { message: { content: unknown } };
     expect(toolUseMsg.message.content).toEqual([{ type: "tool_use", id: "test-call-1", name: "test_tool", input: { probe: true } }]);
     const toolResultMsg = a.trace[2]!.payload as { message: { content: unknown } };
+    expect(toolResultMsg.message.content).toEqual([{ type: "tool_result", tool_use_id: "test-call-1", content: 'test_tool:{"probe":true}' }]);
+  });
+
+  // Task 10 (WS-08 §1/§9/§10): a hooked tool round with includeHookEvents — proves the ENTIRE
+  // hook-RPC round trip (query.ts's Options.hooks -> RuntimeConfig.hooks -> the real registry ->
+  // the bridge -> the real SDK-callback -> back) on every leg, including a REAL spawned child
+  // process, and that the public hook_started/hook_response lifecycle frames it triggers are
+  // IDENTICAL across legs (hookId is positional/deterministic — the same `${event}:sdk:${group}:
+  // ${index}` formula on both sides of the wire — and `uuid`/`session_id` are already in trace.ts's
+  // VOLATILE set, so this needs no new normalizer entries). The PreToolUse hook's own "allow" is
+  // ADVISORY ONLY (WS-07 §2.1 — evaluate() continues the pipeline regardless), so `allowedTools`
+  // still does the actual authorizing at stage 5, exactly like the plain "tool round" scenario
+  // above; this scenario's own point is the hook RPC round trip and lifecycle stream, not
+  // re-proving stage 1's advisory-only semantics (already covered exhaustively in evaluator.test.ts).
+  test("hooked tool round with includeHookEvents: PreToolUse hook allow + the public hook_started/hook_response lifecycle frames are identical across legs", async () => {
+    const preToolUseAllow: Options["hooks"] = {
+      PreToolUse: [{ hooks: [async () => ({ hookSpecificOutput: { hookEventName: "PreToolUse" as const, permissionDecision: "allow" as const } })] }],
+    };
+    const a = await traceViaQuery(legA, { prompt: "go", testProviderName: "tooluse", allowedTools: ["test_tool"], hooks: preToolUseAllow, includeHookEvents: true });
+    const b = await traceViaQuery(legB, { prompt: "go", testProviderName: "tooluse", allowedTools: ["test_tool"], hooks: preToolUseAllow, includeHookEvents: true });
+    expect(compareTraces(a.trace, b.trace)).toEqual([]);
+    expect(a.thrown).toBeUndefined();
+    expect(b.thrown).toBeUndefined();
+    // PreToolUse's own hook_started/hook_response fire from WITHIN evaluate(), which engine.ts
+    // calls AFTER the tool_use ("assistant") block is already written to the wire (that file's own
+    // comment: "the permission gate slots HERE — between this round's tool_use emission ... and
+    // execution") — so the lifecycle pair lands between "assistant" and the tool_result ("user").
+    expect(a.trace.map((e) => e.kind)).toEqual([
+      "system/init",
+      "assistant",
+      "system/hook_started",
+      "system/hook_response",
+      "user",
+      "assistant",
+      "result",
+      "exit",
+    ]);
+    const toolUseMsg = a.trace[1]!.payload as { message: { content: unknown } };
+    expect(toolUseMsg.message.content).toEqual([{ type: "tool_use", id: "test-call-1", name: "test_tool", input: { probe: true } }]);
+    const started = a.trace[2]!.payload as { type: string; subtype: string; hook_id: string; hook_name: string; hook_event: string };
+    expect(started).toEqual({ type: "system", subtype: "hook_started", hook_id: "PreToolUse:sdk:0:0", hook_name: "", hook_event: "PreToolUse" });
+    const response = a.trace[3]!.payload as { type: string; subtype: string; hook_id: string; hook_name: string; hook_event: string; output: string; stdout: string; stderr: string; outcome: string };
+    expect(response).toEqual({
+      type: "system",
+      subtype: "hook_response",
+      hook_id: "PreToolUse:sdk:0:0",
+      hook_name: "",
+      hook_event: "PreToolUse",
+      output: "",
+      stdout: "",
+      stderr: "",
+      outcome: "success",
+    });
+    // The hook's own allow resolved the call — the SAME tool round shape as the plain "tool round"
+    // scenario above, proving the hook answer genuinely authorized execution (mechanism "hook",
+    // not merely an ignored/observational hook riding alongside a separate allow).
+    const toolResultMsg = a.trace[4]!.payload as { message: { content: unknown } };
     expect(toolResultMsg.message.content).toEqual([{ type: "tool_result", tool_use_id: "test-call-1", content: 'test_tool:{"probe":true}' }]);
   });
 
