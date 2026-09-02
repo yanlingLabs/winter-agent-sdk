@@ -17,7 +17,7 @@ import {
   NO_OPINION_HOOK_STAGE,
   NO_OPINION_PROMPT_STAGE,
   NO_OPINION_AUTO_ENGINE,
-  NO_SPECIAL_CHECKS,
+  REAL_SPECIAL_CHECKS,
   type PermissionCall,
   type EvaluationContext,
 } from "./permissions/evaluator.ts";
@@ -166,17 +166,32 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // `trustedWorkspace: false` (constant, P2-wide): no settings-file loader exists yet to have
   // actually established workspace trust (P5); this is the SAFE direction (WS-07 §3.2's own
   // trust-gate — project/local ALLOW rules and directory grants stay inert; deny/ask are
-  // unaffected) and P5 is the one that wires a real trust signal in. All four evaluator seams are
-  // the T6 no-opinion stubs (T7/T8/T9/T10/T12 each fill exactly one, per the plan's seam list).
+  // unaffected) and P5 is the one that wires a real trust signal in.
+  //
+  // Task 7: `specialChecks` is now the REAL protected-path/critical-removal seam fill (T6's
+  // NO_SPECIAL_CHECKS stub retired here — this is the one production call site; every other
+  // reference to NO_SPECIAL_CHECKS left in the codebase is test-only). `sessionBypassEnabled`
+  // threads the SAME `allowDangerouslySkipPermissions` flag PolicyStateStore's own bypass gate
+  // (above) already checked at startup one level further, unchanged — WS-07 §6.4's "a session that
+  // did not enable bypass at startup cannot casually switch into it later" fact, needed by plan
+  // mode's own bypass-relaxation carve-out (§6.4/§6.5), which is a SESSION-scoped constant, not the
+  // CURRENT policy.mode (a session can be bypass-enabled while sitting in `plan` right now).
+  // `additionalDirectories` is deliberately NOT set here: no RuntimeConfig/Options wire field for it
+  // exists yet at P2 (EvaluationContext's own comment) — acceptEdits' path-bounding still gets T5's
+  // rule-derived grants via `effectiveDirectories(ctx.policy.rules, ...)`, computed inside
+  // evaluator.ts's own `boundedRoots`, independent of this field. The remaining two seams (hooks,
+  // canUseTool) and the auto classifier are still the T6 no-opinion stubs (T8/T9/T10/T12 each fill
+  // one, per the plan's seam list).
   const makeEvalCtx = (): EvaluationContext => ({
     policy: policyStateStore.getState(),
     cwd: config.cwd,
     home: permissionHome,
     trustedWorkspace: false,
+    sessionBypassEnabled: config.allowDangerouslySkipPermissions === true,
     hookStage: NO_OPINION_HOOK_STAGE,
     promptStage: NO_OPINION_PROMPT_STAGE,
     autoEngine: NO_OPINION_AUTO_ENGINE,
-    specialChecks: NO_SPECIAL_CHECKS,
+    specialChecks: REAL_SPECIAL_CHECKS,
   });
 
   // WS-07 §2's stale-policy-rejection contract: evaluate() stamps `policyVersion` from the SNAPSHOT

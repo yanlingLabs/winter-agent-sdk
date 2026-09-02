@@ -7,9 +7,30 @@
 // pipeline is T12's (AutoEngine seam, stubbed here as NO-VERDICT).
 //
 // Every fixture builds its own EvaluationContext from scratch (baseCtx) — no shared mutable state
-// between tests, no fs, no real WINTER_HOME (pure in-memory PolicyState objects throughout; the
-// PolicyStateStore section further down never touches disk either).
+// between tests. MOST fixtures are pure in-memory strings with no fs/WINTER_HOME involvement (the
+// PolicyStateStore section further down never touches disk either) — Task 7's own "Ruling P2-J
+// proven at the evaluator layer" describe block is the one real-fs exception (mkdtemp + planted
+// symlinks, mirroring paths.test.ts's own regime for the identical reason: symlink resolution is
+// not something a string can answer).
+//
+// Task 7 (Ruling P2-J, rider 2) landmine, fixed here — READ BEFORE choosing a synthetic path: the
+// file-rule matching path (matchesRuleForCall's FILE_RULE_TOOLS branch) and the cwd-read baseline
+// are now symlink-aware (matchFileRuleAtBothEnds -> checkSymlinkBothEnds -> realpathSync), even
+// though this whole file's OWN fixtures are meant to be pure in-memory strings with no real fs
+// involvement. On macOS, `/home` and `/etc` are REAL symlinks (`/home` -> `/System/Volumes/Data/
+// home`, `/etc` -> `/private/etc`) — a synthetic test path built on either prefix silently resolves
+// through a REAL symlink to a DIFFERENT absolute path, which can make an "allow requires both link
+// and target to match" check spuriously fail (deny/ask's "either" semantics are unaffected, since
+// the un-resolved link path still matches directly either way — this is why only ALLOW-direction
+// fixtures using `/home/...` broke when rider 2 landed, and why no *existing* `/etc` fixture broke:
+// every one of them was deny-direction). `home` now uses `/synthetic/home/...` (matching paths.
+// test.ts's own established, collision-free convention) for exactly this reason — prefer
+// `/synthetic/...` over any path prefix that might collide with a real macOS mount/symlink for any
+// NEW allow-direction file-rule fixture this file gains.
 import { test, expect, describe } from "bun:test";
+import { mkdtempSync, mkdirSync, symlinkSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { PermissionMode, PermissionRuleValue, PermissionUpdate, RuleSource } from "@yanlinglabs/winter-agent-sdk";
 import {
   evaluate,
@@ -17,6 +38,8 @@ import {
   NO_OPINION_PROMPT_STAGE,
   NO_OPINION_AUTO_ENGINE,
   NO_SPECIAL_CHECKS,
+  REAL_SPECIAL_CHECKS,
+  PLAN_WRITE_WITHHELD_MESSAGE,
   type EvaluationContext,
   type PermissionCall,
   type PromptStage,
@@ -48,7 +71,7 @@ function baseCtx(overrides: Partial<EvaluationContext> = {}): EvaluationContext 
   return {
     policy: policy(),
     cwd: "/work",
-    home: "/home/tester",
+    home: "/synthetic/home/tester",
     trustedWorkspace: false,
     hookStage: NO_OPINION_HOOK_STAGE,
     promptStage: NO_OPINION_PROMPT_STAGE,
@@ -278,9 +301,18 @@ describe("§5 baseline matrix — read-only work and unmatched actions", () => {
 
 // --- acceptEdits / plan / auto: T6 placeholder arm (identical to default's own baseline) ----------
 
-describe("acceptEdits/plan/auto placeholder arm (T7/T12 own the real semantics)", () => {
+describe("acceptEdits/plan/auto — the shared baseline invariant (T6 origin; still true after T7's real acceptEdits/plan semantics land below; `auto` remains T12's placeholder)", () => {
+  // Task 7: acceptEdits/plan get REAL semantics in their own describe blocks further down. This
+  // block is retained (not deleted) because BOTH assertions below still hold true under the real
+  // implementation — an out-of-root Edit is still not auto-approved by acceptEdits (WS-07 §2's
+  // standing-exceptions list doesn't cover "acceptEdits out-of-root", so it falls through to the
+  // ordinary pipeline exactly like `default`'s own unmatched-Edit case; plan withholds the SAME
+  // Edit via its own mustPrompt path, which ALSO still calls promptStage before falling back —
+  // see evaluateModeStage's own comments) and `pwd` is still built-in-read-only in every mode. A
+  // future replacement of either invariant is therefore still a deliberate, reviewed diff here, not
+  // a silent regression — exactly the property this block existed to protect under T6.
   for (const mode of ["acceptEdits", "plan", "auto"] as const) {
-    test(`mode=${mode}: never auto-approves MORE than default would (an ordinary Edit still reaches the prompt stage)`, async () => {
+    test(`mode=${mode}: never auto-approves MORE than default would (an ordinary out-of-root Edit still reaches the prompt stage)`, async () => {
       const promptSpy = spyPromptStage(() => ({ decision: "deny" }));
       const ctx = baseCtx({ promptStage: promptSpy.stage, policy: policy({ mode }) });
       const record = await evaluate(call("Edit", { file_path: "/etc/x" }), ctx);
@@ -294,6 +326,541 @@ describe("acceptEdits/plan/auto placeholder arm (T7/T12 own the real semantics)"
       expect(record).toMatchObject({ decision: "allow", mechanism: "mode" });
     });
   }
+});
+
+describe("Task 7 — acceptEdits real semantics (WS-07 §6.2)", () => {
+  test("Edit/Write recognized directly, in-bounds (cwd) -> auto-approved", async () => {
+    const ctx = baseCtx({ policy: policy({ mode: "acceptEdits" }), specialChecks: REAL_SPECIAL_CHECKS });
+    const record = await evaluate(call("Edit", { file_path: "/work/src/a.ts" }), ctx);
+    expect(record).toMatchObject({ decision: "allow", mechanism: "mode" });
+    const writeRecord = await evaluate(call("Write", { file_path: "/work/src/b.ts" }), ctx);
+    expect(writeRecord).toMatchObject({ decision: "allow", mechanism: "mode" });
+  });
+
+  test("a recognized Bash fs-op, in-bounds (the brief's own fixture: in-root `sed -i` approved in acceptEdits)", async () => {
+    const ctx = baseCtx({ policy: policy({ mode: "acceptEdits" }), specialChecks: REAL_SPECIAL_CHECKS });
+    const record = await evaluate(call("Bash", { command: "sed -i 's/x/y/' ./notes.txt" }), ctx);
+    expect(record).toMatchObject({ decision: "allow", mechanism: "mode" });
+  });
+
+  test("every recognized fs-op verb auto-approves when in-bounds", async () => {
+    const ctx = baseCtx({ policy: policy({ mode: "acceptEdits" }), specialChecks: REAL_SPECIAL_CHECKS });
+    for (const command of ["mkdir ./scratch", "touch ./scratch/f.txt", "rm ./scratch/f.txt", "rmdir ./scratch", "mv ./a.txt ./b.txt", "cp ./a.txt ./c.txt"]) {
+      const record = await evaluate(call("Bash", { command }), ctx);
+      expect(record).toMatchObject({ decision: "allow", mechanism: "mode" });
+    }
+  });
+
+  test("a compound of recognized fs-ops, ALL in-bounds, auto-approves", async () => {
+    const ctx = baseCtx({ policy: policy({ mode: "acceptEdits" }), specialChecks: REAL_SPECIAL_CHECKS });
+    const record = await evaluate(call("Bash", { command: "mkdir ./foo && touch ./foo/bar" }), ctx);
+    expect(record).toMatchObject({ decision: "allow", mechanism: "mode" });
+  });
+
+  test("the brief's own fixture: out-of-root write prompts (not silently allowed by acceptEdits' own arm)", async () => {
+    const promptSpy = spyPromptStage(() => ({ decision: "deny", message: "no" }));
+    const ctx = baseCtx({ promptStage: promptSpy.stage, policy: policy({ mode: "acceptEdits" }), specialChecks: REAL_SPECIAL_CHECKS });
+    const record = await evaluate(call("Edit", { file_path: "/etc/x" }), ctx);
+    expect(promptSpy.calls.length).toBe(1);
+    expect(record).toMatchObject({ decision: "deny", mechanism: "canUseTool" });
+  });
+
+  test("out-of-root is NOT a standing exception — an explicit allow rule can still rescue it at stage 5 (unlike protected/critical)", async () => {
+    // "/synthetic/..." per this file's own header comment — NOT "/etc" (a real macOS symlink to
+    // /private/etc, which would make rider 2's OWN symlink-aware allow-rule matching spuriously
+    // fail: the resolved target no longer matches a pattern written against the un-resolved link).
+    const ctx = baseCtx({
+      policy: policy({ mode: "acceptEdits", rules: withRules(rule("Edit(//synthetic/outside/x)", "allow")) }),
+      specialChecks: REAL_SPECIAL_CHECKS,
+    });
+    const record = await evaluate(call("Edit", { file_path: "/synthetic/outside/x" }), ctx);
+    expect(record).toMatchObject({ decision: "allow", mechanism: "rule" });
+  });
+
+  test("additionalDirectories (EvaluationContext's own config field) widen the bound, beyond cwd", async () => {
+    const ctx = baseCtx({
+      policy: policy({ mode: "acceptEdits" }),
+      specialChecks: REAL_SPECIAL_CHECKS,
+      additionalDirectories: ["/extra/grant"],
+    });
+    const record = await evaluate(call("Edit", { file_path: "/extra/grant/notes.txt" }), ctx);
+    expect(record).toMatchObject({ decision: "allow", mechanism: "mode" });
+  });
+
+  test("T5's rule-derived (trusted, addDirectories-sourced) directories ALSO widen the bound — boundedRoots unions both sources", async () => {
+    const ctx = baseCtx({
+      trustedWorkspace: true,
+      policy: policy({
+        mode: "acceptEdits",
+        rules: { ...emptyRuleSet(), directories: [{ path: "/rule-granted", source: "session" }] },
+      }),
+      specialChecks: REAL_SPECIAL_CHECKS,
+    });
+    const record = await evaluate(call("Edit", { file_path: "/rule-granted/notes.txt" }), ctx);
+    expect(record).toMatchObject({ decision: "allow", mechanism: "mode" });
+  });
+
+  test("an UNTRUSTED project-sourced rule directory grant is inert (effectiveDirectories' own trust gate, unaffected by this task)", async () => {
+    const promptSpy = spyPromptStage(() => ({ decision: "deny" }));
+    const ctx = baseCtx({
+      promptStage: promptSpy.stage,
+      trustedWorkspace: false,
+      policy: policy({
+        mode: "acceptEdits",
+        rules: { ...emptyRuleSet(), directories: [{ path: "/rule-granted", source: "project" }] },
+      }),
+      specialChecks: REAL_SPECIAL_CHECKS,
+    });
+    const record = await evaluate(call("Edit", { file_path: "/rule-granted/notes.txt" }), ctx);
+    expect(promptSpy.calls.length).toBe(1); // never auto-approved via the untrusted grant
+  });
+
+  test("mv/cp: BOTH source and destination must be in-bounds — an out-of-root source is not rescued by an in-bounds destination", async () => {
+    const promptSpy = spyPromptStage(() => ({ decision: "deny" }));
+    const ctx = baseCtx({ promptStage: promptSpy.stage, policy: policy({ mode: "acceptEdits" }), specialChecks: REAL_SPECIAL_CHECKS });
+    const record = await evaluate(call("Bash", { command: "mv /etc/passwd ./local-copy" }), ctx);
+    expect(promptSpy.calls.length).toBe(1); // never silently allowed just because the destination is in-bounds
+    expect(record.decision).toBe("deny");
+  });
+
+  test("unrecognized Bash (not one of the six verbs, no redirect) falls to the ordinary pipeline, same as default's own 'other unmatched action'", async () => {
+    const ctx = baseCtx({ policy: policy({ mode: "acceptEdits" }), specialChecks: REAL_SPECIAL_CHECKS });
+    const record = await evaluate(call("Bash", { command: "npm test" }), ctx);
+    // NO_OPINION_PROMPT_STAGE (default in baseCtx) -> T6's generic bottom-of-pipeline interim
+    // resolves this to allow, mechanism "mode" -- IDENTICAL to how `default` mode treats it today.
+    expect(record).toMatchObject({ decision: "allow", mechanism: "mode" });
+  });
+
+  test("a redirect (kind:'other') never auto-approves even though it's write-shaped", async () => {
+    const promptSpy = spyPromptStage(() => ({ decision: "deny" }));
+    const ctx = baseCtx({ promptStage: promptSpy.stage, policy: policy({ mode: "acceptEdits" }), specialChecks: REAL_SPECIAL_CHECKS });
+    const record = await evaluate(call("Bash", { command: "echo hi > ./notes.txt" }), ctx);
+    expect(promptSpy.calls.length).toBe(1);
+    expect(record.decision).toBe("deny");
+  });
+});
+
+describe("Task 7 — plan mode real semantics (WS-07 §6.5, phase ruling 6)", () => {
+  test("reads proceed: built-in read-only work is still allowed", async () => {
+    const ctx = baseCtx({ policy: policy({ mode: "plan" }), specialChecks: REAL_SPECIAL_CHECKS });
+    const record = await evaluate(call("Bash", { command: "pwd" }), ctx);
+    expect(record).toMatchObject({ decision: "allow", mechanism: "mode" });
+  });
+
+  test("a write (Edit) is withheld with the plan-specific message when unanswered (denial-as-tool_result)", async () => {
+    const ctx = baseCtx({ policy: policy({ mode: "plan" }), specialChecks: REAL_SPECIAL_CHECKS });
+    const record = await evaluate(call("Edit", { file_path: "/work/src/a.ts" }), ctx);
+    expect(record).toMatchObject({ decision: "deny", mechanism: "mode", message: PLAN_WRITE_WITHHELD_MESSAGE });
+  });
+
+  test("a write still routes through promptStage first — 'unresolved plan-mode operations can still route through canUseTool' (WS-07 §6.5)", async () => {
+    const promptSpy = spyPromptStage(() => ({ decision: "allow" }));
+    const ctx = baseCtx({ promptStage: promptSpy.stage, policy: policy({ mode: "plan" }), specialChecks: REAL_SPECIAL_CHECKS });
+    const record = await evaluate(call("Edit", { file_path: "/work/src/a.ts" }), ctx);
+    expect(promptSpy.calls.length).toBe(1);
+    expect(record).toMatchObject({ decision: "allow", mechanism: "canUseTool" });
+  });
+
+  test("a recognized Bash write (fs-op or redirect) is ALSO withheld, not just Edit/Write", async () => {
+    const ctx = baseCtx({ policy: policy({ mode: "plan" }), specialChecks: REAL_SPECIAL_CHECKS });
+    const fsOp = await evaluate(call("Bash", { command: "rm ./tmp/x" }), ctx);
+    expect(fsOp).toMatchObject({ decision: "deny", mechanism: "mode", message: PLAN_WRITE_WITHHELD_MESSAGE });
+    const redirect = await evaluate(call("Bash", { command: "echo x > ./log.txt" }), ctx);
+    expect(redirect).toMatchObject({ decision: "deny", mechanism: "mode", message: PLAN_WRITE_WITHHELD_MESSAGE });
+  });
+
+  test("ordinary allow rules do NOT silently convert a plan-mode write into execution (WS-07 §6.5)", async () => {
+    const ctx = baseCtx({
+      policy: policy({ mode: "plan", rules: withRules(rule("Edit(**)", "allow")) }),
+      specialChecks: REAL_SPECIAL_CHECKS,
+    });
+    const record = await evaluate(call("Edit", { file_path: "/work/src/a.ts" }), ctx);
+    expect(record.decision).toBe("deny"); // never resolves via mechanism "rule" here — stage 5 is never reached
+  });
+
+  test("a non-write exploratory action falls to the ordinary pipeline (classifier borrow OFF at P2)", async () => {
+    const ctx = baseCtx({ policy: policy({ mode: "plan" }), specialChecks: REAL_SPECIAL_CHECKS });
+    const record = await evaluate(call("Bash", { command: "npm test" }), ctx);
+    expect(record).toMatchObject({ decision: "allow", mechanism: "mode" }); // same T6 interim as default's own "other unmatched action"
+  });
+
+  test("bypass-relaxation: session bypass-enabled + plan = writes execute (§6.4/§6.5) — an unconditional auto-allow at stage 4, deliberately NOT routed through stage 5/6 (advisor-reviewed: must survive T8's future flip of the generic bottom-of-pipeline fallback)", async () => {
+    const promptSpy = spyPromptStage(() => ({ decision: "deny" })); // proves this does NOT fall through to the prompt stage at all
+    const ctx = baseCtx({
+      promptStage: promptSpy.stage,
+      policy: policy({ mode: "plan" }),
+      specialChecks: REAL_SPECIAL_CHECKS,
+      sessionBypassEnabled: true,
+    });
+    const record = await evaluate(call("Edit", { file_path: "/work/src/a.ts" }), ctx);
+    // WINTER_SDK note (WS-15's UI-surfacing obligation): a session that enabled bypass at startup
+    // loses plan's own enforcement boundary the instant it's in plan mode — the host UI MUST show
+    // this loss of protection (WS-07 §6.4: "Winter preserves that interaction for compatibility and
+    // its UI MUST surface the loss of plan enforcement"). This evaluator has no UI surface of its
+    // own; the obligation is discharged by whichever host renders canUseTool/mode state (WS-15),
+    // not by this function — flagged here so the obligation isn't lost between specs.
+    expect(promptSpy.calls.length).toBe(0);
+    expect(record).toMatchObject({ decision: "allow", mechanism: "mode" });
+  });
+
+  test("bypass-relaxation does NOT need an allow rule — an out-of-cwd write also executes unconditionally (proves this is a direct allow, not merely 'ordinary pipeline, and this path happens to be in cwd')", async () => {
+    const ctx = baseCtx({
+      cwd: "/work",
+      policy: policy({ mode: "plan" }),
+      specialChecks: REAL_SPECIAL_CHECKS,
+      sessionBypassEnabled: true,
+    });
+    const record = await evaluate(call("Edit", { file_path: "/synthetic/outside/x" }), ctx);
+    expect(record).toMatchObject({ decision: "allow", mechanism: "mode" });
+  });
+
+  test("critical removal is NEVER relaxed by session bypass in plan mode (§6.8's plan row has no bypass carve-out, unlike §6.7's)", async () => {
+    const ctx = baseCtx({
+      policy: policy({ mode: "plan" }),
+      specialChecks: REAL_SPECIAL_CHECKS,
+      sessionBypassEnabled: true,
+    });
+    const record = await evaluate(call("Bash", { command: "rm -rf /" }), ctx);
+    expect(record.decision).toBe("deny"); // still fails closed absent a real prompt handler -- never auto-allowed
+    expect(record.mechanism).toBe("mode");
+  });
+});
+
+describe("Task 7 — §6.7 protected-path write matrix (mode × protected write, cell-by-cell, verbatim table)", () => {
+  const protectedCall = call("Edit", { file_path: "/work/.git/config" });
+
+  test("default: prompt/callback", async () => {
+    const promptSpy = spyPromptStage(() => ({ decision: "deny" }));
+    const ctx = baseCtx({ promptStage: promptSpy.stage, policy: policy({ mode: "default" }), specialChecks: REAL_SPECIAL_CHECKS });
+    const record = await evaluate(protectedCall, ctx);
+    expect(promptSpy.calls.length).toBe(1);
+    expect(record).toMatchObject({ decision: "deny", mechanism: "canUseTool" });
+  });
+
+  test("acceptEdits: prompt/callback — never silently auto-approved just because Edit is 'recognized'", async () => {
+    const promptSpy = spyPromptStage(() => ({ decision: "deny" }));
+    const ctx = baseCtx({ promptStage: promptSpy.stage, policy: policy({ mode: "acceptEdits" }), specialChecks: REAL_SPECIAL_CHECKS });
+    const record = await evaluate(protectedCall, ctx);
+    expect(promptSpy.calls.length).toBe(1);
+    expect(record.decision).toBe("deny");
+  });
+
+  test("dontAsk: deny, canUseTool never called", async () => {
+    const promptSpy = spyPromptStage(() => ({ decision: "allow" })); // even if it WOULD allow, dontAsk must never ask at all
+    const ctx = baseCtx({ promptStage: promptSpy.stage, policy: policy({ mode: "dontAsk" }), specialChecks: REAL_SPECIAL_CHECKS });
+    const record = await evaluate(protectedCall, ctx);
+    expect(promptSpy.calls.length).toBe(0);
+    expect(record).toMatchObject({ decision: "deny", mechanism: "mode" });
+  });
+
+  test("bypassPermissions: allow, unconditionally (the ONE matrix cell where protected differs from critical)", async () => {
+    const ctx = baseCtx({ policy: policy({ mode: "bypassPermissions" }), specialChecks: REAL_SPECIAL_CHECKS });
+    const record = await evaluate(protectedCall, ctx);
+    expect(record).toMatchObject({ decision: "allow", mechanism: "mode" });
+  });
+
+  test("plan (no session bypass): prompt (classifier-active branch never applies at P2)", async () => {
+    const promptSpy = spyPromptStage(() => ({ decision: "deny" }));
+    const ctx = baseCtx({ promptStage: promptSpy.stage, policy: policy({ mode: "plan" }), specialChecks: REAL_SPECIAL_CHECKS });
+    const record = await evaluate(protectedCall, ctx);
+    expect(promptSpy.calls.length).toBe(1);
+    expect(record.decision).toBe("deny");
+  });
+
+  test("plan + session bypass enabled: allowed (§6.7's own bypass carve-out)", async () => {
+    const ctx = baseCtx({ policy: policy({ mode: "plan" }), specialChecks: REAL_SPECIAL_CHECKS, sessionBypassEnabled: true });
+    const record = await evaluate(protectedCall, ctx);
+    expect(record).toMatchObject({ decision: "allow", mechanism: "mode" });
+  });
+
+  test("auto: prompt (classifier not yet wired at P2 — T12's job; never silently allow)", async () => {
+    const promptSpy = spyPromptStage(() => ({ decision: "deny" }));
+    const ctx = baseCtx({ promptStage: promptSpy.stage, policy: policy({ mode: "auto" }), specialChecks: REAL_SPECIAL_CHECKS });
+    const record = await evaluate(protectedCall, ctx);
+    expect(promptSpy.calls.length).toBe(1);
+    expect(record.decision).toBe("deny");
+  });
+
+  test("an explicit allow rule does NOT clear this check, in ANY mode (WS-07 §6.7: 'an ordinary settings allow rule does NOT clear this check')", async () => {
+    const promptSpy = spyPromptStage(() => ({ decision: "deny" }));
+    const ctx = baseCtx({
+      promptStage: promptSpy.stage,
+      policy: policy({ mode: "default", rules: withRules(rule("Edit(**)", "allow")) }),
+      specialChecks: REAL_SPECIAL_CHECKS,
+    });
+    const record = await evaluate(protectedCall, ctx);
+    expect(promptSpy.calls.length).toBe(1); // never resolved via mechanism "rule"
+    expect(record.decision).toBe("deny");
+  });
+
+  test("reads are unaffected — a plain Read of a protected path is untouched by this primitive (write-shaped only)", async () => {
+    const ctx = baseCtx({ cwd: "/work", policy: policy({ mode: "default" }), specialChecks: REAL_SPECIAL_CHECKS });
+    const record = await evaluate(call("Read", { file_path: "/work/.git/config" }), ctx);
+    expect(record).toMatchObject({ decision: "allow", mechanism: "mode" }); // ordinary cwd-read baseline, never routed through the protected-write check
+  });
+});
+
+describe("Task 7 — §6.8 critical-removal matrix (mode × critical rm, cell-by-cell) — the brief's own `rm -rf /` fixture, every mode", () => {
+  const criticalCall = call("Bash", { command: "rm -rf /" });
+
+  for (const mode of ["default", "acceptEdits", "bypassPermissions", "plan", "auto"] as const) {
+    test(`${mode}: never silently allowed — reaches the prompt stage, fails closed absent a real answer`, async () => {
+      const promptSpy = spyPromptStage(() => ({ decision: "deny" }));
+      const ctx = baseCtx({ promptStage: promptSpy.stage, policy: policy({ mode }), specialChecks: REAL_SPECIAL_CHECKS });
+      const record = await evaluate(criticalCall, ctx);
+      expect(promptSpy.calls.length).toBe(1);
+      expect(record.decision).toBe("deny");
+    });
+  }
+
+  test("dontAsk: deny outright, canUseTool never called", async () => {
+    const promptSpy = spyPromptStage(() => ({ decision: "allow" }));
+    const ctx = baseCtx({ promptStage: promptSpy.stage, policy: policy({ mode: "dontAsk" }), specialChecks: REAL_SPECIAL_CHECKS });
+    const record = await evaluate(criticalCall, ctx);
+    expect(promptSpy.calls.length).toBe(0);
+    expect(record).toMatchObject({ decision: "deny", mechanism: "mode" });
+  });
+
+  test("bypassPermissions specifically: 'still prompts/callback' — a REAL prompt answer of allow DOES execute (unlike the fail-closed-absent-a-host default)", async () => {
+    const promptSpy = spyPromptStage(() => ({ decision: "allow" }));
+    const ctx = baseCtx({ promptStage: promptSpy.stage, policy: policy({ mode: "bypassPermissions" }), specialChecks: REAL_SPECIAL_CHECKS });
+    const record = await evaluate(criticalCall, ctx);
+    expect(promptSpy.calls.length).toBe(1);
+    expect(record).toMatchObject({ decision: "allow", mechanism: "canUseTool" });
+  });
+
+  test("plan + session bypass enabled: critical removal is STILL prompted, never relaxed (§6.8's plan row has no bypass carve-out, unlike §6.7's)", async () => {
+    const promptSpy = spyPromptStage(() => ({ decision: "deny" }));
+    const ctx = baseCtx({
+      promptStage: promptSpy.stage,
+      policy: policy({ mode: "plan" }),
+      specialChecks: REAL_SPECIAL_CHECKS,
+      sessionBypassEnabled: true,
+    });
+    const record = await evaluate(criticalCall, ctx);
+    expect(promptSpy.calls.length).toBe(1);
+    expect(record.decision).toBe("deny");
+  });
+
+  test("T6-review obligation: a broad `Bash(rm *)` allow rule does NOT rescue a critical rm at stage 5, in EVERY mode", async () => {
+    for (const mode of ["default", "acceptEdits", "bypassPermissions", "auto"] as const) {
+      const promptSpy = spyPromptStage(() => ({ decision: "deny" }));
+      const ctx = baseCtx({
+        promptStage: promptSpy.stage,
+        policy: policy({ mode, rules: withRules(rule("Bash(rm *)", "allow")) }),
+        specialChecks: REAL_SPECIAL_CHECKS,
+      });
+      const record = await evaluate(criticalCall, ctx);
+      expect(record.mechanism).not.toBe("rule"); // never resolved by the allow rule
+      expect(promptSpy.calls.length).toBe(1); // routed to the standing exception instead
+    }
+  });
+
+  test("a PreToolUse hook 'allow' does not clear the critical-removal circuit breaker either (WS-07 §2 stage 1 / §6.8)", async () => {
+    const hookSpy = spyHookStage(() => ({ decision: "allow" }));
+    const promptSpy = spyPromptStage(() => ({ decision: "deny" }));
+    const ctx = baseCtx({
+      hookStage: hookSpy.stage,
+      promptStage: promptSpy.stage,
+      policy: policy({ mode: "default" }),
+      specialChecks: REAL_SPECIAL_CHECKS,
+    });
+    const record = await evaluate(criticalCall, ctx);
+    expect(promptSpy.calls.length).toBe(1);
+    expect(record.decision).toBe("deny");
+  });
+
+  test("`rm $VAR/…` — variable-rooted conservative-critical, reaches the standing exception (the task's own fixture)", async () => {
+    const promptSpy = spyPromptStage(() => ({ decision: "deny" }));
+    const ctx = baseCtx({ promptStage: promptSpy.stage, policy: policy({ mode: "default" }), specialChecks: REAL_SPECIAL_CHECKS });
+    const record = await evaluate(call("Bash", { command: "rm -rf $SOME_DIR/sub" }), ctx);
+    expect(promptSpy.calls.length).toBe(1);
+    expect(record.decision).toBe("deny");
+  });
+});
+
+describe("Task 7 — T6-review obligation: Read-deny-blocks-Edit enforced generally at stage 2 (WS-07 §3.1), not merely inside acceptEdits", () => {
+  test("default mode: a Read deny on the path blocks an Edit, before ever reaching the mode/prompt stage", async () => {
+    const promptSpy = spyPromptStage(() => ({ decision: "allow" })); // proves the denial happens BEFORE the prompt stage, not merely "would deny if asked"
+    const ctx = baseCtx({
+      promptStage: promptSpy.stage,
+      cwd: "/work",
+      policy: policy({ mode: "default", rules: withRules(rule("Read(secrets/**)", "deny")) }),
+    });
+    const record = await evaluate(call("Edit", { file_path: "/work/secrets/key.pem" }), ctx);
+    expect(promptSpy.calls.length).toBe(0);
+    expect(record).toMatchObject({ decision: "deny", mechanism: "rule" });
+  });
+
+  test("acceptEdits: the SAME Read-deny-blocked path is denied, not auto-approved despite being in-bounds and recognized", async () => {
+    const ctx = baseCtx({
+      cwd: "/work",
+      policy: policy({ mode: "acceptEdits", rules: withRules(rule("Read(secrets/**)", "deny")) }),
+      specialChecks: REAL_SPECIAL_CHECKS,
+    });
+    const record = await evaluate(call("Edit", { file_path: "/work/secrets/key.pem" }), ctx);
+    expect(record).toMatchObject({ decision: "deny", mechanism: "rule" });
+  });
+
+  test("bypassPermissions: the Read-deny-blocks-Edit check is a stage-2 DENY rule, so it wins even under bypass", async () => {
+    const ctx = baseCtx({
+      cwd: "/work",
+      policy: policy({ mode: "bypassPermissions", rules: withRules(rule("Read(secrets/**)", "deny")) }),
+    });
+    const record = await evaluate(call("Edit", { file_path: "/work/secrets/key.pem" }), ctx);
+    expect(record).toMatchObject({ decision: "deny", mechanism: "rule" });
+  });
+
+  test("a Write call is blocked identically to Edit", async () => {
+    const ctx = baseCtx({
+      cwd: "/work",
+      policy: policy({ mode: "default", rules: withRules(rule("Read(secrets/**)", "deny")) }),
+    });
+    const record = await evaluate(call("Write", { file_path: "/work/secrets/new-key.pem" }), ctx);
+    expect(record).toMatchObject({ decision: "deny", mechanism: "rule" });
+  });
+
+  test("a Read ASK rule (not deny) does not block Edit — WS-07 §3.1 names deny specifically", async () => {
+    const ctx = baseCtx({
+      cwd: "/work",
+      policy: policy({ mode: "default", rules: withRules(rule("Read(secrets/**)", "ask")) }),
+    });
+    const record = await evaluate(call("Edit", { file_path: "/work/secrets/key.pem" }), ctx);
+    expect(record.mechanism).not.toBe("rule"); // the ask rule is Read-scoped and never matches an Edit call at all
+  });
+
+  test("a non-matching Read deny does not block an unrelated path", async () => {
+    const ctx = baseCtx({
+      cwd: "/work",
+      policy: policy({ mode: "default", rules: withRules(rule("Read(secrets/**)", "deny")) }),
+    });
+    const record = await evaluate(call("Edit", { file_path: "/work/public/readme.txt" }), ctx);
+    expect(record).toMatchObject({ decision: "allow", mechanism: "mode" });
+  });
+});
+
+describe("Task 7 — Ruling P2-J (rider 2) proven at the evaluator layer, not just paths.ts (real mkdtemp + planted symlinks — see this file's own header)", () => {
+  // Real fs, exactly like paths.test.ts's own checkSymlinkBothEnds regime: realpath the mkdtemp
+  // root immediately (the macOS $TMPDIR-resolves-through-a-symlink trap; see paths.test.ts's
+  // freshRoot comment) so a matcher built from the un-realpath'd mkdtemp path never disagrees with
+  // this module's own realpathSync-based resolution.
+  function freshRoot(): string {
+    return realpathSync(mkdtempSync(join(tmpdir(), "winter-evaluator-symlink-")));
+  }
+
+  test("deny-via-target: a Read deny on secrets/** fires on a symlink OUTSIDE secrets/ whose target resolves INTO it — mechanism 'rule', at stage 2", async () => {
+    const root = freshRoot();
+    try {
+      const secretsDir = join(root, "secrets");
+      mkdirSync(secretsDir);
+      const secretFile = join(secretsDir, "key.pem");
+      writeFileSync(secretFile, "top secret");
+      const outsideDir = join(root, "outside");
+      mkdirSync(outsideDir);
+      const linkPath = join(outsideDir, "link-to-secret"); // lives OUTSIDE secrets/, resolves INTO it
+      symlinkSync(secretFile, linkPath);
+
+      const promptSpy = spyPromptStage(() => ({ decision: "allow" })); // proves the deny fires BEFORE ever reaching the prompt stage
+      const ctx = baseCtx({
+        promptStage: promptSpy.stage,
+        cwd: root,
+        policy: policy({ rules: withRules(rule("Read(secrets/**)", "deny")) }),
+      });
+      const record = await evaluate(call("Read", { file_path: linkPath }), ctx);
+      expect(promptSpy.calls.length).toBe(0);
+      expect(record).toMatchObject({ decision: "deny", mechanism: "rule" });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("cwd-baseline-escape: default mode, a symlink INSIDE cwd whose target resolves OUTSIDE it is NOT routine-read-only-in-cwd — falls through to the prompt stage instead of auto-allowing", async () => {
+    const root = freshRoot();
+    const cwd = join(root, "work");
+    mkdirSync(cwd);
+    try {
+      const outsideFile = join(root, "outside-secret.txt");
+      writeFileSync(outsideFile, "secret");
+      const linkPath = join(cwd, "escape-link"); // sits INSIDE cwd, resolves OUTSIDE it
+      symlinkSync(outsideFile, linkPath);
+
+      const promptSpy = spyPromptStage(() => ({ decision: "deny" }));
+      const ctx = baseCtx({ promptStage: promptSpy.stage, cwd, policy: policy({ mode: "default" }) });
+      const record = await evaluate(call("Read", { file_path: linkPath }), ctx);
+      // if the wiring regressed to plain matchFileRule (link-text-only), this would resolve
+      // {decision:"allow", mechanism:"mode"} WITHOUT ever calling promptStage — exactly the fail-
+      // open rider 2 exists to close.
+      expect(promptSpy.calls.length).toBe(1);
+      expect(record.mechanism).toBe("canUseTool");
+
+      // an ORDINARY (non-symlink) file actually inside cwd is unaffected by the same wiring.
+      const ordinary = join(cwd, "ordinary.txt");
+      writeFileSync(ordinary, "fine");
+      const ordinaryRecord = await evaluate(call("Read", { file_path: ordinary }), ctx);
+      expect(ordinaryRecord).toMatchObject({ decision: "allow", mechanism: "mode" });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("allow requires BOTH ends: an allow rule scoped to project/** does not fire through a link planted outside it whose target resolves in", async () => {
+    const root = freshRoot();
+    try {
+      const projectDir = join(root, "project");
+      mkdirSync(projectDir);
+      const realFile = join(projectDir, "real.txt");
+      writeFileSync(realFile, "content");
+      const outsideDir = join(root, "outside");
+      mkdirSync(outsideDir);
+      const linkPath = join(outsideDir, "link");
+      symlinkSync(realFile, linkPath);
+
+      const promptSpy = spyPromptStage(() => ({ decision: "deny" }));
+      const ctx = baseCtx({
+        promptStage: promptSpy.stage,
+        cwd: root,
+        policy: policy({ rules: withRules(rule("Edit(project/**)", "allow")) }),
+      });
+      const record = await evaluate(call("Edit", { file_path: linkPath }), ctx);
+      expect(record.mechanism).not.toBe("rule"); // never silently allowed via the rule
+      expect(promptSpy.calls.length).toBe(1); // falls through to the ordinary pipeline instead
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("Task 7 — advisor-flagged gap, fixed: protected-write is symlink-aware too (a live fail-open this task's own matrix would otherwise miss)", () => {
+  function freshRoot(): string {
+    return realpathSync(mkdtempSync(join(tmpdir(), "winter-evaluator-protected-symlink-")));
+  }
+
+  test("acceptEdits: writing through an in-bounds symlink whose REAL TARGET lands inside .git is still protected — not silently auto-approved", async () => {
+    const root = freshRoot();
+    try {
+      const gitDir = join(root, ".git");
+      mkdirSync(gitDir);
+      const gitConfig = join(gitDir, "config");
+      writeFileSync(gitConfig, "[core]");
+      const linkPath = join(root, "innocent-link"); // sits in cwd, LOOKS unrelated to .git
+      symlinkSync(gitConfig, linkPath);
+
+      const promptSpy = spyPromptStage(() => ({ decision: "deny" }));
+      const ctx = baseCtx({
+        promptStage: promptSpy.stage,
+        cwd: root,
+        policy: policy({ mode: "acceptEdits" }),
+        specialChecks: REAL_SPECIAL_CHECKS,
+      });
+      const record = await evaluate(call("Edit", { file_path: linkPath }), ctx);
+      // Without the fix, isProtectedPath (link-text-only) sees no ".git" segment in "innocent-link"
+      // and isWithinBounds sees both ends inside cwd -> this would silently auto-approve.
+      expect(promptSpy.calls.length).toBe(1);
+      expect(record.decision).toBe("deny");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
 
 // --- Trap 1: compound Bash commands must be split before recognition/matching ----------------------
@@ -395,10 +962,10 @@ describe("file-rule routing — Read/Edit scoped rules route to matchFileRule (l
   test("a scoped allow rule (outside cwd, ~-anchored) allows via matchFileRule — isolated from the cwd baseline", async () => {
     const ctx = baseCtx({
       cwd: "/work",
-      home: "/home/tester",
+      home: "/synthetic/home/tester",
       policy: policy({ rules: withRules(rule("Read(~/.config/app/**)", "allow")) }),
     });
-    const record = await evaluate(call("Read", { file_path: "/home/tester/.config/app/settings.json" }), ctx);
+    const record = await evaluate(call("Read", { file_path: "/synthetic/home/tester/.config/app/settings.json" }), ctx);
     expect(record.decision).toBe("allow");
     expect(record.mechanism).toBe("rule");
     expect(record.source).toBe("sdk");
@@ -409,11 +976,11 @@ describe("file-rule routing — Read/Edit scoped rules route to matchFileRule (l
     const ctx = baseCtx({
       promptStage: promptSpy.stage,
       cwd: "/work",
-      home: "/home/tester",
+      home: "/synthetic/home/tester",
       trustedWorkspace: false,
       policy: policy({ rules: withRules(rule("Read(~/.config/app/**)", "allow", "project")) }),
     });
-    const record = await evaluate(call("Read", { file_path: "/home/tester/.config/app/settings.json" }), ctx);
+    const record = await evaluate(call("Read", { file_path: "/synthetic/home/tester/.config/app/settings.json" }), ctx);
     expect(promptSpy.calls.length).toBe(1); // the allow rule never fired
     expect(record.mechanism).toBe("canUseTool");
   });
@@ -421,11 +988,11 @@ describe("file-rule routing — Read/Edit scoped rules route to matchFileRule (l
   test("the SAME project-sourced allow rule fires once trustedWorkspace flips true", async () => {
     const ctx = baseCtx({
       cwd: "/work",
-      home: "/home/tester",
+      home: "/synthetic/home/tester",
       trustedWorkspace: true,
       policy: policy({ rules: withRules(rule("Read(~/.config/app/**)", "allow", "project")) }),
     });
-    const record = await evaluate(call("Read", { file_path: "/home/tester/.config/app/settings.json" }), ctx);
+    const record = await evaluate(call("Read", { file_path: "/synthetic/home/tester/.config/app/settings.json" }), ctx);
     expect(record.decision).toBe("allow");
     expect(record.mechanism).toBe("rule");
   });

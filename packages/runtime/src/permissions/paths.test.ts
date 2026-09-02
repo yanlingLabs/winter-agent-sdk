@@ -5,7 +5,11 @@
 // fixtures use plain synthetic literal strings (matchFileRule never touches disk -- see paths.ts's
 // own header) -- no mkdtemp needed, mirroring grammar.test.ts's own use of synthetic paths like
 // "/etc/passwd" as pure string literals with no real fs access. Only checkSymlinkBothEnds's real
-// symlink-resolution behavior needs a real mkdtemp root (lstat/realpath demand real fs). Fixture
+// symlink-resolution behavior needs a real mkdtemp root (lstat/realpath demand real fs) --
+// Task 7/Ruling P2-J extends this second regime to `matchFileRuleAtBothEnds` (the general symlink
+// composition) and to one real-symlink `readDenyBlocksEdit` fixture (that primitive is upgraded to
+// use the composition internally, so its OWN symlink behavior now needs the same real-fs regime for
+// that one case, alongside its existing synthetic-string fixtures for everything else). Fixture
 // privacy (name-guard): every real-fs fixture below is a fresh mkdtemp root; no real usernames or
 // personal paths appear anywhere in this file.
 import { describe, test, expect } from "bun:test";
@@ -15,6 +19,7 @@ import { join } from "node:path";
 
 import {
   matchFileRule,
+  matchFileRuleAtBothEnds,
   checkSymlinkBothEnds,
   readDenyBlocksEdit,
   MAX_DOUBLE_STARS,
@@ -286,6 +291,54 @@ describe("matchFileRule -- single-segment directory pattern depth asymmetry (WS-
   });
 });
 
+describe("Ruling P2-F (Task 7, rider 1): zero-rest bare anchors get denyAsk subtree reach, allow stays exact-only", () => {
+  // Before this ruling, a zero-rest anchor (`~`, `~/`, `//`, `/`+sourceDir alone) fell through to
+  // the general glob-compile path, which produces a plain `^literal$` regex (no `*`/`**` at all) --
+  // matching ONLY the anchor's base directory itself, on EVERY direction. `deny Read(~)` therefore
+  // did not reach `~/anything` -- fail-open, same class as Ruling P2-D one level up. Fixed by
+  // folding "zero rest" into isSingleSegmentDirectoryPattern (see that function's own comment).
+
+  test("bare `~` alone: allow is exact-only (unchanged); denyAsk now reaches any depth beneath home (the flip: false -> true)", () => {
+    expect(matchFileRule("~", opts({ path: "/synthetic/home", direction: "allow" }))).toBe(true);
+    expect(matchFileRule("~", opts({ path: "/synthetic/home/sub", direction: "allow" }))).toBe(false);
+    expect(matchFileRule("~", opts({ path: "/synthetic/home", direction: "denyAsk" }))).toBe(true);
+    expect(matchFileRule("~", opts({ path: "/synthetic/home/sub", direction: "denyAsk" }))).toBe(true);
+    expect(matchFileRule("~", opts({ path: "/synthetic/home/sub/nested/deep.txt", direction: "denyAsk" }))).toBe(
+      true,
+    );
+  });
+
+  test("`~/` (trailing-slash spelling, also zero-rest per resolveAnchor): identical to bare `~`", () => {
+    expect(matchFileRule("~/", opts({ path: "/synthetic/home", direction: "allow" }))).toBe(true);
+    expect(matchFileRule("~/", opts({ path: "/synthetic/home/sub", direction: "allow" }))).toBe(false);
+    expect(matchFileRule("~/", opts({ path: "/synthetic/home", direction: "denyAsk" }))).toBe(true);
+    expect(matchFileRule("~/", opts({ path: "/synthetic/home/sub", direction: "denyAsk" }))).toBe(true);
+  });
+
+  test("bare `//` alone: filesystem root itself -- allow exact-only, denyAsk reaches everything", () => {
+    expect(matchFileRule("//", opts({ path: "/", direction: "allow" }))).toBe(true);
+    expect(matchFileRule("//", opts({ path: "/etc/hostname", direction: "allow" }))).toBe(false);
+    expect(matchFileRule("//", opts({ path: "/", direction: "denyAsk" }))).toBe(true);
+    expect(matchFileRule("//", opts({ path: "/etc/hostname", direction: "denyAsk" }))).toBe(true);
+    expect(matchFileRule("//", opts({ path: "/synthetic/proj/anything", direction: "denyAsk" }))).toBe(true);
+  });
+
+  test("bare `/` alone (settings-source directory itself): allow exact-only, denyAsk reaches everything beneath sourceDir", () => {
+    const base = { direction: "allow" as const, sourceDir: SOURCE_DIR };
+    expect(matchFileRule("/", opts({ ...base, path: SOURCE_DIR }))).toBe(true);
+    expect(matchFileRule("/", opts({ ...base, path: `${SOURCE_DIR}/config.json` }))).toBe(false);
+    expect(matchFileRule("/", opts({ ...base, path: SOURCE_DIR, direction: "denyAsk" }))).toBe(true);
+    expect(matchFileRule("/", opts({ ...base, path: `${SOURCE_DIR}/config.json`, direction: "denyAsk" }))).toBe(
+      true,
+    );
+  });
+
+  test("a `/` pattern with sourceDir absent stays inert on every direction (unaffected by this ruling)", () => {
+    expect(matchFileRule("/", { path: SOURCE_DIR, cwd: CWD, home: HOME, direction: "allow" })).toBe(false);
+    expect(matchFileRule("/", { path: SOURCE_DIR, cwd: CWD, home: HOME, direction: "denyAsk" })).toBe(false);
+  });
+});
+
 describe("checkSymlinkBothEnds (WS-07 §3.1: 'symlinks are checked at both ends')", () => {
   // Real fs: every root below is realpath'd immediately after mkdtemp -- on macOS, $TMPDIR resolves
   // under /var, itself a symlink to /private/var; skipping this step would make a matcher built
@@ -414,6 +467,94 @@ describe("checkSymlinkBothEnds (WS-07 §3.1: 'symlinks are checked at both ends'
   });
 });
 
+describe("matchFileRuleAtBothEnds (Ruling P2-J, Task 7 rider 2): the general-purpose symlink-both-ends composition", () => {
+  function freshRoot(): string {
+    return realpathSync(mkdtempSync(join(tmpdir(), "winter-paths-bothends-")));
+  }
+
+  test("deny fires via the RESOLVED TARGET even though the link itself sits outside the denied subtree (closes the live fail-open T6's report flagged)", () => {
+    const root = freshRoot();
+    try {
+      const secretsDir = join(root, "secrets");
+      mkdirSync(secretsDir);
+      const secretFile = join(secretsDir, "key.pem");
+      writeFileSync(secretFile, "top secret");
+      const outsideDir = join(root, "outside");
+      mkdirSync(outsideDir);
+      const linkPath = join(outsideDir, "link-to-secret");
+      symlinkSync(secretFile, linkPath); // link lives OUTSIDE secrets/, but resolves INTO it
+
+      const denied = matchFileRuleAtBothEnds("secrets/**", { path: linkPath, cwd: root, home: HOME, direction: "denyAsk" });
+      expect(denied).toBe(true); // RED->GREEN: previously false (matchFileRule alone never sees the target)
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("allow requires BOTH ends: a link outside the allowed subtree whose target resolves inside it is NOT allowed", () => {
+    const root = freshRoot();
+    try {
+      const projectDir = join(root, "project");
+      mkdirSync(projectDir);
+      const realFile = join(projectDir, "real.txt");
+      writeFileSync(realFile, "content");
+      const outsideDir = join(root, "outside");
+      mkdirSync(outsideDir);
+      const linkPath = join(outsideDir, "link");
+      symlinkSync(realFile, linkPath);
+
+      expect(matchFileRuleAtBothEnds("project/**", { path: linkPath, cwd: root, home: HOME, direction: "allow" })).toBe(
+        false,
+      );
+      // and the symmetric ordinary case: link AND target both inside project/ -- allow succeeds.
+      const linkInside = join(projectDir, "link-inside");
+      symlinkSync(realFile, linkInside);
+      expect(
+        matchFileRuleAtBothEnds("project/**", { path: linkInside, cwd: root, home: HOME, direction: "allow" }),
+      ).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("cwd-baseline shape: a `**` (whole-cwd) pattern denies-through / requires-both exactly like any other pattern -- the primitive evaluator.ts's isReadWithinCwd now composes with", () => {
+    const root = freshRoot();
+    const cwd = join(root, "work");
+    mkdirSync(cwd);
+    try {
+      const outsideFile = join(root, "outside.txt");
+      writeFileSync(outsideFile, "secret");
+      const linkPath = join(cwd, "escape-link"); // sits INSIDE cwd, resolves OUTSIDE it
+      symlinkSync(outsideFile, linkPath);
+
+      // "**" anchored at cwd matches cwd itself and everything beneath -- a cwd symlink pointing
+      // outside cwd must NOT be treated as "inside cwd" once the target is considered.
+      expect(matchFileRuleAtBothEnds("**", { path: linkPath, cwd, home: HOME, direction: "allow" })).toBe(false);
+      // an ordinary file actually inside cwd is unaffected.
+      const ordinary = join(cwd, "ordinary.txt");
+      writeFileSync(ordinary, "fine");
+      expect(matchFileRuleAtBothEnds("**", { path: ordinary, cwd, home: HOME, direction: "allow" })).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("a caller-supplied RELATIVE path is resolved against opts.cwd (not the real process cwd) before symlink resolution", () => {
+    const root = freshRoot();
+    const cwd = join(root, "work");
+    mkdirSync(cwd);
+    try {
+      writeFileSync(join(cwd, "notes.txt"), "content");
+      // relative path "notes.txt" must resolve against `cwd` above, never `process.cwd()`.
+      expect(matchFileRuleAtBothEnds("notes.txt", { path: "notes.txt", cwd, home: HOME, direction: "allow" })).toBe(
+        true,
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("readDenyBlocksEdit (WS-07 §3.1: 'a Read deny also blocks current Edit/Write operations on the same path')", () => {
   const ctx = { cwd: CWD, home: HOME };
 
@@ -466,6 +607,25 @@ describe("readDenyBlocksEdit (WS-07 §3.1: 'a Read deny also blocks current Edit
   test("a `/`-anchored deny rule with no sourceDir never blocks (same sourceDir-absent rule as matchFileRule)", () => {
     const rules: FileRuleEntry[] = [{ toolName: "Read", pattern: "/config.json", behavior: "deny" }];
     expect(readDenyBlocksEdit(rules, "/synthetic/settings-src/config.json", ctx)).toBe(false);
+  });
+
+  test("Ruling P2-J (rider 2): blocks editing a symlink whose REAL TARGET falls under the denied Read pattern, even though the link itself lives elsewhere", () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "winter-paths-denyblocks-")));
+    try {
+      const secretsDir = join(root, "secrets");
+      mkdirSync(secretsDir);
+      const secretFile = join(secretsDir, "key.pem");
+      writeFileSync(secretFile, "top secret");
+      const outsideDir = join(root, "outside");
+      mkdirSync(outsideDir);
+      const linkPath = join(outsideDir, "link-to-secret");
+      symlinkSync(secretFile, linkPath);
+
+      const rules: FileRuleEntry[] = [{ toolName: "Read", pattern: "secrets/**", behavior: "deny" }];
+      expect(readDenyBlocksEdit(rules, linkPath, { cwd: root, home: HOME })).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
 

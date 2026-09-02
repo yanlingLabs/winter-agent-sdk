@@ -114,14 +114,42 @@ function joinBaseAndRest(base: string, rest: string): string {
 // so it matched NOTHING. Now it exact-matches the directory, like its non-trailing-slash spelling
 // always did. Strictly more correct and still shallow (never widens past the exact entry), not a
 // security-relevant change -- flagged here for honesty, not because it needs a different fix.
+// Ruling P2-F (Task 7, rider 1): a ZERO-REST bare anchor -- pattern `~`, `~/`, `//`, or `/`
+// (+sourceDir) alone, i.e. the anchor resolves to `{base, rest: ""}` with nothing after the anchor
+// token itself -- was previously excluded from this function (the old `trimmed.length > 0` guard)
+// and fell through to the general glob-compile path instead. That path compiles a pattern with no
+// `*`/`**` at all into a plain `^literal$` regex, which matches ONLY the anchor's base directory
+// itself, on EVERY direction -- so `deny Read(~)` did not reach `~/anything`, a fail-open exactly
+// like the one Ruling P2-D fixed one level up (single-segment RELATIVE bare names). Folding
+// "zero rest" into this SAME function, rather than adding a parallel branch, is deliberate: a bare
+// anchor is structurally "zero segments after the anchor," the same family as P2-D's "one segment
+// after the anchor" -- both get denyAsk deep-reach and allow exact-only, via the identical formula
+// in matchFileRule below (`exact` degenerates to the anchor's base itself when rest is empty).
+// Scope note: this also (harmlessly) covers a bare `""`/`"./"` pattern spelling, which resolves to
+// the SAME zero-rest cwd-anchored shape via resolveAnchor's fallthrough branch -- not one of the
+// four spellings WS-07 §3.1 or the task's own ruling names, but the identical shape structurally,
+// and treating it identically is the more defensible single rule rather than four hand-picked
+// string literals (capture-noted, like every other anchor-edge judgment call in this file).
 function isSingleSegmentDirectoryPattern(anchor: AnchorResolution): boolean {
   const trimmed = stripTrailingSlash(anchor.rest);
-  return trimmed.length > 0 && !trimmed.includes("/") && !trimmed.includes("*");
+  if (trimmed.length === 0) return true;
+  return !trimmed.includes("/") && !trimmed.includes("*");
 }
 
 function resolveTargetPath(path: string, cwd: string): string {
   const abs = isAbsolute(path) ? path : join(cwd, path);
   return stripTrailingSlash(normalize(abs));
+}
+
+// Ruling P2-F fallout: `exact + "/"` (the pre-existing denyAsk deep-reach formula below) produces
+// "//" when `exact` is the filesystem root itself ("/" + "/" = "//"), which no real absolute path
+// ever starts with -- silently breaking the deep-reach check for exactly the one new case this
+// ruling introduces (a bare `//` anchor resolves `exact` to "/"). Never exercised before P2-F
+// (every prior isSingleSegmentDirectoryPattern fixture had a non-root `exact`), so this is a
+// latent formula bug this ruling's own fixture newly exposes, not a mistake in the ruling itself.
+function isExactOrDescendant(targetPath: string, base: string): boolean {
+  if (targetPath === base) return true;
+  return targetPath.startsWith(base === "/" ? "/" : base + "/");
 }
 
 const REGEXP_SPECIAL = /[.+?^${}()|[\]\\]/;
@@ -237,7 +265,7 @@ export function matchFileRule(pattern: string, opts: MatchFileRuleOptions): bool
     // isSingleSegmentDirectoryPattern's own comment).
     const exact = resolveTargetPath(joinBaseAndRest(anchor.base, stripTrailingSlash(anchor.rest)), opts.cwd);
     if (opts.direction === "allow") return targetPath === exact;
-    return targetPath === exact || targetPath.startsWith(exact + "/");
+    return isExactOrDescendant(targetPath, exact);
   }
 
   const fullPattern = normalize(joinBaseAndRest(anchor.base, anchor.rest));
@@ -301,6 +329,38 @@ export function checkSymlinkBothEnds(
 }
 
 // ---------------------------------------------------------------------------------------------
+// matchFileRuleAtBothEnds -- Ruling P2-J (Task 7, rider 2): the symlink-both-ends composition
+// ---------------------------------------------------------------------------------------------
+//
+// checkSymlinkBothEnds (above) is a bare predicate-composer; T6's report flagged that NOTHING
+// actually wired it into the general file-rule matching path (evaluator.ts's `matchesRuleForCall`
+// FILE_RULE_TOOLS branch, stages 2/3/5) or into the `default`/`dontAsk`/`bypassPermissions`
+// cwd-read baseline (`isReadWithinCwd`) -- both called `matchFileRule` directly against the raw,
+// un-resolved path, so `deny Read(//etc/passwd)` did not fire on a Read of a SYMLINK whose target
+// is `/etc/passwd`, and a cwd-read baseline would affirmatively ALLOW a symlinked read whose real
+// target escapes cwd. This is that composition, written ONCE, here, rather than at each call site
+// (both call sites need the identical "resolve the pattern, both ends, one direction-appropriate
+// verdict" shape) -- evaluator.ts imports and calls this instead of `matchFileRule` directly for
+// both of those uses; `readDenyBlocksEdit` below is upgraded to use it internally too (closing the
+// identical gap for its own "Read deny blocks Edit" check, for free, with no call-site changes at
+// ITS two current callers).
+//
+// `opts.path` is pre-resolved to an ABSOLUTE path via the same `resolveTargetPath` matchFileRule
+// itself uses, BEFORE handing it to checkSymlinkBothEnds/realpathSync -- realpathSync resolves a
+// relative path against the REAL PROCESS cwd, not `opts.cwd`, so skipping this step would silently
+// symlink-resolve against the wrong base whenever a caller passes a cwd-relative `path` (the common
+// case for a tool call's own `file_path` input). The `matcher` closure re-resolves each candidate
+// (link path, then real target) through the identical `matchFileRule` semantics, including its own
+// (already-absolute) `resolveTargetPath` call -- calling it twice on an already-absolute string is
+// a no-op past the first `isAbsolute` check, not a second resolution.
+export function matchFileRuleAtBothEnds(pattern: string, opts: MatchFileRuleOptions): boolean {
+  const absPath = resolveTargetPath(opts.path, opts.cwd);
+  const matcher = (candidatePath: string): boolean => matchFileRule(pattern, { ...opts, path: candidatePath });
+  const { allowRequiresBoth, denyIfEither } = checkSymlinkBothEnds(absPath, matcher);
+  return opts.direction === "allow" ? allowRequiresBoth : denyIfEither;
+}
+
+// ---------------------------------------------------------------------------------------------
 // readDenyBlocksEdit
 // ---------------------------------------------------------------------------------------------
 
@@ -328,7 +388,10 @@ export interface FileRuleEntry {
 export function readDenyBlocksEdit(rules: FileRuleEntry[], path: string, ctx: { cwd: string; home: string }): boolean {
   return rules.some((rule) => {
     if (rule.toolName !== "Read" || rule.behavior !== "deny") return false;
-    return matchFileRule(rule.pattern, {
+    // Ruling P2-J (rider 2): symlink-both-ends composed here too -- a Read deny on
+    // `secrets/**` must also block editing a symlink whose real target resolves into `secrets/`,
+    // matching the same "deny fires if EITHER end matches" rule the general file-rule path gets.
+    return matchFileRuleAtBothEnds(rule.pattern, {
       path,
       cwd: ctx.cwd,
       home: ctx.home,

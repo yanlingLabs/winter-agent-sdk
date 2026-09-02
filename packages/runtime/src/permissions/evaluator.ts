@@ -33,11 +33,20 @@
 // still the long-term target, and T8 is free to flip the generic fallback to "deny" once a real host
 // is reachable (with a justified `--update` to whichever goldens that touches) — this comment is the
 // pointer for that implementer.
+import { resolve } from "node:path";
 import type { PermissionBehavior, PermissionMode, PermissionUpdate, RuleSource } from "@yanlinglabs/winter-agent-sdk";
 import { FILE_RULE_TOOLS, matchesRule, splitCompound, isRecognizedReadOnly, type ParsedRule } from "./grammar.ts";
-import { matchFileRule } from "./paths.ts";
+import { matchFileRuleAtBothEnds, checkSymlinkBothEnds } from "./paths.ts";
 import type { SourcedRuleEntry, SourcedRuleSet } from "./ruleset.ts";
+import { effectiveDirectories } from "./ruleset.ts";
 import type { PolicyState, AutoModeConfig } from "./policy-state.ts";
+// Task 7 (WS-07 §6.2/§6.7/§6.8): the two SpecialChecks-seam primitive modules. Renamed on import --
+// their own exported names (`isProtectedWrite`/`isCriticalRemoval`) are identical to this module's
+// SEAM method names (SpecialChecks.isProtectedWrite/.isCriticalRemoval) by design (the seam and the
+// primitive answer "the same question," just at different granularity -- whole-call vs. bare
+// path/command; see REAL_SPECIAL_CHECKS below for the adaptation).
+import { recognizeEditOperation } from "./edit-recognition.ts";
+import { isProtectedWrite as isProtectedPath, isCriticalRemoval as classifyCriticalRemoval } from "./protected.ts";
 
 export type { AutoModeConfig };
 
@@ -148,6 +157,24 @@ export interface EvaluationContext {
   home: string;
   trustedWorkspace: boolean;
   allowManagedPermissionRulesOnly?: boolean;
+  // Task 7 (WS-07 §6.2): direct, config-sourced acceptEdits bounds, ADDITIONAL to whatever
+  // `effectiveDirectories(ctx.policy.rules, ...)` (T5, rule-derived `addDirectories` grants)
+  // already contributes -- see `boundedRoots` below, which unions cwd + both sources. No
+  // RuntimeConfig/Options wiring exists yet at P2 (engine.ts does not populate this from any wire
+  // field) -- it exists here so a direct SDK-level `additionalDirectories` config option has
+  // somewhere to land the moment a later task adds that wire field, and so tests can inject bounds
+  // without needing a full rule-set/trust setup. Deliberately optional; absent = no extra bounds
+  // beyond cwd + rule-derived directories.
+  additionalDirectories?: string[];
+  // Task 7 (WS-07 §6.4/§6.5): "a session that did not enable bypass at startup cannot casually
+  // switch into it later" -- this is that SAME session-level fact (constant for the life of a
+  // session, unlike `policy.mode`, which changes on every setPermissionMode), needed by plan mode's
+  // own bypass-relaxation carve-out (§6.4: "with bypass enabled, plan mode becomes instructional");
+  // NOT the same thing as `policy.mode === "bypassPermissions"` (the session can be bypass-ENABLED
+  // while currently sitting in `plan`). Sourced from the SAME `allowDangerouslySkipPermissions`
+  // config flag PolicyStateStore's own bypass gate already checks (policy-state.ts) -- engine.ts
+  // threads it through unchanged, one level further.
+  sessionBypassEnabled?: boolean;
   hookStage: HookStage;
   promptStage: PromptStage;
   autoEngine: AutoEngine;
@@ -204,6 +231,83 @@ export const NO_SPECIAL_CHECKS: SpecialChecks = {
 };
 
 // ---------------------------------------------------------------------------------------------------
+// Task 7: acceptEdits path-bounding + the real SpecialChecks seam fill
+// ---------------------------------------------------------------------------------------------------
+
+// WS-07 §6.2's "cwd or additionalDirectories" bound — unions THREE sources: the live cwd, T5's
+// rule-derived grants (`addDirectories` PermissionUpdate entries, trust-gated exactly like every
+// other project/local grant — `effectiveDirectories` already does that gating), and this task's own
+// direct `ctx.additionalDirectories` config field (see that field's own EvaluationContext comment
+// for why it's separate and currently unwired past this file). Also reused, deliberately, as
+// `isCriticalRemoval`'s own "additionalDirectories" input (§6.8's "dangerous additional-directory
+// glob shapes") — the two checks share exactly the same notion of "a directory this session may
+// freely operate in," so computing it once and threading it to both is structural, not incidental.
+function boundedRoots(ctx: EvaluationContext): string[] {
+  const ruleDerived = effectiveDirectories(ctx.policy.rules, { trustedWorkspace: ctx.trustedWorkspace });
+  return [ctx.cwd, ...ruleDerived, ...(ctx.additionalDirectories ?? [])];
+}
+
+// Is `path` inside cwd or ANY additional directory? Pre-resolves `path` to an absolute string
+// against the REAL cwd exactly once — a relative tool-call path (`file_path: "./tmp/x"`) only ever
+// means "relative to this session's actual cwd," never "relative to whichever additionalDirectory
+// happens to be under consideration" — then checks that one resolved candidate against each root in
+// turn via the symlink-aware composition (rider 2): "allow" requires BOTH the path and its resolved
+// symlink target to fall inside a root, so a symlink planted in-bounds that points out of every
+// granted root is correctly NOT auto-approved.
+function isWithinBounds(path: string, ctx: EvaluationContext): boolean {
+  const absPath = resolve(ctx.cwd, path);
+  return boundedRoots(ctx).some((root) => matchFileRuleAtBothEnds("**", { path: absPath, cwd: root, home: ctx.home, direction: "allow" }));
+}
+
+// The whole-call path extraction the SpecialChecks seam contract asks T7 to own (see that
+// interface's own comment: "DIFFERENT tools extract 'the path' ... that extraction is exactly what
+// T7's real implementation of this seam is expected to own"). Reused by both `isWithinBounds`'s
+// acceptEdits caller (evaluateModeStage below) and `REAL_SPECIAL_CHECKS.isProtectedWrite` — a Bash
+// call's candidate paths are recognizeEditOperation's UNION of blessed-fs-op paths and redirect
+// targets regardless of `kind`, so `echo x > .git/config` surfaces `.git/config` here even though
+// `echo` is nowhere near the six blessed verbs (this task's own instruction: "redirect targets
+// count as write paths for the SpecialChecks seam ... but do not widen §6.2's auto-approve set" —
+// the "do not widen" half is `evaluateModeStage`'s job, by checking `kind`, not this function's).
+function extractCandidateWritePaths(call: PermissionCall): string[] {
+  if (call.toolName === "Edit" || call.toolName === "Write") {
+    const path = call.input["file_path"];
+    return typeof path === "string" ? [path] : [];
+  }
+  if (call.toolName === "Bash") {
+    const recognized = recognizeEditOperation(call);
+    return recognized ? recognized.paths : [];
+  }
+  return [];
+}
+
+// The real SpecialChecks seam fill (T6's stub, NO_SPECIAL_CHECKS above, was "always no opinion").
+// Wired into engine.ts's `makeEvalCtx` in place of NO_SPECIAL_CHECKS; every fixture in this file
+// that wants real protected/critical behavior passes this explicitly instead.
+export const REAL_SPECIAL_CHECKS: SpecialChecks = {
+  isProtectedWrite(call, ctx) {
+    // Ruling P2-J (rider 2) applied here too, advisor-flagged gap: `isProtectedPath` itself is
+    // pure name/segment matching against the LINK text only (protected.ts has no fs access at
+    // all) — without composing checkSymlinkBothEnds here, `Edit(file_path="/work/innocent-link")`
+    // where the link resolves into `/work/.git/config` would sail through as "not protected" (the
+    // link's own path has no `.git` segment) even though the write lands inside `.git`. "deny if
+    // EITHER end classifies protected" mirrors rider 2's own deny-direction semantics — protected
+    // is a safety check, not a grant, so the more-restrictive interpretation applies, exactly like
+    // deny/ask elsewhere in this phase.
+    return extractCandidateWritePaths(call).some((p) => {
+      const absPath = resolve(ctx.cwd, p);
+      return checkSymlinkBothEnds(absPath, (candidate) => isProtectedPath(candidate, { cwd: ctx.cwd, home: ctx.home })).denyIfEither;
+    });
+  },
+  isCriticalRemoval(call, ctx) {
+    // WS-07 §6.8 is scoped to `rm`/`rmdir` — a shell concept; Edit/Write never "remove" anything.
+    if (call.toolName !== "Bash") return { critical: false };
+    const raw = call.input["command"];
+    const command = typeof raw === "string" ? raw : "";
+    return classifyCriticalRemoval(command, { cwd: ctx.cwd, home: ctx.home, additionalDirectories: boundedRoots(ctx) });
+  },
+};
+
+// ---------------------------------------------------------------------------------------------------
 // Rule lookup — deliberately NOT ruleset.ts's resolveRules()
 // ---------------------------------------------------------------------------------------------------
 //
@@ -235,7 +339,10 @@ function matchesRuleForCall(rule: ParsedRule, call: PermissionCall, direction: "
     if (rule.toolName !== call.toolName) return false; // literal match only — WS-07 never documents a globbed tool name for this family
     const path = call.input["file_path"]; // WS-06 §"Read"/"Edit" pinned field name (docs/superpowers/specs/winter/WS-06-tool-catalog.md:145,167)
     if (typeof path !== "string") return false;
-    return matchFileRule(rule.specifier.source, {
+    // Ruling P2-J (Task 7, rider 2): symlink-both-ends composed here — deny/ask fire if the LINK OR
+    // the resolved TARGET matches; allow requires BOTH. Closes the fail-open T6's report flagged
+    // ("deny Read(//etc/passwd) does not fire on a Read of a symlink whose target is /etc/passwd").
+    return matchFileRuleAtBothEnds(rule.specifier.source, {
       path,
       cwd: ctx.cwd,
       home: ctx.home,
@@ -286,6 +393,35 @@ function findMatchingRuleEntry(rules: SourcedRuleSet, call: PermissionCall, beha
   return undefined;
 }
 
+// Task 7 (WS-07 §3.1: "a Read deny also blocks current Edit/Write operations on the same path") —
+// T6-review obligation: this lands at STAGE 2 generally (every mode), not merely inside the
+// acceptEdits arm the original brief text named. `matchesRuleForCall`'s FILE_RULE_TOOLS branch
+// above can never surface this by itself — a rule entry with `toolName: "Read"` never matches a
+// call with `toolName: "Edit"` (`rule.toolName !== call.toolName` returns false immediately) — so
+// this is a SEPARATE lookup, scoped to Edit/Write calls specifically (WS-07 §3.1's own examples are
+// "every editing surface," i.e. tools, not arbitrary Bash writes — a Bash fs-op/redirect touching a
+// Read-denied path is caught by the ordinary Bash deny-rule stage instead, plus T7's own
+// protected/critical checks; scoped this way deliberately, flagged in the report).
+// A BARE Read deny (no specifier, or `Tool(*)`) is out of scope by construction (same SCOPE
+// BOUNDARY paths.ts's own readDenyBlocksEdit documents) — it is an advertisement-layer schema
+// removal (WS-07 §1), not a path-pattern block.
+function findReadDenyBlockingEdit(call: PermissionCall, ctx: EvaluationContext): SourcedRuleEntry | undefined {
+  if (call.toolName !== "Edit" && call.toolName !== "Write") return undefined;
+  const path = call.input["file_path"];
+  if (typeof path !== "string") return undefined;
+  const pool = ctx.allowManagedPermissionRulesOnly ? ctx.policy.rules.entries.filter((e) => e.source === "managed") : ctx.policy.rules.entries;
+  for (const entry of pool) {
+    if (entry.rule.toolName !== "Read" || entry.behavior !== "deny") continue;
+    if (entry.rule.specifier?.kind !== "pattern") continue;
+    // Ruling P2-J (rider 2): symlink-both-ends composed here too, for the identical reason
+    // paths.ts's own readDenyBlocksEdit primitive now is.
+    if (matchFileRuleAtBothEnds(entry.rule.specifier.source, { path, cwd: ctx.cwd, home: ctx.home, direction: "denyAsk" })) {
+      return entry;
+    }
+  }
+  return undefined;
+}
+
 function formatRuleRef(entry: SourcedRuleEntry): string {
   const { toolName, ruleContent } = entry.ruleValue;
   return ruleContent !== undefined ? `${toolName}(${ruleContent})` : toolName;
@@ -315,36 +451,149 @@ function isReadWithinCwd(call: PermissionCall, ctx: EvaluationContext): boolean 
   if (call.toolName !== "Read") return false;
   const path = call.input["file_path"];
   if (typeof path !== "string") return false;
-  // WS-07 §6.1: "Reads within working ... directories ... run without prompting." additionalDirectories
-  // (WS-07 §3.2) is a T7 config field not yet plumbed at T6 — cwd only, for now. `matchFileRule("**", ...)`
-  // is the same primitive T4 documents as matching the base directory itself and everything beneath it.
-  return matchFileRule("**", { path, cwd: ctx.cwd, home: ctx.home, direction: "allow" });
+  // WS-07 §6.1: "Reads within working ... directories ... run without prompting." Ruling P2-J
+  // (Task 7, rider 2): resolved through the symlink TARGET, not just the link path — "a cwd symlink
+  // pointing outside cwd is NOT 'routine read-only in cwd'" (this task's own instruction). `"**"` is
+  // the same bare-anchor primitive T4 documents as matching the base directory itself and
+  // everything beneath it; `matchFileRuleAtBothEnds`'s "allow" direction requires BOTH the link and
+  // its resolved target to fall inside cwd.
+  return matchFileRuleAtBothEnds("**", { path, cwd: ctx.cwd, home: ctx.home, direction: "allow" });
 }
 
 function isBuiltInReadOnly(call: PermissionCall, ctx: EvaluationContext): boolean {
   return isBashCallReadOnly(call) || isReadWithinCwd(call, ctx);
 }
 
-type ModeStageResult = { kind: "allow" } | { kind: "unresolved" };
+// Task 7 extends the T6 two-member union with two new terminal outcomes that, unlike "unresolved",
+// NEVER fall through to stage 5's allow-rule lookup — see this type's four members' own uses in
+// evaluate() below. "deny"/"mustPrompt" both carry a message so the eventual denial (immediate, or
+// the fail-closed synthesized one when the still-stubbed PromptStage answers null) is legible.
+type ModeStageResult =
+  | { kind: "allow" }
+  | { kind: "deny"; message: string }
+  | { kind: "mustPrompt"; message: string }
+  | { kind: "unresolved" };
+
+// WS-07 §6.5 / this task's own phase-ruling-6 instruction, verbatim: "writes withheld ... with a
+// plan-specific message." Exported so fixtures can assert the exact string rather than a substring
+// guess, mirroring ruleDenialMessage's own callers.
+export const PLAN_WRITE_WITHHELD_MESSAGE = "Denied: plan mode withholds file/shell writes until the plan is approved or session bypass is enabled (WS-07 §6.5)";
+
+// --- Standing exceptions (WS-07 §2 stage 5's own list; §6.7/§6.8 matrices) ---------------------------
+//
+// Both resolvers are called BEFORE any mode-specific baseline or allow-rule lookup, in EVERY mode
+// (T6 review obligation, restated in this task's own dispatch: "stage 5's OWN allow-rule resolution
+// must consult them in EVERY mode ... never resolve 'allow' at stage 5"). Returning "mustPrompt" (a
+// terminal kind evaluate() never lets reach stage 5) is exactly how that's enforced structurally —
+// there is no code path from "critical/protected" back into `findMatchingRuleEntry`.
+
+function resolveCriticalRemoval(mode: PermissionMode, reason: string | undefined): ModeStageResult {
+  const message = `Denied: critical removal requires approval${reason ? ` (${reason})` : ""} (WS-07 §6.8)`;
+  // WS-07 §6.8 matrix: EVERY mode either denies outright (dontAsk) or prompts/callback — never an
+  // auto-allow, not even bypassPermissions ("still prompts/callback", §6.4/§6.8) and not even plan
+  // with session bypass enabled (§6.8's plan row carries no bypass carve-out, unlike §6.7's).
+  if (mode === "dontAsk") return { kind: "deny", message };
+  return { kind: "mustPrompt", message };
+}
+
+function resolveProtectedWrite(mode: PermissionMode, ctx: EvaluationContext): ModeStageResult {
+  const message = "Denied: protected path write requires approval (WS-07 §6.7)";
+  // WS-07 §6.7 matrix, verbatim per mode:
+  if (mode === "dontAsk") return { kind: "deny", message };
+  if (mode === "bypassPermissions") return { kind: "allow" };
+  // "allowed when bypass enabled for that session" — the §6.4/§6.5 relaxation carve-out this
+  // task's own instruction names; `plan`'s classifier-active branch never applies at P2 (classifier
+  // borrow OFF).
+  if (mode === "plan" && ctx.sessionBypassEnabled === true) return { kind: "allow" };
+  return { kind: "mustPrompt", message };
+}
+
+function isBashRecognizedWrite(call: PermissionCall): boolean {
+  // Any write-shaped path at all (a blessed fs-op OR a bare redirect target) counts as a "write"
+  // for plan-mode withholding purposes — WS-07 §6.2's narrower "kind" distinction (blessed vs.
+  // "other") only matters for acceptEdits' own auto-approve eligibility, not for plan's broader
+  // "is this a write" question.
+  return recognizeEditOperation(call) !== null;
+}
+
+function isPlanWriteShaped(call: PermissionCall): boolean {
+  if (call.toolName === "Edit" || call.toolName === "Write") return true;
+  if (call.toolName === "Bash") return isBashRecognizedWrite(call);
+  return false;
+}
 
 function evaluateModeStage(call: PermissionCall, ctx: EvaluationContext, mode: PermissionMode): ModeStageResult {
+  // Standing exceptions run FIRST, unconditionally, before any mode-specific baseline — see this
+  // section's own header. Order (critical before protected) is not observationally load-bearing at
+  // P2 (isCriticalRemoval only ever fires for a Bash rm/rmdir; isProtectedWrite fires for
+  // Edit/Write/Bash-fs-op/redirect paths — the two are disjoint in practice), critical is checked
+  // first as the narrower, stronger circuit breaker.
+  const critical = ctx.specialChecks.isCriticalRemoval(call, ctx);
+  if (critical.critical) return resolveCriticalRemoval(mode, critical.reason);
+  if (ctx.specialChecks.isProtectedWrite(call, ctx)) return resolveProtectedWrite(mode, ctx);
+
   if (mode === "bypassPermissions") {
-    // WS-07 §6.4: bypass auto-allows virtually everything (incl. protected-path writes) EXCEPT the
-    // critical-rm/rmdir circuit breaker, which "still prompts/callback" even under bypass (§6.8) —
-    // T7's SpecialChecks seam owns that classification; T6's stub never flags anything critical, so
-    // this arm always resolves "allow" until T7 lands.
-    const critical = ctx.specialChecks.isCriticalRemoval(call, ctx);
-    return critical.critical ? { kind: "unresolved" } : { kind: "allow" };
+    // Standing exceptions above already intercepted anything critical/protected; everything else
+    // is an unconditional auto-allow under bypass (WS-07 §6.4).
+    return { kind: "allow" };
   }
-  // default / dontAsk share the IDENTICAL baseline (WS-07 §6.1/§6.3: both "still permit built-in/
-  // read-only operations") — their divergence is the post-allow-stage fallback in evaluate() below,
-  // not this baseline check.
-  //
-  // acceptEdits / plan / auto: T6 PLACEHOLDER arm, deliberately identical to default's own baseline
-  // (never auto-approves MORE than default would). T7 replaces acceptEdits (WS-07 §6.2, path-bounded
-  // recognized-edit auto-approval) and plan (§6.5, write-withholding); T12 replaces auto (§6.6, the
-  // classifier pipeline). evaluator.test.ts pins this placeholder explicitly so a future replacement
-  // is a deliberate, reviewed diff, not a silent regression.
+
+  if (mode === "dontAsk" || mode === "default") {
+    // default / dontAsk share the IDENTICAL baseline (WS-07 §6.1/§6.3: both "still permit
+    // built-in/read-only operations") — their divergence is the post-allow-stage fallback in
+    // evaluate() below, not this baseline check.
+    return isBuiltInReadOnly(call, ctx) ? { kind: "allow" } : { kind: "unresolved" };
+  }
+
+  if (mode === "acceptEdits") {
+    // WS-07 §6.2: auto-approval is path-bounded (cwd/additionalDirectories), AFTER normalization +
+    // symlink checks (isWithinBounds composes matchFileRuleAtBothEnds, rider 2) + protected/critical
+    // (already excluded above) + Read/Edit deny rules — the latter is enforced generally at STAGE 2
+    // now (T6-review obligation), so by the time this arm runs, a Read-deny-blocked path has
+    // ALREADY been denied upstream; this arm doesn't need to re-check it.
+    if (isBuiltInReadOnly(call, ctx)) return { kind: "allow" };
+    const recognized = recognizeEditOperation(call);
+    if (recognized !== null && (recognized.kind === "edit" || recognized.kind === "bashFsOp")) {
+      // "other" (a redirect, or a subcommand mixed with an unblessed one) NEVER auto-approves here
+      // — it falls through to "unresolved" below, same as an unrecognized command.
+      if (recognized.paths.every((p) => isWithinBounds(p, ctx))) return { kind: "allow" };
+    }
+    // Out-of-root, unrecognized, or "other"-kind: WS-07 §2 stage 5's standing-exceptions list does
+    // NOT name "acceptEdits out-of-root" — an explicit allow rule may still rescue it at stage 5,
+    // unlike critical/protected/plan-writes. Falls through to the ordinary pipeline.
+    return { kind: "unresolved" };
+  }
+
+  if (mode === "plan") {
+    // WS-07 §6.5 / phase ruling 6: reads proceed; writes withheld; "ordinary allow rules do not
+    // silently convert writes into execution" — a write in plan mode is a THIRD standing exception
+    // (named explicitly in WS-07 §2 stage 5's own list: "plan-mode write restrictions"), so it must
+    // skip stage 5 exactly like critical/protected, UNLESS session bypass relaxes plan entirely
+    // (§6.4/§6.5: "session bypass-enabled + plan = writes execute" — this task's own instruction).
+    // `allow` here, deliberately, NOT `unresolved`: the §6.7 matrix pins protected writes as
+    // "allowed when bypass enabled for that session" (an unconditional allow, not "falls back to
+    // the ordinary pipeline") — an ORDINARY write cannot be treated stricter than a protected one,
+    // and "writes execute" must survive T8's own future flip of the generic bottom-of-pipeline
+    // fallback (an `unresolved` result here would traverse stage 5/6 and could start prompting, or
+    // even denying, the moment that fallback changes, silently breaking this relaxation).
+    if (isBuiltInReadOnly(call, ctx)) return { kind: "allow" };
+    if (isPlanWriteShaped(call)) {
+      if (ctx.sessionBypassEnabled === true) return { kind: "allow" };
+      return { kind: "mustPrompt", message: PLAN_WRITE_WITHHELD_MESSAGE };
+    }
+    // Non-write, non-read-only exploratory action (e.g. an arbitrary shell command with no
+    // filesystem-write shape) — WS-07 §5's plan row: "Prompt or classifier for exploratory shell";
+    // classifier borrow is OFF at P2 (this task's own instruction), so this falls to the ordinary
+    // pipeline exactly like `default`'s own "other unmatched action" bucket, rather than a THIRD
+    // bespoke terminal outcome this task was not asked to invent.
+    return { kind: "unresolved" };
+  }
+
+  // mode === "auto": T6's own placeholder baseline (identical to default's), UNCHANGED beyond the
+  // standing-exceptions check above — T12 owns the real classifier pipeline (WS-07 §6.6). Guarding
+  // critical/protected here too (rather than leaving auto exempt) is required by the §6.7/§6.8
+  // matrices' own "auto: classifier" cells — never observably "silently allow," even before T12
+  // wires the real classifier route.
   return isBuiltInReadOnly(call, ctx) ? { kind: "allow" } : { kind: "unresolved" };
 }
 
@@ -408,6 +657,21 @@ export async function evaluate(call: PermissionCall, ctx: EvaluationContext): Pr
     };
   }
 
+  // Task 7 / T6-review obligation: a Read deny also blocks Edit/Write on the same path (WS-07
+  // §3.1), enforced generally at stage 2, for every mode — not merely inside acceptEdits.
+  const readBlockEntry = findReadDenyBlockingEdit(effectiveCall, ctx);
+  if (readBlockEntry) {
+    return {
+      decision: "deny",
+      mechanism: "rule",
+      policyVersion,
+      source: readBlockEntry.source,
+      ruleRef: formatRuleRef(readBlockEntry),
+      message: `Denied: Read deny rule ${formatRuleRef(readBlockEntry)} blocks Edit/Write on this path (WS-07 §3.1)`,
+      ...(carriedTransform !== undefined ? { transformedInput: carriedTransform } : {}),
+    };
+  }
+
   // --- Stage 3: ask rules + mandatory interaction -----------------------------------------------
   const askEntry = findMatchingRuleEntry(policy.rules, effectiveCall, "ask", ctx);
   if (askEntry) {
@@ -458,6 +722,37 @@ export async function evaluate(call: PermissionCall, ctx: EvaluationContext): Pr
   const modeResult = evaluateModeStage(effectiveCall, ctx, policy.mode);
   if (modeResult.kind === "allow") {
     return { decision: "allow", mechanism: "mode", policyVersion, ...(carriedTransform !== undefined ? { transformedInput: carriedTransform } : {}) };
+  }
+  if (modeResult.kind === "deny") {
+    // dontAsk's own standing-exception denial (critical/protected) — "canUseTool is NEVER called"
+    // (WS-07 §6.3) applies here exactly as it does to dontAsk's generic post-allow-stage fallback
+    // below; this is that SAME rule, just reached one step earlier for a standing exception.
+    return { decision: "deny", mechanism: "mode", policyVersion, message: modeResult.message, ...(carriedTransform !== undefined ? { transformedInput: carriedTransform } : {}) };
+  }
+  if (modeResult.kind === "mustPrompt") {
+    // Task 7's own standing-exception terminal outcome (critical/protected/plan-write): a genuine
+    // "this must be asked" request — NEVER reaches stage 5's allow-rule lookup below (WS-07 §2's
+    // own "standing exceptions" list for stage 5; §6.7/§6.8: "an ordinary settings allow rule does
+    // NOT clear this check" / "even if an allow rule ... approves it"). Mirrors stage 3's own
+    // ask-rule-null handling: a null PromptStage answer fails CLOSED here (mechanism "mode", not
+    // "canUseTool" — this evaluator is the one making the fallback call, not a real host) — the
+    // OPPOSITE of stage 6's generic bottom-of-pipeline fallback (which stays "allow" for backward
+    // compat with a zero-config session, per the T6 interim decision this module's header
+    // documents). No existing golden exercises a standing exception, so this new fail-closed
+    // default never touches the byte-unchanged gate. Once T8 wires a real PromptStage, a non-null
+    // answer here is used exactly like any other prompt result (mechanism "canUseTool") — this
+    // fail-closed branch simply stops being reached in practice; assert on `mechanism`/`decision`
+    // here, not on "the tool executed," so a fixture survives that flip (this task's own
+    // instruction).
+    const result = await ctx.promptStage.prompt(effectiveCall, ctx, {
+      decisionReason: modeResult.message,
+      ...(effectiveCall.toolUseId !== undefined ? { toolUseID: effectiveCall.toolUseId } : {}),
+      ...(effectiveCall.agentId !== undefined ? { agentID: effectiveCall.agentId } : {}),
+    });
+    if (result === null) {
+      return { decision: "deny", mechanism: "mode", policyVersion, message: modeResult.message, ...(carriedTransform !== undefined ? { transformedInput: carriedTransform } : {}) };
+    }
+    return buildRecordFromPromptResult(result, policyVersion, carriedTransform);
   }
 
   // --- Stage 5: allow rules ------------------------------------------------------------------
