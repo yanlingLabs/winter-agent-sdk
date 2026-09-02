@@ -1,5 +1,9 @@
 export { query } from "./query.ts";
 export type { Query, SdkMessage } from "./query.ts";
+// Task 2 (WS-04 §3.1): the wrapper's control-request handler registry types — QueryInternal is the
+// shape behind the Winter-only `Query.__internal` extension (never part of the WS-03 pinned
+// surface; T8 adds `respondPermission` to it for the canUseTool `null` escape).
+export type { QueryInternal, ControlRequestHandler, ControlRequestHandlerResult } from "./query.ts";
 export type { Options } from "./options.ts";
 export {
   WinterSDKError,
@@ -9,6 +13,8 @@ export {
   ProtocolDecodeError,
   AbortError,
   SessionNotFoundError,
+  WinterRpcError,
+  WinterRpcTimeoutError,
 } from "./errors.ts";
 
 // The pinned process seam (WS-04 §8) — byte-level SpawnedRuntimeProcess handle, shared by the real

@@ -1,12 +1,13 @@
 import { test, expect } from "bun:test";
-import { query } from "./query.ts";
-import { ResultError } from "./errors.ts";
+import { query, type QueryInternal } from "./query.ts";
+import { ResultError, WinterRpcError } from "./errors.ts";
 import { inMemoryProcess } from "winter-agent-runtime/testing";
-import type { ProviderTurn } from "winter-agent-runtime";
+import { echoProvider } from "winter-agent-runtime";
+import type { Provider, ProviderTurn } from "winter-agent-runtime";
 import type { SpawnedRuntimeProcess, SpawnRuntimeOptions } from "./transport.ts";
 import { encodeFrame } from "./protocol/codec.ts";
 import { PROTOCOL_VERSION } from "./protocol/frames.ts";
-import type { WinterFrame } from "./protocol/frames.ts";
+import type { WinterFrame, ControlResponseFrame } from "./protocol/frames.ts";
 
 test("query yields system/init, assistant, result in order", async () => {
   const seen: string[] = [];
@@ -178,4 +179,178 @@ test("Task 9: a pre-allocated Options.sessionId round-trips into the init frame'
     if (msg.type === "system" && msg.subtype === "init") sawInitSessionId = (msg as { session_id: string }).session_id;
   }
   expect(sawInitSessionId).toBe(explicitId);
+});
+
+// --- Task 2 (WS-04 §3.1, direction inversion): the wrapper's read loop now dispatches
+// runtime-originated control_request frames to a handler registry (keyed by subtype), auto-
+// answering an unregistered subtype so an old host never parks the runtime forever. Scripted
+// double, in-memory only (Query.__internal is a Winter-only extension beyond the WS-03 §4 pinned
+// surface — never something a real spawned child depends on for these two tests).
+
+// A scripted double whose stdout emits ONE runtime-originated control_request (after the string
+// prompt's user/end_input writes land on stdin, mirroring recordingProcess's own gating idiom
+// above) and gates its terminal "result" frame on having OBSERVED the matching control_response
+// arrive back on stdin — so asserting "the response landed runtime-side" is deterministic, never a
+// timing guess.
+function recordingProcessWithControlRequest(subtype: string, requestId: string): { proc: SpawnedRuntimeProcess; writes: string[] } {
+  const writes: string[] = [];
+  let resolveGotResponse!: () => void;
+  const gotResponse = new Promise<void>((r) => {
+    resolveGotResponse = r;
+  });
+  const proc: SpawnedRuntimeProcess = {
+    stdin: {
+      write(chunk: string) {
+        writes.push(chunk);
+        for (const line of chunk.split("\n").filter((l) => l.length > 0)) {
+          const frame = JSON.parse(line) as { type: string; requestId?: string };
+          if (frame.type === "control_response" && frame.requestId === requestId) resolveGotResponse();
+        }
+      },
+      end() {},
+    },
+    stdout: (async function* () {
+      yield encodeFrame({ type: "init", protocolVersion: PROTOCOL_VERSION, sessionId: "s", cwd: "/x", model: "sonnet", permissionMode: "default", tools: [] });
+      yield encodeFrame({ type: "control_request", requestId, subtype, payload: { probe: true } });
+      await gotResponse;
+      yield encodeFrame({ type: "data", message: { type: "result", subtype: "success", is_error: false, result: "ok" } });
+    })(),
+    kill() {},
+    exited: Promise.resolve({ code: 0, signal: null }),
+    pid: null,
+  };
+  return { proc, writes };
+}
+
+function decodeControlResponse(writes: string[], requestId: string): ControlResponseFrame | undefined {
+  const sent = writes
+    .join("")
+    .split("\n")
+    .filter((l) => l.length > 0)
+    .map((l) => JSON.parse(l) as WinterFrame);
+  return sent.find((f) => f.type === "control_response" && (f as ControlResponseFrame).requestId === requestId) as ControlResponseFrame | undefined;
+}
+
+test("runtime-originated control_request reaches a registered handler; the response lands runtime-side", async () => {
+  const requestId = "probe-1";
+  const { proc, writes } = recordingProcessWithControlRequest("test_subtype", requestId);
+  const gen = query({ prompt: "hi", options: { spawnClaudeCodeProcess: () => proc } });
+
+  const internal = (gen as unknown as { __internal?: QueryInternal }).__internal;
+  expect(internal).toBeDefined();
+  let receivedPayload: unknown;
+  internal!.registerControlRequestHandler("test_subtype", async (payload) => {
+    receivedPayload = payload;
+    return { ok: true, payload: { answer: 42 } };
+  });
+
+  for await (const _msg of gen) {
+    /* drain */
+  }
+
+  expect(receivedPayload).toEqual({ probe: true });
+  const response = decodeControlResponse(writes, requestId);
+  expect(response).toBeDefined();
+  expect(response!.ok).toBe(true);
+  expect(response!.payload).toEqual({ answer: 42 });
+});
+
+test("an unregistered control subtype from the runtime is auto-answered ok:false, unhandled_subtype", async () => {
+  const requestId = "probe-2";
+  const { proc, writes } = recordingProcessWithControlRequest("nobody_handles_this", requestId);
+  const gen = query({ prompt: "hi", options: { spawnClaudeCodeProcess: () => proc } });
+
+  for await (const _msg of gen) {
+    /* drain — no handler registered */
+  }
+
+  const response = decodeControlResponse(writes, requestId);
+  expect(response).toBeDefined();
+  expect(response!.ok).toBe(false);
+  expect(response!.error?.code).toBe("unhandled_subtype");
+});
+
+// --- Task 2: real setPermissionMode()/interrupt() — replacing the P0/P1 stubs. Both send a real
+// control_request and resolve/reject on the runtime's ack, correlated by requestId
+// (pendingHostRequests in query.ts). Driven against the REAL engine (inMemoryProcess), never a
+// scripted double, since what's under test is the engine's own set_permission_mode/interrupt
+// handling reached THROUGH the wrapper — string prompts close stdin immediately (before any
+// message is even yielded), so both tests use streaming input, gated open until after the control
+// call's effect is observed, exactly like engine.test.ts's own interrupt precedent.
+
+test("setPermissionMode(): sends a real control request mid-iteration; an invalid mode rejects with a typed error, a valid mode resolves", async () => {
+  let releasePrompt!: () => void;
+  const promptGate = new Promise<void>((resolve) => {
+    releasePrompt = resolve;
+  });
+  async function* prompt() {
+    yield "hi";
+    await promptGate; // keep the stream open (WS-04 §3: streaming input) until the turn completes
+  }
+
+  const gen = query({ prompt: prompt(), options: { spawnClaudeCodeProcess: (opts) => inMemoryProcess(opts.args, echoProvider) } });
+
+  let validPromise: Promise<void> | undefined;
+  let invalidPromise: Promise<void> | undefined;
+  for await (const msg of gen) {
+    // Fired, NOT awaited, here: the ack is processed by THIS SAME read loop, so awaiting inline
+    // would suspend the very loop that has to keep running to deliver it — a deadlock. Both
+    // promises are awaited after the loop ends instead (already settled by then).
+    if (msg.type === "system" && validPromise === undefined) {
+      validPromise = gen.setPermissionMode("plan");
+      invalidPromise = gen.setPermissionMode("not_a_real_mode");
+    }
+    if (msg.type === "result") releasePrompt();
+  }
+
+  await validPromise; // throws (failing the test) if the ack path is broken
+  let invalidError: unknown;
+  try {
+    await invalidPromise;
+  } catch (e) {
+    invalidError = e;
+  }
+  expect(invalidError).toBeInstanceOf(WinterRpcError);
+  expect((invalidError as WinterRpcError).code).toBe("invalid_mode");
+});
+
+test("interrupt(): sends a real control request and resolves on ack; drain semantics stay byte-identical to the raw-frame scenario", async () => {
+  let enteredGenerate!: () => void;
+  const entered = new Promise<void>((resolve) => {
+    enteredGenerate = resolve;
+  });
+  const blockingProvider: Provider = {
+    generate() {
+      enteredGenerate();
+      return new Promise(() => {}); // never resolves; the engine must abandon it on interrupt
+    },
+  };
+  let releasePrompt!: () => void;
+  const promptGate = new Promise<void>((resolve) => {
+    releasePrompt = resolve;
+  });
+  async function* prompt() {
+    yield "hang";
+    await promptGate;
+  }
+
+  const gen = query({ prompt: prompt(), options: { spawnClaudeCodeProcess: (opts) => inMemoryProcess(opts.args, blockingProvider) } });
+
+  let interruptPromise: Promise<void> | undefined;
+  void (async () => {
+    await entered; // deterministic: only interrupt once the engine is genuinely blocked inside generate()
+    interruptPromise = gen.interrupt();
+  })();
+
+  const seen: string[] = [];
+  for await (const msg of gen) {
+    seen.push(msg.type);
+    if (msg.type === "result") {
+      expect((msg as { interrupted?: boolean }).interrupted).toBe(true);
+      releasePrompt();
+    }
+  }
+
+  expect(seen).toEqual(["system", "result"]);
+  await interruptPromise; // already resolved during the loop above; surfaces any rejection here
 });

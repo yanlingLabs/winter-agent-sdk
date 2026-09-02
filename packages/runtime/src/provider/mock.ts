@@ -48,10 +48,14 @@ export const stubExecutor: ToolExecutor = {
 // it received — the only way a resume equivalence scenario can observe "did this run's provider
 // actually see the prior turns" from OUTSIDE a real child/compiled process (transport-
 // equivalence.test.ts's resume scenario uses it on all three legs, via this SAME selector).
-export type TestProviderName = "boom" | "tooluse" | "hang" | "reflect";
+// Task 2: "rpcprobe" joins this family — a single scripted turn that returns the engine's
+// "rpc_probe" ProviderTurn kind (engine.ts), proving the runtime-originated control-RPC bridge
+// round trip (WS-04 §3.1) identically on every transport leg (transport-equivalence.test.ts's
+// rpcprobe scenario is its only consumer). REMOVE at P6 alongside the rest of this file.
+export type TestProviderName = "boom" | "tooluse" | "hang" | "reflect" | "rpcprobe";
 
 export function isTestProviderName(v: string): v is TestProviderName {
-  return v === "boom" || v === "tooluse" || v === "hang" || v === "reflect";
+  return v === "boom" || v === "tooluse" || v === "hang" || v === "reflect" || v === "rpcprobe";
 }
 
 export function testProviderByName(name: TestProviderName): Provider {
@@ -90,6 +94,17 @@ export function testProviderByName(name: TestProviderName): Provider {
       return {
         async generate({ messages }) {
           return { kind: "text", text: JSON.stringify(messages) };
+        },
+      };
+    // Task 2 (WS-04 §3.1): a single scripted turn returning the "rpc_probe" ProviderTurn kind —
+    // the ENGINE (not this provider) performs bridge.request(subtype, payload) and embeds the
+    // host's answer in the final reply (engine.ts's round loop). This provider never touches the
+    // bridge itself: it just hands the engine the subtype/payload to send, the same way "tooluse"
+    // hands the engine calls to execute.
+    case "rpcprobe":
+      return {
+        async generate() {
+          return { kind: "rpc_probe", subtype: "test_rpc_probe", payload: { probe: "ping" } };
         },
       };
   }

@@ -5,8 +5,8 @@
 // sequences are IDENTICAL. A divergence between the two legs is a release blocker per spec, not a
 // mere test failure.
 //
-// Three scenarios (multi-turn, interrupt, split-frame-carry) drive the raw SpawnedRuntimeProcess
-// frame stream directly instead of going through query():
+// Four scenarios (multi-turn, interrupt, split-frame-carry, rpcprobe) drive the raw
+// SpawnedRuntimeProcess frame stream directly instead of going through query():
 //  - multi-turn: query.ts's iterate() USED to stop at the FIRST terminal result unconditionally,
 //    silently dropping every subsequent streaming-input turn (a real gap this task's first pass
 //    discovered — confirmed empirically, then fixed in query.ts per controller Ruling P1-I:
@@ -15,12 +15,21 @@
 //    result). `multi-turn (streaming input, 2 envelopes)` below still drives the raw frame stream
 //    directly — it tests the WIRE contract independently of whatever the query() wrapper does —
 //    and a SEPARATE `multi-turn via query()` test now covers the wrapper-level fix directly.
-//  - interrupt: Query.interrupt() is still a documented stub (`proc.stdin.end()` — see query.ts's
-//    own comment on gen.interrupt), so a real WS-04 §5 interrupt control_request isn't reachable
-//    through the public wrapper yet. Noted in this task's report as a tracked-not-fixed gap (out of
-//    this file list's scope) rather than silently worked around.
+//  - interrupt: Query.interrupt() is now real (Task 2 — it sends a genuine interrupt
+//    control_request and resolves on the ack), but `traceInterrupt` below still drives the raw
+//    frame stream directly rather than going through query() — deliberately left as-is (Task 2
+//    brief): it synchronizes with "the engine is genuinely blocked inside provider.generate()" via
+//    INTERRUPT_SETTLE_MS below, something a query()-driven scenario can't observe any more
+//    precisely either, so rewriting it through query() would trade one timing assumption for an
+//    identical one while losing this file's independent proof of the WIRE contract. A
+//    query()-driven interrupt test now exists too (packages/sdk/src/query.test.ts), synchronized
+//    precisely via the scripted provider's own "entered" signal instead of a timer.
 //  - split-frame-carry: exercises splitFrames' carry mechanism directly at the transport boundary
 //    (a frame's bytes deliberately split across two stdin writes) — unrelated to query() at all.
+//  - rpcprobe (Task 2, WS-04 §3.1): a runtime-originated control_request mid-turn, answered with a
+//    scripted control_response — proves the RUNTIME side (engine.ts + createRpcBridge) behaves
+//    identically on every leg; deliberately bypasses query()'s own handler registry, which is
+//    covered separately (in-memory only) by query.test.ts.
 import { describe, test, expect, afterAll } from "bun:test";
 import { fileURLToPath } from "node:url";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -31,7 +40,7 @@ import { query } from "./query.ts";
 import { defaultSpawn, type SpawnedRuntimeProcess, type SpawnRuntimeOptions, type SpawnClaudeCodeProcess } from "./transport.ts";
 import { ResultError, ProcessError, AbortError, CLIConnectionError } from "./errors.ts";
 import { encodeFrame, splitFrames } from "./protocol/codec.ts";
-import type { WinterFrame, ControlResponseFrame } from "./protocol/frames.ts";
+import type { WinterFrame, ControlRequestFrame, ControlResponseFrame } from "./protocol/frames.ts";
 import type { RuntimeConfig } from "./protocol/config.ts";
 import { inMemoryProcess } from "winter-agent-runtime/testing";
 import { echoProvider, stubExecutor, testProviderByName, type TestProviderName, WinterCompatibilitySessionStore, compatibilityKeys } from "winter-agent-runtime";
@@ -442,6 +451,63 @@ async function traceSplitFrameCarry(leg: LegName): Promise<ConformanceTraceEntry
   }
 }
 
+// --- Task 2 (WS-04 §3.1, direction inversion): a runtime-originated control_request mid-turn -----
+//
+// Raw-driver pattern (like traceInterrupt/traceMultiTurn above), not traceViaQuery: what's under
+// test here is the RUNTIME side (engine.ts's round loop + createRpcBridge) behaving identically
+// whether it's running in-memory or as a real/compiled child — main.ts and testing.ts's
+// inMemoryProcess both call the SAME runEngine. Manually answering the control_request with a
+// scripted control_response proves that parity directly, without needing query()'s own handler
+// registry (covered separately, in-memory only, by query.test.ts) at all.
+async function traceRpcProbe(leg: LegName): Promise<ConformanceTraceEntry[]> {
+  const proc = buildRawProc(leg, "rpcprobe", "rpc-probe-fixture");
+  try {
+    const driver = createDriver(proc);
+    const entries: ConformanceTraceEntry[] = [];
+
+    const init = await driver.nextFrame();
+    pushFrame(entries, init!);
+    const sys = await driver.nextFrame();
+    pushFrame(entries, sys!);
+
+    driver.send({ type: "user", text: "probe" });
+
+    // The runtime originates a control_request mid-turn (WS-04 §3.1) — answer it exactly like a
+    // real host would; requestId is a runtime-generated UUID, already in trace.ts's VOLATILE set,
+    // so it normalizes away and never causes a spurious cross-leg diff.
+    const req = await driver.nextFrame();
+    expect(req?.type).toBe("control_request");
+    const reqFrame = req as ControlRequestFrame;
+    expect(reqFrame.subtype).toBe("test_rpc_probe");
+    expect(reqFrame.payload).toEqual({ probe: "ping" });
+    pushFrame(entries, req!);
+    driver.send({ type: "control_response", requestId: reqFrame.requestId, ok: true, payload: { text: "pong" } });
+
+    const assistant = await driver.nextFrame();
+    expect(assistant?.type).toBe("data");
+    pushFrame(entries, assistant!);
+    const result = await driver.nextFrame();
+    expect(result?.type).toBe("data");
+    pushFrame(entries, result!);
+
+    driver.send({ type: "control_request", requestId: "end-input-1", subtype: "end_input", payload: undefined });
+    const ack = await driver.nextFrame();
+    expect(ack?.type).toBe("control_response");
+    expect((ack as ControlResponseFrame).ok).toBe(true);
+    pushFrame(entries, ack!);
+
+    const eof = await driver.nextFrame();
+    expect(eof).toBeNull();
+
+    const exitInfo = await proc.exited; // natural exit — proves the engine terminates on its own
+    pushExit(entries, { code: exitInfo.code, signal: exitInfo.signal });
+    return normalizeTrace(entries);
+  } finally {
+    proc.kill();
+    await proc.exited;
+  }
+}
+
 // --- Task 9 (WS-05 §7): resume across a NEW process/instance, same leg -------------------------
 //
 // Two separate query() calls (two separate SpawnedRuntimeProcess instances — a real child/compiled
@@ -569,6 +635,22 @@ function registerEquivalenceScenarios(legA: LegName, legB: LegName): void {
     expect(a.map((e) => e.kind)).toEqual(["init", "system/init", "assistant", "result", "control_response", "exit"]);
     const assistantMsg = a[2]!.payload as { message: { content: unknown } };
     expect(assistantMsg.message.content).toEqual([{ type: "text", text: "echo: carried" }]);
+  });
+
+  // Task 2 (WS-04 §3.1, direction inversion): the runtime originates its OWN control_request
+  // mid-turn (rpcprobe test-provider arm) — proves the round trip (request out, scripted answer in,
+  // answer embedded in the reply) is leg-invariant, the same way every other scenario here proves
+  // leg-invariance for host-originated control traffic.
+  test("runtime-originated control RPC mid-turn (rpcprobe)", async () => {
+    const a = await traceRpcProbe(legA);
+    const b = await traceRpcProbe(legB);
+    expect(compareTraces(a, b)).toEqual([]);
+    expect(a.map((e) => e.kind)).toEqual(["init", "system/init", "control_request", "assistant", "result", "control_response", "exit"]);
+    const assistantMsg = a[3]!.payload as { message: { content: unknown } };
+    expect(assistantMsg.message.content).toEqual([{ type: "text", text: "rpc reply: pong" }]);
+    const resultMsg = a[4]!.payload as { subtype?: string; result?: string };
+    expect(resultMsg.subtype).toBe("success");
+    expect(resultMsg.result).toBe("rpc reply: pong");
   });
 
   test("error-result-then-throw (boom)", async () => {

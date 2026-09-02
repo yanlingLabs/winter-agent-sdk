@@ -8,6 +8,7 @@ import {
 } from "@yanlinglabs/winter-agent-sdk";
 import type { FrameSource, FrameSink } from "./protocol/channel.ts";
 import { Queue } from "./protocol/channel.ts";
+import { createRpcBridge } from "./rpc/bridge.ts";
 
 export type ContentBlock =
   | { type: "text"; text: string }
@@ -31,7 +32,16 @@ export interface ProviderMessage {
 
 export type ProviderTurn =
   | { kind: "text"; text: string }
-  | { kind: "tool_use"; calls: Array<{ id: string; name: string; input: unknown }> };
+  | { kind: "tool_use"; calls: Array<{ id: string; name: string; input: unknown }> }
+  // Task 2 (WS-04 §3.1): a P1-only test-affordance turn kind (WINTER_TEST_PROVIDER=rpcprobe,
+  // provider/mock.ts) that proves the runtime-originated control-RPC bridge round trip end-to-end
+  // on every transport leg (the transport-equivalence suite's rpcprobe scenario). The ENGINE
+  // performs bridge.request(subtype, payload) on the provider's behalf when it sees this kind
+  // (round loop below) — Provider.generate() itself never touches the bridge directly, staying a
+  // plain, transport-agnostic function for every other turn kind. REMOVE at P6 alongside
+  // provider/mock.ts's whole test-provider family; a real permission/hook RPC (Tasks 8/10) is
+  // issued from the evaluator/hook runner, not from this turn kind.
+  | { kind: "rpc_probe"; subtype: string; payload: unknown };
 
 export interface Provider {
   generate(input: { messages: ProviderMessage[] }): Promise<ProviderTurn>;
@@ -75,6 +85,12 @@ export interface EngineOptions {
   initialMessages?: ProviderMessage[];
 }
 
+// WS-03 §6's pinned six-value public PermissionMode union. Task 2's set_permission_mode handler
+// (below) validates against exactly this set; Task 6 (WS-07) replaces the whole handler with full
+// PolicyState semantics (rule re-evaluation, journal, provenance) — this set stays the same, only
+// the handler body around it grows.
+const PUBLIC_PERMISSION_MODES = new Set(["default", "acceptEdits", "dontAsk", "bypassPermissions", "plan", "auto"]);
+
 type RaceOutcome<T> = { kind: "ok"; value: T } | { kind: "interrupted" };
 
 // Races `p` against the current turn's interrupt signal. `p` is given a no-op catch so that if it
@@ -100,7 +116,11 @@ function raceInterrupt<T>(p: Promise<T>, interrupted: Promise<void>): Promise<Ra
  */
 export async function runEngine(opts: EngineOptions): Promise<number> {
   const { config, input, output, provider, tools, store, initialMessages } = opts;
-  const permissionMode = config.permissionMode ?? "default";
+  // Mutable (Task 2): set_permission_mode's handler below swaps this live; every other read
+  // (the init/system-init frames above the pump) still only ever sees whatever value is current
+  // at the moment it runs — unchanged for the very first read, since the pump cannot have
+  // processed any control_request yet.
+  let permissionMode = config.permissionMode ?? "default";
 
   // Store failures are auxiliary, never turn-fatal (WS-03 §11 — a mirror failure becomes a
   // `mirror_error` event, not a retroactive turn failure). P1 has no such event to emit yet, so
@@ -148,6 +168,15 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
     message: { type: "system", subtype: "init", session_id: config.sessionId, cwd: config.cwd, model: config.model, permissionMode, tools: [] },
   });
 
+  // Task 2 (WS-04 §3.1, direction inversion): the runtime's own half of the control-RPC envelope —
+  // declared here, in runEngine's OUTER scope, so it's reachable by both the pump below (which
+  // routes incoming control_response frames to it) and the round loop further down (rpc_probe;
+  // Tasks 8/10's permission/hook RPCs will reach it the same way, whether called directly from here
+  // or threaded into a helper this function calls). Exactly one bridge instance per run, built from
+  // the SAME `output` every other runtime->host frame goes through — there is no second writer to
+  // race against.
+  const bridge = createRpcBridge(output);
+
   const userFrames = new Queue<UserFrame>();
   // Non-null exactly while a turn is turn_active; the pump calls it (a no-op while idle) when an
   // `interrupt` control request arrives. Kept as a plain callback rather than an AbortController
@@ -169,6 +198,14 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
           userFrames.write(frame as UserFrame);
           continue;
         }
+        if (frame.type === "control_response") {
+          // Task 2 direction inversion: this is the ACK for a request the RUNTIME originated
+          // (bridge.request() — rpc_probe today, permission/hook RPCs in Tasks 8/10), arriving
+          // host->runtime. handleResponse itself never throws and logs+drops an unmatched/stale
+          // requestId (WS-04: a stale response must never kill the run) — nothing more to do here.
+          bridge.handleResponse(frame as ControlResponseFrame);
+          continue;
+        }
         if (frame.type === "control_request") {
           const cf = frame as ControlRequestFrame;
           if (cf.subtype === "end_input") {
@@ -178,6 +215,26 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
           if (cf.subtype === "interrupt") {
             output.write({ type: "control_response", requestId: cf.requestId, ok: true });
             interruptCurrentTurn.current?.(); // no-op while idle: nothing active to abort
+            continue;
+          }
+          if (cf.subtype === "set_permission_mode") {
+            // Controller resolution (Task 2 scope, WS-04 §3.1): a MINIMAL handler — validate the
+            // payload is one of the six public PermissionMode values, swap the engine's live
+            // variable, ack with the effective mode. Task 6 (WS-07) replaces this whole handler
+            // with full PolicyState semantics (rule re-evaluation, journal, provenance); this is
+            // exactly as far as T2 goes, no more.
+            const mode = cf.payload; // WS-04 §3.1: request payload is the bare PermissionMode value
+            if (typeof mode !== "string" || !PUBLIC_PERMISSION_MODES.has(mode)) {
+              output.write({
+                type: "control_response",
+                requestId: cf.requestId,
+                ok: false,
+                error: { code: "invalid_mode", message: `invalid permission mode: ${JSON.stringify(mode)}` },
+              });
+              continue;
+            }
+            permissionMode = mode;
+            output.write({ type: "control_response", requestId: cf.requestId, ok: true, payload: { effectiveMode: permissionMode } });
             continue;
           }
           // WS-04 §3.1: an unrecognized subtype gets a structured error response, never a dropped
@@ -248,6 +305,33 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
         messages.push({ role: "assistant", content: turn.text });
         await recordAssistant([{ type: "text", text: turn.text }]);
         finalResult = { type: "result", subtype: "success", is_error: false, result: turn.text };
+        break roundLoop;
+      }
+
+      if (turn.kind === "rpc_probe") {
+        // See this type's own comment on ProviderTurn above: P1-only, REMOVE at P6. Every path
+        // below ends in `break roundLoop` so TS's narrowing of `turn` to the tool_use variant past
+        // this point (via `turn.calls` further down) still holds.
+        //
+        // Deliberately NOT raced against interruptSignal the way provider.generate()/tools.execute()
+        // are above: an interrupt arriving while this await is in flight still gets ACKed by the
+        // pump (unconditional), but has no effect on this wait — a known gap acceptable for a
+        // P1-only test scaffold that's never itself interrupted, not a spec requirement. A real
+        // permission/hook RPC (Tasks 8/10) will need to decide its own interrupt-during-wait
+        // semantics (WS-07/WS-08), which may differ from this.
+        let replyText: string;
+        try {
+          const response = await bridge.request<{ text: string }>(turn.subtype, turn.payload);
+          replyText = `rpc reply: ${response.text}`;
+        } catch (err) {
+          const text = err instanceof Error ? err.message : String(err);
+          finalResult = { type: "result", subtype: "error_during_execution", is_error: true, result: text };
+          break roundLoop;
+        }
+        output.write({ type: "data", message: { type: "assistant", message: { content: [{ type: "text", text: replyText }] } } });
+        messages.push({ role: "assistant", content: replyText });
+        await recordAssistant([{ type: "text", text: replyText }]);
+        finalResult = { type: "result", subtype: "success", is_error: false, result: replyText };
         break roundLoop;
       }
 

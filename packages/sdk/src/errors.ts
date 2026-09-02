@@ -57,3 +57,25 @@ export class SessionNotFoundError extends WinterSDKError {
     this.reason = reason;
   }
 }
+
+// Task 2 (WS-04 §3.1): the control-RPC bridge's typed rejection for a `control_response{ok:false}`
+// — both directions (runtime's createRpcBridge answering a runtime-originated request; query.ts's
+// own host-originated pendingHostRequests correlation) throw this SAME class rather than each
+// inventing its own, since the shape (a response-carried code + message) is identical either way.
+export class WinterRpcError extends WinterSDKError {
+  constructor(public readonly code: string, message: string) {
+    super(message);
+    this.name = "WinterRpcError";
+  }
+}
+// A timeout IS an rpc error (code "timeout") — extends WinterRpcError so a consumer catching the
+// broader class also catches this, while `instanceof WinterRpcTimeoutError` (or `.code === "timeout"`)
+// distinguishes it. Only ever thrown when the caller opted into `opts.timeoutMs` — WS-04 §3's
+// permission-class RPCs pass none and so can never time out (this class exists, but is never
+// constructed, on that path).
+export class WinterRpcTimeoutError extends WinterRpcError {
+  constructor(subtype: string, timeoutMs: number) {
+    super("timeout", `control request '${subtype}' timed out after ${timeoutMs}ms`);
+    this.name = "WinterRpcTimeoutError";
+  }
+}

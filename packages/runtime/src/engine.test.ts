@@ -1,5 +1,5 @@
-import { test, expect } from "bun:test";
-import type { RuntimeConfig, WinterFrame, ControlResponseFrame, ProtocolSdkMessage as SdkMessage } from "@yanlinglabs/winter-agent-sdk";
+import { test, expect, spyOn } from "bun:test";
+import type { RuntimeConfig, WinterFrame, ControlRequestFrame, ControlResponseFrame, ProtocolSdkMessage as SdkMessage } from "@yanlinglabs/winter-agent-sdk";
 import { createInMemoryChannel } from "./protocol/channel.ts";
 import { runEngine, type Provider, type ProviderMessage, type ContentBlock, type ToolExecutor } from "./engine.ts";
 import { echoProvider, scriptedProvider, stubExecutor } from "./provider/mock.ts";
@@ -499,4 +499,130 @@ test("EOF mid-turn: ending input while a turn is genuinely in flight still lets 
   expect(msgs.map((m) => m.type)).toEqual(["system", "assistant", "result"]);
   expect((msgs.at(-1) as Extract<SdkMessage, { type: "result" }>).result).toBe("done-after-eof");
   expect(code).toBe(0);
+});
+
+// --- Task 2 (WS-04 §3.1): set_permission_mode — a MINIMAL handler (validate against the six
+// public PermissionMode values, swap the engine's live variable, ack with the effective mode).
+// Task 6 (WS-07) replaces this with full PolicyState semantics; this is exactly T2's controller-
+// resolved scope, no more.
+
+test("set_permission_mode: accepts every one of the six public PermissionMode values and acks the effective mode", async () => {
+  const modes = ["default", "acceptEdits", "dontAsk", "bypassPermissions", "plan", "auto"];
+  for (const mode of modes) {
+    const { host, runtime } = createInMemoryChannel();
+    const done = runEngine({ config: baseConfig(), input: runtime.input, output: runtime.output, provider: echoProvider, tools: stubExecutor });
+
+    host.output.write({ type: "control_request", requestId: "m", subtype: "set_permission_mode", payload: mode });
+    host.output.write({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined });
+
+    const frames = await drain(host.input);
+    await done;
+
+    const ack = frames.find((f) => f.type === "control_response" && (f as ControlResponseFrame).requestId === "m") as ControlResponseFrame;
+    expect(ack.ok).toBe(true);
+    expect(ack.payload).toEqual({ effectiveMode: mode });
+  }
+});
+
+test("set_permission_mode: an invalid mode is rejected ok:false/invalid_mode, the engine keeps running, and a later valid call still swaps the live mode", async () => {
+  const { host, runtime } = createInMemoryChannel();
+  const done = runEngine({ config: baseConfig(), input: runtime.input, output: runtime.output, provider: echoProvider, tools: stubExecutor });
+
+  host.output.write({ type: "control_request", requestId: "m1", subtype: "set_permission_mode", payload: "plan" });
+  host.output.write({ type: "control_request", requestId: "m2", subtype: "set_permission_mode", payload: "not_a_real_mode" });
+  host.output.write({ type: "control_request", requestId: "m3", subtype: "set_permission_mode", payload: "acceptEdits" });
+  host.output.write({ type: "user", text: "hi" });
+  host.output.write({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined });
+
+  const frames = await drain(host.input);
+  const code = await done;
+
+  const byId = (id: string) => frames.find((f) => f.type === "control_response" && (f as ControlResponseFrame).requestId === id) as ControlResponseFrame;
+  const ack1 = byId("m1");
+  expect(ack1.ok).toBe(true);
+  expect(ack1.payload).toEqual({ effectiveMode: "plan" });
+
+  const ack2 = byId("m2");
+  expect(ack2.ok).toBe(false);
+  expect(ack2.error?.code).toBe("invalid_mode");
+
+  const ack3 = byId("m3");
+  expect(ack3.ok).toBe(true);
+  expect(ack3.payload).toEqual({ effectiveMode: "acceptEdits" });
+
+  // the engine kept running: the turn still completed normally despite the interleaved control traffic
+  expect(dataMessages(frames).map((m) => m.type)).toEqual(["system", "assistant", "result"]);
+  expect(code).toBe(0);
+});
+
+// --- Task 2 (WS-04 §3.1, direction inversion): the pump now ALSO routes incoming control_response
+// frames (host->runtime) to the bridge's handleResponse — the mirror of the pre-existing
+// control_request handling. rpc_probe is the P1-only ProviderTurn kind that exercises this: the
+// engine performs bridge.request() on the scripted provider's behalf and embeds the host's answer
+// in the turn's reply (see engine.ts's round loop, and provider/mock.ts's "rpcprobe" arm / the
+// transport-equivalence suite's cross-leg scenario for the same round trip on a real/compiled
+// child).
+
+test("Task 2: a rpc_probe turn writes a runtime-originated control_request; the pump routes the host's control_response back to it and the reply embeds the answer", async () => {
+  const { host, runtime } = createInMemoryChannel();
+  const provider: Provider = {
+    async generate() {
+      return { kind: "rpc_probe", subtype: "test_rpc_probe", payload: { probe: "ping" } };
+    },
+  };
+  const done = runEngine({ config: baseConfig(), input: runtime.input, output: runtime.output, provider, tools: stubExecutor });
+
+  host.output.write({ type: "user", text: "go" });
+
+  const seen: WinterFrame[] = [];
+  let reqId: string | undefined;
+  let reqPayload: unknown;
+  for await (const f of host.input) {
+    seen.push(f);
+    if (f.type === "control_request") {
+      reqId = (f as ControlRequestFrame).requestId;
+      reqPayload = (f as ControlRequestFrame).payload;
+      break;
+    }
+  }
+  expect(reqId).toBeDefined();
+  expect(reqPayload).toEqual({ probe: "ping" });
+
+  host.output.write({ type: "control_response", requestId: reqId!, ok: true, payload: { text: "pong" } });
+  host.output.write({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined });
+
+  for await (const f of host.input) {
+    seen.push(f);
+    if (f.type === "data" && (f as { message: SdkMessage }).message.type === "result") break;
+  }
+  const rest = await drain(host.input);
+  seen.push(...rest);
+  const code = await done;
+
+  const msgs = dataMessages(seen);
+  const assistantMsg = msgs.find((m) => m.type === "assistant") as { message: { content: unknown } };
+  expect(assistantMsg.message.content).toEqual([{ type: "text", text: "rpc reply: pong" }]);
+  const result = msgs.find((m) => m.type === "result");
+  expect(result).toEqual({ type: "result", subtype: "success", is_error: false, result: "rpc reply: pong" });
+  expect(code).toBe(0);
+});
+
+test("Task 2: a control_response with no matching pending request is dropped (bridge logs to stderr) — never crashes the engine", async () => {
+  const errSpy = spyOn(console, "error").mockImplementation(() => {});
+  try {
+    const { host, runtime } = createInMemoryChannel();
+    const done = runEngine({ config: baseConfig(), input: runtime.input, output: runtime.output, provider: echoProvider, tools: stubExecutor });
+
+    host.output.write({ type: "control_response", requestId: "nobody-asked", ok: true, payload: {} });
+    host.output.write({ type: "user", text: "hi" });
+    host.output.write({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined });
+
+    const frames = await drain(host.input);
+    const code = await done;
+
+    expect(dataMessages(frames).map((m) => m.type)).toEqual(["system", "assistant", "result"]);
+    expect(code).toBe(0);
+  } finally {
+    errSpy.mockRestore();
+  }
 });

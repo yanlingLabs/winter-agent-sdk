@@ -22,6 +22,12 @@ export type {
 export { createInMemoryChannel } from "./protocol/channel.ts";
 export type { Duplex, FrameSource, FrameSink } from "./protocol/channel.ts";
 
+// Task 2 (WS-04 §3.1): the runtime's half of the bidirectional control-RPC bridge — re-exported so
+// later tasks (permission/hook RPCs, Tasks 8/10) can reach it from outside engine.ts without a deep
+// import.
+export { createRpcBridge } from "./rpc/bridge.ts";
+export type { RpcBridge } from "./rpc/bridge.ts";
+
 export { echoProvider, scriptedProvider, stubExecutor, isTestProviderName, testProviderByName } from "./provider/mock.ts";
 export type { TestProviderName } from "./provider/mock.ts";
 
