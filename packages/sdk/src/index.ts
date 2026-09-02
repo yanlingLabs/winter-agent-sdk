@@ -95,3 +95,46 @@ export type { PermissionUpdate, PermissionUpdateDestination, RuleSource } from "
 // Task 8 (WS-07 §7.1/§7.2): canUseTool's verbatim callback/result contracts, plus Winter's own
 // "permission" control-request wire payload shape (see permissions/types.ts's own Task 8 banners).
 export type { CanUseTool, PermissionResult, PermissionDecisionClassification, PermissionRequestPayload } from "./permissions/types.ts";
+// Task 9 (WS-08 §1/§2/§4/§6): the hooks pinned-types surface — HookEvent (31-member union, HookEventName
+// alias) + HOOK_EVENTS (the runtime membership list the type is derived from), HookSource
+// (Winter-original, mirrors RuleSource), the full HookInput/HookJSONOutput family, and the
+// Options.hooks registration shapes (HookCallback/HookCallbackMatcher). The runtime's
+// packages/runtime/src/hooks/* imports every one of these from this barrel (WS-02 §3: the runtime
+// imports sdk types, never the reverse — no deep subpath import exists, matching every prior task's
+// own precedent in this file).
+export { HOOK_EVENTS } from "./permissions/types.ts";
+export type {
+  HookEvent,
+  HookEventName,
+  HookSource,
+  HookPermissionDecision,
+  BaseHookInput,
+  PreToolUseHookInput,
+  PostToolUseHookInput,
+  PostToolUseFailureHookInput,
+  UserPromptSubmitHookInput,
+  StopHookInput,
+  SessionStartHookInput,
+  SessionEndHookInput,
+  NotificationHookInput,
+  PermissionRequestHookInput,
+  PermissionDeniedHookInput,
+  GenericHookInput,
+  HookInput,
+  AsyncHookJSONOutput,
+  SyncHookJSONOutput,
+  HookJSONOutput,
+  PreToolUseHookSpecificOutput,
+  PostToolUseHookSpecificOutput,
+  PostToolUseFailureHookSpecificOutput,
+  UserPromptSubmitHookSpecificOutput,
+  StopHookSpecificOutput,
+  SessionStartHookSpecificOutput,
+  NotificationHookSpecificOutput,
+  PermissionRequestHookSpecificOutput,
+  PermissionDeniedHookSpecificOutput,
+  GenericHookSpecificOutput,
+  HookSpecificOutput,
+  HookCallback,
+  HookCallbackMatcher,
+} from "./permissions/types.ts";
