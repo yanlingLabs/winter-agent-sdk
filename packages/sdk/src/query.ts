@@ -2,9 +2,20 @@ import { randomUUID } from "node:crypto";
 import type { SdkMessage as RuntimeSdkMessage, WinterFrame, InitFrame, ControlRequestFrame, ControlResponseFrame } from "./protocol/frames.ts";
 import { PROTOCOL_VERSION } from "./protocol/frames.ts";
 import { splitFrames, encodeFrame, ProtocolError } from "./protocol/codec.ts";
-import type { RuntimeConfig } from "./protocol/config.ts";
+import type { RuntimeConfig, RuntimeHooksConfig, RuntimeHookMatcherGroup } from "./protocol/config.ts";
 import type { Options } from "./options.ts";
-import type { PermissionMode, CanUseTool, PermissionResult, PermissionRequestPayload } from "./permissions/types.ts";
+import type {
+  PermissionMode,
+  CanUseTool,
+  PermissionResult,
+  PermissionRequestPayload,
+  HookEvent,
+  HookCallback,
+  HookCallbackMatcher,
+  HookInput,
+  HookJSONOutput,
+  HookInvocationPayload,
+} from "./permissions/types.ts";
 import { resolveRuntimeExecutable, defaultSpawn, type SpawnRuntimeOptions, type SpawnedRuntimeProcess } from "./transport.ts";
 import { ResultError, CLIConnectionError, ProtocolDecodeError, ProcessError, AbortError, WinterRpcError } from "./errors.ts";
 
@@ -63,6 +74,131 @@ const DEFAULT_MAX_BUFFER_SIZE = 1024 * 1024;
 // and a fast test suite; a pinned/configurable value is future work.
 const KILL_GRACE_MS = 50;
 
+// --- Task 10 (WS-08 §1/§2/§10): Options.hooks <-> RuntimeConfig.hooks + the "hook" control-request
+// handler. `Options.hooks` values are JS functions — never serialized wholesale (options.ts's own
+// comment); this section builds the STRUCTURE-ONLY RuntimeHooksConfig the wire actually carries, and
+// the reverse: dispatching an inbound "hook" control_request back to the exact SDK-callback it names.
+
+// Positional identity, deterministic on BOTH sides of the wire from the config shape alone (no id
+// needs to round-trip at CONFIG-build time — protocol/config.ts's own RuntimeHookMatcherGroup
+// header) — this is the SAME formula the runtime side uses when it builds registry entries from this
+// exact config shape (packages/runtime/src/hooks -- see that side's own converter).
+function hookIdFor(event: string, source: "sdk", groupIndex: number, hookIndex: number): string {
+  return `${event}:${source}:${groupIndex}:${hookIndex}`;
+}
+
+// Builds the wire-safe RuntimeConfig.hooks shape from a real Options.hooks value — undefined when
+// there is nothing to send at all (an absent/empty hooks option must serialize to an ABSENT
+// `hooks` key, never `{}`, so the runtime's own "hooks default-off, byte-identical wire trace" claim
+// holds for every existing scenario that never touches this option). Only ever produces
+// `source: "sdk"` groups: filesystem-configured (managed/user/project/local) hooks have no
+// representation in `Options.hooks` at all — they are P5's settings-loader territory (phase ruling
+// 1) and this function has nothing to build for them.
+function buildRuntimeHooksConfig(hooks: Partial<Record<HookEvent, HookCallbackMatcher[]>> | undefined): RuntimeHooksConfig | undefined {
+  if (!hooks) return undefined;
+  const out: RuntimeHooksConfig = {};
+  for (const [event, groups] of Object.entries(hooks)) {
+    if (!groups || groups.length === 0) continue;
+    out[event] = groups.map((group): RuntimeHookMatcherGroup => {
+      // `.name || null`, not `?? null`: an anonymous/arrow function's own `.name` is `""` (never
+      // undefined) — `||` normalizes that to `null` too, so "no name available" is represented
+      // uniformly regardless of which falsy form produced it. See RuntimeHookMatcherGroup's own
+      // comment for why this is `string | null`, not `string | undefined`.
+      const hookNames = group.hooks.map((hook) => hook.name || null);
+      return {
+        ...(group.matcher !== undefined ? { matcher: group.matcher } : {}),
+        hookCount: group.hooks.length,
+        ...(group.timeout !== undefined ? { timeoutSec: group.timeout } : {}),
+        source: "sdk",
+        // Omitted entirely when every hook in this group is unnamed — matches this whole file's own
+        // conditional-spread convention (never send a key whose value carries no information).
+        ...(hookNames.some((n) => n !== null) ? { hookNames } : {}),
+      };
+    });
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+// Reconstructs a proper per-event HookInput (the shape a real HookCallback receives as its first
+// argument) from the runtime's own wire payload. Generic construction covers every one of the 31
+// events without 31 per-event builders: BaseHookInput's shared envelope + the discriminant + tool
+// identity (tool-scoped events) + whatever event-specific fields the runtime already placed in
+// `payload` (already exactly the extra-input shape WS-08 §10's own payload field carries per event —
+// e.g. PermissionRequest's permission_suggestions, UserPromptSubmit's prompt, Notification's
+// message/title/notification_type) — lossless forward-compatible construction, matching WS-08 §1.3's
+// own "forwards payloads losslessly, never invents field-level semantics" instruction.
+function buildHookInput(req: HookInvocationPayload, cwd: string): HookInput {
+  const payload = (req.payload ?? {}) as Record<string, unknown>;
+  return {
+    session_id: req.sessionId,
+    // No transcript-path synthesis at P2: nothing consumes it yet (filesystem hook scripts are
+    // typed-but-inert until P5, phase ruling 1; a JS HookCallback is free to ignore a field it
+    // doesn't need) — "" rather than widening this pinned non-optional wire field to optional,
+    // matching prompt-stage.ts's own toolUseID precedent (runtime/src/permissions/prompt-stage.ts's
+    // header: "an absent id ... falls back to \"\" rather than widening the wire type to optional").
+    transcript_path: "",
+    cwd,
+    ...(req.agentID !== undefined ? { agent_id: req.agentID } : {}),
+    hook_event_name: req.event,
+    ...(req.toolName !== undefined ? { tool_name: req.toolName } : {}),
+    ...(req.input !== undefined ? { tool_input: req.input } : {}),
+    ...(req.toolUseID !== undefined ? { tool_use_id: req.toolUseID } : {}),
+    ...payload,
+  } as unknown as HookInput;
+}
+
+// Task 10 (WS-08 §10): the "hook" control-request handler — registered ONLY when Options.hooks is
+// non-empty (mirroring makePermissionHandler's own "no callback = no handler" posture: an
+// unrecognized subtype and "a subtype whose handler never gets a chance to answer" collapse to the
+// identical wire outcome). Locates the target callback by `req.hookId`'s deterministic positional
+// identity, built ONCE from the SAME Options.hooks the runtime independently derived its own
+// registry entries from (hookIdFor above == the runtime side's own formula).
+function makeHookHandler(hooks: Partial<Record<HookEvent, HookCallbackMatcher[]>>, cwd: string, abortController: AbortController | undefined): ControlRequestHandler {
+  const byId = new Map<string, HookCallback>();
+  for (const [event, groups] of Object.entries(hooks)) {
+    (groups ?? []).forEach((group, groupIndex) => {
+      group.hooks.forEach((hook, hookIndex) => {
+        byId.set(hookIdFor(event, "sdk", groupIndex, hookIndex), hook);
+      });
+    });
+  }
+
+  return async (payload: unknown): Promise<ControlRequestHandlerResult> => {
+    const req = payload as HookInvocationPayload;
+    const callback = byId.get(req.hookId);
+    if (!callback) {
+      // A config/registry drift this handler cannot itself cause (the runtime derives its own
+      // registry from the SAME RuntimeHooksConfig this file builds) — defended anyway rather than
+      // crashing the wrapper or leaving the runtime's request unanswered.
+      return { ok: false, error: { code: "unknown_hook_id", message: `no SDK-callback hook registered for hookId '${req.hookId}'` } };
+    }
+
+    const controller = new AbortController();
+    if (abortController?.signal.aborted) controller.abort();
+    else abortController?.signal.addEventListener("abort", () => controller.abort(), { once: true });
+
+    const input = buildHookInput(req, cwd);
+    let output: HookJSONOutput;
+    try {
+      output = await callback(input, req.toolUseID, { signal: controller.signal });
+    } catch (err) {
+      // WS-08 §8: "a hook error is not a tool denial unless this spec says so" — a gating hook's
+      // error contributes NO decision and NO transformation, evaluation continues; it does NOT
+      // itself deny anything. This is DELIBERATELY DIFFERENT from makePermissionHandler's own
+      // throw-handling just below (a typed deny PermissionResult): a canUseTool callback answers a
+      // decision that has nowhere else to go, so "the host answered, badly" must still resolve as
+      // an explainable denial; a hook callback's failure is instead THAT HOOK's own contract error
+      // (§8's own row), and ok:false — the bridge rejects, runner.ts's invokeWithTimeout classifies
+      // it as {kind:"error"}, and evaluation continues with whatever OTHER hooks/stages apply —
+      // exactly like an unhandled-subtype or a transport failure would.
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`winter: hook callback threw for '${req.event}' (hookId '${req.hookId}'): ${message}`);
+      return { ok: false, error: { code: "hook_threw", message } };
+    }
+    return { ok: true, payload: output };
+  };
+}
+
 export function query(args: { prompt: string | AsyncIterable<string>; options: Options }): Query {
   const { prompt, options } = args;
 
@@ -85,6 +221,9 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
       console.error(`winter: WINTER_SDK_CAN_USE_TOOL_SHADOWED: canUseTool is configured but ${cause} — some or all tool calls will never reach it`);
     }
   }
+
+  // Task 10: computed once, ahead of `config`, so it can be conditionally spread into it below.
+  const runtimeHooksConfig = buildRuntimeHooksConfig(options.hooks);
 
   const config: RuntimeConfig = {
     // Task 9: a caller-supplied sessionId wins over the default auto-generated uuid — this is what
@@ -111,6 +250,12 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
     ...(options.settingSources !== undefined ? { settingSources: options.settingSources } : {}),
     // Task 6 (WS-07 §6.4): same pure-passthrough convention as every field above.
     ...(options.allowDangerouslySkipPermissions !== undefined ? { allowDangerouslySkipPermissions: options.allowDangerouslySkipPermissions } : {}),
+    // Task 10 (WS-08 §1/§2/§9): the hooks structure-only wire shape (functions stripped -- see
+    // buildRuntimeHooksConfig's own header) + the public-lifecycle-stream gate. An absent/empty
+    // Options.hooks serializes to an ABSENT `hooks` key (never `{}`), keeping every existing
+    // hooks-free scenario's wire trace byte-identical to before this task.
+    ...(runtimeHooksConfig !== undefined ? { hooks: runtimeHooksConfig } : {}),
+    ...(options.includeHookEvents !== undefined ? { includeHookEvents: options.includeHookEvents } : {}),
   };
 
   // A custom spawnClaudeCodeProcess hook owns process creation entirely (containers, VMs, remote
@@ -274,6 +419,14 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
   }
   if (options.canUseTool) {
     controlRequestHandlers.set("permission", makePermissionHandler(options.canUseTool));
+  }
+  // Task 10 (WS-08 §1/§2): registered ONLY when there is at least one real SDK-callback hook to
+  // dispatch to — an empty/absent Options.hooks means "no handler," collapsing to the SAME
+  // generic "unhandled_subtype" fallback every other unregistered subtype already gets (no
+  // observable difference from the runtime's point of view, mirroring the "permission" handler's
+  // own registration guard immediately above).
+  if (options.hooks && Object.keys(options.hooks).length > 0) {
+    controlRequestHandlers.set("hook", makeHookHandler(options.hooks, config.cwd, options.abortController));
   }
 
   // Stderr is diagnostics only, never frames (WS-04 §6) — forwarded eagerly, independent of

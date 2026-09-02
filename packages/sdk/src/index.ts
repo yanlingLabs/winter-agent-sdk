@@ -137,4 +137,5 @@ export type {
   HookSpecificOutput,
   HookCallback,
   HookCallbackMatcher,
+  HookInvocationPayload,
 } from "./permissions/types.ts";

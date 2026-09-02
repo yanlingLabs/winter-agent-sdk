@@ -8,7 +8,7 @@ import type { SpawnedRuntimeProcess, SpawnRuntimeOptions } from "./transport.ts"
 import { encodeFrame } from "./protocol/codec.ts";
 import { PROTOCOL_VERSION } from "./protocol/frames.ts";
 import type { WinterFrame, ControlResponseFrame } from "./protocol/frames.ts";
-import type { PermissionMode, PermissionResult, PermissionRequestPayload } from "./permissions/types.ts";
+import type { PermissionMode, PermissionResult, PermissionRequestPayload, HookInvocationPayload, HookInput, HookJSONOutput } from "./permissions/types.ts";
 
 test("query yields system/init, assistant, result in order", async () => {
   const seen: string[] = [];
@@ -657,6 +657,210 @@ test("canUseTool returning null with NO prior out-of-band response fails closed:
   } finally {
     errSpy.mockRestore();
   }
+});
+
+// --- Task 10 (WS-08 §1/§2/§10): the "hook" control-request handler, wrapper-isolated -------------
+//
+// Mirrors recordingProcessWithPermissionRequest/fullPermissionPayload exactly, for a "hook"
+// control_request instead of "permission" — proves query.ts's own dispatch/reconstruction/
+// response-mapping logic independent of whether the real runtime (packages/runtime) sends one yet.
+
+function recordingProcessWithHookRequest(payload: HookInvocationPayload): { proc: SpawnedRuntimeProcess; writes: string[] } {
+  const writes: string[] = [];
+  let resolveGotResponse!: () => void;
+  const gotResponse = new Promise<void>((r) => {
+    resolveGotResponse = r;
+  });
+  const proc: SpawnedRuntimeProcess = {
+    stdin: {
+      write(chunk: string) {
+        writes.push(chunk);
+        for (const line of chunk.split("\n").filter((l) => l.length > 0)) {
+          const frame = JSON.parse(line) as { type: string; requestId?: string };
+          if (frame.type === "control_response" && frame.requestId === payload.requestId) resolveGotResponse();
+        }
+      },
+      end() {},
+    },
+    stdout: (async function* () {
+      yield encodeFrame({ type: "init", protocolVersion: PROTOCOL_VERSION, sessionId: "s", cwd: "/x", model: "sonnet", permissionMode: "default", tools: [] });
+      yield encodeFrame({ type: "control_request", requestId: payload.requestId, subtype: "hook", payload });
+      await gotResponse;
+      yield encodeFrame({ type: "data", message: { type: "result", subtype: "success", is_error: false, result: "ok" } });
+    })(),
+    kill() {},
+    exited: Promise.resolve({ code: 0, signal: null }),
+    pid: null,
+  };
+  return { proc, writes };
+}
+
+function fullHookPayload(overrides: Partial<HookInvocationPayload> = {}): HookInvocationPayload {
+  return {
+    event: "PreToolUse",
+    matchedMatcher: "Bash",
+    sessionId: "s1",
+    agentID: "agent-1",
+    toolUseID: "call-1",
+    toolName: "Bash",
+    input: { command: "rm -rf /tmp/x" },
+    policyVersion: "3",
+    requestId: "hook-1",
+    hookId: "PreToolUse:sdk:0:0",
+    ...overrides,
+  };
+}
+
+test("a hook callback receives a reconstructed HookInput with cwd/session/tool identity, and its answer is written back verbatim as ok:true", async () => {
+  const payload = fullHookPayload();
+  const { proc, writes } = recordingProcessWithHookRequest(payload);
+  let received: { input?: HookInput; toolUseID?: string | undefined } = {};
+  const answer: HookJSONOutput = { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "allow" } };
+  const gen = query({
+    prompt: "hi",
+    options: {
+      cwd: "/work",
+      spawnClaudeCodeProcess: () => proc,
+      hooks: {
+        PreToolUse: [
+          {
+            hooks: [
+              async (input, toolUseID) => {
+                received = { input, toolUseID };
+                return answer;
+              },
+            ],
+          },
+        ],
+      },
+    },
+  });
+  for await (const _msg of gen) {
+    /* drain */
+  }
+  expect(received.toolUseID).toBe("call-1");
+  expect(received.input).toMatchObject({
+    hook_event_name: "PreToolUse",
+    session_id: "s1",
+    cwd: "/work",
+    agent_id: "agent-1",
+    tool_name: "Bash",
+    tool_input: { command: "rm -rf /tmp/x" },
+    tool_use_id: "call-1",
+    transcript_path: "",
+  });
+  const response = decodeControlResponse(writes, "hook-1");
+  expect(response?.ok).toBe(true);
+  expect(response?.payload).toEqual(answer);
+});
+
+test("an unrecognized hookId answers ok:false, unknown_hook_id (a config/registry drift this handler defends against without crashing)", async () => {
+  const payload = fullHookPayload({ hookId: "PreToolUse:sdk:0:99" });
+  const { proc, writes } = recordingProcessWithHookRequest(payload);
+  const gen = query({
+    prompt: "hi",
+    options: { spawnClaudeCodeProcess: () => proc, hooks: { PreToolUse: [{ hooks: [async () => ({})] }] } },
+  });
+  for await (const _msg of gen) {
+    /* drain */
+  }
+  const response = decodeControlResponse(writes, "hook-1");
+  expect(response?.ok).toBe(false);
+  expect(response?.error?.code).toBe("unknown_hook_id");
+});
+
+test("a throwing hook callback fails closed to ok:false, hook_threw -- DELIBERATELY NOT a canUseTool-style typed deny (WS-08 §8: a hook error is that hook's own error, never a tool denial by itself)", async () => {
+  const payload = fullHookPayload();
+  const { proc, writes } = recordingProcessWithHookRequest(payload);
+  const errSpy = spyOn(console, "error").mockImplementation(() => {});
+  try {
+    const gen = query({
+      prompt: "hi",
+      options: {
+        spawnClaudeCodeProcess: () => proc,
+        hooks: {
+          PreToolUse: [
+            {
+              hooks: [
+                async () => {
+                  throw new Error("hook exploded");
+                },
+              ],
+            },
+          ],
+        },
+      },
+    });
+    const seen: string[] = [];
+    for await (const msg of gen) seen.push(msg.type);
+    expect(seen).toContain("result"); // the throw never crashed the wrapper/query
+    const response = decodeControlResponse(writes, "hook-1");
+    expect(response?.ok).toBe(false);
+    expect(response?.error?.code).toBe("hook_threw");
+    expect(response?.error?.message).toBe("hook exploded");
+    expect(errSpy.mock.calls.some((args) => args.some((a) => String(a).includes("hook exploded")))).toBe(true);
+  } finally {
+    errSpy.mockRestore();
+  }
+});
+
+test("multiple hooks/groups/events resolve to distinct positional hookIds, each dispatching to the correct callback", async () => {
+  const calls: string[] = [];
+  const makeHook = (name: string) => async () => {
+    calls.push(name);
+    return {};
+  };
+  const gen = query({
+    prompt: "hi",
+    options: {
+      spawnClaudeCodeProcess: () => {
+        const payload1 = fullHookPayload({ requestId: "hook-a", hookId: "PreToolUse:sdk:0:1", event: "PreToolUse" });
+        const payload2 = fullHookPayload({ requestId: "hook-b", hookId: "PreToolUse:sdk:1:0", event: "PreToolUse" });
+        const payload3: HookInvocationPayload = {
+          event: "SessionStart",
+          sessionId: "s1",
+          policyVersion: "3",
+          requestId: "hook-c",
+          hookId: "SessionStart:sdk:0:0",
+        };
+        const writes: string[] = [];
+        const proc: SpawnedRuntimeProcess = {
+          stdin: { write: (c: string) => writes.push(c), end() {} },
+          stdout: (async function* () {
+            yield encodeFrame({ type: "init", protocolVersion: PROTOCOL_VERSION, sessionId: "s", cwd: "/x", model: "sonnet", permissionMode: "default", tools: [] });
+            yield encodeFrame({ type: "control_request", requestId: payload1.requestId, subtype: "hook", payload: payload1 });
+            yield encodeFrame({ type: "control_request", requestId: payload2.requestId, subtype: "hook", payload: payload2 });
+            yield encodeFrame({ type: "control_request", requestId: payload3.requestId, subtype: "hook", payload: payload3 });
+            yield encodeFrame({ type: "data", message: { type: "result", subtype: "success", is_error: false, result: "ok" } });
+          })(),
+          kill() {},
+          exited: Promise.resolve({ code: 0, signal: null }),
+          pid: null,
+        };
+        return proc;
+      },
+      hooks: {
+        PreToolUse: [{ hooks: [makeHook("group0-hook0"), makeHook("group0-hook1")] }, { hooks: [makeHook("group1-hook0")] }],
+        SessionStart: [{ hooks: [makeHook("sessionstart-hook0")] }],
+      },
+    },
+  });
+  for await (const _msg of gen) {
+    /* drain */
+  }
+  expect(calls.sort()).toEqual(["group0-hook1", "group1-hook0", "sessionstart-hook0"]);
+});
+
+test("no Options.hooks at all: the 'hook' subtype is never registered -- falls to the generic unhandled_subtype fallback, identical to any other unregistered subtype", async () => {
+  const requestId = "hook-none";
+  const { proc, writes } = recordingProcessWithControlRequest("hook", requestId);
+  const gen = query({ prompt: "hi", options: { spawnClaudeCodeProcess: () => proc } });
+  for await (const _msg of gen) {
+    /* drain */
+  }
+  const response = decodeControlResponse(writes, requestId);
+  expect(response?.ok).toBe(false);
+  expect(response?.error?.code).toBe("unhandled_subtype");
 });
 
 test("the null escape: query.__internal.respondPermission sends the out-of-band response; the callback's subsequent null does NOT write a duplicate", async () => {

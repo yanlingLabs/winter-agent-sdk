@@ -29,6 +29,19 @@ export interface RuntimeHookMatcherGroup {
   hookCount: number;
   timeoutSec?: number; // HookCallbackMatcher.timeout's own pinned unit (derived-shapes item (a)/(f)) -- SECONDS, not ms; the runtime converts once, at registry-build time (see hooks/registry.ts's own header).
   source: HookSource;
+  // Task 10: per-hook names (index-aligned with the stripped HookCallback array, length ===
+  // hookCount when present), sourced from each callback's own JS `.name` (an anonymous/arrow
+  // function has one of `""`, threaded through as `null` rather than an empty string so a real,
+  // deliberately-blank name and "no name available" stay distinguishable). `Array<string | null>`,
+  // NOT `Array<string | undefined>` -- a `HookCallback` array can only ever be built host-side by
+  // query.ts, which then JSON-serializes this whole config into `--config-json`; JSON.stringify
+  // silently turns an `undefined` array element into `null` on the wire regardless of what TypeScript
+  // declares, so typing it `undefined` here would just be a compile-time lie about the runtime's own
+  // parsed shape (exactOptionalPropertyTypes catches exactly this class of mismatch for object
+  // fields, but not array elements, which is why this needed writing down explicitly rather than
+  // relying on the type checker to catch it). Absent entirely (not just an empty array) when no
+  // group in this event has any hook name worth carrying — see query.ts's own builder.
+  hookNames?: Array<string | null>;
 }
 
 // Keyed by an OPEN string, deliberately NOT the closed `HookEvent` union `Options.hooks` itself uses
@@ -71,4 +84,7 @@ export interface RuntimeConfig {
   // absent/empty config behaves byte-identically to the pre-hooks engine (every event resolves
   // no-opinion), which is what keeps hooks default-off from touching any existing wire trace.
   hooks?: RuntimeHooksConfig;
+  // Task 10 (WS-08 §9): Options.includeHookEvents's own wire mirror -- see that field's comment
+  // (options.ts) for the gate's exact semantics and the SessionStart/Setup exemption.
+  includeHookEvents?: boolean;
 }

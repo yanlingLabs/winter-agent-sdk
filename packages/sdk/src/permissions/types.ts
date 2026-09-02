@@ -447,3 +447,27 @@ export interface HookCallbackMatcher {
   hooks: HookCallback[];
   timeout?: number; // doc-asserted (item (a)/(f)): UNIT IS SECONDS, scope is every hook in this matcher.
 }
+
+// --- Task 10 (WS-08 §10, verbatim request shape + Winter's own hookId/hookName addition) ---
+//
+// The sdk-side MIRROR of the runtime's own `HookInvocationRequest` (packages/runtime/src/hooks/
+// runner.ts) — defined independently here rather than imported, matching PermissionRequestPayload's
+// own precedent immediately above (WS-02 §3: the sdk package never imports the runtime). `hookId` is
+// Winter's own additive wire field (see runner.ts's own comment on it): the bridge-backed
+// SDK-callback invoker needs it to route an inbound "hook" control_request back to the exact
+// `Options.hooks` callback to call, using the positional scheme `${event}:${source}:${groupIndex}:
+// ${hookIndex}` protocol/config.ts's RuntimeHookMatcherGroup already documents.
+export interface HookInvocationPayload {
+  event: string;
+  matchedMatcher?: string;
+  sessionId: string;
+  agentID?: string;
+  toolUseID?: string;
+  toolName?: string;
+  input?: Record<string, unknown>;
+  payload?: unknown;
+  policyVersion: string;
+  requestId: string;
+  hookId: string;
+  hookName?: string;
+}

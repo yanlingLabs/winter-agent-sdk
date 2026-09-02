@@ -94,4 +94,12 @@ export interface Options {
   // control_request back to the matching callback here) is query.ts's job, owned by a later task —
   // this field only pins the verbatim public shape a host program writes against.
   hooks?: Partial<Record<HookEvent, HookCallbackMatcher[]>>;
+
+  // Task 10 (WS-08 §9; derived-shapes item (d), doc-asserted `@default false`): gates the public
+  // hook-lifecycle message trio (hook_started/hook_progress/hook_response) — suppressed from the
+  // public stream when false/absent, but ALWAYS recorded to Winter's audit stream regardless (§9
+  // Amended text). Two events are exempt from the gate per that same doc comment (SessionStart's and
+  // Setup's own lifecycle messages emit unconditionally) — see engine.ts's own lifecycle-sink
+  // comment for where that exception actually lives.
+  includeHookEvents?: boolean;
 }
