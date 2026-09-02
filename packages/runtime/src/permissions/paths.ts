@@ -1,42 +1,269 @@
-// RED-phase stub (Task 4, WS-07 §3.1) -- signatures only, thrown/trivial bodies so paths.test.ts
-// exercises real call sites (not module-resolution errors) before the real implementation lands.
+// Task 4 (WS-07 §3.1): file-rule anchors + path semantics. This is the FILE-pattern sibling of
+// Task 3's grammar.ts: it consumes raw pattern strings (the specifier content of a `Read`/`Edit`
+// rule, e.g. the "build/**" inside `Read(build/**)` -- already stripped of the `Tool(...)` wrapper
+// by whoever calls in, exactly as grammar.ts's own `ParsedRule.specifier.source` would carry it for
+// the generic "pattern" family), NOT a `ParsedRule` -- grammar.ts's `matchesRule` only ever reads
+// `call.input.command` for its own "pattern" specifier kind (Bash-shaped), so it structurally
+// cannot be reused for a Read/Edit file path. Naming/API style (the `"allow" | "denyAsk"` direction
+// union, named exports, no default export) deliberately mirrors grammar.ts.
+//
+// SCOPE BOUNDARY: this module only ever sees SCOPED `Read(pattern)`/`Edit(pattern)` rules. A BARE
+// `Read`/`Edit` deny (no specifier at all) removes the tool from the model's schema entirely
+// (WS-07 §3's "Advertisement" layer / §1's five-layer table) -- that never reaches path matching in
+// the first place, so it is out of scope here by construction, not by omission.
+//
+// Two fixture regimes (see paths.test.ts's own header): `matchFileRule` is pure string logic, no
+// fs access at all -- only `checkSymlinkBothEnds` touches real disk (lstat/realpath), because
+// resolving a symlink's true target is not something a string can answer.
+//
+// P1 paths-module reuse (context question, answered): packages/runtime/src/paths/{temp,
+// project-dir-name}.ts own transcript/temp-dir KEY derivation (safe-segment validation, uid-scoped
+// tmp chains) -- a completely different problem (deriving a filesystem-safe identifier) from THIS
+// module's (matching a user-authored glob against an arbitrary real path). Nothing there fits
+// without coupling permission-rule matching to transcript-key logic, which the brief explicitly
+// forbids; this module shares no code with either file (only the mkdtemp/realpath-the-base TEST
+// convention is intentionally mirrored -- see paths.test.ts).
+import { realpathSync } from "node:fs";
+import { dirname, basename, join, isAbsolute, normalize } from "node:path";
 import type { PermissionBehavior } from "@yanlinglabs/winter-agent-sdk";
+
+// ---------------------------------------------------------------------------------------------
+// matchFileRule
+// ---------------------------------------------------------------------------------------------
 
 export interface MatchFileRuleOptions {
   path: string;
   cwd: string;
+  // Judgment call (WS-07 §3.1 table row 3: "`/path` | directory associated with the settings
+  // source"): the spec pins WHAT the anchor means but not what happens when the evaluator has no
+  // such directory to hand -- there is no fallback settings-source concept documented anywhere in
+  // WS-07. Rather than silently falling back to cwd (which would make a `/`-anchored rule
+  // indistinguishable from a bare one -- actively wrong, since the two anchors are deliberately
+  // listed as DISTINCT rows) or to the filesystem root (equally undocumented), an absent sourceDir
+  // makes a `/`-anchored rule INERT: it can never match, on either direction. This is the
+  // conservative reading for BOTH allow and deny alike -- an allow that never fires under-grants
+  // (safe), a deny/ask that never fires under this one specific unresolvable anchor is a real gap,
+  // but silently guessing a wrong base directory for a deny rule (potentially UNDER-matching a
+  // completely different real location) is worse than a caller-visible no-match; see
+  // paths.test.ts's "sourceDir is absent" fixture (pinned both directions) and the report's
+  // judgment-call section.
   sourceDir?: string;
   home: string;
   direction: "allow" | "denyAsk";
 }
 
-export function matchFileRule(_pattern: string, _opts: MatchFileRuleOptions): boolean {
-  throw new Error("not implemented");
+interface AnchorResolution {
+  base: string;
+  rest: string;
+  // True only for the bare/`./`-prefixed family -- WS-07 §3.1's table literally calls this row
+  // "current directory", and in standard Unix terminology "a relative path" specifically means one
+  // with none of the other three prefixes. The single-segment depth-asymmetry clause below reads
+  // "single-segment RELATIVE directory pattern" as pinned to exactly this row (see that section's
+  // own comment for the full judgment call and its flagged consequence for the other three anchors).
+  isCwdAnchored: boolean;
 }
+
+function resolveAnchor(pattern: string, opts: Pick<MatchFileRuleOptions, "cwd" | "home" | "sourceDir">): AnchorResolution | null {
+  if (pattern.startsWith("//")) {
+    return { base: "/", rest: pattern.slice(2), isCwdAnchored: false };
+  }
+  if (pattern === "~") {
+    return { base: opts.home, rest: "", isCwdAnchored: false };
+  }
+  if (pattern.startsWith("~/")) {
+    return { base: opts.home, rest: pattern.slice(2), isCwdAnchored: false };
+  }
+  if (pattern.startsWith("/")) {
+    if (opts.sourceDir === undefined) return null; // see MatchFileRuleOptions.sourceDir's comment
+    return { base: opts.sourceDir, rest: pattern.slice(1), isCwdAnchored: false };
+  }
+  if (pattern.startsWith("./")) {
+    return { base: opts.cwd, rest: pattern.slice(2), isCwdAnchored: true };
+  }
+  return { base: opts.cwd, rest: pattern, isCwdAnchored: true };
+}
+
+function stripTrailingSlash(s: string): string {
+  return s.length > 1 && s.endsWith("/") ? s.slice(0, -1) : s;
+}
+
+// Joins an anchor's absolute base directory with a (possibly glob-laden) relative rest-of-pattern.
+// Deliberately NOT `node:path`'s `join` here -- `join` would be perfectly happy to collapse the
+// `**` token in ways that are fine (it only special-cases `.`/`..`, and `**` is neither) but this
+// keeps the seam-only responsibility explicit and cheap to reason about independent of `**`
+// handling, which lives entirely in compileFsGlobToRegex below.
+function joinBaseAndRest(base: string, rest: string): string {
+  const cleanBase = stripTrailingSlash(base) || "/";
+  const cleanRest = rest.replace(/^\/+/, "");
+  if (cleanRest === "") return cleanBase;
+  return (cleanBase === "/" ? "" : cleanBase) + "/" + cleanRest;
+}
+
+// A pattern's rest is "single relative segment" only when it is cwd-anchored AND, once a trailing
+// slash is trimmed, contains neither `/` nor `*` -- i.e. a bare literal name like "build", not
+// "src/build" (multi-segment -- ordinary glob applies) and not "build*"/"build/**" (an explicit
+// wildcard means the author already said how far the rule reaches; the asymmetry only exists to
+// resolve what an UNADORNED bare name silently means).
+function isSingleRelativeSegment(anchor: AnchorResolution): boolean {
+  if (!anchor.isCwdAnchored) return false;
+  const trimmed = stripTrailingSlash(anchor.rest);
+  return trimmed.length > 0 && !trimmed.includes("/") && !trimmed.includes("*");
+}
+
+function resolveTargetPath(path: string, cwd: string): string {
+  const abs = isAbsolute(path) ? path : join(cwd, path);
+  return stripTrailingSlash(normalize(abs));
+}
+
+const REGEXP_SPECIAL = /[.+?^${}()|[\]\\]/;
+
+function escapeRegexChar(ch: string): string {
+  return REGEXP_SPECIAL.test(ch) ? "\\" + ch : ch;
+}
+
+// One path SEGMENT's glob body: every `*` becomes `[^/]*` (WS-07 §3.1: "`*` stays within one path
+// segment" -- and, mirroring grammar.ts's own Bash-glob convention, a `*` also matches zero
+// characters, so "build*" matches literal "build" too); every other character is regex-escaped.
+// Never called with an actual "**" segment -- compileFsGlobToRegex intercepts that case first.
+function globSegmentToRegexBody(segment: string): string {
+  let out = "";
+  for (const ch of segment) {
+    out += ch === "*" ? "[^/]*" : escapeRegexChar(ch);
+  }
+  return out;
+}
+
+// Compiles a full ABSOLUTE pattern (anchor base + rest, still containing `*`/`**` tokens) into a
+// regex matched against a full absolute target path. `**` (WS-07 §3.1: "`**` crosses directories")
+// becomes "(?:/[^/]+)*" wherever it sits in the segment sequence -- zero or more complete
+// "/segment" groups -- which uniformly covers every position:
+//   ["a","**","b"] -> "/a(?:/[^/]+)*/b"   matches /a/b, /a/x/b, /a/x/y/b
+//   ["**","b"]     -> "(?:/[^/]+)*/b"     matches /b, /x/b, /x/y/b
+//   ["a","**"]     -> "/a(?:/[^/]+)*"     matches /a, /a/x, /a/x/y
+// Judgment call (documented, not part of the required corpus): the trailing-`**` case above
+// deliberately ALSO matches the bare base itself ("/a"). Real gitignore's own trailing "/**" is
+// contents-only (does not match "a" itself) -- diverged here for a single uniform "zero or more"
+// rule rather than three positional variants, since WS-07 §3.1 pins "`**` crosses directories" as
+// one general fact, not gitignore's own fuller grammar. Flagged in the report; a one-line change
+// (require 1+ reps only when the "**" is the LAST segment) if a differential capture disagrees.
+function compileFsGlobToRegex(absPattern: string): RegExp {
+  const segments = absPattern.slice(1).split("/"); // absPattern always starts with "/"
+  let out = "";
+  for (const seg of segments) {
+    out += seg === "**" ? "(?:/[^/]+)*" : "/" + globSegmentToRegexBody(seg);
+  }
+  return new RegExp(`^${out}$`);
+}
+
+export function matchFileRule(pattern: string, opts: MatchFileRuleOptions): boolean {
+  const anchor = resolveAnchor(pattern, opts);
+  if (anchor === null) return false;
+
+  const targetPath = resolveTargetPath(opts.path, opts.cwd);
+
+  if (isSingleRelativeSegment(anchor)) {
+    // WS-07 §3.1: "a single-segment relative directory pattern has deliberately different depth
+    // behavior for allow vs ask/deny." Conservative reading (provisional, capture-verification-
+    // pending -- see paths.test.ts's PAIR fixtures): allow reaches LESS (the exact entry only, so a
+    // bare `Read(build)` allow can't silently widen into everything nested under build/ that the
+    // settings author never explicitly reviewed); denyAsk reaches MORE (the entry AND everything
+    // beneath it at any depth, so a bare `Read(build)` deny/ask can't be defeated by writing one
+    // directory deeper than the author pictured).
+    const exact = resolveTargetPath(joinBaseAndRest(anchor.base, stripTrailingSlash(anchor.rest)), opts.cwd);
+    if (opts.direction === "allow") return targetPath === exact;
+    return targetPath === exact || targetPath.startsWith(exact + "/");
+  }
+
+  const fullPattern = normalize(joinBaseAndRest(anchor.base, anchor.rest));
+  return compileFsGlobToRegex(fullPattern).test(targetPath);
+}
+
+// ---------------------------------------------------------------------------------------------
+// checkSymlinkBothEnds
+// ---------------------------------------------------------------------------------------------
 
 export interface SymlinkBothEndsResult {
   allowRequiresBoth: boolean;
   denyIfEither: boolean;
 }
 
-export function checkSymlinkBothEnds(
-  _path: string,
-  _matcher: (candidatePath: string) => boolean,
-): SymlinkBothEndsResult {
-  throw new Error("not implemented");
+// Resolves `path` to its real, fully-symlink-resolved target -- tolerating a missing LEAF (e.g. a
+// new file about to be Written, which cannot exist yet) by realpath-ing the nearest real ancestor
+// and rejoining the remainder, so a symlinked PARENT directory is still honored even though the
+// leaf itself has nothing to lstat. A DANGLING symlink (the leaf exists as a link, but its target
+// does not) hits the identical ENOENT branch and degrades the same way: this function only ever
+// walks `path`'s OWN ancestor chain on failure, never the broken target string the symlink points
+// at, so the "resolved target" for a dangling link is just `path` itself, unresolved -- neither
+// more nor less permissive than an ordinary non-symlink path (both formulas below collapse to the
+// plain single-path check). Not spec-mandated (WS-07 §3.1 never mentions dangling links); pinned
+// as a documented, deliberately conservative-by-neutrality choice rather than left to crash.
+function resolveRealTarget(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch (err) {
+    if ((err as { code?: unknown }).code !== "ENOENT") throw err;
+    const dir = dirname(path);
+    if (dir === path) return path; // reached the fs root and still nothing resolves -- give up
+    return join(resolveRealTarget(dir), basename(path));
+  }
 }
 
+// WS-07 §3.1: "Symlinks are checked at both ends: allow requires link AND resolved target to both
+// match; deny applies if EITHER matches." `matcher` tests ONE candidate path string against
+// whatever rule pattern the caller is evaluating (typically `(p) => matchFileRule(pattern, {...,
+// path: p})`, but kept as a plain predicate here so this function stays pure-decision and never
+// itself re-derives anchor/opts plumbing) -- composing a matcher with `matchFileRule` for the
+// pattern-plus-anchors case is T7's job at the evaluator layer, not this primitive's.
+export function checkSymlinkBothEnds(
+  path: string,
+  matcher: (candidatePath: string) => boolean,
+): SymlinkBothEndsResult {
+  const target = resolveRealTarget(path);
+  const linkMatches = matcher(path);
+  const targetMatches = matcher(target);
+  return {
+    allowRequiresBoth: linkMatches && targetMatches,
+    denyIfEither: linkMatches || targetMatches,
+  };
+}
+
+// ---------------------------------------------------------------------------------------------
+// readDenyBlocksEdit
+// ---------------------------------------------------------------------------------------------
+
+// Interface judgment call (concern for T5/T7, flagged the same way T3's report flagged concerns
+// for its downstream consumers): the brief's own signature sketch, `readDenyBlocksEdit(rules,
+// path): boolean`, has no room for the cwd/home/sourceDir context matchFileRule requires to
+// resolve anchors -- that context cannot be invented from nowhere, so it is threaded through as a
+// third `ctx` param, mirroring grammar.ts's own `(rule, call, opts)` shape (data, data, options)
+// rather than smearing cwd/home onto every rule entry. `sourceDir` stays PER-RULE (on
+// `FileRuleEntry`, not `ctx`) because it is genuinely a per-SOURCE fact (WS-07 §3.2: rules arrive
+// from managed/user/project/local sources, each potentially its own settings-source directory) --
+// cwd/home are the same for every rule in one evaluation, sourceDir is not.
 export interface FileRuleEntry {
   toolName: string;
   pattern: string;
+  // WS-07 §3.1 says "a Read DENY" specifically, not "deny/ask" -- unlike matchFileRule's own
+  // internal "denyAsk" grouping (which is about SHARING conservative matching semantics between
+  // deny and ask), this primitive only fires for an actual `deny` behavior. An `ask` on Read means
+  // "prompt before reading", which doesn't carry the same "you may not even look at this" signal an
+  // outright deny does -- see paths.test.ts's boundary fixture pinning this exactly.
   behavior: PermissionBehavior;
   sourceDir?: string;
 }
 
-export function readDenyBlocksEdit(
-  _rules: FileRuleEntry[],
-  _path: string,
-  _ctx: { cwd: string; home: string },
-): boolean {
-  throw new Error("not implemented");
+export function readDenyBlocksEdit(rules: FileRuleEntry[], path: string, ctx: { cwd: string; home: string }): boolean {
+  return rules.some((rule) => {
+    if (rule.toolName !== "Read" || rule.behavior !== "deny") return false;
+    return matchFileRule(rule.pattern, {
+      path,
+      cwd: ctx.cwd,
+      home: ctx.home,
+      direction: "denyAsk",
+      // exactOptionalPropertyTypes: conditional spread rather than `sourceDir: rule.sourceDir`,
+      // which would assign a statically `string | undefined`-typed value into an optional-but-not-
+      // undefined property -- same convention as dialect.ts's appendWithDialectRecord.
+      ...(rule.sourceDir !== undefined ? { sourceDir: rule.sourceDir } : {}),
+    });
+  });
 }
