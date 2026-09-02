@@ -964,6 +964,12 @@ export async function evaluate(call: PermissionCall, ctx: EvaluationContext): Pr
   const hookForcedDefer = hookResult.decision === "defer";
   const hookDeferId = hookForcedDefer ? hookResult.hookId : undefined;
   const hookDeferMessage = hookForcedDefer ? hookResult.message : undefined;
+  // Finding 1 (P2 fix-wave, CRITICAL): captured the SAME way ask/defer are -- non-terminal here, a
+  // stage-2 deny rule (and the defer branch, immediately below) still win first -- but "allow" is
+  // resolved much later than ask/defer, right after stage 3's gate, once the standing exceptions
+  // have ALSO been consulted (see the new branch below stage 3 for the full rationale).
+  const hookAllow = hookResult.decision === "allow";
+  const hookAllowId = hookAllow ? hookResult.hookId : undefined;
   const effectiveCall: PermissionCall = hookResult.transformedInput !== undefined ? { ...call, input: hookResult.transformedInput } : call;
   const carriedTransform = hookResult.transformedInput;
 
@@ -1162,6 +1168,48 @@ export async function evaluate(call: PermissionCall, ctx: EvaluationContext): Pr
       };
     }
     return buildRecordFromPromptResult(result, policyVersion, carriedTransform);
+  }
+
+  // --- Finding 1 (P2 fix-wave, CRITICAL): a hook-forced "allow" resolves HERE ---------------------
+  //
+  // WS-08 §3's table pins `allow` as "pre-approves — but does NOT override later deny rules, ask
+  // rules, interaction-required metadata, organization-required approval, or the critical-removal
+  // circuit breaker." WS-07 §2.1: hooks "may … pre-approve"; §6.3 (dontAsk), verbatim: "Still
+  // permits: … PreToolUse `allow` provided later deny/ask/critical checks don't block." Every gate
+  // between here and stage 1 has already run and NOT overridden it by the time this line is
+  // reached: stage 2's deny rules and the Read-deny-blocks-Edit check already returned above if
+  // either fired; a hook-forced defer already resolved above too; and stage 3's own
+  // askEntry/isMandatoryAskUserQuestion/hookForcedAsk gate — immediately above — did NOT fire (this
+  // line is unreached otherwise, since that block always returns). What remains before a hook allow
+  // may actually resolve the call is consulting the SAME standing exceptions stage 4 is about to
+  // consult on its own: critical-removal (§6.8's circuit breaker — a hook allow must never clear it,
+  // exactly like an ordinary allow rule never does), protected-write (§6.7: "an ordinary settings
+  // allow rule does NOT clear this check" — extended here to a hook's own allow, treated with the
+  // identical conservative posture), and plan-mode write withholding (§6.5's unconditional prose —
+  // a hook allow is not a documented carve-out any more than a rule-level allow is). When NONE of
+  // the three applies, the hook's own pre-approval is exactly what WS-07 §2.1/§6.3 promise: an
+  // allow, mechanism "hook", BEFORE stage 4's mode baseline is ever consulted — so `dontAsk`,
+  // `default`, and `auto` all resolve to allow here without ever reaching a prompt handler or the
+  // classifier (the canonical headless "PreToolUse auto-approver" pattern §6.1/§7.3 direct hosts
+  // toward). When one DOES apply, the hook's allow contributes nothing further — the call falls
+  // through to the ordinary stage-4 pipeline immediately below, which already resolves
+  // critical/protected/planWrite correctly and completely independently of any hook ever having
+  // opined (evaluateModeStage's own standing-exception checks run first, unconditionally, in every
+  // mode) — this is what makes the non-override floor structural rather than a runtime special case
+  // duplicated in two places.
+  if (hookAllow) {
+    const criticalForHookAllow = ctx.specialChecks.isCriticalRemoval(effectiveCall, ctx);
+    const protectedForHookAllow = !criticalForHookAllow.critical && ctx.specialChecks.isProtectedWrite(effectiveCall, ctx);
+    const planWriteWithheldForHookAllow = policy.mode === "plan" && isPlanWriteShaped(effectiveCall) && ctx.sessionBypassEnabled !== true;
+    if (!criticalForHookAllow.critical && !protectedForHookAllow && !planWriteWithheldForHookAllow) {
+      return {
+        decision: "allow",
+        mechanism: "hook",
+        policyVersion,
+        ...(hookAllowId !== undefined ? { hookId: hookAllowId } : {}),
+        ...(carriedTransform !== undefined ? { transformedInput: carriedTransform } : {}),
+      };
+    }
   }
 
   // --- Stage 4: permission mode ------------------------------------------------------------------

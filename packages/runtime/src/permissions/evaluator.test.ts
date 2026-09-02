@@ -179,11 +179,20 @@ describe("stage 1: PreToolUse hooks", () => {
     expect(record.mechanism).toBe("rule");
   });
 
-  // Fix round 1, item 4 (LOW — pin against future refactors): "allow" is advisory ONLY — the
-  // existing test above already proves a downstream DENY RULE still wins over it; this proves the
-  // OTHER downstream stage a hook-allow must never suppress: a matching ASK rule (stage 3) still
-  // forces the prompt path even though stage 1 already said "allow". There must be no early
-  // return anywhere in evaluate() for hookResult.decision === "allow".
+  // Fix round 1, item 4 (LOW — pin against future refactors): "allow" is advisory ONLY relative to
+  // a downstream deny/ask/critical/protected/planWrite exception — the existing test above already
+  // proves a downstream DENY RULE still wins over it; this proves the OTHER downstream stage a
+  // hook-allow must never suppress: a matching ASK rule (stage 3) still forces the prompt path even
+  // though stage 1 already said "allow".
+  //
+  // Finding 1 (P2 fix-wave, CRITICAL) supersedes this comment's ORIGINAL, stronger framing ("there
+  // must be no early return anywhere in evaluate() for hookResult.decision === 'allow'") — that
+  // framing was itself the bug WS-08 §3 flags: a hook allow now DOES resolve directly to
+  // `{decision:"allow", mechanism:"hook"}` once stage 3's gate has cleared and no standing exception
+  // (critical/protected/planWrite) applies (see evaluate()'s own new branch, right after stage 3).
+  // This test's own scenario — a matching ASK rule — is exactly the case where that new branch is
+  // never reached (the ask gate claims the call first, above), so it stays green, unchanged, under
+  // the corrected (narrower) claim: no early return for hook-allow BEFORE stage 3 has had its say.
   test("hook allow is advisory only — a matching ASK rule still forces the prompt path (no early return on hook-allow)", async () => {
     const promptSpy = spyPromptStage(() => ({ decision: "deny", message: "human said no" }));
     const ctx = baseCtx({
@@ -197,6 +206,78 @@ describe("stage 1: PreToolUse hooks", () => {
     expect(record.decision).toBe("deny");
     expect(record.mechanism).toBe("canUseTool");
     expect(record.message).toBe("human said no");
+  });
+});
+
+// --- Finding 1 (P2 fix-wave, CRITICAL): a PreToolUse hook 'allow' actually pre-approves -------------
+//
+// WS-08 §3's own table pins `allow` as "pre-approves — but does NOT override later deny rules, ask
+// rules, interaction-required metadata, organization-required approval, or the critical-removal
+// circuit breaker." Every fixture above this block (and T10-CARRY 1/Task 11's own hook-ask/hook-defer
+// blocks) only ever tested the NON-OVERRIDE direction; nobody tested the PRE-APPROVAL direction
+// itself — a hook allow that reaches this point (stage 2's deny rules already cleared, stage 3's
+// ask/mandatory-interaction gate already cleared, no standing exception applies) must actually
+// resolve the call, never silently fall through to a prompt/classifier/dontAsk-denial that a real
+// canUseTool answer never gets a chance to prevent.
+describe("Finding 1 (P2 fix-wave, CRITICAL): a PreToolUse hook 'allow' actually pre-approves once no standing exception applies", () => {
+  test("dontAsk + hook allow + an unmatched, non-read-only tool call resolves to allow, mechanism 'hook' (WS-07 §6.3's verbatim 'Still permits' cell)", async () => {
+    const ctx = baseCtx({
+      hookStage: spyHookStage(() => ({ decision: "allow", hookId: "auto-approver" })).stage,
+      policy: policy({ mode: "dontAsk" }),
+    });
+    const record = await evaluate(call("Bash", { command: "some-arbitrary-tool --flag" }), ctx);
+    expect(record).toMatchObject({ decision: "allow", mechanism: "hook", hookId: "auto-approver" });
+  });
+
+  test("default + hook allow + zero rules: allow, without ever invoking canUseTool or a PermissionRequest hook", async () => {
+    const promptSpy = spyPromptStage(() => ({ decision: "deny" })); // would deny if ever reached -- proving it ISN'T
+    let permissionRequestCalls = 0;
+    const hook = spyHookStage(
+      () => ({ decision: "allow" }),
+      () => {
+        permissionRequestCalls++;
+        return null;
+      },
+    );
+    const ctx = baseCtx({ hookStage: hook.stage, promptStage: promptSpy.stage, policy: policy({ mode: "default" }) });
+    const record = await evaluate(call("Bash", { command: "some-arbitrary-tool" }), ctx);
+    expect(record).toMatchObject({ decision: "allow", mechanism: "hook" });
+    expect(promptSpy.calls.length).toBe(0);
+    expect(permissionRequestCalls).toBe(0);
+  });
+
+  test("auto + hook allow: allow, without ever consulting the classifier", async () => {
+    const scripted = createScriptedClassifier({ verdict: "deny" }); // would deny if consulted -- proving it ISN'T
+    const ctx = baseCtx({
+      hookStage: spyHookStage(() => ({ decision: "allow" })).stage,
+      policy: policy({ mode: "auto" }),
+      autoEngine: createAutoEngine({ sessionId: "s1", classifier: scripted }),
+    });
+    const record = await evaluate(call("Bash", { command: "some-arbitrary-tool" }), ctx);
+    expect(scripted.calls.length).toBe(0);
+    expect(record).toMatchObject({ decision: "allow", mechanism: "hook" });
+  });
+
+  test("keep-green: a hook allow does not clear a protected-path write — the ordinary mode-cell outcome still applies, never a silent allow", async () => {
+    const promptSpy = spyPromptStage(() => ({ decision: "deny" }));
+    const ctx = baseCtx({
+      hookStage: spyHookStage(() => ({ decision: "allow" })).stage,
+      promptStage: promptSpy.stage,
+      policy: policy({ mode: "default" }),
+      specialChecks: REAL_SPECIAL_CHECKS,
+    });
+    const record = await evaluate(call("Edit", { file_path: "/work/.git/config" }), ctx);
+    expect(promptSpy.calls.length).toBe(1); // still reaches canUseTool, per the ordinary protected-write matrix (Task 7)
+    expect(record.decision).toBe("deny");
+  });
+
+  test("keep-green: plan mode + hook allow + a write is still withheld unconditionally (§6.5)", async () => {
+    const ctx = baseCtx({
+      hookStage: spyHookStage(() => ({ decision: "allow" })).stage,
+      policy: policy({ mode: "plan" }),
+    });
+    const record = await evaluate(call("Edit", { file_path: "/work/src/index.ts" }), ctx);
+    expect(record).toMatchObject({ decision: "deny", mechanism: "mode", message: PLAN_WRITE_WITHHELD_MESSAGE });
   });
 });
 
