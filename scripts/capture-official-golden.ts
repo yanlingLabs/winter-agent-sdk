@@ -20,14 +20,27 @@
 //
 // Hermeticity (hard rule, non-negotiable): the official runtime must never read or write the real
 // ~/.claude (or ~/.winter/~/.norma). Achieved by handing it the MINIMAL env an empirical probe
-// proved sufficient — exactly {ANTHROPIC_BASE_URL, ANTHROPIC_API_KEY, CLAUDE_CONFIG_DIR} with NO
-// process.env spread — plus settingSources: [] (reads no real settings.json at any level) and a
+// proved sufficient — exactly {ANTHROPIC_BASE_URL, ANTHROPIC_API_KEY, CLAUDE_CONFIG_DIR, HOME} with
+// NO process.env spread — plus settingSources: [] (reads no real settings.json at any level) and a
 // fresh mkdtemp cwd. Every request either scenario's loopback receives is logged to stderr below as
-// direct evidence that the loopback is the only endpoint it ever contacts. Both scenarios' own
-// working files (the Scenario B dummy read target included) live under fresh mkdtemp dirs — never a
-// real path, never real user data — and every acquired resource is cleaned up in a `finally`,
-// mirroring the T11 review's own resource-exhaustion-safety fix (acquire-then-register-cleanup,
-// never a batch of acquisitions ahead of one shared try).
+// direct evidence that the loopback is the only endpoint it ever contacts.
+//
+// Item 13 (P2 fix-wave) hardening: `HOME` is now ALSO explicitly set, to its own fresh mkdtemp dir,
+// for BOTH scenarios — closing a gap Task 13's own review found (pre-existing, read-only, no PII,
+// but real): `env` REPLACES the child/imported module's environment entirely (this repo's own
+// established convention — see query.ts's identical semantics for Options.env), so a `HOME`-less
+// env leaves `os.homedir()` free to fall back to its own OS-level user-database lookup (POSIX
+// getpwuid), which resolves to the REAL ambient user's actual home directory regardless of
+// CLAUDE_CONFIG_DIR — any internal path the official runtime derives directly from `os.homedir()`
+// (a plugin/marketplace cache under `~/.claude`, observed by Task 13's reviewer, is exactly this
+// shape) is invisible to CLAUDE_CONFIG_DIR's own scoping and needs this second, independent knob.
+// `CLAUDE_CONFIG_DIR` itself was ALREADY a fresh mkdtemp for both scenarios before this fix — see
+// each scenario's own `claudeConfigDir` local below; this hardening is additive, not a correction of
+// that half. Every one of a scenario's own working files (the Scenario B dummy read target
+// included) lives under fresh mkdtemp dirs — never a real path, never real user data — and every
+// acquired resource is cleaned up in a `finally`, mirroring the T11 review's own
+// resource-exhaustion-safety fix (acquire-then-register-cleanup, never a batch of acquisitions
+// ahead of one shared try).
 import { mkdtempSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -128,6 +141,11 @@ async function runPlainQueryCapture(officialSdk: OfficialSdk): Promise<void> {
   try {
     const claudeConfigDir = mkdtempSync(join(tmpdir(), "winter-official-capture-config-"));
     cleanups.push(() => rmSync(claudeConfigDir, { recursive: true, force: true }));
+    // Item 13 (P2 fix-wave): a SEPARATE fresh mkdtemp from claudeConfigDir -- see this file's own
+    // header for why HOME needs to be independently isolated (os.homedir()'s own OS-level fallback
+    // is invisible to CLAUDE_CONFIG_DIR's scoping).
+    const homeDir = mkdtempSync(join(tmpdir(), "winter-official-capture-home-"));
+    cleanups.push(() => rmSync(homeDir, { recursive: true, force: true }));
     const fixtureCwd = mkdtempSync(join(tmpdir(), "winter-official-capture-cwd-"));
     cleanups.push(() => rmSync(fixtureCwd, { recursive: true, force: true }));
 
@@ -144,7 +162,7 @@ async function runPlainQueryCapture(officialSdk: OfficialSdk): Promise<void> {
     });
     console.error(`\n=== Scenario A: plain query ===`);
     console.error(`[capture A] loopback listening on ${server.url.href} (the ONLY endpoint the official runtime is given)`);
-    console.error(`[capture A] CLAUDE_CONFIG_DIR=${claudeConfigDir} (fresh mkdtemp — never the real ~/.claude)`);
+    console.error(`[capture A] CLAUDE_CONFIG_DIR=${claudeConfigDir} HOME=${homeDir} (both fresh mkdtemp — never the real ~/.claude or the real user home)`);
 
     const entries: ConformanceTraceEntry[] = [];
     let thrown: unknown;
@@ -159,6 +177,7 @@ async function runPlainQueryCapture(officialSdk: OfficialSdk): Promise<void> {
             ANTHROPIC_BASE_URL: server.url.href.replace(/\/$/, ""),
             ANTHROPIC_API_KEY: "test",
             CLAUDE_CONFIG_DIR: claudeConfigDir,
+            HOME: homeDir,
           },
         },
       });
@@ -188,6 +207,9 @@ async function runPermissionsAndHooksCapture(officialSdk: OfficialSdk): Promise<
   try {
     const claudeConfigDir = mkdtempSync(join(tmpdir(), "winter-official-capture-config-b-"));
     cleanups.push(() => rmSync(claudeConfigDir, { recursive: true, force: true }));
+    // Item 13 (P2 fix-wave): see runPlainQueryCapture's own identical `homeDir` comment.
+    const homeDir = mkdtempSync(join(tmpdir(), "winter-official-capture-home-b-"));
+    cleanups.push(() => rmSync(homeDir, { recursive: true, force: true }));
     const fixtureCwd = mkdtempSync(join(tmpdir(), "winter-official-capture-cwd-b-"));
     cleanups.push(() => rmSync(fixtureCwd, { recursive: true, force: true }));
     // A dedicated dummy read target, OUTSIDE fixtureCwd (so it's genuinely promptable, never
@@ -219,7 +241,7 @@ async function runPermissionsAndHooksCapture(officialSdk: OfficialSdk): Promise<
     });
     console.error(`\n=== Scenario B: canUseTool + includeHookEvents + PreToolUse (observer) + SessionEnd ===`);
     console.error(`[capture B] loopback listening on ${server.url.href} (the ONLY endpoint the official runtime is given)`);
-    console.error(`[capture B] CLAUDE_CONFIG_DIR=${claudeConfigDir} (fresh mkdtemp); read target=${readTargetPath} (fresh mkdtemp, dummy content, never read for real)`);
+    console.error(`[capture B] CLAUDE_CONFIG_DIR=${claudeConfigDir} HOME=${homeDir} (both fresh mkdtemp); read target=${readTargetPath} (fresh mkdtemp, dummy content, never read for real)`);
 
     // Captured for the report's own "callback field set" printout. `signal` (an AbortSignal) is
     // recorded by TYPE only, never JSON.stringify'd (it doesn't serialize meaningfully); every other
@@ -244,6 +266,7 @@ async function runPermissionsAndHooksCapture(officialSdk: OfficialSdk): Promise<
             ANTHROPIC_BASE_URL: server.url.href.replace(/\/$/, ""),
             ANTHROPIC_API_KEY: "test",
             CLAUDE_CONFIG_DIR: claudeConfigDir,
+            HOME: homeDir,
           },
           // Denies immediately — the point of this scenario is observing the callback's received
           // fields and the hook lifecycle stream, never actually letting Read execute.
