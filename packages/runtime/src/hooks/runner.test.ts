@@ -94,6 +94,23 @@ describe("runHooks -- basic shape", () => {
     expect(records[0]).toMatchObject({ hookId: "h1", hookEvent: "PreToolUse", sessionId: "sess-1", outcome: "decision", decision: "allow" });
     expect(typeof records[0]!.uuid).toBe("string");
   });
+
+  // Finding 11 (P2 fix-wave, NIT): the audit record carries agentID -- WS-08 §11's own child-call
+  // correlator -- the SAME value every participant's own HookInvocationRequest in this call already
+  // receives (the "built request carries ... agentID" fixture below, this file's own precedent).
+  test("Finding 11: agentID (when the caller supplies one) is stamped on every audit record", async () => {
+    const { audit, records } = recordingAudit();
+    const { invoker } = fixedInvoker({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "allow" } });
+    await runHooks("PreToolUse", { toolName: "Bash", input: {} }, ctxWith({ registry: fakeRegistry([entry("h1", "PreToolUse")]), invoker, audit, agentID: "agent-1" }));
+    expect(records[0]!.agentID).toBe("agent-1");
+  });
+
+  test("Finding 11: agentID is absent (not present-as-undefined) from the audit record when the caller supplies none", async () => {
+    const { audit, records } = recordingAudit();
+    const { invoker } = fixedInvoker({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "allow" } });
+    await runHooks("PreToolUse", { toolName: "Bash", input: {} }, ctxWith({ registry: fakeRegistry([entry("h1", "PreToolUse")]), invoker, audit }));
+    expect("agentID" in records[0]!).toBe(false);
+  });
 });
 
 describe("runHooks -- §10 request payload shape", () => {

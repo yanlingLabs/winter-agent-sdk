@@ -12,10 +12,13 @@ import type { HookInvocationRequest } from "./runner.ts";
 function fakeBridge(impl: (subtype: string, payload: unknown, opts?: { timeoutMs?: number; requestId?: string }) => Promise<unknown>): {
   bridge: RpcBridge;
   calls: Array<{ subtype: string; payload: unknown; opts?: { timeoutMs?: number; requestId?: string } }>;
+  cancelled: string[];
 } {
   const calls: Array<{ subtype: string; payload: unknown; opts?: { timeoutMs?: number; requestId?: string } }> = [];
+  const cancelled: string[] = [];
   return {
     calls,
+    cancelled,
     bridge: {
       request: (async (subtype: string, payload: unknown, opts?: { timeoutMs?: number; requestId?: string }) => {
         calls.push({ subtype, payload, ...(opts !== undefined ? { opts } : {}) });
@@ -23,6 +26,9 @@ function fakeBridge(impl: (subtype: string, payload: unknown, opts?: { timeoutMs
       }) as RpcBridge["request"],
       handleResponse: () => false,
       rejectAllPending: () => {},
+      cancel: (requestId: string) => {
+        cancelled.push(requestId);
+      },
     },
   };
 }
@@ -76,4 +82,25 @@ test("a rejected bridge request (e.g. no 'hook' handler registered host-side) pr
     caught = e;
   }
   expect(caught).toBeInstanceOf(WinterRpcError);
+});
+
+// Finding 10 (P2 fix-wave, NIT): the runner's own timeout fires opts.signal's abort event
+// (invokeWithTimeout's `controller.abort()`) -- this invoker must free the bridge's own pending
+// entry at that exact moment, rather than leaving it parked until run-end teardown.
+test("Finding 10: an abort on opts.signal cancels the bridge entry for this exact requestId", async () => {
+  const { bridge, cancelled } = fakeBridge(() => new Promise(() => {})); // never resolves -- only the abort matters here
+  const invoker = createBridgeHookInvoker(bridge);
+  const controller = new AbortController();
+  void invoker.invoke(baseRequest, { signal: controller.signal }); // fire-and-forget: never settles
+  expect(cancelled).toEqual([]);
+
+  controller.abort();
+  expect(cancelled).toEqual(["req-1"]);
+});
+
+test("Finding 10: NO abort -- the bridge entry is never cancelled (the happy path is unaffected)", async () => {
+  const { bridge, cancelled } = fakeBridge(async () => ({}));
+  const invoker = createBridgeHookInvoker(bridge);
+  await invoker.invoke(baseRequest, { signal: new AbortController().signal });
+  expect(cancelled).toEqual([]);
 });

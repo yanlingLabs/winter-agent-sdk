@@ -26,11 +26,17 @@ import type { RpcBridge } from "../rpc/bridge.ts";
 export function createBridgeHookInvoker(bridge: RpcBridge): HookInvoker {
   return {
     async invoke(request: HookInvocationRequest, opts: { signal: AbortSignal }): Promise<unknown> {
-      // `opts.signal` is a COURTESY only (see this file's own header) — nothing here needs to wire
-      // it into bridge.request, which has no abort parameter of its own; the runner's hard timer is
-      // what actually bounds this call, on both the invoker's promise and (via `signal.aborted`) the
-      // far side, if it's listening.
-      void opts;
+      // Finding 10 (P2 fix-wave, NIT): `opts.signal` firing IS the runner's own timeout — see
+      // invokeWithTimeout's own `controller.abort()` call, at the exact moment its hard timer
+      // fires. Without this, the abandoned bridge.request() entry stayed parked in the bridge's own
+      // `pending` map until `rejectAllPending` at run end (a long session with many flaky/slow hooks
+      // accumulates entries, and a very-late host answer would resolve an ignored promise) — the
+      // runner is still the sole TIMEOUT authority (unchanged: no timeoutMs is passed to
+      // bridge.request below), this is purely cleanup of the now-abandoned bridge-side bookkeeping.
+      // Registered BEFORE bridge.request() is called (invokeWithTimeout always hands this a fresh,
+      // not-yet-aborted signal from a controller it just created — never already-aborted — so there
+      // is no missed-event race to guard against here).
+      opts.signal.addEventListener("abort", () => bridge.cancel(request.requestId), { once: true });
       return bridge.request("hook", request, { requestId: request.requestId });
     },
   };

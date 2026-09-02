@@ -665,6 +665,10 @@ export interface HookAuditJournalRecord {
   outcome: string;
   decision?: string;
   durationMs?: number;
+  // Finding 11 (P2 fix-wave, NIT): mirrors hooks/runner.ts's own HookAuditRecord.agentID — this
+  // type's wider-string typing (its own header: "intentionally WIDER... so passing a real
+  // HookAuditRecord value here type-checks with no cast") already absorbs it with no further change.
+  agentID?: string;
 }
 
 export interface HookAuditJournalEnvelope {

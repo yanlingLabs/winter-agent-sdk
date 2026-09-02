@@ -103,6 +103,12 @@ export interface HookAuditRecord {
   outcome: HookAuditOutcome;
   decision?: HookPermissionDecision;
   durationMs?: number;
+  // Finding 11 (P2 fix-wave, NIT): the invocation request already carries `agentID` (this file's
+  // own HookInvocationRequest) and WS-08 §11 makes it the child-call correlator — the audit record
+  // itself carried no such field, so P4's subagent audit rows would have been unattributable without
+  // this. Sourced from RunHooksContext.agentID (buildAuditRecord below) — the SAME value every
+  // participant's own request in this one runHooks() call already receives.
+  agentID?: string;
 }
 
 export interface HookAuditRecorder {
@@ -507,6 +513,9 @@ function buildAuditRecord(entry: SourcedHookEntry, event: HookEvent, ctx: RunHoo
     sessionId: ctx.sessionId,
     uuid: randomUUID(),
     ...(call.toolUseID !== undefined ? { toolUseID: call.toolUseID } : {}),
+    // Finding 11 (P2 fix-wave): the SAME agentID every participant's own HookInvocationRequest in
+    // this runHooks() call already receives (buildRequest, above) — see HookAuditRecord's own comment.
+    ...(ctx.agentID !== undefined ? { agentID: ctx.agentID } : {}),
     ...(fields.requestId !== undefined ? { requestId: fields.requestId } : {}),
     outcome: fields.outcome,
     ...(fields.decision !== undefined ? { decision: fields.decision } : {}),

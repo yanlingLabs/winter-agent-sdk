@@ -200,3 +200,46 @@ test("T10: rejectAllPending is idempotent — calling it again after the bridge 
   bridge.rejectAllPending(new Error("first"));
   expect(() => bridge.rejectAllPending(new Error("second"))).not.toThrow();
 });
+
+// Finding 10 (P2 fix-wave, NIT): a runner-timed-out hook RPC leaves its bridge entry parked until
+// teardown — cancel() frees the map slot (accumulation over a long flaky-hooks session; a very-late
+// answer resolving an ignored promise) WITHOUT settling the caller's promise, which has already
+// moved on by the time it calls this (the runner's own timer raced ahead of it).
+test("Finding 10: cancel() removes a pending entry — a later response for that requestId is now 'unknown', not double-settled", async () => {
+  const { sink, written } = recordingSink();
+  const bridge = createRpcBridge(sink);
+  const p = bridge.request("hook", {});
+  const req = written[0] as ControlRequestFrame;
+
+  bridge.cancel(req.requestId);
+
+  const errSpy = spyOn(console, "error").mockImplementation(() => {});
+  try {
+    expect(bridge.handleResponse({ type: "control_response", requestId: req.requestId, ok: true, payload: {} })).toBe(false);
+  } finally {
+    errSpy.mockRestore();
+  }
+
+  // Never settles -- neither resolved nor rejected -- since nothing (the eventual real host answer,
+  // above) was ever allowed to reach it after cancellation.
+  let settled = false;
+  p.then(
+    () => { settled = true; },
+    () => { settled = true; },
+  );
+  await sleep(30);
+  expect(settled).toBe(false);
+});
+
+test("Finding 10: cancel() on an unknown requestId (never issued, or already settled) is a silent no-op", () => {
+  const { sink, written } = recordingSink();
+  const bridge = createRpcBridge(sink);
+  expect(() => bridge.cancel("never-issued")).not.toThrow();
+
+  const p = bridge.request("hook", {});
+  p.catch(() => {});
+  const req = written[0] as ControlRequestFrame;
+  bridge.handleResponse({ type: "control_response", requestId: req.requestId, ok: true, payload: {} });
+  // Already settled and removed from `pending` -- cancelling it again is a no-op, not a crash.
+  expect(() => bridge.cancel(req.requestId)).not.toThrow();
+});

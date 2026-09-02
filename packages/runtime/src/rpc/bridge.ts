@@ -35,6 +35,16 @@ export interface RpcBridge {
   // this fired; there is no reason to make it wait out its own per-hook timeout to find that out.
   // Idempotent — safe to call more than once.
   rejectAllPending(err: unknown): void;
+  // Finding 10 (P2 fix-wave, NIT): removes ONE pending entry without settling its promise either
+  // way (never resolve, never reject) — the caller has ALREADY moved on by the time it calls this
+  // (runner.ts's own per-hook timeout already raced ahead and resolved its own await), so there is
+  // nothing left to notify; this exists purely to free the map slot so (a) a long session with many
+  // timed-out hooks doesn't accumulate entries forever, and (b) a very-late host answer for this
+  // exact requestId resolves via the SAME safe "unknown requestId" path handleResponse already gives
+  // every other stale response, rather than quietly resolving/rejecting a promise nobody is awaiting
+  // anymore. A requestId that is already unknown (never issued, already settled, or already
+  // cancelled) is a silent no-op — never throws.
+  cancel(requestId: string): void;
 }
 
 interface PendingRpc {
@@ -113,6 +123,15 @@ export function createRpcBridge(output: FrameSink): RpcBridge {
         entry.reject(err);
       }
       pending.clear();
+    },
+    cancel(requestId: string): void {
+      const entry = pending.get(requestId);
+      if (entry === undefined) return; // already unknown -- silent no-op, see this method's own doc comment
+      if (entry.timer !== undefined) clearTimeout(entry.timer);
+      pending.delete(requestId);
+      // Deliberately NEITHER resolve() NOR reject() -- the caller has already moved on by the time
+      // it calls cancel() (its own timer raced ahead); settling this promise now would just be
+      // resolving/rejecting something nobody is awaiting anymore.
     },
   };
 }
