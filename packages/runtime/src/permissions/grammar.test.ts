@@ -56,6 +56,37 @@ describe("parseRule -- fix round 2, Ruling P2-G (file-rule tools are never gener
     expect(rule.specifier).toEqual({ kind: "pattern", source: "a:b/**" });
   });
 
+  // Item 4 (P2 fix-wave): the MOST confusable colon shape -- "x:*" simultaneously resembles BOTH
+  // the generic FIELD_VALUE param grammar (field "x", value "*") AND Bash's own ":*"
+  // trailing-wildcard sugar (Bash(ls:*) === Bash(ls *), tested below in the Bash describe block).
+  // For a FILE_RULE_TOOLS tool, NEITHER reading applies -- the whole string is a literal file
+  // pattern, verbatim, with no sugar/param semantics of its own. Distinct regression coverage from
+  // the Read(a:b/**) fixture above: that pattern's post-colon text ("b/**") is unambiguously
+  // path-shaped; "x:*"'s post-colon text ("*") is exactly the shape two OTHER dispatch families
+  // would each claim for themselves.
+  test("Read(x:*) parses as a pattern specifier with the literal string 'x:*' intact -- neither a param rule (field 'x') nor Bash's own trailing-wildcard sugar", () => {
+    const rule = parseRule("Read(x:*)");
+    expect(rule.specifier).toEqual({ kind: "pattern", source: "x:*" });
+    expect(rule.isBareEquivalent).toBe(false);
+  });
+
+  test("Edit(x:*) — the identical shape on Edit, the other FILE_RULE_TOOLS member", () => {
+    const rule = parseRule("Edit(x:*)");
+    expect(rule.specifier).toEqual({ kind: "pattern", source: "x:*" });
+  });
+
+  test("Read(x:*) dispatches through matchesRuleForCall's FILE_RULE_TOOLS branch (paths.ts), never matchesRule's own generic 'pattern' case -- a Read call has no call.input.command for that branch to (wrongly) read", () => {
+    // matchesRule's generic "pattern" case reads call.input.command (Bash-shaped) -- a Read call
+    // has no such field, so if Read(x:*) were EVER routed through matchesRule's own pattern
+    // handling instead of paths.ts's matchFileRule, it would silently fail closed (never match) on
+    // the allow side regardless of the actual file_path. This proves the OPPOSITE: matchesRule
+    // alone (bypassing the evaluator's own FILE_RULE_TOOLS dispatch) indeed fails closed here --
+    // documenting exactly why evaluator.ts's matchesRuleForCall must never fall through to plain
+    // matchesRule for this specifier kind (see that function's own header).
+    const rule = parseRule("Read(x:*)");
+    expect(matchesRule(rule, call("Read", { file_path: "x:*" }), { direction: "allow" })).toBe(false);
+  });
+
   test("Edit-family case: a Windows-drive-letter-style colon path also parses as a pattern specifier", () => {
     const rule = parseRule("Edit(C:/Users/x/**)");
     expect(rule.specifier).toEqual({ kind: "pattern", source: "C:/Users/x/**" });

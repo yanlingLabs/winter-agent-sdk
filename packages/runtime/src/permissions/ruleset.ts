@@ -31,7 +31,7 @@
 // untrusted-project allow that becomes inert only after a restart). Authority answers a DIFFERENT
 // question: who is allowed to author an update destined for a given file/scope at all.
 import { parseRule, matchesRule, type ParsedRule } from "./grammar.ts";
-import { exceedsDoubleStarCap } from "./paths.ts";
+import { exceedsDoubleStarCap, exceedsStarsPerSegmentCap } from "./paths.ts";
 import {
   openSync,
   writeSync,
@@ -202,6 +202,18 @@ function validateNewRule(value: PermissionRuleValue, behavior: PermissionBehavio
     if (exceedsDoubleStarCap(value.ruleContent)) {
       throw new PermissionRuleValidationError(
         `rule ${JSON.stringify(raw)} exceeds the glob depth cap (Ruling P2-E, MAX_DOUBLE_STARS)`,
+        value,
+        behavior,
+      );
+    }
+    // P2 fix-wave item 3: the sibling same-segment multiple-`*` cap (paths.ts's own
+    // MAX_STARS_PER_SEGMENT) gets the IDENTICAL add-time rejection Ruling P2-E already gives
+    // MAX_DOUBLE_STARS above — belt-and-suspenders alongside that cap's own NEW direction-aware
+    // match-time resolution (paths.ts's matchFileRule): a rule this obviously pathological should
+    // never actually reach match time needing the direction-aware fallback at all.
+    if (exceedsStarsPerSegmentCap(value.ruleContent)) {
+      throw new PermissionRuleValidationError(
+        `rule ${JSON.stringify(raw)} exceeds the same-segment glob-star cap (P2 fix-wave, MAX_STARS_PER_SEGMENT)`,
         value,
         behavior,
       );

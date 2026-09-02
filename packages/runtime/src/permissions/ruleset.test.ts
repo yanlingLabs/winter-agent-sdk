@@ -26,7 +26,7 @@ import {
   type SourcedRuleEntry,
   type HookAuditJournalRecord,
 } from "./ruleset.ts";
-import { MAX_DOUBLE_STARS } from "./paths.ts";
+import { MAX_DOUBLE_STARS, MAX_STARS_PER_SEGMENT } from "./paths.ts";
 import type { PermissionUpdate, PermissionRuleValue } from "@yanlinglabs/winter-agent-sdk";
 
 function call(toolName: string, input: Record<string, unknown> = {}) {
@@ -201,6 +201,51 @@ describe("add-time validation carry (b), Ruling P2-E: Read/Edit rules over the g
 
   test("the cap does not apply to non-Read/Edit tools even with many '**' segments (Bash's own pattern grammar is unrelated)", () => {
     expect(() => sourceRule(rv("Bash", overCapPattern()), "allow", "user")).not.toThrow();
+  });
+});
+
+// P2 fix-wave item 3: the sibling same-segment multiple-`*` cap, add-time rejection mirroring
+// MAX_DOUBLE_STARS' own fixture corpus exactly (belt-and-suspenders alongside that cap's own new
+// direction-aware match-time resolution in paths.ts's matchFileRule).
+describe("add-time validation carry, P2 fix-wave item 3: Read/Edit rules over the same-segment glob-star cap are rejected", () => {
+  function overStarsPattern(): string {
+    return "a" + "*a".repeat(MAX_STARS_PER_SEGMENT + 1) + "b";
+  }
+
+  test("a Read rule whose pattern exceeds MAX_STARS_PER_SEGMENT throws PermissionRuleValidationError", () => {
+    expect(() => sourceRule(rv("Read", overStarsPattern()), "deny", "project")).toThrow(PermissionRuleValidationError);
+  });
+
+  test("an Edit rule whose pattern exceeds MAX_STARS_PER_SEGMENT throws", () => {
+    expect(() => sourceRule(rv("Edit", overStarsPattern()), "allow", "user")).toThrow(PermissionRuleValidationError);
+  });
+
+  test("the thrown error names the offending rule", () => {
+    const pattern = overStarsPattern();
+    try {
+      sourceRule(rv("Read", pattern), "deny", "project");
+      throw new Error("expected sourceRule to throw");
+    } catch (err) {
+      expect(err).toBeInstanceOf(PermissionRuleValidationError);
+      expect((err as PermissionRuleValidationError).rule).toEqual(rv("Read", pattern));
+    }
+  });
+
+  test("a pattern AT exactly the cap is accepted", () => {
+    const pattern = "a" + "*a".repeat(MAX_STARS_PER_SEGMENT) + "b";
+    expect(() => sourceRule(rv("Read", pattern), "allow", "user")).not.toThrow();
+  });
+
+  test("an ordinary in-cap Read glob is accepted", () => {
+    expect(() => sourceRule(rv("Read", "build/*.js"), "allow", "user")).not.toThrow();
+  });
+
+  test("a bare Read/Edit rule (no ruleContent) is never subject to this cap either -- out of scope by construction", () => {
+    expect(() => sourceRule(rv("Edit"), "deny", "managed")).not.toThrow();
+  });
+
+  test("the cap does not apply to non-Read/Edit tools even with many same-segment '*' occurrences", () => {
+    expect(() => sourceRule(rv("Bash", overStarsPattern()), "allow", "user")).not.toThrow();
   });
 });
 

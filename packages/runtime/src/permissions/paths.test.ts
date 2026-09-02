@@ -24,6 +24,8 @@ import {
   readDenyBlocksEdit,
   MAX_DOUBLE_STARS,
   exceedsDoubleStarCap,
+  MAX_STARS_PER_SEGMENT,
+  exceedsStarsPerSegmentCap,
   type FileRuleEntry,
 } from "./paths.ts";
 
@@ -199,6 +201,65 @@ describe("matchFileRule -- glob semantics (WS-07 §3.1: `*` stays within one seg
         matchFileRule("src/config.json", opts({ path: "/synthetic/proj/src/sub/config.json", direction })),
       ).toBe(false);
     }
+  });
+});
+
+// P2 fix-wave item 3: the same-segment multiple-`*` cap (residual gap this module's own header
+// used to name as "deliberately deferred" alongside MAX_DOUBLE_STARS -- now closed). UNLIKE
+// MAX_DOUBLE_STARS (uniformly inert on both directions, mitigated entirely by add-time rejection),
+// this cap resolves DIRECTION-AWARE at match time too: inert on allow, counts as matching on
+// denyAsk -- see MAX_STARS_PER_SEGMENT's own header in paths.ts for the full rationale.
+describe("matchFileRule -- MAX_STARS_PER_SEGMENT (P2 fix-wave item 3: same-segment multiple-`*` polynomial backtracking cap)", () => {
+  function manyStarsSegment(count: number): string {
+    // "a*a*a*...*b" -- `count` stars within ONE segment, never a "**" token (each star is
+    // surrounded by literal "a" characters so no two stars are ever adjacent, which would risk
+    // forming an unrelated "**" sub-sequence the collapse/count logic could misread).
+    return "a" + "*a".repeat(count) + "b";
+  }
+
+  test("an over-cap single-segment pattern is INERT on allow (never matches, safe under-grant)", () => {
+    const overCap = manyStarsSegment(MAX_STARS_PER_SEGMENT + 1);
+    expect(matchFileRule(overCap, opts({ path: "/synthetic/proj/anything-at-all", direction: "allow" }))).toBe(false);
+    // Even a path that WOULD plausibly match the pattern's own shape still resolves false -- the
+    // cap short-circuits before compilation is ever attempted, not merely "happens not to match".
+    const plausible = "a" + "x".repeat(MAX_STARS_PER_SEGMENT + 1) + "b";
+    expect(matchFileRule(overCap, opts({ path: `/synthetic/proj/${plausible}`, direction: "allow" }))).toBe(false);
+  });
+
+  test("an over-cap single-segment pattern COUNTS AS MATCHING on denyAsk -- fails safe (broadly denies/asks) rather than silently doing nothing", () => {
+    const overCap = manyStarsSegment(MAX_STARS_PER_SEGMENT + 1);
+    expect(matchFileRule(overCap, opts({ path: "/synthetic/proj/anything-at-all", direction: "denyAsk" }))).toBe(true);
+    expect(matchFileRule(overCap, opts({ path: "/synthetic/proj/totally-unrelated/nested/path", direction: "denyAsk" }))).toBe(true);
+  });
+
+  test("boundary: EXACTLY MAX_STARS_PER_SEGMENT stars in one segment still compiles and matches normally on BOTH directions -- pins the cap check is `>`, not an accidental `>=`", () => {
+    const atCap = manyStarsSegment(MAX_STARS_PER_SEGMENT);
+    // "a*a*...*b" with N stars matches literal "a" + N "a"s + "b" (each "*" also matches zero
+    // characters) as the simplest concrete witness.
+    const matchingPath = "/synthetic/proj/a" + "a".repeat(MAX_STARS_PER_SEGMENT) + "b";
+    expect(matchFileRule(atCap, opts({ path: matchingPath, direction: "allow" }))).toBe(true);
+    expect(matchFileRule(atCap, opts({ path: matchingPath, direction: "denyAsk" }))).toBe(true);
+    // A non-matching path at the SAME (in-cap) star count behaves like an ordinary glob miss on
+    // BOTH directions -- never the direction-aware "counts as matching" resolution, which is
+    // reserved for the OVER-cap case only.
+    expect(matchFileRule(atCap, opts({ path: "/synthetic/proj/totally-different", direction: "denyAsk" }))).toBe(false);
+  });
+
+  test("a '**' segment's own two characters are never counted toward MAX_STARS_PER_SEGMENT -- that mechanism is entirely separate (MAX_DOUBLE_STARS)", () => {
+    // MAX_STARS_PER_SEGMENT-many literal "**" segments -- if "**" were mistakenly counted here too,
+    // this would spuriously trip the per-segment cap; it must not, on either direction, for a
+    // pattern that is comfortably within MAX_DOUBLE_STARS' own separate limit.
+    const segments = Array.from({ length: MAX_STARS_PER_SEGMENT }, (_, i) => `seg${i}`);
+    const pattern = segments.join("/**/");
+    const zeroRepPath = "/synthetic/proj/" + segments.join("/");
+    expect(matchFileRule(pattern, opts({ path: zeroRepPath, direction: "allow" }))).toBe(true);
+    expect(matchFileRule(pattern, opts({ path: zeroRepPath, direction: "denyAsk" }))).toBe(true);
+  });
+
+  test("the two caps compose: an over-cap MAX_DOUBLE_STARS pattern that is ALSO over-cap on MAX_STARS_PER_SEGMENT still resolves via the direction-aware per-segment path (checked first)", () => {
+    const manyDoubleStars = Array.from({ length: MAX_DOUBLE_STARS + 2 }, (_, i) => manyStarsSegment(MAX_STARS_PER_SEGMENT + 1) + i).join("/**/");
+    expect(matchFileRule(manyDoubleStars, opts({ path: "/synthetic/proj/anything", direction: "allow" }))).toBe(false);
+    expect(matchFileRule(manyDoubleStars, opts({ path: "/synthetic/proj/anything", direction: "denyAsk" }))).toBe(true);
   });
 });
 
@@ -661,5 +722,42 @@ describe("exceedsDoubleStarCap (Ruling P2-E: rule-add-time probe for compileFsGl
     const anchored = `/synthetic/settings-src/${bare}`;
     expect(exceedsDoubleStarCap(bare)).toBe(true);
     expect(exceedsDoubleStarCap(anchored)).toBe(true);
+  });
+});
+
+// P2 fix-wave item 3: rule-add-time probe for MAX_STARS_PER_SEGMENT, mirroring
+// exceedsDoubleStarCap's own fixture corpus exactly (same shape, sibling cap).
+describe("exceedsStarsPerSegmentCap (P2 fix-wave item 3: rule-add-time probe for matchFileRule's own same-segment cap)", () => {
+  function manyStarsSegment(count: number): string {
+    return "a" + "*a".repeat(count) + "b";
+  }
+
+  test("a segment at exactly MAX_STARS_PER_SEGMENT does not exceed the cap", () => {
+    expect(exceedsStarsPerSegmentCap(manyStarsSegment(MAX_STARS_PER_SEGMENT))).toBe(false);
+  });
+
+  test("a segment with one more than MAX_STARS_PER_SEGMENT exceeds the cap", () => {
+    expect(exceedsStarsPerSegmentCap(manyStarsSegment(MAX_STARS_PER_SEGMENT + 1))).toBe(true);
+  });
+
+  test("a pattern with no '*' at all never exceeds the cap", () => {
+    expect(exceedsStarsPerSegmentCap("build/dist/index.js")).toBe(false);
+  });
+
+  test("'**' segments are never counted toward this cap, however many appear", () => {
+    const pattern = Array.from({ length: MAX_STARS_PER_SEGMENT + 5 }, () => "**").join("/a/");
+    expect(exceedsStarsPerSegmentCap(pattern)).toBe(false);
+  });
+
+  test("the cap is PER SEGMENT, not summed across the whole pattern -- two segments each just under the cap do not combine to exceed it", () => {
+    const twoSegments = `${manyStarsSegment(MAX_STARS_PER_SEGMENT)}/${manyStarsSegment(MAX_STARS_PER_SEGMENT)}`;
+    expect(exceedsStarsPerSegmentCap(twoSegments)).toBe(false);
+  });
+
+  test("anchor-independence: prepending a literal absolute base never changes the verdict", () => {
+    const bare = manyStarsSegment(MAX_STARS_PER_SEGMENT + 1);
+    const anchored = `/synthetic/settings-src/${bare}`;
+    expect(exceedsStarsPerSegmentCap(bare)).toBe(true);
+    expect(exceedsStarsPerSegmentCap(anchored)).toBe(true);
   });
 });

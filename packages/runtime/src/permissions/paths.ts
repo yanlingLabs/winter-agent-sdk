@@ -201,14 +201,14 @@ function globSegmentToRegexBody(segment: string): string {
 //       exponent fixed and small regardless of how an untrusted rule author crafts the pattern. A
 //       pattern over the cap is treated as never-matching (fails closed) rather than compiled.
 //
-// Residual, explicitly NOT addressed by either mitigation (review fix round 1 finding; P2 fix-wave
-// tracks it, no code change here): a SINGLE segment carrying many `*` tokens (e.g.
-// "a*a*a*a*a*a*a*b") compiles, via globSegmentToRegexBody, to that many sequential "[^/]*" groups
-// WITHIN one segment's own regex body -- untouched by MAX_DOUBLE_STARS, which only counts whole
-// "**" segment tokens, never `*` occurrences inside a segment. Matched against a long, non-matching
-// candidate segment this is the same shape of ambiguous-partition backtracking (polynomial in the
-// star count), under the identical untrusted-rule threat model (WS-07 §3.2: project deny/ask rules
-// apply without workspace trust). Deliberately deferred, not fixed in this pass.
+// P2 fix-wave item 3 (was: "Residual, explicitly NOT addressed by either mitigation ... P2 fix-wave
+// tracks it" -- now closed, see MAX_STARS_PER_SEGMENT below): a SINGLE segment carrying many `*`
+// tokens (e.g. "a*a*a*a*a*a*a*b") compiles, via globSegmentToRegexBody, to that many sequential
+// "[^/]*" groups WITHIN one segment's own regex body -- untouched by MAX_DOUBLE_STARS, which only
+// counts whole "**" segment tokens, never `*` occurrences inside a segment. Matched against a long,
+// non-matching candidate segment this is the same shape of ambiguous-partition backtracking
+// (polynomial in the star count), under the identical untrusted-rule threat model (WS-07 §3.2:
+// project deny/ask rules apply without workspace trust).
 export const MAX_DOUBLE_STARS = 8;
 
 function collapseConsecutiveDoubleStars(segments: string[]): string[] {
@@ -220,10 +220,62 @@ function collapseConsecutiveDoubleStars(segments: string[]): string[] {
   return out;
 }
 
-function compileFsGlobToRegex(absPattern: string): RegExp | null {
-  const segments = collapseConsecutiveDoubleStars(absPattern.slice(1).split("/")); // absPattern always starts with "/"
-  const doubleStarCount = segments.filter((seg) => seg === "**").length;
-  if (doubleStarCount > MAX_DOUBLE_STARS) return null;
+// P2 fix-wave item 3: the same-segment multiple-`*` cap named above. 8 mirrors MAX_DOUBLE_STARS'
+// own generous-headroom rationale (this module's own corpus never exceeds one or two `*` in a
+// single segment). Excludes "**" segments themselves -- those are governed entirely by the
+// SEPARATE MAX_DOUBLE_STARS mechanism (a "**" segment never goes through globSegmentToRegexBody at
+// all, so counting its own two characters here would conflate two independent bounds).
+//
+// DIRECTION-AWARE, UNLIKE MAX_DOUBLE_STARS (below, deliberately unchanged -- match-time-inert on
+// BOTH directions, per Ruling P2-E's own "deferred to T5" comment at this function's call site):
+// this cap is checked and resolved BEFORE compilation is ever attempted (matchFileRule, below),
+// never by returning `null` from inside a compiler and letting that resolve to a uniform `false`.
+// On "allow" it resolves to `false` (a too-complex allow simply never grants -- safe under-grant,
+// the SAME posture MAX_DOUBLE_STARS' own inertness already has). On "denyAsk" it resolves to `true`
+// (a too-complex safety rule fails SAFE -- counts as matching, denies/asks broadly -- rather than
+// silently doing nothing) if it somehow reaches match time without having been rejected at add time
+// (ruleset.ts's validateNewRule extends Ruling P2-E's own add-time-rejection precedent to this cap,
+// via the exported probe below) -- closing, for THIS cap specifically, the identical "fail-open gap
+// for deny/ask" class Ruling P2-E's own comment names as an accepted, add-time-mitigated residual
+// for MAX_DOUBLE_STARS.
+export const MAX_STARS_PER_SEGMENT = 8;
+
+function countStars(segment: string): number {
+  let count = 0;
+  for (const ch of segment) if (ch === "*") count++;
+  return count;
+}
+
+function exceedsStarsPerSegment(segments: string[]): boolean {
+  return segments.some((seg) => seg !== "**" && countStars(seg) > MAX_STARS_PER_SEGMENT);
+}
+
+// Rule-add-time probe for MAX_STARS_PER_SEGMENT, mirroring exceedsDoubleStarCap's own precedent
+// exactly (same caller -- ruleset.ts's validateNewRule; same "raw, pre-anchor pattern text, no
+// leading '/' required" scope; same collapse-then-count shape). A future task adding a THIRD
+// segment-shaped cap should extend this pairing pattern, not invent a new one.
+export function exceedsStarsPerSegmentCap(pattern: string): boolean {
+  return exceedsStarsPerSegment(collapseConsecutiveDoubleStars(pattern.split("/")));
+}
+
+// Compiles an already-split, already-capped segment sequence into a regex matched against a full
+// absolute target path. Takes `segments` (never a raw pattern string) because BOTH caps above must
+// be checked, on the SAME segment sequence, before this is ever called -- see matchFileRule, the
+// only caller, for why that ordering matters (MAX_STARS_PER_SEGMENT resolves directionally and
+// never reaches this function at all; MAX_DOUBLE_STARS resolves uniformly and also short-circuits
+// before this point). `**` (WS-07 §3.1: "`**` crosses directories") becomes "(?:/[^/]+)*" wherever
+// it sits in the segment sequence -- zero or more complete "/segment" groups -- which uniformly
+// covers every position:
+//   ["a","**","b"] -> "/a(?:/[^/]+)*/b"   matches /a/b, /a/x/b, /a/x/y/b
+//   ["**","b"]     -> "(?:/[^/]+)*/b"     matches /b, /x/b, /x/y/b
+//   ["a","**"]     -> "/a(?:/[^/]+)*"     matches /a, /a/x, /a/x/y
+// Judgment call (documented, not part of the required corpus): the trailing-`**` case above
+// deliberately ALSO matches the bare base itself ("/a"). Real gitignore's own trailing "/**" is
+// contents-only (does not match "a" itself) -- diverged here for a single uniform "zero or more"
+// rule rather than three positional variants, since WS-07 §3.1 pins "`**` crosses directories" as
+// one general fact, not gitignore's own fuller grammar. Flagged in the report; a one-line change
+// (require 1+ reps only when the "**" is the LAST segment) if a differential capture disagrees.
+function compileFsGlobToRegex(segments: string[]): RegExp {
   let out = "";
   for (const seg of segments) {
     out += seg === "**" ? "(?:/[^/]+)*" : "/" + globSegmentToRegexBody(seg);
@@ -231,18 +283,19 @@ function compileFsGlobToRegex(absPattern: string): RegExp | null {
   return new RegExp(`^${out}$`);
 }
 
-// Task 5 (Ruling P2-E): rule-add-time probe for the SAME cap compileFsGlobToRegex enforces at match
-// time, so a Read/Edit rule store (packages/runtime/src/permissions/ruleset.ts) can reject an
-// over-cap pattern when it is ADDED rather than let it silently compile to `null` (never-matching,
-// including for deny/ask -- a fail-open gap for those two directions, see compileFsGlobToRegex's
-// call site comment above) at match time. Reuses collapseConsecutiveDoubleStars + MAX_DOUBLE_STARS
-// rather than letting a caller re-derive the collapse/count algorithm independently, which would
-// drift the moment either changes here. Anchor-independent: an absolute pattern's segments are
-// exactly [...anchor's literal base segments, ...this raw pattern's own segments], and a literal
-// base segment is by definition never "**" -- so prepending it can never change the "**" count.
-// The caller may therefore pass the RAW, pre-anchor rule pattern exactly as authored (this
-// function does not require -- and must not require -- a leading "/", unlike
-// compileFsGlobToRegex's own `absPattern` parameter).
+// Task 5 (Ruling P2-E): rule-add-time probe for the SAME cap compileFsGlobToRegex's own caller
+// (matchFileRule) enforces at match time, so a Read/Edit rule store (packages/runtime/src/
+// permissions/ruleset.ts) can reject an over-cap pattern when it is ADDED rather than let it
+// silently resolve to never-matching, including for deny/ask -- a fail-open gap for those two
+// directions, see matchFileRule's own comment for where that gap is now closed one layer more
+// directly for MAX_STARS_PER_SEGMENT specifically) at match time. Reuses
+// collapseConsecutiveDoubleStars + MAX_DOUBLE_STARS rather than letting a caller re-derive the
+// collapse/count algorithm independently, which would drift the moment either changes here.
+// Anchor-independent: an absolute pattern's segments are exactly [...anchor's literal base
+// segments, ...this raw pattern's own segments], and a literal base segment is by definition never
+// "**" -- so prepending it can never change the "**" count. The caller may therefore pass the RAW,
+// pre-anchor rule pattern exactly as authored (this function does not require -- and must not
+// require -- a leading "/", unlike matchFileRule's own internal `fullPattern`).
 export function exceedsDoubleStarCap(pattern: string): boolean {
   const segments = collapseConsecutiveDoubleStars(pattern.split("/"));
   return segments.filter((seg) => seg === "**").length > MAX_DOUBLE_STARS;
@@ -269,14 +322,25 @@ export function matchFileRule(pattern: string, opts: MatchFileRuleOptions): bool
   }
 
   const fullPattern = normalize(joinBaseAndRest(anchor.base, anchor.rest));
-  const regex = compileFsGlobToRegex(fullPattern);
-  // Ruling P2-E (deferred to T5, NOT changed here): an over-cap pattern (compileFsGlobToRegex
-  // returned null) is inert here for EVERY direction, including deny/ask -- itself a fail-open gap
-  // (a too-complex deny rule silently never fires, rather than being rejected). The real fix is
-  // LOADER-side rejection at rule-*add* time (T5's rule store), using this module's exported
-  // MAX_DOUBLE_STARS as the pre-check threshold, so an over-complex rule is refused before it ever
-  // reaches match-time semantics -- deliberately not match-time behavior, so not touched here.
-  return regex !== null && regex.test(targetPath);
+  const segments = collapseConsecutiveDoubleStars(fullPattern.slice(1).split("/")); // fullPattern always starts with "/"
+
+  // P2 fix-wave item 3: checked FIRST, before MAX_DOUBLE_STARS or compilation -- see
+  // MAX_STARS_PER_SEGMENT's own header for the direction-aware resolution this cap uses, unlike
+  // MAX_DOUBLE_STARS immediately below.
+  if (exceedsStarsPerSegment(segments)) {
+    return opts.direction === "denyAsk";
+  }
+
+  // Ruling P2-E (deferred to T5, NOT changed here): an over-cap MAX_DOUBLE_STARS pattern is inert
+  // here for EVERY direction, including deny/ask -- itself a fail-open gap (a too-complex deny rule
+  // silently never fires, rather than being rejected). The real fix is LOADER-side rejection at
+  // rule-*add* time (T5's rule store), using this module's exported MAX_DOUBLE_STARS as the
+  // pre-check threshold, so an over-complex rule is refused before it ever reaches match-time
+  // semantics -- deliberately not match-time behavior, so not touched here.
+  const doubleStarCount = segments.filter((seg) => seg === "**").length;
+  if (doubleStarCount > MAX_DOUBLE_STARS) return false;
+
+  return compileFsGlobToRegex(segments).test(targetPath);
 }
 
 // ---------------------------------------------------------------------------------------------
