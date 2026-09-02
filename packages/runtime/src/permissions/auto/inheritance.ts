@@ -22,6 +22,42 @@ import { computePolicyHash } from "./caches.ts";
 //   auto       -- read-only/bounded-edit PLUS classifier-mediated auto-approval of much more.
 //   bypassPermissions -- everything except the hard-pinned exceptions (critical rm, deny/ask
 //                 rules, mandatory interaction) auto-approved.
+//
+// Fix round 1, Ruling P2-M (this order's actual soundness, stated plainly — read before adding a
+// caller): this scalar total order is sound ONLY at its two extremes. `dontAsk` is genuinely the
+// global minimum (nothing is stricter: it forecloses every path to "allow" every other mode has)
+// and `bypassPermissions` is genuinely the global maximum (nothing is looser). The FOUR modes in
+// between are NOT actually comparable on one axis — this list flattens two DIFFERENT restriction
+// axes into one number:
+//   - rule-silencing: whether a PRE-EXISTING static allow rule can resolve a call at stage 5 at
+//     all, vs. a whole category being withheld as a standing exception no rule can even reach
+//     (plan's writes — §6.5's own "source edits are withheld... unconditional prose"; auto's own
+//     broad-allow suspension, isAutoSuspendedAllowRule).
+//   - auto-approval breadth: how much of "everything else" a mode grants WITHOUT a matching rule
+//     at all (acceptEdits' bounded edits; auto's classifier-mediated grant).
+// A mode can be narrower on one axis and wider on the other than a neighbor this list calls
+// "stricter" — no single scalar is monotonic in both at once, so the middle four's placement is
+// UNPROVEN, and at least two concrete `resolveChildResumeMode` cells built from it are ACTIVELY
+// UNSAFE, not merely arguable:
+//   (i) a child recorded `auto`, resumed under a parent now at `acceptEdits`, resolves to
+//       `acceptEdits` (rank 3 < rank 4 — "stricter" on this list). But `acceptEdits` does NOT
+//       suspend broad allow rules the way `auto` does (isAutoSuspendedAllowRule is an auto-mode-
+//       only stage-5 filter) — a standing `Bash(*)` allow that `auto` would have suspended to the
+//       classifier now resolves as a bare rule-allow, unreviewed. "Stricter" on the flattened
+//       order; LOOSER on the rule-silencing axis that actually governs this exact call.
+//   (ii) a child recorded `plan`, resumed under a parent now at `dontAsk`, resolves to `dontAsk`
+//       (rank 0 < rank 1 — "stricter" on this list). But `dontAsk` has no concept of plan's own
+//       write-withholding standing exception at all — it falls through to stage 5 like any other
+//       unresolved action, so a pre-existing static allow rule can silently execute a write that
+//       `plan` withholds UNCONDITIONALLY, with no prompt (dontAsk never prompts) and no classifier
+//       borrow (that machinery is plan-mode-only). "Stricter" on the flattened order; a write
+//       `plan` would never have let through at all now goes through silently.
+// Root cause: there is no total order over these four modes, only two partial ones. P4 MUST
+// re-examine this (likely a per-axis comparison, never a single scalar rank) BEFORE wiring any
+// real subagent spawn/resume caller to `computeChildPolicy`/`resolveChildResumeMode` — this list
+// and the two functions built on it are correct exactly as far as WS-07 §11's own two PINNED facts
+// go (the two extremes, and "stricter of" as a bare concept), and no further. No behavior change
+// in this fix round — this comment only states the boundary of what is proven versus assumed.
 // Exported so a fixture (or a future task) can pin the exact order without re-deriving it.
 export const AUTO_MODE_STRICTNESS_ORDER: readonly PermissionMode[] = ["dontAsk", "plan", "default", "acceptEdits", "auto", "bypassPermissions"];
 

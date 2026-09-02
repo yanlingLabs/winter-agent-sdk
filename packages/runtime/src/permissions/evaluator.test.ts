@@ -1367,6 +1367,12 @@ describe("Task 12 — auto mode arm: broad-allow suspension at stage 5 (WS-07 §
     expect(record).toMatchObject({ decision: "allow", mechanism: "rule" });
   });
 
+  test("REGRESSION: a blanket Bash(*) allow rule is NOT suspended outside auto mode -- resolves as a rule through the FULL evaluate() pipeline (closes the 'suspension fixtured both ways' gap: the prior Bash(*) fixtures either called isAutoSuspendedAllowRule directly, bypassing evaluate() entirely, or only ever exercised auto mode)", async () => {
+    const ctx = baseCtx({ policy: policy({ mode: "default", rules: withRules(rule("Bash(*)", "allow")) }) });
+    const record = await evaluate(call("Bash", { command: "curl https://example.com" }), ctx);
+    expect(record).toMatchObject({ decision: "allow", mechanism: "rule" });
+  });
+
   test("classifyAllShell: true suspends even the narrow survivor above -- now reaches the classifier", async () => {
     const scripted = createScriptedClassifier({ verdict: "allow" });
     const ctx = baseCtx({

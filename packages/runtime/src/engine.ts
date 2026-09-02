@@ -363,6 +363,9 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // auto engine below. Appended to, never cleared, for the life of this run (reducer.ts's own
   // "accumulate unconditionally" posture) — see the PostToolUse call site further down for where
   // this actually gets pushed to.
+  // Fix round 1: growth is UNBOUNDED today — harmless at P2 only because the ONE shipped classifier
+  // (alwaysNoVerdictClassifier) never reads `context` at all; MUST be bounded before P6/D13 wires a
+  // real classifier that actually consumes it (§10.4: "a BOUNDED portion").
   const accumulatedClassifierContext: AttributedContext[] = [];
   // Task 12 (WS-07 §10.5): P2 ships ONLY alwaysNoVerdictClassifier (createAutoEngine's own default
   // when `classifier` is omitted) — the real model-routed classifier is P6/D13's job. Audit
