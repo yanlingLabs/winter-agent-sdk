@@ -1,3 +1,4 @@
+import { homedir } from "node:os";
 import {
   PROTOCOL_VERSION,
   type RuntimeConfig,
@@ -9,17 +10,30 @@ import {
 import type { FrameSource, FrameSink } from "./protocol/channel.ts";
 import { Queue } from "./protocol/channel.ts";
 import { createRpcBridge } from "./rpc/bridge.ts";
+import { PolicyStateStore, assertKnownPermissionMode, isPermissionMode } from "./permissions/policy-state.ts";
+import { emptyRuleSet, buildSdkSourcedEntries } from "./permissions/ruleset.ts";
+import {
+  evaluate,
+  NO_OPINION_HOOK_STAGE,
+  NO_OPINION_PROMPT_STAGE,
+  NO_OPINION_AUTO_ENGINE,
+  NO_SPECIAL_CHECKS,
+  type PermissionCall,
+  type EvaluationContext,
+} from "./permissions/evaluator.ts";
 
 export type ContentBlock =
   | { type: "text"; text: string }
   | { type: "tool_use"; id: string; name: string; input: unknown }
-  // `interrupted`/`error` are optional and set ONLY on a synthetic tool_result the engine
-  // manufactures when a round is cut short after its tool_use was already pushed into history —
-  // `interrupted` for an abandoned-mid-interrupt call (Ruling P1-G), `error` for a call whose tool
-  // executor threw (Ruling P1-H). Both are provisional shapes pending official capture. Never set
-  // on a real tool_result; never both set on the same block (a single call is either interrupted or
-  // errored, never both, since each round's execute loop stops at the first of either).
-  | { type: "tool_result"; tool_use_id: string; content: string; interrupted?: boolean; error?: boolean };
+  // `interrupted`/`error`/`denied` are optional and set ONLY on a synthetic tool_result the engine
+  // manufactures instead of actually executing the call — `interrupted` for an abandoned-mid-
+  // interrupt call (Ruling P1-G), `error` for a call whose tool executor threw (Ruling P1-H),
+  // `denied` for a call the six-stage permission evaluator (Task 6, WS-07 §2) refused to execute at
+  // all (cross-task pin: "a normal tool_result ... same provisional-marker class as interrupted/
+  // error"). All three are provisional shapes pending official capture. Never set on a real
+  // tool_result; never two of the three set on the same block (a single call reaches at most one of
+  // denied-before-execution, interrupted-during-execution, or errored-during-execution).
+  | { type: "tool_result"; tool_use_id: string; content: string; interrupted?: boolean; error?: boolean; denied?: boolean };
 
 // The engine's own turn-history record fed back to Provider.generate() on every call. Distinct
 // from the WIRE shape (assistant/user data frames, below): the wire has no "tool" role (tool
@@ -85,12 +99,6 @@ export interface EngineOptions {
   initialMessages?: ProviderMessage[];
 }
 
-// WS-03 §6's pinned six-value public PermissionMode union. Task 2's set_permission_mode handler
-// (below) validates against exactly this set; Task 6 (WS-07) replaces the whole handler with full
-// PolicyState semantics (rule re-evaluation, journal, provenance) — this set stays the same, only
-// the handler body around it grows.
-const PUBLIC_PERMISSION_MODES = new Set(["default", "acceptEdits", "dontAsk", "bypassPermissions", "plan", "auto"]);
-
 type RaceOutcome<T> = { kind: "ok"; value: T } | { kind: "interrupted" };
 
 // Races `p` against the current turn's interrupt signal. `p` is given a no-op catch so that if it
@@ -116,11 +124,75 @@ function raceInterrupt<T>(p: Promise<T>, interrupted: Promise<void>): Promise<Ra
  */
 export async function runEngine(opts: EngineOptions): Promise<number> {
   const { config, input, output, provider, tools, store, initialMessages } = opts;
-  // Mutable (Task 2): set_permission_mode's handler below swaps this live; every other read
-  // (the init/system-init frames above the pump) still only ever sees whatever value is current
-  // at the moment it runs — unchanged for the very first read, since the pump cannot have
-  // processed any control_request yet.
-  let permissionMode = config.permissionMode ?? "default";
+
+  // Task 6 (WS-07 §2/§6.4, Ruling 8): permission startup validation — deliberately the very FIRST
+  // thing runEngine does, before any `await` and before the `init` frame is written. A throw here
+  // (an unrecognized permissionMode, an invalid allowedTools/disallowedTools/permissions rule, or
+  // selecting bypassPermissions without allowDangerouslySkipPermissions/against a managed
+  // disableBypassPermissionsMode veto) takes the SAME "exited before init" path a pre-init
+  // resolution failure already does (e.g. store/resume.ts's ResumeTargetError, via
+  // testing.ts's/main.ts's own pre-runEngine try/catch) — never a parse failure, never a silently
+  // wrong default.
+  const initialMode = assertKnownPermissionMode(config.permissionMode);
+  // Task 5 (WS-07 §3.3 / phase ruling 1) seeding: Options.{allowedTools,disallowedTools,permissions}
+  // become source:"sdk" rule entries via T5's own builder — this is the wiring T5's own header
+  // called "not wired into the engine by this task (that is a later task's job)". Runs the SAME
+  // add-time grammar validation every other rule source gets, so an invalid rule fails loud at
+  // startup (PermissionRuleValidationError) rather than being silently inert at match time.
+  const initialRules = {
+    ...emptyRuleSet(),
+    entries: buildSdkSourcedEntries({
+      ...(config.allowedTools !== undefined ? { allowedTools: config.allowedTools } : {}),
+      ...(config.disallowedTools !== undefined ? { disallowedTools: config.disallowedTools } : {}),
+      ...(config.permissions !== undefined ? { permissions: config.permissions } : {}),
+    }),
+  };
+  const policyStateStore = new PolicyStateStore(
+    { mode: initialMode, rules: initialRules },
+    {
+      allowDangerouslySkipPermissions: config.allowDangerouslySkipPermissions === true,
+      disableBypassPermissionsMode: config.permissions?.disableBypassPermissionsMode === true,
+    },
+  );
+  // Task 6: the resolved, fixed-at-startup home directory used for `~`-anchored file rules
+  // (WS-07 §3.1). A plain `os.homedir()` read — no WINTER_HOME-style override exists for this at P2
+  // (it is the invoking OS user's real home, exactly like every other tool would see it; tests that
+  // need a synthetic home construct an EvaluationContext directly against evaluator.ts instead of
+  // exercising this real value).
+  const permissionHome = homedir();
+
+  // Task 6: builds a FRESH EvaluationContext — always reading policyStateStore.getState() at the
+  // moment of the call, never cached — so every evaluate() call sees the live mode/rules/version.
+  // `trustedWorkspace: false` (constant, P2-wide): no settings-file loader exists yet to have
+  // actually established workspace trust (P5); this is the SAFE direction (WS-07 §3.2's own
+  // trust-gate — project/local ALLOW rules and directory grants stay inert; deny/ask are
+  // unaffected) and P5 is the one that wires a real trust signal in. All four evaluator seams are
+  // the T6 no-opinion stubs (T7/T8/T9/T10/T12 each fill exactly one, per the plan's seam list).
+  const makeEvalCtx = (): EvaluationContext => ({
+    policy: policyStateStore.getState(),
+    cwd: config.cwd,
+    home: permissionHome,
+    trustedWorkspace: false,
+    hookStage: NO_OPINION_HOOK_STAGE,
+    promptStage: NO_OPINION_PROMPT_STAGE,
+    autoEngine: NO_OPINION_AUTO_ENGINE,
+    specialChecks: NO_SPECIAL_CHECKS,
+  });
+
+  // WS-07 §2's stale-policy-rejection contract: evaluate() stamps `policyVersion` from the SNAPSHOT
+  // it was handed (evaluator.ts's own EvaluationContext.policy comment) — if a mode/rule change
+  // lands (via a concurrent set_permission_mode/applyUpdate control request, processed by the pump
+  // below WHILE this call's evaluation is in flight) before this decision is actually used, the
+  // decision is stale and must be discarded, never executed against a policy that has since moved
+  // on. Re-evaluating under the now-current snapshot is the correct recovery (not merely rejecting):
+  // the call still needs an answer under WHATEVER policy is active now.
+  async function evaluateWithFreshPolicy(call: PermissionCall) {
+    let record = await evaluate(call, makeEvalCtx());
+    while (record.policyVersion !== policyStateStore.getState().version) {
+      record = await evaluate(call, makeEvalCtx());
+    }
+    return record;
+  }
 
   // Store failures are auxiliary, never turn-fatal (WS-03 §11 — a mirror failure becomes a
   // `mirror_error` event, not a retroactive turn failure). P1 has no such event to emit yet, so
@@ -160,12 +232,20 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
     sessionId: config.sessionId,
     cwd: config.cwd,
     model: config.model,
-    permissionMode,
+    permissionMode: policyStateStore.getState().mode,
     tools: [],
   });
   output.write({
     type: "data",
-    message: { type: "system", subtype: "init", session_id: config.sessionId, cwd: config.cwd, model: config.model, permissionMode, tools: [] },
+    message: {
+      type: "system",
+      subtype: "init",
+      session_id: config.sessionId,
+      cwd: config.cwd,
+      model: config.model,
+      permissionMode: policyStateStore.getState().mode,
+      tools: [],
+    },
   });
 
   // Task 2 (WS-04 §3.1, direction inversion): the runtime's own half of the control-RPC envelope —
@@ -218,13 +298,14 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
             continue;
           }
           if (cf.subtype === "set_permission_mode") {
-            // Controller resolution (Task 2 scope, WS-04 §3.1): a MINIMAL handler — validate the
-            // payload is one of the six public PermissionMode values, swap the engine's live
-            // variable, ack with the effective mode. Task 6 (WS-07) replaces this whole handler
-            // with full PolicyState semantics (rule re-evaluation, journal, provenance); this is
-            // exactly as far as T2 goes, no more.
+            // Task 6 (WS-07 §2/§6.4) upgrade over T2's minimal handler: still validates the payload
+            // is one of the six public values (unchanged — a wire-level guard against arbitrary
+            // strings), then routes the actual switch through PolicyStateStore.setMode, which bumps
+            // `policyVersion` on success and applies the SAME bypassPermissions gate startup
+            // validation uses (checkBypassGate) — `ok:false` with a typed error code
+            // ("bypass_not_allowed" / "bypass_disabled") on a gated rejection, never a silent no-op.
             const mode = cf.payload; // WS-04 §3.1: request payload is the bare PermissionMode value
-            if (typeof mode !== "string" || !PUBLIC_PERMISSION_MODES.has(mode)) {
+            if (typeof mode !== "string" || !isPermissionMode(mode)) {
               output.write({
                 type: "control_response",
                 requestId: cf.requestId,
@@ -233,8 +314,12 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
               });
               continue;
             }
-            permissionMode = mode;
-            output.write({ type: "control_response", requestId: cf.requestId, ok: true, payload: { effectiveMode: permissionMode } });
+            const result = policyStateStore.setMode(mode);
+            if (!result.ok) {
+              output.write({ type: "control_response", requestId: cf.requestId, ok: false, error: result.error });
+              continue;
+            }
+            output.write({ type: "control_response", requestId: cf.requestId, ok: true, payload: { effectiveMode: result.effectiveMode } });
             continue;
           }
           // WS-04 §3.1: an unrecognized subtype gets a structured error response, never a dropped
@@ -359,7 +444,43 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
       let toolThrowText: string | null = null;
       for (const call of turn.calls) {
         try {
-          const raced = await raceInterrupt(tools.execute(call), interruptSignal);
+          // Task 6 (WS-07 §2, WS-04 §4 ordering rule 5): the permission gate slots HERE — between
+          // this round's tool_use emission (already written/pushed/recorded above) and execution.
+          // Calls in one round evaluate SEQUENTIALLY in call order (this `for` loop's own order); a
+          // deny produces its synthetic tool_result and the loop CONTINUES to the next call — it
+          // does not `break` the round, matching "each-call-independent" semantics (unlike an
+          // interrupt or a thrown executor, which legitimately do stop the round early below).
+          const permissionCall: PermissionCall = {
+            toolName: call.name,
+            input: typeof call.input === "object" && call.input !== null ? (call.input as Record<string, unknown>) : {},
+            toolUseId: call.id,
+          };
+          const decisionRaced = await raceInterrupt(evaluateWithFreshPolicy(permissionCall), interruptSignal);
+          if (decisionRaced.kind === "interrupted") {
+            interrupted = true;
+            break;
+          }
+          const decision = decisionRaced.value;
+          if (decision.decision !== "allow") {
+            // decision.decision === "deny" at T6 — evaluate() never returns "ask"/"defer" yet (T11
+            // wires defer-parking here; a matched ask rule is already resolved to a terminal
+            // allow/deny by the prompt stage inside evaluate() itself, never surfaced as its own
+            // pending state). Cross-task pin: a denial is a NORMAL tool_result, `denied: true`,
+            // flowing through the SAME emit/push/record cluster below as every other result — this
+            // is what makes dontAsk's deny-not-hang fall out structurally (WS-07 §6.3).
+            resultBlocks.push({
+              type: "tool_result",
+              tool_use_id: call.id,
+              content: decision.message ?? "Permission denied",
+              denied: true,
+            });
+            continue;
+          }
+          // WS-07 §7.2: updatedInput/transformedInput sanitizes/narrows/redirects the EXECUTED call
+          // — the tool_use block already emitted above keeps the model's ORIGINAL input; only what
+          // actually runs (and therefore the tool_result that comes back) reflects the transform.
+          const executedCall = decision.transformedInput !== undefined ? { ...call, input: decision.transformedInput } : call;
+          const raced = await raceInterrupt(tools.execute(executedCall), interruptSignal);
           if (raced.kind === "interrupted") {
             interrupted = true;
             break;

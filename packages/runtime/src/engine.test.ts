@@ -1,8 +1,16 @@
 import { test, expect, spyOn } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { randomUUID } from "node:crypto";
 import type { RuntimeConfig, WinterFrame, ControlRequestFrame, ControlResponseFrame, ProtocolSdkMessage as SdkMessage } from "@yanlinglabs/winter-agent-sdk";
+import { WinterCompatibilitySessionStore, splitFrames, encodeFrame, compatibilityKeys } from "@yanlinglabs/winter-agent-sdk";
+import type { SpawnedRuntimeProcess } from "@yanlinglabs/winter-agent-sdk";
 import { createInMemoryChannel } from "./protocol/channel.ts";
 import { runEngine, type Provider, type ProviderMessage, type ContentBlock, type ToolExecutor } from "./engine.ts";
 import { echoProvider, scriptedProvider, stubExecutor } from "./provider/mock.ts";
+import { inMemoryProcess } from "./testing.ts";
+import { WinterPermissionError } from "./permissions/policy-state.ts";
 
 // Drains a WinterFrame source fully — used whenever the test writes ALL of its input frames
 // (including end_input/EOF) up front, so there's no ping-pong race between the writer and the
@@ -510,7 +518,17 @@ test("set_permission_mode: accepts every one of the six public PermissionMode va
   const modes = ["default", "acceptEdits", "dontAsk", "bypassPermissions", "plan", "auto"];
   for (const mode of modes) {
     const { host, runtime } = createInMemoryChannel();
-    const done = runEngine({ config: baseConfig(), input: runtime.input, output: runtime.output, provider: echoProvider, tools: stubExecutor });
+    // Task 6 (WS-07 §6.4): bypassPermissions is now gated on allowDangerouslySkipPermissions — this
+    // test's OWN purpose is "every one of the six values is individually well-formed and swaps the
+    // live mode," not the gate itself (which has its own dedicated tests below), so the config
+    // simply grants the flag unconditionally for every iteration.
+    const done = runEngine({
+      config: baseConfig({ allowDangerouslySkipPermissions: true }),
+      input: runtime.input,
+      output: runtime.output,
+      provider: echoProvider,
+      tools: stubExecutor,
+    });
 
     host.output.write({ type: "control_request", requestId: "m", subtype: "set_permission_mode", payload: mode });
     host.output.write({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined });
@@ -605,6 +623,199 @@ test("Task 2: a rpc_probe turn writes a runtime-originated control_request; the 
   const result = msgs.find((m) => m.type === "result");
   expect(result).toEqual({ type: "result", subtype: "success", is_error: false, result: "rpc reply: pong" });
   expect(code).toBe(0);
+});
+
+// --- Task 6 (WS-07 §2/§6.1/§6.3/§6.4): the permission gate — engine integration --------------------
+//
+// Unlike every test above, these drive `inMemoryProcess` (winter-agent-runtime/testing) rather than
+// `createInMemoryChannel` directly, over a fresh mkdtemp WINTER_HOME — mirroring the established
+// "T8/P1 dialect test pattern" (packages/runtime/src/store/resume.test.ts's own runOneEnvelope/
+// drainAll helpers) so persistence (via WinterCompatibilitySessionStore) can be read back and
+// compared against the wire. Every winterHome below is a fresh mkdtemp, never ~/.winter/~/.norma.
+
+function freshHome(): string {
+  return mkdtempSync(join(tmpdir(), "winter-permissions-test-"));
+}
+
+async function drainProcess(proc: SpawnedRuntimeProcess): Promise<WinterFrame[]> {
+  const frames: WinterFrame[] = [];
+  let carry = "";
+  for await (const chunk of proc.stdout) {
+    const split = splitFrames(chunk, carry);
+    carry = split.carry;
+    frames.push(...split.frames);
+  }
+  return frames;
+}
+
+test("Task 6: a denied tool call produces a synthetic tool_result with denied:true on the wire, and the round continues to the other call + the next provider turn", async () => {
+  const home = freshHome();
+  try {
+    const sessionId = randomUUID();
+    const cwd = "/winter-fixture-permissions";
+    const config: RuntimeConfig = { sessionId, cwd, model: "sonnet", disallowedTools: ["test_tool"] };
+    const provider = scriptedProvider([
+      {
+        kind: "tool_use",
+        calls: [
+          { id: "call1", name: "test_tool", input: { probe: true } },
+          { id: "call2", name: "other_tool", input: { x: 1 } },
+        ],
+      },
+      { kind: "text", text: "done" },
+    ]);
+    const proc = inMemoryProcess(["--config-json", JSON.stringify(config)], provider, stubExecutor, { WINTER_HOME: home });
+    proc.stdin.write(encodeFrame({ type: "user", text: "go" }));
+    proc.stdin.write(encodeFrame({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined }));
+
+    const frames = await drainProcess(proc);
+    await proc.exited;
+
+    const msgs = frames.filter((f) => f.type === "data").map((f) => (f as { message: SdkMessage }).message);
+    expect(msgs.map((m) => m.type)).toEqual(["system", "assistant", "user", "assistant", "result"]);
+    const toolResultMsg = msgs[2] as { message: { content: unknown } };
+    expect(toolResultMsg.message.content).toEqual([
+      { type: "tool_result", tool_use_id: "call1", content: expect.any(String), denied: true },
+      { type: "tool_result", tool_use_id: "call2", content: "other_tool:{\"x\":1}" }, // never denied — the round continues past the deny
+    ]);
+    const deniedBlock = (toolResultMsg.message.content as Array<{ tool_use_id: string; content: string }>)[0]!;
+    expect(deniedBlock.content.length).toBeGreaterThan(0);
+    // the round genuinely continued: the SECOND provider turn ("done") still ran and completed
+    expect((msgs.at(-1) as Extract<SdkMessage, { type: "result" }>).result).toBe("done");
+
+    // persistence: the SAME content the wire showed is what's on disk (wire/history/persistence agreement)
+    const store = new WinterCompatibilitySessionStore({ winterHome: home });
+    const projectKey = compatibilityKeys(cwd).transcriptProjectKey;
+    const loaded = await store.load({ projectKey, sessionId });
+    expect(loaded).not.toBeNull();
+    const persistedUserEntry = loaded!.find(
+      (e) => e.type === "user" && Array.isArray((e as { message?: { content?: unknown } }).message?.content),
+    ) as { message: { content: unknown } } | undefined;
+    expect(persistedUserEntry).toBeDefined();
+    expect(persistedUserEntry!.message.content).toEqual(toolResultMsg.message.content);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("Task 6: bypassPermissions at startup without allowDangerouslySkipPermissions is a typed config error before init is ever written", async () => {
+  const { runtime } = createInMemoryChannel();
+  // A synchronous throw at the very top of runEngine (before the pump/turn-loop ever starts) settles
+  // this promise immediately — no input frame is needed either way (WinterPermissionError's throw
+  // point precedes the very first `await`).
+  const donePromise = runEngine({
+    config: baseConfig({ permissionMode: "bypassPermissions" }),
+    input: runtime.input,
+    output: runtime.output,
+    provider: echoProvider,
+    tools: stubExecutor,
+  });
+  await expect(donePromise).rejects.toThrow(WinterPermissionError);
+});
+
+test("Task 6: an unrecognized permissionMode in RuntimeConfig is a typed config error, not a parse failure", async () => {
+  const { runtime } = createInMemoryChannel();
+  const donePromise = runEngine({
+    config: baseConfig({ permissionMode: "not_a_real_mode" }),
+    input: runtime.input,
+    output: runtime.output,
+    provider: echoProvider,
+    tools: stubExecutor,
+  });
+  await expect(donePromise).rejects.toThrow(WinterPermissionError);
+});
+
+test("Task 6: bypassPermissions IS reachable at startup once allowDangerouslySkipPermissions is true", async () => {
+  const { host, runtime } = createInMemoryChannel();
+  const done = runEngine({
+    config: baseConfig({ permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true }),
+    input: runtime.input,
+    output: runtime.output,
+    provider: echoProvider,
+    tools: stubExecutor,
+  });
+  host.output.write({ type: "user", text: "hi" });
+  host.output.write({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined });
+  const frames = await drain(host.input);
+  const code = await done;
+  expect(code).toBe(0);
+  expect(dataMessages(frames).map((m) => m.type)).toEqual(["system", "assistant", "result"]);
+});
+
+test("Task 6: disableBypassPermissionsMode vetoes bypassPermissions at startup even with allowDangerouslySkipPermissions:true", async () => {
+  const { runtime } = createInMemoryChannel();
+  const donePromise = runEngine({
+    config: baseConfig({ permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true, permissions: { disableBypassPermissionsMode: true } }),
+    input: runtime.input,
+    output: runtime.output,
+    provider: echoProvider,
+    tools: stubExecutor,
+  });
+  await expect(donePromise).rejects.toThrow(WinterPermissionError);
+});
+
+test("Task 6: switching INTO bypassPermissions mid-run without allowDangerouslySkipPermissions is rejected ok:false, and the mode stays unchanged", async () => {
+  const { host, runtime } = createInMemoryChannel();
+  const done = runEngine({ config: baseConfig(), input: runtime.input, output: runtime.output, provider: echoProvider, tools: stubExecutor });
+
+  host.output.write({ type: "control_request", requestId: "m1", subtype: "set_permission_mode", payload: "bypassPermissions" });
+  host.output.write({ type: "user", text: "hi" });
+  host.output.write({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined });
+
+  const frames = await drain(host.input);
+  const code = await done;
+
+  const ack = frames.find((f) => f.type === "control_response" && (f as ControlResponseFrame).requestId === "m1") as ControlResponseFrame;
+  expect(ack.ok).toBe(false);
+  expect(ack.error?.code).toBe("bypass_not_allowed");
+  expect(code).toBe(0);
+});
+
+test("Task 6: live set_permission_mode flips behavior between two rounds — default allows an unmatched call (interim fallback), dontAsk then denies the same shape", async () => {
+  const { host, runtime } = createInMemoryChannel();
+  const provider = scriptedProvider([
+    { kind: "tool_use", calls: [{ id: "c1", name: "mystery_tool", input: {} }] },
+    { kind: "text", text: "first done" },
+    { kind: "tool_use", calls: [{ id: "c2", name: "mystery_tool", input: {} }] },
+    { kind: "text", text: "unreachable — c2 is denied before a second provider call would matter" },
+  ]);
+  const done = runEngine({ config: baseConfig(), input: runtime.input, output: runtime.output, provider, tools: stubExecutor });
+
+  // Sequenced deliberately (NOT all written up front): writing every frame synchronously would let
+  // the pump race the mode switch and envelope 2 ahead of envelope 1 ever reaching its own
+  // evaluate() call (control_request frames are drained by the pump independently of how fast the
+  // round loop consumes `userFrames`) — the SAME class of race the file's own "FIFO under pressure"
+  // test above exists to guard against, just triggered from the opposite direction here. Round 1
+  // must OBSERVABLY complete (its result frame seen) before the mode switch is even sent.
+  host.output.write({ type: "user", text: "first" }); // round 1: default mode
+
+  const round1Frames: WinterFrame[] = [];
+  for await (const f of host.input) {
+    round1Frames.push(f);
+    if (f.type === "data" && (f as { message: SdkMessage }).message.type === "result") break;
+  }
+  const firstToolResult = dataMessages(round1Frames).find((m) => m.type === "user") as { message: { content: unknown } };
+  // envelope 1 (default): mystery_tool executes (interim no-opinion-prompt-stage fallback -> allow)
+  expect(firstToolResult.message.content).toEqual([{ type: "tool_result", tool_use_id: "c1", content: "mystery_tool:{}" }]);
+
+  host.output.write({ type: "control_request", requestId: "m1", subtype: "set_permission_mode", payload: "dontAsk" });
+  const modeAck = await (async () => {
+    for await (const f of host.input) {
+      if (f.type === "control_response" && (f as ControlResponseFrame).requestId === "m1") return f as ControlResponseFrame;
+    }
+    throw new Error("never saw the set_permission_mode ack");
+  })();
+  expect(modeAck.ok).toBe(true);
+
+  host.output.write({ type: "user", text: "second" }); // round 2: now genuinely under dontAsk
+  host.output.write({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined });
+  const round2Frames = await drain(host.input);
+  const code = await done;
+  expect(code).toBe(0);
+
+  const secondToolResult = dataMessages(round2Frames).find((m) => m.type === "user") as { message: { content: unknown } };
+  // envelope 2 (dontAsk): the SAME unmatched call is now denied, never executed
+  expect(secondToolResult.message.content).toEqual([{ type: "tool_result", tool_use_id: "c2", content: expect.any(String), denied: true }]);
 });
 
 test("Task 2: a control_response with no matching pending request is dropped (bridge logs to stderr) — never crashes the engine", async () => {
