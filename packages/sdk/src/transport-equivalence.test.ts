@@ -701,6 +701,44 @@ function registerEquivalenceScenarios(legA: LegName, legB: LegName): void {
     expect(toolResultMsg.message.content).toEqual([{ type: "tool_result", tool_use_id: "test-call-1", content: 'test_tool:{"probe":true}' }]);
   });
 
+  // Controller-advisor-flagged residual (this task's own report, Concerns): the two halves of
+  // "SessionEnd is structurally unanswerable in single-shot mode" were each already unit-proven
+  // separately (bridge.test.ts's closed-flag fix; engine.ts's own extensive teardown-ordering
+  // comment) but never composed end-to-end through the REAL sdk-side query() wrapper. This
+  // scenario is that composed proof, on every leg including a real spawned child process.
+  test("SessionEnd hook in single-shot mode: callback body never runs, query() still completes cleanly with no throw and no hang", async () => {
+    let aRan = false;
+    let bRan = false;
+    const a = await traceViaQuery(legA, {
+      prompt: "hi",
+      includeHookEvents: true,
+      hooks: { SessionEnd: [{ hooks: [async () => { aRan = true; return {}; }] }] },
+    });
+    const b = await traceViaQuery(legB, {
+      prompt: "hi",
+      includeHookEvents: true,
+      hooks: { SessionEnd: [{ hooks: [async () => { bRan = true; return {}; }] }] },
+    });
+    expect(compareTraces(a.trace, b.trace)).toEqual([]);
+    expect(a.thrown).toBeUndefined();
+    expect(b.thrown).toBeUndefined();
+    // SessionEnd fires from engine.ts strictly AFTER the terminal `result` frame is written (its
+    // own "teardown" call site, only once the turn loop has fully drained) — but a single-shot
+    // query() consumer's readLoop deterministically breaks the INSTANT it processes that `result`
+    // frame (query.ts: "single-shot prompt: exactly one turn, unchanged"), never asking for
+    // another chunk and never processing any further already-decoded frame in the same batch. So
+    // this hook's own hook_started/hook_response lifecycle frames can NEVER reach a single-shot
+    // consumer, regardless of `includeHookEvents` or leg — the observed trace is byte-identical to
+    // an unhooked plain query. This is the sharper, structural half of the advisor's flagged
+    // limitation: not merely "the hook's answer arrives late", but "a single-shot consumer can
+    // never observe this hook ran at all" — only the server-side audit journal (dialect.ts)
+    // records its outcome (as "error"), and nothing reads that journal back yet at P2 (see this
+    // task's report).
+    expect(a.trace.map((e) => e.kind)).toEqual(["system/init", "assistant", "result", "exit"]);
+    expect(aRan).toBe(false);
+    expect(bRan).toBe(false);
+  });
+
   // Ruling P2-B's own proof, plus Task 8's equivalence-scenario requirement (allow WITH
   // updatedInput) — combined deliberately: answering this RPC at all is only possible once BOTH
   // sides of P2-B are fixed, and the answer's updatedInput is what proves the whole canUseTool
