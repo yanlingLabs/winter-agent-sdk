@@ -149,6 +149,18 @@ export class PolicyStateStore {
   // ungated. The gate is checked FIRST, atomically: on rejection, NEITHER the rules' bookkeeping
   // `mode` field (applyPermissionUpdate's own setMode case) NOR this store's active mode/version
   // changes at all — never a partial application. No journaling here (see this class's own header).
+  //
+  // API-shape note (flagged for T8, this method's first real caller beyond this file's own unit
+  // tests): the bypass gate above is the ONLY failure this method reports via a returned
+  // `{ok:false}` value. T5's own applyPermissionUpdate (called below) still THROWS its established
+  // typed errors for a malformed update — PermissionUpdateAuthorityError (unknown/unauthorized
+  // destination) or PermissionRuleValidationError (an invalid rule inside an addRules/replaceRules
+  // payload) — unchanged and uncaught here. This asymmetry is deliberate, not an oversight: the
+  // bypass gate is a NEW, expected, recoverable outcome this task adds (worth a clean result value,
+  // matching engine.ts's own control-request-handler convention); T5's exceptions represent
+  // malformed/unauthorized input that was already throw-shaped before this class existed, and this
+  // task's edit authorization does not extend to changing that. A caller wanting one uniform
+  // try/catch-free interface needs its own wrapping try/catch around this call.
   applyUpdate(update: PermissionUpdate, opts: { authority: RuleSource }): ApplyUpdateOk | SetModeError {
     if (update.type === "setMode") {
       const check = checkBypassGate(update.mode, this.gate);
