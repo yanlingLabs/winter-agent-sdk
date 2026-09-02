@@ -4,7 +4,7 @@ import { PROTOCOL_VERSION } from "./protocol/frames.ts";
 import { splitFrames, encodeFrame, ProtocolError } from "./protocol/codec.ts";
 import type { RuntimeConfig } from "./protocol/config.ts";
 import type { Options } from "./options.ts";
-import type { PermissionMode } from "./permissions/types.ts";
+import type { PermissionMode, CanUseTool, PermissionResult, PermissionRequestPayload } from "./permissions/types.ts";
 import { resolveRuntimeExecutable, defaultSpawn, type SpawnRuntimeOptions, type SpawnedRuntimeProcess } from "./transport.ts";
 import { ResultError, CLIConnectionError, ProtocolDecodeError, ProcessError, AbortError, WinterRpcError } from "./errors.ts";
 
@@ -31,6 +31,13 @@ export type ControlRequestHandler = (payload: unknown) => Promise<ControlRequest
 // double, or a not-yet-built subtype, uses to reach the same registry).
 export interface QueryInternal {
   registerControlRequestHandler(subtype: string, handler: ControlRequestHandler): void;
+  // Task 8 (WS-07 §7.2's "null escape"): sends a `permission` control_response OUT OF BAND,
+  // independent of the normal handler-return write path below — the ONLY legitimate way a
+  // `canUseTool` callback may resolve to `null` (see makePermissionHandler's own enforcement: an
+  // unaccompanied null fails closed instead of silently parking the runtime's permission RPC
+  // forever, which has no timeout, WS-04 §3). Transport-compatible low-level API only — a product
+  // approval broker always returns a typed PermissionResult from the callback itself (WS-07 §7.2).
+  respondPermission(requestId: string, result: PermissionResult): void;
 }
 
 export interface Query extends AsyncGenerator<SdkMessage> {
@@ -58,6 +65,23 @@ const KILL_GRACE_MS = 50;
 
 export function query(args: { prompt: string | AsyncIterable<string>; options: Options }): Query {
   const { prompt, options } = args;
+
+  // Task 8 (WS-07 §7.3): the shadow warning — a STATIC, ONE-TIME check at query() CONSTRUCTION
+  // time, independent of whether the process ever spawns/connects or a single tool call is ever
+  // made. Two "obviously shadowed" cases only, per the spec's own scope: `bypassPermissions` (the
+  // engine auto-allows nearly everything under it, WS-07 §6.4 — canUseTool is reached only for
+  // PreToolUse-hook denial, explicit deny/ask rules, AskUserQuestion, and the critical-rm circuit
+  // breaker) and a BARE `allowedTools` entry (an unscoped tool name always pre-approves at stage 5,
+  // before canUseTool is ever reached, WS-07 §2 stage 6). No promise of catching every
+  // runtime/path-specific case (WS-07 §7.3's own text) — e.g. a SCOPED entry like `Bash(ls:*)`
+  // still lets other Bash invocations reach the callback, so it does not warn.
+  if (options.canUseTool) {
+    const hasBareAllowedTool = options.allowedTools?.some((rule) => !rule.includes("(")) ?? false;
+    if (options.permissionMode === "bypassPermissions" || hasBareAllowedTool) {
+      const cause = options.permissionMode === "bypassPermissions" ? "permissionMode is 'bypassPermissions'" : "an allowedTools entry is bare (unscoped)";
+      console.error(`winter: WINTER_SDK_CAN_USE_TOOL_SHADOWED: canUseTool is configured but ${cause} — some or all tool calls will never reach it`);
+    }
+  }
 
   const config: RuntimeConfig = {
     // Task 9: a caller-supplied sessionId wins over the default auto-generated uuid — this is what
@@ -123,6 +147,19 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
     });
   }
 
+  // Task 8 (WS-07 §7.2's "null escape"): requestIds ALREADY answered out of band via
+  // query.__internal.respondPermission — checked (and consumed) immediately before every
+  // control_response write below so a legitimate null response from a subtype handler never
+  // produces a duplicate frame for the same requestId. Generic (keyed only by requestId, not
+  // subtype) because the mechanism itself is generic in WS-07 §7.2's own wording ("the consumer
+  // already sent the matching control response out of band") — `respondPermission` is currently
+  // the only producer, but nothing here assumes that.
+  const respondedOutOfBand = new Set<string>();
+  function writeControlResponse(frame: ControlResponseFrame): void {
+    if (respondedOutOfBand.delete(frame.requestId)) return; // already answered out of band -- suppress the duplicate
+    proc.stdin.write(encodeFrame(frame));
+  }
+
   // RUNTIME-originated control requests (permission/hook RPCs in Tasks 8/10; this task ships only
   // the registry + the fallback below) dispatch to a handler registered by subtype. An
   // unrecognized subtype — including every subtype at T2, since nothing registers one in
@@ -141,38 +178,99 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
     try {
       const handler = controlRequestHandlers.get(cf.subtype);
       if (!handler) {
-        proc.stdin.write(
-          encodeFrame({
-            type: "control_response",
-            requestId: cf.requestId,
-            ok: false,
-            error: { code: "unhandled_subtype", message: `no handler registered for control subtype '${cf.subtype}'` },
-          }),
-        );
+        writeControlResponse({
+          type: "control_response",
+          requestId: cf.requestId,
+          ok: false,
+          error: { code: "unhandled_subtype", message: `no handler registered for control subtype '${cf.subtype}'` },
+        });
         return;
       }
       try {
         const result = await handler(cf.payload);
         if (result.ok) {
-          proc.stdin.write(
-            encodeFrame({
-              type: "control_response",
-              requestId: cf.requestId,
-              ok: true,
-              ...(result.payload !== undefined ? { payload: result.payload } : {}),
-            }),
-          );
+          writeControlResponse({
+            type: "control_response",
+            requestId: cf.requestId,
+            ok: true,
+            ...(result.payload !== undefined ? { payload: result.payload } : {}),
+          });
         } else {
-          proc.stdin.write(encodeFrame({ type: "control_response", requestId: cf.requestId, ok: false, error: result.error }));
+          writeControlResponse({ type: "control_response", requestId: cf.requestId, ok: false, error: result.error });
         }
       } catch (err) {
         // A throwing handler fails closed — ok:false, never a dropped request or a wrapper crash.
         const message = err instanceof Error ? err.message : String(err);
-        proc.stdin.write(encodeFrame({ type: "control_response", requestId: cf.requestId, ok: false, error: { code: "handler_threw", message } }));
+        writeControlResponse({ type: "control_response", requestId: cf.requestId, ok: false, error: { code: "handler_threw", message } });
       }
     } catch {
       /* see policy note above: a stdin write after the child has already exited is swallowed */
     }
+  }
+
+  // Task 8 (WS-07 §7.1): registered ONLY when a callback is configured — from the runtime's point
+  // of view, "no callback" and "a callback that never gets a chance to answer" collapse to the
+  // identical wire outcome (the generic "unhandled_subtype" fallback above), which is exactly what
+  // the real PromptStage's own null-on-rejection handling expects (packages/runtime/src/
+  // permissions/prompt-stage.ts). `signal` is a fresh AbortController per request, forwarded from
+  // the query's own abortController if one exists (P2: no other cancellation source reaches a
+  // pending permission prompt — WS-04 §3's own no-park-timeout rule means only the callback
+  // resolving, or the whole query aborting, ever ends the wait).
+  function makePermissionHandler(canUseTool: CanUseTool): ControlRequestHandler {
+    return async (payload: unknown): Promise<ControlRequestHandlerResult> => {
+      const req = payload as PermissionRequestPayload;
+      const controller = new AbortController();
+      if (options.abortController?.signal.aborted) controller.abort();
+      else options.abortController?.signal.addEventListener("abort", () => controller.abort(), { once: true });
+
+      let result: PermissionResult | null;
+      try {
+        result = await canUseTool(req.toolName, req.input, {
+          signal: controller.signal,
+          ...(req.suggestions !== undefined ? { suggestions: req.suggestions } : {}),
+          ...(req.blockedPath !== undefined ? { blockedPath: req.blockedPath } : {}),
+          ...(req.decisionReason !== undefined ? { decisionReason: req.decisionReason } : {}),
+          ...(req.title !== undefined ? { title: req.title } : {}),
+          ...(req.displayName !== undefined ? { displayName: req.displayName } : {}),
+          ...(req.description !== undefined ? { description: req.description } : {}),
+          toolUseID: req.toolUseID,
+          ...(req.agentID !== undefined ? { agentID: req.agentID } : {}),
+          requestId: req.requestId,
+          ...(req.matchedAskRule !== undefined ? { matchedAskRule: req.matchedAskRule } : {}),
+        });
+      } catch (err) {
+        // Callback THROW = fail-closed deny (task instruction, verbatim) — a typed PermissionResult,
+        // not an RPC-level ok:false: the runtime's real PromptStage treats any bridge rejection as
+        // "no opinion" (packages/runtime/src/permissions/prompt-stage.ts), which is the WRONG
+        // semantics for "the host answered, badly" — a genuine typed deny is what actually reaches
+        // the model as a normal, explainable tool_result.
+        const message = err instanceof Error ? err.message : String(err);
+        console.error(`winter: canUseTool callback threw for '${req.toolName}': ${message} — failing closed (deny)`);
+        const deny: PermissionResult = { behavior: "deny", message: `canUseTool callback threw: ${message}` };
+        return { ok: true, payload: deny };
+      }
+
+      if (result === null) {
+        // The ONLY legitimate reason to see this: the callback already answered out of band via
+        // respondPermission (checked/consumed by writeControlResponse above) — this handler's own
+        // return value is then irrelevant, since the write it would produce is suppressed. Anything
+        // else is an ACCIDENTAL null (WS-07 §7.2) — fails closed rather than leaving the runtime's
+        // permission RPC parked forever (no park timeout, WS-04 §3).
+        if (respondedOutOfBand.has(req.requestId)) {
+          return { ok: true }; // suppressed by writeControlResponse's own guard; payload is moot
+        }
+        console.error(`winter: canUseTool callback for '${req.toolName}' returned null with no prior out-of-band response — failing closed (deny)`);
+        const deny: PermissionResult = {
+          behavior: "deny",
+          message: "canUseTool callback returned null with no prior out-of-band response (accidental null fails closed, WS-07 §7.2)",
+        };
+        return { ok: true, payload: deny };
+      }
+      return { ok: true, payload: result };
+    };
+  }
+  if (options.canUseTool) {
+    controlRequestHandlers.set("permission", makePermissionHandler(options.canUseTool));
   }
 
   // Stderr is diagnostics only, never frames (WS-04 §6) — forwarded eagerly, independent of
@@ -396,6 +494,19 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
   gen.__internal = {
     registerControlRequestHandler(subtype, handler) {
       controlRequestHandlers.set(subtype, handler);
+    },
+    // Task 8 (WS-07 §7.2's "null escape"): marks `requestId` answered BEFORE writing, so a
+    // concurrently-resolving handler's own (suppressed) write can never race ahead of this one —
+    // writeControlResponse's guard checks/consumes this same set. Swallow-on-write-failure matches
+    // this file's established policy (a write after the child has already exited is never a second,
+    // competing failure — see handleIncomingControlRequest's own header comment).
+    respondPermission(requestId, result) {
+      respondedOutOfBand.add(requestId);
+      try {
+        proc.stdin.write(encodeFrame({ type: "control_response", requestId, ok: true, payload: result }));
+      } catch {
+        /* see policy note above */
+      }
     },
   };
   return gen;

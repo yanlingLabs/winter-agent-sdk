@@ -1,14 +1,14 @@
-import { test, expect } from "bun:test";
+import { test, expect, spyOn } from "bun:test";
 import { query, type QueryInternal } from "./query.ts";
 import { ResultError, WinterRpcError } from "./errors.ts";
 import { inMemoryProcess } from "winter-agent-runtime/testing";
-import { echoProvider } from "winter-agent-runtime";
+import { echoProvider, testProviderByName } from "winter-agent-runtime";
 import type { Provider, ProviderTurn } from "winter-agent-runtime";
 import type { SpawnedRuntimeProcess, SpawnRuntimeOptions } from "./transport.ts";
 import { encodeFrame } from "./protocol/codec.ts";
 import { PROTOCOL_VERSION } from "./protocol/frames.ts";
 import type { WinterFrame, ControlResponseFrame } from "./protocol/frames.ts";
-import type { PermissionMode } from "./permissions/types.ts";
+import type { PermissionMode, PermissionResult, PermissionRequestPayload } from "./permissions/types.ts";
 
 test("query yields system/init, assistant, result in order", async () => {
   const seen: string[] = [];
@@ -426,4 +426,329 @@ test("interrupt(): sends a real control request and resolves on ack; drain seman
 
   expect(seen).toEqual(["system", "result"]);
   await interruptPromise; // already resolved during the loop above; surfaces any rejection here
+});
+
+// --- Task 8 (WS-07 §7): canUseTool end-to-end -------------------------------------------------
+//
+// Wrapper-isolated tests (this section's first half) drive a SCRIPTED double that emits a raw
+// "permission" control_request directly — like recordingProcessWithControlRequest above, but with
+// the full WS-07 §7.1 payload — so they exercise query.ts's own handler/response-mapping logic
+// independent of whether the real runtime (packages/runtime) ever actually sends one yet. The
+// integration tests further down (dontAsk cross-check + its default-mode positive control) drive
+// the REAL engine (inMemoryProcess) and only turn green once evaluator.ts's real PromptStage is
+// wired into engine.ts — see this task's report for the RED-before/GREEN-after sequencing.
+
+function recordingProcessWithPermissionRequest(payload: PermissionRequestPayload): { proc: SpawnedRuntimeProcess; writes: string[] } {
+  const writes: string[] = [];
+  let resolveGotResponse!: () => void;
+  const gotResponse = new Promise<void>((r) => {
+    resolveGotResponse = r;
+  });
+  const proc: SpawnedRuntimeProcess = {
+    stdin: {
+      write(chunk: string) {
+        writes.push(chunk);
+        for (const line of chunk.split("\n").filter((l) => l.length > 0)) {
+          const frame = JSON.parse(line) as { type: string; requestId?: string };
+          if (frame.type === "control_response" && frame.requestId === payload.requestId) resolveGotResponse();
+        }
+      },
+      end() {},
+    },
+    stdout: (async function* () {
+      yield encodeFrame({ type: "init", protocolVersion: PROTOCOL_VERSION, sessionId: "s", cwd: "/x", model: "sonnet", permissionMode: "default", tools: [] });
+      yield encodeFrame({ type: "control_request", requestId: payload.requestId, subtype: "permission", payload });
+      await gotResponse;
+      yield encodeFrame({ type: "data", message: { type: "result", subtype: "success", is_error: false, result: "ok" } });
+    })(),
+    kill() {},
+    exited: Promise.resolve({ code: 0, signal: null }),
+    pid: null,
+  };
+  return { proc, writes };
+}
+
+function fullPermissionPayload(overrides: Partial<PermissionRequestPayload> = {}): PermissionRequestPayload {
+  return {
+    toolName: "Bash",
+    input: { command: "rm -rf /tmp/x" },
+    suggestions: [{ type: "addRules", rules: [{ toolName: "Bash", ruleContent: "rm -rf /tmp/x" }], behavior: "allow", destination: "session" }],
+    blockedPath: "/tmp/x",
+    decisionReason: "unmatched action reached the prompt stage",
+    title: "Run a shell command",
+    displayName: "Bash",
+    description: "Executes a shell command",
+    toolUseID: "call-1",
+    agentID: "agent-1",
+    requestId: "perm-1",
+    matchedAskRule: { source: "sdk", toolName: "Bash", ruleContent: "rm *" },
+    policyVersion: 0,
+    ...overrides,
+  };
+}
+
+// Never actually iterated — used only by the shadow-warning tests below, which assert on a
+// SYNCHRONOUS side effect of query() construction itself, before any iteration/spawn semantics
+// matter at all.
+function neverIteratedProc(): SpawnedRuntimeProcess {
+  return {
+    stdin: { write() {}, end() {} },
+    stdout: (async function* () {})(),
+    kill() {},
+    exited: new Promise(() => {}),
+    pid: null,
+  };
+}
+
+test("canUseTool receives the verbatim WS-07 §7.1 field set", async () => {
+  const payload = fullPermissionPayload();
+  const { proc } = recordingProcessWithPermissionRequest(payload);
+  let receivedToolName: string | undefined;
+  let receivedInput: unknown;
+  let receivedOpts: Record<string, unknown> | undefined;
+  const gen = query({
+    prompt: "hi",
+    options: {
+      spawnClaudeCodeProcess: () => proc,
+      canUseTool: async (toolName, input, opts) => {
+        receivedToolName = toolName;
+        receivedInput = input;
+        receivedOpts = { ...opts };
+        return { behavior: "allow" };
+      },
+    },
+  });
+  for await (const _msg of gen) {
+    /* drain */
+  }
+  expect(receivedToolName).toBe("Bash");
+  expect(receivedInput).toEqual({ command: "rm -rf /tmp/x" });
+  expect(receivedOpts?.signal).toBeInstanceOf(AbortSignal);
+  const { signal: _signal, ...rest } = receivedOpts!;
+  expect(rest).toEqual({
+    suggestions: payload.suggestions,
+    blockedPath: "/tmp/x",
+    decisionReason: "unmatched action reached the prompt stage",
+    title: "Run a shell command",
+    displayName: "Bash",
+    description: "Executes a shell command",
+    toolUseID: "call-1",
+    agentID: "agent-1",
+    requestId: "perm-1",
+    matchedAskRule: { source: "sdk", toolName: "Bash", ruleContent: "rm *" },
+  });
+});
+
+test("an allow PermissionResult (with updatedInput/updatedPermissions/decisionClassification) is written back verbatim", async () => {
+  const payload = fullPermissionPayload({ requestId: "perm-2" });
+  const { proc, writes } = recordingProcessWithPermissionRequest(payload);
+  const allowResult: PermissionResult = {
+    behavior: "allow",
+    updatedInput: { command: "rm -rf /tmp/x --safe" },
+    updatedPermissions: [{ type: "addRules", rules: [{ toolName: "Bash", ruleContent: "rm -rf /tmp/x" }], behavior: "allow", destination: "session" }],
+    decisionClassification: "user_temporary",
+  };
+  const gen = query({ prompt: "hi", options: { spawnClaudeCodeProcess: () => proc, canUseTool: async () => allowResult } });
+  for await (const _msg of gen) {
+    /* drain */
+  }
+  const response = decodeControlResponse(writes, "perm-2");
+  expect(response?.ok).toBe(true);
+  expect(response?.payload).toEqual(allowResult);
+});
+
+test("a deny PermissionResult (with interrupt/decisionClassification) is written back verbatim", async () => {
+  const payload = fullPermissionPayload({ requestId: "perm-3" });
+  const { proc, writes } = recordingProcessWithPermissionRequest(payload);
+  const denyResult: PermissionResult = { behavior: "deny", message: "no thanks", interrupt: true, decisionClassification: "user_reject" };
+  const gen = query({ prompt: "hi", options: { spawnClaudeCodeProcess: () => proc, canUseTool: async () => denyResult } });
+  for await (const _msg of gen) {
+    /* drain */
+  }
+  const response = decodeControlResponse(writes, "perm-3");
+  expect(response?.ok).toBe(true);
+  expect(response?.payload).toEqual(denyResult);
+});
+
+test("a throwing canUseTool callback fails closed: a deny PermissionResult is written, plus a console.error note; the query still completes", async () => {
+  const payload = fullPermissionPayload({ requestId: "perm-4" });
+  const { proc, writes } = recordingProcessWithPermissionRequest(payload);
+  const errSpy = spyOn(console, "error").mockImplementation(() => {});
+  try {
+    const gen = query({
+      prompt: "hi",
+      options: {
+        spawnClaudeCodeProcess: () => proc,
+        canUseTool: async () => {
+          throw new Error("boom");
+        },
+      },
+    });
+    const seen: string[] = [];
+    for await (const msg of gen) seen.push(msg.type);
+    expect(seen).toContain("result"); // the throw never crashed the wrapper/query
+    const response = decodeControlResponse(writes, "perm-4");
+    expect(response?.ok).toBe(true);
+    expect(response?.payload).toMatchObject({ behavior: "deny" });
+    expect((response?.payload as { message: string }).message).toContain("boom");
+    expect(errSpy.mock.calls.some((args) => args.some((a) => String(a).includes("boom")))).toBe(true);
+  } finally {
+    errSpy.mockRestore();
+  }
+});
+
+test("canUseTool returning null with NO prior out-of-band response fails closed: deny + a console.error warning (accidental null, WS-07 §7.2)", async () => {
+  const payload = fullPermissionPayload({ requestId: "perm-5" });
+  const { proc, writes } = recordingProcessWithPermissionRequest(payload);
+  const errSpy = spyOn(console, "error").mockImplementation(() => {});
+  try {
+    const gen = query({ prompt: "hi", options: { spawnClaudeCodeProcess: () => proc, canUseTool: async () => null } });
+    for await (const _msg of gen) {
+      /* drain */
+    }
+    const response = decodeControlResponse(writes, "perm-5");
+    expect(response?.ok).toBe(true);
+    expect(response?.payload).toMatchObject({ behavior: "deny" });
+    expect(errSpy).toHaveBeenCalled();
+  } finally {
+    errSpy.mockRestore();
+  }
+});
+
+test("the null escape: query.__internal.respondPermission sends the out-of-band response; the callback's subsequent null does NOT write a duplicate", async () => {
+  const payload = fullPermissionPayload({ requestId: "perm-6" });
+  const { proc, writes } = recordingProcessWithPermissionRequest(payload);
+  const outOfBandResult: PermissionResult = { behavior: "allow", decisionClassification: "user_permanent" };
+  const internalRef: { current?: QueryInternal } = {};
+  const gen = query({
+    prompt: "hi",
+    options: {
+      spawnClaudeCodeProcess: () => proc,
+      canUseTool: async (_toolName, _input, opts) => {
+        internalRef.current!.respondPermission(opts.requestId, outOfBandResult);
+        return null;
+      },
+    },
+  });
+  internalRef.current = (gen as unknown as { __internal: QueryInternal }).__internal;
+  for await (const _msg of gen) {
+    /* drain */
+  }
+  const responses = writes
+    .join("")
+    .split("\n")
+    .filter((l) => l.length > 0)
+    .map((l) => JSON.parse(l) as WinterFrame)
+    .filter((f): f is ControlResponseFrame => f.type === "control_response" && (f as ControlResponseFrame).requestId === "perm-6");
+  expect(responses.length).toBe(1); // never a duplicate write for the same requestId
+  expect(responses[0]!.payload).toEqual(outOfBandResult);
+});
+
+// --- Task 8 (WS-07 §7.3): the shadow warning — static, one-time, at query() CONSTRUCTION time ----
+
+test("shadow warning: canUseTool + permissionMode 'bypassPermissions' -> exactly one WINTER_SDK_CAN_USE_TOOL_SHADOWED warning", () => {
+  const errSpy = spyOn(console, "error").mockImplementation(() => {});
+  try {
+    query({
+      prompt: "hi",
+      options: { permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true, canUseTool: async () => null, spawnClaudeCodeProcess: () => neverIteratedProc() },
+    });
+    expect(errSpy).toHaveBeenCalledTimes(1);
+    expect(String(errSpy.mock.calls[0]?.[0])).toContain("WINTER_SDK_CAN_USE_TOOL_SHADOWED");
+  } finally {
+    errSpy.mockRestore();
+  }
+});
+
+test("shadow warning: canUseTool + a BARE allowedTools entry -> exactly one warning", () => {
+  const errSpy = spyOn(console, "error").mockImplementation(() => {});
+  try {
+    query({ prompt: "hi", options: { allowedTools: ["Bash"], canUseTool: async () => null, spawnClaudeCodeProcess: () => neverIteratedProc() } });
+    expect(errSpy).toHaveBeenCalledTimes(1);
+    expect(String(errSpy.mock.calls[0]?.[0])).toContain("WINTER_SDK_CAN_USE_TOOL_SHADOWED");
+  } finally {
+    errSpy.mockRestore();
+  }
+});
+
+test("shadow warning: a SCOPED allowedTools entry (has a specifier) does NOT warn", () => {
+  const errSpy = spyOn(console, "error").mockImplementation(() => {});
+  try {
+    query({ prompt: "hi", options: { allowedTools: ["Bash(ls:*)"], canUseTool: async () => null, spawnClaudeCodeProcess: () => neverIteratedProc() } });
+    expect(errSpy).not.toHaveBeenCalled();
+  } finally {
+    errSpy.mockRestore();
+  }
+});
+
+test("shadow warning: canUseTool alone, default mode, no allowedTools -> never warns", () => {
+  const errSpy = spyOn(console, "error").mockImplementation(() => {});
+  try {
+    query({ prompt: "hi", options: { canUseTool: async () => null, spawnClaudeCodeProcess: () => neverIteratedProc() } });
+    expect(errSpy).not.toHaveBeenCalled();
+  } finally {
+    errSpy.mockRestore();
+  }
+});
+
+test("shadow warning: bypassPermissions with NO canUseTool configured never warns (nothing is being shadowed)", () => {
+  const errSpy = spyOn(console, "error").mockImplementation(() => {});
+  try {
+    query({ prompt: "hi", options: { permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true, spawnClaudeCodeProcess: () => neverIteratedProc() } });
+    expect(errSpy).not.toHaveBeenCalled();
+  } finally {
+    errSpy.mockRestore();
+  }
+});
+
+// --- Task 8: integration cross-check against T6's dontAsk semantics (real engine) ------------------
+//
+// These two drive the REAL engine (inMemoryProcess) rather than a scripted double — "dontAsk never
+// calls canUseTool" is only a meaningful claim once default mode (the positive control right above
+// it) provably DOES reach it through the same real stack. Both are RED until evaluator.ts's real
+// PromptStage is wired into engine.ts (this task's Step 2) — see the task report.
+
+test("default mode: an unmatched tool call reaches canUseTool through the REAL engine (positive control for the dontAsk cross-check below)", async () => {
+  let called = false;
+  const gen = query({
+    prompt: "go",
+    options: {
+      canUseTool: async () => {
+        called = true;
+        return { behavior: "allow" };
+      },
+      spawnClaudeCodeProcess: (opts) => inMemoryProcess(opts.args, testProviderByName("tooluse")),
+    },
+  });
+  for await (const _msg of gen) {
+    /* drain */
+  }
+  expect(called).toBe(true);
+});
+
+test("dontAsk mode: canUseTool is NEVER invoked through the REAL engine, even for a call that would otherwise reach it (WS-07 §6.3 cross-check)", async () => {
+  let called = false;
+  const gen = query({
+    prompt: "go",
+    options: {
+      permissionMode: "dontAsk",
+      canUseTool: async () => {
+        called = true;
+        return { behavior: "allow" };
+      },
+      spawnClaudeCodeProcess: (opts) => inMemoryProcess(opts.args, testProviderByName("tooluse")),
+    },
+  });
+  const userMessages: Array<{ content: Array<{ type: string; denied?: boolean }> }> = [];
+  for await (const msg of gen) {
+    // Note: the "user" tool_result frame is yielded at RUNTIME (iterate() forwards a data frame's
+    // message verbatim, unfiltered) even though the closed SdkMessage TYPE only names
+    // system/assistant/result — a pre-existing SDK-surface gap, out of this task's scope. Widen to
+    // `unknown` to inspect it without fighting that type.
+    const raw = msg as unknown as { type: string; message?: { content: Array<{ type: string; denied?: boolean }> } };
+    if (raw.type === "user" && raw.message) userMessages.push(raw.message);
+  }
+  expect(called).toBe(false);
+  const deniedBlock = userMessages.flatMap((m) => m.content).find((b) => b.type === "tool_result");
+  expect(deniedBlock?.denied).toBe(true);
 });
