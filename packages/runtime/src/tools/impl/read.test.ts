@@ -393,7 +393,12 @@ describe("Read (Phase 3, Lane A, Task 4)", () => {
       expect(ctx.readState.lookup(p)?.complete).toBe(false);
     });
 
-    test("`pages` beyond the real total errors even when the span alone would be legal", async () => {
+    // Fix round 1 (MINOR): this test's title previously said "errors" while its body asserts the
+    // opposite (a legal range) -- corrected to describe what it actually proves: a `pages` range
+    // whose END lands EXACTLY on the real total is a legal boundary case, not an off-by-one error,
+    // distinguishing it from the very next test ("naming an out-of-range page errors"), which pushes
+    // one page past that same boundary.
+    test("`pages` reaching exactly the last page is legal (boundary case, not an off-by-one error)", async () => {
       const p = join(dir, "big3.pdf");
       writeFileSync(p, makePdfBytes({ pageCount: 15 }));
       const result = await runRead({ file_path: p, pages: "10-15" }, makeCtx(dir));

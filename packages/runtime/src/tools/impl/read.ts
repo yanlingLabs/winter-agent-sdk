@@ -42,8 +42,9 @@
 //     ("complete: true ONLY for whole-file reads -- a windowed/offset/limit/pages read records
 //     complete: false") are read literally/conservatively here: Lane B's edit ladder is safety
 //     -relevant, so under-claiming completeness (forcing a re-read) beats over-claiming it.
-//   - IMAGE_MAX_BYTES=5MB, PDF_WHOLE_MAX_PAGES=10, PDF_WHOLE_MAX_BYTES_WHEN_UNKNOWN=2MB: invented,
-//     documented thresholds -- no pinned values exist anywhere in scope.
+//   - IMAGE_MAX_BYTES=5MB, PDF_WHOLE_MAX_PAGES=10, PDF_WHOLE_MAX_BYTES_WHEN_UNKNOWN=2MB,
+//     NB_OUTPUT_CAP=4000 (per-notebook-output-block character cap, mirrors Norma's own fs-read.ts
+//     precedent): invented, documented thresholds -- no pinned values exist anywhere in scope.
 //   - Dimension parsing is hand-rolled (no library, per R3-5) for PNG/GIF/BMP/JPEG only; webp/tiff
 //     /heic get mime-by-extension with dimensions omitted (not worth a bespoke parser for formats
 //     this brittle to hand-roll correctly).
@@ -373,6 +374,13 @@ function renderNotebookBlocks(raw: string): ReadBlock[] | undefined {
           pending.push(nbCap(nbText(out.text)));
         } else if (out.output_type === "execute_result" || out.output_type === "display_data") {
           const data = out.data ?? {};
+          // Fix round 1 (disclosed narrowness): only `image/png` is recognized here. A notebook
+          // output dict carrying `image/jpeg` (or any other image mime) with NO `text/plain`
+          // sibling key produces NO block at all for that output -- neither an image block (not
+          // parsed) nor a text fallback (nothing to fall back to) -- it is silently dropped. Scoped
+          // this way because `image/png` is by far Matplotlib/Jupyter's default plot-output mime
+          // and `parsePngDimensions` already exists for it; a second hand-rolled JPEG-in-base64
+          // path was judged not worth it for this phase. Flagged here rather than left implicit.
           const png = data["image/png"];
           if (typeof png === "string") {
             flush();
