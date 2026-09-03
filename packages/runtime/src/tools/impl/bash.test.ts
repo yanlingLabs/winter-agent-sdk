@@ -11,7 +11,6 @@ import { configureBackgroundTaskRoot, resetBackgroundTaskRootForTest } from "../
 import { resetBackgroundTaskRuntimeForTest, getTask } from "./background-task-runtime.ts";
 import { parseBashInput, resolveTimeout, extractBashPaths, computeWritableRoots } from "./bash.ts";
 import type { SessionTempDirPaths } from "../../paths/temp.ts";
-import { isSandboxAvailable } from "../../sandbox/spawn.ts";
 
 function proj(): string {
   return realpathSync(mkdtempSync(join(tmpdir(), "winter-bash-test-")));
@@ -37,8 +36,10 @@ function bash() {
   return (input: unknown, ctx: ToolExecutionContext) => executor.execute(input, ctx);
 }
 
-const darwin = isSandboxAvailable();
-const d = darwin ? describe : describe.skip;
+// test.skipIf, matching deny.darwin.test.ts's own pinned shape (not `const d = darwin ? describe :
+// describe.skip`) -- a non-darwin CI run then ENUMERATES every test below as visibly skipped,
+// rather than describe.skip hiding the whole block from the report.
+const t = test.skipIf(process.platform !== "darwin");
 
 // ---------------------------------------------------------------------------------------------
 // Pure input validation / timeout resolution -- platform-free.
@@ -149,8 +150,8 @@ describe("extractBashPaths (P2-T11 carry)", () => {
 // ---------------------------------------------------------------------------------------------
 // Real end-to-end executor behavior (darwin-gated -- this dev box has sandbox-exec).
 // ---------------------------------------------------------------------------------------------
-d("Bash executor (real sandboxed spawn)", () => {
-  test("runs a command, reports stdout and exit 0, and shows the sandbox posture", async () => {
+describe("Bash executor (real sandboxed spawn)", () => {
+  t("runs a command, reports stdout and exit 0, and shows the sandbox posture", async () => {
     const ctx = fakeCtx();
     const res = await bash()({ command: "echo hello-winter" }, ctx);
     expect(res.isError).toBeFalsy();
@@ -159,7 +160,7 @@ d("Bash executor (real sandboxed spawn)", () => {
     expect(res.output).toContain("[sandbox: sandboxed]");
   });
 
-  test("stdout and stderr are shown separately, not merged (§6.4 retirement delta)", async () => {
+  t("stdout and stderr are shown separately, not merged (§6.4 retirement delta)", async () => {
     const ctx = fakeCtx();
     const res = await bash()({ command: "echo on-out; echo on-err 1>&2" }, ctx);
     expect(res.output).toContain("on-out");
@@ -167,26 +168,26 @@ d("Bash executor (real sandboxed spawn)", () => {
     expect(res.output).toContain("on-err");
   });
 
-  test("no stderr section at all when stderr is empty", async () => {
+  t("no stderr section at all when stderr is empty", async () => {
     const ctx = fakeCtx();
     const res = await bash()({ command: "echo only-stdout" }, ctx);
     expect(res.output).not.toContain("[stderr]");
   });
 
-  test("a nonzero exit is reported in the text, not as a tool-level isError", async () => {
+  t("a nonzero exit is reported in the text, not as a tool-level isError", async () => {
     const ctx = fakeCtx();
     const res = await bash()({ command: "exit 7" }, ctx);
     expect(res.isError).toBeFalsy();
     expect(res.output).toContain("[exit 7]");
   });
 
-  test("a command that exceeds its timeout is killed and reported", async () => {
+  t("a command that exceeds its timeout is killed and reported", async () => {
     const ctx = fakeCtx();
     const res = await bash()({ command: "sleep 5", timeout: 300 }, ctx);
     expect(res.output).toMatch(/timed out/);
   });
 
-  test("cannot write outside the session cwd under the default sandbox", async () => {
+  t("cannot write outside the session cwd under the default sandbox", async () => {
     const ctx = fakeCtx();
     const sibling = proj();
     const target = join(sibling, "escaped.txt");
@@ -195,14 +196,14 @@ d("Bash executor (real sandboxed spawn)", () => {
     expect(res.output).not.toContain("[exit 0]");
   });
 
-  test("can write into $TMPDIR (ctx.tempDir)", async () => {
+  t("can write into $TMPDIR (ctx.tempDir)", async () => {
     const ctx = fakeCtx();
     const res = await bash()({ command: 'echo scratch > "$TMPDIR/probe.txt" && cat "$TMPDIR/probe.txt"' }, ctx);
     expect(res.output).toContain("scratch");
     expect(res.output).toContain("[exit 0]");
   });
 
-  test("dangerouslyDisableSandbox: true escapes the write fence and is shown as override-requested", async () => {
+  t("dangerouslyDisableSandbox: true escapes the write fence and is shown as override-requested", async () => {
     const ctx = fakeCtx();
     const sibling = proj();
     const target = join(sibling, "escaped.txt");
@@ -212,7 +213,7 @@ d("Bash executor (real sandboxed spawn)", () => {
     expect(res.output).toContain("[sandbox: override-requested]");
   });
 
-  test("bad args are a tool error, never a throw", async () => {
+  t("bad args are a tool error, never a throw", async () => {
     const ctx = fakeCtx();
     const res = await bash()({ command: "" }, ctx);
     expect(res.isError).toBe(true);
@@ -223,7 +224,7 @@ d("Bash executor (real sandboxed spawn)", () => {
   // state) -- the first exports a var from inside its own spawned shell, the second (a genuinely
   // separate bash()() invocation) must not see it. This is the one property in the Bash contract
   // that is invisible to any single-call test, however many of those a suite accumulates.
-  test("env exports from one call do NOT persist to the next -- fresh shell per call", async () => {
+  t("env exports from one call do NOT persist to the next -- fresh shell per call", async () => {
     const ctx = fakeCtx();
     const first = await bash()({ command: "export WINTER_PROBE=leaked" }, ctx);
     expect(first.output).toContain("[exit 0]");
@@ -233,7 +234,7 @@ d("Bash executor (real sandboxed spawn)", () => {
 
   // --- cwd-carry (WS-06 §6.1) ---
   describe("cwd-carry", () => {
-    test("a cd that lands within an allowed dir (ctx.tempDir) persists via ctx.session.setCwd", async () => {
+    t("a cd that lands within an allowed dir (ctx.tempDir) persists via ctx.session.setCwd", async () => {
       const cwd = proj();
       const tempDir = proj();
       mkdirSync(join(tempDir, "sub"));
@@ -244,7 +245,7 @@ d("Bash executor (real sandboxed spawn)", () => {
       expect(carried).toBe(realpathSync(join(tempDir, "sub")));
     });
 
-    test("a cd OUTSIDE every allowed dir does not persist", async () => {
+    t("a cd OUTSIDE every allowed dir does not persist", async () => {
       const cwd = proj();
       let carried: string | undefined;
       const ctx = fakeCtx({ cwd, session: { setCwd: (p) => (carried = p), addBoundedRoot() {}, setPermissionMode() {} } });
@@ -253,14 +254,14 @@ d("Bash executor (real sandboxed spawn)", () => {
       expect(carried).toBeUndefined();
     });
 
-    test("no cd at all -- setCwd is never called", async () => {
+    t("no cd at all -- setCwd is never called", async () => {
       let called = false;
       const ctx = fakeCtx({ session: { setCwd: () => (called = true), addBoundedRoot() {}, setPermissionMode() {} } });
       await bash()({ command: "echo hi" }, ctx);
       expect(called).toBe(false);
     });
 
-    test("a command that itself calls exit early (never reaching the trailing pwd capture) does not crash and does not carry cwd", async () => {
+    t("a command that itself calls exit early (never reaching the trailing pwd capture) does not crash and does not carry cwd", async () => {
       let called = false;
       const ctx = fakeCtx({ session: { setCwd: () => (called = true), addBoundedRoot() {}, setPermissionMode() {} } });
       const res = await bash()({ command: "exit 3" }, ctx);
@@ -271,13 +272,13 @@ d("Bash executor (real sandboxed spawn)", () => {
 
   // --- output capping ---
   describe("output capping", () => {
-    test("small output is never persisted", async () => {
+    t("small output is never persisted", async () => {
       const ctx = fakeCtx();
       const res = await bash()({ command: "echo small" }, ctx);
       expect(res.output).not.toContain("truncated");
     });
 
-    test("large SUCCESSFUL stdout is capped at ~30k chars with a persisted-output path", async () => {
+    t("large SUCCESSFUL stdout is capped at ~30k chars with a persisted-output path", async () => {
       const ctx = fakeCtx();
       const res = await bash()({ command: "yes x | head -c 40000" }, ctx);
       expect(res.output).toContain("[stdout truncated");
@@ -287,7 +288,7 @@ d("Bash executor (real sandboxed spawn)", () => {
       expect(persisted.length).toBeGreaterThan(30_000);
     });
 
-    test("a large FAILURE gets a smaller head/tail excerpt, not the full 30k", async () => {
+    t("a large FAILURE gets a smaller head/tail excerpt, not the full 30k", async () => {
       const ctx = fakeCtx();
       const res = await bash()({ command: "yes x | head -c 40000; exit 1" }, ctx);
       expect(res.output).toContain("[exit 1]");
@@ -315,7 +316,7 @@ d("Bash executor (real sandboxed spawn)", () => {
       resetBackgroundTaskRuntimeForTest();
     });
 
-    test("returns immediately with a task id and output_file, without waiting for completion", async () => {
+    t("returns immediately with a task id and output_file, without waiting for completion", async () => {
       const ctx = fakeCtx();
       const started = Date.now();
       const res = await bash()({ command: "sleep 2 && echo done", run_in_background: true }, ctx);
@@ -324,7 +325,7 @@ d("Bash executor (real sandboxed spawn)", () => {
       expect(res.output).toContain("output_file:");
     });
 
-    test("emits task_started and background_tasks_changed synchronously before returning", async () => {
+    t("emits task_started and background_tasks_changed synchronously before returning", async () => {
       const frames: BackgroundTaskMessage[] = [];
       const ctx = fakeCtx({ emitFrame: (f) => frames.push(f) });
       await bash()({ command: "echo hi", run_in_background: true }, ctx);
@@ -332,7 +333,7 @@ d("Bash executor (real sandboxed spawn)", () => {
       expect(frames.some((f) => f.subtype === "background_tasks_changed")).toBe(true);
     });
 
-    test("appends stdout to the task's own output file, and emits task_notification on completion", async () => {
+    t("appends stdout to the task's own output file, and emits task_notification on completion", async () => {
       const frames: BackgroundTaskMessage[] = [];
       const ctx = fakeCtx({ emitFrame: (f) => frames.push(f) });
       const res = await bash()({ command: "echo from-background", run_in_background: true }, ctx);
@@ -348,7 +349,7 @@ d("Bash executor (real sandboxed spawn)", () => {
       expect(getTask((frames.find((f) => f.subtype === "task_started") as { task_id: string }).task_id)?.status).toBe("completed");
     });
 
-    test("a failing background command is reported as a failed task_notification", async () => {
+    t("a failing background command is reported as a failed task_notification", async () => {
       const frames: BackgroundTaskMessage[] = [];
       const ctx = fakeCtx({ emitFrame: (f) => frames.push(f) });
       await bash()({ command: "exit 1", run_in_background: true }, ctx);
@@ -359,7 +360,7 @@ d("Bash executor (real sandboxed spawn)", () => {
       expect(notif.status).toBe("failed");
     });
 
-    test("foreground calls never touch the background task registry/output dir", async () => {
+    t("foreground calls never touch the background task registry/output dir", async () => {
       const ctx = fakeCtx();
       const res = await bash()({ command: "echo hi" }, ctx);
       expect(res.output).not.toContain("output_file");

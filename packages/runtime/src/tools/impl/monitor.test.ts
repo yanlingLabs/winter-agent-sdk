@@ -12,7 +12,6 @@ import { configureBackgroundTaskRoot, resetBackgroundTaskRootForTest } from "../
 import { resetBackgroundTaskRuntimeForTest, getTask } from "./background-task-runtime.ts";
 import { parseMonitorInput, isDisallowedAddress, validateWsEndpoint, connectMonitorWs } from "./monitor.ts";
 import type { SessionTempDirPaths } from "../../paths/temp.ts";
-import { isSandboxAvailable } from "../../sandbox/spawn.ts";
 
 function proj(): string {
   return realpathSync(mkdtempSync(join(tmpdir(), "winter-monitor-test-")));
@@ -57,8 +56,10 @@ async function waitFor(predicate: () => boolean, maxMs = 3000, stepMs = 25): Pro
   }
 }
 
-const darwin = isSandboxAvailable();
-const d = darwin ? describe : describe.skip;
+// test.skipIf, matching deny.darwin.test.ts's own pinned shape (not `const d = darwin ? describe :
+// describe.skip`) -- a non-darwin CI run then ENUMERATES every test below as visibly skipped,
+// rather than describe.skip hiding the whole block from the report.
+const t = test.skipIf(process.platform !== "darwin");
 
 // ---------------------------------------------------------------------------------------------
 // Input validation -- platform-free.
@@ -341,7 +342,7 @@ describe("connectMonitorWs (real local server)", () => {
 // ---------------------------------------------------------------------------------------------
 // Command half through the real registered executor (darwin-gated -- reuses Bash's own sandbox).
 // ---------------------------------------------------------------------------------------------
-d("Monitor executor: command half", () => {
+describe("Monitor executor: command half", () => {
   let paths: SessionTempDirPaths;
   let cleanupDir: string;
 
@@ -357,7 +358,7 @@ d("Monitor executor: command half", () => {
     resetBackgroundTaskRuntimeForTest();
   });
 
-  test("returns immediately with {taskId, timeoutMs}, and streams stdout to the output file", async () => {
+  t("returns immediately with {taskId, timeoutMs}, and streams stdout to the output file", async () => {
     const ctx = fakeCtx();
     const started = Date.now();
     const res = await monitor()({ description: "watch a build", timeout_ms: 5000, persistent: false, command: "sleep 1 && echo from-monitor" }, ctx);
@@ -369,7 +370,7 @@ d("Monitor executor: command half", () => {
     await waitFor(() => existsSync(outputPath) && readFileSync(outputPath, "utf8").includes("from-monitor"), 3000);
   });
 
-  test("emits task_started/background_tasks_changed synchronously, and task_notification on completion", async () => {
+  t("emits task_started/background_tasks_changed synchronously, and task_notification on completion", async () => {
     const frames: BackgroundTaskMessage[] = [];
     const ctx = fakeCtx({ emitFrame: (f) => frames.push(f) });
     await monitor()({ description: "quick", timeout_ms: 5000, persistent: false, command: "echo hi" }, ctx);
@@ -380,7 +381,7 @@ d("Monitor executor: command half", () => {
     expect(notif.status).toBe("completed");
   });
 
-  test("a failing command is reported as a failed task_notification", async () => {
+  t("a failing command is reported as a failed task_notification", async () => {
     const frames: BackgroundTaskMessage[] = [];
     const ctx = fakeCtx({ emitFrame: (f) => frames.push(f) });
     await monitor()({ description: "will fail", timeout_ms: 5000, persistent: false, command: "exit 1" }, ctx);
@@ -389,7 +390,7 @@ d("Monitor executor: command half", () => {
     expect(notif.status).toBe("failed");
   });
 
-  test("the command half is sandboxed by default -- cannot write outside cwd", async () => {
+  t("the command half is sandboxed by default -- cannot write outside cwd", async () => {
     const ctx = fakeCtx();
     const sibling = proj();
     const target = join(sibling, "escaped.txt");
@@ -398,7 +399,7 @@ d("Monitor executor: command half", () => {
     expect(existsSync(target)).toBe(false);
   });
 
-  test("the real TaskStop tool kills a running monitor command task via the process group", async () => {
+  t("the real TaskStop tool kills a running monitor command task via the process group", async () => {
     // Uses the REAL TaskStop executor (not the lower-level stopTask primitive directly): TaskStop's
     // own executor is what actually sets status "stopped" BEFORE killing (see task-stop.ts's own
     // comment on that ordering) -- calling stopTask alone, as bash.test.ts/task-stop.test.ts's own
@@ -417,7 +418,7 @@ d("Monitor executor: command half", () => {
     expect(getTask(taskId)?.status).toBe("stopped");
   });
 
-  test("bad args are a tool error, never a throw", async () => {
+  t("bad args are a tool error, never a throw", async () => {
     const res = await monitor()({}, fakeCtx());
     expect(res.isError).toBe(true);
   });
