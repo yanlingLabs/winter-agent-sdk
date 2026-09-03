@@ -2344,6 +2344,140 @@ describe("RULING P3-K: task/mode-class tools get a default-mode silent allow (me
   });
 });
 
+// RULING P3-K-2 (controller ruling, fix wave round 2, P3 close-out): a no-prompt class must never
+// be stricter under a more permissive mode. P3-K's own silent-allow cell set (the 13 task/mode-class
+// tools) extends from default/dontAsk to acceptEdits, plan, and auto too -- deny/ask rules at
+// stages 2-3 still run first in every mode, exactly as before.
+//
+// Durable CronCreate is explicitly NOT part of this extension -- it was always P3-K's own named
+// EXCEPTION ("write-shaped", never silent-allow), not a class member. See this file's own
+// already-GREEN P3-K tests above (default/acceptEdits both prompt it via the SAME protected-write
+// standing exception `.winter/scheduled_tasks.json` triggers for ANY tool) -- this ruling's per-mode
+// table is honored for the SILENT-ALLOW CLASS ONLY; durable CronCreate's own mustPrompt-everywhere
+// behavior (via isProtectedWrite, unconditional and tool-name-agnostic by design) is UNCHANGED and
+// is proven again below under plan/auto for completeness, not because either arm's own logic needed
+// a durable-CronCreate-specific branch.
+describe("RULING P3-K-2: the task/mode-class silent allow extends to acceptEdits, plan, and auto (never stricter than default)", () => {
+  const silentAllowTools = [
+    "TaskCreate",
+    "TaskGet",
+    "TaskList",
+    "TaskUpdate",
+    "TodoWrite",
+    "CronList",
+    "CronDelete",
+    "ScheduleWakeup",
+    "ReportFindings",
+    "PushNotification",
+    "TaskOutput",
+    "TaskStop",
+    "EnterPlanMode",
+  ];
+
+  for (const toolName of silentAllowTools) {
+    test(`${toolName}: silent allow under acceptEdits too (was: unresolved -> stage 6)`, async () => {
+      const ctx = baseCtx({ cwd: "/work", policy: policy({ mode: "acceptEdits" }) });
+      const record = await evaluate(call(toolName, {}), ctx);
+      expect(record).toMatchObject({ decision: "allow", mechanism: "mode" });
+    });
+
+    test(`${toolName}: silent allow under plan too (it's not a write, so plan's own write-withholding never applies)`, async () => {
+      const ctx = baseCtx({ cwd: "/work", policy: policy({ mode: "plan" }) });
+      const record = await evaluate(call(toolName, {}), ctx);
+      expect(record).toMatchObject({ decision: "allow", mechanism: "mode" });
+    });
+
+    test(`${toolName}: silent allow under auto too (skips the classifier entirely, exactly like built-in read-only)`, async () => {
+      const ctx = baseCtx({ cwd: "/work", policy: policy({ mode: "auto" }) });
+      const record = await evaluate(call(toolName, {}), ctx);
+      expect(record).toMatchObject({ decision: "allow", mechanism: "mode" });
+    });
+  }
+
+  test("a deny rule still wins over the silent-allow class under acceptEdits (stage 2 runs before stage 4 in every mode)", async () => {
+    const ctx = baseCtx({ cwd: "/work", policy: policy({ mode: "acceptEdits", rules: withRules(rule("TaskCreate", "deny")) }) });
+    const record = await evaluate(call("TaskCreate", {}), ctx);
+    expect(record).toMatchObject({ decision: "deny", mechanism: "rule" });
+  });
+
+  test("a deny rule still wins over the silent-allow class under plan", async () => {
+    const ctx = baseCtx({ cwd: "/work", policy: policy({ mode: "plan", rules: withRules(rule("TaskCreate", "deny")) }) });
+    const record = await evaluate(call("TaskCreate", {}), ctx);
+    expect(record).toMatchObject({ decision: "deny", mechanism: "rule" });
+  });
+
+  test("a deny rule still wins over the silent-allow class under auto", async () => {
+    const ctx = baseCtx({ cwd: "/work", policy: policy({ mode: "auto", rules: withRules(rule("TaskCreate", "deny")) }) });
+    const record = await evaluate(call("TaskCreate", {}), ctx);
+    expect(record).toMatchObject({ decision: "deny", mechanism: "rule" });
+  });
+
+  test("non-durable CronCreate is silent-allow under acceptEdits/plan/auto too", async () => {
+    for (const mode of ["acceptEdits", "plan", "auto"] as const) {
+      const ctx = baseCtx({ cwd: "/work", policy: policy({ mode }) });
+      const record = await evaluate(call("CronCreate", { cron: "* * * * *", prompt: "p", recurring: true, durable: false }), ctx);
+      expect(record).toMatchObject({ decision: "allow", mechanism: "mode" });
+    }
+  });
+
+  // Durable CronCreate is write-shaped, not a class member (see this describe block's own header
+  // comment) -- plan withholds it via isPlanWriteShaped's own independent CronCreate(durable) check
+  // (unaffected by anything this ruling changes), which happens to be moot in practice because
+  // isProtectedWrite's standing exception (unconditional, before ANY mode arm) already intercepted
+  // it first, same as default/acceptEdits above.
+  test("CronCreate(durable:true) under plan is withheld like any write (protected-write intercepts before plan's own arm runs)", async () => {
+    const promptSpy = spyPromptStage(() => ({ decision: "deny" }));
+    const ctx = baseCtx({
+      promptStage: promptSpy.stage,
+      cwd: "/work",
+      sessionRoot: "/work",
+      policy: policy({ mode: "plan" }),
+      specialChecks: REAL_SPECIAL_CHECKS,
+    });
+    const record = await evaluate(call("CronCreate", { cron: "* * * * *", prompt: "p", recurring: true, durable: true }), ctx);
+    expect(promptSpy.calls.length).toBe(1);
+    expect(record.decision).toBe("deny");
+  });
+
+  // Session-bypass relaxes plan's OWN write-withholding (WS-07 §6.4/§6.5), which also happens to be
+  // exactly what protected-write's own plan+bypass branch already grants -- both paths agree, so
+  // this is unaffected by this ruling either way; pinned here for completeness alongside its sibling.
+  test("CronCreate(durable:true) under plan WITH session bypass enabled is allowed (protected-write's own plan+bypass carve-out, WS-07 §6.7 -- pre-existing, unchanged by this ruling)", async () => {
+    const ctx = baseCtx({
+      cwd: "/work",
+      sessionRoot: "/work",
+      sessionBypassEnabled: true,
+      policy: policy({ mode: "plan" }),
+      specialChecks: REAL_SPECIAL_CHECKS,
+    });
+    const record = await evaluate(call("CronCreate", { cron: "* * * * *", prompt: "p", recurring: true, durable: true }), ctx);
+    expect(record).toMatchObject({ decision: "allow" });
+  });
+
+  // Durable CronCreate's mustPrompt-under-auto cell did not previously have explicit coverage
+  // (only default/acceptEdits did). Discovered while writing this test (not assumed): `auto` does
+  // NOT route a protected-write mustPrompt to promptStage at all -- Task 12 (WS-07 §6.7's own "auto:
+  // classifier" cell, evaluator.ts ~line 1429) routes EVERY protected/critical mustPrompt to
+  // `resolveAutoDecision` (the classifier) under `auto`, unconditionally, before promptStage is ever
+  // reached -- exactly like this file's own pre-existing "auto ... routes to the classifier, never
+  // canUseTool" tests for an ordinary protected write. Durable CronCreate is no exception: it is
+  // "just another protected write" to this routing, which is precisely the point -- no
+  // durable-CronCreate-specific logic exists or is needed in auto's own arm.
+  test("CronCreate(durable:true) under auto routes to the classifier (never canUseTool), never silently auto-approved by auto's own bounded-write recognition", async () => {
+    const promptSpy = spyPromptStage(() => ({ decision: "allow" })); // even if it WOULD allow, auto's protected-write cell is "classifier", never canUseTool
+    const ctx = baseCtx({
+      promptStage: promptSpy.stage,
+      cwd: "/work",
+      sessionRoot: "/work",
+      policy: policy({ mode: "auto" }),
+      specialChecks: REAL_SPECIAL_CHECKS,
+    });
+    const record = await evaluate(call("CronCreate", { cron: "* * * * *", prompt: "p", recurring: true, durable: true }), ctx);
+    expect(promptSpy.calls.length).toBe(0);
+    expect(record).toMatchObject({ decision: "deny", mechanism: "autoEngine", message: BLOCKED_BY_CLASSIFIER_MESSAGE });
+  });
+});
+
 describe("Task 7 — Ruling P2-J (rider 2) proven at the evaluator layer, not just paths.ts (real mkdtemp + planted symlinks — see this file's own header)", () => {
   // Real fs, exactly like paths.test.ts's own checkSymlinkBothEnds regime: realpath the mkdtemp
   // root immediately (the macOS $TMPDIR-resolves-through-a-symlink trap; see paths.test.ts's

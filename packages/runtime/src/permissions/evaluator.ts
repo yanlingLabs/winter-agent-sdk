@@ -679,12 +679,30 @@ function isBuiltInReadOnly(call: PermissionCall, ctx: EvaluationContext): boolea
 // exactly like its siblings. TaskOutput joins only after I5's traversal-guard fix landed (fix wave,
 // same commit sequence) -- an unvalidated task_id could otherwise read arbitrary files silently.
 //
-// capture-pending (per the ruling's own instruction: "mark the whole cell set capture-pending") --
-// mirrors grammar.ts's own PARSE_LIMIT/DANGEROUS_ASSIGNMENT_NAMES posture: this SET of tool names is
-// the controller's own considered ruling, not itself confirmed against a WS-17 differential capture
-// of the pinned 0.3.250 artifact. A future capture that finds a DIFFERENT per-tool cell (e.g. a tool
-// here that the real runtime actually prompts for, or a tool absent here that it silently allows)
-// should update this set directly, not restructure the mechanism.
+// RULING P3-K-2 (fix wave round 2, controller ruling, P3 close-out): a no-prompt class must never be
+// STRICTER under a more permissive mode -- P3-K originally wired `isTaskModeClassSilentAllow` into
+// only the shared default/dontAsk arm, leaving acceptEdits/plan/auto to fall through to stage 6 (a
+// denial) for the identical calls, so `acceptEdits` was, perversely, stricter than `default` for
+// this whole class. `isTaskModeClassSilentAllow` is now ALSO consulted in the acceptEdits, plan, and
+// auto arms (see each arm's own call site, below) -- FOUR arms total cover this set (the shared
+// default/dontAsk arm, acceptEdits, plan, auto); `bypassPermissions` needs no explicit check, since
+// its own arm already unconditionally allows everything the standing exceptions didn't already
+// intercept. Deny/ask rules (stages 2-3) still run before EVERY one of these arms, in every mode,
+// completely unaffected by this widening. Durable CronCreate is NOT part of this widening -- it was
+// always the named EXCEPTION above, not a class member, and its own write-shaped treatment (via the
+// SAME tool-agnostic, mode-position-agnostic `isProtectedWrite` standing exception every other
+// `.winter/` write gets) is deliberately UNCHANGED by this ruling; see this file's own P3-K-2 test
+// block for the full per-mode proof, including auto's pre-existing (Task 12) classifier-routing for
+// ITS OWN mustPrompt outcome, which durable CronCreate now has explicit coverage under too.
+//
+// capture-pending (per the ruling's own instruction: "mark the whole cell set capture-pending"),
+// WIDENED by P3-K-2 to cover all four arms this set now gates, not just the original default/dontAsk
+// one -- mirrors grammar.ts's own PARSE_LIMIT/DANGEROUS_ASSIGNMENT_NAMES posture: this SET of tool
+// names, and its extension to acceptEdits/plan/auto, is the controller's own considered ruling, not
+// itself confirmed against a WS-17 differential capture of the pinned 0.3.250 artifact. A future
+// capture that finds a DIFFERENT per-tool-per-mode cell (e.g. a tool here that the real runtime
+// actually prompts for under some mode, or a tool absent here that it silently allows) should update
+// this set directly, not restructure the mechanism.
 const TASK_MODE_CLASS_SILENT_ALLOW: ReadonlySet<string> = new Set([
   "TaskCreate",
   "TaskGet",
@@ -840,6 +858,12 @@ function evaluateModeStage(call: PermissionCall, ctx: EvaluationContext, mode: P
     // now (T6-review obligation), so by the time this arm runs, a Read-deny-blocked path has
     // ALREADY been denied upstream; this arm doesn't need to re-check it.
     if (isBuiltInReadOnly(call, ctx)) return { kind: "allow" };
+    // RULING P3-K-2 (fix wave round 2): the task/mode-class silent-allow set now applies here too --
+    // "acceptEdits must never be stricter than default for a no-prompt class." Durable CronCreate
+    // returns false from this check (it's the class's own named exception, not a member), so it
+    // falls through unaffected to the write-recognition below, which `isProtectedWrite`'s standing
+    // exception already intercepted before this arm was ever reached anyway.
+    if (isTaskModeClassSilentAllow(call)) return { kind: "allow" };
     // RULING P3-K: sessionRoot threaded through for CronCreate(durable) -- in practice unreachable
     // here (isProtectedWrite's own `.winter` coverage always intercepts it first, above), kept for
     // consistency with every other recognizeEditOperation call site in this file.
@@ -875,6 +899,14 @@ function evaluateModeStage(call: PermissionCall, ctx: EvaluationContext, mode: P
     // fallback (an `unresolved` result here would traverse stage 5/6 and could start prompting, or
     // even denying, the moment that fallback changes, silently breaking this relaxation).
     if (isBuiltInReadOnly(call, ctx)) return { kind: "allow" };
+    // RULING P3-K-2 (fix wave round 2): the task/mode-class silent-allow set applies under plan too
+    // -- none of these thirteen tools is a write, so plan's own write-withholding (below) never had
+    // any claim on them; leaving them to fall to "unresolved" (stage 6) was exactly the same
+    // stricter-than-default inversion acceptEdits/auto had. Durable CronCreate returns false here
+    // (the class's own named exception), so it falls through to isPlanWriteShaped's own independent
+    // CronCreate(durable) check below -- moot in practice since isProtectedWrite's standing exception
+    // already intercepted it before this arm was ever reached, but kept for consistency.
+    if (isTaskModeClassSilentAllow(call)) return { kind: "allow" };
     if (isPlanWriteShaped(call)) {
       if (ctx.sessionBypassEnabled === true) return { kind: "allow" };
       // origin "planWrite" — deliberately EXCLUDED from the plan classifier borrow (Task 12, WS-07
@@ -901,6 +933,17 @@ function evaluateModeStage(call: PermissionCall, ctx: EvaluationContext, mode: P
   // evaluate()'s own stage-5 comment) and then the real classifier (ctx.autoEngine, via
   // evaluate()'s resolveAutoDecision) get a chance next, never a silent allow.
   if (isBuiltInReadOnly(call, ctx)) return { kind: "allow" };
+  // RULING P3-K-2 (fix wave round 2): the task/mode-class silent-allow set applies under auto too --
+  // "skips the classifier entirely, exactly like built-in read-only" (the ruling's own words).
+  // Without this, an unresolved task-class call falls through to stage 5 (no rule) and then this
+  // mode's own post-stage-5 fallback, which for `auto` means the REAL classifier (resolveAutoDecision)
+  // gets consulted and fails closed ("Blocked by classifier") for a call that was never supposed to
+  // prompt OR be classified at all -- the same stricter-than-default inversion acceptEdits/plan had.
+  // Durable CronCreate returns false here (the class's own named exception), so it falls through to
+  // the write-recognition below -- moot in practice since isProtectedWrite's standing exception
+  // already intercepted it before this arm was ever reached, routing it to auto's own PRE-EXISTING
+  // (Task 12) classifier path for a protected-write mustPrompt, not this arm's write-recognition.
+  if (isTaskModeClassSilentAllow(call)) return { kind: "allow" };
   // I2 (fix wave, P3 close-out): Monitor excluded from THIS arm's auto-approve outcome too -- see
   // the acceptEdits arm's own identical comment, above, for the full rationale.
   const recognizedForAuto = call.toolName !== "Monitor" ? recognizeEditOperation(call, { sessionRoot: ctx.sessionRoot }) : null;
