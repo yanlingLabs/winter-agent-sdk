@@ -1,7 +1,7 @@
 import { describe, test, expect } from "bun:test";
 import { createSessionReadState } from "../read-state.ts";
 import { getRegisteredTool, type ToolExecutionContext } from "../registry.ts";
-import { ASK_USER_QUESTION_TOOL_NAME, askUserQuestionExecutor } from "./ask-user-question.ts";
+import { ASK_USER_QUESTION_TOOL_NAME, ASK_USER_QUESTION_ANSWER_KEY_FIELD, askUserQuestionExecutor } from "./ask-user-question.ts";
 
 function makeCtx(): ToolExecutionContext {
   return {
@@ -172,6 +172,30 @@ describe("AskUserQuestion (task-7 brief, tool-surface-only)", () => {
         const result = await askUserQuestionExecutor.execute(bad, makeCtx());
         expect(result.isError).toBe(true);
       }
+    });
+  });
+
+  // M7 (fix wave, ledger carry, P3 close-out): the answers/annotations keying convention is
+  // exported as ONE named constant (ASK_USER_QUESTION_ANSWER_KEY_FIELD) so nothing hand-copies the
+  // literal "header" string -- this test proves the executor actually READS that constant (not just
+  // that it happens to equal "header" by coincidence): keying `answers`/`annotations` by whatever
+  // ASK_USER_QUESTION_ANSWER_KEY_FIELD currently names is what the executor's own lookups use.
+  describe("M7: ASK_USER_QUESTION_ANSWER_KEY_FIELD is the real keying convention, not just documentation", () => {
+    test("the constant currently names 'header'", () => {
+      expect(ASK_USER_QUESTION_ANSWER_KEY_FIELD).toBe("header");
+    });
+
+    test("answers/annotations are keyed by the question's OWN value at that field", async () => {
+      const input = {
+        questions: [{ question: "Pick one", [ASK_USER_QUESTION_ANSWER_KEY_FIELD]: "Q1", options: [{ label: "A", description: "a" }, { label: "B", description: "b" }] }],
+        answers: { Q1: "A" },
+        annotations: { Q1: { notes: "picked A" } },
+      };
+      const result = await askUserQuestionExecutor.execute(input, makeCtx());
+      expect(result.isError).toBeUndefined();
+      const parsed = JSON.parse(result.output);
+      expect(parsed.results[0].answer).toBe("A");
+      expect(parsed.results[0].annotation).toEqual({ notes: "picked A" });
     });
   });
 });

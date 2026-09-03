@@ -29,6 +29,17 @@ import { replaceExecutor, type ToolExecutionContext, type ToolExecutor, type Too
 
 export const ASK_USER_QUESTION_TOOL_NAME = "AskUserQuestion";
 
+// M7 (fix wave, ledger carry, P3 close-out): the ONE thing a future host-side implementation
+// (WS-15's own canUseTool answer path) MUST agree on to interoperate with this executor -- see this
+// file's own "ANSWERS/ANNOTATIONS KEYING" header comment for why the key was never pinned by any
+// spec/cross-file protocol in the first place. Exported so every consumer in this codebase (this
+// file's own accesses below included) reads the key name from ONE place rather than hand-copying the
+// literal "header" string, which is exactly the class of drift that would silently break
+// interoperability if a future host chose a different convention independently. Capture-checking
+// this against the pinned artifact (does the REAL runtime key by header, or by question text, or
+// something else) is a separate, ledgered WS-17 carry -- not attempted in this fix wave.
+export const ASK_USER_QUESTION_ANSWER_KEY_FIELD = "header" as const;
+
 interface OptionInput {
   label: string;
   description: string;
@@ -151,9 +162,9 @@ export const askUserQuestionExecutor: ToolExecutor = {
 
     const unanswered: string[] = [];
     const results = questions.map((q) => {
-      const rawAnswer = answers[q.header];
+      const rawAnswer = answers[q[ASK_USER_QUESTION_ANSWER_KEY_FIELD]];
       const answer = typeof rawAnswer === "string" ? rawAnswer : null;
-      if (answer === null) unanswered.push(q.header);
+      if (answer === null) unanswered.push(q[ASK_USER_QUESTION_ANSWER_KEY_FIELD]);
 
       // "Runtime adds the free-form 'Other' path" (WS-06 §3.3 prose): an answer that does not match
       // any declared option's label is echoed as a free-form response. Restricted to single-select
@@ -163,7 +174,7 @@ export const askUserQuestionExecutor: ToolExecutor = {
       // echoed verbatim with no Other-detection judgment applied to it.
       const isOther = answer !== null && !q.multiSelect && !q.options.some((o) => o.label === answer);
 
-      const annotation = extractAnnotation(annotations[q.header]);
+      const annotation = extractAnnotation(annotations[q[ASK_USER_QUESTION_ANSWER_KEY_FIELD]]);
 
       return {
         header: q.header,
