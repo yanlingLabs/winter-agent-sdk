@@ -48,6 +48,16 @@ export type {
   SDKPermissionDeniedMessage,
   // Finding 3 (P2 fix-wave): the array-element shape of SDKResultMessage.permission_denials.
   SDKPermissionDenial,
+  // Phase 3 Task 2 (WS-06 §3.5; Ruling-9 public union growth): the background-task message family +
+  // local-command-output — new named SdkMessage variants a host can discriminate on `.subtype`, plus
+  // the closed union alias ToolExecutionContext.emitFrame (packages/runtime) accepts.
+  SDKTaskStartedMessage,
+  SDKTaskNotificationMessage,
+  SDKTaskUpdatedMessage,
+  SDKTaskProgressMessage,
+  SDKBackgroundTasksChangedMessage,
+  SDKLocalCommandOutputMessage,
+  BackgroundTaskMessage,
 } from "./protocol/frames.ts";
 
 // Paths (Task 6, moved here Task 10 -- WS-05 §6): WINTER_HOME resolution, the exact CC-compatible
