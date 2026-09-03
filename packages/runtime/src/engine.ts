@@ -11,15 +11,18 @@ import {
   type RuleSource,
   type HookEvent,
   type SDKPermissionDenial,
+  type PermissionMode,
+  compatibilityKeys,
 } from "@yanlinglabs/winter-agent-sdk";
 import type { FrameSource, FrameSink } from "./protocol/channel.ts";
 import { Queue } from "./protocol/channel.ts";
 import { createRpcBridge } from "./rpc/bridge.ts";
-import { PolicyStateStore, assertKnownPermissionMode, isPermissionMode } from "./permissions/policy-state.ts";
+import { PolicyStateStore, WinterPermissionError, assertKnownPermissionMode, isPermissionMode } from "./permissions/policy-state.ts";
 import { emptyRuleSet, buildSdkSourcedEntries } from "./permissions/ruleset.ts";
 import { createBridgePromptStage } from "./permissions/prompt-stage.ts";
 import {
   evaluate,
+  probeReadWouldPrompt,
   REAL_SPECIAL_CHECKS,
   type PermissionCall,
   type EvaluationContext,
@@ -53,6 +56,14 @@ import {
   type DurableApprovalStore,
   type DurableApprovalRecord,
 } from "./permissions/approvals.ts";
+// Task 1 (P3, WS-06 §1): the tool registry -- forcing this side-effect import registers every WS-06
+// §2 stub (descriptors/index.ts's own header explains why registry.ts itself never imports it back,
+// avoiding a cycle) before this module's own buildDefaultToolExecutor (below) can ever be called.
+import "./tools/descriptors/index.ts";
+import { buildRegistryToolExecutor } from "./tools/registry.ts";
+import { createSessionReadState } from "./tools/read-state.ts";
+import { configureBackgroundTaskRoot } from "./tools/background-tasks.ts";
+import { sessionTempDir, type SessionTempDirPaths } from "./paths/temp.ts";
 
 export type ContentBlock =
   | { type: "text"; text: string }
@@ -132,7 +143,16 @@ export interface EngineOptions {
   input: FrameSource;
   output: FrameSink;
   provider: Provider;
-  tools: ToolExecutor;
+  // Task 1 (P3, WS-06 §1): now OPTIONAL -- WRAP, don't rewrite dispatch (both `tools.execute(...)`
+  // call sites below are byte-for-byte unchanged). A caller that supplies its own ToolExecutor
+  // (every one of this engine's ~1272 pre-existing tests, main.ts, runtime.ts) gets EXACTLY the same
+  // behavior as before this task, unconditionally -- the registry is never even imported by those
+  // paths' own reasoning, let alone consulted. Omitting `tools` is what makes the registry
+  // "live behind the engine seam": runEngine builds a registry-backed ToolExecutor internally (see
+  // `buildDefaultToolExecutor` below) from THIS run's own PolicyState/cwd/readState/tempDir --
+  // state only reachable from inside this closure, which is why the adapter cannot be built by a
+  // caller like testing.ts and merely passed in.
+  tools?: ToolExecutor;
   store?: SessionPersistence;
   // Task 9 (WS-05 §7): the resumed/continued/forked conversation's prior turns, already rebuilt
   // into this engine's own ProviderMessage shapes by the store layer (dialect.ts's
@@ -196,7 +216,13 @@ function raceInterrupt<T>(p: Promise<T>, interrupted: Promise<void>): Promise<Ra
  * definition further down for the full re-argued termination guarantee.
  */
 export async function runEngine(opts: EngineOptions): Promise<number> {
-  const { config, input, output, provider, tools, store, initialMessages, approvalStore, autoStateStore } = opts;
+  // Task 1 (P3): `tools` renamed to `providedTools` at the destructuring site ONLY -- every existing
+  // reference to the bare name `tools` further down this function (both `tools.execute(...)` call
+  // sites) is deliberately left untouched; `const tools: ToolExecutor = providedTools ?? ...` is
+  // declared once, below, right where its own dependencies (makeEvalCtx, cancelPendingApprovalsOn
+  // ModeSwitch) already exist, so the two call sites shadow right back onto this new binding without
+  // a single further textual change to either of them.
+  const { config, input, output, provider, tools: providedTools, store, initialMessages, approvalStore, autoStateStore } = opts;
 
   // Task 6 (WS-07 §2/§6.4, Ruling 8): permission startup validation — deliberately the very FIRST
   // thing runEngine does, before any `await` and before the `init` frame is written. A throw here
@@ -394,18 +420,37 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
     audit: NO_OP_AUTO_AUDIT_RECORDER,
     getClassifierContext: () => accumulatedClassifierContext,
   });
-  const makeEvalCtx = (): EvaluationContext => ({
-    policy: policyStateStore.getState(),
-    cwd: config.cwd,
-    home: permissionHome,
-    trustedWorkspace,
-    sessionBypassEnabled: config.allowDangerouslySkipPermissions === true,
-    ...(config.additionalDirectories !== undefined ? { additionalDirectories: config.additionalDirectories } : {}),
-    hookStage: realHookStage,
-    promptStage: realPromptStage,
-    autoEngine: realAutoEngine,
-    specialChecks: REAL_SPECIAL_CHECKS,
-  });
+  // Task 1 (P3, WS-06 §1.1 ToolExecutionContext.session): the session posture-mutation seam's own
+  // live state. `currentCwd` starts at `config.cwd` and `extraBoundedRoots` starts empty -- for
+  // EVERY pre-existing caller (nothing before this task could ever mutate either one; the only
+  // mutator is the `session` object handed to a REGISTRY-DISPATCHED tool call, below), both stay at
+  // their starting values for the run's entire lifetime, so `makeEvalCtx`'s own cwd/
+  // additionalDirectories fields below are byte-identical to before this task whenever neither is
+  // ever touched -- which is always, for every one of this engine's ~1272 pre-existing tests (they
+  // supply their own `tools` and never reach the registry's `session` seam at all).
+  let currentCwd = config.cwd;
+  const extraBoundedRoots: string[] = [];
+  const makeEvalCtx = (): EvaluationContext => {
+    // Preserves the EXACT pre-existing "include the key only when config.additionalDirectories
+    // itself was ever set" contract (Finding 6, P2 fix-wave) — union in extraBoundedRoots WITHOUT
+    // making an untouched `extraBoundedRoots` (the common case) start including the key on its own.
+    const additionalDirectories =
+      config.additionalDirectories !== undefined || extraBoundedRoots.length > 0
+        ? [...(config.additionalDirectories ?? []), ...extraBoundedRoots]
+        : undefined;
+    return {
+      policy: policyStateStore.getState(),
+      cwd: currentCwd,
+      home: permissionHome,
+      trustedWorkspace,
+      sessionBypassEnabled: config.allowDangerouslySkipPermissions === true,
+      ...(additionalDirectories !== undefined ? { additionalDirectories } : {}),
+      hookStage: realHookStage,
+      promptStage: realPromptStage,
+      autoEngine: realAutoEngine,
+      specialChecks: REAL_SPECIAL_CHECKS,
+    };
+  };
 
   // WS-07 §2's stale-policy-rejection contract: evaluate() stamps `policyVersion` from the SNAPSHOT
   // it was handed (evaluator.ts's own EvaluationContext.policy comment) — if a mode/rule change
@@ -515,6 +560,79 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
       /* auxiliary — see comment above */
     }
   };
+
+  // Task 1 (P3, WS-06 §1): the tools seam becomes registry-backed. Built ONLY when the caller omits
+  // `tools` (buildDefaultToolExecutor, below) -- everything in this block is unreachable, and
+  // therefore inert, for a caller that supplies its own ToolExecutor (every pre-existing test,
+  // main.ts, runtime.ts): `providedTools ?? buildDefaultToolExecutor()` short-circuits before this
+  // function's body ever runs whenever `providedTools` is defined.
+  //
+  // `session`: the posture-mutation seam Lane E's plan/worktree tools mutate through, wired to this
+  // run's own PolicyState/cwd owners declared above (`currentCwd`/`extraBoundedRoots`,
+  // `policyStateStore`) -- see ToolExecutionContext.session's own doc comment (registry.ts) for the
+  // exact contract. `setPermissionMode` reuses the SAME bypass-gated `policyStateStore.setMode` path
+  // + `cancelPendingApprovalsOnModeSwitch` door 1/2 precedent every other mode-switch caller in this
+  // file already goes through (set_permission_mode control request; canUseTool/hook
+  // updatedPermissions) -- a THIRD door into the identical room, never a parallel implementation of
+  // the switch itself. A rejected switch (the bypass gate) throws -- this executes INSIDE a tool
+  // executor's own async function, so it rejects that call's promise and surfaces as this round's
+  // ordinary error_during_execution (Ruling P1-H), the same severity any other executor-thrown error
+  // gets; it is not expected to be reachable via EnterPlanMode/EnterWorktree (neither ever requests
+  // "bypassPermissions", the only mode the gate can reject).
+  //
+  // `getTempDir`/`configureBackgroundTaskRoot`: memoized ONCE per run, lazily -- `sessionTempDir`
+  // creates real `/tmp/winter-<uid>/...` directories (D18), so this must never run just because a
+  // tool call happened; only a REAL executor that actually reads `ctx.tempDir` (or calls
+  // createBackgroundTask) triggers it (see registry.ts's own ToolExecutionContext.tempDir comment
+  // and background-tasks.ts's own header for the one-live-engine assumption this accepts).
+  // `tempProjectKey` is derived from `config.cwd` (the session's STARTING cwd), deliberately never
+  // `currentCwd` -- D18's session-temp identity is fixed for the run's whole lifetime, the same way
+  // `permissionHome`/`policyStateStore`'s own initial mode are; it must not drift if a tool later
+  // switches worktrees mid-session.
+  let cachedSessionTempPaths: SessionTempDirPaths | undefined;
+  function resolveSessionTempPaths(): SessionTempDirPaths {
+    if (!cachedSessionTempPaths) {
+      cachedSessionTempPaths = sessionTempDir({
+        tempProjectKey: compatibilityKeys(config.cwd).tempProjectKey,
+        backendUuid: config.sessionId,
+      });
+    }
+    return cachedSessionTempPaths;
+  }
+  function buildDefaultToolExecutor(): ToolExecutor {
+    configureBackgroundTaskRoot(resolveSessionTempPaths);
+    return buildRegistryToolExecutor({
+      sessionId: config.sessionId,
+      home: permissionHome,
+      getCwd: () => currentCwd,
+      probeReadWouldPrompt: (filePath: string) => probeReadWouldPrompt(filePath, makeEvalCtx()),
+      // T2 completes this seam's engine plumbing (WS-06 §3.5's background-task message family) --
+      // output.write expects the closed WinterFrame union, not `unknown`; forcing a cast here would
+      // silently accept a malformed frame with no compile-time check against T2's own real shapes.
+      emitFrame: (_frame: unknown): void => {
+        /* T2: wire this to output.write once task_started/task_notification/... exist */
+      },
+      session: {
+        setCwd(p: string): void {
+          currentCwd = p;
+        },
+        addBoundedRoot(p: string): void {
+          extraBoundedRoots.push(p);
+        },
+        setPermissionMode(mode: PermissionMode): void {
+          const previousMode = policyStateStore.getState().mode;
+          const result = policyStateStore.setMode(mode);
+          if (!result.ok) {
+            throw new WinterPermissionError(result.error.message);
+          }
+          cancelPendingApprovalsOnModeSwitch(previousMode, result.effectiveMode);
+        },
+      },
+      readState: createSessionReadState(),
+      getTempDir: () => resolveSessionTempPaths().root,
+    });
+  }
+  const tools: ToolExecutor = providedTools ?? buildDefaultToolExecutor();
 
   // `init` MUST be the first runtime→host frame (WS-04 §4.1 `initializing`), from resolved runtime
   // state. P1 has no tool catalog yet (WS-06) so the advertised tool list is always empty.

@@ -6,8 +6,60 @@ import { encodeFrame, splitFrames } from "@yanlinglabs/winter-agent-sdk";
 import { Queue } from "./protocol/channel.ts";
 import type { FrameSource, FrameSink } from "./protocol/channel.ts";
 import { runEngine, type Provider, type ToolExecutor } from "./engine.ts";
-import { echoProvider, stubExecutor } from "./provider/mock.ts";
+import { echoProvider } from "./provider/mock.ts";
 import { resolveEngineSession } from "./store/dialect.ts";
+// Task 1 (P3, WS-06 §1): test-tool registration goes through the registry. The equivalence corpus
+// (packages/sdk/src/query.test.ts's "tooluse" scenarios, scripts/differential.ts's tool-round/
+// hooked-tool-round/canusetool-approved-round/mode-switch-mid-session scenarios) calls
+// inMemoryProcess WITHOUT its own `tools` argument specifically so the DEFAULT executor is what
+// runs -- flipping that default away from the old universal-echo `stubExecutor` to the real
+// registry-backed adapter (below) means the two ad-hoc, non-WS-06 tool names those fixed provider
+// scripts hard-code (provider/mock.ts's "tooluse"/"modeswitch" cases: `test_tool`, `mystery_tool`)
+// must be pre-registered here with EXACTLY stubExecutor's own byte-for-byte echo behavior --
+// `${name}:${JSON.stringify(input)}` -- or every committed differential golden that exercises one of
+// them would stop matching. `long_task` is registered for the identical reason even though no
+// CURRENT default-tools call site happens to invoke it (engine.test.ts's own `long_task` fixtures
+// always pass an explicit `tools:`, bypassing this default entirely) -- named explicitly by this
+// task's own brief, and harmless to pre-register defensively. `unmatched_tool` is deliberately NOT
+// registered: its entire test purpose (engine.test.ts) is to be an unresolved permission-axis name,
+// a concern orthogonal to this tool registry, and every one of its own call sites already supplies
+// an explicit `tools:` too.
+//
+// These three are plain, throwaway, snake_case test doubles -- visually distinct from every real
+// WS-06 PascalCase name and from the `mcp__server__tool` namespace by construction -- registered
+// directly against the SAME module-level registry singleton descriptors/*.ts populate (registry.ts's
+// own header documents why that singleton is safe to share here: bun's test runner evaluates this
+// module's top-level side effects exactly once per `bun test` invocation, so this registration runs
+// a single time regardless of how many test files import `inMemoryProcess` from this module).
+import "./tools/descriptors/index.ts";
+import { registerTool, type ToolResultPayload } from "./tools/registry.ts";
+
+function registerEquivalenceStandIn(name: string): void {
+  const echo: { execute(input: unknown): Promise<ToolResultPayload> } = {
+    async execute(input: unknown) {
+      return { output: `${name}:${JSON.stringify(input)}` };
+    },
+  };
+  registerTool({
+    descriptor: {
+      canonicalName: name,
+      advertisedName: name,
+      source: "sdk",
+      inputSchema: { type: "object" },
+      description: "Test-only equivalence-corpus stand-in (testing.ts) -- not a WS-06 tool.",
+      exposure: "hidden",
+      permissionClass: "read",
+      availability: {},
+      capabilityRequirements: [],
+      disposition: "implement-now",
+    },
+    executor: echo,
+  });
+}
+
+for (const name of ["test_tool", "long_task", "mystery_tool"]) {
+  registerEquivalenceStandIn(name);
+}
 
 // inMemoryProcess is a TESTING-ONLY entry point (winter-agent-runtime/testing — never used by real
 // production code; main.ts is the real entrypoint) — so unlike main.ts's resolveProductionWinterHome,
@@ -51,7 +103,13 @@ function parseConfigFromArgv(argv: string[]): RuntimeConfig {
 export function inMemoryProcess(
   argv: string[],
   provider: Provider = echoProvider,
-  tools: ToolExecutor = stubExecutor,
+  // Task 1 (P3): no longer defaults to stubExecutor -- an omitted (or explicit `undefined`, the
+  // SAME thing to a default parameter; scripts/differential.ts relies on exactly this) `tools`
+  // now flows through to runEngine as omitted too, so THAT function builds its own registry-backed
+  // executor (see engine.ts's own EngineOptions.tools comment). Every caller that still wants the
+  // old universal-echo double keeps working unchanged by passing `stubExecutor` explicitly (every
+  // pre-existing test that does so already spells it out at the call site).
+  tools?: ToolExecutor,
   env?: Record<string, string | undefined>,
 ): SpawnedRuntimeProcess {
   const config = parseConfigFromArgv(argv);
@@ -108,7 +166,7 @@ export function inMemoryProcess(
         input,
         output,
         provider,
-        tools,
+        ...(tools !== undefined ? { tools } : {}),
         ...(store !== undefined ? { store } : {}),
         ...(initialMessages.length > 0 ? { initialMessages } : {}),
         // Task 11 (WS-07 §9): threaded exactly like `store`/`initialMessages` above.
