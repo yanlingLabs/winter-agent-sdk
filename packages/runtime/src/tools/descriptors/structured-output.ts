@@ -18,6 +18,11 @@ stub({
   exposure: "eager",
   permissionClass: "task",
   availability: ALWAYS_AVAILABLE,
-  capabilityRequirements: [],
+  // I4 (fix wave, P3 close-out): gated on "winter.structured-output" -- this descriptor has no `impl/*.ts`
+  // executor anywhere in the codebase yet (owned by P5/WS-03 host), so advertising it unconditionally
+  // handed a real model a schema for a tool that always answers "registered but not yet
+  // executable" (registry.ts). Mirrors the WebSearch/LSP precedent -- a capability token, not
+  // `executor !== undefined` (which would also silently hide a test-registered executorless tool).
+  capabilityRequirements: ["winter.structured-output"],
   disposition: "implement-now",
 });

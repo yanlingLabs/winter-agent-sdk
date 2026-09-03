@@ -111,6 +111,69 @@ test("WS-06 §6 obligation 1: system/init.tools reflects the real buildAdvertise
   expect(systemInit!.tools).toEqual(initFrame!.tools);
 });
 
+// I4 (fix wave, P3 close-out): twelve `disposition: "implement-now"` descriptors
+// (Agent/SendMessage/ListAgents/Skill/Workflow/StructuredOutput/ToolSearch/the four MCP resource
+// tools/ReadNotifications) had NO `impl/*.ts` executor anywhere in the codebase, yet were advertised
+// unconditionally -- a real model saw their schemas, called them, and got "registered but not yet
+// executable" on every single call (registry.ts's own notYetExecutableResult). Fixed by gating each
+// on a capability token per its owning phase (winter.subagents/winter.mcp/winter.workflows/
+// winter.skills/winter.structured-output/winter.global-messaging), mirroring the WebSearch/LSP
+// precedent -- never `executor !== undefined` (which would also silently hide a legitimately
+// test-registered executorless descriptor). This test is COUNT-INDEPENDENT (it does not hardcode
+// "exactly twelve") and scoped to `disposition === "implement-now"` -- the class WS-06 §2 defines as
+// "ships now" -- so it stays correct as new implement-now tools are added or existing ones gain
+// executors over time; it would have failed on all twelve before this fix's capability gating landed
+// (they were all advertised under an empty `capabilities: []` cfg, same as every ungated tool).
+test("I4: every advertised implement-now descriptor has a real executor -- no schema is handed to a model that only ever answers 'not yet executable'", async () => {
+  // Forces every real executor to be wired, independent of import/test order (same precedent as this
+  // file's own "TaskCreate/TaskGet/.../CronDelete/ScheduleWakeup executors emit exactly the pinned
+  // result envelopes" test, a few tests down) -- descriptors/*.ts registers a STUB (no executor) at
+  // module load; a lane's own impl/*.ts only installs the real executor when ITS module loads, which
+  // nothing before this test in file order guarantees has happened yet.
+  await import("./impl/index.ts");
+  // The DEFAULT cfg (no capabilities supplied) -- byte-identical to what engine.ts's own
+  // buildAdvertisedSet call site produces for a session that configures nothing. This is exactly the
+  // cfg under which I4's twelve previously-executorless descriptors (Agent/SendMessage/ListAgents/
+  // Skill/Workflow/StructuredOutput/ToolSearch/the four MCP resource tools/ReadNotifications) used to
+  // be advertised anyway (an empty `capabilityRequirements` always passed) despite having no executor
+  // at all -- now correctly excluded by their own capability gate. Deliberately NOT a cfg that
+  // supplies every known capability token: doing so would put the twelve right back into this
+  // loop with no executor, which is not what "fixed" means here -- fixed means "not advertised until
+  // an executor exists," not "advertised with an executor materializing out of nowhere."
+  const advertised = buildAdvertisedSet({ mode: "bypassPermissions" });
+  const implementNowAdvertised = advertised.filter((d) => d.disposition === "implement-now");
+  expect(implementNowAdvertised.length).toBeGreaterThan(0); // sanity: the filter itself isn't vacuous
+  for (const d of implementNowAdvertised) {
+    const registered = getRegisteredTool(d.canonicalName);
+    expect(registered?.executor, `"${d.canonicalName}" is advertised (disposition: implement-now) but has no registered executor`).toBeDefined();
+  }
+
+  // Positive confirmation that I4's own twelve are the ones now excluded (would have appeared in,
+  // and failed, the loop above before the capability gating landed) -- count-independent in spirit
+  // (this list is the fix's OWN documented scope, not re-derived from a live descriptor scan), but
+  // still a real, falsifiable assertion: if a future task wires a real executor for one of these and
+  // forgets to drop its capabilityRequirements, this line (not the loop above) is what would need
+  // updating -- the loop above stays correct regardless.
+  const stillExecutorlessImplementNow = [
+    "Agent",
+    "SendMessage",
+    "ListAgents",
+    "Skill",
+    "Workflow",
+    "StructuredOutput",
+    "ToolSearch",
+    "ListMcpResourcesTool",
+    "ReadMcpResourceTool",
+    "ReadMcpResourceDirTool",
+    "RefreshMcpTools",
+    "ReadNotifications",
+  ];
+  const advertisedNames = new Set(advertised.map((d) => d.canonicalName));
+  for (const name of stillExecutorlessImplementNow) {
+    expect(advertisedNames.has(name), `"${name}" should stay excluded under the default (no-capabilities) cfg until it has a real executor`).toBe(false);
+  }
+});
+
 // ================================================================================================
 // New coverage: WS-06 §6 obligation 3 -- schema-identity, task-graph/cron/schedule-wakeup family.
 // ================================================================================================
@@ -237,22 +300,74 @@ test("WS-06 §6 obligation 5: mcp__winter__advisor keeps the pinned mcp__ name a
     expect(advertised, `mode=${mode}: mcp__winter__advisor must be advertised identically`).toEqual(descriptor);
   }
 
-  // Honest gap, not silently glossed over: unlike WS06-01a's own ordinary-tool proof (Read/Bash reach
-  // the real engine wire today), mcp__winter__advisor does NOT, because RuntimeConfig has no field
-  // threading `capabilities` to the real runEngine(...) call site at all (the same gap WS06-01b's own
-  // matrix note already names for familyMetadata/features/toolSearchEnabled/insideSubagent -- this is
-  // that same gap's concrete instance for the capabilities axis specifically). Proven here rather than
-  // asserted away: the real wire currently omits it.
+  // GAP CLOSED (Part B item 1, fix wave, P3 close-out): this used to be an "honest gap" proof that
+  // RuntimeConfig had no field threading `capabilities` to the real runEngine(...) call site at all,
+  // so mcp__winter__advisor could never reach the real engine wire regardless of what a host wanted.
+  // RuntimeConfig.capabilities (protocol/config.ts) now exists and engine.ts's own buildAdvertisedSet
+  // call site threads it through -- this proves the OTHER direction: a host that supplies the
+  // capability on RuntimeConfig now genuinely sees the tool on the real wire, not just the pure
+  // function.
   const { host, runtime } = createInMemoryChannel();
   const provider = scriptedProvider([{ kind: "text", text: "done" }]);
-  const done = runEngine({ config: baseConfig(), input: runtime.input, output: runtime.output, provider, tools: stubExecutor });
+  const done = runEngine({
+    config: baseConfig({ capabilities: ["winter.reviewer-model"] }),
+    input: runtime.input,
+    output: runtime.output,
+    provider,
+    tools: stubExecutor,
+  });
   host.output.write({ type: "user", text: "go" });
   host.output.write({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined });
   const frames: WinterFrame[] = [];
   for await (const f of host.input) frames.push(f);
   await done;
   const initFrame = frames.find((f) => f.type === "init") as { tools: string[] } | undefined;
-  expect(initFrame!.tools).not.toContain("mcp__winter__advisor");
+  expect(initFrame!.tools).toContain("mcp__winter__advisor");
+
+  // Positive control: WITHOUT the capability supplied, the real engine wire still correctly excludes
+  // it (the gate itself was always enforced -- only the WIRING to reach it was missing before this fix).
+  const { host: host2, runtime: runtime2 } = createInMemoryChannel();
+  const provider2 = scriptedProvider([{ kind: "text", text: "done" }]);
+  const done2 = runEngine({ config: baseConfig(), input: runtime2.input, output: runtime2.output, provider: provider2, tools: stubExecutor });
+  host2.output.write({ type: "user", text: "go" });
+  host2.output.write({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined });
+  const frames2: WinterFrame[] = [];
+  for await (const f of host2.input) frames2.push(f);
+  await done2;
+  const initFrame2 = frames2.find((f) => f.type === "init") as { tools: string[] } | undefined;
+  expect(initFrame2!.tools).not.toContain("mcp__winter__advisor");
+});
+
+// Part B item 1 (fix wave, P3 close-out): the engine-level proof for the OTHER three axes
+// (toolSearchEnabled/insideSubagent/familyMetadata) WS06-01b's own note used to name as unreachable
+// from RuntimeConfig at all. `familyMetadata.taskNative` is the cheapest real axis to prove
+// end-to-end (TodoWrite's own registry.test.ts fixture is task-native-hidden; ../registry.test.ts's
+// "mode gates a task-graph tool via the R3-4 seam" is the pure-function half this mirrors).
+test("Part B item 1: familyMetadata now reaches the real engine wire (RuntimeConfig.familyMetadata -> buildAdvertisedSet)", async () => {
+  const { host, runtime } = createInMemoryChannel();
+  const provider = scriptedProvider([{ kind: "text", text: "done" }]);
+  const done = runEngine({
+    config: baseConfig({ familyMetadata: { taskNative: true } }),
+    input: runtime.input,
+    output: runtime.output,
+    provider,
+    tools: stubExecutor,
+  });
+  host.output.write({ type: "user", text: "go" });
+  host.output.write({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined });
+  const frames: WinterFrame[] = [];
+  for await (const f of host.input) frames.push(f);
+  await done;
+  const initFrame = frames.find((f) => f.type === "init") as { tools: string[] } | undefined;
+  // Whichever descriptor(s) declare `hiddenWhenFamilyTaskNative: true` are excluded on the real wire
+  // once familyMetadata.taskNative reaches it -- proving the THREADING, not re-deriving which
+  // descriptors declare the predicate (registry.test.ts already owns that enumeration).
+  const hiddenNames = listRegisteredTools()
+    .map((t) => t.descriptor)
+    .filter((d) => d.availability.hiddenWhenFamilyTaskNative === true)
+    .map((d) => d.advertisedName);
+  expect(hiddenNames.length).toBeGreaterThan(0);
+  for (const name of hiddenNames) expect(initFrame!.tools).not.toContain(name);
 });
 
 // ================================================================================================
@@ -289,6 +404,10 @@ const WS06_06: ConformanceRow[] = [
     status: "new",
     citations: [
       { file: "./conformance.test.ts", testName: "system/init.tools reflects the real buildAdvertisedSet wiring (mode + disallowedTools) on BOTH init frame shapes" },
+      // Part B item 1 (fix wave, P3 close-out): the capabilities/familyMetadata axes join mode/
+      // disallowedTools on the real engine wire (see WS06-01b's own updated note for the closed gap).
+      { file: "./conformance.test.ts", testName: "mcp__winter__advisor keeps the pinned mcp__ name and an identical descriptor across every permission mode" },
+      { file: "./conformance.test.ts", testName: "Part B item 1: familyMetadata now reaches the real engine wire" },
     ],
   },
   {
@@ -303,7 +422,7 @@ const WS06_06: ConformanceRow[] = [
       { file: "./registry.test.ts", testName: "AskUserQuestion is unavailable inside a subagent" },
     ],
     note:
-      "Every AdvertisedSetInputs axis is exhaustively unit-tested at the pure-function level. Scope carve-out (stated plainly, not glossed over): RuntimeConfig has no field threading familyMetadata/features/toolSearchEnabled/insideSubagent to the real runEngine(...) call site today -- only mode and disallowedTools reach it (see WS06-01a's own new coverage). A real per-model-family/feature-flag ENGINE-LEVEL snapshot is therefore not yet producible until a later task threads those fields through RuntimeConfig; this row's 'covered' verdict is for the axis LOGIC, which is real and correct, not a claim that every axis is reachable end-to-end today.",
+      "Every AdvertisedSetInputs axis is exhaustively unit-tested at the pure-function level. GAP CLOSED (Part B item 1, fix wave, P3 close-out): RuntimeConfig.capabilities/toolSearchEnabled/insideSubagent/familyMetadata (protocol/config.ts) now exist and engine.ts's own buildAdvertisedSet call site threads all four through, alongside mode/disallowedTools -- see WS06-01a's own two new citations for the engine-level proof (capabilities via mcp__winter__advisor, familyMetadata via the hiddenWhenFamilyTaskNative set). `features`/`toolSearchEnabled`/`insideSubagent` still have no CATALOG-DERIVED resolution story populating a real value at runtime (a provider-catalog/session-context producer is a later phase's own job, same as before) -- the WIRE FIELD and the plumbing into buildAdvertisedSet are what this fix closes, not the population story.",
   },
   {
     id: "WS06-02",

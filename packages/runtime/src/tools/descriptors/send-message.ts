@@ -21,6 +21,11 @@ stub({
   exposure: "eager",
   permissionClass: "messaging",
   availability: ALWAYS_AVAILABLE,
-  capabilityRequirements: [],
+  // I4 (fix wave, P3 close-out): gated on "winter.subagents" -- this descriptor has no `impl/*.ts`
+  // executor anywhere in the codebase yet (owned by P4/WS-10), so advertising it unconditionally
+  // handed a real model a schema for a tool that always answers "registered but not yet
+  // executable" (registry.ts). Mirrors the WebSearch/LSP precedent -- a capability token, not
+  // `executor !== undefined` (which would also silently hide a test-registered executorless tool).
+  capabilityRequirements: ["winter.subagents"],
   disposition: "implement-now",
 });

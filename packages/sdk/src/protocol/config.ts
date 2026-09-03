@@ -125,4 +125,15 @@ export interface RuntimeConfig {
   // caller is responsible for it existing. Absent means "no OUTDIR export, no extra writable root,"
   // byte-identical to every session before this field existed.
   outputsDir?: string;
+  // Part B item 1 (fix wave, P3 close-out): Options.capabilities/toolSearchEnabled/insideSubagent/
+  // familyMetadata's own wire mirrors -- see options.ts's own comment for the full rationale
+  // (registry.ts's buildAdvertisedSet has carried these input fields since T1; engine.ts's one
+  // production call site never had a wire field to read a real value from, so every
+  // capability-gated descriptor -- WebSearch/LSP/advisor and I4's twelve executorless tools -- was
+  // unconditionally excluded regardless of what a host might supply). Pure passthrough, same
+  // convention as `additionalDirectories`/`sandbox`/`outputsDir` above.
+  capabilities?: string[];
+  toolSearchEnabled?: boolean;
+  insideSubagent?: boolean;
+  familyMetadata?: { taskNative?: boolean };
 }

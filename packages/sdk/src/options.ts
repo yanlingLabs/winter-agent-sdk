@@ -99,6 +99,32 @@ export interface Options {
   // root, exactly as before this field existed.
   outputsDir?: string;
 
+  // Part B item 1 (fix wave, P3 close-out): registry.ts's own `buildAdvertisedSet` (WS-06 §1.5) has
+  // carried `capabilities`/`toolSearchEnabled`/`insideSubagent`/`familyMetadata` input fields since
+  // T1 -- every capability-gated descriptor (WebSearch/LSP/advisor, and now I4's twelve
+  // executorless implement-now tools) checks `cfg.capabilities` against its own
+  // `capabilityRequirements` -- but engine.ts's one production call site never had a wire field to
+  // read a real value FROM, so `cfg.capabilities` was always `undefined` and every one of those
+  // descriptors was unconditionally excluded regardless of what a host might actually want to
+  // supply. This is that missing wire field: resolved runtime capability tokens (e.g.
+  // "winter.search-backend", "winter.subagents", "mcp:<server>"), matched 1:1 against a
+  // descriptor's own `capabilityRequirements`. Absent means "no capabilities supplied" -- the SAME
+  // exclude-everything-gated behavior every session had before this field existed (byte-identical
+  // default). Populating this from a real catalog-derived source (the provider catalog, MCP-server
+  // connection state) is a LATER phase's own job (P6-ish, WS-13/WS-09) -- this is only the wire
+  // field + the plumbing into buildAdvertisedSet, mirroring `additionalDirectories`'s own
+  // "orphaned carry, closed" precedent above.
+  capabilities?: string[];
+  // Same posture as `capabilities` above -- registry.ts's own AvailabilityPredicate fields
+  // (`requiresToolSearchDisabled`/`insideSubagent`) already consult these; absent means "tool search
+  // is not known-disabled" / "not known to be inside a subagent," the pre-existing default every
+  // descriptor's own comments already document for an absent value.
+  toolSearchEnabled?: boolean;
+  insideSubagent?: boolean;
+  // Registry.ts's own `AvailabilityPredicate.hiddenWhenFamilyTaskNative` consumer -- absent reads as
+  // "not task-native" (shown), exactly as every existing descriptor comment already documents.
+  familyMetadata?: { taskNative?: boolean };
+
   // Task 6 (WS-07 §6.4): explicit, top-level, and named to be impossible to set by accident — the
   // ONLY thing that lets a session SELECT bypassPermissions (at startup, or via a later
   // setPermissionMode into it): both paths are gated identically

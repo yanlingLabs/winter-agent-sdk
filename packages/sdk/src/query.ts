@@ -257,6 +257,11 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
     // field above.
     ...(options.sandbox !== undefined ? { sandbox: options.sandbox } : {}),
     ...(options.outputsDir !== undefined ? { outputsDir: options.outputsDir } : {}),
+    // Part B item 1 (fix wave, P3 close-out): same pure-passthrough convention as every field above.
+    ...(options.capabilities !== undefined ? { capabilities: options.capabilities } : {}),
+    ...(options.toolSearchEnabled !== undefined ? { toolSearchEnabled: options.toolSearchEnabled } : {}),
+    ...(options.insideSubagent !== undefined ? { insideSubagent: options.insideSubagent } : {}),
+    ...(options.familyMetadata !== undefined ? { familyMetadata: options.familyMetadata } : {}),
     // Task 6 (WS-07 §6.4): same pure-passthrough convention as every field above.
     ...(options.allowDangerouslySkipPermissions !== undefined ? { allowDangerouslySkipPermissions: options.allowDangerouslySkipPermissions } : {}),
     // Task 10 (WS-08 §1/§2/§9): the hooks structure-only wire shape (functions stripped -- see

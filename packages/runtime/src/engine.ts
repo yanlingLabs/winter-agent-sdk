@@ -782,23 +782,34 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // state. T8 (WS-06 §6 obligation 1): the advertised tool list is no longer hardcoded empty --
   // buildAdvertisedSet's own header comment named this exact wiring as "T8's own job... once every
   // lane's real executor/capability story exists to describe", which is now true (all five P3 lanes
-  // merged). `familyMetadata`/`capabilities`/`toolSearchEnabled`/`insideSubagent` are left unset here
-  // deliberately -- each has a documented, spec-correct default when absent (AvailabilityPredicate's
-  // own comments: absent familyMetadata reads as "not task-native", i.e. shown; absent capabilities
-  // requires an EMPTY capabilityRequirements list to pass, which every implement-now descriptor
-  // already has), and a real resolution story for any of them (the provider catalog's family
-  // metadata [WS-13]; MCP-server-derived capability tokens [WS-09]) is a LATER phase's own job, not
-  // invented here. `disallowedTools` threads the run's own deny-grammar config straight through,
-  // matching what the permissions engine already sees from the same `config` object -- RuntimeConfig
-  // carries no separate "requested tool config" allowlist distinct from `allowedTools` (which stays
-  // OUT of this call by design: AdvertisedSetInputs.allowedTools exists for documentation only, and
-  // a test in registry.test.ts pins that buildAdvertisedSet must never filter on it -- §1.3's
-  // pre-approval-is-not-a-visibility-allowlist rule), so `cfg.tools` is left unset here (its
-  // documented default: "no restriction on this axis").
+  // merged).
+  //
+  // Part B item 1 (fix wave, P3 close-out): `familyMetadata`/`capabilities`/`toolSearchEnabled`/
+  // `insideSubagent` are now threaded from `config` (RuntimeConfig's own wire mirrors, options.ts's
+  // own header for the full rationale) rather than left permanently unset -- a session with none of
+  // these configured sees byte-identical behavior to before this fix (every field's own documented
+  // absent-default: no capabilities supplied -> every capability-gated descriptor stays excluded,
+  // exactly as it always was; absent familyMetadata reads as "not task-native", i.e. shown; absent
+  // toolSearchEnabled/insideSubagent are simply not known-true). A real CATALOG-DERIVED resolution
+  // story for any of these (the provider catalog's family metadata [WS-13]; MCP-server-derived
+  // capability tokens [WS-09]) is still a LATER phase's own job -- this is only the wire-to-
+  // buildAdvertisedSet plumbing a host can already use directly (e.g. supplying
+  // `capabilities: ["winter.reviewer-model"]` today makes `mcp__winter__advisor` advertisable, per
+  // I4's own capability-token precedent). `disallowedTools` threads the run's own deny-grammar
+  // config straight through, matching what the permissions engine already sees from the same
+  // `config` object -- RuntimeConfig carries no separate "requested tool config" allowlist distinct
+  // from `allowedTools` (which stays OUT of this call by design: AdvertisedSetInputs.allowedTools
+  // exists for documentation only, and a test in registry.test.ts pins that buildAdvertisedSet must
+  // never filter on it -- §1.3's pre-approval-is-not-a-visibility-allowlist rule), so `cfg.tools` is
+  // left unset here (its documented default: "no restriction on this axis").
   const advertisedToolNames = buildAdvertisedSet({
     mode: policyStateStore.getState().mode,
     platform: process.platform,
     ...(config.disallowedTools !== undefined ? { disallowedTools: config.disallowedTools } : {}),
+    ...(config.capabilities !== undefined ? { capabilities: config.capabilities } : {}),
+    ...(config.toolSearchEnabled !== undefined ? { toolSearchEnabled: config.toolSearchEnabled } : {}),
+    ...(config.insideSubagent !== undefined ? { insideSubagent: config.insideSubagent } : {}),
+    ...(config.familyMetadata !== undefined ? { familyMetadata: config.familyMetadata } : {}),
   }).map((d) => d.advertisedName);
   output.write({
     type: "init",
