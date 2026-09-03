@@ -214,6 +214,19 @@ describe("Bash executor (real sandboxed spawn)", () => {
     expect(res.output).toContain("[sandbox: override-requested]");
   });
 
+  // T8 fix round 1 (coordinator-required, brief item 7): runForeground wraps the model's raw
+  // command in a pwd-capture script before spawning (buildPwdCaptureScript) but passes
+  // matchCommand: input.command through to runCommand -- excludedCommands must match what the
+  // model/settings author actually wrote, never the wrapper. This was already true in the
+  // production code (spawn.ts:210, bash.ts:266) but had ZERO fixture coverage at the executor
+  // level; spawn.test.ts's own sibling fixture proves the lower-level runCommand mechanism, this
+  // one proves it reaches the real Bash tool end-to-end.
+  t("excludedCommands matches the model's RAW command, not bash.ts's own pwd-capture wrapper", async () => {
+    const ctx = fakeCtx({ sandboxSettings: { excludedCommands: ["echo raw-command"], allowUnsandboxedCommands: true } });
+    const res = await bash()({ command: "echo raw-command" }, ctx);
+    expect(res.output).toContain("[sandbox: excluded]");
+  });
+
   t("bad args are a tool error, never a throw", async () => {
     const ctx = fakeCtx();
     const res = await bash()({ command: "" }, ctx);

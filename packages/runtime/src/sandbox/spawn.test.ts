@@ -181,6 +181,58 @@ describe("runCommand: real spawn (darwin)", () => {
     expect(res.profile).toBeDefined();
   });
 
+  // T8 fix round 1 (coordinator-required, brief item 7): matchCommand (spawn.ts) is what
+  // excludedCommands matches against, DISTINCT from the (possibly wrapped) command that actually
+  // gets spawned -- bash.ts's own runForeground wraps the model's raw command in a pwd-capture
+  // script (buildPwdCaptureScript) before spawning it, but must match excludedCommands against
+  // the model's raw command, never the wrapper. This mechanism existed in production code
+  // (spawn.ts:210's `command: opts.matchCommand ?? opts.command`) but had zero grep hits across
+  // every test file before this fixture -- the WS12-08 matrix row's own citation covered
+  // first-match-wins PRIORITY ordering, never raw-vs-wrapped matching specifically.
+  test.skipIf(process.platform !== "darwin")("matchCommand, not the (possibly wrapped) command, is what excludedCommands matches against", async () => {
+    const cwd = realTmp();
+    const raw = "echo winter-t8-fixround1-raw-probe";
+    // Mirrors bash.ts's own buildPwdCaptureScript shape closely enough to be a faithful stand-in
+    // (the exact trailing lines don't matter to this test -- only that the SPAWNED command differs
+    // textually from the raw command excludedCommands names).
+    const wrapped = `${raw}\n__winter_test_rc=$?\npwd > /dev/null 2>&1\nexit "$__winter_test_rc"\n`;
+    const res = await runCommand({
+      command: wrapped,
+      matchCommand: raw,
+      cwd,
+      env: { ...process.env },
+      timeoutMs: 5000,
+      settings: { excludedCommands: [raw], allowUnsandboxedCommands: true },
+    });
+    expect(res.posture).toBe("excluded");
+    expect(res.exitCode).toBe(0);
+  });
+
+  // Negative control (RED direction, per the coordinator's own instruction): the SAME wrapped
+  // command WITHOUT matchCommand falls back to matching the WRAPPED command against
+  // excludedCommands -- which does not equal the raw string, so this must NOT be excluded. Proven
+  // empirically by reverting spawn.ts's own `command: opts.matchCommand ?? opts.command` to a bare
+  // `command: opts.command` and re-running both tests: the positive test above then fails
+  // (`posture` becomes "sandboxed" instead of "excluded") while THIS test still passes unchanged --
+  // confirming this fixture genuinely exercises the matchCommand plumbing rather than being
+  // vacuously true regardless of it. Reverted immediately after that RED observation; both tests
+  // pass against the real (fixed) spawn.ts.
+  test.skipIf(process.platform !== "darwin")("negative control: the same wrapped command WITHOUT matchCommand is NOT excluded -- the wrap defeats naive matching", async () => {
+    const cwd = realTmp();
+    const raw = "echo winter-t8-fixround1-raw-probe";
+    const wrapped = `${raw}\n__winter_test_rc=$?\npwd > /dev/null 2>&1\nexit "$__winter_test_rc"\n`;
+    const res = await runCommand({
+      command: wrapped,
+      // no matchCommand -- resolveExecutionPath falls back to matching `wrapped` itself, which
+      // never equals `raw` textually.
+      cwd,
+      env: { ...process.env },
+      timeoutMs: 5000,
+      settings: { excludedCommands: [raw], allowUnsandboxedCommands: true },
+    });
+    expect(res.posture).toBe("sandboxed");
+  });
+
   test.skipIf(process.platform !== "darwin")("dangerouslyDisableSandbox: true actually skips the seatbelt wrapper (no profile in the result)", async () => {
     const cwd = realTmp();
     const res = await runCommand({

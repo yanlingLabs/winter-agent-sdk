@@ -614,9 +614,10 @@ export async function traceWinterBashBackgroundRound(): Promise<ConformanceTrace
 
 // Task 8 (Phase 3 close-out, WS-06 §6 obligation 1's own "system/init.tools snapshot" MUST): proves
 // the buildAdvertisedSet wiring (previous commit; conformance.test.ts's own engine-level unit proof)
-// also survives the FULL query() wrapper, pinned byte-exact -- disallowedTools:["Bash"] is the one
-// config axis RuntimeConfig actually threads to the real call (see conformance.test.ts's own
-// WS06-01b note for the other axes' scope carve-out). Note: like every other scenario's golden after
+// also survives the FULL query() wrapper, pinned byte-exact -- disallowedTools:["Bash"] is one of
+// the TWO config axes RuntimeConfig actually threads to the real call today (mode is the other,
+// exercised implicitly here via the ordinary default permissionMode; see conformance.test.ts's own
+// WS06-01b note for the other four axes' scope carve-out). Note: like every other scenario's golden after
 // the previous commit's regeneration, this one CHURNS whenever a descriptor is added/removed from the
 // registry -- not a new fragility this scenario introduces, the same property the other 11 already
 // have now.
