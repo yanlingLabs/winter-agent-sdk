@@ -164,7 +164,7 @@ test("WS-06 §6 obligation 3: TaskCreate/TaskGet/TaskList/TaskUpdate/CronDelete/
     permissions: { probeReadAccess: () => "silent" as const },
     tempDir: "/work/.tmp",
     sandboxSettings: {},
-    session: { setCwd() {}, addBoundedRoot() {}, setPermissionMode() {}, getBoundedRoots: () => [], getPermissionMode: () => "default" as const },
+    session: { setCwd() {}, addBoundedRoot() {}, setPermissionMode() {}, getBoundedRoots: () => [], getPermissionMode: () => "default" as const, getSessionRoot: () => "/work", setSessionRoot() {} },
   };
   const run = async (name: string, input: unknown) => {
     const tool = getRegisteredTool(name);
@@ -439,7 +439,14 @@ const WS12_11: ConformanceRow[] = [
     status: "covered",
     citations: [
       { file: "./impl/bash.test.ts", testName: "env exports from one call do NOT persist to the next -- fresh shell per call" },
-      { file: "./impl/bash.test.ts", testName: "a cd that lands within an allowed dir (ctx.tempDir) persists via ctx.session.setCwd" },
+      // RULING P3-L / I3 (fix wave, P3 close-out): re-pointed -- the former citation ("a cd that
+      // lands within an allowed dir (ctx.tempDir) persists via ctx.session.setCwd") named a Lane C
+      // test pin that RULING P3-L deliberately inverts (tempDir is profile-writable, never a working
+      // directory a `cd` may carry into). The two citations below are this file's own post-fix
+      // replacements: the inverted pin, plus the fix's own "an allowed dir that is NOT tempDir still
+      // carries" positive control.
+      { file: "./impl/bash.test.ts", testName: "a cd into ctx.tempDir does NOT persist (RULING P3-L inverts the former Lane C pin -- tempDir is profile-writable, not a working directory)" },
+      { file: "./impl/bash.test.ts", testName: "a cd that lands within a bounded root (an additionalDirectory, not tempDir) persists via ctx.session.setCwd" },
       { file: "./impl/bash.test.ts", testName: "a cd OUTSIDE every allowed dir does not persist" },
       { file: "./impl/bash.test.ts", testName: "defaults to 2 minutes when omitted" },
       { file: "./impl/bash.test.ts", testName: "clamps to the 600000ms ceiling (the ordinary ceiling and the declaration cap are the same number)" },

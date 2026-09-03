@@ -139,6 +139,9 @@ export const enterWorktreeExecutor: ToolExecutor = {
 
       ctx.session.setCwd(target);
       ctx.session.addBoundedRoot(target);
+      // RULING P3-L: the session root moves WITH the worktree switch -- see registry.ts's own
+      // ToolExecutionContext.session.getSessionRoot doc comment.
+      ctx.session.setSessionRoot(target);
 
       return {
         output: JSON.stringify({
@@ -167,6 +170,8 @@ export const enterWorktreeExecutor: ToolExecutor = {
 
     ctx.session.setCwd(match.path);
     ctx.session.addBoundedRoot(match.path);
+    // RULING P3-L: see this file's own header EnterWorktree comment above.
+    ctx.session.setSessionRoot(match.path);
 
     return {
       output: JSON.stringify({

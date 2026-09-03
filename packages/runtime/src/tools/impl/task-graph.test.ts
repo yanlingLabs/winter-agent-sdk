@@ -22,7 +22,7 @@ function makeCtx(sessionId: string): ToolExecutionContext {
     permissions: { probeReadAccess: () => "silent" },
     tempDir: "/work/.tmp",
     sandboxSettings: {},
-    session: { setCwd() {}, addBoundedRoot() {}, setPermissionMode() {}, getBoundedRoots: () => [], getPermissionMode: () => "default" },
+    session: { setCwd() {}, addBoundedRoot() {}, setPermissionMode() {}, getBoundedRoots: () => [], getPermissionMode: () => "default", getSessionRoot: () => "/work", setSessionRoot() {} },
   };
 }
 

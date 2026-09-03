@@ -171,6 +171,17 @@ export interface ToolExecutionContext {
   session: {
     setCwd(p: string): void;
     addBoundedRoot(p: string): void;
+    // RULING P3-L (fix wave, P3 close-out): the session's ENGINE-OWNED "root" -- distinct from the
+    // live, freely-drifting `ctx.cwd` (a `cd` can move that anywhere within the allowed set; see
+    // bash.ts's own cwd-carry). Initialized from `config.cwd` and moved ONLY by EnterWorktree (to
+    // the new worktree path) and ExitWorktree (back to the main worktree) -- never by a plain `cd`.
+    // Two consumers need this EXACT distinction: (1) bash.ts's cwd-carry allowed-set, which must not
+    // let a `cd` into tempDir/outDir "stick" as though it were a real working directory (I3), and
+    // (2) cron.ts's durable store key (M3) and CronCreate(durable)'s write-recognition target
+    // (RULING P3-K) -- both must survive an in-worktree `cd` into a subdirectory without silently
+    // keying off wherever the live cwd happens to have drifted to.
+    getSessionRoot(): string;
+    setSessionRoot(p: string): void;
     setPermissionMode(mode: PermissionMode): void;
     // Task 8 (P3 close-out, "Settings threading" MUST): the identical "cwd or additionalDirectories"
     // notion permissions/evaluator.ts's own boundedRoots() already computes for the STANDING

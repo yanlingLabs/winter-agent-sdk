@@ -40,8 +40,8 @@ function mkdtempRepo(): string {
   return mkdtempSync(join(tmpdir(), "winter-lane-e-enter-wt-"));
 }
 
-function makeCtx(cwd: string): { ctx: ToolExecutionContext; calls: { setCwd: string[]; addBoundedRoot: string[] } } {
-  const calls = { setCwd: [] as string[], addBoundedRoot: [] as string[] };
+function makeCtx(cwd: string): { ctx: ToolExecutionContext; calls: { setCwd: string[]; addBoundedRoot: string[]; setSessionRoot: string[] } } {
+  const calls = { setCwd: [] as string[], addBoundedRoot: [] as string[], setSessionRoot: [] as string[] };
   const ctx: ToolExecutionContext = {
     cwd,
     home: "/home/test",
@@ -61,6 +61,10 @@ function makeCtx(cwd: string): { ctx: ToolExecutionContext; calls: { setCwd: str
       setPermissionMode() {},
       getBoundedRoots: () => [],
       getPermissionMode: () => "default",
+      getSessionRoot: () => cwd,
+      setSessionRoot(p: string) {
+        calls.setSessionRoot.push(p);
+      },
     },
   };
   return { ctx, calls };
@@ -122,6 +126,8 @@ describe("EnterWorktree (task-7 brief)", () => {
     expect(parsed.branch).toBe("feature-x"); // git's own convention: no -b given -> branch named after the basename
     expect(calls.setCwd).toEqual([expectedPath]);
     expect(calls.addBoundedRoot).toEqual([expectedPath]);
+    // RULING P3-L (fix wave): the session root moves WITH the worktree switch, same target as cwd.
+    expect(calls.setSessionRoot).toEqual([expectedPath]);
 
     // The worktree is real and git actually knows about it.
     const list = await runGit(["worktree", "list", "--porcelain"], repo);
@@ -184,6 +190,7 @@ describe("EnterWorktree (task-7 brief)", () => {
     expect(parsed.worktreePath).toBe(realpathSync(worktreePath));
     expect(calls.setCwd).toEqual([realpathSync(worktreePath)]);
     expect(calls.addBoundedRoot).toEqual([realpathSync(worktreePath)]);
+    expect(calls.setSessionRoot).toEqual([realpathSync(worktreePath)]);
   });
 
   test("path pointing at a real directory that is NOT a registered worktree -> legible error", async () => {

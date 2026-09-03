@@ -489,6 +489,11 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // supply their own `tools` and never reach the registry's `session` seam at all).
   let currentCwd = config.cwd;
   const extraBoundedRoots: string[] = [];
+  // RULING P3-L (fix wave, P3 close-out): the engine-owned session root -- see registry.ts's own
+  // ToolExecutionContext.session.getSessionRoot doc comment for the exact contract. Starts at
+  // `config.cwd`, exactly like `currentCwd`, but is moved ONLY by EnterWorktree/ExitWorktree
+  // (tools/impl/{enter,exit}-worktree.ts), never by a plain `cd` (bash.ts's own cwd-carry).
+  let sessionRoot = config.cwd;
   const makeEvalCtx = (): EvaluationContext => {
     // Preserves the EXACT pre-existing "include the key only when config.additionalDirectories
     // itself was ever set" contract (Finding 6, P2 fix-wave) — union in extraBoundedRoots WITHOUT
@@ -500,6 +505,7 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
     return {
       policy: policyStateStore.getState(),
       cwd: currentCwd,
+      sessionRoot,
       home: permissionHome,
       trustedWorkspace,
       sessionBypassEnabled: config.allowDangerouslySkipPermissions === true,
@@ -685,6 +691,16 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
         },
         addBoundedRoot(p: string): void {
           extraBoundedRoots.push(p);
+        },
+        // RULING P3-L: see registry.ts's own doc comment. `getSessionRoot` is a plain read of this
+        // closure's own `sessionRoot` (never re-derived from `currentCwd`, which is exactly the
+        // value it must stay independent of); `setSessionRoot` is called ONLY by EnterWorktree/
+        // ExitWorktree.
+        getSessionRoot(): string {
+          return sessionRoot;
+        },
+        setSessionRoot(p: string): void {
+          sessionRoot = p;
         },
         setPermissionMode(mode: PermissionMode): void {
           const previousMode = policyStateStore.getState().mode;

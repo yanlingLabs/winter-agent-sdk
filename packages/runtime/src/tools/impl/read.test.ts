@@ -29,6 +29,8 @@ function makeCtx(cwd: string): ToolExecutionContext {
       setPermissionMode() {},
       getBoundedRoots: () => [],
       getPermissionMode: () => "default",
+      getSessionRoot: () => cwd,
+      setSessionRoot() {},
     },
   };
 }

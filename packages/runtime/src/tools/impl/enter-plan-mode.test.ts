@@ -33,6 +33,8 @@ function makeCtx(overrides?: { setPermissionMode?: ToolExecutionContext["session
       },
       getBoundedRoots: () => [],
       getPermissionMode: () => "default",
+      getSessionRoot: () => "/work",
+      setSessionRoot() {},
     },
   };
   return { ctx, calls };

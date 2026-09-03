@@ -264,6 +264,11 @@ export interface EvaluationContext {
   // a mismatch (WS-07 §2's stale-policy-rejection contract).
   policy: PolicyState;
   cwd: string;
+  // RULING P3-L (fix wave, P3 close-out): the engine-owned session root -- see registry.ts's own
+  // ToolExecutionContext.session.getSessionRoot doc comment. Distinct from `cwd` (which drifts with
+  // every `cd`): moved only by EnterWorktree/ExitWorktree. Consumed today by CronCreate(durable)'s
+  // write-recognition target (RULING P3-K, edit-recognition.ts's own CronCreate case).
+  sessionRoot: string;
   home: string;
   trustedWorkspace: boolean;
   allowManagedPermissionRulesOnly?: boolean;

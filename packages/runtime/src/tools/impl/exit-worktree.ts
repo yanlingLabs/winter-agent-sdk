@@ -63,6 +63,8 @@ export const exitWorktreeExecutor: ToolExecutor = {
 
     if (action === "keep") {
       ctx.session.setCwd(main.path);
+      // RULING P3-L: exiting a worktree restores the session root to the main worktree too.
+      ctx.session.setSessionRoot(main.path);
       return {
         output: JSON.stringify({
           action: "keep",
@@ -106,6 +108,8 @@ export const exitWorktreeExecutor: ToolExecutor = {
     }
 
     ctx.session.setCwd(main.path);
+    // RULING P3-L: exiting a worktree restores the session root to the main worktree too.
+    ctx.session.setSessionRoot(main.path);
     // NOTE (task-7-report.md Concerns): ctx.session.addBoundedRoot (EnterWorktree's own call, made
     // when this worktree was created) has no corresponding "remove a bounded root" seam on
     // ToolExecutionContext.session (registry.ts) -- the session's filesystem permission fence keeps

@@ -41,6 +41,8 @@ function makeCtx(overrides?: { initialMode?: PermissionMode; setPermissionMode?:
       },
       getBoundedRoots: () => [],
       getPermissionMode: () => liveMode,
+      getSessionRoot: () => "/work",
+      setSessionRoot() {},
     },
   };
   return { ctx, calls };

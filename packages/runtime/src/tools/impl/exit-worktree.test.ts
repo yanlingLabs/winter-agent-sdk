@@ -44,8 +44,8 @@ async function addFixtureWorktree(repo: string, name: string): Promise<string> {
   return path;
 }
 
-function makeCtx(cwd: string): { ctx: ToolExecutionContext; calls: { setCwd: string[] } } {
-  const calls = { setCwd: [] as string[] };
+function makeCtx(cwd: string): { ctx: ToolExecutionContext; calls: { setCwd: string[]; setSessionRoot: string[] } } {
+  const calls = { setCwd: [] as string[], setSessionRoot: [] as string[] };
   const ctx: ToolExecutionContext = {
     cwd,
     home: "/home/test",
@@ -63,6 +63,10 @@ function makeCtx(cwd: string): { ctx: ToolExecutionContext; calls: { setCwd: str
       setPermissionMode() {},
       getBoundedRoots: () => [],
       getPermissionMode: () => "default",
+      getSessionRoot: () => cwd,
+      setSessionRoot(p: string) {
+        calls.setSessionRoot.push(p);
+      },
     },
   };
   return { ctx, calls };
@@ -111,6 +115,7 @@ describe("ExitWorktree (task-7 brief)", () => {
     const parsed = JSON.parse(result.output);
     expect(parsed.action).toBe("keep");
     expect(calls.setCwd).toEqual([parsed.mainWorktreePath]);
+    expect(calls.setSessionRoot).toEqual([parsed.mainWorktreePath]);
 
     // The worktree must still be registered with git (kept, not removed).
     const listAll = await runGitFixture(["worktree", "list"], repo);
@@ -129,6 +134,7 @@ describe("ExitWorktree (task-7 brief)", () => {
     expect(parsed.action).toBe("remove");
     expect(parsed.discarded).toBe(false);
     expect(calls.setCwd).toEqual([parsed.mainWorktreePath]);
+    expect(calls.setSessionRoot).toEqual([parsed.mainWorktreePath]);
 
     const listAll = await runGitFixture(["worktree", "list"], repo);
     expect(listAll.stdout).not.toContain("wt-clean");

@@ -18,8 +18,9 @@ function proj(): string {
 
 function fakeCtx(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionContext {
   const frames: BackgroundTaskMessage[] = [];
+  const resolvedCwd = overrides.cwd ?? proj();
   return {
-    cwd: proj(),
+    cwd: resolvedCwd,
     home: "/home/test",
     sessionId: "s1",
     readState: createSessionReadState(),
@@ -27,7 +28,17 @@ function fakeCtx(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionCo
     permissions: { probeReadAccess: () => "silent" },
     tempDir: proj(),
     sandboxSettings: {},
-    session: { setCwd() {}, addBoundedRoot() {}, setPermissionMode() {}, getBoundedRoots: () => [], getPermissionMode: () => "default" },
+    // RULING P3-L: the default fake session root mirrors the resolved cwd -- the SAME "starting
+    // cwd" identity engine.ts's own `sessionRoot` variable is initialized from (`config.cwd`).
+    session: {
+      setCwd() {},
+      addBoundedRoot() {},
+      setPermissionMode() {},
+      getBoundedRoots: () => [],
+      getPermissionMode: () => "default",
+      getSessionRoot: () => resolvedCwd,
+      setSessionRoot() {},
+    },
     ...overrides,
   };
 }
@@ -246,23 +257,97 @@ describe("Bash executor (real sandboxed spawn)", () => {
     expect(second.output).toContain("val:absent");
   });
 
-  // --- cwd-carry (WS-06 §6.1) ---
+  // --- cwd-carry (WS-06 §6.1, RULING P3-L / I3) ---
+  //
+  // RULING P3-L: the cwd-carry ALLOWED set is `[ctx.session.getSessionRoot(), ...getBoundedRoots()]`
+  // -- EXCLUDING tempDir/outDir (they stay profile-WRITABLE, but a `cd` into them must never "stick"
+  // as a working directory; only EnterWorktree/ExitWorktree move the session root). This INVERTS the
+  // former Lane C pin ("a cd that lands within ctx.tempDir persists") -- see this describe block's
+  // own first two tests for the before/after shape.
   describe("cwd-carry", () => {
-    t("a cd that lands within an allowed dir (ctx.tempDir) persists via ctx.session.setCwd", async () => {
+    t("a cd into ctx.tempDir does NOT persist (RULING P3-L inverts the former Lane C pin -- tempDir is profile-writable, not a working directory)", async () => {
       const cwd = proj();
       const tempDir = proj();
       mkdirSync(join(tempDir, "sub"));
       let carried: string | undefined;
-      const ctx = fakeCtx({ cwd, tempDir, session: { setCwd: (p) => (carried = p), addBoundedRoot() {}, setPermissionMode() {}, getBoundedRoots: () => [], getPermissionMode: () => "default" } });
+      const ctx = fakeCtx({
+        cwd,
+        tempDir,
+        session: {
+          setCwd: (p) => (carried = p),
+          addBoundedRoot() {},
+          setPermissionMode() {},
+          getBoundedRoots: () => [cwd],
+          getPermissionMode: () => "default",
+          getSessionRoot: () => cwd,
+          setSessionRoot() {},
+        },
+      });
       const res = await bash()({ command: `cd ${join(tempDir, "sub")} && pwd` }, ctx);
       expect(res.output).toContain("[exit 0]");
-      expect(carried).toBe(realpathSync(join(tempDir, "sub")));
+      expect(carried).toBeUndefined();
+    });
+
+    t("two sequential calls: `cd $TMPDIR` then `cd <project>` never locks the session out (RULING P3-L / I3 fix -- the exact failure scenario the review names)", async () => {
+      const cwd = proj();
+      const tempDir = proj();
+      // A session seam that MIRRORS the engine (registry.ts/engine.ts): `setCwd` mutates the SAME
+      // `liveCwd` both `getBoundedRoots()` derives from AND the next call's own `ctx.cwd` reads --
+      // exactly like engine.ts's real `currentCwd`/`boundedRoots()`. `getSessionRoot()` stays fixed
+      // at the original project dir throughout (only EnterWorktree/ExitWorktree would move it).
+      let liveCwd = cwd;
+      const session = {
+        setCwd: (p: string) => {
+          liveCwd = p;
+        },
+        addBoundedRoot() {},
+        setPermissionMode() {},
+        getBoundedRoots: () => [liveCwd],
+        getPermissionMode: () => "default" as const,
+        getSessionRoot: () => cwd,
+        setSessionRoot() {},
+      };
+
+      // Call 1: `cd $TMPDIR` -- pre-fix, tempDir was a writable root and this WOULD have carried,
+      // permanently losing the project dir. Post-fix, tempDir is excluded from the carry allow-list.
+      const ctx1 = fakeCtx({ cwd: liveCwd, tempDir, session });
+      const res1 = await bash()({ command: `cd ${tempDir} && pwd` }, ctx1);
+      expect(res1.output).toContain("[exit 0]");
+      expect(liveCwd).toBe(cwd); // did NOT carry into tempDir
+
+      // Call 2: the session's own cwd (liveCwd, unchanged) can still reach the project -- no lockout.
+      const ctx2 = fakeCtx({ cwd: liveCwd, tempDir, session });
+      const res2 = await bash()({ command: `cd ${cwd} && pwd` }, ctx2);
+      expect(res2.output).toContain("[exit 0]");
+      expect(res2.output).toContain(realpathSync(cwd));
+    });
+
+    t("a cd that lands within a bounded root (an additionalDirectory, not tempDir) persists via ctx.session.setCwd", async () => {
+      const cwd = proj();
+      const extra = proj();
+      mkdirSync(join(extra, "sub"));
+      let carried: string | undefined;
+      const ctx = fakeCtx({
+        cwd,
+        session: {
+          setCwd: (p) => (carried = p),
+          addBoundedRoot() {},
+          setPermissionMode() {},
+          getBoundedRoots: () => [cwd, extra],
+          getPermissionMode: () => "default",
+          getSessionRoot: () => cwd,
+          setSessionRoot() {},
+        },
+      });
+      const res = await bash()({ command: `cd ${join(extra, "sub")} && pwd` }, ctx);
+      expect(res.output).toContain("[exit 0]");
+      expect(carried).toBe(realpathSync(join(extra, "sub")));
     });
 
     t("a cd OUTSIDE every allowed dir does not persist", async () => {
       const cwd = proj();
       let carried: string | undefined;
-      const ctx = fakeCtx({ cwd, session: { setCwd: (p) => (carried = p), addBoundedRoot() {}, setPermissionMode() {}, getBoundedRoots: () => [], getPermissionMode: () => "default" } });
+      const ctx = fakeCtx({ cwd, session: { setCwd: (p) => (carried = p), addBoundedRoot() {}, setPermissionMode() {}, getBoundedRoots: () => [cwd], getPermissionMode: () => "default", getSessionRoot: () => cwd, setSessionRoot() {} } });
       const res = await bash()({ command: "cd /var && pwd" }, ctx);
       expect(res.output).toContain("[exit 0]");
       expect(carried).toBeUndefined();
@@ -270,14 +355,16 @@ describe("Bash executor (real sandboxed spawn)", () => {
 
     t("no cd at all -- setCwd is never called", async () => {
       let called = false;
-      const ctx = fakeCtx({ session: { setCwd: () => (called = true), addBoundedRoot() {}, setPermissionMode() {}, getBoundedRoots: () => [], getPermissionMode: () => "default" } });
+      const cwd = proj();
+      const ctx = fakeCtx({ cwd, session: { setCwd: () => (called = true), addBoundedRoot() {}, setPermissionMode() {}, getBoundedRoots: () => [cwd], getPermissionMode: () => "default", getSessionRoot: () => cwd, setSessionRoot() {} } });
       await bash()({ command: "echo hi" }, ctx);
       expect(called).toBe(false);
     });
 
     t("a command that itself calls exit early (never reaching the trailing pwd capture) does not crash and does not carry cwd", async () => {
       let called = false;
-      const ctx = fakeCtx({ session: { setCwd: () => (called = true), addBoundedRoot() {}, setPermissionMode() {}, getBoundedRoots: () => [], getPermissionMode: () => "default" } });
+      const cwd = proj();
+      const ctx = fakeCtx({ cwd, session: { setCwd: () => (called = true), addBoundedRoot() {}, setPermissionMode() {}, getBoundedRoots: () => [cwd], getPermissionMode: () => "default", getSessionRoot: () => cwd, setSessionRoot() {} } });
       const res = await bash()({ command: "exit 3" }, ctx);
       expect(res.output).toContain("[exit 3]");
       expect(called).toBe(false);

@@ -124,6 +124,20 @@ function isWithinAllowedDirs(candidate: string, cwd: string, writableRoots: stri
   return allowed.some((root) => canonicalCandidate === root || canonicalCandidate.startsWith(root + sep));
 }
 
+// RULING P3-L / I3 (fix wave, P3 close-out): the cwd-CARRY allowed set is DELIBERATELY NARROWER
+// than `computeWritableRoots` above. `computeWritableRoots` answers "where may this call's spawn
+// write" (tempDir/outDir included -- both remain profile-writable); this answers "where may the
+// session's OWN cwd persist to" (WS-06 §6.1's "allowed WORKING directories"), which excludes
+// tempDir/outDir on purpose -- see this function's own header comment on `carryCwdIfAllowed` for
+// the failure mode this closes (a `cd $TMPDIR` permanently locking the session out of its own
+// project). `ctx.session.getSessionRoot()` (registry.ts) is the engine-owned "starting cwd"
+// identity, moved only by EnterWorktree/ExitWorktree -- NOT `ctx.cwd` itself, which is only ever
+// the call's OWN (already-possibly-drifted) cwd, and would make the allowed set trivially include
+// wherever the session already drifted to, defeating the whole point of a carry allow-list.
+function computeCwdCarryAllowedRoots(ctx: ToolExecutionContext): string[] {
+  return [ctx.session.getSessionRoot(), ...ctx.session.getBoundedRoots()];
+}
+
 // Task 8 (P3 close-out, "Settings threading" MUST; WS-12 §6.1/§5.3): the child env every spawn
 // (foreground + background) exports -- `TMPDIR` always (the session scratch dir, pre-existing), plus
 // `OUTDIR` when the session configured one. A session with no `ctx.outDir` gets a child env
@@ -157,7 +171,7 @@ function buildPwdCaptureScript(command: string, pwdFile: string): string {
   return `${command}\n__winter_bash_rc=$?\npwd > ${shQuote(pwdFile)} 2>/dev/null\nexit "$__winter_bash_rc"\n`;
 }
 
-function carryCwdIfAllowed(pwdFile: string, ctx: ToolExecutionContext, writableRoots: string[]): void {
+function carryCwdIfAllowed(pwdFile: string, ctx: ToolExecutionContext): void {
   let finalCwd: string;
   try {
     finalCwd = readFileSync(pwdFile, "utf8").trim();
@@ -165,7 +179,10 @@ function carryCwdIfAllowed(pwdFile: string, ctx: ToolExecutionContext, writableR
     return;
   }
   if (!finalCwd) return;
-  if (isWithinAllowedDirs(finalCwd, ctx.cwd, writableRoots) && canonicalizePath(finalCwd) !== canonicalizePath(ctx.cwd)) {
+  // RULING P3-L / I3: the carry allow-list is `computeCwdCarryAllowedRoots`, NOT the spawn's own
+  // `writableRoots` (which includes tempDir/outDir -- see that function's own header for why a `cd`
+  // into either must never "stick").
+  if (isWithinAllowedDirs(finalCwd, ctx.cwd, computeCwdCarryAllowedRoots(ctx)) && canonicalizePath(finalCwd) !== canonicalizePath(ctx.cwd)) {
     ctx.session.setCwd(canonicalizePath(finalCwd));
   }
 }
@@ -285,7 +302,7 @@ async function runForeground(input: BashInput, ctx: ToolExecutionContext): Promi
     throw err;
   }
 
-  carryCwdIfAllowed(pwdFile, ctx, writableRoots);
+  carryCwdIfAllowed(pwdFile, ctx);
   cleanupPwdFile(pwdFile);
 
   const success = result.exitCode === 0 && !result.timedOut && !result.aborted;

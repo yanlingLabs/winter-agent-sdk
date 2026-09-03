@@ -38,6 +38,7 @@ function ctx(overrides: Partial<EvaluationContext> = {}): EvaluationContext {
   return {
     policy,
     cwd: "/work",
+    sessionRoot: "/work",
     home: "/synthetic/home/tester",
     trustedWorkspace: false,
     hookStage: NO_OPINION_HOOK_STAGE,

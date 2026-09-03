@@ -22,6 +22,7 @@ function ctx(overrides: Partial<EvaluationContext> = {}): EvaluationContext {
   return {
     policy,
     cwd: "/work",
+    sessionRoot: "/work",
     home: "/home/u",
     trustedWorkspace: false,
     hookStage: NO_OPINION_HOOK_STAGE,
