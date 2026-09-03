@@ -40,28 +40,35 @@ export const exitPlanModeExecutor: ToolExecutor = {
     const plan = optionalString(record.plan);
     const planFilePath = optionalString(record.planFilePath);
 
-    // T8 FLAG (task-7 brief, explicit): the semantically correct target is "whatever permission mode
-    // was active immediately before EnterPlanMode ran", but ToolExecutionContext (registry.ts) has no
-    // mode GETTER at all -- `session` is a write-only posture-mutation seam (setCwd/addBoundedRoot/
-    // setPermissionMode), and no other field on ToolExecutionContext records the prior mode either.
-    // "default" is used as the documented restoration target until a later phase threads the real
-    // prior mode through (e.g. a `session.getPermissionMode()` addition, or a value carried on
-    // ToolExecutionContext itself) -- this is a carry, not a guess: "default" is the engine's own
-    // documented pre-session-start default (permissions/policy-state.ts's assertKnownPermissionMode),
-    // so a plan that was entered from the ordinary starting mode round-trips correctly; a plan entered
-    // from `acceptEdits`/`auto`/`dontAsk` does NOT round-trip to its own prior mode at this phase.
-    const newMode = "default";
-    try {
-      ctx.session.setPermissionMode(newMode);
-    } catch (err) {
-      // KNOWN FLAG -- see enter-plan-mode.ts's identical comment for the full mechanism
-      // (WinterPermissionError from the bypass gate). Unreachable here too: this executor never
-      // requests "bypassPermissions". Wrapped defensively for the same reason: a legible tool error,
-      // never an uncaught rejection promoted to a whole-round `error_during_execution`.
-      return {
-        output: `Error: ExitPlanMode failed to restore the session's permission mode: ${err instanceof Error ? err.message : String(err)}`,
-        isError: true,
-      };
+    // RULING P3-H (Task 8, P3 close-out): CLOSES the T8 flag this file's header used to carry.
+    // Lane E's reviewer found the previous unconditional `setPermissionMode("default")` clobbers a
+    // mode the HOST already applied via a canUseTool `updatedPermissions` suggestion — engine.ts
+    // applies suggested updates to the LIVE policy BEFORE calling tools.execute() for the now-
+    // approved call (engine.ts's own "Task 8 (WS-07 §7.2)" comment: "Applied BEFORE executing this
+    // call"), so by the time THIS executor runs, the live mode may already have moved to whatever
+    // the plan-approval flow itself chose (e.g. straight to "acceptEdits") — not "plan" anymore.
+    // `ctx.session.getPermissionMode()` (registry.ts) is the newly-added getter that lets this
+    // executor tell the two cases apart: flip to "default" ONLY when the live mode is STILL
+    // literally "plan" (nobody else already moved it); otherwise leave the host's own choice alone.
+    // `previousMode` in the result is always the OBSERVED value from the getter — never a hardcoded
+    // "plan" literal — so a caller can tell, from the result alone, whether this executor's own flip
+    // fired or the mode had already moved before it ran.
+    const observedMode = ctx.session.getPermissionMode();
+    const stillInPlan = observedMode === "plan";
+    const newMode = stillInPlan ? "default" : observedMode;
+    if (stillInPlan) {
+      try {
+        ctx.session.setPermissionMode(newMode);
+      } catch (err) {
+        // KNOWN FLAG -- see enter-plan-mode.ts's identical comment for the full mechanism
+        // (WinterPermissionError from the bypass gate). Unreachable here too: this executor never
+        // requests "bypassPermissions". Wrapped defensively for the same reason: a legible tool
+        // error, never an uncaught rejection promoted to a whole-round `error_during_execution`.
+        return {
+          output: `Error: ExitPlanMode failed to restore the session's permission mode: ${err instanceof Error ? err.message : String(err)}`,
+          isError: true,
+        };
+      }
     }
 
     // Result fields deliberately OMITTED, with reasons (WS-06 §3.3 prose: "Result: plan, plan file
@@ -73,11 +80,13 @@ export const exitPlanModeExecutor: ToolExecutor = {
     //     worse than omitting them outright. This is a deliberate simplification, not an oversight.
     return {
       output: JSON.stringify({
-        previousMode: "plan",
+        previousMode: observedMode,
         newMode,
         ...(plan !== undefined ? { plan } : {}),
         ...(planFilePath !== undefined ? { planFilePath } : {}),
-        message: `Plan approved; permission mode restored to "${newMode}" (Winter does not yet track the pre-plan mode -- see the T8 flag in this file's own header).`,
+        message: stillInPlan
+          ? `Plan approved; permission mode restored to "${newMode}".`
+          : `Plan approved; permission mode already moved to "${observedMode}" (by a canUseTool/hook updatedPermissions suggestion applied before this executor ran) -- left unchanged.`,
       }),
     };
   },

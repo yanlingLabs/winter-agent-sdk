@@ -13,7 +13,7 @@ function makeCtx(): ToolExecutionContext {
     permissions: { probeReadAccess: () => "silent" },
     tempDir: "/tmp/winter-test",
     sandboxSettings: {},
-    session: { setCwd() {}, addBoundedRoot() {}, setPermissionMode() {}, getBoundedRoots: () => [] },
+    session: { setCwd() {}, addBoundedRoot() {}, setPermissionMode() {}, getBoundedRoots: () => [], getPermissionMode: () => "default" },
   };
 }
 

@@ -28,6 +28,7 @@ function makeCtx(cwd: string): ToolExecutionContext {
       addBoundedRoot() {},
       setPermissionMode() {},
       getBoundedRoots: () => [],
+      getPermissionMode: () => "default",
     },
   };
 }

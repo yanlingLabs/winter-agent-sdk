@@ -60,6 +60,7 @@ function makeCtx(cwd: string): { ctx: ToolExecutionContext; calls: { setCwd: str
       },
       setPermissionMode() {},
       getBoundedRoots: () => [],
+      getPermissionMode: () => "default",
     },
   };
   return { ctx, calls };

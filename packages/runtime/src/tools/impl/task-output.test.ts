@@ -19,7 +19,7 @@ function fakeCtx(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionCo
     permissions: { probeReadAccess: () => "silent" },
     tempDir: realpathSync(mkdtempSync(join(tmpdir(), "winter-taskoutput-tempdir-"))),
     sandboxSettings: {},
-    session: { setCwd() {}, addBoundedRoot() {}, setPermissionMode() {}, getBoundedRoots: () => [] },
+    session: { setCwd() {}, addBoundedRoot() {}, setPermissionMode() {}, getBoundedRoots: () => [], getPermissionMode: () => "default" },
     ...overrides,
   };
 }

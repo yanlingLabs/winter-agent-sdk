@@ -179,6 +179,14 @@ export interface ToolExecutionContext {
     // notion of "which directories this session may freely write to" can never drift from the
     // permission engine's own. See engine.ts's own session-seam construction for the real wiring.
     getBoundedRoots(): string[];
+    // RULING P3-H (Task 8, P3 close-out): the getter half of the write-only posture-mutation seam
+    // above -- Lane E's own reviewer found that ExitPlanMode's unconditional `setPermissionMode
+    // ("default")` clobbers a mode the HOST already applied via a canUseTool `updatedPermissions`
+    // suggestion (engine.ts applies suggested updates BEFORE calling tools.execute() for the
+    // approved call), because ExitPlanMode had no way to observe "is the live mode still actually
+    // 'plan'" before deciding whether to flip it. Reads the SAME live PolicyStateStore
+    // `setPermissionMode` itself mutates -- never a separate, potentially-stale snapshot.
+    getPermissionMode(): PermissionMode;
   };
 }
 

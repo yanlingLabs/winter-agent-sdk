@@ -668,6 +668,12 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
         getBoundedRoots(): string[] {
           return boundedRoots(makeEvalCtx());
         },
+        // RULING P3-H: reads the SAME live PolicyStateStore `setPermissionMode` (above) mutates --
+        // never a separate, potentially-stale snapshot. See registry.ts's own
+        // ToolExecutionContext.session.getPermissionMode comment for why this exists.
+        getPermissionMode(): PermissionMode {
+          return policyStateStore.getState().mode;
+        },
       },
       // Ruling P3-D carry (task-1 report, spine amendment section): `config.cwd` -- the run's own
       // STARTING cwd -- was in scope here all along; passing it is what lets the read-before-edit

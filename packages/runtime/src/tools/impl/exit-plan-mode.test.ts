@@ -1,13 +1,20 @@
 import { describe, test, expect } from "bun:test";
+import type { PermissionMode } from "@yanlinglabs/winter-agent-sdk";
 import { createSessionReadState } from "../read-state.ts";
 import { getRegisteredTool, type ToolExecutionContext } from "../registry.ts";
 import { EXIT_PLAN_MODE_TOOL_NAME, exitPlanModeExecutor } from "./exit-plan-mode.ts";
 
-function makeCtx(overrides?: { setPermissionMode?: ToolExecutionContext["session"]["setPermissionMode"] }): {
+// RULING P3-H: `getPermissionMode` now reads LIVE state -- `liveMode` mirrors engine.ts's own real
+// PolicyStateStore, mutated by the SAME `setPermissionMode` call the getter reflects, never a
+// separate snapshot. `initialMode` defaults to "plan" (every pre-existing test in this file assumes
+// the call arrives while still genuinely in plan mode, matching EnterPlanMode having just run); a
+// test proving the OTHER branch (mode already moved before this executor runs) overrides it.
+function makeCtx(overrides?: { initialMode?: PermissionMode; setPermissionMode?: ToolExecutionContext["session"]["setPermissionMode"] }): {
   ctx: ToolExecutionContext;
   calls: { setCwd: string[]; addBoundedRoot: string[]; setPermissionMode: string[] };
 } {
   const calls = { setCwd: [] as string[], addBoundedRoot: [] as string[], setPermissionMode: [] as string[] };
+  let liveMode: PermissionMode = overrides?.initialMode ?? "plan";
   const ctx: ToolExecutionContext = {
     cwd: "/work",
     home: "/home/test",
@@ -25,10 +32,15 @@ function makeCtx(overrides?: { setPermissionMode?: ToolExecutionContext["session
         calls.addBoundedRoot.push(p);
       },
       setPermissionMode(mode) {
-        calls.setPermissionMode.push(mode);
+        // A throwing override (the "KNOWN FLAG" bypass-gate-rejection fixture below) mirrors the
+        // real gate: it fires BEFORE any state actually changes, so `calls`/`liveMode` stay
+        // untouched on rejection, exactly like the real PolicyStateStore#setMode.
         overrides?.setPermissionMode?.(mode);
+        calls.setPermissionMode.push(mode);
+        liveMode = mode;
       },
       getBoundedRoots: () => [],
+      getPermissionMode: () => liveMode,
     },
   };
   return { ctx, calls };
@@ -103,5 +115,50 @@ describe("ExitPlanMode (task-7 brief)", () => {
     const result = await exitPlanModeExecutor.execute({}, ctx);
     expect(result.isError).toBe(true);
     expect(result.output).toContain("ExitPlanMode failed to restore");
+  });
+
+  describe("RULING P3-H: reads the live mode via the getter instead of hardcoding 'plan'", () => {
+    test("still in plan (the ordinary case): flips to default and reports previousMode:'plan' from the getter, not a hardcoded literal", async () => {
+      const { ctx, calls } = makeCtx({ initialMode: "plan" });
+      const result = await exitPlanModeExecutor.execute({}, ctx);
+      expect(calls.setPermissionMode).toEqual(["default"]);
+      const parsed = JSON.parse(result.output);
+      expect(parsed.previousMode).toBe("plan");
+      expect(parsed.newMode).toBe("default");
+    });
+
+    test("mode already moved by a canUseTool/hook updatedPermissions suggestion BEFORE this executor ran: does NOT clobber it back to default, and reports the ACTUAL observed mode as previousMode", async () => {
+      const { ctx, calls } = makeCtx({ initialMode: "acceptEdits" });
+      const result = await exitPlanModeExecutor.execute({}, ctx);
+      // The whole point of the ruling: setPermissionMode must NEVER be called when the live mode is
+      // already something other than "plan" -- calling it with "default" here would be the exact
+      // clobber the reviewer's finding named.
+      expect(calls.setPermissionMode).toEqual([]);
+      expect(result.isError).toBeUndefined();
+      const parsed = JSON.parse(result.output);
+      expect(parsed.previousMode).toBe("acceptEdits");
+      expect(parsed.newMode).toBe("acceptEdits");
+      expect(parsed.message).toContain("acceptEdits");
+    });
+
+    test("mode already moved to 'auto': same non-clobbering behavior, proving this isn't special-cased to just one alternate mode", async () => {
+      const { ctx, calls } = makeCtx({ initialMode: "auto" });
+      const result = await exitPlanModeExecutor.execute({}, ctx);
+      expect(calls.setPermissionMode).toEqual([]);
+      const parsed = JSON.parse(result.output);
+      expect(parsed.previousMode).toBe("auto");
+      expect(parsed.newMode).toBe("auto");
+    });
+
+    test("the KNOWN-FLAG bypass-gate throw is genuinely unreachable when the mode already moved away from plan -- setPermissionMode is never even called, so a throwing override never fires", async () => {
+      const { ctx } = makeCtx({
+        initialMode: "acceptEdits",
+        setPermissionMode: () => {
+          throw new Error("should never be called");
+        },
+      });
+      const result = await exitPlanModeExecutor.execute({}, ctx);
+      expect(result.isError).toBeUndefined();
+    });
   });
 });
