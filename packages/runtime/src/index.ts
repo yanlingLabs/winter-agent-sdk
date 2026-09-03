@@ -28,7 +28,7 @@ export type { Duplex, FrameSource, FrameSink } from "./protocol/channel.ts";
 export { createRpcBridge } from "./rpc/bridge.ts";
 export type { RpcBridge } from "./rpc/bridge.ts";
 
-export { echoProvider, scriptedProvider, stubExecutor, isTestProviderName, testProviderByName } from "./provider/mock.ts";
+export { echoProvider, scriptedProvider, stubExecutor, isTestProviderName, testProviderByName, registerBgTaskTestTool, BGTASK_TEST_TOOL_NAME } from "./provider/mock.ts";
 export type { TestProviderName } from "./provider/mock.ts";
 
 // Phase 3 Task 2 (WS-06 §3.5): the tool-registration seam (Task 1, packages/runtime/src/tools/

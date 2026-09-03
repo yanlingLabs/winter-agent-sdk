@@ -380,3 +380,39 @@ export function buildRegistryToolExecutor(deps: RegistryToolExecutorDeps): Engin
     },
   };
 }
+
+// --- Fix round 1, RULING P3-C: the fallback-composed adapter main.ts uses -------------------------
+//
+// main.ts (the real child/compiled entrypoint) cannot itself build a RegistryToolExecutorDeps -- that
+// requires engine-internal live state (currentCwd, the running PolicyState, output.write, the
+// session's own readState/tempDir resolver) that only exists once runEngine is already executing, so
+// main.ts can only ever supply `tools` from OUTSIDE the call, or omit it and let engine.ts's own
+// `buildDefaultToolExecutor` build `deps` internally. Omitting `tools` alone is not enough on its
+// own, though: `buildRegistryToolExecutor` above deliberately returns a typed, non-throwing
+// unknownToolResult for any name with NO registered descriptor at all (by design -- see that
+// function's own header) -- correct for a genuine WS-06 name that simply has no `impl/*.ts` yet
+// (`notYetExecutableResult`), but wrong for the pre-existing scripted test-double names
+// ("test_tool"/"mystery_tool"/"long_task") that every child/compiled transport-equivalence scenario
+// and differential-adjacent test already depends on echoing exactly like stubExecutor always has --
+// those names have NO WS-06 descriptor at all and never will.
+//
+// `buildRegistryToolExecutorWithFallback` composes the two: a name absent from the registry
+// ENTIRELY (`getRegisteredTool(name) === undefined`, checked directly -- never by matching
+// `unknownToolResult`'s own text) delegates to `fallback` instead of producing the registry's own
+// "unknown tool" error; every other outcome (correctly-absent, not-yet-executable, or a real
+// dispatch) is untouched, so a genuine WS-06 stub without an executor yet STILL reports
+// not-yet-executable rather than silently echoing -- that distinction is exactly what T8's
+// conformance sweep (this file's own header, "unknown / correctly-absent / not-yet-executable") and
+// the phase ledger's own "typed not-yet-executable errors" phrasing both depend on staying real.
+// `fallback` is typed `EngineFacingToolExecutor` (not, say, engine.ts's own `ToolExecutor` by name)
+// so any value structurally matching `{id,name,input} -> {output}` -- stubExecutor included --
+// satisfies it with no cast.
+export function buildRegistryToolExecutorWithFallback(deps: RegistryToolExecutorDeps, fallback: EngineFacingToolExecutor): EngineFacingToolExecutor {
+  const registryExecutor = buildRegistryToolExecutor(deps);
+  return {
+    async execute(call: EngineToolCall): Promise<EngineToolResult> {
+      if (getRegisteredTool(call.name) === undefined) return fallback.execute(call);
+      return registryExecutor.execute(call);
+    },
+  };
+}

@@ -41,6 +41,14 @@ export function resetBackgroundTaskRootForTest(): void {
 
 export type BackgroundTaskKind = "bash" | "monitor" | "workflow" | "agent";
 
+// Fix round 1 (item 7): still UNEXERCISED by anything real as of this fix round. T2's own
+// background-task-message-family proof (provider/mock.ts's registerBgTaskTestTool, the "bgtask"
+// TestProviderName, scripts/differential.ts's differential_bgtask_probe) calls `ctx.emitFrame`
+// directly with FIXED literal task_id/output_file values -- none of those scripted tools call this
+// function at all, so neither its `randomUUID()` taskId nor its `ensureTasksDir` real-mkdir path has
+// ever run for real anywhere in this phase's own test suite. The first REAL caller will be Lane C's
+// own Bash executor, once its `run_in_background` support (T3) actually calls
+// `createBackgroundTask("bash")` for a genuine backgrounded command.
 export function createBackgroundTask(kind: BackgroundTaskKind): { taskId: string; outputPath: string } {
   if (!activeResolver) {
     throw new Error(

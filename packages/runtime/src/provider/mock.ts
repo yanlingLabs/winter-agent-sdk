@@ -1,4 +1,6 @@
+import { randomUUID } from "node:crypto";
 import type { Provider, ProviderTurn, ToolExecutor } from "../engine.ts";
+import { registerTool } from "../tools/registry.ts";
 
 // Task 3 moved Provider from prompt-based (`generate({prompt}): Promise<{text}>`) to
 // messages-based (`generate({messages}): Promise<ProviderTurn>`) to support multi-turn
@@ -52,10 +54,16 @@ export const stubExecutor: ToolExecutor = {
 // "rpc_probe" ProviderTurn kind (engine.ts), proving the runtime-originated control-RPC bridge
 // round trip (WS-04 §3.1) identically on every transport leg (transport-equivalence.test.ts's
 // rpcprobe scenario is its only consumer). REMOVE at P6 alongside the rest of this file.
-export type TestProviderName = "boom" | "tooluse" | "hang" | "reflect" | "rpcprobe" | "modeswitch";
+// P3 fix round 1 (RULING P3-C): "bgtask" joins this family for the SAME reason "tooluse"/
+// "modeswitch" needed a named scripted provider -- the child/compiled legs can only select a
+// Provider by env name, never an in-process closure. Selecting it is only half the fixture, though:
+// unlike "tooluse" (whose "test_tool" target has always worked via stubExecutor's blind echo), this
+// provider's target tool needs a REAL ToolExecutionContext (it calls ctx.emitFrame) -- see
+// BGTASK_TEST_TOOL_NAME/registerBgTaskTestTool below, this pair's own other half.
+export type TestProviderName = "boom" | "tooluse" | "hang" | "reflect" | "rpcprobe" | "modeswitch" | "bgtask";
 
 export function isTestProviderName(v: string): v is TestProviderName {
-  return v === "boom" || v === "tooluse" || v === "hang" || v === "reflect" || v === "rpcprobe" || v === "modeswitch";
+  return v === "boom" || v === "tooluse" || v === "hang" || v === "reflect" || v === "rpcprobe" || v === "modeswitch" || v === "bgtask";
 }
 
 export function testProviderByName(name: TestProviderName): Provider {
@@ -121,5 +129,87 @@ export function testProviderByName(name: TestProviderName): Provider {
         { kind: "tool_use", calls: [{ id: "c2", name: "mystery_tool", input: {} }] },
         { kind: "text", text: "second done" },
       ]);
+    // P3 fix round 1 (RULING P3-C): one tool_use round targeting BGTASK_TEST_TOOL_NAME, then text --
+    // same 2-step shape as "tooluse", same fixed literals transport-equivalence.test.ts's own
+    // (now-removed) in-memory-only proof used, so a golden/trace comparison sees byte-identical
+    // output regardless of which leg produced it. Paired with registerBgTaskTestTool below -- this
+    // provider alone is not enough; the target tool must also be registered for a call to it to do
+    // anything but echo through the unregisteredToolExecutor fallback.
+    case "bgtask":
+      return scriptedProvider([
+        { kind: "tool_use", calls: [{ id: "bgtask-call-1", name: BGTASK_TEST_TOOL_NAME, input: {} }] },
+        { kind: "text", text: "bgtask done" },
+      ]);
   }
+}
+
+// --- P3 fix round 1 (RULING P3-C): the bgtask test tool, paired with the "bgtask" provider above ---
+//
+// A throwaway snake_case test double (mirrors testing.ts's own test_tool/long_task/mystery_tool
+// naming) -- never a real WS-06 name. Exported by NAME (not just registered as a side effect) so
+// main.ts, transport-equivalence.test.ts, and any `allowedTools`/assertion that needs the literal
+// all consume the SAME constant -- this file's own established doctrine ("ONE definition ... rather
+// than two hand-copies that could quietly drift apart"), now extended to the tool side of the "bgtask"
+// pairing, not just the provider side.
+export const BGTASK_TEST_TOOL_NAME = "test_bgtask_probe";
+
+// Registers BGTASK_TEST_TOOL_NAME with a REAL executor that calls ctx.emitFrame three times
+// (task_started -> task_progress -> task_notification, WS-06 §3.5's own closed message family) --
+// the ONLY way a "bgtask" provider's tool_use call produces anything but an
+// unregisteredToolExecutor-fallback echo. Every literal below (task_id, description, usage counters,
+// status, output_file, summary) is FIXED -- never randomUUID()/createBackgroundTask() output or a
+// real timestamp -- so every leg (in-memory, child, compiled) that calls this produces byte-identical
+// frames regardless of process/timing; only `uuid` is genuinely random per call, and that field is
+// itself one of normalizeTrace's own VOLATILE fields, stripped before any comparison.
+//
+// A P1 test-only affordance exactly like this file's other exports: REMOVE at P6 alongside the rest
+// of this file (and alongside main.ts's own conditional call to this function).
+export function registerBgTaskTestTool(): void {
+  registerTool({
+    descriptor: {
+      canonicalName: BGTASK_TEST_TOOL_NAME,
+      advertisedName: BGTASK_TEST_TOOL_NAME,
+      source: "sdk",
+      inputSchema: { type: "object" },
+      description: "Test-only background-task-frame emitter (provider/mock.ts) -- not a WS-06 tool.",
+      exposure: "hidden",
+      permissionClass: "execute",
+      availability: {},
+      capabilityRequirements: [],
+      disposition: "implement-now",
+    },
+    executor: {
+      async execute(_input, ctx) {
+        const taskId = "t2-fixture-task";
+        ctx.emitFrame({
+          type: "system",
+          subtype: "task_started",
+          task_id: taskId,
+          description: "fixture background task",
+          uuid: randomUUID(),
+          session_id: ctx.sessionId,
+        });
+        ctx.emitFrame({
+          type: "system",
+          subtype: "task_progress",
+          task_id: taskId,
+          description: "fixture background task",
+          usage: { total_tokens: 1, tool_uses: 1, duration_ms: 1 },
+          uuid: randomUUID(),
+          session_id: ctx.sessionId,
+        });
+        ctx.emitFrame({
+          type: "system",
+          subtype: "task_notification",
+          task_id: taskId,
+          status: "completed",
+          output_file: "/dev/null",
+          summary: "fixture background task complete",
+          uuid: randomUUID(),
+          session_id: ctx.sessionId,
+        });
+        return { output: "bgtask-probe-done" };
+      },
+    },
+  });
 }

@@ -61,7 +61,7 @@ import {
 // §2 stub (descriptors/index.ts's own header explains why registry.ts itself never imports it back,
 // avoiding a cycle) before this module's own buildDefaultToolExecutor (below) can ever be called.
 import "./tools/descriptors/index.ts";
-import { buildRegistryToolExecutor } from "./tools/registry.ts";
+import { buildRegistryToolExecutor, buildRegistryToolExecutorWithFallback, type RegistryToolExecutorDeps } from "./tools/registry.ts";
 import { createSessionReadState } from "./tools/read-state.ts";
 import { configureBackgroundTaskRoot } from "./tools/background-tasks.ts";
 import { sessionTempDir, type SessionTempDirPaths } from "./paths/temp.ts";
@@ -146,14 +146,26 @@ export interface EngineOptions {
   provider: Provider;
   // Task 1 (P3, WS-06 §1): now OPTIONAL -- WRAP, don't rewrite dispatch (both `tools.execute(...)`
   // call sites below are byte-for-byte unchanged). A caller that supplies its own ToolExecutor
-  // (every one of this engine's ~1272 pre-existing tests, main.ts, runtime.ts) gets EXACTLY the same
-  // behavior as before this task, unconditionally -- the registry is never even imported by those
-  // paths' own reasoning, let alone consulted. Omitting `tools` is what makes the registry
-  // "live behind the engine seam": runEngine builds a registry-backed ToolExecutor internally (see
-  // `buildDefaultToolExecutor` below) from THIS run's own PolicyState/cwd/readState/tempDir --
-  // state only reachable from inside this closure, which is why the adapter cannot be built by a
-  // caller like testing.ts and merely passed in.
+  // (every one of this engine's ~1272 pre-existing tests, runtime.ts) gets EXACTLY the same behavior
+  // as before this task, unconditionally -- the registry is never even imported by those paths' own
+  // reasoning, let alone consulted. Omitting `tools` is what makes the registry "live behind the
+  // engine seam": runEngine builds a registry-backed ToolExecutor internally (see
+  // `buildDefaultToolExecutor` below) from THIS run's own PolicyState/cwd/readState/tempDir -- state
+  // only reachable from inside this closure, which is why the adapter cannot be built by a caller
+  // like testing.ts and merely passed in.
+  //
+  // Fix round 1 (RULING P3-C): main.ts is no longer in the "supplies its own ToolExecutor" list
+  // above -- it now omits `tools` too, and supplies `unregisteredToolExecutor` instead (below).
   tools?: ToolExecutor;
+  // Fix round 1 (RULING P3-C): main.ts's own fallback for a tool name with NO registered descriptor
+  // at all -- the pre-existing scripted test doubles ("test_tool"/"mystery_tool"/"long_task") have no
+  // WS-06 entry and never will, so they need to keep echoing exactly as stubExecutor always has, even
+  // though main.ts now dispatches through the registry by default. Ignored entirely when `tools` is
+  // explicitly supplied (this run never calls `buildDefaultToolExecutor` at all in that case); has no
+  // effect on a REGISTERED-but-executor-less name (a genuine WS-06 stub still reports its own typed
+  // not-yet-executable error -- see registry.ts's buildRegistryToolExecutorWithFallback for exactly
+  // which case triggers this fallback and which doesn't).
+  unregisteredToolExecutor?: ToolExecutor;
   store?: SessionPersistence;
   // Task 9 (WS-05 §7): the resumed/continued/forked conversation's prior turns, already rebuilt
   // into this engine's own ProviderMessage shapes by the store layer (dialect.ts's
@@ -223,7 +235,7 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // declared once, below, right where its own dependencies (makeEvalCtx, cancelPendingApprovalsOn
   // ModeSwitch) already exist, so the two call sites shadow right back onto this new binding without
   // a single further textual change to either of them.
-  const { config, input, output, provider, tools: providedTools, store, initialMessages, approvalStore, autoStateStore } = opts;
+  const { config, input, output, provider, tools: providedTools, unregisteredToolExecutor, store, initialMessages, approvalStore, autoStateStore } = opts;
 
   // Task 6 (WS-07 §2/§6.4, Ruling 8): permission startup validation — deliberately the very FIRST
   // thing runEngine does, before any `await` and before the `init` frame is written. A throw here
@@ -565,8 +577,10 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // Task 1 (P3, WS-06 §1): the tools seam becomes registry-backed. Built ONLY when the caller omits
   // `tools` (buildDefaultToolExecutor, below) -- everything in this block is unreachable, and
   // therefore inert, for a caller that supplies its own ToolExecutor (every pre-existing test,
-  // main.ts, runtime.ts): `providedTools ?? buildDefaultToolExecutor()` short-circuits before this
-  // function's body ever runs whenever `providedTools` is defined.
+  // runtime.ts): `providedTools ?? buildDefaultToolExecutor()` short-circuits before this function's
+  // body ever runs whenever `providedTools` is defined. Fix round 1 (RULING P3-C): main.ts now omits
+  // `tools`, so it DOES run this block -- see `unregisteredToolExecutor`'s own doc comment
+  // (EngineOptions, above) for how it still keeps its pre-existing scripted test doubles working.
   //
   // `session`: the posture-mutation seam Lane E's plan/worktree tools mutate through, wired to this
   // run's own PolicyState/cwd owners declared above (`currentCwd`/`extraBoundedRoots`,
@@ -602,7 +616,7 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   }
   function buildDefaultToolExecutor(): ToolExecutor {
     configureBackgroundTaskRoot(resolveSessionTempPaths);
-    return buildRegistryToolExecutor({
+    const deps: RegistryToolExecutorDeps = {
       sessionId: config.sessionId,
       home: permissionHome,
       getCwd: () => currentCwd,
@@ -637,7 +651,12 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
       },
       readState: createSessionReadState(),
       getTempDir: () => resolveSessionTempPaths().root,
-    });
+    };
+    // Fix round 1 (RULING P3-C): main.ts is the one caller that supplies `unregisteredToolExecutor`
+    // (stubExecutor) -- every OTHER caller of this default (testing.ts's inMemoryProcess, when ITS
+    // OWN `tools` param is also omitted) has none, and keeps the registry's plain, typed "unknown
+    // tool" error for an unregistered name exactly as before this fix round.
+    return unregisteredToolExecutor !== undefined ? buildRegistryToolExecutorWithFallback(deps, unregisteredToolExecutor) : buildRegistryToolExecutor(deps);
   }
   const tools: ToolExecutor = providedTools ?? buildDefaultToolExecutor();
 

@@ -15,7 +15,7 @@ import type { RuntimeConfig } from "@yanlinglabs/winter-agent-sdk";
 import { splitFrames, encodeFrame } from "@yanlinglabs/winter-agent-sdk";
 import type { FrameSource, FrameSink } from "./protocol/channel.ts";
 import { runEngine, type Provider } from "./engine.ts";
-import { echoProvider, stubExecutor, isTestProviderName, testProviderByName } from "./provider/mock.ts";
+import { echoProvider, stubExecutor, isTestProviderName, testProviderByName, registerBgTaskTestTool } from "./provider/mock.ts";
 import { resolveEngineSession, resolveProductionWinterHome } from "./store/dialect.ts";
 
 // Same argv contract as winter-agent-runtime/testing's inMemoryProcess (Task 2): find the flag by
@@ -49,6 +49,12 @@ function resolveProvider(): Provider {
   if (!isTestProviderName(raw)) {
     throw new Error(`winter: unrecognized WINTER_TEST_PROVIDER '${raw}'`);
   }
+  // P3 fix round 1 (RULING P3-C): "bgtask" needs its OWN registered tool for a call to it to do
+  // anything but echo through the unregisteredToolExecutor fallback (below) -- see
+  // provider/mock.ts's registerBgTaskTestTool for why the provider and the tool are a pair, never
+  // one without the other. Every other TestProviderName's own target ("test_tool"/"mystery_tool")
+  // needs no such pairing -- they were never meant to do more than echo.
+  if (raw === "bgtask") registerBgTaskTestTool();
   return testProviderByName(raw);
 }
 
@@ -110,7 +116,19 @@ try {
     input: stdinFrameSource(),
     output: stdoutFrameSink,
     provider,
-    tools: stubExecutor,
+    // P3 fix round 1 (RULING P3-C): `tools` is no longer supplied here -- omitting it lets runEngine
+    // build its own registry-backed default (buildDefaultToolExecutor, engine.ts), so a real WS-06
+    // tool call now flows through a FULL ToolExecutionContext (emitFrame/session/tempDir/readState/
+    // probeReadAccess all wired to this run's own live engine state) instead of stubExecutor's blind
+    // echo -- see the phase's own descriptor index (tools/descriptors/index.ts, imported
+    // transitively via engine.ts) for what "registered" means today: every WS-06 §2 name has a
+    // descriptor, but only names a later lane's replaceExecutor has reached actually execute for
+    // real; everything else reports its own typed not-yet-executable/correctly-absent error.
+    // `unregisteredToolExecutor: stubExecutor` keeps the PRE-EXISTING scripted test doubles
+    // ("test_tool"/"mystery_tool"/"long_task", none of which are — or ever will be — a WS-06 name)
+    // echoing exactly as before this fix round; see registry.ts's buildRegistryToolExecutorWithFallback
+    // for the exact "no descriptor at all" test that triggers this fallback.
+    unregisteredToolExecutor: stubExecutor,
     ...(store !== undefined ? { store } : {}),
     ...(initialMessages.length > 0 ? { initialMessages } : {}),
     // Task 11 (WS-07 §9): threaded exactly like `store`/`initialMessages` above -- resolveEngineSession
