@@ -118,6 +118,28 @@ describe("evaluateReadLadder -- the Write-overwrite-only override", () => {
     expect(result.eligible).toBe(false);
   });
 
+  // T8 rider (Lane B review, "the never-read≠partially-read Write-override distinction lacks a
+  // direct unit test"): the override's own trigger condition is `record !== undefined &&
+  // !record.complete` (read-ladder.ts's own header: "an existing-but-PARTIAL read record") -- a
+  // NEVER-read non-notebook path (no record at ALL) must NOT trip it, falling through to the
+  // ORDINARY rung-2 treatment instead, exactly like any other never-read file. Without this direct
+  // fixture, "never read" and "partially read" could silently collapse into the same code path
+  // (both being "not a complete fresh read") and nobody would notice until a real relaxed-profile
+  // model tried to overwrite a never-opened file and got wrongly blocked.
+  test("NEVER read (no record at all), operation 'overwrite', non-notebook path, relaxed + silent -> ELIGIBLE (the override does NOT fire for never-read -- only for an existing partial record)", () => {
+    const result = evaluateReadLadder(check({ operation: "overwrite", profile: "relaxed" }), deps("silent"));
+    expect(result).toEqual({ eligible: true });
+  });
+
+  test("NEVER read (no record at all), operation 'overwrite', non-notebook path, STRICT profile -> ineligible for the ORDINARY rung-2 reason ('has not been read'), not the override's own reason", () => {
+    const result = evaluateReadLadder(check({ operation: "overwrite", profile: "strict" }), deps("silent"));
+    expect(result.eligible).toBe(false);
+    if (!result.eligible) {
+      expect(result.reason).toContain("has not been read");
+      expect(result.reason).not.toContain("partially-read");
+    }
+  });
+
   test("a partial record, operation 'edit', unchanged mtime, relaxed + silent -> eligible (override does not extend to 'edit')", () => {
     const state = createSessionReadState();
     state.recordRead("/work/a.txt", { complete: false, mtimeMs: 1000 });

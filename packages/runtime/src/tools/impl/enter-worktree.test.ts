@@ -140,6 +140,34 @@ describe("EnterWorktree (task-7 brief)", () => {
     expect(JSON.parse(first.output).worktreePath).not.toBe(JSON.parse(second.output).worktreePath);
   });
 
+  // T8 rider (Lane E review, "duplicate-worktree-name test"): the sibling test above only ever
+  // proves two DIFFERENT names don't collide -- it says nothing about the SAME name requested
+  // twice, which `git worktree add` genuinely refuses (the target path already exists and is
+  // already a registered worktree). Proves the generic `!add.ok` error path (this file's own
+  // `add.stderr`-based branch) fires legibly rather than throwing, and that the FIRST worktree is
+  // completely unaffected by the second, failed attempt.
+  test("creating a SECOND worktree with the SAME name fails legibly (git itself refuses); the first worktree is untouched", async () => {
+    const repo = mkdtempRepo();
+    await initFixtureRepo(repo);
+    const { ctx: ctx1 } = makeCtx(repo);
+    const { ctx: ctx2, calls: calls2 } = makeCtx(repo);
+
+    const first = await enterWorktreeExecutor.execute({ name: "dup" }, ctx1);
+    expect(first.isError).toBeUndefined();
+    const firstPath = JSON.parse(first.output).worktreePath as string;
+
+    const second = await enterWorktreeExecutor.execute({ name: "dup" }, ctx2);
+    expect(second.isError).toBe(true);
+    expect(second.output).toContain("Error: EnterWorktree failed to create a worktree");
+    // The failed second attempt never touched the SECOND context's own posture-mutation seam.
+    expect(calls2.setCwd).toEqual([]);
+    expect(calls2.addBoundedRoot).toEqual([]);
+
+    // The FIRST worktree is still there, completely unaffected by the second call's failure.
+    const list = await runGit(["worktree", "list", "--porcelain"], repo);
+    expect(list.stdout).toContain(realpathSync(firstPath));
+  });
+
   test("path switches to an already-registered worktree, matching via realpath even through a symlinked temp dir", async () => {
     const repo = mkdtempRepo();
     await initFixtureRepo(repo);

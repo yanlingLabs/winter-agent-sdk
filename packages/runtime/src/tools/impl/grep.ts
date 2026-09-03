@@ -141,6 +141,20 @@ function parseInput(raw: unknown): GrepInput {
   ] as const) {
     if (value !== undefined && typeof value !== "number") throw new Error(`${key} must be a number`);
   }
+  // T8 rider ("Grep negative head_limit/offset validation"): a bare `typeof !== "number"` check
+  // (above) lets a NEGATIVE value straight through -- `head_limit: -5`/`offset: -1` would otherwise
+  // reach `rows.slice(offsetInput)`/the head-limit slicing below with silently WRONG semantics
+  // (Array.prototype.slice treats a negative argument as "count back from the end," not an error),
+  // producing confusing, undocumented behavior instead of the legible rejection every other
+  // out-of-range numeric field in this tool already gets. WS-06 §3.1 pins `head_limit` default 250
+  // (`0` = unlimited) and `offset` default 0 -- neither pinned semantic has any use for a negative
+  // value, so this is a genuine input error, not a valid-but-unusual request.
+  if (headLimit !== undefined && (typeof headLimit !== "number" || headLimit < 0 || !Number.isFinite(headLimit))) {
+    throw new Error("head_limit must be a non-negative number (0 means unlimited)");
+  }
+  if (offset !== undefined && (typeof offset !== "number" || offset < 0 || !Number.isFinite(offset))) {
+    throw new Error("offset must be a non-negative number");
+  }
   for (const [key, value] of [
     ["-n", showLineNumbers],
     ["-i", caseInsensitive],

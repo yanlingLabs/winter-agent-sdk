@@ -120,9 +120,16 @@ describe("stop branch", () => {
     expect(JSON.parse(result.output)).toEqual({ stopped: true, cancelledWakeups: 0 });
   });
 
-  test("stop short-circuits: delaySeconds/reason/prompt/noop are ignored entirely, even if absent", async () => {
-    const result = await run({ stop: true }, makeCtx(SID));
+  // T8 rider (Lane D review, "stop-short-circuit test-name mismatch"): the pre-existing body here
+  // only ever omitted delaySeconds/reason/prompt/noop -- it never proved the title's actual claim
+  // ("ignored entirely, EVEN IF [also] present"), the stronger and more interesting property. Fixed
+  // to supply all four alongside `stop: true` and prove the result is still the STOP shape (never a
+  // schedule shape, never an error) -- the short-circuit genuinely short-circuits, not merely
+  // "happens to work when there's nothing to ignore."
+  test("stop short-circuits: delaySeconds/reason/prompt/noop are ignored entirely, even when PRESENT alongside stop", async () => {
+    const result = await run({ stop: true, delaySeconds: 60, reason: "should be ignored", prompt: "should be ignored", noop: true }, makeCtx(SID));
     expect(result.isError).toBeUndefined();
+    expect(JSON.parse(result.output)).toEqual({ stopped: true, cancelledWakeups: 0 });
   });
 
   test("stop result has exactly stopped/cancelledWakeups -- no scheduledFor/clampedDelaySeconds/wasClamped", async () => {

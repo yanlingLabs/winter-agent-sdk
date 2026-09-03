@@ -187,6 +187,36 @@ describe("Grep (Phase 3, Lane A, Task 4)", () => {
       expect(r.truncated).toBe(true);
       expect(r.offset).toBe(5);
     });
+
+    // T8 rider ("Grep negative head_limit/offset validation"): a bare `typeof !== "number"` check
+    // let a NEGATIVE value straight through, reaching `rows.slice(offsetInput)` with silently WRONG
+    // semantics (a negative slice argument means "count back from the end" in JS, not an error).
+    test("a negative head_limit errors, never silently accepted", async () => {
+      const result = await runGrep({ pattern: "x", head_limit: -5 }, makeCtx(dir));
+      expect(result.isError).toBe(true);
+      expect(result.output).toContain("head_limit");
+    });
+
+    test("a negative offset errors, never silently accepted", async () => {
+      const result = await runGrep({ pattern: "x", offset: -1 }, makeCtx(dir));
+      expect(result.isError).toBe(true);
+      expect(result.output).toContain("offset");
+    });
+
+    test("NaN/Infinity for head_limit or offset error too (both are technically 'number', so the bare typeof check alone would accept them)", async () => {
+      for (const bad of [NaN, Infinity, -Infinity]) {
+        const headLimitResult = await runGrep({ pattern: "x", head_limit: bad }, makeCtx(dir));
+        expect(headLimitResult.isError).toBe(true);
+        const offsetResult = await runGrep({ pattern: "x", offset: bad }, makeCtx(dir));
+        expect(offsetResult.isError).toBe(true);
+      }
+    });
+
+    test("head_limit:0 (the pinned 'unlimited' sentinel) is still accepted -- the new check rejects negative/non-finite, never zero", async () => {
+      writeFileSync(join(dir, "a.txt"), "X");
+      const result = await runGrep({ pattern: "X", head_limit: 0 }, makeCtx(dir));
+      expect(result.isError).toBeUndefined();
+    });
   });
 
   describe("glob and type filters", () => {

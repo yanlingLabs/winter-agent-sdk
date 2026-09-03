@@ -120,6 +120,19 @@ describe("TaskList", () => {
     expect(rows).toEqual([{ id: created.id, subject: "s", status: "pending", blockedBy: [] }]);
   });
 
+  // T8 rider (Lane D review, "owner wire-layer round-trip test"): the sibling test above only ever
+  // proves owner's ABSENCE (never set, never appears) -- it does not prove owner actually reaches
+  // TaskList once genuinely SET via TaskUpdate. Full wire round trip: TaskCreate -> TaskUpdate(owner)
+  // -> TaskList shows it, through the real registered executors, not task-graph-store.ts's own
+  // internal methods directly.
+  test("owner wire round-trip: TaskUpdate(owner) -> TaskList's own compact row carries it", async () => {
+    const created = JSON.parse((await run("TaskCreate", { subject: "s", description: "d" }, makeCtx(SID))).output);
+    const updateResult = await run("TaskUpdate", { taskId: created.id, owner: "agent-2" }, makeCtx(SID));
+    expect(updateResult.isError).toBeUndefined();
+    const rows = JSON.parse((await run("TaskList", {}, makeCtx(SID))).output);
+    expect(rows).toEqual([{ id: created.id, subject: "s", status: "pending", blockedBy: [], owner: "agent-2" }]);
+  });
+
   test("a deleted task is excluded", async () => {
     const created = JSON.parse((await run("TaskCreate", { subject: "s", description: "d" }, makeCtx(SID))).output);
     await run("TaskUpdate", { taskId: created.id, status: "deleted" }, makeCtx(SID));
