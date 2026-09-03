@@ -224,11 +224,22 @@ describe("buildAdvertisedSet §1.5 pipeline", () => {
     expect(withFlag).toContain("TodoWrite");
   });
 
-  test("WaitForMcpServers is advertised only when ToolSearch is disabled", () => {
-    const toolSearchOn = buildAdvertisedSet({ mode: "default", toolSearchEnabled: true }).map((d) => d.canonicalName);
+  test("WaitForMcpServers is advertised only when ToolSearch is disabled AND its capability token is present", () => {
+    // I4 fix-up (fix wave, P3 close-out): WaitForMcpServers fell OUTSIDE I4's original
+    // executorless-descriptor scan (its gate is `availability.requiresToolSearchDisabled`, not an
+    // empty `capabilityRequirements`), so it was never advertised only by accident -- `toolSearchEnabled`
+    // had no RuntimeConfig wiring at all until Part B item 1 landed, so the `toolSearchOff` branch below
+    // was dead code until then. Now that a host CAN set toolSearchEnabled: false, the availability gate
+    // alone is no longer sufficient; `capabilityRequirements: ["winter.mcp"]` (this fix, mirroring the
+    // other four MCP-family tools) is what actually keeps it from reappearing with no executor.
+    const toolSearchOn = buildAdvertisedSet({ mode: "default", toolSearchEnabled: true, capabilities: ["winter.mcp"] }).map((d) => d.canonicalName);
     expect(toolSearchOn).not.toContain("WaitForMcpServers");
-    const toolSearchOff = buildAdvertisedSet({ mode: "default", toolSearchEnabled: false }).map((d) => d.canonicalName);
-    expect(toolSearchOff).toContain("WaitForMcpServers");
+    const toolSearchOffNoCapability = buildAdvertisedSet({ mode: "default", toolSearchEnabled: false }).map((d) => d.canonicalName);
+    expect(toolSearchOffNoCapability).not.toContain("WaitForMcpServers");
+    const toolSearchOffWithCapability = buildAdvertisedSet({ mode: "default", toolSearchEnabled: false, capabilities: ["winter.mcp"] }).map(
+      (d) => d.canonicalName,
+    );
+    expect(toolSearchOffWithCapability).toContain("WaitForMcpServers");
   });
 
   test("AskUserQuestion is unavailable inside a subagent", () => {

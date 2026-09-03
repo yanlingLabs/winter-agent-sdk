@@ -72,10 +72,16 @@ function fixtureDescriptor(canonicalName: string, overrides?: Partial<ToolDescri
 // function in registry.test.ts (cited in the matrix below, row WS06-01b) -- that coverage is real and
 // is not re-proven here. What was NEVER proven before this task is that the real engine wire output
 // reflects buildAdvertisedSet at all (it was hardcoded tools:[] on both init frames since P1). This
-// closes that gap for the two axes RuntimeConfig actually threads through to the real
-// runEngine(...) call site today (mode, disallowedTools) -- see this row's own note in the matrix for
-// the honest scope carve-out on the other four axes (family/feature/toolSearch/subagent), which have
-// no RuntimeConfig field wiring them to the real call at all yet, only to the pure function.
+// closes that gap for the axes RuntimeConfig threads through to the real runEngine(...) call site --
+// originally just mode + disallowedTools; Part B item 1 (fix wave, P3 close-out) added the remaining
+// four (capabilities, toolSearchEnabled, insideSubagent, familyMetadata) as RuntimeConfig/Options
+// fields and wired engine.ts's own buildAdvertisedSet call site to thread all of them through -- see
+// this row's own note in the matrix for the engine-level proof of those four (capabilities via
+// mcp__winter__advisor, familyMetadata via the hiddenWhenFamilyTaskNative set) and I4's own
+// WaitForMcpServers coverage for toolSearchEnabled reaching the real call. `features`/
+// `toolSearchEnabled`/`insideSubagent` still have no CATALOG-DERIVED resolution story populating a
+// real value at runtime (a provider-catalog/session-context producer is a later phase's own job) --
+// the wire field and the plumbing are what closed, not the population story.
 test("WS-06 §6 obligation 1: system/init.tools reflects the real buildAdvertisedSet wiring (mode + disallowedTools) on BOTH init frame shapes, not the old hardcoded []", async () => {
   const { host, runtime } = createInMemoryChannel();
   const provider = scriptedProvider([{ kind: "text", text: "done" }]);
@@ -167,11 +173,25 @@ test("I4: every advertised implement-now descriptor has a real executor -- no sc
     "ReadMcpResourceDirTool",
     "RefreshMcpTools",
     "ReadNotifications",
+    "WaitForMcpServers",
   ];
   const advertisedNames = new Set(advertised.map((d) => d.canonicalName));
   for (const name of stillExecutorlessImplementNow) {
     expect(advertisedNames.has(name), `"${name}" should stay excluded under the default (no-capabilities) cfg until it has a real executor`).toBe(false);
   }
+
+  // WaitForMcpServers's own gate is `availability: { requiresToolSearchDisabled: true }`, not the
+  // empty-capabilityRequirements shape I4's original scan filtered on -- it fell outside that filter
+  // entirely, not because it had an executor. Before Part B item 1 wired `toolSearchEnabled` into
+  // RuntimeConfig, that axis was permanently `undefined`, so `requiresToolSearchDisabled` could never
+  // be satisfied and WaitForMcpServers was never advertised at all -- accidental safety, not policy.
+  // Now that a host can set `toolSearchEnabled: false`, this second loop proves the SAME cfg that
+  // satisfies its availability gate still correctly excludes it via `capabilityRequirements:
+  // ["winter.mcp"]` (this fix wave), the identical gating the other four MCP-family tools already
+  // carry -- would have failed (WaitForMcpServers reappearing with no executor) before that one-line
+  // fix landed.
+  const advertisedNoToolSearch = buildAdvertisedSet({ mode: "bypassPermissions", toolSearchEnabled: false });
+  expect(advertisedNoToolSearch.some((d) => d.canonicalName === "WaitForMcpServers")).toBe(false);
 });
 
 // ================================================================================================

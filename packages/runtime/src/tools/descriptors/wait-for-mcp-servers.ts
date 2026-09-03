@@ -14,6 +14,6 @@ stub({
   exposure: "eager",
   permissionClass: "read",
   availability: { requiresToolSearchDisabled: true },
-  capabilityRequirements: [],
+  capabilityRequirements: ["winter.mcp"],
   disposition: "implement-now",
 });
