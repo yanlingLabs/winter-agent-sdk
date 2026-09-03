@@ -312,6 +312,21 @@ export async function connectMonitorWs(
   persistent: boolean,
   ctx: ToolExecutionContext,
 ): Promise<ToolResultPayload> {
+  // DISCLOSED, NOT FIXED HERE (routed to a future T8 design item under RULING P3-I -- this lane's
+  // instruction is to name the hole, not patch around it): DNS-rebinding TOCTOU. `validateWsEndpoint`
+  // resolves `url.hostname` ONCE (above, in runMonitorWs) and hands back a URL still keyed by that
+  // SAME hostname, never by the validated address. `new WebSocket(url)` below re-resolves the
+  // hostname independently, at connect time, through Bun's own platform DNS -- a TTL-0 attacker (or
+  // a compromised/rebinding-capable resolver) can serve a safe public address for the FIRST lookup
+  // (the one this file validates) and a loopback/RFC1918/link-local/metadata address for the SECOND
+  // (the one that actually gets connected to), defeating validateWsEndpoint entirely without ever
+  // tripping isDisallowedAddress. Full remediation means pinning the CONNECTION to the validated
+  // address rather than the hostname -- but Bun's WebSocket constructor exposes no resolver hook or
+  // "connect to this IP" option, and `wss://` complicates a hand-rolled pin further (TLS SNI/cert
+  // validation still needs to see the ORIGINAL hostname, not the pinned IP, so pinning naively would
+  // break every TLS monitor target). This IS defense-in-depth, not the primary gate, per this file's
+  // own header (WS-07's own approval/network-policy layer is the PRIMARY control here) -- but it is
+  // real, live exposure until P3-I lands a real fix, not a theoretical gap.
   let socket: WebSocket;
   try {
     socket = protocols !== undefined ? new WebSocket(url, protocols) : new WebSocket(url);
