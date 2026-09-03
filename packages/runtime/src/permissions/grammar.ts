@@ -190,11 +190,21 @@ const BASH_PARAM_FIELDS: ReadonlySet<string> = new Set(["run_in_background"]);
 // in `Edit(C:/Users/x/**)`, or any other path segment in `Read(a:b/**)`) that would otherwise be
 // misread as a `field:value` param rule -- silently turning a deny/ask rule into one that can
 // never match (the same fail-open class as this phase's other findings). Expressed as DATA (this
-// exported set), not a scattered per-tool conditional, so extending it is a one-line addition:
-// TODO(P3): add "Write", "NotebookEdit", and any other file-surface tool once the tool catalog
-// lands. Task 4's matchFileRule (paths.ts) is the actual file-glob engine; this table only decides
+// exported set), not a scattered per-tool conditional, so extending it is a one-line addition.
+// Task 4's matchFileRule (paths.ts) is the actual file-glob engine; this table only decides
 // DISPATCH -- which Specifier kind a given tool's parenthetical content becomes at parse time.
-export const FILE_RULE_TOOLS: ReadonlySet<string> = new Set(["Read", "Edit"]);
+//
+// Task 8 (P3 close-out, RULING P3-E + advisor-ratified extension): "Write" and "NotebookEdit" join
+// Read/Edit here -- the P3 lane's own registry now has real descriptors with `permissionClass:
+// "edit"`/"read"` for every one of these four names, so this table is no longer a P3-carried TODO.
+// Before this fix, a `Write(secrets/**)` or `NotebookEdit(secrets/**)` deny/ask/allow rule fell
+// through to the GENERIC branch below, which reads `call.input["command"]` (a Bash-shaped field
+// neither tool call ever has) -- silently NEVER matching, the identical fail-open class RULING
+// P3-E's own NotebookEdit finding named for the write-path-EXTRACTION side. `evaluator.ts`'s
+// `matchesRuleForCall` FILE_RULE_TOOLS branch (and `edit-recognition.ts`'s own `fileRulePathField`)
+// is what makes this table's EXTENSIBILITY promise ("extending it is a one-line addition") true in
+// practice, not just in the comment above.
+export const FILE_RULE_TOOLS: ReadonlySet<string> = new Set(["Read", "Edit", "Write", "NotebookEdit"]);
 
 // ---------------------------------------------------------------------------------------------
 // Shared low-level shell-like scanner

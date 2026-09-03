@@ -10,14 +10,15 @@
 // authored under an older nbformat with no per-cell `id` field can never be targeted by `cell_id` --
 // this executor does not invent a positional fallback.
 //
-// Read-deny enforcement note: the STANDING P2 evaluator's `extractCandidateWritePaths`
-// (permissions/evaluator.ts) currently recognizes only Edit/Write/Bash call shapes -- it does not
-// look at `notebook_path` at all, so a `Read(...)` deny rule does not (yet) block a NotebookEdit the
-// way it blocks Edit/Write on the same path (report §40's own "an Edit denial is still needed for
-// every editing surface such as NotebookEdit" already names this gap for the permission RULE side).
-// This executor does not attempt to close that gap itself -- this lane's own brief is explicit that
-// read-deny composition is the standing evaluator's job, never re-implemented in a tool -- it is
-// called out in this task's report as a standing-evaluator gap for T8.
+// Read-deny enforcement note (CLOSED, Task 8, RULING P3-E): the standing P2 evaluator's
+// `extractCandidateWritePaths`/`recognizeEditOperation` (permissions/{evaluator,edit-recognition}.ts)
+// now recognize `notebook_path` (via `fileRulePathField`) alongside Edit/Write/Bash, and `NotebookEdit`
+// joined `FILE_RULE_TOOLS` (grammar.ts) -- a `Read(...)`/`NotebookEdit(...)` deny rule now blocks a
+// NotebookEdit on the same path exactly like it blocks Edit/Write (report §40's own "an Edit denial
+// is still needed for every editing surface such as NotebookEdit" is now satisfied). This executor
+// still does not implement any of that itself -- read-deny composition remains the standing
+// evaluator's job, never re-implemented in a tool; this comment is updated in place because it had
+// documented the gap as open.
 import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { randomUUID } from "node:crypto";

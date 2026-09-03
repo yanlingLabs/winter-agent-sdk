@@ -20,6 +20,9 @@ import { echoProvider, scriptedProvider, stubExecutor } from "./provider/mock.ts
 import { inMemoryProcess } from "./testing.ts";
 import { WinterPermissionError } from "./permissions/policy-state.ts";
 import { createInMemoryApprovalStore, createFileDurableApprovalStore, WINTER_RUNTIME_KIND, type DurableApprovalStore, type DurableApprovalRecord } from "./permissions/approvals.ts";
+// Task 8 (P3 close-out): RULING P2-E's own pinned cap constant, reused (never a hand-copied number)
+// so the "over the cap" fixture below can never silently drift from what validateNewRule enforces.
+import { MAX_DOUBLE_STARS } from "./permissions/paths.ts";
 
 // Drains a WinterFrame source fully — used whenever the test writes ALL of its input frames
 // (including end_input/EOF) up front, so there's no ping-pong race between the writer and the
@@ -1398,6 +1401,52 @@ test("Finding 8(b): a real canUseTool allow suggesting a MALFORMED addRules entr
         type: "addRules",
         rules: [{ toolName: "mcp__github__get_issue", ruleContent: "anything" }],
         behavior: "allow",
+        destination: "userSettings",
+      };
+      const result: PermissionResult = { behavior: "allow", updatedPermissions: [badRule] };
+      host.output.write({ type: "control_response", requestId: cf.requestId, ok: true, payload: result });
+    }
+  }
+  await done;
+
+  expect(executed).toBe(true); // the already-approved call still ran
+  const msgs = dataMessages(seen);
+  const result = msgs.find((m) => m.type === "result") as Extract<SdkMessage, { type: "result" }>;
+  expect(result.subtype).toBe("success"); // NOT error_during_execution
+  expect(result.is_error).toBe(false);
+});
+
+test("Task 8 (P3 close-out): a real canUseTool allow suggesting an addRules entry whose Read pattern exceeds RULING P2-E's glob-depth cap still executes the call and ends the turn 'success' -- the SAME drop-not-crash mechanism as Finding 8(b) above, now proven for the OTHER validateNewRule rejection class (the glob-depth cap), not just the MCP-parenthetical one", async () => {
+  const { host, runtime } = createInMemoryChannel();
+  let executed = false;
+  const tools: ToolExecutor = {
+    async execute() {
+      executed = true;
+      return { output: "ok" };
+    },
+  };
+  const provider = scriptedProvider([
+    { kind: "tool_use", calls: [{ id: "call1", name: "unmatched_tool", input: {} }] },
+    { kind: "text", text: "done" },
+  ]);
+  const done = runEngine({ config: baseConfig(), input: runtime.input, output: runtime.output, provider, tools });
+
+  host.output.write({ type: "user", text: "go" });
+  host.output.write({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined });
+
+  // RULING P2-E: MAX_DOUBLE_STARS+1 "**" segments -- ruleset.ts's validateNewRule (via sourceRule)
+  // throws PermissionRuleValidationError for this exact shape, Read/Edit/Write/NotebookEdit alike.
+  const overCapPattern = Array.from({ length: MAX_DOUBLE_STARS + 1 }, () => "**").join("/a/");
+
+  const seen: WinterFrame[] = [];
+  for await (const f of host.input) {
+    seen.push(f);
+    if (f.type === "control_request" && (f as ControlRequestFrame).subtype === "permission") {
+      const cf = f as ControlRequestFrame;
+      const badRule: PermissionUpdate = {
+        type: "addRules",
+        rules: [{ toolName: "Read", ruleContent: overCapPattern }],
+        behavior: "deny",
         destination: "userSettings",
       };
       const result: PermissionResult = { behavior: "allow", updatedPermissions: [badRule] };

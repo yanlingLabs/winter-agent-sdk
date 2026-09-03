@@ -6,7 +6,9 @@
 // acceptEdits at all.
 //
 // ARCHITECTURE:
-//   - `Edit`/`Write` tool calls are direct: one call, one `file_path` input, one recognized path.
+//   - `Edit`/`Write`/`NotebookEdit` tool calls are direct: one call, one path field (`fileRulePathField`
+//     below -- `file_path` for Edit/Write, `notebook_path` for NotebookEdit, RULING P3-E), one
+//     recognized path.
 //   - A `Bash` call is decomposed via T3's `splitCompound` (never treating raw, unsplit compound
 //     text as one command -- the exact "lens item 1" trap T6's own tests pin) and EVERY subcommand
 //     is independently classified. A subcommand is "blessed" (part of WS-07 §6.2's exact seven-verb
@@ -217,9 +219,22 @@ function recognizeBashFsOpPaths(stripped: string): string[] | null {
 // recognizeEditOperation
 // ---------------------------------------------------------------------------------------------
 
+// Task 8 (P3 close-out, RULING P3-E): the single source of truth for "which input field holds a
+// WS-06 §3.1 file-rule tool's target path" (Read/Edit/Write: `file_path`; NotebookEdit:
+// `notebook_path`) -- exported so evaluator.ts's `extractCandidateWritePaths` and
+// `matchesRuleForCall` (both of which need this for Read too, hence the parameter isn't scoped to
+// only the three write-tools this module cares about) consume the IDENTICAL mapping rather than
+// each hand-rolling their own, which is exactly the class of drift that left `notebook_path`
+// invisible to the whole permissions package before this ruling (Lane B's own report: "zero grep
+// hits"). Lives here, not in evaluator.ts, because evaluator.ts already imports FROM this module
+// (recognizeEditOperation below) -- the reverse import would be circular.
+export function fileRulePathField(toolName: string): "file_path" | "notebook_path" {
+  return toolName === "NotebookEdit" ? "notebook_path" : "file_path";
+}
+
 export function recognizeEditOperation(call: { toolName: string; input: Record<string, unknown> }): RecognizedEditOperation | null {
-  if (call.toolName === "Edit" || call.toolName === "Write") {
-    const path = call.input["file_path"];
+  if (call.toolName === "Edit" || call.toolName === "Write" || call.toolName === "NotebookEdit") {
+    const path = call.input[fileRulePathField(call.toolName)];
     return typeof path === "string" ? { kind: "edit", paths: [path] } : null;
   }
   if (call.toolName !== "Bash") return null;

@@ -30,8 +30,14 @@
 // added — otherwise live and replayed semantics would diverge (a session could grant itself an
 // untrusted-project allow that becomes inert only after a restart). Authority answers a DIFFERENT
 // question: who is allowed to author an update destined for a given file/scope at all.
-import { parseRule, matchesRule, type ParsedRule } from "./grammar.ts";
+import { parseRule, matchesRule, FILE_RULE_TOOLS, type ParsedRule } from "./grammar.ts";
 import { exceedsDoubleStarCap, exceedsStarsPerSegmentCap } from "./paths.ts";
+// Task 8 (P3 close-out): "structural FILE_RULE_TOOLS routing enforcement -- registry classes make
+// misrouting a typed error." A real value import (getRegisteredTool is called, not just typed) --
+// verified non-circular before adding: tools/registry.ts imports permissions/grammar.ts (value) and
+// permissions/evaluator.ts (type-only); neither of those, nor any transitive import of this file,
+// imports permissions/ruleset.ts, so ruleset.ts -> tools/registry.ts introduces no cycle.
+import { getRegisteredTool } from "../tools/registry.ts";
 import {
   openSync,
   writeSync,
@@ -152,6 +158,35 @@ function isAnchoredMcpAllowGlob(toolName: string): boolean {
   return rest.includes("__");
 }
 
+// Task 8 (P3 close-out): "structural FILE_RULE_TOOLS routing enforcement -- registry classes make
+// misrouting a typed error." Every registered tool descriptor with `permissionClass === "edit"` is,
+// by WS-07 §3.1's own contract, a gitignore-style file-pattern rule tool (verified empirically before
+// writing this check: `grep -l 'permissionClass: "edit"' tools/descriptors/*.ts` names EXACTLY Edit/
+// Write/NotebookEdit -- a 1:1 match with FILE_RULE_TOOLS's own three write-tool members). If a
+// FUTURE tool ever ships with that class but is forgotten from FILE_RULE_TOOLS (grammar.ts), its
+// scoped rule content would silently fall through to the generic Bash-shaped "pattern" matcher
+// (matchesRule's own `call.input["command"]` read, which a non-Bash call never has) instead of
+// matchFileRule -- the EXACT fail-open class RULING P3-E just closed for Write/NotebookEdit
+// specifically. Checked here, at rule-ADD time (this function's own "the moment it's added"
+// precedent), so the mismatch surfaces the instant anyone ever writes a scoped rule for that tool,
+// rather than silently compiling to a rule that can never match. Deliberately ONE-DIRECTIONAL: the
+// converse (every FILE_RULE_TOOLS member must be "edit"-class) is false BY DESIGN -- Read is a
+// file-rule tool with `permissionClass: "read"` -- so only the "edit" direction is asserted.
+// Unregistered tool names (MCP, or a genuinely absent descriptor) are silently skipped: this is a
+// registry-consistency guard, not a "every rule names a known tool" check (that is a separate,
+// pre-existing concern this function does not own).
+function assertFileRuleRoutingConsistency(value: PermissionRuleValue, behavior: PermissionBehavior, parsed: ParsedRule): void {
+  const registered = getRegisteredTool(parsed.toolName);
+  if (registered === undefined) return;
+  if (registered.descriptor.permissionClass === "edit" && !FILE_RULE_TOOLS.has(parsed.toolName)) {
+    throw new PermissionRuleValidationError(
+      `tool ${JSON.stringify(parsed.toolName)} is registered with permissionClass "edit" but is missing from grammar.ts's FILE_RULE_TOOLS -- its rule content would silently misroute through the generic pattern matcher (the RULING P3-E fail-open class)`,
+      value,
+      behavior,
+    );
+  }
+}
+
 // The shared rule-add-time gate every SourcedRuleEntry producer routes through. Throws
 // PermissionRuleValidationError (naming the offending rule) rather than silently accepting content
 // that would be inert at match time — the exact hazard grammar.ts's own Specifier-type comment
@@ -159,6 +194,15 @@ function isAnchoredMcpAllowGlob(toolName: string): boolean {
 function validateNewRule(value: PermissionRuleValue, behavior: PermissionBehavior): ParsedRule {
   const raw = ruleValueToRaw(value);
   const parsed = parseRule(raw);
+
+  // Task 8 (P3 close-out): structural FILE_RULE_TOOLS routing consistency -- see
+  // assertFileRuleRoutingConsistency's own header. Scoped to `ruleContent !== undefined` because a
+  // BARE rule (no specifier at all) never reaches matchesRuleForCall's FILE_RULE_TOOLS branch in the
+  // first place (that branch is itself gated on `rule.specifier?.kind === "pattern"`) -- nothing to
+  // misroute yet, so nothing to check yet.
+  if (value.ruleContent !== undefined) {
+    assertFileRuleRoutingConsistency(value, behavior, parsed);
+  }
 
   // (a) T3 carry: a syntactically-parsed-but-forbidden rule (today: an MCP tool with ANY
   // parenthetical specifier, WS-07 §3) is silently inert at match time (matchesRule's "invalid"

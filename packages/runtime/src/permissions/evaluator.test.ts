@@ -1897,6 +1897,71 @@ describe("Task 7 — T6-review obligation: Read-deny-blocks-Edit enforced genera
   });
 });
 
+describe("Task 8 (P3 close-out, RULING P3-E): NotebookEdit joins FILE_RULE_TOOLS/write-path extraction, exactly like Edit/Write", () => {
+  test("a deny rule on a notebook path blocks NotebookEdit, before ever reaching the mode/prompt stage (mirrors the Edit/Write fixture above)", async () => {
+    const promptSpy = spyPromptStage(() => ({ decision: "allow" })); // proves the denial happens BEFORE the prompt stage
+    const ctx = baseCtx({
+      promptStage: promptSpy.stage,
+      cwd: "/work",
+      policy: policy({ mode: "default", rules: withRules(rule("NotebookEdit(secrets/**)", "deny")) }),
+    });
+    const record = await evaluate(call("NotebookEdit", { notebook_path: "/work/secrets/analysis.ipynb", new_source: "1+1" }), ctx);
+    expect(promptSpy.calls.length).toBe(0);
+    expect(record).toMatchObject({ decision: "deny", mechanism: "rule" });
+  });
+
+  test("a Read deny on the SAME path ALSO blocks NotebookEdit — extractCandidateWritePaths now recognizes notebook_path, so the general Read-deny-blocks-edit check (WS-07 §3.1) covers this editing surface too, exactly as report §40 requires", async () => {
+    const ctx = baseCtx({
+      cwd: "/work",
+      policy: policy({ mode: "default", rules: withRules(rule("Read(secrets/**)", "deny")) }),
+    });
+    const record = await evaluate(call("NotebookEdit", { notebook_path: "/work/secrets/analysis.ipynb", new_source: "1+1" }), ctx);
+    expect(record).toMatchObject({ decision: "deny", mechanism: "rule" });
+  });
+
+  test("acceptEdits: a NotebookEdit within cwd is recognized and auto-approved, exactly like Edit (recognizeEditOperation now returns kind:'edit' for NotebookEdit)", async () => {
+    const ctx = baseCtx({
+      cwd: "/work",
+      policy: policy({ mode: "acceptEdits" }),
+      specialChecks: REAL_SPECIAL_CHECKS,
+    });
+    const record = await evaluate(call("NotebookEdit", { notebook_path: "/work/notes/analysis.ipynb", new_source: "1+1" }), ctx);
+    expect(record).toMatchObject({ decision: "allow", mechanism: "mode" });
+  });
+
+  test("acceptEdits: an OUT-OF-CWD NotebookEdit is NOT auto-approved by the acceptEdits path-bound (falls through to the ordinary pipeline, same as an out-of-root Edit)", async () => {
+    const ctx = baseCtx({
+      cwd: "/work",
+      policy: policy({ mode: "acceptEdits" }),
+      specialChecks: REAL_SPECIAL_CHECKS,
+    });
+    const record = await evaluate(call("NotebookEdit", { notebook_path: "/synthetic/outside/analysis.ipynb", new_source: "1+1" }), ctx);
+    expect(record).not.toMatchObject({ decision: "allow", mechanism: "mode" });
+  });
+
+  test("protected paths gate NotebookEdit exactly like Edit — a notebook inside .git is prompt/callback in default mode, never silently auto-approved", async () => {
+    const promptSpy = spyPromptStage(() => ({ decision: "deny" }));
+    const ctx = baseCtx({ promptStage: promptSpy.stage, cwd: "/work", policy: policy({ mode: "default" }), specialChecks: REAL_SPECIAL_CHECKS });
+    const record = await evaluate(call("NotebookEdit", { notebook_path: "/work/.git/analysis.ipynb", new_source: "1+1" }), ctx);
+    expect(promptSpy.calls.length).toBe(1);
+    expect(record).toMatchObject({ decision: "deny", mechanism: "canUseTool" });
+  });
+
+  test("protected paths gate NotebookEdit under acceptEdits too — never silently auto-approved just because it's 'recognized' (mirrors the Edit fixture at §6.7)", async () => {
+    const promptSpy = spyPromptStage(() => ({ decision: "deny" }));
+    const ctx = baseCtx({ promptStage: promptSpy.stage, cwd: "/work", policy: policy({ mode: "acceptEdits" }), specialChecks: REAL_SPECIAL_CHECKS });
+    const record = await evaluate(call("NotebookEdit", { notebook_path: "/work/.git/analysis.ipynb", new_source: "1+1" }), ctx);
+    expect(promptSpy.calls.length).toBe(1);
+    expect(record.decision).toBe("deny");
+  });
+
+  test("plan mode withholds a NotebookEdit exactly like Edit/Write (isPlanWriteShaped now recognizes it)", async () => {
+    const ctx = baseCtx({ cwd: "/work", policy: policy({ mode: "plan" }), specialChecks: REAL_SPECIAL_CHECKS });
+    const record = await evaluate(call("NotebookEdit", { notebook_path: "/work/notes/analysis.ipynb", new_source: "1+1" }), ctx);
+    expect(record).toMatchObject({ decision: "deny", mechanism: "mode" });
+  });
+});
+
 describe("Task 7 — Ruling P2-J (rider 2) proven at the evaluator layer, not just paths.ts (real mkdtemp + planted symlinks — see this file's own header)", () => {
   // Real fs, exactly like paths.test.ts's own checkSymlinkBothEnds regime: realpath the mkdtemp
   // root immediately (the macOS $TMPDIR-resolves-through-a-symlink trap; see paths.test.ts's

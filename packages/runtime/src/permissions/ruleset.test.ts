@@ -28,6 +28,14 @@ import {
 } from "./ruleset.ts";
 import { MAX_DOUBLE_STARS, MAX_STARS_PER_SEGMENT } from "./paths.ts";
 import type { PermissionUpdate, PermissionRuleValue } from "@yanlinglabs/winter-agent-sdk";
+// Task 8 (P3 close-out): "structural FILE_RULE_TOOLS routing enforcement -- registry classes make
+// misrouting a typed error." The descriptor barrel import (side-effect only) is what makes the four
+// real WS-06 file-rule tools genuinely registered for this file's own "Task 8" describe block below
+// -- ruleset.ts's own `getRegisteredTool` call silently no-ops for an unregistered name (by design,
+// see assertFileRuleRoutingConsistency's own header), so without this import the "no throw for the
+// four real tools" tests would pass VACUOUSLY (nothing to check) rather than for the reason claimed.
+import "../tools/descriptors/index.ts";
+import { registerTool, unregisterToolForTest } from "../tools/registry.ts";
 
 function call(toolName: string, input: Record<string, unknown> = {}) {
   return { toolName, input };
@@ -201,6 +209,82 @@ describe("add-time validation carry (b), Ruling P2-E: Read/Edit rules over the g
 
   test("the cap does not apply to non-Read/Edit tools even with many '**' segments (Bash's own pattern grammar is unrelated)", () => {
     expect(() => sourceRule(rv("Bash", overCapPattern()), "allow", "user")).not.toThrow();
+  });
+});
+
+describe("Task 8: structural FILE_RULE_TOOLS routing enforcement (registry permissionClass vs grammar.ts's table)", () => {
+  test("Read/Edit/Write/NotebookEdit -- the four real permissionClass:'edit'-or-Read file-rule tools -- never throw (registry and FILE_RULE_TOOLS agree)", () => {
+    expect(() => sourceRule(rv("Read", "secrets/**"), "deny", "project")).not.toThrow();
+    expect(() => sourceRule(rv("Edit", "secrets/**"), "deny", "project")).not.toThrow();
+    expect(() => sourceRule(rv("Write", "secrets/**"), "deny", "project")).not.toThrow();
+    expect(() => sourceRule(rv("NotebookEdit", "secrets/**"), "deny", "project")).not.toThrow();
+  });
+
+  test("a REGISTERED permissionClass:'edit' tool missing from FILE_RULE_TOOLS throws a typed PermissionRuleValidationError naming the mismatch -- the regression this guard exists to catch", () => {
+    // A throwaway, invented canonical name (registry.ts's own documented test-safety convention --
+    // never a real WS-06 entry, since the registry is a process-wide singleton under bun's test
+    // runner). Deliberately mirrors Edit's own real descriptor shape (permissionClass: "edit") to
+    // simulate the exact FUTURE mistake this check exists to catch: a new file-surface tool shipped
+    // with the "edit" class but forgotten from grammar.ts's FILE_RULE_TOOLS.
+    const FAKE_NAME = "__t8_fake_edit_tool_missing_from_file_rule_tools__";
+    registerTool({
+      descriptor: {
+        canonicalName: FAKE_NAME,
+        advertisedName: FAKE_NAME,
+        source: "sdk",
+        inputSchema: { type: "object" },
+        description: "test-only fixture, never a real WS-06 tool",
+        exposure: "hidden",
+        permissionClass: "edit",
+        availability: {},
+        capabilityRequirements: [],
+        disposition: "implement-now",
+      },
+    });
+    try {
+      expect(() => sourceRule(rv(FAKE_NAME, "secrets/**"), "deny", "project")).toThrow(PermissionRuleValidationError);
+      try {
+        sourceRule(rv(FAKE_NAME, "secrets/**"), "deny", "project");
+        throw new Error("expected sourceRule to throw");
+      } catch (err) {
+        expect(err).toBeInstanceOf(PermissionRuleValidationError);
+        expect((err as PermissionRuleValidationError).message).toContain(FAKE_NAME);
+        expect((err as PermissionRuleValidationError).message).toContain("FILE_RULE_TOOLS");
+      }
+    } finally {
+      unregisterToolForTest(FAKE_NAME);
+    }
+  });
+
+  test("an UNREGISTERED tool name (no descriptor at all) is silently skipped by this check -- a registry-consistency guard, not an 'every rule names a known tool' check", () => {
+    // A plain (non-mcp__) unregistered name -- an mcp__ name would ALSO throw here, but for the
+    // pre-existing, UNRELATED "MCP tools reject parenthetical specifiers" carry (T3/WS-07 §3), not
+    // for anything this check adds; picking a plain name keeps this fixture isolated to the ONE
+    // behavior it claims to prove.
+    expect(() => sourceRule(rv("__t8_totally_unregistered_name__", "secrets/**"), "deny", "project")).not.toThrow();
+  });
+
+  test("a bare rule (no ruleContent) for the fake edit-class tool does NOT throw -- nothing to misroute yet, matching the P2-E cap's own 'bare rule out of scope' precedent", () => {
+    const FAKE_NAME = "__t8_fake_edit_tool_bare_rule__";
+    registerTool({
+      descriptor: {
+        canonicalName: FAKE_NAME,
+        advertisedName: FAKE_NAME,
+        source: "sdk",
+        inputSchema: { type: "object" },
+        description: "test-only fixture, never a real WS-06 tool",
+        exposure: "hidden",
+        permissionClass: "edit",
+        availability: {},
+        capabilityRequirements: [],
+        disposition: "implement-now",
+      },
+    });
+    try {
+      expect(() => sourceRule(rv(FAKE_NAME), "deny", "project")).not.toThrow();
+    } finally {
+      unregisterToolForTest(FAKE_NAME);
+    }
   });
 });
 

@@ -46,7 +46,11 @@ import type { PolicyState, AutoModeConfig } from "./policy-state.ts";
 // SEAM method names (SpecialChecks.isProtectedWrite/.isCriticalRemoval) by design (the seam and the
 // primitive answer "the same question," just at different granularity -- whole-call vs. bare
 // path/command; see REAL_SPECIAL_CHECKS below for the adaptation).
-import { recognizeEditOperation } from "./edit-recognition.ts";
+// Task 8 (P3 close-out, RULING P3-E): `fileRulePathField` joins `recognizeEditOperation` in this
+// import -- both this module's `extractCandidateWritePaths` and `matchesRuleForCall` consume it so
+// neither can independently drift from edit-recognition.ts's own Read/Edit/Write/NotebookEdit path-
+// field mapping (see that module's own header for why it lives there, not here).
+import { recognizeEditOperation, fileRulePathField } from "./edit-recognition.ts";
 import { isProtectedWrite as isProtectedPath, isCriticalRemoval as classifyCriticalRemoval } from "./protected.ts";
 // Task 12 (WS-07 §10.1 step 2 / §6.5): the two auto/config.ts primitives evaluator.ts's own `auto`
 // mode arm and plan's classifier borrow need. This is the ONLY dependency evaluator.ts takes on
@@ -385,16 +389,17 @@ function isWithinBounds(path: string, ctx: EvaluationContext): boolean {
 // §10.6-1) — reused rather than duplicated, per this function's own header precedent of being
 // shared internally; a second copy would be exactly the kind of drift risk this whole phase's
 // review lens exists to catch.
+// Task 8 (P3 close-out, RULING P3-E): now a pure delegation to `recognizeEditOperation` for EVERY
+// tool shape (Edit/Write/NotebookEdit's own direct single-path case included) — the pre-existing
+// hand-rolled `call.input["file_path"]` branch here read a HARDCODED field name that was blind to
+// NotebookEdit's own `notebook_path` (edit-recognition.ts's own `fileRulePathField` is the fix); once
+// that module gained a real NotebookEdit case, re-implementing the identical logic here a second time
+// would only reintroduce the exact drift risk this function's own header already warns about
+// ("a second copy would be exactly the kind of drift risk this whole phase's review lens exists to
+// catch"). Behavior for Edit/Write/Bash is byte-identical to before this change.
 export function extractCandidateWritePaths(call: PermissionCall): string[] {
-  if (call.toolName === "Edit" || call.toolName === "Write") {
-    const path = call.input["file_path"];
-    return typeof path === "string" ? [path] : [];
-  }
-  if (call.toolName === "Bash") {
-    const recognized = recognizeEditOperation(call);
-    return recognized ? recognized.paths : [];
-  }
-  return [];
+  const recognized = recognizeEditOperation(call);
+  return recognized ? recognized.paths : [];
 }
 
 // The real SpecialChecks seam fill (T6's stub, NO_SPECIAL_CHECKS above, was "always no opinion").
@@ -448,13 +453,17 @@ export const REAL_SPECIAL_CHECKS: SpecialChecks = {
 // handles correctly on its own.
 
 function matchesRuleForCall(rule: ParsedRule, call: PermissionCall, direction: "allow" | "denyAsk", ctx: EvaluationContext): boolean {
-  // Lens item 2 (task-6 brief): FILE_RULE_TOOLS (Read/Edit) with a SCOPED pattern specifier route to
-  // matchFileRule (paths.ts), never matchesRule. A bare rule or `Tool(*)` (specifier undefined /
-  // wildcardAll) skips this branch entirely — matchesRule already resolves those correctly via
-  // tool-name matching alone, without ever touching call.input.
+  // Lens item 2 (task-6 brief): FILE_RULE_TOOLS (Task 8, RULING P3-E: Read/Edit/Write/NotebookEdit)
+  // with a SCOPED pattern specifier route to matchFileRule (paths.ts), never matchesRule. A bare
+  // rule or `Tool(*)` (specifier undefined / wildcardAll) skips this branch entirely — matchesRule
+  // already resolves those correctly via tool-name matching alone, without ever touching call.input.
   if (FILE_RULE_TOOLS.has(rule.toolName) && rule.specifier?.kind === "pattern") {
     if (rule.toolName !== call.toolName) return false; // literal match only — WS-07 never documents a globbed tool name for this family
-    const path = call.input["file_path"]; // WS-06 §"Read"/"Edit" pinned field name (docs/superpowers/specs/winter/WS-06-tool-catalog.md:145,167)
+    // Task 8 (RULING P3-E): `fileRulePathField` -- WS-06's own pinned field name per tool
+    // (docs/superpowers/specs/winter/WS-06-tool-catalog.md:145,167,179: file_path for Read/Edit/
+    // Write, notebook_path for NotebookEdit) -- shared with edit-recognition.ts/
+    // extractCandidateWritePaths so this dispatch can never drift from theirs.
+    const path = call.input[fileRulePathField(call.toolName)];
     if (typeof path !== "string") return false;
     // Ruling P2-J (Task 7, rider 2): symlink-both-ends composed here — deny/ask fire if the LINK OR
     // the resolved TARGET matches; allow requires BOTH. Closes the fail-open T6's report flagged
@@ -701,7 +710,9 @@ function isBashRecognizedWrite(call: PermissionCall): boolean {
 }
 
 function isPlanWriteShaped(call: PermissionCall): boolean {
-  if (call.toolName === "Edit" || call.toolName === "Write") return true;
+  // Task 8 (RULING P3-E): NotebookEdit joins Edit/Write -- a notebook edit is exactly as much a
+  // plan-mode-withheld write as a file edit is (WS-06 §3.1's own "class edit" pin for all three).
+  if (call.toolName === "Edit" || call.toolName === "Write" || call.toolName === "NotebookEdit") return true;
   if (call.toolName === "Bash") return isBashRecognizedWrite(call);
   return false;
 }
