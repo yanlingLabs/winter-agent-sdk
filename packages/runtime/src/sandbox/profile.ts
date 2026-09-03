@@ -314,6 +314,14 @@ ${denySettingsLocalFileRegex}
  *   - deny network*,
  *   - deny process-fork AND allow process-exec ONLY for the self binary.
  *
+ * Part B item 2 (fix wave, P3 close-out) -- CAVEAT the "strictly tighter" claim above: this
+ * function takes no `home` parameter at all, so it CANNOT emit the ordinary Bash profile's own
+ * `~/.winter/run` baseline read-deny rule (buildSeatbeltProfile's own `home` field) -- on the READ
+ * axis specifically, this profile is not a strict superset of denials; it is missing one the
+ * ordinary profile has. Every OTHER axis (write/network/exec) genuinely is tighter, as described
+ * above. Ledgered as a P5/WS-11 carry: whichever task wires a real workflow worker (WS-11 §1.7)
+ * should thread the session's own `home` through here too, once a real caller exists to supply it.
+ *
  * THE #1 RISK (verified empirically by the Norma original): a blanket `(deny process-exec*)` makes
  * sandbox-exec's own execvp() of the target fail ("Operation not permitted"), because the
  * sandbox->target transition is itself an exec checked against the profile. So this allows exec of
