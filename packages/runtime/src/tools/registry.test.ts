@@ -238,6 +238,42 @@ describe("buildAdvertisedSet §1.5 pipeline", () => {
     expect(inSubagent).not.toContain("AskUserQuestion");
   });
 
+  // Fix round 1 (reviewer item 3): the two AvailabilityPredicate axes no real WS-06 §2 descriptor
+  // currently uses (modes, platforms) -- same synthetic-fixture pattern as the deferred+read
+  // combination above (§1.3's own describe block), registered/torn down like the real-executor
+  // tests below rather than checked as a bare descriptor-field assertion, since the thing actually
+  // under test is buildAdvertisedSet's OWN gating logic (isAvailable), not just that the field exists.
+  test("AvailabilityPredicate.modes gates a descriptor to specific permission modes (synthetic -- no real WS-06 tool uses this axis yet)", () => {
+    const name = "__t1_test_modes_gate__";
+    registerTool({ descriptor: fixtureDescriptor(name, { availability: { modes: ["plan"] } }) });
+    try {
+      const inPlan = buildAdvertisedSet({ mode: "plan" }).map((d) => d.canonicalName);
+      expect(inPlan).toContain(name);
+      const inDefault = buildAdvertisedSet({ mode: "default" }).map((d) => d.canonicalName);
+      expect(inDefault).not.toContain(name);
+    } finally {
+      unregisterToolForTest(name);
+    }
+  });
+
+  test("AvailabilityPredicate.platforms gates a descriptor to specific NodeJS platforms (synthetic -- no real WS-06 tool uses this axis yet)", () => {
+    const name = "__t1_test_platforms_gate__";
+    registerTool({ descriptor: fixtureDescriptor(name, { availability: { platforms: ["darwin"] } }) });
+    try {
+      const onDarwin = buildAdvertisedSet({ mode: "default", platform: "darwin" }).map((d) => d.canonicalName);
+      expect(onDarwin).toContain(name);
+      const onLinux = buildAdvertisedSet({ mode: "default", platform: "linux" }).map((d) => d.canonicalName);
+      expect(onLinux).not.toContain(name);
+      // cfg.platform OMITTED entirely -- isAvailable's own guard (`cfg.platform !== undefined`) means
+      // an unspecified platform never excludes a platform-gated descriptor (§1.5: no resolved value
+      // for an axis is "not restricted by it," never treated as a non-match).
+      const platformUnspecified = buildAdvertisedSet({ mode: "default" }).map((d) => d.canonicalName);
+      expect(platformUnspecified).toContain(name);
+    } finally {
+      unregisterToolForTest(name);
+    }
+  });
+
   test("correctly-absent names are excluded regardless of every other input", () => {
     const maximallyPermissive = buildAdvertisedSet({
       mode: "bypassPermissions",
@@ -282,18 +318,36 @@ describe("buildRegistryToolExecutor (the engine-facing adapter)", () => {
   });
 
   test("an implement-now stub with no executor yet resolves to a DISTINCT not-yet-executable result", async () => {
-    const executor = buildRegistryToolExecutor(deps());
-    const result = await executor.execute({ id: "1", name: "Read", input: {} });
-    expect(result.output).toContain("not yet executable");
-    expect(result.output).not.toContain("unknown tool");
-    expect(result.output).not.toContain("correctly absent");
+    // Fix round 1 (reviewer item 1): a THROWAWAY name, never "Read" -- once a later lane's own
+    // replaceExecutor("Read", ...) lands (Lane B), "Read" is no longer a no-executor stub, and this
+    // assertion would start failing for a reason that has nothing to do with T1's own adapter logic.
+    const name = "__t1_test_not_yet_executable__";
+    registerTool({ descriptor: fixtureDescriptor(name) });
+    try {
+      const executor = buildRegistryToolExecutor(deps());
+      const result = await executor.execute({ id: "1", name, input: {} });
+      expect(result.output).toContain("not yet executable");
+      expect(result.output).not.toContain("unknown tool");
+      expect(result.output).not.toContain("correctly absent");
+    } finally {
+      unregisterToolForTest(name);
+    }
   });
 
   test("none of the three stub-path results ever throws", async () => {
-    const executor = buildRegistryToolExecutor(deps());
-    await expect(executor.execute({ id: "1", name: "__nope__", input: {} })).resolves.toBeDefined();
-    await expect(executor.execute({ id: "1", name: "EndConversation", input: {} })).resolves.toBeDefined();
-    await expect(executor.execute({ id: "1", name: "Read", input: {} })).resolves.toBeDefined();
+    // Fix round 1 (reviewer item 1): same throwaway-name swap as above, for the not-yet-executable
+    // leg only -- the EndConversation (correctly-absent) and "__nope__" (unknown) legs are real/
+    // invented names already immune to a future lane landing a real executor, and stay as-is.
+    const notYetExecutableName = "__t1_test_stub_no_throw__";
+    registerTool({ descriptor: fixtureDescriptor(notYetExecutableName) });
+    try {
+      const executor = buildRegistryToolExecutor(deps());
+      await expect(executor.execute({ id: "1", name: "__nope__", input: {} })).resolves.toBeDefined();
+      await expect(executor.execute({ id: "1", name: "EndConversation", input: {} })).resolves.toBeDefined();
+      await expect(executor.execute({ id: "1", name: notYetExecutableName, input: {} })).resolves.toBeDefined();
+    } finally {
+      unregisterToolForTest(notYetExecutableName);
+    }
   });
 
   test("a real executor receives a fully-populated ToolExecutionContext, and getTempDir stays lazy unless read", async () => {
