@@ -17,6 +17,17 @@
 // capture-note asked for (does the OFFICIAL SDK invoke a SessionEnd hook / emit lifecycle frames in
 // single-shot mode?). The canUseTool callback's received field set is captured and printed
 // separately for controller eyeballing, exactly as this task's brief specifies.
+// Scenario C (Task 8, WS-06 §6 obligation 1): the OFFICIAL runtime's own DEFAULT `system/init.tools`
+// advertised list — zero permission/hook/tool config, same shape as Scenario A's own minimal
+// options, so the ONLY variable is which branch produced the list. Printed alone (its own labeled
+// block, in addition to the full normalized trace every scenario already prints) specifically so a
+// controller can diff it directly against Winter's own default-config buildAdvertisedSet output
+// (packages/runtime/src/tools/registry.test.ts / conformance.test.ts) without hunting through the
+// rest of the trace for it. Report-only, exactly like A and B — never auto-compared, never a pass/
+// fail gate, never written as a pinned golden (WS-06 §6 obligation 1 itself only requires a
+// Winter-side snapshot fixture per configuration, which conformance.test.ts already supplies; this
+// scenario is the separate, explicitly-named "capture the OFFICIAL list for a human to eyeball
+// against it" signal task-8-brief.md asks for).
 //
 // Hermeticity (hard rule, non-negotiable): the official runtime must never read or write the real
 // ~/.claude (or ~/.winter/~/.norma). Achieved by handing it the MINIMAL env an empirical probe
@@ -199,6 +210,86 @@ async function runPlainQueryCapture(officialSdk: OfficialSdk): Promise<void> {
   }
 }
 
+// --- Scenario C (Task 8, WS-06 §6 obligation 1): the official runtime's own default init.tools ---
+
+async function runInitToolsCapture(officialSdk: OfficialSdk): Promise<void> {
+  const cleanups: Array<() => void> = [];
+  let server: ReturnType<typeof Bun.serve> | undefined;
+  try {
+    const claudeConfigDir = mkdtempSync(join(tmpdir(), "winter-official-capture-config-c-"));
+    cleanups.push(() => rmSync(claudeConfigDir, { recursive: true, force: true }));
+    // Item 13 (P2 fix-wave): see runPlainQueryCapture's own identical `homeDir` comment.
+    const homeDir = mkdtempSync(join(tmpdir(), "winter-official-capture-home-c-"));
+    cleanups.push(() => rmSync(homeDir, { recursive: true, force: true }));
+    const fixtureCwd = mkdtempSync(join(tmpdir(), "winter-official-capture-cwd-c-"));
+    cleanups.push(() => rmSync(fixtureCwd, { recursive: true, force: true }));
+
+    let requestCount = 0;
+    server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req) {
+        requestCount++;
+        const url = new URL(req.url);
+        console.error(`[loopback C] #${requestCount} ${req.method} ${url.pathname}${url.search} host=${req.headers.get("host")}`);
+        // A single canned text turn is enough -- this scenario only needs the FIRST frame the
+        // official runtime ever emits (init); the query() call is drained to completion anyway (a
+        // hung/unread stream would leave the loopback server and the official runtime's own request
+        // dangling), but nothing past the init frame is this scenario's own point.
+        return new Response(JSON.stringify(CANNED_TEXT_RESPONSE), { status: 200, headers: { "content-type": "application/json" } });
+      },
+    });
+    console.error(`\n=== Scenario C: official default system/init.tools ===`);
+    console.error(`[capture C] loopback listening on ${server.url.href} (the ONLY endpoint the official runtime is given)`);
+    console.error(`[capture C] CLAUDE_CONFIG_DIR=${claudeConfigDir} HOME=${homeDir} (both fresh mkdtemp — never the real ~/.claude or the real user home)`);
+
+    const entries: ConformanceTraceEntry[] = [];
+    let thrown: unknown;
+    try {
+      // Deliberately the SAME minimal options as Scenario A -- no tools/allowedTools/disallowedTools/
+      // permissions/hooks of any kind, so this is genuinely the official runtime's own UNMODIFIED
+      // default advertised set, not a set already narrowed by this capture's own configuration.
+      const q = officialSdk.query({
+        prompt: "hi",
+        options: {
+          model: "sonnet",
+          cwd: fixtureCwd,
+          settingSources: [],
+          env: {
+            ANTHROPIC_BASE_URL: server.url.href.replace(/\/$/, ""),
+            ANTHROPIC_API_KEY: "test",
+            CLAUDE_CONFIG_DIR: claudeConfigDir,
+            HOME: homeDir,
+          },
+        },
+      });
+      for await (const msg of q) {
+        entries.push({ sequence: entries.length, direction: "runtime-to-host", kind: msg.type === "system" ? `system/${msg.subtype}` : msg.type, payload: msg });
+      }
+    } catch (e) {
+      thrown = e;
+    }
+
+    console.error(`[capture C] official runtime made ${requestCount} request(s) to the loopback; ${entries.length} message(s) yielded`);
+    if (thrown) console.error(`[capture C] query() threw: ${thrown instanceof Error ? (thrown.stack ?? thrown.message) : String(thrown)}`);
+
+    const normalized = normalizeTrace(entries);
+    const initEntry = normalized.find((e) => e.kind === "system/init");
+    const officialTools = initEntry ? (initEntry.payload as { tools?: unknown }).tools : undefined;
+
+    console.log(`\n--- Scenario C normalized trace ---`);
+    console.log(JSON.stringify(normalized, null, 2));
+    console.log(`\n--- Scenario C: the official runtime's own default system/init.tools list (compare by eye against Winter's own default buildAdvertisedSet output) ---`);
+    console.log(JSON.stringify(officialTools ?? "(no system/init message observed)", null, 2));
+    if (Array.isArray(officialTools)) {
+      console.error(`[capture C] official default advertised set has ${officialTools.length} name(s) -- see the printed list above for the exact names (WS-06 §6 obligation 1/4: report-only, never asserted as a count anywhere in the committed test suite)`);
+    }
+  } finally {
+    server?.stop(true);
+    for (const cleanup of cleanups) cleanup();
+  }
+}
+
 // --- Scenario B (Task 13): canUseTool + includeHookEvents + PreToolUse + SessionEnd -------------
 
 async function runPermissionsAndHooksCapture(officialSdk: OfficialSdk): Promise<void> {
@@ -343,6 +434,7 @@ async function runCapture(): Promise<void> {
     const officialSdk = await installOfficialSdk(cleanups);
     await runPlainQueryCapture(officialSdk);
     await runPermissionsAndHooksCapture(officialSdk);
+    await runInitToolsCapture(officialSdk);
   } finally {
     for (const cleanup of cleanups) cleanup();
   }
