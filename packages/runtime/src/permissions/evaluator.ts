@@ -1102,12 +1102,34 @@ export async function evaluate(call: PermissionCall, ctx: EvaluationContext): Pr
   // it's keyed on `policy.mode`, not on `askEntry` specifically). A DENY rule targeting the tool
   // still wins outright — stage 2 already returned before this stage ever runs.
   const isMandatoryAskUserQuestion = effectiveCall.toolName === ASK_USER_QUESTION_TOOL_NAME;
-  // T10-CARRY 1: a hook-forced ask (no rule matched) joins this gate as a THIRD reason to reach the
-  // prompt path — priority among the three, when more than one applies simultaneously, is
-  // askEntry > isMandatoryAskUserQuestion > hookForcedAsk (a documented judgment call: the more
-  // specific attribution's own message/mechanism wins; every case still ends in the identical
-  // "prompt, then fail closed on no answer" behavior regardless of which one is picked).
-  if (askEntry || isMandatoryAskUserQuestion || hookForcedAsk) {
+  // RULING P3-J (Task 8, P3 close-out; WS-12 §4/§11): "the call is always surfaced for approval,
+  // under every policy, and no permission rule may silence it" — a Bash call carrying
+  // `dangerouslyDisableSandbox: true` joins AskUserQuestion as mandatory interaction, for the
+  // IDENTICAL structural reason: checked here, at stage 3, strictly before stage 4's mode baseline
+  // (so acceptEdits/auto never auto-approve it) and stage 5's allow-rule lookup (so a `Bash(*)`
+  // allow — or any other Bash allow rule — never silences it). "Under every policy" is true by
+  // CONSTRUCTION once this line is added: stage 3 runs unconditionally, for every mode including
+  // `bypassPermissions` (mirroring how AskUserQuestion is already mandatory under bypass, WS-07
+  // §6.4's own "does NOT override ... AskUserQuestion" carve-out) — the only mode that converts this
+  // into an outright denial is `dontAsk` (the SAME dontAsk-converts-to-denial branch below, keyed on
+  // `policy.mode` alone, already covers it). CAPTURE-PENDING (WS-12 §4's own text): a future
+  // differential capture MAY show the real product loosens the bypass cell specifically for this
+  // override; until then this is the spec-literal reading, not a guess, and the override's own
+  // request flag is preserved verbatim in `effectiveCall.input` regardless of how this resolves (a
+  // PreToolUse hook's `transformedInput` is the only thing that could ever change it, exactly like
+  // any other field) — engine.ts still records it as "override-requested" on the sandbox posture
+  // whenever bash.ts's own executor eventually runs (see registry.ts's ToolExecutionContext.session
+  // and WS-12 §4's "the result MUST record the sandbox-override state"), never silently normalized
+  // away by this stage regardless of allow/deny outcome.
+  const isMandatoryDangerousBashOverride = effectiveCall.toolName === "Bash" && effectiveCall.input["dangerouslyDisableSandbox"] === true;
+  // T10-CARRY 1: a hook-forced ask (no rule matched) joins this gate as a FOURTH reason to reach the
+  // prompt path — priority among the four, when more than one applies simultaneously, is askEntry >
+  // isMandatoryAskUserQuestion > isMandatoryDangerousBashOverride > hookForcedAsk (a documented
+  // judgment call: the more specific attribution's own message/mechanism wins; every case still ends
+  // in the identical "prompt, then fail closed on no answer" behavior regardless of which one is
+  // picked). In practice the first three are mutually exclusive (a call cannot simultaneously BE
+  // AskUserQuestion and Bash), so this ordering is a tie-break with no live ambiguity today.
+  if (askEntry || isMandatoryAskUserQuestion || isMandatoryDangerousBashOverride || hookForcedAsk) {
     if (policy.mode === "dontAsk") {
       // WS-07 §6.3: "dontAsk converts all of these into denial." An actual ask-RULE match keeps its
       // own rule-denial message/mechanism; AskUserQuestion / a hook-forced ask with no matching rule
@@ -1121,6 +1143,19 @@ export async function evaluate(call: PermissionCall, ctx: EvaluationContext): Pr
           source: askEntry.source,
           ruleRef: formatRuleRef(askEntry),
           message: ruleDenialMessage(askEntry),
+          ...(carriedTransform !== undefined ? { transformedInput: carriedTransform } : {}),
+        };
+      }
+      if (isMandatoryDangerousBashOverride) {
+        // RULING P3-J: dontAsk denies the override outright — "every would-prompt outcome becomes a
+        // denial" (WS-07 §6.3) applies here exactly as it does to AskUserQuestion just below; the
+        // message names the flag by name so the transcript records WHAT was refused, not just that
+        // something was.
+        return {
+          decision: "deny",
+          mechanism: "mode",
+          policyVersion,
+          message: "Denied: dontAsk mode denies a Bash call requesting dangerouslyDisableSandbox (WS-07 §6.3; WS-12 §4/§11, RULING P3-J)",
           ...(carriedTransform !== undefined ? { transformedInput: carriedTransform } : {}),
         };
       }
@@ -1147,11 +1182,12 @@ export async function evaluate(call: PermissionCall, ctx: EvaluationContext): Pr
     }
     // "a matching ask forces human/application approval even when a narrower allow also matches and
     // even in auto/bypassPermissions" (WS-07 §2) — skip stages 4/5 entirely, straight to the prompt.
-    // `matchedAskRule` is present ONLY when an actual rule matched — AskUserQuestion alone (no rule)
-    // and a hook-forced ask (no rule) are both mandatory-interaction requirements, not rule-forced
-    // ones, so it stays absent for both (§7.1: it "distinguishes an explicit human-required policy
-    // from an ordinary safety prompt" — these ARE the ordinary-safety-prompt case, just forced
-    // unconditionally by the tool's own identity or by a hook's own decision, rather than by a rule).
+    // `matchedAskRule` is present ONLY when an actual rule matched — AskUserQuestion/the Bash-override
+    // mandate alone (no rule) and a hook-forced ask (no rule) are all mandatory-interaction
+    // requirements, not rule-forced ones, so it stays absent for all three (§7.1: it "distinguishes an
+    // explicit human-required policy from an ordinary safety prompt" — these ARE the ordinary-safety-
+    // prompt case, just forced unconditionally by the tool's own identity/input shape or by a hook's
+    // own decision, rather than by a rule).
     const matchedAskRule = askEntry
       ? {
           source: askEntry.source,
@@ -1163,7 +1199,9 @@ export async function evaluate(call: PermissionCall, ctx: EvaluationContext): Pr
       ? `matched ask rule ${formatRuleRef(askEntry)}`
       : isMandatoryAskUserQuestion
         ? "AskUserQuestion requires mandatory interaction (WS-07 §8)"
-        : (hookAskMessage ?? "a PreToolUse hook requested interactive approval (WS-08 §3)");
+        : isMandatoryDangerousBashOverride
+          ? "Bash dangerouslyDisableSandbox requires mandatory interaction (WS-12 §4/§11, RULING P3-J)"
+          : (hookAskMessage ?? "a PreToolUse hook requested interactive approval (WS-08 §3)");
     const meta: PromptStageMeta = {
       decisionReason,
       ...(matchedAskRule !== undefined ? { matchedAskRule } : {}),
@@ -1185,6 +1223,15 @@ export async function evaluate(call: PermissionCall, ctx: EvaluationContext): Pr
           source: askEntry.source,
           ruleRef: formatRuleRef(askEntry),
           message: ruleAskUnresolvedMessage(askEntry),
+          ...(carriedTransform !== undefined ? { transformedInput: carriedTransform } : {}),
+        };
+      }
+      if (isMandatoryDangerousBashOverride) {
+        return {
+          decision: "deny",
+          mechanism: "mode",
+          policyVersion,
+          message: "Denied: a Bash call requesting dangerouslyDisableSandbox requires interaction and no prompt handler answered it (WS-12 §4/§11, RULING P3-J)",
           ...(carriedTransform !== undefined ? { transformedInput: carriedTransform } : {}),
         };
       }

@@ -850,6 +850,92 @@ describe("Task 8 — AskUserQuestion as mandatory interaction (WS-07 §8)", () =
   });
 });
 
+// --- Task 8 (P3 close-out, RULING P3-J): a Bash call requesting dangerouslyDisableSandbox is
+// mandatory interaction, structurally identical to AskUserQuestion above (WS-12 §4/§11: "the call is
+// always surfaced for approval, under every policy, and no permission rule may silence it").
+describe("Task 8 — RULING P3-J: Bash dangerouslyDisableSandbox as mandatory interaction (WS-12 §4/§11)", () => {
+  const overrideCall = call("Bash", { command: "rm -rf /tmp/whatever", dangerouslyDisableSandbox: true });
+
+  for (const mode of ["default", "acceptEdits", "auto", "bypassPermissions"] as const) {
+    test(`mode=${mode}: the override reaches the prompt stage even with a BARE Bash(*) allow rule present — never rule-silenced, never auto-approved by acceptEdits/auto, spec-literal "under every policy" including bypass`, async () => {
+      const promptSpy = spyPromptStage(() => ({ decision: "allow" }));
+      const ctx = baseCtx({
+        promptStage: promptSpy.stage,
+        policy: policy({ mode, rules: withRules(rule("Bash(*)", "allow")) }), // a maximally broad allow rule must not shadow this
+        specialChecks: REAL_SPECIAL_CHECKS,
+        sessionBypassEnabled: mode === "bypassPermissions",
+      });
+      const record = await evaluate(overrideCall, ctx);
+      expect(promptSpy.calls.length).toBe(1);
+      expect(record.mechanism).toBe("canUseTool");
+      expect(record.decision).toBe("allow");
+    });
+  }
+
+  test("dontAsk: the override is denied outright, the prompt stage is NEVER invoked", async () => {
+    const promptSpy = spyPromptStage(() => ({ decision: "allow" }));
+    const ctx = baseCtx({ promptStage: promptSpy.stage, policy: policy({ mode: "dontAsk", rules: withRules(rule("Bash(*)", "allow")) }) });
+    const record = await evaluate(overrideCall, ctx);
+    expect(promptSpy.calls.length).toBe(0);
+    expect(record.decision).toBe("deny");
+    expect(record.mechanism).toBe("mode");
+    expect(record.message).toContain("dangerouslyDisableSandbox");
+  });
+
+  test("no answering host (no-opinion prompt stage) fails CLOSED — never implicitly allowed", async () => {
+    const ctx = baseCtx({ policy: policy({ mode: "default" }) }); // NO_OPINION_PROMPT_STAGE
+    const record = await evaluate(overrideCall, ctx);
+    expect(record.decision).toBe("deny");
+    expect(record.message).toContain("dangerouslyDisableSandbox");
+  });
+
+  test("a deny rule targeting Bash still wins outright (stage 2 runs before stage 3's mandatory interaction)", async () => {
+    const promptSpy = spyPromptStage(() => ({ decision: "allow" }));
+    const ctx = baseCtx({
+      promptStage: promptSpy.stage,
+      policy: policy({ mode: "default", rules: withRules(rule("Bash(*)", "deny")) }),
+    });
+    const record = await evaluate(overrideCall, ctx);
+    expect(promptSpy.calls.length).toBe(0);
+    expect(record.decision).toBe("deny");
+    expect(record.mechanism).toBe("rule");
+  });
+
+  test("decisionReason names the mandatory interaction explicitly (transcript legibility)", async () => {
+    const promptSpy = spyPromptStage(() => ({ decision: "deny" }));
+    const ctx = baseCtx({ promptStage: promptSpy.stage, policy: policy({ mode: "default" }) });
+    await evaluate(overrideCall, ctx);
+    expect(promptSpy.calls.length).toBe(1);
+    expect(promptSpy.calls[0]!.meta.matchedAskRule).toBeUndefined(); // no rule forced this -- the call's own input shape did
+    expect(promptSpy.calls[0]!.meta.decisionReason).toContain("dangerouslyDisableSandbox");
+  });
+
+  test("an ordinary Bash call (no dangerouslyDisableSandbox) is completely unaffected — the mandatory-interaction gate is keyed on the input flag, not the tool name alone", async () => {
+    const ctx = baseCtx({ policy: policy({ mode: "default" }) });
+    const record = await evaluate(call("Bash", { command: "ls" }), ctx);
+    expect(record).toMatchObject({ decision: "allow", mechanism: "mode" }); // recognized read-only, unaffected
+  });
+
+  test("dangerouslyDisableSandbox: false is NOT mandatory interaction (only === true triggers it, matching the pinned boolean-flag semantics)", async () => {
+    const ctx = baseCtx({ policy: policy({ mode: "default" }) });
+    const record = await evaluate(call("Bash", { command: "ls", dangerouslyDisableSandbox: false }), ctx);
+    expect(record).toMatchObject({ decision: "allow", mechanism: "mode" });
+  });
+
+  // "the result's override state stays recorded regardless of outcome" (WS-12 §4) — the ALLOWED
+  // branch here proves the override flag survives evaluate() into `updatedInput`/the executed call
+  // unchanged (no PreToolUse/canUseTool transform touched it), which is what lets bash.ts's own
+  // executor (tools/impl/bash.ts, already fixed by Lane C's own fix round 1 item 3 --
+  // formatSandboxAnnotation) still see and report it once the call actually runs; this evaluator
+  // layer has no tool-result surface of its own to assert against directly.
+  test("a real prompt-approved override carries the flag through to the effective/transformed call untouched, when the host does not itself transform it", async () => {
+    const promptSpy = spyPromptStage(() => ({ decision: "allow" }));
+    const ctx = baseCtx({ promptStage: promptSpy.stage, policy: policy({ mode: "default" }) });
+    await evaluate(overrideCall, ctx);
+    expect(promptSpy.calls[0]!.call.input["dangerouslyDisableSandbox"]).toBe(true);
+  });
+});
+
 // --- read-only allowed; unmatched -> mode-specific outcome -----------------------------------------
 
 describe("§5 baseline matrix — read-only work and unmatched actions", () => {
