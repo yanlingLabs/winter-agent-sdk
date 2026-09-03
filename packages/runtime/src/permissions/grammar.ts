@@ -204,7 +204,14 @@ const BASH_PARAM_FIELDS: ReadonlySet<string> = new Set(["run_in_background"]);
 // `matchesRuleForCall` FILE_RULE_TOOLS branch (and `edit-recognition.ts`'s own `fileRulePathField`)
 // is what makes this table's EXTENSIBILITY promise ("extending it is a one-line addition") true in
 // practice, not just in the comment above.
-export const FILE_RULE_TOOLS: ReadonlySet<string> = new Set(["Read", "Edit", "Write", "NotebookEdit"]);
+// I1 (fix wave, P3 close-out): "Glob" and "Grep" join the family here too -- the dedicated
+// read/search tools WS-07 §6.1 (line 136) names alongside plain Read ("Reads within
+// working/additional directories, dedicated read/search tools, and recognized read-only shell forms
+// run without prompting"). The P2 evaluator predates Glob/Grep (T8's own P3-E extension only ever
+// added Write/NotebookEdit); this table's own "extending it is a one-line addition" promise is what
+// makes THIS addition equally mechanical -- evaluator.ts's `matchesRuleForCall` FILE_RULE_TOOLS
+// branch and `edit-recognition.ts`'s own `fileRulePathField` both grow the matching Glob/Grep case.
+export const FILE_RULE_TOOLS: ReadonlySet<string> = new Set(["Read", "Edit", "Write", "NotebookEdit", "Glob", "Grep"]);
 
 // ---------------------------------------------------------------------------------------------
 // Shared low-level shell-like scanner

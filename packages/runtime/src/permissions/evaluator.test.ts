@@ -2106,6 +2106,220 @@ describe("Task 8 (P3 close-out, RULING P3-E): NotebookEdit joins FILE_RULE_TOOLS
   });
 });
 
+// I1 (fix wave, P3 close-out): the evaluator predates Glob/Grep -- every input-aware read/exec
+// judgment was keyed on `toolName === "Read"|"Bash"` alone, so Glob/Grep prompted in default mode
+// (denied under dontAsk) and the `~/.winter/run` baseline deny never covered them.
+describe("I1 (fix wave, P3 close-out): Glob/Grep join the dedicated-read-tool baseline (WS-07 §6.1 line 136)", () => {
+  test("Glob(pattern:'*') in default mode, no rule/hook/canUseTool -- silent allow, mechanism mode (was: denied)", async () => {
+    const ctx = baseCtx({ cwd: "/work", policy: policy({ mode: "default" }) });
+    const record = await evaluate(call("Glob", { pattern: "*" }), ctx);
+    expect(record).toMatchObject({ decision: "allow", mechanism: "mode" });
+  });
+
+  test("Grep with a path INSIDE cwd -- silent allow (was: denied)", async () => {
+    const ctx = baseCtx({ cwd: "/work", policy: policy({ mode: "default" }) });
+    const record = await evaluate(call("Grep", { pattern: "x", path: "/work/sub" }), ctx);
+    expect(record).toMatchObject({ decision: "allow", mechanism: "mode" });
+  });
+
+  test("Grep with a path OUTSIDE cwd -- still prompts (unchanged: out-of-bounds is never silently allowed)", async () => {
+    const promptSpy = spyPromptStage(() => ({ decision: "deny" }));
+    const ctx = baseCtx({ promptStage: promptSpy.stage, cwd: "/work", policy: policy({ mode: "default" }) });
+    const record = await evaluate(call("Grep", { pattern: "x", path: "/etc" }), ctx);
+    expect(promptSpy.calls.length).toBe(1);
+    expect(record.decision).toBe("deny");
+  });
+
+  test("Glob/Grep with NO path field at all default to cwd -- silent allow (mirrors the executors' own 'absent == scan from cwd')", async () => {
+    const ctxGlob = baseCtx({ cwd: "/work", policy: policy({ mode: "default" }) });
+    expect(await evaluate(call("Glob", { pattern: "*" }), ctxGlob)).toMatchObject({ decision: "allow", mechanism: "mode" });
+    const ctxGrep = baseCtx({ cwd: "/work", policy: policy({ mode: "default" }) });
+    expect(await evaluate(call("Grep", { pattern: "x" }), ctxGrep)).toMatchObject({ decision: "allow", mechanism: "mode" });
+  });
+
+  test("dontAsk also silently permits Glob/Grep (shares default's built-in-read-only baseline)", async () => {
+    const ctx = baseCtx({ cwd: "/work", policy: policy({ mode: "dontAsk" }) });
+    const record = await evaluate(call("Glob", { pattern: "*" }), ctx);
+    expect(record).toMatchObject({ decision: "allow", mechanism: "mode" });
+  });
+
+  function baselineDenyRulesForAllThree(): SourcedRuleSet {
+    return withRules(
+      rule("Read(~/.winter/run)", "deny", "managed"),
+      rule("Read(~/.winter/run/**)", "deny", "managed"),
+      rule("Glob(~/.winter/run)", "deny", "managed"),
+      rule("Glob(~/.winter/run/**)", "deny", "managed"),
+      rule("Grep(~/.winter/run)", "deny", "managed"),
+      rule("Grep(~/.winter/run/**)", "deny", "managed"),
+    );
+  }
+
+  test("the baseline `~/.winter/run` deny, emitted for Grep too, denies a Grep whose OWN path field names the denied subtree (was: allow/prompt)", async () => {
+    const ctx = baseCtx({ home: "/synthetic/home", cwd: "/work", policy: policy({ mode: "default", rules: baselineDenyRulesForAllThree() }) });
+    const record = await evaluate(call("Grep", { pattern: "x", path: "/synthetic/home/.winter/run" }), ctx);
+    expect(record).toMatchObject({ decision: "deny", mechanism: "rule", source: "managed" });
+  });
+
+  test("the baseline `~/.winter/run` deny, emitted for Glob too, denies a Glob whose OWN path field names the denied subtree", async () => {
+    const ctx = baseCtx({ home: "/synthetic/home", cwd: "/work", policy: policy({ mode: "default", rules: baselineDenyRulesForAllThree() }) });
+    const record = await evaluate(call("Glob", { pattern: "*", path: "/synthetic/home/.winter/run" }), ctx);
+    expect(record).toMatchObject({ decision: "deny", mechanism: "rule", source: "managed" });
+  });
+
+  test("a Read(...) baseline deny rule alone does NOT cover a Grep call -- matchesRuleForCall requires an exact toolName match (documents why engine.ts must emit all three)", async () => {
+    const readOnlyBaseline = withRules(rule("Read(~/.winter/run)", "deny", "managed"), rule("Read(~/.winter/run/**)", "deny", "managed"));
+    const ctx = baseCtx({ home: "/synthetic/home", cwd: "/work", policy: policy({ mode: "default", rules: readOnlyBaseline }) });
+    const record = await evaluate(call("Grep", { pattern: "x", path: "/synthetic/home/.winter/run" }), ctx);
+    // Falls through to the ordinary built-in-read-only baseline (path outside cwd would normally
+    // prompt, but /synthetic/home/.winter/run isn't within /work's bounds either -- so this call is
+    // actually denied by the generic post-allow-stage fallback, NOT by a rule; the point of this
+    // test is `record.mechanism !== "rule"`, proving a Read-only rule set is not itself sufficient).
+    expect(record.mechanism).not.toBe("rule");
+  });
+});
+
+// I2 (fix wave, P3 close-out): Monitor's command half is outside the Bash permission family -- no
+// critical-removal breaker, no protected-write, no read-deny-blocks-edit, no plan-write withholding.
+// `shellCommandOf` (edit-recognition.ts) closes this by covering Monitor's own `command` field
+// everywhere Bash's is already consulted (except the read-only pre-approval, deliberately).
+describe("I2 (fix wave, P3 close-out): Monitor's command half joins the Bash permission family", () => {
+  const monitorCall = (command: string) => call("Monitor", { description: "d", timeout_ms: 1000, persistent: false, command });
+
+  test("bypassPermissions does NOT silently allow a critical Monitor removal -- the WS-07 §6.8 breaker fires exactly like Bash's own (was: allow)", async () => {
+    const ctx = baseCtx({ cwd: "/work", policy: policy({ mode: "bypassPermissions" }), specialChecks: REAL_SPECIAL_CHECKS });
+    const record = await evaluate(monitorCall("rm -rf /"), ctx);
+    expect(record.decision).not.toBe("allow");
+  });
+
+  test("a bare Monitor allow rule does NOT bypass the critical-removal breaker either", async () => {
+    const ctx = baseCtx({
+      cwd: "/work",
+      policy: policy({ mode: "default", rules: withRules(rule("Monitor", "allow")) }),
+      specialChecks: REAL_SPECIAL_CHECKS,
+    });
+    const record = await evaluate(monitorCall("rm -rf /"), ctx);
+    expect(record.decision).not.toBe("allow");
+  });
+
+  test("plan mode withholds a Monitor write exactly like Bash's own recognized fs-op (isPlanWriteShaped)", async () => {
+    const ctx = baseCtx({ cwd: "/work", policy: policy({ mode: "plan" }), specialChecks: REAL_SPECIAL_CHECKS });
+    const record = await evaluate(monitorCall("touch /work/newfile"), ctx);
+    expect(record).toMatchObject({ decision: "deny", mechanism: "mode" });
+  });
+
+  test("a protected-path write via Monitor prompts, exactly like Bash's own", async () => {
+    const promptSpy = spyPromptStage(() => ({ decision: "deny" }));
+    const ctx = baseCtx({ promptStage: promptSpy.stage, cwd: "/work", policy: policy({ mode: "default" }), specialChecks: REAL_SPECIAL_CHECKS });
+    const record = await evaluate(monitorCall("echo x > /work/.git/config"), ctx);
+    expect(promptSpy.calls.length).toBe(1);
+    expect(record.decision).toBe("deny");
+  });
+
+  test("Monitor is deliberately NOT included in the read-only pre-approval -- a read-only-LOOKING Monitor command still falls through, never silently allowed as a 'read'", async () => {
+    const ctx = baseCtx({ cwd: "/work", policy: policy({ mode: "default" }) });
+    const record = await evaluate(monitorCall("cat /work/somefile"), ctx);
+    // Monitor has no dedicated schema field this evaluator recognizes as read-shaped, and
+    // isBashCallReadOnly is Bash-only by design -- falls all the way to the generic post-allow-stage
+    // fallback (Ruling P2-I: null PromptStage answer -> deny, mechanism "mode"), never silently
+    // allowed the way a read-only Bash call would be.
+    expect(record).toMatchObject({ decision: "deny", mechanism: "mode" });
+  });
+});
+
+// RULING P3-K (controller ruling, fix wave, P3 close-out): task/mode-class tools WS-06 §1.4's
+// Manual-mode evidence column marks "No" get a default-mode silent allow at stage 4.
+describe("RULING P3-K: task/mode-class tools get a default-mode silent allow (mechanism 'mode')", () => {
+  const silentAllowTools = [
+    "TaskCreate",
+    "TaskGet",
+    "TaskList",
+    "TaskUpdate",
+    "TodoWrite",
+    "CronList",
+    "CronDelete",
+    "ScheduleWakeup",
+    "ReportFindings",
+    "PushNotification",
+    "TaskOutput",
+    "TaskStop",
+    "EnterPlanMode",
+  ];
+
+  for (const toolName of silentAllowTools) {
+    test(`${toolName}: silent allow in default mode (was: denied at stage 6)`, async () => {
+      const ctx = baseCtx({ cwd: "/work", policy: policy({ mode: "default" }) });
+      const record = await evaluate(call(toolName, {}), ctx);
+      expect(record).toMatchObject({ decision: "allow", mechanism: "mode" });
+    });
+
+    test(`${toolName}: dontAsk also silently permits it ("still permits built-in operations")`, async () => {
+      const ctx = baseCtx({ cwd: "/work", policy: policy({ mode: "dontAsk" }) });
+      const record = await evaluate(call(toolName, {}), ctx);
+      expect(record).toMatchObject({ decision: "allow", mechanism: "mode" });
+    });
+  }
+
+  test("a deny rule still wins over the silent-allow class (stage 2 runs first)", async () => {
+    const ctx = baseCtx({ cwd: "/work", policy: policy({ mode: "default", rules: withRules(rule("TaskCreate", "deny")) }) });
+    const record = await evaluate(call("TaskCreate", {}), ctx);
+    expect(record).toMatchObject({ decision: "deny", mechanism: "rule" });
+  });
+
+  test("non-durable CronCreate is silent-allow too (never touches the filesystem)", async () => {
+    const ctx = baseCtx({ cwd: "/work", policy: policy({ mode: "default" }) });
+    const record = await evaluate(call("CronCreate", { cron: "* * * * *", prompt: "p", recurring: true, durable: false }), ctx);
+    expect(record).toMatchObject({ decision: "allow", mechanism: "mode" });
+  });
+
+  test("CronCreate omitting `durable` entirely is also silent-allow (defaults to false)", async () => {
+    const ctx = baseCtx({ cwd: "/work", policy: policy({ mode: "default" }) });
+    const record = await evaluate(call("CronCreate", { cron: "* * * * *", prompt: "p", recurring: true }), ctx);
+    expect(record).toMatchObject({ decision: "allow", mechanism: "mode" });
+  });
+
+  test("CronCreate(durable:true) is WRITE-SHAPED, not silent-allow -- it prompts in default mode, like any write", async () => {
+    const promptSpy = spyPromptStage(() => ({ decision: "deny" }));
+    const ctx = baseCtx({
+      promptStage: promptSpy.stage,
+      cwd: "/work",
+      sessionRoot: "/work",
+      policy: policy({ mode: "default" }),
+      specialChecks: REAL_SPECIAL_CHECKS,
+    });
+    const record = await evaluate(call("CronCreate", { cron: "* * * * *", prompt: "p", recurring: true, durable: true }), ctx);
+    expect(promptSpy.calls.length).toBe(1); // protected-write (`.winter/` is a protected dir) forces a prompt
+    expect(record.decision).toBe("deny");
+  });
+
+  test("CronCreate(durable:true) is RECOGNIZED as write-shaped under acceptEdits too -- it still prompts (protected `.winter/` path), never silently auto-approved just because acceptEdits is active", async () => {
+    const promptSpy = spyPromptStage(() => ({ decision: "deny" }));
+    const ctx = baseCtx({
+      promptStage: promptSpy.stage,
+      cwd: "/work",
+      sessionRoot: "/work",
+      policy: policy({ mode: "acceptEdits" }),
+      specialChecks: REAL_SPECIAL_CHECKS,
+    });
+    const record = await evaluate(call("CronCreate", { cron: "* * * * *", prompt: "p", recurring: true, durable: true }), ctx);
+    expect(promptSpy.calls.length).toBe(1);
+    expect(record.decision).toBe("deny");
+  });
+
+  test("CronCreate(durable:true) is denied outright by a deny rule targeting its actual write target", async () => {
+    const ctx = baseCtx({
+      cwd: "/work",
+      sessionRoot: "/work",
+      // Double-leading-slash is this rule grammar's own absolute-path anchor convention (mirrors
+      // this file's own "file-rule routing" describe block, e.g. `Read(//etc/passwd)`) -- a single
+      // `/`-anchored pattern is inert without a `sourceDir` no fixture here ever supplies.
+      policy: policy({ mode: "default", rules: withRules(rule("Read(//work/.winter/**)", "deny")) }),
+      specialChecks: REAL_SPECIAL_CHECKS,
+    });
+    const record = await evaluate(call("CronCreate", { cron: "* * * * *", prompt: "p", recurring: true, durable: true }), ctx);
+    expect(record).toMatchObject({ decision: "deny", mechanism: "rule" });
+  });
+});
+
 describe("Task 7 — Ruling P2-J (rider 2) proven at the evaluator layer, not just paths.ts (real mkdtemp + planted symlinks — see this file's own header)", () => {
   // Real fs, exactly like paths.test.ts's own checkSymlinkBothEnds regime: realpath the mkdtemp
   // root immediately (the macOS $TMPDIR-resolves-through-a-symlink trap; see paths.test.ts's

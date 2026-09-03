@@ -7,7 +7,7 @@ import "./glob.ts";
 import { getRegisteredTool, type ToolExecutionContext, type ToolResultPayload } from "../registry.ts";
 import { createSessionReadState } from "../read-state.ts";
 
-function makeCtx(cwd: string): ToolExecutionContext {
+function makeCtx(cwd: string, overrides: Partial<ToolExecutionContext> = {}): ToolExecutionContext {
   return {
     cwd,
     home: "/home/test",
@@ -18,6 +18,7 @@ function makeCtx(cwd: string): ToolExecutionContext {
     tempDir: join(cwd, ".tmp"),
     sandboxSettings: {},
     session: { setCwd() {}, addBoundedRoot() {}, setPermissionMode() {}, getBoundedRoots: () => [], getPermissionMode: () => "default", getSessionRoot: () => "/work", setSessionRoot() {} },
+    ...overrides,
   };
 }
 
@@ -146,6 +147,27 @@ describe("Glob (Phase 3, Lane A, Task 4)", () => {
     const result = await runGlob({ pattern: "*.nonexistent-ext" }, makeCtx(dir));
     expect(result.isError).toBeUndefined();
     expect(result.output).toBe("");
+  });
+
+  // I1 (fix wave, P3 close-out): mirrors grep.test.ts's identical scenario -- a rule-matched `path`
+  // FIELD deny is not a traversal guard; a scan rooted OUTSIDE a denied subtree can still discover
+  // matches INSIDE one.
+  describe("I1 (fix wave, P3 close-out): probeReadAccess filters deny-read subtrees out of the scan", () => {
+    test("a file under a subtree probeReadAccess denies is never listed, even though the scan root itself is not denied", async () => {
+      const runDir = join(dir, ".winter", "run");
+      mkdirSync(runDir, { recursive: true });
+      writeFileSync(join(runDir, "pidfile"), "x");
+      writeFileSync(join(dir, "ok.txt"), "x");
+
+      const ctx = makeCtx(dir, {
+        permissions: {
+          probeReadAccess: (filePath: string) => (filePath.startsWith(runDir + "/") || filePath === runDir ? "deny" : "silent"),
+        },
+      });
+      const result = await runGlob({ pattern: "**/*" }, ctx);
+      expect(result.output).toContain(join(dir, "ok.txt"));
+      expect(result.output).not.toContain(join(runDir, "pidfile"));
+    });
   });
 
   describe("extractPaths seam (RULING P3-F, fix round 1: raw passthrough, no cwd resolution)", () => {

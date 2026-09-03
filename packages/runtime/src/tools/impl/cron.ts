@@ -9,8 +9,12 @@
 // not survive a process restart, by design (matches "durable: true persists..."'s own implication
 // that the default does NOT). `durable: true` jobs live ONLY in the project's own
 // `.winter/scheduled_tasks.json` file (WS-01 §2.4 project dot-dir convention; "project dir" resolved
-// as `ctx.cwd`, the one project-identity value ToolExecutionContext actually carries -- no
-// repo-root-walking helper exists anywhere in this codebase today, verified before writing this) --
+// as `ctx.session.getSessionRoot()` (RULING P3-L/M3, fix wave -- was `ctx.cwd` before this fix,
+// which drifted with every `cd`: `CronCreate({durable:true})` in the main worktree, followed by
+// EnterWorktree or an in-session `cd`, made the project's durable jobs silently vanish from CronList
+// and turned CronDelete into a permanent no-op, since a LATER call's live cwd no longer matched the
+// dir the file was written under). `getSessionRoot()` is engine-owned and moves ONLY by
+// EnterWorktree/ExitWorktree -- see registry.ts's own ToolExecutionContext.session doc comment) --
 // re-read fresh on every CronList/CronDelete call rather than cached, so a durable job created by an
 // EARLIER process in the same project directory is visible to a later one (the whole point of
 // "durable" -- outliving this process), and so CronList/CronDelete never drift from the file's own
@@ -324,12 +328,12 @@ async function executeCreate(rawInput: unknown, ctx: ToolExecutionContext): Prom
   if (input.durable) {
     let existing: CronJobRecord[];
     try {
-      existing = readDurableJobs(ctx.cwd);
+      existing = readDurableJobs(ctx.session.getSessionRoot());
     } catch (e) {
       return errorResult((e as Error).message);
     }
     try {
-      writeDurableJobsAtomic(ctx.cwd, [...existing, record]);
+      writeDurableJobsAtomic(ctx.session.getSessionRoot(), [...existing, record]);
     } catch (e) {
       return errorResult(`could not persist the durable job: ${(e as Error).message}`);
     }
@@ -365,7 +369,7 @@ async function executeDelete(rawInput: unknown, ctx: ToolExecutionContext): Prom
 
   let existing: CronJobRecord[];
   try {
-    existing = readDurableJobs(ctx.cwd);
+    existing = readDurableJobs(ctx.session.getSessionRoot());
   } catch (e) {
     return errorResult((e as Error).message);
   }
@@ -377,7 +381,7 @@ async function executeDelete(rawInput: unknown, ctx: ToolExecutionContext): Prom
     return { output: JSON.stringify({ id: input.id }) };
   }
   try {
-    writeDurableJobsAtomic(ctx.cwd, remaining);
+    writeDurableJobsAtomic(ctx.session.getSessionRoot(), remaining);
   } catch (e) {
     return errorResult(`could not persist the deletion: ${(e as Error).message}`);
   }
@@ -389,7 +393,7 @@ async function executeDelete(rawInput: unknown, ctx: ToolExecutionContext): Prom
 async function executeList(_rawInput: unknown, ctx: ToolExecutionContext): Promise<ToolResultPayload> {
   let durableJobs: CronJobRecord[];
   try {
-    durableJobs = readDurableJobs(ctx.cwd);
+    durableJobs = readDurableJobs(ctx.session.getSessionRoot());
   } catch (e) {
     return errorResult((e as Error).message);
   }

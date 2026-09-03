@@ -8,7 +8,7 @@ import { getRegisteredTool, type ToolExecutionContext, type ToolResultPayload } 
 import { createSessionReadState } from "../read-state.ts";
 import type { GrepResult } from "./grep.ts";
 
-function makeCtx(cwd: string): ToolExecutionContext {
+function makeCtx(cwd: string, overrides: Partial<ToolExecutionContext> = {}): ToolExecutionContext {
   return {
     cwd,
     home: "/home/test",
@@ -19,6 +19,7 @@ function makeCtx(cwd: string): ToolExecutionContext {
     tempDir: join(cwd, ".tmp"),
     sandboxSettings: {},
     session: { setCwd() {}, addBoundedRoot() {}, setPermissionMode() {}, getBoundedRoots: () => [], getPermissionMode: () => "default", getSessionRoot: () => "/work", setSessionRoot() {} },
+    ...overrides,
   };
 }
 
@@ -367,6 +368,41 @@ describe("Grep (Phase 3, Lane A, Task 4)", () => {
     test("missing pattern errors", async () => {
       const result = await runGrep({}, makeCtx(dir));
       expect(result.isError).toBe(true);
+    });
+  });
+
+  // I1 (fix wave, P3 close-out): a rule-matched `path` FIELD deny is not a traversal guard --
+  // `Grep({pattern:"x", path:"<home>"})` matches no `~/.winter/run/**` rule on ITS OWN `path` field
+  // (the scan ROOT isn't under the denied subtree) yet would still walk INTO the run dir and surface
+  // its contents. This is the exact RED scenario the review names: "plant `<home>/.winter/run/
+  // pidfile`, run Grep with a probeReadAccess that answers deny for that subtree -- the result must
+  // not list the file."
+  describe("I1 (fix wave, P3 close-out): probeReadAccess filters deny-read subtrees out of the scan, not just the call's own path field", () => {
+    test("a file under a subtree probeReadAccess denies is never listed, even though the scan root itself is not denied", async () => {
+      const runDir = join(dir, ".winter", "run");
+      mkdirSync(runDir, { recursive: true });
+      writeFileSync(join(runDir, "pidfile"), "SEARCHABLE_SECRET_TOKEN");
+      writeFileSync(join(dir, "ok.txt"), "SEARCHABLE_SECRET_TOKEN");
+
+      const ctx = makeCtx(dir, {
+        permissions: {
+          probeReadAccess: (filePath: string) => (filePath.startsWith(runDir + "/") || filePath === runDir ? "deny" : "silent"),
+        },
+      });
+      const result = await runGrep({ pattern: "SEARCHABLE_SECRET_TOKEN", output_mode: "files_with_matches" }, ctx);
+      const parsed = parse(result);
+      expect(parsed.files).toBeDefined();
+      expect(parsed.files).toEqual([join(dir, "ok.txt")]);
+      expect(parsed.files).not.toContain(join(runDir, "pidfile"));
+    });
+
+    test("a directly-named denied file (not a directory scan) is also excluded", async () => {
+      const secretFile = join(dir, "secret.txt");
+      writeFileSync(secretFile, "content");
+      const ctx = makeCtx(dir, { permissions: { probeReadAccess: (filePath: string) => (filePath === secretFile ? "deny" : "silent") } });
+      const result = await runGrep({ pattern: "content", path: secretFile, output_mode: "files_with_matches" }, ctx);
+      const parsed = parse(result);
+      expect(parsed.files ?? []).toEqual([]);
     });
   });
 

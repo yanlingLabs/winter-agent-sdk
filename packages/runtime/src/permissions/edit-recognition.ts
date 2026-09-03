@@ -43,6 +43,7 @@
 // does not extend to grammar.ts either -- so this module carries its own small, independent,
 // deliberately simpler tokenizer (no paren-depth tracking; this module never needs to find compound
 // operators, only whitespace-delimited operands within an ALREADY-split-and-stripped subcommand).
+import { join } from "node:path";
 import { splitCompound, stripWrappers, extractRedirectTargets } from "./grammar.ts";
 
 export type RecognizedEditKind = "edit" | "bashFsOp" | "other";
@@ -228,19 +229,61 @@ function recognizeBashFsOpPaths(stripped: string): string[] | null {
 // invisible to the whole permissions package before this ruling (Lane B's own report: "zero grep
 // hits"). Lives here, not in evaluator.ts, because evaluator.ts already imports FROM this module
 // (recognizeEditOperation below) -- the reverse import would be circular.
-export function fileRulePathField(toolName: string): "file_path" | "notebook_path" {
-  return toolName === "NotebookEdit" ? "notebook_path" : "file_path";
+// I1 (fix wave, P3 close-out): grows a THIRD return, "path" -- Glob/Grep's own pinned field name
+// (WS-06 §3.1) -- now that FILE_RULE_TOOLS (grammar.ts) includes them too. Unlike Read/Edit/Write/
+// NotebookEdit's `file_path`/`notebook_path` (always required on those tools), Glob/Grep's `path` is
+// OPTIONAL on the call itself (absent == "scan from cwd") -- callers reading `call.input[
+// fileRulePathField(call.toolName)]` for Glob/Grep must still apply that same "absent == cwd"
+// default themselves (this function only names the FIELD, never a fallback value, mirroring its own
+// pre-existing contract for the other four tools).
+export function fileRulePathField(toolName: string): "file_path" | "notebook_path" | "path" {
+  if (toolName === "NotebookEdit") return "notebook_path";
+  if (toolName === "Glob" || toolName === "Grep") return "path";
+  return "file_path";
 }
 
-export function recognizeEditOperation(call: { toolName: string; input: Record<string, unknown> }): RecognizedEditOperation | null {
+// I2 (fix wave, P3 close-out): Monitor's command half shares Bash's own sandbox mechanism, and its
+// own descriptor says so explicitly ("Command half uses the Bash permission family",
+// `permissionClass: "execute"`) -- but every Bash-keyed input-aware check in the permission layer
+// (this function included) was keyed on the literal tool name "Bash" alone, so a shell command
+// arriving as Monitor's own `command` field was invisible to all of them (no critical-removal
+// breaker, no protected-write, no read-deny-blocks-edit, no plan-write withholding -- WS-07 §6.8's
+// safety MUST bypassed via a sibling tool). Lives here (not evaluator.ts, which ALSO needs it for
+// `isCriticalRemoval`/`isPlanWriteShaped`) because this module's own `recognizeEditOperation` needs
+// it internally too, and evaluator.ts already imports FROM this module -- the reverse import would
+// be circular. Deliberately does NOT cover `isBashCallReadOnly` (evaluator.ts) -- Monitor is a
+// long-running background process, never a read-only pre-approval candidate, even when its command
+// text looks read-only; that function does not consult this helper.
+export function shellCommandOf(call: { toolName: string; input: Record<string, unknown> }): string | undefined {
+  if (call.toolName !== "Bash" && call.toolName !== "Monitor") return undefined;
+  const raw = call.input["command"];
+  return typeof raw === "string" ? raw : undefined;
+}
+
+export function recognizeEditOperation(
+  call: { toolName: string; input: Record<string, unknown> },
+  opts?: { sessionRoot?: string },
+): RecognizedEditOperation | null {
   if (call.toolName === "Edit" || call.toolName === "Write" || call.toolName === "NotebookEdit") {
     const path = call.input[fileRulePathField(call.toolName)];
     return typeof path === "string" ? { kind: "edit", paths: [path] } : null;
   }
-  if (call.toolName !== "Bash") return null;
+  // RULING P3-K (fix wave, P3 close-out): CronCreate(durable: true) is write-shaped -- its target is
+  // a FIXED, non-model-controllable path (`<sessionRoot>/.winter/scheduled_tasks.json`, cron.ts's
+  // own `durableFilePath`), so it is recognized as a single-path "edit"-kind write for acceptEdits/
+  // protected/plan-write purposes, on par with Edit/Write. Requires `opts.sessionRoot` (the
+  // evaluator's own EvaluationContext.sessionRoot, threaded in by every evaluator.ts call site) --
+  // without it (a caller with no session-root concept), CronCreate is not recognized as a write at
+  // all, never guessed against the wrong root. Non-durable CronCreate (or `durable` omitted/false)
+  // never touches the filesystem at all -- not recognized here, full stop (RULING P3-K's own
+  // "silent-allow" cell, evaluator.ts's `evaluateModeStage`).
+  if (call.toolName === "CronCreate") {
+    if (call.input["durable"] !== true || opts?.sessionRoot === undefined) return null;
+    return { kind: "edit", paths: [join(opts.sessionRoot, ".winter", "scheduled_tasks.json")] };
+  }
 
-  const raw = call.input["command"];
-  const command = typeof raw === "string" ? raw : "";
+  const command = shellCommandOf(call);
+  if (command === undefined) return null;
   const parts = splitCompound(command);
   // Coordinator note (T6 review, "vacuous match" class): splitCompound("") returns `[]`, not
   // `null` -- an empty/all-separator/missing command must never vacuously recognize as an fs-op

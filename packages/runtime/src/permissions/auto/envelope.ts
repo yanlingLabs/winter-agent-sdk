@@ -42,7 +42,7 @@ export interface ResolvedEnvelopePath {
 function resolveCandidatePaths(call: PermissionCall, ctx: EvaluationContext): ResolvedEnvelopePath[] {
   const raw: string[] = [];
   if (call.toolName === "Read" && typeof call.input["file_path"] === "string") raw.push(call.input["file_path"] as string);
-  raw.push(...extractCandidateWritePaths(call));
+  raw.push(...extractCandidateWritePaths(call, ctx));
   const seen = new Set<string>();
   const out: ResolvedEnvelopePath[] = [];
   for (const p of raw) {

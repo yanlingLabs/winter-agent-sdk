@@ -285,9 +285,22 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // required for full coverage, not redundant. The `~` anchor itself is resolved against `ctx.home`
   // at MATCH time (paths.ts), never baked in here, so this constant is correct regardless of which
   // OS user's home a given session actually resolves.
+  // I1 (fix wave, P3 close-out): emitted for Read, Glob, AND Grep -- `matchesRuleForCall`
+  // (evaluator.ts) requires an EXACT `rule.toolName === call.toolName` match for the FILE_RULE_TOOLS
+  // pattern family (a `Read(...)` rule can never cover a `Grep`/`Glob` call "by extension" the way a
+  // reader might assume from the shared bounds-check machinery) -- so the baseline denial must be
+  // its own three entries, one per dedicated read tool, or a bare `Grep`/`Glob` allow rule (or
+  // bypass) would leave `~/.winter/run` readable through either search tool even though `Read` on
+  // the identical path is denied. Before this fix, Glob/Grep were not FILE_RULE_TOOLS members at
+  // all, so this comment's own prior claim ("stops a direct Read/recognized-Bash-read of the path")
+  // was accurate as written but incomplete: it never stopped a search-tool read of the same path.
   const BASELINE_DENY_RULES = [
     sourceRule({ toolName: "Read", ruleContent: "~/.winter/run" }, "deny", "managed"),
     sourceRule({ toolName: "Read", ruleContent: "~/.winter/run/**" }, "deny", "managed"),
+    sourceRule({ toolName: "Glob", ruleContent: "~/.winter/run" }, "deny", "managed"),
+    sourceRule({ toolName: "Glob", ruleContent: "~/.winter/run/**" }, "deny", "managed"),
+    sourceRule({ toolName: "Grep", ruleContent: "~/.winter/run" }, "deny", "managed"),
+    sourceRule({ toolName: "Grep", ruleContent: "~/.winter/run/**" }, "deny", "managed"),
   ];
   // Task 5 (WS-07 §3.3 / phase ruling 1) seeding: Options.{allowedTools,disallowedTools,permissions}
   // become source:"sdk" rule entries via T5's own builder — this is the wiring T5's own header

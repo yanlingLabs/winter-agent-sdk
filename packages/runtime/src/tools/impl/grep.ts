@@ -499,6 +499,14 @@ async function execute(rawInput: unknown, ctx: ToolExecutionContext): Promise<To
     return { output: `Error: path not found: ${input.path ?? scanRoot}`, isError: true };
   }
   if (allowedExts) candidateFiles = candidateFiles.filter((f) => allowedExts!.includes(extOf(f)));
+  // I1 (fix wave, P3 close-out): a rule-matched `path` FIELD deny (the baseline `~/.winter/run`
+  // denial included) only ever catches a call whose OWN `path` input names the denied subtree
+  // directly -- it is not a traversal guard. `Grep({pattern:"x", path:"<home>"})` matches no
+  // `~/.winter/run/**` rule on ITS `path` field (`<home>` isn't under the denied subtree) yet would
+  // still walk INTO the run dir and surface its contents. Filtering every discovered candidate
+  // through `ctx.permissions.probeReadAccess` closes that: a file the standing evaluator would deny
+  // reading directly is never listed here either, regardless of how it was reached.
+  candidateFiles = candidateFiles.filter((f) => ctx.permissions.probeReadAccess(f) !== "deny");
   candidateFiles.sort((a, b) => a.localeCompare(b));
 
   const mode: OutputMode = input.output_mode ?? "files_with_matches";

@@ -50,7 +50,7 @@ import type { PolicyState, AutoModeConfig } from "./policy-state.ts";
 // import -- both this module's `extractCandidateWritePaths` and `matchesRuleForCall` consume it so
 // neither can independently drift from edit-recognition.ts's own Read/Edit/Write/NotebookEdit path-
 // field mapping (see that module's own header for why it lives there, not here).
-import { recognizeEditOperation, fileRulePathField } from "./edit-recognition.ts";
+import { recognizeEditOperation, fileRulePathField, shellCommandOf } from "./edit-recognition.ts";
 import { isProtectedWrite as isProtectedPath, isCriticalRemoval as classifyCriticalRemoval } from "./protected.ts";
 // Task 12 (WS-07 §10.1 step 2 / §6.5): the two auto/config.ts primitives evaluator.ts's own `auto`
 // mode arm and plan's classifier borrow need. This is the ONLY dependency evaluator.ts takes on
@@ -402,8 +402,13 @@ function isWithinBounds(path: string, ctx: EvaluationContext): boolean {
 // would only reintroduce the exact drift risk this function's own header already warns about
 // ("a second copy would be exactly the kind of drift risk this whole phase's review lens exists to
 // catch"). Behavior for Edit/Write/Bash is byte-identical to before this change.
-export function extractCandidateWritePaths(call: PermissionCall): string[] {
-  const recognized = recognizeEditOperation(call);
+// RULING P3-K (fix wave, P3 close-out): now takes `ctx` too, so CronCreate(durable) can be
+// recognized against the real `ctx.sessionRoot` (edit-recognition.ts's own CronCreate case) --
+// every pre-existing call site already had `ctx` in scope (isProtectedWrite/resolveProtectedWrite/
+// findReadDenyBlockingEdit/auto/envelope.ts's resolveCandidatePaths), so this is a pure widening,
+// never a new requirement on a caller that didn't already have one.
+export function extractCandidateWritePaths(call: PermissionCall, ctx: EvaluationContext): string[] {
+  const recognized = recognizeEditOperation(call, { sessionRoot: ctx.sessionRoot });
   return recognized ? recognized.paths : [];
 }
 
@@ -420,16 +425,17 @@ export const REAL_SPECIAL_CHECKS: SpecialChecks = {
     // EITHER end classifies protected" mirrors rider 2's own deny-direction semantics — protected
     // is a safety check, not a grant, so the more-restrictive interpretation applies, exactly like
     // deny/ask elsewhere in this phase.
-    return extractCandidateWritePaths(call).some((p) => {
+    return extractCandidateWritePaths(call, ctx).some((p) => {
       const absPath = resolve(ctx.cwd, p);
       return checkSymlinkBothEnds(absPath, (candidate) => isProtectedPath(candidate, { cwd: ctx.cwd, home: ctx.home })).denyIfEither;
     });
   },
   isCriticalRemoval(call, ctx) {
     // WS-07 §6.8 is scoped to `rm`/`rmdir` — a shell concept; Edit/Write never "remove" anything.
-    if (call.toolName !== "Bash") return { critical: false };
-    const raw = call.input["command"];
-    const command = typeof raw === "string" ? raw : "";
+    // I2 (fix wave, P3 close-out): `shellCommandOf` covers Monitor's command half too (Bash-only
+    // before this fix) -- see that function's own header for the full rationale.
+    const command = shellCommandOf(call);
+    if (command === undefined) return { critical: false };
     return classifyCriticalRemoval(command, { cwd: ctx.cwd, home: ctx.home, additionalDirectories: boundedRoots(ctx) });
   },
 };
@@ -468,8 +474,14 @@ function matchesRuleForCall(rule: ParsedRule, call: PermissionCall, direction: "
     // (docs/superpowers/specs/winter/WS-06-tool-catalog.md:145,167,179: file_path for Read/Edit/
     // Write, notebook_path for NotebookEdit) -- shared with edit-recognition.ts/
     // extractCandidateWritePaths so this dispatch can never drift from theirs.
-    const path = call.input[fileRulePathField(call.toolName)];
-    if (typeof path !== "string") return false;
+    const rawPath = call.input[fileRulePathField(call.toolName)];
+    // I1 (fix wave, P3 close-out): Glob/Grep's own `path` field is OPTIONAL on the call (absent ==
+    // "scan from cwd", mirroring glob.ts/grep.ts's own `input.path !== undefined ? resolve(ctx.cwd,
+    // input.path) : ctx.cwd`) -- an absent path must still resolve to "." here, or a scoped
+    // Glob/Grep deny/ask/allow rule could never match the (extremely common) no-`path`-given call
+    // shape at all.
+    const path = typeof rawPath === "string" ? rawPath : rawPath === undefined && (call.toolName === "Glob" || call.toolName === "Grep") ? "." : undefined;
+    if (path === undefined) return false;
     // Ruling P2-J (Task 7, rider 2): symlink-both-ends composed here — deny/ask fire if the LINK OR
     // the resolved TARGET matches; allow requires BOTH. Closes the fail-open T6's report flagged
     // ("deny Read(//etc/passwd) does not fire on a Read of a symlink whose target is /etc/passwd").
@@ -572,7 +584,7 @@ export function findMatchingRuleEntry(
 // BOUNDARY paths.ts's own readDenyBlocksEdit documents) — it is an advertisement-layer schema
 // removal (WS-07 §1), not a path-pattern block.
 function findReadDenyBlockingEdit(call: PermissionCall, ctx: EvaluationContext): SourcedRuleEntry | undefined {
-  const candidatePaths = extractCandidateWritePaths(call);
+  const candidatePaths = extractCandidateWritePaths(call, ctx);
   if (candidatePaths.length === 0) return undefined;
   const pool = ctx.allowManagedPermissionRulesOnly ? ctx.policy.rules.entries.filter((e) => e.source === "managed") : ctx.policy.rules.entries;
   for (const entry of pool) {
@@ -608,7 +620,15 @@ function ruleAskUnresolvedMessage(entry: SourcedRuleEntry): string {
 // Stage 4: permission mode baseline
 // ---------------------------------------------------------------------------------------------------
 
+// I2 (fix wave, P3 close-out): scoped to `call.toolName === "Bash"` EXPLICITLY -- found while adding
+// this fix wave's own Monitor fixtures: this check previously read `call.input["command"]" off ANY
+// call regardless of toolName, so Monitor's own `command` field (same field name, same shape) was
+// ALREADY silently eligible for the read-only pre-approval before this fix wave touched anything
+// else here. WS-06 §3.2/WS-07's own framing treats Monitor as a background-process primitive, never
+// a read -- see this fix wave's own `shellCommandOf` (edit-recognition.ts) header for why Monitor is
+// deliberately excluded from THIS ONE check while joining every other Bash-keyed one.
 function isBashCallReadOnly(call: PermissionCall): boolean {
+  if (call.toolName !== "Bash") return false;
   const raw = call.input["command"];
   if (typeof raw !== "string") return false;
   const parts = splitCompound(raw);
@@ -626,15 +646,57 @@ function isBashCallReadOnly(call: PermissionCall): boolean {
 // check: the SAME "cwd or additionalDirectories" notion acceptEdits' own edit-bounding already
 // applies, including its symlink-both-ends composition (Ruling P2-J, rider 2 — "a granted-directory
 // symlink pointing outside every root is NOT routine read-only," unchanged by this fix).
+//
+// I1 (fix wave, P3 close-out): renamed IN SPIRIT (name kept for minimal diff) to cover every
+// "dedicated read/search tool" WS-07 §6.1 (line 136) names, not only Read — Glob/Grep join here.
+// `fileRulePathField` supplies the per-tool field name; Glob/Grep's own field is OPTIONAL (absent ==
+// "scan from cwd", i.e. "."), mirroring `matchesRuleForCall`'s own identical default one section up.
+function dedicatedReadToolPath(call: PermissionCall): string | undefined {
+  if (call.toolName !== "Read" && call.toolName !== "Glob" && call.toolName !== "Grep") return undefined;
+  const raw = call.input[fileRulePathField(call.toolName)];
+  if (typeof raw === "string") return raw;
+  if (raw === undefined && (call.toolName === "Glob" || call.toolName === "Grep")) return ".";
+  return undefined;
+}
+
 function isReadWithinBounds(call: PermissionCall, ctx: EvaluationContext): boolean {
-  if (call.toolName !== "Read") return false;
-  const path = call.input["file_path"];
-  if (typeof path !== "string") return false;
+  const path = dedicatedReadToolPath(call);
+  if (path === undefined) return false;
   return isWithinBounds(path, ctx);
 }
 
 function isBuiltInReadOnly(call: PermissionCall, ctx: EvaluationContext): boolean {
   return isBashCallReadOnly(call) || isReadWithinBounds(call, ctx);
+}
+
+// RULING P3-K (fix wave, controller ruling, P3 close-out): WS-06 §1.4's Manual-mode evidence column
+// marks these task/mode-class tools "No" (ordinarily no prompt). EXCLUDES CronCreate as a bare set
+// member -- it is conditionally write-shaped (see the dedicated check below): `durable:true` writes
+// a real file (`<sessionRoot>/.winter/scheduled_tasks.json`, RULING P3-K's own edit-recognition.ts
+// case) and must fall through to the ordinary write pipeline ("prompts like any write," caught
+// upstream by `isProtectedWrite`'s own `.winter` coverage before this arm is ever reached); a
+// non-durable CronCreate never touches the filesystem at all and belongs in this silent-allow set
+// exactly like its siblings. TaskOutput joins only after I5's traversal-guard fix landed (fix wave,
+// same commit sequence) -- an unvalidated task_id could otherwise read arbitrary files silently.
+const TASK_MODE_CLASS_SILENT_ALLOW: ReadonlySet<string> = new Set([
+  "TaskCreate",
+  "TaskGet",
+  "TaskList",
+  "TaskUpdate",
+  "TodoWrite",
+  "CronList",
+  "CronDelete",
+  "ScheduleWakeup",
+  "ReportFindings",
+  "PushNotification",
+  "TaskOutput",
+  "TaskStop",
+  "EnterPlanMode",
+]);
+
+function isTaskModeClassSilentAllow(call: PermissionCall): boolean {
+  if (call.toolName === "CronCreate") return call.input["durable"] !== true;
+  return TASK_MODE_CLASS_SILENT_ALLOW.has(call.toolName);
 }
 
 // Task 7 extends the T6 two-member union with two new terminal outcomes that, unlike "unresolved",
@@ -701,7 +763,7 @@ function resolveProtectedWrite(mode: PermissionMode, ctx: EvaluationContext, cal
   // isProtectedWrite is true, so at least one candidate path exists) — the first candidate is
   // reported; a compound Bash command touching several protected paths at once reports only one,
   // a judgment call (no ordering guarantee is documented anywhere in scope).
-  const candidatePaths = extractCandidateWritePaths(call);
+  const candidatePaths = extractCandidateWritePaths(call, ctx);
   const blockedPath = candidatePaths[0] !== undefined ? resolve(ctx.cwd, candidatePaths[0]) : undefined;
   return { kind: "mustPrompt", message, origin: "protected", ...(blockedPath !== undefined ? { blockedPath } : {}) };
 }
@@ -710,7 +772,8 @@ function isBashRecognizedWrite(call: PermissionCall): boolean {
   // Any write-shaped path at all (a blessed fs-op OR a bare redirect target) counts as a "write"
   // for plan-mode withholding purposes — WS-07 §6.2's narrower "kind" distinction (blessed vs.
   // "other") only matters for acceptEdits' own auto-approve eligibility, not for plan's broader
-  // "is this a write" question.
+  // "is this a write" question. `recognizeEditOperation` here needs no `sessionRoot` -- this is only
+  // ever called for Bash/Monitor (see isPlanWriteShaped below), never CronCreate.
   return recognizeEditOperation(call) !== null;
 }
 
@@ -718,7 +781,16 @@ function isPlanWriteShaped(call: PermissionCall): boolean {
   // Task 8 (RULING P3-E): NotebookEdit joins Edit/Write -- a notebook edit is exactly as much a
   // plan-mode-withheld write as a file edit is (WS-06 §3.1's own "class edit" pin for all three).
   if (call.toolName === "Edit" || call.toolName === "Write" || call.toolName === "NotebookEdit") return true;
-  if (call.toolName === "Bash") return isBashRecognizedWrite(call);
+  // RULING P3-K (fix wave, P3 close-out): CronCreate(durable:true) is write-shaped -- checked
+  // directly via the flag alone (no ctx/sessionRoot needed for THIS yes/no classification question,
+  // unlike the exact write-PATH evaluator.ts's extractCandidateWritePaths needs for protected/deny
+  // purposes). In practice this branch is likely unreachable in evaluateModeStage's own `plan` arm:
+  // the target is always under `.winter/`, which `isProtectedWrite` ALREADY intercepts,
+  // unconditionally, before evaluateModeStage ever reaches its per-mode arms -- kept anyway per the
+  // ruling's own literal text and as a documented belt-and-suspenders, not dead weight to prune.
+  if (call.toolName === "CronCreate") return call.input["durable"] === true;
+  // I2 (fix wave, P3 close-out): Monitor's command half joins Bash here too.
+  if (call.toolName === "Bash" || call.toolName === "Monitor") return isBashRecognizedWrite(call);
   return false;
 }
 
@@ -742,7 +814,16 @@ function evaluateModeStage(call: PermissionCall, ctx: EvaluationContext, mode: P
     // default / dontAsk share the IDENTICAL baseline (WS-07 §6.1/§6.3: both "still permit
     // built-in/read-only operations") — their divergence is the post-allow-stage fallback in
     // evaluate() below, not this baseline check.
-    return isBuiltInReadOnly(call, ctx) ? { kind: "allow" } : { kind: "unresolved" };
+    if (isBuiltInReadOnly(call, ctx)) return { kind: "allow" };
+    // RULING P3-K (fix wave, controller ruling, P3 close-out): WS-06 §1.4's Manual-mode evidence
+    // column marks the task/mode class "No" (ordinarily no prompt) -- these fall to stage 6 today
+    // and get denied ("no canUseTool handler answered this unmatched action"), silently diverging
+    // from the pinned artifact for every one of these tools in a plain default-mode session. Deny/
+    // ask rules (stages 2/3) and the standing exceptions above still apply FIRST -- this arm is only
+    // reached once nothing upstream already resolved the call, exactly like isBuiltInReadOnly's own
+    // position in this same branch.
+    if (isTaskModeClassSilentAllow(call)) return { kind: "allow" };
+    return { kind: "unresolved" };
   }
 
   if (mode === "acceptEdits") {
@@ -752,7 +833,10 @@ function evaluateModeStage(call: PermissionCall, ctx: EvaluationContext, mode: P
     // now (T6-review obligation), so by the time this arm runs, a Read-deny-blocked path has
     // ALREADY been denied upstream; this arm doesn't need to re-check it.
     if (isBuiltInReadOnly(call, ctx)) return { kind: "allow" };
-    const recognized = recognizeEditOperation(call);
+    // RULING P3-K: sessionRoot threaded through for CronCreate(durable) -- in practice unreachable
+    // here (isProtectedWrite's own `.winter` coverage always intercepts it first, above), kept for
+    // consistency with every other recognizeEditOperation call site in this file.
+    const recognized = recognizeEditOperation(call, { sessionRoot: ctx.sessionRoot });
     if (recognized !== null && (recognized.kind === "edit" || recognized.kind === "bashFsOp")) {
       // "other" (a redirect, or a subcommand mixed with an unblessed one) NEVER auto-approves here
       // — it falls through to "unresolved" below, same as an unrecognized command.
@@ -803,7 +887,7 @@ function evaluateModeStage(call: PermissionCall, ctx: EvaluationContext, mode: P
   // evaluate()'s own stage-5 comment) and then the real classifier (ctx.autoEngine, via
   // evaluate()'s resolveAutoDecision) get a chance next, never a silent allow.
   if (isBuiltInReadOnly(call, ctx)) return { kind: "allow" };
-  const recognizedForAuto = recognizeEditOperation(call);
+  const recognizedForAuto = recognizeEditOperation(call, { sessionRoot: ctx.sessionRoot });
   if (recognizedForAuto !== null && (recognizedForAuto.kind === "edit" || recognizedForAuto.kind === "bashFsOp") && recognizedForAuto.paths.every((p) => isWithinBounds(p, ctx))) {
     return { kind: "allow" };
   }

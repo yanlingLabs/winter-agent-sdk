@@ -27,8 +27,10 @@
 //   - `onlyFiles: true` (directories are never themselves a match) -- mirrors Norma's own Glob
 //     precedent; WS-06 does not discuss directory matches at all.
 //
-// ctx.permissions.probeReadAccess is deliberately unused: the standing P2 evaluator gates the call
-// before this executor ever runs.
+// I1 (fix wave, P3 close-out): ctx.permissions.probeReadAccess IS now used (see execute() below) --
+// the standing evaluator gates the CALL itself (its own `path` input field) before this executor
+// ever runs, but that is not a traversal guard: a scan rooted OUTSIDE a denied subtree can still
+// discover matches INSIDE one. This executor's own probeReadAccess filter is what closes that.
 import "../descriptors/index.ts";
 import { statSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
@@ -90,6 +92,12 @@ async function execute(rawInput: unknown, ctx: ToolExecutionContext): Promise<To
   } catch (e) {
     return { output: `Error: ${(e as Error).message}`, isError: true };
   }
+
+  // I1 (fix wave, P3 close-out): see grep.ts's identical filter for the full rationale -- a
+  // rule-matched `path` FIELD deny (the baseline `~/.winter/run` denial included) is not a
+  // traversal guard; a broad `Glob({pattern:"**/*", path:"<home>"})` would otherwise still surface
+  // matches from inside a denied subtree it never named directly.
+  matched = matched.filter((p) => ctx.permissions.probeReadAccess(p) !== "deny");
 
   const withMtime = matched.map((p) => {
     let mtimeMs = 0;
