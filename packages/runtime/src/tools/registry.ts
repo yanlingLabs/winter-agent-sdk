@@ -34,7 +34,7 @@
 // "correctly-absent (v1)"). Per-tool ground truth (§2/§3) is treated as authoritative over §1.1's
 // introductory type sketch; `ToolDisposition` below widens to 5 members rather than silently
 // mis-filing those two tools under an existing value.
-import type { PermissionMode } from "@yanlinglabs/winter-agent-sdk";
+import type { PermissionMode, BackgroundTaskMessage } from "@yanlinglabs/winter-agent-sdk";
 import { parseRule } from "../permissions/grammar.ts";
 import type { SessionReadState } from "./read-state.ts";
 
@@ -138,7 +138,12 @@ export interface ToolExecutionContext {
   home: string;
   sessionId: string;
   readState: SessionReadState;
-  emitFrame: (frame: unknown) => void;
+  // Phase 3 Task 2 (WS-06 §3.5): narrowed from Task 1's placeholder `unknown` now that the real,
+  // closed background-task message union exists (packages/sdk/src/protocol/frames.ts) -- a lane's
+  // real tool executor now gets full compile-time checking on what it emits, and engine.ts's own
+  // emitFrame closure can hand the value straight to `output.write` with no unchecked cast (see that
+  // closure's own header comment, and this field's sibling on RegistryToolExecutorDeps below).
+  emitFrame: (frame: BackgroundTaskMessage) => void;
   permissions: { probeReadWouldPrompt(filePath: string): boolean };
   tempDir: string;
   session: { setCwd(p: string): void; addBoundedRoot(p: string): void; setPermissionMode(mode: PermissionMode): void };
@@ -330,7 +335,9 @@ export interface RegistryToolExecutorDeps {
   // SAME live value this reads, so a tool call made after a worktree switch sees the new cwd.
   getCwd: () => string;
   probeReadWouldPrompt: (filePath: string) => boolean;
-  emitFrame: (frame: unknown) => void;
+  // Phase 3 Task 2: same narrowing as ToolExecutionContext.emitFrame above -- this is the deps-level
+  // value that field is built from, just below.
+  emitFrame: (frame: BackgroundTaskMessage) => void;
   session: ToolExecutionContext["session"];
   readState: SessionReadState;
   // A getter, not a string: see this module's own `ToolExecutionContext.tempDir` field and

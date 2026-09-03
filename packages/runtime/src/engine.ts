@@ -12,6 +12,7 @@ import {
   type HookEvent,
   type SDKPermissionDenial,
   type PermissionMode,
+  type BackgroundTaskMessage,
   compatibilityKeys,
 } from "@yanlinglabs/winter-agent-sdk";
 import type { FrameSource, FrameSink } from "./protocol/channel.ts";
@@ -606,11 +607,17 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
       home: permissionHome,
       getCwd: () => currentCwd,
       probeReadWouldPrompt: (filePath: string) => probeReadWouldPrompt(filePath, makeEvalCtx()),
-      // T2 completes this seam's engine plumbing (WS-06 §3.5's background-task message family) --
-      // output.write expects the closed WinterFrame union, not `unknown`; forcing a cast here would
-      // silently accept a malformed frame with no compile-time check against T2's own real shapes.
-      emitFrame: (_frame: unknown): void => {
-        /* T2: wire this to output.write once task_started/task_notification/... exist */
+      // Task 2 (P3, WS-06 §3.5) completes this seam's engine plumbing. registry.ts's own
+      // ToolExecutionContext.emitFrame is now typed `(frame: BackgroundTaskMessage) => void` (narrowed
+      // from Task 1's placeholder `unknown`), so `frame` here is already one of the six real, closed
+      // shapes -- wrapping it in a "data" envelope and hand it to `output.write` needs no cast at all;
+      // TS itself proves `{type:"data", message: frame}` satisfies `WinterFrame` structurally, since
+      // BackgroundTaskMessage's six members are now part of SdkMessage's own union (frames.ts).
+      // Synchronous, like every other output.write call in this file -- three emitFrame calls made
+      // back-to-back inside one executor land on the wire in that exact call order (WS-06 §3.5
+      // "delivers these frames onto the wire in order").
+      emitFrame: (frame: BackgroundTaskMessage): void => {
+        output.write({ type: "data", message: frame });
       },
       session: {
         setCwd(p: string): void {
