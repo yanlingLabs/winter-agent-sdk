@@ -36,6 +36,10 @@
 // mis-filing those two tools under an existing value.
 import type { PermissionMode, BackgroundTaskMessage } from "@yanlinglabs/winter-agent-sdk";
 import { parseRule } from "../permissions/grammar.ts";
+// Fix round 1, RULING P3-B: probeReadWouldPrompt's boolean widened to this named 3-state result --
+// imported (type-only, erased at build time; no runtime cycle since evaluator.ts never imports this
+// file) rather than hand-copying the `"silent" | "prompt" | "deny"` literal union in two places.
+import type { ReadAccessProbe } from "../permissions/evaluator.ts";
 import type { SessionReadState } from "./read-state.ts";
 
 // --- §1.1: ToolDescriptor + supporting types -----------------------------------------------------
@@ -144,7 +148,7 @@ export interface ToolExecutionContext {
   // emitFrame closure can hand the value straight to `output.write` with no unchecked cast (see that
   // closure's own header comment, and this field's sibling on RegistryToolExecutorDeps below).
   emitFrame: (frame: BackgroundTaskMessage) => void;
-  permissions: { probeReadWouldPrompt(filePath: string): boolean };
+  permissions: { probeReadAccess(filePath: string): ReadAccessProbe };
   tempDir: string;
   session: { setCwd(p: string): void; addBoundedRoot(p: string): void; setPermissionMode(mode: PermissionMode): void };
 }
@@ -205,12 +209,13 @@ export function unregisterToolForTest(canonicalName: string): void {
 // --- §1.5: availability resolution + buildAdvertisedSet ---------------------------------------------
 
 // Deliberately NOT wired into engine.ts's init frame at T1 (advisor-reviewed correction): engine.ts's
-// two init frames pin `tools: []` and the differential goldens pin those exact bytes; main.ts (the
-// compiled/dev binary `verify:compiled` and the transport-equivalence child/compiled legs exercise)
-// never imports this registry at all, so flipping the in-memory leg's init frame to a live 50+-name
-// list while the compiled leg still emits `[]` would make the two legs diverge structurally. This
-// function ships as a pure, fully-tested function now; wiring it into `system/init.tools` is T8's
-// job (WS-06 §6 obligation 1), once every lane's real executor/capability story exists to describe.
+// two init frames pin `tools: []` and the differential goldens pin those exact bytes. Fix round 1
+// (reviewer item 4): as of the executor flip below, main.ts DOES consult this registry by default for
+// dispatch -- but advertising is a separate concern from dispatch, and `system/init.tools` still has
+// no populated `AdvertisedSetInputs` to call this with (mode/platform/features/capabilities/
+// familyMetadata all need a real resolution story no lane has built yet). This function ships as a
+// pure, fully-tested function now; wiring it into `system/init.tools` is T8's own job (WS-06 §6
+// obligation 1), once every lane's real executor/capability story exists to describe.
 export interface AdvertisedSetInputs {
   mode: PermissionMode;
   platform?: NodeJS.Platform;
@@ -334,7 +339,7 @@ export interface RegistryToolExecutorDeps {
   // A getter, not a snapshot: the session posture-mutation seam (`session.setCwd`) mutates the
   // SAME live value this reads, so a tool call made after a worktree switch sees the new cwd.
   getCwd: () => string;
-  probeReadWouldPrompt: (filePath: string) => boolean;
+  probeReadAccess: (filePath: string) => ReadAccessProbe;
   // Phase 3 Task 2: same narrowing as ToolExecutionContext.emitFrame above -- this is the deps-level
   // value that field is built from, just below.
   emitFrame: (frame: BackgroundTaskMessage) => void;
@@ -364,7 +369,7 @@ export function buildRegistryToolExecutor(deps: RegistryToolExecutorDeps): Engin
         sessionId: deps.sessionId,
         readState: deps.readState,
         emitFrame: deps.emitFrame,
-        permissions: { probeReadWouldPrompt: deps.probeReadWouldPrompt },
+        permissions: { probeReadAccess: deps.probeReadAccess },
         get tempDir() {
           return deps.getTempDir();
         },

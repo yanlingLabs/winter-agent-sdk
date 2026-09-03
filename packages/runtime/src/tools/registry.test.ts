@@ -257,7 +257,7 @@ describe("buildRegistryToolExecutor (the engine-facing adapter)", () => {
       sessionId: "test-session",
       home: "/home/test",
       getCwd: () => "/work",
-      probeReadWouldPrompt: () => false,
+      probeReadAccess: () => "silent",
       emitFrame: () => {},
       session: { setCwd() {}, addBoundedRoot() {}, setPermissionMode() {} },
       readState: createSessionReadState(),

@@ -1414,15 +1414,14 @@ export async function evaluate(call: PermissionCall, ctx: EvaluationContext): Pr
 }
 
 // ---------------------------------------------------------------------------------------------------
-// P3 (WS-06 tool registry): probeReadWouldPrompt -- a SIDE-EFFECT-FREE probe
+// P3 (WS-06 tool registry): probeReadAccess -- a SIDE-EFFECT-FREE probe
 // ---------------------------------------------------------------------------------------------------
 //
-// The read-before-edit ladder (P3 Lane B, WS-06 §3.1) needs to ask "would reading this path right
-// now need an interactive decision?" WITHOUT ever making one -- an unread-but-editable file is safe
-// to skip the read requirement for ONLY when a real Read of it would resolve silently. This function
-// answers exactly that, consulting ONLY the live policy's mode + rules (the same deny/ask/mode/allow
-// stages evaluate() itself runs for a synthetic `Read` call), and deliberately stops short of every
-// stage that could have a side effect or depend on a live answer:
+// The read-before-edit ladder (P3 Lane B, WS-06 §3.1) needs to ask "what would a real Read of this
+// path do RIGHT NOW, without actually doing it?" This function answers exactly that, consulting ONLY
+// the live policy's mode + rules (the same deny/ask/mode/allow stages evaluate() itself runs for a
+// synthetic `Read` call), and deliberately stops short of every stage that could have a side effect
+// or depend on a live answer:
 //   - no ctx.hookStage (stage 1's preToolUse, and every permissionRequest call site) -- a probe must
 //     never fire a PreToolUse/PermissionRequest hook;
 //   - no ctx.promptStage.prompt (stage 3's ask-match, the mustPrompt standing-exception site, stage
@@ -1431,42 +1430,62 @@ export async function evaluate(call: PermissionCall, ctx: EvaluationContext): Pr
 //     concrete AutoEngine may itself write an audit record when consulted (this file's own
 //     AutoEngine.noteHeadlessFallbackDenial/noteFallbackResolution seam comments), so calling it
 //     would violate "no audit" even though it is not, strictly, `promptStage`;
-//   - it never constructs a PermissionDecisionRecord -- only the bare boolean the caller needs.
+//   - it never constructs a PermissionDecisionRecord -- only the bare 3-state answer the caller needs.
 // Synchronous by construction (unlike evaluate(), which is async): every seam this function is
 // forbidden from touching is exactly the set of async seams evaluate() has, so a synchronous
 // signature is itself a structural proof this probe cannot reach any of them.
 //
-// A branch this probe cannot resolve without one of those excluded seams (the `auto`/plan-
-// classifier-active "unresolved past every rule/mode check" case) is answered `true` (a prompt IS
-// possibly needed) -- NEVER `false` -- so a caller like the read-before-edit ladder never treats a
-// call this probe could not actually clear as silently pre-approved. Deny is the one case that is
-// definitively NOT a prompt (a rule/mode deny is an immediate rejection, never an interactive
-// decision) -- reported `false` -- but that is harmless for the ladder's own purposes: Edit/Write
-// retain their own unconditional Read-deny-on-target enforcement (WS-06 §3.1) regardless of what
-// this probe reports, so a denied path is still correctly blocked by a completely separate check.
-export function probeReadWouldPrompt(filePath: string, ctx: EvaluationContext): boolean {
+// RULING P3-B (fix round 1): widened from a boolean (`wouldPrompt`) to this 3-state result. The old
+// boolean's `false` was ambiguous between two genuinely different outcomes -- "resolves silently, no
+// decision needed" (mode-allow, an allow-rule match) and "an interactive decision WOULD be needed,
+// but this policy denies it without ever prompting" (dontAsk's own posture) -- which the
+// read-before-edit ladder cannot treat the same way (a caller safe-to-skip on a genuinely silent
+// read is NOT safe-to-skip on a read this policy would actually reject). `"deny"` now names that
+// second case explicitly, everywhere it arises, including under a mode other than dontAsk (an
+// ordinary rule/mode deny is also never a prompt, and was already reported `false` before this
+// widening -- see each branch below for which of the two `"deny"` covers).
+//
+// The one cell every mode-baseline branch must agree on: dontAsk NEVER prompts -- ANY outcome that
+// would otherwise need interaction (a matched ask rule, a mode mustPrompt, or the generic
+// post-allow-stage fallback that would otherwise reach canUseTool) is a SILENT DENIAL under dontAsk,
+// never `"silent"` and never `"prompt"`. This mirrors evaluate()'s own stage-3/post-allow-stage
+// dontAsk handling exactly (this module's header comment: "dontAsk converts every would-prompt
+// outcome to silent denial"), applied at every interaction exit in this function, not just one.
+//
+// A branch this probe cannot resolve without one of the excluded seams (the `auto`/plan-classifier-
+// active "unresolved past every rule/mode check" case) is answered `"prompt"` -- NEVER `"silent"` --
+// so a caller like the read-before-edit ladder never treats a call this probe could not actually
+// clear as silently pre-approved.
+export type ReadAccessProbe = "silent" | "prompt" | "deny";
+
+export function probeReadAccess(filePath: string, ctx: EvaluationContext): ReadAccessProbe {
   const call: PermissionCall = { toolName: "Read", input: { file_path: filePath } };
 
   // Stage 2: a deny rule is a hard rejection, never a prompt.
-  if (findMatchingRuleEntry(ctx.policy.rules, call, "deny", ctx)) return false;
+  if (findMatchingRuleEntry(ctx.policy.rules, call, "deny", ctx)) return "deny";
 
   // Stage 3: a matched ask rule forces interaction UNLESS dontAsk converts it to a silent denial
-  // (evaluate()'s own stage-3 dontAsk branch, mirrored here). AskUserQuestion/hook-forced-ask are
+  // (evaluate()'s own stage-3 dontAsk branch, mirrored here) -- RULING P3-B's own named cell:
+  // interaction-needed-but-suppressed is "deny", never "silent". AskUserQuestion/hook-forced-ask are
   // not reachable for a bare `Read` call (no hooks are ever consulted by this probe).
   const askEntry = findMatchingRuleEntry(ctx.policy.rules, call, "ask", ctx);
-  if (askEntry) return ctx.policy.mode !== "dontAsk";
+  if (askEntry) return ctx.policy.mode === "dontAsk" ? "deny" : "prompt";
 
   // Stage 4: the mode baseline. Critical-removal/protected-write/plan-write standing exceptions
   // never fire for a bare `Read` call (they are Bash-rm/Edit/Write/Bash-fs-op-shaped checks) -- kept
   // generic/defensive here rather than assuming that, so this stays correct if that ever changes.
   const modeResult = evaluateModeStage(call, ctx, ctx.policy.mode);
-  if (modeResult.kind === "allow") return false;
-  if (modeResult.kind === "deny") return false;
+  if (modeResult.kind === "allow") return "silent";
+  if (modeResult.kind === "deny") return "deny";
   if (modeResult.kind === "mustPrompt") {
-    // Unreachable for a plain Read today; `auto` would route to the classifier here in evaluate()
-    // itself -- an excluded seam for this probe, so answered conservatively. Every other mode's
-    // mustPrompt is a genuine, resolvable-only-by-prompting request.
-    return true;
+    // Unreachable for a plain Read today: dontAsk/default's own baseline (evaluateModeStage's shared
+    // arm) only ever returns `allow` or `unresolved` for a call that clears isBuiltInReadOnly (Read
+    // always does) -- it cannot produce `mustPrompt` at all, under ANY mode, for this probe's call
+    // shape. Mapped per RULING P3-B's general dontAsk-never-prompts rule anyway (mirroring, not
+    // assuming, the invariant): if this ever became reachable under dontAsk, it must still deny, not
+    // prompt or silently pass. Every other mode's mustPrompt is a genuine, resolvable-only-by-
+    // prompting request.
+    return ctx.policy.mode === "dontAsk" ? "deny" : "prompt";
   }
 
   // Stage 5: an allow rule resolves silently (mirrors evaluate()'s own `auto`-suspension filter).
@@ -1477,12 +1496,14 @@ export function probeReadWouldPrompt(filePath: string, ctx: EvaluationContext): 
     ctx,
     ctx.policy.mode === "auto" ? { skip: (entry) => isAutoSuspendedAllowRule(entry.rule, { classifyAllShell: ctx.policy.autoConfig?.classifyAllShell === true }) } : undefined,
   );
-  if (allowEntry) return false;
+  if (allowEntry) return "silent";
 
-  // Post-allow-stage fallback: dontAsk denies unmatched actions silently (no prompt); `auto` and a
-  // plan-with-the-classifier-borrow-enabled call would both consult ctx.autoEngine.classify in
-  // evaluate() itself -- excluded here, so answered conservatively; every other mode falls straight
-  // to stage 6's canUseTool, which is genuinely a prompt.
-  if (ctx.policy.mode === "dontAsk") return false;
-  return true;
+  // Post-allow-stage fallback: dontAsk denies unmatched actions SILENTLY -- interaction-needed
+  // (stage 6's canUseTool would otherwise be consulted) but suppressed, so RULING P3-B's own named
+  // cell applies again: "deny", never "silent". `auto` and a plan-with-the-classifier-borrow-enabled
+  // call would both consult ctx.autoEngine.classify in evaluate() itself -- excluded here, so
+  // answered conservatively as "prompt"; every other mode falls straight to stage 6's canUseTool,
+  // which is genuinely a prompt.
+  if (ctx.policy.mode === "dontAsk") return "deny";
+  return "prompt";
 }

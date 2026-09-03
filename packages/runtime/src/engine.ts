@@ -23,7 +23,7 @@ import { emptyRuleSet, buildSdkSourcedEntries } from "./permissions/ruleset.ts";
 import { createBridgePromptStage } from "./permissions/prompt-stage.ts";
 import {
   evaluate,
-  probeReadWouldPrompt,
+  probeReadAccess,
   REAL_SPECIAL_CHECKS,
   type PermissionCall,
   type EvaluationContext,
@@ -606,7 +606,7 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
       sessionId: config.sessionId,
       home: permissionHome,
       getCwd: () => currentCwd,
-      probeReadWouldPrompt: (filePath: string) => probeReadWouldPrompt(filePath, makeEvalCtx()),
+      probeReadAccess: (filePath: string) => probeReadAccess(filePath, makeEvalCtx()),
       // Task 2 (P3, WS-06 §3.5) completes this seam's engine plumbing. registry.ts's own
       // ToolExecutionContext.emitFrame is now typed `(frame: BackgroundTaskMessage) => void` (narrowed
       // from Task 1's placeholder `unknown`), so `frame` here is already one of the six real, closed
