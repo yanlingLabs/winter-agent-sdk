@@ -240,7 +240,7 @@ test("WS-06 §6 obligation 3: TaskCreate/TaskGet/TaskList/TaskUpdate/CronDelete/
     permissions: { probeReadAccess: () => "silent" as const },
     tempDir: "/work/.tmp",
     sandboxSettings: {},
-    session: { setCwd() {}, addBoundedRoot() {}, setPermissionMode() {}, getBoundedRoots: () => [], getPermissionMode: () => "default" as const, getSessionRoot: () => "/work", setSessionRoot() {} },
+    session: { setCwd() {}, addBoundedRoot() {}, removeBoundedRoot() {}, setPermissionMode() {}, getBoundedRoots: () => [], getPermissionMode: () => "default" as const, getSessionRoot: () => "/work", setSessionRoot() {} },
   };
   const run = async (name: string, input: unknown) => {
     const tool = getRegisteredTool(name);

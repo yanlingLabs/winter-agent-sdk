@@ -58,6 +58,7 @@ function makeCtx(cwd: string): { ctx: ToolExecutionContext; calls: { setCwd: str
       addBoundedRoot(p: string) {
         calls.addBoundedRoot.push(p);
       },
+      removeBoundedRoot() {},
       setPermissionMode() {},
       getBoundedRoots: () => [],
       getPermissionMode: () => "default",

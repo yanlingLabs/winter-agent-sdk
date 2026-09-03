@@ -724,6 +724,15 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
         addBoundedRoot(p: string): void {
           extraBoundedRoots.push(p);
         },
+        // M5 (fix wave, P3 close-out): see registry.ts's own doc comment. Exact-match removal only
+        // (splice at the found index) -- `extraBoundedRoots` can carry duplicate entries in
+        // principle (nothing dedupes `addBoundedRoot`'s own pushes), so this removes the FIRST
+        // matching occurrence, mirroring the ordinary semantics of "undo one add" rather than every
+        // occurrence at once.
+        removeBoundedRoot(p: string): void {
+          const idx = extraBoundedRoots.indexOf(p);
+          if (idx !== -1) extraBoundedRoots.splice(idx, 1);
+        },
         // RULING P3-L: see registry.ts's own doc comment. `getSessionRoot` is a plain read of this
         // closure's own `sessionRoot` (never re-derived from `currentCwd`, which is exactly the
         // value it must stay independent of); `setSessionRoot` is called ONLY by EnterWorktree/

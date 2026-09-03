@@ -32,7 +32,7 @@ function fakeCtx(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionCo
     // cwd" identity engine.ts's own `sessionRoot` variable is initialized from (`config.cwd`).
     session: {
       setCwd() {},
-      addBoundedRoot() {},
+      addBoundedRoot() {}, removeBoundedRoot() {},
       setPermissionMode() {},
       getBoundedRoots: () => [],
       getPermissionMode: () => "default",
@@ -324,7 +324,7 @@ describe("Bash executor (real sandboxed spawn)", () => {
         tempDir,
         session: {
           setCwd: (p) => (carried = p),
-          addBoundedRoot() {},
+          addBoundedRoot() {}, removeBoundedRoot() {},
           setPermissionMode() {},
           getBoundedRoots: () => [cwd],
           getPermissionMode: () => "default",
@@ -349,7 +349,7 @@ describe("Bash executor (real sandboxed spawn)", () => {
         setCwd: (p: string) => {
           liveCwd = p;
         },
-        addBoundedRoot() {},
+        addBoundedRoot() {}, removeBoundedRoot() {},
         setPermissionMode() {},
         getBoundedRoots: () => [liveCwd],
         getPermissionMode: () => "default" as const,
@@ -380,7 +380,7 @@ describe("Bash executor (real sandboxed spawn)", () => {
         cwd,
         session: {
           setCwd: (p) => (carried = p),
-          addBoundedRoot() {},
+          addBoundedRoot() {}, removeBoundedRoot() {},
           setPermissionMode() {},
           getBoundedRoots: () => [cwd, extra],
           getPermissionMode: () => "default",
@@ -396,7 +396,7 @@ describe("Bash executor (real sandboxed spawn)", () => {
     t("a cd OUTSIDE every allowed dir does not persist", async () => {
       const cwd = proj();
       let carried: string | undefined;
-      const ctx = fakeCtx({ cwd, session: { setCwd: (p) => (carried = p), addBoundedRoot() {}, setPermissionMode() {}, getBoundedRoots: () => [cwd], getPermissionMode: () => "default", getSessionRoot: () => cwd, setSessionRoot() {} } });
+      const ctx = fakeCtx({ cwd, session: { setCwd: (p) => (carried = p), addBoundedRoot() {}, removeBoundedRoot() {}, setPermissionMode() {}, getBoundedRoots: () => [cwd], getPermissionMode: () => "default", getSessionRoot: () => cwd, setSessionRoot() {} } });
       const res = await bash()({ command: "cd /var && pwd" }, ctx);
       expect(res.output).toContain("[exit 0]");
       expect(carried).toBeUndefined();
@@ -405,7 +405,7 @@ describe("Bash executor (real sandboxed spawn)", () => {
     t("no cd at all -- setCwd is never called", async () => {
       let called = false;
       const cwd = proj();
-      const ctx = fakeCtx({ cwd, session: { setCwd: () => (called = true), addBoundedRoot() {}, setPermissionMode() {}, getBoundedRoots: () => [cwd], getPermissionMode: () => "default", getSessionRoot: () => cwd, setSessionRoot() {} } });
+      const ctx = fakeCtx({ cwd, session: { setCwd: () => (called = true), addBoundedRoot() {}, removeBoundedRoot() {}, setPermissionMode() {}, getBoundedRoots: () => [cwd], getPermissionMode: () => "default", getSessionRoot: () => cwd, setSessionRoot() {} } });
       await bash()({ command: "echo hi" }, ctx);
       expect(called).toBe(false);
     });
@@ -413,7 +413,7 @@ describe("Bash executor (real sandboxed spawn)", () => {
     t("a command that itself calls exit early (never reaching the trailing pwd capture) does not crash and does not carry cwd", async () => {
       let called = false;
       const cwd = proj();
-      const ctx = fakeCtx({ cwd, session: { setCwd: () => (called = true), addBoundedRoot() {}, setPermissionMode() {}, getBoundedRoots: () => [cwd], getPermissionMode: () => "default", getSessionRoot: () => cwd, setSessionRoot() {} } });
+      const ctx = fakeCtx({ cwd, session: { setCwd: () => (called = true), addBoundedRoot() {}, removeBoundedRoot() {}, setPermissionMode() {}, getBoundedRoots: () => [cwd], getPermissionMode: () => "default", getSessionRoot: () => cwd, setSessionRoot() {} } });
       const res = await bash()({ command: "exit 3" }, ctx);
       expect(res.output).toContain("[exit 3]");
       expect(called).toBe(false);

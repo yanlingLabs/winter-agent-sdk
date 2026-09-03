@@ -28,7 +28,7 @@ function makeCtx(cwd: string): ToolExecutionContext {
     // M3 (fix wave, P3 close-out): cron.ts now keys its durable store on ctx.session.getSessionRoot()
     // (RULING P3-L), not the live ctx.cwd -- this fixture's own session root must track `cwd` (the
     // test's own project dir) for the durable-store tests to exercise the real file path.
-    session: { setCwd() {}, addBoundedRoot() {}, setPermissionMode() {}, getBoundedRoots: () => [], getPermissionMode: () => "default", getSessionRoot: () => cwd, setSessionRoot() {} },
+    session: { setCwd() {}, addBoundedRoot() {}, removeBoundedRoot() {}, setPermissionMode() {}, getBoundedRoots: () => [], getPermissionMode: () => "default", getSessionRoot: () => cwd, setSessionRoot() {} },
   };
 }
 

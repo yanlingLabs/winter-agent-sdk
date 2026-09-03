@@ -1,5 +1,5 @@
 import { describe, test, expect } from "bun:test";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createSessionReadState } from "../read-state.ts";
@@ -44,8 +44,8 @@ async function addFixtureWorktree(repo: string, name: string): Promise<string> {
   return path;
 }
 
-function makeCtx(cwd: string): { ctx: ToolExecutionContext; calls: { setCwd: string[]; setSessionRoot: string[] } } {
-  const calls = { setCwd: [] as string[], setSessionRoot: [] as string[] };
+function makeCtx(cwd: string): { ctx: ToolExecutionContext; calls: { setCwd: string[]; setSessionRoot: string[]; removeBoundedRoot: string[] } } {
+  const calls = { setCwd: [] as string[], setSessionRoot: [] as string[], removeBoundedRoot: [] as string[] };
   const ctx: ToolExecutionContext = {
     cwd,
     home: "/home/test",
@@ -60,6 +60,9 @@ function makeCtx(cwd: string): { ctx: ToolExecutionContext; calls: { setCwd: str
         calls.setCwd.push(p);
       },
       addBoundedRoot() {},
+      removeBoundedRoot(p: string) {
+        calls.removeBoundedRoot.push(p);
+      },
       setPermissionMode() {},
       getBoundedRoots: () => [],
       getPermissionMode: () => "default",
@@ -126,6 +129,7 @@ describe("ExitWorktree (task-7 brief)", () => {
     const repo = mkdtempRepo();
     await initFixtureRepo(repo);
     const worktree = await addFixtureWorktree(repo, "wt-clean");
+    const worktreeRealPath = realpathSync(worktree); // captured BEFORE removal -- the path won't exist to realpath afterward
     const { ctx, calls } = makeCtx(worktree);
 
     const result = await exitWorktreeExecutor.execute({ action: "remove" }, ctx);
@@ -135,9 +139,30 @@ describe("ExitWorktree (task-7 brief)", () => {
     expect(parsed.discarded).toBe(false);
     expect(calls.setCwd).toEqual([parsed.mainWorktreePath]);
     expect(calls.setSessionRoot).toEqual([parsed.mainWorktreePath]);
+    // M5 (fix wave, P3 close-out): the removed worktree's own path is dropped from the session's
+    // bounded roots -- EnterWorktree's own addBoundedRoot(worktree) is undone.
+    expect(calls.removeBoundedRoot).toEqual([worktreeRealPath]);
 
     const listAll = await runGitFixture(["worktree", "list"], repo);
     expect(listAll.stdout).not.toContain("wt-clean");
+  });
+
+  // M5 (fix wave, P3 close-out): a `cd` into a SUBDIRECTORY of the worktree (allowed -- it's within
+  // bounded roots the moment EnterWorktree adds the worktree itself) previously made ExitWorktree
+  // report "the session's cwd is not a worktree of this repository," even though it plainly still
+  // was one, just not exactly AT the worktree's own root.
+  test("keep: a cwd inside a SUBDIRECTORY of the worktree (not the worktree root itself) is still recognized", async () => {
+    const repo = mkdtempRepo();
+    await initFixtureRepo(repo);
+    const worktree = await addFixtureWorktree(repo, "wt-subdir");
+    mkdirSync(join(worktree, "src"));
+    const { ctx, calls } = makeCtx(join(worktree, "src"));
+
+    const result = await exitWorktreeExecutor.execute({ action: "keep" }, ctx);
+    expect(result.isError).toBeUndefined();
+    const parsed = JSON.parse(result.output);
+    expect(parsed.worktreePath).toBe(realpathSync(worktree));
+    expect(calls.setCwd).toEqual([parsed.mainWorktreePath]);
   });
 
   test("remove: refuses on uncommitted changes without discard_changes", async () => {

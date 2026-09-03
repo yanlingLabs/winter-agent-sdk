@@ -25,7 +25,7 @@ function makeCtx(cwd: string): ToolExecutionContext {
     sandboxSettings: {},
     session: {
       setCwd() {},
-      addBoundedRoot() {},
+      addBoundedRoot() {}, removeBoundedRoot() {},
       setPermissionMode() {},
       getBoundedRoots: () => [],
       getPermissionMode: () => "default",

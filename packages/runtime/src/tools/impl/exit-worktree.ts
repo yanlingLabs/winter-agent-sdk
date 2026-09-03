@@ -15,14 +15,29 @@
 // task-7-report.md's Concerns for the full NEEDS_CONTEXT writeup (a later phase needs either a
 // narrower AvailabilityPredicate field or a new ToolExecutionContext field before this can be
 // enforced anywhere).
+import { sep } from "node:path";
 import { replaceExecutor, type ToolExecutionContext, type ToolExecutor, type ToolResultPayload } from "../registry.ts";
 import "../descriptors/exit-worktree.ts"; // self-sufficiency: guarantees the "ExitWorktree" stub is registered before replaceExecutor runs below.
-import { listWorktrees, runGit, safeRealpath } from "./enter-worktree.ts";
+import { listWorktrees, runGit, safeRealpath, type WorktreeInfo } from "./enter-worktree.ts";
 
 export const EXIT_WORKTREE_TOOL_NAME = "ExitWorktree";
 
 function hasUncommittedChanges(statusPorcelainOutput: string): boolean {
   return statusPorcelainOutput.trim().length > 0;
+}
+
+// M5 (fix wave, P3 close-out): the session's cwd need not sit AT a worktree's own realPath -- an
+// allowed `Bash: cd src` (a subdirectory is within bounded roots the moment EnterWorktree adds the
+// worktree itself) leaves `ctx.cwd` somewhere UNDER the worktree, not equal to it, and the previous
+// exact-equality match then reported "the session's cwd is not a worktree of this repository" for a
+// session that plainly still was. Matches "cwd is AT OR UNDER a worktree's realPath," and among
+// multiple candidates (a worktree nested inside another's directory tree -- unusual, but not
+// prevented by anything upstream) picks the LONGEST matching realPath, i.e. the most specific
+// (deepest) worktree actually containing cwd, never an ancestor.
+function findWorktreeContainingCwd(worktrees: readonly WorktreeInfo[], cwdRealPath: string): WorktreeInfo | undefined {
+  const candidates = worktrees.filter((w) => cwdRealPath === w.realPath || cwdRealPath.startsWith(w.realPath + sep));
+  if (candidates.length === 0) return undefined;
+  return candidates.reduce((longest, w) => (w.realPath.length > longest.realPath.length ? w : longest));
 }
 
 // "Unmerged commits": commits reachable from the worktree's own HEAD that are not yet reflected on
@@ -53,7 +68,7 @@ export const exitWorktreeExecutor: ToolExecutor = {
     }
 
     const currentRealPath = safeRealpath(ctx.cwd) ?? ctx.cwd;
-    const current = listed.worktrees.find((w) => w.realPath === currentRealPath);
+    const current = findWorktreeContainingCwd(listed.worktrees, currentRealPath);
     if (!current) {
       return { output: `Error: ExitWorktree: the session's cwd (${ctx.cwd}) is not a worktree of this repository.`, isError: true };
     }
@@ -110,12 +125,12 @@ export const exitWorktreeExecutor: ToolExecutor = {
     ctx.session.setCwd(main.path);
     // RULING P3-L: exiting a worktree restores the session root to the main worktree too.
     ctx.session.setSessionRoot(main.path);
-    // NOTE (task-7-report.md Concerns): ctx.session.addBoundedRoot (EnterWorktree's own call, made
-    // when this worktree was created) has no corresponding "remove a bounded root" seam on
-    // ToolExecutionContext.session (registry.ts) -- the session's filesystem permission fence keeps
-    // including this now-deleted path for the rest of the run. Not a security regression (a WIDER
-    // fence that includes a path no longer on disk grants no new capability), but it is asymmetric
-    // with EnterWorktree's own add, and worth a real removal seam in a later phase.
+    // M5 (fix wave, P3 close-out): the removal half of EnterWorktree's own `addBoundedRoot` call --
+    // `current.path` is the EXACT string EnterWorktree added (never `current.realPath`, which can
+    // differ under a symlinked temp dir; addBoundedRoot/removeBoundedRoot both key on the tool's own
+    // literal target string, not its realpath). The session's filesystem permission fence no longer
+    // includes a path that no longer exists on disk once the worktree is actually removed.
+    ctx.session.removeBoundedRoot(current.path);
     return {
       output: JSON.stringify({
         action: "remove",

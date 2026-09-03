@@ -171,6 +171,15 @@ export interface ToolExecutionContext {
   session: {
     setCwd(p: string): void;
     addBoundedRoot(p: string): void;
+    // M5 (fix wave, P3 close-out): the removal half of `addBoundedRoot` -- EnterWorktree's own
+    // `addBoundedRoot` call had no corresponding "remove a bounded root" seam anywhere on this
+    // interface, so the session's filesystem permission fence kept including a worktree's path for
+    // the rest of the run even after ExitWorktree(action:"remove") deleted it from disk. Not a
+    // security regression by itself (a wider fence that includes a now-nonexistent path grants no
+    // NEW capability), but asymmetric with the add half and worth closing directly. Removes an
+    // EXACT match only (the identical string `addBoundedRoot` was given) -- never a prefix/subpath
+    // match, so it can never accidentally shrink a DIFFERENT, still-live bounded root.
+    removeBoundedRoot(p: string): void;
     // RULING P3-L (fix wave, P3 close-out): the session's ENGINE-OWNED "root" -- distinct from the
     // live, freely-drifting `ctx.cwd` (a `cd` can move that anywhere within the allowed set; see
     // bash.ts's own cwd-carry). Initialized from `config.cwd` and moved ONLY by EnterWorktree (to

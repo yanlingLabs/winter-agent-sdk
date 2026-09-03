@@ -27,6 +27,7 @@ function makeCtx(overrides?: { setPermissionMode?: ToolExecutionContext["session
       addBoundedRoot(p: string) {
         calls.addBoundedRoot.push(p);
       },
+      removeBoundedRoot() {},
       setPermissionMode(mode) {
         calls.setPermissionMode.push(mode);
         overrides?.setPermissionMode?.(mode);

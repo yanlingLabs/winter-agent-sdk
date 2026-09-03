@@ -18,7 +18,7 @@ function makeCtx(cwd: string, overrides: Partial<ToolExecutionContext> = {}): To
     permissions: { probeReadAccess: () => "silent" },
     tempDir: join(cwd, ".tmp"),
     sandboxSettings: {},
-    session: { setCwd() {}, addBoundedRoot() {}, setPermissionMode() {}, getBoundedRoots: () => [], getPermissionMode: () => "default", getSessionRoot: () => "/work", setSessionRoot() {} },
+    session: { setCwd() {}, addBoundedRoot() {}, removeBoundedRoot() {}, setPermissionMode() {}, getBoundedRoots: () => [], getPermissionMode: () => "default", getSessionRoot: () => "/work", setSessionRoot() {} },
     ...overrides,
   };
 }

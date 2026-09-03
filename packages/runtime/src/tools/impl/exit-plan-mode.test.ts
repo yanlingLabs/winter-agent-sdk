@@ -31,6 +31,7 @@ function makeCtx(overrides?: { initialMode?: PermissionMode; setPermissionMode?:
       addBoundedRoot(p: string) {
         calls.addBoundedRoot.push(p);
       },
+      removeBoundedRoot() {},
       setPermissionMode(mode) {
         // A throwing override (the "KNOWN FLAG" bypass-gate-rejection fixture below) mirrors the
         // real gate: it fires BEFORE any state actually changes, so `calls`/`liveMode` stay
