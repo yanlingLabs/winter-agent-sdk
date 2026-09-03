@@ -9,10 +9,11 @@
 // edit.ts imports it for its own "file/diff info" result field.
 //
 // `replaceExecutor` runs at THIS module's own load time (mirrors every descriptors/*.ts file's own
-// top-level `stub(...)` call) -- a test (or, later, T8's real wiring) triggers registration simply by
-// importing this module. Production wiring (making the compiled daemon actually import every
-// impl/*.ts file) is explicitly OUT of this lane's scope (R3-5: engine.ts/main.ts/the descriptors
-// index are no-touch) -- T8 owns that per the phase ledger.
+// top-level `stub(...)` call) -- a test (or a real session) triggers registration simply by
+// importing this module. N1 (fix wave, P3 close-out): "Production wiring... is explicitly OUT of
+// this lane's scope" is STALE as of T8 -- engine.ts now force-imports tools/impl/index.ts (which
+// imports this file), so this module's registration reaches every real session, not merely tests
+// that import it directly.
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import "../descriptors/index.ts"; // side-effect only: guarantees the "Write" stub exists first.

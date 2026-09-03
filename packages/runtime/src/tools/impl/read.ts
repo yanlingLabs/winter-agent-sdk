@@ -56,11 +56,11 @@
 // call before this executor ever runs (task-4 brief: "your executor does NOT re-evaluate
 // permissions; it does the content work").
 //
-// Production wiring note: nothing in engine.ts/main.ts imports tools/impl/*.ts today (only
-// descriptors/index.ts is force-imported, per registry.ts's header) -- self-registering via the
-// module-load side effect below is this lane's whole contract; wiring impl/* into the production
-// import graph is left to T8/the controller (advisor-confirmed: an impl/index.ts is NOT in this
-// lane's file list and would be a three-lane merge collision).
+// N1 (fix wave, P3 close-out): STALE as of T8 -- corrected, not deleted, so a future reader who
+// only skims history sees why the wiring changed. `tools/impl/index.ts` now exists and
+// engine.ts force-imports it (T8, "Settings threading"/production-wiring MUST) alongside
+// descriptors/index.ts -- this file's own module-load side effect below reaches every real session,
+// not merely test files that import it directly.
 import { readFileSync, statSync, type Stats } from "node:fs";
 import { basename, extname, resolve } from "node:path";
 // Self-sufficiency: guarantees the "Read" stub exists before replaceExecutor (bottom of this file)

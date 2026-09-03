@@ -184,13 +184,17 @@ async function runMonitorCommand(input: MonitorInput & { command: string }, ctx:
 
   // Task 8 (the SAME ordering bug bash.ts's own runBackground had, found via a real
   // differential-scenario repro): register the task BEFORE spawning, not only inside onSpawned
-  // below. runCommand's spawn is asynchronous (onSpawned fires on a later tick), so without this
-  // line the background_tasks_changed emit a few lines down always reported an empty tasks list
-  // immediately after starting the very task it was announcing. Safe to call again from onSpawned
-  // with the real pid once spawning completes -- startTracking's `pid?: number` is optional and
-  // `tasks.set()` is a plain overwrite of the same entry, contrast the `ws` half a few hundred lines
-  // below, which already calls startTracking synchronously (no async spawn step to race against)
-  // and therefore never had this bug.
+  // below, so the background_tasks_changed emit a few lines down never reports an empty tasks list
+  // immediately after starting the very task it was announcing.
+  // N3 (fix wave, nit correction, P3 close-out): see bash.ts's own identical correction -- the
+  // former claim here ("runCommand's spawn is asynchronous, onSpawned fires on a later tick") is
+  // empirically false under this project's runtime (onSpawned fires synchronously, same tick).
+  // Pre-registering is still correct/necessary discipline: it decouples this call site from
+  // spawn.ts's own internal timing, which a future change there could alter. Safe to call again
+  // from onSpawned with the real pid once spawning completes -- startTracking's `pid?: number` is
+  // optional and `tasks.set()` is a plain overwrite of the same entry. Contrast the `ws` half a few
+  // hundred lines below, which calls startTracking synchronously with no spawn step at all, so it
+  // never needed this pattern in the first place.
   startTracking({ taskId, kind: "monitor", outputPath, description: input.description, command: input.command });
 
   let completion: ReturnType<typeof runCommand>;
@@ -295,10 +299,15 @@ function isDisallowedIPv4(ip: string): boolean {
   const parts = ip.split(".").map(Number);
   if (parts.length !== 4 || parts.some((n) => Number.isNaN(n) || n < 0 || n > 255)) return true; // unparseable -- fail closed
   const [a, b] = parts as [number, number, number, number];
-  if (a === 127 || a === 10 || a === 0) return true; // loopback / private / unspecified
+  if (a === 127 || a === 10 || a === 0) return true; // loopback / private / unspecified (0.0.0.0/8 falls out of `a === 0` already)
   if (a === 172 && b >= 16 && b <= 31) return true; // private
   if (a === 192 && b === 168) return true; // private
   if (a === 169 && b === 254) return true; // link-local -- covers cloud metadata 169.254.169.254
+  // N5 (fix wave, nit, P3 close-out): two gaps this classifier's own defense-in-depth posture
+  // (WS-07 is the PRIMARY gate; this file's own header) had left open -- neither is a cloud-metadata
+  // or loopback-adjacent risk on the scale of the ranges above, but both were plainly unclassified.
+  if (a === 100 && b >= 64 && b <= 127) return true; // 100.64.0.0/10, Carrier-Grade NAT (RFC 6598)
+  if (a >= 224 && a <= 239) return true; // 224.0.0.0/4, multicast
   return false;
 }
 

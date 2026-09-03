@@ -173,6 +173,20 @@ describe("isDisallowedAddress", () => {
     expect(isDisallowedAddress("8.8.8.8", 4)).toBe(false);
     expect(isDisallowedAddress("93.184.216.34", 4)).toBe(false);
   });
+  // N5 (fix wave, nit, P3 close-out): two previously-unclassified ranges (defense-in-depth only --
+  // WS-07 is the primary gate).
+  test("IPv4 Carrier-Grade NAT (100.64.0.0/10, RFC 6598) is disallowed", () => {
+    expect(isDisallowedAddress("100.64.0.1", 4)).toBe(true);
+    expect(isDisallowedAddress("100.127.255.255", 4)).toBe(true);
+    expect(isDisallowedAddress("100.63.255.255", 4)).toBe(false); // just outside the range
+    expect(isDisallowedAddress("100.128.0.0", 4)).toBe(false); // just outside the range
+  });
+  test("IPv4 multicast (224.0.0.0/4) is disallowed", () => {
+    expect(isDisallowedAddress("224.0.0.1", 4)).toBe(true);
+    expect(isDisallowedAddress("239.255.255.255", 4)).toBe(true);
+    expect(isDisallowedAddress("223.255.255.255", 4)).toBe(false); // just outside the range
+    expect(isDisallowedAddress("240.0.0.0", 4)).toBe(false); // just outside the range
+  });
   test("IPv6 loopback and unspecified are disallowed", () => {
     expect(isDisallowedAddress("::1", 6)).toBe(true);
     expect(isDisallowedAddress("::", 6)).toBe(true);

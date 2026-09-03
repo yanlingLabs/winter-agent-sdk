@@ -189,6 +189,19 @@ describe("extractBashPaths (P2-T11 carry)", () => {
     expect(r.writes).toEqual(["out.txt"]);
   });
 
+  // N4 (fix wave, P3 close-out): `cd` detection now reuses grammar.ts's own quote-aware
+  // `leadingWord` scanner -- the former quote-UNAWARE regex (`/^cd\s+(\S+)/`) stopped at the FIRST
+  // whitespace even inside quotes, so `cd "my dir"` mis-based a later redirect off `"my` alone.
+  test("a quoted cd target with an embedded space is tracked correctly (was: mis-based off the truncated pre-quote fragment)", () => {
+    const r = extractBashPaths({ command: 'cd "my dir" && echo hi > out.txt' });
+    expect(r.writes).toEqual(["my dir/out.txt"]);
+  });
+
+  test("a single-quoted cd target with an embedded space is also tracked correctly", () => {
+    const r = extractBashPaths({ command: "cd 'my dir' && echo hi > out.txt" });
+    expect(r.writes).toEqual(["my dir/out.txt"]);
+  });
+
   test("duplicate candidates are de-duplicated", () => {
     const r = extractBashPaths({ command: "echo a > out.txt; echo b > out.txt" });
     expect(r.writes).toEqual(["out.txt"]);

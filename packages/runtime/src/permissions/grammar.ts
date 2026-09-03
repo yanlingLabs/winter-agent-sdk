@@ -321,7 +321,11 @@ function leadingWordAt(s: string, info: ScanInfo, start: number): { word: string
 // (isRecognizedReadOnly's own two call sites, below) -- scans once, reads once. Byte-identical
 // public contract to the pre-fix-wave `leadingWord` this replaces; a looping caller should use
 // `leadingWordAt` directly against one shared, precomputed ScanInfo instead of this wrapper.
-function leadingWord(s: string): { word: string | undefined; afterWord: string } {
+// N4 (fix wave, P3 close-out): exported -- bash.ts's own `extractBashPaths` cd-tracking used a
+// quote-UNAWARE regex (`/^cd\s+(\S+)/`) instead of this scanner, so `cd "my dir" && echo x > f`
+// mis-based `f` (the regex's own `\S+` stops at the first whitespace, even inside quotes). This is
+// the exact "single word, no loop" shape this wrapper was built for -- reused, not duplicated.
+export function leadingWord(s: string): { word: string | undefined; afterWord: string } {
   const { word, end } = leadingWordAt(s, scanShellLike(s), 0);
   return { word, afterWord: s.slice(end) };
 }

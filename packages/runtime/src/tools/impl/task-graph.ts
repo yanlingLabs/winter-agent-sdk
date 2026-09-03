@@ -52,10 +52,12 @@
 // its own and does not need any -- a call that reaches this file at all has already cleared
 // advertisement-time availability; execution-time behavior is identical regardless of family.
 import { replaceExecutor, type ToolExecutionContext, type ToolExecutor, type ToolResultPayload } from "../registry.ts";
-// Self-sufficiency (Lane A precedent, read.ts): this file is not yet wired into engine.ts's own
-// import graph (T8/controller's job -- nothing production-side imports tools/impl/*.ts today,
-// verified before writing this), so it forces the stub barrel itself rather than assuming some
-// OTHER already-imported module got there first.
+// Self-sufficiency (Lane A precedent, read.ts): forces the stub barrel itself rather than assuming
+// some OTHER already-imported module got there first. N1 (fix wave, P3 close-out): the ORIGINAL
+// rationale here ("nothing production-side imports tools/impl/*.ts today") is STALE as of T8 --
+// engine.ts now force-imports tools/impl/index.ts, which imports this file -- but the
+// self-sufficiency discipline itself remains correct practice regardless (a file should never
+// depend on import ORDER to guarantee its own stub is registered first).
 import "../descriptors/index.ts";
 import {
   createTask,

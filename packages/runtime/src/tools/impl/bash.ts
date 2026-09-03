@@ -24,7 +24,7 @@ import { join, sep } from "node:path";
 import "../descriptors/bash.ts";
 import { replaceExecutor, type ToolExecutor, type ToolExecutionContext, type ToolResultPayload } from "../registry.ts";
 import { createBackgroundTask } from "../background-tasks.ts";
-import { splitCompound, extractRedirectTargets } from "../../permissions/grammar.ts";
+import { splitCompound, extractRedirectTargets, leadingWord } from "../../permissions/grammar.ts";
 import { emptyPathSet, type ExtractedPaths } from "../paths-seam.ts";
 import {
   runCommand,
@@ -423,16 +423,26 @@ async function runBackground(input: BashInput, ctx: ToolExecutionContext): Promi
   const outStream = createWriteStream(outputPath, { flags: "a" });
 
   // Task 8 (found via a real differential-scenario repro, not assumed): register the task BEFORE
-  // spawning, not only inside onSpawned below. runCommand's own spawn is asynchronous (onSpawned
-  // fires on a later tick, once the child process object exists) -- the very next lines emit
-  // task_started and, critically, background_tasks_changed's own listRunningTasks() snapshot
-  // SYNCHRONOUSLY, before that later tick ever runs. Without this line, background_tasks_changed
-  // always reported an EMPTY tasks list immediately after starting the very task it was announcing
-  // (a real ordering bug, invisible to bash.test.ts's own `frames.some(subtype === ...)` existence
-  // check, which never inspected the frame's own `tasks` contents). startTracking's own `pid?:
-  // number` is optional and `tasks.set()` is a plain overwrite, so calling it again from onSpawned
-  // with the real pid once spawning completes is a safe, idempotent update of the SAME entry, not a
-  // duplicate or a race (Node's spawn callback never fires synchronously within this call).
+  // spawning, not only inside onSpawned below -- the very next lines emit task_started and,
+  // critically, background_tasks_changed's own listRunningTasks() snapshot. Without this line,
+  // background_tasks_changed always reported an EMPTY tasks list immediately after starting the
+  // very task it was announcing (a real ordering bug, invisible to bash.test.ts's own
+  // `frames.some(subtype === ...)` existence check, which never inspected the frame's own `tasks`
+  // contents).
+  // N3 (fix wave, nit correction, P3 close-out): the ORIGINAL comment here claimed "runCommand's own
+  // spawn is asynchronous (onSpawned fires on a later tick)" -- empirically FALSE under this
+  // project's own runtime (verified directly: `spawn()`'s pid is set, and `onSpawned` fires,
+  // synchronously, before `runCommand(...)`'s own call site resumes -- there is no `await` anywhere
+  // in spawn.ts's `runCommand` before its `new Promise(...)` executor calls `spawn()`, and a Promise
+  // executor itself runs synchronously). Pre-registering here is still the correct, necessary
+  // discipline regardless -- not because of THIS tick-timing claim, but because it makes the two
+  // startTracking calls independent of spawn.ts's own internal implementation details: a future
+  // change to `runCommand` that DID introduce a genuine await before spawning (e.g. an async
+  // pre-flight check) would silently reintroduce this exact ordering bug if this call site relied on
+  // onSpawned alone. Reworded so a future reader doesn't "fix" this pre-registration back out on the
+  // (now corrected) belief that it was never actually necessary. startTracking's own `pid?: number`
+  // is optional and `tasks.set()` is a plain overwrite, so calling it again from onSpawned with the
+  // real pid is a safe, idempotent update of the SAME entry, never a duplicate.
   startTracking({ taskId, kind: "bash", outputPath, description, command: input.command });
 
   const completion = runCommand({
@@ -535,13 +545,14 @@ async function runBackground(input: BashInput, ctx: ToolExecutionContext): Promi
 // absolute resolution to a future caller that has the real cwd (paths-seam.ts's own
 // resolveCandidatePaths is exactly that caller's tool, not this function's).
 //
-// Judgment call, flagged per this lane's own brief ("grammar-reading judgment calls"): `cd`
-// detection here is a simple, quote-UNAWARE regex (`/^cd\s+(\S+)/`), not grammar.ts's own private
-// quote-aware word scanner (that scanner is not exported, and this lane does not modify grammar.ts
-// -- a shared, already-shipped Phase 2/WS-07 file). A `cd "my dir"` with an embedded space is not
-// tracked correctly; documented rather than silently guessed at.
-const CD_RE = /^cd\s+(\S+)/;
-
+// N4 (fix wave, P3 close-out): `cd` detection now reuses grammar.ts's own quote-aware `leadingWord`
+// scanner (exported specifically for this fix) instead of a hand-rolled quote-UNAWARE regex
+// (`/^cd\s+(\S+)/`, the pre-fix version) -- `cd "my dir" && echo x > f` used to mis-base `f` because
+// `\S+` stops at the first whitespace, even inside quotes, silently truncating the target to `"my`.
+// `leadingWord` correctly treats the whole quoted span as one word (its returned text still
+// INCLUDES the quote characters, exactly like the pre-fix regex's own captured group did -- the
+// quote-STRIPPING regex below is unchanged from before this fix, only the WORD-BOUNDARY detection
+// feeding it is now correct).
 function joinRelative(base: string, candidate: string): string {
   if (candidate.startsWith("/")) return candidate;
   return base === "." ? candidate : `${base}/${candidate}`;
@@ -559,10 +570,14 @@ function extractBashPaths(input: unknown): ExtractedPaths {
     for (const target of extractRedirectTargets(segment)) {
       writes.push(joinRelative(base, target));
     }
-    const cdMatch = CD_RE.exec(segment.trim());
-    if (cdMatch) {
-      const target = cdMatch[1]!.replace(/^["']|["']$/g, "");
-      base = joinRelative(base, target);
+    const trimmed = segment.trim();
+    const first = leadingWord(trimmed);
+    if (first.word === "cd") {
+      const second = leadingWord(first.afterWord);
+      if (second.word !== undefined) {
+        const target = second.word.replace(/^["']|["']$/g, "");
+        base = joinRelative(base, target);
+      }
     }
   }
   return { reads: [], writes: [...new Set(writes)] };

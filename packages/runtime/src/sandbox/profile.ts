@@ -51,12 +51,15 @@ export interface SandboxSettings {
   network?: SandboxNetworkSettings;
 }
 
-// A reasonable, documented default for a session with no real configured SandboxSettings --
-// nothing upstream (RuntimeConfig/Options, ToolExecutionContext) threads a real one through yet
-// (verified before writing this module: no `sandbox` field exists anywhere in packages/sdk/src).
-// Sandbox ON, network denied, no exclusions -- the same safe posture Norma shipped as its own
-// hardcoded default (`allowNetwork` defaulting false in agent/sandbox.ts). A future phase that
-// wires real per-session settings replaces callers of this constant; it is not itself a seam.
+// A reasonable, documented default for a session with no real configured SandboxSettings.
+// N1 (fix wave, P3 close-out): STALE as of T8 -- "nothing upstream threads a real one through yet"
+// was accurate when this module was first written; it no longer is. RuntimeConfig.sandbox
+// (SandboxSettingsConfig, protocol/config.ts) and ToolExecutionContext.sandboxSettings
+// (registry.ts) both exist, and engine.ts's own buildDefaultToolExecutor resolves
+// `config.sandbox ?? DEFAULT_SANDBOX_SETTINGS` once per run -- this constant is now specifically
+// the "session configured nothing" fallback, not a placeholder awaiting a real wire field. Sandbox
+// ON, network denied, no exclusions -- the same safe posture Norma shipped as its own hardcoded
+// default (`allowNetwork` defaulting false in agent/sandbox.ts).
 export const DEFAULT_SANDBOX_SETTINGS: Readonly<SandboxSettings> = Object.freeze({ enabled: true });
 
 // WS-12 §2/§12: "a config carrying domain lists is rejected with a typed unsupported-capability

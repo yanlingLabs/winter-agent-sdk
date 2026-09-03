@@ -41,14 +41,14 @@ export function resetBackgroundTaskRootForTest(): void {
 
 export type BackgroundTaskKind = "bash" | "monitor" | "workflow" | "agent";
 
-// Fix round 1 (item 7): still UNEXERCISED by anything real as of this fix round. T2's own
-// background-task-message-family proof (provider/mock.ts's registerBgTaskTestTool, the "bgtask"
-// TestProviderName, scripts/differential.ts's differential_bgtask_probe) calls `ctx.emitFrame`
-// directly with FIXED literal task_id/output_file values -- none of those scripted tools call this
-// function at all, so neither its `randomUUID()` taskId nor its `ensureTasksDir` real-mkdir path has
-// ever run for real anywhere in this phase's own test suite. The first REAL caller will be Lane C's
-// own Bash executor, once its `run_in_background` support (T3) actually calls
-// `createBackgroundTask("bash")` for a genuine backgrounded command.
+// N1 (fix wave, P3 close-out): STALE as of Lane C's own Task 3 -- "still UNEXERCISED by anything
+// real" was accurate at fix-round-1 time; it no longer is. `createBackgroundTask("bash")` and
+// `createBackgroundTask("monitor")` are both real, exercised call sites now (tools/impl/bash.ts's
+// own `runBackground`, tools/impl/monitor.ts's own command/ws halves) -- both `randomUUID()` task
+// ids and `ensureTasksDir`'s real mkdir path run for real on every backgrounded Bash/Monitor call
+// this phase's own test suite (and every live session) makes. T2's own scripted-tool proof
+// (provider/mock.ts's registerBgTaskTestTool) remains a SEPARATE, still-fixed-literal path -- it
+// simply is no longer the ONLY caller.
 export function createBackgroundTask(kind: BackgroundTaskKind): { taskId: string; outputPath: string } {
   if (!activeResolver) {
     throw new Error(

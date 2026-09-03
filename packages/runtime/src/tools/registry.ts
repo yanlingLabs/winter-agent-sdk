@@ -280,14 +280,14 @@ export function unregisterToolForTest(canonicalName: string): void {
 
 // --- §1.5: availability resolution + buildAdvertisedSet ---------------------------------------------
 
-// Deliberately NOT wired into engine.ts's init frame at T1 (advisor-reviewed correction): engine.ts's
-// two init frames pin `tools: []` and the differential goldens pin those exact bytes. Fix round 1
-// (reviewer item 4): as of the executor flip below, main.ts DOES consult this registry by default for
-// dispatch -- but advertising is a separate concern from dispatch, and `system/init.tools` still has
-// no populated `AdvertisedSetInputs` to call this with (mode/platform/features/capabilities/
-// familyMetadata all need a real resolution story no lane has built yet). This function ships as a
-// pure, fully-tested function now; wiring it into `system/init.tools` is T8's own job (WS-06 §6
-// obligation 1), once every lane's real executor/capability story exists to describe.
+// N1 (fix wave, P3 close-out): STALE as of T8 -- this paragraph described the T1-era state
+// (deliberately unwired, engine.ts's two init frames pinned `tools: []`). T8 wired
+// `system/init.tools` to a REAL `buildAdvertisedSet({mode, platform, disallowedTools, ...})` call
+// (WS-06 §6 obligation 1); the fix wave's own Part B item 1 additionally threads
+// capabilities/toolSearchEnabled/insideSubagent/familyMetadata from RuntimeConfig into that SAME
+// call (engine.ts's own comment there has the current, non-stale account). This function remains a
+// pure, fully-tested function -- that half of the original claim was never stale -- but it is no
+// longer merely "shipped ahead of its own wiring."
 export interface AdvertisedSetInputs {
   mode: PermissionMode;
   platform?: NodeJS.Platform;
