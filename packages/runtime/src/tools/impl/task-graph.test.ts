@@ -106,6 +106,18 @@ describe("TaskGet", () => {
     expect(JSON.parse(result.output)).toEqual({ task: null });
   });
 
+  // T8 advisor-caught gap: getTask() is a bare store lookup -- unlike TaskList's own listTasks(),
+  // it does not exclude soft-deleted rows on its own. Without this, TaskGet on a deleted id would
+  // surface `status: "deleted"`, a value outside the pinned status union (see item (b) of
+  // derived-shapes-p3-task8.md). TaskGet must treat a deleted row exactly like a nonexistent one.
+  test("a soft-deleted task is treated as not-found: {task: null}, not its deleted row", async () => {
+    const created = JSON.parse((await run("TaskCreate", { subject: "s", description: "d" }, makeCtx(SID))).output).task;
+    await run("TaskUpdate", { taskId: created.id, status: "deleted" }, makeCtx(SID));
+    const result = await run("TaskGet", { taskId: created.id }, makeCtx(SID));
+    expect(result.isError).toBeUndefined();
+    expect(JSON.parse(result.output)).toEqual({ task: null });
+  });
+
   test("rejects a missing taskId", async () => {
     const result = await run("TaskGet", {}, makeCtx(SID));
     expect(result.isError).toBe(true);

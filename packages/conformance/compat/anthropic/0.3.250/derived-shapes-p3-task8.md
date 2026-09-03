@@ -101,11 +101,15 @@ is genuine JSON `{"task":null}`, not a bare `"null"` text token.
 contrast `TaskUpdateInput.status` (WS-06 §3.4 line 322 in this repo's own spec, itself
 `*(captured)*`), which pins all **four** values including `"deleted"` as a settable input. Read
 together with `TaskListOutput`'s own identical three-member status union (item (d) below) and
-WS-06's explicit "`deleted` removes from listings" framing already implemented as soft-delete in
-`task-graph-store.ts`'s `listTasks`, this is consistent, not contradictory: a deleted row is
-excluded from every read surface, so no read-side `status` field ever needs to represent the value
-literally. No change made to `TASK_STATUSES` (the four-value input enum) on the strength of this —
-it remains pinned by WS-06's own separately-captured `TaskUpdate` input schema.
+WS-06's explicit "`deleted` removes from listings" framing, a deleted row must be excluded from
+**every** read surface, not just `TaskList`, for this union to be honored — `TaskGet` included.
+`task-graph-store.ts`'s `listTasks` already implemented that exclusion; its `getTask` (the function
+`TaskGet` itself calls) did not — a genuine gap this task fixes: `executeGet` (`task-graph.ts`) now
+treats `row.status === "deleted"` identically to a nonexistent row, returning `{task: null}`,
+so no read-side `status` field the executor emits can ever be `"deleted"`, consistent with the pin.
+No change made to `TASK_STATUSES` (the four-value input enum) on the strength of this — it remains
+pinned by WS-06's own separately-captured `TaskUpdate` input schema; only the two GET-shaped read
+paths (`TaskGet`, `TaskList`) are affected.
 
 ---
 
@@ -333,13 +337,26 @@ from "optional" fields on a single type.
   `*(captured)*` (three separate times, in one family alone), a follow-up sweep applying this same
   ephemeral-capture check to the rest of the tool surface is a reasonable next task to schedule, not
   something this task silently expanded into.
-- During the same investigation, ephemeral capture also confirmed that `ListMcpResourcesTool` and
-  `ReadMcpResourceTool` (`ListMcpResourcesInput`/`Output`, `ReadMcpResourceInput`/`Output` in
-  `sdk-tools.d.ts`) have real, non-placeholder pinned schemas — narrowing the "true placeholder set"
-  (tools with no pinned schema anywhere in the artifact) from the five names an earlier lane's fix
-  round left standing to three: `ToolSearch`, `WaitForMcpServers`, `StructuredOutput` (confirmed via
-  an exhaustive grep of every `.d.ts` file in the pinned tarball for all three names, returning zero
-  matches). This narrowing is recorded here as a finding for `conformance.test.ts` to encode
-  directly; it does not by itself imply any executor-level fix, since neither
-  `ListMcpResourcesTool` nor `ReadMcpResourceTool` has a Winter-side implementation task in scope for
-  Phase 3.
+- During the same investigation, ephemeral capture was cross-checked against all five descriptors
+  in `packages/runtime/src/tools/descriptors/` that self-describe as carrying a "placeholder"
+  schema: `tool-search.ts`, `wait-for-mcp-servers.ts`, `structured-output.ts`,
+  `list-mcp-resources-tool.ts`, `read-mcp-resource-tool.ts`. These five are placeholders for three
+  distinct, non-interchangeable reasons, not one: `ToolSearch`/`WaitForMcpServers` are placeholders
+  because their own header comments assign contract ownership to a **different** workstream
+  ([WS-09]) outright, regardless of what any artifact contains; `StructuredOutput` is placeholder
+  **by design** — its own header states the real schema is generated per-call from a caller's
+  requested output shape, so no static interface could ever replace it; `ListMcpResourcesTool`/
+  `ReadMcpResourceTool`'s own header comments give the narrowest reason of the three ("Schema not
+  pinned **verbatim by WS-06 §3**" — a claim about this repo's own spec prose, not about the
+  upstream artifact). An exhaustive grep of every `.d.ts` file in the pinned tarball found zero
+  occurrences of `ToolSearch`, `WaitForMcpServers`, or `StructuredOutput` anywhere — consistent with
+  the first two reasons regardless of artifact contents, and with the third having nothing to find
+  in principle. The same grep, by contrast, found real, fully-specified `ListMcpResourcesInput`/
+  `Output` and `ReadMcpResourceInput`/`Output` interfaces in `sdk-tools.d.ts` — confirming their own
+  header comments' narrower claim precisely ("not pinned verbatim **by WS-06**" is true; "no schema
+  exists in the upstream artifact" would not have been). This is recorded as a finding for
+  `conformance.test.ts`'s own correct-absence fixtures to encode faithfully (all five remain
+  legitimate placeholders in Winter's registry, for the reasons above, not a "set of five to shrink
+  to three") — it does not imply any executor-level or descriptor-level fix here: the schema
+  [WS-09] eventually pins for the two MCP-resource tools is that workstream's own call to make, out
+  of scope for this WS-06/WS-12 close-out task.

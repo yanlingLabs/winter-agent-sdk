@@ -146,7 +146,15 @@ async function executeGet(rawInput: unknown, ctx: ToolExecutionContext): Promise
   // Pinned success branch, not an error (T8 note 2 above): "or null" is part of the CONTRACT, not a
   // failure mode -- querying an id that does not exist is a normal, expected outcome. Wrapped per the
   // pinned `{ task: {...} | null }` shape -- genuine JSON `{"task":null}`, not a bare "null" string.
-  if (!row) return { output: JSON.stringify({ task: null }) };
+  //
+  // A soft-deleted row is treated identically to "no such row" (advisor-caught gap, T8 review):
+  // `getTask` is a bare store lookup that does NOT exclude `status: "deleted"` rows the way
+  // `listTasks` does -- so without this check, TaskGet on a deleted id would return
+  // `{task: {..., status: "deleted"}}`, a value OUTSIDE the pinned 3-member status union
+  // ("pending"|"in_progress"|"completed", no "deleted" -- see derived-shapes-p3-task8.md item (b)).
+  // The pin's own status union is only explicable if a read never observes "deleted" at all, so
+  // TaskGet extends the same soft-delete-and-exclude treatment WS-06 already pins for TaskList.
+  if (!row || row.status === "deleted") return { output: JSON.stringify({ task: null }) };
   // WS-06 §3.4 pins exactly these 6 fields for TaskGet's inner `task` object -- NOT owner/metadata,
   // even though both are real fields on the stored row (TaskList separately pins `owner?`, TaskGet
   // does not; honored literally rather than "helpfully" adding fields the spec's own per-tool shape
