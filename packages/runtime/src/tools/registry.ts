@@ -194,6 +194,21 @@ export interface ToolExecutor {
   execute(input: unknown, ctx: ToolExecutionContext): Promise<ToolResultPayload>;
 }
 
+// RULING P3-F (Task 8, P3 close-out): the `extractPaths` seam CONTRACT, made explicit here rather
+// than left implicit in each lane's own file. Established by Lane A's own review finding (RULING
+// P3-F, task-4 report): a lane's `extractPaths` function returns RAW, UNRESOLVED candidate strings
+// straight out of the tool's own input (e.g. a `Read` call's literal, un-normalized `file_path` --
+// relative or absolute, whatever the caller typed) -- it MUST NOT resolve against `process.cwd()`,
+// bake in any other daemon-process-level default, or otherwise assume a cwd of its own. Rationale:
+// this function signature (`(input: unknown) => {...}`, no `ctx`/cwd parameter at all) has no
+// session context to resolve against in the first place, and baking the WRONG cwd in either
+// direction (the daemon's own vs. the session's) would be a silent correctness bug the seam's own
+// caller could never detect. The CONSUMER (today: permissions/approvals.ts's own durable-approval
+// "normalized paths" revalidation axis, RULING P3-F's other half -- see that file's own
+// extractNormalizedTargets) is responsible for resolving each raw candidate against ITS OWN session
+// ctx (cwd/home) before comparing or matching. Every current implementation (read.ts/glob.ts/
+// grep.ts/bash.ts) already follows this contract as of Lane A's own fix round 1 and Lane C's
+// original submission; this comment is what pins it as a REQUIREMENT for every future one too.
 export interface RegisteredTool {
   descriptor: ToolDescriptor;
   executor?: ToolExecutor;

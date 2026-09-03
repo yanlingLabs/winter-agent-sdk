@@ -18,6 +18,16 @@ import {
   type DurableApprovalRecord,
   type RevalidationContext,
 } from "./approvals.ts";
+// RULING P3-F (Task 8, P3 close-out): side-effect only -- guarantees Bash/Read/Glob/Grep are
+// genuinely registered WITH their real `extractPaths` (installed by each impl file's own
+// `replaceExecutor` call, not just the T1 stub) for this file's own "RULING P3-F" describe block
+// below. Without this import, `getRegisteredTool(toolName)?.extractPaths` would silently be
+// `undefined` for every one of those names (this file never otherwise imports anything that
+// populates the registry), and the new fixtures would pass VACUOUSLY (falling through to
+// extractNormalizedTargets' own empty-array "nothing recognized" default) rather than for the
+// reason claimed -- the identical caution ruleset.test.ts's own structural-enforcement import
+// already documents.
+import "../tools/impl/index.ts";
 
 function tmpHome(): string {
   return realpathSync(mkdtempSync(join(tmpdir(), "winter-approvals-")));
@@ -420,6 +430,50 @@ describe("revalidateApproval — the 5 revalidation axes", () => {
   test("axis: paths do NOT drift when cwd is unchanged, even for a path-bearing tool", () => {
     const a = approval({ toolName: "Edit", originalInput: { file_path: "notes.txt" }, issuedCwd: "/work/a" });
     expect(revalidateApproval(a, ctxFor(a))).toEqual({ ok: true });
+  });
+
+  // RULING P3-F (Task 8, P3 close-out): the SAME "paths" axis, now ALSO reachable for Bash/Read/
+  // Glob/Grep via the registry's own `extractPaths` seam (registry.ts's pinned contract) instead of
+  // vacuously "nothing recognized" for every tool but Edit/Write/WebFetch. Mirrors the pre-existing
+  // Edit fixtures above exactly, one per newly-reachable tool.
+  test("RULING P3-F: a Bash redirect-target drifts under a new cwd (extractBashPaths' own writes, via the registry seam)", () => {
+    const a = approval({ toolName: "Bash", originalInput: { command: "echo hi > out.txt" }, issuedCwd: "/work/a" });
+    const v = revalidateApproval(a, ctxFor(a, { cwd: "/work/b" }));
+    expect(v).toMatchObject({ ok: false, axis: "paths" });
+  });
+
+  test("RULING P3-F: a Bash redirect-target does NOT drift when cwd is unchanged", () => {
+    const a = approval({ toolName: "Bash", originalInput: { command: "echo hi > out.txt" }, issuedCwd: "/work/a" });
+    expect(revalidateApproval(a, ctxFor(a))).toEqual({ ok: true });
+  });
+
+  test("RULING P3-F: a Read call's file_path drifts under a new cwd (extractReadPaths' own raw passthrough, via the registry seam)", () => {
+    const a = approval({ toolName: "Read", originalInput: { file_path: "notes.txt" }, issuedCwd: "/work/a" });
+    const v = revalidateApproval(a, ctxFor(a, { cwd: "/work/b" }));
+    expect(v).toMatchObject({ ok: false, axis: "paths" });
+  });
+
+  test("RULING P3-F: a Glob call's `path` field drifts under a new cwd", () => {
+    const a = approval({ toolName: "Glob", originalInput: { pattern: "**/*.ts", path: "src" }, issuedCwd: "/work/a" });
+    const v = revalidateApproval(a, ctxFor(a, { cwd: "/work/b" }));
+    expect(v).toMatchObject({ ok: false, axis: "paths" });
+  });
+
+  test("RULING P3-F: a Grep call's `path` field drifts under a new cwd", () => {
+    const a = approval({ toolName: "Grep", originalInput: { pattern: "TODO", path: "src" }, issuedCwd: "/work/a" });
+    const v = revalidateApproval(a, ctxFor(a, { cwd: "/work/b" }));
+    expect(v).toMatchObject({ ok: false, axis: "paths" });
+  });
+
+  test("RULING P3-F: a Glob call with NO `path` field never drifts (extractGlobPaths' own emptyPathSet default) -- vacuously unchanged, matching the pre-existing 'a tool with no recognized target always compares equal' contract", () => {
+    const a = approval({ toolName: "Glob", originalInput: { pattern: "**/*.ts" }, issuedCwd: "/work/a" });
+    expect(revalidateApproval(a, ctxFor(a, { cwd: "/work/b" }))).toEqual({ ok: true });
+  });
+
+  test("RULING P3-F extension: a NotebookEdit call's notebook_path drifts under a new cwd (the SAME fileRulePathField mapping RULING P3-E wired into evaluator.ts/edit-recognition.ts)", () => {
+    const a = approval({ toolName: "NotebookEdit", originalInput: { notebook_path: "analysis.ipynb", new_source: "1+1" }, issuedCwd: "/work/a" });
+    const v = revalidateApproval(a, ctxFor(a, { cwd: "/work/b" }));
+    expect(v).toMatchObject({ ok: false, axis: "paths" });
   });
 
   // Fix round 1, Ruling P2-K (the actual security fix — real fs, a genuine RED before it landed):

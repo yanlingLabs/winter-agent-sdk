@@ -35,6 +35,17 @@ import type { PermissionMode, PermissionUpdate, RuleSource, PermissionDecisionCl
 // store's own "normalized paths" revalidation axis can never silently drift from it. See
 // extractNormalizedTargets's own comment for why a lexical-only resolve() was fail-open here.
 import { resolveRealTarget } from "./paths.ts";
+// RULING P3-F (Task 8, P3 close-out): `fileRulePathField` is the SAME Read/Edit/Write/NotebookEdit
+// path-field mapping evaluator.ts's own extractCandidateWritePaths/matchesRuleForCall consume (see
+// edit-recognition.ts's own header for why it lives there); `getRegisteredTool` is how this axis
+// reaches Bash/Read/Glob/Grep's own real `extractPaths` seam instead of re-deriving a parallel
+// extraction. Verified non-circular before adding: tools/registry.ts imports permissions/grammar.ts
+// (value) and permissions/evaluator.ts (type-only) — neither imports this file, nor does
+// permissions/edit-recognition.ts import anything from tools/ at all — so this file importing FROM
+// tools/registry.ts introduces no cycle (the identical precedent permissions/ruleset.ts's own
+// structural-consistency check already sets).
+import { fileRulePathField } from "./edit-recognition.ts";
+import { getRegisteredTool } from "../tools/registry.ts";
 
 // --- WS-07 §9 verbatim minimum shape, plus this task's documented extensions (see header) ----------
 
@@ -189,12 +200,41 @@ export type RevalidationVerdict = { ok: true } | { ok: false; axis: Revalidation
 // already closed for the LIVE evaluation path. `resolveRealTarget` (paths.ts) is reused, not
 // duplicated, so this axis's symlink-chasing can never independently drift from the rest of the
 // permission engine's own.
+// RULING P3-F extension (beyond the ruling's own literal "Bash/Read/Glob/Grep" text, flagged): the
+// Edit/Write arm below now also covers NotebookEdit, via the SAME `fileRulePathField` mapping RULING
+// P3-E wired into evaluator.ts/edit-recognition.ts — a NotebookEdit approval deferred across a
+// symlink retarget was exactly as unrevalidated as an Edit/Write one before this, and P3-E's own
+// fix-the-identical-class-everywhere spirit argues for closing it here too rather than leaving one
+// sibling call site behind.
 function extractNormalizedTargets(toolName: string, input: Record<string, unknown>, ctx: { cwd: string; home: string }): string[] {
-  if ((toolName === "Edit" || toolName === "Write") && typeof input["file_path"] === "string") {
-    return [resolveRealTarget(resolve(ctx.cwd, input["file_path"]))];
+  if (toolName === "Edit" || toolName === "Write" || toolName === "NotebookEdit") {
+    const path = input[fileRulePathField(toolName)];
+    if (typeof path === "string") return [resolveRealTarget(resolve(ctx.cwd, path))];
   }
   if (toolName === "WebFetch" && typeof input["url"] === "string") {
     return [input["url"].toLowerCase()];
+  }
+  // RULING P3-F: Bash/Read/Glob/Grep consult the registry's own `extractPaths` seam (registry.ts's
+  // own pinned contract: raw, unresolved candidate strings) instead of re-deriving a parallel,
+  // independent path-extraction implementation — resolved here, against THIS axis's own issuance-
+  // time cwd, via the identical resolveRealTarget(resolve(...)) composition the Edit/Write/
+  // NotebookEdit arm above already uses. A tool with no registered `extractPaths` (or none
+  // registered at all — e.g. this axis running before T8's production-wiring barrel existed) falls
+  // through to the empty-array "vacuously unchanged" default below, exactly like any other
+  // unrecognized shape.
+  if (toolName === "Bash" || toolName === "Read" || toolName === "Glob" || toolName === "Grep") {
+    const extractPaths = getRegisteredTool(toolName)?.extractPaths;
+    if (extractPaths) {
+      const resolved = Object.values(extractPaths(input))
+        .flat()
+        .map((p) => resolveRealTarget(resolve(ctx.cwd, p)));
+      // Sorted for a stable, order-independent join — defensive: extractPaths is a pure function of
+      // `input` (itself frozen on the record), so calling it twice on the SAME input already yields
+      // the same order both times regardless of what that order is; sorting costs nothing and
+      // removes even a hypothetical future non-deterministic extractor as a source of a false
+      // "normalized target drift" mismatch.
+      if (resolved.length > 0) return resolved.sort();
+    }
   }
   void ctx.home; // reserved for a future `~`-anchored target shape; unused today, kept for symmetry with cwd
   return [];
