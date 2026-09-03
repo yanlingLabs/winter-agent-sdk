@@ -15,7 +15,10 @@ import type {
 import { WinterCompatibilitySessionStore, splitFrames, encodeFrame, compatibilityKeys } from "@yanlinglabs/winter-agent-sdk";
 import type { SpawnedRuntimeProcess } from "@yanlinglabs/winter-agent-sdk";
 import { createInMemoryChannel } from "./protocol/channel.ts";
-import { runEngine, type Provider, type ProviderMessage, type ContentBlock, type ToolExecutor, type SessionPersistence } from "./engine.ts";
+import { runEngine, providerMessageContentToText, type Provider, type ProviderMessage, type ContentBlock, type ToolExecutor, type SessionPersistence } from "./engine.ts";
+import { getRegisteredTool } from "./tools/registry.ts";
+import { ADVISOR_TOOL_NAME } from "./tools/impl/advisor.ts";
+import "./tools/impl/index.ts"; // guarantees advisor.ts's own module-load default is registered before the M6 tests below run
 import { echoProvider, scriptedProvider, stubExecutor } from "./provider/mock.ts";
 import { inMemoryProcess } from "./testing.ts";
 import { WinterPermissionError } from "./permissions/policy-state.ts";
@@ -39,6 +42,78 @@ function dataMessages(frames: WinterFrame[]): SdkMessage[] {
 
 const baseConfig = (overrides: Partial<RuntimeConfig> = {}): RuntimeConfig => ({
   sessionId: "s", cwd: "/tmp/x", model: "sonnet", ...overrides,
+});
+
+// M6 (fix wave, P3 close-out): RULING R3-2's own "T8 wires the REAL source" instruction --
+// advisor.ts's module-load default (transcriptSource: {getEntries: () => []}) is replaced with a
+// live source backed by this run's own `messages`, but ONLY when the session's capabilities include
+// "winter.reviewer-model" (the SAME token buildAdvertisedSet already gates advertising on).
+// `resolveReviewer` stays the P6 seam (always undefined here) -- since createAdvisorExecutor's own
+// execute() checks resolveReviewer() FIRST and returns before ever touching transcriptSource, the
+// tool's own OBSERVABLE output cannot yet prove the transcript wiring end-to-end (that requires a
+// real reviewer resolver, which is out of this phase's scope) -- so this test proves the WIRING
+// itself: a fresh createAdvisorExecutor object (a new function/closure) is installed exactly when
+// the capability is present, and NOT when it's absent.
+test("M6: the advisor's real transcriptSource is wired (re-registered) only when winter.reviewer-model is a supplied capability", async () => {
+  const before = getRegisteredTool(ADVISOR_TOOL_NAME)?.executor;
+  expect(before).toBeDefined();
+
+  const { host, runtime } = createInMemoryChannel();
+  const provider = scriptedProvider([{ kind: "text", text: "done" }]);
+  const done = runEngine({ config: baseConfig({ capabilities: ["winter.reviewer-model"] }), input: runtime.input, output: runtime.output, provider, tools: stubExecutor });
+  host.output.write({ type: "user", text: "go" });
+  host.output.write({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined });
+  await drain(host.input);
+  await done;
+
+  const afterWithCapability = getRegisteredTool(ADVISOR_TOOL_NAME)?.executor;
+  expect(afterWithCapability).toBeDefined();
+  expect(afterWithCapability).not.toBe(before); // a fresh createAdvisorExecutor() was installed
+
+  const { host: host2, runtime: runtime2 } = createInMemoryChannel();
+  const provider2 = scriptedProvider([{ kind: "text", text: "done" }]);
+  const done2 = runEngine({ config: baseConfig(), input: runtime2.input, output: runtime2.output, provider: provider2, tools: stubExecutor });
+  host2.output.write({ type: "user", text: "go" });
+  host2.output.write({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined });
+  await drain(host2.input);
+  await done2;
+
+  // No `capabilities` supplied this time -- the executor reference must stay whatever it was left
+  // as by the PREVIOUS (capability-gated) run above, never re-wired again.
+  const afterNoCapability = getRegisteredTool(ADVISOR_TOOL_NAME)?.executor;
+  expect(afterNoCapability).toBe(afterWithCapability);
+});
+
+// providerMessageContentToText's own direct unit coverage (the flattening step between engine.ts's
+// own ProviderMessage.content and advisor.ts's plain-text TranscriptEntry -- see this function's own
+// header for why each ContentBlock kind is handled the way it is).
+test("providerMessageContentToText: a bare string passes through unchanged", () => {
+  expect(providerMessageContentToText("hello")).toBe("hello");
+});
+
+test("providerMessageContentToText: a text block's own text is used verbatim", () => {
+  const blocks: ContentBlock[] = [{ type: "text", text: "hello world" }];
+  expect(providerMessageContentToText(blocks)).toBe("hello world");
+});
+
+test("providerMessageContentToText: a tool_use block becomes a short summary, never a raw JSON.stringify of its input", () => {
+  const blocks: ContentBlock[] = [{ type: "tool_use", id: "1", name: "Bash", input: { command: "rm -rf /", secret: "shh" } }];
+  const text = providerMessageContentToText(blocks);
+  expect(text).toContain("Bash");
+  expect(text).not.toContain("shh"); // the raw input is never forwarded verbatim
+});
+
+test("providerMessageContentToText: a tool_result block's own content string is used directly", () => {
+  const blocks: ContentBlock[] = [{ type: "tool_result", tool_use_id: "1", content: "the file contents" }];
+  expect(providerMessageContentToText(blocks)).toBe("the file contents");
+});
+
+test("providerMessageContentToText: multiple blocks join with newlines, in order", () => {
+  const blocks: ContentBlock[] = [
+    { type: "text", text: "first" },
+    { type: "tool_result", tool_use_id: "1", content: "second" },
+  ];
+  expect(providerMessageContentToText(blocks)).toBe("first\nsecond");
 });
 
 test("multi-turn: two user envelopes produce two assistant+result pairs; the second generate() sees the first turn's messages", async () => {

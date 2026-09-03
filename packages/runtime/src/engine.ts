@@ -70,7 +70,15 @@ import "./tools/descriptors/index.ts";
 // import ORDER relative to the descriptors barrel above does not matter (every impl file is
 // self-sufficient: it imports its own descriptor before calling replaceExecutor).
 import "./tools/impl/index.ts";
-import { buildRegistryToolExecutor, buildRegistryToolExecutorWithFallback, buildAdvertisedSet, type RegistryToolExecutorDeps } from "./tools/registry.ts";
+import { buildRegistryToolExecutor, buildRegistryToolExecutorWithFallback, buildAdvertisedSet, replaceExecutor, type RegistryToolExecutorDeps } from "./tools/registry.ts";
+// M6 (fix wave, P3 close-out): RULING R3-2's own "T8 wires the REAL source, from wherever the
+// engine's real turn history... actually lives" instruction -- this IS that wiring. A specific,
+// scoped cross-module dependency (engine.ts -> one lane's own tools/impl/*.ts file), unlike every
+// OTHER tool this engine dispatches through the generic registry -- deliberate, and named as such
+// here rather than left looking like an oversight against R3-5's "lanes never edit registry.ts"
+// boundary (this is the opposite direction: the engine reaching INTO a lane's own file, not a lane
+// reaching into the registry).
+import { createAdvisorExecutor, ADVISOR_TOOL_NAME, type TranscriptEntry } from "./tools/impl/advisor.ts";
 import { createSessionReadState } from "./tools/read-state.ts";
 import { configureBackgroundTaskRoot } from "./tools/background-tasks.ts";
 import { sessionTempDir, type SessionTempDirPaths } from "./paths/temp.ts";
@@ -101,6 +109,28 @@ export type ContentBlock =
 export interface ProviderMessage {
   role: "user" | "assistant" | "tool";
   content: string | ContentBlock[];
+}
+
+// M6 (fix wave, P3 close-out): the advisor's own TranscriptSource wants plain {role, text} entries
+// (tools/impl/advisor.ts's own TranscriptEntry) -- a ProviderMessage's `content` can be a bare
+// string OR a ContentBlock[]; this is the one place that flattens the latter into text for that
+// consumer. Deliberately conservative per-block: a text block contributes its own text verbatim, a
+// tool_use block contributes a short, human-legible summary (never `JSON.stringify`-ing the raw
+// `input`, which could itself contain large/opaque values a review channel has no need of), and a
+// tool_result block contributes its own `content` string (already plain text by construction --
+// ContentBlock's own tool_result.content field, never a nested block). This function has NO
+// awareness of RULING R3-3's own opaque-marker stripping (advisor.ts's own stripOpaqueMarkers runs
+// AFTER this, per-entry, on whatever text comes back from here) -- it only flattens shape, never
+// filters content.
+export function providerMessageContentToText(content: string | ContentBlock[]): string {
+  if (typeof content === "string") return content;
+  return content
+    .map((block) => {
+      if (block.type === "text") return block.text;
+      if (block.type === "tool_use") return `[called ${block.name}]`;
+      return block.content;
+    })
+    .join("\n");
 }
 
 export type ProviderTurn =
@@ -1044,6 +1074,30 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   });
 
   const messages: ProviderMessage[] = initialMessages ? [...initialMessages] : [];
+
+  // M6 (fix wave, P3 close-out): wire the advisor's REAL transcript source, now that `messages`
+  // (this run's own turn history) exists in this closure -- see this file's own import comment for
+  // why this cross-module call is deliberate, not an oversight. `resolveReviewer` STAYS the P6 seam
+  // (advisor.ts's own module-load default, `() => undefined`) -- this call replaces ONLY
+  // `transcriptSource`, never invents a reviewer-resolution story this phase was never asked to
+  // build. Gated on the SAME capability (`winter.reviewer-model`) `buildAdvertisedSet` already
+  // checks before ever advertising the tool (this file's own call, a few lines down) -- wiring a
+  // live transcript source for a tool that is never advertised to this session would be pointless
+  // per-run work, and the capability check is already computed once, here, for that call anyway.
+  // `messages` is captured by REFERENCE (the closure below runs only when the advisor tool actually
+  // executes, well after this line, by which point the round loop has appended real turns to it) --
+  // the getter is what stays live, never a one-time snapshot taken at this line.
+  if (config.capabilities?.includes("winter.reviewer-model") === true) {
+    replaceExecutor(
+      ADVISOR_TOOL_NAME,
+      createAdvisorExecutor({
+        transcriptSource: {
+          getEntries: (): TranscriptEntry[] => messages.map((m) => ({ role: m.role, text: providerMessageContentToText(m.content) })),
+        },
+        resolveReviewer: () => undefined,
+      }),
+    );
+  }
 
   // --- Task 11 (WS-07 §9): resume-consumption ------------------------------------------------------
   //
