@@ -266,14 +266,31 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // (a `(deny file-read* (subpath "<home>/.winter/run"))` SBPL rule, enforced only for a SANDBOXED
   // Bash/Monitor child process) already landed in Lane C (sandbox/profile.ts's own `home` field,
   // threaded through spawn.ts) -- neither half substitutes for the other (WS-12 §1's own layer-
-  // separation invariant): the tool-fence rule below is what stops a direct `Read`/recognized-Bash-
-  // read of the path (no sandbox involved at all), while the SBPL rule is what stops an
-  // UNRECOGNIZED subprocess (a compiler, a language runtime, anything the model's own shell command
-  // spawns) from reading it once inside the sandbox.
+  // separation invariant): the tool-fence rule below is what stops a direct `Read`/`Glob`/`Grep` of
+  // the path (no sandbox involved at all -- see the I1 correction a few lines down for the
+  // NON-coverage of a "recognized-Bash-read" of the same path, which this sentence used to overclaim
+  // was also stopped here), while the SBPL rule is what stops an UNRECOGNIZED subprocess (a
+  // compiler, a language runtime, anything the model's own shell command spawns) from reading it
+  // once inside the sandbox.
   //
   // `source: "managed"` -- an unconditional product floor, never weakened by a lower-priority
   // settings source (WS-07 §3.2: "Deny from any source beats allow from every source... Managed
-  // rules cannot be weakened by CLI or lower settings"). TWO entries, verified empirically to both
+  // rules cannot be weakened by CLI or lower settings").
+  //
+  // CORRECTION (fix wave, P3 close-out, I1 finding 3): the paragraph above overclaimed. The
+  // tool-fence rule is a `Read`/`Glob`/`Grep`-toolName rule matched against each of those tools' own
+  // PATH FIELD -- it does NOT stop a "recognized-Bash-read" of the identical path at all.
+  // `Bash({command:"cat ~/.winter/run/pidfile"})` passes `isBashCallReadOnly` at stage 4 (allowed,
+  // built-in read-only) and is never even a CANDIDATE for this rule set: `findReadDenyBlockingEdit`
+  // (evaluator.ts) only ever consults WRITE-shaped candidates (`extractCandidateWritePaths`), never
+  // a Bash call's own read-only recognition. With `sandbox.enabled: false` (no SBPL layer either)
+  // nothing in this layered defense catches that read at all -- a genuine, config-shaped hole, not
+  // merely an incomplete-but-safe comment. Fixed here only to the extent of naming it honestly;
+  // closing it (extending `isBashCallReadOnly`'s own recognition to consult
+  // `ctx.permissions.probeReadAccess` per read-shaped path, mirroring glob.ts/grep.ts's own I1 fix)
+  // is out of this fix wave's scope and is ledgered as a named carry, not silently left mis-described.
+  //
+  // TWO entries, verified empirically to both
   // be necessary (not merely defensive): Ruling P2-D's "a bare `~`-anchored segment reaches any
   // depth on deny" special case (paths.ts's own `isSingleSegmentDirectoryPattern`) is scoped to a
   // pattern with EXACTLY ONE segment after the anchor (`~/secrets`, paths.test.ts's own fixture) --
@@ -292,8 +309,10 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // its own three entries, one per dedicated read tool, or a bare `Grep`/`Glob` allow rule (or
   // bypass) would leave `~/.winter/run` readable through either search tool even though `Read` on
   // the identical path is denied. Before this fix, Glob/Grep were not FILE_RULE_TOOLS members at
-  // all, so this comment's own prior claim ("stops a direct Read/recognized-Bash-read of the path")
-  // was accurate as written but incomplete: it never stopped a search-tool read of the same path.
+  // all, so this rule set never stopped a search-tool read of the same path -- one of two gaps this
+  // header's own overclaimed "stops a direct Read/recognized-Bash-read" sentence covered up (the
+  // OTHER gap -- "recognized-Bash-read" was never actually true -- is corrected in place above,
+  // where that sentence lives).
   const BASELINE_DENY_RULES = [
     sourceRule({ toolName: "Read", ruleContent: "~/.winter/run" }, "deny", "managed"),
     sourceRule({ toolName: "Read", ruleContent: "~/.winter/run/**" }, "deny", "managed"),

@@ -2224,6 +2224,30 @@ describe("I2 (fix wave, P3 close-out): Monitor's command half joins the Bash per
     // allowed the way a read-only Bash call would be.
     expect(record).toMatchObject({ decision: "deny", mechanism: "mode" });
   });
+
+  // Advisor-flagged correction: the review's own I2 text scopes the fix to the bypass/allow-rule
+  // hole ("acceptEdits: fine (Monitor never auto-approves)") -- widening `recognizeEditOperation`
+  // itself must NOT hand Monitor a NEW acceptEdits/auto silent-allow path it never had before
+  // (WS-07 §13: "stricter, never looser").
+  test("acceptEdits does NOT auto-approve a Monitor bashFsOp command, even in-bounds -- Monitor never gains a new silent-allow path", async () => {
+    const promptSpy = spyPromptStage(() => ({ decision: "deny" }));
+    const ctx = baseCtx({ promptStage: promptSpy.stage, cwd: "/work", policy: policy({ mode: "acceptEdits" }), specialChecks: REAL_SPECIAL_CHECKS });
+    const record = await evaluate(monitorCall("mkdir /work/newdir"), ctx);
+    expect(record.decision).not.toBe("allow");
+  });
+
+  test("auto mode does NOT auto-approve a Monitor bashFsOp command either", async () => {
+    const promptSpy = spyPromptStage(() => ({ decision: "deny" }));
+    const ctx = baseCtx({ promptStage: promptSpy.stage, cwd: "/work", policy: policy({ mode: "auto" }), specialChecks: REAL_SPECIAL_CHECKS });
+    const record = await evaluate(monitorCall("mkdir /work/newdir"), ctx);
+    expect(record.decision).not.toBe("allow");
+  });
+
+  test("the identical Bash command, by contrast, DOES auto-approve under acceptEdits (positive control -- proves the exclusion is Monitor-specific, not a general regression)", async () => {
+    const ctx = baseCtx({ cwd: "/work", policy: policy({ mode: "acceptEdits" }), specialChecks: REAL_SPECIAL_CHECKS });
+    const record = await evaluate(call("Bash", { command: "mkdir /work/newdir" }), ctx);
+    expect(record).toMatchObject({ decision: "allow", mechanism: "mode" });
+  });
 });
 
 // RULING P3-K (controller ruling, fix wave, P3 close-out): task/mode-class tools WS-06 §1.4's

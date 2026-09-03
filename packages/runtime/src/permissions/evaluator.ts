@@ -678,6 +678,13 @@ function isBuiltInReadOnly(call: PermissionCall, ctx: EvaluationContext): boolea
 // non-durable CronCreate never touches the filesystem at all and belongs in this silent-allow set
 // exactly like its siblings. TaskOutput joins only after I5's traversal-guard fix landed (fix wave,
 // same commit sequence) -- an unvalidated task_id could otherwise read arbitrary files silently.
+//
+// capture-pending (per the ruling's own instruction: "mark the whole cell set capture-pending") --
+// mirrors grammar.ts's own PARSE_LIMIT/DANGEROUS_ASSIGNMENT_NAMES posture: this SET of tool names is
+// the controller's own considered ruling, not itself confirmed against a WS-17 differential capture
+// of the pinned 0.3.250 artifact. A future capture that finds a DIFFERENT per-tool cell (e.g. a tool
+// here that the real runtime actually prompts for, or a tool absent here that it silently allows)
+// should update this set directly, not restructure the mechanism.
 const TASK_MODE_CLASS_SILENT_ALLOW: ReadonlySet<string> = new Set([
   "TaskCreate",
   "TaskGet",
@@ -836,7 +843,14 @@ function evaluateModeStage(call: PermissionCall, ctx: EvaluationContext, mode: P
     // RULING P3-K: sessionRoot threaded through for CronCreate(durable) -- in practice unreachable
     // here (isProtectedWrite's own `.winter` coverage always intercepts it first, above), kept for
     // consistency with every other recognizeEditOperation call site in this file.
-    const recognized = recognizeEditOperation(call, { sessionRoot: ctx.sessionRoot });
+    // I2 (fix wave, P3 close-out): Monitor is EXCLUDED from this arm's auto-approve outcome on
+    // purpose -- the review's own I2 text scopes the fix to closing the bypass/allow-rule hole
+    // ("acceptEdits: fine (Monitor never auto-approves)"), never to GRANTING Monitor a new
+    // auto-approve path it never had (WS-07 §13: "stricter, never looser"). `call.toolName !==
+    // "Monitor"` gates the ALLOW outcome only -- recognizeEditOperation itself still runs on Monitor
+    // (feeding protected/critical/plan-write detection above and in isPlanWriteShaped, which IS what
+    // I2 asked for); only the acceptEdits/auto-mode SILENT ALLOW stays Bash-only.
+    const recognized = call.toolName !== "Monitor" ? recognizeEditOperation(call, { sessionRoot: ctx.sessionRoot }) : null;
     if (recognized !== null && (recognized.kind === "edit" || recognized.kind === "bashFsOp")) {
       // "other" (a redirect, or a subcommand mixed with an unblessed one) NEVER auto-approves here
       // — it falls through to "unresolved" below, same as an unrecognized command.
@@ -887,7 +901,9 @@ function evaluateModeStage(call: PermissionCall, ctx: EvaluationContext, mode: P
   // evaluate()'s own stage-5 comment) and then the real classifier (ctx.autoEngine, via
   // evaluate()'s resolveAutoDecision) get a chance next, never a silent allow.
   if (isBuiltInReadOnly(call, ctx)) return { kind: "allow" };
-  const recognizedForAuto = recognizeEditOperation(call, { sessionRoot: ctx.sessionRoot });
+  // I2 (fix wave, P3 close-out): Monitor excluded from THIS arm's auto-approve outcome too -- see
+  // the acceptEdits arm's own identical comment, above, for the full rationale.
+  const recognizedForAuto = call.toolName !== "Monitor" ? recognizeEditOperation(call, { sessionRoot: ctx.sessionRoot }) : null;
   if (recognizedForAuto !== null && (recognizedForAuto.kind === "edit" || recognizedForAuto.kind === "bashFsOp") && recognizedForAuto.paths.every((p) => isWithinBounds(p, ctx))) {
     return { kind: "allow" };
   }
