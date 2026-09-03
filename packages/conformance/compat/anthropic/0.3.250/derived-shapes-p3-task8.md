@@ -256,26 +256,22 @@ match was accurate all along, unlike TaskList's).
 
 ```ts
 interface ScheduleWakeupInput {
-  /** Seconds from now to wake up. Clamped to [60, 3600] by the runtime. Required unless `stop` is true. */
-  delaySeconds?: number;
-  /** One short sentence explaining the chosen delay. [...] Required unless `stop` is true. */
-  reason?: string;
-  /** The /loop input to fire on wake-up. [...] Required unless `stop` is true. */
-  prompt?: string;
-  /** Set to true to end the dynamic loop immediately [...] */
-  stop?: boolean;
-  /** true = nothing changed [...] Required unless `stop` is true. */
-  noop?: boolean;
+  delaySeconds?: number;   // doc-asserted: how many seconds from now to wake up; the runtime (not this schema) clamps it to [60, 3600]; presence required unless `stop` is true
+  reason?: string;         // doc-asserted: a short explanation of the chosen delay, for telemetry/UI; presence required unless `stop` is true
+  prompt?: string;         // doc-asserted: the loop input to re-fire on wake-up; presence required unless `stop` is true
+  stop?: boolean;          // doc-asserted: ends the dynamic loop immediately instead of scheduling another wakeup
+  noop?: boolean;          // doc-asserted: whether this tick changed anything worth reporting; presence required unless `stop` is true
 }
 ```
 
-(Doc comments above are restated/truncated per this document's own naming discipline — condensed to
-the load-bearing clause only, not quoted in full.)
+(Per this document's own naming discipline, every clause above is a restatement in this document's
+own words, attributed as doc-asserted — none is a verbatim quotation of the pinned artifact's own
+doc comments, which are considerably longer and more detailed than the paraphrase kept here.)
 
 **Finding — the brief's named "min/max-vs-clamp" question, resolved**: `delaySeconds` carries **no
 JSON-Schema `minimum`/`maximum`** at the type level — the `[60, 3600]` bound exists *only* as a
-doc-comment description of **runtime** behavior ("Clamped to... by the runtime"), not a
-schema-enforced constraint. This exactly matches `schedule-wakeup.ts`'s own executor, which already
+doc-comment description of **runtime** behavior (doc-asserted, not schema-enforced). This exactly
+matches `schedule-wakeup.ts`'s own executor, which already
 clamps (`Math.min`/`Math.max` against `MIN_DELAY_SECONDS = 60`/`MAX_DELAY_SECONDS = 3600`) rather
 than rejecting out-of-range input. The **unreachable** half the brief refers to was
 `descriptors/schedule-wakeup.ts`'s own `inputSchema`, which declared `minimum: 60, maximum: 3600` —
@@ -292,16 +288,11 @@ clamp is now the only enforcement, matching the pin exactly.
 
 ```ts
 interface ScheduleWakeupOutput {
-  /** Epoch ms timestamp when the next wakeup will fire */
-  scheduledFor: number;
-  /** Actual delay used after clamping to runtime bounds */
-  clampedDelaySeconds: number;
-  /** True if the requested delaySeconds was outside [60, 3600] */
-  wasClamped: boolean;
-  /** True when the model ended the loop via `stop: true` */
-  stopped?: boolean;
-  /** How many pending dynamic-loop wakeups stop:true cancelled. [...] */
-  cancelledWakeups?: number;
+  scheduledFor: number;            // doc-asserted: epoch-ms timestamp of the next wakeup
+  clampedDelaySeconds: number;     // doc-asserted: the delay actually used, after runtime clamping
+  wasClamped: boolean;             // doc-asserted: whether the requested delaySeconds fell outside [60, 3600]
+  stopped?: boolean;                // doc-asserted: set when the model ended the loop via stop:true
+  cancelledWakeups?: number;       // doc-asserted: how many pending wakeups a stop:true call cancelled
 }
 ```
 

@@ -33,11 +33,12 @@
 // *** T8 SCHEMA-SWEEP FIX (envelope reconciliation via ephemeral capture against the pinned 0.3.250
 //     artifact -- derived-shapes-p3-task8.md) ***
 //   `scheduledFor` was implemented as an ISO-8601 string (`Date.prototype.toISOString()`); the
-//   pinned `ScheduleWakeupOutput.scheduledFor` is a NUMBER ("Epoch ms timestamp when the next wakeup
-//   will fire", per the pinned artifact's own doc comment). Fixed to `Date.now() + clampedDelaySeconds
+//   pinned `ScheduleWakeupOutput.scheduledFor` is a NUMBER (doc-asserted in the pinned artifact as
+//   an epoch-ms timestamp for the next wakeup, restated here in this file's own words -- see
+//   derived-shapes-p3-task8.md's own naming discipline). Fixed to `Date.now() + clampedDelaySeconds
 //   * 1000` directly (no ISO conversion). Separately: the pinned `ScheduleWakeupInput.delaySeconds`
-//   carries NO JSON-Schema `minimum`/`maximum` -- only a prose doc comment describing runtime
-//   clamping ("Clamped to [60, 3600] by the runtime"), matching this executor's own clamp constants
+//   carries NO JSON-Schema `minimum`/`maximum` -- only a doc comment describing runtime clamping to
+//   [60, 3600] (again doc-asserted, not schema-enforced), matching this executor's own clamp constants
 //   exactly. descriptors/schedule-wakeup.ts previously declared `minimum: 60, maximum: 3600` at the
 //   schema level, which is both unpinned AND in tension with this executor's own clamp-not-reject
 //   behavior (a strict schema-validating caller could reject an out-of-range value before this
