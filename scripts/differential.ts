@@ -524,6 +524,123 @@ export async function traceWinterBackgroundTaskRound(): Promise<ConformanceTrace
   }
 }
 
+// Task 8 (Phase 3 close-out): a REAL "Bash" tool round_in_background call, end-to-end through the
+// engine's DEFAULT registry-backed executor (no scripted/fake tool double this time, unlike
+// traceWinterBackgroundTaskRound above) -- proves the real production wiring this task's own
+// production-wiring MUST covers reaches the differential harness too, not just
+// transport-equivalence.test.ts's own equivalence proof and bash.test.ts's own unit coverage.
+//
+// Scope, stated plainly (advisor-reviewed design, "closest correct variant"): this golden pins ONLY
+// the SYNCHRONOUS half of a backgrounded call -- task_started + background_tasks_changed (emitted
+// before execute() even returns, per bash.test.ts's own "emits task_started and
+// background_tasks_changed synchronously before returning") and the immediate tool_result carrying
+// the sandbox tag + "output_file: <path>" text. The command (`sleep 10`) is deliberately chosen to
+// run far longer than this scenario's own single query() pass, so the ASYNC completion half
+// (task_notification, once the detached child actually exits) is deterministically ABSENT from the
+// captured trace -- a wall-clock race between that frame and query()'s own single-shot termination at
+// `result` (Ruling P1-I) has no scrub that could fix it, and bash.test.ts's own background fixtures
+// already cover that half by POLLING (`for (let i = 0; i < 50 && !frames.some(...))`), a strategy a
+// byte-exact committed golden cannot use. `sandbox: {enabled:false}` (matching the equivalence
+// suite's own identical Lane C scenario) so this passes on non-darwin CI too, where a real sandboxed
+// path would throw SandboxUnavailableError (spawn.test.ts pins that failure mode).
+export async function traceWinterBashBackgroundRound(): Promise<ConformanceTraceEntry[]> {
+  const winterHome = mkdtempSync(join(tmpdir(), "winter-differential-bashbg-"));
+  // Fixed literal, not randomUUID() -- this IS the D18 session-temp root's own `backendUuid` path
+  // segment (engine.ts's resolveSessionTempPaths: `backendUuid: config.sessionId`). Pinning it here
+  // removes ONE of the two machine-independent-in-principle-but-otherwise-computed components of that
+  // path from the non-determinism this scenario has to scrub below (cwd is already FIXTURE_CWD,
+  // pinning the OTHER component, tempProjectKey). What's left after both are pinned -- the real OS
+  // user id and the resolved TMPDIR base, both genuinely machine-dependent -- is handled by the
+  // value-based scrub below, not by trying to pin those too.
+  const sessionId = "differential-bash-background-fixture";
+  try {
+    const entries: ConformanceTraceEntry[] = [];
+    for await (const msg of query({
+      prompt: "go",
+      options: {
+        model: FIXTURE_MODEL,
+        cwd: FIXTURE_CWD,
+        sessionId,
+        allowedTools: ["Bash"],
+        sandbox: { enabled: false },
+        spawnClaudeCodeProcess: (opts) =>
+          inMemoryProcess(
+            opts.args,
+            scriptedProvider([
+              { kind: "tool_use", calls: [{ id: "bash-bg-call-1", name: "Bash", input: { command: "sleep 10", run_in_background: true } }] },
+              { kind: "text", text: "backgrounded" },
+            ]),
+            undefined,
+            { ...opts.env, WINTER_HOME: winterHome },
+          ),
+      },
+    })) {
+      entries.push({ sequence: entries.length, direction: "runtime-to-host", kind: kindOf(msg), payload: msg });
+    }
+
+    // Value-based scrub (advisor-reviewed design; NOT a change to normalizeTrace's shared VOLATILE
+    // set -- that would silently strip traceWinterBackgroundTaskRound's own MEANINGFUL fixed-literal
+    // task_id/output_file pins above). The real Bash executor's own createBackgroundTask generates a
+    // genuine randomUUID() task id and embeds the real, machine-dependent D18 session-temp root
+    // (unpinned uid/TMPDIR-base) into both a structured field (task_started.task_id) and free text
+    // (the tool_result's own "output_file: <path>" line, bash.test.ts's own regex reused verbatim
+    // here) -- extracted from THIS run's own actual output, never predicted in advance, and replaced
+    // by exact value: the path first (it contains the task id as a substring), then the bare id.
+    const serialized = JSON.stringify(entries);
+    // [^\s\\]+, not bash.test.ts's own \S+ -- JSON.stringify renders the tool_result's real newline
+    // (bash.ts's own template: "output_file: <path>\n[sandbox: ...]") as the two literal characters
+    // `\` `n`, neither of which is regex whitespace, so a plain \S+ over-captures straight through
+    // the escape and into "[sandbox:" up to its own next real space. A POSIX path never contains a
+    // backslash, so excluding it here (in addition to real whitespace) stops the match exactly where
+    // bash.test.ts's own \S+ stops when run against the UN-escaped in-memory string instead.
+    const outputFileMatch = /output_file: ([^\s\\]+)/.exec(serialized);
+    const taskIdMatch = /"task_id":"([^"]+)"/.exec(serialized);
+    let scrubbed = serialized;
+    if (outputFileMatch) scrubbed = scrubbed.split(outputFileMatch[1]!).join("/winter-fixture-tasks/TASKID.output");
+    if (taskIdMatch) scrubbed = scrubbed.split(taskIdMatch[1]!).join("TASKID");
+    const scrubbedEntries = JSON.parse(scrubbed) as ConformanceTraceEntry[];
+
+    return normalizeTrace(scrubbedEntries);
+  } finally {
+    rmSync(winterHome, { recursive: true, force: true });
+    // Known, accepted leak (same structural shape as transport-equivalence.test.ts's own real-process
+    // legs): the D18 session-temp root itself (OS-tempdir-rooted -- WS-01 §2.3's "engine-sibling"
+    // layout is NOT under WINTER_HOME, so the rmSync above never touches it) is not cleaned up here.
+    // The `sleep 10` child is spawned detached (bash.test.ts's own "background task" framing) and
+    // outlives this function's return by design -- a harmless, self-terminating ~10s orphan process,
+    // not a resource that accumulates across repeated runs.
+  }
+}
+
+// Task 8 (Phase 3 close-out, WS-06 §6 obligation 1's own "system/init.tools snapshot" MUST): proves
+// the buildAdvertisedSet wiring (previous commit; conformance.test.ts's own engine-level unit proof)
+// also survives the FULL query() wrapper, pinned byte-exact -- disallowedTools:["Bash"] is the one
+// config axis RuntimeConfig actually threads to the real call (see conformance.test.ts's own
+// WS06-01b note for the other axes' scope carve-out). Note: like every other scenario's golden after
+// the previous commit's regeneration, this one CHURNS whenever a descriptor is added/removed from the
+// registry -- not a new fragility this scenario introduces, the same property the other 11 already
+// have now.
+export async function traceWinterAdvertisedSetRound(): Promise<ConformanceTraceEntry[]> {
+  const winterHome = mkdtempSync(join(tmpdir(), "winter-differential-advertisedset-"));
+  try {
+    const entries: ConformanceTraceEntry[] = [];
+    for await (const msg of query({
+      prompt: "hi",
+      options: {
+        model: FIXTURE_MODEL,
+        cwd: FIXTURE_CWD,
+        disallowedTools: ["Bash"],
+        spawnClaudeCodeProcess: (opts) => inMemoryProcess(opts.args, undefined, undefined, { ...opts.env, WINTER_HOME: winterHome }),
+      },
+    })) {
+      entries.push({ sequence: entries.length, direction: "runtime-to-host", kind: kindOf(msg), payload: msg });
+    }
+    return normalizeTrace(entries);
+  } finally {
+    rmSync(winterHome, { recursive: true, force: true });
+  }
+}
+
 // --- registry-driven check: every scenario against its committed golden --------------------------
 
 interface Scenario {
@@ -552,6 +669,12 @@ const SCENARIOS: Scenario[] = [
   // own header comment for the one-line justification (full closed background-task message family,
   // proved end-to-end through a real registered tool's ctx.emitFrame -> engine.ts -> output.write).
   { name: "background-task-round", trace: traceWinterBackgroundTaskRound, goldenFile: "background-task-round.trace.json" },
+  // Task 8 (Phase 3 close-out): two new goldens -- see each trace function's own header comment for
+  // scope and design (the bash-background one is deliberately scoped to the synchronous half only;
+  // the advertised-set one closes the loop from the previous commit's buildAdvertisedSet wiring
+  // through the full query() wrapper, not just runEngine() directly).
+  { name: "bash-background-round", trace: traceWinterBashBackgroundRound, goldenFile: "bash-background-round.trace.json" },
+  { name: "advertised-set-round", trace: traceWinterAdvertisedSetRound, goldenFile: "advertised-set-round.trace.json" },
 ];
 
 // Sign-off 3 directive (whole-branch review): `--update` turns this script from a comparator into
