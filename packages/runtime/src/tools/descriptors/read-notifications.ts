@@ -7,6 +7,13 @@
 // real model handed this schema unconditionally got "registered but not yet executable" on every
 // call. Now gated on "winter.global-messaging" (see the WebSearch/LSP precedent) until WS-10 wires a
 // real executor.
+//
+// Schema-sweep fix (fix wave, Part B item 4, P3 close-out): `outputSchema` below was a FLAT
+// single-notification shape; the pinned 0.3.250 artifact's own `ReadNotificationsOutput`
+// (ephemeral checksum-verified fetch, scripts/fetch-upstream.ts -- nothing committed) is
+// `{ notifications: Array<{notification_id, origin, queued_at, content}>, remaining: number }` --
+// an ARRAY of drained notifications per call, not one. Corrected to match; zero behavioral risk
+// (no executor consumes this schema yet -- WS-10 owns building the real thing).
 import { stub, ALWAYS_AVAILABLE } from "./_shared.ts";
 
 stub({
@@ -17,10 +24,18 @@ stub({
   outputSchema: {
     type: "object",
     properties: {
-      notification_id: { type: "string" },
-      origin: { type: "string" },
-      queued_at: { type: "string" },
-      content: { type: "string" },
+      notifications: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            notification_id: { type: "string" },
+            origin: { type: "string" },
+            queued_at: { type: "string" },
+            content: { type: "string" },
+          },
+        },
+      },
       remaining: { type: "number" },
     },
   },

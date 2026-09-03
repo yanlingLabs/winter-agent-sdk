@@ -206,6 +206,19 @@ test("WS-06 §6 obligation 3: TaskUpdate/CronCreate/ScheduleWakeup descriptors c
   // it once passed.
   expect(scheduleWakeup.properties["delaySeconds"]).not.toHaveProperty("minimum");
   expect(scheduleWakeup.properties["delaySeconds"]).not.toHaveProperty("maximum");
+
+  // M1 schema-sweep fix (fix wave, Part B item 4, P3 close-out): the SAME "no schema-level bounds"
+  // finding, decided ONCE and applied uniformly across all three timeout-bearing descriptors this
+  // finding named (Bash/Monitor/ScheduleWakeup) -- the pinned artifact's own MonitorInput.timeout_ms
+  // and BashInput.timeout doc comments carry their "max" bound as PROSE only, the identical
+  // evidentiary shape ScheduleWakeup's own delaySeconds already had.
+  const monitor = getRegisteredTool("Monitor")?.descriptor.inputSchema as { properties: Record<string, unknown> };
+  expect(monitor.properties["timeout_ms"]).not.toHaveProperty("minimum");
+  expect(monitor.properties["timeout_ms"]).not.toHaveProperty("maximum");
+
+  const bash = getRegisteredTool("Bash")?.descriptor.inputSchema as { properties: Record<string, unknown> };
+  expect(bash.properties["timeout"]).not.toHaveProperty("minimum");
+  expect(bash.properties["timeout"]).not.toHaveProperty("maximum");
 });
 
 test("WS-06 §6 obligation 3: TaskCreate/TaskGet/TaskList/TaskUpdate/CronDelete/ScheduleWakeup executors emit exactly the pinned result envelopes (derived-shapes-p3-task8.md), end-to-end through the real registered executors", async () => {
