@@ -70,7 +70,7 @@ import "./tools/descriptors/index.ts";
 // import ORDER relative to the descriptors barrel above does not matter (every impl file is
 // self-sufficient: it imports its own descriptor before calling replaceExecutor).
 import "./tools/impl/index.ts";
-import { buildRegistryToolExecutor, buildRegistryToolExecutorWithFallback, type RegistryToolExecutorDeps } from "./tools/registry.ts";
+import { buildRegistryToolExecutor, buildRegistryToolExecutorWithFallback, buildAdvertisedSet, type RegistryToolExecutorDeps } from "./tools/registry.ts";
 import { createSessionReadState } from "./tools/read-state.ts";
 import { configureBackgroundTaskRoot } from "./tools/background-tasks.ts";
 import { sessionTempDir, type SessionTempDirPaths } from "./paths/temp.ts";
@@ -731,7 +731,27 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   const tools: ToolExecutor = providedTools ?? buildDefaultToolExecutor();
 
   // `init` MUST be the first runtime→host frame (WS-04 §4.1 `initializing`), from resolved runtime
-  // state. P1 has no tool catalog yet (WS-06) so the advertised tool list is always empty.
+  // state. T8 (WS-06 §6 obligation 1): the advertised tool list is no longer hardcoded empty --
+  // buildAdvertisedSet's own header comment named this exact wiring as "T8's own job... once every
+  // lane's real executor/capability story exists to describe", which is now true (all five P3 lanes
+  // merged). `familyMetadata`/`capabilities`/`toolSearchEnabled`/`insideSubagent` are left unset here
+  // deliberately -- each has a documented, spec-correct default when absent (AvailabilityPredicate's
+  // own comments: absent familyMetadata reads as "not task-native", i.e. shown; absent capabilities
+  // requires an EMPTY capabilityRequirements list to pass, which every implement-now descriptor
+  // already has), and a real resolution story for any of them (the provider catalog's family
+  // metadata [WS-13]; MCP-server-derived capability tokens [WS-09]) is a LATER phase's own job, not
+  // invented here. `disallowedTools` threads the run's own deny-grammar config straight through,
+  // matching what the permissions engine already sees from the same `config` object -- RuntimeConfig
+  // carries no separate "requested tool config" allowlist distinct from `allowedTools` (which stays
+  // OUT of this call by design: AdvertisedSetInputs.allowedTools exists for documentation only, and
+  // a test in registry.test.ts pins that buildAdvertisedSet must never filter on it -- §1.3's
+  // pre-approval-is-not-a-visibility-allowlist rule), so `cfg.tools` is left unset here (its
+  // documented default: "no restriction on this axis").
+  const advertisedToolNames = buildAdvertisedSet({
+    mode: policyStateStore.getState().mode,
+    platform: process.platform,
+    ...(config.disallowedTools !== undefined ? { disallowedTools: config.disallowedTools } : {}),
+  }).map((d) => d.advertisedName);
   output.write({
     type: "init",
     protocolVersion: PROTOCOL_VERSION,
@@ -739,7 +759,7 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
     cwd: config.cwd,
     model: config.model,
     permissionMode: policyStateStore.getState().mode,
-    tools: [],
+    tools: advertisedToolNames,
   });
   output.write({
     type: "data",
@@ -750,7 +770,7 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
       cwd: config.cwd,
       model: config.model,
       permissionMode: policyStateStore.getState().mode,
-      tools: [],
+      tools: advertisedToolNames,
     },
   });
 
