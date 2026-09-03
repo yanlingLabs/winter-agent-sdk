@@ -60,10 +60,38 @@ export const stubExecutor: ToolExecutor = {
 // unlike "tooluse" (whose "test_tool" target has always worked via stubExecutor's blind echo), this
 // provider's target tool needs a REAL ToolExecutionContext (it calls ctx.emitFrame) -- see
 // BGTASK_TEST_TOOL_NAME/registerBgTaskTestTool below, this pair's own other half.
-export type TestProviderName = "boom" | "tooluse" | "hang" | "reflect" | "rpcprobe" | "modeswitch" | "bgtask";
+// Task 8 (P3 close-out, "production wiring" MUST): "lanea"/"laneb"/"lanec"/"laned"/"lanee" join this
+// family for the SAME reason "bgtask" did -- proving that each P3 lane's own REAL tool executor
+// (not just a WS-06 stub) is reachable on the child/compiled legs too, which can only select a
+// Provider by env name. One representative tool per lane, each picked for being DETERMINISTIC
+// across two SEPARATE invocations (one per leg, never sharing in-process state) -- no randomUUID(),
+// no session/task-graph state, no shared mutable filesystem target: lanea=Glob (Lane A, Read/Glob/
+// Grep), laneb=Write (Lane B, Edit/Write/NotebookEdit), lanec=Bash (Lane C, sandbox/Bash/Monitor/
+// TaskOutput/TaskStop), laned=ReportFindings (Lane D, task graph/Cron/ScheduleWakeup/ReportFindings/
+// PushNotification -- NOT TaskCreate, whose minted row id is never byte-identical across two calls;
+// see the "laned" case's own comment below), lanee=EnterPlanMode (Lane E, plan/worktree posture/
+// AskUserQuestion/advisor). See transport-equivalence.test.ts's own "lane equivalence" scenarios
+// (the only consumers) and the "laneb" case below for why Write alone needs a real (non-scripted)
+// provider.
+export type TestProviderName = "boom" | "tooluse" | "hang" | "reflect" | "rpcprobe" | "modeswitch" | "bgtask" | "lanea" | "laneb" | "lanec" | "laned" | "lanee";
+
+const TEST_PROVIDER_NAMES: ReadonlySet<string> = new Set([
+  "boom",
+  "tooluse",
+  "hang",
+  "reflect",
+  "rpcprobe",
+  "modeswitch",
+  "bgtask",
+  "lanea",
+  "laneb",
+  "lanec",
+  "laned",
+  "lanee",
+]);
 
 export function isTestProviderName(v: string): v is TestProviderName {
-  return v === "boom" || v === "tooluse" || v === "hang" || v === "reflect" || v === "rpcprobe" || v === "modeswitch" || v === "bgtask";
+  return TEST_PROVIDER_NAMES.has(v);
 }
 
 export function testProviderByName(name: TestProviderName): Provider {
@@ -140,6 +168,78 @@ export function testProviderByName(name: TestProviderName): Provider {
         { kind: "tool_use", calls: [{ id: "bgtask-call-1", name: BGTASK_TEST_TOOL_NAME, input: {} }] },
         { kind: "text", text: "bgtask done" },
       ]);
+    // Task 8 (P3 close-out): Lane A (Read/Glob/Grep) representative. A fabricated, guaranteed-to-
+    // match-nothing pattern needs no fixture file/directory at all -- Glob's own `path` field is
+    // omitted (defaults to the session cwd, WS-06 §3.1), so the result is deterministically empty
+    // ({paths: [], ...}-shaped) regardless of what the real cwd actually contains on whichever
+    // machine/leg runs this.
+    case "lanea":
+      return scriptedProvider([
+        { kind: "tool_use", calls: [{ id: "lanea-call-1", name: "Glob", input: { pattern: "winter-t8-lanea-fixture-*.does-not-exist-anywhere" } }] },
+        { kind: "text", text: "lane a done" },
+      ]);
+    // Task 8 (P3 close-out): Lane C (Bash/sandbox/Monitor/TaskOutput/TaskStop) representative. `echo`
+    // is a grammar.ts READ_ONLY_COMMANDS entry (auto-approved without an explicit allow rule) and
+    // needs no filesystem fixture -- deterministic stdout on every leg/platform. The scenario itself
+    // (transport-equivalence.test.ts) also passes `sandbox: {enabled:false}` so this runs identically
+    // whether or not the host has /usr/bin/sandbox-exec (Linux CI has none).
+    case "lanec":
+      return scriptedProvider([
+        { kind: "tool_use", calls: [{ id: "lanec-call-1", name: "Bash", input: { command: "echo winter-t8-lanec" } }] },
+        { kind: "text", text: "lane c done" },
+      ]);
+    // Task 8 (P3 close-out): Lane D (task graph/Cron/ScheduleWakeup/ReportFindings/PushNotification)
+    // representative. ReportFindings, not TaskCreate: TaskCreate mints a fresh `randomUUID()` row id
+    // per call (task-graph-store.ts), which is NEVER byte-identical across two SEPARATE invocations
+    // (one per leg) -- discovered empirically (this scenario's own first draft used TaskCreate and
+    // failed compareTraces on exactly that field). ReportFindings is a pure, stateless echo of its
+    // validated input (report-findings.ts's own header: "fully cloneable -- value is local"), so two
+    // separate calls with IDENTICAL input produce byte-identical output, on any leg.
+    case "laned":
+      return scriptedProvider([
+        {
+          kind: "tool_use",
+          calls: [
+            {
+              id: "laned-call-1",
+              name: "ReportFindings",
+              input: { findings: [{ file: "winter-t8-laned.ts", summary: "lane d equivalence fixture", failure_scenario: "none -- deterministic fixture" }] },
+            },
+          ],
+        },
+        { kind: "text", text: "lane d done" },
+      ]);
+    // Task 8 (P3 close-out): Lane E (plan/worktree posture, AskUserQuestion, advisor) representative.
+    // EnterPlanMode's own input schema is `{}` (WS-06 §3.3) -- a pure session-posture mutation via
+    // ctx.session.setPermissionMode, no filesystem/sandbox/network concern either.
+    case "lanee":
+      return scriptedProvider([
+        { kind: "tool_use", calls: [{ id: "lanee-call-1", name: "EnterPlanMode", input: {} }] },
+        { kind: "text", text: "lane e done" },
+      ]);
+    // Task 8 (P3 close-out): Lane B (Edit/Write/NotebookEdit) representative. Write is the ONE
+    // representative that genuinely needs a real, absolute filesystem path -- unlike lanea/lanec/
+    // laned/lanee above, a fabricated/non-existent path would not exercise a REAL write. Unlike every
+    // other case here, this cannot be a fixed `scriptedProvider` script: the path must be the SAME
+    // literal string on whichever leg/process runs it, so the calling test (transport-
+    // equivalence.test.ts) creates ONE real path and threads it through as the query's own `prompt`
+    // text (the one piece of scenario-specific data every leg already receives identically,
+    // regardless of transport) -- mirrored here by `echoProvider`'s own "read the latest user
+    // message" idiom rather than a second, hand-rolled extraction.
+    case "laneb": {
+      let step = 0;
+      return {
+        async generate({ messages }) {
+          if (step === 0) {
+            step++;
+            const lastUser = [...messages].reverse().find((m) => m.role === "user");
+            const filePath = typeof lastUser?.content === "string" ? lastUser.content : "";
+            return { kind: "tool_use", calls: [{ id: "laneb-call-1", name: "Write", input: { file_path: filePath, content: "winter-t8-laneb-fixture-content\n" } }] };
+          }
+          return { kind: "text", text: "lane b done" };
+        },
+      };
+    }
   }
 }
 

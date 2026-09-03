@@ -32,7 +32,7 @@
 //    covered separately (in-memory only) by query.test.ts.
 import { describe, test, expect, afterAll } from "bun:test";
 import { fileURLToPath } from "node:url";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -117,6 +117,13 @@ const LEG_NAMES: LegName[] = process.env.WINTER_COMPILED_BIN ? ["inMemory", "chi
 // registerEquivalenceStandIn calls.
 registerBgTaskTestTool();
 
+// Task 8 (P3 close-out): every scripted TestProviderName whose target is a REAL WS-06 tool name
+// (reachable now via tools/impl/index.ts's production wiring) rather than one of the throwaway
+// snake_case doubles ("test_tool"/"mystery_tool") testing.ts pre-registers to mirror stubExecutor's
+// own echo. One shared set (not a repeated inline `=== "bgtask" || ...` chain) so a future addition
+// here can't independently drift between this file's own spawnHook branch and any other reader.
+const REGISTRY_BACKED_TEST_PROVIDERS: ReadonlySet<TestProviderName> = new Set(["bgtask", "lanea", "laneb", "lanec", "laned", "lanee"]);
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -152,7 +159,17 @@ function spawnHook(leg: LegName, testProviderName: TestProviderName | undefined,
       // WS-06 descriptor and never will, so this substitution is invisible to every pre-existing
       // scenario (registerEquivalenceStandIn's own echo executor for those names, testing.ts, is
       // byte-identical to stubExecutor's formula: `${name}:${JSON.stringify(input)}`).
-      proc = inMemoryProcess(opts.args, testProviderName ? testProviderByName(testProviderName) : echoProvider, testProviderName === "bgtask" ? undefined : stubExecutor, env);
+      //
+      // Task 8 (P3 close-out): the five "lane*" providers join "bgtask" here for the identical
+      // reason -- each targets a REAL WS-06 tool name (Glob/Write/Bash/TaskCreate/EnterPlanMode)
+      // that now has a real executor (the production-wiring MUST, tools/impl/index.ts) and needs the
+      // real registry-backed dispatch, not stubExecutor's blind echo.
+      proc = inMemoryProcess(
+        opts.args,
+        testProviderName ? testProviderByName(testProviderName) : echoProvider,
+        testProviderName !== undefined && REGISTRY_BACKED_TEST_PROVIDERS.has(testProviderName) ? undefined : stubExecutor,
+        env,
+      );
     } else if (leg === "compiled") {
       // Task 5: the compiled `winter` binary IS the executable — spawn it directly (no
       // `process.execPath main.ts` wrapping the way the dev-child leg below needs). Same env
@@ -246,6 +263,12 @@ interface QueryScenarioOptions {
   // own configured-at-startup behavior, not the live-switch mechanic WS-07 §2 promises).
   permissionMode?: PermissionMode;
   allowDangerouslySkipPermissions?: boolean;
+  // Task 8 (P3 close-out, "Settings threading" MUST): lets a scenario configure the session's
+  // effective sandbox posture -- the Lane C equivalence scenario below passes `{enabled:false}` so
+  // its Bash round runs identically whether or not the host actually has /usr/bin/sandbox-exec
+  // (Linux CI does not), proving the settings-threading wiring end-to-end rather than depending on
+  // this suite running on a darwin box.
+  sandbox?: Options["sandbox"];
   // Invoked once per yielded message, AFTER it's recorded into the trace — the kill/abort
   // scenarios use this to act at a precise, OBSERVED point in the stream (WS-04 events), never a
   // real-clock guess (unlike the raw-driven interrupt scenario, which has no such observable event
@@ -282,6 +305,7 @@ async function traceViaQuery(leg: LegName, scenario: QueryScenarioOptions): Prom
         ...(scenario.includeHookEvents !== undefined ? { includeHookEvents: scenario.includeHookEvents } : {}),
         ...(scenario.permissionMode !== undefined ? { permissionMode: scenario.permissionMode } : {}),
         ...(scenario.allowDangerouslySkipPermissions !== undefined ? { allowDangerouslySkipPermissions: scenario.allowDangerouslySkipPermissions } : {}),
+        ...(scenario.sandbox !== undefined ? { sandbox: scenario.sandbox } : {}),
       },
     });
     for await (const msg of gen) {
@@ -736,6 +760,135 @@ function registerEquivalenceScenarios(legA: LegName, legB: LegName): void {
 
     const toolResultMsg = a.trace[5]!.payload as { message: { content: unknown } };
     expect(toolResultMsg.message.content).toEqual([{ type: "tool_result", tool_use_id: "bgtask-call-1", content: "bgtask-probe-done" }]);
+  });
+
+  // Task 8 (P3 close-out, production-wiring MUST): "one tool-round scenario per lane family runs on
+  // all three legs" -- the equivalence proof that tools/impl/index.ts's barrel wiring reaches a REAL
+  // WS-06 tool's REAL executor identically on every transport, not just in-process (where every
+  // lane's own impl/*.test.ts already exercises it directly). Each scenario targets ONE
+  // representative tool per lane (provider/mock.ts's own header names the choice and why); every
+  // scenario also proves the equivalence-suite-wide invariant (`allowedTools` pre-approves so the
+  // scenario proves TRANSPORT equivalence, not permissions, mirroring "tool round"/"bgtask" above).
+  describe("Task 8: one real WS-06 tool round per lane family, on every leg", () => {
+    test("Lane A (Read/Glob/Grep): a real Glob round", async () => {
+      const a = await traceViaQuery(legA, { prompt: "go", testProviderName: "lanea", allowedTools: ["Glob"] });
+      const b = await traceViaQuery(legB, { prompt: "go", testProviderName: "lanea", allowedTools: ["Glob"] });
+      expect(compareTraces(a.trace, b.trace)).toEqual([]);
+      expect(a.thrown).toBeUndefined();
+      expect(b.thrown).toBeUndefined();
+      expect(a.trace.map((e) => e.kind)).toEqual(["system/init", "assistant", "user", "assistant", "result", "exit"]);
+      const toolUseMsg = a.trace[1]!.payload as { message: { content: unknown } };
+      expect(toolUseMsg.message.content).toEqual([{ type: "tool_use", id: "lanea-call-1", name: "Glob", input: { pattern: "winter-t8-lanea-fixture-*.does-not-exist-anywhere" } }]);
+      const toolResultMsg = a.trace[2]!.payload as { message: { content: Array<{ type: string; tool_use_id: string; content: string }> } };
+      const resultText = toolResultMsg.message.content[0]!.content;
+      // Glob's real executor (glob.ts) returns a plain newline-joined path list, not JSON -- a
+      // no-match result is the empty string. Proven identical across legs by compareTraces above;
+      // this assertion just confirms it is genuinely the real executor's own no-match shape, never a
+      // stub/unregistered-tool echo (which would read `Glob:{"pattern":...}`).
+      expect(resultText).toBe("");
+      const finalMsg = a.trace[3]!.payload as { message: { content: unknown } };
+      expect(finalMsg.message.content).toEqual([{ type: "text", text: "lane a done" }]);
+    });
+
+    test("Lane B (Edit/Write/NotebookEdit): a real Write round", async () => {
+      // ONE real, absolute path shared by BOTH legs (advisor guidance, this task's own report): the
+      // scripted "laneb" provider (provider/mock.ts) reads it back out of the query's own `prompt`
+      // text, so both legs embed the IDENTICAL literal in their own Write call/result -- the mkdtemp
+      // path itself is created once, here, by the TEST, never inside either spawned leg.
+      const fixtureDir = mkdtempSync(join(tmpdir(), "winter-t8-laneb-"));
+      afterAll(() => rmSync(fixtureDir, { recursive: true, force: true }));
+      const filePath = join(fixtureDir, "out.txt");
+
+      const a = await traceViaQuery(legA, { prompt: filePath, testProviderName: "laneb", allowedTools: ["Write"] });
+      // Found empirically (this scenario's own first draft): both legs target the SAME literal path
+      // by design (see this test's own header comment), but Write's own executor is genuinely
+      // stateful -- a file that already exists takes the "update" branch (with `previousContent`
+      // populated), while a fresh path takes "create". Running BOTH legs against the same path
+      // SEQUENTIALLY means leg B's own call would otherwise see the file leg A's call just created,
+      // producing a genuinely different (not merely differently-ordered) result shape than leg A saw
+      // -- a real behavioral fact about Write, not a test bug to route around by comparing less.
+      // Removing what leg A wrote before leg B's call keeps this a fair "identical fresh input on
+      // both legs" comparison rather than accidentally testing "create" against "update".
+      rmSync(filePath, { force: true });
+      const b = await traceViaQuery(legB, { prompt: filePath, testProviderName: "laneb", allowedTools: ["Write"] });
+      expect(compareTraces(a.trace, b.trace)).toEqual([]);
+      expect(a.thrown).toBeUndefined();
+      expect(b.thrown).toBeUndefined();
+      expect(a.trace.map((e) => e.kind)).toEqual(["system/init", "assistant", "user", "assistant", "result", "exit"]);
+      const toolUseMsg = a.trace[1]!.payload as { message: { content: unknown } };
+      expect(toolUseMsg.message.content).toEqual([{ type: "tool_use", id: "laneb-call-1", name: "Write", input: { file_path: filePath, content: "winter-t8-laneb-fixture-content\n" } }]);
+      const toolResultMsg = a.trace[2]!.payload as { message: { content: Array<{ type: string; tool_use_id: string; content: string }> } };
+      const resultText = toolResultMsg.message.content[0]!.content;
+      expect(resultText).not.toContain("Write:{");
+      expect(JSON.parse(resultText)).toMatchObject({ type: "create" });
+      const finalMsg = a.trace[3]!.payload as { message: { content: unknown } };
+      expect(finalMsg.message.content).toEqual([{ type: "text", text: "lane b done" }]);
+      // Both legs really wrote the file (not just agreeing on an error) -- read it back once, for real.
+      expect(readFileSync(filePath, "utf8")).toBe("winter-t8-laneb-fixture-content\n");
+    });
+
+    // `sandbox: {enabled:false}` (Task 8's own "Settings threading" MUST) makes this scenario run
+    // identically whether or not the host has /usr/bin/sandbox-exec (Linux CI does not) -- proving
+    // BOTH the production-wiring barrel AND the settings-threading plumbing end-to-end, without
+    // darwin-gating a real cross-leg proof.
+    test("Lane C (Bash/sandbox/Monitor/TaskOutput/TaskStop): a real, unsandboxed Bash round", async () => {
+      const a = await traceViaQuery(legA, { prompt: "go", testProviderName: "lanec", allowedTools: ["Bash"], sandbox: { enabled: false } });
+      const b = await traceViaQuery(legB, { prompt: "go", testProviderName: "lanec", allowedTools: ["Bash"], sandbox: { enabled: false } });
+      expect(compareTraces(a.trace, b.trace)).toEqual([]);
+      expect(a.thrown).toBeUndefined();
+      expect(b.thrown).toBeUndefined();
+      expect(a.trace.map((e) => e.kind)).toEqual(["system/init", "assistant", "user", "assistant", "result", "exit"]);
+      const toolUseMsg = a.trace[1]!.payload as { message: { content: unknown } };
+      expect(toolUseMsg.message.content).toEqual([{ type: "tool_use", id: "lanec-call-1", name: "Bash", input: { command: "echo winter-t8-lanec" } }]);
+      const toolResultMsg = a.trace[2]!.payload as { message: { content: Array<{ type: string; tool_use_id: string; content: string }> } };
+      const resultText = toolResultMsg.message.content[0]!.content;
+      expect(resultText).not.toContain("Bash:{");
+      expect(resultText).toContain("winter-t8-lanec");
+      expect(resultText).toContain("[exit 0]");
+      expect(resultText).toContain("[sandbox: config-disabled]");
+      const finalMsg = a.trace[3]!.payload as { message: { content: unknown } };
+      expect(finalMsg.message.content).toEqual([{ type: "text", text: "lane c done" }]);
+    });
+
+    test("Lane D (task graph/Cron/ScheduleWakeup/ReportFindings/PushNotification): a real ReportFindings round", async () => {
+      // ReportFindings, not TaskCreate: found empirically (this scenario's own first draft) that
+      // TaskCreate mints a fresh randomUUID() row id per call (task-graph-store.ts) that can never be
+      // byte-identical across two SEPARATE invocations -- see provider/mock.ts's own "laned" comment.
+      const findingInput = { findings: [{ file: "winter-t8-laned.ts", summary: "lane d equivalence fixture", failure_scenario: "none -- deterministic fixture" }] };
+      const a = await traceViaQuery(legA, { prompt: "go", testProviderName: "laned", allowedTools: ["ReportFindings"] });
+      const b = await traceViaQuery(legB, { prompt: "go", testProviderName: "laned", allowedTools: ["ReportFindings"] });
+      expect(compareTraces(a.trace, b.trace)).toEqual([]);
+      expect(a.thrown).toBeUndefined();
+      expect(b.thrown).toBeUndefined();
+      expect(a.trace.map((e) => e.kind)).toEqual(["system/init", "assistant", "user", "assistant", "result", "exit"]);
+      const toolUseMsg = a.trace[1]!.payload as { message: { content: unknown } };
+      expect(toolUseMsg.message.content).toEqual([{ type: "tool_use", id: "laned-call-1", name: "ReportFindings", input: findingInput }]);
+      const toolResultMsg = a.trace[2]!.payload as { message: { content: Array<{ type: string; tool_use_id: string; content: string }> } };
+      const resultText = toolResultMsg.message.content[0]!.content;
+      expect(resultText).not.toContain("ReportFindings:{");
+      // A pure, stateless echo of the validated input (report-findings.ts's own header) -- byte-equal
+      // to what was sent, no invented fields.
+      expect(JSON.parse(resultText)).toEqual(findingInput);
+      const finalMsg = a.trace[3]!.payload as { message: { content: unknown } };
+      expect(finalMsg.message.content).toEqual([{ type: "text", text: "lane d done" }]);
+    });
+
+    test("Lane E (plan/worktree posture, AskUserQuestion, advisor): a real EnterPlanMode round", async () => {
+      const a = await traceViaQuery(legA, { prompt: "go", testProviderName: "lanee", allowedTools: ["EnterPlanMode"] });
+      const b = await traceViaQuery(legB, { prompt: "go", testProviderName: "lanee", allowedTools: ["EnterPlanMode"] });
+      expect(compareTraces(a.trace, b.trace)).toEqual([]);
+      expect(a.thrown).toBeUndefined();
+      expect(b.thrown).toBeUndefined();
+      expect(a.trace.map((e) => e.kind)).toEqual(["system/init", "assistant", "user", "assistant", "result", "exit"]);
+      const toolUseMsg = a.trace[1]!.payload as { message: { content: unknown } };
+      expect(toolUseMsg.message.content).toEqual([{ type: "tool_use", id: "lanee-call-1", name: "EnterPlanMode", input: {} }]);
+      const toolResultMsg = a.trace[2]!.payload as { message: { content: Array<{ type: string; tool_use_id: string; content: string }> } };
+      const resultText = toolResultMsg.message.content[0]!.content;
+      expect(resultText).not.toContain("EnterPlanMode:{");
+      expect(JSON.parse(resultText)).toMatchObject({ mode: "plan" });
+      const finalMsg = a.trace[3]!.payload as { message: { content: unknown } };
+      expect(finalMsg.message.content).toEqual([{ type: "text", text: "lane e done" }]);
+    });
   });
 
   // Task 13 (Carry 1, WS-07 §6.1 / Ruling P2-I): the COMPOSED, integration-level proof that a
