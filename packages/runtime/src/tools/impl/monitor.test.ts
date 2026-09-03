@@ -204,6 +204,67 @@ describe("validateWsEndpoint", () => {
     const v = await validateWsEndpoint("ws://8.8.8.8/");
     expect(v.ok).toBe(true);
   });
+
+  // RULING P3-I (Task 8, P3 close-out): the DNS-rebinding TOCTOU fix -- validateWsEndpoint now pins
+  // the connection to the validated address itself, never leaving the caller to re-resolve the
+  // original hostname independently at connect time.
+  describe("RULING P3-I: pins the connection to the validated address", () => {
+    test("ws:// to an IP literal: connectUrl is keyed by that SAME literal, hostHeader preserves the original host[:port]", async () => {
+      const v = await validateWsEndpoint("ws://8.8.8.8:1234/path");
+      expect(v.ok).toBe(true);
+      if (v.ok) {
+        expect(v.connectUrl.hostname).toBe("8.8.8.8");
+        expect(v.connectUrl.toString()).toBe("ws://8.8.8.8:1234/path");
+        expect(v.hostHeader).toBe("8.8.8.8:1234");
+      }
+    });
+
+    test("wss:// to a DNS name is rejected outright (RULING P3-I: not yet pinnable against a rebinding resolver)", async () => {
+      const v = await validateWsEndpoint("wss://example.com/socket");
+      expect(v.ok).toBe(false);
+      if (!v.ok) {
+        expect(v.reason).toContain("RULING P3-I");
+        expect(v.reason).toContain("example.com");
+      }
+    });
+
+    test("wss:// to an already-literal IP is NOT rejected -- nothing to rebind (no second, independent resolution of a literal)", async () => {
+      const v = await validateWsEndpoint("wss://8.8.8.8/socket");
+      expect(v.ok).toBe(true);
+      if (v.ok) {
+        expect(v.connectUrl.hostname).toBe("8.8.8.8");
+        expect(v.hostHeader).toBe("8.8.8.8");
+      }
+    });
+
+    test("a bracketed IPv6 literal round-trips through the pin correctly (the bare-hostname-assignment silent-no-op trap this ruling's own comment warns against)", async () => {
+      // A real, publicly-routable IPv6 literal (Google public DNS) -- exercises the family:6 branch
+      // of hostnameForUrl/isDisallowedIPv6 end to end, not just the IPv4 path every other fixture
+      // here exercises.
+      const v = await validateWsEndpoint("ws://[2001:4860:4860::8888]:1234/path");
+      expect(v.ok).toBe(true);
+      if (v.ok) {
+        // If bracketing were dropped (the exact trap the comment names), `connectUrl.hostname`
+        // would silently still read the URL's ORIGINAL host string as a no-op assignment -- the
+        // fact this equals the address itself (bracketed) is the proof the assignment actually took.
+        expect(v.connectUrl.hostname).toBe("[2001:4860:4860::8888]");
+        expect(v.hostHeader).toBe("[2001:4860:4860::8888]:1234");
+      }
+    });
+
+    // A genuine PRE-EXISTING bug found while writing the fixture above (not introduced by this
+    // ruling, but fixed alongside it -- see stripBrackets' own header for the full account):
+    // `URL.hostname` for a bracketed IPv6 host includes the brackets, which made `dns.lookup()`
+    // reject EVERY IPv6 URL outright (ENOTFOUND) before this fix, regardless of whether the address
+    // was disallowed or not -- a functional bug (IPv6 monitor targets were simply unusable), not by
+    // itself a security fail-open. This fixture proves the DISALLOW check still fires correctly now
+    // that resolution itself works: a link-local IPv6 literal is rejected, not merely "unresolvable".
+    test("a disallowed (link-local) IPv6 literal is correctly rejected end to end, now that resolution itself works", async () => {
+      const v = await validateWsEndpoint("ws://[fe80::1]/");
+      expect(v.ok).toBe(false);
+      if (!v.ok) expect(v.reason).toContain("disallowed");
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------------------------
@@ -346,6 +407,57 @@ describe("connectMonitorWs (real local server)", () => {
     expect(stopTask(taskId)).toBe(true);
     await waitFor(() => getTask(taskId)?.status !== "running");
     expect(getTask(taskId)?.status).not.toBe("running");
+  });
+
+  // RULING P3-I (Task 8, P3 close-out): proves the production path end to end -- runMonitorWs
+  // passes validateWsEndpoint's own pinned `connectUrl`/`hostHeader` straight through to
+  // connectMonitorWs's new optional 7th parameter, which this test exercises directly (the
+  // IP-literal `url` here stands in for what validateWsEndpoint's own pin would have produced; this
+  // describe block's own header explains why a real local server can't go through validateWsEndpoint
+  // itself). A real Bun.serve server observing the ACTUAL Host header it received is the only way to
+  // prove the header genuinely reaches the wire, not just that this file's own code compiles it.
+  test("RULING P3-I: an explicit hostHeader is sent as the WS upgrade request's own Host header (virtual-hosting preservation)", async () => {
+    const captured: { host: string | null } = { host: null };
+    server = Bun.serve({
+      port: 0,
+      fetch(req, srv) {
+        captured.host = req.headers.get("host");
+        if (srv.upgrade(req)) return;
+        return new Response("expected websocket", { status: 400 });
+      },
+      websocket: {
+        open: (ws) => {
+          ws.send("hello");
+        },
+        message: () => {},
+      },
+    });
+    const ctx = fakeCtx();
+    await connectMonitorWs(`ws://127.0.0.1:${server.port}`, undefined, "watch", 5000, false, ctx, "pinned-test-host.example:9999");
+    await waitFor(() => captured.host !== null);
+    expect(captured.host).toBe("pinned-test-host.example:9999");
+  });
+
+  test("RULING P3-I: omitting hostHeader (every pre-existing call site) behaves exactly as before -- the server sees the connection's own literal host", async () => {
+    const captured: { host: string | null } = { host: null };
+    server = Bun.serve({
+      port: 0,
+      fetch(req, srv) {
+        captured.host = req.headers.get("host");
+        if (srv.upgrade(req)) return;
+        return new Response("expected websocket", { status: 400 });
+      },
+      websocket: {
+        open: (ws) => {
+          ws.send("hello");
+        },
+        message: () => {},
+      },
+    });
+    const ctx = fakeCtx();
+    await connectMonitorWs(`ws://127.0.0.1:${server.port}`, undefined, "watch", 5000, false, ctx);
+    await waitFor(() => captured.host !== null);
+    expect(captured.host).toBe(`127.0.0.1:${server.port}`);
   });
 });
 

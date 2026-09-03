@@ -17,6 +17,7 @@
 import { randomUUID } from "node:crypto";
 import { createWriteStream } from "node:fs";
 import { lookup as dnsLookup } from "node:dns/promises";
+import { isIP } from "node:net";
 import "../descriptors/monitor.ts";
 import { replaceExecutor, type ToolExecutor, type ToolExecutionContext, type ToolResultPayload } from "../registry.ts";
 import { createBackgroundTask } from "../background-tasks.ts";
@@ -272,7 +273,60 @@ function isDisallowedAddress(address: string, family: number): boolean {
   return family === 6 ? isDisallowedIPv6(address) : isDisallowedIPv4(address);
 }
 
-type WsValidation = { ok: true; url: URL } | { ok: false; reason: string };
+// RULING P3-I (Task 8, P3 close-out): `connectUrl` is keyed by the VALIDATED ADDRESS itself (never
+// the original hostname) and `hostHeader` preserves the original `host[:port]` for the WS upgrade
+// request's own Host header (virtual-hosting servers care which name the client asked for) -- see
+// validateWsEndpoint's own header for why this closes the DNS-rebinding TOCTOU Lane C's review
+// disclosed.
+type WsValidation = { ok: true; connectUrl: URL; hostHeader: string } | { ok: false; reason: string };
+
+// A bare (unbracketed) IPv6 literal assigned to `URL.hostname` SILENTLY NO-OPS under WHATWG URL
+// parsing -- verified empirically before writing this function (`u.hostname = "::1"` leaves the URL
+// completely unchanged, no error, no warning). Bracketing is not cosmetic here; omitting it would
+// make the whole pin a silent no-op for every IPv6 target, defeating this ruling entirely.
+function hostnameForUrl(address: string, family: number): string {
+  return family === 6 ? `[${address}]` : address;
+}
+
+// RULING P3-I: pins the ACTUAL CONNECTION to the address this function itself just validated,
+// closing the DNS-rebinding TOCTOU Lane C's own review disclosed (fix-round-1 item 2, `d776808`):
+// the pre-fix `validateWsEndpoint` resolved+validated the hostname ONCE, then handed back a URL
+// still keyed by that SAME hostname -- `new WebSocket(url)` at the actual connect site re-resolved
+// it INDEPENDENTLY, through Bun's own platform DNS, so a TTL-0/rebinding-capable resolver could pass
+// THIS validation with a safe address and connect to a disallowed one on the SECOND, independent
+// resolution.
+//
+// ws:// is pinned unconditionally below (nothing about a plain TCP connection cares which name was
+// used to find the address -- see the Host-header handling instead for the one thing that DOES).
+//
+// wss:// is the harder case, and is DELIBERATELY NOT given the identical treatment: TLS certificate
+// validation (and SNI, before the handshake even starts) needs the ORIGINAL HOSTNAME, not the
+// resolved IP -- pinning the raw connection to an IP while asking Bun's own TLS stack to validate
+// against a DIFFERENT literal string is not the same "just change the hostname" operation ws://'s
+// pin is. Bun's WebSocket constructor DOES expose a `tls.serverName` override that could in
+// principle re-supply the real hostname for SNI/cert validation while the raw TCP connection targets
+// the pinned IP (verified present in this task's own research) -- a genuine candidate resolver seam
+// for whoever revisits this. This ruling does NOT adopt it here: the phase ledger's own ratified
+// posture is "fail-closed on non-literal wss hosts is the fallback posture" until that seam is built
+// and empirically verified end-to-end (TLS pinning has more failure modes than a plain TCP connect,
+// and this task's own scope did not include standing up a real TLS test fixture to prove it). An
+// ALREADY-literal wss:// host (the caller wrote a raw IP) has nothing to rebind in the first place --
+// there is no SECOND, independent resolution of a literal address -- so it is not rejected; only a
+// genuine DNS name is.
+// A REAL, pre-existing (not introduced by this ruling) bug found empirically while adding this
+// ruling's own IPv6 fixture: `URL.hostname` for a bracketed IPv6 host returns the BRACKETS INCLUDED
+// (`"[2001:4860:4860::8888]"`, verified directly against this project's own URL implementation --
+// not the bracket-stripped form the WHATWG spec's prose might suggest at a glance). Handing that
+// bracketed string to `node:dns`'s `lookup()` or `node:net`'s `isIP()` makes BOTH silently fail to
+// recognize it as the literal it is: `dns.lookup("[::1]")` rejects with ENOTFOUND (it tries to
+// resolve "[::1]" as a hostname), and `isIP("[::1]")` returns `0` ("not an IP"). Before this fix,
+// EVERY IPv6 URL -- literal or not -- would have failed DNS resolution outright; no existing test
+// anywhere in this file exercised a real IPv6 URL end-to-end, only the bare-string
+// isDisallowedIPv6() classifier directly. Stripping brackets ONCE, up front, is what makes both the
+// wss:// literal-detection check below AND the DNS lookup see the address form they actually expect.
+function stripBrackets(hostname: string): string {
+  return hostname.startsWith("[") && hostname.endsWith("]") ? hostname.slice(1, -1) : hostname;
+}
 
 async function validateWsEndpoint(rawUrl: string): Promise<WsValidation> {
   let url: URL;
@@ -284,9 +338,18 @@ async function validateWsEndpoint(rawUrl: string): Promise<WsValidation> {
   if (url.protocol !== "ws:" && url.protocol !== "wss:") {
     return { ok: false, reason: `unsupported scheme "${url.protocol}" -- only ws:// and wss:// are allowed` };
   }
+  const bareHostname = stripBrackets(url.hostname);
+  if (url.protocol === "wss:" && isIP(bareHostname) === 0) {
+    return {
+      ok: false,
+      reason:
+        `wss:// to a DNS name ("${url.hostname}") cannot yet be safely pinned against a DNS-rebinding resolver (RULING P3-I) -- ` +
+        `use a literal IP address for wss://, or ws:// if TLS is not required`,
+    };
+  }
   let addresses: Array<{ address: string; family: number }>;
   try {
-    addresses = await dnsLookup(url.hostname, { all: true });
+    addresses = await dnsLookup(bareHostname, { all: true });
   } catch {
     return { ok: false, reason: `DNS resolution failed for "${url.hostname}" -- failing closed` };
   }
@@ -298,7 +361,13 @@ async function validateWsEndpoint(rawUrl: string): Promise<WsValidation> {
       return { ok: false, reason: `"${url.hostname}" resolves to a disallowed private/link-local/metadata address (${address})` };
     }
   }
-  return { ok: true, url };
+  // Every candidate above passed the disallow check; pin to the first one. `url.host` already
+  // includes a non-default port when one was given, which is exactly the Host-header value a
+  // virtual-hosting server would have seen from an UNPINNED connection to the original hostname.
+  const pinned = addresses[0]!;
+  const connectUrl = new URL(url.toString());
+  connectUrl.hostname = hostnameForUrl(pinned.address, pinned.family);
+  return { ok: true, connectUrl, hostHeader: url.host };
 }
 
 const MAX_WS_MESSAGE_BYTES = 1024 * 1024; // WS-06 §3.2: "kills on >1 MiB messages"
@@ -308,7 +377,7 @@ async function runMonitorWs(input: MonitorInput & { ws: { url: string; protocols
   if (!validation.ok) {
     return { output: `Error: Monitor: ${validation.reason}`, isError: true };
   }
-  return connectMonitorWs(validation.url.toString(), input.ws.protocols, input.description, input.timeout_ms, input.persistent, ctx);
+  return connectMonitorWs(validation.connectUrl.toString(), input.ws.protocols, input.description, input.timeout_ms, input.persistent, ctx, validation.hostHeader);
 }
 
 // Split out from runMonitorWs (and exported) so the CONNECTION/STREAMING mechanics -- message
@@ -324,25 +393,40 @@ export async function connectMonitorWs(
   timeoutMs: number,
   persistent: boolean,
   ctx: ToolExecutionContext,
+  // RULING P3-I (Task 8, P3 close-out): optional, appended LAST so every pre-existing direct-call
+  // test site (this file's own header: "directly testable against a real local WS server") keeps
+  // compiling unchanged. Production's own caller (runMonitorWs, above) always supplies it -- `url`
+  // by that point is already the PINNED address (validateWsEndpoint's own connectUrl), and this is
+  // the original `host[:port]` string a virtual-hosting server would have seen from an unpinned
+  // connection.
+  hostHeader?: string,
 ): Promise<ToolResultPayload> {
-  // DISCLOSED, NOT FIXED HERE (routed to a future T8 design item under RULING P3-I -- this lane's
-  // instruction is to name the hole, not patch around it): DNS-rebinding TOCTOU. `validateWsEndpoint`
-  // resolves `url.hostname` ONCE (above, in runMonitorWs) and hands back a URL still keyed by that
-  // SAME hostname, never by the validated address. `new WebSocket(url)` below re-resolves the
-  // hostname independently, at connect time, through Bun's own platform DNS -- a TTL-0 attacker (or
-  // a compromised/rebinding-capable resolver) can serve a safe public address for the FIRST lookup
-  // (the one this file validates) and a loopback/RFC1918/link-local/metadata address for the SECOND
-  // (the one that actually gets connected to), defeating validateWsEndpoint entirely without ever
-  // tripping isDisallowedAddress. Full remediation means pinning the CONNECTION to the validated
-  // address rather than the hostname -- but Bun's WebSocket constructor exposes no resolver hook or
-  // "connect to this IP" option, and `wss://` complicates a hand-rolled pin further (TLS SNI/cert
-  // validation still needs to see the ORIGINAL hostname, not the pinned IP, so pinning naively would
-  // break every TLS monitor target). This IS defense-in-depth, not the primary gate, per this file's
-  // own header (WS-07's own approval/network-policy layer is the PRIMARY control here) -- but it is
-  // real, live exposure until P3-I lands a real fix, not a theoretical gap.
+  // RULING P3-I: CLOSED for ws:// -- `url` (above) is already the address `validateWsEndpoint`
+  // itself validated (never re-derived from a second, independent resolution at this connect site),
+  // and `hostHeader` restores the Host a virtual-hosting server expects. wss:// to a genuine DNS
+  // name is rejected upstream, in validateWsEndpoint, before this function is ever reached -- see
+  // that function's own header for the full rationale (including the TLS-serverName candidate seam
+  // this ruling deliberately does not adopt yet) and why an already-literal wss:// host needed no
+  // fix here to begin with (nothing to rebind).
   let socket: WebSocket;
+  // Verified empirically (a standalone script, real Bun runtime): `new WebSocket(url, { headers:
+  // {...} })` genuinely works -- Bun's real constructor accepts a `Bun.WebSocketOptions` object as
+  // its 2nd argument (protocols/headers/tls/proxy/compression), per bun-types' own declared
+  // `new (url, options?: Bun.WebSocketOptions)` overload. But in THIS project's own tsconfig, the
+  // ambient `WebSocket` global's effective TYPE resolves to only the OTHER, narrower overload
+  // (`(url, protocols?: string | string[])`) -- verified project-wide, not specific to this file or
+  // this argument's own shape (bun-types' own `UseLibDomIfAvailable` helper falls back to whatever
+  // `lib.dom.d.ts`-shaped WebSocket some transitively-loaded lib/types package supplies once one is
+  // present, and that shape has no options-object overload at all). A local constructor-type cast is
+  // the least-invasive way to use the REAL (runtime-correct, spec-documented) signature without
+  // fighting this project's own global type resolution.
+  type BunWebSocketCtor = new (url: string, options?: Bun.WebSocketOptions) => WebSocket;
+  const wsOptions: Bun.WebSocketOptions = {
+    ...(protocols !== undefined ? { protocols } : {}),
+    ...(hostHeader !== undefined ? { headers: { Host: hostHeader } } : {}),
+  };
   try {
-    socket = protocols !== undefined ? new WebSocket(url, protocols) : new WebSocket(url);
+    socket = new (WebSocket as unknown as BunWebSocketCtor)(url, wsOptions);
   } catch (err) {
     return { output: `Error: Monitor: failed to open websocket: ${(err as Error).message}`, isError: true };
   }
