@@ -291,14 +291,19 @@ function buildImageBlock(bytes: Buffer, mediaType: string, dims: { width: number
   };
 }
 
-function readImage(target: string, ext: string, st: Stats, ctx: ToolExecutionContext): ToolResultPayload {
+function readImage(target: string, ext: string, st: Stats, usedWindow: boolean, ctx: ToolExecutionContext): ToolResultPayload {
   if (st.size > IMAGE_MAX_BYTES) {
     return { output: `Error: image ${basename(target)} is ${st.size} bytes, exceeding the ${IMAGE_MAX_BYTES}-byte read limit`, isError: true };
   }
   const bytes = readFileSync(target);
   const mediaType = IMAGE_MIME[ext]!;
   const dims = parseImageDimensions(ext, bytes);
-  ctx.readState.recordRead(target, { complete: true, mtimeMs: st.mtimeMs });
+  // A whole image is always attached in full -- there is no partial-image concept -- but the
+  // brief's own rule is literal and carve-out-free ("a windowed/offset/limit/pages read records
+  // complete: false"): a caller that passed offset/limit/pages on an image read (nonsensical, but
+  // not rejected -- WS-06 doesn't scope those fields per file type) must not be told it was a
+  // trustworthy whole-file read either. Same reasoning applies to notebooks and PDFs below.
+  ctx.readState.recordRead(target, { complete: !usedWindow, mtimeMs: st.mtimeMs });
   return blocksResult([buildImageBlock(bytes, mediaType, dims)]);
 }
 
@@ -434,7 +439,7 @@ function pdfFitsWholeFileBudget(totalPages: number | undefined, byteSize: number
 const PDF_NO_EXTRACTION_NOTE =
   "text content is not extracted at this phase (WS-06 Phase-3 Lane-A schema-sweep) -- raw document bytes are provided for native handling where supported";
 
-function readPdf(target: string, st: Stats, pagesStr: string | undefined, ctx: ToolExecutionContext): ToolResultPayload {
+function readPdf(target: string, st: Stats, pagesStr: string | undefined, usedWindow: boolean, ctx: ToolExecutionContext): ToolResultPayload {
   const bytes = readFileSync(target);
   const totalPages = countPdfPages(bytes);
   const fits = pdfFitsWholeFileBudget(totalPages, st.size);
@@ -472,8 +477,9 @@ function readPdf(target: string, st: Stats, pagesStr: string | undefined, ctx: T
           note: PDF_NO_EXTRACTION_NOTE,
         };
 
-  // `complete` is true only for a genuine whole-document read -- `pages` was never given.
-  ctx.readState.recordRead(target, { complete: requestedPages === undefined, mtimeMs: st.mtimeMs });
+  // `complete` is true only for a genuine whole-document read -- `pages` was never given AND no
+  // other windowing field (offset/limit, nonsensical for a PDF but not schema-rejected) was either.
+  ctx.readState.recordRead(target, { complete: !usedWindow && requestedPages === undefined, mtimeMs: st.mtimeMs });
   return blocksResult([block]);
 }
 
@@ -504,12 +510,13 @@ async function execute(rawInput: unknown, ctx: ToolExecutionContext): Promise<To
   const ext = extname(target).toLowerCase();
 
   try {
-    if (IMAGE_EXTS.has(ext)) return readImage(target, ext, st, ctx);
-    if (ext === ".pdf") return readPdf(target, st, input.pages, ctx);
+    if (IMAGE_EXTS.has(ext)) return readImage(target, ext, st, usedWindow, ctx);
+    if (ext === ".pdf") return readPdf(target, st, input.pages, usedWindow, ctx);
     if (ext === ".ipynb") {
       const rendered = renderNotebookBlocks(readFileSync(target, "utf8"));
       if (rendered !== undefined) {
-        ctx.readState.recordRead(target, { complete: true, mtimeMs: st.mtimeMs });
+        // Same literal, carve-out-free rule as images/PDFs above -- see readImage's own comment.
+        ctx.readState.recordRead(target, { complete: !usedWindow, mtimeMs: st.mtimeMs });
         return blocksResult(rendered);
       }
       // malformed JSON / no `cells` array -- fall through to plain text below.

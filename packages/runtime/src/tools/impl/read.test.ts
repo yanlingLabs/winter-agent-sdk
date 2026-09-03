@@ -288,6 +288,15 @@ describe("Read (Phase 3, Lane A, Task 4)", () => {
       expect(result.isError).toBe(true);
       expect(result.output).toContain("exceeding");
     });
+
+    test("a stray offset on an image read still records complete:false (no per-type carve-out)", async () => {
+      const p = join(dir, "pic2.png");
+      writeFileSync(p, makePng(1, 1));
+      const ctx = makeCtx(dir);
+      const result = await runRead({ file_path: p, offset: 3 }, ctx);
+      expect(result.isError).toBeUndefined();
+      expect(ctx.readState.lookup(p)?.complete).toBe(false);
+    });
   });
 
   describe("notebooks", () => {
@@ -318,6 +327,15 @@ describe("Read (Phase 3, Lane A, Task 4)", () => {
       expect(imageBlocks).toHaveLength(1);
       expect(imageBlocks[0]?.media_type).toBe("image/png");
       expect(imageBlocks[0]?.width).toBe(5);
+    });
+
+    test("a stray offset on a notebook read still records complete:false (no per-type carve-out)", async () => {
+      const p = join(dir, "nb2.ipynb");
+      writeFileSync(p, JSON.stringify({ cells: [{ cell_type: "code", source: "x" }] }));
+      const ctx = makeCtx(dir);
+      const result = await runRead({ file_path: p, offset: 2 }, ctx);
+      expect(result.isError).toBeUndefined();
+      expect(ctx.readState.lookup(p)?.complete).toBe(false);
     });
 
     test("a malformed notebook falls through to the plain-text path", async () => {
@@ -419,6 +437,15 @@ describe("Read (Phase 3, Lane A, Task 4)", () => {
       expect(block.totalPages).toBeUndefined();
       expect(typeof block.data).toBe("string");
       expect(ctx.readState.lookup(p)?.complete).toBe(true);
+    });
+
+    test("a stray offset on a whole-document PDF read still records complete:false (no per-type carve-out)", async () => {
+      const p = join(dir, "small3.pdf");
+      writeFileSync(p, makePdfBytes({ pageCount: 2 }));
+      const ctx = makeCtx(dir);
+      const result = await runRead({ file_path: p, offset: 1 }, ctx);
+      expect(result.isError).toBeUndefined();
+      expect(ctx.readState.lookup(p)?.complete).toBe(false);
     });
 
     test("unknown page count, large file, no `pages`: errors naming the byte size", async () => {
