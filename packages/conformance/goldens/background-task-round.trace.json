@@ -1,0 +1,171 @@
+[
+  {
+    "sequence": 0,
+    "direction": "runtime-to-host",
+    "kind": "system/init",
+    "payload": {
+      "type": "system",
+      "subtype": "init",
+      "cwd": "/winter-fixture",
+      "model": "sonnet",
+      "permissionMode": "default",
+      "tools": []
+    }
+  },
+  {
+    "sequence": 1,
+    "direction": "runtime-to-host",
+    "kind": "assistant",
+    "payload": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "type": "tool_use",
+            "id": "bgtask-call-1",
+            "name": "differential_bgtask_probe",
+            "input": {
+              "command": "sleep 100 &"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "sequence": 2,
+    "direction": "runtime-to-host",
+    "kind": "system/task_started",
+    "payload": {
+      "type": "system",
+      "subtype": "task_started",
+      "task_id": "bgtask-differential-1",
+      "tool_use_id": "bgtask-call-1",
+      "description": "sleep 100 &",
+      "task_type": "local_bash",
+      "is_backgrounded": true
+    }
+  },
+  {
+    "sequence": 3,
+    "direction": "runtime-to-host",
+    "kind": "system/background_tasks_changed",
+    "payload": {
+      "type": "system",
+      "subtype": "background_tasks_changed",
+      "tasks": [
+        {
+          "task_id": "bgtask-differential-1",
+          "task_type": "local_bash",
+          "description": "sleep 100 &",
+          "ambient": false
+        }
+      ]
+    }
+  },
+  {
+    "sequence": 4,
+    "direction": "runtime-to-host",
+    "kind": "system/task_progress",
+    "payload": {
+      "type": "system",
+      "subtype": "task_progress",
+      "task_id": "bgtask-differential-1",
+      "tool_use_id": "bgtask-call-1",
+      "description": "sleep 100 &",
+      "usage": {
+        "total_tokens": 0,
+        "tool_uses": 0
+      },
+      "last_tool_name": "Bash",
+      "summary": "still running"
+    }
+  },
+  {
+    "sequence": 5,
+    "direction": "runtime-to-host",
+    "kind": "system/task_updated",
+    "payload": {
+      "type": "system",
+      "subtype": "task_updated",
+      "task_id": "bgtask-differential-1",
+      "patch": {
+        "status": "completed",
+        "end_time": 0
+      }
+    }
+  },
+  {
+    "sequence": 6,
+    "direction": "runtime-to-host",
+    "kind": "system/task_notification",
+    "payload": {
+      "type": "system",
+      "subtype": "task_notification",
+      "task_id": "bgtask-differential-1",
+      "tool_use_id": "bgtask-call-1",
+      "status": "completed",
+      "output_file": "/winter-fixture/tasks/bgtask-differential-1.output",
+      "summary": "background bash task finished",
+      "usage": {
+        "total_tokens": 0,
+        "tool_uses": 0
+      }
+    }
+  },
+  {
+    "sequence": 7,
+    "direction": "runtime-to-host",
+    "kind": "system/local_command_output",
+    "payload": {
+      "type": "system",
+      "subtype": "local_command_output",
+      "content": "[background] sleep 100 & -> completed"
+    }
+  },
+  {
+    "sequence": 8,
+    "direction": "runtime-to-host",
+    "kind": "user",
+    "payload": {
+      "type": "user",
+      "message": {
+        "content": [
+          {
+            "type": "tool_result",
+            "tool_use_id": "bgtask-call-1",
+            "content": "backgrounded"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "sequence": 9,
+    "direction": "runtime-to-host",
+    "kind": "assistant",
+    "payload": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "type": "text",
+            "text": "backgrounded"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "sequence": 10,
+    "direction": "runtime-to-host",
+    "kind": "result",
+    "payload": {
+      "type": "result",
+      "subtype": "success",
+      "is_error": false,
+      "result": "backgrounded",
+      "permission_denials": []
+    }
+  }
+]

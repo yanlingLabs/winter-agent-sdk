@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { query, encodeFrame, splitFrames, type RuntimeConfig, type WinterFrame } from "@yanlinglabs/winter-agent-sdk";
 import { inMemoryProcess } from "winter-agent-runtime/testing";
-import { testProviderByName } from "winter-agent-runtime";
+import { testProviderByName, scriptedProvider, registerTool } from "winter-agent-runtime";
 import { normalizeTrace, compareTraces, type ConformanceTraceEntry } from "winter-conformance/trace";
 
 // A pinned, synthetic cwd (never process.cwd()) so every recorded trace — and the committed golden
@@ -394,6 +394,136 @@ export async function traceWinterResume(): Promise<ConformanceTraceEntry[]> {
   }
 }
 
+// Task 2 (P3, WS-06 §3.5): the background-task message family, end-to-end through a real registered
+// tool's ctx.emitFrame call — proves engine.ts's plumbing (buildDefaultToolExecutor's emitFrame
+// closure -> output.write) against a committed golden, complementing transport-equivalence.test.ts's
+// own in-memory-scoped RED->GREEN proof of the same seam (see that file's own header comment on this
+// same scenario shape for why this phase's proof stops at the in-memory leg — main.ts's stubExecutor
+// is a structural gap outside this task's named scope, per Task 1's own "main.ts is untouched"
+// invariant; this script is in-memory-only BY DESIGN regardless, per its own file header above, so
+// that gap does not even apply here).
+//
+// Framed as a single backgrounded bash task's own lifecycle (WS-06 §3.5's own motivating case,
+// background-tasks.ts's task-id namespace) — but the registered tool also emits task_updated,
+// background_tasks_changed, and local_command_output back-to-back so this ONE new golden (this
+// task's own "one new differential scenario" scope) covers the full closed six-shape family in a
+// single run, rather than pinning three of six here and leaving the rest to type-check alone.
+// task_id/output_file/description/summary/usage counters are all FIXED literals, never
+// randomUUID()/createBackgroundTask() output or a real timestamp — regenerate-twice determinism
+// (WS-17 §4) depends on it, since `end_time` (task_updated's patch) is NOT one of normalizeTrace's
+// VOLATILE fields the way uuid/session_id/duration_ms already are.
+const DIFFERENTIAL_BGTASK_TOOL = "differential_bgtask_probe"; // throwaway snake_case test double, distinct from transport-equivalence.test.ts's own test_bgtask_probe (separate process, but named apart for clarity) -- never a real WS-06 name
+
+registerTool({
+  descriptor: {
+    canonicalName: DIFFERENTIAL_BGTASK_TOOL,
+    advertisedName: DIFFERENTIAL_BGTASK_TOOL,
+    source: "sdk",
+    inputSchema: { type: "object" },
+    description: "Test-only background-task-frame emitter (scripts/differential.ts) -- not a WS-06 tool.",
+    exposure: "hidden",
+    permissionClass: "execute",
+    availability: {},
+    capabilityRequirements: [],
+    disposition: "implement-now",
+  },
+  executor: {
+    async execute(_input, ctx) {
+      const taskId = "bgtask-differential-1";
+      const toolUseId = "bgtask-call-1";
+      const description = "sleep 100 &";
+      ctx.emitFrame({
+        type: "system",
+        subtype: "task_started",
+        task_id: taskId,
+        tool_use_id: toolUseId,
+        description,
+        task_type: "local_bash",
+        is_backgrounded: true,
+        uuid: randomUUID(),
+        session_id: ctx.sessionId,
+      });
+      ctx.emitFrame({
+        type: "system",
+        subtype: "background_tasks_changed",
+        tasks: [{ task_id: taskId, task_type: "local_bash", description, ambient: false }],
+        uuid: randomUUID(),
+        session_id: ctx.sessionId,
+      });
+      ctx.emitFrame({
+        type: "system",
+        subtype: "task_progress",
+        task_id: taskId,
+        tool_use_id: toolUseId,
+        description,
+        usage: { total_tokens: 0, tool_uses: 0, duration_ms: 0 },
+        last_tool_name: "Bash",
+        summary: "still running",
+        uuid: randomUUID(),
+        session_id: ctx.sessionId,
+      });
+      ctx.emitFrame({
+        type: "system",
+        subtype: "task_updated",
+        task_id: taskId,
+        patch: { status: "completed", end_time: 0 },
+        uuid: randomUUID(),
+        session_id: ctx.sessionId,
+      });
+      ctx.emitFrame({
+        type: "system",
+        subtype: "task_notification",
+        task_id: taskId,
+        tool_use_id: toolUseId,
+        status: "completed",
+        output_file: "/winter-fixture/tasks/bgtask-differential-1.output",
+        summary: "background bash task finished",
+        usage: { total_tokens: 0, tool_uses: 0, duration_ms: 0 },
+        uuid: randomUUID(),
+        session_id: ctx.sessionId,
+      });
+      ctx.emitFrame({
+        type: "system",
+        subtype: "local_command_output",
+        content: "[background] sleep 100 & -> completed",
+        uuid: randomUUID(),
+        session_id: ctx.sessionId,
+      });
+      return { output: "backgrounded" };
+    },
+  },
+});
+
+export async function traceWinterBackgroundTaskRound(): Promise<ConformanceTraceEntry[]> {
+  const winterHome = mkdtempSync(join(tmpdir(), "winter-differential-bgtask-"));
+  try {
+    const entries: ConformanceTraceEntry[] = [];
+    for await (const msg of query({
+      prompt: "run it in the background",
+      options: {
+        model: FIXTURE_MODEL,
+        cwd: FIXTURE_CWD,
+        allowedTools: [DIFFERENTIAL_BGTASK_TOOL],
+        spawnClaudeCodeProcess: (opts) =>
+          inMemoryProcess(
+            opts.args,
+            scriptedProvider([
+              { kind: "tool_use", calls: [{ id: "bgtask-call-1", name: DIFFERENTIAL_BGTASK_TOOL, input: { command: "sleep 100 &" } }] },
+              { kind: "text", text: "backgrounded" },
+            ]),
+            undefined,
+            { ...opts.env, WINTER_HOME: winterHome },
+          ),
+      },
+    })) {
+      entries.push({ sequence: entries.length, direction: "runtime-to-host", kind: kindOf(msg), payload: msg });
+    }
+    return normalizeTrace(entries);
+  } finally {
+    rmSync(winterHome, { recursive: true, force: true });
+  }
+}
+
 // --- registry-driven check: every scenario against its committed golden --------------------------
 
 interface Scenario {
@@ -418,6 +548,10 @@ const SCENARIOS: Scenario[] = [
   { name: "canusetool-approved-round", trace: traceWinterCanUseToolApprovedRound, goldenFile: "canusetool-approved-round.trace.json" },
   { name: "hook-denied-round", trace: traceWinterHookDeniedRound, goldenFile: "hook-denied-round.trace.json" },
   { name: "mode-switch-mid-session", trace: traceWinterModeSwitchMidSession, goldenFile: "mode-switch-mid-session.trace.json" },
+  // Task 2 (P3, WS-06 §3.5): the one new golden this task adds -- see traceWinterBackgroundTaskRound's
+  // own header comment for the one-line justification (full closed background-task message family,
+  // proved end-to-end through a real registered tool's ctx.emitFrame -> engine.ts -> output.write).
+  { name: "background-task-round", trace: traceWinterBackgroundTaskRound, goldenFile: "background-task-round.trace.json" },
 ];
 
 // Sign-off 3 directive (whole-branch review): `--update` turns this script from a comparator into
