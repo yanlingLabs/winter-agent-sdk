@@ -116,6 +116,65 @@ test("providerMessageContentToText: multiple blocks join with newlines, in order
   expect(providerMessageContentToText(blocks)).toBe("first\nsecond");
 });
 
+// RULING P3-L engine-level twin (fix wave round 2, P3 close-out): I3's own bash.test.ts fixture
+// proves the cwd-carry fix at the EXECUTOR level, against a fake ToolExecutionContext that mirrors
+// the engine's cwd/sessionRoot relationship by hand. This test proves the SAME fix through the REAL
+// engine: no `tools:` override (so `runEngine` builds its own `buildDefaultToolExecutor`, wiring the
+// REAL registered Bash executor to THIS run's own live `currentCwd`/`sessionRoot` closures --
+// engine.ts:552/558/736-774), a REAL mkdtemp'd project directory, and REAL filesystem writes
+// (`sandbox: {enabled:false}` -- the sandbox mechanism itself is already proven separately by C1's
+// darwin fixtures; this test isolates the cwd-carry COMPUTATION, not sandbox enforcement, so it runs
+// on every platform, not just darwin).
+//
+// Pre-wave trace (documented per the ruling's own instruction, rather than reverting 17 commits to
+// re-run this exact test against 7d60feb): before I3 landed, `computeCwdCarryAllowedRoots` did not
+// exist -- the carry check used the SAME list `computeWritableRoots` builds for the sandbox profile
+// (`[ctx.tempDir, ...ctx.session.getBoundedRoots(), ctx.outDir]`), which INCLUDES `ctx.tempDir`. A
+// `cd $TMPDIR` therefore satisfied `isWithinAllowedDirs` and called `ctx.session.setCwd(tempDir)`,
+// after which `getBoundedRoots()` (itself derived from the now-current cwd) no longer contained the
+// project directory at all -- see bash.test.ts's own already-GREEN two-call lockout fixture for the
+// executor-level proof of exactly this drift, and the whole-branch-review's own I3 failure-scenario
+// prose for the narrative this test's assertion targets. Empirically reconfirmed for THIS test
+// specifically below (not merely cited): temporarily reverting `computeCwdCarryAllowedRoots` to
+// that pre-fix formula reproduces the identical failure this test would have shown on 7d60feb --
+// the marker file lands in the session temp dir instead of the project directory.
+test("RULING P3-L engine twin: a real `cd $TMPDIR` Bash call does not carry — a later call still writes into the real project directory, not the session temp dir", async () => {
+  const projectDir = mkdtempSync(join(tmpdir(), "winter-i3-engine-project-"));
+  try {
+    const { host, runtime } = createInMemoryChannel();
+    const scripted = scriptedProvider([
+      { kind: "tool_use", calls: [{ id: "call1", name: "Bash", input: { command: "cd $TMPDIR" } }] },
+      { kind: "tool_use", calls: [{ id: "call2", name: "Bash", input: { command: "echo recovered > marker.txt" } }] },
+      { kind: "text", text: "done" },
+    ]);
+    const done = runEngine({
+      config: baseConfig({
+        cwd: projectDir,
+        permissionMode: "bypassPermissions", // this test is about cwd-carry, not approval — bypass keeps both real Bash calls unattended
+        allowDangerouslySkipPermissions: true, // required by the bypass gate (checkBypassGate) for permissionMode: "bypassPermissions" to be accepted at all
+        sandbox: { enabled: false }, // sandbox enforcement is C1's own concern (deny.darwin.test.ts); isolate the carry computation here
+      }),
+      input: runtime.input,
+      output: runtime.output,
+      provider: scripted,
+      // no `tools:` override — this is the whole point: buildDefaultToolExecutor wires the REAL
+      // registered Bash executor to this run's own live currentCwd/sessionRoot.
+    });
+
+    host.output.write({ type: "user", text: "go" });
+    host.output.write({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined });
+    await drain(host.input);
+    await done;
+
+    // The observable: if `cd $TMPDIR` had carried (the pre-I3 bug), call2's `echo > marker.txt`
+    // would have run with cwd = the session temp dir, silently landing the write OUTSIDE the
+    // project entirely. Recovery means call2 still ran with cwd = projectDir.
+    expect(existsSync(join(projectDir, "marker.txt"))).toBe(true);
+  } finally {
+    rmSync(projectDir, { recursive: true, force: true });
+  }
+});
+
 test("multi-turn: two user envelopes produce two assistant+result pairs; the second generate() sees the first turn's messages", async () => {
   const { host, runtime } = createInMemoryChannel();
   const calls: ProviderMessage[][] = [];
