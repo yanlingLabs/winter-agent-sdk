@@ -82,7 +82,13 @@ describe("TaskStop executor", () => {
     expect(parsed.command).toBe("echo hi");
     expect(getTask("t1")?.status).toBe("stopped");
     expect(frames.some((f) => f.subtype === "task_notification" && "status" in f && f.status === "stopped")).toBe(true);
-    expect(frames.some((f) => f.subtype === "background_tasks_changed")).toBe(true);
+    // M9 (fix wave, lens 4, "frame exists, contents not"): the pre-existing assertion only checked
+    // that a background_tasks_changed frame existed at all -- correct today only because status is
+    // set BEFORE listRunningTasks() runs, an ordering fact this test never actually pinned. Assert
+    // the load-bearing CONTENT: the just-stopped task is genuinely absent from the frame's own list.
+    const changed = frames.find((f) => f.subtype === "background_tasks_changed") as { tasks: Array<{ task_id: string }> } | undefined;
+    expect(changed).toBeDefined();
+    expect(changed!.tasks.map((t) => t.task_id)).not.toContain("t1");
   });
 
   test("shell_id is an alias for the same task-id namespace, never a second registry", async () => {

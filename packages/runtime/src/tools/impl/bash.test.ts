@@ -534,7 +534,16 @@ describe("Bash executor (real sandboxed spawn)", () => {
       }
       expect(frames.some((f) => f.subtype === "task_notification")).toBe(true);
       expect(readFileSync(outputPath, "utf8")).toContain("from-background");
-      expect(getTask((frames.find((f) => f.subtype === "task_started") as { task_id: string }).task_id)?.status).toBe("completed");
+      const taskId = (frames.find((f) => f.subtype === "task_started") as { task_id: string }).task_id;
+      expect(getTask(taskId)?.status).toBe("completed");
+      // M9 (fix wave, lens 4, "frame exists, contents not"): bash.ts's own `.then()` handler emits a
+      // SECOND background_tasks_changed frame right after task_notification -- the pre-existing
+      // assertions here never checked its own CONTENT (or that it even exists as a distinct,
+      // later frame): the just-completed task must be genuinely absent from that later frame's list.
+      const changedFrames = frames.filter((f) => f.subtype === "background_tasks_changed") as Array<{ tasks: Array<{ task_id: string }> }>;
+      expect(changedFrames.length).toBeGreaterThanOrEqual(2); // one at start, one at completion
+      const completionChanged = changedFrames[changedFrames.length - 1]!;
+      expect(completionChanged.tasks.map((t) => t.task_id)).not.toContain(taskId);
     });
 
     t("a failing background command is reported as a failed task_notification", async () => {

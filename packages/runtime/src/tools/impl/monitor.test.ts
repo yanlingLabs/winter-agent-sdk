@@ -334,6 +334,31 @@ describe("connectMonitorWs (real local server)", () => {
     return server.port!;
   }
 
+  // M9 (fix wave, lens 4, "frame exists, contents not"): every ws-half test in this describe block
+  // checked output-file CONTENT but never that task_started.description echoes the real input
+  // description, or that task_notification.output_file names the SAME path the task was actually
+  // created with -- both were previously unasserted (a swapped/hardcoded field would have passed).
+  test("task_started.description and task_notification.output_file match the real input/created values", async () => {
+    const port = startServer({
+      open: (ws) => {
+        ws.send("hello");
+        ws.close(1000);
+      },
+    });
+    const frames: BackgroundTaskMessage[] = [];
+    const ctx = fakeCtx({ emitFrame: (f) => frames.push(f) });
+    const res = await connectMonitorWs(`ws://127.0.0.1:${port}`, undefined, "a very specific description", 5000, false, ctx);
+    const { taskId } = JSON.parse(res.output);
+    const outputPath = getTask(taskId)!.outputPath;
+    await waitFor(() => frames.some((f) => f.subtype === "task_notification"));
+
+    const started = frames.find((f) => f.subtype === "task_started") as { description: string };
+    expect(started.description).toBe("a very specific description");
+
+    const notif = frames.find((f) => f.subtype === "task_notification") as { output_file: string };
+    expect(notif.output_file).toBe(outputPath);
+  });
+
   test("appends text messages to the output file, in order", async () => {
     const port = startServer({
       open: (ws) => {
@@ -530,6 +555,15 @@ describe("Monitor executor: command half", () => {
     await waitFor(() => frames.some((f) => f.subtype === "task_notification"));
     const notif = frames.find((f) => f.subtype === "task_notification") as { status: string };
     expect(notif.status).toBe("completed");
+    // M9 (fix wave, lens 4, "frame exists, contents not"): monitor.ts's own completion handler
+    // emits a SECOND background_tasks_changed frame right after task_notification -- never
+    // previously asserted at all (neither existence as a distinct later frame, nor content). The
+    // just-completed task must be genuinely absent from that later frame's own tasks list.
+    const started = frames.find((f) => f.subtype === "task_started") as { task_id: string };
+    const changedFrames = frames.filter((f) => f.subtype === "background_tasks_changed") as Array<{ tasks: Array<{ task_id: string }> }>;
+    expect(changedFrames.length).toBeGreaterThanOrEqual(2); // one at start, one at completion
+    const completionChanged = changedFrames[changedFrames.length - 1]!;
+    expect(completionChanged.tasks.map((t) => t.task_id)).not.toContain(started.task_id);
   });
 
   // M2 (fix wave, P3 close-out): WS-12 §8 requires every surface to record sandbox posture; the
