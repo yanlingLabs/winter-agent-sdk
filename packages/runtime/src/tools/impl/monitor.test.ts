@@ -532,6 +532,27 @@ describe("Monitor executor: command half", () => {
     expect(notif.status).toBe("completed");
   });
 
+  // M2 (fix wave, P3 close-out): WS-12 §8 requires every surface to record sandbox posture; the
+  // command half's task_notification.summary never carried it (Lane C's own fix added the
+  // annotation to Bash's three background surfaces only).
+  t("task_notification summary carries [sandbox: config-disabled] when enabled:false", async () => {
+    const frames: BackgroundTaskMessage[] = [];
+    const ctx = fakeCtx({ emitFrame: (f) => frames.push(f), sandboxSettings: { enabled: false } });
+    await monitor()({ description: "quick", timeout_ms: 5000, persistent: false, command: "echo hi" }, ctx);
+    await waitFor(() => frames.some((f) => f.subtype === "task_notification"));
+    const notif = frames.find((f) => f.subtype === "task_notification") as { summary: string };
+    expect(notif.summary).toContain("[sandbox: config-disabled]");
+  });
+
+  t("a sandboxed command's task_notification summary carries [sandbox: sandboxed]", async () => {
+    const frames: BackgroundTaskMessage[] = [];
+    const ctx = fakeCtx({ emitFrame: (f) => frames.push(f) });
+    await monitor()({ description: "quick", timeout_ms: 5000, persistent: false, command: "echo hi" }, ctx);
+    await waitFor(() => frames.some((f) => f.subtype === "task_notification"));
+    const notif = frames.find((f) => f.subtype === "task_notification") as { summary: string };
+    expect(notif.summary).toContain("[sandbox: sandboxed]");
+  });
+
   // Task 8 (the SAME ordering bug bash.ts's own equivalent test found): runCommand's spawn is
   // asynchronous, so without registering the task synchronously up front, this frame's own `tasks`
   // list was always empty at the exact moment it announced the task that had just started.

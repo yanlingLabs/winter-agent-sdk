@@ -98,6 +98,18 @@ const PERSISTENT_STAND_IN_TIMEOUT_MS = 2_147_483_647;
 // keeping the mechanism duplicated-but-identical here is lower-risk than introducing a Monitor ->
 // Bash source dependency for two three-line helpers). See bash.ts's own comments for the full
 // rationale on each piece.
+// M2 (fix wave, P3 close-out): mirrors bash.ts's own `formatSandboxAnnotation` verbatim -- same
+// deliberate duplication precedent as every other small sandbox-mechanism helper in this file (see
+// this function's own sibling comments). WS-12 §8 requires the result to record the sandbox-override
+// state on every surface; Lane C's own fix (bash.ts) added this annotation to Bash's three
+// background surfaces only -- Monitor's `task_notification.summary` (both the natural-completion and
+// pre-spawn-failure branches, below) never got it, leaving a `config-disabled`/`excluded` Monitor
+// command with no trace it ran unfenced.
+function formatSandboxAnnotation(posture: string, sandboxOverrideRequested: boolean): string {
+  const overrideNote = sandboxOverrideRequested && posture !== "override-requested" ? ", override-requested" : "";
+  return `[sandbox: ${posture}${overrideNote}]`;
+}
+
 function computeMonitorWritableRoots(ctx: ToolExecutionContext): string[] {
   // C1 (fix wave, P3 close-out): `filesystem.allowWrite` unioned in too, mirroring bash.ts's own
   // identical fix to `computeWritableRoots` (WS-12 §12 Q5: additive, never a replacement).
@@ -231,7 +243,9 @@ async function runMonitorCommand(input: MonitorInput & { command: string }, ctx:
           task_id: taskId,
           status,
           output_file: outputPath,
-          summary: `${input.description} (${status})`,
+          // M2 (fix wave, P3 close-out): WS-12 §8's own annotation, previously only on Bash's three
+          // background surfaces.
+          summary: `${input.description} (${status}) ${formatSandboxAnnotation(result.posture, result.sandboxOverrideRequested)}`,
           uuid: randomUUID(),
           session_id: ctx.sessionId,
         });
@@ -257,7 +271,10 @@ async function runMonitorCommand(input: MonitorInput & { command: string }, ctx:
           task_id: taskId,
           status: "failed",
           output_file: outputPath,
-          summary: `${input.description} (failed to run: ${(err as Error).message})`,
+          // M2 (fix wave, P3 close-out): no RunCommandResult exists on this branch (runCommand
+          // itself rejected, pre-spawn) -- `decision`, computed at the top of this function, is what
+          // was actually attempted (mirrors bash.ts's own runBackground failure-branch precedent).
+          summary: `${input.description} (failed to run: ${(err as Error).message}) ${formatSandboxAnnotation(decision.posture, decision.sandboxOverrideRequested)}`,
           uuid: randomUUID(),
           session_id: ctx.sessionId,
         });
