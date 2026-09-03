@@ -127,6 +127,18 @@ function shQuote(s: string): string {
   return `'${s.replace(/'/g, `'\\''`)}'`;
 }
 
+// LATENT TRAP, flagged rather than silently shipped: `runForeground` passes THIS wrapped script
+// (not the model's raw `input.command`) as `RunCommandOptions.command`, and spawn.ts's own
+// `resolveExecutionPath` matches `excludedCommands` against exactly that string (R3-6, exact-full-
+// command-string equality). So on the foreground path, an `excludedCommands` entry is compared
+// against the pwd-capture-wrapped script, never the raw command the model wrote or the settings
+// author configured -- it will never match. `runBackground` below has no such wrapper and matches
+// the raw command correctly. This is MOOT today only because DEFAULT_SANDBOX_SETTINGS carries no
+// exclusions at all (see this file's own header); the instant a future phase wires real
+// `excludedCommands` through, foreground exclusion silently stops working. Fixing it (matching on
+// the raw command, wrapping only what actually gets spawned) is a spawn.ts/bash.ts seam change this
+// lane did not make, to avoid touching the exact-match semantics mid-flight while R3-6 stays
+// capture-pending -- left as a carry for whoever wires real settings in.
 function buildPwdCaptureScript(command: string, pwdFile: string): string {
   return `${command}\n__winter_bash_rc=$?\npwd > ${shQuote(pwdFile)} 2>/dev/null\nexit "$__winter_bash_rc"\n`;
 }

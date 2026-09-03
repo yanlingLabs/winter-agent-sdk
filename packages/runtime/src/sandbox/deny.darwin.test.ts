@@ -15,7 +15,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { createServer, type AddressInfo } from "node:net";
+import { spawnSync } from "node:child_process";
 import { runCommand } from "./spawn.ts";
+import { buildWorkflowWorkerSeatbeltProfile } from "./profile.ts";
 
 function proj(): string {
   return realpathSync(mkdtempSync(join(tmpdir(), "winter-deny-")));
@@ -32,8 +34,11 @@ async function run(command: string, cwd: string, writableRoots?: string[]) {
   });
 }
 
-const darwin = process.platform === "darwin";
-const t = darwin ? test : test.skip;
+// `test.skipIf`, per this task's own brief (not `const t = darwin ? test : test.skip`, which reads
+// identically at each call site but is the wrong SHAPE per the brief's literal wording) -- both
+// forms make a non-darwin CI run enumerate every test as visibly skipped rather than hiding a whole
+// file, but skipIf is what the brief pins.
+const t = test.skipIf(process.platform !== "darwin");
 
 describe("sandbox deny suite (real sandbox-exec, WS-12 §5.2 carried corpus)", () => {
   t("denies a write outside every writable root", async () => {
@@ -170,6 +175,30 @@ describe("sandbox deny suite (real sandbox-exec, WS-12 §5.2 carried corpus)", (
       const label = `winter-escape-${randomUUID()}`;
       await run(`launchctl submit -l ${label} -- /bin/sh -c "echo pwned > ${probe}" 2>&1 || echo submit-failed`, cwd);
       await new Promise((r) => setTimeout(r, 500));
+      expect(existsSync(probe)).toBe(false);
+    });
+  });
+
+  // buildWorkflowWorkerSeatbeltProfile (WS-11's own future consumer) is otherwise only STRING-
+  // tested (profile.test.ts) -- this is the one place in the suite that actually LOADS it through
+  // real sandbox-exec, closing the exact failure class the profile's own header documents: a naive
+  // `(deny process-fork*)` is an unbound SBPL variable that fails the profile's PARSE, not merely a
+  // rule -- a string test asserting "contains (deny process-fork)" cannot tell a profile that loads
+  // from one that is silently malformed. `--version` is used as the self-exec probe (not `-e "1"`)
+  // because it needs no shell/quoting and every real binary this profile could ever wrap supports it.
+  describe("buildWorkflowWorkerSeatbeltProfile loads under real sandbox-exec (WS-12 §5.2 process-fork* trap)", () => {
+    t("the profile parses and loads: self-exec succeeds (proves no unbound-variable parse failure)", () => {
+      const profile = buildWorkflowWorkerSeatbeltProfile(process.execPath);
+      const res = spawnSync("/usr/bin/sandbox-exec", ["-p", profile, process.execPath, "--version"], { encoding: "utf8" });
+      expect(res.status).toBe(0);
+    });
+
+    t("exec of anything OTHER than the self binary is denied -- /bin/sh cannot run, so its write never happens", () => {
+      const profile = buildWorkflowWorkerSeatbeltProfile(process.execPath);
+      const probeDir = proj();
+      const probe = join(probeDir, "escape.txt");
+      const res = spawnSync("/usr/bin/sandbox-exec", ["-p", profile, "/bin/sh", "-c", `echo pwned > ${probe}`], { encoding: "utf8" });
+      expect(res.status).not.toBe(0);
       expect(existsSync(probe)).toBe(false);
     });
   });

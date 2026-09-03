@@ -150,6 +150,16 @@ export interface RunCommandOptions {
   maxStreamedBytes?: number;
   settings: SandboxSettings;
   dangerouslyDisableSandbox?: boolean;
+  /**
+   * TEST-ONLY injection seam: overrides which path the internal `isSandboxAvailable` check probes
+   * for existence, WITHOUT changing the real spawn target (`REAL_SANDBOX_EXEC_PATH` below is always
+   * what actually runs once availability passes). WS-12 §3's typed-unavailability path is otherwise
+   * unreachable on any dev/CI box that genuinely has /usr/bin/sandbox-exec -- which is every darwin
+   * box this product ships on -- so without this seam the throw site below has zero live coverage.
+   * Never read from model input (bash.ts's own BashInput has no such field): a model-controllable
+   * override of its own sandbox-availability check would be a containment hole, not a test seam.
+   */
+  sandboxExecPath?: string;
   /** Extra writable roots beyond cwd -- session scratch, configured filesystem.allowWrite, outputs dir. */
   writableRoots?: string[];
   denyWritePaths?: string[];
@@ -189,7 +199,7 @@ export async function runCommand(opts: RunCommandOptions): Promise<RunCommandRes
   if (posture === "sandboxed") {
     // §3: never silently degrade to an unsandboxed spawn -- a typed error, before any process
     // starts, is the only outcome when the sandbox is required but unavailable.
-    if (!isSandboxAvailable()) {
+    if (!isSandboxAvailable(opts.sandboxExecPath)) {
       throw new SandboxUnavailableError(
         "sandbox is required by the effective configuration but /usr/bin/sandbox-exec is unavailable on this host (WS-12 §3) -- refusing to silently run unsandboxed",
       );

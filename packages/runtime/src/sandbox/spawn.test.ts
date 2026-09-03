@@ -82,15 +82,26 @@ describe("isSandboxAvailable", () => {
 });
 
 describe("runCommand: §3 sandbox-unavailable is a typed error, never a silent unsandboxed fallback", () => {
-  test("a sandboxed posture with no real sandbox-exec on the resolution path rejects with SandboxUnavailableError", async () => {
-    // We cannot uninstall sandbox-exec from the test machine, so this proves the THROW SITE and
-    // error type directly rather than the OS-level absence -- isSandboxAvailable's own injectable
-    // seam is unit-tested above; this test pins that runCommand actually calls it (via a real
-    // unavailable posture) and never falls through to an unsandboxed spawn on that path. On a
-    // non-darwin CI box, isSandboxAvailable() is unconditionally false, so this assertion holds
-    // there for free; on darwin it holds because isSandboxAvailable() is checked with no override
-    // seam exposed on runCommand itself (by design -- production always checks the real binary).
-    if (isSandboxAvailable()) return; // this dev box has it; the real assertion runs on a box without it
+  // The real assertion: `sandboxExecPath` lets this fire on EVERY dev/CI box, including one that
+  // genuinely has /usr/bin/sandbox-exec (this one does) -- without it, the only way to observe this
+  // throw site would be a box that lacks the real binary, which is not this product's shipping
+  // platform and would leave the throw site with zero live coverage in practice.
+  test("an injected bogus sandboxExecPath forces SandboxUnavailableError even though the real binary is present", async () => {
+    const cwd = realTmp();
+    await expect(
+      runCommand({
+        command: "echo should-never-run",
+        cwd,
+        env: {},
+        timeoutMs: 5000,
+        settings: {},
+        sandboxExecPath: join(realTmp(), "no-such-sandbox-exec"),
+      }),
+    ).rejects.toBeInstanceOf(SandboxUnavailableError);
+  });
+
+  test("a sandboxed posture with no real sandbox-exec on the resolution path rejects with SandboxUnavailableError (the real, non-injected OS-level absence, for whatever box genuinely lacks the binary -- e.g. non-darwin CI)", async () => {
+    if (isSandboxAvailable()) return; // this dev box has it; the injected-path test above already proves the throw site here
     const cwd = realTmp();
     await expect(
       runCommand({ command: "echo hi", cwd, env: {}, timeoutMs: 5000, settings: {} }),
@@ -287,6 +298,26 @@ describe("runCommand: real spawn (darwin)", () => {
     expect(out).not.toContain("on-stderr");
     expect(err).toContain("on-stderr");
     expect(err).not.toContain("on-stdout");
+  });
+
+  test.skipIf(process.platform !== "darwin")("the stream-kill switch actually fires: a producer well past maxStreamedBytes is killed mid-stream, not just left to finish naturally", async () => {
+    const cwd = realTmp();
+    // yes|head is itself a common way to produce a lot of output fast; the 5MB source is chosen to
+    // sit FAR above the 10KB cap (~500x) so the kill is unambiguously what stopped it -- a source
+    // only slightly over the cap could instead finish naturally in the same window, leaving
+    // `streamKilled` as the only trustworthy signal ambiguous. `res.streamKilled` is set ONLY by
+    // spawn.ts's own onChunk threshold check (never by a natural close), so asserting it directly
+    // proves the kill switch executed rather than merely that the command eventually stopped.
+    const res = await runCommand({
+      command: "yes x | head -c 5000000",
+      cwd,
+      env: { ...process.env, TMPDIR: cwd },
+      timeoutMs: 8000,
+      settings: {},
+      maxStreamedBytes: 10_000,
+      onStdout: () => {},
+    });
+    expect(res.streamKilled).toBe(true);
   });
 
   test.skipIf(process.platform !== "darwin")("a launch failure (bad spawnFile) resolves with spawnError set, never an unhandled rejection", async () => {

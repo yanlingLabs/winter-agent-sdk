@@ -218,6 +218,19 @@ d("Bash executor (real sandboxed spawn)", () => {
     expect(res.isError).toBe(true);
   });
 
+  // WS-12 §6.1: "each call starts a separate, fresh shell; env exports do NOT persist." Two real
+  // calls against the SAME ctx (only cwd-carry is meant to survive between calls, never shell
+  // state) -- the first exports a var from inside its own spawned shell, the second (a genuinely
+  // separate bash()() invocation) must not see it. This is the one property in the Bash contract
+  // that is invisible to any single-call test, however many of those a suite accumulates.
+  test("env exports from one call do NOT persist to the next -- fresh shell per call", async () => {
+    const ctx = fakeCtx();
+    const first = await bash()({ command: "export WINTER_PROBE=leaked" }, ctx);
+    expect(first.output).toContain("[exit 0]");
+    const second = await bash()({ command: 'echo "val:${WINTER_PROBE:-absent}"' }, ctx);
+    expect(second.output).toContain("val:absent");
+  });
+
   // --- cwd-carry (WS-06 §6.1) ---
   describe("cwd-carry", () => {
     test("a cd that lands within an allowed dir (ctx.tempDir) persists via ctx.session.setCwd", async () => {
