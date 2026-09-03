@@ -339,11 +339,16 @@ describe("Grep (Phase 3, Lane A, Task 4)", () => {
     });
   });
 
-  describe("extractPaths seam", () => {
-    test("reports `path` when given, else cwd", () => {
+  describe("extractPaths seam (RULING P3-F, fix round 1: raw passthrough, no cwd resolution)", () => {
+    test("returns the RAW `path` string unresolved, even when relative", () => {
       const tool = getRegisteredTool("Grep");
-      expect(tool!.extractPaths!({ pattern: "x", path: "/some/dir" }).reads).toContain("/some/dir");
-      expect(tool!.extractPaths!({ pattern: "x" }).reads).toHaveLength(1);
+      expect(tool!.extractPaths!({ pattern: "x", path: "/some/dir" }).reads).toEqual(["/some/dir"]);
+      expect(tool!.extractPaths!({ pattern: "x", path: "relative/dir" }).reads).toEqual(["relative/dir"]);
+    });
+
+    test("returns no candidates when `path` is absent -- never synthesizes a cwd default", () => {
+      const tool = getRegisteredTool("Grep");
+      expect(tool!.extractPaths!({ pattern: "x" }).reads).toEqual([]);
     });
   });
 });

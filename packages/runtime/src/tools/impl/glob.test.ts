@@ -147,18 +147,16 @@ describe("Glob (Phase 3, Lane A, Task 4)", () => {
     expect(result.output).toBe("");
   });
 
-  describe("extractPaths seam", () => {
-    test("reports `path` when given", () => {
+  describe("extractPaths seam (RULING P3-F, fix round 1: raw passthrough, no cwd resolution)", () => {
+    test("returns the RAW `path` string unresolved, even when relative", () => {
       const tool = getRegisteredTool("Glob");
-      const extracted = tool!.extractPaths!({ pattern: "*.ts", path: "/some/dir" });
-      expect(extracted.reads).toContain("/some/dir");
-      expect(extracted.writes).toEqual([]);
+      expect(tool!.extractPaths!({ pattern: "*.ts", path: "/some/dir" })).toEqual({ reads: ["/some/dir"], writes: [] });
+      expect(tool!.extractPaths!({ pattern: "*.ts", path: "relative/dir" })).toEqual({ reads: ["relative/dir"], writes: [] });
     });
 
-    test("falls back to cwd when `path` is absent", () => {
+    test("returns no candidates when `path` is absent -- never synthesizes a cwd default", () => {
       const tool = getRegisteredTool("Glob");
-      const extracted = tool!.extractPaths!({ pattern: "*.ts" });
-      expect(extracted.reads).toHaveLength(1);
+      expect(tool!.extractPaths!({ pattern: "*.ts" })).toEqual({ reads: [], writes: [] });
     });
   });
 });

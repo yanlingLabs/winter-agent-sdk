@@ -78,7 +78,7 @@ import "../descriptors/index.ts";
 import { readFileSync, statSync } from "node:fs";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { replaceExecutor, type ToolExecutionContext, type ToolExecutor, type ToolResultPayload } from "../registry.ts";
-import { resolveCandidatePaths, type ExtractedPaths } from "../paths-seam.ts";
+import { emptyPathSet, type ExtractedPaths } from "../paths-seam.ts";
 
 // --- Input (WS-06 §3.1, verbatim) -------------------------------------------------------------------
 
@@ -579,10 +579,17 @@ async function execute(rawInput: unknown, ctx: ToolExecutionContext): Promise<To
 
 const grepExecutor: ToolExecutor = { execute };
 
+// RULING P3-F (fix round 1): returns the RAW input-derived string, UNRESOLVED -- no process.cwd()
+// baked in here anymore. This seam's signature (registry.ts's `RegisteredTool.extractPaths`,
+// `(input) => {reads,writes}`) carries no ctx/cwd parameter; the eventual CONSUMER resolves each
+// candidate against its own session ctx.cwd (the seam-level contract itself lands at T8). Absent
+// `path` -> emptyPathSet() -- there is no raw string to derive when the caller never supplied one;
+// synthesizing a "." or a resolved default would be exactly the kind of baked-in assumption this
+// ruling retires.
 function extractGrepPaths(input: unknown): ExtractedPaths {
   const path = typeof input === "object" && input !== null ? (input as Record<string, unknown>)["path"] : undefined;
-  const base = typeof path === "string" && path.length > 0 ? path : process.cwd();
-  return { reads: resolveCandidatePaths([base], process.cwd()), writes: [] };
+  if (typeof path !== "string" || path.length === 0) return emptyPathSet();
+  return { reads: [path], writes: [] };
 }
 
 replaceExecutor("Grep", grepExecutor, extractGrepPaths);

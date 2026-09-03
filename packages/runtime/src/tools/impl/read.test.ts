@@ -457,19 +457,26 @@ describe("Read (Phase 3, Lane A, Task 4)", () => {
     });
   });
 
-  describe("extractPaths seam", () => {
-    test("is registered and reports the file_path as a read", () => {
+  describe("extractPaths seam (RULING P3-F, fix round 1: raw passthrough, no cwd resolution)", () => {
+    test("is registered and reports the RAW file_path as a read", () => {
       const tool = getRegisteredTool("Read");
       expect(tool?.extractPaths).toBeDefined();
       const extracted = tool!.extractPaths!({ file_path: "/some/file.txt" });
-      expect(extracted.reads).toContain("/some/file.txt");
+      expect(extracted.reads).toEqual(["/some/file.txt"]);
       expect(extracted.writes).toEqual([]);
     });
 
-    test("never throws on a shapeless input", () => {
+    test("a RELATIVE file_path is returned unresolved -- never joined against process.cwd() or anything else", () => {
+      const tool = getRegisteredTool("Read");
+      const extracted = tool!.extractPaths!({ file_path: "relative/file.txt" });
+      expect(extracted.reads).toEqual(["relative/file.txt"]);
+    });
+
+    test("never throws on a shapeless input, and reports no candidates", () => {
       const tool = getRegisteredTool("Read");
       expect(() => tool!.extractPaths!({})).not.toThrow();
       expect(() => tool!.extractPaths!(null)).not.toThrow();
+      expect(tool!.extractPaths!({})).toEqual({ reads: [], writes: [] });
     });
   });
 });

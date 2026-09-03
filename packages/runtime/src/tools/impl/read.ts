@@ -70,7 +70,7 @@ import { basename, extname, resolve } from "node:path";
 // from a test file is safe -- ES modules evaluate a given module's body exactly once.
 import "../descriptors/index.ts";
 import { replaceExecutor, type ToolExecutionContext, type ToolExecutor, type ToolResultPayload } from "../registry.ts";
-import { emptyPathSet, resolveCandidatePaths, type ExtractedPaths } from "../paths-seam.ts";
+import { emptyPathSet, type ExtractedPaths } from "../paths-seam.ts";
 
 // --- Input (WS-06 §3.1, verbatim) -----------------------------------------------------------------
 
@@ -529,19 +529,19 @@ async function execute(rawInput: unknown, ctx: ToolExecutionContext): Promise<To
 
 const readExecutor: ToolExecutor = { execute };
 
-// extractPaths seam (registry.ts's RegisteredTool.extractPaths -- the T11-carry approvals-paths
-// axis; unconsumed anywhere yet, verified before writing this). NOTE: this seam's signature is
-// `(input) => {reads, writes}` with NO ctx/cwd parameter, so a relative `file_path` cannot be
-// resolved against the real per-session cwd here -- `process.cwd()` is used as a documented
-// best-effort placeholder (the daemon process is not expected to chdir(), so this normally
-// coincides with a session's logical cwd, but it is NOT the same guarantee ctx.cwd gives the real
-// executor above). Flagged in task-4-report.md; harmless today since nothing consumes this field
-// yet (grep-verified).
+// RULING P3-F (fix round 1): extractPaths returns the RAW input-derived string, UNRESOLVED -- no
+// process.cwd() baked in here anymore (retiring this file's own original placeholder, flagged in
+// task-4-report.md and confirmed by the controller as a fix-round item). This seam's signature
+// (registry.ts's RegisteredTool.extractPaths -- the T11-carry approvals-paths axis; unconsumed
+// anywhere yet, verified before writing this) is `(input) => {reads, writes}` with NO ctx/cwd
+// parameter, so a relative `file_path` cannot be resolved against the real per-session cwd from
+// inside this function at all -- the eventual CONSUMER resolves each candidate against its own
+// session ctx.cwd (the seam-level contract itself lands at T8).
 function extractReadPaths(input: unknown): ExtractedPaths {
   if (typeof input !== "object" || input === null) return emptyPathSet();
   const filePath = (input as Record<string, unknown>)["file_path"];
   if (typeof filePath !== "string" || filePath.length === 0) return emptyPathSet();
-  return { reads: resolveCandidatePaths([filePath], process.cwd()), writes: [] };
+  return { reads: [filePath], writes: [] };
 }
 
 replaceExecutor("Read", readExecutor, extractReadPaths);
