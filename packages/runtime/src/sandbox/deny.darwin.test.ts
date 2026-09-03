@@ -35,6 +35,26 @@ async function run(command: string, cwd: string, writableRoots?: string[], home?
   });
 }
 
+// C1 (fix wave, P3 close-out): the real sandbox-exec proof that `filesystem.{denyWrite,denyRead,
+// allowWrite}` actually reach the generated profile end-to-end -- `buildSeatbeltProfile` itself
+// already had a real denyWrite/denyRead layer (profile.ts:228-236); this suite is what proves
+// bash.ts/monitor.ts's OWN missing plumbing fix (buildRunCommandOptions/buildMonitorRunCommandOptions)
+// is what was actually missing, by driving `runCommand`'s own `denyWritePaths`/`denyReadPaths`/
+// `writableRoots` fields directly -- the SAME seam those two fixes now populate from
+// `ctx.sandboxSettings.filesystem`.
+async function runWithFsSettings(command: string, cwd: string, opts: { writableRoots?: string[]; denyWritePaths?: string[]; denyReadPaths?: string[] }) {
+  return runCommand({
+    command,
+    cwd,
+    env: { ...process.env, TMPDIR: cwd },
+    timeoutMs: 8000,
+    settings: {},
+    ...(opts.writableRoots !== undefined ? { writableRoots: opts.writableRoots } : {}),
+    ...(opts.denyWritePaths !== undefined ? { denyWritePaths: opts.denyWritePaths } : {}),
+    ...(opts.denyReadPaths !== undefined ? { denyReadPaths: opts.denyReadPaths } : {}),
+  });
+}
+
 // `test.skipIf`, per this task's own brief (not `const t = darwin ? test : test.skip`, which reads
 // identically at each call site but is the wrong SHAPE per the brief's literal wording) -- both
 // forms make a non-darwin CI run enumerate every test as visibly skipped rather than hiding a whole
@@ -70,6 +90,53 @@ describe("sandbox deny suite (real sandbox-exec, WS-12 §5.2 carried corpus)", (
     } finally {
       server.close();
     }
+  });
+
+  describe("C1 (fix wave): sandbox.filesystem.{denyWrite,denyRead,allowWrite} actually reach the real sandbox-exec profile", () => {
+    t("denyWrite: a write to a subpath under a configured denyWrite root is denied even though it's inside cwd", async () => {
+      const cwd = proj();
+      mkdirSync(join(cwd, "secrets"));
+      const target = join(cwd, "secrets", "key.pem");
+      const res = await runWithFsSettings(`echo pwned > ${target}`, cwd, { denyWritePaths: [join(cwd, "secrets")] });
+      expect(existsSync(target)).toBe(false);
+      expect(res.exitCode).not.toBe(0);
+    });
+
+    t("positive control: a write to a SIBLING path (not under denyWrite) still succeeds", async () => {
+      const cwd = proj();
+      mkdirSync(join(cwd, "secrets"));
+      const target = join(cwd, "ok.txt");
+      const res = await runWithFsSettings(`echo fine > ${target}`, cwd, { denyWritePaths: [join(cwd, "secrets")] });
+      expect(res.exitCode).toBe(0);
+      expect(existsSync(target)).toBe(true);
+    });
+
+    t("denyRead: reading a file under a configured denyRead root is denied even though it's inside cwd", async () => {
+      const cwd = proj();
+      const secretFile = join(cwd, ".env");
+      writeFileSync(secretFile, "SECRET=1\n");
+      const res = await runWithFsSettings(`cat ${secretFile}`, cwd, { denyReadPaths: [secretFile] });
+      expect(res.exitCode).not.toBe(0);
+    });
+
+    t("positive control: reading a SIBLING file (not denied) still succeeds", async () => {
+      const cwd = proj();
+      const secretFile = join(cwd, ".env");
+      const otherFile = join(cwd, "readme.txt");
+      writeFileSync(secretFile, "SECRET=1\n");
+      writeFileSync(otherFile, "hello\n");
+      const res = await runWithFsSettings(`cat ${otherFile}`, cwd, { denyReadPaths: [secretFile] });
+      expect(res.exitCode).toBe(0);
+    });
+
+    t("allowWrite: a write to a configured allowWrite root (a sibling of cwd) succeeds", async () => {
+      const cwd = proj();
+      const sibling = proj();
+      const target = join(sibling, "extra.txt");
+      const res = await runWithFsSettings(`echo hi > ${target}`, cwd, { writableRoots: [sibling] });
+      expect(res.exitCode).toBe(0);
+      expect(existsSync(target)).toBe(true);
+    });
   });
 
   describe("regex arm 1: the mktemp per-user-temp direct-children allowance", () => {

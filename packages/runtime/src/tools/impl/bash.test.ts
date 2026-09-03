@@ -9,7 +9,7 @@ import type { ToolExecutionContext } from "../registry.ts";
 import { createSessionReadState } from "../read-state.ts";
 import { configureBackgroundTaskRoot, resetBackgroundTaskRootForTest } from "../background-tasks.ts";
 import { resetBackgroundTaskRuntimeForTest, getTask } from "./background-task-runtime.ts";
-import { parseBashInput, resolveTimeout, extractBashPaths, computeWritableRoots } from "./bash.ts";
+import { parseBashInput, resolveTimeout, extractBashPaths, computeWritableRoots, buildRunCommandOptions } from "./bash.ts";
 import type { SessionTempDirPaths } from "../../paths/temp.ts";
 
 function proj(): string {
@@ -106,6 +106,55 @@ describe("computeWritableRoots", () => {
   test("includes ctx.tempDir beyond cwd", () => {
     const ctx = fakeCtx();
     expect(computeWritableRoots(ctx)).toEqual([ctx.tempDir]);
+  });
+
+  // C1 (fix wave, P3 close-out): `filesystem.allowWrite` is additive to session roots (WS-12 §12 Q5).
+  test("unions ctx.sandboxSettings.filesystem.allowWrite in, additively", () => {
+    const ctx = fakeCtx({ sandboxSettings: { filesystem: { allowWrite: ["/extra/allowed"] } } });
+    expect(computeWritableRoots(ctx)).toEqual([ctx.tempDir, "/extra/allowed"]);
+  });
+});
+
+// C1 (fix wave, P3 close-out): `sandbox.filesystem.{denyWrite,denyRead,allowWrite}` are accepted,
+// threaded onto ctx.sandboxSettings, and built into a real SBPL layer by buildSeatbeltProfile -- but
+// no production caller ever read `.filesystem` off ctx.sandboxSettings and passed it to runCommand.
+// `RunCommandResult.profile` never leaves `runForeground`/`runBackground` (it's swallowed after the
+// `await`), so this asserts on the OPTIONS `buildRunCommandOptions` builds, exactly as the review's
+// own RED-test note prescribes, rather than trying to intercept a value no caller can observe.
+describe("buildRunCommandOptions (C1 -- filesystem deny/allow layers actually reach runCommand)", () => {
+  test("denyWritePaths/denyReadPaths are read off ctx.sandboxSettings.filesystem and passed through", () => {
+    const ctx = fakeCtx({
+      sandboxSettings: {
+        filesystem: {
+          denyWrite: ["/proj/secrets"],
+          denyRead: ["/proj/.env"],
+          allowWrite: ["/extra/allowed"],
+        },
+      },
+    });
+    const parsed = parseBashInput({ command: "echo hi" });
+    if ("error" in parsed) throw new Error("unreachable");
+    const options = buildRunCommandOptions(parsed, ctx);
+    expect(options.denyWritePaths).toEqual(["/proj/secrets"]);
+    expect(options.denyReadPaths).toEqual(["/proj/.env"]);
+    expect(options.writableRoots).toContain("/extra/allowed");
+  });
+
+  test("no filesystem settings configured -> no denyWritePaths/denyReadPaths keys at all (byte-identical to before this fix)", () => {
+    const ctx = fakeCtx();
+    const parsed = parseBashInput({ command: "echo hi" });
+    if ("error" in parsed) throw new Error("unreachable");
+    const options = buildRunCommandOptions(parsed, ctx);
+    expect("denyWritePaths" in options).toBe(false);
+    expect("denyReadPaths" in options).toBe(false);
+  });
+
+  test("carries dangerouslyDisableSandbox from input when present", () => {
+    const ctx = fakeCtx();
+    const parsed = parseBashInput({ command: "echo hi", dangerouslyDisableSandbox: true });
+    if ("error" in parsed) throw new Error("unreachable");
+    const options = buildRunCommandOptions(parsed, ctx);
+    expect(options.dangerouslyDisableSandbox).toBe(true);
   });
 });
 

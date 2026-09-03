@@ -386,9 +386,22 @@ const WS12_11: ConformanceRow[] = [
     status: "covered",
     citations: [
       { file: "../../../sdk/src/transport-equivalence.test.ts", testName: "Lane C (Bash/sandbox/Monitor/TaskOutput/TaskStop): a real, unsandboxed Bash round" },
+      // C1 (fix wave, P3 close-out): the former citation set here was JUST the unsandboxed-branch
+      // transport round plus a single `sandbox: {enabled:false}` scenario that never generates a
+      // profile at all -- it asserted coverage of "every 'fully enforced' row" (filesystem.
+      // allowWrite/denyWrite/denyRead included) that the code did not actually have: T8 threaded
+      // `ctx.sandboxSettings` onto Bash/Monitor but neither executor ever read `.filesystem` off it.
+      // These four are the REAL "fully enforced" proof for the filesystem rows, against a real
+      // sandbox-exec, added by the fix wave alongside the executor-level plumbing fix itself
+      // (tools/impl/bash.ts's buildRunCommandOptions, tools/impl/monitor.ts's
+      // buildMonitorRunCommandOptions).
+      { file: "../sandbox/deny.darwin.test.ts", testName: "denyWrite: a write to a subpath under a configured denyWrite root is denied even though it's inside cwd" },
+      { file: "../sandbox/deny.darwin.test.ts", testName: "denyRead: reading a file under a configured denyRead root is denied even though it's inside cwd" },
+      { file: "../sandbox/deny.darwin.test.ts", testName: "allowWrite: a write to a configured allowWrite root (a sibling of cwd) succeeds" },
+      { file: "./impl/bash.test.ts", testName: "denyWritePaths/denyReadPaths are read off ctx.sandboxSettings.filesystem and passed through" },
     ],
     note:
-      "SandboxSettingsConfig parses (packages/sdk/src/protocol/config.ts) and threads through to the real runtime SandboxSettings without re-typing (RuntimeConfig.sandbox -> ToolExecutionContext.sandboxSettings, this task's own production-wiring work). 'Differential capture' here is the leg-equivalence proof this task's own Task 8 section of transport-equivalence.test.ts already established (\"Task 8: one real WS-06 tool round per lane family, on every leg\", Lane C's own Bash entry) -- the SAME transport mechanism every other lane's equivalence proof already relies on, so per-config-row re-registration is not repeated here (WS08-01's own P2 precedent for this exact reasoning: \"structural, not 10x-duplicated\").",
+      "SandboxSettingsConfig parses (packages/sdk/src/protocol/config.ts) and threads through to the real runtime SandboxSettings without re-typing (RuntimeConfig.sandbox -> ToolExecutionContext.sandboxSettings, this task's own production-wiring work). 'Differential capture' here is the leg-equivalence proof this task's own Task 8 section of transport-equivalence.test.ts already established (\"Task 8: one real WS-06 tool round per lane family, on every leg\", Lane C's own Bash entry) -- the SAME transport mechanism every other lane's equivalence proof already relies on, so per-config-row re-registration is not repeated here (WS08-01's own P2 precedent for this exact reasoning: \"structural, not 10x-duplicated\"). C1 (fix wave): the filesystem.{allowWrite,denyWrite,denyRead} rows specifically are now covered end-to-end (executor -> runCommand -> buildSeatbeltProfile -> real sandbox-exec), closing the gap this row previously asserted but did not have.",
   },
   {
     id: "WS12-02",

@@ -99,10 +99,52 @@ const PERSISTENT_STAND_IN_TIMEOUT_MS = 2_147_483_647;
 // Bash source dependency for two three-line helpers). See bash.ts's own comments for the full
 // rationale on each piece.
 function computeMonitorWritableRoots(ctx: ToolExecutionContext): string[] {
-  return [ctx.tempDir, ...ctx.session.getBoundedRoots(), ...(ctx.outDir !== undefined ? [ctx.outDir] : [])];
+  // C1 (fix wave, P3 close-out): `filesystem.allowWrite` unioned in too, mirroring bash.ts's own
+  // identical fix to `computeWritableRoots` (WS-12 §12 Q5: additive, never a replacement).
+  return [ctx.tempDir, ...ctx.session.getBoundedRoots(), ...(ctx.outDir !== undefined ? [ctx.outDir] : []), ...(ctx.sandboxSettings.filesystem?.allowWrite ?? [])];
 }
 function buildMonitorChildEnv(ctx: ToolExecutionContext): NodeJS.ProcessEnv {
   return { ...process.env, TMPDIR: ctx.tempDir, ...(ctx.outDir !== undefined ? { OUTDIR: ctx.outDir } : {}) };
+}
+
+// C1 (fix wave, P3 close-out): the SAME missing-deny-paths gap bash.ts's own `computeDenyPaths` (see
+// that file's header for the full rationale) closes, for Monitor's command half -- Monitor's own
+// header already says "Command half uses the Bash permission family" / "reuses the exact same
+// sandbox mechanism Bash does"; the two files intentionally duplicate this small, identical
+// three-line shape rather than one importing the other (this file's own header: "a small, deliberate
+// duplication rather than a cross-tool-file import").
+interface MonitorDenyPaths {
+  denyWritePaths?: string[];
+  denyReadPaths?: string[];
+}
+function computeMonitorDenyPaths(ctx: ToolExecutionContext): MonitorDenyPaths {
+  const fs = ctx.sandboxSettings.filesystem;
+  return {
+    ...(fs?.denyWrite !== undefined ? { denyWritePaths: fs.denyWrite } : {}),
+    ...(fs?.denyRead !== undefined ? { denyReadPaths: fs.denyRead } : {}),
+  };
+}
+
+// C1 (fix wave, P3 close-out): mirrors bash.ts's own `buildRunCommandOptions` -- factored out so a
+// test can assert on the OPTIONS `runMonitorCommand` would build without needing to intercept
+// `RunCommandResult.profile`.
+function buildMonitorRunCommandOptions(ctx: ToolExecutionContext): {
+  cwd: string;
+  env: NodeJS.ProcessEnv;
+  settings: typeof ctx.sandboxSettings;
+  writableRoots: string[];
+  denyWritePaths?: string[];
+  denyReadPaths?: string[];
+  home: string;
+} {
+  return {
+    cwd: ctx.cwd,
+    env: buildMonitorChildEnv(ctx),
+    settings: ctx.sandboxSettings,
+    writableRoots: computeMonitorWritableRoots(ctx),
+    ...computeMonitorDenyPaths(ctx),
+    home: ctx.home,
+  };
 }
 
 async function runMonitorCommand(input: MonitorInput & { command: string }, ctx: ToolExecutionContext): Promise<ToolResultPayload> {
@@ -142,13 +184,9 @@ async function runMonitorCommand(input: MonitorInput & { command: string }, ctx:
   let completion: ReturnType<typeof runCommand>;
   try {
     completion = runCommand({
+      ...buildMonitorRunCommandOptions(ctx),
       command: input.command,
-      cwd: ctx.cwd,
-      env: buildMonitorChildEnv(ctx),
       timeoutMs: effectiveTimeout,
-      settings: ctx.sandboxSettings,
-      writableRoots: computeMonitorWritableRoots(ctx),
-      home: ctx.home,
       onSpawned: ({ pid }) => {
         startTracking({ taskId, kind: "monitor", outputPath, description: input.description, command: input.command, pid });
       },
@@ -566,4 +604,4 @@ export const monitorExecutor: ToolExecutor = {
 
 replaceExecutor("Monitor", monitorExecutor);
 
-export { parseMonitorInput, isDisallowedAddress, validateWsEndpoint };
+export { parseMonitorInput, isDisallowedAddress, validateWsEndpoint, buildMonitorRunCommandOptions };

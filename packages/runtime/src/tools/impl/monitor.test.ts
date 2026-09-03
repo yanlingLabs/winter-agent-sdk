@@ -10,7 +10,7 @@ import type { ToolExecutionContext } from "../registry.ts";
 import { createSessionReadState } from "../read-state.ts";
 import { configureBackgroundTaskRoot, resetBackgroundTaskRootForTest } from "../background-tasks.ts";
 import { resetBackgroundTaskRuntimeForTest, getTask } from "./background-task-runtime.ts";
-import { parseMonitorInput, isDisallowedAddress, validateWsEndpoint, connectMonitorWs } from "./monitor.ts";
+import { parseMonitorInput, isDisallowedAddress, validateWsEndpoint, connectMonitorWs, buildMonitorRunCommandOptions } from "./monitor.ts";
 import type { SessionTempDirPaths } from "../../paths/temp.ts";
 
 function proj(): string {
@@ -61,6 +61,35 @@ async function waitFor(predicate: () => boolean, maxMs = 3000, stepMs = 25): Pro
 // describe.skip`) -- a non-darwin CI run then ENUMERATES every test below as visibly skipped,
 // rather than describe.skip hiding the whole block from the report.
 const t = test.skipIf(process.platform !== "darwin");
+
+// C1 (fix wave, P3 close-out): Monitor's command half shares bash.ts's own sandbox mechanism, and
+// shared the SAME gap -- `ctx.sandboxSettings.filesystem` was never read anywhere in this file
+// either. Options-level assertion, same rationale as bash.test.ts's own "buildRunCommandOptions"
+// describe block (RunCommandResult.profile never leaves runMonitorCommand).
+describe("buildMonitorRunCommandOptions (C1 -- filesystem deny/allow layers actually reach runCommand)", () => {
+  test("denyWritePaths/denyReadPaths are read off ctx.sandboxSettings.filesystem and passed through", () => {
+    const ctx = fakeCtx({
+      sandboxSettings: {
+        filesystem: {
+          denyWrite: ["/proj/secrets"],
+          denyRead: ["/proj/.env"],
+          allowWrite: ["/extra/allowed"],
+        },
+      },
+    });
+    const options = buildMonitorRunCommandOptions(ctx);
+    expect(options.denyWritePaths).toEqual(["/proj/secrets"]);
+    expect(options.denyReadPaths).toEqual(["/proj/.env"]);
+    expect(options.writableRoots).toContain("/extra/allowed");
+  });
+
+  test("no filesystem settings configured -> no denyWritePaths/denyReadPaths keys at all", () => {
+    const ctx = fakeCtx();
+    const options = buildMonitorRunCommandOptions(ctx);
+    expect("denyWritePaths" in options).toBe(false);
+    expect("denyReadPaths" in options).toBe(false);
+  });
+});
 
 // ---------------------------------------------------------------------------------------------
 // Input validation -- platform-free.

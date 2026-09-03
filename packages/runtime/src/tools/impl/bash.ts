@@ -115,7 +115,69 @@ function computeWritableRoots(ctx: ToolExecutionContext): string[] {
   // correctness one. `ctx.outDir` is appended only when the session actually configured one (WS-12
   // §5.3's OUTDIR extension) -- an unconfigured session sees byte-identical writableRoots to before
   // this task, i.e. exactly [ctx.tempDir].
-  return [ctx.tempDir, ...ctx.session.getBoundedRoots(), ...(ctx.outDir !== undefined ? [ctx.outDir] : [])];
+  //
+  // C1 (fix wave, P3 close-out): `ctx.sandboxSettings.filesystem?.allowWrite` is now unioned in too
+  // (WS-12 §12 Q5: additive to session roots, never a REPLACEMENT of them) -- T8's "Settings
+  // threading" MUST threaded `ctx.sandboxSettings` onto the context but never actually read
+  // `.filesystem` anywhere; this is that missing read. An unconfigured session (no
+  // `filesystem.allowWrite`) sees byte-identical output to before this fix.
+  return [
+    ctx.tempDir,
+    ...ctx.session.getBoundedRoots(),
+    ...(ctx.outDir !== undefined ? [ctx.outDir] : []),
+    ...(ctx.sandboxSettings.filesystem?.allowWrite ?? []),
+  ];
+}
+
+// C1 (fix wave, P3 close-out): the OTHER missing half of the same gap -- `filesystem.denyWrite`/
+// `denyRead` were accepted (SandboxFilesystemSettings), threaded onto ctx.sandboxSettings (T8), and
+// even built into a real SBPL layer by `buildSeatbeltProfile` (profile.ts:228-236) -- but no
+// production caller ever read them off `ctx.sandboxSettings.filesystem` and passed them to
+// `runCommand`. Plain field reads, no matching/resolution -- `buildSeatbeltProfile` does its own
+// `canonicalizePath`/SBPL-escaping downstream; this function's only job is "don't drop the fields
+// on the floor between ctx and runCommand," mirroring `computeWritableRoots`'s own scope.
+interface DenyPaths {
+  denyWritePaths?: string[];
+  denyReadPaths?: string[];
+}
+function computeDenyPaths(ctx: ToolExecutionContext): DenyPaths {
+  const fs = ctx.sandboxSettings.filesystem;
+  return {
+    ...(fs?.denyWrite !== undefined ? { denyWritePaths: fs.denyWrite } : {}),
+    ...(fs?.denyRead !== undefined ? { denyReadPaths: fs.denyRead } : {}),
+  };
+}
+
+// C1 (fix wave, P3 close-out): the common `runCommand` OPTIONS both `runForeground` and
+// `runBackground` build -- factored out so the deny/writable-roots wiring above lives in exactly
+// ONE place, and so a test can assert on the OPTIONS a call would build without needing to
+// intercept `RunCommandResult.profile` (which never leaves `runForeground`/`runBackground` at all --
+// see this function's own test file header). Deliberately does NOT include `command`/`matchCommand`/
+// `timeoutMs`/`onStdout`/`onStderr`/`onSpawned` -- those differ between the foreground (pwd-capture
+// wrapper + matchCommand override) and background (register-before-spawn) call sites, which each
+// still build their own literal for those fields, spreading this function's return underneath.
+function buildRunCommandOptions(
+  input: BashInput,
+  ctx: ToolExecutionContext,
+): {
+  cwd: string;
+  env: NodeJS.ProcessEnv;
+  settings: typeof ctx.sandboxSettings;
+  writableRoots: string[];
+  denyWritePaths?: string[];
+  denyReadPaths?: string[];
+  home: string;
+  dangerouslyDisableSandbox?: boolean;
+} {
+  return {
+    cwd: ctx.cwd,
+    env: buildChildEnv(ctx),
+    settings: ctx.sandboxSettings,
+    writableRoots: computeWritableRoots(ctx),
+    ...computeDenyPaths(ctx),
+    home: ctx.home,
+    ...(input.dangerouslyDisableSandbox !== undefined ? { dangerouslyDisableSandbox: input.dangerouslyDisableSandbox } : {}),
+  };
 }
 
 function isWithinAllowedDirs(candidate: string, cwd: string, writableRoots: string[]): boolean {
@@ -270,7 +332,7 @@ function formatForegroundResult(parts: {
 // Foreground execution
 // ---------------------------------------------------------------------------------------------
 async function runForeground(input: BashInput, ctx: ToolExecutionContext): Promise<ToolResultPayload> {
-  const writableRoots = computeWritableRoots(ctx);
+  const runOptions = buildRunCommandOptions(input, ctx);
   const timeoutMs = resolveTimeout(input.timeout);
   const pwdFile = join(ctx.tempDir, `.bash-cwd-${randomUUID()}`);
 
@@ -279,15 +341,10 @@ async function runForeground(input: BashInput, ctx: ToolExecutionContext): Promi
   let result: RunCommandResult;
   try {
     result = await runCommand({
+      ...runOptions,
       command: buildPwdCaptureScript(input.command, pwdFile),
       matchCommand: input.command,
-      cwd: ctx.cwd,
-      env: buildChildEnv(ctx),
       timeoutMs,
-      settings: ctx.sandboxSettings,
-      ...(input.dangerouslyDisableSandbox !== undefined ? { dangerouslyDisableSandbox: input.dangerouslyDisableSandbox } : {}),
-      writableRoots,
-      home: ctx.home,
       onStdout: (c) => {
         stdout += c.toString("utf8");
       },
@@ -333,7 +390,7 @@ function summarizeCommand(command: string, max = 80): string {
 }
 
 async function runBackground(input: BashInput, ctx: ToolExecutionContext): Promise<ToolResultPayload> {
-  const writableRoots = computeWritableRoots(ctx);
+  const runOptions = buildRunCommandOptions(input, ctx);
   const timeoutMs = resolveTimeout(input.timeout);
 
   // Pre-flight the SAME checks runCommand performs internally, synchronously, BEFORE creating the
@@ -379,14 +436,9 @@ async function runBackground(input: BashInput, ctx: ToolExecutionContext): Promi
   startTracking({ taskId, kind: "bash", outputPath, description, command: input.command });
 
   const completion = runCommand({
+    ...runOptions,
     command: input.command,
-    cwd: ctx.cwd,
-    env: buildChildEnv(ctx),
     timeoutMs,
-    settings: ctx.sandboxSettings,
-    ...(input.dangerouslyDisableSandbox !== undefined ? { dangerouslyDisableSandbox: input.dangerouslyDisableSandbox } : {}),
-    writableRoots,
-    home: ctx.home,
     onSpawned: ({ pid }) => {
       startTracking({ taskId, kind: "bash", outputPath, description, command: input.command, pid });
     },
@@ -530,4 +582,4 @@ export const bashExecutor: ToolExecutor = {
 replaceExecutor("Bash", bashExecutor, extractBashPaths);
 
 // Exported for direct unit testing without going through the full registry/ctx machinery.
-export { parseBashInput, resolveTimeout, extractBashPaths, computeWritableRoots, capOutput, formatForegroundResult };
+export { parseBashInput, resolveTimeout, extractBashPaths, computeWritableRoots, capOutput, formatForegroundResult, buildRunCommandOptions };
