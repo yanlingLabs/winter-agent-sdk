@@ -31,6 +31,16 @@ export type { RpcBridge } from "./rpc/bridge.ts";
 export { echoProvider, scriptedProvider, stubExecutor, isTestProviderName, testProviderByName } from "./provider/mock.ts";
 export type { TestProviderName } from "./provider/mock.ts";
 
+// Phase 3 Task 2 (WS-06 §3.5): the tool-registration seam (Task 1, packages/runtime/src/tools/
+// registry.ts) was package-internal until now -- re-exported so packages/sdk/src/transport-
+// equivalence.test.ts (an sdk-package test, one layer up from this package) can register its own
+// scripted background-task-emitting tool the SAME way testing.ts's own registerEquivalenceStandIn
+// does, rather than reaching past this package's public surface with a deep relative import. Only
+// the registration FUNCTION is exported, not the descriptor/executor/disposition types it takes --
+// TS's contextual typing already fully checks an object literal passed directly as registerTool's
+// own argument (this file's one new consumer does exactly that), so nothing else needs a name here.
+export { registerTool } from "./tools/registry.ts";
+
 // Paths (Task 6): WINTER_HOME resolution, the exact CC-compatible project-key algorithm, and the
 // D18 per-session temp resolver — consumed by the store (Task 7), the dialect writer (Task 8), and
 // resume (Task 9). Task 10 moved home.ts/project-key.ts/keys.ts into the sdk package (WS-05 §6) —

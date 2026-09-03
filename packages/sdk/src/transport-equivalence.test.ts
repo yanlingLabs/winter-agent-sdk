@@ -45,7 +45,19 @@ import type { RuntimeConfig } from "./protocol/config.ts";
 import type { CanUseTool, PermissionMode } from "./permissions/types.ts";
 import type { Options } from "./options.ts";
 import { inMemoryProcess } from "winter-agent-runtime/testing";
-import { echoProvider, stubExecutor, testProviderByName, type TestProviderName, WinterCompatibilitySessionStore, compatibilityKeys } from "winter-agent-runtime";
+import {
+  echoProvider,
+  stubExecutor,
+  testProviderByName,
+  type TestProviderName,
+  WinterCompatibilitySessionStore,
+  compatibilityKeys,
+  // Phase 3 Task 2 (WS-06 §3.5): scriptedProvider + registerTool back the background-task-message-
+  // family emission proof below — see that section's own header comment for why it registers its own
+  // tool directly rather than going through this file's shared spawnHook/traceViaQuery scaffolding.
+  scriptedProvider,
+  registerTool,
+} from "winter-agent-runtime";
 import { normalizeTrace, compareTraces, type ConformanceTraceEntry } from "winter-conformance/trace";
 
 // Task 8: every engine run in this file persists by default (RuntimeConfig.persistSession defaults
@@ -1109,3 +1121,146 @@ if (process.env.WINTER_COMPILED_BIN) {
     registerEquivalenceScenarios("inMemory", "compiled");
   });
 }
+
+// --- Task 2 (P3, WS-06 §3.5): background-task message family — ctx.emitFrame -> the wire ----------
+//
+// Scoped to the in-memory leg ONLY, and deliberately NOT registered through this file's shared
+// spawnHook/traceViaQuery/registerEquivalenceScenarios scaffolding — that scaffolding's own spawnHook
+// hard-codes `stubExecutor` for EVERY leg, INCLUDING inMemory (see its own definition above:
+// `inMemoryProcess(opts.args, ..., stubExecutor, env)`), which is deliberate for every EXISTING
+// scenario in this file (byte-identical tool_result text across all three transports without needing
+// the registry to be leg-aware) but is exactly the thing this new seam cannot run through:
+// ctx.emitFrame only exists on a REAL per-tool ToolExecutionContext (registry.ts), which engine.ts
+// only builds when its own `tools` option is OMITTED (buildDefaultToolExecutor) — stubExecutor's own
+// ToolExecutor shape has no context parameter at all, so there is nothing to call emitFrame ON when
+// it is forced. This test instead drives inMemoryProcess directly, passing `tools` as `undefined`
+// (omitted) so engine.ts builds its own registry-backed executor for real.
+//
+// STRUCTURAL GAP (this task's own top concern — see task-2-report.md): the CHILD and COMPILED legs
+// both run through main.ts, which hard-codes `tools: stubExecutor` unconditionally — Task 1's own
+// commit message pins "main.ts is untouched ... structurally unaffected by this whole task" as a
+// deliberate, already-reviewed spine invariant. That means ctx.emitFrame is UNREACHABLE on those two
+// legs today, by construction, regardless of what this task does — there is no way for a real
+// spawned/compiled `winter` process to invoke a per-tool ToolExecutionContext at all right now. This
+// is why this proof stops at the in-memory leg instead of joining registerEquivalenceScenarios's
+// cross-leg pattern: flipping main.ts's own default is a controller-level call (main.ts is outside
+// this task's named files, and every existing child/compiled equivalence scenario and differential
+// golden that calls "test_tool"/"long_task"/"mystery_tool" currently depends on stubExecutor's exact
+// echo behavior surviving unchanged) — not something to change unilaterally while Task 1's own review
+// of the neighboring registry.ts/testing.ts diff is in flight. scripts/differential.ts's own new
+// "background-task-round" golden is the SAME in-memory-only proof, frozen for regression.
+const TEST_BGTASK_TOOL = "test_bgtask_probe"; // throwaway snake_case test double (mirrors testing.ts's own test_tool/long_task/mystery_tool naming) -- never a real WS-06 name
+
+registerTool({
+  descriptor: {
+    canonicalName: TEST_BGTASK_TOOL,
+    advertisedName: TEST_BGTASK_TOOL,
+    source: "sdk",
+    inputSchema: { type: "object" },
+    description: "Test-only background-task-frame emitter (transport-equivalence.test.ts) -- not a WS-06 tool.",
+    exposure: "hidden",
+    permissionClass: "execute",
+    availability: {},
+    capabilityRequirements: [],
+    disposition: "implement-now",
+  },
+  executor: {
+    async execute(_input, ctx) {
+      const taskId = "t2-fixture-task";
+      ctx.emitFrame({
+        type: "system",
+        subtype: "task_started",
+        task_id: taskId,
+        description: "fixture background task",
+        uuid: randomUUID(),
+        session_id: ctx.sessionId,
+      });
+      ctx.emitFrame({
+        type: "system",
+        subtype: "task_progress",
+        task_id: taskId,
+        description: "fixture background task",
+        usage: { total_tokens: 1, tool_uses: 1, duration_ms: 1 },
+        uuid: randomUUID(),
+        session_id: ctx.sessionId,
+      });
+      ctx.emitFrame({
+        type: "system",
+        subtype: "task_notification",
+        task_id: taskId,
+        status: "completed",
+        output_file: "/dev/null",
+        summary: "fixture background task complete",
+        uuid: randomUUID(),
+        session_id: ctx.sessionId,
+      });
+      return { output: "bgtask-probe-done" };
+    },
+  },
+});
+
+describe("background-task message family (WS-06 §3.5): ctx.emitFrame -> the wire (in-memory leg)", () => {
+  test("task_started -> task_progress -> task_notification appear on the wire in emit order, between the tool_use assistant block and its tool_result", async () => {
+    const winterHome = mkdtempSync(join(tmpdir(), "winter-bgtask-emit-"));
+    try {
+      const entries: ConformanceTraceEntry[] = [];
+      for await (const msg of query({
+        prompt: "go",
+        options: {
+          model: FIXTURE_MODEL,
+          cwd: FIXTURE_CWD,
+          allowedTools: [TEST_BGTASK_TOOL],
+          spawnClaudeCodeProcess: (opts) =>
+            inMemoryProcess(
+              opts.args,
+              scriptedProvider([
+                { kind: "tool_use", calls: [{ id: "bgtask-call-1", name: TEST_BGTASK_TOOL, input: {} }] },
+                { kind: "text", text: "bgtask done" },
+              ]),
+              undefined, // omitted -- engine.ts builds the REAL registry-backed executor (see header comment above)
+              { ...opts.env, WINTER_HOME: winterHome },
+            ),
+        },
+      })) {
+        entries.push({ sequence: entries.length, direction: "runtime-to-host", kind: kindOfMessage(msg), payload: msg });
+      }
+      const trace = normalizeTrace(entries);
+      expect(trace.map((e) => e.kind)).toEqual([
+        "system/init",
+        "assistant",
+        "system/task_started",
+        "system/task_progress",
+        "system/task_notification",
+        "user",
+        "assistant",
+        "result",
+      ]);
+      const toolUseMsg = trace[1]!.payload as { message: { content: unknown } };
+      expect(toolUseMsg.message.content).toEqual([{ type: "tool_use", id: "bgtask-call-1", name: TEST_BGTASK_TOOL, input: {} }]);
+
+      expect(trace[2]!.payload).toEqual({ type: "system", subtype: "task_started", task_id: "t2-fixture-task", description: "fixture background task" });
+
+      expect(trace[3]!.payload).toEqual({
+        type: "system",
+        subtype: "task_progress",
+        task_id: "t2-fixture-task",
+        description: "fixture background task",
+        usage: { total_tokens: 1, tool_uses: 1 }, // duration_ms is normalizeTrace's own VOLATILE field -- stripped
+      });
+
+      expect(trace[4]!.payload).toEqual({
+        type: "system",
+        subtype: "task_notification",
+        task_id: "t2-fixture-task",
+        status: "completed",
+        output_file: "/dev/null",
+        summary: "fixture background task complete",
+      });
+
+      const toolResultMsg = trace[5]!.payload as { message: { content: unknown } };
+      expect(toolResultMsg.message.content).toEqual([{ type: "tool_result", tool_use_id: "bgtask-call-1", content: "bgtask-probe-done" }]);
+    } finally {
+      rmSync(winterHome, { recursive: true, force: true });
+    }
+  });
+});
