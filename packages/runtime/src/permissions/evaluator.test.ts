@@ -1983,6 +1983,63 @@ describe("Task 7 — T6-review obligation: Read-deny-blocks-Edit enforced genera
   });
 });
 
+// Task 8 (P3 close-out, "Baseline read denial" MUST; WS-12 §2 / D6): the exact rule shapes engine.ts
+// seeds into EVERY session (`BASELINE_DENY_RULES`) -- two `~`-anchored deny rules, source "managed".
+// Per engine.ts's own documented testing convention ("tests that need a synthetic home construct an
+// EvaluationContext directly against evaluator.ts instead of exercising [os.homedir()'s] real
+// value"), this proves the RULE MECHANISM against a synthetic `ctx.home` -- never the real OS home
+// (this file's own hard constraint: no test may touch a real ~/.winter). engine.ts's own
+// construction is two `sourceRule(...)` calls; a throw there would fail EVERY test in the whole
+// suite at import time (engine.ts is transitively imported everywhere), which the gate gave zero
+// evidence of -- the wiring itself is a matter of reading engine.ts's own source, not something
+// this file re-derives. TWO rules, not one: found empirically (this describe block's own first
+// draft used only the bare pattern and a RED test caught it) that Ruling P2-D's "bare `~`-anchored
+// segment reaches any depth on deny" special case is scoped to a SINGLE-segment pattern
+// (paths.ts's own `isSingleSegmentDirectoryPattern`) -- `.winter/run` is two segments, so it
+// compiles through the general, exact-match-only glob path instead; see engine.ts's own
+// BASELINE_DENY_RULES comment for the full account.
+describe("Task 8 (P3 close-out): the baseline `~/.winter/run` read denial (WS-12 §2 / D6, engine.ts's own BASELINE_DENY_RULES shape)", () => {
+  function baselineDenyRules(): SourcedRuleSet {
+    return withRules(rule("Read(~/.winter/run)", "deny", "managed"), rule("Read(~/.winter/run/**)", "deny", "managed"));
+  }
+
+  test("denies a Read of the bare path itself", async () => {
+    const ctx = baseCtx({ home: "/synthetic/home", policy: policy({ mode: "default", rules: baselineDenyRules() }) });
+    const record = await evaluate(call("Read", { file_path: "/synthetic/home/.winter/run" }), ctx);
+    expect(record).toMatchObject({ decision: "deny", mechanism: "rule", source: "managed" });
+  });
+
+  test("denies a Read of a file NESTED under the path (Ruling P2-D: a bare `~`-anchored segment reaches any depth on deny)", async () => {
+    const ctx = baseCtx({ home: "/synthetic/home", policy: policy({ mode: "default", rules: baselineDenyRules() }) });
+    const record = await evaluate(call("Read", { file_path: "/synthetic/home/.winter/run/core.sock" }), ctx);
+    expect(record).toMatchObject({ decision: "deny", mechanism: "rule", source: "managed" });
+  });
+
+  test("wins even under bypassPermissions -- a managed deny rule always outranks bypass (WS-07 §6.4)", async () => {
+    const ctx = baseCtx({ home: "/synthetic/home", policy: policy({ mode: "bypassPermissions", rules: baselineDenyRules() }) });
+    const record = await evaluate(call("Read", { file_path: "/synthetic/home/.winter/run/core.sock" }), ctx);
+    expect(record).toMatchObject({ decision: "deny", mechanism: "rule" });
+  });
+
+  test("also blocks Edit/Write/NotebookEdit on the same path via the general Read-deny-blocks-edit composition (WS-07 §3.1) -- the tool-fence layer, not just Read itself", async () => {
+    const ctx = baseCtx({ home: "/synthetic/home", policy: policy({ mode: "default", rules: baselineDenyRules() }) });
+    for (const [toolName, field] of [
+      ["Edit", "file_path"],
+      ["Write", "file_path"],
+      ["NotebookEdit", "notebook_path"],
+    ] as const) {
+      const record = await evaluate(call(toolName, { [field]: "/synthetic/home/.winter/run/core.sock" }), ctx);
+      expect(record).toMatchObject({ decision: "deny", mechanism: "rule" });
+    }
+  });
+
+  test("does NOT block a read of an unrelated path under the same home (the rule is scoped, not a blanket home-wide deny)", async () => {
+    const ctx = baseCtx({ home: "/synthetic/home", cwd: "/synthetic/home", policy: policy({ mode: "default", rules: baselineDenyRules() }) });
+    const record = await evaluate(call("Read", { file_path: "/synthetic/home/notes.txt" }), ctx);
+    expect(record).toMatchObject({ decision: "allow", mechanism: "mode" });
+  });
+});
+
 describe("Task 8 (P3 close-out, RULING P3-E): NotebookEdit joins FILE_RULE_TOOLS/write-path extraction, exactly like Edit/Write", () => {
   test("a deny rule on a notebook path blocks NotebookEdit, before ever reaching the mode/prompt stage (mirrors the Edit/Write fixture above)", async () => {
     const promptSpy = spyPromptStage(() => ({ decision: "allow" })); // proves the denial happens BEFORE the prompt stage

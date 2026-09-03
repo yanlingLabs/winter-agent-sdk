@@ -19,7 +19,7 @@ import type { FrameSource, FrameSink } from "./protocol/channel.ts";
 import { Queue } from "./protocol/channel.ts";
 import { createRpcBridge } from "./rpc/bridge.ts";
 import { PolicyStateStore, WinterPermissionError, assertKnownPermissionMode, isPermissionMode } from "./permissions/policy-state.ts";
-import { emptyRuleSet, buildSdkSourcedEntries } from "./permissions/ruleset.ts";
+import { emptyRuleSet, buildSdkSourcedEntries, sourceRule } from "./permissions/ruleset.ts";
 import { createBridgePromptStage } from "./permissions/prompt-stage.ts";
 import {
   evaluate,
@@ -259,6 +259,36 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // testing.ts's/main.ts's own pre-runEngine try/catch) — never a parse failure, never a silently
   // wrong default.
   const initialMode = assertKnownPermissionMode(config.permissionMode);
+  // Task 8 (P3 close-out, "Baseline read denial" MUST; WS-12 §2 / D6): the sole baseline read
+  // denial -- `~/.winter/run` -- enforced at the TOOL-FENCE layer (the standing evaluator's own
+  // Read-deny machinery, WS-07 §3.1), independent of whether a call ever reaches the OS sandbox at
+  // all. This is the PERMISSIONS-layer half of D6's tool-surface parity; the sandbox-PROFILE half
+  // (a `(deny file-read* (subpath "<home>/.winter/run"))` SBPL rule, enforced only for a SANDBOXED
+  // Bash/Monitor child process) already landed in Lane C (sandbox/profile.ts's own `home` field,
+  // threaded through spawn.ts) -- neither half substitutes for the other (WS-12 §1's own layer-
+  // separation invariant): the tool-fence rule below is what stops a direct `Read`/recognized-Bash-
+  // read of the path (no sandbox involved at all), while the SBPL rule is what stops an
+  // UNRECOGNIZED subprocess (a compiler, a language runtime, anything the model's own shell command
+  // spawns) from reading it once inside the sandbox.
+  //
+  // `source: "managed"` -- an unconditional product floor, never weakened by a lower-priority
+  // settings source (WS-07 §3.2: "Deny from any source beats allow from every source... Managed
+  // rules cannot be weakened by CLI or lower settings"). TWO entries, verified empirically to both
+  // be necessary (not merely defensive): Ruling P2-D's "a bare `~`-anchored segment reaches any
+  // depth on deny" special case (paths.ts's own `isSingleSegmentDirectoryPattern`) is scoped to a
+  // pattern with EXACTLY ONE segment after the anchor (`~/secrets`, paths.test.ts's own fixture) --
+  // `.winter/run` is TWO segments, so it does NOT qualify and instead compiles through the general,
+  // exact-match-only glob path (a first draft of this fix used only the bare pattern and a RED test
+  // caught it immediately: it matched the literal `~/.winter/run` path but NOT anything nested
+  // beneath it, e.g. `~/.winter/run/core.sock`). The bare entry covers the path itself; `/**`
+  // covers its contents (gitignore-style `dir/**` does not itself match bare `dir`) -- both are
+  // required for full coverage, not redundant. The `~` anchor itself is resolved against `ctx.home`
+  // at MATCH time (paths.ts), never baked in here, so this constant is correct regardless of which
+  // OS user's home a given session actually resolves.
+  const BASELINE_DENY_RULES = [
+    sourceRule({ toolName: "Read", ruleContent: "~/.winter/run" }, "deny", "managed"),
+    sourceRule({ toolName: "Read", ruleContent: "~/.winter/run/**" }, "deny", "managed"),
+  ];
   // Task 5 (WS-07 §3.3 / phase ruling 1) seeding: Options.{allowedTools,disallowedTools,permissions}
   // become source:"sdk" rule entries via T5's own builder — this is the wiring T5's own header
   // called "not wired into the engine by this task (that is a later task's job)". Runs the SAME
@@ -266,11 +296,14 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // startup (PermissionRuleValidationError) rather than being silently inert at match time.
   const initialRules = {
     ...emptyRuleSet(),
-    entries: buildSdkSourcedEntries({
-      ...(config.allowedTools !== undefined ? { allowedTools: config.allowedTools } : {}),
-      ...(config.disallowedTools !== undefined ? { disallowedTools: config.disallowedTools } : {}),
-      ...(config.permissions !== undefined ? { permissions: config.permissions } : {}),
-    }),
+    entries: [
+      ...BASELINE_DENY_RULES,
+      ...buildSdkSourcedEntries({
+        ...(config.allowedTools !== undefined ? { allowedTools: config.allowedTools } : {}),
+        ...(config.disallowedTools !== undefined ? { disallowedTools: config.disallowedTools } : {}),
+        ...(config.permissions !== undefined ? { permissions: config.permissions } : {}),
+      }),
+    ],
   };
   const policyStateStore = new PolicyStateStore(
     { mode: initialMode, rules: initialRules },
