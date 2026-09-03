@@ -22,10 +22,12 @@ function makeCtx(cwd: string): ToolExecutionContext {
     emitFrame: () => {},
     permissions: { probeReadAccess: () => "silent" },
     tempDir: join(cwd, ".tmp"),
+    sandboxSettings: {},
     session: {
       setCwd() {},
       addBoundedRoot() {},
       setPermissionMode() {},
+      getBoundedRoots: () => [],
     },
   };
 }

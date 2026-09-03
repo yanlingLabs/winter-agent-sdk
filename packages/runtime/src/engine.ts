@@ -25,6 +25,10 @@ import {
   evaluate,
   probeReadAccess,
   REAL_SPECIAL_CHECKS,
+  // Task 8 (P3 close-out, "Settings threading" MUST): reused for the session seam's own
+  // `getBoundedRoots()` (registry.ts) -- the IDENTICAL "cwd or additionalDirectories" notion the
+  // standing evaluator already computes for acceptEdits/critical-removal, never re-derived.
+  boundedRoots,
   type PermissionCall,
   type EvaluationContext,
   type PermissionDecisionRecord,
@@ -70,6 +74,10 @@ import { buildRegistryToolExecutor, buildRegistryToolExecutorWithFallback, type 
 import { createSessionReadState } from "./tools/read-state.ts";
 import { configureBackgroundTaskRoot } from "./tools/background-tasks.ts";
 import { sessionTempDir, type SessionTempDirPaths } from "./paths/temp.ts";
+// Task 8 (P3 close-out, "Settings threading" MUST): the resolved-once-per-run fallback every real
+// executor (bash.ts, monitor.ts) used to hardcode as a module constant -- see
+// RegistryToolExecutorDeps.sandboxSettings's own comment (registry.ts) for the seam this feeds.
+import { DEFAULT_SANDBOX_SETTINGS } from "./sandbox/profile.ts";
 
 export type ContentBlock =
   | { type: "text"; text: string }
@@ -653,9 +661,27 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
           }
           cancelPendingApprovalsOnModeSwitch(previousMode, result.effectiveMode);
         },
+        // Task 8 (P3 close-out, "Settings threading" MUST): `makeEvalCtx()` is cheap and side-
+        // effect-free (built fresh per call throughout this file already, e.g. the probeReadAccess
+        // line above) -- reusing evaluator.ts's own boundedRoots() here is what keeps a tool
+        // executor's notion of "writable roots" from ever drifting from the standing evaluator's.
+        getBoundedRoots(): string[] {
+          return boundedRoots(makeEvalCtx());
+        },
       },
-      readState: createSessionReadState(),
+      // Ruling P3-D carry (task-1 report, spine amendment section): `config.cwd` -- the run's own
+      // STARTING cwd -- was in scope here all along; passing it is what lets the read-before-edit
+      // ladder's canonicalization resolve a RELATIVE file_path/notebook_path the same way for every
+      // caller in this run, instead of silently defaulting to `process.cwd()` (the daemon's own
+      // process-wide cwd, never a per-session concept). Deliberately `config.cwd`, not the live
+      // `currentCwd` -- SessionReadStateOptions.cwd is fixed at CONSTRUCTION time by design (its own
+      // header: "never per-call, so one session's keying stays internally consistent"), and this
+      // call site runs exactly once, before any tool call could have switched worktrees, so the two
+      // would read identically here regardless; `config.cwd` names the invariant this actually is.
+      readState: createSessionReadState({ cwd: config.cwd }),
       getTempDir: () => resolveSessionTempPaths().root,
+      sandboxSettings: config.sandbox ?? DEFAULT_SANDBOX_SETTINGS,
+      ...(config.outputsDir !== undefined ? { outDir: config.outputsDir } : {}),
     };
     // Fix round 1 (RULING P3-C): main.ts is the one caller that supplies `unregisteredToolExecutor`
     // (stubExecutor) -- every OTHER caller of this default (testing.ts's inMemoryProcess, when ITS

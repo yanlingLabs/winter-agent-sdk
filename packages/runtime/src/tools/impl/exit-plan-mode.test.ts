@@ -16,6 +16,7 @@ function makeCtx(overrides?: { setPermissionMode?: ToolExecutionContext["session
     emitFrame: () => {},
     permissions: { probeReadAccess: () => "silent" },
     tempDir: "/tmp/winter-test",
+    sandboxSettings: {},
     session: {
       setCwd(p: string) {
         calls.setCwd.push(p);
@@ -27,6 +28,7 @@ function makeCtx(overrides?: { setPermissionMode?: ToolExecutionContext["session
         calls.setPermissionMode.push(mode);
         overrides?.setPermissionMode?.(mode);
       },
+      getBoundedRoots: () => [],
     },
   };
   return { ctx, calls };

@@ -253,6 +253,10 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
     // comment on each field for what does/doesn't consume it runtime-side).
     ...(options.permissionPromptToolName !== undefined ? { permissionPromptToolName: options.permissionPromptToolName } : {}),
     ...(options.additionalDirectories !== undefined ? { additionalDirectories: options.additionalDirectories } : {}),
+    // Task 8 (P3 close-out, "Settings threading" MUST): same pure-passthrough convention as every
+    // field above.
+    ...(options.sandbox !== undefined ? { sandbox: options.sandbox } : {}),
+    ...(options.outputsDir !== undefined ? { outputsDir: options.outputsDir } : {}),
     // Task 6 (WS-07 §6.4): same pure-passthrough convention as every field above.
     ...(options.allowDangerouslySkipPermissions !== undefined ? { allowDangerouslySkipPermissions: options.allowDangerouslySkipPermissions } : {}),
     // Task 10 (WS-08 §1/§2/§9): the hooks structure-only wire shape (functions stripped -- see

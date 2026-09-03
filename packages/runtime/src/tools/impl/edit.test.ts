@@ -24,7 +24,8 @@ function makeCtx(cwd: string, opts?: { readState?: SessionReadState; probe?: Rea
     emitFrame: () => {},
     permissions: { probeReadAccess: () => opts?.probe ?? "silent" },
     tempDir: "/unused",
-    session: { setCwd() {}, addBoundedRoot() {}, setPermissionMode() {} },
+    sandboxSettings: {},
+    session: { setCwd() {}, addBoundedRoot() {}, setPermissionMode() {}, getBoundedRoots: () => [] },
   };
 }
 

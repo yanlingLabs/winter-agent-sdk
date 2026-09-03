@@ -26,7 +26,8 @@ function fakeCtx(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionCo
     emitFrame: (f) => frames.push(f),
     permissions: { probeReadAccess: () => "silent" },
     tempDir: proj(),
-    session: { setCwd() {}, addBoundedRoot() {}, setPermissionMode() {} },
+    sandboxSettings: {},
+    session: { setCwd() {}, addBoundedRoot() {}, setPermissionMode() {}, getBoundedRoots: () => [] },
     ...overrides,
   };
 }
@@ -239,7 +240,7 @@ describe("Bash executor (real sandboxed spawn)", () => {
       const tempDir = proj();
       mkdirSync(join(tempDir, "sub"));
       let carried: string | undefined;
-      const ctx = fakeCtx({ cwd, tempDir, session: { setCwd: (p) => (carried = p), addBoundedRoot() {}, setPermissionMode() {} } });
+      const ctx = fakeCtx({ cwd, tempDir, session: { setCwd: (p) => (carried = p), addBoundedRoot() {}, setPermissionMode() {}, getBoundedRoots: () => [] } });
       const res = await bash()({ command: `cd ${join(tempDir, "sub")} && pwd` }, ctx);
       expect(res.output).toContain("[exit 0]");
       expect(carried).toBe(realpathSync(join(tempDir, "sub")));
@@ -248,7 +249,7 @@ describe("Bash executor (real sandboxed spawn)", () => {
     t("a cd OUTSIDE every allowed dir does not persist", async () => {
       const cwd = proj();
       let carried: string | undefined;
-      const ctx = fakeCtx({ cwd, session: { setCwd: (p) => (carried = p), addBoundedRoot() {}, setPermissionMode() {} } });
+      const ctx = fakeCtx({ cwd, session: { setCwd: (p) => (carried = p), addBoundedRoot() {}, setPermissionMode() {}, getBoundedRoots: () => [] } });
       const res = await bash()({ command: "cd /var && pwd" }, ctx);
       expect(res.output).toContain("[exit 0]");
       expect(carried).toBeUndefined();
@@ -256,14 +257,14 @@ describe("Bash executor (real sandboxed spawn)", () => {
 
     t("no cd at all -- setCwd is never called", async () => {
       let called = false;
-      const ctx = fakeCtx({ session: { setCwd: () => (called = true), addBoundedRoot() {}, setPermissionMode() {} } });
+      const ctx = fakeCtx({ session: { setCwd: () => (called = true), addBoundedRoot() {}, setPermissionMode() {}, getBoundedRoots: () => [] } });
       await bash()({ command: "echo hi" }, ctx);
       expect(called).toBe(false);
     });
 
     t("a command that itself calls exit early (never reaching the trailing pwd capture) does not crash and does not carry cwd", async () => {
       let called = false;
-      const ctx = fakeCtx({ session: { setCwd: () => (called = true), addBoundedRoot() {}, setPermissionMode() {} } });
+      const ctx = fakeCtx({ session: { setCwd: () => (called = true), addBoundedRoot() {}, setPermissionMode() {}, getBoundedRoots: () => [] } });
       const res = await bash()({ command: "exit 3" }, ctx);
       expect(res.output).toContain("[exit 3]");
       expect(called).toBe(false);

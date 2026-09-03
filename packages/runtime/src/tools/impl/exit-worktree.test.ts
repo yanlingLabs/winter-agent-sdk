@@ -54,12 +54,14 @@ function makeCtx(cwd: string): { ctx: ToolExecutionContext; calls: { setCwd: str
     emitFrame: () => {},
     permissions: { probeReadAccess: () => "silent" },
     tempDir: "/tmp/winter-test",
+    sandboxSettings: {},
     session: {
       setCwd(p: string) {
         calls.setCwd.push(p);
       },
       addBoundedRoot() {},
       setPermissionMode() {},
+      getBoundedRoots: () => [],
     },
   };
   return { ctx, calls };

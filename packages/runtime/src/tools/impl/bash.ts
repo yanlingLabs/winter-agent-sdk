@@ -4,18 +4,20 @@
 // run_in_background -> a real background task + frames, the ~30k inline cap with persisted
 // overflow, a smaller failure excerpt, and the 5 GB stream kill.
 //
-// Documented scope gaps (nothing upstream provides these yet -- flagged rather than guessed):
-//   - SandboxSettings is not threaded through ToolExecutionContext/RuntimeConfig at all in this
-//     phase (verified: no `sandbox` field exists anywhere in packages/sdk/src). This executor uses
-//     the documented DEFAULT_SANDBOX_SETTINGS (profile.ts) -- sandbox on, network denied, no
-//     exclusions -- until a future phase wires real per-session settings in.
-//   - `filesystem.allowWrite` and the OUTDIR product extension (WS-12 §5.3) have no seam on
-//     ToolExecutionContext to read from yet (no `outDir`/`roots` field exists); writableRoots here
-//     is therefore just [ctx.tempDir] (the session scratch) beyond cwd itself.
-//   - "allowed working directories" for the cwd-carry policy (WS-06 §6.1) is approximated as the
-//     SAME writable-roots set the sandbox profile embeds (cwd + ctx.tempDir) -- WS-07's own
-//     `boundedRoots()` (rule-derived directory grants) is not exposed on ToolExecutionContext
-//     either, so this is the best available proxy, not a re-implementation of that engine.
+// Task 8 (P3 close-out, "Settings threading" MUST) closed the gaps this header used to document:
+//   - `ctx.sandboxSettings` (registry.ts) now carries the session's EFFECTIVE sandbox configuration
+//     (RuntimeConfig.sandbox, resolved once per run against DEFAULT_SANDBOX_SETTINGS by engine.ts)
+//     -- every `settings: DEFAULT_SANDBOX_SETTINGS` call site below became `settings:
+//     ctx.sandboxSettings`. A session that configures nothing behaves byte-identically to before
+//     this task (engine.ts's own fallback IS DEFAULT_SANDBOX_SETTINGS).
+//   - `computeWritableRoots` now unions `ctx.session.getBoundedRoots()` (the SAME "cwd or
+//     additionalDirectories" notion the standing evaluator computes for acceptEdits/critical-
+//     removal -- rule-derived addDirectories grants + RuntimeConfig.additionalDirectories +
+//     EnterWorktree's own addBoundedRoot calls) and `ctx.outDir` (WS-12 §5.3's OUTDIR extension,
+//     when the session configured one) alongside `ctx.tempDir`. "Allowed working directories" for
+//     the cwd-carry policy (WS-06 §6.1) is this SAME set, no longer a documented approximation.
+//   - `$OUTDIR` is now exported into the spawned shell's env alongside `$TMPDIR`, when `ctx.outDir`
+//     is configured (WS-12 §5.3: "The OUTDIR export remains a Winter extension").
 import { randomUUID } from "node:crypto";
 import { readFileSync, writeFileSync, mkdirSync, unlinkSync, createWriteStream } from "node:fs";
 import { join, sep } from "node:path";
@@ -31,7 +33,7 @@ import {
   isSandboxAvailable,
   type RunCommandResult,
 } from "../../sandbox/spawn.ts";
-import { DEFAULT_SANDBOX_SETTINGS, SandboxConfigError, canonicalizePath, resolveNetworkPosture } from "../../sandbox/profile.ts";
+import { SandboxConfigError, canonicalizePath, resolveNetworkPosture } from "../../sandbox/profile.ts";
 import { startTracking, setTaskStatus, getTask, listRunningTasks, toBackgroundTasksChangedEntry } from "./background-task-runtime.ts";
 
 // ---------------------------------------------------------------------------------------------
@@ -103,16 +105,31 @@ const INLINE_CAP = 30_000;
 const FAILURE_EXCERPT_CHARS = 2_000;
 
 // ---------------------------------------------------------------------------------------------
-// Writable roots -- see this file's own header for the documented allowWrite/OUTDIR gap.
+// Writable roots (Task 8, "Settings threading" MUST) -- see this file's own header.
 // ---------------------------------------------------------------------------------------------
 function computeWritableRoots(ctx: ToolExecutionContext): string[] {
-  return [ctx.tempDir];
+  // `ctx.session.getBoundedRoots()` already includes `ctx.cwd` itself (evaluator.ts's own
+  // boundedRoots()) -- redundant with buildSeatbeltProfile's own separate, always-writable `cwd`
+  // field, but harmless: SBPL allow rules are idempotent, and de-duplicating here would need a
+  // canonicalize-then-Set pass for a purely cosmetic win (a shorter generated profile), not a
+  // correctness one. `ctx.outDir` is appended only when the session actually configured one (WS-12
+  // §5.3's OUTDIR extension) -- an unconfigured session sees byte-identical writableRoots to before
+  // this task, i.e. exactly [ctx.tempDir].
+  return [ctx.tempDir, ...ctx.session.getBoundedRoots(), ...(ctx.outDir !== undefined ? [ctx.outDir] : [])];
 }
 
 function isWithinAllowedDirs(candidate: string, cwd: string, writableRoots: string[]): boolean {
   const canonicalCandidate = canonicalizePath(candidate);
   const allowed = [canonicalizePath(cwd), ...writableRoots.map(canonicalizePath)];
   return allowed.some((root) => canonicalCandidate === root || canonicalCandidate.startsWith(root + sep));
+}
+
+// Task 8 (P3 close-out, "Settings threading" MUST; WS-12 §6.1/§5.3): the child env every spawn
+// (foreground + background) exports -- `TMPDIR` always (the session scratch dir, pre-existing), plus
+// `OUTDIR` when the session configured one. A session with no `ctx.outDir` gets a child env
+// byte-identical to before this task.
+function buildChildEnv(ctx: ToolExecutionContext): NodeJS.ProcessEnv {
+  return { ...process.env, TMPDIR: ctx.tempDir, ...(ctx.outDir !== undefined ? { OUTDIR: ctx.outDir } : {}) };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -127,18 +144,15 @@ function shQuote(s: string): string {
   return `'${s.replace(/'/g, `'\\''`)}'`;
 }
 
-// LATENT TRAP, flagged rather than silently shipped: `runForeground` passes THIS wrapped script
-// (not the model's raw `input.command`) as `RunCommandOptions.command`, and spawn.ts's own
-// `resolveExecutionPath` matches `excludedCommands` against exactly that string (R3-6, exact-full-
-// command-string equality). So on the foreground path, an `excludedCommands` entry is compared
-// against the pwd-capture-wrapped script, never the raw command the model wrote or the settings
-// author configured -- it will never match. `runBackground` below has no such wrapper and matches
-// the raw command correctly. This is MOOT today only because DEFAULT_SANDBOX_SETTINGS carries no
-// exclusions at all (see this file's own header); the instant a future phase wires real
-// `excludedCommands` through, foreground exclusion silently stops working. Fixing it (matching on
-// the raw command, wrapping only what actually gets spawned) is a spawn.ts/bash.ts seam change this
-// lane did not make, to avoid touching the exact-match semantics mid-flight while R3-6 stays
-// capture-pending -- left as a carry for whoever wires real settings in.
+// FIXED (Task 8, "excludedCommands raw-match" MUST) -- was a LATENT TRAP: `runForeground` passes
+// THIS wrapped script (not the model's raw `input.command`) as `RunCommandOptions.command`, so a
+// naive `resolveExecutionPath` match against `command` would compare `excludedCommands` entries to
+// the pwd-capture wrapper, never the raw command the model wrote or the settings author configured.
+// `runCommand` now takes a SEPARATE `matchCommand` (spawn.ts's own field, defaulting to `command`
+// when omitted) precisely for this: `runForeground` below passes `matchCommand: input.command` (the
+// raw string) while still spawning the wrapped script, so `excludedCommands` matches what it was
+// always meant to match, on both the foreground AND background (`runBackground`, which never wrapped
+// its command to begin with, and therefore needs no `matchCommand` override) paths alike.
 function buildPwdCaptureScript(command: string, pwdFile: string): string {
   return `${command}\n__winter_bash_rc=$?\npwd > ${shQuote(pwdFile)} 2>/dev/null\nexit "$__winter_bash_rc"\n`;
 }
@@ -249,10 +263,11 @@ async function runForeground(input: BashInput, ctx: ToolExecutionContext): Promi
   try {
     result = await runCommand({
       command: buildPwdCaptureScript(input.command, pwdFile),
+      matchCommand: input.command,
       cwd: ctx.cwd,
-      env: { ...process.env, TMPDIR: ctx.tempDir },
+      env: buildChildEnv(ctx),
       timeoutMs,
-      settings: DEFAULT_SANDBOX_SETTINGS,
+      settings: ctx.sandboxSettings,
       ...(input.dangerouslyDisableSandbox !== undefined ? { dangerouslyDisableSandbox: input.dangerouslyDisableSandbox } : {}),
       writableRoots,
       home: ctx.home,
@@ -311,7 +326,7 @@ async function runBackground(input: BashInput, ctx: ToolExecutionContext): Promi
   // throw inside it becomes a REJECTED PROMISE, not something this caller can inspect before its
   // own `await`/`.then` -- see spawn.ts's own header on why it is declared `async` at all).
   const decision = resolveExecutionPath({
-    settings: DEFAULT_SANDBOX_SETTINGS,
+    settings: ctx.sandboxSettings,
     command: input.command,
     ...(input.dangerouslyDisableSandbox !== undefined ? { dangerouslyDisableSandbox: input.dangerouslyDisableSandbox } : {}),
   });
@@ -323,7 +338,7 @@ async function runBackground(input: BashInput, ctx: ToolExecutionContext): Promi
       };
     }
     try {
-      resolveNetworkPosture(DEFAULT_SANDBOX_SETTINGS.network);
+      resolveNetworkPosture(ctx.sandboxSettings.network);
     } catch (err) {
       return { output: `Error: ${(err as Error).message}`, isError: true };
     }
@@ -336,9 +351,9 @@ async function runBackground(input: BashInput, ctx: ToolExecutionContext): Promi
   const completion = runCommand({
     command: input.command,
     cwd: ctx.cwd,
-    env: { ...process.env, TMPDIR: ctx.tempDir },
+    env: buildChildEnv(ctx),
     timeoutMs,
-    settings: DEFAULT_SANDBOX_SETTINGS,
+    settings: ctx.sandboxSettings,
     ...(input.dangerouslyDisableSandbox !== undefined ? { dangerouslyDisableSandbox: input.dangerouslyDisableSandbox } : {}),
     writableRoots,
     home: ctx.home,

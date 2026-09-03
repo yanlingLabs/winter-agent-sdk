@@ -21,7 +21,7 @@ import "../descriptors/monitor.ts";
 import { replaceExecutor, type ToolExecutor, type ToolExecutionContext, type ToolResultPayload } from "../registry.ts";
 import { createBackgroundTask } from "../background-tasks.ts";
 import { runCommand, resolveExecutionPath, isSandboxAvailable, SandboxUnavailableError } from "../../sandbox/spawn.ts";
-import { DEFAULT_SANDBOX_SETTINGS, SandboxConfigError, resolveNetworkPosture } from "../../sandbox/profile.ts";
+import { SandboxConfigError, resolveNetworkPosture } from "../../sandbox/profile.ts";
 import { startTracking, setTaskStatus, getTask, listRunningTasks, toBackgroundTasksChangedEntry } from "./background-task-runtime.ts";
 
 // ---------------------------------------------------------------------------------------------
@@ -91,11 +91,24 @@ function formatMonitorResult(taskId: string, timeoutMs: number, persistent: bool
 // to firing near-immediately. No real session runs that long; TaskStop is the actual exit door.
 const PERSISTENT_STAND_IN_TIMEOUT_MS = 2_147_483_647;
 
+// Task 8 (P3 close-out, "Settings threading" MUST) -- mirrors bash.ts's own computeWritableRoots/
+// buildChildEnv exactly (a small, deliberate duplication rather than a cross-tool-file import: this
+// file's own header already documents "reuses the exact same sandbox mechanism Bash does," and
+// keeping the mechanism duplicated-but-identical here is lower-risk than introducing a Monitor ->
+// Bash source dependency for two three-line helpers). See bash.ts's own comments for the full
+// rationale on each piece.
+function computeMonitorWritableRoots(ctx: ToolExecutionContext): string[] {
+  return [ctx.tempDir, ...ctx.session.getBoundedRoots(), ...(ctx.outDir !== undefined ? [ctx.outDir] : [])];
+}
+function buildMonitorChildEnv(ctx: ToolExecutionContext): NodeJS.ProcessEnv {
+  return { ...process.env, TMPDIR: ctx.tempDir, ...(ctx.outDir !== undefined ? { OUTDIR: ctx.outDir } : {}) };
+}
+
 async function runMonitorCommand(input: MonitorInput & { command: string }, ctx: ToolExecutionContext): Promise<ToolResultPayload> {
   // Same pre-flight-before-committing pattern as bash.ts's own runBackground -- see that function's
   // header comment for why (runCommand is `async`, so a pre-spawn throw becomes an unobservable
   // rejected promise by the time this caller could otherwise inspect it).
-  const decision = resolveExecutionPath({ settings: DEFAULT_SANDBOX_SETTINGS, command: input.command });
+  const decision = resolveExecutionPath({ settings: ctx.sandboxSettings, command: input.command });
   if (decision.posture === "sandboxed") {
     if (!isSandboxAvailable()) {
       return {
@@ -104,7 +117,7 @@ async function runMonitorCommand(input: MonitorInput & { command: string }, ctx:
       };
     }
     try {
-      resolveNetworkPosture(DEFAULT_SANDBOX_SETTINGS.network);
+      resolveNetworkPosture(ctx.sandboxSettings.network);
     } catch (err) {
       return { output: `Error: ${(err as Error).message}`, isError: true };
     }
@@ -119,10 +132,10 @@ async function runMonitorCommand(input: MonitorInput & { command: string }, ctx:
     completion = runCommand({
       command: input.command,
       cwd: ctx.cwd,
-      env: { ...process.env, TMPDIR: ctx.tempDir },
+      env: buildMonitorChildEnv(ctx),
       timeoutMs: effectiveTimeout,
-      settings: DEFAULT_SANDBOX_SETTINGS,
-      writableRoots: [ctx.tempDir],
+      settings: ctx.sandboxSettings,
+      writableRoots: computeMonitorWritableRoots(ctx),
       home: ctx.home,
       onSpawned: ({ pid }) => {
         startTracking({ taskId, kind: "monitor", outputPath, description: input.description, command: input.command, pid });

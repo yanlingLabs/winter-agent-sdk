@@ -26,7 +26,8 @@ function fakeCtx(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionCo
     emitFrame: () => {},
     permissions: { probeReadAccess: () => "silent" },
     tempDir: proj(),
-    session: { setCwd() {}, addBoundedRoot() {}, setPermissionMode() {} },
+    sandboxSettings: {},
+    session: { setCwd() {}, addBoundedRoot() {}, setPermissionMode() {}, getBoundedRoots: () => [] },
     ...overrides,
   };
 }

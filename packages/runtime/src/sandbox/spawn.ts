@@ -132,6 +132,17 @@ const DEFAULT_MAX_STREAMED_BYTES = 5 * 1024 ** 3; // WS-12 §6.3: >5 GB streamed
 
 export interface RunCommandOptions {
   command: string;
+  /**
+   * Task 8 (P3 close-out, "excludedCommands raw-match" MUST): the command string `resolveExecutionPath`
+   * matches against `settings.excludedCommands`, when it differs from `command` above (the string
+   * that actually gets spawned). Defaults to `command` when omitted -- byte-identical to every caller
+   * before this field existed (background execution, Monitor's command half, both of which already
+   * spawn the model's raw command with no wrapper). bash.ts's own foreground path is the one caller
+   * that needs this: it wraps the raw command in a pwd-capture script before spawning (see that
+   * file's own `buildPwdCaptureScript`/`runForeground` header comment, "LATENT TRAP") but must match
+   * `excludedCommands` against what the model/settings author actually wrote, never the wrapper.
+   */
+  matchCommand?: string;
   /** Real, existing, already-canonicalized directory to spawn the shell in. */
   cwd: string;
   env: NodeJS.ProcessEnv;
@@ -196,7 +207,7 @@ export interface RunCommandResult {
 export async function runCommand(opts: RunCommandOptions): Promise<RunCommandResult> {
   const { posture, sandboxOverrideRequested } = resolveExecutionPath({
     settings: opts.settings,
-    command: opts.command,
+    command: opts.matchCommand ?? opts.command,
     ...(opts.dangerouslyDisableSandbox !== undefined ? { dangerouslyDisableSandbox: opts.dangerouslyDisableSandbox } : {}),
   });
 

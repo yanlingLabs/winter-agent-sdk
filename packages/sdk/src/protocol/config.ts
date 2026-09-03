@@ -52,6 +52,24 @@ export interface RuntimeHookMatcherGroup {
 // Without this, "unknown event names accepted" would be untypeable at the wire layer.
 export type RuntimeHooksConfig = Partial<Record<string, RuntimeHookMatcherGroup[]>>;
 
+// Task 8 (P3 close-out, "Settings threading" MUST; WS-12 §2): the CC-shaped sandbox configuration
+// surface, mirrored HERE rather than imported from packages/runtime/src/sandbox/profile.ts's own
+// `SandboxSettings` -- WS-02 §3's one-directional import rule ("the sdk never imports the runtime")
+// forbids the reverse. Kept structurally IDENTICAL to that module's own type (same optional fields,
+// same shapes) on purpose: engine.ts assigns a `RuntimeConfig.sandbox` value straight into a
+// `SandboxSettings`-typed field with no remapping function, which only type-checks at all because
+// TypeScript's structural typing treats the two independently-declared interfaces as interchangeable
+// so long as they stay in sync. If `packages/runtime/src/sandbox/profile.ts`'s own `SandboxSettings`
+// ever grows/renames a field, this declaration needs the identical edit.
+export interface SandboxSettingsConfig {
+  enabled?: boolean;
+  autoAllowBashIfSandboxed?: boolean;
+  excludedCommands?: string[];
+  allowUnsandboxedCommands?: boolean;
+  filesystem?: { allowWrite?: string[]; denyWrite?: string[]; denyRead?: string[] };
+  network?: { allowedDomains?: string[]; deniedDomains?: string[]; [key: string]: unknown };
+}
+
 export interface RuntimeConfig {
   sessionId: string;
   cwd: string;
@@ -94,4 +112,17 @@ export interface RuntimeConfig {
   // this into EvaluationContext.additionalDirectories (see options.ts's own comment for the real
   // behavior this unlocks via evaluator.ts's boundedRoots()).
   additionalDirectories?: string[];
+  // Task 8 (P3 close-out, "Settings threading" MUST; WS-12 §2): pure passthrough, same conditional-
+  // spread convention as every field above -- query.ts never interprets this, it only serializes it.
+  // engine.ts is the actual consumer: an absent value keeps the pre-existing behavior every lane
+  // shipped against (packages/runtime/src/sandbox/profile.ts's own DEFAULT_SANDBOX_SETTINGS) byte-
+  // identical; a present value threads through ToolExecutionContext.sandboxSettings into Bash/
+  // Monitor's real executors instead of that hardcoded module constant.
+  sandbox?: SandboxSettingsConfig;
+  // Task 8 (P3 close-out, "Settings threading" MUST; WS-12 §5.3): a Winter product extension, not a
+  // CC-pinned field -- the session's own configured "outputs" directory. Pure passthrough (like
+  // `additionalDirectories`): this package creates nothing and validates nothing about the path; the
+  // caller is responsible for it existing. Absent means "no OUTDIR export, no extra writable root,"
+  // byte-identical to every session before this field existed.
+  outputsDir?: string;
 }

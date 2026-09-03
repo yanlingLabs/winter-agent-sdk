@@ -41,6 +41,13 @@ import { parseRule } from "../permissions/grammar.ts";
 // file) rather than hand-copying the `"silent" | "prompt" | "deny"` literal union in two places.
 import type { ReadAccessProbe } from "../permissions/evaluator.ts";
 import type { SessionReadState } from "./read-state.ts";
+// Task 8 (P3 close-out, "Settings threading" MUST): type-only, erased at build time -- no runtime
+// cycle (../sandbox/profile.ts imports only node:path and ../permissions/paths.ts, never this file).
+// ToolExecutionContext.sandboxSettings below is what lets Bash/Monitor's real executors read the
+// session's EFFECTIVE sandbox config instead of the DEFAULT_SANDBOX_SETTINGS module constant every
+// lane shipped against (Lane C's own report, "documented scope gaps": "no `sandbox` field exists
+// anywhere in packages/sdk/src").
+import type { SandboxSettings } from "../sandbox/profile.ts";
 
 // --- §1.1: ToolDescriptor + supporting types -----------------------------------------------------
 
@@ -150,7 +157,29 @@ export interface ToolExecutionContext {
   emitFrame: (frame: BackgroundTaskMessage) => void;
   permissions: { probeReadAccess(filePath: string): ReadAccessProbe };
   tempDir: string;
-  session: { setCwd(p: string): void; addBoundedRoot(p: string): void; setPermissionMode(mode: PermissionMode): void };
+  // Task 8 (P3 close-out, "Settings threading" MUST): the session's EFFECTIVE sandbox configuration
+  // (RuntimeConfig.sandbox, resolved once per run against DEFAULT_SANDBOX_SETTINGS by engine.ts --
+  // see buildDefaultToolExecutor's own comment). Non-optional: every ToolExecutionContext this
+  // registry ever builds carries a real, resolved value, never `undefined`, so a real executor
+  // (bash.ts, monitor.ts) never needs its own fallback-to-default branch.
+  sandboxSettings: SandboxSettings;
+  // Task 8 (P3 close-out, "Settings threading" MUST; WS-12 §5.3): the session's configured outputs
+  // directory (RuntimeConfig.outputsDir), when one was configured -- a Winter product extension, not
+  // a CC-pinned field. Optional (most sessions configure none): absent means "no $OUTDIR export, no
+  // extra writable root," byte-identical to before this field existed.
+  outDir?: string;
+  session: {
+    setCwd(p: string): void;
+    addBoundedRoot(p: string): void;
+    setPermissionMode(mode: PermissionMode): void;
+    // Task 8 (P3 close-out, "Settings threading" MUST): the identical "cwd or additionalDirectories"
+    // notion permissions/evaluator.ts's own boundedRoots() already computes for the STANDING
+    // evaluator (rule-derived addDirectories grants + RuntimeConfig.additionalDirectories +
+    // EnterWorktree's own addBoundedRoot calls) -- reused here, not re-derived, so a tool executor's
+    // notion of "which directories this session may freely write to" can never drift from the
+    // permission engine's own. See engine.ts's own session-seam construction for the real wiring.
+    getBoundedRoots(): string[];
+  };
 }
 
 export interface ToolExecutor {
@@ -350,6 +379,10 @@ export interface RegistryToolExecutorDeps {
   // create real `/tmp/winter-<uid>/...` directories for every tool_use, including ones that never
   // touch tempDir at all -- e.g. the differential/query.test.ts equivalence stand-ins below).
   getTempDir: () => string;
+  // Task 8 (P3 close-out, "Settings threading" MUST): resolved ONCE per run by engine.ts (config.
+  // sandbox ?? DEFAULT_SANDBOX_SETTINGS) -- see ToolExecutionContext.sandboxSettings's own comment.
+  sandboxSettings: SandboxSettings;
+  outDir?: string;
 }
 
 export function buildRegistryToolExecutor(deps: RegistryToolExecutorDeps): EngineFacingToolExecutor {
@@ -374,6 +407,8 @@ export function buildRegistryToolExecutor(deps: RegistryToolExecutorDeps): Engin
           return deps.getTempDir();
         },
         session: deps.session,
+        sandboxSettings: deps.sandboxSettings,
+        ...(deps.outDir !== undefined ? { outDir: deps.outDir } : {}),
       };
       const result = await registered.executor.execute(call.input, ctx);
       return foldResult(result);

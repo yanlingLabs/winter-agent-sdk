@@ -1,5 +1,6 @@
 import type { SpawnClaudeCodeProcess } from "./transport.ts";
 import type { RuleSource, PermissionMode, CanUseTool, HookEvent, HookCallbackMatcher } from "./permissions/types.ts";
+import type { SandboxSettingsConfig } from "./protocol/config.ts";
 
 export interface Options {
   model?: string;
@@ -84,6 +85,19 @@ export interface Options {
   // `boundedRoots()` already unions with cwd + rule-derived grants for acceptEdits/auto edit
   // bounding, critical-removal input, AND (Finding 7, same fix wave) ordinary Reads.
   additionalDirectories?: string[];
+
+  // Task 8 (P3 close-out, "Settings threading" MUST; WS-12 §2): the CC-shaped sandbox configuration
+  // surface (RuntimeConfig.sandbox's own SandboxSettingsConfig, protocol/config.ts) — same pure-
+  // passthrough convention as `additionalDirectories` above. Absent means "no sandbox config
+  // supplied," which resolves runtime-side to the pre-existing DEFAULT_SANDBOX_SETTINGS every lane
+  // already shipped against (sandbox on, network denied, no exclusions) — byte-identical to every
+  // session before this field existed.
+  sandbox?: SandboxSettingsConfig;
+  // Task 8 (P3 close-out, "Settings threading" MUST; WS-12 §5.3): a Winter product extension (the
+  // `$OUTDIR` export + extra writable root), not a CC-pinned field. Pure passthrough; this package
+  // never creates or validates the directory. Absent means no OUTDIR export and no extra writable
+  // root, exactly as before this field existed.
+  outputsDir?: string;
 
   // Task 6 (WS-07 §6.4): explicit, top-level, and named to be impossible to set by accident — the
   // ONLY thing that lets a session SELECT bypassPermissions (at startup, or via a later
