@@ -325,6 +325,30 @@ describe("Bash executor (real sandboxed spawn)", () => {
       expect(res.output).toContain("output_file:");
     });
 
+    t("a background override call reports override-requested in BOTH the started message and the task_notification summary (WS-12 §4 MUST)", async () => {
+      const frames: BackgroundTaskMessage[] = [];
+      const ctx = fakeCtx({ emitFrame: (f) => frames.push(f) });
+      const res = await bash()({ command: "echo hi", run_in_background: true, dangerouslyDisableSandbox: true }, ctx);
+      expect(res.output).toContain("[sandbox: override-requested]");
+      for (let i = 0; i < 50 && !frames.some((f) => f.subtype === "task_notification"); i++) {
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      const notif = frames.find((f) => f.subtype === "task_notification") as { summary: string };
+      expect(notif.summary).toContain("[sandbox: override-requested]");
+    });
+
+    t("an ordinary sandboxed background call reports [sandbox: sandboxed] in both surfaces too (not just the override case)", async () => {
+      const frames: BackgroundTaskMessage[] = [];
+      const ctx = fakeCtx({ emitFrame: (f) => frames.push(f) });
+      const res = await bash()({ command: "echo hi", run_in_background: true }, ctx);
+      expect(res.output).toContain("[sandbox: sandboxed]");
+      for (let i = 0; i < 50 && !frames.some((f) => f.subtype === "task_notification"); i++) {
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      const notif = frames.find((f) => f.subtype === "task_notification") as { summary: string };
+      expect(notif.summary).toContain("[sandbox: sandboxed]");
+    });
+
     t("emits task_started and background_tasks_changed synchronously before returning", async () => {
       const frames: BackgroundTaskMessage[] = [];
       const ctx = fakeCtx({ emitFrame: (f) => frames.push(f) });

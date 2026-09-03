@@ -196,6 +196,18 @@ function capOutput(ctx: ToolExecutionContext, stream: "stdout" | "stderr", raw: 
   return { text: `${head}\n... [excerpt -- see persisted output for the full body] ...\n${tail}`, persistedPath };
 }
 
+// WS-12 §4: "the result MUST record the sandbox-override state." Shared by the foreground result
+// text AND the two background surfaces (the "started" message and the task_notification summary,
+// see runBackground below) so all three render identically. When the posture itself is already
+// "override-requested" that word already carries the fact; the extra annotation only adds
+// information for the (rarer, but real) case where the flag was set yet a DIFFERENT row of the
+// §4.1 table won first (e.g. `enabled: false` beats a same-call override request) -- avoids the
+// redundant "override-requested, override-requested" this would otherwise read as.
+function formatSandboxAnnotation(posture: string, sandboxOverrideRequested: boolean): string {
+  const overrideNote = sandboxOverrideRequested && posture !== "override-requested" ? ", override-requested" : "";
+  return `[sandbox: ${posture}${overrideNote}]`;
+}
+
 function formatForegroundResult(parts: {
   stdout: CappedOutput;
   stderr: CappedOutput;
@@ -219,13 +231,7 @@ function formatForegroundResult(parts: {
   if (parts.aborted) lines.push("[aborted]");
   else if (parts.timedOut) lines.push(`[timed out after ${parts.timeoutMs}ms, killed]`);
   else lines.push(`[exit ${parts.exitCode}]`);
-  // §4: "the result MUST record the sandbox-override state." When the posture itself is already
-  // "override-requested" that word already carries the fact; the extra annotation only adds
-  // information for the (rarer, but real) case where the flag was set yet a DIFFERENT row of the
-  // §4.1 table won first (e.g. `enabled: false` beats a same-call override request) -- avoids the
-  // redundant "override-requested, override-requested" this would otherwise read as.
-  const overrideNote = parts.sandboxOverrideRequested && parts.posture !== "override-requested" ? ", override-requested" : "";
-  lines.push(`[sandbox: ${parts.posture}${overrideNote}]`);
+  lines.push(formatSandboxAnnotation(parts.posture, parts.sandboxOverrideRequested));
   return lines.join("\n");
 }
 
@@ -377,7 +383,7 @@ async function runBackground(input: BashInput, ctx: ToolExecutionContext): Promi
           task_id: taskId,
           status,
           output_file: outputPath,
-          summary: `${description} (${status})`,
+          summary: `${description} (${status}) ${formatSandboxAnnotation(result.posture, result.sandboxOverrideRequested)}`,
           uuid: randomUUID(),
           session_id: ctx.sessionId,
         });
@@ -403,7 +409,9 @@ async function runBackground(input: BashInput, ctx: ToolExecutionContext): Promi
           task_id: taskId,
           status: "failed",
           output_file: outputPath,
-          summary: `${description} (failed to run: ${(err as Error).message})`,
+          // No RunCommandResult exists on this branch (runCommand itself rejected, pre-spawn) -- the
+          // pre-flight `decision` computed at the top of this function is what was actually attempted.
+          summary: `${description} (failed to run: ${(err as Error).message}) ${formatSandboxAnnotation(decision.posture, decision.sandboxOverrideRequested)}`,
           uuid: randomUUID(),
           session_id: ctx.sessionId,
         });
@@ -414,7 +422,7 @@ async function runBackground(input: BashInput, ctx: ToolExecutionContext): Promi
   );
 
   return {
-    output: `background task ${taskId} started\noutput_file: ${outputPath}\nRead or grep that file for output as it accumulates; use task_output to peek, task_stop to stop it.`,
+    output: `background task ${taskId} started\noutput_file: ${outputPath}\n${formatSandboxAnnotation(decision.posture, decision.sandboxOverrideRequested)}\nRead or grep that file for output as it accumulates; use task_output to peek, task_stop to stop it.`,
   };
 }
 
