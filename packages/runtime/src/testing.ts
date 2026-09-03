@@ -32,6 +32,13 @@ import { resolveEngineSession } from "./store/dialect.ts";
 // module's top-level side effects exactly once per `bun test` invocation, so this registration runs
 // a single time regardless of how many test files import `inMemoryProcess` from this module).
 import "./tools/descriptors/index.ts";
+// Task 8 (P3 close-out, production wiring MUST): explicit for documentation parity with the
+// descriptors import immediately above -- `./engine.ts` (imported below) already pulls this
+// transitively (ES module evaluation runs an import's whole graph before the importer's own body),
+// so this line changes no behavior; it just keeps this file's own header comment (which enumerates
+// every registered tool an inMemoryProcess default-tools caller can reach) honest about what is
+// actually live by the time this module's body runs.
+import "./tools/impl/index.ts";
 import { registerTool, type ToolResultPayload } from "./tools/registry.ts";
 
 function registerEquivalenceStandIn(name: string): void {

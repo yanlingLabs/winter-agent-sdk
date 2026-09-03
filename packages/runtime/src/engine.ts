@@ -61,6 +61,11 @@ import {
 // §2 stub (descriptors/index.ts's own header explains why registry.ts itself never imports it back,
 // avoiding a cycle) before this module's own buildDefaultToolExecutor (below) can ever be called.
 import "./tools/descriptors/index.ts";
+// Task 8 (P3 close-out, production wiring MUST): every lane's own real executor now reaches live
+// sessions too -- see tools/impl/index.ts's own header for why this second barrel exists and why
+// import ORDER relative to the descriptors barrel above does not matter (every impl file is
+// self-sufficient: it imports its own descriptor before calling replaceExecutor).
+import "./tools/impl/index.ts";
 import { buildRegistryToolExecutor, buildRegistryToolExecutorWithFallback, type RegistryToolExecutorDeps } from "./tools/registry.ts";
 import { createSessionReadState } from "./tools/read-state.ts";
 import { configureBackgroundTaskRoot } from "./tools/background-tasks.ts";
