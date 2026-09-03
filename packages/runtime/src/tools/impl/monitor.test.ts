@@ -503,6 +503,18 @@ describe("Monitor executor: command half", () => {
     expect(notif.status).toBe("completed");
   });
 
+  // Task 8 (the SAME ordering bug bash.ts's own equivalent test found): runCommand's spawn is
+  // asynchronous, so without registering the task synchronously up front, this frame's own `tasks`
+  // list was always empty at the exact moment it announced the task that had just started.
+  t("background_tasks_changed's own tasks list already contains the just-started task, not an empty list", async () => {
+    const frames: BackgroundTaskMessage[] = [];
+    const ctx = fakeCtx({ emitFrame: (f) => frames.push(f) });
+    await monitor()({ description: "quick", timeout_ms: 5000, persistent: false, command: "echo hi" }, ctx);
+    const started = frames.find((f) => f.subtype === "task_started") as { task_id: string };
+    const changed = frames.find((f) => f.subtype === "background_tasks_changed") as { tasks: Array<{ task_id: string }> };
+    expect(changed.tasks.map((t) => t.task_id)).toContain(started.task_id);
+  });
+
   t("a failing command is reported as a failed task_notification", async () => {
     const frames: BackgroundTaskMessage[] = [];
     const ctx = fakeCtx({ emitFrame: (f) => frames.push(f) });

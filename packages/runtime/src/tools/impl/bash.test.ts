@@ -358,6 +358,20 @@ describe("Bash executor (real sandboxed spawn)", () => {
       expect(frames.some((f) => f.subtype === "background_tasks_changed")).toBe(true);
     });
 
+    // Task 8 (found via a real differential-scenario repro, not assumed): the sibling test above only
+    // ever checked the FRAME EXISTS, never its own CONTENTS -- runCommand's spawn is asynchronous
+    // (onSpawned fires on a later tick), so without registering the task synchronously up front,
+    // this frame's own `tasks` list was ALWAYS EMPTY at the exact moment it announced the task that
+    // had just started. Proves the real content, not just the frame's presence.
+    t("background_tasks_changed's own tasks list already contains the just-started task, not an empty list", async () => {
+      const frames: BackgroundTaskMessage[] = [];
+      const ctx = fakeCtx({ emitFrame: (f) => frames.push(f) });
+      await bash()({ command: "echo hi", run_in_background: true }, ctx);
+      const started = frames.find((f) => f.subtype === "task_started") as { task_id: string };
+      const changed = frames.find((f) => f.subtype === "background_tasks_changed") as { tasks: Array<{ task_id: string }> };
+      expect(changed.tasks.map((t) => t.task_id)).toContain(started.task_id);
+    });
+
     t("appends stdout to the task's own output file, and emits task_notification on completion", async () => {
       const frames: BackgroundTaskMessage[] = [];
       const ctx = fakeCtx({ emitFrame: (f) => frames.push(f) });

@@ -348,6 +348,19 @@ async function runBackground(input: BashInput, ctx: ToolExecutionContext): Promi
   const description = input.description ?? summarizeCommand(input.command);
   const outStream = createWriteStream(outputPath, { flags: "a" });
 
+  // Task 8 (found via a real differential-scenario repro, not assumed): register the task BEFORE
+  // spawning, not only inside onSpawned below. runCommand's own spawn is asynchronous (onSpawned
+  // fires on a later tick, once the child process object exists) -- the very next lines emit
+  // task_started and, critically, background_tasks_changed's own listRunningTasks() snapshot
+  // SYNCHRONOUSLY, before that later tick ever runs. Without this line, background_tasks_changed
+  // always reported an EMPTY tasks list immediately after starting the very task it was announcing
+  // (a real ordering bug, invisible to bash.test.ts's own `frames.some(subtype === ...)` existence
+  // check, which never inspected the frame's own `tasks` contents). startTracking's own `pid?:
+  // number` is optional and `tasks.set()` is a plain overwrite, so calling it again from onSpawned
+  // with the real pid once spawning completes is a safe, idempotent update of the SAME entry, not a
+  // duplicate or a race (Node's spawn callback never fires synchronously within this call).
+  startTracking({ taskId, kind: "bash", outputPath, description, command: input.command });
+
   const completion = runCommand({
     command: input.command,
     cwd: ctx.cwd,

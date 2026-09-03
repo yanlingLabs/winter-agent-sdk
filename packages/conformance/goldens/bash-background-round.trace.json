@@ -90,7 +90,13 @@
     "payload": {
       "type": "system",
       "subtype": "background_tasks_changed",
-      "tasks": []
+      "tasks": [
+        {
+          "task_id": "TASKID",
+          "task_type": "bash",
+          "description": "sleep 10"
+        }
+      ]
     }
   },
   {

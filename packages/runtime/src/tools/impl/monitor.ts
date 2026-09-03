@@ -128,6 +128,17 @@ async function runMonitorCommand(input: MonitorInput & { command: string }, ctx:
   const outStream = createWriteStream(outputPath, { flags: "a" });
   const effectiveTimeout = input.persistent ? PERSISTENT_STAND_IN_TIMEOUT_MS : input.timeout_ms;
 
+  // Task 8 (the SAME ordering bug bash.ts's own runBackground had, found via a real
+  // differential-scenario repro): register the task BEFORE spawning, not only inside onSpawned
+  // below. runCommand's spawn is asynchronous (onSpawned fires on a later tick), so without this
+  // line the background_tasks_changed emit a few lines down always reported an empty tasks list
+  // immediately after starting the very task it was announcing. Safe to call again from onSpawned
+  // with the real pid once spawning completes -- startTracking's `pid?: number` is optional and
+  // `tasks.set()` is a plain overwrite of the same entry, contrast the `ws` half a few hundred lines
+  // below, which already calls startTracking synchronously (no async spawn step to race against)
+  // and therefore never had this bug.
+  startTracking({ taskId, kind: "monitor", outputPath, description: input.description, command: input.command });
+
   let completion: ReturnType<typeof runCommand>;
   try {
     completion = runCommand({
