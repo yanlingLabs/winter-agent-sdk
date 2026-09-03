@@ -34,6 +34,7 @@ import { join } from "node:path";
 import type { PermissionMode, PermissionRuleValue, PermissionUpdate, RuleSource } from "@yanlinglabs/winter-agent-sdk";
 import {
   evaluate,
+  probeReadWouldPrompt,
   findMatchingRuleEntry,
   NO_OPINION_HOOK_STAGE,
   NO_OPINION_PROMPT_STAGE,
@@ -2450,5 +2451,120 @@ describe("assertKnownPermissionMode", () => {
   test("an unrecognized value throws WinterPermissionError", async () => {
     const { assertKnownPermissionMode } = await import("./policy-state.ts");
     expect(() => assertKnownPermissionMode("not_a_real_mode")).toThrow(WinterPermissionError);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------
+// P3 (WS-06 tool registry, task 1): probeReadWouldPrompt -- side-effect-free by construction
+// ---------------------------------------------------------------------------------------------------
+//
+// Every ctx below wires hookStage/promptStage/autoEngine to seams that THROW the moment any of
+// their methods is invoked -- not the ordinary NO_OPINION_* stubs baseCtx defaults to (those would
+// pass even if the probe secretly called them, since "no opinion" is itself indistinguishable from
+// "never asked"). The RED fixture immediately below proves these poisoned seams are load-bearing:
+// evaluate() itself (a real six-stage run, not the probe) genuinely throws through them for a call
+// that needs a prompt, so a probeReadWouldPrompt test that DOESN'T throw is real evidence the probe
+// never reached stage 1's hooks, stage 3/6's canUseTool, or the auto classifier -- not an accident
+// of a stub that would have stayed quiet either way.
+describe("probeReadWouldPrompt (P3 seam): side-effect-free by construction", () => {
+  function poisonedSeams() {
+    const fail = (label: string) => (): never => {
+      throw new Error(`probeReadWouldPrompt must never invoke ${label}`);
+    };
+    return {
+      hookStage: { preToolUse: fail("hookStage.preToolUse"), permissionRequest: fail("hookStage.permissionRequest") },
+      promptStage: { prompt: fail("promptStage.prompt") },
+      autoEngine: {
+        classify: fail("autoEngine.classify"),
+        noteFallbackResolution: fail("autoEngine.noteFallbackResolution"),
+        noteHeadlessFallbackDenial: fail("autoEngine.noteHeadlessFallbackDenial"),
+      },
+    };
+  }
+
+  function poisonedCtx(overrides: Partial<EvaluationContext> = {}): EvaluationContext {
+    return baseCtx({ ...poisonedSeams(), specialChecks: REAL_SPECIAL_CHECKS, ...overrides });
+  }
+
+  test("RED fixture: with the SAME poisoned seams, a real evaluate() call that needs a prompt genuinely throws -- proves the seams are load-bearing, not merely quiet", async () => {
+    const ctx = poisonedCtx();
+    await expect(evaluate(call("Read", { file_path: "/outside/file.txt" }), ctx)).rejects.toThrow(/must never invoke/);
+  });
+
+  test("no decision record is ever produced: the return type itself is a plain boolean, never a PermissionDecisionRecord", () => {
+    const ctx = poisonedCtx();
+    const result: boolean = probeReadWouldPrompt("/work/inside.txt", ctx);
+    expect(typeof result).toBe("boolean");
+  });
+
+  test("stage 2 -- a deny rule: no prompt needed (false), no poisoned seam fires", () => {
+    const ctx = poisonedCtx({ policy: policy({ rules: withRules(rule("Read(secrets/**)", "deny")) }) });
+    expect(probeReadWouldPrompt("/work/secrets/key.pem", ctx)).toBe(false);
+  });
+
+  test("stage 3 -- a matched ask rule outside dontAsk: would prompt (true)", () => {
+    const ctx = poisonedCtx({ policy: policy({ rules: withRules(rule("Read(secrets/**)", "ask")) }) });
+    expect(probeReadWouldPrompt("/work/secrets/key.pem", ctx)).toBe(true);
+  });
+
+  test("stage 3 -- a matched ask rule under dontAsk: converts to a silent denial (false)", () => {
+    const ctx = poisonedCtx({ policy: policy({ mode: "dontAsk", rules: withRules(rule("Read(secrets/**)", "ask")) }) });
+    expect(probeReadWouldPrompt("/work/secrets/key.pem", ctx)).toBe(false);
+  });
+
+  test("stage 4 -- a read within cwd resolves via the built-in read-only baseline: no prompt (false)", () => {
+    const ctx = poisonedCtx(); // baseCtx cwd = "/work"
+    expect(probeReadWouldPrompt("/work/inside.txt", ctx)).toBe(false);
+  });
+
+  test("stage 4 -- bypassPermissions allows unconditionally (standing exceptions never fire for Read): false", () => {
+    const ctx = poisonedCtx({ policy: policy({ mode: "bypassPermissions" }) });
+    expect(probeReadWouldPrompt("/outside/file.txt", ctx)).toBe(false);
+  });
+
+  test("stage 5 -- an allow rule outside cwd resolves silently: false", () => {
+    const ctx = poisonedCtx({ policy: policy({ rules: withRules(rule("Read(//synthetic/protected/**)", "allow")) }) });
+    expect(probeReadWouldPrompt("/synthetic/protected/x", ctx)).toBe(false);
+  });
+
+  test("post-allow-stage fallback -- dontAsk denies unmatched actions silently: false", () => {
+    const ctx = poisonedCtx({ policy: policy({ mode: "dontAsk" }) });
+    expect(probeReadWouldPrompt("/outside/file.txt", ctx)).toBe(false);
+  });
+
+  test("post-allow-stage fallback -- default mode with nothing else resolving it would reach canUseTool: conservative true", () => {
+    const ctx = poisonedCtx();
+    expect(probeReadWouldPrompt("/outside/file.txt", ctx)).toBe(true);
+  });
+
+  test("post-allow-stage fallback -- acceptEdits mode with nothing else resolving it would also reach canUseTool: conservative true", () => {
+    const ctx = poisonedCtx({ policy: policy({ mode: "acceptEdits" }) });
+    expect(probeReadWouldPrompt("/outside/file.txt", ctx)).toBe(true);
+  });
+
+  test("post-allow-stage fallback -- auto mode with nothing else resolving it would consult the classifier: conservative true (never false)", () => {
+    const ctx = poisonedCtx({ policy: policy({ mode: "auto" }) });
+    expect(probeReadWouldPrompt("/outside/file.txt", ctx)).toBe(true);
+  });
+
+  // These two cross-checks call evaluate() itself for real (stage 1's PreToolUse hook is
+  // UNCONDITIONAL in evaluate() -- it runs even for a call a deny/allow rule will go on to resolve
+  // outright -- so the poisoned ctx above cannot be reused for evaluate() the way it is for the
+  // probe; evaluate() gets an ordinary NO_OPINION-seamed ctx over the IDENTICAL policy instead).
+  // The probe call in each still uses the fully poisoned ctx -- this is what the cross-check is
+  // actually proving: the probe reaches the SAME conclusion evaluate() does, without needing any of
+  // the seams evaluate() itself unconditionally exercises.
+  test("cross-check against the REAL evaluator for a resolvable case: an allow rule resolves BOTH the probe and evaluate() itself to \"no interaction needed\"", async () => {
+    const rules = withRules(rule("Read(//synthetic/protected/**)", "allow"));
+    expect(probeReadWouldPrompt("/synthetic/protected/x", poisonedCtx({ policy: policy({ rules }) }))).toBe(false);
+    const record = await evaluate(call("Read", { file_path: "/synthetic/protected/x" }), baseCtx({ policy: policy({ rules }), specialChecks: REAL_SPECIAL_CHECKS }));
+    expect(record).toMatchObject({ decision: "allow", mechanism: "rule" });
+  });
+
+  test("cross-check against the REAL evaluator for a deny case: both agree no interaction happens", async () => {
+    const rules = withRules(rule("Read(secrets/**)", "deny"));
+    expect(probeReadWouldPrompt("/work/secrets/key.pem", poisonedCtx({ policy: policy({ rules }) }))).toBe(false);
+    const record = await evaluate(call("Read", { file_path: "/work/secrets/key.pem" }), baseCtx({ policy: policy({ rules }), specialChecks: REAL_SPECIAL_CHECKS }));
+    expect(record).toMatchObject({ decision: "deny", mechanism: "rule" });
   });
 });
