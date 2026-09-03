@@ -242,8 +242,30 @@ describe("Read (Phase 3, Lane A, Task 4)", () => {
       expect(block.width).toBe(64);
       expect(block.height).toBe(48);
       expect(typeof block.data).toBe("string");
-      expect(Buffer.from(block.data, "base64").equals(makePng(64, 48))).toBe(true);
+      expect(Buffer.from(block.data!, "base64").equals(makePng(64, 48))).toBe(true);
       expect(ctx.readState.lookup(p)?.complete).toBe(true);
+    });
+
+    // I6 (fix wave, P3 close-out): the interim size guard -- when the winterReadBlocks envelope
+    // would exceed MAX_RESULT_CHARS, the block loses `data` but keeps `note`/`bytes`/`width`/
+    // `height`. A 1 MB image (well under IMAGE_MAX_BYTES=5MB, so the READ itself succeeds) base64s
+    // to ~1.37 MB of JSON text, comfortably over the 100k-char cap.
+    test("an oversized envelope (1MB image) omits `data`, adds `note`, keeps bytes/width/height", async () => {
+      const p = join(dir, "big.png");
+      const oneMbPng = Buffer.concat([makePng(64, 48), Buffer.alloc(1_000_000)]);
+      writeFileSync(p, oneMbPng);
+      const ctx = makeCtx(dir);
+      const result = await runRead({ file_path: p }, ctx);
+      expect(result.isError).toBeUndefined();
+      const env = envelope(result);
+      expect(env.winterReadBlocks).toHaveLength(1);
+      const block = env.winterReadBlocks[0] as Extract<ReadBlock, { type: "image" }>;
+      expect(block.type).toBe("image");
+      expect(block.data).toBeUndefined();
+      expect(typeof block.note).toBe("string");
+      expect(block.bytes).toBe(oneMbPng.length);
+      expect(block.width).toBe(64);
+      expect(block.height).toBe(48);
     });
 
     test("a GIF's dimensions parse correctly", async () => {

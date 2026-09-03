@@ -105,7 +105,12 @@ function parseInput(raw: unknown): ReadInput {
 
 export type ReadBlock =
   | { type: "text"; text: string }
-  | { type: "image"; media_type: string; bytes: number; width?: number; height?: number; data: string }
+  // I6 (fix wave, P3 close-out): `data` is now OPTIONAL -- see `capOversizedEnvelope` below. A
+  // normal (under-cap) image read still always carries `data`; only the interim size-guard path
+  // omits it, adding `note` in its place. `note` is otherwise absent on an image block (PDF's own
+  // `note` field, by contrast, is unconditional -- a pre-existing, unrelated fact about PDFs, not
+  // introduced by this fix).
+  | { type: "image"; media_type: string; bytes: number; width?: number; height?: number; data?: string; note?: string }
   | {
       type: "pdf";
       media_type: "application/pdf";
@@ -120,8 +125,38 @@ export interface ReadBlocksEnvelope {
   winterReadBlocks: ReadBlock[];
 }
 
+// I6 (fix wave, P3 close-out): the multimodal Read envelope hands the model base64 image/PDF bytes
+// as JSON TEXT (up to ~6.7 MB per read for a 5 MB image) -- there is no image/document content-block
+// variant anywhere in the P3 engine wire (engine.ts's own ContentBlock union), so `winterReadBlocks`
+// is spliced into the provider transcript as a plain tool_result TEXT block. Read.ts's own header
+// already defers the REAL fix (a wire content-block variant + engine.ts unwrapping it) to whichever
+// later phase grows that (P4 engine/wire, or P5/WS-03's own result content-block types) -- this is
+// ONLY the interim guard the review asks for now: when the envelope would exceed MAX_RESULT_CHARS
+// (already this file's own text-read cap, reused here rather than inventing a second, unrelated
+// threshold), strip `data` from every block that carries one and add a `note` explaining why --
+// `bytes`/`width`/`height`/`totalPages`/`requestedPages` stay populated (nothing about the block's
+// own METADATA is lost, only the payload). The contract surface (which block TYPES/fields exist)
+// stays identical either way -- a consumer that already handles "no data" (a PDF whose own
+// `PDF_WHOLE_MAX_BYTES_WHEN_UNKNOWN`/paged-cap branches already produce blocks with no `data` today)
+// needs no new code path for an image block that takes the same shape.
+function capOversizedEnvelope(blocks: ReadBlock[]): ReadBlock[] {
+  const envelopeSize = JSON.stringify({ winterReadBlocks: blocks } satisfies ReadBlocksEnvelope).length;
+  if (envelopeSize <= MAX_RESULT_CHARS) return blocks;
+  return blocks.map((b) => {
+    if (b.type === "text" || b.data === undefined) return b;
+    if (b.type === "image") {
+      const { data: _data, ...rest } = b;
+      return { ...rest, note: "image data omitted: the read envelope exceeded the per-call size cap; re-read with a narrower scope if the raw bytes are needed" };
+    }
+    // pdf: already carries a `note` field unconditionally -- only strip data, don't clobber a more
+    // specific pre-existing note (e.g. "text is not extracted") with this guard's own generic one.
+    const { data: _data, ...rest } = b;
+    return { ...rest, note: `${b.note} (data additionally omitted here: the read envelope exceeded the per-call size cap)` };
+  });
+}
+
 function blocksResult(blocks: ReadBlock[]): ToolResultPayload {
-  return { output: JSON.stringify({ winterReadBlocks: blocks } satisfies ReadBlocksEnvelope) };
+  return { output: JSON.stringify({ winterReadBlocks: capOversizedEnvelope(blocks) } satisfies ReadBlocksEnvelope) };
 }
 
 // --- Plain text (line windowing) --------------------------------------------------------------------
