@@ -123,6 +123,7 @@ async function runMonitorCommand(input: MonitorInput & { command: string }, ctx:
       timeoutMs: effectiveTimeout,
       settings: DEFAULT_SANDBOX_SETTINGS,
       writableRoots: [ctx.tempDir],
+      home: ctx.home,
       onSpawned: ({ pid }) => {
         startTracking({ taskId, kind: "monitor", outputPath, description: input.description, command: input.command, pid });
       },

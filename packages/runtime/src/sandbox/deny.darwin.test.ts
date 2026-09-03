@@ -10,7 +10,7 @@
 // background tasks) -- those are bash.test.ts's job; this file's only concern is "does the fence
 // itself hold."
 import { describe, test, expect } from "bun:test";
-import { mkdtempSync, mkdirSync, realpathSync, existsSync } from "node:fs";
+import { mkdtempSync, mkdirSync, realpathSync, existsSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -23,7 +23,7 @@ function proj(): string {
   return realpathSync(mkdtempSync(join(tmpdir(), "winter-deny-")));
 }
 
-async function run(command: string, cwd: string, writableRoots?: string[]) {
+async function run(command: string, cwd: string, writableRoots?: string[], home?: string) {
   return runCommand({
     command,
     cwd,
@@ -31,6 +31,7 @@ async function run(command: string, cwd: string, writableRoots?: string[]) {
     timeoutMs: 8000,
     settings: {},
     ...(writableRoots !== undefined ? { writableRoots } : {}),
+    ...(home !== undefined ? { home } : {}),
   });
 }
 
@@ -151,6 +152,30 @@ describe("sandbox deny suite (real sandbox-exec, WS-12 §5.2 carried corpus)", (
       expect(res.exitCode).toBe(0);
       expect(existsSync(other)).toBe(true);
       expect(existsSync(mem)).toBe(true);
+    });
+  });
+
+  // WS-12 §2: "the sole baseline read denial is <home>/.winter/run" -- the daemon's own runtime dir
+  // (control socket, PID/lock files). Reads are otherwise deliberately unrestricted (this product's
+  // own tool-surface design), so this is the ONE thing that must stay unreadable from a sandboxed
+  // shell -- proven here against a sibling path under the SAME fake home, so a positive control rules
+  // out "the profile just denies everything under home."
+  describe("baseline <home>/.winter/run read denial (WS-12 §2)", () => {
+    t("a sandboxed read of <home>/.winter/run/* is denied while a sibling path under the same home reads fine", async () => {
+      const cwd = proj();
+      const home = proj();
+      const runDir = join(home, ".winter", "run");
+      mkdirSync(runDir, { recursive: true });
+      const secretFile = join(runDir, "core.sock-info.txt");
+      writeFileSync(secretFile, "socket-secret");
+      const siblingFile = join(home, ".winter", "sibling.txt");
+      writeFileSync(siblingFile, "not-secret");
+
+      const denied = await run(`cat ${secretFile}`, cwd, undefined, home);
+      expect(denied.exitCode).not.toBe(0);
+
+      const allowed = await run(`cat ${siblingFile}`, cwd, undefined, home);
+      expect(allowed.exitCode).toBe(0);
     });
   });
 

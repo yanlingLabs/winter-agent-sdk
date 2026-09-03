@@ -255,6 +255,7 @@ async function runForeground(input: BashInput, ctx: ToolExecutionContext): Promi
       settings: DEFAULT_SANDBOX_SETTINGS,
       ...(input.dangerouslyDisableSandbox !== undefined ? { dangerouslyDisableSandbox: input.dangerouslyDisableSandbox } : {}),
       writableRoots,
+      home: ctx.home,
       onStdout: (c) => {
         stdout += c.toString("utf8");
       },
@@ -340,6 +341,7 @@ async function runBackground(input: BashInput, ctx: ToolExecutionContext): Promi
     settings: DEFAULT_SANDBOX_SETTINGS,
     ...(input.dangerouslyDisableSandbox !== undefined ? { dangerouslyDisableSandbox: input.dangerouslyDisableSandbox } : {}),
     writableRoots,
+    home: ctx.home,
     onSpawned: ({ pid }) => {
       startTracking({ taskId, kind: "bash", outputPath, description, command: input.command, pid });
     },

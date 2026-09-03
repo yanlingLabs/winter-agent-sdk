@@ -177,12 +177,26 @@ export interface SeatbeltProfileInput {
    * convenience rule is still a correct profile" comment.
    */
   darwinUserTempDir?: string;
+  /**
+   * WS-12 §2: "the sole baseline read denial is `<home>/.winter/run`, enforced via profile deny
+   * rules layered over allow-read." The daemon's own runtime dir (control socket, PID/lock files) --
+   * a bash-invoked `cat ~/.winter/run/core.sock` or similar never passes through a read-tool's own
+   * permission fence at all (reads are otherwise deliberately unrestricted, per this product's own
+   * tool-surface design), so the seatbelt profile is the only enforcement point left. Omitted
+   * entirely -> no baseline deny is emitted, still a correct (if less defended) profile -- mirrors
+   * `darwinUserTempDir`'s own "omitted is still correct" posture; there is no ToolExecutionContext
+   * seam this module can reach into itself (profile.ts stays platform/context-free by design, per
+   * this file's own header), so every caller (spawn.ts -> tools/impl/{bash,monitor}.ts) is
+   * responsible for threading its own `ctx.home` through.
+   */
+  home?: string;
 }
 
 /**
  * Build a macOS Seatbelt (SBPL) profile: deny-by-default, read anywhere (minus configured
- * denyRead layers), write only under the given roots (minus configured denyWrite layers), network
- * denied unless explicitly allowed.
+ * denyRead layers and, when `home` is given, the WS-12 §2 baseline `<home>/.winter/run` denial --
+ * see `SeatbeltProfileInput.home`'s own header), write only under the given roots (minus configured
+ * denyWrite layers), network denied unless explicitly allowed.
  *
  * WS-12 §5.2 (verbatim carry, Winter-renamed): EVERY writable root (cwd + each of `writableRoots`)
  * additionally gets an explicit `(deny file-write* (literal "<root>/.winter/<file>"))` line, for
@@ -220,6 +234,15 @@ export function buildSeatbeltProfile(input: SeatbeltProfileInput): string {
   // entry happening to shadow them.
   const denyWriteRules = (input.denyWritePaths ?? []).map((p) => `(deny file-write* (subpath "${sbplString(canon(p))}"))`).join("\n");
   const denyReadRules = (input.denyReadPaths ?? []).map((p) => `(deny file-read* (subpath "${sbplString(canon(p))}"))`).join("\n");
+
+  // WS-12 §2: "the sole baseline read denial is <home>/.winter/run" -- a subpath deny (not a
+  // filename literal/regex like the control-plane carve-outs above): the WHOLE directory tree is
+  // off-limits, not one specific filename within it. Placed AFTER the user-configured denyReadRules
+  // (this file's own placement convention: a carried/baseline protection sits after user config, so
+  // a user's own denyRead entries can never accidentally reorder around it) -- though for two
+  // DENY rules of possibly-overlapping scope, unlike an allow/deny pair, relative order does not
+  // change which paths end up denied; this ordering is for readability/convention, not correctness.
+  const denyRunDirRule = input.home ? `(deny file-read* (subpath "${sbplString(canon(join(input.home, ".winter", "run")))}"))` : "";
 
   // WS-12 §5.2 (verbatim carry): macOS `mktemp(1)` (and anything else calling
   // confstr(_CS_DARWIN_USER_TEMP_DIR)) writes to the PER-USER temp dir and ignores $TMPDIR
@@ -262,6 +285,7 @@ export function buildSeatbeltProfile(input: SeatbeltProfileInput): string {
 ${machRules})
 (allow file-read*)
 ${denyReadRules}
+${denyRunDirRule}
 (allow file-write*
 ${writeRules})
 ${denyWriteRules}

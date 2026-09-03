@@ -214,6 +214,29 @@ describe("buildSeatbeltProfile: denyWrite/denyRead layers (WS-12 §5.3, new)", (
   });
 });
 
+// WS-12 §2: "the sole baseline read denial is <home>/.winter/run, enforced via profile deny rules
+// layered over allow-read."
+describe("buildSeatbeltProfile: baseline <home>/.winter/run read denial (WS-12 §2)", () => {
+  test("home renders a subpath deny for <home>/.winter/run, layered AFTER the read-allow line", () => {
+    const home = realTmp();
+    const p = buildSeatbeltProfile({ cwd: realTmp(), allowNetwork: false, home });
+    const allowIdx = p.indexOf("(allow file-read*)");
+    const denyIdx = p.indexOf(`(deny file-read* (subpath "${join(home, ".winter", "run")}"))`);
+    expect(allowIdx).toBeGreaterThanOrEqual(0);
+    expect(denyIdx).toBeGreaterThan(allowIdx);
+  });
+
+  test("home is canonicalized the same graceful way as every other path this module handles", () => {
+    const p = buildSeatbeltProfile({ cwd: realTmp(), allowNetwork: false, home: "/does/not/exist/home" });
+    expect(p).toContain('(deny file-read* (subpath "/does/not/exist/home/.winter/run"))');
+  });
+
+  test("home omitted emits no baseline run-dir denial -- still a correct, if less defended, profile (mirrors darwinUserTempDir's own omitted-is-still-correct posture)", () => {
+    const p = buildSeatbeltProfile({ cwd: realTmp(), allowNetwork: false });
+    expect(p).not.toContain(".winter/run");
+  });
+});
+
 describe("resolveNetworkPosture", () => {
   test("undefined network config resolves to deny (false)", () => {
     expect(resolveNetworkPosture(undefined)).toBe(false);
