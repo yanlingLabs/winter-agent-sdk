@@ -582,4 +582,7 @@ export const bashExecutor: ToolExecutor = {
 replaceExecutor("Bash", bashExecutor, extractBashPaths);
 
 // Exported for direct unit testing without going through the full registry/ctx machinery.
-export { parseBashInput, resolveTimeout, extractBashPaths, computeWritableRoots, capOutput, formatForegroundResult, buildRunCommandOptions };
+// M8 (fix wave, P3 close-out): CEILING_TIMEOUT_MS also exported for task-output.ts's own
+// block:true timeout clamp (see that file's own comment) -- ONE shared ceiling constant, not a
+// second hand-copied 600_000 literal.
+export { parseBashInput, resolveTimeout, extractBashPaths, computeWritableRoots, capOutput, formatForegroundResult, buildRunCommandOptions, CEILING_TIMEOUT_MS };

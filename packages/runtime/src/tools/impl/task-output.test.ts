@@ -7,7 +7,8 @@ import { getRegisteredTool } from "../registry.ts";
 import type { ToolExecutionContext } from "../registry.ts";
 import { createSessionReadState } from "../read-state.ts";
 import { startTracking, setTaskStatus, resetBackgroundTaskRuntimeForTest } from "./background-task-runtime.ts";
-import { parseTaskOutputInput } from "./task-output.ts";
+import { parseTaskOutputInput, resolveClampedTimeout } from "./task-output.ts";
+import { CEILING_TIMEOUT_MS } from "./bash.ts";
 
 function fakeCtx(overrides: Partial<ToolExecutionContext> = {}): ToolExecutionContext {
   return {
@@ -196,5 +197,42 @@ describe("TaskOutput -- I5 traversal guard (untracked-task fallback)", () => {
     const res = await taskOutput()({ task_id: "not-a-uuid", block: false, timeout: 0 }, ctx);
     expect(res.isError).toBe(true);
     expect(res.output).toContain("unknown task_id");
+  });
+});
+
+// M8 (fix wave, P3 close-out): block:true previously accepted any finite non-negative timeout with
+// no ceiling -- a model-chosen `timeout: 1e12` parked the round for a multi-hour stall. Clamped to
+// Bash's own CEILING_TIMEOUT_MS (imported, not a second hand-copied 600000 literal).
+describe("resolveClampedTimeout (M7 fix wave)", () => {
+  test("a timeout over the ceiling is clamped down to it", () => {
+    expect(resolveClampedTimeout(1_000_000_000)).toEqual({ effective: CEILING_TIMEOUT_MS, wasClamped: true });
+  });
+  test("a timeout at exactly the ceiling is not reported as clamped", () => {
+    expect(resolveClampedTimeout(CEILING_TIMEOUT_MS)).toEqual({ effective: CEILING_TIMEOUT_MS, wasClamped: false });
+  });
+  test("a timeout under the ceiling passes through unchanged", () => {
+    expect(resolveClampedTimeout(5000)).toEqual({ effective: 5000, wasClamped: false });
+  });
+});
+
+describe("TaskOutput -- M8 clamp note on the result (fix wave)", () => {
+  test("block:true with an over-ceiling timeout reports the clamp in the result, even when no actual wait was needed (task already terminal)", async () => {
+    const ctx = fakeCtx();
+    const outputPath = join(ctx.tempDir, "already-done.output");
+    writeFileSync(outputPath, "already done");
+    startTracking({ taskId: "already-done", kind: "bash", outputPath, description: "d" });
+    setTaskStatus("already-done", "completed");
+    const res = await taskOutput()({ task_id: "already-done", block: true, timeout: 999_999_999 }, ctx);
+    expect(res.output).toContain(`[timeout clamped from 999999999ms to the ${CEILING_TIMEOUT_MS}ms ceiling]`);
+  });
+
+  test("a timeout at or under the ceiling is never reported as clamped", async () => {
+    const ctx = fakeCtx();
+    const outputPath = join(ctx.tempDir, "already-done2.output");
+    writeFileSync(outputPath, "already done");
+    startTracking({ taskId: "already-done2", kind: "bash", outputPath, description: "d" });
+    setTaskStatus("already-done2", "completed");
+    const res = await taskOutput()({ task_id: "already-done2", block: true, timeout: CEILING_TIMEOUT_MS }, ctx);
+    expect(res.output).not.toContain("clamped");
   });
 });

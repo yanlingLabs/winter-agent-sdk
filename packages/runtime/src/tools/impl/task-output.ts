@@ -8,6 +8,9 @@ import "../descriptors/task-output.ts";
 import { replaceExecutor, type ToolExecutor, type ToolExecutionContext } from "../registry.ts";
 import { getTask } from "./background-task-runtime.ts";
 import { resolveRealTarget } from "../../permissions/paths.ts";
+// M8 (fix wave, P3 close-out): the SAME ceiling Bash's own `timeout` field enforces -- see this
+// file's own resolveClampedTimeout below.
+import { CEILING_TIMEOUT_MS } from "./bash.ts";
 
 interface TaskOutputInput {
   task_id: string;
@@ -83,13 +86,23 @@ async function waitForTerminal(taskId: string, timeoutMs: number): Promise<void>
   }
 }
 
+// M8 (fix wave, P3 close-out): `block:true` accepted any finite non-negative `timeout` with no
+// ceiling -- `{task_id:<persistent Monitor task>, block:true, timeout: 1e12}` parked the whole
+// round for a model-chosen multi-hour stall (the interrupt path still races it, so not a true hang,
+// but an unbounded one nonetheless). Clamped to the SAME ceiling Bash's own `timeout` field
+// enforces, not a second independently-chosen number.
+function resolveClampedTimeout(requested: number): { effective: number; wasClamped: boolean } {
+  return requested > CEILING_TIMEOUT_MS ? { effective: CEILING_TIMEOUT_MS, wasClamped: true } : { effective: requested, wasClamped: false };
+}
+
 const taskOutputExecutor: ToolExecutor = {
   async execute(input, ctx) {
     const parsed = parseTaskOutputInput(input);
     if ("error" in parsed) return { output: `Error: ${parsed.error}`, isError: true };
 
+    const { effective: effectiveTimeout, wasClamped } = resolveClampedTimeout(parsed.timeout);
     if (parsed.block) {
-      await waitForTerminal(parsed.task_id, parsed.timeout);
+      await waitForTerminal(parsed.task_id, effectiveTimeout);
     }
 
     const outputPath = resolveOutputPath(parsed.task_id, ctx);
@@ -111,6 +124,7 @@ const taskOutputExecutor: ToolExecutor = {
     const status = getTask(parsed.task_id)?.status;
     const lines = [capped.length > 0 ? capped : "(no output yet)"];
     if (status) lines.push(`[task status: ${status}]`);
+    if (wasClamped) lines.push(`[timeout clamped from ${parsed.timeout}ms to the ${CEILING_TIMEOUT_MS}ms ceiling]`);
     lines.push(`Note: TaskOutput is deprecated in favor of Read on ${outputPath} directly.`);
     return { output: lines.join("\n") };
   },
@@ -118,4 +132,4 @@ const taskOutputExecutor: ToolExecutor = {
 
 replaceExecutor("TaskOutput", taskOutputExecutor);
 
-export { parseTaskOutputInput, taskOutputExecutor };
+export { parseTaskOutputInput, taskOutputExecutor, resolveClampedTimeout };
