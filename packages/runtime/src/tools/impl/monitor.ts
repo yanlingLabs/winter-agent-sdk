@@ -221,10 +221,29 @@ function isDisallowedIPv4(ip: string): boolean {
   return false;
 }
 
+// An IPv4-mapped IPv6 address's two trailing 16-bit groups ARE the IPv4 address, just split across
+// group boundaries rather than byte boundaries: each group's high byte then low byte, concatenated,
+// is the dotted-quad. E.g. "a9fe:a9fe" -> 0xa9fe=169.254 twice -> "169.254.169.254" (cloud metadata).
+function ipv4FromHexGroups(g1: string, g2: string): string {
+  const h1 = parseInt(g1, 16);
+  const h2 = parseInt(g2, 16);
+  return `${(h1 >> 8) & 0xff}.${h1 & 0xff}.${(h2 >> 8) & 0xff}.${h2 & 0xff}`;
+}
+
 function isDisallowedIPv6(ip: string): boolean {
   const lower = ip.toLowerCase();
-  const mapped = /^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/.exec(lower);
-  if (mapped) return isDisallowedIPv4(mapped[1]!);
+  const mappedDotted = /^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/.exec(lower);
+  if (mappedDotted) return isDisallowedIPv4(mappedDotted[1]!);
+  // IPv4-mapped, HEX-GROUP form (e.g. "::ffff:a9fe:a9fe" for 169.254.169.254) -- a resolver can hand
+  // this shape back just as readily as the dotted-quad form above. Without this arm, the two
+  // trailing hex groups fail the dotted-quad regex, and `lower.split(":")[0]` (used below for the
+  // fe80::/fc00:: checks) is "" (the leading "::" splits to two empty leading segments) -- an empty
+  // string fails the `.length > 0` guard, so `firstGroup` stays NaN and NEITHER link-local check
+  // ever fires either. The address fell all the way through to the final `return false`: silently
+  // ALLOWED. Converting both groups to their four constituent bytes and re-running them through
+  // isDisallowedIPv4 gives this one shared source of truth with the dotted-quad arm above.
+  const mappedHex = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(lower);
+  if (mappedHex) return isDisallowedIPv4(ipv4FromHexGroups(mappedHex[1]!, mappedHex[2]!));
   if (lower === "::1" || lower === "::") return true; // loopback / unspecified
   const firstGroupText = lower.split(":")[0] ?? "";
   const firstGroup = firstGroupText.length > 0 ? parseInt(firstGroupText, 16) : NaN;

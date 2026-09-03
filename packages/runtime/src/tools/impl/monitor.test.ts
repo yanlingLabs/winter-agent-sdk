@@ -158,6 +158,15 @@ describe("isDisallowedAddress", () => {
     expect(isDisallowedAddress("::ffff:169.254.169.254", 6)).toBe(true);
     expect(isDisallowedAddress("::ffff:8.8.8.8", 6)).toBe(false);
   });
+  test("an IPv4-mapped IPv6 address in HEX-GROUP form (not dotted-quad) is ALSO checked against the embedded IPv4 rules", () => {
+    // "::ffff:a9fe:a9fe" is the identical address to "::ffff:169.254.169.254" (cloud metadata) --
+    // just with each 16-bit trailing group written in hex instead of a dotted-quad tail. A resolver
+    // can hand back either shape; only the dotted-quad form was previously recognized.
+    expect(isDisallowedAddress("::ffff:a9fe:a9fe", 6)).toBe(true); // 169.254.169.254
+    expect(isDisallowedAddress("::ffff:7f00:1", 6)).toBe(true); // 127.0.0.1
+    expect(isDisallowedAddress("::ffff:c0a8:0101", 6)).toBe(true); // 192.168.1.1
+    expect(isDisallowedAddress("::ffff:808:808", 6)).toBe(false); // 8.8.8.8, public
+  });
   test("a public-looking IPv6 address is allowed", () => {
     expect(isDisallowedAddress("2001:4860:4860::8888", 6)).toBe(false);
   });
