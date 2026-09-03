@@ -208,6 +208,44 @@ describe("Grep (Phase 3, Lane A, Task 4)", () => {
       expect(result.isError).toBe(true);
       expect(result.output).toContain("unrecognized type");
     });
+
+    // Fix round 1 (MODERATE): `glob` is silently a no-op when `path` directly names a file -- only
+    // the directory branch consults it. Pinned here: a `glob` that would EXCLUDE the directly-named
+    // file (it's .txt, the glob only wants .md) has no effect -- the file is still searched.
+    test("a `glob` that would exclude the directly-named file still searches it (glob is a no-op for a directly-named path)", async () => {
+      const p = join(dir, "target.txt");
+      writeFileSync(p, "needle");
+      const r = parse(await runGrep({ pattern: "needle", path: p, glob: "*.md" }, makeCtx(dir)));
+      expect(r.files).toEqual([p]);
+    });
+
+    test("`type` still applies to a directly-named path (a positive filter the caller explicitly asked for, unlike glob)", async () => {
+      const p = join(dir, "target.py");
+      writeFileSync(p, "needle");
+      const r = parse(await runGrep({ pattern: "needle", path: p, type: "js" }, makeCtx(dir)));
+      expect(r.files).toEqual([]);
+    });
+  });
+
+  describe("per-file size cap (fix round 1, MODERATE)", () => {
+    test("an oversized file is skipped, counted, and forces truncated:true -- a normal sibling still matches", async () => {
+      const bigFile = join(dir, "huge.txt");
+      // ~6.67MB of "needle" text -- over GREP_MAX_FILE_BYTES (5MB). Every line WOULD match if
+      // scanned, so a passing test here proves the file was genuinely skipped, not just empty.
+      writeFileSync(bigFile, "needle\n".repeat(1_000_000));
+      writeFileSync(join(dir, "normal.txt"), "needle");
+      const r = parse(await runGrep({ pattern: "needle" }, makeCtx(dir)));
+      expect(r.files).toEqual([join(dir, "normal.txt")]);
+      expect(r.skippedOversized).toBe(1);
+      expect(r.truncated).toBe(true);
+    });
+
+    test("no oversized files: skippedOversized is 0 and never spuriously forces truncated", async () => {
+      writeFileSync(join(dir, "normal.txt"), "needle");
+      const r = parse(await runGrep({ pattern: "needle" }, makeCtx(dir)));
+      expect(r.skippedOversized).toBe(0);
+      expect(r.truncated).toBe(false);
+    });
   });
 
   describe("multiline", () => {

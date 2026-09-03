@@ -37,9 +37,26 @@
 //     dependent and therefore untestable; alphabetical is deterministic and pinned by tests here.
 //   - `type` names an intentionally SMALL, hand-rolled extension map (not ripgrep's real ~700-type
 //     registry) -- an unrecognized `type` errors, naming the supported set.
-//   - ReDoS mitigation is INTERNAL ONLY (the schema is pinned law, no new input field): a pattern
-//     length cap (1000 chars) and a wall-clock scan deadline (5s) that stops scanning further FILES
-//     (never mid-line) and reports `truncated: true` rather than hanging.
+//   - Per-file size cap AND wall-clock scan deadline are BOTH internal-only (the schema is pinned
+//     law, no new input field): a pattern length cap (1000 chars); a disclosed per-file byte cap
+//     (`GREP_MAX_FILE_BYTES`, mirrors read.ts's own `IMAGE_MAX_BYTES` pattern -- a named, documented
+//     threshold, not a silent one) that SKIPS an oversized file outright, checked via `statSync`
+//     BEFORE any read -- fix-round-1 finding: the original version read+`.toString("utf8")`'d every
+//     candidate file unconditionally, so an oversized file's failure mode was whatever exception
+//     that produced, silently swallowed by the per-file `catch { continue; }` and never reflected
+//     anywhere in the result (a scan that silently dropped a huge candidate file read as "complete"
+//     to the caller). Skips are now counted in `skippedOversized` and force `truncated: true` --
+//     the result is honestly incomplete, not silently wrong. A wall-clock scan deadline (5s) that
+//     halts scanning further FILES BETWEEN iterations of the main per-candidate-file loop, also
+//     forcing `truncated: true`.
+//     NEITHER mechanism is a general ReDoS defense, despite the earlier header wording here (also a
+//     fix-round-1 correction) -- the deadline bounds neither `discoverCandidateFiles` itself (the
+//     initial file-listing walk, unbounded) nor a single pathological regex evaluation against one
+//     already-read file's content: a catastrophic-backtracking `pattern` run via `.test()`/
+//     `.matchAll()` inside `scanFileLineByLine`/`scanFileMultiline` can still hang past the
+//     deadline, since the deadline is only checked BETWEEN whole files, never inside one. The
+//     pattern-length cap is the only actual ReDoS-adjacent mitigation, and it is a weak one (bounds
+//     pattern size, not worst-case engine behavior on a given input).
 //   - Binary files (a NUL byte in the first 8000 bytes) are silently skipped, matching common
 //     grep/ripgrep default behavior -- including when directly named via `path` (a directly-named
 //     file bypasses gitignore/hidden-file rules, per spec, but binary detection is a content
@@ -169,6 +186,11 @@ export interface GrepResult {
   truncated: boolean;
   limit: number;
   offset: number;
+  // Fix round 1: how many candidate files were skipped outright for exceeding GREP_MAX_FILE_BYTES.
+  // Always present (0 when none were skipped) -- same "always-present, not conditionally omitted"
+  // treatment as `truncated`/`limit`/`offset`, so a caller never has to guess whether an absent
+  // field means "zero" or "never computed."
+  skippedOversized: number;
 }
 
 // --- type filter (small, hand-rolled -- see T8 note) -------------------------------------------------
@@ -408,6 +430,11 @@ function scanFileMultiline(file: string, text: string, opts: ScanOptions): PerFi
 // --- dispatch ------------------------------------------------------------------------------------
 
 const SCAN_DEADLINE_MS = 5000;
+// Fix round 1: disclosed per-file cap, mirrors read.ts's own IMAGE_MAX_BYTES pattern -- an invented,
+// documented threshold (no pinned value exists anywhere in scope), chosen to keep a single
+// candidate file's full materialization (readFileSync + .split("\n") + a line array) bounded rather
+// than either OOM-prone on a pathologically large file or silently swallowed by the per-file catch.
+const GREP_MAX_FILE_BYTES = 5 * 1024 * 1024;
 
 function resolveContext(input: GrepInput): { before: number; after: number } {
   const radius = input.contextDash ?? input.context;
@@ -442,7 +469,13 @@ async function execute(rawInput: unknown, ctx: ToolExecutionContext): Promise<To
   try {
     const st = statSync(scanRoot);
     if (st.isFile()) {
-      candidateFiles = [scanRoot]; // directly-named file: bypasses gitignore + hidden-file rules
+      // Directly-named file: bypasses gitignore + hidden-file rules (spec carve-out). `input.glob`
+      // is a NO-OP here -- fix-round-1 finding, pinned by a test below: there is only one candidate
+      // and nothing for a filter pattern to scope across, so `glob` is never consulted on this
+      // branch (only the directory branch, just below, passes it to discoverCandidateFiles). A
+      // `glob` that would have excluded this exact file, had it been reached via directory
+      // traversal, has no effect when the file is named directly.
+      candidateFiles = [scanRoot];
     } else if (st.isDirectory()) {
       candidateFiles = await discoverCandidateFiles(scanRoot, input.glob ?? "**/*");
     } else {
@@ -471,11 +504,26 @@ async function execute(rawInput: unknown, ctx: ToolExecutionContext): Promise<To
   const allContentRows: GrepContentRow[] = [];
   const deadline = Date.now() + SCAN_DEADLINE_MS;
   let scanTruncatedByDeadline = false;
+  let skippedOversized = 0;
 
   for (const file of candidateFiles) {
     if (Date.now() > deadline) {
       scanTruncatedByDeadline = true;
       break;
+    }
+    // Fix round 1: size-checked via stat BEFORE any read -- an oversized file is skipped outright,
+    // never materialized into memory at all (previously: read unconditionally, then
+    // `buf.toString("utf8")` on a huge buffer, whose failure the blanket catch below swallowed
+    // silently with no trace in the result).
+    let fileSize: number;
+    try {
+      fileSize = statSync(file).size;
+    } catch {
+      continue; // vanished mid-scan -- skip, never abort the whole call
+    }
+    if (fileSize > GREP_MAX_FILE_BYTES) {
+      skippedOversized++;
+      continue;
     }
     let buf: Buffer;
     try {
@@ -503,24 +551,27 @@ async function execute(rawInput: unknown, ctx: ToolExecutionContext): Promise<To
   const offsetInput = input.offset ?? 0;
   const take = headLimitInput === 0 ? Infinity : headLimitInput;
 
+  // Fix round 1: a file skipped for being oversized means this scan's OWN view of "what matches"
+  // is incomplete regardless of how many rows happen to fit under head_limit -- `truncated` must
+  // reflect that, not just the head_limit/offset arithmetic on what WAS scanned.
   function paginate<T>(rows: T[]): { shown: T[]; truncated: boolean } {
     const afterOffset = rows.slice(offsetInput);
     const shown = take === Infinity ? afterOffset : afterOffset.slice(0, take);
-    return { shown, truncated: scanTruncatedByDeadline || shown.length < afterOffset.length };
+    return { shown, truncated: scanTruncatedByDeadline || skippedOversized > 0 || shown.length < afterOffset.length };
   }
 
   let result: GrepResult;
   if (mode === "files_with_matches") {
     const { shown, truncated } = paginate(matchingFiles);
-    result = { mode, files: shown, truncated, limit: headLimitInput, offset: offsetInput };
+    result = { mode, files: shown, truncated, limit: headLimitInput, offset: offsetInput, skippedOversized };
   } else if (mode === "count") {
     const { shown, truncated } = paginate(matchingFiles);
     const shownCounts: Record<string, number> = {};
     for (const f of shown) shownCounts[f] = counts[f]!;
-    result = { mode, counts: shownCounts, truncated, limit: headLimitInput, offset: offsetInput };
+    result = { mode, counts: shownCounts, truncated, limit: headLimitInput, offset: offsetInput, skippedOversized };
   } else {
     const { shown, truncated } = paginate(allContentRows);
-    result = { mode, content: shown, truncated, limit: headLimitInput, offset: offsetInput };
+    result = { mode, content: shown, truncated, limit: headLimitInput, offset: offsetInput, skippedOversized };
   }
 
   return { output: JSON.stringify(result) };
