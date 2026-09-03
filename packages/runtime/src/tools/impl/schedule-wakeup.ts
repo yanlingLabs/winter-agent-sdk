@@ -29,6 +29,21 @@
 //   3. Validation reports the FIRST missing/malformed required field, not an aggregate list -- WS-06's
 //      own phrasing is singular ("naming the missing field"), and every sibling executor in this
 //      lane (task-graph.ts, cron.ts, todo-write.ts) already reports one violation at a time.
+//
+// *** T8 SCHEMA-SWEEP FIX (envelope reconciliation via ephemeral capture against the pinned 0.3.250
+//     artifact -- derived-shapes-p3-task8.md) ***
+//   `scheduledFor` was implemented as an ISO-8601 string (`Date.prototype.toISOString()`); the
+//   pinned `ScheduleWakeupOutput.scheduledFor` is a NUMBER ("Epoch ms timestamp when the next wakeup
+//   will fire", per the pinned artifact's own doc comment). Fixed to `Date.now() + clampedDelaySeconds
+//   * 1000` directly (no ISO conversion). Separately: the pinned `ScheduleWakeupInput.delaySeconds`
+//   carries NO JSON-Schema `minimum`/`maximum` -- only a prose doc comment describing runtime
+//   clamping ("Clamped to [60, 3600] by the runtime"), matching this executor's own clamp constants
+//   exactly. descriptors/schedule-wakeup.ts previously declared `minimum: 60, maximum: 3600` at the
+//   schema level, which is both unpinned AND in tension with this executor's own clamp-not-reject
+//   behavior (a strict schema-validating caller could reject an out-of-range value before this
+//   executor's own "clamps a delay below the 60s floor" behavior is ever reached -- the "one is
+//   unreachable" the brief names). Fixed by removing the schema-level bounds there; the runtime clamp
+//   below is now the ONLY enforcement, matching the pinned contract.
 import { randomUUID } from "node:crypto";
 import { replaceExecutor, type ToolExecutionContext, type ToolExecutor, type ToolResultPayload } from "../registry.ts";
 // Self-sufficiency (Lane A precedent, read.ts): see task-graph.ts's identical comment.
@@ -39,7 +54,7 @@ const MAX_DELAY_SECONDS = 3600;
 
 interface PendingWakeup {
   id: string;
-  scheduledFor: string;
+  scheduledFor: number;
 }
 
 // --- Session-scoped pending-wakeup store -----------------------------------------------------------
@@ -114,7 +129,8 @@ async function execute(rawInput: unknown, ctx: ToolExecutionContext): Promise<To
 
   const clampedDelaySeconds = Math.min(MAX_DELAY_SECONDS, Math.max(MIN_DELAY_SECONDS, input.delaySeconds));
   const wasClamped = clampedDelaySeconds !== input.delaySeconds;
-  const scheduledFor = new Date(Date.now() + clampedDelaySeconds * 1000).toISOString();
+  // Pinned shape: epoch-ms number, not an ISO string (T8 schema-sweep fix above).
+  const scheduledFor = Date.now() + clampedDelaySeconds * 1000;
 
   sessionList(ctx.sessionId).push({ id: randomUUID(), scheduledFor });
 

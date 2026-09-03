@@ -23,14 +23,18 @@
 //      CronCreate OMITS `durable` from its result when the call used the default (false); it is
 //      present (`durable: true`) only when the caller explicitly asked for persistence. `recurring`
 //      has no `?` in CronCreate's own text -- always present, resolved-to-its-default value.
-//   2. CronDelete's result shape is NOT pinned anywhere in WS-06 §3.4 prose (only the input,
-//      `{id}`, and "by id only, never by expression"). Minimal honest choice: `{id, deleted}` -- an
-//      echo of the requested id plus whether a job with that id was actually found and removed.
-//      Deleting an unknown id is a normal, non-error outcome (`deleted: false`), mirroring
-//      TaskGet's own "absence is a valid answer, not a failure" pattern elsewhere in this lane --
-//      NOT an isError (contrast TaskUpdate's own targeted-mutation-of-an-unknown-id, which IS an
-//      error: CronDelete's own contract explicitly frames "by id" as a lookup, not an assertion
-//      that the id must already exist).
+//   2. CronDelete's result shape WAS unpinned in WS-06 §3.4 prose (only the input, `{id}`, and "by
+//      id only, never by expression"); task-6's own honest choice was `{id, deleted}` -- an echo of
+//      the requested id plus whether a job with that id was actually found and removed. Task 8's
+//      ephemeral capture against the pinned 0.3.250 artifact (derived-shapes-p3-task8.md) found the
+//      real shape: bare `{id: string}`, no `deleted` field at all. Fixed to match -- `deleted`
+//      dropped from the wire shape in every branch. The underlying BEHAVIOR is unchanged and still
+//      not an isError for an unknown id (mirroring TaskGet's own "absence is a valid answer, not a
+//      failure" pattern elsewhere in this lane; contrast TaskUpdate's targeted-mutation-of-an-
+//      unknown-id, which IS an error) -- CronDelete's own contract frames "by id" as a lookup, not an
+//      assertion the id must already exist; the pinned result shape simply carries no signal for
+//      which branch happened, so a caller cannot distinguish "removed" from "was already gone" from
+//      the result alone. Winter MUST NOT invent a field beyond the pin to restore that distinction.
 //   3. `humanSchedule` is DERIVED, never persisted -- computed fresh from the stored `cron` string
 //      on every CronCreate/CronList call by `humanizeCron` below. This is a deliberately MODEST,
 //      best-effort formatter (a handful of common shapes: every minute, every N minutes, hourly,
@@ -356,7 +360,7 @@ async function executeDelete(rawInput: unknown, ctx: ToolExecutionContext): Prom
   }
 
   if (inMemoryJobs.delete(input.id)) {
-    return { output: JSON.stringify({ id: input.id, deleted: true }) };
+    return { output: JSON.stringify({ id: input.id }) };
   }
 
   let existing: CronJobRecord[];
@@ -368,15 +372,16 @@ async function executeDelete(rawInput: unknown, ctx: ToolExecutionContext): Prom
   const remaining = existing.filter((j) => j.id !== input.id);
   if (remaining.length === existing.length) {
     // T8 note 2 above: unknown id is a normal, non-error outcome -- "by id only" is a lookup
-    // contract, not an assertion that the id must already exist.
-    return { output: JSON.stringify({ id: input.id, deleted: false }) };
+    // contract, not an assertion that the id must already exist. The pinned result shape (bare
+    // {id}) carries no found/not-found signal either way.
+    return { output: JSON.stringify({ id: input.id }) };
   }
   try {
     writeDurableJobsAtomic(ctx.cwd, remaining);
   } catch (e) {
     return errorResult(`could not persist the deletion: ${(e as Error).message}`);
   }
-  return { output: JSON.stringify({ id: input.id, deleted: true }) };
+  return { output: JSON.stringify({ id: input.id }) };
 }
 
 // --- CronList --------------------------------------------------------------------------------------

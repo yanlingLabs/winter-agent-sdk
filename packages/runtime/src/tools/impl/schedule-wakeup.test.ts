@@ -38,14 +38,21 @@ afterEach(() => {
 });
 
 describe("scheduling branch", () => {
+  // T8 envelope-reconciliation fix: the pinned ScheduleWakeupOutput.scheduledFor is an epoch-ms
+  // NUMBER ("Epoch ms timestamp when the next wakeup will fire"), not an ISO string -- confirmed via
+  // ephemeral capture, derived-shapes-p3-task8.md.
   test("success shape has exactly scheduledFor/clampedDelaySeconds/wasClamped -- no stopped/cancelledWakeups", async () => {
+    const before = Date.now();
     const result = await run(VALID, makeCtx(SID));
+    const after = Date.now();
     expect(result.isError).toBeUndefined();
     const parsed = JSON.parse(result.output);
     expect(Object.keys(parsed).sort()).toEqual(["clampedDelaySeconds", "scheduledFor", "wasClamped"]);
     expect(parsed.clampedDelaySeconds).toBe(120);
     expect(parsed.wasClamped).toBe(false);
-    expect(new Date(parsed.scheduledFor).toISOString()).toBe(parsed.scheduledFor);
+    expect(typeof parsed.scheduledFor).toBe("number");
+    expect(parsed.scheduledFor).toBeGreaterThanOrEqual(before + 120 * 1000);
+    expect(parsed.scheduledFor).toBeLessThanOrEqual(after + 120 * 1000);
   });
 
   test("clamps a delay below the 60s floor and reports wasClamped: true", async () => {

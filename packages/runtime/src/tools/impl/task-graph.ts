@@ -6,28 +6,45 @@
 // this file's own header documents in full -- this file is the thin unknown-input-parsing +
 // wire-formatting layer over that store, mirroring Lane A's read.ts / Lane B's edit.ts shape.
 //
-// *** T8 SCHEMA-SWEEP NOTES (report these in task-6-report.md) ***
-//   1. TaskUpdate has NO pinned RESULT shape anywhere in WS-06 §3.4 (only its INPUT schema and the
-//      "dependency/ownership semantics MUST be implemented" prose are pinned). Advisor-endorsed
-//      choice: mirror TaskGet's own exact pinned 6-field shape (id/subject/description/status/
-//      blocks/blockedBy) on success -- the closest already-pinned sibling shape, reused rather than
-//      inventing a new one from nothing.
-//   2. TaskGet's not-found branch is a pinned, non-error success case ("...or null") -- this
-//      executor's `output` is the bare text "null" with `isError` UNSET, deliberately distinct from
-//      TaskUpdate's not-found (a real error: updating a nonexistent id is caller error, not a valid
-//      query outcome). Comment kept at each call site below, not just here, so the asymmetry reads
-//      as a decision, not an inconsistency.
-//   3. TaskList's result envelope is UNPINNED (no outputSchema on the TaskList stub, unlike
-//      CronList's spine-pinned `{jobs: [...]}` -- verified by reading descriptors/task-list.ts and
-//      descriptors/cron-list.ts directly before writing this). Chosen shape: a BARE JSON array of
-//      compact rows, matching WS-06's own phrasing ("-> compact rows (...)") literally rather than
-//      inventing a wrapper key CronList's text doesn't have either (CronList's own wrapper key
-//      choice was the SPINE's call, made before this lane started, not evidence of a house style to
-//      match). Flagged for whoever eventually reconciles wire shapes across the whole tool surface.
-//   4. Every field in every result object below is either UNCONDITIONAL (TaskGet's blocks/
+// *** T8 SCHEMA-SWEEP NOTES (originally written during task-6; corrected+superseded by Task 8's own
+//     envelope-reconciliation sweep -- see derived-shapes-p3-task8.md for the ephemeral-capture
+//     evidence against the pinned @anthropic-ai/claude-agent-sdk@0.3.250 artifact) ***
+//   1. TaskUpdate's RESULT envelope WAS unpinned in WS-06 §3.4 prose (only its INPUT schema is
+//      spelled out there); Task 8's capture found it after all in the pinned artifact's own
+//      `sdk-tools.d.ts`: `{ success: boolean; taskId: string; updatedFields: string[]; error?:
+//      string; statusChange?: { from: string; to: string } }`. This SUPERSEDES the task-6 choice of
+//      mirroring TaskGet's 6-field shape (an advisor-endorsed guess made absent better information --
+//      now superseded by direct evidence, not a case of silently narrowing a ruling).
+//   2. TaskGet's not-found branch is a pinned, non-error success case ("...or null") -- Task 8's
+//      capture confirms the wrapper applies to BOTH branches (`{ task: {...} | null }`), so the
+//      not-found branch now emits genuine JSON `{"task":null}` rather than the old bare 4-character
+//      text "null" (a strict improvement: still non-error, now actually parseable-as-the-pinned-shape
+//      by a caller that JSON.parses every result uniformly). Still deliberately distinct from
+//      TaskUpdate's own not-found (a real error there: see note 1's `success:false` path, which is
+//      itself never the tool-call-level `isError` -- only input-SHAPE failures are).
+//   3. TaskList's result envelope: WS-06's own prose ("-> compact rows (...)") does not mention a
+//      wrapper key, and CronList's own prose ("-> jobs with ...") does -- task-6 read this contrast
+//      as "TaskList is genuinely unpinned, unlike CronList". Task 8's capture shows BOTH are pinned
+//      wrapper objects (`{ tasks: [...] }` / `{ jobs: [...] }`); WS-06's prose paraphrase simply
+//      dropped the wrapper word for TaskList (and, per note 1, for TaskCreate/TaskGet too) while
+//      keeping it for CronList -- a paraphrase gap, not a real absence of a pinned shape. Fixed to
+//      `{ tasks: [...] }`.
+//   4. TaskCreate: WS-06 prose says "-> id/subject" with no wrapper; Task 8's capture shows
+//      `{ task: { id, subject } }`. Same paraphrase-gap pattern as note 3. Fixed to wrap.
+//   5. Every field in every result object below is either UNCONDITIONAL (TaskGet's blocks/
 //      blockedBy, TaskList's blockedBy) or OPTIONAL-VIA-CONDITIONAL-SPREAD keyed to the spec's own
-//      `?` marks (TaskList's owner). Unconditional fields are never omitted, including as empty
-//      arrays -- see task-graph-store.ts's own row shape.
+//      `?` marks (TaskList's owner, TaskUpdate's error/statusChange). Unconditional fields are never
+//      omitted, including as empty arrays -- see task-graph-store.ts's own row shape.
+//   6. `updatedFields`/`statusChange` are NOT resolvable from WS-06 prose OR from the pinned
+//      artifact's own doc comments (the interface carries no field-level documentation, unlike
+//      ScheduleWakeupOutput's richly-commented fields) -- two further judgment calls, flagged here
+//      rather than silently invented: (a) `updatedFields` reports the RESULT ROW's own field names
+//      (`blocks`/`blockedBy`), not the input's verb-prefixed parameter names (`addBlocks`/
+//      `addBlockedBy`), since the field is describing what changed on the row, not which input keys
+//      were passed; (b) `statusChange` is emitted only when `status` was part of the input AND the
+//      value actually differs from the row's prior status (a same-value "update" to the status
+//      already in place is not reported as a change) -- the more conservative of the two readings the
+//      bare field name supports.
 //
 // R3-4 note (per this lane's brief -- record in task-6-report.md, not just here): model-family
 // availability (hiddenWhenFamilyTaskNative) is a REGISTRY-side gate already encoded on each stub's
@@ -103,9 +120,10 @@ async function executeCreate(rawInput: unknown, ctx: ToolExecutionContext): Prom
     return errorResult((e as Error).message);
   }
   const row = createTask(ctx.sessionId, input);
-  // WS-06 §3.4: "-> id/subject." -- exactly these two fields, nothing else, even though the store
-  // row carries more (Winter MUST NOT invent/rename/re-type pinned fields).
-  return { output: JSON.stringify({ id: row.id, subject: row.subject }) };
+  // Pinned shape (T8 note 4 above): { task: { id, subject } } -- exactly these two inner fields,
+  // nothing else, even though the store row carries more (Winter MUST NOT invent/rename/re-type
+  // pinned fields), wrapped under `task` per the ephemeral-capture correction.
+  return { output: JSON.stringify({ task: { id: row.id, subject: row.subject } }) };
 }
 
 // --- TaskGet -----------------------------------------------------------------------------------
@@ -126,19 +144,23 @@ async function executeGet(rawInput: unknown, ctx: ToolExecutionContext): Promise
   }
   const row = getTask(ctx.sessionId, input.taskId);
   // Pinned success branch, not an error (T8 note 2 above): "or null" is part of the CONTRACT, not a
-  // failure mode -- querying an id that does not exist is a normal, expected outcome.
-  if (!row) return { output: "null" };
-  // WS-06 §3.4 pins exactly these 6 fields for TaskGet -- NOT owner/metadata, even though both are
-  // real fields on the stored row (TaskList separately pins `owner?`, TaskGet does not; honored
-  // literally rather than "helpfully" adding fields the spec's own per-tool shape omits).
+  // failure mode -- querying an id that does not exist is a normal, expected outcome. Wrapped per the
+  // pinned `{ task: {...} | null }` shape -- genuine JSON `{"task":null}`, not a bare "null" string.
+  if (!row) return { output: JSON.stringify({ task: null }) };
+  // WS-06 §3.4 pins exactly these 6 fields for TaskGet's inner `task` object -- NOT owner/metadata,
+  // even though both are real fields on the stored row (TaskList separately pins `owner?`, TaskGet
+  // does not; honored literally rather than "helpfully" adding fields the spec's own per-tool shape
+  // omits).
   return {
     output: JSON.stringify({
-      id: row.id,
-      subject: row.subject,
-      description: row.description,
-      status: row.status,
-      blocks: row.blocks,
-      blockedBy: row.blockedBy,
+      task: {
+        id: row.id,
+        subject: row.subject,
+        description: row.description,
+        status: row.status,
+        blocks: row.blocks,
+        blockedBy: row.blockedBy,
+      },
     }),
   };
 }
@@ -148,8 +170,8 @@ async function executeGet(rawInput: unknown, ctx: ToolExecutionContext): Promise
 async function executeList(_rawInput: unknown, ctx: ToolExecutionContext): Promise<ToolResultPayload> {
   // No input fields to validate (`{}`) -- WS-06 §3.4 TaskList takes no arguments.
   const rows = listTasks(ctx.sessionId);
-  // T8 note 3 above: bare array, no wrapper envelope (unpinned shape).
-  return { output: JSON.stringify(rows) };
+  // T8 note 3 above: pinned shape is `{ tasks: [...] }`, not a bare array.
+  return { output: JSON.stringify({ tasks: rows }) };
 }
 
 // --- TaskUpdate ----------------------------------------------------------------------------------
@@ -205,6 +227,23 @@ function describeUpdateError(error: TaskUpdateError): string {
   }
 }
 
+// Maps a TaskUpdateInput key to the ROW field it actually changes, for `updatedFields` (T8 note 6
+// above: reports the result row's own field names, not the input's verb-prefixed parameter names).
+const UPDATE_INPUT_TO_ROW_FIELD: ReadonlyArray<readonly [keyof TaskUpdateInput, string]> = [
+  ["subject", "subject"],
+  ["description", "description"],
+  ["activeForm", "activeForm"],
+  ["status", "status"],
+  ["addBlocks", "blocks"],
+  ["addBlockedBy", "blockedBy"],
+  ["owner", "owner"],
+  ["metadata", "metadata"],
+];
+
+function computeUpdatedFields(input: TaskUpdateInput): string[] {
+  return UPDATE_INPUT_TO_ROW_FIELD.filter(([inputKey]) => input[inputKey] !== undefined).map(([, rowField]) => rowField);
+}
+
 async function executeUpdate(rawInput: unknown, ctx: ToolExecutionContext): Promise<ToolResultPayload> {
   let input: TaskUpdateInput;
   try {
@@ -212,21 +251,38 @@ async function executeUpdate(rawInput: unknown, ctx: ToolExecutionContext): Prom
   } catch (e) {
     return errorResult((e as Error).message);
   }
+  // Snapshot the pre-update status as a PRIMITIVE (not a row reference -- updateTask mutates the same
+  // stored row object in place, but a string value copies cleanly) -- needed only for `statusChange`.
+  const beforeStatus = getTask(ctx.sessionId, input.taskId)?.status;
+
   const result = updateTask(ctx.sessionId, input);
-  // Unlike TaskGet's not-found (a valid query outcome), TaskUpdate targeting a nonexistent id IS an
-  // error -- the caller asked to mutate a specific row that isn't there (T8 note 2 above).
-  if (!result.ok) return errorResult(describeUpdateError(result.error));
+  // T8 note 1 above: pinned TaskUpdateOutput carries success/error INSIDE a normal (non-isError)
+  // result -- unlike input-SHAPE failures (missing/malformed taskId etc, caught above by
+  // parseUpdateInput, which remain isError:true: a call that never resolved to a real taskId has
+  // nothing to echo back in a {success,taskId,...} shape), TaskUpdate's own DOMAIN failures
+  // (not-found / self-reference / unknown-reference) are reported as {success:false, taskId,
+  // updatedFields:[], error} at the payload level, confirmed via ephemeral capture against the
+  // pinned 0.3.250 artifact (derived-shapes-p3-task8.md) -- superseding task-6's own `errorResult()`
+  // choice for this branch (never a case of silently narrowing a ruling: this is new evidence).
+  if (!result.ok) {
+    return {
+      output: JSON.stringify({
+        success: false,
+        taskId: input.taskId,
+        updatedFields: [],
+        error: describeUpdateError(result.error),
+      }),
+    };
+  }
   const row = result.row;
-  // T8 note 1 above: mirrors TaskGet's own pinned 6-field shape -- no result shape is pinned for
-  // TaskUpdate itself.
+  const updatedFields = computeUpdatedFields(input);
+  const statusChanged = input.status !== undefined && beforeStatus !== undefined && beforeStatus !== row.status;
   return {
     output: JSON.stringify({
-      id: row.id,
-      subject: row.subject,
-      description: row.description,
-      status: row.status,
-      blocks: row.blocks,
-      blockedBy: row.blockedBy,
+      success: true,
+      taskId: row.id,
+      updatedFields,
+      ...(statusChanged ? { statusChange: { from: beforeStatus, to: row.status } } : {}),
     }),
   };
 }

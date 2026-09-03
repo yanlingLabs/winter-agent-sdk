@@ -220,12 +220,16 @@ describe("CronCreate", () => {
 });
 
 describe("CronDelete", () => {
+  // T8 envelope-reconciliation fix: the pinned CronDeleteOutput is bare `{id: string}` (confirmed via
+  // ephemeral capture, derived-shapes-p3-task8.md) -- no `deleted` field, in either branch. The
+  // deletion still genuinely happens (proven below via a follow-up CronList), the wire result just
+  // carries no found/not-found signal, per the pinned shape.
   test("deletes a non-durable (in-memory) job by id", async () => {
     const { dir, cleanup } = tempProjectDir();
     try {
       const created = JSON.parse((await run("CronCreate", { cron: "* * * * *", prompt: "p" }, makeCtx(dir))).output);
       const result = await run("CronDelete", { id: created.id }, makeCtx(dir));
-      expect(JSON.parse(result.output)).toEqual({ id: created.id, deleted: true });
+      expect(JSON.parse(result.output)).toEqual({ id: created.id });
       const listed = JSON.parse((await run("CronList", {}, makeCtx(dir))).output);
       expect(listed.jobs).toEqual([]);
     } finally {
@@ -238,7 +242,7 @@ describe("CronDelete", () => {
     try {
       const created = JSON.parse((await run("CronCreate", { cron: "* * * * *", prompt: "p", durable: true }, makeCtx(dir))).output);
       const result = await run("CronDelete", { id: created.id }, makeCtx(dir));
-      expect(JSON.parse(result.output)).toEqual({ id: created.id, deleted: true });
+      expect(JSON.parse(result.output)).toEqual({ id: created.id });
       const onDisk = JSON.parse(readFileSync(join(dir, ".winter", "scheduled_tasks.json"), "utf8"));
       expect(onDisk.jobs).toEqual([]);
     } finally {
@@ -259,12 +263,12 @@ describe("CronDelete", () => {
     }
   });
 
-  test("deleting an unknown id is a non-error {deleted: false}", async () => {
+  test("deleting an unknown id is a non-error, bare {id} echo (no found/not-found signal in the pinned shape)", async () => {
     const { dir, cleanup } = tempProjectDir();
     try {
       const result = await run("CronDelete", { id: "ghost" }, makeCtx(dir));
       expect(result.isError).toBeUndefined();
-      expect(JSON.parse(result.output)).toEqual({ id: "ghost", deleted: false });
+      expect(JSON.parse(result.output)).toEqual({ id: "ghost" });
     } finally {
       cleanup();
     }
