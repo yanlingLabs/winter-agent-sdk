@@ -3,10 +3,11 @@
 // "Read supersedes TaskOutput") -- Winter preserves the tool for pinned compatibility and the file
 // as the primary path. Shares the background-task-runtime.ts registry with bash.ts/monitor.ts.
 import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import "../descriptors/task-output.ts";
 import { replaceExecutor, type ToolExecutor, type ToolExecutionContext } from "../registry.ts";
 import { getTask } from "./background-task-runtime.ts";
+import { resolveRealTarget } from "../../permissions/paths.ts";
 
 interface TaskOutputInput {
   task_id: string;
@@ -33,6 +34,17 @@ function parseTaskOutputInput(input: unknown): TaskOutputInput | { error: string
 // large output (Read is the primary path), so a generous but bounded inline peek is all it owes.
 const INLINE_CAP = 30_000;
 
+// I5 (fix wave, P3 close-out): `createBackgroundTask` (background-tasks.ts) always mints its own
+// `taskId` via `randomUUID()` -- this is the ONLY shape a legitimate task_id can ever take. The
+// untracked-task fallback below builds a filesystem path directly from a model-supplied `task_id`
+// with no shape check at all; `join` normalizes `..`, so `task_id: "../../../../etc/passwd\0.output"`-
+// shaped input (any string ending in a component that, once `.output` is appended, still resolves
+// outside `<tempDir>/tasks/`) could read an arbitrary file whose name happens to end in `.output`.
+// A plain regex match is the cheapest correct fix (mirrors `randomUUID()`'s own canonical
+// 8-4-4-4-12 hex form) -- rejecting outright rather than best-effort-sanitizing, since there is no
+// legitimate reason a real task_id would ever need `/` or `..` in it.
+const TASK_ID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 // Registry lookup FIRST (has live status); falls back to reconstructing the D18 path directly from
 // ctx.tempDir when the in-process registry has no record (e.g. this process restarted but the
 // output file itself, being plain durable storage, survived) -- see background-task-runtime.ts's
@@ -40,8 +52,21 @@ const INLINE_CAP = 30_000;
 function resolveOutputPath(taskId: string, ctx: ToolExecutionContext): string | undefined {
   const tracked = getTask(taskId);
   if (tracked) return tracked.outputPath;
-  const fallback = join(ctx.tempDir, "tasks", `${taskId}.output`);
-  return existsSync(fallback) ? fallback : undefined;
+  // I5: the untracked-task fallback is the ONLY branch that builds a path straight from
+  // model-controlled input -- `tracked.outputPath` above came from this process's own
+  // `createBackgroundTask` call, never from the model. Belt-and-suspenders: reject a
+  // non-UUID-shaped id outright (closes the traversal at the cheapest point), AND assert the
+  // resolved real path still lands inside `<tempDir>/tasks/` (closes it again even if a future
+  // change ever widens TASK_ID_SHAPE or the join logic changes) -- WS-07 §13's "stricter, never
+  // looser" license: two independent, cheap checks are never a correctness risk, only a defense
+  // one.
+  if (!TASK_ID_SHAPE.test(taskId)) return undefined;
+  const tasksDir = join(ctx.tempDir, "tasks");
+  const fallback = join(tasksDir, `${taskId}.output`);
+  if (!existsSync(fallback)) return undefined;
+  const realFallback = resolveRealTarget(fallback);
+  const realTasksDir = resolveRealTarget(tasksDir);
+  return realFallback.startsWith(realTasksDir + sep) ? fallback : undefined;
 }
 
 async function waitForTerminal(taskId: string, timeoutMs: number): Promise<void> {

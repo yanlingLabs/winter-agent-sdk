@@ -73,11 +73,15 @@ describe("TaskOutput executor", () => {
   });
 
   test("falls back to the D18 path under ctx.tempDir/tasks/<id>.output when untracked but the file exists", async () => {
+    // I5 (fix wave): the fallback now requires a UUID-shaped task_id (the ONLY shape
+    // createBackgroundTask ever mints) -- "orphan" (pre-fix fixture id) is deliberately replaced by
+    // a real UUID here; the traversal describe block below covers the rejection path.
     const ctx = fakeCtx();
+    const orphanId = "11111111-2222-3333-4444-555555555555";
     const tasksDir = join(ctx.tempDir, "tasks");
     mkdirSync(tasksDir, { recursive: true });
-    writeFileSync(join(tasksDir, "orphan.output"), "orphaned content");
-    const res = await taskOutput()({ task_id: "orphan", block: false, timeout: 0 }, ctx);
+    writeFileSync(join(tasksDir, `${orphanId}.output`), "orphaned content");
+    const res = await taskOutput()({ task_id: orphanId, block: false, timeout: 0 }, ctx);
     expect(res.isError).toBeFalsy();
     expect(res.output).toContain("orphaned content");
     expect(res.output).not.toContain("[task status:"); // untracked -- no live status to report
@@ -135,11 +139,12 @@ describe("TaskOutput executor", () => {
 
   test("block: true on an UNTRACKED task returns immediately rather than waiting out the full timeout", async () => {
     const ctx = fakeCtx();
+    const orphanId = "66666666-7777-8888-9999-aaaaaaaaaaaa";
     const tasksDir = join(ctx.tempDir, "tasks");
     mkdirSync(tasksDir, { recursive: true });
-    writeFileSync(join(tasksDir, "orphan2.output"), "orphan content");
+    writeFileSync(join(tasksDir, `${orphanId}.output`), "orphan content");
     const started = Date.now();
-    const res = await taskOutput()({ task_id: "orphan2", block: true, timeout: 5000 }, ctx);
+    const res = await taskOutput()({ task_id: orphanId, block: true, timeout: 5000 }, ctx);
     expect(Date.now() - started).toBeLessThan(300);
     expect(res.output).toContain("orphan content");
   });
@@ -153,5 +158,43 @@ describe("TaskOutput executor", () => {
     expect(res.isError).toBeFalsy();
     expect(res.output).toContain("not done yet");
     expect(res.output).toContain("[task status: running]");
+  });
+});
+
+// I5 (fix wave, P3 close-out): the untracked-task fallback built a filesystem path straight from a
+// model-supplied task_id with no shape check -- `join` normalizes `..`, so a crafted task_id could
+// read any file outside <tempDir>/tasks/ whose name happens to end in `.output`.
+describe("TaskOutput -- I5 traversal guard (untracked-task fallback)", () => {
+  test("a traversal-shaped task_id is rejected as unknown, not read", async () => {
+    const ctx = fakeCtx();
+    // Plant a secret OUTSIDE <tempDir>/tasks/, named so that `../escape.output` (joined against
+    // <tempDir>/tasks/) resolves to it.
+    const secretPath = join(ctx.tempDir, "escape.output");
+    writeFileSync(secretPath, "TOP SECRET");
+    const res = await taskOutput()({ task_id: "../escape", block: false, timeout: 0 }, ctx);
+    expect(res.isError).toBe(true);
+    expect(res.output).toContain("unknown task_id");
+    expect(res.output).not.toContain("TOP SECRET");
+  });
+
+  test("an absolute-path-shaped task_id is also rejected (join() would otherwise honor an absolute second segment)", async () => {
+    const ctx = fakeCtx();
+    const secretDir = mkdtempSync(join(tmpdir(), "winter-taskoutput-secret-"));
+    const secretPath = join(secretDir, "passwd.output");
+    writeFileSync(secretPath, "root:x:0:0");
+    const res = await taskOutput()({ task_id: secretPath.replace(/\.output$/, ""), block: false, timeout: 0 }, ctx);
+    expect(res.isError).toBe(true);
+    expect(res.output).toContain("unknown task_id");
+    expect(res.output).not.toContain("root:x:0:0");
+  });
+
+  test("a non-UUID-shaped (but traversal-free) task_id is also rejected by the fallback -- shape, not just traversal, is enforced", async () => {
+    const ctx = fakeCtx();
+    const tasksDir = join(ctx.tempDir, "tasks");
+    mkdirSync(tasksDir, { recursive: true });
+    writeFileSync(join(tasksDir, "not-a-uuid.output"), "should never be reachable via a crafted id");
+    const res = await taskOutput()({ task_id: "not-a-uuid", block: false, timeout: 0 }, ctx);
+    expect(res.isError).toBe(true);
+    expect(res.output).toContain("unknown task_id");
   });
 });
