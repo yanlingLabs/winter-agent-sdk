@@ -1,0 +1,202 @@
+// Phase 5 Task 2 (R5-8 as AMENDED after Task 1 -- derived-shapes-p5.md item (a)): the settings
+// surface.
+//
+// WHY THIS LIVES IN packages/sdk AND NOT packages/runtime. The Task 2 brief names
+// `packages/runtime/src/settings/{resolve,sources,trust}.ts`, but Task 1's item (a) found that
+// `resolveSettings`/`filterEscalatingDefaultMode` are PINNED PUBLIC EXPORTS of the SDK surface
+// (`sdk.d.ts:2809`/`694`), not Winter extensions -- and the amendment directs both to be exported
+// from `packages/sdk/src/index.ts` as public API. WS-02 §3 forbids the sdk package from importing
+// the runtime (enforced twice: tsconfig.sdk-fence.json, and `winter-agent-runtime` being only a
+// devDependency of packages/sdk), so a runtime-side implementation could never be re-exported from
+// that barrel. The implementation therefore lands here, exactly as `paths/home.ts` and
+// `store/session-store.ts` did when they turned out to be public-adjacent; the brief's
+// `packages/runtime/src/settings/*` files exist as pass-through re-exports plus the runtime-only
+// trust seam, and remain THE seam authority the lanes import from.
+//
+// Node-only: this module is inside tsconfig.sdk-fence.json's fence (packages/sdk/src production
+// code type-checks with `types: ["node"]` and NO Bun ambient globals) -- `node:fs/promises` and
+// `node:path` only, never `Bun.file`/`Bun.env`.
+
+// --- The pinned tier vocabularies -----------------------------------------------------------------
+//
+// THREE separate vocabularies live next to each other in the pinned declaration and must never be
+// collapsed into one (derived-shapes-p5.md item (a)): `SettingSource` (which file tiers to LOAD),
+// `ResolvedSettingSource` (which tier a resolved value CAME FROM -- adds the two non-file tiers),
+// and `PolicySettingsOrigin` (how a `managed` value reached the process). A fourth,
+// `PermissionUpdateDestination` (permissions/types.ts), spells the same three file tiers a third
+// way for permission WRITES. Winter's own `RuleSource` (permissions/types.ts) is a fifth and is a
+// RULE ORIGIN, not a file tier: it additionally carries `cliArg`/`session`/`sdk`.
+
+/** The three settings FILE tiers a session may load. `sdk.d.ts:7917`, verbatim and in pinned order. */
+export type SettingSource = "user" | "project" | "local";
+
+/** Pinned order (`sdk.d.ts:7917`). Also the value `settingSources: undefined` means (all three). */
+export const SETTING_SOURCES: readonly SettingSource[] = ["user", "project", "local"] as const;
+
+/** `sdk.d.ts:2783`: `SettingSource | 'managed' | 'flag'`. `'flag'` is R5-8's "inline/sdk" position. */
+export type ResolvedSettingSource = SettingSource | "managed" | "flag";
+
+/** `sdk.d.ts:2310`, verbatim -- how a `managed` value reached this process. */
+export type PolicySettingsOrigin = "helper" | "remote" | "plist" | "hklm" | "file" | "parent" | "hkcu";
+
+// --- The settings document ------------------------------------------------------------------------
+//
+// The pinned `Settings` is a ~2500-line interface generated from a settings JSON schema
+// (`sdk.d.ts:5426-7912`). Winter declares the keys P5 actually resolves, plus an index signature so
+// every OTHER key a settings file carries is PRESERVED and inert rather than dropped -- the same
+// "accepted, preserved, inert" posture WS-08 §1 pins for unknown hook event names, applied to the
+// settings document as a whole. A key Winter does not know about still merges, still gets
+// provenance, and still reaches whichever future consumer learns to read it.
+
+export interface SettingsHookHandler {
+  /** `"command"` is the only shape a settings file can express; see buildHookEntriesFromSettings. */
+  type?: string;
+  command?: string;
+  /** SECONDS (HookCallbackMatcher.timeout's pinned unit) -- converted to ms exactly once, at entry-build time. */
+  timeout?: number;
+}
+
+export interface SettingsHookMatcherGroup {
+  matcher?: string;
+  hooks?: SettingsHookHandler[];
+}
+
+/** Open-keyed for the same reason RuntimeHooksConfig is (protocol/config.ts): unknown event names are accepted, preserved and inert. */
+export type SettingsHooksConfig = Partial<Record<string, SettingsHookMatcherGroup[]>>;
+
+export interface SettingsPermissionsBlock {
+  allow?: string[];
+  ask?: string[];
+  deny?: string[];
+  /** An OPEN string at this layer: a settings file is JSON, so an invalid mode must degrade at the consumer, never be assumed pre-validated. */
+  defaultMode?: string;
+  disableBypassPermissionsMode?: boolean;
+  additionalDirectories?: string[];
+  [key: string]: unknown;
+}
+
+export interface Settings {
+  permissions?: SettingsPermissionsBlock;
+  hooks?: SettingsHooksConfig;
+  env?: Record<string, string>;
+  apiKeyHelper?: string;
+  /** `sdk.d.ts:7270` */
+  outputStyle?: string;
+  /** `sdk.d.ts:7734` */
+  autoMemoryEnabled?: boolean;
+  /**
+   * `sdk.d.ts:7738`. Its own pinned doc (`7736`) says a PROJECT-set value is ignored for security --
+   * the one per-key project-source restriction the declaration actually states. See OVERLAY_NEVER_KEYS.
+   */
+  autoMemoryDirectory?: string;
+  /** `sdk.d.ts:7693` */
+  plansDirectory?: string;
+  /** `sdk.d.ts:6047`: the value is `string[] | boolean | object`, NOT a boolean map. */
+  enabledPlugins?: Record<string, string[] | boolean | Record<string, unknown>>;
+  /**
+   * `sdk.d.ts:7755`. NEGATIVE sense, one-member literal -- there is NO `autoMode` key in the pinned
+   * declaration (OQ-P5-2). Restrictive, so it is safe from every tier and is NOT an overlay-never key.
+   */
+  disableAutoMode?: "disable";
+  /**
+   * WINTER-DEFINED (disclosed): WS-07 §3.2's "`autoMode` is never taken from project/local" names a
+   * key the pin does not have. Winter keeps the key and the restriction, narrowed per RULING P5-A to
+   * the PROJECT tier only (the pinned analogue at `autoMemoryDirectory` is project-only).
+   */
+  autoMode?: string;
+  [key: string]: unknown;
+}
+
+// --- Resolution results ---------------------------------------------------------------------------
+
+/** `sdk.d.ts:2413-2419`, verbatim. */
+export interface ProvenanceEntry {
+  source: ResolvedSettingSource;
+  path?: string;
+  policyOrigin?: PolicySettingsOrigin;
+}
+
+/** One tier's contribution, RAW (never overlay-filtered) -- the pinned `sources` escape hatch (`sdk.d.ts:2764-2767`). */
+export interface ResolvedSettingsSourceEntry {
+  source: ResolvedSettingSource;
+  settings: Settings;
+  path?: string;
+  policyOrigin?: PolicySettingsOrigin;
+}
+
+/**
+ * `sdk.d.ts:2759-2774`, verbatim three fields.
+ *
+ * `provenance` is per TOP-LEVEL key only (`2762`) -- runtime-confirmed by capture (1): with
+ * `permissions.allow` from project and `permissions.defaultMode` from local, the merged
+ * `effective.permissions` carried both and `provenance.permissions.source` reported `local` alone.
+ * A consumer that needs finer attribution reads `sources` (which this implementation orders
+ * highest-precedence first), exactly as the pinned field's own doc directs.
+ */
+export interface ResolvedSettings {
+  effective: Settings;
+  provenance: Partial<Record<string, ProvenanceEntry>>;
+  sources: ResolvedSettingsSourceEntry[];
+}
+
+/** `sdk.d.ts:2815-2843`, verbatim four fields -- ONE options object, not four positional parameters. */
+export interface ResolveSettingsOptions {
+  cwd?: string;
+  settingSources?: SettingSource[];
+  /** Programmatic policy tier. Pinned doc `2018-2040`: filtered restrictive-only. */
+  managedSettings?: Settings;
+  /** Remote policy payload -- pinned doc `2838-2839`: explicitly UNfiltered where `managedSettings` is filtered. */
+  serverManagedSettings?: Settings;
+}
+
+// --- Winter-side detail (NOT part of the pinned surface) ------------------------------------------
+
+/** A per-tier record carrying what the pinned `sources` entry cannot: whether the file loaded, and why not. */
+export interface DetailedSettingsSourceEntry extends ResolvedSettingsSourceEntry {
+  /** True iff a file/inline value existed AND parsed to a JSON object. */
+  loaded: boolean;
+  /** Present iff `loaded` is false because something existed but could not be used (parse error, wrong shape, unreadable). */
+  error?: string;
+  /** Alias of `settings`, kept under the brief's own field name so lane code can use either. */
+  values: Settings;
+}
+
+export interface DetailedResolvedSettings extends ResolvedSettings {
+  /** Highest-precedence first, same order as `sources`; a superset of it. */
+  perSource: DetailedSettingsSourceEntry[];
+}
+
+export interface ResolveSettingsDetailedOptions extends ResolveSettingsOptions {
+  /** Explicit `~/.winter` root. Tests MUST pass this rather than mutating process.env (a shared-process `bun test` run would race). */
+  winterHome?: string;
+  /** Injectable environment for WINTER_HOME resolution; defaults to `process.env`. */
+  env?: Record<string, string | undefined>;
+  /** The `'flag'` tier -- R5-8's "inline/sdk" position. Unreachable from the pinned options object, which has no inline input. */
+  inline?: Settings;
+}
+
+/**
+ * Keys that are NEVER taken from PROJECT settings.
+ *
+ * Scope correction vs the Task 2 brief: the brief said "project/local"; RULING P5-A (and the one
+ * pinned per-key restriction this can mirror, `autoMemoryDirectory`'s own doc at `sdk.d.ts:7736`)
+ * make it PROJECT-only. `local` is gitignored and personal -- it carries the same authority as
+ * `user` under the captured per-tier filter; only the repo-committed tier is restricted.
+ *
+ * `disableAutoMode` is deliberately ABSENT: it is restrictive (`'disable'` is its only value), so a
+ * repo-committed file setting it can only ever tighten, which every tier is allowed to do.
+ */
+export const OVERLAY_NEVER_KEYS: readonly string[] = ["autoMemoryDirectory", "autoMode"] as const;
+
+/**
+ * The permission modes `filterEscalatingDefaultMode` treats as escalating (pinned doc `686-694`).
+ * `plan`/`default` are non-escalating and survive from any tier.
+ */
+export const ESCALATING_PERMISSION_MODES: readonly string[] = ["bypassPermissions", "auto", "acceptEdits"] as const;
+
+/**
+ * PROJECT-tier permission keys that LOAD but never WIDEN in an untrusted workspace (RULING P5-A,
+ * capture (1) cells B/I/O). `deny`/`ask` are deliberately absent: they only ever tighten, and
+ * capture (1) cells K/L prove a project `deny` is honored and beats a local `allow`.
+ */
+export const PROJECT_PERMISSIVE_KEYS: readonly string[] = ["allow", "additionalDirectories"] as const;

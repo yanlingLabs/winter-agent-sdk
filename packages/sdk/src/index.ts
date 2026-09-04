@@ -124,6 +124,49 @@ export {
   getSubagentMessages,
 } from "./sessions.ts";
 
+// --- Phase 5 Task 2 (R5-8 as amended; derived-shapes-p5.md item (a)): the settings surface --------
+//
+// `resolveSettings` and `filterEscalatingDefaultMode` are PINNED PUBLIC EXPORTS of the 0.3.250
+// declaration (`sdk.d.ts:2809` / `694`), not Winter extensions -- Task 1's single biggest ruling
+// amendment. They are exported here under their pinned names and pinned shapes (one options object;
+// three result fields; per-TOP-LEVEL-key provenance). Everything else in this block is disclosed
+// Winter-side detail over that surface: `resolveSettingsDetailed` (per-source raw values + load
+// errors + the inline/`flag` tier + an explicit `winterHome`), `applyWorkspaceTrust` (RULING P5-A's
+// per-tier permissive filter), and the two path/loader primitives a host or the runtime needs to
+// locate a tier's file at all.
+export {
+  resolveSettings,
+  filterEscalatingDefaultMode,
+  resolveSettingsDetailed,
+  applyWorkspaceTrust,
+} from "./settings/resolve.ts";
+export { settingsPathFor, loadSettingsFile } from "./settings/sources.ts";
+export type { SettingsPathOptions, LoadedSettingsFile } from "./settings/sources.ts";
+export {
+  SETTING_SOURCES,
+  OVERLAY_NEVER_KEYS,
+  ESCALATING_PERMISSION_MODES,
+  PROJECT_PERMISSIVE_KEYS,
+} from "./settings/types.ts";
+export type {
+  SettingSource,
+  ResolvedSettingSource,
+  PolicySettingsOrigin,
+  Settings,
+  SettingsPermissionsBlock,
+  SettingsHooksConfig,
+  SettingsHookMatcherGroup,
+  SettingsHookHandler,
+  ProvenanceEntry,
+  ResolvedSettings,
+  ResolvedSettingsSourceEntry,
+  ResolveSettingsOptions,
+  DetailedResolvedSettings,
+  DetailedSettingsSourceEntry,
+  ResolveSettingsDetailedOptions,
+} from "./settings/types.ts";
+export type { WorkspaceTrustFilterOptions } from "./settings/resolve.ts";
+
 // Task 3 (WS-07 §3.3/§4): permissions surface, pinned-types home. See permissions/types.ts's own
 // header for the section boundaries later tasks (5, 8) extend.
 export type { PermissionMode, PermissionBehavior, PermissionRuleValue } from "./permissions/types.ts";
