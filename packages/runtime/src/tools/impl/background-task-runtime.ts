@@ -19,6 +19,10 @@
 // the mechanical blocker; "workflow" joins for the same reason (P5's own tasks will need it, and a
 // union that is a strict subset of the spine's is a trap waiting for the next kind).
 export type BackgroundTaskKind = "bash" | "monitor" | "workflow" | "agent";
+// Phase 5 Task 3: the internal-kind -> wire-`task_type` mapping lives in the SPINE module
+// (tools/background-tasks.ts), imported rather than re-declared -- two copies of "workflow means
+// local_workflow on the wire" is exactly the drift the single mapping exists to prevent.
+import { wireTaskType } from "../background-tasks.ts";
 export type BackgroundTaskStatus = "running" | "completed" | "failed" | "stopped";
 
 export interface BackgroundTaskHandle {
@@ -115,7 +119,11 @@ export function stopTask(taskId: string): boolean {
 // Shared mapper to the SDKBackgroundTasksChangedMessage.tasks[] element shape (frames.ts) --
 // co-located with the type it maps rather than duplicated across bash.ts/monitor.ts/task-stop.ts.
 export function toBackgroundTasksChangedEntry(t: BackgroundTaskHandle): { task_id: string; task_type: string; description: string } {
-  return { task_id: t.taskId, task_type: t.kind, description: t.description };
+  // Phase 5 Task 3: the WIRE spelling, never `t.kind` -- a workflow's internal kind is `"workflow"`
+  // and its pinned wire `task_type` is `"local_workflow"` (item (g) + capture (3)). See
+  // background-tasks.ts's own wireTaskType for why the mapping is one function rather than a literal
+  // at each of the three emission sites.
+  return { task_id: t.taskId, task_type: wireTaskType(t.kind), description: t.description };
 }
 
 // Test-only escape hatch, same rationale as background-tasks.ts's own resetBackgroundTaskRootForTest:

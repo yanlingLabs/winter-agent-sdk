@@ -51,7 +51,7 @@ import type { PolicyState, AutoModeConfig } from "./policy-state.ts";
 // neither can independently drift from edit-recognition.ts's own Read/Edit/Write/NotebookEdit path-
 // field mapping (see that module's own header for why it lives there, not here).
 import { recognizeEditOperation, fileRulePathField, shellCommandOf } from "./edit-recognition.ts";
-import { isProtectedWrite as isProtectedPath, isCriticalRemoval as classifyCriticalRemoval } from "./protected.ts";
+import { isProtectedWrite as isProtectedPath, isCriticalRemoval as classifyCriticalRemoval, isWorkflowScriptCarveOut } from "./protected.ts";
 // Task 12 (WS-07 §10.1 step 2 / §6.5): the two auto/config.ts primitives evaluator.ts's own `auto`
 // mode arm and plan's classifier borrow need. This is the ONLY dependency evaluator.ts takes on
 // the auto/ package — the concrete AutoEngine implementation (auto/engine.ts) is never imported
@@ -608,14 +608,53 @@ export function findMatchingRuleEntry(
 // a deny rule already names.
 const WRITE_BLOCKING_DENY_TOOLS: ReadonlySet<string> = new Set(["Read", "Write", "Edit", "NotebookEdit"]);
 
+// --- RULING P5-B: the workflow-script carve-out, evaluator side -----------------------------------
+//
+// `permissions/protected.ts` handles the §6.7 protected-write half. This handles the OTHER half: the
+// M13 baseline `Write/Edit/NotebookEdit(~/.winter/projects/**)` DENY rules (engine.ts's
+// buildBaselineDenyRules), which a plain allow rule can never beat -- deny wins at stage 2, before
+// any allow is consulted, by design.
+//
+// The carve-out is therefore expressed as a SKIP on those specific entries, using
+// `findMatchingRuleEntry`'s existing `opts.skip` seam (Task 12's own broad-allow-suspension
+// precedent) rather than by inventing rule negation, which the grammar has no way to express and
+// which would be a far larger and more dangerous surface.
+//
+// TWO CONDITIONS, both required: the entry must be a MANAGED deny naming the projects subtree (so a
+// user-authored `Write(~/.winter/projects/**)` deny is NOT skipped -- an explicit human denial still
+// wins), and EVERY candidate write path of the call must be inside the carve-out (so a compound Bash
+// command touching one script and one transcript is still denied outright).
+function isProjectsBaselineDeny(entry: SourcedRuleEntry): boolean {
+  if (entry.behavior !== "deny" || entry.source !== "managed") return false;
+  const content = entry.ruleValue.ruleContent;
+  return typeof content === "string" && (content === "~/.winter/projects" || content.startsWith("~/.winter/projects/"));
+}
+
+function callIsEntirelyWorkflowScriptWrite(call: PermissionCall, ctx: EvaluationContext): boolean {
+  const paths = extractCandidateWritePaths(call, ctx);
+  if (paths.length === 0) return false;
+  return paths.every((p) => isWorkflowScriptCarveOut(resolve(ctx.cwd, p), ctx.home));
+}
+
+/** The `skip` predicate the stage-2 deny lookup passes, or `undefined` when this call earns no carve-out at all. */
+export function workflowScriptCarveOutSkip(call: PermissionCall, ctx: EvaluationContext): ((entry: SourcedRuleEntry) => boolean) | undefined {
+  if (!callIsEntirelyWorkflowScriptWrite(call, ctx)) return undefined;
+  return isProjectsBaselineDeny;
+}
+
 function findFileDenyBlockingEdit(call: PermissionCall, ctx: EvaluationContext): SourcedRuleEntry | undefined {
   const candidatePaths = extractCandidateWritePaths(call, ctx);
   if (candidatePaths.length === 0) return undefined;
+  // RULING P5-B: the same carve-out the stage-2 lookup applies. Without it here, a `Write` into the
+  // scripts subtree would walk past the stage-2 skip and be caught by the SIBLING `Edit`/`NotebookEdit`
+  // baseline deny through this function's cross-tool rule -- a denial from the rule next door.
+  const carveOutSkip = workflowScriptCarveOutSkip(call, ctx);
   const pool = ctx.allowManagedPermissionRulesOnly ? ctx.policy.rules.entries.filter((e) => e.source === "managed") : ctx.policy.rules.entries;
   for (const entry of pool) {
     // A rule for the SAME tool the call is already using is left to the ordinary stage-2 lookup
     // above -- reaching it here too would only produce a differently-worded identical denial.
     if (entry.rule.toolName === call.toolName) continue;
+    if (carveOutSkip?.(entry) === true) continue;
     if (!WRITE_BLOCKING_DENY_TOOLS.has(entry.rule.toolName) || entry.behavior !== "deny") continue;
     const specifier = entry.rule.specifier;
     if (specifier?.kind !== "pattern") continue;
@@ -1189,7 +1228,11 @@ export async function evaluate(call: PermissionCall, ctx: EvaluationContext): Pr
   const carriedTransform = hookResult.transformedInput;
 
   // --- Stage 2: deny rules ---------------------------------------------------------------------
-  const denyEntry = findMatchingRuleEntry(policy.rules, effectiveCall, "deny", ctx);
+  // RULING P5-B: the ONE skip applied here -- see workflowScriptCarveOutSkip. `undefined` for every
+  // call that is not entirely a write into a session's own persisted-workflow-script directory, which
+  // is every call in every pre-P5 fixture, so stage 2 is byte-identical for them.
+  const projectsCarveOutSkip = workflowScriptCarveOutSkip(effectiveCall, ctx);
+  const denyEntry = findMatchingRuleEntry(policy.rules, effectiveCall, "deny", ctx, projectsCarveOutSkip !== undefined ? { skip: projectsCarveOutSkip } : undefined);
   if (denyEntry) {
     return {
       decision: "deny",

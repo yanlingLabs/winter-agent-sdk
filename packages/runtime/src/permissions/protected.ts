@@ -72,6 +72,51 @@ export const PROTECTED_FILE_BASENAMES: ReadonlySet<string> = new Set([
   "WINTER.md",
 ]);
 
+// --- RULING P5-B: the model-writable workflow-script carve-out ------------------------------------
+//
+// `~/.winter/projects/<project-key>/<session-uuid>/workflows/scripts/**` is MODEL-WRITABLE. That is
+// not a relaxation for convenience: WS-11 §1.3's Edit-then-rerun contract REQUIRES it -- every
+// Workflow invocation persists its script to that path and returns the path in its result
+// (capture (3)), and the documented iterate loop is "edit the persisted script, re-invoke with
+// `scriptPath`". A model that cannot write there cannot iterate on a workflow at all.
+//
+// SCOPED AS TIGHTLY AS THE CONTRACT ALLOWS, and the shape is the enforcement: the subtree must be
+// EXACTLY `<home>/.winter/projects/<key>/<uuid>/workflows/scripts/...` -- six fixed positions with
+// exactly two wildcards between them. A `projects/**/workflows/scripts` style match would let a
+// session write into another session's area by nesting; a prefix match on `workflows/scripts` alone
+// would open one anywhere under `projects/`. Everything else under `projects/` -- the JSONL
+// transcripts a resume rebuilds from, the roster sidecars, the provider-state sidecars -- stays
+// write-denied by the M13 baseline rules (engine.ts's buildBaselineDenyRules) and by this module.
+const WINTER_PROJECTS_SEGMENT = "projects";
+const WORKFLOW_SCRIPTS_SEGMENTS = ["workflows", "scripts"] as const;
+
+/**
+ * True when `absPath` is inside a session's own persisted-workflow-script directory under `home`.
+ *
+ * Takes an ALREADY-ABSOLUTE path (every caller here resolves first) and `home` explicitly -- this
+ * module resolves no environment of its own, matching `isProtectedWrite`'s existing `ctx.home`
+ * contract.
+ */
+export function isWorkflowScriptCarveOut(absPath: string, home: string): boolean {
+  const homeSegments = pathSegments(resolve(home));
+  const segments = pathSegments(absPath);
+  // Must start with <home>/.winter/projects/<key>/<uuid>/workflows/scripts/ and have at least one
+  // more segment after it (the script file itself) -- the DIRECTORY is not itself writable, only its
+  // contents, so a `Write` targeting the directory path is still denied.
+  const prefix = [...homeSegments, ".winter", WINTER_PROJECTS_SEGMENT];
+  if (segments.length < prefix.length + 2 + WORKFLOW_SCRIPTS_SEGMENTS.length + 1) return false;
+  for (let i = 0; i < prefix.length; i++) {
+    if (segments[i] !== prefix[i]) return false;
+  }
+  // segments[prefix.length] = <project-key>, segments[prefix.length + 1] = <session-uuid>: two
+  // wildcards, never more -- a deeper nesting is a different session's area, or an invented one.
+  const scriptsStart = prefix.length + 2;
+  for (let i = 0; i < WORKFLOW_SCRIPTS_SEGMENTS.length; i++) {
+    if (segments[scriptsStart + i] !== WORKFLOW_SCRIPTS_SEGMENTS[i]) return false;
+  }
+  return true;
+}
+
 function pathSegments(absPath: string): string[] {
   return absPath.split("/").filter((s) => s.length > 0);
 }
@@ -103,6 +148,11 @@ function basenameOf(absPath: string): string {
 // the seam never calls it for a Read at all, not because of anything checked in here.
 export function isProtectedWrite(path: string, ctx: { cwd: string; home: string }): boolean {
   const absPath = resolve(ctx.cwd, path);
+  // RULING P5-B: checked FIRST, because the carve-out lives INSIDE `.winter`, which
+  // `isInsideProtectedDirectory` would otherwise reject unconditionally. Same shape as the
+  // pre-existing `.winter/worktrees` exception one function down, and for the same reason: a subtree
+  // the agent is meant to work in cannot also be protected from it.
+  if (isWorkflowScriptCarveOut(absPath, ctx.home)) return false;
   return isInsideProtectedDirectory(absPath) || PROTECTED_FILE_BASENAMES.has(basenameOf(absPath));
 }
 

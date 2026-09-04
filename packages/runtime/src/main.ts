@@ -25,6 +25,13 @@ import { resolveEngineSession, resolveProductionWinterHome } from "./store/diale
 import { registerDefaultChildEngineFactory } from "./subagents/register-default-factory.ts";
 import { WinterCompatibilitySessionStore, compatibilityKeys } from "@yanlinglabs/winter-agent-sdk";
 import { restoreChildRoster } from "./subagents/restore.ts";
+// Phase 5 Task 3 (RULING R5-15): the pinned worker entry. Lane W replaces the BODY of
+// workflowWorkerMain; this dispatch and the export's name/signature are frozen by that ruling and by
+// workflows/seam.contract.test.ts.
+import { workflowWorkerMain } from "./workflows/subprocess-entry.ts";
+
+/** The argv marker that selects the worker role. One constant, so the dispatch and Lane W's spawner cannot disagree by a character. */
+export const WORKFLOW_WORKER_ARGV_FLAG = "__workflow-worker";
 
 // Same argv contract as winter-agent-runtime/testing's inMemoryProcess (Task 2): find the flag by
 // NAME, never by position. Position-based parsing would silently break between the two ways this
@@ -100,6 +107,26 @@ const stdoutFrameSink: FrameSink = {
     // observes completion via this process's exit (WS-04 §6.1), not a synthetic stream-end frame.
   },
 };
+
+// --- Phase 5 Task 3 (R5-5/R5-15): the `__workflow-worker` argv dispatch ---------------------------
+//
+// Checked BEFORE `parseConfigFromArgv`, because a worker invocation carries no `--run --config-json`
+// and would otherwise die on the missing-flag throw. Found by NAME, never by position -- `bun
+// src/main.ts __workflow-worker ...` and the compiled `winter __workflow-worker ...` differ by one
+// leading argv slot, the same shift `parseConfigFromArgv`'s own indexOf comment describes.
+//
+// A STATIC import (see the file header's compiled-binary constraints): a dynamic import of the entry
+// would not survive `bun build --compile`, which is precisely the leg `verify:workflow` exercises.
+if (process.argv.includes(WORKFLOW_WORKER_ARGV_FLAG)) {
+  try {
+    const code = await workflowWorkerMain(process.argv, { stdin: process.stdin, stdout: process.stdout, stderr: process.stderr });
+    process.exit(code);
+  } catch (err) {
+    const text = err instanceof Error ? (err.stack ?? err.message) : String(err);
+    process.stderr.write(`winter: fatal (workflow worker): ${text}\n`);
+    process.exit(1);
+  }
+}
 
 try {
   const config = parseConfigFromArgv(process.argv);

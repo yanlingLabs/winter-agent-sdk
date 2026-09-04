@@ -314,13 +314,18 @@ ${denySettingsLocalFileRegex}
  *   - deny network*,
  *   - deny process-fork AND allow process-exec ONLY for the self binary.
  *
- * Part B item 2 (fix wave, P3 close-out) -- CAVEAT the "strictly tighter" claim above: this
- * function takes no `home` parameter at all, so it CANNOT emit the ordinary Bash profile's own
- * `~/.winter/run` baseline read-deny rule (buildSeatbeltProfile's own `home` field) -- on the READ
- * axis specifically, this profile is not a strict superset of denials; it is missing one the
- * ordinary profile has. Every OTHER axis (write/network/exec) genuinely is tighter, as described
- * above. Ledgered as a P5/WS-11 carry: whichever task wires a real workflow worker (WS-11 §1.7)
- * should thread the session's own `home` through here too, once a real caller exists to supply it.
+ * Part B item 2 (fix wave, P3 close-out) -- THE READ-AXIS CARRY IS NOW CLOSED (Phase 5 Task 3,
+ * R5-5: "the P3 worker seatbelt profile PLUS the ledgered `~/.winter/run` deny"). `opts.home`, when
+ * supplied, emits the same baseline `<home>/.winter/run` read-deny rule the ordinary Bash profile
+ * carries (buildSeatbeltProfile's own `home` field), making this profile a strict superset of that
+ * one's denials on every axis.
+ *
+ * `home` is OPTIONAL rather than required, deliberately: this module is platform- and
+ * context-free by design (it resolves no paths of its own), and every pre-P5 caller -- profile.test.ts
+ * and the darwin deny suite -- constructs the profile with no session to take a home from. Omitting
+ * it still yields a correct, if less defended, profile, exactly as buildSeatbeltProfile documents for
+ * its own `home`. LANE W'S SPAWNER MUST PASS IT: a real worker launched without `home` reproduces the
+ * pre-P5 gap silently.
  *
  * THE #1 RISK (verified empirically by the Norma original): a blanket `(deny process-exec*)` makes
  * sandbox-exec's own execvp() of the target fail ("Operation not permitted"), because the
@@ -330,8 +335,11 @@ ${denySettingsLocalFileRegex}
  * /bin/sh etc. Note the operation is `process-fork` (no star) -- `process-fork*` is an unbound
  * variable that fails to load.
  */
-export function buildWorkflowWorkerSeatbeltProfile(selfExecPath: string): string {
+export function buildWorkflowWorkerSeatbeltProfile(selfExecPath: string, opts?: { home?: string }): string {
   const self = canon(selfExecPath);
+  // Placed with the other denies (below), after `(allow file-read*)`, so SBPL's last-match-wins makes
+  // it actually bind -- emitted before the blanket read-allow it would be dead text.
+  const denyRunDirRule = opts?.home !== undefined ? `\n(deny file-read* (subpath "${sbplString(canon(join(opts.home, ".winter", "run")))}"))` : "";
   const machRules = [
     "com.apple.system.notification_center",
     "com.apple.system.logger",
@@ -348,7 +356,7 @@ export function buildWorkflowWorkerSeatbeltProfile(selfExecPath: string): string
 (allow sysctl-read)
 (allow mach-lookup
 ${machRules})
-(allow file-read*)
+(allow file-read*)${denyRunDirRule}
 (deny file-write*)
 (deny network*)
 (allow file-write-data (path "/dev/null") (path "/dev/stdout") (path "/dev/stderr"))

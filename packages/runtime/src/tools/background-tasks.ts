@@ -41,6 +41,26 @@ export function resetBackgroundTaskRootForTest(): void {
 
 export type BackgroundTaskKind = "bash" | "monitor" | "workflow" | "agent";
 
+// Phase 5 Task 3 (derived-shapes-p5 item (g) + capture (3)): the INTERNAL kind and the WIRE
+// `task_type` are not the same string for workflows. `WorkflowOutput.taskType` is the pinned literal
+// `"local_workflow"` (`sdk-tools.d.ts:4059`) and the running pinned engine emits exactly that on
+// `task_started.task_type` -- Winter's own kind stays `"workflow"`, which is the ergonomic internal
+// name and the one `createBackgroundTask("workflow")` takes.
+//
+// ONE mapping, here, rather than a literal at each emission site: `task_started.task_type`,
+// `task_progress`, and `background_tasks_changed[].task_type` are three separate producers, and a
+// hand-written spelling at any one of them is invisible until a conformance comparison runs.
+const WIRE_TASK_TYPES: Readonly<Record<BackgroundTaskKind, string>> = Object.freeze({
+  bash: "bash",
+  monitor: "monitor",
+  workflow: "local_workflow",
+  agent: "agent",
+});
+
+export function wireTaskType(kind: BackgroundTaskKind): string {
+  return WIRE_TASK_TYPES[kind];
+}
+
 // N1 (fix wave, P3 close-out): STALE as of Lane C's own Task 3 -- "still UNEXERCISED by anything
 // real" was accurate at fix-round-1 time; it no longer is. `createBackgroundTask("bash")` and
 // `createBackgroundTask("monitor")` are both real, exercised call sites now (tools/impl/bash.ts's
