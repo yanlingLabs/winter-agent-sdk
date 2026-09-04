@@ -5,8 +5,9 @@
 // tests must target a throwaway, invented server name: the registry is a process-wide singleton
 // across one `bun test` invocation.
 import { describe, test, expect } from "bun:test";
-import { registerMcpServerTools, unregisterMcpServerTools, type DeferralActivation } from "../tools/registry.ts";
+import { registerMcpServerTools, registerTool, unregisterMcpServerTools, unregisterToolForTest, type DeferralActivation } from "../tools/registry.ts";
 import { computeExposurePartition } from "./exposure.ts";
+import type { ToolSearchSessionRuntime } from "./search.ts";
 
 const SRV = "t5exposuresrv";
 
@@ -105,6 +106,62 @@ describe("computeExposurePartition (WS-09 §9 exposure mapping, ground truth)", 
       expect(withCapability.deferred.map((d) => d.canonicalName)).toContain(name);
     } finally {
       unregisterMcpServerTools(SRV);
+    }
+  });
+});
+
+// --- RULING P4-E amended (fix wave): the host alias table reaches the exclusion pass --------------
+//
+// NEEDS_CONTEXT (a) in this lane's report depends on this seam being complete end to end: without it,
+// engine.ts's one-line pass-through at registerToolSearchSessionRuntime would either fail typecheck
+// (excess property) or silently never reach `hideAliasExcludedTwins`.
+describe("computeExposurePartition: a HOST alias edge excludes its twin too (RULING P4-E amended)", () => {
+  const ALIAS_SRV = "aliasexposuresrv";
+  const NATIVE = "AliasExposureNative";
+
+  test("a bare-denied host alias SOURCE hides its target, and the table travels through ToolSearchDeps", () => {
+    try {
+      registerTool({
+        descriptor: {
+          canonicalName: NATIVE,
+          advertisedName: NATIVE,
+          source: "builtin",
+          inputSchema: { type: "object" },
+          description: "host-alias source fixture",
+          exposure: "eager",
+          permissionClass: "read",
+          availability: {},
+          capabilityRequirements: [],
+          disposition: "implement-now",
+        },
+      });
+      registerMcpServerTools(ALIAS_SRV, [{ name: "twin", inputSchema: { type: "object" } }], { deferredDefault: true });
+      const target = `mcp__${ALIAS_SRV}__twin`;
+      const base = { mode: "default" as const, activation: ACTIVE, capabilities: ["winter.mcp"], disallowedTools: [NATIVE] };
+
+      // Without the host table the engine's DEFAULT canonical pair is all that is consulted, so this
+      // unrelated pair is untouched -- the control that makes the assertion below meaningful.
+      const withoutTable = computeExposurePartition(base);
+      expect([...withoutTable.eager, ...withoutTable.deferred].map((d) => d.canonicalName)).toContain(target);
+
+      const withTable = computeExposurePartition({ ...base, toolAliases: { [NATIVE]: target } });
+      expect([...withTable.eager, ...withTable.deferred].map((d) => d.canonicalName)).not.toContain(target);
+      expect(withTable.hidden.map((d) => d.canonicalName)).toContain(target);
+
+      // ...and the same value reaches it through the SESSION-scoped shape engine.ts registers, which
+      // is what the one-line pass-through at registerToolSearchSessionRuntime supplies.
+      const deps: ToolSearchSessionRuntime = { getMode: () => "default", activation: ACTIVE, capabilities: ["winter.mcp"], disallowedTools: [NATIVE], toolAliases: { [NATIVE]: target } };
+      const viaDeps = computeExposurePartition({
+        mode: deps.getMode(),
+        activation: deps.activation,
+        ...(deps.capabilities !== undefined ? { capabilities: deps.capabilities } : {}),
+        ...(deps.disallowedTools !== undefined ? { disallowedTools: deps.disallowedTools } : {}),
+        ...(deps.toolAliases !== undefined ? { toolAliases: deps.toolAliases } : {}),
+      });
+      expect(viaDeps.hidden.map((d) => d.canonicalName)).toContain(target);
+    } finally {
+      unregisterToolForTest(NATIVE);
+      unregisterMcpServerTools(ALIAS_SRV);
     }
   });
 });

@@ -149,6 +149,27 @@ describe("WaitForMcpServers -- advertised only when Tool Search is disabled (ver
     const enabledSet = buildAdvertisedSet({ mode: "default", capabilities: ["winter.mcp"], toolSearchEnabled: true });
     expect(enabledSet.map((d) => d.canonicalName)).not.toContain(WAIT_FOR_MCP_SERVERS_TOOL_NAME);
   });
+
+  // T8-review M3 (here B-M3): matrix row WS09-6d's ONLY citation was the descriptor file's own
+  // description STRING -- self-fulfilling ("the file contains the text it asserts"), and the 9c41d49
+  // length tripwire does not catch that class at all. This is the real pin: the schema AS ADVERTISED
+  // to the model, read out of the live advertised set rather than out of the source file.
+  test("WS-09 §8.4: the ADVERTISED input schema is exactly { servers?: string[] } -- no timeout_ms, nothing required", () => {
+    const advertised = buildAdvertisedSet({ mode: "default", capabilities: ["winter.mcp"], toolSearchEnabled: false }).find(
+      (d) => d.canonicalName === WAIT_FOR_MCP_SERVERS_TOOL_NAME,
+    );
+    expect(advertised).toBeDefined();
+    const schema = advertised!.inputSchema as { type?: string; properties?: Record<string, unknown>; required?: string[] };
+    expect(schema.type).toBe("object");
+    // EXACTLY one property. The T1-era placeholder advertised `{ timeout_ms: number }`, so a model
+    // could not express the one field this tool accepts and could pass a field it does not have.
+    expect(Object.keys(schema.properties ?? {})).toEqual(["servers"]);
+    expect(schema.properties!["servers"]).toMatchObject({ type: "array", items: { type: "string" } });
+    // "omitted waits for all pending" -- so `servers` must NOT be required.
+    expect(schema.required ?? []).toEqual([]);
+    // ...and the executor genuinely honours the advertised shape: an omitted `servers` is valid.
+    expect(schema.properties).not.toHaveProperty("timeout_ms");
+  });
 });
 
 describe("waitForMcpServersExecutor -- ctx-adapter", () => {

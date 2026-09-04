@@ -56,6 +56,10 @@ import {
   // `getBoundedRoots()` (registry.ts) -- the IDENTICAL "cwd or additionalDirectories" notion the
   // standing evaluator already computes for acceptEdits/critical-removal, never re-derived.
   boundedRoots,
+  // Fix wave (RULING P4-E amended): the pure rule-matching lookup the alias-identity probes at the
+  // dispatch loop reuse -- the IDENTICAL matcher `evaluate()`'s own stages 2/3/5 run, never a second
+  // implementation of the deny/ask grammar living in the alias layer.
+  findMatchingRuleEntry,
   type PermissionCall,
   type EvaluationContext,
   type PermissionDecisionRecord,
@@ -141,7 +145,7 @@ import { DEFAULT_SANDBOX_SETTINGS } from "./sandbox/profile.ts";
 // resolution for the permission/hook axis, and duplicate suppression over the advertised partition.
 // Both shipped as pure functions with no engine call site (R4-10 forbade Lane B from adding one);
 // this file is that call site.
-import { resolveToolAlias, suppressAliasedDuplicates } from "./toolsearch/aliases.ts";
+import { effectiveAliasTable, resolvePermissionIdentity, suppressAliasedDuplicates } from "./toolsearch/aliases.ts";
 // Phase 4 Task 8 (rider 2, WS-09 §8): Lane B's session-keyed ToolSearch/WaitForMcpServers runtime
 // registry. Both of that lane's executors answer a typed "no session runtime registered" error until
 // a live run registers one -- this file is the one production registrar.
@@ -1350,7 +1354,15 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // is `disallowedTools`' job, WS-07 §3). Computed ONCE here and reused by the dispatch-time
   // availability check (buildDefaultToolExecutor's getAvailabilityInputs, which spreads this same
   // object) and by the ToolSearch session runtime below -- one authority, never three derivations.
-  const sessionCapabilities = resolveSessionCapabilities(config.capabilities, { hasMcpServers: config.mcpServers !== undefined && Object.keys(config.mcpServers).length > 0 });
+  // T8-review M1 (fix wave): the fact is derived from the EFFECTIVE state source, the very same
+  // value `init.mcp_servers` is built from a few lines below -- never from `config.mcpServers` alone.
+  // Those two disagreed for exactly one input: a host that injects `mcpServerStateSource` WITHOUT
+  // declaring servers (the daemon-owns-the-MCP-stack case the precedence block above exists for) got
+  // a populated `mcp_servers` on the wire while every winter.mcp tool stayed unadvertised AND was
+  // refused at dispatch by rider 27's availability check. Equivalent to the old predicate for every
+  // other input by construction: the engine builds `mcpLifecycle` (hence a state source) exactly when
+  // no source was supplied and `config.mcpServers` is non-empty.
+  const sessionCapabilities = resolveSessionCapabilities(config.capabilities, { hasMcpServers: effectiveMcpStateSource !== undefined });
   // Phase 4 Task 8 (rider 3, WS-09 §10 / RULING P4-E): the Winter branch's own canonical alias pair.
   // WS-10 §15 names it verbatim -- [WS-14] redirects the model-visible `SendMessage`/`ListAgents`
   // built-ins at `mcp__winter__send_message`/`mcp__winter__list_agents`. On the WINTER branch those
@@ -1359,24 +1371,25 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // "the model normally sees ONE SendMessage" is a Winter-branch obligation that holds whether or not
   // a host configured `Options.toolAliases` at all.
   //
-  // *** THE ONE DELIBERATE SPLIT, stated plainly because it deviates from a literal reading of
-  // P4-E's "canonical-IDENTITY mapping plus duplicate suppression" as one indivisible mechanism: ***
-  // this default table feeds DUPLICATE SUPPRESSION ONLY. It is deliberately NOT folded into the
-  // permission/hook identity resolution below, which stays scoped to `config.toolAliases` (what the
-  // HOST actually configured). Reason: identity mapping rewrites the name every permission rule and
-  // hook matcher is matched against, so a default-on table would silently stop
-  // `disallowedTools: ["SendMessage"]` and a `PreToolUse` matcher on "SendMessage" from matching in
-  // every session that never asked for aliasing -- a security-relevant regression, in a spec section
-  // (WS-09 §10) whose own text says "aliases are not a security boundary... `disallowedTools` remains
-  // the enforcement mechanism". Suppression has no such hazard: it only changes which of two names
-  // for one executor the model is shown. A host that genuinely wants the canonical identity gets it
-  // by setting `Options.toolAliases` explicitly, exactly as the official branch does.
-  const WINTER_CANONICAL_ALIASES: Readonly<Record<string, string>> = {
-    SendMessage: "mcp__winter__send_message",
-    ListAgents: "mcp__winter__list_agents",
-  };
+  // *** SUPERSEDED, fix wave / RULING P4-E AMENDED (2026-09-04). *** T8 shipped a deliberate SPLIT
+  // here: the default table fed duplicate suppression ONLY and was kept out of permission/hook
+  // identity, on the argument that folding it in would silently stop `disallowedTools:
+  // ["SendMessage"]` from matching. The whole-branch review found the split's own escape hatch
+  // (CRITICAL C2): suppression keyed on the NATIVE name being advertised, so denying the native
+  // DISABLED suppression and `mcp__winter__send_message` surfaced eager, executing the same executor
+  // with no deny rule and no hook matcher matching it. The argument was right about the hazard and
+  // wrong about the remedy -- the fix is not to withhold identity mapping but to make it
+  // BIDIRECTIONAL and strictest-of (`resolvePermissionIdentity`, toolsearch/aliases.ts): a rule
+  // naming EITHER spelling governs both, so `disallowedTools: ["SendMessage"]` keeps matching AND
+  // the twin can no longer be the way around it. The table itself now lives in `toolsearch/aliases.ts`
+  // (`WINTER_CANONICAL_ALIASES`), read by three consumers -- this partition, ToolSearch's own
+  // candidate pool, and the identity resolution at the dispatch loop below.
+  //
+  // Dispatch still never redirects: `call.name` alone drives registry lookup, execution and the
+  // load-first predicate (P4-E, unamended).
+  //
   // Host entries win on collision (a host that redirects `SendMessage` somewhere else means it).
-  const suppressionAliasTable: Record<string, string> = { ...WINTER_CANONICAL_ALIASES, ...(config.toolAliases ?? {}) };
+  const suppressionAliasTable: Record<string, string> = effectiveAliasTable(config.toolAliases);
   // Phase 4 Task 8 (rider 5) -- the init.tools-vs-live-mode freeze, INVESTIGATED and recorded rather
   // than "fixed", because there is nothing here to fix without a protocol addition.
   //
@@ -1417,7 +1430,16 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // an alias TARGET that is currently eager into `deferred` whenever its SOURCE name is also
   // advertised -- never removes it (WS-09 §10: "keeps the canonical entry deferred", not hidden; a
   // model that already knows the exact canonical name can still ToolSearch-select it).
-  const advertisedPartition = suppressAliasedDuplicates(partitionAdvertisedTools(advertisedCfg, deferralActivation), suppressionAliasTable);
+  //
+  // Fix wave (C2): `disallowedTools` is now threaded in as well, so the same call ALSO runs the
+  // alias-EXCLUSION pass -- a twin whose native spelling this session denied/excluded is moved to
+  // `hidden` (never eager, never searchable) rather than left to surface because suppression's own
+  // "is the source advertised?" precondition failed. See hideAliasExcludedTwins for both directions.
+  const advertisedPartition = suppressAliasedDuplicates(
+    partitionAdvertisedTools(advertisedCfg, deferralActivation),
+    suppressionAliasTable,
+    config.disallowedTools,
+  );
   currentAdvertisedCanonicalNames = [...advertisedPartition.eager, ...advertisedPartition.deferred].map((d) => d.canonicalName);
   // Phase 4 Task 3 (MUST 6, WS-09 §8.2/§8.5): the execution-boundary "load ≠ permission" check --
   // registry.ts's own exported isLoadFirstBlocked (re-derived from the LIVE registry per call, never
@@ -2080,19 +2102,43 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
           // deny produces its synthetic tool_result and the loop CONTINUES to the next call — it
           // does not `break` the round, matching "each-call-independent" semantics (unlike an
           // interrupt or a thrown executor, which legitimately do stop the round early below).
+          const permissionInput = typeof call.input === "object" && call.input !== null ? (call.input as Record<string, unknown>) : {};
+          // RULING P4-E AMENDED (fix wave, whole-branch C2 + T8-review M6): the hook/permission
+          // identity is alias-aware in BOTH directions -- a rule naming EITHER spelling governs both.
+          //
+          // P4-E's unamended half is untouched: `call.name` still drives registry lookup, execution
+          // and the load-first predicate (the checks above, `executedCall` and `tools.execute` below).
+          // Only the name the permission pipeline and hook matchers are matched AGAINST is resolved
+          // here -- WS-09 §10's "hook and permission matching run on the canonical post-alias
+          // identity" -- and the PRIMARY candidate is still exactly `resolveToolAlias(call.name,
+          // config.toolAliases)`, so a session that configures no aliases and writes no rule against
+          // a canonical twin is byte-identical to before this amendment.
+          //
+          // What changed: the alternates. `resolvePermissionIdentity` walks the single-hop
+          // equivalence set over the EFFECTIVE table (Winter defaults + host) and picks the
+          // STRICTEST identity that anything actually matches -- deny, then ask, then an explicit
+          // hook matcher, then allow. One evaluation, never two (a second `evaluate()` for the twin
+          // would prompt the user twice for an `ask`).
+          //
+          // The probes read the SAME live state the evaluation itself will: `evalCtxForIdentity` is
+          // this call's own `makeEvalCtx()` snapshot (so a mid-flight rule change is handled by
+          // evaluateWithFreshPolicy's existing stale-policy retry, not by a second notion of "live"),
+          // and `hookRegistry.matching` is the identical selector the hook stage runs. Matcher-ABSENT
+          // hook entries are filtered out: WS-08 §2.1 makes them match every occurrence, so counting
+          // them would let one global hook flip the identity of every call in the session.
+          const evalCtxForIdentity = makeEvalCtx();
+          const probeRule = (behavior: "deny" | "ask" | "allow") => (candidate: string): boolean =>
+            findMatchingRuleEntry(evalCtxForIdentity.policy.rules, { toolName: candidate, input: permissionInput, toolUseId: call.id }, behavior, evalCtxForIdentity) !==
+            undefined;
           const permissionCall: PermissionCall = {
-            // Phase 4 Task 8 (rider 3, RULING P4-E precision, VERBATIM): "The unresolved call name
-            // drives registry lookup, execution, and the load-first predicate" -- so `call.name` is
-            // untouched everywhere else in this loop (the load-first check above, `executedCall`
-            // below, `tools.execute`). `resolveToolAlias(call.name)` computes ONLY the hook/
-            // permission identity, which is exactly WS-09 §10's "hook and permission matching run on
-            // the canonical post-alias identity". Single-hop by construction (aliases.ts).
-            //
-            // Scoped to `config.toolAliases` -- the table the HOST configured -- never the
-            // Winter-branch default suppression table (see WINTER_CANONICAL_ALIASES above for why
-            // that split exists and what it protects).
-            toolName: resolveToolAlias(call.name, config.toolAliases),
-            input: typeof call.input === "object" && call.input !== null ? (call.input as Record<string, unknown>) : {},
+            toolName: resolvePermissionIdentity(call.name, config.toolAliases, {
+              deniedByRule: probeRule("deny"),
+              askedByRule: probeRule("ask"),
+              hookScoped: (candidate: string): boolean =>
+                (["PreToolUse", "PermissionRequest"] as const).some((event) => hookRegistry.matching(event, candidate).some((e) => e.matcher !== undefined)),
+              allowedByRule: probeRule("allow"),
+            }),
+            input: permissionInput,
             toolUseId: call.id,
             // Phase 4 Task 3 (MUST 9): the identical agentID a child engine's own hook stage/audit
             // already carry (createHookStage/fireObservationalHook above) -- PermissionCall.agentId

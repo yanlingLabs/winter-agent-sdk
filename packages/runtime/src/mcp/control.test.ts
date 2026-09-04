@@ -229,4 +229,87 @@ describe("createMcpControlSeam via the REAL rpc/mcp-control.ts handlers (this la
       await inner.close();
     }
   });
+
+  // Whole-branch review M1 (fix wave): the reserved-name check must fire BEFORE anything is spawned
+  // or connected. `resolveMcpServerSources` refuses "winter" at STARTUP resolution, but
+  // `addAndConnect` bypasses that function entirely -- so a live `mcp_set_servers` naming "winter"
+  // used to spawn a real child, assign `slot.client`, and only then hit registerMcpServerTools' own
+  // throw, leaving a connected client in a `failed` slot with its process reaped no earlier than
+  // dispose().
+  test("M1: mcp_set_servers REFUSES the reserved name `winter` up front -- no slot, no spawn, no connect", async () => {
+    const lifecycle = createMcpLifecycle({ servers: [], envConfig: fastEnv(), elicitationAsk: NO_ELICIT });
+    try {
+      await lifecycle.start();
+      const { command, args } = stdioFixtureCommand();
+      const result = await handleMcpSetServers({ controlSeam: lifecycle.controlSeam }, { servers: { winter: { command, args, env: {} } } });
+      expect(result.ok).toBe(true);
+      const payload = (result as { payload: { added: string[]; removed: string[]; errors: Record<string, string> } }).payload;
+      expect(payload.added).toEqual([]); // never added
+      expect(payload.errors["winter"]).toContain("reserved server identity");
+      // ...and no slot was ever created for it, so nothing was spawned or connected.
+      expect(lifecycle.stateSource.snapshot().map((e) => e.name)).not.toContain("winter");
+    } finally {
+      await lifecycle.dispose();
+    }
+  });
+
+  // Whole-branch review M12 (fix wave): a REPLACEMENT must withdraw the previous declaration's tools.
+  // Before this, closing the old client left every `mcp__<name>__<tool>` from the prior server in the
+  // registry -- advertised, ToolSearch-able, and bound to a closed connection.
+  test("M12: replacing a server via mcp_set_servers UNREGISTERS the old declaration's tools", async () => {
+    const inner = createFixtureMcpServer({
+      tools: [{ name: "only_old", inputSchema: { type: "object", properties: {} }, handler: () => ({ content: [{ type: "text", text: "old" }] }) }],
+    });
+    const servers: ResolvedMcpServerEntry[] = [{ name: "swap", origin: "explicit", config: { type: "sdk", name: "swap" } }];
+    const lifecycle = createMcpLifecycle({
+      servers,
+      envConfig: fastEnv({ connectTimeoutMs: 2000, timeoutMs: 2000 }),
+      elicitationAsk: NO_ELICIT,
+      inProcessServers: { swap: inner },
+    });
+    try {
+      await lifecycle.start();
+      expect(getRegisteredTool("mcp__swap__only_old")).toBeDefined();
+
+      const { command, args } = stdioFixtureCommand();
+      await handleMcpSetServers({ controlSeam: lifecycle.controlSeam }, { servers: { swap: { command, args, env: {} } } });
+      await lifecycle.stateSource.waitForPending(undefined, 2000);
+
+      // THE M12 ASSERTION: the old server's tool is gone, not left dangling with a dead executor.
+      expect(getRegisteredTool("mcp__swap__only_old"), "the replaced server's tools must be withdrawn").toBeUndefined();
+      expect(getRegisteredTool("mcp__swap__echo")).toBeDefined(); // the replacement's own tools are live
+    } finally {
+      await lifecycle.dispose();
+      await inner.close();
+    }
+  });
+
+  test("M12: a replacement that FAILS to connect also withdraws the old tools rather than leaving a dead executor", async () => {
+    const inner = createFixtureMcpServer({
+      tools: [{ name: "only_old", inputSchema: { type: "object", properties: {} }, handler: () => ({ content: [{ type: "text", text: "old" }] }) }],
+    });
+    const servers: ResolvedMcpServerEntry[] = [{ name: "swapfail", origin: "explicit", config: { type: "sdk", name: "swapfail" } }];
+    const lifecycle = createMcpLifecycle({
+      servers,
+      envConfig: fastEnv({ connectTimeoutMs: 300, timeoutMs: 300 }),
+      elicitationAsk: NO_ELICIT,
+      inProcessServers: { swapfail: inner },
+    });
+    try {
+      await lifecycle.start();
+      expect(getRegisteredTool("mcp__swapfail__only_old")).toBeDefined();
+
+      // A command that does not exist -- the connect fails, so the slot lands in `failed`.
+      await handleMcpSetServers({ controlSeam: lifecycle.controlSeam }, { servers: { swapfail: { command: "/nonexistent/winter-no-such-binary", args: [], env: {} } } });
+      await lifecycle.stateSource.waitForPending(undefined, 2000).catch(() => {});
+      const deadline = Date.now() + 2000;
+      while (lifecycle.stateSource.snapshot()[0]?.state === "pending" && Date.now() < deadline) await new Promise((r) => setTimeout(r, 20));
+
+      expect(lifecycle.stateSource.snapshot()[0]?.state).toBe("failed");
+      expect(getRegisteredTool("mcp__swapfail__only_old"), "a failed replacement must not leave the old tools advertised").toBeUndefined();
+    } finally {
+      await lifecycle.dispose();
+      await inner.close();
+    }
+  });
 });

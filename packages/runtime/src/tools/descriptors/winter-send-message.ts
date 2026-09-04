@@ -21,10 +21,18 @@
 // (isLoadFirstBlocked), i.e. callable by name with no `select:` first. Declared here, the two
 // layers agree whenever Tool Search is active.
 //
-// Duplicate suppression (WS-09 §10's "the model normally sees ONE SendMessage") is engine.ts's own
-// job, via `suppressAliasedDuplicates` over the Winter-branch canonical alias table -- see
-// WINTER_CANONICAL_ALIASES there for why that table exists and, specifically, why it is applied to
-// SUPPRESSION only and never to permission identity.
+// Duplicate suppression (WS-09 §10's "the model normally sees ONE SendMessage") happens in
+// `toolsearch/aliases.ts`, over the Winter-branch canonical alias table (`WINTER_CANONICAL_ALIASES`,
+// declared there) that engine.ts hands to its advertised-partition call.
+//
+// STALE-COMMENT SWEEP (P4 fix wave, KNOWN (8)): this paragraph used to end "...why it is applied to
+// SUPPRESSION only and never to permission identity". RULING P4-E was AMENDED after the whole-branch
+// review's CRITICAL C2 found the escape that split left open -- denying the NATIVE name unadvertised
+// it, which DISABLED suppression and surfaced THIS descriptor eagerly, executing the same executor
+// object with no deny rule or hook matcher matching it. The table now feeds identity too, but
+// BIDIRECTIONALLY and strictest-of, so `disallowedTools: ["SendMessage"]` still matches (the property
+// the original split existed to protect) AND this entry is hidden whenever its native is denied or
+// excluded. See `resolvePermissionIdentity`/`hideAliasExcludedTwins` in toolsearch/aliases.ts.
 //
 // `source: "mcp"` matches the `mcp__winter__advisor` precedent exactly (descriptors/advisor.ts): a
 // standing-server tool is registered with MCP identity so it is rule-addressable under its canonical

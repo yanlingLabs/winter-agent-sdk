@@ -31,6 +31,15 @@ stub({
       // inputSchema -- registry.ts's own JSONSchema type is explicitly "not a validator"), so this
       // change is purely about what the MODEL is told exists. Restoring the field is a one-line
       // edit here once a real capture pins the teams-feature predicate.
+      //
+      // WITHHELD IS NOT UNREACHABLE (whole-branch review N2, fix wave). The consequence of that same
+      // "no validator" fact in the other direction: a MODEL that emits `name` anyway -- it is a
+      // plausible guess, and a model that has seen the official schema elsewhere would guess it --
+      // has that value read and threaded exactly like a host-supplied one. Withholding shapes what
+      // the model is TOLD, never what it can send. That is deliberate and safe rather than a hole:
+      // `name` grants nothing (WS-10 §11 rule 6 -- it is an addressing label, not a capability), and
+      // every permission, tool-pool and policy decision for the child is derived elsewhere. Written
+      // down so a future reader does not mistake this schema for an enforcement boundary.
     },
     required: ["description", "prompt"],
   },

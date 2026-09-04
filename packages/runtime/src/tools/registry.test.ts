@@ -1308,4 +1308,63 @@ describe("registerMcpServerTools: per-tool _meta alwaysLoad + same-batch dedupe 
     unregisterMcpServerTools(SRV);
     expect(getRegisteredTool(`mcp__${SRV}__dup`)).toBeUndefined();
   });
+
+  // P4 fix wave, KNOWN (1). Rider 16 above pins the COUNT ("exactly one, never throws") -- which
+  // last-write-wins also satisfies. This pins WHICH one, because the answer has to be the same as
+  // mcp/client.ts's protocol-layer `dedupeTools` (first-wins). Two layers disagreeing about which
+  // duplicate survives is the drift, not the duplicate itself.
+  test("KNOWN (1): a same-batch duplicate is dropped FIRST-WINS -- the second definition is ignored, matching client.ts", () => {
+    const diagnostics: string[] = [];
+    const spy = spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+      diagnostics.push(args.map(String).join(" "));
+    });
+    try {
+      registerMcpServerTools(
+        SRV,
+        [
+          { name: "dup", inputSchema: { type: "object" }, description: "FIRST occurrence wins" },
+          { name: "dup", inputSchema: { type: "object" }, description: "SECOND occurrence is ignored" },
+          { name: "other", inputSchema: { type: "object" }, description: "untouched" },
+        ],
+        { deferredDefault: true },
+      );
+      const entry = getRegisteredTool(`mcp__${SRV}__dup`);
+      expect(entry?.descriptor.description).toBe("FIRST occurrence wins");
+      expect(getRegisteredTool(`mcp__${SRV}__other`)).toBeDefined();
+      // ...and it is VISIBLE, never a silent drop.
+      expect(diagnostics.some((d) => d.includes('duplicate tool name "dup"') && d.includes("keeping the first occurrence"))).toBe(true);
+    } finally {
+      spy.mockRestore();
+      unregisterMcpServerTools(SRV);
+    }
+  });
+
+  // The companion half of KNOWN (1): the EXECUTOR-install loop (mcp/lifecycle.ts's
+  // installExecutorsForSlot, which iterates the SAME `tools` array) cannot double-install either.
+  // `replaceExecutor` is keyed by canonical name, so a second occurrence overwrites rather than
+  // accumulating -- one registry entry, one executor, whichever order the two loops run in.
+  test("KNOWN (1): the replaceExecutor loop over the same batch cannot double-install", () => {
+    const spy = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const tools = [
+        { name: "dup", inputSchema: { type: "object" }, description: "first" },
+        { name: "dup", inputSchema: { type: "object" }, description: "second" },
+      ];
+      registerMcpServerTools(SRV, tools, { deferredDefault: true });
+      // Mirrors installExecutorsForSlot's own loop shape exactly.
+      const installed: string[] = [];
+      for (const tool of tools) {
+        const canonicalName = `mcp__${SRV}__${tool.name}`;
+        installed.push(canonicalName);
+        replaceExecutor(canonicalName, { async execute() { return { output: tool.description! }; } });
+      }
+      expect(installed).toHaveLength(2); // the loop genuinely ran twice
+      expect(listRegisteredTools().filter((t) => t.descriptor.canonicalName === `mcp__${SRV}__dup`)).toHaveLength(1);
+      // One entry, one executor -- the second install replaced the first rather than adding a name.
+      expect(getRegisteredTool(`mcp__${SRV}__dup`)?.executor).toBeDefined();
+    } finally {
+      spy.mockRestore();
+      unregisterMcpServerTools(SRV);
+    }
+  });
 });

@@ -18,6 +18,17 @@ import { describe, test } from "bun:test";
 // it eventually lands, is a separate process/package entirely) -- there is nothing in THIS package
 // for a real fixture to even attach to yet. That is itself part of why this stays a placeholder
 // rather than a real (if empty) integration test.
+//
+// P4 FIX WAVE (T8-review M4) -- what is owed here, stated accurately. An earlier version of this
+// deferral (and of matrix row WS09-6d's sibling, WS09-1f) also claimed the OFFICIAL SDK's `query()`
+// surface cannot reach the `-p` path at all, so there was "no observable to capture the semantics
+// from". That second half is NOT established by any artifact in this repo: `exports.json` lists
+// names and kinds only, and none of derived-shapes-p2/p3/p4 says how `query()` drives the CLI. If
+// the SDK spawns that CLI in print mode, every capture through `query()` is already ON the `-p`
+// path, and a delayed-initialize MCP fixture plus a first-turn tool call would be a real probe
+// surface. The honest, narrower statement is: NO DEADLINE PROBE WAS BUILT. Corroborating evidence
+// that the race itself is reachable through `query()`: this phase's rider-11 elicitation scenario
+// empirically hit it and had to set MCP_CONNECTION_NONBLOCKING=0.
 describe("MCP -p (non-interactive one-shot) first-turn wait (WS-09 §2 / §12 Open Question 5)", () => {
   test.skip("CAPTURE-PENDING (R4-8): first-turn wait deadline(s) and alwaysLoad/discovery-cache interaction are not pinned by the report and are not guessed here -- author from a real 0.3.250 `-p`-mode capture", () => {
     // Intentionally empty -- see this file's own header for why no assertion belongs here yet.

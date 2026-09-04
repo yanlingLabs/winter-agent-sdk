@@ -65,10 +65,17 @@ export interface WinterStdioTransportOptions {
 // real `Client.connect()` only ever calls `start()`/`send()`/`close()` and assigns
 // `onclose`/`onerror`/`onmessage` -- `sessionId`/`setProtocolVersion` are optional and this
 // transport, like the reference stdio implementation, declares neither).
+// Whole-branch review N3: the diagnostic tail's hard ceiling. Small on purpose -- enough for a
+// stack trace or a "command not found"-shaped message, far too small to be mistaken for a log sink.
+const STDERR_TAIL_MAX_CHARS = 4096;
+
 export class WinterStdioTransport implements Transport {
   private readonly opts: WinterStdioTransportOptions;
   private child: ChildProcess | undefined;
   private readonly readBuffer = new ReadBuffer();
+  // Whole-branch review N3: bounded stderr tail (see the `stderr` listener in start() for why it is
+  // retained at all, and why it stays this small).
+  private stderrTailBuffer = "";
 
   onclose?: () => void;
   onerror?: (error: Error) => void;
@@ -95,8 +102,10 @@ export class WinterStdioTransport implements Transport {
         // stderr is ALWAYS piped, never inherited -- WS-04 owns exactly two stdio streams already
         // (this process's own stdin/stdout frame pipe, and the host's stderr diagnostics callback
         // for THIS process); a daemon process must never let a connected server's stderr fall
-        // through to a TTY or fd it does not own. Piped-but-drained below (see the "data" listener)
-        // so a chatty server's own stderr writes can never block on a full, unread pipe.
+        // through to a TTY or fd it does not own. Piped, drained, and TAIL-RETAINED below (see the
+        // "data" listener) so a chatty server's own stderr writes can never block on a full, unread
+        // pipe -- and so a server that dies during startup still leaves a bounded diagnostic
+        // (whole-branch review N3).
         stdio: ["pipe", "pipe", "pipe"],
         shell: false,
         // RULING P4-H: `detached: true` makes this child its own session/process-group leader
@@ -108,7 +117,10 @@ export class WinterStdioTransport implements Transport {
       this.child = child;
 
       child.on("error", (error) => {
-        reject(error);
+        // N3: whatever the child managed to say before dying is the only evidence a caller will ever
+        // get for a spawn failure -- attached here rather than at the caller, which has no access to
+        // the pipe at all.
+        reject(this.withStderrTail(error));
         this.onerror?.(error);
       });
       child.on("spawn", () => resolve());
@@ -131,12 +143,35 @@ export class WinterStdioTransport implements Transport {
         }
       });
       child.stdout?.on("error", (error) => this.onerror?.(error));
-      // Drained, never surfaced anywhere (no channel exists for a connected server's own stderr --
-      // see this file's own header): the ONLY purpose of attaching a listener at all is to prevent
-      // an unread pipe from eventually applying backpressure to the child's own stderr writes.
-      // Nothing is buffered, retained, or logged.
-      child.stderr?.on("data", () => {});
+      // Whole-branch review N3 (fix wave): stderr is drained -- an unread pipe eventually applies
+      // backpressure to the child's own stderr writes -- and a BOUNDED TAIL is retained so a server
+      // that dies during startup leaves a diagnostic somewhere. Before this, a crashing stdio
+      // server produced `spawn_failed`/`handshake_failed` with nothing whatsoever to debug from
+      // (WS-04 §6's stderr channel exists for exactly this).
+      //
+      // Bounded on purpose, and small: this is a DIAGNOSTIC TAIL, not a log sink. A chatty server
+      // (progress bars, per-request logging) must never grow this process's memory, and the tail is
+      // only ever read on a failure path. It is a per-transport field, never a global, and it is
+      // never written to disk or logged on its own -- only appended to an error a caller already
+      // decided to raise.
+      child.stderr?.on("data", (chunk: Buffer) => {
+        this.stderrTailBuffer = (this.stderrTailBuffer + chunk.toString("utf8")).slice(-STDERR_TAIL_MAX_CHARS);
+      });
     });
+  }
+
+  // Whole-branch review N3: the last bytes the child wrote to stderr, for failure diagnostics only.
+  // Public (readonly by convention) so mcp/client.ts can append it to a HANDSHAKE failure it raises
+  // itself -- a hung server that never speaks MCP produces no `error` event here at all, so the
+  // spawn-path attachment below cannot cover that case.
+  get stderrTail(): string {
+    return this.stderrTailBuffer;
+  }
+
+  private withStderrTail(error: Error): Error {
+    const tail = this.stderrTailBuffer.trim();
+    if (tail === "") return error;
+    return new Error(`${error.message}\n--- server stderr (last ${tail.length} chars) ---\n${tail}`, { cause: error });
   }
 
   private processReadBuffer(): void {

@@ -86,7 +86,7 @@ const ITEM_1: ConformanceRow[] = [
     bullet: "the `-p` (non-interactive) first-turn wait, as its own separate lifecycle path",
     status: "deferred",
     owningPhase:
-      "R4-8 capture-pending, and NEEDS_CONTEXT after this task's own capture attempt. `packages/runtime` has no `-p`/one-shot concept of its own to attach a fixture to, and -- the new finding -- the OFFICIAL SDK's `query()` surface has no `-p` either: it is a CLI flag, so there is no observable through the SDK to capture the semantics from. WS-09 §12 OQ5's own text ('report §56 establishes that non-interactive -p mode has additional first-turn waiting behavior but does not pin its deadlines') therefore still stands unresolved. mcp/p-flag-first-turn.test.ts holds the deliberate `test.skip` placeholder. RELATED, and recorded because it is the same hazard the -p wait exists to cover: this task's own rider-11 elicitation scenario empirically hit the race (a first-turn tool call reaching a server still connecting under the nonblocking default) and had to set MCP_CONNECTION_NONBLOCKING=0 -- see engine.test.ts's own comment there.",
+      "R4-8 capture-pending. CORRECTED IN THE P4 FIX WAVE (T8-review M4): the reason recorded here previously claimed 'the OFFICIAL SDK's query() surface has no -p either... so there is no observable through the SDK to capture the semantics from'. Half of that is established and half is not, and the unestablished half is load-bearing. ESTABLISHED, verified by search: `packages/runtime` has no `-p`/one-shot concept of its own to attach a fixture to (the only `-p` occurrences in the tree are `sandbox-exec -p` and `tsc -p`). NOT ESTABLISHED BY ANY ARTIFACT IN THIS REPO: that `query()` cannot reach the `-p` path. `exports.json` lists names and kinds only, and derived-shapes-p2/p3/p4 say nothing about how `query()` drives the CLI -- and if the SDK spawns that CLI in print mode, every capture through `query()` is ALREADY on the `-p` path, which would make a delayed-initialize MCP fixture plus a first-turn tool call a real probe surface. So the honest statement of what is owed is narrower: NO DEADLINE PROBE WAS BUILT. WS-09 §12 OQ5's own text ('report §56 establishes that non-interactive -p mode has additional first-turn waiting behavior but does not pin its deadlines') stands unresolved for that reason, not because the surface is unreachable. mcp/p-flag-first-turn.test.ts holds the deliberate `test.skip` placeholder. RELATED, and recorded because it is the same hazard the -p wait exists to cover -- and because it CORROBORATES that the race is reachable through query(): this phase's own rider-11 elicitation scenario empirically hit it (a first-turn tool call reaching a server still connecting under the nonblocking default) and had to set MCP_CONNECTION_NONBLOCKING=0 -- see engine.test.ts's own comment there.",
   },
 ];
 
@@ -295,9 +295,12 @@ const ITEM_6: ConformanceRow[] = [
     spec: "WS-09 §11.6",
     bullet: "the pinned `{ servers?: string[] }` input schema, as ADVERTISED to the model",
     status: "new",
-    citations: [{ file: "../tools/descriptors/wait-for-mcp-servers.ts", testName: "omitted waits for all pending servers" }],
+    citations: [
+      { file: "../tools/impl/wait-for-mcp-servers.test.ts", testName: "WS-09 §8.4: the ADVERTISED input schema is exactly { servers?: string[] } -- no timeout_ms, nothing required" },
+      { file: "../tools/impl/wait-for-mcp-servers.test.ts", testName: "an explicitly-requested name absent from the snapshot is `unknown`, not silently dropped" },
+    ],
     note:
-      "rider 4 (schema identity). The descriptor advertised the T1-era placeholder `{timeout_ms: number}` -- a model literally could not express the one field this tool accepts, and could pass a field it does not have. The executor always handled `{servers?}` correctly; only what the model was TOLD was wrong. The citation is the corrected schema's own description string in the descriptor file.",
+      "rider 4 (schema identity). The descriptor advertised the T1-era placeholder `{timeout_ms: number}` -- a model literally could not express the one field this tool accepts, and could pass a field it does not have. The executor always handled `{servers?}` correctly; only what the model was TOLD was wrong. FIX WAVE (T8-review M3): this row's ONLY citation used to be the descriptor file's own description string -- self-fulfilling, since the evidence was that the file contains the text the row asserts, and the length tripwire does not catch that class. It now cites a real test that reads the schema out of the LIVE advertised set (buildAdvertisedSet), plus the executor-side fixture proving the same shape is what actually runs.",
   },
   {
     id: "WS09-6e",

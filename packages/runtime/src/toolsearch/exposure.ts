@@ -16,6 +16,7 @@
 // `partitionAdvertisedTools` (never a hand-built ToolDescriptor object asserted against in isolation)
 // so a fixture can never pass by agreeing with itself.
 import { partitionAdvertisedTools, type AdvertisedSetInputs, type DeferralActivation, type ToolDescriptor } from "../tools/registry.ts";
+import { hideAliasExcludedTwins } from "./aliases.ts";
 import type { PermissionMode } from "@yanlinglabs/winter-agent-sdk";
 
 // The subset of `AdvertisedSetInputs` ToolSearch/WaitForMcpServers need, plus the `DeferralActivation`
@@ -34,6 +35,11 @@ export interface ExposureQuery {
   disallowedTools?: readonly string[];
   insideSubagent?: boolean;
   familyMetadata?: { taskNative?: boolean };
+  // The HOST's own `Options.toolAliases` (RULING P4-E amended). Optional: the Winter-branch DEFAULT
+  // canonical table is applied unconditionally by `hideAliasExcludedTwins` regardless, so a caller
+  // that supplies nothing here still gets the C2 guarantee for the two canonical twins -- this field
+  // only widens the same guarantee to a host-configured alias edge.
+  toolAliases?: Record<string, string>;
 }
 
 export interface DeferredCandidates {
@@ -64,6 +70,16 @@ export function computeExposurePartition(query: ExposureQuery): DeferredCandidat
     ...(query.insideSubagent !== undefined ? { insideSubagent: query.insideSubagent } : {}),
     ...(query.familyMetadata !== undefined ? { familyMetadata: query.familyMetadata } : {}),
   };
-  const partition = partitionAdvertisedTools(cfg, query.activation);
+  // RULING P4-E amended (whole-branch C2): the alias-EXCLUSION pass, and ONLY that pass. ToolSearch's
+  // candidate pool must never offer a spelling `init.tools` withheld -- a deferred tool is one
+  // `select:` away from being callable, so "absent from init.tools but searchable" is not a smaller
+  // hole than the eager one C2 found, merely a slower one.
+  //
+  // Deliberately NOT `suppressAliasedDuplicates`: that function's OTHER half moves an alias target
+  // eager -> deferred, which would inflate `total_deferred_tools` for a session whose activation is
+  // off (where `partition.deferred` is empty by construction) and change a committed golden's own
+  // count. Duplicate suppression is a MODEL-FACING listing concern that `init.tools` owns; exclusion
+  // is a security concern both surfaces owe.
+  const partition = hideAliasExcludedTwins(partitionAdvertisedTools(cfg, query.activation), query.toolAliases, query.disallowedTools);
   return { eager: partition.eager, deferred: partition.deferred, hidden: partition.hidden, totalDeferredTools: partition.deferred.length };
 }

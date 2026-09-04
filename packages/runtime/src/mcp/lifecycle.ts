@@ -488,7 +488,7 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
       const canonicalName = `mcp__${slot.name}__${tool.name}`;
       const toolName = tool.name;
       replaceExecutor(canonicalName, {
-        async execute(input: unknown, _ctx: ToolExecutionContext): Promise<ToolResultPayload> {
+        async execute(input: unknown, ctx: ToolExecutionContext): Promise<ToolResultPayload> {
           // WS-09 §2.1: a `cached` server's live connection is deferred to its first tool call.
           if (slot.state === "cached" && !slot.client) {
             // Fix round 1 (MAJOR M2, then a post-fix-round correction): this is a SECOND
@@ -539,7 +539,17 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
           const timeoutMs = resolveToolCallTimeoutMs(slot.config, deps.envConfig);
           try {
             const result = await slot.client.callTool(toolName, (input ?? {}) as Record<string, unknown>, { timeoutMs });
-            const capped = capMcpOutput(contentToText(result.content), deps.envConfig.maxOutputTokens);
+            // RULING P4-K: over the threshold, the full payload is PERSISTED and the model gets the
+            // `<persisted-output>` envelope naming the file. `ctx.tempDir` is a lazy getter (the
+            // registry's own ToolExecutionContext literal), so an ordinary under-threshold call still
+            // never materializes a session temp directory -- and it is the CALLING SESSION's root,
+            // never the process-global background-task root a nested child re-points mid-session
+            // (whole-branch review M3(a)).
+            const capped = capMcpOutput(contentToText(result.content), deps.envConfig.maxOutputTokens, {
+              sessionDir: () => ctx.tempDir,
+              serverName: slot.name,
+              toolName,
+            });
             return { output: capped.text, ...(result.isError === true ? { isError: true as const } : {}) };
           } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
@@ -647,6 +657,13 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
         if (!isCurrentAttempt(slot, gen)) return;
         const code = err instanceof McpConnectError ? err.code : "unknown";
         const message = err instanceof Error ? err.message : String(err);
+        // Whole-branch review M12 (fix wave), the second half: a slot that transitions to
+        // failed/needsAuth must not leave tools registered behind it either. WS-09 §2.1 already
+        // requires exactly this for the cached-server first-call failure ("its tools are withdrawn
+        // rather than left dangling", installExecutorsForSlot's own catch) -- this is the same rule
+        // for a slot that never got that far. Idempotent by construction: unregisterMcpServerTools
+        // is a silent no-op when the server owns nothing (the ordinary first-connect failure).
+        unregisterMcpServerTools(slot.name);
         setSlotState(slot.name, code === "needs_auth" ? "needsAuth" : "failed", { errorCode: code, error: message });
       },
     );
@@ -843,6 +860,14 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
       if (existing?.client) {
         await existing.client.close().catch(() => {});
       }
+      // Whole-branch review M12 (fix wave): the OLD server's tool registrations must go with the old
+      // client. Closing the client alone left every `mcp__<name>__<tool>` from the previous
+      // declaration in the registry, still ADVERTISED and still ToolSearch-able, with an executor
+      // bound to a closed connection -- so every call to a stale name answered "not connected" while
+      // `init.tools` kept offering it. Unregistering here restores the invariant "a name is
+      // registered only while the connection that discovered it is the current one"; the replacement
+      // slot's own `connectOneServer` re-registers whatever the NEW server actually reports.
+      if (existing) unregisterMcpServerTools(name);
       slots.set(name, { name, origin, config, toolNames: [], state: "pending", gen: 0 }); // see the constructor loop's own comment on this same choice
       // Fire-and-forget, matching WS-09 §2's own nonblocking startup default -- a live
       // `setMcpServers` call is not "startup," and nothing in WS-09 §3 asks it to block until the
