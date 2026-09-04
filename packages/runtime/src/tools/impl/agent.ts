@@ -113,30 +113,48 @@ function writeAgentTaskStub(outputPath: string, handle: ChildHandle): void {
 }
 
 function startBackgroundAgentTask(handle: ChildHandle, ctx: ToolExecutionContext, description: string, prompt: string, subagentType: string | undefined): ToolResultPayload {
-  const { taskId, outputPath } = createBackgroundTask("agent");
-  backgroundAgentTasks.set(taskId, { task_id: taskId, task_type: "agent", description });
-  writeAgentTaskStub(outputPath, handle);
+  // `handle` is ALREADY a real, running child by the time this function is called (spawnChild has
+  // already succeeded, in the caller). Everything below is bookkeeping ON TOP of that live child --
+  // if ANY of it throws (createBackgroundTask before configureBackgroundTaskRoot, a filesystem
+  // error writing the stub, a torn-down session's emitFrame), the child would otherwise become a
+  // silent ORPHAN: already running, tracked nowhere, awaited by nothing, stoppable by nothing. The
+  // try/catch below exists ONLY to prevent that -- on any failure here, stop() the child rather than
+  // leaving it live with zero visibility, and surface a legible error instead of letting the
+  // executor throw past this point with a real subagent already in flight underneath it.
+  let taskId: string;
+  let outputPath: string;
+  try {
+    ({ taskId, outputPath } = createBackgroundTask("agent"));
+    backgroundAgentTasks.set(taskId, { task_id: taskId, task_type: "agent", description });
+    writeAgentTaskStub(outputPath, handle);
 
-  ctx.emitFrame({
-    type: "system",
-    subtype: "task_started",
-    task_id: taskId,
-    tool_use_id: handle.record.parentToolUseId,
-    description,
-    ...(subagentType !== undefined ? { subagent_type: subagentType } : {}),
-    is_backgrounded: true,
-    task_type: "agent",
-    prompt,
-    uuid: randomUUID(),
-    session_id: ctx.sessionId,
-  });
-  ctx.emitFrame({
-    type: "system",
-    subtype: "background_tasks_changed",
-    tasks: currentBackgroundTasksChanged(),
-    uuid: randomUUID(),
-    session_id: ctx.sessionId,
-  });
+    ctx.emitFrame({
+      type: "system",
+      subtype: "task_started",
+      task_id: taskId,
+      tool_use_id: handle.record.parentToolUseId,
+      description,
+      ...(subagentType !== undefined ? { subagent_type: subagentType } : {}),
+      is_backgrounded: true,
+      task_type: "agent",
+      prompt,
+      uuid: randomUUID(),
+      session_id: ctx.sessionId,
+    });
+    ctx.emitFrame({
+      type: "system",
+      subtype: "background_tasks_changed",
+      tasks: currentBackgroundTasksChanged(),
+      uuid: randomUUID(),
+      session_id: ctx.sessionId,
+    });
+  } catch (err) {
+    void handle.stop();
+    return {
+      output: `Error: subagent ${handle.record.id} was spawned but its background-task setup failed -- stopped it rather than leaving an orphan: ${err instanceof Error ? err.message : String(err)}`,
+      isError: true,
+    };
+  }
 
   // Fire-and-forget: run_in_background's whole point is returning before completion (mirrors
   // bash.ts's own identical completion.then pattern for its own background tasks). Per the

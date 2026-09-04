@@ -31,7 +31,7 @@ function fakeRecord(overrides: Partial<ChildSessionRecord> = {}): ChildSessionRe
 
 // A minimal fake ChildHandle -- `result()` is caller-controlled via an externally resolvable
 // promise so a test can decide exactly when the "child" finishes, without racing real timers.
-function fakeHandle(result: Promise<ChildResult>, recordOverrides: Partial<ChildSessionRecord> = {}): ChildHandle {
+function fakeHandle(result: Promise<ChildResult>, recordOverrides: Partial<ChildSessionRecord> = {}, onStop?: () => void): ChildHandle {
   const record = fakeRecord(recordOverrides);
   return {
     record,
@@ -46,7 +46,7 @@ function fakeHandle(result: Promise<ChildResult>, recordOverrides: Partial<Child
       return result;
     },
     async stop() {
-      /* not used by these tests */
+      onStop?.();
     },
   };
 }
@@ -281,6 +281,21 @@ describe("Agent tool: foreground spawn (default; run_in_background omitted)", ()
     expect(seen).toHaveLength(2);
     expect(seen[0]).not.toBe(seen[1]);
     expect(seen[0]!.length).toBeGreaterThan(10);
+  });
+});
+
+describe("Agent tool: background setup failure never orphans an already-spawned child", () => {
+  test("createBackgroundTask throwing (root never configured) stops the already-running child and returns a legible error", async () => {
+    resetBackgroundTaskRootForTest(); // deliberately NOT configureBackgroundTaskRoot -- createBackgroundTask("agent") throws
+    let stopped = false;
+    const { ctx } = makeCtx({
+      spawnChild: async () => fakeHandle(new Promise(() => {}), {}, () => (stopped = true)),
+    });
+    const result = await agentExecutor.execute({ description: "d", prompt: "p", run_in_background: true }, ctx);
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain("child-1");
+    expect(result.output).toContain("orphan");
+    expect(stopped).toBe(true);
   });
 });
 
