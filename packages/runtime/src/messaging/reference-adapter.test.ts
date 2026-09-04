@@ -14,6 +14,7 @@ import { HELD_INBOX_CAP, ACCEPTED_QUEUE_CAP, DEFAULT_HOLD_EXPIRY_MS } from "./ou
 import type { CrossSessionInbound } from "./inbound.ts";
 import type { PermissionMode } from "@yanlinglabs/winter-agent-sdk";
 import { sendMessage, type CallerContext } from "./router.ts";
+import { resolveTarget } from "./resolution.ts";
 
 function fakePeer(overrides: {
   winterSessionId?: string;
@@ -93,6 +94,78 @@ describe("listReachable", () => {
     const rows = await adapter.listReachable({});
     expect(rows).toHaveLength(1);
     expect(rows[0]?.objectKind).toBe("session");
+  });
+
+  // WS-10 §10.2 MUST: "eligible LIVE peer sessions ... does NOT enumerate exited transcripts."
+  // "running" and "idle" are the only two statuses under which deliverToSession's own reachability
+  // short-circuit (above) runs ordinary inbound policy at all -- every other status is refused or
+  // reported unavailable BEFORE a receiver even exists to apply a policy decision against. Listing a
+  // non-live peer here would advertise a target that SendMessage cannot actually reach yet, so
+  // listReachable's own eligibility mirrors deliverToSession's reachability line for line.
+  test("an EXITED peer is excluded from listReachable's own rows (WS-10 §10.2: never enumerate exited transcripts)", async () => {
+    const { deps, peers } = makeAdapterDeps();
+    peers.register(fakePeer({ winterSessionId: "s_gone", status: "exited" }).peer);
+    const adapter = createReferenceMessagingAdapter(deps);
+    const rows = await adapter.listReachable({});
+    expect(rows).toHaveLength(0);
+  });
+  test("an ARCHIVED peer is excluded", async () => {
+    const { deps, peers } = makeAdapterDeps();
+    peers.register(fakePeer({ winterSessionId: "s_archived", status: "archived" }).peer);
+    const adapter = createReferenceMessagingAdapter(deps);
+    const rows = await adapter.listReachable({});
+    expect(rows).toHaveLength(0);
+  });
+  test("an UNAVAILABLE peer is excluded", async () => {
+    const { deps, peers } = makeAdapterDeps();
+    peers.register(fakePeer({ winterSessionId: "s_unavailable", status: "unavailable" }).peer);
+    const adapter = createReferenceMessagingAdapter(deps);
+    const rows = await adapter.listReachable({});
+    expect(rows).toHaveLength(0);
+  });
+  // DECISION (documented per the fix-round request): a "starting" peer is excluded too, not just
+  // exited/archived/unavailable. Rationale: deliverToSession's own reachability short-circuit never
+  // queues/holds a message to a "starting" target -- it reports a retryable `unavailable` outcome
+  // with no mailbox side effect at all (there is no inbound-policy receiver to apply a decision
+  // against yet, same as "unavailable"). Listing a "starting" peer as reachable would therefore
+  // advertise a delivery guarantee ("message: true") this reference cannot back up: a SendMessage
+  // call to it neither delivers nor queues, it just fails-retryable. Excluding it keeps
+  // "capabilities.message: true" in a listed row synonymous with "an ordinary send will not
+  // immediately bounce."
+  test("a STARTING peer is excluded (documented: not yet reachable-for-queue, see comment above)", async () => {
+    const { deps, peers } = makeAdapterDeps();
+    peers.register(fakePeer({ winterSessionId: "s_starting", status: "starting" }).peer);
+    const adapter = createReferenceMessagingAdapter(deps);
+    const rows = await adapter.listReachable({});
+    expect(rows).toHaveLength(0);
+  });
+  test("RUNNING and IDLE peers are both still listed -- the only two live statuses", async () => {
+    const { deps, peers } = makeAdapterDeps();
+    peers.register(fakePeer({ winterSessionId: "s_running", status: "running" }).peer);
+    peers.register(fakePeer({ winterSessionId: "s_idle", status: "idle" }).peer);
+    const adapter = createReferenceMessagingAdapter(deps);
+    const rows = await adapter.listReachable({});
+    expect(rows.map((r) => r.address).sort()).toEqual(["session:s_idle", "session:s_running"]);
+  });
+  // WS-10 §10.3: "Cold-resume ... is a separate session-resume operation, never SendMessage" -- a
+  // PEER (a top-level session) is therefore never `resume`-capable through this tool, in contrast to
+  // a CHILD, whose `resume` capability genuinely does depend on status (childToListedRuntimeObject:
+  // `resume: !running`). The two live statuses that survive listReachable's own filter (above) both
+  // already yield `resume: false` under the old status-keyed formula too -- so this assertion cannot,
+  // by itself, discriminate the old buggy `status === "exited"` formula from the corrected constant
+  // `false` (the one status where they differed, "exited", is now unreachable via this method by
+  // construction, per the exclusion tests above). It is a genuine invariant pin, not a regression
+  // test for the specific formula bug; see the task report for the honest accounting.
+  test("a peer's capabilities.resume is always false regardless of status, unlike a child's", async () => {
+    const child = createFakeChildHandle({ id: "c1", parentSessionId: "s_parent" });
+    child.simulateCompletion("done"); // flips the fake's live status() to "completed" -- a terminal, addressable child
+    const { deps, peers } = makeAdapterDeps(() => [child]);
+    peers.register(fakePeer({ winterSessionId: "s_running", status: "running" }).peer);
+    peers.register(fakePeer({ winterSessionId: "s_idle", status: "idle" }).peer);
+    const adapter = createReferenceMessagingAdapter(deps);
+    const rows = await adapter.listReachable({ parent: { objectKind: "session", runtimeKind: "winter-agent", winterSessionId: "s_parent" } });
+    for (const row of rows.filter((r) => r.objectKind === "session")) expect(row.capabilities.resume).toBe(false);
+    expect(rows.find((r) => r.objectKind === "agent")?.capabilities.resume).toBe(true); // a terminal child IS resumable
   });
 });
 
@@ -334,6 +407,47 @@ describe("subscribeIdle (WS-10 §14)", () => {
     const { notifications: drained } = notifications.drain("s_subscriber");
     expect(drained[0]?.content).toContain("reduced-status");
   });
+
+  // Fix-round item 2 (spec gap): idle.ts's own contract for `fireIdle`'s `computeReducedStatus`
+  // callback is "the SAME inbound-policy decision" deliverToSession/reevaluateHeldFor make for a
+  // REAL message -- both of which thread the receiver's own explicit `crossSessionInbound` setting
+  // (which always wins over the default matrix, per resolveInboundDecision's own contract). The two
+  // tests below each set up a case where the default-matrix result and the explicit-override result
+  // DISAGREE, so a `reducedStatusFor` that forgets to thread `explicitSetting` computes the WRONG
+  // notice kind -- proving this isn't just a shape gap but an observable wrong-notice bug.
+  test("a subscriber's explicit crossSessionInbound 'accept' overrides what the default matrix would hold -- full notice, not reduced-status", async () => {
+    const { deps, peers, subscribers, notifications } = makeAdapterDeps();
+    // default matrix alone: prompts (subscriber) x bypasses (target) -> hold. The subscriber's own
+    // EXPLICIT "accept" must override that down to accept -- full notice.
+    const { peer: target, setStatus } = fakePeer({ winterSessionId: "s_target", mode: "bypassPermissions", status: "running" });
+    const { peer: subscriberPeer } = fakePeer({ winterSessionId: "s_subscriber", mode: "default", crossSessionInbound: "accept" });
+    peers.register(target);
+    peers.register(subscriberPeer);
+    subscribers.remember("m1", "s_subscriber");
+    const adapter = createReferenceMessagingAdapter(deps);
+    await adapter.subscribeIdle(target.address, { messageId: "m1" });
+    setStatus("idle");
+    adapter.firePeerIdleTransition(target.address);
+    const { notifications: drained } = notifications.drain("s_subscriber");
+    expect(drained[0]?.content).not.toContain("reduced-status");
+    expect(drained[0]?.content).toContain("is now idle");
+  });
+  test("a subscriber's explicit crossSessionInbound 'hold' overrides what the default matrix would accept -- reduced-status notice", async () => {
+    const { deps, peers, subscribers, notifications } = makeAdapterDeps();
+    // default matrix alone: prompts (subscriber) x prompts (target) -> accept. The subscriber's own
+    // EXPLICIT "hold" must override that up to hold -- reduced-status notice.
+    const { peer: target, setStatus } = fakePeer({ winterSessionId: "s_target", mode: "default", status: "running" });
+    const { peer: subscriberPeer } = fakePeer({ winterSessionId: "s_subscriber", mode: "default", crossSessionInbound: "hold" });
+    peers.register(target);
+    peers.register(subscriberPeer);
+    subscribers.remember("m1", "s_subscriber");
+    const adapter = createReferenceMessagingAdapter(deps);
+    await adapter.subscribeIdle(target.address, { messageId: "m1" });
+    setStatus("idle");
+    adapter.firePeerIdleTransition(target.address);
+    const { notifications: drained } = notifications.drain("s_subscriber");
+    expect(drained[0]?.content).toContain("reduced-status");
+  });
 });
 
 describe("senderPermissionClass", () => {
@@ -422,5 +536,47 @@ describe("createDefaultMessagingRuntime: end-to-end wiring smoke test", () => {
     expect(result.outcome.status).toBe("queued");
     expect(delivered).toHaveLength(1);
     expect(delivered[0]?.body).toBe("hello from the default wiring");
+  });
+
+  // Fix-round item 4 (cheap rider): WS-10 §10.1's "inert @/slash text" MUST -- a message body
+  // containing patterns that OTHER surfaces (e.g. a chat composer) might expand is delivered
+  // completely byte-identically here. There is no @/slash parser anywhere on this path by
+  // construction; this test pins that absence directly rather than leaving it merely true-by-omission.
+  test("@-mentions and slash-command-shaped text inside `message` are delivered byte-identically -- never expanded", async () => {
+    const runtime = createDefaultMessagingRuntime({ now: () => 0 });
+    const { peer, delivered } = fakePeer({ winterSessionId: "s_peer" });
+    runtime.peers.register(peer);
+    const caller: CallerContext = { sessionId: "s_caller", toolUseId: "tool-2" };
+    const body = "please read @file.ts and then run /command --flag=1, also @another/agent and /nested/slash";
+    const result = await sendMessage(runtime, caller, { to: "session:s_peer", message: body });
+    expect(result.outcome.status).toBe("queued");
+    expect(delivered).toHaveLength(1);
+    expect(delivered[0]?.body).toBe(body); // exact identity, not just "contains" -- no substitution, no stripping
+  });
+});
+
+// Fix-round item 1 (spec gap, WS-10 §10.2): a full-pipeline proof that listReachable's own exclusion
+// of non-live peers (above) is what keeps a stale/exited registrant from ever reaching resolveTarget
+// as a candidate -- resolution.ts itself needs no change; it only ever sees what listReachable hands
+// it. This is the "resolution candidates" half of the coordinator's fix-round request; the
+// "ListAgents' rows" half is the `listReachable` describe block's own exclusion tests above.
+describe("listReachable's exclusion feeds resolveTarget -- an exited peer cannot surface, even via ambiguity", () => {
+  test("two peers sharing a display name, one exited -- resolves directly to the live one instead of reporting ambiguous", async () => {
+    const { deps, peers } = makeAdapterDeps();
+    peers.register(fakePeer({ winterSessionId: "s_live", name: "buddy", status: "running" }).peer);
+    peers.register(fakePeer({ winterSessionId: "s_gone", name: "buddy", status: "exited" }).peer);
+    const adapter = createReferenceMessagingAdapter(deps);
+    const reachable = await adapter.listReachable({});
+    const result = resolveTarget({ to: "buddy", callerParentSessionId: "s_caller", children: [], peers: reachable });
+    expect(result.kind).toBe("resolved");
+    if (result.kind === "resolved") expect(result.address.winterSessionId).toBe("s_live");
+  });
+  test("canonical-address resolution of an exited peer's own address also fails, not just name lookup", async () => {
+    const { deps, peers } = makeAdapterDeps();
+    peers.register(fakePeer({ winterSessionId: "s_gone", status: "exited" }).peer);
+    const adapter = createReferenceMessagingAdapter(deps);
+    const reachable = await adapter.listReachable({});
+    const result = resolveTarget({ to: "session:s_gone", callerParentSessionId: "s_caller", children: [], peers: reachable });
+    expect(result.kind).toBe("not_found");
   });
 });

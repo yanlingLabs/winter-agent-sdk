@@ -155,6 +155,21 @@ export function createReferenceMessagingAdapter(deps: ReferenceAdapterDeps): Ref
     return classifyPermissionMode(peer.mode(), { bypassAvailable: peer.bypassAvailable() });
   }
 
+  // Fix-round item 1 (WS-10 §10.2 MUST: "eligible LIVE peer sessions ... does NOT enumerate exited
+  // transcripts"). "running"/"idle" are the only statuses under which deliverToSession's own
+  // reachability short-circuit (below) runs ordinary inbound policy at all -- every other status
+  // (exited/archived/unavailable, AND "starting") is refused or reported unavailable there with NO
+  // mailbox side effect, before a receiver even exists to apply a policy decision against. DECISION:
+  // "starting" is excluded from listing too, not just exited/archived/unavailable -- a message to a
+  // "starting" peer is never queued (deliverToSession reports a bare retryable `unavailable` for it,
+  // same as "unavailable"), so listing it as reachable would advertise a delivery guarantee this
+  // reference cannot back up. This is the ONE gate listReachable's own peer loop (below) consults;
+  // `peerRow` itself stays pure/unconditional so it remains correct if ever reused for a single
+  // already-known-live peer instead of the full list.
+  function isLiveForListing(status: ReturnType<PeerSessionHandle["status"]>): boolean {
+    return status === "running" || status === "idle";
+  }
+
   function peerRow(peer: PeerSessionHandle): ListedRuntimeObject {
     const status = peer.status();
     const reachableForMessage = status === "running" || status === "idle";
@@ -175,7 +190,17 @@ export function createReferenceMessagingAdapter(deps: ReferenceAdapterDeps): Ref
       ...(peer.cwd !== undefined ? { cwd: peer.cwd } : {}),
       capabilities: {
         message: reachableForMessage,
-        resume: status === "exited",
+        // Fix-round item 1: a PEER (a top-level session) is NEVER resume-capable through SendMessage
+        // -- WS-10 §10.3: "Cold-resume ... is a separate session-resume operation, never SendMessage;
+        // resumed_and_delivered MUST NOT be claimed for resume alone." The previous `status ===
+        // "exited"` formula was backwards (it claimed a peer BECOMES resumable once exited, when the
+        // truth is a peer is NEVER resumable this way, unlike a CHILD -- see
+        // childToListedRuntimeObject's own `resume: !running`, which genuinely does depend on status).
+        // Now moot in practice too: `isLiveForListing` above means this function only ever runs
+        // against "running"/"idle" peers, where the old formula already produced `false` -- but the
+        // field is hardcoded here rather than left as a status-keyed expression that would be WRONG
+        // again the moment anything calls `peerRow` with a non-live peer in the future.
+        resume: false,
         notifyWhenIdle: peer.hasReliableIdleSignal(),
         reply: reachableForMessage, // T8 FLAG: unpinned anywhere in WS-10/the companion doc; mirrors `message`
       },
@@ -189,7 +214,22 @@ export function createReferenceMessagingAdapter(deps: ReferenceAdapterDeps): Ref
     // a PEER of its own adapter instance -- when unknown, default conservatively to "prompts" (the
     // class most likely to hold an unrecognized/bypassing sender, per the WS-10 §13 matrix).
     const receiverClass: PermissionClassLabel = subscriberPeer !== undefined ? classifyPermissionMode(subscriberPeer.mode(), { bypassAvailable: subscriberPeer.bypassAvailable() }) : "prompts";
-    return resolveInboundDecision({ authenticated: true, receiverClass, senderClass }) === "hold";
+    // Fix-round item 2: idle.ts's own `fireIdle` contract calls this "the SAME inbound-policy
+    // decision" deliverToSession/reevaluateHeldFor make for a REAL message -- both of which thread
+    // the receiver's own explicit `crossSessionInbound` setting (resolveInboundDecision's contract:
+    // an explicit setting always wins over the default matrix). Here the "receiver" role is the
+    // SUBSCRIBER (the one who would hypothetically be receiving a message from the idling target),
+    // so its explicit override -- not the target's -- is what must be threaded; an unregistered
+    // subscriber has none to read, same as any other unknown-subscriber field above.
+    const explicitSetting = subscriberPeer?.crossSessionInbound?.();
+    return (
+      resolveInboundDecision({
+        authenticated: true,
+        ...(explicitSetting !== undefined ? { explicitSetting } : {}),
+        receiverClass,
+        senderClass,
+      }) === "hold"
+    );
   }
 
   function pushIdleNotice(peer: PeerSessionHandle, messageId: string): void {
@@ -215,7 +255,9 @@ export function createReferenceMessagingAdapter(deps: ReferenceAdapterDeps): Ref
           if (child.record.parentSessionId === parentSessionId) rows.push(childToListedRuntimeObject(parentSessionId, child));
         }
       }
-      for (const peer of deps.peers.list()) rows.push(peerRow(peer));
+      for (const peer of deps.peers.list()) {
+        if (isLiveForListing(peer.status())) rows.push(peerRow(peer));
+      }
       return rows;
     },
 
