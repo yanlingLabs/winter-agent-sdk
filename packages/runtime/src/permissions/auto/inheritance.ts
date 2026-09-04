@@ -52,13 +52,57 @@ import { computePolicyHash } from "./caches.ts";
 //       `plan` withholds UNCONDITIONALLY, with no prompt (dontAsk never prompts) and no classifier
 //       borrow (that machinery is plan-mode-only). "Stricter" on the flattened order; a write
 //       `plan` would never have let through at all now goes through silently.
-// Root cause: there is no total order over these four modes, only two partial ones. P4 MUST
-// re-examine this (likely a per-axis comparison, never a single scalar rank) BEFORE wiring any
-// real subagent spawn/resume caller to `computeChildPolicy`/`resolveChildResumeMode` — this list
-// and the two functions built on it are correct exactly as far as WS-07 §11's own two PINNED facts
-// go (the two extremes, and "stricter of" as a bare concept), and no further. No behavior change
-// in this fix round — this comment only states the boundary of what is proven versus assumed.
-// Exported so a fixture (or a future task) can pin the exact order without re-deriving it.
+// Root cause: there is no total order over these four modes, only two partial ones.
+//
+// RULING P2-M (Phase 4, Task 3) — the fix, stated as the axis model this file now implements:
+//
+// Rather than one scalar rank, `stricterOf` compares two INDEPENDENT axes, lexicographically, axis
+// 1 dominant:
+//
+//   AXIS 1 — rule-silencing (categorical): does this mode impose a STANDING EXCEPTION that
+//   withholds or reviews a whole category of actions REGARDLESS of what a pre-existing static rule
+//   would otherwise do — i.e. a rule cannot even "reach" the call to resolve it? Exactly two modes
+//   have this property: `plan` (source edits are withheld UNCONDITIONALLY — WS-07 §6.5's own "not
+//   auto-approved... source edits are withheld" — no allow rule can convert one into execution) and
+//   `auto` (broad allow rules are SUSPENDED to classifier review on auto entry — WS-07 §10.1 step 2,
+//   `isAutoSuspendedAllowRule`). The other four (`default`, `dontAsk`, `acceptEdits`,
+//   `bypassPermissions`) have NO such standing exception: an existing allow-rule match resolves
+//   normally in every one of them. This is deliberately NOT the same grouping the brief's own gloss
+//   suggests ("dontAsk/plan") — `dontAsk` does NOT silence a rule: WS-07 §6.3 lists "allow-rule/
+//   allowedTools matches" among what dontAsk "still permits" unmodified. dontAsk only changes what
+//   happens to an UNRESOLVED (would-prompt) call (denial instead of a prompt) — a fundamentally
+//   different mechanism from a standing rule-silencing exception, and cell (ii) below is exactly the
+//   fixture that tells the two apart: if dontAsk really did silence rules the way plan does, cell
+//   (ii) would have no bug to fix in the first place.
+//
+//   AXIS 2 — auto-approval breadth (a tie-break, used ONLY when axis 1 agrees): how much of
+//   "everything else" a mode grants WITHOUT a matching rule at all. Within the rule-silencing
+//   partition {plan, auto}: plan is narrower (writes are NEVER auto-approved, and non-write
+//   exploratory actions at best reach a prompt or a classifier BORROW — WS-07 §6.5) than auto
+//   (auto auto-approves ordinary in-cwd edits outright once past its own suspension filter — WS-07
+//   §6.6), so plan wins a same-partition comparison against auto. Within the non-silencing
+//   partition {default, dontAsk, acceptEdits, bypassPermissions}: dontAsk (denies every unresolved
+//   case outright) < default (prompts) < acceptEdits (auto-approves bounded edits) <
+//   bypassPermissions (auto-approves everything else) — the ORIGINAL scalar order's own relative
+//   placement of these four, which nothing in the P2-M finding disputes (both proven-widening cells
+//   are CROSS-partition comparisons; this order was never the problem).
+//
+// Consequence, stated plainly because it reads as surprising at first: axis 1 is lexicographically
+// DOMINANT, so `auto` (and `plan`) are judged stricter than EVERY non-silencing mode INCLUDING
+// `dontAsk` and `bypassPermissions` — overturning the old comment's own claim that dontAsk is the
+// unconditional "global minimum." That claim was true only within the non-silencing partition; it
+// silently assumed dontAsk's mechanism (deny-the-unresolved-residual) dominates plan/auto's
+// mechanism (silence-a-whole-category-regardless-of-rule), which cell (ii) disproves directly. The
+// two mechanisms answer different questions, and rule-silencing is the one that must never be
+// lost on resume (a mode that reviews/withholds a category by construction can never be replaced by
+// one that doesn't, no matter how "generally stricter" the replacement looks on a flattened scale).
+//
+// `AUTO_MODE_STRICTNESS_ORDER` is kept ONLY as the axis-2 tie-break table (never again a
+// cross-partition total order) — `computeChildPolicy` (below) does not consume it at all (WS-07
+// §11's forced-mode table is a fixed per-mode set membership check, not a "which is stricter"
+// comparison, so it needed no change for this ruling); nothing else in this codebase imports it
+// (verified), so it survives here purely as a documented, tested constant a future fixture can pin
+// against without re-deriving the within-partition order.
 export const AUTO_MODE_STRICTNESS_ORDER: readonly PermissionMode[] = ["dontAsk", "plan", "default", "acceptEdits", "auto", "bypassPermissions"];
 
 function strictnessRank(mode: PermissionMode): number {
@@ -67,9 +111,29 @@ function strictnessRank(mode: PermissionMode): number {
   return idx;
 }
 
-// The lower-ranked (earlier in AUTO_MODE_STRICTNESS_ORDER) of the two wins ties go to `a`.
+// Axis 1: the two modes with a standing rule-silencing exception (see the header above for why
+// dontAsk is deliberately NOT a member of this set).
+const RULE_SILENCING_MODES: ReadonlySet<PermissionMode> = new Set<PermissionMode>(["plan", "auto"]);
+function isRuleSilencing(mode: PermissionMode): boolean {
+  return RULE_SILENCING_MODES.has(mode);
+}
+
+// Axis 2: a within-partition breadth rank, used only to break an axis-1 tie. Reuses
+// AUTO_MODE_STRICTNESS_ORDER's own relative ordering (see header) rather than a second, independent
+// table that could drift from it — the two partitions never need to be compared against each other
+// on this axis (axis 1 already resolved every cross-partition case by the time this runs).
+function breadthRank(mode: PermissionMode): number {
+  return strictnessRank(mode);
+}
+
+// Per-axis comparator (RULING P2-M): axis 1 (rule-silencing) is checked first and is dominant --
+// only when it TIES (both modes in the same partition) does axis 2 (breadth) decide. Always returns
+// one of {a, b} verbatim (never a synthesized third mode); ties (identical mode) return `a`.
 export function stricterOf(a: PermissionMode, b: PermissionMode): PermissionMode {
-  return strictnessRank(a) <= strictnessRank(b) ? a : b;
+  const silA = isRuleSilencing(a);
+  const silB = isRuleSilencing(b);
+  if (silA !== silB) return silA ? a : b;
+  return breadthRank(a) <= breadthRank(b) ? a : b;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -80,6 +144,13 @@ export function stricterOf(a: PermissionMode, b: PermissionMode): PermissionMode
 // override is ignored." Everything else (default/dontAsk/plan) is overridable, subject to ONE
 // documented veto: "a definition asking for bypassPermissions is also ignored when
 // permissions.disableBypassPermissionsMode disables the mode -- the child uses the parent mode."
+//
+// RULING P2-M note: this function needs NO change for the per-axis comparator above and does not
+// call `stricterOf`/`resolveChildResumeMode` at all. WS-07 §11's forced-mode table is a fixed
+// per-PARENT-MODE set-membership check ("is the parent's live mode one of these three fixed
+// literals"), never a "which of two modes is stricter" comparison — there is nothing here for an
+// axis model to correct. Only `resolveChildResumeMode` (below), which genuinely compares two
+// arbitrary modes against each other, was in scope for this ruling.
 const FORCED_MODES: ReadonlySet<PermissionMode> = new Set<PermissionMode>(["bypassPermissions", "acceptEdits", "auto"]);
 
 export interface ChildAgentDefinition {
@@ -125,11 +196,16 @@ export function computeChildPolicy(parent: PolicyState, def: ChildAgentDefinitio
 // parent can no longer use" is about never GAINING permissiveness at resume, not about
 // re-deriving what a fresh spawn would compute today.
 //
-// KNOWN TENSION (documented, not silently absorbed): if the parent was `default` when the child
-// was spawned with an override to `plan`, and the parent has SINCE moved to `auto` (which the
-// forced-mode table would now force onto any NEWLY spawned child), stricter-of picks `plan`
-// (stricter than `auto`) for the RESUMED child, not `auto`. That is deliberate at P2 — real
-// resume/reconciliation semantics are P4's; this only pins the one comparison WS-07 §11 states.
+// RESOLVED under RULING P2-M (was flagged "KNOWN TENSION" at P2; the per-axis model above resolves
+// it rather than merely tolerating it): if the parent was `default` when the child was spawned with
+// an override to `plan`, and the parent has SINCE moved to `auto` (which the forced-mode table would
+// now force onto any NEWLY spawned child), `stricterOf` picks `plan` for the RESUMED child, not
+// `auto` — and this is now the PROVEN-CORRECT answer, not an accepted gap: plan and auto share the
+// rule-silencing axis (§1 above), and within that shared partition plan is strictly narrower (its
+// write-withholding is unconditional; auto still auto-approves ordinary in-cwd edits). A resumed
+// child that kept `plan`'s stricter write posture is exactly "never reviving in a mode the parent
+// can no longer use" in its safest reading — it is MORE conservative than what a fresh spawn would
+// now compute (`auto`, forced), never less.
 export interface RecordedChildPolicy {
   effectiveMode: PermissionMode;
   parentPolicyVersion: number;

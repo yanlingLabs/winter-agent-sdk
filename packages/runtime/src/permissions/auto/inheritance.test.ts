@@ -67,22 +67,61 @@ describe("computeChildPolicy -- parentPolicyVersion / parentPolicyHash", () => {
   });
 });
 
+// RULING P2-M (Phase 4, Task 3): the scalar AUTO_MODE_STRICTNESS_ORDER above is RETIRED as a total
+// order -- see inheritance.ts's own header for the full per-axis model this replaces it with. These
+// two cells are the ones the P2 fix-round comment identified as ACTIVELY UNSAFE under the old scalar
+// order; they are written FIRST (RED against the pre-P2-M `stricterOf`) so the fix is provably a fix,
+// not a reformulation that happens to still pass.
+describe("RULING P2-M -- per-axis comparator: the two proven-widening cells", () => {
+  test("cell (i): auto-recorded child resumed under a parent now at acceptEdits must NOT become acceptEdits's un-suspended Bash(*) allow -- auto (rule-silencing axis) wins over acceptEdits (non-silencing)", () => {
+    // Old scalar order: rank(acceptEdits)=3 < rank(auto)=4, so stricterOf picked acceptEdits -- WRONG:
+    // acceptEdits does not suspend a broad Bash(*) allow the way auto's isAutoSuspendedAllowRule does.
+    expect(stricterOf("auto", "acceptEdits")).toBe("auto");
+    expect(stricterOf("acceptEdits", "auto")).toBe("auto"); // order-independent
+    expect(resolveChildResumeMode({ effectiveMode: "auto", parentPolicyVersion: 1, parentPolicyHash: "h" }, "acceptEdits")).toBe("auto");
+  });
+
+  test("cell (ii): plan-recorded child under a parent now at dontAsk must NOT gain dontAsk's rule-silent writes -- plan (rule-silencing axis) wins over dontAsk (non-silencing)", () => {
+    // Old scalar order: rank(dontAsk)=0 < rank(plan)=1, so stricterOf picked dontAsk -- WRONG: dontAsk
+    // lets an existing allow-rule match proceed unmodified (WS-07 §6.3), so a write plan withholds
+    // UNCONDITIONALLY would execute silently under dontAsk if dontAsk won this comparison.
+    expect(stricterOf("plan", "dontAsk")).toBe("plan");
+    expect(stricterOf("dontAsk", "plan")).toBe("plan"); // order-independent
+    expect(resolveChildResumeMode({ effectiveMode: "plan", parentPolicyVersion: 1, parentPolicyHash: "h" }, "dontAsk")).toBe("plan");
+  });
+});
+
 describe("AUTO_MODE_STRICTNESS_ORDER / stricterOf", () => {
-  test("the order is the six public modes, no more, no fewer", () => {
+  test("the order is the six public modes, no more, no fewer (retained ONLY as the axis-2 tie-break table -- see inheritance.ts header)", () => {
     expect([...AUTO_MODE_STRICTNESS_ORDER].sort()).toEqual([...ALL_MODES].sort());
   });
 
-  test("dontAsk is the strictest of all", () => {
-    for (const other of ALL_MODES) expect(stricterOf("dontAsk", other)).toBe("dontAsk");
+  // RULING P2-M supersedes this claim in its old unqualified form: dontAsk is the global minimum
+  // ONLY within the non-silencing partition {default, dontAsk, acceptEdits, bypassPermissions} --
+  // it has NO rule-silencing property of its own (WS-07 §6.3: allow-rule/allowedTools matches still
+  // proceed under dontAsk), so a rule-silencing mode (plan/auto) is judged stricter than it on axis 1.
+  test("dontAsk is the strictest of the non-silencing partition (default/acceptEdits/bypassPermissions), but NOT of plan/auto (a different, rule-silencing axis)", () => {
+    for (const other of ["default", "acceptEdits", "bypassPermissions", "dontAsk"] as const) {
+      expect(stricterOf("dontAsk", other)).toBe("dontAsk");
+    }
+    for (const other of ["plan", "auto"] as const) {
+      expect(stricterOf("dontAsk", other)).toBe(other); // the rule-silencing mode wins, not dontAsk
+    }
   });
 
   test("bypassPermissions is the least strict of all", () => {
     for (const other of ALL_MODES) expect(stricterOf("bypassPermissions", other)).toBe(other);
   });
 
-  test("plan is stricter than default, acceptEdits, auto, and bypassPermissions", () => {
+  test("plan is stricter than default, acceptEdits, and bypassPermissions (non-silencing partition), and stricter than auto (same rule-silencing partition, narrower breadth)", () => {
     for (const other of ["default", "acceptEdits", "auto", "bypassPermissions"] as const) {
       expect(stricterOf("plan", other)).toBe("plan");
+    }
+  });
+
+  test("axis 1 (rule-silencing) is lexicographically dominant over axis 2 (breadth) -- auto is judged stricter than default/acceptEdits/bypassPermissions/dontAsk despite auto's classifier auto-approving more in the ordinary case", () => {
+    for (const other of ["default", "acceptEdits", "bypassPermissions", "dontAsk"] as const) {
+      expect(stricterOf("auto", other)).toBe("auto");
     }
   });
 });
@@ -100,7 +139,7 @@ describe("resolveChildResumeMode -- stricter of recorded vs current parent polic
     expect(resolveChildResumeMode({ effectiveMode: "bypassPermissions", parentPolicyVersion: 1, parentPolicyHash: "h" }, "dontAsk")).toBe("dontAsk");
   });
 
-  test("KNOWN TENSION (documented): parent was default (child overridden to plan), parent is now auto (forced-mode would force auto onto a FRESH child) -- resume keeps the stricter recorded `plan`, not `auto`", () => {
+  test("recorded plan, current auto -- resume keeps the stricter recorded `plan` (same rule-silencing partition, plan narrower than auto), not `auto`", () => {
     const recorded = { effectiveMode: "plan" as const, parentPolicyVersion: 1, parentPolicyHash: "h" };
     expect(resolveChildResumeMode(recorded, "auto")).toBe("plan");
   });
