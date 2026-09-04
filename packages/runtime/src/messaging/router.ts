@@ -140,9 +140,15 @@ export function resetMessagingRuntimeForTest(): void {
 
 export interface CallerContext {
   // The OWNING top-level session id -- for a top-level caller this is its own product id; for a
-  // CHILD's own tool call this is STILL the owning parent's id (engine.ts's own child runEngine()
-  // invocation reuses `config.sessionId`; only `agentId` distinguishes a child's own call -- see
-  // registry.ts's ToolExecutionContext.agentId field comment).
+  // CHILD's own tool call this is STILL the owning parent's id, because a child engine's own
+  // `RuntimeConfig.sessionId` IS the parent's (subagents/child-engine.ts's `baseConfig`); only
+  // `agentId` distinguishes a child's own call -- see registry.ts's ToolExecutionContext.agentId.
+  //
+  // Phase 4 fix wave (I1/N1): this comment used to assert exactly that and was FALSE -- the child
+  // engine set `sessionId: agentId`, so `callerAddress` below built the malformed `agent:<id>:<id>`
+  // and `resolveTarget`'s `record.parentSessionId === caller.sessionId` filter matched a child's
+  // own GRANDCHILDREN rather than its siblings (a child could not SendMessage to a sibling at all).
+  // The comment described the intended seam; the child engine is what now honours it.
   sessionId: string;
   agentId?: string;
   toolUseId: string;

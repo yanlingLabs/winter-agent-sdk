@@ -198,7 +198,9 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
 
   // WS-10 §6: depth/concurrency checked BEFORE any real work (workspace creation, store I/O) --
   // a rejected spawn should be cheap and side-effect-free.
-  checkAndRegisterSpawn({ parentSessionId: runCtx.parentSessionId, childSessionId: agentId, env });
+  // Phase 4 fix wave (I1): keyed by the SPAWNER's own agent key -- see limits.ts's own header for
+  // why `parentSessionId` alone would now read depth 0 at every nesting level.
+  checkAndRegisterSpawn({ parentKey: runCtx.parentAgentId ?? runCtx.parentSessionId, childKey: agentId, env });
   let spawnRegistered = true;
 
   try {
@@ -497,7 +499,17 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
     }
 
     const baseConfig: RuntimeConfig = {
-      sessionId: agentId,
+      // Phase 4 fix wave (I1, whole-branch review): a child's `sessionId` is the OWNING PARENT's,
+      // never its own agentId. WS-10's addressing model is one owning SESSION containing N AGENTS
+      // (`agent:<sessionId>:<agentId>`), and every consumer downstream of `ToolExecutionContext`
+      // already reads it that way: messaging/router.ts's `CallerContext.sessionId` documents it
+      // verbatim, `resolveTarget` filters a caller's own children by
+      // `record.parentSessionId === caller.sessionId`, and the session-keyed MCP lifecycle /
+      // ToolSearch registries are looked up by it. Setting it to the agentId made all four
+      // disagree: a child's SendMessage could not reach a SIBLING (its "own children" filter
+      // matched only its grandchildren), its self-address serialized as `agent:<id>:<id>`, and the
+      // MCP bridge tools resolved nothing (I2). `agentId` below is what distinguishes this child.
+      sessionId: runCtx.parentSessionId,
       cwd: workspace.root,
       model: resolvedModel.effectiveModel,
       permissionMode: inherit.policy.effectiveMode,
@@ -614,7 +626,9 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
         // as a fresh spawn hitting the same limit -- `retryable: true`, since concurrency (unlike the
         // gone-worktree case above) can free up on its own moments later.
         try {
-          checkAndRegisterSpawn({ parentSessionId: runCtx.parentSessionId, childSessionId: agentId, env });
+          // Phase 4 fix wave (I1): keyed by the SPAWNER's own agent key -- see limits.ts's own header for
+  // why `parentSessionId` alone would now read depth 0 at every nesting level.
+  checkAndRegisterSpawn({ parentKey: runCtx.parentAgentId ?? runCtx.parentSessionId, childKey: agentId, env });
         } catch (err) {
           return {
             status: "unavailable",

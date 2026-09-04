@@ -109,7 +109,17 @@ export interface ChildEngineDeps {
 // never a bare, run-independent `ChildEngineDeps` singleton the way `registerTool`/`replaceExecutor`
 // are (those describe a process-wide CATALOG; a child's own spawn deps are session-scoped).
 export interface ChildEngineRunContext {
+  // The OWNING top-level session id -- identical at every nesting level, because (Phase 4 fix wave,
+  // I1) a child engine's own `RuntimeConfig.sessionId` IS this value: WS-10 addressing has one
+  // owning session with N agents in it, distinguished by `agentId`, never N sessions.
   parentSessionId: string;
+  // Phase 4 fix wave (I1): the SPAWNING engine's own agent key -- `config.agentId` when the spawner
+  // is itself a child, absent for the one top-level session. Distinct from `parentSessionId`, which
+  // no longer identifies the spawner once every descendant shares it: without this, the spawn-depth
+  // table (limits.ts) would read depth 0 for every nesting level and WINTER_MAX_SUBAGENT_SPAWN_DEPTH
+  // would bound nothing. Optional so a pre-existing hand-built run context keeps compiling; absent
+  // means "the spawner is the top-level session", which is exactly true for such a caller.
+  parentAgentId?: string;
   // Forwards ONE child WinterFrame to the REAL host-facing output this run owns, applying the
   // parent_tool_use_id correlation + the forwardSubagentText gate (transformChildFrame below) --
   // pre-bound to this run's own real output sink and forwardSubagentText setting so Lane C's own

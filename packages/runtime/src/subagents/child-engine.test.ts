@@ -1319,3 +1319,87 @@ describe("child-engine.ts: the parent's LIVE permission rules bind every child (
     expect(probe.ran).toEqual([]);
   }, 10_000);
 });
+
+// --- Phase 4 fix wave: I1 -- a child's sessionId is the OWNING PARENT's --------------------------
+
+describe("child-engine.ts: child session identity (fix wave I1, WS-10 addressing)", () => {
+  test("a child's ctx.sessionId is the PARENT's session id and its agentId is distinct -- the self-address is well-formed, never agent:<id>:<id>", async () => {
+    registerSpawnProbe();
+    cleanupToolNames.push(SPAWN_PROBE);
+    const IDENTITY = "t6fw_identity";
+    cleanupToolNames.push(IDENTITY);
+    const seen: Array<{ sessionId: string; agentId: string | undefined; insideSubagent: boolean | undefined }> = [];
+    registerTool({
+      descriptor: {
+        canonicalName: IDENTITY, advertisedName: IDENTITY, source: "builtin", inputSchema: { type: "object" },
+        description: "records the executing context's own identity", exposure: "eager", permissionClass: "read",
+        availability: {}, capabilityRequirements: [], disposition: "implement-now",
+      },
+      executor: {
+        async execute(_input: unknown, ctx: ToolExecutionContext) {
+          seen.push({ sessionId: ctx.sessionId, agentId: ctx.agentId, insideSubagent: ctx.insideSubagent });
+          return { output: "recorded" };
+        },
+      },
+    });
+    const req: SpawnChildRequest = { parentToolUseId: "call-1", prompt: "identify yourself", runInBackground: false };
+    const childProvider = scriptedProvider([
+      { kind: "tool_use", calls: [{ id: "c1", name: IDENTITY, input: {} }] },
+      { kind: "text", text: "child done" },
+    ]);
+    const { code } = await driveParent({ provider: childProvider }, baseConfig({ sessionId: "parent-identity-s" }), [
+      { kind: "tool_use", calls: [{ id: "call-1", name: SPAWN_PROBE, input: req }] },
+      { kind: "text", text: "parent done" },
+    ]);
+    expect(code).toBe(0);
+    expect(seen.length).toBe(1);
+    // The review's own PROBE 2 observed `ctx.sessionId === ctx.agentId` here -- the malformed
+    // identity that made `callerAddress` build `agent:<agentId>:<agentId>`.
+    expect(seen[0]!.sessionId).toBe("parent-identity-s");
+    expect(seen[0]!.agentId).toBeDefined();
+    expect(seen[0]!.agentId).not.toBe(seen[0]!.sessionId);
+    expect(seen[0]!.insideSubagent).toBe(true);
+  }, 10_000);
+
+  test("a child can SendMessage to a SIBLING (both children of the same session), not only to its own grandchildren", async () => {
+    registerSpawnProbe();
+    registerSpawnAndRegister();
+    cleanupToolNames.push(SPAWN_PROBE, SPAWN_AND_REGISTER);
+    // ONE provider instance serves BOTH children (createChildEngineFactory hands `deps.provider`
+    // straight to every child's nested runEngine), so it must be a PURE FUNCTION of the messages it
+    // sees -- the established discipline for provider/mock.ts's own "subagent"/"childmsg" arms.
+    const childProvider: Provider = {
+      async generate({ messages }) {
+        const firstUser = messages.find((m) => m.role === "user");
+        const firstText = typeof firstUser?.content === "string" ? firstUser.content : "";
+        if (firstText.includes("BETA")) return { kind: "text", text: "beta done" };
+        for (const m of messages) {
+          if (!Array.isArray(m.content)) continue;
+          for (const b of m.content) {
+            if (b.type === "tool_result" && b.tool_use_id === "a1") return { kind: "text", text: `SENDRESULT:${b.content}` };
+          }
+        }
+        return { kind: "tool_use", calls: [{ id: "a1", name: "SendMessage", input: { to: "beta", message: "hi sibling" } }] };
+      },
+    };
+    const beta: SpawnChildRequest = { parentToolUseId: "call-1", prompt: "BETA", runInBackground: true, name: "beta" };
+    const alpha: SpawnChildRequest = { parentToolUseId: "call-2", prompt: "ALPHA: message your sibling", runInBackground: false };
+    const { code, frames } = await driveParent({ provider: childProvider }, baseConfig({ sessionId: "parent-siblings-s" }), [
+      { kind: "tool_use", calls: [{ id: "call-1", name: SPAWN_AND_REGISTER, input: beta }] },
+      { kind: "tool_use", calls: [{ id: "call-2", name: SPAWN_PROBE, input: alpha }] },
+      { kind: "text", text: "parent done" },
+    ]);
+    expect(code).toBe(0);
+    const block = dataMessages(frames)
+      .filter((m) => m.type === "user")
+      .flatMap((m) => ((m as unknown as { message: { content: Array<{ tool_use_id: string; content: string }> } }).message.content ?? []))
+      .find((b) => b.tool_use_id === "call-2")!;
+    const parsed = JSON.parse(block.content) as { result: { status: string; content: string } };
+    expect(parsed.result.status).toBe("completed");
+    // Before the fix: `not_found` -- alpha's own "children" filter (record.parentSessionId ===
+    // caller.sessionId) compared beta's PARENT session id against alpha's own AGENT id, so a
+    // sibling was structurally unreachable and `ListAgents` from a child listed only grandchildren.
+    expect(parsed.result.content).not.toContain("not_found");
+    expect(parsed.result.content).toMatch(/"status":"(delivered|queued|resumed_and_delivered)"/);
+  }, 10_000);
+});

@@ -7,12 +7,15 @@
 // A child is an in-process runEngine() instance (R4-4, child-handle.ts's own header) -- there is no
 // OS-process tree to walk for "how deep am I," and the T3-frozen seam types
 // (SpawnChildRequest/ChildInheritance/ChildEngineRunContext) carry no depth field at all. This
-// module therefore keeps its own process-wide bookkeeping, keyed by the ENGINE session id every
-// runEngine() invocation already carries (RuntimeConfig.sessionId): child-engine.ts sets a child's
-// own `config.sessionId` to its freshly-minted agentId (see that file's header for why), so
-// `runCtx.parentSessionId` (ChildEngineRunContext, T3-frozen) is exactly the right lookup key at
-// every nesting level -- depth 0 for the real top-level session (never registered here, since
-// nothing ever spawns it), depth 1 for its direct children, depth 2 for their own children, etc.
+// module therefore keeps its own process-wide bookkeeping, keyed by the SPAWNING ENGINE'S OWN AGENT
+// KEY: `config.agentId` for a child engine, and `config.sessionId` for the one top-level session
+// (which has no agentId). Phase 4 fix wave (I1): that key is deliberately NOT `config.sessionId` any
+// more -- a child now SHARES its parent's session id (WS-10 addressing: one owning session, N agents
+// distinguished by agentId), so keying depth on the session id would read depth 0 for every
+// descendant and defeat WINTER_MAX_SUBAGENT_SPAWN_DEPTH entirely. `ChildEngineRunContext` carries
+// both halves (`parentSessionId` + the fix wave's `parentAgentId`) precisely so this key can be
+// formed at every nesting level -- depth 0 for the real top-level session (never registered here,
+// since nothing ever spawns it), depth 1 for its direct children, depth 2 for their own, etc.
 //
 // Same "ONE-LIVE-ENGINE ASSUMPTION" this codebase already accepts elsewhere for an identical reason
 // (tools/background-tasks.ts's own module-level temp-root resolver; tools/impl/
@@ -71,15 +74,15 @@ export interface SpawnLimitCheck {
 // "typed capability/limit error" precedent (sandbox/profile.ts's SandboxConfigError). Registers the
 // new child's OWN depth (for ITS future children to look up) and increments the running counter --
 // paired with releaseSpawn below, called once the child reaches a terminal status.
-export function checkAndRegisterSpawn(opts: { parentSessionId: string; childSessionId: string; env?: Record<string, string | undefined> }): SpawnLimitCheck {
+export function checkAndRegisterSpawn(opts: { parentKey: string; childKey: string; env?: Record<string, string | undefined> }): SpawnLimitCheck {
   const env = opts.env ?? process.env;
   const maxDepth = resolveMaxSpawnDepth(env);
   const maxConcurrency = resolveMaxConcurrentSubagents(env);
-  const parentDepth = depthById.get(opts.parentSessionId) ?? 0;
+  const parentDepth = depthById.get(opts.parentKey) ?? 0;
   const depth = parentDepth + 1;
   if (depth > maxDepth) throw new SpawnDepthExceededError(depth, maxDepth);
   if (runningCount >= maxConcurrency) throw new SpawnConcurrencyExceededError(runningCount, maxConcurrency);
-  depthById.set(opts.childSessionId, depth);
+  depthById.set(opts.childKey, depth);
   runningCount += 1;
   return { depth };
 }
@@ -90,8 +93,8 @@ export function checkAndRegisterSpawn(opts: { parentSessionId: string; childSess
 // call for an id already released is a silent no-op -- mirrors this codebase's own
 // cancel()/stopTask-style "already gone is fine" convention, since a child's own natural-completion
 // path and an external stop() can legitimately race to call this once each.
-export function releaseSpawn(childSessionId: string): void {
-  if (depthById.delete(childSessionId)) {
+export function releaseSpawn(childKey: string): void {
+  if (depthById.delete(childKey)) {
     runningCount = Math.max(0, runningCount - 1);
   }
 }

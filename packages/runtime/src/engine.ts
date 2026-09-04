@@ -1066,6 +1066,11 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
           }
           const deps = factory({
             parentSessionId: config.sessionId,
+            // Phase 4 fix wave (I1): this run's OWN agent key -- present only when THIS engine is
+            // itself a child. `config.sessionId` is the owning session at every nesting level now
+            // (a child shares its parent's), so it can no longer identify the spawner; the spawn
+            // DEPTH table (subagents/limits.ts) is keyed on this instead.
+            ...(config.agentId !== undefined ? { parentAgentId: config.agentId } : {}),
             // Handoff note (fix round 1, T3 review minor, item 4): proven at the engine level, on
             // the in-memory/direct-runEngine harness only (engine.test.ts's own fix-round-1 spawn
             // seam tests) -- no ChildEngineFactory is registered anywhere on the child/compiled
@@ -1264,6 +1269,15 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // `trustedWorkspace` is the SAME constant the permission evaluator and hook registry already share
   // (declared once, far above) -- WS-09 §1.2's project-trust gate can never disagree with WS-07
   // §3.2's, because there is exactly one value.
+  // Phase 4 fix wave (I1/I2): the key for this run's own SESSION-KEYED side registries (the MCP
+  // lifecycle registry and the ToolSearch session runtime). A child engine now shares its parent's
+  // `config.sessionId` (WS-10 addressing -- see child-engine.ts's own baseConfig comment), so
+  // keying its own registrations by the session id would OVERWRITE the parent's entry at spawn and
+  // DELETE it again at the child's teardown. Keyed by the child's own agent key instead, which is
+  // also what makes the intended I2 behaviour fall out: a bridge tool executing INSIDE a child
+  // looks its lifecycle up by `ctx.sessionId` -- the owning session's -- and therefore sees the
+  // PARENT's real MCP state instead of a child-local void.
+  const sessionStateKey = config.agentId ?? config.sessionId;
   let mcpLifecycle: McpLifecycle | undefined;
   let disposeSessionMcpLifecycle: (() => void) | undefined;
   if (mcpServerStateSource === undefined && config.mcpServers !== undefined && Object.keys(config.mcpServers).length > 0) {
@@ -1290,7 +1304,7 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
     // The four WS-09 §1.4 bridge tools resolve their lifecycle out of this session-keyed registry
     // (see mcp/lifecycle.ts's own header for why it is session-keyed rather than a module singleton
     // or a per-run replaceExecutor). Cleared in teardown, below.
-    disposeSessionMcpLifecycle = registerSessionMcpLifecycle(config.sessionId, mcpLifecycle);
+    disposeSessionMcpLifecycle = registerSessionMcpLifecycle(sessionStateKey, mcpLifecycle);
   }
   // From here on, ONE resolved pair for the whole run -- the pump's own MCP control dispatch and the
   // init frames both read these, never `opts.*` directly, so caller-supplied and engine-built are
@@ -1472,7 +1486,7 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // Unregistered in this run's own teardown (below): the registry is keyed by session id in a
   // process-wide module singleton, so a long-lived host running many sessions would otherwise leak
   // one entry per run.
-  registerToolSearchSessionRuntime(config.sessionId, {
+  registerToolSearchSessionRuntime(sessionStateKey, {
     getMode: () => policyStateStore.getState().mode,
     activation: deferralActivation,
     platform: process.platform,
@@ -2531,7 +2545,7 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   if (mcpLifecycle) await mcpLifecycle.dispose().catch(() => {});
   // Phase 4 Task 8 (rider 2): drop this run's ToolSearch session runtime -- same singleton-hygiene
   // argument as the MCP unregistration immediately above (one leaked entry per run otherwise).
-  unregisterToolSearchSessionRuntime(config.sessionId);
+  unregisterToolSearchSessionRuntime(sessionStateKey); // fix wave (I1): the paired disposer for the registration above -- never `config.sessionId`, which a child shares with its parent
   output.end();
   return 0;
 }
