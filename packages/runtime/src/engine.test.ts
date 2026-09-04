@@ -3572,13 +3572,17 @@ describe("Phase 4 Task 8 (rider 11): live MCP lifecycle wiring", () => {
       input: runtime.input,
       output: runtime.output,
       provider: echoProvider,
-      mcpServerStateSource: { snapshot: () => [{ name: "injected", state: "failed" }], waitForPending: async () => {} },
+      mcpServerStateSource: {
+        snapshot: () => [{ name: "injected", state: "failed", toolNames: [] }],
+        subscribe: () => () => {},
+        waitForPending: async () => [{ name: "injected", state: "failed", toolNames: [] }],
+      },
     });
     host.output.write({ type: "user", text: "hi" });
     host.output.write({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined });
     const frames = await drain(host.input);
     await done;
-    const init = frames.find((f) => f.type === "init") as { mcp_servers?: Array<{ name: string }> };
+    const init = frames.find((f) => f.type === "init") as { mcp_servers?: Array<{ name: string; status: string }> };
     expect(init.mcp_servers).toEqual([{ name: "injected", status: "failed" }]);
   });
 

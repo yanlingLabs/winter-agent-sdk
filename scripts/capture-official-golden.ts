@@ -428,6 +428,281 @@ async function runPermissionsAndHooksCapture(officialSdk: OfficialSdk): Promise<
   }
 }
 
+
+// --- Scenario D (Phase 4 Task 8, rider 8): the ADVERTISED TOOL SCHEMAS in the live request ------
+//
+// WS-09 §8.5's own "Ground truth" rule -- "every deferral decision is verified against what the
+// model actually received (the live request's tools array), never against configuration intent
+// alone" -- has one and only one observable source on the official branch: the `tools[]` array of
+// the Messages API request body the runtime sends. This scenario's loopback captures that body and
+// reports, per configuration:
+//
+//   (1) every advertised tool NAME (the official default advertised set, at the request layer
+//       rather than at system/init -- Scenario C already prints the latter, and the two disagreeing
+//       would itself be a finding);
+//   (2) the Agent/Task tool's own input_schema PROPERTY NAMES + `required` -- which is exactly
+//       WS-10 §17 Open Question 1's evidence gap ("the pinned default session did not advertise
+//       `name`... the exact capability predicate that turns it on must be captured");
+//   (3) explicit presence checks for the names Winter advertises and the pinned artifact does not
+//       declare a schema for at all (SendMessage/ListAgents -- derived-shapes-p4 item (e)'s
+//       "exhaustive absence"), plus the MCP/Tool-Search family.
+//
+// PROSE IS NEVER PRINTED: only property names, `required` lists, enum members, and types. Every
+// `description` field is stripped before printing (this repo's own hermeticity rule: no Anthropic
+// prose beyond names). Report-only, like every other scenario here.
+function schemaShapeOnly(schema: unknown): unknown {
+  if (Array.isArray(schema)) return schema.map(schemaShapeOnly);
+  if (schema === null || typeof schema !== "object") return schema;
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(schema as Record<string, unknown>)) {
+    if (k === "description" || k === "title" || k === "$comment") continue; // prose -- never printed
+    out[k] = schemaShapeOnly(v);
+  }
+  return out;
+}
+
+interface CapturedRequestTools {
+  names: string[];
+  agentSchema: unknown;
+}
+
+function capturedToolsFrom(body: unknown): CapturedRequestTools | undefined {
+  const tools = (body as { tools?: unknown }).tools;
+  if (!Array.isArray(tools)) return undefined;
+  const names = tools.map((t) => String((t as { name?: unknown }).name));
+  const agent = tools.find((t) => {
+    const n = (t as { name?: unknown }).name;
+    return n === "Agent" || n === "Task";
+  });
+  return { names, agentSchema: agent === undefined ? undefined : schemaShapeOnly((agent as { input_schema?: unknown }).input_schema) };
+}
+
+async function runAdvertisedSchemaCapture(officialSdk: OfficialSdk): Promise<void> {
+  const cleanups: Array<() => void> = [];
+  let server: ReturnType<typeof Bun.serve> | undefined;
+  try {
+    const claudeConfigDir = mkdtempSync(join(tmpdir(), "winter-official-capture-config-d-"));
+    cleanups.push(() => rmSync(claudeConfigDir, { recursive: true, force: true }));
+    const homeDir = mkdtempSync(join(tmpdir(), "winter-official-capture-home-d-"));
+    cleanups.push(() => rmSync(homeDir, { recursive: true, force: true }));
+    const fixtureCwd = mkdtempSync(join(tmpdir(), "winter-official-capture-cwd-d-"));
+    cleanups.push(() => rmSync(fixtureCwd, { recursive: true, force: true }));
+
+    let captured: CapturedRequestTools | undefined;
+    let requestCount = 0;
+    server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      async fetch(req) {
+        requestCount++;
+        const url = new URL(req.url);
+        console.error(`[loopback D] #${requestCount} ${req.method} ${url.pathname}${url.search}`);
+        try {
+          const body = await req.json();
+          if (captured === undefined) captured = capturedToolsFrom(body);
+        } catch {
+          /* a non-JSON / non-completions request -- nothing to capture from it */
+        }
+        return new Response(JSON.stringify(CANNED_TEXT_RESPONSE), { status: 200, headers: { "content-type": "application/json" } });
+      },
+    });
+    console.error(`\n=== Scenario D: the live request's advertised tools[] (WS-09 §8.5 ground truth; WS-10 §17 OQ1) ===`);
+    console.error(`[capture D] loopback ${server.url.href}; CLAUDE_CONFIG_DIR=${claudeConfigDir} HOME=${homeDir} (both fresh mkdtemp)`);
+
+    let thrown: unknown;
+    try {
+      const q = officialSdk.query({
+        prompt: "hi",
+        options: {
+          model: "sonnet",
+          cwd: fixtureCwd,
+          settingSources: [],
+          env: {
+            ANTHROPIC_BASE_URL: server.url.href.replace(/\/$/, ""),
+            ANTHROPIC_API_KEY: "test",
+            CLAUDE_CONFIG_DIR: claudeConfigDir,
+            HOME: homeDir,
+          },
+        },
+      });
+      for await (const _msg of q) {
+        /* drained to completion so the loopback and the runtime both shut down cleanly */
+      }
+    } catch (e) {
+      thrown = e;
+    }
+    if (thrown) console.error(`[capture D] query() threw: ${thrown instanceof Error ? (thrown.stack ?? thrown.message) : String(thrown)}`);
+
+    console.log(`\n--- Scenario D: every tool NAME in the live request's tools[] ---`);
+    console.log(JSON.stringify(captured?.names ?? "(no completions request body with a tools[] array was observed)", null, 2));
+    console.log(`\n--- Scenario D: the Agent/Task tool's own input_schema (SHAPE ONLY -- descriptions stripped) ---`);
+    console.log(JSON.stringify(captured?.agentSchema ?? "(no Agent/Task tool present in the advertised set)", null, 2));
+
+    // WS-10 §17 OQ1, answered directly and printed as a one-line verdict rather than left for the
+    // reader to spot inside the schema dump.
+    const agentProps = Object.keys(((captured?.agentSchema as { properties?: Record<string, unknown> } | undefined)?.properties) ?? {});
+    console.log(`\n--- Scenario D verdicts ---`);
+    console.log(JSON.stringify(
+      {
+        "WS-10 §17 OQ1 -- is `name` advertised on Agent in a DEFAULT session?": agentProps.length === 0 ? "(no Agent schema captured)" : agentProps.includes("name"),
+        "Agent input_schema property names": agentProps,
+        // derived-shapes-p4 item (e) recorded these as declaration-absent; this is the RUNTIME half
+        // of that same finding (does the default session advertise them to the model at all?).
+        "SendMessage advertised?": captured?.names.includes("SendMessage") ?? "(unknown)",
+        "ListAgents advertised?": captured?.names.includes("ListAgents") ?? "(unknown)",
+        "ToolSearch advertised?": captured?.names.includes("ToolSearch") ?? "(unknown)",
+        "WaitForMcpServers advertised?": captured?.names.includes("WaitForMcpServers") ?? "(unknown)",
+        "MCP bridge tools advertised?": (captured?.names ?? []).filter((n) => n.startsWith("ListMcpResources") || n.startsWith("ReadMcpResource") || n === "RefreshMcpTools"),
+      },
+      null,
+      2,
+    ));
+  } finally {
+    server?.stop(true);
+    for (const cleanup of cleanups) cleanup();
+  }
+}
+
+// --- Scenario E (Phase 4 Task 8, rider 8): MAX_MCP_OUTPUT_TOKENS default + truncation ------------
+//
+// WS-09 §12 Open Question 1, verbatim: "The pinned report has no entry for it; the value here
+// (default 25000) comes from public env-var documentation. The drift gate MUST capture the exact
+// 0.3.250-runtime default and truncation behavior before the §7 fixture is trusted."
+//
+// The observable: an in-process SDK MCP server tool returns a deliberately enormous text payload;
+// whatever the runtime actually puts into the NEXT request's `messages` (as that call's
+// tool_result) is what survived the cap. Printed as LENGTHS and a head/tail sample of any marker
+// text the runtime inserted -- never the payload itself, which is this script's own synthetic
+// filler. Run TWICE: once with no env override (the default), once with MAX_MCP_OUTPUT_TOKENS=100
+// (does the knob bind at all, and does the marker change?).
+async function runMcpOutputCapCapture(officialSdk: OfficialSdk, maxOutputTokens: string | undefined): Promise<void> {
+  const label = maxOutputTokens === undefined ? "default" : `MAX_MCP_OUTPUT_TOKENS=${maxOutputTokens}`;
+  const cleanups: Array<() => void> = [];
+  let server: ReturnType<typeof Bun.serve> | undefined;
+  try {
+    const claudeConfigDir = mkdtempSync(join(tmpdir(), "winter-official-capture-config-e-"));
+    cleanups.push(() => rmSync(claudeConfigDir, { recursive: true, force: true }));
+    const homeDir = mkdtempSync(join(tmpdir(), "winter-official-capture-home-e-"));
+    cleanups.push(() => rmSync(homeDir, { recursive: true, force: true }));
+    const fixtureCwd = mkdtempSync(join(tmpdir(), "winter-official-capture-cwd-e-"));
+    cleanups.push(() => rmSync(fixtureCwd, { recursive: true, force: true }));
+
+    // ~400k characters of synthetic filler -- far past any plausible token cap, and entirely this
+    // script's own content (never upstream prose).
+    const HUGE = "winterfiller ".repeat(30_000);
+    const sdkAny = officialSdk as unknown as {
+      createSdkMcpServer?: (opts: Record<string, unknown>) => unknown;
+      tool?: (name: string, description: string, schema: unknown, handler: (args: unknown) => Promise<unknown>) => unknown;
+    };
+    if (typeof sdkAny.createSdkMcpServer !== "function" || typeof sdkAny.tool !== "function") {
+      console.log(`\n--- Scenario E (${label}): SKIPPED -- the installed package does not export createSdkMcpServer/tool ---`);
+      return;
+    }
+    const bigTool = sdkAny.tool("bigoutput", "returns a very large payload", { type: "object", properties: {} }, async () => ({
+      content: [{ type: "text", text: HUGE }],
+    }));
+    const mcpServer = sdkAny.createSdkMcpServer({ name: "capfixture", version: "1.0.0", tools: [bigTool] });
+
+    let toolResultTexts: string[] = [];
+    let requestCount = 0;
+    server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      async fetch(req) {
+        requestCount++;
+        let body: unknown;
+        try {
+          body = await req.json();
+        } catch {
+          return new Response(JSON.stringify(CANNED_TEXT_RESPONSE), { status: 200, headers: { "content-type": "application/json" } });
+        }
+        // Harvest every tool_result text the runtime has put into the conversation so far.
+        const messages = (body as { messages?: unknown[] }).messages ?? [];
+        for (const m of messages) {
+          const content = (m as { content?: unknown }).content;
+          if (!Array.isArray(content)) continue;
+          for (const block of content) {
+            if ((block as { type?: string }).type !== "tool_result") continue;
+            const c = (block as { content?: unknown }).content;
+            const text = typeof c === "string" ? c : Array.isArray(c) ? c.map((b) => String((b as { text?: unknown }).text ?? "")).join("") : "";
+            if (text.length > 0) toolResultTexts.push(text);
+          }
+        }
+        if (requestAlreadySawToolResult(body)) {
+          return new Response(JSON.stringify(CANNED_TEXT_AFTER_TOOL_RESPONSE), { status: 200, headers: { "content-type": "application/json" } });
+        }
+        return new Response(
+          JSON.stringify({
+            id: "msg_capture_mcp_01",
+            type: "message",
+            role: "assistant",
+            model: "claude-sonnet-4-5-20250929",
+            content: [{ type: "tool_use", id: "toolu_capture_mcp_01", name: "mcp__capfixture__bigoutput", input: {} }],
+            stop_reason: "tool_use",
+            stop_sequence: null,
+            usage: { input_tokens: 10, output_tokens: 5 },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      },
+    });
+    console.error(`\n=== Scenario E (${label}): MAX_MCP_OUTPUT_TOKENS default + truncation (WS-09 §12 OQ1) ===`);
+    console.error(`[capture E/${label}] loopback ${server.url.href}; payload sent by the fixture server: ${HUGE.length} chars`);
+
+    let thrown: unknown;
+    try {
+      const q = officialSdk.query({
+        prompt: "call the big tool",
+        options: {
+          model: "sonnet",
+          cwd: fixtureCwd,
+          settingSources: [],
+          allowedTools: ["mcp__capfixture__bigoutput"],
+          permissionMode: "bypassPermissions",
+          mcpServers: { capfixture: mcpServer },
+          env: {
+            ANTHROPIC_BASE_URL: server.url.href.replace(/\/$/, ""),
+            ANTHROPIC_API_KEY: "test",
+            CLAUDE_CONFIG_DIR: claudeConfigDir,
+            HOME: homeDir,
+            ...(maxOutputTokens !== undefined ? { MAX_MCP_OUTPUT_TOKENS: maxOutputTokens } : {}),
+          },
+        },
+      });
+      for await (const _msg of q) {
+        /* drained */
+      }
+    } catch (e) {
+      thrown = e;
+    }
+    if (thrown) console.error(`[capture E/${label}] query() threw: ${thrown instanceof Error ? (thrown.stack ?? thrown.message) : String(thrown)}`);
+
+    const longest = toolResultTexts.reduce((a, b) => (b.length > a.length ? b : a), "");
+    console.log(`\n--- Scenario E (${label}) ---`);
+    console.log(
+      JSON.stringify(
+        {
+          "payload chars the fixture server returned": HUGE.length,
+          "tool_result blocks observed": toolResultTexts.length,
+          "longest tool_result chars the runtime forwarded": longest.length,
+          truncated: longest.length > 0 && longest.length < HUGE.length,
+          // The MARKER is the load-bearing half of WS-09 §7 ("Winter marks the truncation explicitly
+          // in the result the model sees"). Printed as the head+tail of the surviving text with the
+          // synthetic filler collapsed, so any marker sentence the official runtime inserted is
+          // visible without reprinting 25k characters of this script's own filler.
+          "head (first 300 chars)": longest.slice(0, 300),
+          "tail (last 300 chars)": longest.slice(-300),
+        },
+        null,
+        2,
+      ),
+    );
+  } finally {
+    server?.stop(true);
+    for (const cleanup of cleanups) cleanup();
+  }
+}
+
 async function runCapture(): Promise<void> {
   const cleanups: Array<() => void> = [];
   try {
@@ -435,6 +710,10 @@ async function runCapture(): Promise<void> {
     await runPlainQueryCapture(officialSdk);
     await runPermissionsAndHooksCapture(officialSdk);
     await runInitToolsCapture(officialSdk);
+    // Phase 4 Task 8 (rider 8): the P4 capture-pending cells.
+    await runAdvertisedSchemaCapture(officialSdk);
+    await runMcpOutputCapCapture(officialSdk, undefined);
+    await runMcpOutputCapCapture(officialSdk, "100");
   } finally {
     for (const cleanup of cleanups) cleanup();
   }
