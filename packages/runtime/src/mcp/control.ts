@@ -12,6 +12,7 @@ import type { McpServerConfigForProcessTransport } from "@yanlinglabs/winter-age
 import type { McpControlSeam, McpSetServersResult } from "./control-seam.ts";
 import type { McpLifecycleInternals, McpConfigSourceOrigin } from "./lifecycle.ts";
 import { validateServerConfig } from "./lifecycle.ts";
+import { WINTER_SERVER_NAME } from "./winter-server.ts";
 
 // derived-shapes-p4.md item (b) (this lane's own shape authority): `setMcpServers`'s doc-asserted
 // scope is narrower than WS-09 §3's own blanket "replaces the configured set live" -- "the method's
@@ -53,6 +54,18 @@ export function createMcpControlSeam(internals: McpLifecycleInternals): McpContr
       // reported in `errors` and never partially applied.
       const validated = new Map<string, McpServerConfigForProcessTransport>();
       for (const [name, raw] of Object.entries(servers)) {
+        // Whole-branch review M1 (fix wave): the RESERVED-NAME check belongs HERE, ahead of any
+        // spawn or connect. `resolveMcpServerSources` (lifecycle.ts) refuses "winter" at STARTUP
+        // resolution, but `addAndConnect` bypasses that function entirely -- so a live
+        // `mcp_set_servers` naming "winter" used to spawn a real stdio child, assign `slot.client`,
+        // and only THEN hit `registerMcpServerTools`' own reserved-name throw (registry.ts), leaving
+        // a connected client in a `failed` slot with its child process reaped no earlier than
+        // `dispose()`. Reported as an ordinary per-entry error, matching every other rejection on
+        // this path: never partially applied, never a thrown seam.
+        if (name === WINTER_SERVER_NAME) {
+          errors[name] = `"${WINTER_SERVER_NAME}" is a reserved server identity (RULING P4-B, the standing Winter server) -- no source may configure a live MCP server under this name`;
+          continue;
+        }
         const result = validateServerConfig(raw);
         if (!result.ok) {
           errors[name] = result.reason;
