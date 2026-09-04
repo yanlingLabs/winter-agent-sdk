@@ -495,6 +495,11 @@ function buildMcpToolDescriptor(server: string, tool: McpToolDefinition, opts: {
   // WS-09 §6 verbatim: the literal `anthropic/` key, checked for an EXACT `=== true` (any other
   // value, or the key's absence, leaves `interaction` unset -- never a truthy-coercion).
   const requiresInteraction = tool._meta?.["anthropic/requiresUserInteraction"] === true;
+  // See the `alwaysLoad` field below for the full rationale. `undefined` (rather than `false`) when
+  // NEITHER source asserts it, so the field stays genuinely absent -- resolveDeferral only ever
+  // checks `=== true`, and an explicit `false` would be a claim the registration never made.
+  const perToolAlwaysLoad = tool._meta?.["anthropic/alwaysLoad"] === true;
+  const alwaysLoadResolved = perToolAlwaysLoad || opts.alwaysLoad === true ? true : opts.alwaysLoad;
   return {
     canonicalName,
     advertisedName: canonicalName,
@@ -520,7 +525,18 @@ function buildMcpToolDescriptor(server: string, tool: McpToolDefinition, opts: {
     // executors exist end to end. Do not remove this token here without that same T8 change.
     capabilityRequirements: ["winter.mcp"],
     disposition: "implement-now",
-    ...(opts.alwaysLoad !== undefined ? { alwaysLoad: opts.alwaysLoad } : {}),
+    // Phase 4 Task 8 (rider 13, RULING P4-G): per-TOOL `_meta["anthropic/alwaysLoad"]` is honored
+    // here, OR'd with the server-wide `opts.alwaysLoad`. Lane A's own report named this as a spine
+    // gap it could not work around: `opts.alwaysLoad` is server-wide only, so a real server marking
+    // DIFFERENT tools with different `_meta` values had no way to reach resolveDeferral's per-tool
+    // verdict (splitting one server's tools across multiple registerMcpServerTools calls would
+    // corrupt set-replace semantics). The pinned mechanism is exactly this shape --
+    // derived-shapes-p4 item (a): `createSdkMcpServer({alwaysLoad:true})` "applies via
+    // `_meta['anthropic/alwaysLoad']` on every tool the server registers; a per-tool
+    // `tool({alwaysLoad})` still works independently and is OR'd with the server-level flag." Same
+    // exact-`=== true` discipline as `requiresUserInteraction` above: any other value, or absence,
+    // contributes nothing (never a truthy coercion).
+    ...(alwaysLoadResolved !== undefined ? { alwaysLoad: alwaysLoadResolved } : {}),
     deferred: opts.deferredDefault,
     ...(tool._meta !== undefined ? { _meta: tool._meta } : {}),
     ...(requiresInteraction ? { interaction: "required" as const } : {}),

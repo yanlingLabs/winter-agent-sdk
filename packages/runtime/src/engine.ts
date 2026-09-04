@@ -28,6 +28,13 @@ import type { McpControlSeam } from "./mcp/control-seam.ts";
 // Phase 4 Task 2/3 (WS-09 §2/§7/§8.1): the unbranded MCP/Tool-Search env controls, parsed once per
 // run (mirrors how every other env-derived value in this file is resolved exactly once at startup).
 import { parseMcpEnvConfig } from "./mcp/env.ts";
+// Phase 4 Task 8 (rider 11): Lane A's real MCP client/lifecycle/control stack, wired into a live
+// session for the first time. Lane A shipped all of it as a self-contained subsystem with the exact
+// integration recipe in its own report, and could not perform the integration itself: the
+// elicitation sender it needs is `bridge`, which is a closure-local value inside THIS function --
+// there is no seam exposing it outward, so main.ts structurally cannot construct one.
+import { createMcpLifecycle, resolveMcpServerSources, registerSessionMcpLifecycle, type McpLifecycle, type McpServerSource } from "./mcp/lifecycle.ts";
+import { createElicitationAsker } from "./mcp/elicitation.ts";
 // Phase 4 Task 3 (MUST 5/8): the child-spawn seam + host-stream correlation transform, and the
 // messaging router seam's own engine-side hook (children() from the live child roster).
 import { getChildEngineFactory, transformChildFrame, type ChildHandle, type ChildInheritance, type SpawnChildRequest } from "./subagents/child-handle.ts";
@@ -1125,7 +1132,16 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
       for (const [serverName, serverCfg] of Object.entries(config.mcpServers)) {
         if (serverCfg.type !== "sdk" || !serverCfg.tools || serverCfg.tools.length === 0) continue;
         const toolDefs: McpToolDefinition[] = serverCfg.tools;
-        registerMcpServerTools(serverName, toolDefs, { deferredDefault: false });
+        // Phase 4 Task 8 (rider 12, RULING P4-G "custom SDK-server tools are deferred by default when
+        // activation is on"): `deferredDefault` flips false -> true, aligning this sdk-wire path with
+        // Lane A's own transport-connected registrations (which always used `true`) and closing the
+        // asymmetry that lane disclosed as "a real, disclosed asymmetry with T3's own sdk-path choice
+        // that nothing in this phase reconciles". A per-tool `_meta["anthropic/alwaysLoad"]` still
+        // forces eager (registry.ts's buildMcpToolDescriptor, rider 13), and with Tool Search
+        // INACTIVE resolveDeferral collapses `deferred: true` to "eager" anyway -- so a default
+        // session's advertised set is byte-identical either way; this only becomes observable once
+        // activation is genuinely on, which is exactly when WS-09 §8 says these tools should defer.
+        registerMcpServerTools(serverName, toolDefs, { deferredDefault: true });
         sdkMcpServerNames.push(serverName);
         const perServerTimeoutMs = serverCfg.timeout;
         for (const tool of toolDefs) {
@@ -1156,6 +1172,68 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
       throw err;
     }
   }
+
+  // --- Phase 4 Task 8 (rider 11): the REAL MCP lifecycle, for a live session ----------------------
+  //
+  // Lane A's own OWED item #1, verbatim: "runEngine (or a wrapper one layer up) constructing
+  // createMcpLifecycle({ servers: resolveMcpServerSources([...]).resolved, envConfig:
+  // parseMcpEnvConfig(env), elicitationAsk: createElicitationAsker(bridge), ... }) and calling
+  // .start() before the first turn, then threading .stateSource/.controlSeam into the SAME
+  // EngineOptions object." It lands HERE rather than in main.ts for the structural reason that
+  // report named: `bridge` is a closure-local inside this function, and `ElicitationSender` is
+  // deliberately the narrow structural type `{request(...)}` precisely so `bridge` satisfies it with
+  // zero adaptation from inside this closure. main.ts could never build one.
+  //
+  // SOURCE SCOPE (RULING P4-F): Options-level `mcpServers` only -- the `.winter/mcp.json`,
+  // settings-declared, and plugin-contributed loaders are WS-11/Phase 5's, and no loader for any of
+  // them exists anywhere in this codebase (Lane A verified this by search before building
+  // `resolveMcpServerSources` as a pure function over already-supplied sources). Phase 4 ships the
+  // precedence/duplicate-name/strictMcpConfig/trust-gate machinery over whatever inputs it is given;
+  // this call supplies the one input that exists.
+  //
+  // PRECEDENCE over the EngineOptions fields: a CALLER-SUPPLIED `mcpServerStateSource`/
+  // `mcpControlSeam` always wins. Those are how T3's own contract tests inject fakes, and how a
+  // future host that owns its own MCP stack (a daemon managing connections across sessions) hands
+  // one in. The engine only builds its own when the caller supplied none AND this session actually
+  // declares servers -- so a session with no MCP config is byte-identical to before this wiring
+  // (no lifecycle object, `mcp_servers` still absent from both init frames, no golden churn).
+  //
+  // `trustedWorkspace` is the SAME constant the permission evaluator and hook registry already share
+  // (declared once, far above) -- WS-09 §1.2's project-trust gate can never disagree with WS-07
+  // §3.2's, because there is exactly one value.
+  let mcpLifecycle: McpLifecycle | undefined;
+  let disposeSessionMcpLifecycle: (() => void) | undefined;
+  if (mcpServerStateSource === undefined && config.mcpServers !== undefined && Object.keys(config.mcpServers).length > 0) {
+    const sources: McpServerSource[] = [{ origin: "explicit", servers: config.mcpServers }];
+    const resolvedSources = resolveMcpServerSources(sources, {
+      ...(config.strictMcpConfig !== undefined ? { strictMcpConfig: config.strictMcpConfig } : {}),
+      trustedWorkspace,
+    });
+    // `rejected`/`shadowed` are deliberately NOT surfaced on the wire: no frame shape exists for
+    // "this server declaration lost" (WS-09 §1.2's "the losing declaration is reported" needs a
+    // reporting channel Phase 4 does not have), and with a single explicit source `shadowed` is
+    // empty by construction. A rejected entry simply never becomes a slot -- it is absent from
+    // `mcp_servers`, which is itself an observable signal. Recorded as a P5 carry.
+    mcpLifecycle = createMcpLifecycle({
+      servers: resolvedSources.resolved,
+      envConfig: mcpEnvConfig,
+      elicitationAsk: createElicitationAsker(bridge),
+    });
+    // WS-09 §2's three-deadline model lives entirely inside `start()`: an ordinary server connects
+    // in the background and this returns immediately; `MCP_CONNECTION_NONBLOCKING=0` or an
+    // `alwaysLoad` server makes it wait, bounded by MCP_CONNECT_TIMEOUT_MS. Awaited BEFORE the init
+    // frame is written so `mcp_servers` reflects the batch snapshot the spec describes.
+    await mcpLifecycle.start();
+    // The four WS-09 §1.4 bridge tools resolve their lifecycle out of this session-keyed registry
+    // (see mcp/lifecycle.ts's own header for why it is session-keyed rather than a module singleton
+    // or a per-run replaceExecutor). Cleared in teardown, below.
+    disposeSessionMcpLifecycle = registerSessionMcpLifecycle(config.sessionId, mcpLifecycle);
+  }
+  // From here on, ONE resolved pair for the whole run -- the pump's own MCP control dispatch and the
+  // init frames both read these, never `opts.*` directly, so caller-supplied and engine-built are
+  // indistinguishable downstream.
+  const effectiveMcpStateSource: McpServerStateSource | undefined = mcpServerStateSource ?? mcpLifecycle?.stateSource;
+  const effectiveMcpControlSeam: McpControlSeam | undefined = mcpControlSeam ?? mcpLifecycle?.controlSeam;
 
   // `init` MUST be the first runtime→host frame (WS-04 §4.1 `initializing`), from resolved runtime
   // state. T8 (WS-06 §6 obligation 1): the advertised tool list is no longer hardcoded empty --
@@ -1321,7 +1399,7 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
     ...(config.disallowedTools !== undefined ? { disallowedTools: config.disallowedTools } : {}),
     ...(config.insideSubagent !== undefined ? { insideSubagent: config.insideSubagent } : {}),
     ...(config.familyMetadata !== undefined ? { familyMetadata: config.familyMetadata } : {}),
-    ...(mcpServerStateSource !== undefined ? { stateSource: mcpServerStateSource } : {}),
+    ...(effectiveMcpStateSource !== undefined ? { stateSource: effectiveMcpStateSource } : {}),
   });
 
   const loadedNames = new Set(loadedToolSet.snapshot());
@@ -1341,7 +1419,7 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // scenario proving whatever Lane A/Lane C eventually decide here (a synthesized permanent
   // "connected" entry, or a deliberate documented absence) is owed once that injection point exists
   // -- not this task's to add speculatively ahead of the design decision.
-  const mcpServersWire = mcpServerStateSource ? mcpServerStatesToWire(mcpServerStateSource.snapshot()) : undefined;
+  const mcpServersWire = effectiveMcpStateSource ? mcpServerStatesToWire(effectiveMcpStateSource.snapshot()) : undefined;
   output.write({
     type: "init",
     protocolVersion: PROTOCOL_VERSION,
@@ -1513,7 +1591,7 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
           // subtypes -- thin dispatch over rpc/mcp-control.ts's own pure handlers, mirroring
           // set_permission_mode's own "validate/delegate/respond" shape immediately above.
           if (cf.subtype === "mcp_status" || cf.subtype === "mcp_reconnect" || cf.subtype === "mcp_toggle" || cf.subtype === "mcp_set_servers") {
-            const mcpDeps = { ...(mcpServerStateSource !== undefined ? { stateSource: mcpServerStateSource } : {}), ...(mcpControlSeam !== undefined ? { controlSeam: mcpControlSeam } : {}) };
+            const mcpDeps = { ...(effectiveMcpStateSource !== undefined ? { stateSource: effectiveMcpStateSource } : {}), ...(effectiveMcpControlSeam !== undefined ? { controlSeam: effectiveMcpControlSeam } : {}) };
             const result =
               cf.subtype === "mcp_status"
                 ? await handleMcpStatus(mcpDeps)
@@ -2326,6 +2404,12 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   for (const serverName of sdkMcpServerNames) {
     unregisterMcpServerTools(serverName);
   }
+  // Phase 4 Task 8 (rider 11): tear down THIS run's own MCP lifecycle -- closes every live client
+  // (process-group-killing a stdio child, per RULING P4-H) and unregisters every tool it registered
+  // into the process-wide registry singleton. Only ever set when this run BUILT the lifecycle; a
+  // caller-supplied state source/control seam is the caller's own to dispose.
+  disposeSessionMcpLifecycle?.();
+  if (mcpLifecycle) await mcpLifecycle.dispose().catch(() => {});
   // Phase 4 Task 8 (rider 2): drop this run's ToolSearch session runtime -- same singleton-hygiene
   // argument as the MCP unregistration immediately above (one leaked entry per run otherwise).
   unregisterToolSearchSessionRuntime(config.sessionId);

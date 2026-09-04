@@ -10,6 +10,7 @@
 // list-mcp-resources-tool.ts's own header for the full rationale).
 import "../descriptors/refresh-mcp-tools.ts";
 import { replaceExecutor, type ToolExecutionContext, type ToolExecutor, type ToolResultPayload } from "../registry.ts";
+import { getSessionMcpLifecycle } from "../../mcp/lifecycle.ts";
 import type { McpLifecycle } from "../../mcp/lifecycle.ts";
 import type { McpLifecycleResolver } from "./list-mcp-resources-tool.ts";
 
@@ -63,6 +64,10 @@ export function createRefreshMcpToolsExecutor(deps: RefreshMcpToolsDeps): ToolEx
 replaceExecutor(
   REFRESH_MCP_TOOLS_NAME,
   createRefreshMcpToolsExecutor({
-    resolveLifecycle: () => undefined,
+    // Phase 4 Task 8 (rider 11): no longer an inert `() => undefined` -- resolves THIS call's own
+    // session lifecycle from mcp/lifecycle.ts's session-keyed registry, which a live runEngine
+    // populates (and clears at teardown). A session with no MCP servers configured registers none, so
+    // the tool still answers its own typed "no MCP lifecycle" error rather than throwing.
+    resolveLifecycle: (ctx) => getSessionMcpLifecycle(ctx.sessionId),
   }),
 );

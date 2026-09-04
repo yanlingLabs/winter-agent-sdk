@@ -18,6 +18,7 @@
 // nothing to key off of yet), but the shape is ready for that without a future signature change.
 import "../descriptors/list-mcp-resources-tool.ts"; // self-sufficiency: guarantees the stub is registered before replaceExecutor runs below.
 import { replaceExecutor, type ToolExecutionContext, type ToolExecutor, type ToolResultPayload } from "../registry.ts";
+import { getSessionMcpLifecycle } from "../../mcp/lifecycle.ts";
 import type { McpLifecycle } from "../../mcp/lifecycle.ts";
 
 export const LIST_MCP_RESOURCES_TOOL_NAME = "ListMcpResourcesTool";
@@ -81,6 +82,10 @@ export function createListMcpResourcesExecutor(deps: ListMcpResourcesDeps): Tool
 replaceExecutor(
   LIST_MCP_RESOURCES_TOOL_NAME,
   createListMcpResourcesExecutor({
-    resolveLifecycle: () => undefined,
+    // Phase 4 Task 8 (rider 11): no longer an inert `() => undefined` -- resolves THIS call's own
+    // session lifecycle from mcp/lifecycle.ts's session-keyed registry, which a live runEngine
+    // populates (and clears at teardown). A session with no MCP servers configured registers none, so
+    // the tool still answers its own typed "no MCP lifecycle" error rather than throwing.
+    resolveLifecycle: (ctx) => getSessionMcpLifecycle(ctx.sessionId),
   }),
 );

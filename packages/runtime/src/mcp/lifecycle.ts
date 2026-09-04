@@ -442,6 +442,29 @@ export interface McpLifecycle {
   refreshServerTools(server: string): Promise<RefreshServerToolsResult>;
 }
 
+// --- Phase 4 Task 8 (rider 11): the per-session lifecycle registry -------------------------------
+//
+// The four WS-09 §1.4 bridge tools reach their lifecycle through an `McpLifecycleResolver`
+// (`(ctx: ToolExecutionContext) => McpLifecycle | undefined`, tools/impl/list-mcp-resources-tool.ts)
+// and each installs an INERT default at module load. This is what a live run registers into so that
+// default becomes real -- keyed by SESSION id, deliberately, and not (a) a module singleton, because
+// a host process runs many concurrent sessions and each owns its own connections, nor (b) a per-run
+// `replaceExecutor`, which would mutate the process-wide tool registry once per run and leave the
+// LAST run's closure installed for every later one. Mirrors toolsearch/search.ts's own
+// session-keyed runtime registry exactly, for the same reason it exists there.
+const sessionLifecycles = new Map<string, McpLifecycle>();
+
+export function registerSessionMcpLifecycle(sessionId: string, lifecycle: McpLifecycle): () => void {
+  sessionLifecycles.set(sessionId, lifecycle);
+  return () => {
+    if (sessionLifecycles.get(sessionId) === lifecycle) sessionLifecycles.delete(sessionId);
+  };
+}
+
+export function getSessionMcpLifecycle(sessionId: string): McpLifecycle | undefined {
+  return sessionLifecycles.get(sessionId);
+}
+
 export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
   const { slots, stateSource, setSlotState } = createStateBoard();
   const discoveryCache = deps.discoveryCache ?? createInMemoryDiscoveryCache();

@@ -1245,3 +1245,60 @@ describe("canonical mcp__winter__* alias targets (Phase 4 Task 8, rider 15)", ()
     }
   });
 });
+
+// ================================================================================================
+// Phase 4 Task 8 (riders 13/16): per-tool _meta alwaysLoad, and same-batch duplicate handling.
+// ================================================================================================
+describe("registerMcpServerTools: per-tool _meta alwaysLoad + same-batch dedupe (Phase 4 Task 8)", () => {
+  const SRV = "t8metasrv";
+  afterEach(() => unregisterMcpServerTools(SRV));
+
+  // Rider 13 / RULING P4-G: Lane A's own reported spine gap -- `opts.alwaysLoad` is server-WIDE, so
+  // a server marking different tools with different `_meta["anthropic/alwaysLoad"]` values had no
+  // way to reach resolveDeferral's per-tool verdict at all.
+  test("a per-tool _meta['anthropic/alwaysLoad'] forces THAT tool eager while its siblings stay deferrable", () => {
+    registerMcpServerTools(
+      SRV,
+      [
+        { name: "pinned", inputSchema: { type: "object" }, _meta: { "anthropic/alwaysLoad": true } },
+        { name: "ordinary", inputSchema: { type: "object" } },
+      ],
+      { deferredDefault: true },
+    );
+    const activation: DeferralActivation = { enableToolSearch: "true", providerSupportsToolSearch: true, deferrableContextShare: 0 };
+    expect(getRegisteredTool(`mcp__${SRV}__pinned`)!.descriptor.alwaysLoad).toBe(true);
+    expect(resolveDeferral(getRegisteredTool(`mcp__${SRV}__pinned`)!.descriptor, "default", activation)).toBe("eager");
+    // The sibling in the SAME batch is unaffected -- which is the whole point (one call, two verdicts).
+    expect(getRegisteredTool(`mcp__${SRV}__ordinary`)!.descriptor.alwaysLoad).toBeUndefined();
+    expect(resolveDeferral(getRegisteredTool(`mcp__${SRV}__ordinary`)!.descriptor, "default", activation)).toBe("deferred");
+  });
+
+  test("the server-wide opts.alwaysLoad is OR'd with the per-tool flag, and neither asserts a false", () => {
+    registerMcpServerTools(SRV, [{ name: "a", inputSchema: { type: "object" } }], { alwaysLoad: true, deferredDefault: true });
+    expect(getRegisteredTool(`mcp__${SRV}__a`)!.descriptor.alwaysLoad).toBe(true);
+    unregisterMcpServerTools(SRV);
+    // A non-`true` _meta value is NOT truthy-coerced (same discipline as requiresUserInteraction).
+    registerMcpServerTools(SRV, [{ name: "a", inputSchema: { type: "object" }, _meta: { "anthropic/alwaysLoad": "yes" } }], { deferredDefault: true });
+    expect(getRegisteredTool(`mcp__${SRV}__a`)!.descriptor.alwaysLoad).toBeUndefined();
+  });
+
+  // Rider 16 ("same-batch dedupe already required of Lane A's registration path -- verify"): a
+  // server that reports the SAME tool name twice in one tools/list response must not produce two
+  // registry entries or a half-applied batch. Lane A's client.ts dedupes at the protocol layer
+  // (keeping the first occurrence, warning); this pins the REGISTRY's own behaviour independently,
+  // so the guarantee does not rest solely on the client having filtered first.
+  test("rider 16: a duplicate name inside ONE batch registers exactly one entry and never throws", () => {
+    registerMcpServerTools(
+      SRV,
+      [
+        { name: "dup", inputSchema: { type: "object" }, description: "first" },
+        { name: "dup", inputSchema: { type: "object" }, description: "second" },
+      ],
+      { deferredDefault: true },
+    );
+    expect(listRegisteredTools().filter((t) => t.descriptor.canonicalName === `mcp__${SRV}__dup`).length).toBe(1);
+    // Unregistering the server removes it completely -- no orphan left behind by the duplicate.
+    unregisterMcpServerTools(SRV);
+    expect(getRegisteredTool(`mcp__${SRV}__dup`)).toBeUndefined();
+  });
+});

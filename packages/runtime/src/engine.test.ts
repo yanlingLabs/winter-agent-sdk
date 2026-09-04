@@ -20,6 +20,9 @@ import { getRegisteredTool, registerMcpServerTools, unregisterMcpServerTools, re
 import { ADVISOR_TOOL_NAME } from "./tools/impl/advisor.ts";
 import "./tools/impl/index.ts"; // guarantees advisor.ts's own module-load default is registered before the M6 tests below run
 import { echoProvider, scriptedProvider, stubExecutor } from "./provider/mock.ts";
+// Phase 4 Task 8 (rider 11): Lane A's own loopback MCP fixture server, reused here to prove the
+// elicitation bridge end to end through a live runEngine rather than only at the unit level.
+import { withHttpFixture } from "./mcp/test-fixtures.ts";
 import { inMemoryProcess } from "./testing.ts";
 import { WinterPermissionError } from "./permissions/policy-state.ts";
 // Fix round 1, MAJOR item 1: createFakeChildHandle is exported from the seam-authority file (its
@@ -3522,4 +3525,128 @@ describe("Phase 4 Task 8: init.tools reflects derived capabilities, the activati
       unregisterToolForTest(srcName);
     }
   });
+});
+
+// ================================================================================================
+// Phase 4 Task 8 (rider 11): the REAL MCP lifecycle, wired into a live session.
+// ================================================================================================
+describe("Phase 4 Task 8 (rider 11): live MCP lifecycle wiring", () => {
+  test("an sdk-configured server appears in system/init.mcp_servers as connected (RULING P4-C, state-only feed)", async () => {
+    const { host, runtime } = createInMemoryChannel();
+    const config = baseConfig({
+      sessionId: "t8-mcp-init",
+      mcpServers: { probe: { type: "sdk", name: "probe", tools: [{ name: "echo", inputSchema: { type: "object" } }] } },
+    });
+    const done = runEngine({ config, input: runtime.input, output: runtime.output, provider: echoProvider });
+    host.output.write({ type: "user", text: "hi" });
+    host.output.write({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined });
+    const frames = await drain(host.input);
+    await done;
+    const init = frames.find((f) => f.type === "init") as { mcp_servers?: Array<{ name: string; status: string }> } | undefined;
+    expect(init?.mcp_servers).toEqual([{ name: "probe", status: "connected" }]);
+    // BOTH init shapes carry it -- one computation, two wire shapes (the same invariant
+    // conformance.test.ts pins for `tools`).
+    const sysInit = dataMessages(frames).find((m) => m.type === "system") as { mcp_servers?: unknown } | undefined;
+    expect(sysInit?.mcp_servers).toEqual(init!.mcp_servers);
+  });
+
+  test("a session with NO mcpServers builds no lifecycle at all -- mcp_servers stays absent from both init frames", async () => {
+    const { host, runtime } = createInMemoryChannel();
+    const done = runEngine({ config: baseConfig({ sessionId: "t8-mcp-none" }), input: runtime.input, output: runtime.output, provider: echoProvider });
+    host.output.write({ type: "user", text: "hi" });
+    host.output.write({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined });
+    const frames = await drain(host.input);
+    await done;
+    const init = frames.find((f) => f.type === "init") as Record<string, unknown>;
+    expect("mcp_servers" in init).toBe(false); // conditional presence, never an unconditional []
+  });
+
+  test("a CALLER-SUPPLIED mcpServerStateSource still wins over the engine-built lifecycle", async () => {
+    const { host, runtime } = createInMemoryChannel();
+    const config = baseConfig({
+      sessionId: "t8-mcp-precedence",
+      mcpServers: { probe: { type: "sdk", name: "probe", tools: [{ name: "echo", inputSchema: { type: "object" } }] } },
+    });
+    const done = runEngine({
+      config,
+      input: runtime.input,
+      output: runtime.output,
+      provider: echoProvider,
+      mcpServerStateSource: { snapshot: () => [{ name: "injected", state: "failed" }], waitForPending: async () => {} },
+    });
+    host.output.write({ type: "user", text: "hi" });
+    host.output.write({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined });
+    const frames = await drain(host.input);
+    await done;
+    const init = frames.find((f) => f.type === "init") as { mcp_servers?: Array<{ name: string }> };
+    expect(init.mcp_servers).toEqual([{ name: "injected", status: "failed" }]);
+  });
+
+  // The end-to-end proof that WS-09 §5's elicitation bridge is genuinely wired to THIS run's own
+  // RpcBridge -- the one piece of rider 11 no unit test could cover, because `bridge` is a
+  // closure-local inside runEngine with no seam exposing it (which is precisely why Lane A could not
+  // perform this integration itself). A REAL http MCP server's tool handler calls
+  // `server.elicitInput(...)` mid-call; the host observes a real `mcp_elicitation` control_request
+  // on the wire and answers it; the server's own tool result reflects the answer.
+  test("a real MCP server's mid-call elicitation reaches the host as an mcp_elicitation control_request, and the answer flows back", async () => {
+    await withHttpFixture(
+      {
+        tools: [
+          {
+            name: "ask",
+            inputSchema: { type: "object", properties: {} },
+            handler: async (_args, server) => {
+              const answered = await server.elicitInput({
+                message: "what is your name?",
+                requestedSchema: { type: "object", properties: { name: { type: "string" } } },
+              });
+              return { content: [{ type: "text", text: `elicited:${answered.action}:${String((answered.content as Record<string, unknown> | undefined)?.name)}` }] };
+            },
+          },
+        ],
+      },
+      async (url) => {
+        const { host, runtime } = createInMemoryChannel();
+        const provider = scriptedProvider([
+          { kind: "tool_use", calls: [{ id: "c1", name: "mcp__elic__ask", input: {} }] },
+          { kind: "text", text: "done" },
+        ]);
+        const config = baseConfig({
+          sessionId: "t8-mcp-elicitation",
+          permissionMode: "bypassPermissions",
+          allowDangerouslySkipPermissions: true,
+          mcpServers: { elic: { type: "http", url: url.href } },
+        });
+        // MCP_CONNECTION_NONBLOCKING=0 (WS-09 §2): startup WAITS for the connection batch, so the
+        // server's tools are registered before the first turn's tool call is dispatched. Without it
+        // the nonblocking default returns from start() immediately and this scenario races a
+        // background connect -- a real, spec'd behaviour (and precisely why WS-09 §2's `-p`
+        // first-turn wait and §8.2's 5 s pending-server wait exist), not a test artifact.
+        const done = runEngine({ config, input: runtime.input, output: runtime.output, provider, env: { MCP_CONNECTION_NONBLOCKING: "0" } });
+        host.output.write({ type: "user", text: "go" });
+
+        const seen: WinterFrame[] = [];
+        let elicitation: ControlRequestFrame | undefined;
+        for await (const f of host.input) {
+          seen.push(f);
+          if (f.type === "control_request" && (f as ControlRequestFrame).subtype === "mcp_elicitation") {
+            elicitation = f as ControlRequestFrame;
+            break;
+          }
+          // Fail FAST rather than hanging to the suite timeout if the elicitation never comes: the
+          // turn's terminal result means the round finished without one.
+          if (f.type === "data" && (f as { message: { type: string } }).message.type === "result") break;
+        }
+        expect(elicitation, "the engine must forward a server's elicitation to the host over the RpcBridge").toBeDefined();
+        expect(elicitation!.payload).toMatchObject({ serverName: "elic", message: "what is your name?" });
+        host.output.write({ type: "control_response", requestId: elicitation!.requestId, ok: true, payload: { action: "accept", content: { name: "winter" } } });
+        host.output.write({ type: "control_request", requestId: "end", subtype: "end_input", payload: undefined });
+        for await (const f of host.input) seen.push(f);
+        await done;
+
+        const toolResult = dataMessages(seen).find((m) => m.type === "user") as { message: { content: Array<{ content: string }> } } | undefined;
+        expect(toolResult?.message.content[0]?.content).toBe("elicited:accept:winter");
+      },
+    );
+  }, 20_000);
 });
