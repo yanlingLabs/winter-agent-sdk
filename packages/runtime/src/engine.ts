@@ -1019,6 +1019,13 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
           }
           const deps = factory({
             parentSessionId: config.sessionId,
+            // Handoff note (fix round 1, T3 review minor, item 4): proven at the engine level, on
+            // the in-memory/direct-runEngine harness only (engine.test.ts's own fix-round-1 spawn
+            // seam tests) -- no ChildEngineFactory is registered anywhere on the child/compiled
+            // transport legs yet (Lane C has not landed a real child-engine.ts), so this closure has
+            // never run through a real spawned/compiled process. A cross-transport equivalence
+            // scenario for the spawn seam (transport-equivalence.test.ts's own pattern) is owed by
+            // Lane A/Lane C once that real injection point exists.
             forwardChildFrame: (frame: WinterFrame, correlation: { parentToolUseId: string; agentId: string }): void => {
               const forwarded = transformChildFrame(frame, correlation, config.forwardSubagentText === true);
               if (forwarded !== null) output.write(forwarded);
@@ -1069,21 +1076,26 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // the next in-memory-leg run sharing this process's module-level registry singleton.
   const mcpEnvConfig = parseMcpEnvConfig(engineEnv ?? process.env);
   const sdkMcpServerNames: string[] = [];
-  // Robustness note (Phase 4 Task 3): this run's own teardown (below, right before `output.end()`)
-  // only executes on NORMAL completion of this function -- there is no top-level try/finally around
-  // the rest of runEngine's body. Without this try/catch, a registerMcpServerTools throw (e.g. a
-  // genuine, permanent canonical-name collision with a static WS-06 descriptor -- registry.ts's own
-  // "already registered by a non-live-MCP mechanism" guard, which stays reachable even after T2's
-  // own mid-batch-atomicity fix lands, per the controller's mid-task FYI on that bug) would abort
-  // runEngine before the teardown loop ever runs, permanently leaking any EARLIER server in this
-  // same config.mcpServers that had already registered successfully into the process-wide registry
-  // singleton (tools/registry.ts's own header) -- corrupting every subsequent in-memory-leg run
-  // sharing this process. This catch does NOT paper over T2's own bug (a) (a single
-  // registerMcpServerTools call's own internal partial-registration orphans, which have no owner
-  // recorded and so are not addressed by calling unregisterMcpServerTools on that same server name --
-  // left exactly as the controller's FYI describes, for T2's own fix round); it only guarantees that
-  // servers THIS loop had already fully registered (pushed to sdkMcpServerNames only AFTER their own
-  // registerMcpServerTools call returned) are cleaned up before the error propagates.
+  // Robustness note (Phase 4 Task 3, refreshed fix round 1 item 3): this run's own teardown (below,
+  // right before `output.end()`) only executes on NORMAL completion of this function -- there is no
+  // top-level try/finally around the rest of runEngine's body. Without this try/catch, a
+  // registerMcpServerTools throw (e.g. a genuine, permanent canonical-name collision with a static
+  // WS-06 descriptor -- registry.ts's own "already registered by a non-live-MCP mechanism" guard,
+  // which is a real, PERMANENT possibility a host can always trigger, not merely a transient bug)
+  // would abort runEngine before the teardown loop ever runs, permanently leaking any EARLIER server
+  // in this same config.mcpServers that had already registered successfully into the process-wide
+  // registry singleton (tools/registry.ts's own header) -- corrupting every subsequent in-memory-leg
+  // run sharing this process.
+  //
+  // T2's own fix round (bc601b0) landed VALIDATE-THEN-COMMIT atomicity inside registerMcpServerTools
+  // itself: a single call now either fully succeeds or leaves the registry byte-identical to its
+  // pre-call state -- there is no longer any "internal partial-registration orphan" scenario for
+  // this catch to worry about at all (that class of bug -- T2's own bug (a) -- no longer exists).
+  // What THIS try/catch still does, and is now the WHOLE of its job: when server N's own
+  // registerMcpServerTools call throws (atomically, per T2's fix -- server N itself leaves no
+  // trace), unregister whatever servers 1..N-1 in THIS SAME loop had already fully registered and
+  // been pushed to sdkMcpServerNames, before rethrowing -- a pure blast-radius reducer across
+  // MULTIPLE servers in one run, not a defense against any single call's own internal state.
   if (config.mcpServers) {
     try {
       for (const [serverName, serverCfg] of Object.entries(config.mcpServers)) {
@@ -1230,6 +1242,14 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // spelling: needsAuth -> 'needs-auth'). Conditionally present -- absent whenever no state source
   // is configured for this run (every session before Lane A's own real transports exist, and every
   // pre-existing test/golden), keeping every committed differential golden byte-identical.
+  //
+  // Handoff note (fix round 1, T3 review minor, item 4): an SDK MCP server registered via THIS run's
+  // own config.mcpServers (below) never produces an entry here -- mcpServerStateSource is a wholly
+  // separate mechanism this task's SDK-server wiring never touches, and no McpServerStateSource
+  // implementation for an in-process instance exists anywhere yet. A cross-transport equivalence
+  // scenario proving whatever Lane A/Lane C eventually decide here (a synthesized permanent
+  // "connected" entry, or a deliberate documented absence) is owed once that injection point exists
+  // -- not this task's to add speculatively ahead of the design decision.
   const mcpServersWire = mcpServerStateSource ? mcpServerStatesToWire(mcpServerStateSource.snapshot()) : undefined;
   output.write({
     type: "init",
