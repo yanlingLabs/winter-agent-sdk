@@ -77,11 +77,20 @@ export interface JSONSchema {
   [key: string]: unknown;
 }
 
-// report §54.
+// report §54; widened Phase 4 Task 2. WS-09 §4's own prose enumerates only three hints
+// (readOnlyHint/destructiveHint/openWorldHint), matching WS-06 §1.1's identical three-field comment
+// -- but the REAL MCP protocol `ToolAnnotations` type carries five (verified empirically against
+// @modelcontextprotocol/sdk@1.30.0's own `Client.listTools()` result shape: a registered tool's
+// listed `annotations` object includes `title`/`idempotentHint` alongside the three WS-09 §4 names).
+// WS-09 §4's own MUST ("preserved end-to-end") is taken literally over its truncated enumeration:
+// dropping a real connected server's `idempotentHint`/`title` here would silently violate
+// "end-to-end" the first time Lane A (Task 4) forwards one through registerMcpServerTools below.
 export interface ToolAnnotations {
   readOnlyHint?: boolean;
   destructiveHint?: boolean;
   openWorldHint?: boolean;
+  title?: string;
+  idempotentHint?: boolean;
 }
 
 // §1.4 table, verbatim set of classes. A descriptor pins exactly ONE -- two §2 rows document a dual
@@ -129,6 +138,38 @@ export interface ToolDescriptor {
   capabilityRequirements: string[];
   disposition: ToolDisposition;
   versionIntroduced?: string;
+  // --- Phase 4 Task 2 additions (WS-09 §8.5/§9 deferral policy + §4/§6 MCP passthrough) -----------
+  //
+  // `deferred` is the descriptor's DECLARED Tool-Search eligibility -- resolveDeferral (below) turns
+  // this + a session's mode/activation into the actual eager/deferred/hidden verdict. Deliberately
+  // separate from the pre-existing `exposure` field above (P3-era; still the ONLY thing
+  // buildAdvertisedSet's own isAvailable/hidden-filtering consults -- this task does not rewire that
+  // pipeline to read `deferred`; per the task-2 brief, engine/exposure wiring is Task 3's and Lane
+  // B's (toolsearch/exposure.ts) job). Absent/false = never eligible, byte-identical to every P3
+  // descriptor's existing behavior (none of them set this field). `readonly PermissionMode[]` =
+  // eligible ONLY in the listed modes (WS-09 §9: "deferred only in listed modes"); outside them,
+  // treated exactly like `false`.
+  deferred?: boolean | readonly PermissionMode[];
+  // WS-09 §1.1/§2: "alwaysLoad: true forces the server's complete tools eager (never deferred)".
+  // Unconditionally overrides `deferred` to "eager" in resolveDeferral. The connection-lifecycle
+  // half of this flag (forcing the nonblocking startup default to wait) is Lane A's own concern
+  // (mcp/env.ts's `connectionNonblocking` + the per-server config's own `alwaysLoad`, WS-09 §1.1)
+  // -- this is only the descriptor-level mirror resolveDeferral reads.
+  alwaysLoad?: boolean;
+  // WS-09 §4/§6: the RAW MCP `_meta` bag a connected server attached to this tool
+  // (registerMcpServerTools, below), preserved VERBATIM -- including any `anthropic/`-namespaced
+  // key, per WS-09 §6's own MUST ("preserved... verbatim including the anthropic/ key literal ...
+  // not a brandable name"). Kept alongside `interaction` (immediately below, DERIVED from this bag
+  // at registration time) so a consumer can still read back the exact original object for
+  // round-trip fixtures, or a future key this task does not itself interpret.
+  _meta?: Record<string, unknown>;
+  // WS-09 §6: set to the literal "required" ONLY when `_meta["anthropic/requiresUserInteraction"]
+  // === true` at registration time -- [WS-07]'s stage-3 mandatory-interaction gate is Task 3's own
+  // wiring; this field is the derived signal it will read. A single-literal union (not a boolean),
+  // matching this file's own `AvailabilityPredicate.insideSubagent` precedent immediately above
+  // ("a fixed literal ... so a descriptor can only ever assert this one direction") -- room for a
+  // future second forced-interaction reason without a breaking boolean-to-string migration.
+  interaction?: "required";
 }
 
 // --- Per-tool execution seams (task-1 brief's Interfaces block, verbatim) --------------------------
@@ -276,6 +317,173 @@ export function listRegisteredTools(): readonly RegisteredTool[] {
 // header for why: the registry is a shared, process-wide singleton under bun's test runner).
 export function unregisterToolForTest(canonicalName: string): void {
   registry.delete(canonicalName);
+}
+
+// --- Phase 4 Task 2: live MCP server registration (WS-09 §1.3/§2.1/§3/§4/§6) ----------------------
+//
+// `registerTool`/`replaceExecutor` above are P3's BOOTSTRAP primitives (one stub per WS-06 §2 name,
+// registered once at module load by descriptors/*.ts). The functions below are the LIVE mutation
+// surface a real, running session uses as MCP servers connect/reconnect/disconnect/refresh their
+// tool lists (WS-09 §2.1's seven-state model; report §57/§64: "the tool registry MUST support live
+// mutation... without a session restart"). They own a SEPARATE bookkeeping index (below) so a
+// same-server re-registration can be told apart from a name that pre-exists via some OTHER
+// mechanism entirely (a P3 static stub, most notably `mcp__winter__advisor` -- see winter-server.ts,
+// which deliberately builds a real MCP `McpServer` object instead of calling registerMcpServerTools,
+// specifically to avoid this exact collision).
+//
+// Set-replace, not per-tool upsert: EVERY call to registerMcpServerTools(server, tools, opts)
+// replaces server's ENTIRE owned name set with exactly `tools` -- a name this server owned before
+// but that is absent from the new `tools` list (a tool a server dropped after a reconnect, or that
+// RefreshMcpTools discovered was removed, WS-09 §1.4) is deleted, never left dangling.
+// registerMcpServerTools(server, [], opts) is therefore equivalent to
+// unregisterMcpServerTools(server) (both drop every name the server owned; a seam-contracts-p4.test.ts
+// case pins this).
+//
+// Preserve-executor-on-replace: a SAME-SERVER re-registration (e.g. RefreshMcpTools re-querying an
+// already-connected server whose tool DESCRIPTIONS changed) replaces ONLY the descriptor, preserving
+// whatever `executor`/`extractPaths` Lane A already installed via replaceExecutor -- mirroring
+// replaceExecutor's own `{...existing, executor, ...}` spread precedent. This has a real consequence
+// for Lane A's own executor design, spelled out again at seam-contracts-p4.test.ts's own header:
+// a per-tool executor must not close over stale per-connection state (e.g. a specific transport
+// client instance) that a reconnect would invalidate -- either keep a mutable slot the executor
+// reads through, or re-call replaceExecutor after every reconnect.
+export interface McpToolDefinition {
+  // The BARE tool name exactly as the connected server itself calls it (never pre-namespaced) --
+  // this function computes the canonical `mcp__<server>__<tool>` form itself (WS-09 §1.3).
+  name: string;
+  description?: string;
+  inputSchema: JSONSchema;
+  outputSchema?: JSONSchema;
+  annotations?: ToolAnnotations;
+  // WS-09 §6: the RAW MCP `_meta` bag exactly as the server sent it (e.g. a real `tools/list`
+  // response's per-tool `_meta` field) -- preserved verbatim onto the descriptor's own `_meta`, and
+  // used (read-only) to derive `interaction` below.
+  _meta?: Record<string, unknown>;
+}
+
+const mcpServerOwnedNames = new Map<string, Set<string>>(); // server -> canonical names it currently owns
+const mcpToolOwner = new Map<string, string>(); // canonical name -> owning server (reverse index)
+const registryChangeListeners = new Set<() => void>();
+
+function notifyRegistryChange(): void {
+  // Every listener runs even if an earlier one throws -- one bad subscriber must never starve the
+  // others (mirrors this codebase's established hook/subscriber error-isolation posture elsewhere,
+  // e.g. query.ts's own per-callback swallow policy).
+  for (const cb of registryChangeListeners) {
+    try {
+      cb();
+    } catch (err) {
+      console.error("tools/registry: onRegistryChange listener threw", err);
+    }
+  }
+}
+
+// WS-09 §3/§57/§64: subscribe to LIVE registry mutations (registerMcpServerTools/
+// unregisterMcpServerTools only -- see those functions' own headers). Fires ONCE per call to either
+// function, never once per tool, so a caller that re-derives e.g. system/init.tools on change does
+// so exactly once per server-level event. Deliberately NOT fired by registerTool/replaceExecutor/
+// unregisterToolForTest (P3's bootstrap-time and test-only primitives) -- see this section's own
+// header for the scoping rationale. Returns an unsubscribe function, mirroring McpServerStateSource
+// .subscribe's own shape (mcp/state.ts) and this codebase's existing HookCallbackMatcher-adjacent
+// subscribe/unsubscribe idiom.
+export function onRegistryChange(cb: () => void): () => void {
+  registryChangeListeners.add(cb);
+  return () => {
+    registryChangeListeners.delete(cb);
+  };
+}
+
+function buildMcpToolDescriptor(server: string, tool: McpToolDefinition, opts: { alwaysLoad?: boolean; deferredDefault: boolean | readonly PermissionMode[] }): ToolDescriptor {
+  const canonicalName = `mcp__${server}__${tool.name}`;
+  // WS-09 §6 verbatim: the literal `anthropic/` key, checked for an EXACT `=== true` (any other
+  // value, or the key's absence, leaves `interaction` unset -- never a truthy-coercion).
+  const requiresInteraction = tool._meta?.["anthropic/requiresUserInteraction"] === true;
+  return {
+    canonicalName,
+    advertisedName: canonicalName,
+    source: "mcp",
+    inputSchema: tool.inputSchema,
+    ...(tool.outputSchema !== undefined ? { outputSchema: tool.outputSchema } : {}),
+    // Real MCP `Tool.description` is optional; WS-06 §1.1's own ToolDescriptor.description is not --
+    // "" is the neutral default for a server that omits it (no spec-pinned alternative exists).
+    description: tool.description ?? "",
+    ...(tool.annotations !== undefined ? { annotations: tool.annotations } : {}),
+    // Static P3-era axis -- see ToolDescriptor.exposure's own doc comment above; a dynamically
+    // registered MCP tool starts "eager" here exactly like every other implement-now descriptor
+    // (buildAdvertisedSet's own hidden/correctly-absent filtering is unaffected either way). Live
+    // eager/deferred/hidden resolution for Tool Search is `deferred` + resolveDeferral, below.
+    exposure: "eager",
+    permissionClass: "mcp",
+    availability: {},
+    // I4 (P3 fix wave) precedent: WebSearch/LSP/ToolSearch/WaitForMcpServers/ListMcpResourcesTool
+    // all gate on "winter.mcp" because they had no executor yet. A live-registered MCP tool is
+    // gated the SAME way for the SAME reason (a fresh registerMcpServerTools call from Lane A has
+    // no executor until a following replaceExecutor lands) -- MUST 7 / the plan's own "Carries"
+    // list: this stays HOST-SUPPLIED this task; T8 flips it to runtime-derived once real MCP
+    // executors exist end to end. Do not remove this token here without that same T8 change.
+    capabilityRequirements: ["winter.mcp"],
+    disposition: "implement-now",
+    ...(opts.alwaysLoad !== undefined ? { alwaysLoad: opts.alwaysLoad } : {}),
+    deferred: opts.deferredDefault,
+    ...(tool._meta !== undefined ? { _meta: tool._meta } : {}),
+    ...(requiresInteraction ? { interaction: "required" as const } : {}),
+  };
+}
+
+export function registerMcpServerTools(server: string, tools: readonly McpToolDefinition[], opts: { alwaysLoad?: boolean; deferredDefault: boolean | readonly PermissionMode[] }): void {
+  const newNames = new Set(tools.map((t) => `mcp__${server}__${t.name}`));
+  const previouslyOwned = mcpServerOwnedNames.get(server);
+
+  // Set-replace (this section's own header): drop anything this server owned before that is absent
+  // from the new list, BEFORE inserting anything new -- so a name that moves from "owned by this
+  // server, not in the new list" straight to "owned by this server, in the new list" (impossible in
+  // one call since a name can't be both, but keeps the two phases strictly ordered regardless) never
+  // observes a transient duplicate-ownership state.
+  if (previouslyOwned) {
+    for (const oldName of previouslyOwned) {
+      if (!newNames.has(oldName)) {
+        registry.delete(oldName);
+        mcpToolOwner.delete(oldName);
+      }
+    }
+  }
+
+  const nowOwned = new Set<string>();
+  for (const tool of tools) {
+    const canonicalName = `mcp__${server}__${tool.name}`;
+    const existingOwner = mcpToolOwner.get(canonicalName);
+    if (registry.has(canonicalName) && existingOwner === undefined) {
+      throw new Error(
+        `registerMcpServerTools: "${canonicalName}" is already registered by a non-live-MCP mechanism ` +
+          `(e.g. a static WS-06 descriptor stub, or the standing winter server's own advisor identity) -- ` +
+          `refusing to overwrite it. If this name is meant to be a live-connected MCP tool, its static ` +
+          `registration must be removed first.`,
+      );
+    }
+    if (existingOwner !== undefined && existingOwner !== server) {
+      // Should be structurally impossible (canonical names are namespaced per-server) -- defended
+      // anyway rather than silently reassigning ownership across servers.
+      throw new Error(`registerMcpServerTools: "${canonicalName}" is already owned by server "${existingOwner}", not "${server}"`);
+    }
+    const existingEntry = registry.get(canonicalName); // present only on a same-server replace (checked above)
+    const descriptor = buildMcpToolDescriptor(server, tool, opts);
+    registry.set(canonicalName, existingEntry ? { ...existingEntry, descriptor } : { descriptor });
+    mcpToolOwner.set(canonicalName, server);
+    nowOwned.add(canonicalName);
+  }
+  mcpServerOwnedNames.set(server, nowOwned);
+  notifyRegistryChange(); // once per call, never once per tool
+}
+
+export function unregisterMcpServerTools(server: string): void {
+  const owned = mcpServerOwnedNames.get(server);
+  mcpServerOwnedNames.delete(server);
+  if (!owned || owned.size === 0) return; // idempotent no-op: nothing changed, nothing to notify
+  for (const name of owned) {
+    registry.delete(name);
+    mcpToolOwner.delete(name);
+  }
+  notifyRegistryChange();
 }
 
 // --- §1.5: availability resolution + buildAdvertisedSet ---------------------------------------------

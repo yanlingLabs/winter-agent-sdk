@@ -8,7 +8,7 @@
 // an INVENTED, throwaway canonical name (never a real WS-06 entry) and cleans up via
 // `unregisterToolForTest` in a `finally`, so no test here can leak state into another file's
 // assertions.
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect, spyOn } from "bun:test";
 import "./descriptors/index.ts"; // forces every WS-06 §2 stub to register before any test runs
 import {
   registerTool,
@@ -18,6 +18,9 @@ import {
   unregisterToolForTest,
   buildAdvertisedSet,
   buildRegistryToolExecutor,
+  registerMcpServerTools,
+  unregisterMcpServerTools,
+  onRegistryChange,
   type ToolDescriptor,
   type ToolExecutor,
   type RegistryToolExecutorDeps,
@@ -409,6 +412,199 @@ describe("buildRegistryToolExecutor (the engine-facing adapter)", () => {
     } finally {
       unregisterToolForTest(name);
     }
+  });
+});
+
+// Phase 4 Task 2: live MCP server registration (WS-09 §1.3/§2.1/§3/§4/§6). Throwaway server name
+// distinct from seam-contracts-p4.test.ts's own ("t2seamsrv") -- see registry.ts's own header on why
+// the registry is a shared, process-wide singleton across every file in one `bun test` invocation.
+describe("registerMcpServerTools / unregisterMcpServerTools (Phase 4 Task 2, WS-09 §1.3/§2.1/§3)", () => {
+  const SRV = "t2regsrv";
+
+  test("names tools mcp__<server>__<tool>, defaults description, and gates on winter.mcp", () => {
+    try {
+      registerMcpServerTools(SRV, [{ name: "foo", inputSchema: { type: "object" } }], { deferredDefault: false });
+      const entry = getRegisteredTool(`mcp__${SRV}__foo`);
+      expect(entry).toBeDefined();
+      expect(entry?.descriptor.source).toBe("mcp");
+      expect(entry?.descriptor.permissionClass).toBe("mcp");
+      expect(entry?.descriptor.description).toBe("");
+      expect(entry?.descriptor.capabilityRequirements).toEqual(["winter.mcp"]);
+    } finally {
+      unregisterMcpServerTools(SRV);
+    }
+  });
+
+  test("annotations pass through verbatim, including fields beyond the three WS-09 §4 names", () => {
+    try {
+      registerMcpServerTools(
+        SRV,
+        [{ name: "foo", inputSchema: { type: "object" }, annotations: { readOnlyHint: true, idempotentHint: true, title: "Foo" } }],
+        { deferredDefault: false },
+      );
+      const entry = getRegisteredTool(`mcp__${SRV}__foo`);
+      expect(entry?.descriptor.annotations).toEqual({ readOnlyHint: true, idempotentHint: true, title: "Foo" });
+    } finally {
+      unregisterMcpServerTools(SRV);
+    }
+  });
+
+  test("_meta round-trips verbatim, including the anthropic/ key literal, and derives interaction", () => {
+    try {
+      registerMcpServerTools(
+        SRV,
+        [
+          { name: "needs-interaction", inputSchema: { type: "object" }, _meta: { "anthropic/requiresUserInteraction": true, "anthropic/alwaysLoad": true } },
+          { name: "sibling-only", inputSchema: { type: "object" }, _meta: { "anthropic/alwaysLoad": true } },
+        ],
+        { deferredDefault: false },
+      );
+      const withInteraction = getRegisteredTool(`mcp__${SRV}__needs-interaction`);
+      expect(withInteraction?.descriptor._meta).toEqual({ "anthropic/requiresUserInteraction": true, "anthropic/alwaysLoad": true });
+      expect(withInteraction?.descriptor.interaction).toBe("required");
+
+      // Negative: a SIBLING anthropic/-namespaced key round-trips in `_meta` but does NOT itself set
+      // `interaction` -- only the exact `anthropic/requiresUserInteraction === true` key/value does.
+      const siblingOnly = getRegisteredTool(`mcp__${SRV}__sibling-only`);
+      expect(siblingOnly?.descriptor._meta).toEqual({ "anthropic/alwaysLoad": true });
+      expect(siblingOnly?.descriptor.interaction).toBeUndefined();
+    } finally {
+      unregisterMcpServerTools(SRV);
+    }
+  });
+
+  test("alwaysLoad and deferredDefault (incl. a Mode[] form) populate the descriptor verbatim", () => {
+    try {
+      registerMcpServerTools(SRV, [{ name: "foo", inputSchema: { type: "object" } }], { alwaysLoad: true, deferredDefault: ["plan", "auto"] });
+      const entry = getRegisteredTool(`mcp__${SRV}__foo`);
+      expect(entry?.descriptor.alwaysLoad).toBe(true);
+      expect(entry?.descriptor.deferred).toEqual(["plan", "auto"]);
+    } finally {
+      unregisterMcpServerTools(SRV);
+    }
+  });
+
+  test("re-registering the SAME server replaces the descriptor but preserves an already-wired executor", () => {
+    try {
+      registerMcpServerTools(SRV, [{ name: "foo", description: "v1", inputSchema: { type: "object" } }], { deferredDefault: false });
+      const echo: ToolExecutor = { async execute(input) { return { output: JSON.stringify(input) }; } };
+      replaceExecutor(`mcp__${SRV}__foo`, echo);
+
+      registerMcpServerTools(SRV, [{ name: "foo", description: "v2", inputSchema: { type: "object" } }], { deferredDefault: false });
+      const entry = getRegisteredTool(`mcp__${SRV}__foo`);
+      expect(entry?.descriptor.description).toBe("v2");
+      expect(entry?.executor).toBe(echo); // preserved across the same-server replace, not wiped
+    } finally {
+      unregisterMcpServerTools(SRV);
+    }
+  });
+
+  test("set-replace: re-registering with a shrunk tool list drops the tool that disappeared", () => {
+    try {
+      registerMcpServerTools(SRV, [{ name: "foo", inputSchema: { type: "object" } }, { name: "bar", inputSchema: { type: "object" } }], {
+        deferredDefault: false,
+      });
+      expect(getRegisteredTool(`mcp__${SRV}__foo`)).toBeDefined();
+      expect(getRegisteredTool(`mcp__${SRV}__bar`)).toBeDefined();
+
+      registerMcpServerTools(SRV, [{ name: "foo", inputSchema: { type: "object" } }], { deferredDefault: false });
+      expect(getRegisteredTool(`mcp__${SRV}__foo`)).toBeDefined();
+      expect(getRegisteredTool(`mcp__${SRV}__bar`)).toBeUndefined(); // dropped -- no longer in the new list
+    } finally {
+      unregisterMcpServerTools(SRV);
+    }
+  });
+
+  test("registerMcpServerTools(server, []) is equivalent to unregisterMcpServerTools(server)", () => {
+    registerMcpServerTools(SRV, [{ name: "foo", inputSchema: { type: "object" } }], { deferredDefault: false });
+    expect(getRegisteredTool(`mcp__${SRV}__foo`)).toBeDefined();
+    registerMcpServerTools(SRV, [], { deferredDefault: false });
+    expect(getRegisteredTool(`mcp__${SRV}__foo`)).toBeUndefined();
+  });
+
+  test("colliding with a name registered by a non-live-MCP mechanism throws rather than overwriting", () => {
+    // A static stub (registerTool, not registerMcpServerTools) sitting under the EXACT canonical
+    // name a live registration would compute -- mirrors the real mcp__winter__advisor collision
+    // this section's own header warns about (winter-server.ts avoids it by never calling
+    // registerMcpServerTools for advisor at all; this proves the guard fires if something ever did).
+    const collideServer = "t2collideserver";
+    const toolName = "collidetool";
+    const canonicalName = `mcp__${collideServer}__${toolName}`;
+    registerTool({ descriptor: fixtureDescriptor(canonicalName) });
+    try {
+      expect(() => registerMcpServerTools(collideServer, [{ name: toolName, inputSchema: { type: "object" } }], { deferredDefault: false })).toThrow();
+      // The throw must not have silently overwritten the static stub.
+      expect(getRegisteredTool(canonicalName)?.descriptor.source).toBe("builtin");
+    } finally {
+      unregisterToolForTest(canonicalName);
+      unregisterMcpServerTools(collideServer); // defensive no-op: the throw prevented any real ownership
+    }
+  });
+
+  test("unregisterMcpServerTools is idempotent for a server that was never (or is no longer) registered", () => {
+    expect(() => unregisterMcpServerTools("__t2_never_registered_server__")).not.toThrow();
+  });
+
+  test("onRegistryChange fires exactly once per call (N tools -> 1 notification), and unsubscribe stops delivery", () => {
+    let calls = 0;
+    const unsubscribe = onRegistryChange(() => {
+      calls++;
+    });
+    try {
+      registerMcpServerTools(SRV, [{ name: "foo", inputSchema: { type: "object" } }, { name: "bar", inputSchema: { type: "object" } }], {
+        deferredDefault: false,
+      });
+      expect(calls).toBe(1);
+      unregisterMcpServerTools(SRV);
+      expect(calls).toBe(2);
+      unsubscribe();
+      registerMcpServerTools(SRV, [{ name: "foo", inputSchema: { type: "object" } }], { deferredDefault: false });
+      expect(calls).toBe(2); // unsubscribed -- no further delivery
+    } finally {
+      unregisterMcpServerTools(SRV);
+    }
+  });
+
+  test("a throwing onRegistryChange listener does not prevent a sibling listener from firing", () => {
+    // Expected, swallowed-and-logged console.error (registry.ts's own notifyRegistryChange) --
+    // spied and silenced per this codebase's established query.test.ts precedent, not left to print.
+    const errSpy = spyOn(console, "error").mockImplementation(() => {});
+    let goodCalls = 0;
+    const unsubBad = onRegistryChange(() => {
+      throw new Error("boom");
+    });
+    const unsubGood = onRegistryChange(() => {
+      goodCalls++;
+    });
+    try {
+      expect(() => registerMcpServerTools(SRV, [{ name: "foo", inputSchema: { type: "object" } }], { deferredDefault: false })).not.toThrow();
+      expect(goodCalls).toBe(1);
+      expect(errSpy).toHaveBeenCalled();
+    } finally {
+      unsubBad();
+      unsubGood();
+      unregisterMcpServerTools(SRV);
+      errSpy.mockRestore();
+    }
+  });
+
+  test("registration ↔ advertised set: a newly registered tool appears only once winter.mcp is supplied", () => {
+    try {
+      registerMcpServerTools(SRV, [{ name: "foo", inputSchema: { type: "object" } }], { deferredDefault: false });
+      const withoutCapability = buildAdvertisedSet({ mode: "default" }).map((d) => d.canonicalName);
+      expect(withoutCapability).not.toContain(`mcp__${SRV}__foo`);
+      const withCapability = buildAdvertisedSet({ mode: "default", capabilities: ["winter.mcp"] }).map((d) => d.canonicalName);
+      expect(withCapability).toContain(`mcp__${SRV}__foo`);
+    } finally {
+      unregisterMcpServerTools(SRV);
+    }
+  });
+
+  test("unregistration removes the tool from the advertised set immediately", () => {
+    registerMcpServerTools(SRV, [{ name: "foo", inputSchema: { type: "object" } }], { deferredDefault: false });
+    expect(buildAdvertisedSet({ mode: "default", capabilities: ["winter.mcp"] }).map((d) => d.canonicalName)).toContain(`mcp__${SRV}__foo`);
+    unregisterMcpServerTools(SRV);
+    expect(buildAdvertisedSet({ mode: "default", capabilities: ["winter.mcp"] }).map((d) => d.canonicalName)).not.toContain(`mcp__${SRV}__foo`);
   });
 });
 
