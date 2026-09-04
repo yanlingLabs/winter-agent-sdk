@@ -870,15 +870,20 @@ describe("child-engine.ts: fix round 1 (controller review) -- I1: permission rul
         provider: childProvider,
         parentHooks: { PreToolUse: [{ hookCount: 1, source: "sdk" }] },
         parentIncludeHookEvents: true,
-        // Still SHORT (150 ms): if rider 20's pause did not hold, the child would abort with a typed
-        // "stalled" error before the hook could ever be answered.
-        env: { WINTER_ASYNC_AGENT_STALL_TIMEOUT_MS: "150" },
+        // SHORT (60 ms) and genuinely beaten: the answer below waits 120 ms -- TWICE this timeout --
+        // with the hook request outstanding, so rider 20's pause is load-bearing here for the HOOK
+        // control_request exactly as the sibling P4-I test proves it for the PERMISSION one. (Fix
+        // wave, T8 review M5's second half: this comment previously claimed the timeout was
+        // "still SHORT" against a callback that answered synchronously, so the clock was beaten
+        // trivially and the pause was not exercised at all.)
+        env: { WINTER_ASYNC_AGENT_STALL_TIMEOUT_MS: "60" },
       },
       baseConfig(),
       [{ kind: "tool_use", calls: [{ id: "call-1", name: SPAWN_PROBE, input: req }] }, { kind: "text", text: "parent done" }],
-      (frame) => {
+      async (frame) => {
         if (frame.subtype !== "hook") return undefined;
         sawHookRequest = true;
+        await new Promise((r) => setTimeout(r, 120));
         return { ok: true, payload: {} }; // an observational, no-opinion hook answer
       },
     );
@@ -1283,6 +1288,56 @@ describe("child-engine.ts: the parent's LIVE permission rules bind every child (
     expect(code).toBe(0);
     expect(sawPermissionRequest, "an allowedTools pre-approval must resolve the child's call without a prompt").toBe(false);
     expect(probe.ran.length).toBe(1);
+  }, 10_000);
+
+  test("C1/I6 (the widening direction): a project-sourced ALLOW rule that is INERT in the untrusted parent does NOT become live in the child", async () => {
+    registerSpawnProbe();
+    cleanupToolNames.push(SPAWN_PROBE);
+    const GATE = "t6fw_trust_gate";
+    const PROJECT_ALLOWED = "t6fw_project_allowed";
+    cleanupToolNames.push(GATE, PROJECT_ALLOWED);
+    registerRecordingTool(GATE);
+    const probe = registerRecordingTool(PROJECT_ALLOWED);
+    const req: SpawnChildRequest = { parentToolUseId: "call-2", prompt: "use the project-allowed tool", runInBackground: false };
+    const childProvider = scriptedProvider([
+      { kind: "tool_use", calls: [{ id: "c1", name: PROJECT_ALLOWED, input: {} }] },
+      { kind: "text", text: "child done" },
+    ]);
+    // WS-07 §3.2 / Ruling P2-H: a project/local ALLOW rule requires workspace trust, and
+    // `trustedWorkspace` is hardcoded false today -- so this rule is INERT in the parent. Only
+    // `cliArg` is authority-restricted at the write path, so a host's own canUseTool can genuinely
+    // author it under `session` authority, which is exactly what happens here.
+    let sawChildPrompt = false;
+    const { code } = await driveParentAnswering(
+      { provider: childProvider, env: { WINTER_ASYNC_AGENT_STALL_TIMEOUT_MS: "2000" } },
+      baseConfig({ permissionMode: "default", allowDangerouslySkipPermissions: false }),
+      [
+        { kind: "tool_use", calls: [{ id: "call-1", name: GATE, input: {} }] },
+        { kind: "tool_use", calls: [{ id: "call-2", name: SPAWN_PROBE, input: req }] },
+        { kind: "text", text: "parent done" },
+      ],
+      (frame) => {
+        if (frame.subtype !== "permission") return undefined;
+        const payload = frame.payload as { toolName?: string } | undefined;
+        if (payload?.toolName === GATE) {
+          return {
+            ok: true,
+            payload: {
+              behavior: "allow",
+              updatedPermissions: [{ type: "addRules", rules: [{ toolName: PROJECT_ALLOWED }], behavior: "allow", destination: "projectSettings" }],
+            },
+          };
+        }
+        if (payload?.toolName === SPAWN_PROBE) return { ok: true, payload: { behavior: "allow" } };
+        // The child's own call: DENIED. It can only run if the inert project rule was mirrored into
+        // the child as a live `sdk` allow, which would resolve it at stage 5 with no prompt at all.
+        sawChildPrompt = true;
+        return { ok: true, payload: { behavior: "deny", message: "the project rule must not be live in a child" } };
+      },
+    );
+    expect(code).toBe(0);
+    expect(probe.ran, "an untrusted project ALLOW must not become live inside a child").toEqual([]);
+    expect(sawChildPrompt, "the child's call must still reach a prompt, i.e. no rule resolved it").toBe(true);
   }, 10_000);
 
   test("I6 (live): a rule added to the PARENT mid-run (updatedPermissions) binds a child spawned afterwards", async () => {

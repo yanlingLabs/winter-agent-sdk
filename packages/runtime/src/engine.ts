@@ -1138,6 +1138,19 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
                 // BASELINE_DENY_RULES itself, so mirroring them would only re-tag a `managed` rule
                 // as `sdk` in the child -- a strictly weaker authority for zero added coverage.
                 if (entry.source === "managed") continue;
+                // WS-07 §3.2 / Ruling P2-H, and the ONE way this accessor could WIDEN rather than
+                // bind: a `project`/`local`-sourced ALLOW entry is INERT in an untrusted workspace
+                // (evaluator.ts's own `findMatchingRuleEntry` skips it, exactly as ruleset.ts's
+                // resolveRules does). Mirroring it here would re-tag it `sdk` in the child, where
+                // that gate no longer applies -- a child auto-approving what its own parent still
+                // gates, which is the C1 class in the opposite direction, inside C1's own fix. The
+                // write path makes this reachable today, not just after P5: only `cliArg` is
+                // authority-restricted (ruleset.ts's assertAuthorityMayWriteDestination), so a
+                // host's `canUseTool` can already return `{type:"addRules", destination:
+                // "projectSettings", behavior:"allow", ...}` under `session` authority. DENY/ASK
+                // entries from those same sources apply WITHOUT trust and are mirrored unchanged --
+                // the skip is allow-side only, matching the evaluator's own predicate verbatim.
+                if (entry.behavior === "allow" && (entry.source === "project" || entry.source === "local") && !trustedWorkspace) continue;
                 const raw = entry.ruleValue.ruleContent === undefined ? entry.ruleValue.toolName : `${entry.ruleValue.toolName}(${entry.ruleValue.ruleContent})`;
                 mirror[entry.behavior].push(raw);
               }
