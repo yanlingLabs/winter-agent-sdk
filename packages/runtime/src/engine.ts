@@ -1570,6 +1570,12 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
     ...(config.disallowedTools !== undefined ? { disallowedTools: config.disallowedTools } : {}),
     ...(config.insideSubagent !== undefined ? { insideSubagent: config.insideSubagent } : {}),
     ...(config.familyMetadata !== undefined ? { familyMetadata: config.familyMetadata } : {}),
+    // Fix wave, follow-up (1) / RULING P4-E amended: the HOST's own alias table, so ToolSearch's
+    // candidate pool runs the SAME alias-exclusion pass `init.tools` does. Without it, a
+    // host-configured alias edge whose native is denied was suppressed from `init.tools` and still
+    // returned by `select:` -- one hop from callable. (The Winter-branch DEFAULT canonical pair was
+    // never exposed this way: `hideAliasExcludedTwins` applies it unconditionally.)
+    ...(config.toolAliases !== undefined ? { toolAliases: config.toolAliases } : {}),
     ...(effectiveMcpStateSource !== undefined ? { stateSource: effectiveMcpStateSource } : {}),
   });
 

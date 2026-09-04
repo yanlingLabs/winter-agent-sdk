@@ -30,6 +30,8 @@ import { runEngine } from "../engine.ts";
 import { echoProvider, scriptedProvider } from "../provider/mock.ts";
 import "../tools/impl/index.ts"; // the messaging executors must be registered for winter.global-messaging to derive
 import { computeExposurePartition } from "./exposure.ts";
+import { registerTool, registerMcpServerTools, unregisterMcpServerTools, unregisterToolForTest } from "../tools/registry.ts";
+import { createFakeMcpServerStateSource } from "../mcp/state.ts";
 import { WINTER_CANONICAL_ALIASES } from "./aliases.ts";
 
 const NATIVE = "SendMessage";
@@ -232,5 +234,82 @@ describe("RULING P4-E amended: alias-aware permission identity (whole-branch C2 
   test("the default canonical table is a single exported constant, not a per-file copy", () => {
     expect(WINTER_CANONICAL_ALIASES[NATIVE]).toBe(TWIN);
     expect(WINTER_CANONICAL_ALIASES["ListAgents"]).toBe("mcp__winter__list_agents");
+  });
+});
+
+// --- Follow-up round, item 1: the host alias table reaches PRODUCTION ------------------------------
+//
+// The first round completed the runtime-side seam (`ToolSearchDeps.toolAliases`, `exposureQuery`,
+// `computeExposurePartition`) and left the engine's own pass-through as a NEEDS_CONTEXT one-liner. Until
+// it lands, C2's hidden-twin guarantee holds for the Winter-branch DEFAULT canonical pair (applied
+// unconditionally) but NOT for a HOST-configured alias edge -- `init.tools` suppressed it while
+// ToolSearch happily returned it, one `select:` from callable. This drives the whole chain through a
+// real `runEngine` on the in-memory leg.
+describe("follow-up (1): a host toolAliases edge excludes its twin in PRODUCTION, not just in the unit layer", () => {
+  const HOST_NATIVE = "__fw_alias_native__";
+  const SRV = "fwaliassrv";
+  const TWIN = `mcp__${SRV}__twin`;
+
+  function register(): void {
+    registerTool({
+      descriptor: {
+        canonicalName: HOST_NATIVE,
+        advertisedName: HOST_NATIVE,
+        source: "builtin",
+        inputSchema: { type: "object" },
+        description: "host-alias source fixture",
+        exposure: "eager",
+        permissionClass: "read",
+        availability: {},
+        capabilityRequirements: [],
+        disposition: "implement-now",
+      },
+    });
+    registerMcpServerTools(SRV, [{ name: "twin", inputSchema: { type: "object" } }], { deferredDefault: true });
+  }
+
+  async function searchFor(overrides: Partial<RuntimeConfig>): Promise<{ initTools: string[]; matches: string[] }> {
+    const { host, runtime } = createInMemoryChannel();
+    const provider = scriptedProvider([
+      { kind: "tool_use", calls: [{ id: "c1", name: "ToolSearch", input: { query: `select:${TWIN}` } }] },
+      { kind: "text", text: "done" },
+    ]);
+    const done = runEngine({
+      config: baseConfig({ permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true, toolSearchEnabled: true, ...overrides }),
+      input: runtime.input,
+      output: runtime.output,
+      provider,
+      // Turns `winter.mcp` on without declaring servers (the B-M1 path) so ToolSearch is advertised
+      // and executable; the fixture tools above are what the search actually ranges over.
+      mcpServerStateSource: createFakeMcpServerStateSource([{ name: SRV, state: "connected", toolNames: ["twin"] }]),
+    });
+    host.output.write({ type: "user", text: "go" });
+    host.output.write({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined });
+    const frames = await drain(host.input);
+    await done;
+    const init = frames.find((f) => f.type === "init") as { tools: string[] } | undefined;
+    const results = dataMessages(frames).filter((m) => m.type === "user");
+    const raw = /\{"matches".*?\}/.exec(JSON.stringify(results).replace(/\\"/g, '"'));
+    return { initTools: init?.tools ?? [], matches: raw ? (JSON.parse(raw[0]) as { matches: string[] }).matches : [] };
+  }
+
+  test("a denied host-alias SOURCE removes its twin from BOTH init.tools and ToolSearch's results", async () => {
+    register();
+    try {
+      // Control: with nothing denied the twin is genuinely selectable, so the assertion below is
+      // about the deny and not about the fixture failing to register.
+      const open = await searchFor({ toolAliases: { [HOST_NATIVE]: TWIN } });
+      expect(open.matches).toContain(TWIN);
+
+      const denied = await searchFor({ toolAliases: { [HOST_NATIVE]: TWIN }, disallowedTools: [HOST_NATIVE] });
+      expect(denied.initTools).not.toContain(HOST_NATIVE);
+      expect(denied.initTools, "init.tools already suppressed the twin before this fix").not.toContain(TWIN);
+      // THE FOLLOW-UP (1) ASSERTION: pre-fix the engine never handed the host table to the session
+      // runtime, so ToolSearch searched a pool the deny had not been applied to and returned the twin.
+      expect(denied.matches, "a denied native's twin must not be selectable through ToolSearch either").not.toContain(TWIN);
+    } finally {
+      unregisterToolForTest(HOST_NATIVE);
+      unregisterMcpServerTools(SRV);
+    }
   });
 });
