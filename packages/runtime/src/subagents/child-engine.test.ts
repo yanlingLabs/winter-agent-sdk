@@ -173,11 +173,17 @@ function driveParent(deps: ChildEngineFactoryDeps, config: RuntimeConfig, turns:
 // runtime-originated control_requests it sees, the way a real host with a `canUseTool`/hook handler
 // does. `driveParent` merely drains, which is why every pre-P4-I scenario that reached a real
 // permission prompt could only ever observe a stall.
+//
+// Phase 4 fix wave (T8 review I1): `answer` may return a PROMISE, and a promised reply is written
+// FIRE-AND-FORGET -- the read loop keeps draining while the answer is pending, exactly as a real
+// host with a human at a prompt behaves. Awaiting inside the loop would stop draining the very
+// stream the answer has to travel back over. This is what makes a genuinely LATE answer testable,
+// which is what rider 20's watchdog pause needs in order to be falsifiable at all.
 function driveParentAnswering(
   deps: ChildEngineFactoryDeps,
   config: RuntimeConfig,
   turns: Parameters<typeof scriptedProvider>[0],
-  answer: (frame: Extract<WinterFrame, { type: "control_request" }>) => { ok: boolean; payload?: unknown } | undefined,
+  answer: (frame: Extract<WinterFrame, { type: "control_request" }>) => { ok: boolean; payload?: unknown } | undefined | Promise<{ ok: boolean; payload?: unknown } | undefined>,
 ): Promise<{ code: number; frames: WinterFrame[] }> {
   registerChildEngineFactory(createChildEngineFactory(deps));
   const { host, runtime } = createInMemoryChannel();
@@ -190,13 +196,15 @@ function driveParentAnswering(
     for await (const frame of host.input) {
       frames.push(frame);
       if (frame.type !== "control_request") continue;
-      const reply = answer(frame as Extract<WinterFrame, { type: "control_request" }>);
-      if (reply === undefined) continue;
-      host.output.write({
-        type: "control_response",
-        requestId: (frame as { requestId: string }).requestId,
-        ok: reply.ok,
-        ...(reply.payload !== undefined ? { payload: reply.payload } : {}),
+      const requestId = (frame as { requestId: string }).requestId;
+      void Promise.resolve(answer(frame as Extract<WinterFrame, { type: "control_request" }>)).then((reply) => {
+        if (reply === undefined) return;
+        host.output.write({
+          type: "control_response",
+          requestId,
+          ok: reply.ok,
+          ...(reply.payload !== undefined ? { payload: reply.payload } : {}),
+        });
       });
     }
   })();
@@ -667,13 +675,16 @@ describe("child-engine.ts: child permission/hook control-RPC routing (RULING P4-
       { provider: childProvider, env: { WINTER_ASYNC_AGENT_STALL_TIMEOUT_MS: "40" } },
       baseConfig({ permissionMode: "default", allowDangerouslySkipPermissions: false, permissions: { allow: [SPAWN_PROBE] } }),
       [{ kind: "tool_use", calls: [{ id: "call-1", name: SPAWN_PROBE, input: req }] }, { kind: "text", text: "parent done" }],
-      (frame) => {
+      async (frame) => {
         if (frame.subtype !== "permission") return undefined;
         sawPermissionRequest = true;
-        // A deliberate 80 ms delay -- TWICE the stall timeout -- so this test cannot pass by the
-        // answer merely beating the clock. It passes only because the clock is genuinely PAUSED
-        // while the request is outstanding (RULING P4-I's companion ruling: a human thinking is not
-        // a stall).
+        // Phase 4 fix wave (T8 review I1): a REAL 80 ms delay -- TWICE the stall timeout -- so this
+        // test cannot pass by the answer merely beating the clock. Before the fix wave this comment
+        // claimed a delay the code did not implement (the callback returned synchronously), so the
+        // whole scenario passed with `watchdog.pause()` DELETED. It now passes only because the
+        // clock is genuinely PAUSED while the request is outstanding (RULING P4-I's companion
+        // ruling: a human thinking is not a stall).
+        await new Promise((r) => setTimeout(r, 80));
         return { ok: true, payload: { behavior: "allow" } };
       },
     );
@@ -1678,4 +1689,49 @@ describe("child-engine.ts: interrupt and teardown stop live children (fix wave I
       gate.release();
     }
   }, 15_000);
+});
+
+// --- Phase 4 fix wave: T8 review M5 -- a THROWING forward must not pause the clock forever -------
+
+describe("child-engine.ts: the watchdog pause is paired with a SUCCESSFUL forward (fix wave, T8 review M5)", () => {
+  test("a child whose control_request forward THROWS (torn-down parent stream) is still reaped by the stall watchdog, never left waiting forever", async () => {
+    const NEEDS_PROMPT = "t6fw_m5_needs_prompt";
+    cleanupToolNames.push(NEEDS_PROMPT);
+    const probe = registerRecordingTool(NEEDS_PROMPT);
+    const childProvider = scriptedProvider([
+      { kind: "tool_use", calls: [{ id: "c1", name: NEEDS_PROMPT, input: {} }] },
+      { kind: "text", text: "never reached" },
+    ]);
+    // Driven through the factory DIRECTLY (not a parent runEngine): the whole point is a run
+    // context whose `forwardChildFrame` throws, which a real engine's own closure never does.
+    const factory = createChildEngineFactory({ provider: childProvider, env: { WINTER_ASYNC_AGENT_STALL_TIMEOUT_MS: "60" } });
+    const deps = factory({
+      parentSessionId: "parent-m5-s",
+      forwardChildFrame: (frame) => {
+        if (frame.type === "control_request") throw new Error("the parent stream is torn down");
+      },
+    });
+    const handle = await deps.spawn(
+      { parentToolUseId: "call-1", prompt: "reach a prompt", runInBackground: false },
+      {
+        // `default` mode with no matching rule is what makes the child's own call reach a real
+        // permission control_request -- the frame whose forward throws.
+        policy: { effectiveMode: "default", parentPolicyVersion: 1, parentPolicyHash: "h" },
+        tools: [NEEDS_PROMPT],
+        model: "sonnet",
+        effort: "inherit",
+        thinking: undefined,
+        systemPrompt: "",
+        sessionRoot: tmpdir(),
+      },
+    );
+    // BOUNDED: without the fix the watchdog is paused for a request the host never received, so
+    // `result()` never settles at all -- this race turns that hang into a loud, fast failure.
+    const outcome = await Promise.race([
+      handle.result().then((r) => r.status as string),
+      new Promise<string>((r) => setTimeout(() => r("NEVER SETTLED -- the watchdog was left paused"), 2000)),
+    ]);
+    expect(outcome).toBe("failed");
+    expect(probe.ran, "the child's call was never approved, so it must never have executed").toEqual([]);
+  }, 10_000);
 });

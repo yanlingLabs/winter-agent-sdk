@@ -462,14 +462,22 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
             // watchdog: a child waiting on a human is not a child making no progress (RULING P4-I's
             // own companion ruling), and the 600 s clock would otherwise abort a genuinely-answerable
             // prompt out from under the person answering it.
-            if (frame.type === "control_request") {
-              forwardedHostRequestIds.add((frame as { requestId: string }).requestId);
-              watchdog.pause();
-            }
+            //
+            // Phase 4 fix wave (T8 review M5): the pause happens ONLY AFTER the forward has actually
+            // SUCCEEDED, and the id is only claimed then. Pausing first (the previous order) meant a
+            // forward that THREW -- a torn-down parent stream, which the catch below is here for --
+            // left the clock paused with a request nobody had received and nobody would ever answer:
+            // the unbounded wait the T8 report's own concern 6 discloses, reachable with no human
+            // involved at all. On a failed forward the request never reached the host, so the child
+            // is genuinely making no progress and the stall clock must keep running.
             try {
               runCtx.forwardChildFrame(frame, correlation);
+              if (frame.type === "control_request") {
+                forwardedHostRequestIds.add((frame as { requestId: string }).requestId);
+                watchdog.pause();
+              }
             } catch {
-              /* a torn-down parent stream must never crash this read loop */
+              /* a torn-down parent stream must never crash this read loop -- and must never pause the clock */
             }
           }
         } catch {
