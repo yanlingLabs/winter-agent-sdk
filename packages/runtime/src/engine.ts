@@ -991,6 +991,14 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   }
 
   function buildDefaultToolExecutor(): ToolExecutor {
+    // Whole-branch M3(a), partially resolved by the fix wave's I1 and recorded here rather than
+    // left implicit: this process-global re-point used to hand the PARENT's background-task root to
+    // the CHILD's temp dir for the rest of the session, because a child's session id (and hence its
+    // `sessionTempDir` key) was its own agentId. A child now SHARES its parent's session id and,
+    // when it is not worktree-isolated, its cwd -- so both derive the identical temp root and the
+    // re-point is a no-op. It remains a real re-point for an `isolation:"worktree"` child (different
+    // cwd -> different tempProjectKey); keying the root per session rather than per process is the
+    // residual carry.
     configureBackgroundTaskRoot(resolveSessionTempPaths);
     const deps: RegistryToolExecutorDeps = {
       sessionId: config.sessionId,
@@ -1087,13 +1095,14 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
             // (a child shares its parent's), so it can no longer identify the spawner; the spawn
             // DEPTH table (subagents/limits.ts) is keyed on this instead.
             ...(config.agentId !== undefined ? { parentAgentId: config.agentId } : {}),
-            // Handoff note (fix round 1, T3 review minor, item 4): proven at the engine level, on
-            // the in-memory/direct-runEngine harness only (engine.test.ts's own fix-round-1 spawn
-            // seam tests) -- no ChildEngineFactory is registered anywhere on the child/compiled
-            // transport legs yet (Lane C has not landed a real child-engine.ts), so this closure has
-            // never run through a real spawned/compiled process. A cross-transport equivalence
-            // scenario for the spawn seam (transport-equivalence.test.ts's own pattern) is owed by
-            // Lane A/Lane C once that real injection point exists.
+            // Handoff note (fix round 1, T3 review minor, item 4) -- CLOSED, and corrected here
+            // because it asserted the opposite of what is now true (P4 fix wave, KNOWN item 8's
+            // stale-comment sweep). A real ChildEngineFactory IS registered on every leg
+            // (subagents/register-default-factory.ts, called by main.ts AND testing.ts), and this
+            // closure runs through real spawned/compiled processes in three committed
+            // cross-transport scenarios: `subagent-spawn-round`, `sendmessage-child-round`, and the
+            // fix wave's own `subagent-permission-round` (which is also the one that pins
+            // `parent_tool_use_id` on the wire).
             forwardChildFrame: (frame: WinterFrame, correlation: { parentToolUseId: string; agentId: string }): void => {
               const forwarded = transformChildFrame(frame, correlation, config.forwardSubagentText === true);
               if (forwarded !== null) output.write(forwarded);
@@ -1539,13 +1548,12 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // is configured for this run (every session before Lane A's own real transports exist, and every
   // pre-existing test/golden), keeping every committed differential golden byte-identical.
   //
-  // Handoff note (fix round 1, T3 review minor, item 4): an SDK MCP server registered via THIS run's
-  // own config.mcpServers (below) never produces an entry here -- mcpServerStateSource is a wholly
-  // separate mechanism this task's SDK-server wiring never touches, and no McpServerStateSource
-  // implementation for an in-process instance exists anywhere yet. A cross-transport equivalence
-  // scenario proving whatever Lane A/Lane C eventually decide here (a synthesized permanent
-  // "connected" entry, or a deliberate documented absence) is owed once that injection point exists
-  // -- not this task's to add speculatively ahead of the design decision.
+  // Handoff note (fix round 1, T3 review minor, item 4) -- CLOSED, corrected in the P4 fix wave's
+  // stale-comment sweep (KNOWN item 8): an SDK MCP server DOES produce an entry here now. RULING
+  // P4-C's state-only feed path (`feedSdkSlotConnected`, mcp/lifecycle.ts) reports an in-process
+  // SDK server as `connected` with no transport at all, and the decision this note said was owed is
+  // made and proven: `mcp_servers: [{name, status:"connected"}]` is asserted on every leg by the
+  // rider-6 equivalence scenario and pinned in the `mcp-tool-round` golden.
   const mcpServersWire = effectiveMcpStateSource ? mcpServerStatesToWire(effectiveMcpStateSource.snapshot()) : undefined;
   output.write({
     type: "init",

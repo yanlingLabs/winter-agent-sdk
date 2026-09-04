@@ -144,6 +144,13 @@ export function createReferenceMessagingAdapter(deps: ReferenceAdapterDeps): Ref
   // "accept" needs the ORIGINAL message to actually deliver, so this reference keeps it here.
   const heldEnvelopes = new Map<string, GlobalAgentMessage>();
 
+  // Both child lookups in this file (here and `listReachable` below) filter the PROCESS-WIDE roster
+  // by `record.parentSessionId === <the owning session id>`. P4 fix wave (I1) note, because the
+  // invariant that makes this correct used to be false: a child engine's own `RuntimeConfig.sessionId`
+  // IS its parent's now (one owning SESSION, N AGENTS keyed by agentId), so a caller's ctx.sessionId
+  // and every one of that session's children's `record.parentSessionId` are the same value at EVERY
+  // nesting level -- which is what makes a child able to see its SIBLINGS here rather than only its
+  // own grandchildren. Nothing in this file changed; the identity it always assumed is now true.
   function findChild(addr: RuntimeAddress): ChildHandle | undefined {
     if (addr.objectKind !== "agent") return undefined;
     const owningParent = addr.parentWinterSessionId ?? addr.winterSessionId;

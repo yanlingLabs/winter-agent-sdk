@@ -6,17 +6,14 @@
 // --- Three seam gaps this file cannot close on its own (raised with the controller; see this
 // lane's own report) ------------------------------------------------------------------------------
 //
-// (1) PROVIDER/STORE INJECTION: neither `ChildEngineRunContext` (parentSessionId +
-// forwardChildFrame only), `SpawnChildRequest`, nor `ChildInheritance` carries a `Provider` or a
-// `SessionStore` -- `runEngine` cannot run without one. `createChildEngineFactory` below therefore
-// takes them as CONSTRUCTION-TIME dependencies (`ChildEngineFactoryDeps`), matching the frozen
-// `(runCtx) => ChildEngineDeps` factory shape: `registerChildEngineFactory(createChildEngineFactory(
-// {provider, store, ...}))` must be called ONCE, near where main.ts already builds its own top-level
-// provider/store -- main.ts is on this lane's never-modify list, so that ONE call is NOT made by
-// this lane's own commits. Until it lands, a real production session's Agent tool calls fail with
-// the PRE-EXISTING, already-tested "no child engine factory is registered" error (engine.ts) rather
-// than truly spawning a child. Every test in this lane registers the factory directly (mirroring
-// T3's own fix-round-1 spawn-seam-test precedent), so the logic below is fully proven regardless.
+// (1) PROVIDER/STORE INJECTION -- CLOSED by Phase 4 Task 8 (rider 18). Neither
+// `ChildEngineRunContext`, `SpawnChildRequest`, nor `ChildInheritance` carries a `Provider` or a
+// `SessionStore`, so `createChildEngineFactory` below takes them as CONSTRUCTION-TIME dependencies
+// (`ChildEngineFactoryDeps`), matching the frozen `(runCtx) => ChildEngineDeps` factory shape. The
+// ONE production registration lives in `subagents/register-default-factory.ts` and is called by
+// BOTH entrypoints (main.ts and testing.ts's inMemoryProcess), so all three transport legs derive
+// their factory from one piece of code -- see that file's own header for why a shared helper rather
+// than a one-liner in main.ts.
 //
 // (2) CHILD PERMISSION/HOOK CONTROL-RPC ROUTING -- CLOSED by Phase 4 Task 8 (rider 19, RULING
 // P4-I). This section previously documented a live gap: the engine pump held exactly ONE `RpcBridge`
@@ -34,15 +31,29 @@
 // human at a child's permission prompt is not a child making no progress. The clock still fires for
 // a genuine stall with nothing outstanding (child-engine.test.ts pins both directions).
 //
-// (3) PROGRAMMATIC AgentDefinition VISIBILITY: `ToolExecutionContext` (registry.ts, frozen) has no
-// field surfacing `RuntimeConfig.agents` to a tool executor -- tools/impl/agent.ts's own
-// `subagent_type` resolution can therefore only ever see filesystem-defined agents
-// (`~/.winter/agents/`, and `.winter/agents/*.md` in a trusted workspace); a session's own
-// programmatic `Options.agents` map is invisible to a running Agent tool call. definitions.ts's own
-// `loadAgentDefinitions` accepts a `programmatic` parameter for exactly this reason -- fully correct
-// and independently tested -- but tools/impl/agent.ts always passes `undefined` for it today. Fixing
-// this needs one new field on `ToolExecutionContext` (registry.ts) plus one conditional-spread line
-// in engine.ts's `buildDefaultToolExecutor`, both outside this lane's file authority.
+// (3) PROGRAMMATIC AgentDefinition VISIBILITY -- CLOSED by Phase 4 Task 8 (Lane C's Gap #3):
+// `ToolExecutionContext.agents` exists now and engine.ts's `buildDefaultToolExecutor` threads
+// `config.agents` onto it, so tools/impl/agent.ts's `subagent_type` resolution sees a session's
+// programmatic agents alongside the filesystem-defined ones.
+//
+// --- Child RuntimeConfig fidelity gaps (whole-branch review M7; DISCLOSED, not closed) ----------
+//
+// The child config below deliberately mirrors a SUBSET of the parent's. Everything omitted is
+// stricter or neutral EXCEPT the third item, which is a real functional gap:
+//   * `additionalDirectories` / `outputsDir` ($OUTDIR) -- absent: a child's writable set is
+//     narrower than its parent's, never wider.
+//   * `toolAliases` -- absent: a child sees native names only; nothing is renamed, so no rule or
+//     hook matcher can be dodged by an alias the child alone knows.
+//   * `agents` -- absent, and NOT merely stricter: a GRANDCHILD spawn inside a child cannot resolve
+//     a programmatic `subagent_type` at all (ctx.agents is undefined there), so it answers the
+//     "unknown subagent_type" error even though the session declared one. Closing it means
+//     mirroring the parent's map onto the child config; carried, not done here.
+//   * `toolSearchEnabled` -- absent: a child's deferral activation comes from the environment
+//     alone, so a host that enabled Tool Search per-session does not have it inside children.
+//   * `approvalStore` / `autoStateStore` -- not passed to the child's `runEngine`: a child's
+//     durable approvals and auto-mode counters are in-memory for its own lifetime.
+// The fix wave closed the two entries that were NOT neutral -- the parent's live permission rules
+// (C1/I6) and the session's MCP state (I2/I4); this list is what genuinely remains.
 //
 // --- Fix round 1 (controller review): two in-authority defects found and closed -----------------
 //
@@ -69,11 +80,12 @@
 // call, now fixed the same way `disableBypassPermissionsMode`/`forwardSubagentText` already were:
 // `parentPermissionRules`/`parentHooks`/`parentSandbox` are construction-time mirrors on
 // `ChildEngineFactoryDeps` below, applied to every child's own `RuntimeConfig`. This closes the
-// STATIC case (a host that configures rules/hooks at startup now binds every descendant); it does
-// NOT close the LIVE case -- a rule/hook change made to the parent's OWN session mid-run has no
-// channel to reach an already-registered factory (the identical root cause as gap (2) above); a
-// real per-spawn fix needs a `ChildEngineRunContext` field carrying the parent's CURRENT rules/hooks,
-// which is T8's seam to add.
+// STATIC case (a host that configures rules/hooks at startup now binds every descendant); the LIVE
+// case for RULES is closed by the P4 fix wave's own `runCtx.getParentRules()` (see
+// `resolveParentRules` below): the parent's rules are re-read per child GENERATION, so a rule added
+// mid-session binds the next spawn or resume. HOOKS remain a construction-time mirror -- no
+// equivalent live accessor exists for them, and a hook change mid-run still does not reach an
+// already-registered factory. Carried.
 //
 // (M1, MINOR) `record.transcript` was a hand-built, relative store KEY (missing the `~/.winter/
 // projects/` prefix a real path needs) computed UNCONDITIONALLY -- including when no store is

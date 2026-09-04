@@ -864,6 +864,15 @@ export async function traceWinterSubagentPermissionRound(): Promise<ConformanceT
 
 // (4) WS-10 §10.3: SendMessage addressed to this session's own (now terminal) child -- a RESUME,
 // with `resumed_and_delivered` claimed only because resume and delivery both completed.
+// Whole-branch N4 (P4 fix wave, a note on this golden's own fragility -- not a change): this trace
+// is deterministic only because the RESUMED child emits nothing forwardable. `forwardSubagentText`
+// is off here, so the resumed generation's text is swallowed, and its `init`/`result` frames are
+// swallowed unconditionally (child-handle.ts's transformChildFrame). Flip that default, or give the
+// resumed child a tool call of its own, and its frames would interleave NONDETERMINISTICALLY with
+// the parent's remaining turn -- a resume is fire-and-forget from the parent's point of view, with
+// no ordering guarantee against it. A scenario that WANTS a child's own frames on the wire should
+// follow `subagent-permission-round` instead, which is deterministic because the parent's Agent call
+// synchronously awaits the child's result.
 export async function traceWinterSendMessageToChildRound(): Promise<ConformanceTraceEntry[]> {
   const winterHome = mkdtempSync(join(tmpdir(), "winter-differential-childmsg-"));
   try {
