@@ -21,6 +21,16 @@ export class Queue<T> implements AsyncIterable<T> {
   }
 }
 
+// DRIVING A RAW `runEngine` OVER THIS CHANNEL (P4 fix wave, KNOWN item 6 -- a note, not a change):
+// a test that wires `runEngine({input: runtime.input, output: runtime.output})` to this pair MUST
+// write BOTH an initial `{type:"user"}` envelope AND a `{type:"control_request", subtype:"end_input"}`
+// on `host.output`. Without the user frame the engine's turn loop never starts; without `end_input`
+// the pump's `userFrames` queue is never ended, so the loop never exits, `runEngine`'s promise never
+// resolves, and a `for await` over `host.input` never completes -- the test HANGS with no error and
+// no output, which reads like a deadlock in the code under test rather than a missing frame. Every
+// harness in this repo that drives a raw engine (subagents/child-engine.test.ts's `driveParent`,
+// store/resume.test.ts's `runOneEnvelope`, engine.test.ts's own drivers) writes both, in that order;
+// copy one of them rather than hand-rolling a third.
 export function createInMemoryChannel(): { host: Duplex; runtime: Duplex } {
   const hostToRuntime = new Queue<WinterFrame>(); const runtimeToHost = new Queue<WinterFrame>();
   return {

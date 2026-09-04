@@ -37,7 +37,7 @@ import { createMcpLifecycle, resolveMcpServerSources, registerSessionMcpLifecycl
 import { createElicitationAsker } from "./mcp/elicitation.ts";
 // Phase 4 Task 3 (MUST 5/8): the child-spawn seam + host-stream correlation transform, and the
 // messaging router seam's own engine-side hook (children() from the live child roster).
-import { getChildEngineFactory, transformChildFrame, type ChildHandle, type ChildInheritance, type SpawnChildRequest } from "./subagents/child-handle.ts";
+import { getChildEngineFactory, transformChildFrame, type ChildHandle, type ChildInheritance, type ParentMcpState, type ParentRuleMirror, type SpawnChildRequest } from "./subagents/child-handle.ts";
 import type { MessagingRouterSeam } from "./messaging/adapter.ts";
 // Phase 4 Task 8: the process-level default messaging runtime Lane D's three tool executors read --
 // see that function's own header for why it is process-level and why the roster is contributed
@@ -714,6 +714,22 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // a function that answers "was this requestId mine?", which is exactly what `handleResponse`
   // already returns.
   const childResponseHandlers: Array<(frame: ControlResponseFrame) => boolean> = [];
+  // Phase 4 fix wave (I5, whole-branch review): the FOREGROUND children this run has spawned. A
+  // foreground child is awaited by the Agent tool call that spawned it -- so when that call is
+  // ABANDONED by an interrupt (`raceInterrupt` stops waiting; Provider/ToolExecutor take no abort
+  // signal, P1-G), nothing else bounds the child: it is an unbounded engine loop that keeps
+  // executing tools, can spawn further children of its own, and -- unlike a background spawn -- has
+  // no task id for `TaskStop` to reach. The stall watchdog never fires either, because a child
+  // making real progress is not stalled. Interrupting the parent's turn therefore stops them.
+  const foregroundChildren = new Set<ChildHandle>();
+  function abortForegroundChildren(): void {
+    for (const child of foregroundChildren) {
+      // `stop()` is idempotent and routes through the child's own gated settle (child-engine.ts) --
+      // a child that already finished is a silent no-op, never a status overwrite.
+      if (child.status() === "running") void child.stop().catch(() => {});
+    }
+    foregroundChildren.clear();
+  }
   opts.onChildRosterReady?.(() => childRoster);
   // Phase 4 Task 8: contribute THIS run's roster to the process-level messaging runtime, so Lane D's
   // SendMessage/ListAgents can actually resolve this session's own children (WS-10 §11 rules 2/3).
@@ -947,7 +963,15 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
       // "exact tool pool") and a bare/unrestricted definition both inherit this session's own
       // CURRENT advertised pool (eager + deferred canonical names -- see currentAdvertisedCanonicalNames's
       // own header for why this is safe to read here, well after assignment).
-      tools: req.definition?.tools ?? [...currentAdvertisedCanonicalNames],
+      // Phase 4 fix wave (C1 CRITICAL, whole-branch review): a definition's own `tools` list
+      // NARROWS the parent's pool, it never REPLACES it. Before this fix the `??` handed the
+      // definition's list through verbatim, so a definition naming a tool the PARENT had
+      // bare-denied (`disallowedTools:["t"]` -> `t` is absent from `currentAdvertisedCanonicalNames`)
+      // put that tool back into `inherit.tools`, out of the child's complement-deny, and -- under
+      // WS-07 §11's forced bypass -- straight into execution. Probe-confirmed, not hypothetical.
+      // An intersection is also the only reading consistent with WS-10 §2 ("AgentDefinition.tools
+      // RESTRICTS availability"): a restriction that can widen is not a restriction.
+      tools: req.definition?.tools !== undefined ? req.definition.tools.filter((name) => currentAdvertisedCanonicalNames.includes(name)) : [...currentAdvertisedCanonicalNames],
       model: resolveChildModel(req),
       // WS-10 §3.2: AgentInput/SpawnChildRequest carry no effort field at all; definition effort
       // overrides the session's own. No session-level effort CONCEPT is surfaced on RuntimeConfig
@@ -971,6 +995,14 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   }
 
   function buildDefaultToolExecutor(): ToolExecutor {
+    // Whole-branch M3(a), partially resolved by the fix wave's I1 and recorded here rather than
+    // left implicit: this process-global re-point used to hand the PARENT's background-task root to
+    // the CHILD's temp dir for the rest of the session, because a child's session id (and hence its
+    // `sessionTempDir` key) was its own agentId. A child now SHARES its parent's session id and,
+    // when it is not worktree-isolated, its cwd -- so both derive the identical temp root and the
+    // re-point is a no-op. It remains a real re-point for an `isolation:"worktree"` child (different
+    // cwd -> different tempProjectKey); keying the root per session rather than per process is the
+    // residual carry.
     configureBackgroundTaskRoot(resolveSessionTempPaths);
     const deps: RegistryToolExecutorDeps = {
       sessionId: config.sessionId,
@@ -1062,13 +1094,19 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
           }
           const deps = factory({
             parentSessionId: config.sessionId,
-            // Handoff note (fix round 1, T3 review minor, item 4): proven at the engine level, on
-            // the in-memory/direct-runEngine harness only (engine.test.ts's own fix-round-1 spawn
-            // seam tests) -- no ChildEngineFactory is registered anywhere on the child/compiled
-            // transport legs yet (Lane C has not landed a real child-engine.ts), so this closure has
-            // never run through a real spawned/compiled process. A cross-transport equivalence
-            // scenario for the spawn seam (transport-equivalence.test.ts's own pattern) is owed by
-            // Lane A/Lane C once that real injection point exists.
+            // Phase 4 fix wave (I1): this run's OWN agent key -- present only when THIS engine is
+            // itself a child. `config.sessionId` is the owning session at every nesting level now
+            // (a child shares its parent's), so it can no longer identify the spawner; the spawn
+            // DEPTH table (subagents/limits.ts) is keyed on this instead.
+            ...(config.agentId !== undefined ? { parentAgentId: config.agentId } : {}),
+            // Handoff note (fix round 1, T3 review minor, item 4) -- CLOSED, and corrected here
+            // because it asserted the opposite of what is now true (P4 fix wave, KNOWN item 8's
+            // stale-comment sweep). A real ChildEngineFactory IS registered on every leg
+            // (subagents/register-default-factory.ts, called by main.ts AND testing.ts), and this
+            // closure runs through real spawned/compiled processes in three committed
+            // cross-transport scenarios: `subagent-spawn-round`, `sendmessage-child-round`, and the
+            // fix wave's own `subagent-permission-round` (which is also the one that pins
+            // `parent_tool_use_id` on the wire).
             forwardChildFrame: (frame: WinterFrame, correlation: { parentToolUseId: string; agentId: string }): void => {
               const forwarded = transformChildFrame(frame, correlation, config.forwardSubagentText === true);
               if (forwarded !== null) output.write(forwarded);
@@ -1090,10 +1128,58 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
               const st = policyStateStore.getState();
               return { mode: st.mode, version: st.version, hash: computePolicyHash(st) };
             },
+            // Phase 4 fix wave (C1 + I6): the parent's CURRENT LIVE rule set, read fresh on every
+            // call (never a spawn-time or factory-construction-time snapshot) -- see
+            // ChildEngineRunContext.getParentRules for the two escapes this closes. The live
+            // `PolicyStateStore` is the ONE authority: it already carries the config-seeded `sdk`
+            // entries (allowedTools/disallowedTools/permissions.* alike, WS-07 §3.3), WS-07 §9's
+            // journal-restored rules, and every mid-session `PermissionUpdate` -- so a child cannot
+            // observe a different rule set from the one the parent's own next tool call would.
+            getParentRules: (): ParentRuleMirror => {
+              const mirror: ParentRuleMirror = { allow: [], ask: [], deny: [] };
+              for (const entry of policyStateStore.getState().rules.entries) {
+                // The engine's own hardcoded floor: every `runEngine` (a child's included) seeds
+                // BASELINE_DENY_RULES itself, so mirroring them would only re-tag a `managed` rule
+                // as `sdk` in the child -- a strictly weaker authority for zero added coverage.
+                if (entry.source === "managed") continue;
+                // WS-07 §3.2 / Ruling P2-H, and the ONE way this accessor could WIDEN rather than
+                // bind: a `project`/`local`-sourced ALLOW entry is INERT in an untrusted workspace
+                // (evaluator.ts's own `findMatchingRuleEntry` skips it, exactly as ruleset.ts's
+                // resolveRules does). Mirroring it here would re-tag it `sdk` in the child, where
+                // that gate no longer applies -- a child auto-approving what its own parent still
+                // gates, which is the C1 class in the opposite direction, inside C1's own fix. The
+                // write path makes this reachable today, not just after P5: only `cliArg` is
+                // authority-restricted (ruleset.ts's assertAuthorityMayWriteDestination), so a
+                // host's `canUseTool` can already return `{type:"addRules", destination:
+                // "projectSettings", behavior:"allow", ...}` under `session` authority. DENY/ASK
+                // entries from those same sources apply WITHOUT trust and are mirrored unchanged --
+                // the skip is allow-side only, matching the evaluator's own predicate verbatim.
+                if (entry.behavior === "allow" && (entry.source === "project" || entry.source === "local") && !trustedWorkspace) continue;
+                const raw = entry.ruleValue.ruleContent === undefined ? entry.ruleValue.toolName : `${entry.ruleValue.toolName}(${entry.ruleValue.ruleContent})`;
+                mirror[entry.behavior].push(raw);
+              }
+              return mirror;
+            },
+            // Phase 4 fix wave (I2): this run's RESOLVED MCP state, handed down so a child is not
+            // an MCP island (see ChildEngineRunContext.getParentMcpState). Read at CALL time, not
+            // capture time -- `effectiveMcpStateSource`/`effectiveMcpControlSeam` are declared
+            // below this function and are always assigned long before any Agent tool call can run,
+            // the same "declared later, read at call time" closure binding `emitToolReference`
+            // already uses for `loadedToolSet`.
+            getParentMcpState: (): ParentMcpState => ({
+              ...(effectiveMcpStateSource !== undefined ? { stateSource: effectiveMcpStateSource } : {}),
+              ...(effectiveMcpControlSeam !== undefined ? { controlSeam: effectiveMcpControlSeam } : {}),
+              ...(config.mcpServers !== undefined ? { declaredServers: config.mcpServers } : {}),
+            }),
           });
           const inheritance = buildChildInheritance(req);
           const handle = await deps.spawn(req, inheritance);
           childRoster.push(handle);
+          // Fix wave (I5): a BACKGROUND child deliberately outlives the call that spawned it (it is
+          // tracked by the background-task registry and reachable by TaskStop); a FOREGROUND child
+          // is owned by this turn, so an interrupt must take it down with the call that was
+          // awaiting it.
+          if (req.runInBackground !== true) foregroundChildren.add(handle);
           return handle;
         },
       },
@@ -1241,6 +1327,15 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // `trustedWorkspace` is the SAME constant the permission evaluator and hook registry already share
   // (declared once, far above) -- WS-09 §1.2's project-trust gate can never disagree with WS-07
   // §3.2's, because there is exactly one value.
+  // Phase 4 fix wave (I1/I2): the key for this run's own SESSION-KEYED side registries (the MCP
+  // lifecycle registry and the ToolSearch session runtime). A child engine now shares its parent's
+  // `config.sessionId` (WS-10 addressing -- see child-engine.ts's own baseConfig comment), so
+  // keying its own registrations by the session id would OVERWRITE the parent's entry at spawn and
+  // DELETE it again at the child's teardown. Keyed by the child's own agent key instead, which is
+  // also what makes the intended I2 behaviour fall out: a bridge tool executing INSIDE a child
+  // looks its lifecycle up by `ctx.sessionId` -- the owning session's -- and therefore sees the
+  // PARENT's real MCP state instead of a child-local void.
+  const sessionStateKey = config.agentId ?? config.sessionId;
   let mcpLifecycle: McpLifecycle | undefined;
   let disposeSessionMcpLifecycle: (() => void) | undefined;
   if (mcpServerStateSource === undefined && config.mcpServers !== undefined && Object.keys(config.mcpServers).length > 0) {
@@ -1267,7 +1362,7 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
     // The four WS-09 §1.4 bridge tools resolve their lifecycle out of this session-keyed registry
     // (see mcp/lifecycle.ts's own header for why it is session-keyed rather than a module singleton
     // or a per-run replaceExecutor). Cleared in teardown, below.
-    disposeSessionMcpLifecycle = registerSessionMcpLifecycle(config.sessionId, mcpLifecycle);
+    disposeSessionMcpLifecycle = registerSessionMcpLifecycle(sessionStateKey, mcpLifecycle);
   }
   // From here on, ONE resolved pair for the whole run -- the pump's own MCP control dispatch and the
   // init frames both read these, never `opts.*` directly, so caller-supplied and engine-built are
@@ -1467,7 +1562,7 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // Unregistered in this run's own teardown (below): the registry is keyed by session id in a
   // process-wide module singleton, so a long-lived host running many sessions would otherwise leak
   // one entry per run.
-  registerToolSearchSessionRuntime(config.sessionId, {
+  registerToolSearchSessionRuntime(sessionStateKey, {
     getMode: () => policyStateStore.getState().mode,
     activation: deferralActivation,
     platform: process.platform,
@@ -1488,13 +1583,12 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // is configured for this run (every session before Lane A's own real transports exist, and every
   // pre-existing test/golden), keeping every committed differential golden byte-identical.
   //
-  // Handoff note (fix round 1, T3 review minor, item 4): an SDK MCP server registered via THIS run's
-  // own config.mcpServers (below) never produces an entry here -- mcpServerStateSource is a wholly
-  // separate mechanism this task's SDK-server wiring never touches, and no McpServerStateSource
-  // implementation for an in-process instance exists anywhere yet. A cross-transport equivalence
-  // scenario proving whatever Lane A/Lane C eventually decide here (a synthesized permanent
-  // "connected" entry, or a deliberate documented absence) is owed once that injection point exists
-  // -- not this task's to add speculatively ahead of the design decision.
+  // Handoff note (fix round 1, T3 review minor, item 4) -- CLOSED, corrected in the P4 fix wave's
+  // stale-comment sweep (KNOWN item 8): an SDK MCP server DOES produce an entry here now. RULING
+  // P4-C's state-only feed path (`feedSdkSlotConnected`, mcp/lifecycle.ts) reports an in-process
+  // SDK server as `connected` with no transport at all, and the decision this note said was owed is
+  // made and proven: `mcp_servers: [{name, status:"connected"}]` is asserted on every leg by the
+  // rider-6 equivalence scenario and pinned in the `mcp-tool-round` golden.
   const mcpServersWire = effectiveMcpStateSource ? mcpServerStatesToWire(effectiveMcpStateSource.snapshot()) : undefined;
   output.write({
     type: "init",
@@ -1947,7 +2041,15 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
     const interruptSignal = new Promise<void>((resolve) => {
       interruptResolve = resolve;
     });
-    interruptCurrentTurn.current = interruptResolve;
+    // Fix wave (I5): an interrupt abandons the in-flight tool call -- including an Agent call that
+    // is awaiting a foreground child -- so the abandoned child is stopped with it. Ordered
+    // resolve-then-stop so the turn unwinds immediately; `stop()` is fire-and-forget and settles
+    // the child's own result promise (never awaited here: WS-04 §5's interrupt must not block on a
+    // child's teardown).
+    interruptCurrentTurn.current = () => {
+      interruptResolve();
+      abortForegroundChildren();
+    };
 
     // Finding 3 (P2 fix-wave, IMPORTANT): result.permission_denials, the array the frozen
     // derived-shapes doc calls "the record to trust ... the array is the ledger" (permission_denied
@@ -2545,12 +2647,26 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // caller-supplied state source/control seam is the caller's own to dispose.
   // Phase 4 Task 8: withdraw this run's child roster from the process-level messaging runtime --
   // a completed session's children must not keep appearing in another session's ListAgents.
+  // Fix wave (I5): a BACKGROUND child that is still running at teardown outlives the session in the
+  // in-memory leg (the child/compiled legs die with the process, main.ts) -- it kept executing tools
+  // while being WITHDRAWN from the messaging roster one line below, i.e. live but unaddressable by
+  // anything. Stopped here instead, BEFORE the withdrawal, and awaited (each `stop()` settles its
+  // own generation) so a host that returns from `runEngine` has no live background descendants.
+  //
+  // FOREGROUND children are deliberately NOT swept here (the review's teardown finding is about the
+  // background half): a foreground child is owned by the Agent call awaiting it -- it either
+  // completes, in which case there is nothing to stop, or its call is interrupted, in which case
+  // `abortForegroundChildren` above already stopped it. Residual, disclosed: a foreground-shaped
+  // spawn that some other caller abandons WITHOUT an interrupt (this file's own test fixtures do
+  // exactly that, deliberately, to interact with a child past its parent's turn) keeps its
+  // pre-existing lifetime.
+  await Promise.allSettled(childRoster.filter((c) => !foregroundChildren.has(c) && c.status() === "running").map((c) => c.stop()));
   removeChildRosterSource();
   disposeSessionMcpLifecycle?.();
   if (mcpLifecycle) await mcpLifecycle.dispose().catch(() => {});
   // Phase 4 Task 8 (rider 2): drop this run's ToolSearch session runtime -- same singleton-hygiene
   // argument as the MCP unregistration immediately above (one leaked entry per run otherwise).
-  unregisterToolSearchSessionRuntime(config.sessionId);
+  unregisterToolSearchSessionRuntime(sessionStateKey); // fix wave (I1): the paired disposer for the registration above -- never `config.sessionId`, which a child shares with its parent
   output.end();
   return 0;
 }

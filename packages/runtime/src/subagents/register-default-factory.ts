@@ -44,6 +44,19 @@ export interface DefaultChildEngineFactoryOptions {
   env: Record<string, string | undefined>;
 }
 
+// WHOLE-BRANCH M3(d) -- THE ONE-LIVE-SESSION-PER-PROCESS ASSUMPTION, stated plainly because this
+// function is where it becomes observable. `registerChildEngineFactory` sets a MODULE SINGLETON, and
+// both entrypoints call this once per session start -- so two CONCURRENT in-memory sessions in one
+// host process (only `inMemoryProcess` can produce that; a spawned/compiled leg is one session per
+// process by construction) leave the LAST registration standing, and the earlier session's children
+// would be built from the later session's provider and config mirrors. Every mirror below is
+// session-scoped data, so this is a real cross-session leak, not merely a lifecycle wrinkle.
+//
+// It is an ACCEPTED assumption at this phase, the same one tools/background-tasks.ts and
+// subagents/limits.ts already document for their own module-level state (P3's ONE-LIVE-ENGINE
+// posture, which R4-4's in-process children stretch but do not break: a child is another engine in
+// the same SESSION). A daemon serving genuinely concurrent sessions in one process is WS-15's, and
+// the fix shape is the same for all three: key the state by session id instead of by module.
 export function registerDefaultChildEngineFactory(opts: DefaultChildEngineFactoryOptions): void {
   const { config } = opts;
   registerChildEngineFactory(

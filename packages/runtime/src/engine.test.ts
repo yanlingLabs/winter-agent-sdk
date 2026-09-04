@@ -25,11 +25,12 @@ import { echoProvider, scriptedProvider, stubExecutor } from "./provider/mock.ts
 import { withHttpFixture } from "./mcp/test-fixtures.ts";
 import { inMemoryProcess } from "./testing.ts";
 import { WinterPermissionError } from "./permissions/policy-state.ts";
-// Fix round 1, MAJOR item 1: createFakeChildHandle is exported from the seam-authority file (its
-// own header still says "keep it green" -- this import, plus the one-line `export` there, is the
-// only change made to it) so this file's NEW spawn-seam tests drive a REAL runEngine against the
-// identical fixture that file's own (i) tests already prove satisfies the ChildHandle contract.
-import { createFakeChildHandle } from "./subagents/seam-contracts-p4.test.ts";
+// Fix round 1, MAJOR item 1 (relocated by the P4 fix wave, KNOWN item 2): the SAME fixture the
+// seam-authority file (subagents/seam-contracts-p4.test.ts) proves satisfies the ChildHandle
+// contract -- it now lives in a plain module rather than inside that test file, so importing it
+// here no longer runs another suite as a side effect. This file's spawn-seam tests drive a REAL
+// runEngine against it, including the object-IDENTITY assertion in test (d).
+import { createFakeChildHandle } from "./subagents/test-fakes.ts";
 import {
   registerChildEngineFactory,
   resetChildEngineFactoryForTest,

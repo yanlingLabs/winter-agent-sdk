@@ -20,6 +20,8 @@ import { createChildEngineFactory, type ChildEngineFactoryDeps } from "./child-e
 import { resetSpawnLimitsForTest } from "./limits.ts";
 import { loadAgentDefinitions } from "./definitions.ts";
 import { TranscriptWriter } from "../store/dialect.ts";
+import { withHttpFixture, defaultFixtureSpec } from "../mcp/test-fixtures.ts";
+import { getToolSearchSessionRuntime } from "../toolsearch/search.ts";
 
 async function drain(source: AsyncIterable<WinterFrame>): Promise<WinterFrame[]> {
   const out: WinterFrame[] = [];
@@ -171,11 +173,17 @@ function driveParent(deps: ChildEngineFactoryDeps, config: RuntimeConfig, turns:
 // runtime-originated control_requests it sees, the way a real host with a `canUseTool`/hook handler
 // does. `driveParent` merely drains, which is why every pre-P4-I scenario that reached a real
 // permission prompt could only ever observe a stall.
+//
+// Phase 4 fix wave (T8 review I1): `answer` may return a PROMISE, and a promised reply is written
+// FIRE-AND-FORGET -- the read loop keeps draining while the answer is pending, exactly as a real
+// host with a human at a prompt behaves. Awaiting inside the loop would stop draining the very
+// stream the answer has to travel back over. This is what makes a genuinely LATE answer testable,
+// which is what rider 20's watchdog pause needs in order to be falsifiable at all.
 function driveParentAnswering(
   deps: ChildEngineFactoryDeps,
   config: RuntimeConfig,
   turns: Parameters<typeof scriptedProvider>[0],
-  answer: (frame: Extract<WinterFrame, { type: "control_request" }>) => { ok: boolean; payload?: unknown } | undefined,
+  answer: (frame: Extract<WinterFrame, { type: "control_request" }>) => { ok: boolean; payload?: unknown } | undefined | Promise<{ ok: boolean; payload?: unknown } | undefined>,
 ): Promise<{ code: number; frames: WinterFrame[] }> {
   registerChildEngineFactory(createChildEngineFactory(deps));
   const { host, runtime } = createInMemoryChannel();
@@ -188,13 +196,15 @@ function driveParentAnswering(
     for await (const frame of host.input) {
       frames.push(frame);
       if (frame.type !== "control_request") continue;
-      const reply = answer(frame as Extract<WinterFrame, { type: "control_request" }>);
-      if (reply === undefined) continue;
-      host.output.write({
-        type: "control_response",
-        requestId: (frame as { requestId: string }).requestId,
-        ok: reply.ok,
-        ...(reply.payload !== undefined ? { payload: reply.payload } : {}),
+      const requestId = (frame as { requestId: string }).requestId;
+      void Promise.resolve(answer(frame as Extract<WinterFrame, { type: "control_request" }>)).then((reply) => {
+        if (reply === undefined) return;
+        host.output.write({
+          type: "control_response",
+          requestId,
+          ok: reply.ok,
+          ...(reply.payload !== undefined ? { payload: reply.payload } : {}),
+        });
       });
     }
   })();
@@ -665,13 +675,16 @@ describe("child-engine.ts: child permission/hook control-RPC routing (RULING P4-
       { provider: childProvider, env: { WINTER_ASYNC_AGENT_STALL_TIMEOUT_MS: "40" } },
       baseConfig({ permissionMode: "default", allowDangerouslySkipPermissions: false, permissions: { allow: [SPAWN_PROBE] } }),
       [{ kind: "tool_use", calls: [{ id: "call-1", name: SPAWN_PROBE, input: req }] }, { kind: "text", text: "parent done" }],
-      (frame) => {
+      async (frame) => {
         if (frame.subtype !== "permission") return undefined;
         sawPermissionRequest = true;
-        // A deliberate 80 ms delay -- TWICE the stall timeout -- so this test cannot pass by the
-        // answer merely beating the clock. It passes only because the clock is genuinely PAUSED
-        // while the request is outstanding (RULING P4-I's companion ruling: a human thinking is not
-        // a stall).
+        // Phase 4 fix wave (T8 review I1): a REAL 80 ms delay -- TWICE the stall timeout -- so this
+        // test cannot pass by the answer merely beating the clock. Before the fix wave this comment
+        // claimed a delay the code did not implement (the callback returned synchronously), so the
+        // whole scenario passed with `watchdog.pause()` DELETED. It now passes only because the
+        // clock is genuinely PAUSED while the request is outstanding (RULING P4-I's companion
+        // ruling: a human thinking is not a stall).
+        await new Promise((r) => setTimeout(r, 80));
         return { ok: true, payload: { behavior: "allow" } };
       },
     );
@@ -857,15 +870,20 @@ describe("child-engine.ts: fix round 1 (controller review) -- I1: permission rul
         provider: childProvider,
         parentHooks: { PreToolUse: [{ hookCount: 1, source: "sdk" }] },
         parentIncludeHookEvents: true,
-        // Still SHORT (150 ms): if rider 20's pause did not hold, the child would abort with a typed
-        // "stalled" error before the hook could ever be answered.
-        env: { WINTER_ASYNC_AGENT_STALL_TIMEOUT_MS: "150" },
+        // SHORT (60 ms) and genuinely beaten: the answer below waits 120 ms -- TWICE this timeout --
+        // with the hook request outstanding, so rider 20's pause is load-bearing here for the HOOK
+        // control_request exactly as the sibling P4-I test proves it for the PERMISSION one. (Fix
+        // wave, T8 review M5's second half: this comment previously claimed the timeout was
+        // "still SHORT" against a callback that answered synchronously, so the clock was beaten
+        // trivially and the pause was not exercised at all.)
+        env: { WINTER_ASYNC_AGENT_STALL_TIMEOUT_MS: "60" },
       },
       baseConfig(),
       [{ kind: "tool_use", calls: [{ id: "call-1", name: SPAWN_PROBE, input: req }] }, { kind: "text", text: "parent done" }],
-      (frame) => {
+      async (frame) => {
         if (frame.subtype !== "hook") return undefined;
         sawHookRequest = true;
+        await new Promise((r) => setTimeout(r, 120));
         return { ok: true, payload: {} }; // an observational, no-opinion hook answer
       },
     );
@@ -1133,4 +1151,642 @@ describe("child-engine.ts: fix round 1 (controller review) -- M1: record.transcr
     await drainPromise;
     await done;
   });
+});
+
+// --- Phase 4 fix wave: C1 (CRITICAL) + I6 -- the parent's LIVE rules bind every child ------------
+//
+// The whole-branch review's own two escapes, plus the two directions of the same omission. Every
+// test here registers the factory through `driveParent`/`driveParentAnswering`, which pass NO
+// `parentPermissionRules` at all -- so a test that passes here is passing through the LIVE
+// `runCtx.getParentRules()` accessor, never the construction-time mirror (that mirror keeps its own
+// pre-existing tests; this block is what proves the accessor is the one production uses).
+
+// A fixture tool that RECORDS every input it is called with -- "did the child actually execute
+// this?" is the only assertion that distinguishes "denied" from "denied-looking" for a tool whose
+// result text a denial would never produce anyway.
+function registerRecordingTool(name: string, opts: { capabilityRequirements?: string[] } = {}): { ran: Array<Record<string, unknown>> } {
+  const ran: Array<Record<string, unknown>> = [];
+  registerTool({
+    descriptor: {
+      canonicalName: name, advertisedName: name, source: "builtin", inputSchema: { type: "object" },
+      description: "fix-wave fixture: records every execution", exposure: "eager", permissionClass: "read",
+      availability: {}, capabilityRequirements: opts.capabilityRequirements ?? [], disposition: "implement-now",
+    },
+    executor: {
+      async execute(input: unknown) {
+        ran.push((input ?? {}) as Record<string, unknown>);
+        return { output: `${name} RAN` };
+      },
+    },
+  });
+  return { ran };
+}
+
+describe("child-engine.ts: the parent's LIVE permission rules bind every child (fix wave C1/I6, WS-07 §3.3/§11)", () => {
+  test("C1(a): a SCOPED parent deny (disallowedTools: 'Tool(rm *)') survives into a forced-bypass child -- the matching call is denied, a non-matching one still runs", async () => {
+    registerSpawnProbe();
+    cleanupToolNames.push(SPAWN_PROBE);
+    const CMD = "t6fw_scoped_cmd";
+    cleanupToolNames.push(CMD);
+    const probe = registerRecordingTool(CMD);
+    const req: SpawnChildRequest = { parentToolUseId: "call-1", prompt: "run two commands", runInBackground: false };
+    // The child tries the DENIED shape first, then a benign one -- so a green result cannot come
+    // from the tool being unreachable/unregistered altogether (the benign call proves it is live).
+    const childProvider = scriptedProvider([
+      { kind: "tool_use", calls: [{ id: "c1", name: CMD, input: { command: "rm -rf /tmp/winter-fixwave-must-never-run" } }] },
+      { kind: "tool_use", calls: [{ id: "c2", name: CMD, input: { command: "ls" } }] },
+      { kind: "text", text: "child done" },
+    ]);
+    // bypassPermissions (baseConfig's default) is the security-relevant case: WS-07 §11 FORCES it
+    // onto the child, and before this fix the scoped rule reached the child through no channel at
+    // all -- `CMD` stays in the parent's advertised set (isBareDenied only removes bare-equivalent
+    // rules), so the child's complement-deny never covered it either.
+    const { code } = await driveParent(
+      { provider: childProvider },
+      baseConfig({ disallowedTools: [`${CMD}(rm *)`] }),
+      [{ kind: "tool_use", calls: [{ id: "call-1", name: SPAWN_PROBE, input: req }] }, { kind: "text", text: "parent done" }],
+    );
+    expect(code).toBe(0);
+    expect(probe.ran.map((i) => i["command"])).toEqual(["ls"]);
+  }, 10_000);
+
+  test("C1(b): a definition's `tools` INTERSECTS the parent's advertised pool -- it can never re-enable a tool the parent does not have", async () => {
+    registerSpawnProbe();
+    cleanupToolNames.push(SPAWN_PROBE);
+    // Excluded from the PARENT's advertised set by a capability gate, NOT by a deny rule -- so this
+    // test isolates the `engine.ts` intersection itself. (The review's own PROBE 2 shape -- a
+    // bare `disallowedTools` deny plus a definition naming that tool -- is now closed twice over:
+    // by this intersection AND by the live deny rule reaching the child; the next test pins that
+    // one directly.)
+    const WIDENED = "t6fw_capability_gated";
+    cleanupToolNames.push(WIDENED);
+    const probe = registerRecordingTool(WIDENED, { capabilityRequirements: ["winter.fixwave-absent"] });
+    const req: SpawnChildRequest = {
+      parentToolUseId: "call-1", prompt: "use the widened tool", runInBackground: false,
+      definition: { description: "widener", prompt: "you may use the widened tool", tools: [WIDENED] },
+    };
+    const childProvider = scriptedProvider([
+      { kind: "tool_use", calls: [{ id: "c1", name: WIDENED, input: {} }] },
+      { kind: "text", text: "child done" },
+    ]);
+    const { code } = await driveParent({ provider: childProvider }, baseConfig(), [
+      { kind: "tool_use", calls: [{ id: "call-1", name: SPAWN_PROBE, input: req }] },
+      { kind: "text", text: "parent done" },
+    ]);
+    expect(code).toBe(0);
+    expect(probe.ran).toEqual([]);
+  }, 10_000);
+
+  test("C1(b) / PROBE 2: a definition naming a parent-BARE-DENIED tool still cannot execute it under forced bypass", async () => {
+    registerSpawnProbe();
+    cleanupToolNames.push(SPAWN_PROBE);
+    const DENIED = "t6fw_probe_denied";
+    cleanupToolNames.push(DENIED);
+    const probe = registerRecordingTool(DENIED);
+    const req: SpawnChildRequest = {
+      parentToolUseId: "call-1", prompt: "child-probe", runInBackground: false,
+      definition: { description: "prober", prompt: "persona", tools: [DENIED] },
+    };
+    const childProvider = scriptedProvider([
+      { kind: "tool_use", calls: [{ id: "cc1", name: DENIED, input: {} }] },
+      { kind: "text", text: "child done" },
+    ]);
+    const { code } = await driveParent({ provider: childProvider }, baseConfig({ disallowedTools: [DENIED] }), [
+      { kind: "tool_use", calls: [{ id: "call-1", name: SPAWN_PROBE, input: req }] },
+      { kind: "text", text: "parent done" },
+    ]);
+    expect(code).toBe(0);
+    expect(probe.ran).toEqual([]);
+  }, 10_000);
+
+  test("I6: a parent's `allowedTools` pre-approval reaches a `default`-mode child -- the child never re-prompts for it", async () => {
+    registerSpawnProbe();
+    cleanupToolNames.push(SPAWN_PROBE);
+    const ALLOWED = "t6fw_preapproved";
+    cleanupToolNames.push(ALLOWED);
+    const probe = registerRecordingTool(ALLOWED);
+    const req: SpawnChildRequest = { parentToolUseId: "call-1", prompt: "use the pre-approved tool", runInBackground: false };
+    const childProvider = scriptedProvider([
+      { kind: "tool_use", calls: [{ id: "c1", name: ALLOWED, input: {} }] },
+      { kind: "text", text: "child done" },
+    ]);
+    // Every permission request is answered DENY, so the two assertions are independent: no prompt
+    // was issued at all (the allow rule resolved the call at stage 5), and the tool genuinely ran.
+    // Before the fix the child prompted, got the deny, and never ran the parent's own pre-approved
+    // tool -- the exact "a default-mode child re-prompts for what the parent pre-approved" failure.
+    let sawPermissionRequest = false;
+    const { code } = await driveParentAnswering(
+      { provider: childProvider, env: { WINTER_ASYNC_AGENT_STALL_TIMEOUT_MS: "2000" } },
+      baseConfig({ permissionMode: "default", allowDangerouslySkipPermissions: false, allowedTools: [SPAWN_PROBE, ALLOWED] }),
+      [{ kind: "tool_use", calls: [{ id: "call-1", name: SPAWN_PROBE, input: req }] }, { kind: "text", text: "parent done" }],
+      (frame) => {
+        if (frame.subtype !== "permission") return undefined;
+        sawPermissionRequest = true;
+        return { ok: true, payload: { behavior: "deny", message: "no prompt should ever have been issued" } };
+      },
+    );
+    expect(code).toBe(0);
+    expect(sawPermissionRequest, "an allowedTools pre-approval must resolve the child's call without a prompt").toBe(false);
+    expect(probe.ran.length).toBe(1);
+  }, 10_000);
+
+  test("C1/I6 (the widening direction): a project-sourced ALLOW rule that is INERT in the untrusted parent does NOT become live in the child", async () => {
+    registerSpawnProbe();
+    cleanupToolNames.push(SPAWN_PROBE);
+    const GATE = "t6fw_trust_gate";
+    const PROJECT_ALLOWED = "t6fw_project_allowed";
+    cleanupToolNames.push(GATE, PROJECT_ALLOWED);
+    registerRecordingTool(GATE);
+    const probe = registerRecordingTool(PROJECT_ALLOWED);
+    const req: SpawnChildRequest = { parentToolUseId: "call-2", prompt: "use the project-allowed tool", runInBackground: false };
+    const childProvider = scriptedProvider([
+      { kind: "tool_use", calls: [{ id: "c1", name: PROJECT_ALLOWED, input: {} }] },
+      { kind: "text", text: "child done" },
+    ]);
+    // WS-07 §3.2 / Ruling P2-H: a project/local ALLOW rule requires workspace trust, and
+    // `trustedWorkspace` is hardcoded false today -- so this rule is INERT in the parent. Only
+    // `cliArg` is authority-restricted at the write path, so a host's own canUseTool can genuinely
+    // author it under `session` authority, which is exactly what happens here.
+    let sawChildPrompt = false;
+    const { code } = await driveParentAnswering(
+      { provider: childProvider, env: { WINTER_ASYNC_AGENT_STALL_TIMEOUT_MS: "2000" } },
+      baseConfig({ permissionMode: "default", allowDangerouslySkipPermissions: false }),
+      [
+        { kind: "tool_use", calls: [{ id: "call-1", name: GATE, input: {} }] },
+        { kind: "tool_use", calls: [{ id: "call-2", name: SPAWN_PROBE, input: req }] },
+        { kind: "text", text: "parent done" },
+      ],
+      (frame) => {
+        if (frame.subtype !== "permission") return undefined;
+        const payload = frame.payload as { toolName?: string } | undefined;
+        if (payload?.toolName === GATE) {
+          return {
+            ok: true,
+            payload: {
+              behavior: "allow",
+              updatedPermissions: [{ type: "addRules", rules: [{ toolName: PROJECT_ALLOWED }], behavior: "allow", destination: "projectSettings" }],
+            },
+          };
+        }
+        if (payload?.toolName === SPAWN_PROBE) return { ok: true, payload: { behavior: "allow" } };
+        // The child's own call: DENIED. It can only run if the inert project rule was mirrored into
+        // the child as a live `sdk` allow, which would resolve it at stage 5 with no prompt at all.
+        sawChildPrompt = true;
+        return { ok: true, payload: { behavior: "deny", message: "the project rule must not be live in a child" } };
+      },
+    );
+    expect(code).toBe(0);
+    expect(probe.ran, "an untrusted project ALLOW must not become live inside a child").toEqual([]);
+    expect(sawChildPrompt, "the child's call must still reach a prompt, i.e. no rule resolved it").toBe(true);
+  }, 10_000);
+
+  test("I6 (live): a rule added to the PARENT mid-run (updatedPermissions) binds a child spawned afterwards", async () => {
+    registerSpawnProbe();
+    cleanupToolNames.push(SPAWN_PROBE);
+    const GATE = "t6fw_gate";
+    const LIVE_DENIED = "t6fw_live_denied";
+    cleanupToolNames.push(GATE, LIVE_DENIED);
+    registerRecordingTool(GATE);
+    const probe = registerRecordingTool(LIVE_DENIED);
+    const req: SpawnChildRequest = { parentToolUseId: "call-2", prompt: "use the live-denied tool", runInBackground: false };
+    const childProvider = scriptedProvider([
+      { kind: "tool_use", calls: [{ id: "c1", name: LIVE_DENIED, input: {} }] },
+      { kind: "text", text: "child done" },
+    ]);
+    const { code } = await driveParentAnswering(
+      { provider: childProvider, env: { WINTER_ASYNC_AGENT_STALL_TIMEOUT_MS: "2000" } },
+      baseConfig({ permissionMode: "default", allowDangerouslySkipPermissions: false }),
+      [
+        // Turn 1: an ordinary call the host approves -- carrying a session-scoped deny for a tool
+        // NOTHING has denied at config time. Nothing about this rule exists when the child engine
+        // factory is constructed, which is exactly why a construction-time mirror cannot see it.
+        { kind: "tool_use", calls: [{ id: "call-1", name: GATE, input: {} }] },
+        // Turn 2: NOW spawn. The child must inherit the rule added during turn 1.
+        { kind: "tool_use", calls: [{ id: "call-2", name: SPAWN_PROBE, input: req }] },
+        { kind: "text", text: "parent done" },
+      ],
+      (frame) => {
+        if (frame.subtype !== "permission") return undefined;
+        const payload = frame.payload as { toolName?: string } | undefined;
+        if (payload?.toolName === GATE) {
+          return {
+            ok: true,
+            payload: {
+              behavior: "allow",
+              updatedPermissions: [{ type: "addRules", rules: [{ toolName: LIVE_DENIED }], behavior: "deny", destination: "session" }],
+            },
+          };
+        }
+        // Everything else (the parent's own spawn call, and -- before the fix -- the child's call to
+        // the live-denied tool) is ALLOWED, so the assertion below can only be satisfied by the rule
+        // itself having reached the child.
+        return { ok: true, payload: { behavior: "allow" } };
+      },
+    );
+    expect(code).toBe(0);
+    expect(probe.ran).toEqual([]);
+  }, 10_000);
+});
+
+// --- Phase 4 fix wave: I1 -- a child's sessionId is the OWNING PARENT's --------------------------
+
+describe("child-engine.ts: child session identity (fix wave I1, WS-10 addressing)", () => {
+  test("a child's ctx.sessionId is the PARENT's session id and its agentId is distinct -- the self-address is well-formed, never agent:<id>:<id>", async () => {
+    registerSpawnProbe();
+    cleanupToolNames.push(SPAWN_PROBE);
+    const IDENTITY = "t6fw_identity";
+    cleanupToolNames.push(IDENTITY);
+    const seen: Array<{ sessionId: string; agentId: string | undefined; insideSubagent: boolean | undefined }> = [];
+    registerTool({
+      descriptor: {
+        canonicalName: IDENTITY, advertisedName: IDENTITY, source: "builtin", inputSchema: { type: "object" },
+        description: "records the executing context's own identity", exposure: "eager", permissionClass: "read",
+        availability: {}, capabilityRequirements: [], disposition: "implement-now",
+      },
+      executor: {
+        async execute(_input: unknown, ctx: ToolExecutionContext) {
+          seen.push({ sessionId: ctx.sessionId, agentId: ctx.agentId, insideSubagent: ctx.insideSubagent });
+          return { output: "recorded" };
+        },
+      },
+    });
+    const req: SpawnChildRequest = { parentToolUseId: "call-1", prompt: "identify yourself", runInBackground: false };
+    const childProvider = scriptedProvider([
+      { kind: "tool_use", calls: [{ id: "c1", name: IDENTITY, input: {} }] },
+      { kind: "text", text: "child done" },
+    ]);
+    const { code } = await driveParent({ provider: childProvider }, baseConfig({ sessionId: "parent-identity-s" }), [
+      { kind: "tool_use", calls: [{ id: "call-1", name: SPAWN_PROBE, input: req }] },
+      { kind: "text", text: "parent done" },
+    ]);
+    expect(code).toBe(0);
+    expect(seen.length).toBe(1);
+    // The review's own PROBE 2 observed `ctx.sessionId === ctx.agentId` here -- the malformed
+    // identity that made `callerAddress` build `agent:<agentId>:<agentId>`.
+    expect(seen[0]!.sessionId).toBe("parent-identity-s");
+    expect(seen[0]!.agentId).toBeDefined();
+    expect(seen[0]!.agentId).not.toBe(seen[0]!.sessionId);
+    expect(seen[0]!.insideSubagent).toBe(true);
+  }, 10_000);
+
+  test("a child can SendMessage to a SIBLING (both children of the same session), not only to its own grandchildren", async () => {
+    registerSpawnProbe();
+    registerSpawnAndRegister();
+    cleanupToolNames.push(SPAWN_PROBE, SPAWN_AND_REGISTER);
+    // ONE provider instance serves BOTH children (createChildEngineFactory hands `deps.provider`
+    // straight to every child's nested runEngine), so it must be a PURE FUNCTION of the messages it
+    // sees -- the established discipline for provider/mock.ts's own "subagent"/"childmsg" arms.
+    const childProvider: Provider = {
+      async generate({ messages }) {
+        const firstUser = messages.find((m) => m.role === "user");
+        const firstText = typeof firstUser?.content === "string" ? firstUser.content : "";
+        if (firstText.includes("BETA")) return { kind: "text", text: "beta done" };
+        for (const m of messages) {
+          if (!Array.isArray(m.content)) continue;
+          for (const b of m.content) {
+            if (b.type === "tool_result" && b.tool_use_id === "a1") return { kind: "text", text: `SENDRESULT:${b.content}` };
+          }
+        }
+        return { kind: "tool_use", calls: [{ id: "a1", name: "SendMessage", input: { to: "beta", message: "hi sibling" } }] };
+      },
+    };
+    const beta: SpawnChildRequest = { parentToolUseId: "call-1", prompt: "BETA", runInBackground: true, name: "beta" };
+    const alpha: SpawnChildRequest = { parentToolUseId: "call-2", prompt: "ALPHA: message your sibling", runInBackground: false };
+    const { code, frames } = await driveParent({ provider: childProvider }, baseConfig({ sessionId: "parent-siblings-s" }), [
+      { kind: "tool_use", calls: [{ id: "call-1", name: SPAWN_AND_REGISTER, input: beta }] },
+      { kind: "tool_use", calls: [{ id: "call-2", name: SPAWN_PROBE, input: alpha }] },
+      { kind: "text", text: "parent done" },
+    ]);
+    expect(code).toBe(0);
+    const block = dataMessages(frames)
+      .filter((m) => m.type === "user")
+      .flatMap((m) => ((m as unknown as { message: { content: Array<{ tool_use_id: string; content: string }> } }).message.content ?? []))
+      .find((b) => b.tool_use_id === "call-2")!;
+    const parsed = JSON.parse(block.content) as { result: { status: string; content: string } };
+    expect(parsed.result.status).toBe("completed");
+    // Before the fix: `not_found` -- alpha's own "children" filter (record.parentSessionId ===
+    // caller.sessionId) compared beta's PARENT session id against alpha's own AGENT id, so a
+    // sibling was structurally unreachable and `ListAgents` from a child listed only grandchildren.
+    expect(parsed.result.content).not.toContain("not_found");
+    expect(parsed.result.content).toMatch(/"status":"(delivered|queued|resumed_and_delivered)"/);
+  }, 10_000);
+});
+
+// --- Phase 4 fix wave: I2 + I4 -- a child is not an MCP island ----------------------------------
+//
+// Every test here drives a REAL loopback MCP server (mcp/test-fixtures.ts's Streamable-HTTP
+// fixture) through a REAL parent `runEngine`, and executes the bridge family INSIDE a real child --
+// the P3-class gap the review named ("advertised in a golden, executed by nothing").
+
+describe("child-engine.ts: children share the session's MCP state (fix wave I2/I4, WS-09 §1.4/§8.4, WS-10 §2)", () => {
+  test("I2: WaitForMcpServers and ListMcpResourcesTool executed INSIDE a child answer with the PARENT's real server state", async () => {
+    registerSpawnProbe();
+    cleanupToolNames.push(SPAWN_PROBE);
+    await withHttpFixture(defaultFixtureSpec(), async (url) => {
+      const req: SpawnChildRequest = { parentToolUseId: "call-1", prompt: "inspect the session's MCP servers", runInBackground: false };
+      const childProvider = scriptedProvider([
+        { kind: "tool_use", calls: [{ id: "c1", name: "WaitForMcpServers", input: { servers: ["fixture"] } }] },
+        { kind: "tool_use", calls: [{ id: "c2", name: "ListMcpResourcesTool", input: {} }] },
+        { kind: "text", text: "child inspected mcp" },
+      ]);
+      const { code, frames } = await driveParent(
+        { provider: childProvider },
+        baseConfig({ sessionId: "parent-mcp-s", mcpServers: { fixture: { type: "http", url: url.href } } }),
+        [{ kind: "tool_use", calls: [{ id: "call-1", name: SPAWN_PROBE, input: req }] }, { kind: "text", text: "parent done" }],
+      );
+      expect(code).toBe(0);
+      // The child's own tool_result blocks are forwarded to the parent's stream stamped with the
+      // parent's tool_use id (WS-10 §4), which is where these answers are observed.
+      const blocks = dataMessages(frames)
+        .filter((m) => m.type === "user")
+        .flatMap((m) => ((m as unknown as { message: { content: Array<{ tool_use_id: string; content: string }> } }).message.content ?? []));
+      const wait = JSON.parse(blocks.find((b) => b.tool_use_id === "c1")!.content) as { ready: boolean; connected: string[]; unknown: string[] };
+      // Before the fix: `{ready:true, connected:[], unknown:["fixture"]}` -- a WRONG answer, not
+      // merely an inert one (wait-for-mcp-servers.ts's own no-state-source branch).
+      expect(wait.connected).toEqual(["fixture"]);
+      expect(wait.unknown).toEqual([]);
+      const listRaw = blocks.find((b) => b.tool_use_id === "c2")!.content;
+      // Before the fix: "no MCP lifecycle is configured for this session".
+      expect(listRaw).not.toContain("no MCP lifecycle");
+      expect(listRaw).toContain("fixture://text.txt");
+    });
+  }, 20_000);
+
+  test("I2: a child can CALL the session's own MCP tool -- through the PARENT's sdk_mcp_call bridge -- and sees exactly the parent's servers", async () => {
+    registerSpawnProbe();
+    cleanupToolNames.push(SPAWN_PROBE);
+    // An `sdk`-type server: its tools register synchronously at parent startup (engine.ts's
+    // sdk-wire path), so they are in the parent's advertised pool -- and therefore in the child's
+    // inherited pool -- deterministically, with no connect race. Its executor forwards the call as
+    // an `sdk_mcp_call` control_request on the PARENT's stream (the child has no second wire),
+    // which this host answers: the P4-I "by trace only" claim, now driven for real from a child.
+    const req: SpawnChildRequest = { parentToolUseId: "call-1", prompt: "call the session's mcp tool", runInBackground: false };
+    const childProvider = scriptedProvider([
+      { kind: "tool_use", calls: [{ id: "c1", name: "mcp__fixture__echo", input: { text: "from-the-child" } }] },
+      { kind: "tool_use", calls: [{ id: "c2", name: "WaitForMcpServers", input: {} }] },
+      { kind: "text", text: "child called mcp" },
+    ]);
+    let sawSdkMcpCall = false;
+    const { code, frames } = await driveParentAnswering(
+      { provider: childProvider },
+      baseConfig({ sessionId: "parent-mcp-call-s", mcpServers: { fixture: { type: "sdk", name: "fixture", tools: [{ name: "echo", inputSchema: { type: "object" } }] } } }),
+      [{ kind: "tool_use", calls: [{ id: "call-1", name: SPAWN_PROBE, input: req }] }, { kind: "text", text: "parent done" }],
+      (frame) => {
+        if (frame.subtype !== "sdk_mcp_call") return undefined;
+        sawSdkMcpCall = true;
+        const payload = frame.payload as { server: string; tool: string; arguments: Record<string, unknown> };
+        return { ok: true, payload: { content: [{ type: "text", text: `echo:${String(payload.arguments["text"])}` }] } };
+      },
+    );
+    expect(code).toBe(0);
+    expect(sawSdkMcpCall, "a child's MCP tool call must reach the host through the PARENT's own bridge").toBe(true);
+    const blocks = dataMessages(frames)
+      .filter((m) => m.type === "user")
+      .flatMap((m) => ((m as unknown as { message: { content: Array<{ tool_use_id: string; content: string }> } }).message.content ?? []));
+    expect(blocks.find((b) => b.tool_use_id === "c1")!.content).toContain("echo:from-the-child");
+    const wait = JSON.parse(blocks.find((b) => b.tool_use_id === "c2")!.content) as { connected: string[] };
+    expect(wait.connected).toEqual(["fixture"]); // EXACTLY the parent's set -- no more, no less
+  }, 20_000);
+
+  test("I2: the CHILD's own ToolSearch session runtime carries the parent's MCP state source, not an empty one", async () => {
+    registerSpawnProbe();
+    cleanupToolNames.push(SPAWN_PROBE);
+    const RUNTIME_PROBE = "t6fw_toolsearch_runtime_probe";
+    cleanupToolNames.push(RUNTIME_PROBE);
+    // White-box, deliberately: the two session-keyed lookups (`ctx.sessionId` for the owning
+    // session's registrations, the child's own `agentId` for its own) must BOTH answer correctly,
+    // or a later change to either lookup silently reintroduces the wrong `ready:true`.
+    let childRuntimeHadStateSource: boolean | undefined;
+    registerTool({
+      descriptor: {
+        canonicalName: RUNTIME_PROBE, advertisedName: RUNTIME_PROBE, source: "builtin", inputSchema: { type: "object" },
+        description: "reads this run's own registered ToolSearch session runtime", exposure: "eager", permissionClass: "read",
+        availability: {}, capabilityRequirements: [], disposition: "implement-now",
+      },
+      executor: {
+        async execute(_input: unknown, ctx: ToolExecutionContext) {
+          childRuntimeHadStateSource = getToolSearchSessionRuntime(ctx.agentId ?? ctx.sessionId)?.stateSource !== undefined;
+          return { output: "probed" };
+        },
+      },
+    });
+    const req: SpawnChildRequest = { parentToolUseId: "call-1", prompt: "probe your own runtime", runInBackground: false };
+    const childProvider = scriptedProvider([
+      { kind: "tool_use", calls: [{ id: "c1", name: RUNTIME_PROBE, input: {} }] },
+      { kind: "text", text: "probed" },
+    ]);
+    const { code } = await driveParent(
+      { provider: childProvider },
+      baseConfig({ sessionId: "parent-ts-runtime-s", mcpServers: { fixture: { type: "sdk", name: "fixture", tools: [{ name: "echo", inputSchema: { type: "object" } }] } } }),
+      [{ kind: "tool_use", calls: [{ id: "call-1", name: SPAWN_PROBE, input: req }] }, { kind: "text", text: "parent done" }],
+    );
+    expect(code).toBe(0);
+    expect(childRuntimeHadStateSource).toBe(true);
+  }, 20_000);
+
+  test("I4: a definition's own `mcpServers` connect as CHILD-SCOPED servers -- callable inside the child, absent from the parent's advertised set", async () => {
+    registerSpawnProbe();
+    cleanupToolNames.push(SPAWN_PROBE);
+    const childOnlySpec = {
+      tools: [{ name: "shout", description: "uppercases", inputSchema: { type: "object", properties: { text: { type: "string" } }, required: ["text"] }, handler: (args: Record<string, unknown>) => ({ content: [{ type: "text" as const, text: `SHOUT:${String(args.text)}` }] }) }],
+      resources: [],
+    };
+    await withHttpFixture(childOnlySpec, async (url) => {
+      const req: SpawnChildRequest = {
+        parentToolUseId: "call-1", prompt: "use your own server", runInBackground: false,
+        definition: {
+          description: "child with its own MCP server", prompt: "persona",
+          mcpServers: [{ childsrv: { type: "http", url: url.href } }, "not-declared-anywhere"],
+        },
+      };
+      const scripted = scriptedProvider([
+        { kind: "tool_use", calls: [{ id: "c1", name: "mcp__childsrv__shout", input: { text: "hi" } }] },
+        { kind: "text", text: "child used its own server" },
+      ]);
+      // Captures the child's own first turn so the STRING-entry warning can be asserted where it
+      // is actually delivered (child-engine.ts's firstTurnText).
+      let childFirstTurn = "";
+      const childProvider: Provider = {
+        async generate(args) {
+          if (childFirstTurn === "") {
+            const firstUser = args.messages.find((m) => m.role === "user");
+            childFirstTurn = typeof firstUser?.content === "string" ? firstUser.content : "";
+          }
+          return scripted.generate(args);
+        },
+      };
+      // MCP_CONNECTION_NONBLOCKING=0 makes the CHILD's own startup wait for its server batch, so
+      // its advertised set deterministically contains the server's tools (the same connect race
+      // engine.test.ts's own elicitation scenario had to close). `deps.env` is the child engine's
+      // own environment.
+      const { code, frames } = await driveParent({ provider: childProvider, env: { MCP_CONNECTION_NONBLOCKING: "0" } }, baseConfig({ sessionId: "parent-i4-s" }), [
+        { kind: "tool_use", calls: [{ id: "call-1", name: SPAWN_PROBE, input: req }] },
+        { kind: "text", text: "parent done" },
+      ]);
+      expect(code).toBe(0);
+      const blocks = dataMessages(frames)
+        .filter((m) => m.type === "user")
+        .flatMap((m) => ((m as unknown as { message: { content: Array<{ tool_use_id: string; content: string }> } }).message.content ?? []));
+      // Before the fix: `AgentDefinition.mcpServers` was dropped on the floor, so this name was
+      // never registered at all and the call answered an "unknown tool" error.
+      expect(blocks.find((b) => b.tool_use_id === "c1")!.content).toContain("SHOUT:hi");
+      // The PARENT declared no servers: its own init.tools carries neither the child's server's
+      // tool nor the winter.mcp-gated bridge family.
+      const init = frames.find((f) => f.type === "init") as { tools: string[] };
+      expect(init.tools).not.toContain("mcp__childsrv__shout");
+      expect(init.tools).not.toContain("ListMcpResourcesTool");
+      // A STRING entry naming a server the session does not declare is warned about, never dropped
+      // silently -- the warning rides the child's own first turn (child-engine.ts's firstTurnText).
+      expect(childFirstTurn).toContain('mcpServers names "not-declared-anywhere"');
+    });
+  }, 20_000);
+});
+
+// --- Phase 4 fix wave: I5 -- interrupt and teardown stop in-process children ---------------------
+
+// Spawns a child, stashes the handle for the test, AND awaits its result -- the FOREGROUND shape
+// (tools/impl/agent.ts's own non-background branch), so an interrupt genuinely abandons a call that
+// is mid-await on a live child.
+const SPAWN_AWAIT_REGISTER = "t6fw_spawn_await_register";
+function registerSpawnAwaitRegister(): void {
+  registerTool({
+    descriptor: {
+      canonicalName: SPAWN_AWAIT_REGISTER, advertisedName: SPAWN_AWAIT_REGISTER, source: "builtin", inputSchema: { type: "object" },
+      description: "spawns a child, stashes the handle, and awaits its result", exposure: "eager", permissionClass: "read",
+      availability: {}, capabilityRequirements: [], disposition: "implement-now",
+    },
+    executor: {
+      async execute(input: unknown, ctx: ToolExecutionContext) {
+        if (!ctx.session.spawnChild) return { output: "no spawnChild capability configured", isError: true };
+        const handle = await ctx.session.spawnChild(input as SpawnChildRequest);
+        liveHandles.set(handle.record.id, handle);
+        const result = await handle.result();
+        return { output: JSON.stringify({ agentId: handle.record.id, result }) };
+      },
+    },
+  });
+}
+
+describe("child-engine.ts: interrupt and teardown stop live children (fix wave I5, WS-04 §5)", () => {
+  test("interrupting the parent's turn STOPS the foreground child the abandoned Agent call was awaiting -- it executes no further tools", async () => {
+    registerSpawnAwaitRegister();
+    cleanupToolNames.push(SPAWN_AWAIT_REGISTER);
+    const SLOW = "t6fw_slow";
+    const MARKER = "t6fw_after_interrupt";
+    cleanupToolNames.push(SLOW, MARKER);
+    let slowStarted = false;
+    registerTool({
+      descriptor: {
+        canonicalName: SLOW, advertisedName: SLOW, source: "builtin", inputSchema: { type: "object" },
+        description: "returns after a short real delay", exposure: "eager", permissionClass: "read",
+        availability: {}, capabilityRequirements: [], disposition: "implement-now",
+      },
+      executor: {
+        async execute() {
+          slowStarted = true;
+          await new Promise((r) => setTimeout(r, 250));
+          return { output: "slow done" };
+        },
+      },
+    });
+    const marker = registerRecordingTool(MARKER);
+    const req: SpawnChildRequest = { parentToolUseId: "call-1", prompt: "work slowly", runInBackground: false };
+    const childProvider = scriptedProvider([
+      { kind: "tool_use", calls: [{ id: "c1", name: SLOW, input: {} }] },
+      // Reached ONLY if the child kept running past the parent's interrupt -- which is exactly the
+      // abandoned-but-alive engine loop the review describes ("an unbounded engine loop that can
+      // call further tools and spawn further children").
+      { kind: "tool_use", calls: [{ id: "c2", name: MARKER, input: {} }] },
+      { kind: "text", text: "child finished anyway" },
+    ]);
+    registerChildEngineFactory(createChildEngineFactory({ provider: childProvider }));
+    const { host, runtime } = createInMemoryChannel();
+    const provider = scriptedProvider([
+      { kind: "tool_use", calls: [{ id: "call-1", name: SPAWN_AWAIT_REGISTER, input: req }] },
+      { kind: "text", text: "parent done" },
+    ]);
+    const done = runEngine({ config: baseConfig({ sessionId: "parent-interrupt-s" }), input: runtime.input, output: runtime.output, provider });
+    host.output.write({ type: "user", text: "go" });
+    const drainPromise = drain(host.input);
+    await waitUntil(() => liveHandles.size === 1 && slowStarted);
+    const handle = [...liveHandles.values()][0]!;
+    host.output.write({ type: "control_request", requestId: "int-1", subtype: "interrupt", payload: undefined });
+    await waitUntil(() => handle.status() !== "running");
+    host.output.write({ type: "control_request", requestId: "end-1", subtype: "end_input", payload: undefined });
+    await drainPromise;
+    await done;
+    expect(handle.status()).toBe("stopped");
+    expect(marker.ran, "an abandoned foreground child must not keep executing tools").toEqual([]);
+  }, 15_000);
+
+  test("teardown STOPS a background child that is still running -- never withdrawn from the roster while still alive", async () => {
+    registerSpawnAndRegister();
+    cleanupToolNames.push(SPAWN_AND_REGISTER);
+    const BLOCKER = "t6fw_teardown_blocker";
+    cleanupToolNames.push(BLOCKER);
+    const gate = registerBlockingTool(BLOCKER);
+    try {
+      const req: SpawnChildRequest = { parentToolUseId: "call-1", prompt: "block forever", runInBackground: true };
+      const childProvider = scriptedProvider([
+        { kind: "tool_use", calls: [{ id: "c1", name: BLOCKER, input: {} }] },
+        { kind: "text", text: "child finished" },
+      ]);
+      const { code } = await driveParent({ provider: childProvider }, baseConfig({ sessionId: "parent-teardown-s" }), [
+        { kind: "tool_use", calls: [{ id: "call-1", name: SPAWN_AND_REGISTER, input: req }] },
+        { kind: "text", text: "parent done" },
+      ]);
+      expect(code).toBe(0);
+      const handle = [...liveHandles.values()][0]!;
+      // Before the fix: still "running" AFTER runEngine returned -- live, executing, and already
+      // withdrawn from the messaging roster, i.e. unaddressable by anything.
+      expect(handle.status()).toBe("stopped");
+    } finally {
+      gate.release();
+    }
+  }, 15_000);
+});
+
+// --- Phase 4 fix wave: T8 review M5 -- a THROWING forward must not pause the clock forever -------
+
+describe("child-engine.ts: the watchdog pause is paired with a SUCCESSFUL forward (fix wave, T8 review M5)", () => {
+  test("a child whose control_request forward THROWS (torn-down parent stream) is still reaped by the stall watchdog, never left waiting forever", async () => {
+    const NEEDS_PROMPT = "t6fw_m5_needs_prompt";
+    cleanupToolNames.push(NEEDS_PROMPT);
+    const probe = registerRecordingTool(NEEDS_PROMPT);
+    const childProvider = scriptedProvider([
+      { kind: "tool_use", calls: [{ id: "c1", name: NEEDS_PROMPT, input: {} }] },
+      { kind: "text", text: "never reached" },
+    ]);
+    // Driven through the factory DIRECTLY (not a parent runEngine): the whole point is a run
+    // context whose `forwardChildFrame` throws, which a real engine's own closure never does.
+    const factory = createChildEngineFactory({ provider: childProvider, env: { WINTER_ASYNC_AGENT_STALL_TIMEOUT_MS: "60" } });
+    const deps = factory({
+      parentSessionId: "parent-m5-s",
+      forwardChildFrame: (frame) => {
+        if (frame.type === "control_request") throw new Error("the parent stream is torn down");
+      },
+    });
+    const handle = await deps.spawn(
+      { parentToolUseId: "call-1", prompt: "reach a prompt", runInBackground: false },
+      {
+        // `default` mode with no matching rule is what makes the child's own call reach a real
+        // permission control_request -- the frame whose forward throws.
+        policy: { effectiveMode: "default", parentPolicyVersion: 1, parentPolicyHash: "h" },
+        tools: [NEEDS_PROMPT],
+        model: "sonnet",
+        effort: "inherit",
+        thinking: undefined,
+        systemPrompt: "",
+        sessionRoot: tmpdir(),
+      },
+    );
+    // BOUNDED: without the fix the watchdog is paused for a request the host never received, so
+    // `result()` never settles at all -- this race turns that hang into a loud, fast failure.
+    const outcome = await Promise.race([
+      handle.result().then((r) => r.status as string),
+      new Promise<string>((r) => setTimeout(() => r("NEVER SETTLED -- the watchdog was left paused"), 2000)),
+    ]);
+    expect(outcome).toBe("failed");
+    expect(probe.ran, "the child's call was never approved, so it must never have executed").toEqual([]);
+  }, 10_000);
 });

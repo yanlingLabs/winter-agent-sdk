@@ -7,6 +7,16 @@ import type { PolicyState } from "../policy-state.ts";
 import { computePolicyHash } from "./caches.ts";
 
 // ---------------------------------------------------------------------------------------------
+// READ IN THIS ORDER (P4 fix wave, KNOWN item 3 -- a forward pointer, so the block below is never
+// read as the current model): the scalar list immediately below is a HISTORICAL artifact, retained
+// only as axis 2's tie-break table. The model this file actually implements is stated in two later
+// sections of this same header:
+//   * "RULING P2-M ... the fix, stated as the axis model this file now implements" -- the two-axis
+//     comparator (rule-silencing dominant, breadth as tie-break) that `stricterOf` really runs.
+//   * "RULING P4-D ... ONE documented exception to axis-1 dominance" -- {dontAsk, auto}, refused in
+//     both directions rather than judged, with `INCOMPARABLE_MODE_PAIRS` below as the enumeration.
+// The full 6x6 consequence of both is written out by hand in inheritance.test.ts's own matrix.
+// ---------------------------------------------------------------------------------------------
 // Strictness order (JUDGMENT CALL — WS-07 §11 never enumerates a total order over all six modes;
 // it only requires ONE comparison: "child resume applies the STRICTER of recorded vs current
 // parent policy"). Ordered strictest-first:
@@ -174,6 +184,12 @@ export class ChildResumeModeIncomparableError extends Error {
 // header's own mechanism-level walkthrough), not a pattern that generalizes to some rule a future
 // mode addition could satisfy automatically. Extend this set (both directions) if a future mode
 // audit finds another genuinely incomparable pair; do not infer one from axis membership alone.
+// P4 fix wave (KNOWN item 7), on the single-entry shape: ONE pair (two directed keys) is the whole
+// set today, and that is a FINDING about these six modes, not a placeholder waiting to be filled.
+// The set is enumerated rather than derived precisely so it cannot grow by accident -- adding a
+// SEVENTH mode is therefore a deliberate full-matrix audit (7x7 = 49 cells against the two axes),
+// not a "does it look silencing?" judgment: inheritance.test.ts's own 6x6 hand-written matrix is the
+// artifact that audit extends, and its cell-count assertion fails loudly until it is extended.
 const INCOMPARABLE_MODE_PAIRS: ReadonlySet<string> = new Set<string>(["dontAsk:auto", "auto:dontAsk"]);
 function incomparablePairKey(a: PermissionMode, b: PermissionMode): string {
   return `${a}:${b}`;

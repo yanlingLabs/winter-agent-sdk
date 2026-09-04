@@ -52,6 +52,7 @@ import {
   type MessagingRouterSeamWithRoster,
   type MessagingRuntimeDeps,
   type SubscriberDirectory,
+  rememberBounded,
 } from "./router.ts";
 
 // --- The reference's own "peer" abstraction (same-process top-level sessions) ----------------------
@@ -143,6 +144,13 @@ export function createReferenceMessagingAdapter(deps: ReferenceAdapterDeps): Ref
   // "accept" needs the ORIGINAL message to actually deliver, so this reference keeps it here.
   const heldEnvelopes = new Map<string, GlobalAgentMessage>();
 
+  // Both child lookups in this file (here and `listReachable` below) filter the PROCESS-WIDE roster
+  // by `record.parentSessionId === <the owning session id>`. P4 fix wave (I1) note, because the
+  // invariant that makes this correct used to be false: a child engine's own `RuntimeConfig.sessionId`
+  // IS its parent's now (one owning SESSION, N AGENTS keyed by agentId), so a caller's ctx.sessionId
+  // and every one of that session's children's `record.parentSessionId` are the same value at EVERY
+  // nesting level -- which is what makes a child able to see its SIBLINGS here rather than only its
+  // own grandchildren. Nothing in this file changed; the identity it always assumed is now true.
   function findChild(addr: RuntimeAddress): ChildHandle | undefined {
     if (addr.objectKind !== "agent") return undefined;
     const owningParent = addr.parentWinterSessionId ?? addr.winterSessionId;
@@ -332,7 +340,7 @@ export function createReferenceMessagingAdapter(deps: ReferenceAdapterDeps): Ref
             : buildDefaultHoldEntry(msg.messageId, "receiver's default inbound policy holds this sender's permission class (WS-10 §13)", now);
         const ok = mailbox.hold(receiverKey, entry);
         if (!ok) return refused(msg.messageId, "held-message inbox is full (cap 100, WS-10 §13); refused visibly rather than silently dropped");
-        heldEnvelopes.set(msg.messageId, msg);
+        rememberBounded(heldEnvelopes, msg.messageId, msg); // M10: bounded, oldest-first -- see router.ts's own rememberBounded header
         return held(msg.messageId, entry.reason);
       }
 

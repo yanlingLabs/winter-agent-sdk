@@ -655,7 +655,12 @@ export async function traceWinterAdvertisedSetRound(): Promise<ConformanceTraceE
 // `scrubJsonToolResults` below rather than by widening trace.ts's shared VOLATILE set -- widening it
 // would silently strip `task_id`/`output_file` from the background-task golden above, whose FIXED
 // LITERAL values are the whole point of that scenario.
-const P4_RESULT_VOLATILE_KEYS = new Set(["agentId", "totalDurationMs", "totalToolUseCount", "taskId", "messageId", "transcript"]);
+// Phase 4 fix wave (whole-branch N5): `totalToolUseCount` is deliberately NOT in this set. It is
+// the one key here that could MASK a real cross-leg divergence (a child counting its own tool calls
+// differently on two transports is exactly the kind of drift this corpus exists to catch), and it
+// is not volatile at all for these fixtures -- every scenario's child makes a fixed number of tool
+// calls. The rest genuinely are volatile: uuids, wall-clock durations, and machine-specific paths.
+const P4_RESULT_VOLATILE_KEYS = new Set(["agentId", "totalDurationMs", "taskId", "messageId", "transcript"]);
 
 function scrubJsonToolResults(entries: ConformanceTraceEntry[]): ConformanceTraceEntry[] {
   const scrubValue = (value: unknown): unknown => {
@@ -809,8 +814,65 @@ export async function traceWinterSubagentSpawnRound(): Promise<ConformanceTraceE
   }
 }
 
+// Phase 4 fix wave (task-8 review I2 + whole-branch KNOWN 11): the spawn round in which the CHILD
+// itself makes a tool call, with `forwardSubagentText` ON so the child's own frames reach the wire.
+//
+// What this golden pins, frame by frame (17 -> 18 goldens; the ONLY new one this wave adds):
+//   [0] system/init            -- one, and only one (P4-J(c)): a child's own init never surfaces.
+//   [1] assistant              -- the PARENT's `Agent` tool_use, id `agent-call-1`, NO
+//                                 parent_tool_use_id (it is the top-level turn's own block).
+//   [2] assistant              -- the CHILD's `ReadNotifications` tool_use, id `child-call-1`,
+//                                 stamped `parent_tool_use_id: "agent-call-1"`. THE point of this
+//                                 golden: before it, `parent_tool_use_id` appeared in no committed
+//                                 golden at all.
+//   [3] user                   -- the CHILD's own tool_result, same stamp, carrying the fixed
+//                                 `{"notifications":[],"remaining":0}` -- proof the child's call was
+//                                 genuinely EXECUTED after its permission request was answered
+//                                 (`canUseTool` here answers immediately; the LATE-answer half,
+//                                  which needs a real clock, is the equivalence scenario's job --
+//                                  a golden must not depend on a timer).
+//   [4] assistant              -- the CHILD's own text, forwarded only because forwardSubagentText
+//                                 is on, same stamp (WS-10 §4's own gate, in a committed artifact).
+//   [5] user                   -- the PARENT's tool_result for `agent-call-1` (the Agent tool's own
+//                                 JSON envelope; its volatile agentId/duration/counters are scrubbed
+//                                 by scrubJsonToolResults, exactly as in the sibling spawn golden).
+//   [6] assistant + [7] result -- the parent's final turn: exactly ONE terminal result (P4-J(c)).
+export async function traceWinterSubagentPermissionRound(): Promise<ConformanceTraceEntry[]> {
+  const winterHome = mkdtempSync(join(tmpdir(), "winter-differential-subagentperm-"));
+  try {
+    const entries: ConformanceTraceEntry[] = [];
+    for await (const msg of query({
+      prompt: "run the subagent",
+      options: {
+        model: FIXTURE_MODEL,
+        cwd: FIXTURE_CWD,
+        allowedTools: ["Agent"], // only the CHILD's own call is left unresolved
+        permissionMode: "default",
+        forwardSubagentText: true,
+        canUseTool: async () => ({ behavior: "allow" }),
+        spawnClaudeCodeProcess: (opts) =>
+          inMemoryProcess(opts.args, testProviderByName("subagentperm"), undefined, { ...opts.env, WINTER_HOME: winterHome }),
+      },
+    })) {
+      entries.push({ sequence: entries.length, direction: "runtime-to-host", kind: kindOf(msg), payload: msg });
+    }
+    return normalizeTrace(scrubJsonToolResults(entries));
+  } finally {
+    rmSync(winterHome, { recursive: true, force: true });
+  }
+}
+
 // (4) WS-10 §10.3: SendMessage addressed to this session's own (now terminal) child -- a RESUME,
 // with `resumed_and_delivered` claimed only because resume and delivery both completed.
+// Whole-branch N4 (P4 fix wave, a note on this golden's own fragility -- not a change): this trace
+// is deterministic only because the RESUMED child emits nothing forwardable. `forwardSubagentText`
+// is off here, so the resumed generation's text is swallowed, and its `init`/`result` frames are
+// swallowed unconditionally (child-handle.ts's transformChildFrame). Flip that default, or give the
+// resumed child a tool call of its own, and its frames would interleave NONDETERMINISTICALLY with
+// the parent's remaining turn -- a resume is fire-and-forget from the parent's point of view, with
+// no ordering guarantee against it. A scenario that WANTS a child's own frames on the wire should
+// follow `subagent-permission-round` instead, which is deterministic because the parent's Agent call
+// synchronously awaits the child's result.
 export async function traceWinterSendMessageToChildRound(): Promise<ConformanceTraceEntry[]> {
   const winterHome = mkdtempSync(join(tmpdir(), "winter-differential-childmsg-"));
   try {
@@ -873,6 +935,7 @@ const SCENARIOS: Scenario[] = [
   { name: "mcp-tool-round", trace: traceWinterMcpToolRound, goldenFile: "mcp-tool-round.trace.json" },
   { name: "toolsearch-select-round", trace: traceWinterToolSearchSelectRound, goldenFile: "toolsearch-select-round.trace.json" },
   { name: "subagent-spawn-round", trace: traceWinterSubagentSpawnRound, goldenFile: "subagent-spawn-round.trace.json" },
+  { name: "subagent-permission-round", trace: traceWinterSubagentPermissionRound, goldenFile: "subagent-permission-round.trace.json" },
   { name: "sendmessage-child-round", trace: traceWinterSendMessageToChildRound, goldenFile: "sendmessage-child-round.trace.json" },
 ];
 

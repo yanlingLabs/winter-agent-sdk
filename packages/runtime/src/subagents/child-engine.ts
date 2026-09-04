@@ -6,17 +6,14 @@
 // --- Three seam gaps this file cannot close on its own (raised with the controller; see this
 // lane's own report) ------------------------------------------------------------------------------
 //
-// (1) PROVIDER/STORE INJECTION: neither `ChildEngineRunContext` (parentSessionId +
-// forwardChildFrame only), `SpawnChildRequest`, nor `ChildInheritance` carries a `Provider` or a
-// `SessionStore` -- `runEngine` cannot run without one. `createChildEngineFactory` below therefore
-// takes them as CONSTRUCTION-TIME dependencies (`ChildEngineFactoryDeps`), matching the frozen
-// `(runCtx) => ChildEngineDeps` factory shape: `registerChildEngineFactory(createChildEngineFactory(
-// {provider, store, ...}))` must be called ONCE, near where main.ts already builds its own top-level
-// provider/store -- main.ts is on this lane's never-modify list, so that ONE call is NOT made by
-// this lane's own commits. Until it lands, a real production session's Agent tool calls fail with
-// the PRE-EXISTING, already-tested "no child engine factory is registered" error (engine.ts) rather
-// than truly spawning a child. Every test in this lane registers the factory directly (mirroring
-// T3's own fix-round-1 spawn-seam-test precedent), so the logic below is fully proven regardless.
+// (1) PROVIDER/STORE INJECTION -- CLOSED by Phase 4 Task 8 (rider 18). Neither
+// `ChildEngineRunContext`, `SpawnChildRequest`, nor `ChildInheritance` carries a `Provider` or a
+// `SessionStore`, so `createChildEngineFactory` below takes them as CONSTRUCTION-TIME dependencies
+// (`ChildEngineFactoryDeps`), matching the frozen `(runCtx) => ChildEngineDeps` factory shape. The
+// ONE production registration lives in `subagents/register-default-factory.ts` and is called by
+// BOTH entrypoints (main.ts and testing.ts's inMemoryProcess), so all three transport legs derive
+// their factory from one piece of code -- see that file's own header for why a shared helper rather
+// than a one-liner in main.ts.
 //
 // (2) CHILD PERMISSION/HOOK CONTROL-RPC ROUTING -- CLOSED by Phase 4 Task 8 (rider 19, RULING
 // P4-I). This section previously documented a live gap: the engine pump held exactly ONE `RpcBridge`
@@ -34,15 +31,29 @@
 // human at a child's permission prompt is not a child making no progress. The clock still fires for
 // a genuine stall with nothing outstanding (child-engine.test.ts pins both directions).
 //
-// (3) PROGRAMMATIC AgentDefinition VISIBILITY: `ToolExecutionContext` (registry.ts, frozen) has no
-// field surfacing `RuntimeConfig.agents` to a tool executor -- tools/impl/agent.ts's own
-// `subagent_type` resolution can therefore only ever see filesystem-defined agents
-// (`~/.winter/agents/`, and `.winter/agents/*.md` in a trusted workspace); a session's own
-// programmatic `Options.agents` map is invisible to a running Agent tool call. definitions.ts's own
-// `loadAgentDefinitions` accepts a `programmatic` parameter for exactly this reason -- fully correct
-// and independently tested -- but tools/impl/agent.ts always passes `undefined` for it today. Fixing
-// this needs one new field on `ToolExecutionContext` (registry.ts) plus one conditional-spread line
-// in engine.ts's `buildDefaultToolExecutor`, both outside this lane's file authority.
+// (3) PROGRAMMATIC AgentDefinition VISIBILITY -- CLOSED by Phase 4 Task 8 (Lane C's Gap #3):
+// `ToolExecutionContext.agents` exists now and engine.ts's `buildDefaultToolExecutor` threads
+// `config.agents` onto it, so tools/impl/agent.ts's `subagent_type` resolution sees a session's
+// programmatic agents alongside the filesystem-defined ones.
+//
+// --- Child RuntimeConfig fidelity gaps (whole-branch review M7; DISCLOSED, not closed) ----------
+//
+// The child config below deliberately mirrors a SUBSET of the parent's. Everything omitted is
+// stricter or neutral EXCEPT the third item, which is a real functional gap:
+//   * `additionalDirectories` / `outputsDir` ($OUTDIR) -- absent: a child's writable set is
+//     narrower than its parent's, never wider.
+//   * `toolAliases` -- absent: a child sees native names only; nothing is renamed, so no rule or
+//     hook matcher can be dodged by an alias the child alone knows.
+//   * `agents` -- absent, and NOT merely stricter: a GRANDCHILD spawn inside a child cannot resolve
+//     a programmatic `subagent_type` at all (ctx.agents is undefined there), so it answers the
+//     "unknown subagent_type" error even though the session declared one. Closing it means
+//     mirroring the parent's map onto the child config; carried, not done here.
+//   * `toolSearchEnabled` -- absent: a child's deferral activation comes from the environment
+//     alone, so a host that enabled Tool Search per-session does not have it inside children.
+//   * `approvalStore` / `autoStateStore` -- not passed to the child's `runEngine`: a child's
+//     durable approvals and auto-mode counters are in-memory for its own lifetime.
+// The fix wave closed the two entries that were NOT neutral -- the parent's live permission rules
+// (C1/I6) and the session's MCP state (I2/I4); this list is what genuinely remains.
 //
 // --- Fix round 1 (controller review): two in-authority defects found and closed -----------------
 //
@@ -69,11 +80,12 @@
 // call, now fixed the same way `disableBypassPermissionsMode`/`forwardSubagentText` already were:
 // `parentPermissionRules`/`parentHooks`/`parentSandbox` are construction-time mirrors on
 // `ChildEngineFactoryDeps` below, applied to every child's own `RuntimeConfig`. This closes the
-// STATIC case (a host that configures rules/hooks at startup now binds every descendant); it does
-// NOT close the LIVE case -- a rule/hook change made to the parent's OWN session mid-run has no
-// channel to reach an already-registered factory (the identical root cause as gap (2) above); a
-// real per-spawn fix needs a `ChildEngineRunContext` field carrying the parent's CURRENT rules/hooks,
-// which is T8's seam to add.
+// STATIC case (a host that configures rules/hooks at startup now binds every descendant); the LIVE
+// case for RULES is closed by the P4 fix wave's own `runCtx.getParentRules()` (see
+// `resolveParentRules` below): the parent's rules are re-read per child GENERATION, so a rule added
+// mid-session binds the next spawn or resume. HOOKS remain a construction-time mirror -- no
+// equivalent live accessor exists for them, and a hook change mid-run still does not reach an
+// already-registered factory. Carried.
 //
 // (M1, MINOR) `record.transcript` was a hand-built, relative store KEY (missing the `~/.winter/
 // projects/` prefix a real path needs) computed UNCONDITIONALLY -- including when no store is
@@ -198,7 +210,9 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
 
   // WS-10 §6: depth/concurrency checked BEFORE any real work (workspace creation, store I/O) --
   // a rejected spawn should be cheap and side-effect-free.
-  checkAndRegisterSpawn({ parentSessionId: runCtx.parentSessionId, childSessionId: agentId, env });
+  // Phase 4 fix wave (I1): keyed by the SPAWNER's own agent key -- see limits.ts's own header for
+  // why `parentSessionId` alone would now read depth 0 at every nesting level.
+  checkAndRegisterSpawn({ parentKey: runCtx.parentAgentId ?? runCtx.parentSessionId, childKey: agentId, env });
   let spawnRegistered = true;
 
   try {
@@ -238,6 +252,35 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
     // hard refusal -- the definition already came from a trusted source (programmatic config, or a
     // filesystem file gated by RULING R4-7).
     const definitionWarnings = req.definition !== undefined ? validateAgentDefinition(req.definition) : [];
+
+    // --- MCP (WS-10 §2 `AgentDefinition.mcpServers`; fix wave I2 + I4) ---------------------------
+    //
+    // I2: the parent's own resolved MCP state, so this child is not an MCP island -- its
+    // `WaitForMcpServers`/ToolSearch answers are computed against the SESSION's real server state
+    // instead of a child-local void (which answered a WRONG `ready:true`). The lifecycle half needs
+    // nothing here: a bridge tool resolves `getSessionMcpLifecycle(ctx.sessionId)`, and since I1 a
+    // child's ctx.sessionId IS the owning session's.
+    //
+    // I4: `AgentDefinition.mcpServers` was accepted, round-tripped and then SILENTLY DROPPED -- the
+    // one wrong option of the three the review names. `AgentMcpServerSpec` is
+    // `string | Record<name, config>`: an OBJECT entry declares a CHILD-SCOPED server (connected by
+    // this child's own lifecycle, torn down with it -- its tools are registered while the child
+    // lives and are absent from the parent's own frozen `init.tools`), while a STRING entry NAMES a
+    // server the session already declares, which the child already reaches through the inherited
+    // state above -- so it is satisfied by inheritance when the session declares that name, and a
+    // legible warning (never a silent drop) when it does not.
+    const parentMcp = runCtx.getParentMcpState?.();
+    const childScopedMcpServers: NonNullable<RuntimeConfig["mcpServers"]> = {};
+    for (const spec of req.definition?.mcpServers ?? []) {
+      if (typeof spec === "string") {
+        if (parentMcp?.declaredServers?.[spec] === undefined) {
+          definitionWarnings.push(`mcpServers names "${spec}", which this session does not declare -- ignored`);
+        }
+        continue;
+      }
+      for (const [name, cfg] of Object.entries(spec)) childScopedMcpServers[name] = cfg;
+    }
+    const hasChildScopedMcpServers = Object.keys(childScopedMcpServers).length > 0;
 
     // --- Isolation (WS-10 §8) --------------------------------------------------------------------
     const workspaceResult = await createWorkspace({ parentCwd: inherit.sessionRoot, ...(req.isolation !== undefined ? { isolation: req.isolation } : {}), agentId });
@@ -431,14 +474,22 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
             // watchdog: a child waiting on a human is not a child making no progress (RULING P4-I's
             // own companion ruling), and the 600 s clock would otherwise abort a genuinely-answerable
             // prompt out from under the person answering it.
-            if (frame.type === "control_request") {
-              forwardedHostRequestIds.add((frame as { requestId: string }).requestId);
-              watchdog.pause();
-            }
+            //
+            // Phase 4 fix wave (T8 review M5): the pause happens ONLY AFTER the forward has actually
+            // SUCCEEDED, and the id is only claimed then. Pausing first (the previous order) meant a
+            // forward that THREW -- a torn-down parent stream, which the catch below is here for --
+            // left the clock paused with a request nobody had received and nobody would ever answer:
+            // the unbounded wait the T8 report's own concern 6 discloses, reachable with no human
+            // involved at all. On a failed forward the request never reached the host, so the child
+            // is genuinely making no progress and the stall clock must keep running.
             try {
               runCtx.forwardChildFrame(frame, correlation);
+              if (frame.type === "control_request") {
+                forwardedHostRequestIds.add((frame as { requestId: string }).requestId);
+                watchdog.pause();
+              }
             } catch {
-              /* a torn-down parent stream must never crash this read loop */
+              /* a torn-down parent stream must never crash this read loop -- and must never pause the clock */
             }
           }
         } catch {
@@ -453,6 +504,16 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
         provider: deps.provider,
         ...(writer !== undefined ? { store: writer } : {}),
         ...(initialMessages.length > 0 ? { initialMessages } : {}),
+        // Fix wave (I2): the parent's live MCP state, injected as this child's own -- but ONLY when
+        // the child declares no servers of its own. A caller-supplied state source SUPPRESSES the
+        // engine's own lifecycle dial (engine.ts's precedence block), so injecting it alongside a
+        // definition's own `mcpServers` would silently prevent those servers from ever connecting.
+        // A child with its own servers therefore keeps its own lifecycle; its bridge tools still
+        // resolve the OWNING session's lifecycle (ctx.sessionId, per I1), so those child-scoped
+        // servers are CALLABLE from inside the child but not browsable through ListMcpResources --
+        // disclosed, not silent.
+        ...(!hasChildScopedMcpServers && parentMcp?.stateSource !== undefined ? { mcpServerStateSource: parentMcp.stateSource } : {}),
+        ...(!hasChildScopedMcpServers && parentMcp?.controlSeam !== undefined ? { mcpControlSeam: parentMcp.controlSeam } : {}),
         env,
       }).catch(() => {
         settle("failed", "child engine process exited unexpectedly");
@@ -461,8 +522,53 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
       channel.host.output.write({ type: "user", text: liveText });
     }
 
+    // Phase 4 fix wave (C1 CRITICAL + I6): the parent's LIVE rules, preferred over the
+    // construction-time mirror whenever the run context supplies the accessor (every production
+    // spawn does; only a pre-existing hand-built runCtx fake does not). Called once per GENERATION
+    // -- at spawn below, and again at every `resume()` -- so a rule the host added after this
+    // factory was constructed (a mid-session PermissionUpdate, or WS-07 §9's journal-restored
+    // rules) binds the next child generation instead of being invisible forever.
+    //
+    // RESIDUAL, disclosed rather than papered over: a rule change made WHILE a generation is
+    // already running does not reach that generation's own already-seeded PolicyStateStore. There
+    // is no channel for it -- `runEngine` seeds its rules once from `config` and the pump handles
+    // exactly one permission-shaped host->runtime control subtype (`set_permission_mode`, a MODE,
+    // not rules), so closing that last gap needs either a new `permission_update` control subtype
+    // or a shared PolicyStateStore across parent and child. Recorded as a carry.
+    // MERGE, not replace, when BOTH sources exist (the review's "the construction-time mirrors
+    // become the fallback" plus the one direction that phrasing leaves open): a RESTRICTION from
+    // either source binds -- `deny`/`ask` are the UNION of both -- while `allow` comes from the
+    // LIVE set alone whenever there is one. That asymmetry is the whole point: a stale
+    // construction-time deny can only ever be too strict (harmless), but a stale construction-time
+    // ALLOW would resurrect a pre-approval the host has since removed from its live rule set. In
+    // production both sources are built from the same `effectiveConfig`, so the union IS the live
+    // set; the mirror only matters to a caller that registers a factory without the engine's own
+    // run-context seam (this file's own tests, and any future non-engine host).
+    function resolveParentRules(): { allow?: string[]; ask?: string[]; deny?: string[] } | undefined {
+      const live = runCtx.getParentRules?.();
+      if (live === undefined) return deps.parentPermissionRules;
+      const mirror = deps.parentPermissionRules;
+      const ask = [...new Set([...(mirror?.ask ?? []), ...live.ask])];
+      const deny = [...new Set([...(mirror?.deny ?? []), ...live.deny])];
+      return {
+        ...(live.allow.length > 0 ? { allow: live.allow } : {}),
+        ...(ask.length > 0 ? { ask } : {}),
+        ...(deny.length > 0 ? { deny } : {}),
+      };
+    }
+
     const baseConfig: RuntimeConfig = {
-      sessionId: agentId,
+      // Phase 4 fix wave (I1, whole-branch review): a child's `sessionId` is the OWNING PARENT's,
+      // never its own agentId. WS-10's addressing model is one owning SESSION containing N AGENTS
+      // (`agent:<sessionId>:<agentId>`), and every consumer downstream of `ToolExecutionContext`
+      // already reads it that way: messaging/router.ts's `CallerContext.sessionId` documents it
+      // verbatim, `resolveTarget` filters a caller's own children by
+      // `record.parentSessionId === caller.sessionId`, and the session-keyed MCP lifecycle /
+      // ToolSearch registries are looked up by it. Setting it to the agentId made all four
+      // disagree: a child's SendMessage could not reach a SIBLING (its "own children" filter
+      // matched only its grandchildren), its self-address serialized as `agent:<id>:<id>`, and the
+      // MCP bridge tools resolved nothing (I2). `agentId` below is what distinguishes this child.
+      sessionId: runCtx.parentSessionId,
       cwd: workspace.root,
       model: resolvedModel.effectiveModel,
       permissionMode: inherit.policy.effectiveMode,
@@ -473,24 +579,37 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
       disallowedTools,
       capabilities,
       forwardSubagentText: deps.forwardSubagentText === true,
-      // Fix round 1 (finding I1): the parent's own `permissions.{allow,ask,deny}` rules and `hooks`
-      // are now mirrored onto every child -- a construction-time SNAPSHOT (see ChildEngineFactoryDeps'
-      // own header on `parentPermissionRules`/`parentHooks` for the residual live-update gap this
-      // does NOT close). `disableBypassPermissionsMode` merges into the SAME `permissions` object
-      // (RuntimeConfig.permissions is one combined shape, never two independent fields).
-      ...(deps.disableBypassPermissionsMode !== undefined || deps.parentPermissionRules !== undefined
-        ? {
-            permissions: {
-              ...(deps.parentPermissionRules ?? {}),
-              ...(deps.disableBypassPermissionsMode !== undefined ? { disableBypassPermissionsMode: deps.disableBypassPermissionsMode } : {}),
-            },
-          }
-        : {}),
+      // Fix round 1 (finding I1), REPLACED by the fix wave's per-generation `generationConfig`
+      // below: the parent's rules no longer live on this static base config at all, because they
+      // must be re-read PER GENERATION (C1/I6) rather than frozen at spawn.
       ...(deps.parentHooks !== undefined ? { hooks: deps.parentHooks } : {}),
       ...(deps.parentIncludeHookEvents !== undefined ? { includeHookEvents: deps.parentIncludeHookEvents } : {}),
       ...(deps.parentSandbox !== undefined ? { sandbox: deps.parentSandbox } : {}),
       ...(req.definition?.maxTurns !== undefined ? { maxTurns: req.definition.maxTurns } : {}),
+      // I4: child-scoped servers only -- the parent's own declared servers are reached through the
+      // inherited state source below, never re-declared (and therefore never re-connected) here.
+      ...(hasChildScopedMcpServers ? { mcpServers: childScopedMcpServers } : {}),
     };
+
+    // Phase 4 fix wave (C1 + I6): ONE generation's own RuntimeConfig -- `baseConfig` plus the mode
+    // this generation actually runs under plus the parent's rules AS THEY ARE RIGHT NOW. Built
+    // afresh for every `startGeneration` call (spawn and every resume), which is what makes the
+    // rule mirror live at generation granularity instead of factory-construction granularity.
+    // `disableBypassPermissionsMode` merges into the SAME `permissions` object (RuntimeConfig.
+    // permissions is one combined shape, never two independent fields).
+    function generationConfig(mode: PermissionMode): RuntimeConfig {
+      const parentRules = resolveParentRules();
+      const permissions = {
+        ...(parentRules ?? {}),
+        ...(deps.disableBypassPermissionsMode !== undefined ? { disableBypassPermissionsMode: deps.disableBypassPermissionsMode } : {}),
+      };
+      return {
+        ...baseConfig,
+        permissionMode: mode,
+        allowDangerouslySkipPermissions: mode === "bypassPermissions",
+        ...(Object.keys(permissions).length > 0 ? { permissions } : {}),
+      };
+    }
 
     const initialMessages = resolveForkInitialMessages(inherit);
     // Fix round 1 (finding C1, CRITICAL, RULING P4-J): `AgentDefinition.prompt` -- WS-10 §2's
@@ -526,7 +645,7 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
       .filter((s): s is string => s !== undefined && s.length > 0)
       .join("\n\n");
 
-    startGeneration(baseConfig, initialMessages, firstTurnText);
+    startGeneration(generationConfig(inherit.policy.effectiveMode), initialMessages, firstTurnText);
 
     const handle: ChildHandle = {
       record,
@@ -569,7 +688,9 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
         // as a fresh spawn hitting the same limit -- `retryable: true`, since concurrency (unlike the
         // gone-worktree case above) can free up on its own moments later.
         try {
-          checkAndRegisterSpawn({ parentSessionId: runCtx.parentSessionId, childSessionId: agentId, env });
+          // Phase 4 fix wave (I1): keyed by the SPAWNER's own agent key -- see limits.ts's own header for
+  // why `parentSessionId` alone would now read depth 0 at every nesting level.
+  checkAndRegisterSpawn({ parentKey: runCtx.parentAgentId ?? runCtx.parentSessionId, childKey: agentId, env });
         } catch (err) {
           return {
             status: "unavailable",
@@ -623,9 +744,11 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
           void writer?.writeMetadata({ ...record });
         }
         record.status = "running";
-        const resumeConfig: RuntimeConfig =
-          resumeMode === baseConfig.permissionMode ? baseConfig : { ...baseConfig, permissionMode: resumeMode, allowDangerouslySkipPermissions: resumeMode === "bypassPermissions" };
-        startGeneration(resumeConfig, rebuilt, msg.body);
+        // Fix wave (C1 + I6): the resumed generation re-reads the parent's LIVE rules too -- a
+        // resume is exactly the moment WS-07 §11's "the same rules apply over child actions" is
+        // most likely to have moved since the spawn (it already re-reads the parent's live MODE,
+        // immediately above).
+        startGeneration(generationConfig(resumeMode), rebuilt, msg.body);
         return { status: "resumed_and_delivered", messageId: msg.messageId };
       },
       async result(): Promise<ChildResult> {

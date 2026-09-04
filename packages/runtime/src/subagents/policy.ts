@@ -67,6 +67,16 @@ function isTruthyEnv(v: string | undefined): boolean {
 // second, divergent notion of trust. A real signal (once one exists) replaces this ONE function's
 // body; every caller (today, only tools/impl/agent.ts's own `loadAgentDefinitions` call) is
 // already written against it as a seam, never a hardcoded literal at the call site.
+//
+// WHOLE-BRANCH M11 (P4 fix wave) -- TWO CONSTANTS THAT MUST FLIP TOGETHER, named here so the second
+// one cannot be missed: this function and engine.ts's own `const trustedWorkspace = false` (declared
+// once and shared by the permission evaluator's `EvaluationContext.trustedWorkspace` and the hook
+// registry's own trust gate). They are independent hardcoded `false`s answering the SAME question.
+// Both are correct-safe today; when P5 lands a real settings/trust-store signal, wiring one and
+// leaving the other would give a session where a checked-in `.winter/agents/*.md` loads while
+// project-scoped rules stay gated, or the reverse. The durable fix is for this function to CONSUME
+// the engine's value (threaded on ToolExecutionContext) rather than to re-derive one -- that thread
+// crosses registry.ts, outside this fix wave's file authority, and is recorded as a carry.
 export function resolveWorkspaceTrust(): boolean {
   return false;
 }

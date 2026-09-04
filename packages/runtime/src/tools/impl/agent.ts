@@ -240,6 +240,12 @@ export const agentExecutor: ToolExecutor = {
     const model = typeof record["model"] === "string" ? (record["model"] as string) : undefined;
     const runInBackgroundInput = typeof record["run_in_background"] === "boolean" ? (record["run_in_background"] as boolean) : undefined;
     const isolation = typeof record["isolation"] === "string" ? (record["isolation"] as string) : undefined;
+    // WHOLE-BRANCH N2: `name` is read from the RAW input here, and nothing validates a call against
+    // the advertised `inputSchema` -- so withholding `name` from that schema (descriptors/agent.ts,
+    // RULING P4-J(d)) makes it UNADVERTISED, never unreachable: a model that emits it anyway gets it
+    // honoured. That is deliberate and harmless (WS-10 §11 rule 6: a name grants nothing -- it is an
+    // addressing convenience, and a duplicate name resolves to a `stale` refusal rather than to
+    // either child), but "withheld" must not be read as "impossible".
     const name = typeof record["name"] === "string" ? (record["name"] as string) : undefined;
     // WS-10 §1.2: `team_name`/`mode` are deprecated, accepted-ignored -- deliberately never read
     // from `record` at all; there is no decision anywhere below that could consult them.
@@ -338,8 +344,33 @@ export const agentExecutor: ToolExecutor = {
     }
 
     if (!fgbg.background) {
-      const result = await handle.result();
-      return foregroundResultToPayload(handle.record, result, prompt, subagentType);
+      // Phase 4 fix wave (I5): a FOREGROUND child is tracked in the same unified task namespace a
+      // background one is, so `TaskStop` can reach it -- before this, a foreground child had no
+      // task id at all and `stop()` was reachable through no tool. Deliberately SILENT: no
+      // `task_started`/`background_tasks_changed` frame is emitted (those describe a BACKGROUNDED
+      // task to the model, and emitting them here would both mislead and churn every committed
+      // spawn golden), and the row is moved to a terminal status the moment the child settles, so a
+      // later `background_tasks_changed` can never advertise a finished foreground child.
+      //
+      // Best-effort by construction: the tracking row is a convenience on top of a child this call
+      // is ALREADY awaiting, so a failure to create it (a hand-built ToolExecutionContext whose run
+      // never called configureBackgroundTaskRoot) must degrade to "no task id", never fail the call.
+      let foregroundTaskId: string | undefined;
+      try {
+        const { taskId, outputPath } = createBackgroundTask("agent");
+        startTracking({ taskId, kind: "agent", outputPath, description, stop: () => void handle.stop() });
+        foregroundTaskId = taskId;
+      } catch {
+        /* see above -- tracking is auxiliary to a child this call already owns */
+      }
+      try {
+        const result = await handle.result();
+        return foregroundResultToPayload(handle.record, result, prompt, subagentType);
+      } finally {
+        if (foregroundTaskId !== undefined) {
+          setTaskStatus(foregroundTaskId, handle.record.status === "completed" ? "completed" : handle.record.status === "stopped" ? "stopped" : "failed");
+        }
+      }
     }
 
     return startBackgroundAgentTask(handle, ctx, description, prompt, subagentType);

@@ -10,7 +10,8 @@ import { echoProvider } from "./provider/mock.ts";
 import { resolveEngineSession } from "./store/dialect.ts";
 // Phase 4 Task 8 (rider 18): see main.ts's own identical import comment.
 import { registerDefaultChildEngineFactory } from "./subagents/register-default-factory.ts";
-import { WinterCompatibilitySessionStore } from "@yanlinglabs/winter-agent-sdk";
+import { restoreChildRoster } from "./subagents/restore.ts";
+import { WinterCompatibilitySessionStore, compatibilityKeys } from "@yanlinglabs/winter-agent-sdk";
 // Task 1 (P3, WS-06 §1): test-tool registration goes through the registry. The equivalence corpus
 // (packages/sdk/src/query.test.ts's "tooluse" scenarios, scripts/differential.ts's tool-round/
 // hooked-tool-round/canusetool-approved-round/mode-switch-mid-session scenarios) calls
@@ -178,14 +179,25 @@ export function inMemoryProcess(
       // real process.env fallback -- that function's own header), so a child's transcripts land under
       // the same temp root the parent's do.
       const childWinterHome = config.persistSession === false ? undefined : resolveInMemoryWinterHome(config, env);
+      // ONE store object, shared by the child-engine factory and the roster restore below (see
+      // main.ts's own identical comment for why `resolveEngineSession`'s `store` cannot serve).
+      const childStore = childWinterHome !== undefined ? new WinterCompatibilitySessionStore({ winterHome: childWinterHome }) : undefined;
       registerDefaultChildEngineFactory({
         provider,
         config: effectiveConfig,
         env: env ?? {},
-        ...(childWinterHome !== undefined
-          ? { store: new WinterCompatibilitySessionStore({ winterHome: childWinterHome }), winterHome: childWinterHome }
-          : {}),
+        ...(childStore !== undefined && childWinterHome !== undefined ? { store: childStore, winterHome: childWinterHome } : {}),
       });
+      // Phase 4 fix wave (I3): WS-10 §7's roster rebuild -- the identical wiring main.ts performs,
+      // so the in-memory leg and a real spawned/compiled `winter` behave the same way for a resumed
+      // session's own children (WS-04 §12 makes a cross-leg divergence a release blocker). Withdrawn
+      // in the `finally` below: unlike main.ts, ONE process runs many sessions here, so a roster
+      // left registered would leak a dead session's children into the next session's ListAgents.
+      const restoredChildren =
+        childStore !== undefined && config.forkSession !== true && (config.resume !== undefined || config.continue === true)
+          ? await restoreChildRoster(childStore, { projectKey: compatibilityKeys(effectiveConfig.cwd).transcriptProjectKey, sessionId: effectiveConfig.sessionId })
+          : undefined;
+      try {
       const code = await runEngine({
         config: effectiveConfig,
         input,
@@ -211,6 +223,9 @@ export function inMemoryProcess(
       if (!settled) {
         settled = true;
         settleExited({ code, signal: null });
+      }
+      } finally {
+        restoredChildren?.remove();
       }
     } catch {
       if (!settled) {

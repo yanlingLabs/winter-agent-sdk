@@ -135,11 +135,16 @@ const ROWS: ConformanceRow[] = [
     bullet: "parent restart + child restoration (rebuild identity and resume state from durable storage)",
     status: "covered",
     citations: [
+      { file: "./restore.test.ts", testName: "a child spawned in session 1 is listed by ListAgents after the session is RESUMED in a fresh process" },
       { file: "./roster.test.ts", testName: "rebuilds a metadata-only child (one that never produced native transcript output)" },
       { file: "./roster.test.ts", testName: "a DIFFERENT parent session's children are never mixed into this roster" },
       { file: "./roster.test.ts", testName: "fix round 1 (finding I4): a restart-orphaned 'running' record is reconciled to a terminal 'stopped' " },
     ],
-    note: "RULING P4-J(b): a non-terminal record with no live handle rebuilds as terminal so it is resumable through the ordinary path, rather than being stuck 'running' forever.",
+    note:
+      "RULING P4-J(b): a non-terminal record with no live handle rebuilds as terminal so it is resumable through the ordinary path, rather than being stuck 'running' forever. " +
+      "Phase 4 fix wave (I3): the LEADING citation is the row's load-bearing one -- until it existed, `rebuildChildRoster` had no production caller at all and the three roster.test.ts " +
+      "citations below it were unit tests of dead code, which is exactly the shape the whole-branch review flagged. IDENTITY restoration is covered; reviving a LIVE, resumable generation " +
+      "across a process restart is explicitly deferred (subagents/restore.ts's own header) -- a restored handle refuses resume() with a typed, non-retryable outcome naming the carry.",
   },
 
   // --- inbound policy ---------------------------------------------------------------------------
