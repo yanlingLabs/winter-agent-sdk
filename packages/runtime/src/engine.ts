@@ -14,7 +14,6 @@ import {
   type SDKPermissionDenial,
   type PermissionMode,
   type BackgroundTaskMessage,
-  type McpServerConfigForProcessTransport,
   compatibilityKeys,
 } from "@yanlinglabs/winter-agent-sdk";
 import type { FrameSource, FrameSink } from "./protocol/channel.ts";
@@ -38,7 +37,6 @@ import { createElicitationAsker } from "./mcp/elicitation.ts";
 // Phase 4 Task 3 (MUST 5/8): the child-spawn seam + host-stream correlation transform, and the
 // messaging router seam's own engine-side hook (children() from the live child roster).
 import { getChildEngineFactory, transformChildFrame, type ChildHandle, type ChildInheritance, type ParentMcpState, type ParentRuleMirror, type SpawnChildRequest } from "./subagents/child-handle.ts";
-import type { MessagingRouterSeam } from "./messaging/adapter.ts";
 // Phase 4 Task 8: the process-level default messaging runtime Lane D's three tool executors read --
 // see that function's own header for why it is process-level and why the roster is contributed
 // per-run rather than the runtime being rebuilt per-run.
@@ -62,7 +60,6 @@ import {
   findMatchingRuleEntry,
   type PermissionCall,
   type EvaluationContext,
-  type PermissionDecisionRecord,
 } from "./permissions/evaluator.ts";
 // Task 12 (WS-07 §6.6/§10): the real AutoEngine (T6's NO_OPINION_AUTO_ENGINE stub retired here —
 // the one production call site, exactly like T7/T8/T10 retired their own stubs above; every other
@@ -83,7 +80,7 @@ import { createHookStage } from "./hooks/hook-stage.ts";
 import { buildHookRegistry } from "./hooks/registry.ts";
 import { buildHookEntriesFromConfig } from "./hooks/from-config.ts";
 import { createBridgeHookInvoker } from "./hooks/bridge-invoker.ts";
-import { runHooks, type HookAuditRecord, type HookAuditRecorder, type HookInvoker, type RunHooksContext, type RunHooksCallInfo } from "./hooks/runner.ts";
+import { runHooks, type HookAuditRecord, type HookAuditRecorder, type HookInvoker, type RunHooksCallInfo } from "./hooks/runner.ts";
 // Task 11 (WS-07 §9 / WS-08 §7): the durable approval store a `defer` decision parks into, and the
 // pure revalidation function the resume-consumption step (this file, below) uses.
 import {
@@ -104,7 +101,6 @@ import "./tools/impl/index.ts";
 import {
   buildRegistryToolExecutor,
   buildRegistryToolExecutorWithFallback,
-  buildAdvertisedSet,
   replaceExecutor,
   getRegisteredTool,
   registerMcpServerTools,
