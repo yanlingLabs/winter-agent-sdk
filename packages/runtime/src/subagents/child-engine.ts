@@ -52,7 +52,8 @@
 // this needs one new field on `ToolExecutionContext` (registry.ts) plus one conditional-spread line
 // in engine.ts's `buildDefaultToolExecutor`, both outside this lane's file authority.
 import { randomUUID } from "node:crypto";
-import type { RuntimeConfig, WinterFrame, SessionStore } from "@yanlinglabs/winter-agent-sdk";
+import { existsSync } from "node:fs";
+import type { RuntimeConfig, WinterFrame, SessionStore, ControlResponseFrame } from "@yanlinglabs/winter-agent-sdk";
 import { compatibilityKeys } from "@yanlinglabs/winter-agent-sdk";
 import { runEngine, type Provider, type ProviderMessage } from "../engine.ts";
 import { createInMemoryChannel } from "../protocol/channel.ts";
@@ -201,15 +202,16 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
     });
 
     let currentSink: { write(f: WinterFrame): void } | undefined;
-    // Both reassigned by EVERY startGeneration call, below -- `.stop()` (external to any one
-    // generation) must route through the SAME gated `settle` a generation's own watchdog/observe()
-    // use internally, never a parallel, ungated status mutation: otherwise a `.stop()` that races a
+    // Reassigned by EVERY startGeneration call, below -- `.stop()` (external to any one generation)
+    // must route through the SAME gated `settle` a generation's own watchdog/observe() use
+    // internally, never a parallel, ungated status mutation: otherwise a `.stop()` that races a
     // genuine (interrupted) "result" frame arriving moments later could have its own "stopped"
     // status silently overwritten back to "failed" by that frame's own observe()/settle() call,
     // since THAT call would see an unset generationSettled flag and proceed as if nothing had
     // settled yet. Routing both through the one gate makes whichever fires FIRST win, permanently.
+    // `settle` itself now owns calling the generation's own `abortGeneration` (see its own comment),
+    // so `.stop()` needs no separate abort handle of its own any more.
     let currentSettle: ((status: "completed" | "failed" | "stopped", content: string) => void) | undefined;
-    let currentAbort: (() => void) | undefined;
 
     // One generation = one live `runEngine()` invocation, from its initial "user" turn until IT
     // reaches a terminal frame (or is stopped/stalls). `resume()` starts a NEW generation against
@@ -228,23 +230,35 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
       let generationSettled = false;
 
       const watchdog = createStallWatchdog(resolveStallTimeoutMs(env), (err) => {
-        settle("failed", err.message);
-        abortGeneration();
+        settle("failed", err.message); // settle() itself now owns calling abortGeneration()
       });
 
+      // Every interrupt/end_input control_request THIS wrapper issues (never the model's own) is
+      // tracked by requestId -- the nested child engine acknowledges host-initiated control_requests
+      // with its own control_response (the same generic RpcBridge correlation mechanism also used for
+      // permission/hook requests), and that response would otherwise be forwarded verbatim, by the
+      // read loop below, straight up to the REAL parent host stream: two stray control_response
+      // frames per completed child, "answering" requests the real host never issued -- harmless to a
+      // human, but it corrupts a byte-level trace-equivalence check (T8), and a careless future
+      // host-side bridge could conceivably misfile one against an unrelated in-flight request of its
+      // own.
+      const ownRequestIds = new Set<string>();
       function abortGeneration(): void {
         try {
-          channel.host.output.write({ type: "control_request", requestId: randomUUID(), subtype: "interrupt", payload: undefined });
+          const requestId = randomUUID();
+          ownRequestIds.add(requestId);
+          channel.host.output.write({ type: "control_request", requestId, subtype: "interrupt", payload: undefined });
         } catch {
           /* a torn-down channel must never crash the abort path */
         }
         try {
-          channel.host.output.write({ type: "control_request", requestId: randomUUID(), subtype: "end_input", payload: undefined });
+          const requestId = randomUUID();
+          ownRequestIds.add(requestId);
+          channel.host.output.write({ type: "control_request", requestId, subtype: "end_input", payload: undefined });
         } catch {
           /* see above */
         }
       }
-      currentAbort = abortGeneration;
 
       function settle(status: "completed" | "failed" | "stopped", content: string): void {
         if (generationSettled) return;
@@ -258,6 +272,15 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
         // like a completed one's, IF genuinely unchanged; real, undiscarded work is left in place
         // either way -- see workspace.ts's own cleanupWorkspace for the exact safety checks).
         void cleanupWorkspace(workspace);
+        // A "completed"/"failed" settlement is reached via observe()'s OWN "result" data frame --
+        // i.e. the nested engine finished a turn and is now sitting idle, waiting for its OWN next
+        // "user" input frame, which nothing will ever send it. Without this call, that engine
+        // instance (plus its writer, plus this read loop) leaks for the rest of the daemon's process
+        // lifetime, once per completed child, forever -- a zombie engine, not merely a zombie
+        // promise. `interrupt` on an already-idle engine is a documented no-op; a second/duplicate
+        // `end_input` is harmless (`Queue.end` is idempotent) -- so calling this unconditionally, on
+        // EVERY terminal status (not only the abrupt-stop/stall paths), is always safe.
+        abortGeneration();
         resolveResultOnce({ status, content, resolvedModel: config.model, totalToolUseCount, totalDurationMs: Date.now() - startedAt });
       }
       currentSettle = settle;
@@ -283,6 +306,13 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
           for await (const frame of channel.host.input) {
             watchdog.poke();
             observe(frame);
+            // `UnknownFrame`'s own wide `type: string` (frames.ts) defeats plain discriminated
+            // narrowing here (same reason engine.ts's own pump casts at its identical check) -- an
+            // explicit cast, matching that established, frozen precedent exactly.
+            if (frame.type === "control_response" && ownRequestIds.has((frame as ControlResponseFrame).requestId)) {
+              ownRequestIds.delete((frame as ControlResponseFrame).requestId); // our own interrupt/end_input handshake -- never surfaced to the real host
+              continue;
+            }
             try {
               runCtx.forwardChildFrame(frame, correlation);
             } catch {
@@ -351,9 +381,42 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
         if (record.status !== "completed" && record.status !== "stopped" && record.status !== "failed") {
           return { status: "not_found", messageId: msg.messageId, reason: `child ${agentId} is still running -- resume targets a terminal child only` };
         }
+        // An isolated child's worktree may already be gone -- `settle()` fires `cleanupWorkspace`
+        // fire-and-forget on EVERY terminal status, and WS-10 §8's own "auto-cleaned when unchanged"
+        // is the common case for a short-lived, successful child. `baseConfig.cwd` is fixed at spawn
+        // time to `workspace.root`; starting a fresh generation against a directory that no longer
+        // exists would fail deep inside `runEngine` in some unhelpful, non-obvious way instead.
+        // Recreating the worktree here (same agentId, presumably the same branch) is possible but
+        // drags in real git edge cases (has the source branch moved? does the old branch name still
+        // resolve?) not worth taking on for this lane -- disclosed as a follow-up rather than
+        // attempted.
+        if (workspace.isolationType === "worktree" && !existsSync(workspace.root)) {
+          return {
+            status: "unavailable",
+            messageId: msg.messageId,
+            retryable: false,
+            reason: `child ${agentId}'s isolated worktree (${workspace.root}) was already auto-cleaned -- resume is unavailable for this child`,
+          };
+        }
+
         // A resume is itself a fresh spawn for accounting purposes -- the previous generation
-        // already released its own slot on termination.
-        checkAndRegisterSpawn({ parentSessionId: runCtx.parentSessionId, childSessionId: agentId, env });
+        // already released its own slot on termination. `checkAndRegisterSpawn` THROWS
+        // (SpawnDepthExceededError/SpawnConcurrencyExceededError) rather than returning a result --
+        // this method's own return type is a `DeliveryOutcome`, which Lane D's messaging router
+        // consumes directly (WS-10 §10) with no reason to expect `resume()` itself to throw. An
+        // over-limit resume is exactly as legitimate a "the system is at capacity right now" outcome
+        // as a fresh spawn hitting the same limit -- `retryable: true`, since concurrency (unlike the
+        // gone-worktree case above) can free up on its own moments later.
+        try {
+          checkAndRegisterSpawn({ parentSessionId: runCtx.parentSessionId, childSessionId: agentId, env });
+        } catch (err) {
+          return {
+            status: "unavailable",
+            messageId: msg.messageId,
+            retryable: true,
+            reason: err instanceof Error ? err.message : String(err),
+          };
+        }
 
         let rebuilt: ProviderMessage[] = [];
         if (childStore !== undefined) {
@@ -381,13 +444,12 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
       },
       async stop(): Promise<void> {
         if (record.status !== "running") return; // already terminal -- idempotent
-        // Routed through the CURRENT generation's own gated `settle`/`abortGeneration` (never a
-        // parallel, ungated status mutation) -- see startGeneration's own header comment on
-        // `currentSettle`/`currentAbort` for why: whichever of {this stop, a genuine result frame
-        // arriving moments later} reaches the gate FIRST wins, permanently, rather than racing to
-        // silently overwrite one terminal status with another.
+        // Routed through the CURRENT generation's own gated `settle` (never a parallel, ungated
+        // status mutation) -- see startGeneration's own header comment on `currentSettle` for why:
+        // whichever of {this stop, a genuine result frame arriving moments later} reaches the gate
+        // FIRST wins, permanently, rather than racing to silently overwrite one terminal status with
+        // another. `settle` itself now calls `abortGeneration` internally (see its own comment).
         currentSettle?.("stopped", "stopped by request");
-        currentAbort?.();
       },
     };
 

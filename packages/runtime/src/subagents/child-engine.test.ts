@@ -6,12 +6,12 @@
 // policy/fork/workspace/definitions .test.ts).
 import { describe, test, expect, afterEach } from "bun:test";
 import { randomUUID } from "node:crypto";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { WinterFrame, RuntimeConfig, ProtocolSdkMessage as SdkMessage } from "@yanlinglabs/winter-agent-sdk";
 import { WinterCompatibilitySessionStore } from "@yanlinglabs/winter-agent-sdk";
-import { runEngine } from "../engine.ts";
+import { runEngine, type Provider } from "../engine.ts";
 import { createInMemoryChannel } from "../protocol/channel.ts";
 import { registerTool, unregisterToolForTest, type ToolExecutionContext } from "../tools/registry.ts";
 import { echoProvider, scriptedProvider } from "../provider/mock.ts";
@@ -123,6 +123,30 @@ async function waitUntil(predicate: () => boolean, timeoutMs = 2000): Promise<vo
   if (!predicate()) throw new Error(`waitUntil: condition never became true within ${timeoutMs}ms`);
 }
 
+// --- Hermetic git fixture helper (mirrors workspace.test.ts's own established pattern exactly --
+// this machine has GLOBAL git hooks installed; GIT_CONFIG_GLOBAL=/dev/null + GIT_CONFIG_NOSYSTEM=1
+// make fixture SETUP hermetic). Repo identity is LOCAL-ONLY and synthetic. Needed here (rather than
+// importing workspace.test.ts's own copy, which isn't exported) only for the advisor fix-round C
+// regression below -- a real git repo is the one precondition `isolation:"worktree"` requires.
+async function runGitFixture(args: string[], cwd: string): Promise<{ ok: boolean; stderr: string }> {
+  const proc = Bun.spawn(["git", ...args], { cwd, stdout: "pipe", stderr: "pipe", env: { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" } });
+  // Both stdout AND stderr are drained (even though only stderr's text is used) -- matching
+  // workspace.test.ts's own established pattern exactly: an unread `stdout: "pipe"` stream is a
+  // latent resource-handle risk best not deviated from without reason.
+  const [, stderr, exitCode] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
+  return { ok: exitCode === 0, stderr: stderr.trim() };
+}
+async function initFixtureRepo(dir: string): Promise<void> {
+  const run = async (args: string[]) => {
+    const result = await runGitFixture(args, dir);
+    if (!result.ok) throw new Error(`fixture setup "git ${args.join(" ")}" failed: ${result.stderr}`);
+  };
+  await run(["init", "-b", "main"]);
+  await run(["config", "user.email", "lane-c-fixture@example.invalid"]);
+  await run(["config", "user.name", "Lane C Fixture"]);
+  await run(["commit", "--allow-empty", "-m", "initial commit"]);
+}
+
 const cleanupToolNames: string[] = [];
 afterEach(() => {
   resetChildEngineFactoryForTest();
@@ -179,6 +203,18 @@ describe("child-engine.ts: foreground spawn end-to-end (WS-10 §1/§3/§4/§7)",
     // swallowed (transformChildFrame's own WS-04 §4 contract).
     const resultFrames = msgs.filter((m) => m.type === "result");
     expect(resultFrames.length).toBe(1);
+
+    // Fix-D regression: THIS wrapper's own internal interrupt/end_input handshake (fired once by
+    // abortGeneration() when the child naturally completes -- see child-engine.ts's own settle()
+    // comment) must never leak its own control_response acks onto the PARENT's real stream. The
+    // ONLY control_request/control_response pair that genuinely belongs to this TEST itself is
+    // "end-1" (the parent's own end_input, written above) -- any OTHER requestId showing up here
+    // would be exactly the two-stray-frames-per-completed-child leak that fix closed.
+    const controlResponses = frames.filter((f): f is Extract<WinterFrame, { type: "control_response" }> => f.type === "control_response");
+    expect(controlResponses.length).toBeGreaterThan(0); // "end-1"'s own ack must still be here
+    for (const cr of controlResponses) {
+      expect(cr.requestId).toBe("end-1");
+    }
   });
 
   test("an AgentDefinition's own tools allowlist DENIES a call to a tool outside it -- not merely hides it", async () => {
@@ -381,6 +417,155 @@ describe("child-engine.ts: durable resume (WS-10 §7)", () => {
       await done;
     } finally {
       rmSync(winterHome, { recursive: true, force: true });
+      rmSync(parentCwd, { recursive: true, force: true });
+    }
+  });
+
+  test("resume() when concurrency is exhausted returns an 'unavailable'/retryable outcome, never a throw (advisor fix B)", async () => {
+    registerSpawnAndRegister();
+    cleanupToolNames.push(SPAWN_AND_REGISTER);
+    const BLOCK_TOOL = "t6_block_resume_capacity";
+    cleanupToolNames.push(BLOCK_TOOL);
+    const gate = registerBlockingTool(BLOCK_TOOL);
+
+    // A bespoke fixture (SPAWN_PROBE's own "await full completion" behavior, combined with
+    // SPAWN_AND_REGISTER's own "stash the handle" behavior): the ordinary SPAWN_AND_REGISTER
+    // returns as soon as spawnChild() resolves with a handle, well BEFORE the child itself has
+    // actually run its own turn to completion -- racy for this test's own purpose, which needs
+    // child1 to be GENUINELY terminal (and its concurrency slot GENUINELY released) before child2
+    // ever attempts to spawn. Awaiting result() inside the SAME tool call makes that deterministic:
+    // the parent's own engine loop does not advance to its next scripted turn (call-2) until this
+    // tool call's own promise resolves.
+    const SPAWN_AWAIT_AND_REGISTER = "t6_spawn_await_and_register";
+    cleanupToolNames.push(SPAWN_AWAIT_AND_REGISTER);
+    registerTool({
+      descriptor: {
+        canonicalName: SPAWN_AWAIT_AND_REGISTER, advertisedName: SPAWN_AWAIT_AND_REGISTER, source: "builtin", inputSchema: { type: "object" },
+        description: "spawns a child, awaits its full completion, then stashes the handle for the test to resume() later", exposure: "eager", permissionClass: "read",
+        availability: {}, capabilityRequirements: [], disposition: "implement-now",
+      },
+      executor: {
+        async execute(input: unknown, ctx: ToolExecutionContext) {
+          if (!ctx.session.spawnChild) return { output: "no spawnChild capability configured", isError: true };
+          const handle = await ctx.session.spawnChild(input as SpawnChildRequest);
+          await handle.result();
+          liveHandles.set(handle.record.id, handle);
+          return { output: JSON.stringify({ agentId: handle.record.id }) };
+        },
+      },
+    });
+
+    // ONE provider instance is shared by BOTH children spawned through this ONE registered factory
+    // (registerChildEngineFactory is a process-wide singleton -- there is no way to hand two
+    // genuinely-concurrent children two DIFFERENT provider instances in this harness). A plain
+    // scriptedProvider's shared internal queue is NOT safe for two concurrent callers (both would
+    // pop from the SAME array, racing) -- this inline provider instead branches on each child's OWN
+    // accumulated `messages`, which stays correctly partitioned per child (every spawned child is
+    // its own separate runEngine() call with its own separate conversation state).
+    //
+    // NOT keyed off "the last user-role message" (a first empirical attempt spun forever): a tool
+    // result in THIS engine's own ProviderMessage shape is its own `role: "tool"` entry (engine.ts),
+    // never a second `role: "user"` one the way the raw Anthropic API wraps tool_result in a
+    // user-role message -- so the FIRST/only "user" message never changes for a single-prompt
+    // child's whole life, and branching on it forever re-decides "hold the slot" -> tool_use, then
+    // (once the test's own one-shot gate gets released the FIRST time) the RE-triggered tool call
+    // resolves instantly forever, a tight zero-delay tool_use/execute cycle. Keying on "have I
+    // already emitted the one tool_use I'm supposed to emit" is the actually-correct completion
+    // signal for a provider meant to call a tool exactly once, then finish.
+    const dualProvider: Provider = {
+      async generate({ messages }) {
+        const alreadyCalledBlockTool = messages.some(
+          (m) => m.role === "assistant" && Array.isArray(m.content) && m.content.some((b) => b.type === "tool_use" && b.name === BLOCK_TOOL),
+        );
+        if (alreadyCalledBlockTool) return { kind: "text", text: "quick done" };
+        const firstUser = messages.find((m) => m.role === "user");
+        const text = typeof firstUser?.content === "string" ? firstUser.content : "";
+        if (text.includes("hold the slot")) return { kind: "tool_use", calls: [{ id: `b-${randomUUID()}`, name: BLOCK_TOOL, input: {} }] };
+        return { kind: "text", text: "quick done" };
+      },
+    };
+    registerChildEngineFactory(createChildEngineFactory({ provider: dualProvider, env: { WINTER_MAX_CONCURRENT_SUBAGENTS: "1" } }));
+
+    const quickReq: SpawnChildRequest = { parentToolUseId: "call-1", prompt: "quick", runInBackground: false };
+    const blockingReq: SpawnChildRequest = {
+      parentToolUseId: "call-2", prompt: "hold the slot", runInBackground: false,
+      definition: { description: "d", prompt: "d", tools: [BLOCK_TOOL] },
+    };
+    const { host, runtime } = createInMemoryChannel();
+    const provider = scriptedProvider([
+      { kind: "tool_use", calls: [{ id: "call-1", name: SPAWN_AWAIT_AND_REGISTER, input: quickReq }] },
+      { kind: "tool_use", calls: [{ id: "call-2", name: SPAWN_AND_REGISTER, input: blockingReq }] },
+      { kind: "text", text: "done" },
+    ]);
+    const done = runEngine({ config: baseConfig(), input: runtime.input, output: runtime.output, provider });
+    host.output.write({ type: "user", text: "go" });
+    host.output.write({ type: "control_request", requestId: "end-1", subtype: "end_input", payload: undefined });
+    const drainPromise = drain(host.input);
+
+    // call-1's own tool call does not resolve until child1 has ALREADY reached "completed" (it
+    // awaits result() itself) -- so by the time BOTH handles are registered, child1's concurrency
+    // slot is deterministically already released and child2 deterministically holds the only one.
+    await waitUntil(() => liveHandles.size === 2);
+    const spawned = [...liveHandles.values()];
+    const quickHandle = spawned.find((h) => h.record.parentToolUseId === "call-1")!;
+    const blockingHandle = spawned.find((h) => h.record.parentToolUseId === "call-2")!;
+    expect(quickHandle.status()).toBe("completed");
+
+    // The SECOND (blocking) child now holds the one-and-only concurrency slot -- a resume() attempt
+    // on the FIRST, already-terminal child must surface that as a legible DeliveryOutcome, never an
+    // uncaught throw propagating out of resume() itself (Lane D's messaging router calls this with
+    // no try/catch of its own).
+    const outcome = await quickHandle.resume(fakeGlobalMessage("try again"));
+    expect(outcome.status).toBe("unavailable");
+    if (outcome.status === "unavailable") {
+      expect(outcome.retryable).toBe(true);
+      expect(outcome.reason.length).toBeGreaterThan(0);
+    }
+    expect(quickHandle.status()).toBe("completed"); // a rejected resume never flips status to "running"
+
+    gate.release();
+    await waitUntil(() => blockingHandle.status() !== "running");
+    await drainPromise;
+    await done;
+  });
+
+  test("resume() of an isolated child whose auto-cleaned worktree no longer exists -> 'unavailable'/retryable:false (advisor fix C)", async () => {
+    const parentCwd = mkdtempSync(join(tmpdir(), "winter-lane-c-resume-worktree-"));
+    try {
+      await initFixtureRepo(parentCwd);
+      registerSpawnAndRegister();
+      cleanupToolNames.push(SPAWN_AND_REGISTER);
+      registerChildEngineFactory(createChildEngineFactory({ provider: echoProvider }));
+
+      const req: SpawnChildRequest = { parentToolUseId: "call-1", prompt: "first turn", runInBackground: false, isolation: "worktree" };
+      const { host, runtime } = createInMemoryChannel();
+      const provider = scriptedProvider([{ kind: "tool_use", calls: [{ id: "call-1", name: SPAWN_AND_REGISTER, input: req }] }, { kind: "text", text: "done" }]);
+      const parentConfig = baseConfig({ cwd: parentCwd });
+      const done = runEngine({ config: parentConfig, input: runtime.input, output: runtime.output, provider });
+      host.output.write({ type: "user", text: "go" });
+      host.output.write({ type: "control_request", requestId: "end-1", subtype: "end_input", payload: undefined });
+      const drainPromise = drain(host.input);
+
+      await waitUntil(() => liveHandles.size === 1);
+      const handle = [...liveHandles.values()][0]!;
+      await waitUntil(() => handle.status() === "completed");
+      // The child made no changes of its own -- WS-10 §8's own "auto-cleaned when unchanged" fires
+      // as part of settle() (fire-and-forget), so poll for the worktree's own actual disappearance
+      // rather than assuming it is synchronously done the instant status flips to "completed".
+      const worktreePath = join(parentCwd, ".winter", "worktrees", `agent-${handle.record.id}`);
+      await waitUntil(() => !existsSync(worktreePath));
+
+      const outcome = await handle.resume(fakeGlobalMessage("second turn"));
+      expect(outcome.status).toBe("unavailable");
+      if (outcome.status === "unavailable") {
+        expect(outcome.retryable).toBe(false);
+        expect(outcome.reason).toContain("auto-cleaned");
+      }
+      expect(handle.status()).toBe("completed"); // unchanged -- never flipped to "running"
+
+      await drainPromise;
+      await done;
+    } finally {
       rmSync(parentCwd, { recursive: true, force: true });
     }
   });
