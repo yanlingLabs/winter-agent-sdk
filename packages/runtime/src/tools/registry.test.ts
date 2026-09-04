@@ -32,6 +32,11 @@ import {
   type AdvertisedSetInputs,
 } from "./registry.ts";
 import { createSessionReadState } from "./read-state.ts";
+// Fix round 1, MAJOR item 2: imported (not hand-typed) so the reserved-name test below is a real
+// drift tripwire against mcp/winter-server.ts's own constant -- see registry.ts's own
+// RESERVED_MCP_SERVER_NAMES comment for why the import runs in THIS direction only (the reverse
+// would be a production-code import cycle; a test-only import here carries no such risk).
+import { WINTER_SERVER_NAME } from "../mcp/winter-server.ts";
 
 // Every WS-06 §2 name (45 public + §40.46 conditional surfaces + the Winter-only advisor) this task
 // is responsible for stubbing. Listed explicitly (not derived from `listRegisteredTools().length`)
@@ -621,6 +626,84 @@ describe("registerMcpServerTools / unregisterMcpServerTools (Phase 4 Task 2, WS-
     }
   });
 
+  test("a MID-BATCH collision leaves the registry byte-identical to before the call (VALIDATE-THEN-COMMIT, fix round 1 MAJOR item 1)", () => {
+    const collideServer = "t2atomiccollide";
+    const dCanonical = `mcp__${collideServer}__d`;
+    registerTool({ descriptor: fixtureDescriptor(dCanonical) }); // a foreign, non-live stub "d" will collide with
+    try {
+      registerMcpServerTools(collideServer, [{ name: "a", inputSchema: { type: "object" } }, { name: "b", inputSchema: { type: "object" } }], {
+        deferredDefault: false,
+      });
+      expect(getRegisteredTool(`mcp__${collideServer}__a`)).toBeDefined();
+      expect(getRegisteredTool(`mcp__${collideServer}__b`)).toBeDefined();
+
+      // [a, c, d]: "a" would be re-affirmed, "c" newly inserted, and "d" collides with the foreign
+      // stub above -- under the OLD mutate-as-you-go implementation, "b" (owned before, absent from
+      // this new list) was already deleted and "c" already inserted by the time the throw on "d"
+      // fired, leaving mcpServerOwnedNames stale in both directions.
+      expect(() =>
+        registerMcpServerTools(
+          collideServer,
+          [
+            { name: "a", inputSchema: { type: "object" } },
+            { name: "c", inputSchema: { type: "object" } },
+            { name: "d", inputSchema: { type: "object" } },
+          ],
+          { deferredDefault: false },
+        ),
+      ).toThrow();
+
+      // Byte-identical to before the failed call: "a" and "b" untouched, "c" never created.
+      expect(getRegisteredTool(`mcp__${collideServer}__a`)).toBeDefined();
+      expect(getRegisteredTool(`mcp__${collideServer}__b`)).toBeDefined();
+      expect(getRegisteredTool(`mcp__${collideServer}__c`)).toBeUndefined();
+
+      // A subsequent unregister removes EXACTLY "a" and "b" -- the old bug left "b" already deleted
+      // but still listed as owned (a harmless double-delete) while a would-be-inserted "c" would be
+      // live in the registry but NOT listed as owned: permanently unreachable via unregister.
+      unregisterMcpServerTools(collideServer);
+      expect(getRegisteredTool(`mcp__${collideServer}__a`)).toBeUndefined();
+      expect(getRegisteredTool(`mcp__${collideServer}__b`)).toBeUndefined();
+    } finally {
+      unregisterToolForTest(dCanonical);
+      unregisterMcpServerTools(collideServer); // defensive no-op if the assertions above already cleaned up
+    }
+  });
+
+  test('RULING P4-B: "winter" is a RESERVED server name -- even a brand-new tool name that collides with nothing throws (fix round 1 MAJOR item 2)', () => {
+    // "browser" has never been registered under ANY mechanism -- the ordinary per-name collision
+    // check (registry.has(canonicalName)) would NOT fire for it; only the reserved-name guard does.
+    expect(() =>
+      registerMcpServerTools(WINTER_SERVER_NAME, [{ name: "browser", inputSchema: { type: "object" } }], { deferredDefault: false }),
+    ).toThrow();
+    expect(getRegisteredTool(`mcp__${WINTER_SERVER_NAME}__browser`)).toBeUndefined(); // never created
+  });
+
+  test('the reserved-name guard is exact-match only -- "Winter"/"WINTER" are NOT reserved (documented choice, fix round 1 MAJOR item 2)', () => {
+    try {
+      expect(() =>
+        registerMcpServerTools("Winter", [{ name: "browser", inputSchema: { type: "object" } }], { deferredDefault: false }),
+      ).not.toThrow();
+      expect(getRegisteredTool("mcp__Winter__browser")).toBeDefined();
+    } finally {
+      unregisterMcpServerTools("Winter");
+    }
+  });
+
+  test("registerMcpServerTools(neverSeenServer, []) is a silent no-op, symmetric with unregisterMcpServerTools (fix round 1 NIT item 4)", () => {
+    let calls = 0;
+    const unsubscribe = onRegistryChange(() => {
+      calls++;
+    });
+    try {
+      expect(() => registerMcpServerTools("__t2_never_seen_empty__", [], { deferredDefault: false })).not.toThrow();
+      expect(calls).toBe(0); // no notification fired -- nothing changed
+    } finally {
+      unsubscribe();
+      unregisterMcpServerTools("__t2_never_seen_empty__"); // defensive; also expected to be a no-op
+    }
+  });
+
   test("unregisterMcpServerTools is idempotent for a server that was never (or is no longer) registered", () => {
     expect(() => unregisterMcpServerTools("__t2_never_registered_server__")).not.toThrow();
   });
@@ -748,7 +831,10 @@ describe("resolveDeferral (Phase 4 Task 2, WS-09 §8.5/§9)", () => {
   test("mode-visibility exclusion (availability.modes) resolves to hidden", () => {
     const d = mcpDescriptor({ deferred: true, availability: { modes: ["plan"] } });
     expect(resolveDeferral(d, "default", fullActivation)).toBe("hidden");
-    expect(resolveDeferral(d, "plan", fullActivation)).not.toBe("hidden");
+    // Fix round 1, NIT item 6: the in-mode case asserts the EXACT expected value, not merely
+    // "anything but hidden" -- `d` is deferred:true under a fully-on activation, so "plan" (a listed
+    // mode) must resolve all the way through to "deferred", not just clear the mode-visibility floor.
+    expect(resolveDeferral(d, "plan", fullActivation)).toBe("deferred");
   });
 
   test("deferred absent/false is never eligible -- eager regardless of activation", () => {

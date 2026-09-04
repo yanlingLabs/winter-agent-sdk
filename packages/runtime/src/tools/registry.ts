@@ -489,10 +489,74 @@ function buildMcpToolDescriptor(server: string, tool: McpToolDefinition, opts: {
   };
 }
 
+// Fix round 1, RULING P4-B (MAJOR item 2): "winter" is RESERVED as a live-MCP server identity,
+// independent of whatever happens to be statically registered under it at any given moment. The
+// standing server (mcp/winter-server.ts) is registry-native -- it builds its own real
+// @modelcontextprotocol/sdk McpServer object and is NEVER installed through this function -- so a
+// call like registerMcpServerTools("winter", [{name: "browser", ...}]) must be refused even for a
+// tool name that has never been seen before and so would not trip the ordinary per-name collision
+// check below (that check only catches a name that already happens to be registered; a brand-new
+// name under the reserved server would sail straight through it and silently create a SECOND,
+// disconnected "winter" identity in the shared registry). Exact-match only, not case-insensitive --
+// mirrors mcp/env.ts's own documented exact-match-only posture; "Winter"/"WINTER" are deliberately
+// NOT reserved (registry.test.ts pins this both ways). Not imported from mcp/winter-server.ts's own
+// WINTER_SERVER_NAME constant: that module already imports FROM this file (it reads the advisor
+// descriptor via getRegisteredTool), so a runtime import in the other direction would be a real
+// import cycle, not merely a type-only one -- registry.test.ts instead imports WINTER_SERVER_NAME
+// directly and asserts it against this literal, which is the drift tripwire without the cycle.
+const RESERVED_MCP_SERVER_NAMES = new Set<string>(["winter"]);
+
 export function registerMcpServerTools(server: string, tools: readonly McpToolDefinition[], opts: { alwaysLoad?: boolean; deferredDefault: boolean | readonly PermissionMode[] }): void {
+  if (RESERVED_MCP_SERVER_NAMES.has(server)) {
+    throw new Error(
+      `registerMcpServerTools: "${server}" is a RESERVED server name -- the standing Winter server ` +
+        `(mcp/winter-server.ts) owns this identity and is registry-native; it is never installed through ` +
+        `this live-mutation function, and nothing else may register live tools under it either.`,
+    );
+  }
+
   const newNames = new Set(tools.map((t) => `mcp__${server}__${t.name}`));
   const previouslyOwned = mcpServerOwnedNames.get(server);
 
+  // Fix round 1, NIT item 4: symmetric with unregisterMcpServerTools's own silent no-op below -- a
+  // server with nothing owned before and nothing in the new list has genuinely nothing to change.
+  // Returning here (rather than falling through to an unconditional mcpServerOwnedNames.set +
+  // notifyRegistryChange at the bottom) avoids firing a spurious onRegistryChange, and avoids
+  // planting a phantom empty-Set bookkeeping entry, for a call that mutated nothing observable.
+  if (tools.length === 0 && (previouslyOwned === undefined || previouslyOwned.size === 0)) return;
+
+  // Fix round 1, MAJOR item 1 -- VALIDATE-THEN-COMMIT: every incoming name is checked for a
+  // collision/foreign-ownership BEFORE anything below is mutated. The previous version validated
+  // and mutated in the SAME loop, so a throw partway through a batch (e.g. register(server, [a, c,
+  // d]) where "d" collides) left the OLD set-replace deletion already applied ("b", owned before but
+  // absent from the new list, already deleted) and some of the NEW insertions already applied ("a"
+  // updated, "c" inserted) while `mcpServerOwnedNames` was never updated to reflect any of it (the
+  // throw happens before that assignment) -- so a subsequent `unregisterMcpServerTools(server)` would
+  // only ever see the STALE pre-call owned set and could never reach "c", orphaning it in the
+  // registry forever. Validating the whole batch first means a throw here leaves registry/
+  // mcpToolOwner/mcpServerOwnedNames byte-identical to their pre-call state -- nothing is ever
+  // half-applied (registry.test.ts pins this exact scenario).
+  for (const tool of tools) {
+    const canonicalName = `mcp__${server}__${tool.name}`;
+    const existingOwner = mcpToolOwner.get(canonicalName);
+    if (registry.has(canonicalName) && existingOwner === undefined) {
+      throw new Error(
+        `registerMcpServerTools: "${canonicalName}" is already registered by a non-live-MCP mechanism ` +
+          `(e.g. a static WS-06 descriptor stub, or the standing winter server's own advisor identity) -- ` +
+          `refusing to overwrite it. If this name is meant to be a live-connected MCP tool, its static ` +
+          `registration must be removed first.`,
+      );
+    }
+    if (existingOwner !== undefined && existingOwner !== server) {
+      // Should be structurally impossible (canonical names are namespaced per-server) -- defended
+      // anyway rather than silently reassigning ownership across servers.
+      throw new Error(`registerMcpServerTools: "${canonicalName}" is already owned by server "${existingOwner}", not "${server}"`);
+    }
+  }
+
+  // Commit phase: validation above already proved every name in `tools` is either brand-new or
+  // already owned by THIS server -- every step below is now guaranteed to succeed.
+  //
   // Set-replace (this section's own header): drop anything this server owned before that is absent
   // from the new list, BEFORE inserting anything new -- so a name that moves from "owned by this
   // server, not in the new list" straight to "owned by this server, in the new list" (impossible in
@@ -510,21 +574,7 @@ export function registerMcpServerTools(server: string, tools: readonly McpToolDe
   const nowOwned = new Set<string>();
   for (const tool of tools) {
     const canonicalName = `mcp__${server}__${tool.name}`;
-    const existingOwner = mcpToolOwner.get(canonicalName);
-    if (registry.has(canonicalName) && existingOwner === undefined) {
-      throw new Error(
-        `registerMcpServerTools: "${canonicalName}" is already registered by a non-live-MCP mechanism ` +
-          `(e.g. a static WS-06 descriptor stub, or the standing winter server's own advisor identity) -- ` +
-          `refusing to overwrite it. If this name is meant to be a live-connected MCP tool, its static ` +
-          `registration must be removed first.`,
-      );
-    }
-    if (existingOwner !== undefined && existingOwner !== server) {
-      // Should be structurally impossible (canonical names are namespaced per-server) -- defended
-      // anyway rather than silently reassigning ownership across servers.
-      throw new Error(`registerMcpServerTools: "${canonicalName}" is already owned by server "${existingOwner}", not "${server}"`);
-    }
-    const existingEntry = registry.get(canonicalName); // present only on a same-server replace (checked above)
+    const existingEntry = registry.get(canonicalName); // present only on a same-server replace (validated above)
     const descriptor = buildMcpToolDescriptor(server, tool, opts);
     registry.set(canonicalName, existingEntry ? { ...existingEntry, descriptor } : { descriptor });
     mcpToolOwner.set(canonicalName, server);
