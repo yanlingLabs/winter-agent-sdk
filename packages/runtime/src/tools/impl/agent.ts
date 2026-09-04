@@ -18,34 +18,33 @@ import type { RuntimeAgentDefinition } from "@yanlinglabs/winter-agent-sdk";
 import { replaceExecutor, type ToolExecutionContext, type ToolExecutor, type ToolResultPayload } from "../registry.ts";
 import "../descriptors/agent.ts"; // self-sufficiency: guarantees the "Agent" stub is registered before replaceExecutor runs below.
 import { createBackgroundTask } from "../background-tasks.ts";
-import { listRunningTasks, toBackgroundTasksChangedEntry } from "./background-task-runtime.ts";
+// Phase 4 Task 8 (rider 24): the shared background-task runtime TaskStop/TaskOutput are built on.
+import { startTracking, setTaskStatus, listRunningTasks, toBackgroundTasksChangedEntry } from "./background-task-runtime.ts";
 import { loadAgentDefinitions } from "../../subagents/definitions.ts";
 import { resolveForegroundBackground, resolveWorkspaceTrust } from "../../subagents/policy.ts";
 import type { ChildHandle, ChildResult, ChildSessionRecord, SpawnChildRequest } from "../../subagents/child-handle.ts";
 
 export const AGENT_TOOL_NAME = "Agent";
 
-// R4-8 / WS-10 §17 Open Question 1: the FROZEN descriptor (tools/descriptors/agent.ts) advertises
-// `name` in its own `inputSchema.properties` -- the spec is explicit that it must instead be
-// "accepted host-side, withheld from the model schema" until a real capability predicate for it
-// exists (none does). This is a genuine violation of that MUST, in a file this lane may never edit
-// (R4-10) -- NOT fixed here, reported as NEEDS_CONTEXT. This executor still accepts `name` (host-
-// side acceptance is correct regardless of what the schema advertises) -- the bug is confined to
-// what the MODEL is told is available, not to this file's own handling of the field once given.
+// R4-8 / WS-10 §17 Open Question 1 -- CLOSED by Phase 4 Task 8 (rider 22, RULING P4-J(d)):
+// `tools/descriptors/agent.ts` no longer advertises `name` in its own `inputSchema.properties`.
+// This executor's host-side acceptance of the field is unchanged and is exactly what the ruling
+// requires ("Winter accepts the field host-side and withholds it from the model schema").
 
 // --- Background-task bookkeeping (WS-06 §3.5, WS-12 §7) ------------------------------------------
 //
-// background-task-runtime.ts's own registry (Lane C-of-P3) only knows "bash"/"monitor" tasks -- an
-// agent task is deliberately NOT registered there (TaskStop's own `getTask(id)` lookup, and
-// TaskOutput's tracked path, both stay blind to it; TaskOutput's own UNTRACKED fallback -- reading
-// the physical `.output` file directly by path -- still works for the stub this file writes below).
-// Wiring TaskStop/TaskOutput to also reach agent children needs edits to background-task-runtime.ts
-// and/or tools/impl/task-stop.ts, both outside this lane's file list (R4-10) -- disclosed as
-// NEEDS_CONTEXT, not attempted. A model-facing way to stop a background agent still exists in
-// principle via SendMessage-driven steer (Lane D's own tool, WS-10 §10.3), just not via TaskStop.
+// Phase 4 Task 8 (rider 24): a background agent task IS registered in background-task-runtime.ts's
+// shared registry now (its `BackgroundTaskKind` union was widened to match the spine seam's own four
+// members, which was the mechanical blocker), so TaskStop and TaskOutput -- both implemented
+// entirely against that registry -- reach a background agent exactly as they reach a backgrounded
+// Bash command. A child has no OS process (RULING R4-4: it is an in-process runEngine loop), so it
+// registers with no `pid` and a generic `stop` callback instead: `handle.stop()`, which is
+// idempotent and settles the child's own result.
 //
-// This own small map exists ONLY so `background_tasks_changed` can report an agent task ALONGSIDE
-// whatever bash/monitor tasks are also running -- `listRunningTasks()` alone would omit it entirely.
+// The small map below still exists for a DIFFERENT reason, unchanged: `background_tasks_changed`
+// carries a `task_type` per row, and the shared registry's own entry shape does not preserve the
+// per-row description/type pairing this frame needs -- so agent rows are merged in alongside
+// whatever the registry reports for bash/monitor.
 interface AgentBackgroundTaskEntry {
   task_id: string;
   task_type: "agent";
@@ -118,6 +117,27 @@ function startBackgroundAgentTask(handle: ChildHandle, ctx: ToolExecutionContext
   try {
     ({ taskId, outputPath } = createBackgroundTask("agent"));
     backgroundAgentTasks.set(taskId, { task_id: taskId, task_type: "agent", description });
+    // Phase 4 Task 8 (rider 24): register the task in the SHARED background-task runtime, so
+    // TaskStop and TaskOutput -- both of which are implemented entirely against that registry --
+    // reach a background agent task exactly as they reach a backgrounded Bash command. Lane C's own
+    // report flagged the asymmetry ("TaskStop/TaskOutput do not reach background agent tasks");
+    // closing it needed the registry's own `BackgroundTaskKind` union widened first (done, this
+    // task), because an agent task has no OS process at all.
+    //
+    // `pid` is deliberately ABSENT: a child is an in-process `runEngine` loop (RULING R4-4), never
+    // an OS process, so there is no process group to signal. The generic `stop` callback is the
+    // whole point of that field's existence (it was added for Monitor's socket half, which likewise
+    // has no pid) -- `handle.stop()` is idempotent and settles the child's result, so a TaskStop
+    // against a background agent aborts the real child rather than merely marking a row.
+    startTracking({
+      taskId,
+      kind: "agent",
+      outputPath,
+      description,
+      stop: () => {
+        void handle.stop();
+      },
+    });
     writeAgentTaskStub(outputPath, handle);
 
     ctx.emitFrame({
@@ -155,6 +175,9 @@ function startBackgroundAgentTask(handle: ChildHandle, ctx: ToolExecutionContext
   handle.result().then(
     (result) => {
       backgroundAgentTasks.delete(taskId);
+      // Rider 24: reflect the child's own terminal status into the shared registry, so
+      // `listRunningTasks()` (and therefore TaskStop's own "already finished" answer) is accurate.
+      setTaskStatus(taskId, result.status === "completed" ? "completed" : result.status === "stopped" ? "stopped" : "failed");
       // ChildResult.status (child-handle.ts, T3-frozen) is ALREADY the identical 3-member
       // "completed"|"stopped"|"failed" union SDKTaskNotificationMessage.status expects -- no
       // narrowing/fallback needed, unlike ChildSessionRecord.status's own wider 4-member ChildStatus.
@@ -189,6 +212,7 @@ function startBackgroundAgentTask(handle: ChildHandle, ctx: ToolExecutionContext
     },
     () => {
       backgroundAgentTasks.delete(taskId);
+      setTaskStatus(taskId, "failed");
     },
   );
 

@@ -44,7 +44,15 @@ import {
 } from "./inbound.ts";
 import { createIdleSubscriptionStore, createNotificationQueue, type NotificationQueue } from "./idle.ts";
 import { delivered, queued, held, subscribed, refused, notFound, unavailable, createLoopGuard } from "./outcomes.ts";
-import { createMessagingRouterSeam, createSubscriberDirectory, type MessagingRuntimeDeps, type SubscriberDirectory } from "./router.ts";
+import {
+  createMessagingRouterSeam,
+  createSubscriberDirectory,
+  getMessagingRuntime,
+  registerMessagingRuntime,
+  type MessagingRouterSeamWithRoster,
+  type MessagingRuntimeDeps,
+  type SubscriberDirectory,
+} from "./router.ts";
 
 // --- The reference's own "peer" abstraction (same-process top-level sessions) ----------------------
 
@@ -480,4 +488,31 @@ export function createDefaultMessagingRuntime(opts: { now?: () => number; getChi
     now,
   });
   return { seam, adapter, notifications, loopGuard: createLoopGuard(), subscribers, now, peers };
+}
+
+// --- Phase 4 Task 8: the PROCESS-LEVEL default messaging runtime ---------------------------------
+//
+// Lane D's three tool executors (SendMessage/ListAgents/ReadNotifications) read a module singleton
+// via `getMessagingRuntime()`, and nothing in this repository ever registered one -- so every one of
+// them answered "no messaging runtime configured for this session" in a live session, however
+// correct the router beneath them was. This is that registrar.
+//
+// PROCESS-level, deliberately, not per-run. A child engine is another `runEngine` loop in the SAME
+// process (RULING R4-4), so a per-run `registerMessagingRuntime` would be clobbered by every child
+// spawn -- the parent's own peers, held messages, notification queue and messageId ledger would all
+// be silently replaced mid-turn by the child's fresh ones. One runtime per process, with each run
+// CONTRIBUTING its own child roster through `addChildRosterSource` (router.ts's own seam, built for
+// exactly this) and withdrawing it at teardown, is the shape that composes: the adapter's
+// `children()` is then the union of every live session's roster, which is precisely what WS-10 §11's
+// resolution rules need to see in order to resolve a name across the process.
+//
+// Idempotent and lazy: the first run to ask builds it; every later run reuses it. A host that wants
+// its own real (daemon-backed, cross-process, durable) runtime registers one BEFORE any session
+// starts and this function leaves it alone -- WS-10 §15's own split of ownership, unchanged.
+export function ensureDefaultMessagingRuntimeRegistered(): MessagingRouterSeamWithRoster {
+  const existing = getMessagingRuntime();
+  if (existing !== undefined) return existing.seam as MessagingRouterSeamWithRoster;
+  const runtime = createDefaultMessagingRuntime();
+  registerMessagingRuntime(runtime);
+  return runtime.seam as MessagingRouterSeamWithRoster;
 }

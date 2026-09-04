@@ -853,6 +853,16 @@ export interface AdvertisedSetInputs {
   disallowedTools?: readonly string[];
 }
 
+// Phase 4 Task 8 (rider 27): exported so the ENGINE's own round loop can apply the identical
+// predicate at the execution boundary, ahead of permission evaluation -- never a re-implementation.
+// See engine.ts's own call site for why the check has to run there and not only in the registry
+// adapter below (a tool whose permission class forces an interactive prompt, e.g. AskUserQuestion,
+// never reaches the adapter at all: it parks on an unanswerable permission RPC first, which is
+// precisely the stall rider 27 exists to eliminate).
+export function isToolAvailable(descriptor: ToolDescriptor, cfg: AdvertisedSetInputs): boolean {
+  return isAvailable(descriptor, cfg);
+}
+
 function isAvailable(descriptor: ToolDescriptor, cfg: AdvertisedSetInputs): boolean {
   const a = descriptor.availability;
   if (a.modes !== undefined && !a.modes.includes(cfg.mode)) return false;

@@ -3654,3 +3654,27 @@ describe("Phase 4 Task 8 (rider 11): live MCP lifecycle wiring", () => {
     );
   }, 20_000);
 });
+
+// ================================================================================================
+// Phase 4 Task 8: Lane D's messaging tools reach a real runtime in a live session.
+// ================================================================================================
+test("Phase 4 Task 8: a live session's ListAgents call reaches the real messaging runtime, not the 'no messaging runtime' error", async () => {
+  const { host, runtime } = createInMemoryChannel();
+  const provider = scriptedProvider([
+    { kind: "tool_use", calls: [{ id: "c1", name: "ListAgents", input: {} }] },
+    { kind: "text", text: "done" },
+  ]);
+  const config = baseConfig({ sessionId: "t8-messaging-live", permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true });
+  const done = runEngine({ config, input: runtime.input, output: runtime.output, provider });
+  host.output.write({ type: "user", text: "who is around" });
+  host.output.write({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined });
+  const frames = await drain(host.input);
+  await done;
+
+  const toolResult = dataMessages(frames).find((m) => m.type === "user") as { message: { content: Array<{ content: string }> } } | undefined;
+  const text = toolResult?.message.content[0]?.content ?? "";
+  expect(text).not.toContain("no messaging runtime");
+  expect(text).not.toContain("not yet executable");
+  // WS-10 §10.2's pinned output shape: exactly `{ listing: string }`.
+  expect(Object.keys(JSON.parse(text))).toEqual(["listing"]);
+});

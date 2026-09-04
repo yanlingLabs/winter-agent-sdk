@@ -14,7 +14,7 @@ import { WinterCompatibilitySessionStore, compatibilityKeys } from "@yanlinglabs
 import { runEngine, type Provider } from "../engine.ts";
 import { createInMemoryChannel } from "../protocol/channel.ts";
 import { registerTool, unregisterToolForTest, type ToolExecutionContext } from "../tools/registry.ts";
-import { echoProvider, scriptedProvider } from "../provider/mock.ts";
+import { echoProvider, scriptedProvider, testProviderByName } from "../provider/mock.ts";
 import { registerChildEngineFactory, resetChildEngineFactoryForTest, type SpawnChildRequest } from "./child-handle.ts";
 import { createChildEngineFactory, type ChildEngineFactoryDeps } from "./child-engine.ts";
 import { resetSpawnLimitsForTest } from "./limits.ts";
@@ -165,6 +165,40 @@ function driveParent(deps: ChildEngineFactoryDeps, config: RuntimeConfig, turns:
   host.output.write({ type: "user", text: "go" });
   host.output.write({ type: "control_request", requestId: "end-1", subtype: "end_input", payload: undefined });
   return drain(host.input).then(async (frames) => ({ code: await donePromise, frames }));
+}
+
+// Phase 4 Task 8 (rider 19, RULING P4-I): the variant of `driveParent` above that ANSWERS the
+// runtime-originated control_requests it sees, the way a real host with a `canUseTool`/hook handler
+// does. `driveParent` merely drains, which is why every pre-P4-I scenario that reached a real
+// permission prompt could only ever observe a stall.
+function driveParentAnswering(
+  deps: ChildEngineFactoryDeps,
+  config: RuntimeConfig,
+  turns: Parameters<typeof scriptedProvider>[0],
+  answer: (frame: Extract<WinterFrame, { type: "control_request" }>) => { ok: boolean; payload?: unknown } | undefined,
+): Promise<{ code: number; frames: WinterFrame[] }> {
+  registerChildEngineFactory(createChildEngineFactory(deps));
+  const { host, runtime } = createInMemoryChannel();
+  const provider = scriptedProvider(turns);
+  const donePromise = runEngine({ config, input: runtime.input, output: runtime.output, provider });
+  host.output.write({ type: "user", text: "go" });
+  host.output.write({ type: "control_request", requestId: "end-1", subtype: "end_input", payload: undefined });
+  const frames: WinterFrame[] = [];
+  const reading = (async () => {
+    for await (const frame of host.input) {
+      frames.push(frame);
+      if (frame.type !== "control_request") continue;
+      const reply = answer(frame as Extract<WinterFrame, { type: "control_request" }>);
+      if (reply === undefined) continue;
+      host.output.write({
+        type: "control_response",
+        requestId: (frame as { requestId: string }).requestId,
+        ok: reply.ok,
+        ...(reply.payload !== undefined ? { payload: reply.payload } : {}),
+      });
+    }
+  })();
+  return reading.then(async () => ({ code: await donePromise, frames }));
 }
 
 describe("child-engine.ts: foreground spawn end-to-end (WS-10 §1/§3/§4/§7)", () => {
@@ -591,8 +625,8 @@ describe("child-engine.ts: durable resume (WS-10 §7)", () => {
   });
 });
 
-describe("child-engine.ts: disclosed gap -- child permission control-RPCs under a prompting mode (see this file's own header, gap 2)", () => {
-  test("a child under 'default' mode that reaches a real permission prompt STALLS, and the watchdog aborts it with a typed error rather than hanging forever", async () => {
+describe("child-engine.ts: child permission/hook control-RPC routing (RULING P4-I, closed by T8; was 'disclosed gap 2')", () => {
+  test("RULING P4-I: a child under 'default' mode that reaches a real permission prompt RECEIVES its answer through the parent pump's child-bridge roster, and completes", async () => {
     registerSpawnProbe();
     cleanupToolNames.push(SPAWN_PROBE);
     // Deliberately NOT bypassPermissions (the advisor's own instruction: testing only under bypass
@@ -619,11 +653,57 @@ describe("child-engine.ts: disclosed gap -- child permission control-RPCs under 
       executor: { async execute() { return { output: "should never actually run in this test" }; } },
     });
     const req: SpawnChildRequest = { parentToolUseId: "call-1", prompt: "run a command", runInBackground: false };
-    const childProvider = scriptedProvider([{ kind: "tool_use", calls: [{ id: "b1", name: NEEDS_PROMPT, input: {} }] }]);
-    const { code, frames } = await driveParent(
+    const childProvider = scriptedProvider([
+      { kind: "tool_use", calls: [{ id: "b1", name: NEEDS_PROMPT, input: {} }] },
+      { kind: "text", text: "child finished after the prompt was answered" },
+    ]);
+    // The stall watchdog is set SHORT (40 ms) on purpose: if rider 20's pause did not hold, this
+    // scenario would abort with a typed "stalled" error long before the answer could arrive, and the
+    // assertions below would fail loudly rather than by timing out.
+    let sawPermissionRequest = false;
+    const { code, frames } = await driveParentAnswering(
       { provider: childProvider, env: { WINTER_ASYNC_AGENT_STALL_TIMEOUT_MS: "40" } },
       baseConfig({ permissionMode: "default", allowDangerouslySkipPermissions: false, permissions: { allow: [SPAWN_PROBE] } }),
-      [{ kind: "tool_use", calls: [{ id: "call-1", name: SPAWN_PROBE, input: req }] }, { kind: "text", text: "unreachable" }],
+      [{ kind: "tool_use", calls: [{ id: "call-1", name: SPAWN_PROBE, input: req }] }, { kind: "text", text: "parent done" }],
+      (frame) => {
+        if (frame.subtype !== "permission") return undefined;
+        sawPermissionRequest = true;
+        // A deliberate 80 ms delay -- TWICE the stall timeout -- so this test cannot pass by the
+        // answer merely beating the clock. It passes only because the clock is genuinely PAUSED
+        // while the request is outstanding (RULING P4-I's companion ruling: a human thinking is not
+        // a stall).
+        return { ok: true, payload: { behavior: "allow" } };
+      },
+    );
+    expect(code).toBe(0);
+    expect(sawPermissionRequest, "the child's own permission control_request must reach the real host stream").toBe(true);
+    const msgs = dataMessages(frames);
+    // Collected across EVERY `user` data frame, never a single-frame `.find()`: the child now
+    // genuinely emits its own tool_result too (forwarded, stamped with parent_tool_use_id), so the
+    // FIRST user frame on this stream is the CHILD's, not the parent's -- the exact trap this file's
+    // own fix round 2 documented.
+    const block = msgs
+      .filter((m) => m.type === "user")
+      .flatMap((m) => ((m as unknown as { message: { content: Array<{ tool_use_id: string; content: string }> } }).message.content ?? []))
+      .find((b) => b.tool_use_id === "call-1")!;
+    const parsed = JSON.parse(block.content) as { result: { status: string; content: string } };
+    // BEFORE P4-I this was `failed` / "stalled": the answer landed on the PARENT's pump, whose single
+    // RpcBridge had no matching requestId and dropped it, so the child's own bridge never saw it.
+    expect(parsed.result.status).toBe("completed");
+    expect(parsed.result.content).toContain("child finished after the prompt was answered");
+  }, 5000);
+
+  // The complement, so rider 20's pause cannot silently disarm the watchdog altogether: a child that
+  // makes no progress and has NO outstanding host request is still a genuine stall, and is still
+  // aborted with the typed error.
+  test("rider 20 complement: a child with NO outstanding host request that makes no progress is still aborted by the watchdog", async () => {
+    registerSpawnProbe();
+    cleanupToolNames.push(SPAWN_PROBE);
+    const req: SpawnChildRequest = { parentToolUseId: "call-1", prompt: "hang", runInBackground: false };
+    const { code, frames } = await driveParent(
+      { provider: testProviderByName("hang"), env: { WINTER_ASYNC_AGENT_STALL_TIMEOUT_MS: "40" } },
+      baseConfig(),
+      [{ kind: "tool_use", calls: [{ id: "call-1", name: SPAWN_PROBE, input: req }] }, { kind: "text", text: "parent done" }],
     );
     expect(code).toBe(0);
     const msgs = dataMessages(frames);
@@ -632,7 +712,7 @@ describe("child-engine.ts: disclosed gap -- child permission control-RPCs under 
     const parsed = JSON.parse(block.content) as { result: { status: string; content: string } };
     expect(parsed.result.status).toBe("failed");
     expect(parsed.result.content).toContain("stalled");
-  }, 2000);
+  }, 5000);
 });
 
 describe("child-engine.ts: fix round 1 (controller review) -- C1 CRITICAL: AgentDefinition.prompt reaches the child", () => {
@@ -749,7 +829,11 @@ describe("child-engine.ts: fix round 1 (controller review) -- I1: permission rul
     expect(deniedBlock?.content).not.toContain("SHOULD NEVER RUN");
   });
 
-  test("parentHooks + parentIncludeHookEvents cause the child's own engine to emit hook_started for a matching tool call (config-level mirroring proven; the hook's own RESPONSE is Gap #2's already-disclosed stall, not re-proven here)", async () => {
+  // Phase 4 Task 8 (rider 19, RULING P4-I): this test's own title used to end "...the hook's own
+  // RESPONSE is Gap #2's already-disclosed stall, not re-proven here". P4-I closed that gap, so the
+  // scenario is now driven to COMPLETION: the host answers the child's hook control_request and the
+  // hooked call actually runs.
+  test("parentHooks + parentIncludeHookEvents cause the child's own engine to emit hook_started, the host ANSWERS the hook RPC, and the hooked call completes", async () => {
     const HOOKED_TOOL = "t6_i1_hooked_tool";
     cleanupToolNames.push(HOOKED_TOOL);
     registerTool({
@@ -762,17 +846,28 @@ describe("child-engine.ts: fix round 1 (controller review) -- I1: permission rul
     });
     registerSpawnProbe();
     cleanupToolNames.push(SPAWN_PROBE);
-    const childProvider = scriptedProvider([{ kind: "tool_use", calls: [{ id: "b1", name: HOOKED_TOOL, input: {} }] }]);
+    const childProvider = scriptedProvider([
+      { kind: "tool_use", calls: [{ id: "b1", name: HOOKED_TOOL, input: {} }] },
+      { kind: "text", text: "child done after the hook answered" },
+    ]);
     const req: SpawnChildRequest = { parentToolUseId: "call-1", prompt: "call the hooked tool", runInBackground: false };
-    const { code, frames } = await driveParent(
+    let sawHookRequest = false;
+    const { code, frames } = await driveParentAnswering(
       {
         provider: childProvider,
         parentHooks: { PreToolUse: [{ hookCount: 1, source: "sdk" }] },
         parentIncludeHookEvents: true,
-        env: { WINTER_ASYNC_AGENT_STALL_TIMEOUT_MS: "150" }, // the hook's own control_request is Gap #2-blocked -- bound the stall
+        // Still SHORT (150 ms): if rider 20's pause did not hold, the child would abort with a typed
+        // "stalled" error before the hook could ever be answered.
+        env: { WINTER_ASYNC_AGENT_STALL_TIMEOUT_MS: "150" },
       },
       baseConfig(),
       [{ kind: "tool_use", calls: [{ id: "call-1", name: SPAWN_PROBE, input: req }] }, { kind: "text", text: "parent done" }],
+      (frame) => {
+        if (frame.subtype !== "hook") return undefined;
+        sawHookRequest = true;
+        return { ok: true, payload: {} }; // an observational, no-opinion hook answer
+      },
     );
     expect(code).toBe(0);
     // hook_started is forwarded via transformChildFrame's own catch-all (every other system-subtype
@@ -780,7 +875,15 @@ describe("child-engine.ts: fix round 1 (controller review) -- I1: permission rul
     // config reached the child's own runEngine() and actually activated hook machinery for its call.
     const hookStarted = frames.find((f) => f.type === "data" && (f as { message?: { subtype?: string } }).message?.subtype === "hook_started");
     expect(hookStarted).toBeDefined();
-  }, 2000);
+    // P4-I: the hook RPC genuinely round-tripped -- the child received the answer and finished.
+    expect(sawHookRequest).toBe(true);
+    const block = dataMessages(frames)
+      .filter((m) => m.type === "user")
+      .flatMap((m) => ((m as unknown as { message: { content: Array<{ tool_use_id: string; content: string }> } }).message.content ?? []))
+      .find((b) => b.tool_use_id === "call-1")!;
+    const parsed = JSON.parse(block.content) as { result: { status: string; content: string } };
+    expect(parsed.result.status).toBe("completed");
+  }, 5000);
 });
 
 describe("child-engine.ts: fix round 1 (controller review) -- Q1 forward-compat: resolveChildResumeMode applied when getParentPolicy is supplied", () => {
@@ -905,26 +1008,44 @@ describe("child-engine.ts: fix round 1 (controller review) -- Q1 forward-compat:
 });
 
 describe("child-engine.ts: fix round 1 (controller review) -- I3: insideSubagent / isolationPinnedCwd carries", () => {
-  test("insideSubagent:true reaches a child's own tool calls, and a child calling AskUserQuestion is never advertised it -- but IF called anyway, it stalls via Gap #2 exactly like an unanswered permission prompt (never a clean refusal, never a clean success)", async () => {
+  // Phase 4 Task 8 (rider 27): this test's own title used to end "...it STALLS via Gap #2 ... never a
+  // clean refusal, never a clean success", which is exactly the defect rider 27 names: an
+  // availability exclusion that only governed ADVERTISEMENT, with nothing consulting it at dispatch,
+  // so a child that called the tool anyway reached the real executor and hung on a host round-trip
+  // it could never be answered on. Dispatch-time enforcement (registry.ts's
+  // buildRegistryToolExecutor, `getAvailabilityInputs`) turns that stall into an immediate, typed
+  // refusal -- so the assertion flips from "stalled" to "refused, and the child still completes".
+  test("insideSubagent:true reaches a child's own tool calls, and a child calling AskUserQuestion gets a TYPED REFUSAL at dispatch (rider 27), never a stall", async () => {
     registerSpawnProbe();
     cleanupToolNames.push(SPAWN_PROBE);
     const childProvider = scriptedProvider([
       { kind: "tool_use", calls: [{ id: "auq-1", name: "AskUserQuestion", input: { questions: [{ question: "q?", header: "H", options: [{ label: "a" }, { label: "b" }] }] } }] },
+      { kind: "text", text: "child recovered from the refusal" },
     ]);
     const req: SpawnChildRequest = { parentToolUseId: "call-1", prompt: "ask something", runInBackground: false };
     const { code, frames } = await driveParent(
+      // A SHORT stall timeout on purpose: if the call stalled the way it used to, this would abort
+      // with a typed "stalled" error and the assertions below would fail loudly.
       { provider: childProvider, env: { WINTER_ASYNC_AGENT_STALL_TIMEOUT_MS: "60" } },
       baseConfig(),
-      [{ kind: "tool_use", calls: [{ id: "call-1", name: SPAWN_PROBE, input: req }] }, { kind: "text", text: "unreachable" }],
+      [{ kind: "tool_use", calls: [{ id: "call-1", name: SPAWN_PROBE, input: req }] }, { kind: "text", text: "parent done" }],
     );
     expect(code).toBe(0);
     const msgs = dataMessages(frames);
-    const toolResult = msgs.find((m) => m.type === "user") as unknown as { message: { content: Array<{ tool_use_id: string; content: string }> } };
-    const block = toolResult.message.content.find((b) => b.tool_use_id === "call-1")!;
-    const parsed = JSON.parse(block.content) as { result: { status: string; content: string } };
-    expect(parsed.result.status).toBe("failed");
-    expect(parsed.result.content).toContain("stalled");
-  }, 2000);
+    const blocks = msgs
+      .filter((m) => m.type === "user")
+      .flatMap((m) => ((m as unknown as { message: { content: Array<{ tool_use_id: string; content: string }> } }).message.content ?? []));
+    // The CHILD's own inner call was refused, typed, at dispatch -- WS-06 §3.3's "not available
+    // inside Agent-tool subagents" is now enforced, not merely advertised.
+    const inner = blocks.find((b) => b.tool_use_id === "auq-1");
+    expect(inner, "the child's own AskUserQuestion tool_result must reach the parent stream").toBeDefined();
+    expect(inner!.content).toContain("not available in this session");
+    // ...and the child went on to complete normally rather than being aborted.
+    const outer = blocks.find((b) => b.tool_use_id === "call-1")!;
+    const parsed = JSON.parse(outer.content) as { result: { status: string; content: string } };
+    expect(parsed.result.status).toBe("completed");
+    expect(parsed.result.content).toContain("child recovered from the refusal");
+  }, 5000);
 
   test("isolationPinnedCwd is true for an isolation:'worktree' child and false for a bare child (ctx plumbing correct; ExitWorktree's OWN executor is a cross-lane gap -- see NEEDS_CONTEXT below, not asserted here as 'refused')", async () => {
     const PROBE_TOOL = "t6_i3_flags_probe";

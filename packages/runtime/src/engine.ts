@@ -39,6 +39,10 @@ import { createElicitationAsker } from "./mcp/elicitation.ts";
 // messaging router seam's own engine-side hook (children() from the live child roster).
 import { getChildEngineFactory, transformChildFrame, type ChildHandle, type ChildInheritance, type SpawnChildRequest } from "./subagents/child-handle.ts";
 import type { MessagingRouterSeam } from "./messaging/adapter.ts";
+// Phase 4 Task 8: the process-level default messaging runtime Lane D's three tool executors read --
+// see that function's own header for why it is process-level and why the roster is contributed
+// per-run rather than the runtime being rebuilt per-run.
+import { ensureDefaultMessagingRuntimeRegistered } from "./messaging/reference-adapter.ts";
 // Phase 4 Task 3 (WS-07 §11 / RULING P2-M): the child permission-policy comparator.
 import { computeChildPolicy } from "./permissions/auto/inheritance.ts";
 import { PolicyStateStore, WinterPermissionError, assertKnownPermissionMode, isPermissionMode } from "./permissions/policy-state.ts";
@@ -107,6 +111,8 @@ import {
   partitionAdvertisedTools,
   createLoadedToolSet,
   isLoadFirstBlocked,
+  // Phase 4 Task 8 (rider 27): the availability predicate, applied at the execution boundary.
+  isToolAvailable,
   // Phase 4 Task 8 (rider 1): the runtime-derived capability tokens (winter.mcp/winter.subagents/
   // winter.global-messaging), unioned with whatever the host supplied -- see that function's own
   // header in registry.ts.
@@ -697,7 +703,20 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // ONE exposure point, called once below, for whichever host-level code constructs Lane D's own
   // real MessagingRouterSeam to wire its `children()` against.
   const childRoster: ChildHandle[] = [];
+  // Phase 4 Task 8 (rider 19, RULING P4-I): the pump-side child-bridge roster. Every child engine
+  // spawned by THIS run registers its own `RpcBridge.handleResponse` here; the pump consults them,
+  // in registration order, for any `control_response` this run's OWN bridge did not claim. The child
+  // engine stays entirely unaware of the parent pump (P4-I's own wording) -- it only ever hands over
+  // a function that answers "was this requestId mine?", which is exactly what `handleResponse`
+  // already returns.
+  const childResponseHandlers: Array<(frame: ControlResponseFrame) => boolean> = [];
   opts.onChildRosterReady?.(() => childRoster);
+  // Phase 4 Task 8: contribute THIS run's roster to the process-level messaging runtime, so Lane D's
+  // SendMessage/ListAgents can actually resolve this session's own children (WS-10 §11 rules 2/3).
+  // `ensureDefaultMessagingRuntimeRegistered` builds the in-process reference runtime once per
+  // process and leaves any host-registered runtime alone -- see its own header for why the runtime
+  // is process-level while the roster contribution is per-run. Withdrawn at teardown.
+  const removeChildRosterSource = ensureDefaultMessagingRuntimeRegistered().addChildRosterSource(() => childRoster);
   const makeEvalCtx = (): EvaluationContext => {
     // Preserves the EXACT pre-existing "include the key only when config.additionalDirectories
     // itself was ever set" contract (Finding 6, P2 fix-wave) — union in extraBoundedRoots WITHOUT
@@ -1049,6 +1068,23 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
             forwardChildFrame: (frame: WinterFrame, correlation: { parentToolUseId: string; agentId: string }): void => {
               const forwarded = transformChildFrame(frame, correlation, config.forwardSubagentText === true);
               if (forwarded !== null) output.write(forwarded);
+            },
+            // Phase 4 Task 8 (rider 19, RULING P4-I): see childResponseHandlers' own declaration.
+            registerChildResponseHandler: (handle: (frame: ControlResponseFrame) => boolean): (() => void) => {
+              childResponseHandlers.push(handle);
+              return () => {
+                const idx = childResponseHandlers.indexOf(handle);
+                if (idx !== -1) childResponseHandlers.splice(idx, 1);
+              };
+            },
+            // Phase 4 Task 8 (rider 26, RULING P4-J(e)): the parent's CURRENT live policy, read
+            // fresh on every call (never a spawn-time snapshot) -- WS-10 §9's stricter-of comparison
+            // is only meaningful against the policy in force at RESUME time. `computePolicyHash` is
+            // the same function the durable-approval path already stamps records with, so a child's
+            // recorded `parentPolicyHash` and this value are directly comparable by construction.
+            getParentPolicy: () => {
+              const st = policyStateStore.getState();
+              return { mode: st.mode, version: st.version, hash: computePolicyHash(st) };
             },
           });
           const inheritance = buildChildInheritance(req);
@@ -1542,7 +1578,17 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
           // requestId (WS-04: a stale response must never kill the run) — nothing more to do here.
           // Ruling P2-B: reachable AFTER end_input too now — this is the exact frame kind the fix
           // exists to keep delivering.
-          bridge.handleResponse(frame as ControlResponseFrame);
+          // Phase 4 Task 8 (rider 19, RULING P4-I): `handleResponse` returns whether it MATCHED a
+          // pending request of its own. When this run's bridge did not issue it, the response
+          // belongs to a CHILD engine whose own control_request was forwarded up this same stream
+          // (transformChildFrame passes control frames through verbatim) -- so it is offered to
+          // every registered child bridge until one claims it. An id no bridge claims is still
+          // dropped harmlessly, exactly as before (a stale response must never kill the run).
+          if (!bridge.handleResponse(frame as ControlResponseFrame)) {
+            for (const handle of childResponseHandlers) {
+              if (handle(frame as ControlResponseFrame)) break;
+            }
+          }
           continue;
         }
         if (frame.type === "control_request") {
@@ -1976,6 +2022,31 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
           // inverse also holds -- loading a tool never authorizes it, and NOT having loaded it is
           // resolved here, not by the permission pipeline at all). Never executed; the round
           // continues to the next call.
+          // Phase 4 Task 8 (rider 27): the AVAILABILITY execution-boundary check, structurally
+          // parallel to the load-first check immediately below and for the same reason -- a tool
+          // this session's own configuration EXCLUDES is not eligible to run at all, independent of
+          // whether it would otherwise be permitted, so the rejection must land before the
+          // permission pipeline is ever entered.
+          //
+          // It cannot live only in registry.ts's dispatch adapter (where it also runs, as
+          // defence-in-depth for a non-engine caller): a tool whose own permission class forces an
+          // interactive prompt never REACHES dispatch. `AskUserQuestion` -- the exact tool WS-06
+          // §3.3 declares "not available inside Agent-tool subagents", and the exact case Lane C's
+          // I3 finding was about -- parks on a permission RPC first, and inside a child that RPC is
+          // answered by nobody, so the call hung until the stall watchdog aborted the whole child.
+          // Empirically confirmed while wiring this: with the check only in the adapter, a child
+          // calling AskUserQuestion still stalled. Checking here turns it into an immediate typed
+          // refusal and the child continues normally.
+          const availabilityDescriptor = getRegisteredTool(call.name)?.descriptor;
+          if (availabilityDescriptor !== undefined && !isToolAvailable(availabilityDescriptor, { ...advertisedCfg, mode: policyStateStore.getState().mode })) {
+            resultBlocks.push({
+              type: "tool_result",
+              tool_use_id: call.id,
+              content: `'${call.name}' is not available in this session's current configuration (WS-06 §1.5 availability) -- it is registered but excluded here, so it was not executed`,
+              error: true,
+            });
+            continue;
+          }
           if (isDeferredAndUnloaded(call.name)) {
             resultBlocks.push({
               type: "tool_result",
@@ -2408,6 +2479,9 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // (process-group-killing a stdio child, per RULING P4-H) and unregisters every tool it registered
   // into the process-wide registry singleton. Only ever set when this run BUILT the lifecycle; a
   // caller-supplied state source/control seam is the caller's own to dispose.
+  // Phase 4 Task 8: withdraw this run's child roster from the process-level messaging runtime --
+  // a completed session's children must not keep appearing in another session's ListAgents.
+  removeChildRosterSource();
   disposeSessionMcpLifecycle?.();
   if (mcpLifecycle) await mcpLifecycle.dispose().catch(() => {});
   // Phase 4 Task 8 (rider 2): drop this run's ToolSearch session runtime -- same singleton-hygiene

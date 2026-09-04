@@ -3,18 +3,19 @@
 // via `git status --porcelain` / `git cherry -v`, per the brief); both actions restore the session's
 // cwd to the repository's main worktree via `ctx.session.setCwd` -- never engine.ts directly (R3-5).
 //
-// NEEDS_CONTEXT (task-7 brief: "Unavailable to isolation-pinned subagents = descriptor predicate...
-// note if the predicate is missing"): tools/descriptors/exit-worktree.ts's own header comment
-// documents that "Unavailable to subagents with isolation-pinned cwd" (WS-06 §3.3) is deliberately
-// NOT modeled as an AvailabilityPredicate at T1 and defers enforcement to this executor -- but
-// ToolExecutionContext (registry.ts) carries NO field identifying "this call is running inside an
-// isolation-pinned subagent" at all. This is narrower than (and therefore cannot reuse)
-// AskUserQuestion's own `insideSubagent` AvailabilityPredicate field, which excludes EVERY subagent,
-// not only ones whose cwd is pinned by Agent's own `isolation: "worktree"` input. There is therefore
-// NO signal this executor can check today to enforce that WS-06 §3.3 sentence at all -- see
-// task-7-report.md's Concerns for the full NEEDS_CONTEXT writeup (a later phase needs either a
-// narrower AvailabilityPredicate field or a new ToolExecutionContext field before this can be
-// enforced anywhere).
+// Phase 4 Task 8 (rider 28, WS-06 §3.3 "Unavailable to subagents with isolation-pinned cwd"):
+// CLOSED. This header previously recorded a real NEEDS_CONTEXT -- "ToolExecutionContext carries NO
+// field identifying 'this call is running inside an isolation-pinned subagent' at all" -- which went
+// STALE during Phase 4: `ToolExecutionContext.isolationPinnedCwd` was added by the P4 spine (T3) and
+// is correctly threaded from `RuntimeConfig.isolationPinnedCwd` (set by subagents/child-engine.ts
+// for an `isolation: "worktree"` child), but nothing ever read it. Lane C found the stale claim and
+// the zero-consumer field together, in the same pass, and flagged it as a genuine cross-lane finding.
+//
+// It is checked at the TOP of execute() below, deliberately, rather than modeled as an
+// AvailabilityPredicate: the predicate family is a session-wide ADVERTISEMENT axis, and this rule is
+// narrower than AskUserQuestion's own `insideSubagent: false` (that one excludes EVERY subagent;
+// this one excludes only a subagent whose filesystem root is PINNED to an isolation workspace). A
+// non-pinned subagent may still legitimately enter and exit its own worktrees.
 import { sep } from "node:path";
 import { replaceExecutor, type ToolExecutionContext, type ToolExecutor, type ToolResultPayload } from "../registry.ts";
 import "../descriptors/exit-worktree.ts"; // self-sufficiency: guarantees the "ExitWorktree" stub is registered before replaceExecutor runs below.
@@ -57,6 +58,17 @@ export const exitWorktreeExecutor: ToolExecutor = {
       return { output: `Error: ExitWorktree "action" must be "keep" or "remove"; got ${JSON.stringify(action)}.`, isError: true };
     }
     const discardChanges = record.discard_changes === true;
+
+    // Rider 28 (WS-06 §3.3): an isolation-pinned subagent's filesystem root IS its isolation
+    // workspace (WS-10 §8) -- letting it "exit" that worktree would move the child out of the very
+    // boundary the parent asked for, and (with `action: "remove"`) let it delete the workspace it is
+    // currently running inside. A typed refusal, checked before any git command runs.
+    if (ctx.isolationPinnedCwd === true) {
+      return {
+        output: "Error: ExitWorktree is unavailable to a subagent whose cwd is pinned to an isolation workspace (WS-06 §3.3) -- this child's filesystem root IS that worktree.",
+        isError: true,
+      };
+    }
 
     const listed = await listWorktrees(ctx.cwd);
     if (!listed.ok) {

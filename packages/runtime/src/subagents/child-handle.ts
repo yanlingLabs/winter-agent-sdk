@@ -11,7 +11,7 @@
 // the parent's real host connection (`transformChildFrame` below), since Lane C's own child-engine.ts
 // builds a child by calling `runEngine()` again with a synthetic input/output pair, and needs
 // something to bridge that pair to the ACTUAL host connection this run owns.
-import type { PermissionMode, RuntimeAgentDefinition, WinterFrame } from "@yanlinglabs/winter-agent-sdk";
+import type { ControlResponseFrame, PermissionMode, RuntimeAgentDefinition, WinterFrame } from "@yanlinglabs/winter-agent-sdk";
 import type { ChildPolicyResult } from "../permissions/auto/inheritance.ts";
 import type { ProviderMessage } from "../engine.ts"; // type-only -- see this file's own header; no runtime cycle (Bun/tsc erase `import type` entirely)
 import type { GlobalAgentMessage, DeliveryOutcome } from "../messaging/adapter.ts"; // type-only; see messaging/adapter.ts's own header for why this is a safe mutual reference
@@ -116,6 +116,32 @@ export interface ChildEngineRunContext {
   // child-engine.ts never has to re-derive either. A no-op return (the frame is swallowed, e.g. the
   // child's own init/result frames) is a legitimate, silent outcome, not an error.
   forwardChildFrame(frame: WinterFrame, correlation: { parentToolUseId: string; agentId: string }): void;
+  // Phase 4 Task 8 (rider 19, RULING P4-I): the child bridge ROSTER hook. A child engine's own
+  // permission/hook `control_request` is forwarded (verbatim, by `transformChildFrame` above) onto
+  // the PARENT's real stream, because that is the only connection a host is listening on -- but the
+  // host's `control_response` then arrives at the PARENT's pump, whose single `RpcBridge` has no
+  // matching requestId and drops it. The child's own bridge never sees the answer, so a child under
+  // any prompting mode hangs on that one call until the stall watchdog aborts it.
+  //
+  // P4-I's ruling: "the pump routes control_response by requestId to the issuing CHILD bridge via a
+  // bridge roster on the run context (pump-side lookup; the child engine stays unaware of the parent
+  // pump)". This is that roster's registration half: a child engine calls it with its OWN
+  // `handleResponse` (the RpcBridge method, which already returns whether it matched), and the
+  // parent pump consults every registered handler for any response its own bridge did not claim.
+  // Returns an unregister function the child calls when its generation ends.
+  //
+  // OPTIONAL so a pre-existing ChildEngineRunContext producer (this phase's own contract-test fakes)
+  // keeps compiling; a child that cannot register simply behaves as it did before P4-I.
+  registerChildResponseHandler?(handle: (frame: ControlResponseFrame) => boolean): () => void;
+  // Phase 4 Task 8 (rider 26, PRECISED; RULING P4-J(e)): the parent's CURRENT live policy, for
+  // WS-10 §9's "a child resume applies the stricter of the recorded and current parent policy".
+  // Lane C's Q1 finding: `resolveChildResumeMode` had ZERO call sites anywhere in the repository and
+  // was structurally unreachable -- `policyStateStore` is a `runEngine` local and no seam exposed it.
+  // The lane's own fix round added the optional `ChildEngineFactoryDeps.getParentPolicy`; this is the
+  // matching field on the RUN context, which is what a factory built once per process (main.ts) can
+  // actually be handed per-spawn. Optional for the same fake-compatibility reason as above; absent
+  // means the pre-P4-D behaviour (reuse the recorded mode verbatim).
+  getParentPolicy?(): { mode: PermissionMode; version: number; hash: string };
 }
 
 export type ChildEngineFactory = (runCtx: ChildEngineRunContext) => ChildEngineDeps;
@@ -164,6 +190,21 @@ export function transformChildFrame(
   // synchronous return value or the task_notification/task_progress family (P3's existing frames),
   // never by impersonating the main turn's own terminal result.
   if (message["type"] === "result") return null;
+  // Phase 4 Task 8 (rider 23, PRECISED; RULING P4-J(c)): the DATA-WRAPPED SDK-facing init message
+  // is swallowed too, not just the wire-level `init` frame above. Lane C found the gap empirically
+  // (a live debug capture, not a hypothesis): a child's `{type:"system", subtype:"init"}` data frame
+  // fell through every specific check to the catch-all below and reached the parent's real stream
+  // carrying the CHILD's own session_id/cwd/model/tools -- so this function's own header promise
+  // ("a child's own init handshake ... never surfaced on the parent's real stream") was true of one
+  // of the two shapes only.
+  //
+  // The artifact settles which of the comment and the code was right: derived-shapes-p4 §(d) records
+  // that `SDKSystemMessage` carries NO `parent_tool_use_id` field at all (`parent_tool_use_id` is on
+  // exactly 6 SDKMessage variants, and the system message is not one of them). A forwarded child
+  // init is therefore structurally UNCORRELATABLE -- a host receiving it cannot tell it apart from
+  // the session's own identity frame, which it would be impersonating. The comment was right; the
+  // code was incomplete.
+  if (message["type"] === "system" && message["subtype"] === "init") return null;
 
   if (message["type"] === "assistant") {
     const inner = message["message"] as { content?: Array<{ type?: string; [k: string]: unknown }> } | undefined;

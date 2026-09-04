@@ -18,29 +18,21 @@
 // than truly spawning a child. Every test in this lane registers the factory directly (mirroring
 // T3's own fix-round-1 spawn-seam-test precedent), so the logic below is fully proven regardless.
 //
-// (2) CHILD PERMISSION/HOOK CONTROL-RPC ROUTING: `child-handle.ts`'s own header comment (lines
-// ~154-157) says control_request/control_response frames "correlate by their OWN requestId
-// regardless of source... see engine.ts's own pump comment for how a response is routed back to
-// whichever bridge, parent's or a child's, actually issued the matching request" -- but the ACTUAL
-// frozen engine.ts pump (~line 1376) constructs exactly ONE `RpcBridge` per `runEngine()` call and
-// calls `bridge.handleResponse(frame)` UNCONDITIONALLY against it, with no fallback to any child's
-// own bridge. A child's own permission/hook control_request is forwarded (via
-// `runCtx.forwardChildFrame`, fire-and-forget, one-way) up to the REAL top-level host; when that
-// host answers, the `control_response` arrives on the PARENT's OWN real input stream, where the
-// PARENT's OWN bridge finds an unknown requestId and drops it -- the CHILD's own bridge (which
-// issued the request) never sees the answer, and the call hangs until this file's own stall
-// watchdog eventually aborts it. This is a genuine discrepancy between child-handle.ts's own
-// descriptive comment and the shipped, frozen engine.ts pump, not a misunderstanding of it -- fixing
-// it requires either a new `ChildEngineRunContext` method engine.ts calls on an unmatched response,
-// or the pump itself consulting the child roster, both engine.ts edits outside this lane's
-// authority. CONSEQUENCE, disclosed rather than hidden: children spawned under `bypassPermissions`
-// (a common, spec-legitimate case -- WS-07 §11 FORCES it onto descendants of a bypass parent) never
-// hit this at all, since bypass mode resolves without ever issuing a permission control_request.
-// Children spawned under a mode that can reach a genuine interactive prompt (`default`/`plan`/
-// `acceptEdits` past its bounded-edit allowance/`auto` on a classifier miss) WILL hang on that one
-// tool call today -- a real, bounded failure (the stall watchdog catches it), never a silent wrong
-// answer or an unbounded hang. Verified explicitly by this lane's own tests (see child-engine.test.ts
-// "a child under a prompting mode that reaches a real prompt stalls, and the watchdog catches it").
+// (2) CHILD PERMISSION/HOOK CONTROL-RPC ROUTING -- CLOSED by Phase 4 Task 8 (rider 19, RULING
+// P4-I). This section previously documented a live gap: the engine pump held exactly ONE `RpcBridge`
+// per `runEngine()` and answered every `control_response` against it, so a child's own permission/
+// hook request -- forwarded up to the real host, answered on the PARENT's stream -- was dropped by
+// the parent's bridge and never reached the child's own, hanging that call until this file's stall
+// watchdog aborted it. P4-I's ruling: "the pump routes control_response by requestId to the issuing
+// CHILD bridge via a bridge roster on the run context (pump-side lookup; the child engine stays
+// unaware of the parent pump)". Implemented as `ChildEngineRunContext.registerChildResponseHandler`
+// (child-handle.ts): this wrapper records every requestId it forwards UP (`forwardedHostRequestIds`
+// below), and its registered handler claims the matching response and writes it back into the
+// child's OWN input channel -- so the child engine's own pump routes it to its own bridge exactly as
+// if the host had answered directly. The handler is unregistered at settle().
+// COMPANION (rider 20): an outstanding host request PAUSES this generation's stall watchdog -- a
+// human at a child's permission prompt is not a child making no progress. The clock still fires for
+// a genuine stall with nothing outstanding (child-engine.test.ts pins both directions).
 //
 // (3) PROGRAMMATIC AgentDefinition VISIBILITY: `ToolExecutionContext` (registry.ts, frozen) has no
 // field surfacing `RuntimeConfig.agents` to a tool executor -- tools/impl/agent.ts's own
@@ -335,6 +327,29 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
       // host-side bridge could conceivably misfile one against an unrelated in-flight request of its
       // own.
       const ownRequestIds = new Set<string>();
+      // Phase 4 Task 8 (rider 19, RULING P4-I): every control_request THIS CHILD's own engine issued
+      // (a permission prompt, a hook invocation) that this wrapper forwarded UP to the real host --
+      // the exact complement of `ownRequestIds` above. The host answers on the PARENT's stream,
+      // where the parent's single RpcBridge finds no matching requestId and would drop it (the whole
+      // Gap #2 hang Lane C documented). The parent pump now offers such a response to every
+      // registered child handler; this one claims the ids it forwarded and writes the frame back
+      // into the child's OWN input, so the child engine's own pump routes it to its own bridge
+      // exactly as if the host had answered it directly. The child stays entirely unaware of the
+      // parent pump, per P4-I's own wording.
+      const forwardedHostRequestIds = new Set<string>();
+      const unregisterResponseHandler = runCtx.registerChildResponseHandler?.((frame: ControlResponseFrame): boolean => {
+        if (!forwardedHostRequestIds.has(frame.requestId)) return false;
+        forwardedHostRequestIds.delete(frame.requestId);
+        // Rider 20: the human has answered -- the progress clock starts counting again (only once
+        // the LAST outstanding request is answered; `resume` is depth-counted).
+        watchdog.resume();
+        try {
+          channel.host.output.write(frame);
+        } catch {
+          /* a torn-down child channel must never crash the parent's pump */
+        }
+        return true;
+      });
       function abortGeneration(): void {
         try {
           const requestId = randomUUID();
@@ -356,6 +371,11 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
         if (generationSettled) return;
         generationSettled = true;
         record.status = status;
+        // Rider 19: stop claiming responses for a generation that is over -- otherwise a late answer
+        // would be written into a torn-down channel, and the roster would grow one dead entry per
+        // completed child for the process's whole lifetime.
+        unregisterResponseHandler?.();
+        forwardedHostRequestIds.clear();
         watchdog.cancel();
         releaseSpawn(agentId);
         void writer?.writeMetadata({ ...record });
@@ -404,6 +424,16 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
             if (frame.type === "control_response" && ownRequestIds.has((frame as ControlResponseFrame).requestId)) {
               ownRequestIds.delete((frame as ControlResponseFrame).requestId); // our own interrupt/end_input handshake -- never surfaced to the real host
               continue;
+            }
+            // Phase 4 Task 8 (riders 19/20): a control_request coming OUT of the child is the child's
+            // own engine asking the host something (a permission decision, a hook invocation). Record
+            // its id so the roster handler above can route the answer back, and PAUSE the stall
+            // watchdog: a child waiting on a human is not a child making no progress (RULING P4-I's
+            // own companion ruling), and the 600 s clock would otherwise abort a genuinely-answerable
+            // prompt out from under the person answering it.
+            if (frame.type === "control_request") {
+              forwardedHostRequestIds.add((frame as { requestId: string }).requestId);
+              watchdog.pause();
             }
             try {
               runCtx.forwardChildFrame(frame, correlation);

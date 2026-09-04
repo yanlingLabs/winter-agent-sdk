@@ -17,6 +17,13 @@ import type { FrameSource, FrameSink } from "./protocol/channel.ts";
 import { runEngine, type Provider } from "./engine.ts";
 import { echoProvider, stubExecutor, isTestProviderName, testProviderByName, registerBgTaskTestTool } from "./provider/mock.ts";
 import { resolveEngineSession, resolveProductionWinterHome } from "./store/dialect.ts";
+// Phase 4 Task 8 (rider 18): the ONE production registration of Lane C's child-engine factory --
+// see that module's own header for why it is a SHARED helper both entrypoints call rather than an
+// inline one-liner here (cross-leg equivalence: a spawned/compiled child shares no module state with
+// an in-process harness, so registering in only one of the two would make the Agent tool behave
+// differently per transport, which WS-04 §12 treats as a release blocker).
+import { registerDefaultChildEngineFactory } from "./subagents/register-default-factory.ts";
+import { WinterCompatibilitySessionStore } from "@yanlinglabs/winter-agent-sdk";
 
 // Same argv contract as winter-agent-runtime/testing's inMemoryProcess (Task 2): find the flag by
 // NAME, never by position. Position-based parsing would silently break between the two ways this
@@ -110,6 +117,19 @@ try {
     config,
     resolveWinterHome: () => resolveProductionWinterHome(config, process.env),
     env: process.env,
+  });
+  // Rider 18: registered BEFORE runEngine starts, so the very first turn's Agent call can spawn.
+  // A non-persistent session (`persistSession: false`) gets no store/winterHome at all -- children
+  // then run without durable transcripts, exactly as the parent does, rather than being handed a
+  // store the parent itself was denied.
+  const childWinterHome = config.persistSession === false ? undefined : resolveProductionWinterHome(config, process.env);
+  registerDefaultChildEngineFactory({
+    provider,
+    config: effectiveConfig,
+    env: process.env,
+    ...(childWinterHome !== undefined
+      ? { store: new WinterCompatibilitySessionStore({ winterHome: childWinterHome }), winterHome: childWinterHome }
+      : {}),
   });
   const code = await runEngine({
     config: effectiveConfig,

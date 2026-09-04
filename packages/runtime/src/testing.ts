@@ -8,6 +8,9 @@ import type { FrameSource, FrameSink } from "./protocol/channel.ts";
 import { runEngine, type Provider, type ToolExecutor } from "./engine.ts";
 import { echoProvider } from "./provider/mock.ts";
 import { resolveEngineSession } from "./store/dialect.ts";
+// Phase 4 Task 8 (rider 18): see main.ts's own identical import comment.
+import { registerDefaultChildEngineFactory } from "./subagents/register-default-factory.ts";
+import { WinterCompatibilitySessionStore } from "@yanlinglabs/winter-agent-sdk";
 // Task 1 (P3, WS-06 §1): test-tool registration goes through the registry. The equivalence corpus
 // (packages/sdk/src/query.test.ts's "tooluse" scenarios, scripts/differential.ts's tool-round/
 // hooked-tool-round/canusetool-approved-round/mode-switch-mid-session scenarios) calls
@@ -167,6 +170,21 @@ export function inMemoryProcess(
         config,
         resolveWinterHome: () => resolveInMemoryWinterHome(config, env),
         env: env ?? {},
+      });
+      // Phase 4 Task 8 (rider 18): the IDENTICAL registration main.ts performs, so the in-memory leg
+      // and a real spawned/compiled `winter` child behave the same way for an Agent call -- see
+      // subagents/register-default-factory.ts's own header for why both entrypoints call it.
+      // `resolveInMemoryWinterHome` is the in-memory leg's own hermetic root (it must NEVER reach the
+      // real process.env fallback -- that function's own header), so a child's transcripts land under
+      // the same temp root the parent's do.
+      const childWinterHome = config.persistSession === false ? undefined : resolveInMemoryWinterHome(config, env);
+      registerDefaultChildEngineFactory({
+        provider,
+        config: effectiveConfig,
+        env: env ?? {},
+        ...(childWinterHome !== undefined
+          ? { store: new WinterCompatibilitySessionStore({ winterHome: childWinterHome }), winterHome: childWinterHome }
+          : {}),
       });
       const code = await runEngine({
         config: effectiveConfig,

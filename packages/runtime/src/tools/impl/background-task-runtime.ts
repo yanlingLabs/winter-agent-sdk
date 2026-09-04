@@ -11,7 +11,14 @@
 // multi-session daemon host (WS-15) or a restart-surviving task store (WS-06 §7.3's own
 // "`~/.winter/tasks/<uuid>/` owns lifecycle") is out of scope for this phase, exactly as it is for
 // background-tasks.ts itself.
-export type BackgroundTaskKind = "bash" | "monitor";
+// Phase 4 Task 8 (rider 24): widened from `"bash" | "monitor"` to match `background-tasks.ts`'s own
+// four-member union exactly. Lane C's report named this as a prerequisite it could not perform: a
+// backgrounded Agent spawn allocates a task id through the SPINE seam (createBackgroundTask("agent"))
+// but could not be tracked HERE, so TaskStop/TaskOutput -- whose whole implementation is this
+// registry -- could never reach a background agent task. The two unions being different widths was
+// the mechanical blocker; "workflow" joins for the same reason (P5's own tasks will need it, and a
+// union that is a strict subset of the spine's is a trap waiting for the next kind).
+export type BackgroundTaskKind = "bash" | "monitor" | "workflow" | "agent";
 export type BackgroundTaskStatus = "running" | "completed" | "failed" | "stopped";
 
 export interface BackgroundTaskHandle {

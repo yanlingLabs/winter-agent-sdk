@@ -235,3 +235,26 @@ describe("ExitWorktree (task-7 brief)", () => {
     }
   });
 });
+
+// ================================================================================================
+// Phase 4 Task 8 (rider 28, WS-06 §3.3): ExitWorktree is unavailable to an isolation-pinned subagent.
+// ================================================================================================
+test("rider 28: an isolation-pinned subagent's ExitWorktree call is refused, typed, before any git command runs", async () => {
+  const pinnedCtx: ToolExecutionContext = { ...makeCtx("/definitely/not/a/repo").ctx, isolationPinnedCwd: true };
+  const result = await exitWorktreeExecutor.execute({ action: "remove", discard_changes: true }, pinnedCtx);
+  expect(result.isError).toBe(true);
+  expect(result.output).toContain("pinned to an isolation workspace");
+  // The refusal is what came back -- NOT the "could not enumerate this repository's worktrees" error
+  // a non-pinned call against the same nonexistent path would produce, which is what proves the
+  // check runs BEFORE any git work.
+  expect(result.output).not.toContain("enumerate");
+});
+
+test("rider 28 control: the SAME call from a non-pinned context is not refused on that basis", async () => {
+  // A REAL (existing, non-repo) directory: the control has to get PAST the pin check and reach git,
+  // which cannot spawn into a nonexistent cwd at all.
+  const notARepo = mkdtempSync(join(tmpdir(), "winter-t8-rider28-"));
+  const result = await exitWorktreeExecutor.execute({ action: "remove", discard_changes: true }, makeCtx(notARepo).ctx);
+  expect(result.output).not.toContain("pinned to an isolation workspace");
+  expect(result.output).toContain("enumerate"); // it genuinely reached the git step
+});

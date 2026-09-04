@@ -25,6 +25,16 @@ export interface StallWatchdog {
   // Resets the countdown -- called on every observed unit of progress (a frame read back from the
   // child, WS-10 §6's own "activity" definition per R4-9).
   poke(): void;
+  // Phase 4 Task 8 (rider 20, RULING P4-I companion): "an outstanding host control request
+  // (delivered, not yet answered) is NOT engine inactivity -- the 600 s progress clock pauses while
+  // one is outstanding, so a human at a child's permission prompt never trips it." A child that
+  // forwards a permission/hook `control_request` to the real host is not stalled; it is WAITING ON A
+  // HUMAN, which has no bound this watchdog could meaningfully impose. Nesting-safe by depth
+  // counting (a child can legitimately have two requests outstanding at once), so the clock only
+  // restarts when the LAST outstanding request is answered. `pause` after `cancel`/a fire is a
+  // guaranteed no-op, exactly like `poke`.
+  pause(): void;
+  resume(): void;
   // Stops the watchdog for good (the child reached a terminal state through some OTHER path --
   // natural completion, an explicit stop() -- before the timer ever fired). Idempotent, and safe to
   // call after the watchdog has already fired.
@@ -37,6 +47,12 @@ export interface StallWatchdog {
 export function createStallWatchdog(timeoutMs: number, onStall: (err: ChildStalledError) => void): StallWatchdog {
   let fired = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  // Rider 20: how many host control requests are outstanding right now. While > 0 the timer is not
+  // armed at all -- a `poke` during a pause still counts as progress (it refreshes nothing, since
+  // there is no timer to refresh) and the clock restarts from zero on the final `resume`, which is
+  // the correct reading of "the progress clock PAUSES": time spent waiting on a human is not
+  // deducted from the child's own next progress budget.
+  let pausedDepth = 0;
 
   function arm(): ReturnType<typeof setTimeout> {
     const t = setTimeout(() => {
@@ -57,7 +73,20 @@ export function createStallWatchdog(timeoutMs: number, onStall: (err: ChildStall
     poke(): void {
       if (fired) return;
       if (timer !== undefined) clearTimeout(timer);
-      timer = arm();
+      timer = pausedDepth > 0 ? undefined : arm();
+    },
+    pause(): void {
+      if (fired) return;
+      pausedDepth++;
+      if (timer !== undefined) {
+        clearTimeout(timer);
+        timer = undefined;
+      }
+    },
+    resume(): void {
+      if (fired || pausedDepth === 0) return;
+      pausedDepth--;
+      if (pausedDepth === 0 && timer === undefined) timer = arm();
     },
     cancel(): void {
       if (timer !== undefined) clearTimeout(timer);
