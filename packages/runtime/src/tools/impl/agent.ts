@@ -240,6 +240,12 @@ export const agentExecutor: ToolExecutor = {
     const model = typeof record["model"] === "string" ? (record["model"] as string) : undefined;
     const runInBackgroundInput = typeof record["run_in_background"] === "boolean" ? (record["run_in_background"] as boolean) : undefined;
     const isolation = typeof record["isolation"] === "string" ? (record["isolation"] as string) : undefined;
+    // WHOLE-BRANCH N2: `name` is read from the RAW input here, and nothing validates a call against
+    // the advertised `inputSchema` -- so withholding `name` from that schema (descriptors/agent.ts,
+    // RULING P4-J(d)) makes it UNADVERTISED, never unreachable: a model that emits it anyway gets it
+    // honoured. That is deliberate and harmless (WS-10 §11 rule 6: a name grants nothing -- it is an
+    // addressing convenience, and a duplicate name resolves to a `stale` refusal rather than to
+    // either child), but "withheld" must not be read as "impossible".
     const name = typeof record["name"] === "string" ? (record["name"] as string) : undefined;
     // WS-10 §1.2: `team_name`/`mode` are deprecated, accepted-ignored -- deliberately never read
     // from `record` at all; there is no decision anywhere below that could consult them.
