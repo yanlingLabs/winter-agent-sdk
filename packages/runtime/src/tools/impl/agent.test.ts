@@ -200,6 +200,28 @@ describe("Agent tool: subagent_type resolution (filesystem AgentDefinition, WS-1
     expect(result.isError).toBe(true);
     expect(result.output).toContain('unknown subagent_type "local-only"');
   });
+
+  // Whole-branch M11 (fix wave follow-up 6): the trust verdict is no longer a second hardcoded
+  // constant inside subagents/policy.ts -- it is the SESSION's own, threaded from engine.ts's single
+  // `const trustedWorkspace` onto every ToolExecutionContext. This is the positive counterpart of the
+  // test above: the identical fixture resolves once the session says the workspace is trusted, which
+  // is what proves the value is CONSUMED rather than re-derived.
+  test("M11: the same .winter/agents/*.md DOES resolve when the SESSION's own trust verdict says so", async () => {
+    const home = mkTempDir("winter-agent-test-home-");
+    const cwd = mkTempDir("winter-agent-test-cwd-");
+    mkdirSync(join(cwd, ".winter", "agents"), { recursive: true });
+    writeFileSync(join(cwd, ".winter", "agents", "local-only.md"), "---\ndescription: project-local\n---\nBody.");
+
+    let capturedReq: SpawnChildRequest | undefined;
+    const { ctx } = makeCtx({
+      home,
+      cwd,
+      spawnChild: async (req) => ((capturedReq = req), fakeHandle(Promise.resolve({ status: "completed", content: "x" }))),
+    });
+    const result = await agentExecutor.execute({ description: "d", prompt: "p", subagent_type: "local-only" }, { ...ctx, trustedWorkspace: true });
+    expect(result.isError).toBeUndefined();
+    expect(capturedReq?.definition?.description).toBe("project-local");
+  });
 });
 
 describe("Agent tool: foreground spawn (default; run_in_background omitted)", () => {

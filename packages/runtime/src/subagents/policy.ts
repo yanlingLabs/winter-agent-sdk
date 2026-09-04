@@ -69,16 +69,23 @@ function isTruthyEnv(v: string | undefined): boolean {
 // already written against it as a seam, never a hardcoded literal at the call site.
 //
 // WHOLE-BRANCH M11 (P4 fix wave) -- TWO CONSTANTS THAT MUST FLIP TOGETHER, named here so the second
-// one cannot be missed: this function and engine.ts's own `const trustedWorkspace = false` (declared
-// once and shared by the permission evaluator's `EvaluationContext.trustedWorkspace` and the hook
-// registry's own trust gate). They are independent hardcoded `false`s answering the SAME question.
-// Both are correct-safe today; when P5 lands a real settings/trust-store signal, wiring one and
-// leaving the other would give a session where a checked-in `.winter/agents/*.md` loads while
-// project-scoped rules stay gated, or the reverse. The durable fix is for this function to CONSUME
-// the engine's value (threaded on ToolExecutionContext) rather than to re-derive one -- that thread
-// crosses registry.ts, outside this fix wave's file authority, and is recorded as a carry.
-export function resolveWorkspaceTrust(): boolean {
-  return false;
+// one cannot be missed: this function and engine.ts's own `const trustedWorkspace` (declared once and
+// shared by the permission evaluator's `EvaluationContext.trustedWorkspace` and the hook registry's
+// own trust gate). They used to be two independent hardcoded `false`s answering the SAME question --
+// correct-safe, but when P5 lands a real settings/trust-store signal, wiring one and leaving the
+// other gives a session where a checked-in `.winter/agents/*.md` loads while project-scoped
+// permission rules stay gated, or the reverse.
+//
+// CLOSED in the fix wave's follow-up round (item 6, whole-branch M11): this function no longer
+// derives anything. It CONSUMES the engine's own verdict, threaded onto every ToolExecutionContext
+// as `trustedWorkspace` (registry.ts) from the one `const trustedWorkspace` in engine.ts. P5 flips
+// that constant and both consumers move together, by construction.
+//
+// Argument-less and context-less callers still get `false`: absent reads as UNTRUSTED, never as
+// trusted, so a hand-built test context or a future caller that forgets to thread it can only ever
+// be stricter than the session actually is.
+export function resolveWorkspaceTrust(ctx?: { trustedWorkspace?: boolean }): boolean {
+  return ctx?.trustedWorkspace === true;
 }
 
 export function resolveForegroundBackground(input: ResolveForegroundBackgroundInput): ForegroundBackgroundDecision {

@@ -282,7 +282,10 @@ export const agentExecutor: ToolExecutor = {
     // project > user, "most specific wins" -- see that file's own header).
     let definition: RuntimeAgentDefinition | undefined;
     if (subagentType !== undefined) {
-      const trustedWorkspace = resolveWorkspaceTrust();
+      // M11 (fix wave follow-up 6): the SESSION's own trust verdict, threaded from engine.ts through
+      // ToolExecutionContext -- never a second hardcoded constant that could drift from the one the
+      // permission evaluator and hook registry already use.
+      const trustedWorkspace = resolveWorkspaceTrust(ctx);
       const definitions = loadAgentDefinitions({
         cwd: ctx.cwd,
         home: ctx.home,

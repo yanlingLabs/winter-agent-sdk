@@ -253,6 +253,17 @@ export interface ToolExecutionContext {
   // its real consumer does" precedent (e.g. AutoEngine/HookStage at P1). Optional for the identical
   // reason as `insideSubagent` immediately above.
   isolationPinnedCwd?: boolean;
+  // Whole-branch review M11 (fix wave follow-up 6): the session's PROJECT-TRUST verdict, resolved
+  // ONCE by engine.ts and threaded here so no consumer re-derives one. Two independent hardcoded
+  // `false`s used to answer this same question -- engine.ts's own `const trustedWorkspace` (feeding
+  // the permission evaluator's `EvaluationContext.trustedWorkspace` and the hook registry's trust
+  // gate) and `subagents/policy.ts`'s `resolveWorkspaceTrust()` (feeding `.winter/agents/*.md`
+  // loading, RULING R4-7). Both were correct-safe, but when P5 lands a real settings/trust signal,
+  // wiring one and missing the other gives a session where a checked-in agent definition loads while
+  // project-scoped permission rules stay gated, or the reverse. There is now ONE producer.
+  // Optional for the same reason as `insideSubagent`/`agentId` above (~25 hand-built test contexts
+  // with no shared builder); ABSENT READS AS UNTRUSTED, never as trusted.
+  trustedWorkspace?: boolean;
   // The running child's own id, absent for the main engine -- threaded from RuntimeConfig.agentId
   // (Phase 4 Task 3's own new wire field). The SAME identity already threaded through
   // PermissionCall.agentId/PromptStageMeta.agentID/HookAuditRecord.agentID elsewhere in this run;
@@ -1114,6 +1125,9 @@ export interface RegistryToolExecutorDeps {
   // negative case explicitly.
   insideSubagent?: boolean;
   isolationPinnedCwd?: boolean;
+  // M11 (fix wave follow-up 6): engine.ts's single project-trust verdict, forwarded onto every
+  // ToolExecutionContext this executor builds. Absent reads as UNTRUSTED.
+  trustedWorkspace?: boolean;
   agentId?: string;
   // Phase 4 Task 8: mirrors ToolExecutionContext.agents exactly -- see that field's own comment.
   agents?: Readonly<Record<string, unknown>>;
@@ -1179,6 +1193,7 @@ export function buildRegistryToolExecutor(deps: RegistryToolExecutorDeps): Engin
         ...(deps.outDir !== undefined ? { outDir: deps.outDir } : {}),
         insideSubagent: deps.insideSubagent === true,
         isolationPinnedCwd: deps.isolationPinnedCwd === true,
+        trustedWorkspace: deps.trustedWorkspace === true,
         ...(deps.agentId !== undefined ? { agentId: deps.agentId } : {}),
         // Phase 4 Task 8: the model's own tool_use id for THIS call -- see
         // ToolExecutionContext.toolUseId's own comment. Always present here (EngineToolCall.id is a

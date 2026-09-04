@@ -1195,6 +1195,10 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
       readState: createSessionReadState({ cwd: config.cwd }),
       getTempDir: () => resolveSessionTempPaths().root,
       sandboxSettings: config.sandbox ?? DEFAULT_SANDBOX_SETTINGS,
+      // M11 (fix wave follow-up 6): the SAME `trustedWorkspace` constant the permission evaluator's
+      // EvaluationContext and the hook registry already read -- one producer, three consumers, so a
+      // P5 trust signal cannot reach two of them and miss the third.
+      trustedWorkspace,
       ...(config.outputsDir !== undefined ? { outDir: config.outputsDir } : {}),
       // Phase 4 Task 3 (MUST 5): threaded straight from this child (or main) run's own RuntimeConfig
       // -- see ToolExecutionContext's own comments on each field for the full rationale.
