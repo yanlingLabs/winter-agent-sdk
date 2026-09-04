@@ -36,6 +36,7 @@ import { parseMcpEnvConfig } from "./mcp/env.ts";
 // nothing from this module, and a value import in either direction would make the pair a runtime
 // cycle the compiled binary resolves differently from the dev leg.
 import type { AssembledPrompt, SystemPromptAssembler, SystemPromptInput } from "./context/seam.ts";
+import type { CompactBoundaryRecord, CompactionController, CompactionResult } from "./compaction/seam.ts";
 import { resolveBuiltinCommand, looksLikeCommand, type CommandResolver } from "./commands/seam.ts";
 // Phase 4 Task 8 (rider 11): Lane A's real MCP client/lifecycle/control stack, wired into a live
 // session for the first time. Lane A shipped all of it as a self-contained subsystem with the exact
@@ -124,6 +125,8 @@ import {
   isDeferralActive,
   partitionAdvertisedTools,
   createLoadedToolSet,
+  // Phase 5 Task 3 (R5-4 / WS-09 §8.5): the deferred loaded-set reset a committed compaction fires.
+  onCompaction,
   isLoadFirstBlocked,
   // Phase 4 Task 8 (rider 27): the availability predicate, applied at the execution boundary.
   isToolAvailable,
@@ -351,6 +354,17 @@ export interface SessionPersistence {
   // dialect.ts's withPermissionJournal is the one production implementation (same journal file as
   // recordPermissionUpdate, a distinguishable sibling line kind — see that file's own comment).
   recordHookAudit?(entry: HookAuditRecord): void | Promise<void>;
+  // Phase 5 Task 3 (R5-4): "the summary and boundary persist as a `compact_boundary` system entry +
+  // summary in the dialect". Optional, matching every other method on this interface's own "entirely
+  // optional" contract -- a store that predates this field (or a bare test double) simply never gets
+  // asked, and compaction still runs, emits its frame, and swaps the in-memory history; only the
+  // DURABLE half is absent, exactly as a session with no store has no durable anything.
+  //
+  // Deliberately NOT expressed as a pair of recordUserEntry/recordAssistantEntry calls: the boundary
+  // must name the preserved entries BY UUID (the pinned `preserved_messages` relink), and uuids are
+  // minted inside the store layer -- the engine has no way to name them. See dialect.ts's own
+  // implementation for how the writer identifies them from its own append log.
+  recordCompactBoundary?(record: CompactBoundaryRecord): void | Promise<void>;
 }
 
 export interface EngineOptions {
@@ -491,6 +505,12 @@ export interface EngineOptions {
    * built-ins resolve and every other prompt passes through verbatim.
    */
   commandResolver?: CommandResolver;
+  /**
+   * R5-4: the compaction vehicle (Lane K). Consulted before every provider call of a turn (the AUTO
+   * trigger) and by `/compact` (the MANUAL one). ABSENT => no auto-compaction happens and `/compact`
+   * says so -- the engine never summarizes on its own.
+   */
+  compactionController?: CompactionController;
 }
 
 type RaceOutcome<T> = { kind: "ok"; value: T } | { kind: "interrupted" };
@@ -607,6 +627,7 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
     systemPromptAssembler,
     agentSystemPrompt,
     commandResolver,
+    compactionController,
   } = opts;
 
   // Task 6 (WS-07 §2/§6.4, Ruling 8): permission startup validation — deliberately the very FIRST
@@ -817,10 +838,14 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
 
   // Task 6: builds a FRESH EvaluationContext — always reading policyStateStore.getState() at the
   // moment of the call, never cached — so every evaluate() call sees the live mode/rules/version.
-  // `trustedWorkspace: false` (constant, P2-wide): no settings-file loader exists yet to have
-  // actually established workspace trust (P5); this is the SAFE direction (WS-07 §3.2's own
-  // trust-gate — project/local ALLOW rules and directory grants stay inert; deny/ask are
-  // unaffected) and P5 is the one that wires a real trust signal in.
+  // `trustedWorkspace` (STALE COMMENT CORRECTED, Phase 5 Task 3): this was a hard-`false` constant
+  // through P2-P4 and the comment here still said so. It is now the ONE value this run derives from
+  // `WorkspaceTrustSource` (P5 Task 2, `defaultTrustSource(config)` above) and shares with all four
+  // consumers -- this evaluation context, the hook registry, the MCP source resolver and the
+  // child-rule mirror. The direction of the gate is also narrower than this comment claimed: per
+  // RULING P5-D, only PROJECT-tier `allow`/`additionalDirectories` require trust; `local` and `user`
+  // permissive rules widen without it, and deny/ask from every tier apply regardless (WS-07 §3.2 as
+  // amended by P5-A).
   //
   // Task 7: `specialChecks` is now the REAL protected-path/critical-removal seam fill (T6's
   // NO_SPECIAL_CHECKS stub retired here — this is the one production call site; every other
@@ -2382,12 +2407,114 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // R5-16: with no assembler registered this returns the caller's `agentSystemPrompt` (a child's
   // persona, R5-3) or an EMPTY prompt. No authored text lives here, deliberately -- the only authored
   // minimal prompt is Lane C's (see context/seam.ts's header).
-  // Phase 5 Task 3 (R5-4/R5-14): the `/compact` action. The compaction slice replaces this body's
-  // no-controller arm with the real PreCompact -> compact() -> persist -> frame -> PostCompact ->
-  // onCompaction sequence; the NO-CONTROLLER answer is permanent and deliberate -- an engine that
-  // silently ignored `/compact` would look identical to one whose controller failed.
-  const runManualCompaction = async (_customInstructions: string): Promise<string> => {
-    return "No compaction controller is configured for this session, so /compact did nothing. (R5-4: the compaction vehicle is supplied by the host; the engine never summarizes on its own.)";
+  // --- Phase 5 Task 3 (R5-4): compaction ----------------------------------------------------------
+  //
+  // THE SEQUENCE (compaction/seam.ts's header states why each ordering is load-bearing):
+  //   PreCompact -> compact() -> persist boundary+summary -> emit the frame -> PostCompact
+  //   -> registry.onCompaction(evidenced) -> swap the in-memory history.
+  //
+  // NO VETO IS INVENTED (WS-08 OQ4): `PreCompact` has no hook-specific output type on the pin, so
+  // there is no shape a veto could be expressed in. Its output is RECORDED (the audit stream, via
+  // runHooks) and FORWARDED (its `extraContext` is appended to `customInstructions`); compaction
+  // then proceeds regardless of what it said.
+  //
+  // The re-entrancy guard is `lastCompactionTokens`, not a per-turn flag. After a compaction the
+  // accountant still reports the PRE-compaction reading until the next generation records usage --
+  // so a naive `shouldCompact()` check would fire again on the very next round and loop forever. A
+  // turn that genuinely grows past the threshold twice still compacts twice, because the second
+  // check runs against a reading a real generation has since updated.
+  let lastCompactionTokens: number | null = null;
+
+  const performCompaction = async (trigger: "auto" | "manual", customInstructions: string | null): Promise<{ ok: true; summary: string; retainedCount: number } | { ok: false; error: string }> => {
+    if (compactionController === undefined) {
+      return { ok: false, error: "No compaction controller is configured for this session (R5-4: the compaction vehicle is supplied by the host; the engine never summarizes on its own)." };
+    }
+    const startedAt = Date.now();
+
+    // PreCompact -- pinned input `{ trigger, custom_instructions }` (derived-shapes-p5 item (f)).
+    // `custom_instructions` is `string | null` on the pin, never absent.
+    const pre = await fireObservationalHook("PreCompact", { payload: { trigger, custom_instructions: customInstructions } });
+    const forwarded = (pre.extraContext ?? []).map((c) => c.context).filter((t) => typeof t === "string" && t.length > 0);
+    const effectiveInstructions = [customInstructions, ...forwarded].filter((t): t is string => typeof t === "string" && t.length > 0).join("\n\n");
+
+    let result: CompactionResult;
+    try {
+      result = await compactionController.compact({
+        messages: messages.map((m) => ({ ...m })),
+        trigger,
+        customInstructions: effectiveInstructions.length > 0 ? effectiveInstructions : null,
+        accountant: contextAccountant,
+        provider,
+      });
+    } catch (err) {
+      // A failed compaction is REPORTED, never fatal: the turn continues on the un-compacted history
+      // (which is correct but large) rather than losing the conversation. The pinned status message
+      // carries exactly this pair -- `compact_result: "failed"` + `compact_error`.
+      const text = err instanceof Error ? err.message : String(err);
+      output.write({ type: "data", message: { type: "system", subtype: "status", status: null, compact_result: "failed", compact_error: text, uuid: randomUUID(), session_id: config.sessionId } });
+      return { ok: false, error: text };
+    }
+
+    // Persist BEFORE emitting the frame and before resetting the loaded set: a crash between
+    // persistence and the reset leaves the durable transcript and the in-memory loaded set
+    // disagreeing in the SAFE direction (the set is rebuilt from the transcript on resume; a reset
+    // that outlived an unpersisted summary would not be).
+    if (store?.recordCompactBoundary !== undefined) {
+      const boundaryRecord: CompactBoundaryRecord = {
+        trigger,
+        preTokens: result.preTokens,
+        durationMs: Date.now() - startedAt,
+        summary: result.summary,
+        retainedCount: result.retained.length,
+      };
+      try {
+        await store.recordCompactBoundary(boundaryRecord);
+      } catch {
+        /* auxiliary, exactly like recordUser/recordAssistant -- a store failure is never turn-fatal */
+      }
+    }
+
+    output.write({
+      type: "data",
+      message: {
+        type: "system",
+        subtype: "compact_boundary",
+        compact_metadata: { trigger, pre_tokens: result.preTokens, duration_ms: Date.now() - startedAt },
+        uuid: randomUUID(),
+        session_id: config.sessionId,
+      },
+    });
+
+    // PostCompact AFTER compact(): its pinned input carries `compact_summary` as a REQUIRED string,
+    // so the summary must exist before the hook can be given its input at all.
+    await fireObservationalHook("PostCompact", { payload: { trigger, compact_summary: result.summary } });
+
+    // WS-09 §8.5: the deferred loaded set resets to `evidenced n still-registered` -- a tool the
+    // model can no longer see evidence of having loaded must not stay silently callable.
+    onCompaction(loadedToolSet, result.evidencedToolNames);
+
+    // The in-memory swap is LAST, so every step above still saw the pre-compaction history.
+    messages.length = 0;
+    messages.push({ role: "user", content: result.summary }, ...result.retained);
+    lastCompactionTokens = contextAccountant.contextTokens();
+    return { ok: true, summary: result.summary, retainedCount: result.retained.length };
+  };
+
+  // R5-14's `/compact [instructions]`: the MANUAL trigger, never subject to the auto re-entrancy
+  // guard (a user asking twice gets two compactions).
+  const runManualCompaction = async (customInstructions: string): Promise<string> => {
+    const outcome = await performCompaction("manual", customInstructions.length > 0 ? customInstructions : null);
+    if (!outcome.ok) return `/compact did nothing: ${outcome.error}`;
+    return `Compacted the conversation. ${outcome.retainedCount} message(s) retained alongside the summary.`;
+  };
+
+  // The AUTO trigger. The threshold formula itself lives with the controller (R5-4) -- the engine
+  // only decides WHEN to ask and guards against asking again before the accountant has moved.
+  const maybeAutoCompact = async (): Promise<void> => {
+    if (compactionController === undefined) return;
+    if (lastCompactionTokens !== null && contextAccountant.contextTokens() === lastCompactionTokens) return;
+    if (!compactionController.shouldCompact(contextAccountant)) return;
+    await performCompaction("auto", null);
   };
 
   const assemblePrompt = (): AssembledPrompt => {
@@ -2511,6 +2638,11 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
     let interrupted = false;
 
     roundLoop: while (true) {
+      // Phase 5 Task 3 (R5-4): the AUTO trigger. Checked before EVERY provider call of the turn, not
+      // once per turn -- a long tool-using turn is exactly where a context window fills up, and a
+      // check that only ran at turn start would let it overflow mid-turn with no recourse.
+      await maybeAutoCompact();
+
       let turn: ProviderTurn;
       try {
         const raced = await raceInterrupt(

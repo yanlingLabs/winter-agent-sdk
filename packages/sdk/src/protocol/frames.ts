@@ -272,6 +272,32 @@ export interface SDKStatusMessage {
   session_id: string;
 }
 
+// Phase 5 Task 3 (derived-shapes-p5.md item (f), `sdk.d.ts:3205-3238`): the compaction boundary.
+// Six `compact_metadata` fields; `trigger`/`pre_tokens` required, the other four optional.
+//
+// `preserved_messages` SUPERSEDES `preserved_segment` (doc-marked on the pin): a reader looks each
+// uuid up directly and relinks `uuids[i]` to `uuids[i-1]` (and `uuids[0]` to `anchor_uuid`) rather
+// than walking the parentUuid chain. That is a RESUME-CORRECTNESS requirement, not a nicety -- a
+// loader reading only `preserved_segment` silently loses the kept segment on any boundary written
+// with the newer field. Winter writes `preserved_messages` and store/resume.ts reads it; the older
+// `preserved_segment` is typed for inbound compatibility and never produced.
+//
+// Both are unset when compaction summarizes everything, i.e. when nothing is kept.
+export interface SDKCompactBoundaryMessage {
+  type: "system";
+  subtype: "compact_boundary";
+  compact_metadata: {
+    trigger: "manual" | "auto";
+    pre_tokens: number;
+    post_tokens?: number;
+    duration_ms?: number;
+    preserved_segment?: { head_uuid: string; anchor_uuid: string; tail_uuid: string };
+    preserved_messages?: { anchor_uuid: string; uuids: string[] };
+  };
+  uuid: string;
+  session_id: string;
+}
+
 export type SdkMessage =
   // Phase 5 Task 2 (derived-shapes-p5.md item (b), `sdk.d.ts:4853-4913`): the LOADED-SURFACE fields.
   // `output_style` and `skills` are REQUIRED on the pin -- Task 1's own finding is that a Winter
@@ -303,6 +329,7 @@ export type SdkMessage =
   | SDKHookResponseMessage
   | SDKPermissionDeniedMessage
   | SDKStatusMessage
+  | SDKCompactBoundaryMessage
   | BackgroundTaskMessage
   // Phase 4 Task 3 (WS-10 §4; derived-shapes-p4.md item (d)): `parent_tool_use_id` is the
   // message-stream child-progress correlator ("present on 6 variants of the... SDKMessage union" --
@@ -319,5 +346,26 @@ export type SdkMessage =
   | { type: "user"; message: { role: "user"; content: Array<{ type: string; [k: string]: unknown }> }; parent_tool_use_id?: string | null; [k: string]: unknown }
   // Finding 3: `permission_denials` is ALWAYS present (pin-verified) — every result the engine
   // constructs carries it, `[]` when this turn denied nothing.
-  | { type: "result"; subtype: "success" | "error_max_turns" | "error_during_execution" | "error_max_budget_usd" | "error_max_structured_output_retries" | string; is_error?: boolean; result?: string; permission_denials: SDKPermissionDenial[]; [k: string]: unknown }
+  // Phase 5 Task 3 (derived-shapes-p5.md item (d)): `structured_output` and `terminal_reason`.
+  //
+  // TWO SPELLINGS, TWO FIELDS, and they are not interchangeable -- an exhausted structured-output run
+  // emits `subtype: "error_max_structured_output_retries"` AND
+  // `terminal_reason: "structured_output_retry_exhausted"`, one on each field, confirmed on the wire
+  // by capture (6). Emitting one spelling on both fields, or the terminal_reason spelling as the
+  // subtype, is wrong in a way no type-checker catches -- which is why both literals are named here.
+  //
+  // `structured_output` is declared on the SUCCESS variant only (`sdk.d.ts:4751`): the exhaustion path
+  // has no `structured_output` at all rather than a null one. Winter's result variant is a single
+  // shape (it carries `is_error` rather than splitting success/error into two types), so that
+  // constraint is a PRODUCER obligation the engine keeps, stated here at the declaration.
+  | {
+      type: "result";
+      subtype: "success" | "error_max_turns" | "error_during_execution" | "error_max_budget_usd" | "error_max_structured_output_retries" | string;
+      is_error?: boolean;
+      result?: string;
+      structured_output?: unknown;
+      terminal_reason?: "structured_output_retry_exhausted" | string;
+      permission_denials: SDKPermissionDenial[];
+      [k: string]: unknown;
+    }
   | { type: string; [k: string]: unknown };

@@ -85,6 +85,10 @@ export type {
   SDKBackgroundTasksChangedMessage,
   SDKLocalCommandOutputMessage,
   BackgroundTaskMessage,
+  // Phase 5 Task 3 (derived-shapes-p5.md item (f)): the compaction boundary a host discriminates on
+  // `.subtype === "compact_boundary"` -- named on the barrel because a host that renders a transcript
+  // needs the metadata shape to relink a preserved segment, not merely to skip the frame.
+  SDKCompactBoundaryMessage,
 } from "./protocol/frames.ts";
 
 // Paths (Task 6, moved here Task 10 -- WS-05 §6): WINTER_HOME resolution, the exact CC-compatible

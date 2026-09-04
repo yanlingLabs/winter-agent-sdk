@@ -162,6 +162,11 @@ export interface DialectEntry {
   uuid: string;
   parentUuid: string | null;
   message?: { role: string; content: unknown };
+  // Phase 5 Task 3 (R5-4): carried through so `rebuildProviderMessages` can honour a compaction
+  // boundary. Typed `unknown` and narrowed at the one read site -- this projection deliberately
+  // mirrors only what resume READS, and a structurally-typed metadata object here would make every
+  // reader believe the field had already been validated.
+  compact_metadata?: unknown;
 }
 
 function isRecord(v: unknown): v is Record<string, unknown> {
@@ -178,7 +183,8 @@ export function toDialectEntries(raw: SessionStoreEntry[]): DialectEntry[] {
     const parentUuid = typeof e.parentUuid === "string" ? e.parentUuid : null;
     const rawMessage = (e as { message?: unknown }).message;
     const message = isRecord(rawMessage) && typeof rawMessage.role === "string" ? { role: rawMessage.role, content: rawMessage.content } : undefined;
-    result.push({ type: e.type, uuid: e.uuid, parentUuid, ...(message !== undefined ? { message } : {}) });
+    const compactMetadata = (e as { compact_metadata?: unknown }).compact_metadata;
+    result.push({ type: e.type, uuid: e.uuid, parentUuid, ...(message !== undefined ? { message } : {}), ...(compactMetadata !== undefined ? { compact_metadata: compactMetadata } : {}) });
   }
   return result;
 }
@@ -308,13 +314,58 @@ export function rebuildProviderMessages(entries: DialectEntry[]): ProviderMessag
   const leafUuid = entries[entries.length - 1]!.uuid; // file order is append order — the last entry is always the current tip
   const lineage = ancestryChain(byUuid, leafUuid);
 
+  // --- Phase 5 Task 3 (R5-4): a compaction boundary CUTS the rebuilt history ----------------------
+  //
+  // Without this, a resumed session rebuilds the entire pre-compaction conversation -- silently
+  // undoing the compaction on the first resume, and doing it in the WORST direction (straight back
+  // over the threshold that triggered compaction in the first place). The boundary entry itself is
+  // non-conversational, so the pre-existing "skip entries with no `message`" line below cannot catch
+  // this: it skips the boundary and happily rebuilds everything around it.
+  //
+  // The cut follows the pinned relink semantics (derived-shapes-p5 item (f)): from the LAST boundary
+  // on this lineage, history is `anchor_uuid` (the summary) followed by `preserved_messages.uuids` in
+  // order, then everything appended after the boundary. `preserved_segment` is deliberately not read
+  // -- the pin marks `preserved_messages` as SUPERSEDING it, and Winter never writes the older field.
+  //
+  // A boundary with NO `preserved_messages` (compaction summarized everything) keeps just the summary.
+  const lastBoundaryIndex = lineage.reduce((acc, e, i) => (e.type === "compact_boundary" ? i : acc), -1);
+  const effectiveLineage =
+    lastBoundaryIndex === -1
+      ? lineage
+      : (() => {
+          const boundary = lineage[lastBoundaryIndex]!;
+          const meta = isRecord(boundary.compact_metadata) ? boundary.compact_metadata : undefined;
+          const preserved = meta !== undefined && isRecord(meta.preserved_messages) ? meta.preserved_messages : undefined;
+          const anchorUuid = preserved !== undefined && typeof preserved.anchor_uuid === "string" ? preserved.anchor_uuid : undefined;
+          const keptUuids = new Set<string>(preserved !== undefined && Array.isArray(preserved.uuids) ? (preserved.uuids as unknown[]).filter((u): u is string => typeof u === "string") : []);
+          // ORDER IS THE PINNED RELINK ORDER, not file order: `uuids[0]` links to `anchor_uuid`, so
+          // the anchor (the summary) comes FIRST and the preserved messages follow in `uuids` order.
+          // File order would put the summary LAST -- it is appended after the entries it preserves --
+          // which would hand the provider a conversation whose summary arrives after the messages it
+          // summarizes.
+          //
+          // When a boundary names no anchor (nothing preserved), the summary is found by type; the
+          // writer always appends exactly one immediately before the boundary. Both routes keep the
+          // summary and nothing else from before the cut.
+          const before = lineage.slice(0, lastBoundaryIndex);
+          const byUuidBefore = new Map(before.map((e) => [e.uuid, e] as const));
+          const anchor = anchorUuid !== undefined ? byUuidBefore.get(anchorUuid) : before.filter((e) => e.type === "compact_summary").at(-1);
+          const preservedInOrder = preserved !== undefined && Array.isArray(preserved.uuids) ? (preserved.uuids as unknown[]).flatMap((u) => (typeof u === "string" ? [byUuidBefore.get(u)] : [])).filter((e): e is DialectEntry => e !== undefined) : [];
+          void keptUuids;
+          const head = [...(anchor !== undefined ? [anchor] : []), ...preservedInOrder];
+          return [...head, ...lineage.slice(lastBoundaryIndex + 1)];
+        })();
+
   const messages: ProviderMessage[] = [];
-  for (const e of lineage) {
+  for (const e of effectiveLineage) {
     const message = e.message;
     if (message === undefined) continue; // not a conversational entry — never fed to the provider (chain continuity is computed from the full entry array elsewhere, not from this function's output)
     const content = message.content;
 
-    if (e.type === "user") {
+    // Phase 5 Task 3: a `compact_summary` entry carries `{role:"user", content: <summary string>}` and
+    // rebuilds as the first user message of the compacted conversation -- its own type rather than
+    // `"user"` so a transcript reader can still tell a summary from something the human typed.
+    if (e.type === "user" || e.type === "compact_summary") {
       if (Array.isArray(content) && (content.length === 0 || content.every((b) => isRecord(b) && b.type === "tool_result"))) {
         messages.push({ role: "tool", content: content as ContentBlock[] });
       } else if (typeof content === "string") {

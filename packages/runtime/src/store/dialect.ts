@@ -29,6 +29,7 @@ import {
   type SessionStoreEntry,
 } from "@yanlinglabs/winter-agent-sdk";
 import type { ContentBlock, ProviderMessage, SessionPersistence } from "../engine.ts";
+import type { CompactBoundaryRecord } from "../compaction/seam.ts";
 import { resolveProjectDirName } from "../paths/project-dir-name.ts";
 import { findContinueTarget, findResumeTarget, truncateAt, toDialectEntries, rebuildProviderMessages, ResumeTargetError } from "./resume.ts";
 // Task 8 (WS-07 §3.3 / phase ruling 2): the permission journal — ruleset.ts's own header names this
@@ -170,6 +171,67 @@ export function assistantEntry(opts: {
   };
 }
 
+// --- Phase 5 Task 3 (R5-4, WS-05 §5): the compaction dialect entries ------------------------------
+//
+// TWO entries per compaction, appended in this order:
+//
+//   1. `compact_summary` -- CONVERSATIONAL (it carries a `message`), because the summary IS the
+//      history after the boundary. On resume it rebuilds as the first user message of the compacted
+//      conversation, which is what makes a resumed session see the same context the live session saw.
+//   2. `compact_boundary` -- NON-conversational (no `message`), carrying the pinned six-field
+//      `compact_metadata`. It is appended AFTER the summary specifically so it can name the summary
+//      as `preserved_messages.anchor_uuid` -- the entry is a BACKWARD-LOOKING record of a cut that
+//      has already been made, not a marker placed ahead of one.
+//
+// ENTRY NAMES ARE WINTER-DEFINED and disclosed as such: derived-shapes-p5 item (e) established that
+// the pinned transcript entry union is CLI-internal by design (`sdk.d.ts:5362-5369` types
+// `SessionStoreEntry` as a deliberately minimal structural supertype and says outright that the
+// concrete union is not part of the SDK API surface). The `compact_metadata` FIELD SHAPE is pinned
+// (item (f)); the entry `type` strings that carry it are not, and cannot be.
+const MAX_TRACKED_CONVERSATIONAL_UUIDS = 4096;
+
+export const COMPACT_SUMMARY_ENTRY_TYPE = "compact_summary";
+export const COMPACT_BOUNDARY_ENTRY_TYPE = "compact_boundary";
+
+export interface CompactMetadata {
+  trigger: "manual" | "auto";
+  pre_tokens: number;
+  post_tokens?: number;
+  duration_ms?: number;
+  preserved_messages?: { anchor_uuid: string; uuids: string[] };
+}
+
+export function compactSummaryEntry(opts: {
+  summary: string;
+  chain: Chain;
+  ctx: SessionCtx;
+  sidechain?: SidechainStamp;
+}): DialectEntryBase & { type: "compact_summary"; message: { role: "user"; content: string } } {
+  return {
+    type: COMPACT_SUMMARY_ENTRY_TYPE,
+    ...baseFields(opts.ctx, opts.chain),
+    ...(opts.sidechain !== undefined ? { isSidechain: true as const, agentId: opts.sidechain.agentId, parent_tool_use_id: opts.sidechain.parentToolUseId } : {}),
+    // `role: "user"` rather than a third role: WS-05 §5.1's dialect has only user/assistant, and
+    // resume.ts's rebuild maps a string-content user entry straight to a `user` ProviderMessage --
+    // exactly what a summary should be when the conversation continues.
+    message: { role: "user", content: opts.summary },
+  };
+}
+
+export function compactBoundaryEntry(opts: {
+  metadata: CompactMetadata;
+  chain: Chain;
+  ctx: SessionCtx;
+  sidechain?: SidechainStamp;
+}): DialectEntryBase & { type: "compact_boundary"; compact_metadata: CompactMetadata } {
+  return {
+    type: COMPACT_BOUNDARY_ENTRY_TYPE,
+    ...baseFields(opts.ctx, opts.chain),
+    ...(opts.sidechain !== undefined ? { isSidechain: true as const, agentId: opts.sidechain.agentId, parent_tool_use_id: opts.sidechain.parentToolUseId } : {}),
+    compact_metadata: opts.metadata,
+  };
+}
+
 export class TranscriptWriterError extends Error {
   constructor(message: string) {
     super(message);
@@ -208,6 +270,11 @@ export interface TranscriptWriterOptions {
   // this is what `buildChildTranscriptWriter` below sets for a child's own writer; every
   // pre-existing caller omits it, staying byte-identical to before this task.
   sidechain?: SidechainStamp;
+  // Phase 5 Task 3 (R5-4): the uuids of the CONVERSATIONAL entries already on this session's chain,
+  // oldest-first -- resolveEngineSession seeds it on a resume/continue/fork so `recordCompactBoundary`
+  // can name preserved messages that predate THIS run. Omitted for a fresh session (nothing precedes
+  // it) and for every pre-P5 caller, in which case the writer names only what it appended itself.
+  initialConversationalUuids?: readonly string[];
 }
 
 // Holds the chain head for one session and appends dialect entries through the Task-7 store — the
@@ -221,6 +288,12 @@ export class TranscriptWriter implements SessionPersistence {
   private readonly ctx: SessionCtx;
   private readonly sidechain: SidechainStamp | undefined;
   private parentUuid: string | null;
+  // Phase 5 Task 3: every conversational entry on this chain, oldest-first. `recordCompactBoundary`
+  // names the last N of them as `preserved_messages.uuids`, which is how a resumed session relinks
+  // the kept segment WITHOUT the transcript carrying a second copy of it (see compactBoundaryEntry).
+  // Bounded: only the most recent MAX_TRACKED_CONVERSATIONAL_UUIDS are kept, because a boundary can
+  // only ever preserve a retention window, never an unbounded history.
+  private readonly conversationalUuids: string[];
 
   constructor(opts: TranscriptWriterOptions) {
     this.store = opts.store;
@@ -235,6 +308,7 @@ export class TranscriptWriter implements SessionPersistence {
     // child-resume machinery (P4/Lane C's own future scope) that would ever pass a non-null value
     // alongside a `sidechain` option.
     this.parentUuid = opts.initialParentUuid ?? null;
+    this.conversationalUuids = [...(opts.initialConversationalUuids ?? [])];
   }
 
   async recordUserEntry(content: string | Block[]): Promise<void> {
@@ -243,6 +317,7 @@ export class TranscriptWriter implements SessionPersistence {
     const entry = typeof content === "string" ? userEntry({ text: content, chain, ctx: this.ctx, ...sidechainOpt }) : userEntry({ content, chain, ctx: this.ctx, ...sidechainOpt });
     await this.appendWithDialectRecord(entry);
     this.parentUuid = entry.uuid;
+    this.trackConversational(entry.uuid);
   }
 
   async recordAssistantEntry(content: Block[]): Promise<void> {
@@ -250,6 +325,56 @@ export class TranscriptWriter implements SessionPersistence {
     const entry = assistantEntry({ content, chain, ctx: this.ctx, ...(this.sidechain !== undefined ? { sidechain: this.sidechain } : {}) });
     await this.appendWithDialectRecord(entry);
     this.parentUuid = entry.uuid;
+    this.trackConversational(entry.uuid);
+  }
+
+  private trackConversational(uuid: string): void {
+    this.conversationalUuids.push(uuid);
+    if (this.conversationalUuids.length > MAX_TRACKED_CONVERSATIONAL_UUIDS) this.conversationalUuids.splice(0, this.conversationalUuids.length - MAX_TRACKED_CONVERSATIONAL_UUIDS);
+  }
+
+  // Phase 5 Task 3 (R5-4): the SessionPersistence method the engine calls when a compaction commits.
+  //
+  // Appends the summary FIRST, then the boundary that names it -- see compactBoundaryEntry's own
+  // header for why the boundary is backward-looking. `preserved_messages` names the last
+  // `retainedCount` conversational entries this chain has (the summary itself is the `anchor_uuid`,
+  // never one of the `uuids`), and is OMITTED ENTIRELY when nothing is retained, matching the pinned
+  // "both are unset when compaction summarizes everything".
+  //
+  // Bounded-by-what-we-know, stated rather than hidden: if `retainedCount` exceeds the entries this
+  // chain has tracked, the boundary names every one it has. That under-names rather than
+  // over-names -- a resumed session then sees LESS context than the live one did, never context the
+  // live session had already dropped.
+  async recordCompactBoundary(record: CompactBoundaryRecord): Promise<void> {
+    const summary = compactSummaryEntry({
+      summary: record.summary,
+      chain: { parentUuid: this.parentUuid },
+      ctx: this.ctx,
+      ...(this.sidechain !== undefined ? { sidechain: this.sidechain } : {}),
+    });
+    // The preserved set is computed BEFORE the summary joins the tracked list, so a summary can
+    // never preserve itself.
+    const preserved = record.retainedCount > 0 ? this.conversationalUuids.slice(-record.retainedCount) : [];
+    await this.appendWithDialectRecord(summary);
+    this.parentUuid = summary.uuid;
+
+    const metadata: CompactMetadata = {
+      trigger: record.trigger,
+      pre_tokens: record.preTokens,
+      ...(record.postTokens !== undefined ? { post_tokens: record.postTokens } : {}),
+      ...(record.durationMs !== undefined ? { duration_ms: record.durationMs } : {}),
+      ...(preserved.length > 0 ? { preserved_messages: { anchor_uuid: summary.uuid, uuids: preserved } } : {}),
+    };
+    const boundary = compactBoundaryEntry({ metadata, chain: { parentUuid: this.parentUuid }, ctx: this.ctx, ...(this.sidechain !== undefined ? { sidechain: this.sidechain } : {}) });
+    await this.appendWithDialectRecord(boundary);
+    this.parentUuid = boundary.uuid;
+
+    // The summary is the new head of conversational history: everything before the boundary is
+    // replaced by it plus whatever `preserved` names, so the tracked list is rebuilt to match what a
+    // resume would rebuild. Without this, a SECOND compaction in the same run would name entries the
+    // first one already discarded.
+    this.conversationalUuids.length = 0;
+    this.conversationalUuids.push(summary.uuid, ...preserved);
   }
 
   // WS-05 §5.3 / WS-10 §3.4/§7: the `.meta.json` sidecar, via the store's own `agent_metadata`
@@ -354,6 +479,13 @@ function withPermissionJournal(writer: TranscriptWriter, location: { winterHome:
   return {
     recordUserEntry: (content) => writer.recordUserEntry(content),
     recordAssistantEntry: (content) => writer.recordAssistantEntry(content),
+    // Phase 5 Task 3 (R5-4): forwarded, like every other write method -- this wrapper adds the
+    // permission/hook journals and delegates everything else. It is an EXPLICIT forward rather than
+    // a spread of `writer` because the wrapper is a fresh object literal, so a method the writer
+    // grows and this list forgets simply vanishes at the seam, silently: the engine's own call site
+    // is `store?.recordCompactBoundary !== undefined`, which would read "no store support" and skip
+    // persisting every compaction with no error anywhere.
+    recordCompactBoundary: (record) => writer.recordCompactBoundary(record),
     flush: () => writer.flush(),
     // Synchronous, matching appendPermissionJournal's own synchronous fs calls (openSync et al.,
     // ruleset.ts) — SessionPersistence's own `void | Promise<void>` return type accepts either, and
@@ -378,12 +510,16 @@ function buildWriter(opts: {
   cwd: string;
   initialParentUuid: string | null;
   winterHome: string;
+  // Phase 5 Task 3 (R5-4): the resumed chain's own conversational uuids -- see
+  // TranscriptWriterOptions.initialConversationalUuids. Omitted for a fresh session.
+  initialConversationalUuids?: readonly string[];
 }): SessionPersistence {
   const writer = new TranscriptWriter({
     store: opts.store,
     key: { projectKey: opts.projectKey, sessionId: opts.sessionId },
     ctx: { sessionId: opts.sessionId, cwd: opts.cwd, version: RUNTIME_ENGINE_VERSION, projectDirName: opts.projectKey },
     initialParentUuid: opts.initialParentUuid,
+    ...(opts.initialConversationalUuids !== undefined ? { initialConversationalUuids: opts.initialConversationalUuids } : {}),
   });
   return withPermissionJournal(writer, { winterHome: opts.winterHome, projectKey: opts.projectKey, sessionId: opts.sessionId });
 }
@@ -629,7 +765,12 @@ export async function resolveEngineSession(opts: {
   // is what "prefer the recorded value over a fresh env resolution" buys concretely: even though
   // `cwdKey` was computed from THIS run's current environment, a resumed session already living
   // under a different (possibly now-stale) resolved name keeps writing there.
-  const writer = buildWriter({ store, projectKey: targetProjectKey, sessionId: targetSessionId, cwd: config.cwd, initialParentUuid, winterHome });
+  // Phase 5 Task 3 (R5-4): a compaction on a RESUMED session must be able to name preserved entries
+  // that predate this run, so the writer inherits the resumed chain's own conversational uuids.
+  // Every entry kind that `rebuildProviderMessages` turns into a provider message is included, and
+  // in the same order, so "the last N conversational entries" means the same thing on both sides.
+  const initialConversationalUuids = chainEntries.filter((e) => e.message !== undefined && (e.type === "user" || e.type === "assistant" || e.type === "compact_summary")).map((e) => e.uuid);
+  const writer = buildWriter({ store, projectKey: targetProjectKey, sessionId: targetSessionId, cwd: config.cwd, initialParentUuid, winterHome, initialConversationalUuids });
   const effectiveConfig: RuntimeConfig = { ...config, sessionId: targetSessionId };
   // Task 11 (WS-07 §9): the SAME (winterHome, targetProjectKey, targetSessionId) triple the writer
   // above just used — a deferred call from an EARLIER run of this exact session has its approvals
