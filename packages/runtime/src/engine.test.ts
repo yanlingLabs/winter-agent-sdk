@@ -1,4 +1,4 @@
-import { test, expect, spyOn } from "bun:test";
+import { test, expect, spyOn, describe } from "bun:test";
 import { mkdtempSync, rmSync, existsSync, readFileSync, mkdirSync, writeFileSync, symlinkSync, unlinkSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -2478,4 +2478,347 @@ test("Phase 4 Task 3: an ordinary MCP tool (no requiresUserInteraction) is unaff
   } finally {
     unregisterMcpServerTools(SRV);
   }
+});
+
+// ================================================================================================
+// Phase 4 Task 3: MCP control subtypes, mcp_servers on init, deferral activation, sdk_mcp_call
+// runtime-side registration, agentID threading (MUSTs 3/4/6/9).
+// ================================================================================================
+import { createFakeMcpServerStateSource } from "./mcp/state.ts";
+import { createFakeMcpControlSeam } from "./mcp/control-seam.ts";
+
+function sendAndCollectUntilResult(host: { output: { write(f: WinterFrame): void } }): void {
+  host.output.write({ type: "user", text: "go" });
+  host.output.write({ type: "control_request", requestId: "end-1", subtype: "end_input", payload: undefined });
+}
+
+describe("Phase 4 Task 3: mcp_status / mcp_reconnect / mcp_toggle / mcp_set_servers (MUST 4)", () => {
+  test("mcp_status reflects the configured McpServerStateSource, with the pinned needs-auth wire spelling", async () => {
+    const { host, runtime } = createInMemoryChannel();
+    const stateSource = createFakeMcpServerStateSource([
+      { name: "gh", state: "connected", toolNames: ["list_issues"] },
+      { name: "priv", state: "needsAuth", toolNames: [] },
+    ]);
+    const done = runEngine({ config: baseConfig(), input: runtime.input, output: runtime.output, provider: echoProvider, tools: stubExecutor, mcpServerStateSource: stateSource });
+
+    host.output.write({ type: "control_request", requestId: "mcp1", subtype: "mcp_status", payload: undefined });
+    let response: ControlResponseFrame | undefined;
+    for await (const f of host.input) {
+      if (f.type === "control_response" && (f as ControlResponseFrame).requestId === "mcp1") {
+        response = f as ControlResponseFrame;
+        break;
+      }
+    }
+    expect(response?.ok).toBe(true);
+    expect(response?.payload).toEqual({
+      servers: [
+        { name: "gh", status: "connected" },
+        { name: "priv", status: "needs-auth" },
+      ],
+    });
+
+    sendAndCollectUntilResult(host);
+    await drain(host.input);
+    await done;
+  });
+
+  test("mcp_status with no state source configured answers an empty list, never an error", async () => {
+    const { host, runtime } = createInMemoryChannel();
+    const done = runEngine({ config: baseConfig(), input: runtime.input, output: runtime.output, provider: echoProvider, tools: stubExecutor });
+    host.output.write({ type: "control_request", requestId: "mcp1", subtype: "mcp_status", payload: undefined });
+    let response: ControlResponseFrame | undefined;
+    for await (const f of host.input) {
+      if (f.type === "control_response" && (f as ControlResponseFrame).requestId === "mcp1") {
+        response = f as ControlResponseFrame;
+        break;
+      }
+    }
+    expect(response).toEqual({ type: "control_response", requestId: "mcp1", ok: true, payload: { servers: [] } });
+    sendAndCollectUntilResult(host);
+    await drain(host.input);
+    await done;
+  });
+
+  test("mcp_reconnect/mcp_toggle/mcp_set_servers delegate to the configured McpControlSeam and ack", async () => {
+    const { host, runtime } = createInMemoryChannel();
+    const seam = createFakeMcpControlSeam();
+    const done = runEngine({ config: baseConfig(), input: runtime.input, output: runtime.output, provider: echoProvider, tools: stubExecutor, mcpControlSeam: seam });
+
+    async function roundTrip(requestId: string, subtype: string, payload: unknown): Promise<ControlResponseFrame> {
+      host.output.write({ type: "control_request", requestId, subtype, payload });
+      for await (const f of host.input) {
+        if (f.type === "control_response" && (f as ControlResponseFrame).requestId === requestId) return f as ControlResponseFrame;
+      }
+      throw new Error("host.input ended before the response arrived");
+    }
+
+    expect(await roundTrip("r1", "mcp_reconnect", { serverName: "gh" })).toEqual({ type: "control_response", requestId: "r1", ok: true });
+    expect(await roundTrip("r2", "mcp_toggle", { serverName: "gh", enabled: false })).toEqual({ type: "control_response", requestId: "r2", ok: true });
+    seam.setServersResult = { added: ["gh"], removed: [], errors: {} };
+    const setServersResponse = await roundTrip("r3", "mcp_set_servers", { servers: { gh: { command: "gh-mcp" } } });
+    expect(setServersResponse).toEqual({ type: "control_response", requestId: "r3", ok: true, payload: { added: ["gh"], removed: [], errors: {} } });
+
+    expect(seam.calls.reconnect).toEqual(["gh"]);
+    expect(seam.calls.toggle).toEqual([{ serverName: "gh", enabled: false }]);
+    expect(seam.calls.setServers).toEqual([{ gh: { command: "gh-mcp" } }]);
+
+    sendAndCollectUntilResult(host);
+    await drain(host.input);
+    await done;
+  });
+
+  test("mcp_reconnect with no control seam configured answers a structured mcp_unavailable error, never unknown_subtype", async () => {
+    const { host, runtime } = createInMemoryChannel();
+    const done = runEngine({ config: baseConfig(), input: runtime.input, output: runtime.output, provider: echoProvider, tools: stubExecutor });
+    host.output.write({ type: "control_request", requestId: "r1", subtype: "mcp_reconnect", payload: { serverName: "gh" } });
+    let response: ControlResponseFrame | undefined;
+    for await (const f of host.input) {
+      if (f.type === "control_response" && (f as ControlResponseFrame).requestId === "r1") {
+        response = f as ControlResponseFrame;
+        break;
+      }
+    }
+    expect(response?.ok).toBe(false);
+    expect((response as { error: { code: string } }).error.code).toBe("mcp_unavailable");
+    sendAndCollectUntilResult(host);
+    await drain(host.input);
+    await done;
+  });
+});
+
+describe("Phase 4 Task 3: system/init.mcp_servers (MUST 3)", () => {
+  test("both init frames carry mcp_servers when a state source is configured", async () => {
+    const { host, runtime } = createInMemoryChannel();
+    const stateSource = createFakeMcpServerStateSource([{ name: "gh", state: "connected", toolNames: [] }]);
+    const done = runEngine({ config: baseConfig(), input: runtime.input, output: runtime.output, provider: echoProvider, tools: stubExecutor, mcpServerStateSource: stateSource });
+    sendAndCollectUntilResult(host);
+    const frames = await drain(host.input);
+    await done;
+    const initFrame = frames.find((f) => f.type === "init") as { mcp_servers?: unknown } | undefined;
+    expect(initFrame?.mcp_servers).toEqual([{ name: "gh", status: "connected" }]);
+    const systemInit = dataMessages(frames).find((m) => m.type === "system" && (m as { subtype?: string }).subtype === "init") as { mcp_servers?: unknown } | undefined;
+    expect(systemInit?.mcp_servers).toEqual([{ name: "gh", status: "connected" }]);
+  });
+
+  test("mcp_servers is absent from both init frames when no state source is configured (every pre-existing scenario)", async () => {
+    const { host, runtime } = createInMemoryChannel();
+    const done = runEngine({ config: baseConfig(), input: runtime.input, output: runtime.output, provider: echoProvider, tools: stubExecutor });
+    sendAndCollectUntilResult(host);
+    const frames = await drain(host.input);
+    await done;
+    const initFrame = frames.find((f) => f.type === "init") as object;
+    expect(Object.keys(initFrame)).not.toContain("mcp_servers");
+  });
+});
+
+describe("Phase 4 Task 3: deferral activation end-to-end (MUST 6, RULING P4-A)", () => {
+  test("a live-registered deferred+eligible MCP tool is excluded from system/init.tools while Tool Search is active, and included when it is not", async () => {
+    const SRV = "t3-engine-deferral-fixture";
+    registerMcpServerTools(SRV, [{ name: "search_docs", inputSchema: { type: "object" } }], { deferredDefault: true });
+    try {
+      const canonicalName = `mcp__${SRV}__search_docs`;
+
+      const { host: hostA, runtime: runtimeA } = createInMemoryChannel();
+      const doneA = runEngine({
+        config: baseConfig({ toolSearchEnabled: true, capabilities: ["winter.mcp"] }),
+        input: runtimeA.input,
+        output: runtimeA.output,
+        provider: echoProvider,
+        tools: stubExecutor,
+        providerSupportsToolSearch: true,
+        deferrableContextShare: 100,
+      });
+      sendAndCollectUntilResult(hostA);
+      const framesA = await drain(hostA.input);
+      await doneA;
+      const initFrameA = framesA.find((f) => f.type === "init") as { tools: string[] };
+      expect(initFrameA.tools).not.toContain(canonicalName); // deferred + never loaded -- absent from init.tools
+
+      const { host: hostB, runtime: runtimeB } = createInMemoryChannel();
+      const doneB = runEngine({
+        config: baseConfig({ toolSearchEnabled: false, capabilities: ["winter.mcp"] }),
+        input: runtimeB.input,
+        output: runtimeB.output,
+        provider: echoProvider,
+        tools: stubExecutor,
+      });
+      sendAndCollectUntilResult(hostB);
+      const framesB = await drain(hostB.input);
+      await doneB;
+      const initFrameB = framesB.find((f) => f.type === "init") as { tools: string[] };
+      expect(initFrameB.tools).toContain(canonicalName); // Tool Search off -- fully injected (eager)
+    } finally {
+      unregisterMcpServerTools(SRV);
+    }
+  });
+
+  test("config.toolSearchEnabled folds in as an override of the ambient ENABLE_TOOL_SEARCH env var (RULING P4-A closes T2's Concern 8)", async () => {
+    const SRV = "t3-engine-override-fixture";
+    registerMcpServerTools(SRV, [{ name: "search_docs", inputSchema: { type: "object" } }], { deferredDefault: true });
+    try {
+      const canonicalName = `mcp__${SRV}__search_docs`;
+      const { host, runtime } = createInMemoryChannel();
+      // Ambient env says Tool Search is OFF; the host's own explicit wire boolean says ON -- the
+      // host's explicit choice must win (never a contradiction between the two signals).
+      const done = runEngine({
+        config: baseConfig({ toolSearchEnabled: true, capabilities: ["winter.mcp"] }),
+        input: runtime.input,
+        output: runtime.output,
+        provider: echoProvider,
+        tools: stubExecutor,
+        env: { ENABLE_TOOL_SEARCH: "false" },
+        providerSupportsToolSearch: true,
+        deferrableContextShare: 100,
+      });
+      sendAndCollectUntilResult(host);
+      const frames = await drain(host.input);
+      await done;
+      const initFrame = frames.find((f) => f.type === "init") as { tools: string[] };
+      expect(initFrame.tools).not.toContain(canonicalName); // the host's explicit "on" won -- deferred, not injected
+    } finally {
+      unregisterMcpServerTools(SRV);
+    }
+  });
+});
+
+describe("Phase 4 Task 3: sdk_mcp_call runtime-side forwarding (MUST 4, WS-04 addendum)", () => {
+  test("a call to a registered SDK-server tool forwards {server,tool,arguments} as sdk_mcp_call and folds the host's CallToolResult into the tool_result text", async () => {
+    const { host, runtime } = createInMemoryChannel();
+    // scriptedProvider (provider/mock.ts), NOT a raw stateless Provider object -- a bare
+    // `async generate() { return {kind:"tool_use", ...} }` re-returns the SAME tool_use on EVERY
+    // round (found empirically: the round loop calls provider.generate() again after each round,
+    // so a provider with no "then finish" turn loops forever, unlike the rpc_probe turn kind, which
+    // terminates its own round immediately regardless of how many times generate() is called).
+    const provider = scriptedProvider([
+      { kind: "tool_use", calls: [{ id: "call-1", name: "mcp__fixture__echo", input: { x: 1 } }] },
+      { kind: "text", text: "done" },
+    ]);
+    const config = baseConfig({
+      permissionMode: "bypassPermissions",
+      allowDangerouslySkipPermissions: true,
+      mcpServers: { fixture: { type: "sdk", name: "fixture", tools: [{ name: "echo", inputSchema: { type: "object" } }] } },
+    });
+    const done = runEngine({ config, input: runtime.input, output: runtime.output, provider });
+
+    host.output.write({ type: "user", text: "go" });
+    const seen: WinterFrame[] = [];
+    let reqId: string | undefined;
+    let reqPayload: unknown;
+    for await (const f of host.input) {
+      seen.push(f);
+      if (f.type === "control_request" && (f as ControlRequestFrame).subtype === "sdk_mcp_call") {
+        reqId = (f as ControlRequestFrame).requestId;
+        reqPayload = (f as ControlRequestFrame).payload;
+        break;
+      }
+    }
+    expect(reqPayload).toEqual({ server: "fixture", tool: "echo", arguments: { x: 1 } });
+    host.output.write({ type: "control_response", requestId: reqId!, ok: true, payload: { content: [{ type: "text", text: "echoed" }] } });
+    host.output.write({ type: "control_request", requestId: "end-1", subtype: "end_input", payload: undefined });
+
+    for await (const f of host.input) {
+      seen.push(f);
+      if (f.type === "data" && (f as { message: SdkMessage }).message.type === "result") break;
+    }
+    seen.push(...(await drain(host.input)));
+    await done;
+
+    const msgs = dataMessages(seen);
+    const toolResultMsg = msgs.find((m) => m.type === "user") as unknown as { message: { content: Array<{ tool_use_id: string; content: string }> } };
+    expect(toolResultMsg.message.content.find((b) => b.tool_use_id === "call-1")?.content).toBe("echoed");
+
+    // Registry singleton hygiene: this run's own SDK-server registration does not survive teardown.
+    expect(getRegisteredTool("mcp__fixture__echo")).toBeUndefined();
+  });
+
+  test("a rejected sdk_mcp_call (e.g. the host has no responder) folds into an error tool_result, never a hung round or a crashed run", async () => {
+    const { host, runtime } = createInMemoryChannel();
+    const provider = scriptedProvider([
+      { kind: "tool_use", calls: [{ id: "call-1", name: "mcp__fixture__echo", input: {} }] },
+      { kind: "text", text: "done" },
+    ]);
+    const config = baseConfig({
+      permissionMode: "bypassPermissions",
+      allowDangerouslySkipPermissions: true,
+      mcpServers: { fixture: { type: "sdk", name: "fixture", tools: [{ name: "echo", inputSchema: { type: "object" } }] } },
+    });
+    const done = runEngine({ config, input: runtime.input, output: runtime.output, provider });
+
+    host.output.write({ type: "user", text: "go" });
+    const seen: WinterFrame[] = [];
+    let reqId: string | undefined;
+    for await (const f of host.input) {
+      seen.push(f);
+      if (f.type === "control_request" && (f as ControlRequestFrame).subtype === "sdk_mcp_call") {
+        reqId = (f as ControlRequestFrame).requestId;
+        break;
+      }
+    }
+    // Mirrors query.ts's own generic "no handler registered" fallback -- never a hang.
+    host.output.write({ type: "control_response", requestId: reqId!, ok: false, error: { code: "unhandled_subtype", message: "no handler" } });
+    host.output.write({ type: "control_request", requestId: "end-1", subtype: "end_input", payload: undefined });
+
+    for await (const f of host.input) {
+      seen.push(f);
+      if (f.type === "data" && (f as { message: SdkMessage }).message.type === "result") break;
+    }
+    seen.push(...(await drain(host.input)));
+    await done;
+
+    const msgs = dataMessages(seen);
+    const toolResultMsg = msgs.find((m) => m.type === "user") as unknown as { message: { content: Array<{ tool_use_id: string; content: string }> } };
+    const block = toolResultMsg.message.content.find((b) => b.tool_use_id === "call-1");
+    expect(block?.content).toContain("sdk_mcp_call failed");
+  });
+});
+
+describe("Phase 4 Task 3: agentID threading (MUST 9)", () => {
+  // Scope note: this proves PermissionCall.agentId's own threading end-to-end (config.agentId ->
+  // the permission_denied stream message's own agent_id field) -- the ONE agentID call site
+  // reachable from a raw runEngine harness without also standing up a full interactive hook-RPC
+  // responder (createHookStage's/fireObservationalHook's own agentID spread fires only inside a
+  // real hook invocation round trip, which needs its own "hook" control_request answered by the
+  // test acting as host, on top of the permission RPC this test already handles by using dontAsk to
+  // avoid it). Both call sites use the IDENTICAL one-line conditional-spread pattern
+  // (`...(config.agentId !== undefined ? {agentID: config.agentId} : {})`) against the SAME
+  // pre-existing seams (HookStageDeps.agentID/RunHooksContext.agentID, established by T8/T9/T10,
+  // WS-08's own agentID plumbing) this exact PermissionCall.agentId pattern already proves works --
+  // recorded here rather than silently assumed; see the task report's own concerns section.
+  test("config.agentId populates permission_denied's agent_id field -- absent for the main engine", async () => {
+    async function runWithAgentId(agentId: string | undefined): Promise<WinterFrame[]> {
+      const { host, runtime } = createInMemoryChannel();
+      const provider = scriptedProvider([
+        { kind: "tool_use", calls: [{ id: "call-1", name: "unmatched_tool_t3_agentid", input: {} }] },
+        { kind: "text", text: "done" },
+      ]);
+      const done = runEngine({
+        // dontAsk: an unmatched tool call denies via the mode-4 fallback WITHOUT ever reaching
+        // canUseTool (WS-07 §6.3) -- calling runEngine directly (bypassing query()) means there is
+        // no host-side "auto-answer an unhandled subtype" mechanism at all (that's a query.ts-only
+        // convenience); `default` mode would issue a REAL, never-answered `permission` bridge
+        // request here and hang forever (WS-04 §3's own "no park timeout," confirmed empirically).
+        config: baseConfig({ permissionMode: "dontAsk", ...(agentId !== undefined ? { agentId } : {}) }),
+        input: runtime.input,
+        output: runtime.output,
+        provider,
+        tools: stubExecutor,
+      });
+      sendAndCollectUntilResult(host);
+      const frames = await drain(host.input);
+      await done;
+      return frames;
+    }
+
+    const withChildFrames = await runWithAgentId("agent-xyz");
+    const permissionDeniedMsgWithChild = dataMessages(withChildFrames).find((m) => m.type === "system" && (m as { subtype?: string }).subtype === "permission_denied") as
+      | { agent_id?: string }
+      | undefined;
+    expect(permissionDeniedMsgWithChild?.agent_id).toBe("agent-xyz");
+
+    const mainOnlyFrames = await runWithAgentId(undefined);
+    const permissionDeniedMsgMain = dataMessages(mainOnlyFrames).find((m) => m.type === "system" && (m as { subtype?: string }).subtype === "permission_denied") as
+      | { agent_id?: string }
+      | undefined;
+    expect(permissionDeniedMsgMain?.agent_id).toBeUndefined();
+  });
 });
