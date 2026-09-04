@@ -424,6 +424,121 @@ describe("buildRegistryToolExecutor (the engine-facing adapter)", () => {
     }
   });
 
+  // Phase 4 Task 8 (WS-10 "Execution amendments -- Per-call tool-use id"): the model's own tool_use
+  // id reaches a registered executor. Before this, NO registered tool anywhere could know its own
+  // tool_use_id -- Agent's parentToolUseId and SendMessage's retry-stable messageId were both rooted
+  // in synthetic stand-ins.
+  test("ctx.toolUseId is the model's own EngineToolCall.id, per call", async () => {
+    const name = "__t8_test_tool_use_id__";
+    registerTool({ descriptor: fixtureDescriptor(name) });
+    try {
+      const seen: Array<string | undefined> = [];
+      replaceExecutor(name, {
+        async execute(_input, ctx) {
+          seen.push(ctx.toolUseId);
+          return { output: "ok" };
+        },
+      });
+      const executor = buildRegistryToolExecutor(deps());
+      await executor.execute({ id: "toolu_first", name, input: {} });
+      await executor.execute({ id: "toolu_second", name, input: {} });
+      expect(seen).toEqual(["toolu_first", "toolu_second"]);
+    } finally {
+      unregisterToolForTest(name);
+    }
+  });
+
+  // Phase 4 Task 8 (Lane C Gap #3, WS-10 §2): the programmatic Options.agents map reaches a
+  // registered executor, so loadAgentDefinitions' own `programmatic` parameter finally has a
+  // production producer.
+  test("ctx.agents threads the programmatic agent map from deps; absent deps leave it undefined", async () => {
+    const name = "__t8_test_ctx_agents__";
+    registerTool({ descriptor: fixtureDescriptor(name) });
+    try {
+      let captured: unknown;
+      replaceExecutor(name, {
+        async execute(_input, ctx) {
+          captured = ctx.agents;
+          return { output: "ok" };
+        },
+      });
+      await buildRegistryToolExecutor(deps()).execute({ id: "1", name, input: {} });
+      expect(captured).toBeUndefined();
+      const agents = { reviewer: { description: "d", prompt: "p" } };
+      await buildRegistryToolExecutor(deps({ agents })).execute({ id: "2", name, input: {} });
+      expect(captured).toEqual(agents);
+    } finally {
+      unregisterToolForTest(name);
+    }
+  });
+
+  // Phase 4 Task 8 (rider 27): availability is enforced AT DISPATCH, not only at advertisement.
+  // Lane C's own I3 finding: AskUserQuestion's `availability:{insideSubagent:false}` excluded it
+  // from a child's advertised set, but a child that called it anyway reached the real executor and
+  // STALLED on a host round-trip it could never be answered on -- aborted only by the 600 s stall
+  // watchdog. An advertised-but-excluded call must refuse, typed, immediately.
+  describe("rider 27: dispatch-time availability enforcement", () => {
+    test("an availability-excluded tool refuses with a typed error and its executor never runs", async () => {
+      const name = "__t8_test_availability_dispatch__";
+      registerTool({ descriptor: fixtureDescriptor(name, { availability: { insideSubagent: false } }) });
+      try {
+        let ran = false;
+        replaceExecutor(name, {
+          async execute() {
+            ran = true;
+            return { output: "SHOULD NEVER RUN" };
+          },
+        });
+        const executor = buildRegistryToolExecutor(deps({ getAvailabilityInputs: () => ({ mode: "default", insideSubagent: true }) }));
+        const result = await executor.execute({ id: "1", name, input: {} });
+        expect(result.output).toContain("not available in this session");
+        expect(result.output).not.toContain("SHOULD NEVER RUN");
+        expect(ran).toBe(false);
+      } finally {
+        unregisterToolForTest(name);
+      }
+    });
+
+    test("the SAME tool executes normally once the availability input no longer excludes it", async () => {
+      const name = "__t8_test_availability_dispatch_ok__";
+      registerTool({ descriptor: fixtureDescriptor(name, { availability: { insideSubagent: false } }) });
+      try {
+        replaceExecutor(name, { async execute() { return { output: "ran" }; } });
+        const executor = buildRegistryToolExecutor(deps({ getAvailabilityInputs: () => ({ mode: "default", insideSubagent: false }) }));
+        expect((await executor.execute({ id: "1", name, input: {} })).output).toBe("ran");
+      } finally {
+        unregisterToolForTest(name);
+      }
+    });
+
+    // The scope guard: `exposure: "hidden"` is a legitimate "registered, deliberately unadvertised,
+    // still directly callable" posture real fixtures depend on (scripts/differential.ts's own
+    // differential_bgtask_probe, called by a committed golden). Enforcing exposure at dispatch would
+    // break it -- this test is what stops a future widening of the check from doing that silently.
+    test("an exposure:'hidden' tool is STILL dispatchable -- the check is isAvailable only, never exposure", async () => {
+      const name = "__t8_test_hidden_still_callable__";
+      registerTool({ descriptor: fixtureDescriptor(name, { exposure: "hidden" }) });
+      try {
+        replaceExecutor(name, { async execute() { return { output: "hidden-but-ran" }; } });
+        const executor = buildRegistryToolExecutor(deps({ getAvailabilityInputs: () => ({ mode: "default" }) }));
+        expect((await executor.execute({ id: "1", name, input: {} })).output).toBe("hidden-but-ran");
+      } finally {
+        unregisterToolForTest(name);
+      }
+    });
+
+    test("no getAvailabilityInputs supplied = no dispatch-time enforcement (every pre-existing caller)", async () => {
+      const name = "__t8_test_availability_absent__";
+      registerTool({ descriptor: fixtureDescriptor(name, { availability: { insideSubagent: false } }) });
+      try {
+        replaceExecutor(name, { async execute() { return { output: "ran" }; } });
+        expect((await buildRegistryToolExecutor(deps()).execute({ id: "1", name, input: {} })).output).toBe("ran");
+      } finally {
+        unregisterToolForTest(name);
+      }
+    });
+  });
+
   test("session.spawnChild, when the deps' session object supplies it, is reachable from a real executor", async () => {
     const name = "__t3_test_spawn_seam__";
     registerTool({ descriptor: fixtureDescriptor(name) });

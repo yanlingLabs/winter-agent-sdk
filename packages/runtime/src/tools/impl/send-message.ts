@@ -61,11 +61,16 @@ function fallbackToolUseId(): string {
 }
 
 function callerContextFrom(ctx: ToolExecutionContext): CallerContext {
-  const forwardCompatId = (ctx as ToolExecutionContext & { toolUseId?: string }).toolUseId;
+  // Phase 4 Task 8: `ctx.toolUseId` is a REAL ToolExecutionContext field now (registry.ts threads
+  // `EngineToolCall.id` onto every context it builds) -- the forward-compatible cast this line used
+  // to need is gone. WS-10 §12's "messageId is stable across retries, derived/persisted from the
+  // sender session plus tool-call ID" is therefore live in production, not only at the router layer.
+  // The synthetic fallback stays for a hand-built context with no id: the SAFE direction, since two
+  // distinct model calls must never be mistaken for one retry of each other.
   return {
     sessionId: ctx.sessionId,
     ...(ctx.agentId !== undefined ? { agentId: ctx.agentId } : {}),
-    toolUseId: forwardCompatId ?? fallbackToolUseId(),
+    toolUseId: ctx.toolUseId ?? fallbackToolUseId(),
   };
 }
 

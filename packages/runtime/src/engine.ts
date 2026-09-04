@@ -1055,6 +1055,17 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
       ...(config.insideSubagent !== undefined ? { insideSubagent: config.insideSubagent } : {}),
       ...(config.isolationPinnedCwd !== undefined ? { isolationPinnedCwd: config.isolationPinnedCwd } : {}),
       ...(config.agentId !== undefined ? { agentId: config.agentId } : {}),
+      // Phase 4 Task 8 (Lane C Gap #3): the programmatic Options.agents map, straight from this
+      // run's own RuntimeConfig -- see ToolExecutionContext.agents (registry.ts) for why.
+      ...(config.agents !== undefined ? { agents: config.agents } : {}),
+      // Phase 4 Task 8 (rider 27): dispatch-time availability enforcement. A FUNCTION, not a
+      // snapshot, for two independent reasons: (1) `advertisedCfg` (below) is assigned AFTER this
+      // one runs -- the same "declared later, read at call time" closure binding `emitToolReference`
+      // already uses for `loadedToolSet`; (2) `mode` must be read LIVE on every call, never the
+      // frozen startup value `advertisedCfg` captured (a mid-session setPermissionMode must be able
+      // to make a mode-gated tool refuse, exactly like `isDeferredAndUnloaded` already reads mode
+      // live at the same execution boundary).
+      getAvailabilityInputs: () => ({ ...advertisedCfg, mode: policyStateStore.getState().mode }),
     };
     // Fix round 1 (RULING P3-C): main.ts is the one caller that supplies `unregisteredToolExecutor`
     // (stubExecutor) -- every OTHER caller of this default (testing.ts's inMemoryProcess, when ITS

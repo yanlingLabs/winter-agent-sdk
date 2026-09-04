@@ -1,25 +1,17 @@
 // WS-10: the Agent tool -- ties definitions/resolution/policy/limits/workspace/child-engine
-// together into the model-facing tool a running session actually calls. child-engine.ts's own file
-// header discloses three seam gaps this whole subsystem inherits (provider/store injection at
-// main.ts, child permission-RPC routing, programmatic AgentDefinition visibility) -- this file
-// documents a FOURTH below, and is where all four are actually felt by a real model-facing call.
+// together into the model-facing tool a running session actually calls.
 //
-// Disclosed Gap #4 (parentToolUseId): `SpawnChildRequest.parentToolUseId` is REQUIRED (child-
-// handle.ts, T3-frozen), but `ToolExecutionContext` (registry.ts, frozen) carries no field for a
-// tool's own tool_use_id. Confirmed by direct code reading, not assumption: engine.ts calls
-// `tools.execute({id: record.toolUseID, ...})`, but `buildRegistryToolExecutor`'s own `execute`
-// (registry.ts) constructs its `ctx: ToolExecutionContext` object WITHOUT ever including `call.id`
-// -- grepping registry.ts for `toolUseId`/`tool_use_id`/`callId`/`call\.id` returns zero matches. No
-// registered tool anywhere in this codebase can know its own tool_use_id today. No workaround exists
-// within this lane's file authority (the fix is a one-line `toolUseId: string` field on
-// ToolExecutionContext plus one `toolUseId: call.id` line in registry.ts's own ctx literal, both
-// outside this lane's file list) -- a freshly generated id stands in for it instead. This is
-// internally self-consistent (every frame ONE spawn's own descendants ever produce is stamped with
-// the SAME synthetic id, so a listener can still correlate a family of frames to ONE spawn call),
-// but it is NOT the model's own real tool_use_id -- WS-10 §4's "keyed by parent tool-use ID"
-// correlation guarantee is real but rooted in a synthetic key, not the model's own. Flagged
-// NEEDS_CONTEXT #1 in this lane's own report -- do not attempt to recover the real id from `input`;
-// it is not present there.
+// CLOSED by Phase 4 Task 8 (this header previously documented both as live gaps; kept as a record
+// of what the fix actually was rather than deleted):
+//   - Gap #4 (parentToolUseId): `ToolExecutionContext` now carries `toolUseId`, threaded from
+//     `EngineToolCall.id` in registry.ts's own ctx literal, so `SpawnChildRequest.parentToolUseId`
+//     is the MODEL's own tool_use id and WS-10 §4's "keyed by parent tool-use ID" correlation is
+//     rooted in a real key. The randomUUID() fallback below survives only for a hand-built context.
+//   - Gap #3 (programmatic AgentDefinition visibility): `ToolExecutionContext.agents` now carries
+//     `RuntimeConfig.agents`, so `loadAgentDefinitions`'s own `programmatic` parameter finally has a
+//     production producer -- WS-10 §2's "programmatic definitions and filesystem-defined agents MUST
+//     coexist" holds in a live session, not only in this lane's own unit tests.
+// child-engine.ts's own header still discloses the remaining subsystem-level seams.
 import { randomUUID } from "node:crypto";
 import { writeFileSync, appendFileSync } from "node:fs";
 import type { RuntimeAgentDefinition } from "@yanlinglabs/winter-agent-sdk";
@@ -249,21 +241,28 @@ export const agentExecutor: ToolExecutor = {
       return { output: "no spawnChild capability configured", isError: true };
     }
 
-    // WS-10 §2: subagent_type selects an AgentDefinition. Resolvable sources today are filesystem-
-    // only: `~/.winter/agents/*.md` always, `.winter/agents/*.md` only in a trusted workspace
-    // (RULING R4-7, resolveWorkspaceTrust()). A session's own programmatic Options.agents map is NOT
-    // reachable from inside a tool executor at all (Disclosed Gap #3, child-engine.ts's own header)
-    // -- `loadAgentDefinitions`'s own `programmatic` parameter is always omitted here until that seam
-    // grows a field; this is a real, disclosed production limitation (NEEDS_CONTEXT), not a bug in
-    // this call.
+    // WS-10 §2: subagent_type selects an AgentDefinition. Both sources now resolve -- filesystem
+    // (`~/.winter/agents/*.md` always, `.winter/agents/*.md` only in a trusted workspace, RULING
+    // R4-7 / resolveWorkspaceTrust()) AND the session's own PROGRAMMATIC `Options.agents` map,
+    // which reaches this executor via `ctx.agents` (Phase 4 Task 8 closed Lane C's Disclosed Gap #3
+    // by adding that field to ToolExecutionContext and threading `config.agents` onto it in
+    // engine.ts's buildDefaultToolExecutor). `loadAgentDefinitions`'s own `programmatic` parameter
+    // was always implemented and independently tested; this call site simply had nothing to pass it
+    // until the seam existed. Precedence across sources is definitions.ts's own (programmatic >
+    // project > user, "most specific wins" -- see that file's own header).
     let definition: RuntimeAgentDefinition | undefined;
     if (subagentType !== undefined) {
       const trustedWorkspace = resolveWorkspaceTrust();
-      const definitions = loadAgentDefinitions({ cwd: ctx.cwd, home: ctx.home, trustedWorkspace });
+      const definitions = loadAgentDefinitions({
+        cwd: ctx.cwd,
+        home: ctx.home,
+        trustedWorkspace,
+        ...(ctx.agents !== undefined ? { programmatic: ctx.agents as Record<string, RuntimeAgentDefinition> } : {}),
+      });
       const found = definitions.get(subagentType);
       if (found === undefined) {
         return {
-          output: `Error: unknown subagent_type "${subagentType}" -- no AgentDefinition by that name was found (checked ~/.winter/agents/*.md${trustedWorkspace ? " and .winter/agents/*.md" : ""}).`,
+          output: `Error: unknown subagent_type "${subagentType}" -- no AgentDefinition by that name was found (checked ~/.winter/agents/*.md${trustedWorkspace ? " and .winter/agents/*.md" : ""}${ctx.agents !== undefined ? " and this session's programmatic agents" : ""}).`,
           isError: true,
         };
       }
@@ -283,9 +282,14 @@ export const agentExecutor: ToolExecutor = {
       isFork: false,
     });
 
-    // Disclosed Gap #4 (this file's own header): a freshly generated id stands in for the real
-    // tool_use_id no registered executor can see.
-    const parentToolUseId = randomUUID();
+    // Phase 4 Task 8 closed Lane C's Disclosed Gap #4: `ctx.toolUseId` IS the model's own
+    // `tool_use` block id for this call (registry.ts threads `EngineToolCall.id` onto every
+    // ToolExecutionContext it builds), so WS-10 §4's "child progress correlated, keyed by parent
+    // tool-use ID" is now keyed on the real id a host can match against the tool_use block it saw.
+    // The randomUUID() fallback stays for a hand-built context that supplies no id (every
+    // pre-existing impl/*.test.ts fixture): internally self-consistent, never a fabricated claim to
+    // be the model's id.
+    const parentToolUseId = ctx.toolUseId ?? randomUUID();
 
     const req: SpawnChildRequest = {
       parentToolUseId,

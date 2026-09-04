@@ -249,6 +249,34 @@ export interface ToolExecutionContext {
   // exposed here too so a tool executor that needs to self-identify (e.g. a future messaging tool
   // addressing itself) never has to reach back into engine-internal state for it.
   agentId?: string;
+  // Phase 4 Task 8 (WS-10 "Execution amendments -- Per-call tool-use id"): the id of the
+  // model-emitted `tool_use` block this execution is answering -- `EngineToolCall.id`, threaded
+  // through `buildRegistryToolExecutor` below. Two production consumers, both of which had to
+  // invent a synthetic stand-in until this landed: `tools/impl/agent.ts`'s
+  // `SpawnChildRequest.parentToolUseId` (WS-10 §4's "child progress correlated, keyed by parent
+  // tool-use ID" -- a randomUUID() was internally self-consistent but was never the model's own id,
+  // so a host correlating a child's forwarded frames against the tool_use block it saw could not
+  // match them) and `tools/impl/send-message.ts`'s message-id derivation (WS-10 §12: "messageId is
+  // stable across retries, derived/persisted from the sender session plus tool-call ID" -- a fresh
+  // synthetic id per call made the retry-returns-the-stored-outcome guarantee unreachable in
+  // production, though the router layer itself was always correct).
+  //
+  // OPTIONAL for the identical reason as `insideSubagent`/`agentId` above (~25 pre-existing
+  // `impl/*.test.ts` files construct a ToolExecutionContext by hand with no shared builder); the
+  // real engine always supplies it. Absent means "this executor cannot know its own tool_use id" --
+  // each consumer owns its own documented fallback, never a fabricated-but-plausible value.
+  toolUseId?: string;
+  // Phase 4 Task 8 (Lane C Gap #3, WS-10 §2): the session's PROGRAMMATIC agent definitions
+  // (`Options.agents` -> `RuntimeConfig.agents`), surfaced to a tool executor so
+  // `tools/impl/agent.ts` can pass them to `loadAgentDefinitions`'s own already-implemented
+  // `programmatic` parameter. Before this field existed, only FILESYSTEM-defined agents
+  // (`~/.winter/agents/*.md`, and `.winter/agents/*.md` in a trusted workspace) were resolvable via
+  // `subagent_type` in production, silently ignoring every programmatically-supplied definition --
+  // a real gap WS-10 §2's own "programmatic definitions and filesystem-defined agents MUST coexist"
+  // forbids. Typed structurally (never importing subagents/definitions.ts's own type here) to keep
+  // this module free of a runtime dependency on that one; `loadAgentDefinitions` accepts the same
+  // shape by construction. Optional/absent = "no programmatic definitions this session."
+  agents?: Readonly<Record<string, unknown>>;
   session: {
     setCwd(p: string): void;
     addBoundedRoot(p: string): void;
@@ -922,6 +950,36 @@ export interface RegistryToolExecutorDeps {
   insideSubagent?: boolean;
   isolationPinnedCwd?: boolean;
   agentId?: string;
+  // Phase 4 Task 8: mirrors ToolExecutionContext.agents exactly -- see that field's own comment.
+  agents?: Readonly<Record<string, unknown>>;
+  // Phase 4 Task 8 (rider 27): the session's own availability inputs, so this adapter can enforce
+  // `isAvailable` AT DISPATCH rather than only at advertisement. Rationale, from Lane C's own I3
+  // finding: `AskUserQuestion`'s `availability: { insideSubagent: false }` excluded it from a child's
+  // ADVERTISED set but nothing consulted availability before EXECUTING a called tool -- a child that
+  // called it anyway reached the real executor and STALLED on a host round-trip it could never get
+  // an answer for, aborted only by the 600 s stall watchdog. An advertised-but-excluded tool call
+  // must return a typed refusal, never a stall.
+  //
+  // Deliberately SCOPED to `isAvailable`'s own axes (modes/platforms/features/toolSearchDisabled/
+  // familyTaskNative/insideSubagent/capabilities) -- NEVER exposure, disposition, or disallowedTools:
+  // `exposure: "hidden"` is a legitimate "registered, deliberately unadvertised, still directly
+  // callable" posture that real fixtures depend on (scripts/differential.ts's own
+  // `differential_bgtask_probe`, called by a committed golden), `disposition` is already handled
+  // above, and `disallowedTools` is the permission engine's own enforcement path (WS-07 §3), not
+  // this adapter's. A getter, not a snapshot: `mode` and the loaded capability set can both move
+  // mid-session. Absent = no dispatch-time availability enforcement (every pre-existing caller,
+  // byte-identical to before this field existed).
+  getAvailabilityInputs?: () => AdvertisedSetInputs;
+}
+
+// Phase 4 Task 8 (rider 27): the shared dispatch-time availability refusal. Text names the axis
+// generically rather than re-deriving WHICH gate failed -- `isAvailable` is a conjunction and a
+// caller that needs the specific axis has the descriptor in hand already.
+function unavailableResult(name: string): ToolResultPayload {
+  return {
+    output: `Error: "${name}" is not available in this session's current configuration (WS-06 §1.5 availability) -- it is registered but excluded here, so it was not executed`,
+    isError: true,
+  };
 }
 
 export function buildRegistryToolExecutor(deps: RegistryToolExecutorDeps): EngineFacingToolExecutor {
@@ -930,6 +988,11 @@ export function buildRegistryToolExecutor(deps: RegistryToolExecutorDeps): Engin
       const registered = getRegisteredTool(call.name);
       if (!registered) return foldResult(unknownToolResult(call.name));
       if (registered.descriptor.disposition === "correctly-absent") return foldResult(correctlyAbsentResult(call.name));
+      // Rider 27: availability is enforced HERE, before `executor` is even consulted -- an excluded
+      // tool must refuse identically whether or not its executor happens to exist yet.
+      if (deps.getAvailabilityInputs !== undefined && !isAvailable(registered.descriptor, deps.getAvailabilityInputs())) {
+        return foldResult(unavailableResult(call.name));
+      }
       if (!registered.executor) return foldResult(notYetExecutableResult(call.name));
 
       // A getter-backed object literal: satisfies `ToolExecutionContext.tempDir: string`
@@ -952,6 +1015,11 @@ export function buildRegistryToolExecutor(deps: RegistryToolExecutorDeps): Engin
         insideSubagent: deps.insideSubagent === true,
         isolationPinnedCwd: deps.isolationPinnedCwd === true,
         ...(deps.agentId !== undefined ? { agentId: deps.agentId } : {}),
+        // Phase 4 Task 8: the model's own tool_use id for THIS call -- see
+        // ToolExecutionContext.toolUseId's own comment. Always present here (EngineToolCall.id is a
+        // required field); optional only on the interface, for hand-built test contexts.
+        toolUseId: call.id,
+        ...(deps.agents !== undefined ? { agents: deps.agents } : {}),
       };
       const result = await registered.executor.execute(call.input, ctx);
       return foldResult(result);
