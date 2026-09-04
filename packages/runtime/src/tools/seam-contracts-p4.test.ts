@@ -34,6 +34,8 @@ import {
   buildAdvertisedSet,
   createLoadedToolSet,
   resolveDeferral,
+  isDeferralActive,
+  isLoadFirstBlocked,
   type DeferralActivation,
 } from "./registry.ts";
 import { createFakeMcpServerStateSource } from "../mcp/state.ts";
@@ -141,6 +143,32 @@ describe("(iii) deferral: load-first (WS-09 §8.5 execution-boundary ingredients
     expect(loadedSet.isLoaded("Read")).toBe(true);
     expect(loadedSet.isLoaded("Edit")).toBe(false);
   });
+
+  // Phase 4 Task 3 (MUST 6/MUST 10): isLoadFirstBlocked is the EXACT execution-boundary predicate
+  // engine.ts's own tool-call loop consults (via its own thin isDeferredAndUnloaded wrapper) before
+  // ever reaching permission evaluation -- exported specifically so this file exercises the
+  // IDENTICAL code path production traffic runs through, never a re-implementation that could
+  // silently drift from it (this file's own R4-2 charter).
+  test("isLoadFirstBlocked (Task 3): true for a deferred+unloaded name, false once loaded, false when Tool Search is inactive, false for an unknown name", () => {
+    try {
+      registerMcpServerTools(SRV, [{ name: "search_docs", inputSchema: { type: "object" } }], { deferredDefault: true });
+      const canonicalName = `mcp__${SRV}__search_docs`;
+      const loadedSet = createLoadedToolSet();
+
+      expect(isLoadFirstBlocked(canonicalName, "default", activeToolSearch, loadedSet)).toBe(true);
+
+      loadedSet.load([canonicalName]);
+      expect(isLoadFirstBlocked(canonicalName, "default", activeToolSearch, loadedSet)).toBe(false);
+
+      const inactiveToolSearch: DeferralActivation = { enableToolSearch: "false", providerSupportsToolSearch: true, deferrableContextShare: 0 };
+      const freshLoadedSet = createLoadedToolSet(); // never loaded
+      expect(isLoadFirstBlocked(canonicalName, "default", inactiveToolSearch, freshLoadedSet)).toBe(false); // resolveDeferral itself resolves "eager" -- never blocked
+
+      expect(isLoadFirstBlocked("__t3_totally_unknown_name__", "default", activeToolSearch, freshLoadedSet)).toBe(false);
+    } finally {
+      unregisterMcpServerTools(SRV);
+    }
+  });
 });
 
 describe("(iv) _meta preservation round-trip (WS-09 §6)", () => {
@@ -187,6 +215,32 @@ describe("(iv) _meta preservation round-trip (WS-09 §6)", () => {
       const descriptor = getRegisteredTool(`mcp__${SRV}__truthy_case`)!.descriptor;
       expect(descriptor._meta).toEqual({ "anthropic/requiresUserInteraction": "yes" }); // preserved verbatim regardless
       expect(descriptor.interaction).toBeUndefined(); // but NOT derived -- exact === true only
+    } finally {
+      unregisterMcpServerTools(SRV);
+    }
+  });
+});
+
+// Phase 4 Task 3 (RULING P4-A, MUST 10): isDeferralActive is the ONE "is Tool Search on" authority
+// this same module's resolveDeferral now derives its own tail from -- proven here as its own seam
+// contract so a future caller (Lane B) can rely on the "impossible by construction" guarantee
+// without re-deriving it from resolveDeferral's own private implementation.
+describe("(v) RULING P4-A -- isDeferralActive is the single activation authority", () => {
+  test("agrees with resolveDeferral's own verdict for an eligible descriptor across a representative sweep, by construction", () => {
+    try {
+      registerMcpServerTools(SRV, [{ name: "search_docs", inputSchema: { type: "object" } }], { deferredDefault: true });
+      const descriptor = getRegisteredTool(`mcp__${SRV}__search_docs`)!.descriptor;
+      const sweep: DeferralActivation[] = [
+        { enableToolSearch: "unset", providerSupportsToolSearch: true, deferrableContextShare: 0 },
+        { enableToolSearch: "auto", providerSupportsToolSearch: true, deferrableContextShare: 10 },
+        { enableToolSearch: "true", providerSupportsToolSearch: true, deferrableContextShare: 0 },
+        { enableToolSearch: "false", providerSupportsToolSearch: true, deferrableContextShare: 100 },
+        { enableToolSearch: "true", providerSupportsToolSearch: false, deferrableContextShare: 100 },
+        { enableToolSearch: { auto: 40 }, providerSupportsToolSearch: true, deferrableContextShare: 39 },
+      ];
+      for (const activation of sweep) {
+        expect(resolveDeferral(descriptor, "default", activation) === "deferred").toBe(isDeferralActive(activation));
+      }
     } finally {
       unregisterMcpServerTools(SRV);
     }

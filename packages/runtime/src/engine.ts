@@ -99,7 +99,7 @@ import {
   isDeferralActive,
   partitionAdvertisedTools,
   createLoadedToolSet,
-  resolveDeferral,
+  isLoadFirstBlocked,
   type RegistryToolExecutorDeps,
   type McpToolDefinition,
   type DeferralActivation,
@@ -1189,15 +1189,12 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   const advertisedPartition = partitionAdvertisedTools(advertisedCfg, deferralActivation);
   currentAdvertisedCanonicalNames = [...advertisedPartition.eager, ...advertisedPartition.deferred].map((d) => d.canonicalName);
   // Phase 4 Task 3 (MUST 6, WS-09 §8.2/§8.5): the execution-boundary "load ≠ permission" check --
-  // re-derived from the LIVE registry per call (never a frozen startup snapshot), so a server
-  // registered/reconnected mid-session is covered too. An unknown name (no descriptor at all)
-  // is NOT this check's concern -- it falls through to the registry's own "unknown tool" result,
-  // unaffected.
+  // registry.ts's own exported isLoadFirstBlocked (re-derived from the LIVE registry per call, never
+  // a frozen startup snapshot, so a server registered/reconnected mid-session is covered too;
+  // exported specifically so the seam contract tests exercise this IDENTICAL code path, not a
+  // re-implementation).
   function isDeferredAndUnloaded(toolName: string): boolean {
-    const descriptor = getRegisteredTool(toolName)?.descriptor;
-    if (!descriptor) return false;
-    const verdict = resolveDeferral(descriptor, policyStateStore.getState().mode, deferralActivation);
-    return verdict === "deferred" && !loadedToolSet.isLoaded(toolName);
+    return isLoadFirstBlocked(toolName, policyStateStore.getState().mode, deferralActivation, loadedToolSet);
   }
   // WS-09 §8.5 "Ground truth... the live request's tools array": `system/init.tools` = eager PLUS
   // whichever deferred names are ALREADY loaded this session (none, at startup -- a fresh

@@ -699,6 +699,20 @@ export function partitionAdvertisedTools(cfg: AdvertisedSetInputs, activation: D
   return partition;
 }
 
+// Phase 4 Task 3 (MUST 6, WS-09 §8.2/§8.5): the EXACT execution-boundary predicate engine.ts's own
+// tool-call loop consults before ever reaching permission evaluation ("load ≠ permission" -- an
+// unloaded deferred tool is not yet ELIGIBLE to run at all). Exported (rather than left as a private
+// engine.ts closure) so the seam contract tests exercise the IDENTICAL code path production traffic
+// runs through, never a re-implementation that could silently drift from it. Looks up the LIVE
+// registry by name (never a frozen snapshot) via the already-exported `getRegisteredTool` -- an
+// unknown name is not this predicate's concern (`false`; the registry's own "unknown tool" result
+// handles it elsewhere).
+export function isLoadFirstBlocked(toolName: string, mode: PermissionMode, activation: DeferralActivation, loaded: LoadedToolSet): boolean {
+  const descriptor = getRegisteredTool(toolName)?.descriptor;
+  if (!descriptor) return false;
+  return resolveDeferral(descriptor, mode, activation) === "deferred" && !loaded.isLoaded(toolName);
+}
+
 // --- §1.5: availability resolution + buildAdvertisedSet ---------------------------------------------
 
 // N1 (fix wave, P3 close-out): STALE as of T8 -- this paragraph described the T1-era state
