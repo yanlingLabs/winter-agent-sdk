@@ -23,7 +23,8 @@ import { resolveEngineSession, resolveProductionWinterHome } from "./store/diale
 // an in-process harness, so registering in only one of the two would make the Agent tool behave
 // differently per transport, which WS-04 §12 treats as a release blocker).
 import { registerDefaultChildEngineFactory } from "./subagents/register-default-factory.ts";
-import { WinterCompatibilitySessionStore } from "@yanlinglabs/winter-agent-sdk";
+import { WinterCompatibilitySessionStore, compatibilityKeys } from "@yanlinglabs/winter-agent-sdk";
+import { restoreChildRoster } from "./subagents/restore.ts";
 
 // Same argv contract as winter-agent-runtime/testing's inMemoryProcess (Task 2): find the flag by
 // NAME, never by position. Position-based parsing would silently break between the two ways this
@@ -123,14 +124,26 @@ try {
   // then run without durable transcripts, exactly as the parent does, rather than being handed a
   // store the parent itself was denied.
   const childWinterHome = config.persistSession === false ? undefined : resolveProductionWinterHome(config, process.env);
+  // ONE store object, shared by the child-engine factory and the fix wave's roster restore below --
+  // `resolveEngineSession`'s own `store` is a narrower write-side `SessionPersistence`, which can
+  // neither list a session's child subkeys nor read a sidecar back.
+  const childStore = childWinterHome !== undefined ? new WinterCompatibilitySessionStore({ winterHome: childWinterHome }) : undefined;
   registerDefaultChildEngineFactory({
     provider,
     config: effectiveConfig,
     env: process.env,
-    ...(childWinterHome !== undefined
-      ? { store: new WinterCompatibilitySessionStore({ winterHome: childWinterHome }), winterHome: childWinterHome }
-      : {}),
+    ...(childStore !== undefined && childWinterHome !== undefined ? { store: childStore, winterHome: childWinterHome } : {}),
   });
+  // Phase 4 fix wave (I3): WS-10 §7's "the roster rebuilds from durable storage" MUST -- on a
+  // RESUME (never a fork, which is a NEW session whose children belong to the source), the prior
+  // session's children are restored from their durable sidecars and contributed to the messaging
+  // runtime BEFORE the first turn, so `ListAgents`/`SendMessage` can see a child that outlived a
+  // restart. Withdrawn once this session's own run ends. See subagents/restore.ts for what a
+  // restored handle can and cannot do (identity yes, live resume no -- an explicit carry).
+  const restoredChildren =
+    childStore !== undefined && config.forkSession !== true && (config.resume !== undefined || config.continue === true)
+      ? await restoreChildRoster(childStore, { projectKey: compatibilityKeys(effectiveConfig.cwd).transcriptProjectKey, sessionId: effectiveConfig.sessionId })
+      : undefined;
   const code = await runEngine({
     config: effectiveConfig,
     input: stdinFrameSource(),
@@ -157,6 +170,10 @@ try {
     // Task 12 (WS-07 §10.5): same precedent, same resolved triple.
     ...(autoStateStore !== undefined ? { autoStateStore } : {}),
   });
+  // Withdrawn before exit for symmetry with engine.ts's own per-run roster withdrawal; this process
+  // is about to end either way, so it is hygiene, not a leak fix (testing.ts's in-memory leg, where
+  // ONE process runs many sessions, is where it genuinely matters).
+  restoredChildren?.remove();
   process.exit(code);
 } catch (err) {
   const text = err instanceof Error ? (err.stack ?? err.message) : String(err);
