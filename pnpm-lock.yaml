@@ -36,6 +36,9 @@ importers:
       '@yanlinglabs/winter-agent-sdk':
         specifier: workspace:*
         version: link:../sdk
+      ajv:
+        specifier: ^8.20.0
+        version: 8.20.0
 
   packages/sdk:
     devDependencies:
