@@ -85,8 +85,25 @@ describe("parseMcpEnvConfig: MAX_MCP_OUTPUT_TOKENS (WS-09 §7)", () => {
   });
 });
 
-test("parseMcpEnvConfig is a pure function of its input -- never reads the real process.env", () => {
+test("parseMcpEnvConfig never WRITES to the real process.env", () => {
   const before = process.env.ENABLE_TOOL_SEARCH;
   parseMcpEnvConfig({ ENABLE_TOOL_SEARCH: "true" });
   expect(process.env.ENABLE_TOOL_SEARCH).toBe(before); // untouched
+});
+
+// Fix round 1, NIT item 5: the test above (previously titled "...never reads the real process.env")
+// only ever proved the no-WRITE half -- a before/after equality check on ONE key can never catch an
+// internal fallback to the real process.env for a DIFFERENT key the caller's own object omits. This
+// closes that gap directly: seed a real env value the passed-in object never mentions, and confirm
+// the result is the DOCUMENTED DEFAULT rather than the real env's value -- the only way that can
+// happen is if parseMcpEnvConfig reads exclusively from its `env` parameter.
+test("parseMcpEnvConfig never READS the real process.env -- a key the caller omits gets the default, not the real value", () => {
+  const previousRealValue = process.env.MCP_TIMEOUT;
+  process.env.MCP_TIMEOUT = "99999"; // a real env value the function must NOT see
+  try {
+    expect(parseMcpEnvConfig({ ENABLE_TOOL_SEARCH: "true" }).timeoutMs).toBe(30000); // the documented default, not 99999
+  } finally {
+    if (previousRealValue === undefined) delete process.env.MCP_TIMEOUT;
+    else process.env.MCP_TIMEOUT = previousRealValue;
+  }
 });
