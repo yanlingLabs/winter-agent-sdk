@@ -1,8 +1,29 @@
 export type ProtocolVersion = `${number}.${number}`;
 export const PROTOCOL_VERSION = "1.0" as const;
 
+// Phase 4 Task 3 (WS-09 §2.1/§3, item (b) of derived-shapes-p4.md): a server's connection state,
+// wire-mapped from the internal seven-state McpServerStateKind (mcp/state.ts) to the string this
+// frame carries. T1's own Open Question 5 pins the one spelling that must NOT match its internal
+// name verbatim: the internal kind `needsAuth` (camelCase) maps to the wire string `'needs-auth'`
+// (hyphenated) -- the exact spelling the pinned official `McpServerStatus.status` enum uses for the
+// identical concept (item (b): "'connected'|'failed'|'needs-auth'|'pending'|'disabled'", 5 members).
+// Every other one of Winter's seven internal kinds (`pending`/`connected`/`cached`/`failed`/
+// `disabled`/`unconfigured`) already spells identically either way; `cached`/`unconfigured` are
+// Winter-only additions beyond the pinned 5-member enum, which this field's own bare-`string` type
+// (never a closed literal union, matching item (b)'s own finding: "a BARE, UNTYPED string status,
+// not the richer 5-member literal union") accommodates without contradiction.
+export interface WireMcpServerStatus { name: string; status: string; }
+
 export interface InitFrame { type: "init"; protocolVersion: ProtocolVersion; sessionId: string; cwd: string;
-  model: string; permissionMode: string; tools: string[]; [k: string]: unknown; }
+  model: string; permissionMode: string; tools: string[];
+  // Phase 4 Task 3 (WS-09 §2.1's own consequence clause: "the next turn's system/init.tools
+  // reflects the mutation" -- generalized here to the whole snapshot, mirrored onto the paired
+  // system/init SdkMessage variant below by the SAME single computation, never two independent
+  // ones). Absent whenever no MCP server state source is configured for this run (every
+  // pre-existing session before this field existed) -- conditional presence, not an unconditional
+  // `[]`, so every committed differential golden stays byte-identical by construction.
+  mcp_servers?: WireMcpServerStatus[];
+  [k: string]: unknown; }
 export interface UserFrame { type: "user"; text: string; [k: string]: unknown; }
 export interface DataFrame { type: "data"; message: SdkMessage; [k: string]: unknown; }
 export interface ControlRequestFrame { type: "control_request"; requestId: string; subtype: string; payload: unknown; }
@@ -227,14 +248,47 @@ export type BackgroundTaskMessage =
   | SDKBackgroundTasksChangedMessage
   | SDKLocalCommandOutputMessage;
 
+// Phase 4 Task 3 (derived-shapes-p4.md item (b), sdk.d.ts:4836-4848): `compacting`/`requesting`
+// lifecycle status, UNRELATED to MCP despite this task's own brief phrasing implying otherwise --
+// T1's own DEVIATION note in item (b) already corrected that reading; recorded here so a future
+// reader of this file sees the same correction at the type's own definition site. Closed
+// three-member union incl. `null` (the pinned artifact's own "no status" resting value) --
+// `compact_result`/`compact_error` are present only on a `'compacting'` status update, per the
+// pinned declaration's own optionality (never enforced structurally here, matching this file's
+// established "optional, producer decides which fields it actually sets" convention throughout).
+export type SDKStatus = "compacting" | "requesting" | null;
+export interface SDKStatusMessage {
+  type: "system";
+  subtype: "status";
+  status: SDKStatus;
+  permissionMode?: string;
+  compact_result?: "success" | "failed";
+  compact_error?: string;
+  uuid: string;
+  session_id: string;
+}
+
 export type SdkMessage =
-  | { type: "system"; subtype: "init"; session_id: string; cwd: string; model: string; permissionMode: string; tools: string[]; [k: string]: unknown }
+  | { type: "system"; subtype: "init"; session_id: string; cwd: string; model: string; permissionMode: string; tools: string[]; mcp_servers?: WireMcpServerStatus[]; [k: string]: unknown }
   | SDKHookStartedMessage
   | SDKHookProgressMessage
   | SDKHookResponseMessage
   | SDKPermissionDeniedMessage
+  | SDKStatusMessage
   | BackgroundTaskMessage
-  | { type: "assistant"; message: { content: Array<{ type: "text"; text: string } | { type: string; [k: string]: unknown }> }; [k: string]: unknown }
+  // Phase 4 Task 3 (WS-10 §4; derived-shapes-p4.md item (d)): `parent_tool_use_id` is the
+  // message-stream child-progress correlator ("present on 6 variants of the... SDKMessage union" --
+  // T1's own item (d) finding). Added here on the two variants THIS engine actually produces that
+  // the correlation applies to (assistant text/tool_use, and the "user" role tool-result carrier --
+  // engine.ts's own `{type:"data", message:{type:"user", message:{content: resultBlocks}}}` shape,
+  // previously reachable only through the generic catch-all below). `agentID` is DELIBERATELY NOT
+  // added to either shape: T1's own item (d) correction is explicit that `agentID` is a
+  // FUNCTION-CALL-TIME permission correlator (CanUseTool's options object / the already-shipped
+  // `SDKPermissionDeniedMessage.agent_id` above), never a message-stream field on any SDKMessage
+  // variant in the pinned declaration -- conflating the two was the brief's own framing error,
+  // corrected by the shape authority this task was told to follow.
+  | { type: "assistant"; message: { content: Array<{ type: "text"; text: string } | { type: string; [k: string]: unknown }> }; parent_tool_use_id?: string | null; [k: string]: unknown }
+  | { type: "user"; message: { role: "user"; content: Array<{ type: string; [k: string]: unknown }> }; parent_tool_use_id?: string | null; [k: string]: unknown }
   // Finding 3: `permission_denials` is ALWAYS present (pin-verified) — every result the engine
   // constructs carries it, `[]` when this turn denied nothing.
   | { type: "result"; subtype: "success" | "error_max_turns" | "error_during_execution" | "error_max_budget_usd" | "error_max_structured_output_retries" | string; is_error?: boolean; result?: string; permission_denials: SDKPermissionDenial[]; [k: string]: unknown }
