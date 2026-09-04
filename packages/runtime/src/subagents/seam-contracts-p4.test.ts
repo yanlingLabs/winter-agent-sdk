@@ -41,7 +41,13 @@ import { handleMcpStatus, handleMcpReconnect, handleMcpToggle, handleMcpSetServe
 // (Lane C's own child-engine.ts is that), but a fixture proving the four outcomes MUST 10 pins are
 // mutually consistent and testable at all. Lane D's own router (consuming ChildHandle ONLY) can be
 // tested against this exact fake instead of a live child engine.
-function createFakeChildHandle(recordOverrides?: Partial<ChildSessionRecord>): ChildHandle & { simulateCompletion(content: string): void } {
+// Fix round 1, MAJOR item 1: exported (was file-private) so engine.test.ts's own NEW spawn-seam
+// tests can drive a REAL runEngine against this exact fixture, per the controller's explicit
+// instruction, instead of hand-rolling a second, potentially-drifting fake ChildHandle. No test body
+// or assertion in THIS file changed -- this is the one, minimal, additive edit "keep it green" was
+// always going to tolerate: a seam-authority file staying the single source of the fixture its own
+// tests already prove correct, rather than becoming one of two.
+export function createFakeChildHandle(recordOverrides?: Partial<ChildSessionRecord>): ChildHandle & { simulateCompletion(content: string): void } {
   let status: ChildSessionRecord["status"] = "running";
   let resolveResult!: (r: ChildResult) => void;
   let settled = false;

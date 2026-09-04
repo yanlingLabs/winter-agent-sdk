@@ -22,6 +22,20 @@ import "./tools/impl/index.ts"; // guarantees advisor.ts's own module-load defau
 import { echoProvider, scriptedProvider, stubExecutor } from "./provider/mock.ts";
 import { inMemoryProcess } from "./testing.ts";
 import { WinterPermissionError } from "./permissions/policy-state.ts";
+// Fix round 1, MAJOR item 1: createFakeChildHandle is exported from the seam-authority file (its
+// own header still says "keep it green" -- this import, plus the one-line `export` there, is the
+// only change made to it) so this file's NEW spawn-seam tests drive a REAL runEngine against the
+// identical fixture that file's own (i) tests already prove satisfies the ChildHandle contract.
+import { createFakeChildHandle } from "./subagents/seam-contracts-p4.test.ts";
+import {
+  registerChildEngineFactory,
+  resetChildEngineFactoryForTest,
+  type ChildEngineFactory,
+  type ChildEngineRunContext,
+  type SpawnChildRequest,
+  type ChildInheritance,
+  type ChildHandle,
+} from "./subagents/child-handle.ts";
 import { createInMemoryApprovalStore, createFileDurableApprovalStore, WINTER_RUNTIME_KIND, type DurableApprovalStore, type DurableApprovalRecord } from "./permissions/approvals.ts";
 // Task 8 (P3 close-out): RULING P2-E's own pinned cap constant, reused (never a hand-copied number)
 // so the "over the cap" fixture below can never silently drift from what validateNewRule enforces.
@@ -3022,5 +3036,353 @@ describe("Phase 4 Task 3: ctx.emitToolReference (MUST 6, WS-09 §8.2/§8.3)", ()
       unregisterMcpServerTools(SRV);
       unregisterToolForTest(SELECT_TOOL);
     }
+  });
+});
+
+// ==================================================================================================
+// Fix round 1, MAJOR item 1: the spawn seam ENGINE-LEVEL proof (WS-10 §1/§3.5, R4-4, MUST 5).
+//
+// The original task-3-report.md claimed "MUST 5 proven in 39b1c44" -- that commit's own tests
+// exercise MCP control subtypes, mcp_servers on init, deferral activation, sdk_mcp_call, and agentID
+// ONLY. None of them ever call ctx.session.spawnChild, register a ChildEngineFactory, exercise
+// buildChildInheritance's model-chain precedence, observe the childRoster, or drive
+// forwardChildFrame's own wiring to the REAL host stream. That claim was false; this section is the
+// actual proof (see task-3-report.md's fix-round section for the correction).
+//
+// Every test below drives a REAL runEngine with a scripted provider -- never a unit-level call into
+// buildChildInheritance/resolveChildModel directly -- so what's proven is the WIRING (tool call ->
+// registry dispatch -> ctx.session.spawnChild -> the registered factory -> the real host stream),
+// not just the pure functions underneath it (already unit-provable, and beside the point: the
+// report's false claim was specifically about END-TO-END engine coverage).
+// ==================================================================================================
+
+const SPAWN_PROBE_TOOL_NAME = "t3fix1_spawn_probe";
+
+// A fixture tool whose executor does the ONE thing every test below needs: call
+// ctx.session.spawnChild with EXACTLY the SpawnChildRequest the scripted tool_use's own `input`
+// specifies, and report back which child it got. Registered/unregistered per-test (mirrors this
+// file's own "collideCanonical" precedent, commit 95a27c7) rather than once at module scope, since
+// different tests need no different DESCRIPTOR, only different scripted `input` per call.
+function registerSpawnProbeTool(): void {
+  registerTool({
+    descriptor: {
+      canonicalName: SPAWN_PROBE_TOOL_NAME,
+      advertisedName: SPAWN_PROBE_TOOL_NAME,
+      source: "builtin",
+      inputSchema: { type: "object" },
+      description: "fixture: calls ctx.session.spawnChild with its own input as the SpawnChildRequest",
+      exposure: "eager",
+      permissionClass: "read",
+      availability: {},
+      capabilityRequirements: [],
+      disposition: "implement-now",
+    },
+    executor: {
+      async execute(input: unknown, ctx) {
+        if (!ctx.session.spawnChild) return { output: "no spawnChild capability configured", isError: true };
+        const handle = await ctx.session.spawnChild(input as SpawnChildRequest);
+        return { output: JSON.stringify({ id: handle.record.id, status: handle.status() }) };
+      },
+    },
+  });
+}
+
+// Captures every (req, inherit, runCtx) triple the registered factory is called with, in call
+// order, and hands back the SAME createFakeChildHandle() instance every time (assertion (d) checks
+// object IDENTITY against this, not merely a structurally-similar handle).
+function installCapturingFactory(): { calls: Array<{ req: SpawnChildRequest; inherit: ChildInheritance; runCtx: ChildEngineRunContext }>; handleToReturn: ChildHandle } {
+  const calls: Array<{ req: SpawnChildRequest; inherit: ChildInheritance; runCtx: ChildEngineRunContext }> = [];
+  const handleToReturn = createFakeChildHandle();
+  const factory: ChildEngineFactory = (runCtx) => ({
+    async spawn(req: SpawnChildRequest, inherit: ChildInheritance) {
+      calls.push({ req, inherit, runCtx });
+      return handleToReturn;
+    },
+  });
+  registerChildEngineFactory(factory);
+  return { calls, handleToReturn };
+}
+
+describe("Fix round 1, MAJOR item 1: spawn seam engine-level proof (MUST 5, WS-10 R4-4)", () => {
+  test("(a) no factory registered: the typed throw surfaces as a legible tool_result AND the run's own terminal error -- never a crash, never a hang", async () => {
+    resetChildEngineFactoryForTest(); // clean slate regardless of test execution order
+    registerSpawnProbeTool();
+    try {
+      const { host, runtime } = createInMemoryChannel();
+      const provider = scriptedProvider([
+        { kind: "tool_use", calls: [{ id: "spawn-a", name: SPAWN_PROBE_TOOL_NAME, input: { parentToolUseId: "spawn-a", prompt: "go", runInBackground: false } }] },
+        { kind: "text", text: "unreachable" },
+      ]);
+      const config = baseConfig({ permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true });
+      const done = runEngine({ config, input: runtime.input, output: runtime.output, provider });
+      host.output.write({ type: "user", text: "go" });
+      host.output.write({ type: "control_request", requestId: "end-1", subtype: "end_input", payload: undefined });
+      const frames = await drain(host.input);
+      const code = await done;
+      expect(code).toBe(0); // graceful completion -- a tool-executor throw is a normal exit, never a rejected runEngine promise
+
+      const msgs = dataMessages(frames);
+      const toolResultMsg = msgs.find((m) => m.type === "user") as unknown as { message: { content: Array<{ tool_use_id: string; content: string; error?: boolean }> } };
+      const block = toolResultMsg.message.content.find((b) => b.tool_use_id === "spawn-a");
+      expect(block?.error).toBe(true);
+      expect(block?.content).toContain("no child engine factory is registered");
+
+      const resultMsg = msgs.find((m) => m.type === "result") as unknown as { subtype: string; is_error: boolean; result: string };
+      expect(resultMsg.subtype).toBe("error_during_execution");
+      expect(resultMsg.is_error).toBe(true);
+      expect(resultMsg.result).toContain("no child engine factory is registered");
+    } finally {
+      unregisterToolForTest(SPAWN_PROBE_TOOL_NAME);
+      resetChildEngineFactoryForTest();
+    }
+  });
+
+  test("(b) inherit.messages is present iff fork:true, both directions, within the same run", async () => {
+    resetChildEngineFactoryForTest();
+    registerSpawnProbeTool();
+    const { calls } = installCapturingFactory();
+    try {
+      const { host, runtime } = createInMemoryChannel();
+      const provider = scriptedProvider([
+        { kind: "tool_use", calls: [{ id: "spawn-b1", name: SPAWN_PROBE_TOOL_NAME, input: { parentToolUseId: "spawn-b1", prompt: "go", runInBackground: false } }] },
+        { kind: "tool_use", calls: [{ id: "spawn-b2", name: SPAWN_PROBE_TOOL_NAME, input: { parentToolUseId: "spawn-b2", prompt: "go", runInBackground: false, fork: true } }] },
+        { kind: "text", text: "done" },
+      ]);
+      const config = baseConfig({ permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true });
+      const done = runEngine({ config, input: runtime.input, output: runtime.output, provider });
+      host.output.write({ type: "user", text: "go" });
+      host.output.write({ type: "control_request", requestId: "end-1", subtype: "end_input", payload: undefined });
+      await drain(host.input);
+      await done;
+
+      expect(calls.length).toBe(2);
+      expect(calls[0]!.req.fork).toBeUndefined();
+      expect(calls[0]!.inherit.messages).toBeUndefined();
+      expect(calls[1]!.req.fork).toBe(true);
+      expect(calls[1]!.inherit.messages).toBeDefined();
+      expect(calls[1]!.inherit.messages!.length).toBeGreaterThan(0); // genuinely the live turn history, not an accidental empty array
+    } finally {
+      unregisterToolForTest(SPAWN_PROBE_TOOL_NAME);
+      resetChildEngineFactoryForTest();
+    }
+  });
+
+  test("(c) model chain: WINTER_SUBAGENT_MODEL wins when set to a real value", async () => {
+    resetChildEngineFactoryForTest();
+    registerSpawnProbeTool();
+    const { calls } = installCapturingFactory();
+    try {
+      const { host, runtime } = createInMemoryChannel();
+      const provider = scriptedProvider([
+        {
+          kind: "tool_use",
+          calls: [
+            {
+              id: "spawn-c1",
+              name: SPAWN_PROBE_TOOL_NAME,
+              input: { parentToolUseId: "spawn-c1", prompt: "go", runInBackground: false, model: "invocation-model", definition: { description: "d", prompt: "p", model: "definition-model" } },
+            },
+          ],
+        },
+        { kind: "text", text: "done" },
+      ]);
+      const config = baseConfig({ permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true, model: "session-model" });
+      const done = runEngine({ config, input: runtime.input, output: runtime.output, provider, env: { WINTER_SUBAGENT_MODEL: "env-model" } });
+      host.output.write({ type: "user", text: "go" });
+      host.output.write({ type: "control_request", requestId: "end-1", subtype: "end_input", payload: undefined });
+      await drain(host.input);
+      await done;
+      expect(calls.length).toBe(1);
+      expect(calls[0]!.inherit.model).toBe("env-model");
+    } finally {
+      unregisterToolForTest(SPAWN_PROBE_TOOL_NAME);
+      resetChildEngineFactoryForTest();
+    }
+  });
+
+  test("(c) model chain: WINTER_SUBAGENT_MODEL=inherit is treated as absent -- falls through to the invocation model", async () => {
+    resetChildEngineFactoryForTest();
+    registerSpawnProbeTool();
+    const { calls } = installCapturingFactory();
+    try {
+      const { host, runtime } = createInMemoryChannel();
+      const provider = scriptedProvider([
+        { kind: "tool_use", calls: [{ id: "spawn-c2", name: SPAWN_PROBE_TOOL_NAME, input: { parentToolUseId: "spawn-c2", prompt: "go", runInBackground: false, model: "invocation-model" } }] },
+        { kind: "text", text: "done" },
+      ]);
+      const config = baseConfig({ permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true, model: "session-model" });
+      const done = runEngine({ config, input: runtime.input, output: runtime.output, provider, env: { WINTER_SUBAGENT_MODEL: "inherit" } });
+      host.output.write({ type: "user", text: "go" });
+      host.output.write({ type: "control_request", requestId: "end-1", subtype: "end_input", payload: undefined });
+      await drain(host.input);
+      await done;
+      expect(calls.length).toBe(1);
+      expect(calls[0]!.inherit.model).toBe("invocation-model");
+    } finally {
+      unregisterToolForTest(SPAWN_PROBE_TOOL_NAME);
+      resetChildEngineFactoryForTest();
+    }
+  });
+
+  test("(c) model chain: with no env override, invocation > definition > session, and fork ignores the invocation override entirely", async () => {
+    resetChildEngineFactoryForTest();
+    registerSpawnProbeTool();
+    const { calls } = installCapturingFactory();
+    try {
+      const { host, runtime } = createInMemoryChannel();
+      const provider = scriptedProvider([
+        // (i) invocation beats definition
+        {
+          kind: "tool_use",
+          calls: [
+            {
+              id: "spawn-c3a",
+              name: SPAWN_PROBE_TOOL_NAME,
+              input: { parentToolUseId: "spawn-c3a", prompt: "go", runInBackground: false, model: "invocation-model", definition: { description: "d", prompt: "p", model: "definition-model" } },
+            },
+          ],
+        },
+        // (ii) definition beats session, when no invocation override
+        {
+          kind: "tool_use",
+          calls: [{ id: "spawn-c3b", name: SPAWN_PROBE_TOOL_NAME, input: { parentToolUseId: "spawn-c3b", prompt: "go", runInBackground: false, definition: { description: "d", prompt: "p", model: "definition-model" } } }],
+        },
+        // (iii) session is the final fallback, nothing else set
+        { kind: "tool_use", calls: [{ id: "spawn-c3c", name: SPAWN_PROBE_TOOL_NAME, input: { parentToolUseId: "spawn-c3c", prompt: "go", runInBackground: false } }] },
+        // (iv) fork ignores the invocation override (and definition) entirely -- always session
+        {
+          kind: "tool_use",
+          calls: [
+            {
+              id: "spawn-c3d",
+              name: SPAWN_PROBE_TOOL_NAME,
+              input: { parentToolUseId: "spawn-c3d", prompt: "go", runInBackground: false, fork: true, model: "invocation-model", definition: { description: "d", prompt: "p", model: "definition-model" } },
+            },
+          ],
+        },
+        { kind: "text", text: "done" },
+      ]);
+      // env: {} (never process.env) -- resolveChildModel's own (engineEnv ?? process.env) reads THIS
+      // empty object, not the real process's own environment, so this test can never flake on
+      // whatever WINTER_SUBAGENT_MODEL happens to be set to on the machine running it.
+      const config = baseConfig({ permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true, model: "session-model" });
+      const done = runEngine({ config, input: runtime.input, output: runtime.output, provider, env: {} });
+      host.output.write({ type: "user", text: "go" });
+      host.output.write({ type: "control_request", requestId: "end-1", subtype: "end_input", payload: undefined });
+      await drain(host.input);
+      await done;
+      expect(calls.length).toBe(4);
+      expect(calls[0]!.inherit.model).toBe("invocation-model");
+      expect(calls[1]!.inherit.model).toBe("definition-model");
+      expect(calls[2]!.inherit.model).toBe("session-model");
+      expect(calls[3]!.inherit.model).toBe("session-model"); // fork -- invocation/definition both ignored
+    } finally {
+      unregisterToolForTest(SPAWN_PROBE_TOOL_NAME);
+      resetChildEngineFactoryForTest();
+    }
+  });
+
+  test("(d) the childRoster is visible via onChildRosterReady, by identity, after a spawn completes", async () => {
+    resetChildEngineFactoryForTest();
+    registerSpawnProbeTool();
+    const { handleToReturn } = installCapturingFactory();
+    let getChildren: (() => readonly ChildHandle[]) | undefined;
+    try {
+      const { host, runtime } = createInMemoryChannel();
+      const provider = scriptedProvider([
+        { kind: "tool_use", calls: [{ id: "spawn-d", name: SPAWN_PROBE_TOOL_NAME, input: { parentToolUseId: "spawn-d", prompt: "go", runInBackground: false } }] },
+        { kind: "text", text: "done" },
+      ]);
+      const config = baseConfig({ permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true });
+      const done = runEngine({
+        config,
+        input: runtime.input,
+        output: runtime.output,
+        provider,
+        onChildRosterReady: (fn) => {
+          getChildren = fn;
+        },
+      });
+      // onChildRosterReady is called synchronously, near the start of setup -- available immediately,
+      // well before any tool round runs, but the roster itself is empty until a spawn actually happens.
+      expect(getChildren).toBeDefined();
+      expect(getChildren!()).toEqual([]);
+      host.output.write({ type: "user", text: "go" });
+      host.output.write({ type: "control_request", requestId: "end-1", subtype: "end_input", payload: undefined });
+      await drain(host.input);
+      await done;
+      const children = getChildren!();
+      expect(children.length).toBe(1);
+      expect(children[0]).toBe(handleToReturn); // identity, not merely structural equality
+    } finally {
+      unregisterToolForTest(SPAWN_PROBE_TOOL_NAME);
+      resetChildEngineFactoryForTest();
+    }
+  });
+
+  test("(e) forwardChildFrame lands on the REAL host stream, parent_tool_use_id-stamped -- tool_use/tool_result always forward, text only when forwardSubagentText is on", async () => {
+    async function runOnce(forwardSubagentText: boolean, toolUseId: string): Promise<SdkMessage[]> {
+      resetChildEngineFactoryForTest();
+      registerSpawnProbeTool();
+      try {
+        const { host, runtime } = createInMemoryChannel();
+        const factory: ChildEngineFactory = (runCtx: ChildEngineRunContext) => ({
+          async spawn() {
+            // Simulates the child's OWN frame stream -- forwarded through THIS run's real host
+            // connection via the exact closure engine.ts built and handed to this factory (the
+            // wiring under test; transformChildFrame's own pure-function correctness is already
+            // unit-proven separately in child-handle.test.ts).
+            runCtx.forwardChildFrame(
+              { type: "data", message: { type: "assistant", message: { content: [{ type: "text", text: "child thinking out loud" }] } } } as WinterFrame,
+              { parentToolUseId: toolUseId, agentId: "child-e" },
+            );
+            runCtx.forwardChildFrame(
+              { type: "data", message: { type: "assistant", message: { content: [{ type: "tool_use", id: "childcall-1", name: "Read", input: {} }] } } } as WinterFrame,
+              { parentToolUseId: toolUseId, agentId: "child-e" },
+            );
+            runCtx.forwardChildFrame(
+              { type: "data", message: { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "childcall-1", content: "ok" }] } } } as WinterFrame,
+              { parentToolUseId: toolUseId, agentId: "child-e" },
+            );
+            return createFakeChildHandle();
+          },
+        });
+        registerChildEngineFactory(factory);
+        const provider = scriptedProvider([
+          { kind: "tool_use", calls: [{ id: toolUseId, name: SPAWN_PROBE_TOOL_NAME, input: { parentToolUseId: toolUseId, prompt: "go", runInBackground: false } }] },
+          { kind: "text", text: "done" },
+        ]);
+        const config = baseConfig({ permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true, forwardSubagentText });
+        const done = runEngine({ config, input: runtime.input, output: runtime.output, provider });
+        host.output.write({ type: "user", text: "go" });
+        host.output.write({ type: "control_request", requestId: "end-1", subtype: "end_input", payload: undefined });
+        const frames = await drain(host.input);
+        await done;
+        return dataMessages(frames);
+      } finally {
+        unregisterToolForTest(SPAWN_PROBE_TOOL_NAME);
+        resetChildEngineFactoryForTest();
+      }
+    }
+
+    // forwardSubagentText: false (default) -- the child's own text block is SWALLOWED entirely
+    // (transformChildFrame filters to tool_use-only, and an all-filtered assistant frame returns
+    // null); tool_use/tool_result still forward, both parent_tool_use_id-stamped.
+    const msgsOff = await runOnce(false, "spawn-e-off");
+    const childAssistantsOff = msgsOff.filter((m) => m.type === "assistant" && (m as unknown as { parent_tool_use_id?: string }).parent_tool_use_id === "spawn-e-off");
+    expect(childAssistantsOff.length).toBe(1); // only the tool_use frame -- the text-only frame was swallowed
+    const childToolUseOff = childAssistantsOff[0] as unknown as { message: { content: Array<{ type: string; id: string; name: string; input: unknown }> } };
+    expect(childToolUseOff.message.content).toEqual([{ type: "tool_use", id: "childcall-1", name: "Read", input: {} }]);
+    const childUsersOff = msgsOff.filter((m) => m.type === "user" && (m as unknown as { parent_tool_use_id?: string }).parent_tool_use_id === "spawn-e-off");
+    expect(childUsersOff.length).toBe(1);
+
+    // forwardSubagentText: true -- the text frame now forwards too, still stamped.
+    const msgsOn = await runOnce(true, "spawn-e-on");
+    const childAssistantsOn = msgsOn.filter((m) => m.type === "assistant" && (m as unknown as { parent_tool_use_id?: string }).parent_tool_use_id === "spawn-e-on");
+    expect(childAssistantsOn.length).toBe(2); // text frame AND tool_use frame, both forwarded
+    const textFrame = childAssistantsOn.find((m) => (m as unknown as { message: { content: Array<{ type: string }> } }).message.content[0]?.type === "text") as unknown as {
+      message: { content: Array<{ type: string; text: string }> };
+    };
+    expect(textFrame.message.content).toEqual([{ type: "text", text: "child thinking out loud" }]);
   });
 });
