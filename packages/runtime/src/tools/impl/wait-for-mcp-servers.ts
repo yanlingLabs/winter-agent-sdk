@@ -116,7 +116,16 @@ function notWiredResult(): ToolResultPayload {
 
 export const waitForMcpServersExecutor: ToolExecutor = {
   async execute(input: unknown, ctx: ToolExecutionContext): Promise<ToolResultPayload> {
-    const runtime = getToolSearchSessionRuntime(ctx.sessionId);
+    // Fix wave follow-up (5) / Lane X NEEDS_CONTEXT 1: `ctx.agentId ?? ctx.sessionId`, deliberately NOT
+    // the bare `ctx.sessionId` the four MCP BRIDGE tools use. Lane X's I1 gives a child its PARENT's
+    // `config.sessionId` and keys every session-scoped registration by `config.agentId ?? config.sessionId`,
+    // so the two lookups have to disagree on purpose: a bridge tool must resolve the OWNING session's
+    // MCP lifecycle (that is the I2 fix -- a child is not an MCP island), while ToolSearch must resolve
+    // the CHILD's OWN runtime, whose `disallowedTools` is the complement of the child's inherited
+    // allowlist. Resolving the parent's runtime here let a child `select:` a tool its own pool
+    // excludes -- and on this path that name is exactly what `emitToolReference` then marks LOADED.
+    // Falls back to the session id for a main-engine call, which carries no agentId at all.
+    const runtime = getToolSearchSessionRuntime(ctx.agentId ?? ctx.sessionId);
     if (!runtime) return notWiredResult();
 
     const outcome = await executeWaitForMcpServers(input, {

@@ -13,6 +13,9 @@ import {
   type DeferralActivation,
 } from "../registry.ts";
 import { registerToolSearchSessionRuntime, type ToolSearchSessionRuntime } from "../../toolsearch/search.ts";
+import { registerSessionMcpLifecycle, getSessionMcpLifecycle } from "../../mcp/lifecycle.ts";
+import { createFakeMcpLifecycle, createFakeConnectedMcpClient } from "../../mcp/test-fixtures.ts";
+import "./list-mcp-resources-tool.ts";
 import { TOOL_SEARCH_TOOL_NAME, toolSearchExecutor } from "./tool-search.ts";
 import {
   evaluate,
@@ -163,6 +166,101 @@ describe("load != permission (WS-09 §8.2/§8.5, brief-named regression)", () =>
       }
     } finally {
       unregisterMcpServerTools(SRV);
+    }
+  });
+});
+
+// --- Fix wave follow-up (5) / Lane X NEEDS_CONTEXT 1: a CHILD's ToolSearch uses its OWN runtime ----
+//
+// Lane X's I1 keys every session-scoped registration by `config.agentId ?? config.sessionId`, and
+// gives a child its PARENT's `config.sessionId`. Two lookups therefore have to disagree on purpose:
+//
+//   * `getSessionMcpLifecycle(ctx.sessionId)` -- the four WS-09 §1.4 bridge tools -- must resolve the
+//     OWNING SESSION's lifecycle, so a child is not an MCP island. That IS the I2 fix; it must not
+//     move to `agentId`.
+//   * `getToolSearchSessionRuntime(...)` -- ToolSearch and WaitForMcpServers -- must prefer the
+//     CHILD's OWN runtime, because a child's advertised pool is narrower than its parent's
+//     (`child-engine.ts` computes the complement of the inherited allowlist into the child's own
+//     `disallowedTools`). Resolving the parent's runtime let a child `select:` a tool its own pool
+//     excludes -- and, on the ToolSearch path, that name is exactly what `emitToolReference` then
+//     marks LOADED.
+describe("follow-up (5): the ToolSearch runtime lookup prefers ctx.agentId; the MCP lifecycle lookup does not", () => {
+  const PARENT_ONLY = "t6fw_parent_only_tool";
+  const SHARED = "t6fw_shared_tool";
+  const PARENT_SESSION = "t6fw-owning-session";
+  const CHILD_AGENT = "t6fw-child-agent-key";
+
+  function runtimeFor(disallowed: readonly string[]): ToolSearchSessionRuntime {
+    return { getMode: () => "default", activation: ACTIVE, capabilities: ["winter.mcp"], disallowedTools: disallowed };
+  }
+
+  test("a child selecting a tool its OWN pool excludes gets no match, though the parent's pool has it", async () => {
+    try {
+      registerMcpServerTools(SRV, [{ name: "parent_only_mcp", inputSchema: { type: "object" } }], { deferredDefault: true });
+      const parentOnlyMcp = `mcp__${SRV}__parent_only_mcp`;
+      // The parent denies nothing; the child's own runtime denies the name -- exactly the shape
+      // `child-engine.ts` builds from the complement of the inherited allowlist.
+      const disposeParent = registerToolSearchSessionRuntime(PARENT_SESSION, runtimeFor([]));
+      const disposeChild = registerToolSearchSessionRuntime(CHILD_AGENT, runtimeFor([parentOnlyMcp]));
+      try {
+        // A child's ctx: the OWNING session's id, plus its own agent key (Lane X's I1 shape).
+        const childCtx = makeCtx({ sessionId: PARENT_SESSION, agentId: CHILD_AGENT, insideSubagent: true });
+        const inChild = await toolSearchExecutor.execute({ query: `select:${parentOnlyMcp}` }, childCtx);
+        expect((JSON.parse(inChild.output) as { matches: string[] }).matches, "the child's own pool excludes it").toEqual([]);
+
+        // The control: the identical call from the PARENT (no agentId) still matches, so the
+        // assertion above is about the lookup and not about the fixture being unregistered.
+        const inParent = await toolSearchExecutor.execute({ query: `select:${parentOnlyMcp}` }, makeCtx({ sessionId: PARENT_SESSION }));
+        expect((JSON.parse(inParent.output) as { matches: string[] }).matches).toEqual([parentOnlyMcp]);
+      } finally {
+        disposeChild();
+        disposeParent();
+      }
+    } finally {
+      unregisterMcpServerTools(SRV);
+    }
+  });
+
+  test("a child whose own runtime is gone gets the typed error, NOT a silent fall-back to its parent's wider pool", async () => {
+    const dispose = registerToolSearchSessionRuntime(PARENT_SESSION, runtimeFor([]));
+    try {
+      const out = await toolSearchExecutor.execute({ query: "select:anything" }, makeCtx({ sessionId: PARENT_SESSION, agentId: "unregistered-agent-key" }));
+      // Deliberate: `??` falls back only when there is no agentId AT ALL (a main-engine call). A
+      // child whose own registration is missing must not silently inherit the parent's pool -- that
+      // is the exact widening this item closes, and in production it cannot happen anyway (a child's
+      // own runEngine registers before its turn loop starts).
+      expect(out.isError).toBe(true);
+      expect(out.output).toContain("no session runtime registered");
+    } finally {
+      dispose();
+    }
+  });
+
+  test("a MAIN-engine call (no agentId) resolves the session's own runtime exactly as before", async () => {
+    const dispose = registerToolSearchSessionRuntime(PARENT_SESSION, runtimeFor([]));
+    try {
+      const out = await toolSearchExecutor.execute({ query: "select:anything" }, makeCtx({ sessionId: PARENT_SESSION }));
+      expect(out.isError).toBeUndefined();
+    } finally {
+      dispose();
+    }
+  });
+
+  // The guard rail on the other lookup, in the same file so a future edit that "makes them
+  // consistent" trips here.
+  test("the MCP bridge lookup is NOT moved to agentId -- a child still resolves the OWNING session's lifecycle (Lane X's I2)", async () => {
+    const lifecycle = createFakeMcpLifecycle({ connectedServers: { "owned-by-parent": createFakeConnectedMcpClient("owned-by-parent", { listResources: async () => [{ uri: "parent://one" }] }) } });
+    const dispose = registerSessionMcpLifecycle(PARENT_SESSION, lifecycle);
+    try {
+      const childCtx = makeCtx({ sessionId: PARENT_SESSION, agentId: CHILD_AGENT, insideSubagent: true });
+      const out = await getRegisteredTool("ListMcpResourcesTool")!.executor!.execute({}, childCtx);
+      expect(out.isError).toBeUndefined();
+      expect(out.output).toContain("owned-by-parent");
+      // ...and nothing is registered under the child's agent key, so a lookup that had moved to
+      // `agentId` would have answered "no MCP lifecycle is configured for this session".
+      expect(getSessionMcpLifecycle(CHILD_AGENT)).toBeUndefined();
+    } finally {
+      dispose();
     }
   });
 });
