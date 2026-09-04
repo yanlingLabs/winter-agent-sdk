@@ -2,7 +2,7 @@
 // transform. registerChildEngineFactory's own registration mechanics are covered too; ChildHandle
 // semantics against a fake, and the full adapter/router seam, are the seam-contracts-p4.test.ts
 // file's own job (this file covers the parts genuinely local to child-handle.ts itself).
-import { describe, test, expect, afterEach } from "bun:test";
+import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import type { WinterFrame } from "@yanlinglabs/winter-agent-sdk";
 import {
   transformChildFrame,
@@ -79,6 +79,17 @@ describe("transformChildFrame (WS-10 §4)", () => {
 });
 
 describe("registerChildEngineFactory / getChildEngineFactory (registration mechanics)", () => {
+  // Phase 4 Task 8: `beforeEach` joins the pre-existing `afterEach`. The registry is a process-wide
+  // module singleton and bun shares one process across every test FILE, so "absent by default" is a
+  // claim about THIS describe's own starting state, not about the process's -- and as of rider 18 a
+  // real production registration happens inside `inMemoryProcess` (testing.ts), which many other
+  // files exercise. Without the reset this test passed only when it happened to run before any of
+  // them: green in `bun test packages/runtime`, red in a whole-repo run. Resetting on BOTH sides is
+  // exactly what `resetChildEngineFactoryForTest`'s own doc comment exists for ("so one test file's
+  // registration never leaks into another's assertions").
+  beforeEach(() => {
+    resetChildEngineFactoryForTest();
+  });
   afterEach(() => {
     resetChildEngineFactoryForTest();
   });

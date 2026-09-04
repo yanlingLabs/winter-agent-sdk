@@ -1377,6 +1377,24 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   };
   // Host entries win on collision (a host that redirects `SendMessage` somewhere else means it).
   const suppressionAliasTable: Record<string, string> = { ...WINTER_CANONICAL_ALIASES, ...(config.toolAliases ?? {}) };
+  // Phase 4 Task 8 (rider 5) -- the init.tools-vs-live-mode freeze, INVESTIGATED and recorded rather
+  // than "fixed", because there is nothing here to fix without a protocol addition.
+  //
+  // Lane B observed that `advertisedCfg.mode` is captured ONCE, here, while its own
+  // `ToolSearchDeps.getMode()` and this engine's own `isDeferredAndUnloaded`/`isToolAvailable` checks
+  // all read the mode LIVE per call -- so a mid-session `setPermissionMode`/ExitPlanMode makes a live
+  // ToolSearch result diverge from the frozen `init.tools` snapshot. Confirmed by reading the code:
+  // `system/init` (and its `data`-wrapped twin) is written exactly ONCE per runEngine, before the
+  // turn loop, and NOTHING in this runtime emits a second one -- there is no re-init/refresh frame in
+  // the protocol at all (WS-09 §11 item 2's own "the next turn's system/init.tools reflects the
+  // mutation" has the same missing observable; mcp/conformance.test.ts's row WS09-2c defers it for
+  // exactly this reason).
+  //
+  // So the asymmetry is not a bug in either half -- it is "a startup SNAPSHOT vs. a live CHECK", and
+  // the live side is the one that must stay honest, because it governs what actually executes. A
+  // frozen live check would let a tool excluded by the CURRENT mode still run; a live init frame has
+  // nowhere to be delivered. Freezing the live readers to match the snapshot would be strictly worse.
+  // The real fix is a re-init/refresh frame, which is a protocol addition a later phase owns.
   const advertisedCfg = {
     mode: policyStateStore.getState().mode,
     platform: process.platform,
