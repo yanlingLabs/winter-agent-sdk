@@ -24,7 +24,18 @@ export interface RosterKey {
 // corrupted transcript, or a transcript with no metadata sidecar at all -- e.g. hand-edited or
 // deleted out of band). Never thrown: one bad child's own storage must never prevent the REST of a
 // parent's roster from rebuilding.
-export type RosterEntry = { ok: true; record: ChildSessionRecord } | { ok: false; agentId: string; reason: string };
+//
+// Fix round 1 (finding I4): `reconciled: "orphaned"` marks a record whose OWN sidecar still said
+// `status: "running"` at rebuild time -- WS-10 §7's own "rebuild child identity AND resume state"
+// MUST, for the one case that only arises on restart: a child whose daemon died mid-run has no live
+// handle behind it (this whole module's own header) and, left as `"running"`, is PERMANENTLY
+// stranded -- `ChildHandle.resume()` (child-engine.ts) refuses any non-terminal record, so nothing
+// could ever move it forward again. `record.status` itself is reconciled to `"stopped"` (the
+// frozen `ChildSessionRecord` type, T3's, has no field of its own for "why" a status changed, so
+// that marker lives here, on THIS module's own wrapper, not invented on the frozen record) --
+// `"stopped"` reads truer than `"failed"` (the child's own work did not fail; its own PROCESS died
+// out from under it), and is one of the three terminal statuses `resume()` already accepts.
+export type RosterEntry = { ok: true; record: ChildSessionRecord; reconciled?: "orphaned" } | { ok: false; agentId: string; reason: string };
 
 function isPlausibleChildSessionRecord(v: unknown): v is ChildSessionRecord {
   if (typeof v !== "object" || v === null) return false;
@@ -52,6 +63,10 @@ export async function rebuildChildRoster(store: SessionStore, key: RosterKey): P
       const { type: _type, ...record } = metadata;
       if (!isPlausibleChildSessionRecord(record)) {
         out.push({ ok: false, agentId, reason: `child ${agentId}'s agent_metadata sidecar is missing required fields -- treating as corrupted` });
+        continue;
+      }
+      if (record.status === "running") {
+        out.push({ ok: true, record: { ...record, status: "stopped" }, reconciled: "orphaned" });
         continue;
       }
       out.push({ ok: true, record });

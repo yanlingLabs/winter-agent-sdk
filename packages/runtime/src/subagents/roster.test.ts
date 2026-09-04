@@ -133,4 +133,42 @@ describe("rebuildChildRoster (WS-10 §7)", () => {
     expect(roster).toHaveLength(1);
     expect(successfulRecords(roster).map((r) => r.id)).toEqual(["mine"]);
   });
+
+  test("fix round 1 (finding I4): a restart-orphaned 'running' record is reconciled to a terminal 'stopped' status, marked reconciled:'orphaned', never left permanently stuck", async () => {
+    const store = new WinterCompatibilitySessionStore({ winterHome: mkWinterHome() });
+    const agentId = "orphan-1";
+    const childKey = { projectKey, sessionId: parentSessionId, subpath: childTranscriptSubpath(agentId) };
+    // The daemon died mid-run -- the LAST sidecar write this child ever got was its own spawn-time
+    // "running" write; nothing ever settled it to a terminal status.
+    await store.append(childKey, [{ type: "agent_metadata", ...fakeRecord(agentId, { status: "running" }) }]);
+
+    const roster = await rebuildChildRoster(store, { projectKey, sessionId: parentSessionId });
+    expect(roster).toHaveLength(1);
+    const entry = roster[0]!;
+    expect(entry.ok).toBe(true);
+    if (entry.ok) {
+      expect(entry.record.status).toBe("stopped");
+      expect(entry.reconciled).toBe("orphaned");
+      // Every OTHER field survives the reconciliation untouched -- only `status` changes.
+      expect(entry.record).toEqual({ ...fakeRecord(agentId, { status: "running" }), status: "stopped" });
+    }
+    // successfulRecords() surfaces the reconciled (now-terminal) record like any other -- a caller
+    // that only wants "the roster" sees a resumable child, never a permanently-stuck "running" one.
+    expect(successfulRecords(roster)).toEqual([{ ...fakeRecord(agentId, { status: "running" }), status: "stopped" }]);
+  });
+
+  test("a NORMAL terminal record (never running at rebuild time) is never marked reconciled", async () => {
+    const store = new WinterCompatibilitySessionStore({ winterHome: mkWinterHome() });
+    const agentId = "normal-1";
+    await store.append({ projectKey, sessionId: parentSessionId, subpath: childTranscriptSubpath(agentId) }, [{ type: "agent_metadata", ...fakeRecord(agentId, { status: "completed" }) }]);
+
+    const roster = await rebuildChildRoster(store, { projectKey, sessionId: parentSessionId });
+    expect(roster).toHaveLength(1);
+    const entry = roster[0]!;
+    expect(entry.ok).toBe(true);
+    if (entry.ok) {
+      expect(entry.reconciled).toBeUndefined();
+      expect(entry.record.status).toBe("completed");
+    }
+  });
 });
