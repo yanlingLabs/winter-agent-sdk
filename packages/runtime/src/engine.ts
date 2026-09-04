@@ -46,7 +46,7 @@ import { ensureDefaultMessagingRuntimeRegistered } from "./messaging/reference-a
 // Phase 4 Task 3 (WS-07 §11 / RULING P2-M): the child permission-policy comparator.
 import { computeChildPolicy } from "./permissions/auto/inheritance.ts";
 import { PolicyStateStore, WinterPermissionError, assertKnownPermissionMode, isPermissionMode } from "./permissions/policy-state.ts";
-import { emptyRuleSet, buildSdkSourcedEntries, sourceRule } from "./permissions/ruleset.ts";
+import { emptyRuleSet, buildSdkSourcedEntries, sourceRule, type SourcedRuleEntry } from "./permissions/ruleset.ts";
 import { createBridgePromptStage } from "./permissions/prompt-stage.ts";
 import {
   evaluate,
@@ -389,6 +389,60 @@ function raceInterrupt<T>(p: Promise<T>, interrupted: Promise<void>): Promise<Ra
  * explicitly cancels the pump instead, once the turn loop has fully drained. See the pump's own
  * definition further down for the full re-argued termination guarantee.
  */
+// --- The managed product floor (WS-07 §3.2) ------------------------------------------------------
+//
+// Lifted out of `runEngine` (fix wave follow-up 6/7) so a test can drive the EXACT entries production
+// seeds, against a synthetic `home`, instead of re-typing them -- the alternative is a second copy of
+// a security-relevant list, which is the drift class R4-2 exists to catch. Nothing here closes over
+// run state; it never did.
+//
+// `source: "managed"` is what makes these bind under `bypassPermissions` too: stage 2's deny lookup
+// runs before stage 4's bypass auto-allow, and `allowManagedPermissionRulesOnly` narrows the pool to
+// exactly this source rather than dropping it.
+export function buildBaselineDenyRules(): SourcedRuleEntry[] {
+  return [
+    // The daemon's own runtime directory -- sockets, pidfiles, credentials-adjacent state.
+    sourceRule({ toolName: "Read", ruleContent: "~/.winter/run" }, "deny", "managed"),
+    sourceRule({ toolName: "Read", ruleContent: "~/.winter/run/**" }, "deny", "managed"),
+    sourceRule({ toolName: "Glob", ruleContent: "~/.winter/run" }, "deny", "managed"),
+    sourceRule({ toolName: "Glob", ruleContent: "~/.winter/run/**" }, "deny", "managed"),
+    sourceRule({ toolName: "Grep", ruleContent: "~/.winter/run" }, "deny", "managed"),
+    sourceRule({ toolName: "Grep", ruleContent: "~/.winter/run/**" }, "deny", "managed"),
+
+    // --- Whole-branch review M13 (fix wave follow-up item 7): durable session state is READ-ONLY ---
+    //
+    // `~/.winter/projects/**` holds every session's own durable history: the JSONL transcript a
+    // session and each of its children resume from, the `.meta.json` roster sidecars, and the
+    // provider-state sidecars. `permissions/protected.ts` already protects `.winter/**` WRITES in
+    // prompting modes -- but `resolveProtectedWrite` returns `allow` under `bypassPermissions` (WS-07
+    // §6.7's matrix, verbatim), and WS-07 §11 FORCES bypass on every descendant of a bypass parent.
+    // So a forced-bypass child could rewrite the very transcript its own `resume()` rebuilds from,
+    // injecting turns into durable history, and `tools/impl/agent.ts`'s `.output` stub hands the
+    // model that exact absolute path with "Read that file directly". A managed deny binds where the
+    // protected-write check does not.
+    //
+    // WRITE-SIDE ONLY, deliberately, and this is the load-bearing scoping decision: the `.output`
+    // stub path is a MODEL-FACING contract (Lane C's M1 fix, WS-12 §7.2 "return the durable
+    // transcript path through the tool result"), so denying READS here would regress a shipped
+    // behaviour to close a write hole. Read/Glob/Grep on `~/.winter/projects/**` therefore stay
+    // allowed, and a test pins that they do.
+    //
+    // Bash-shaped writes to the same paths are covered too, through `findFileDenyBlockingEdit`
+    // (evaluator.ts), which extends the pre-existing "a Read deny also blocks Edit/Write on the same
+    // path" rule (WS-07 §3.1) to the whole FILE_RULE_TOOLS write family -- otherwise
+    // `echo x >> ~/.winter/projects/.../agent-1.jsonl` would walk straight past a `Write` deny.
+    //
+    // Two entries per tool for the same reason as `~/.winter/run` above: the bare pattern covers the
+    // directory itself, `/**` covers its contents.
+    sourceRule({ toolName: "Write", ruleContent: "~/.winter/projects" }, "deny", "managed"),
+    sourceRule({ toolName: "Write", ruleContent: "~/.winter/projects/**" }, "deny", "managed"),
+    sourceRule({ toolName: "Edit", ruleContent: "~/.winter/projects" }, "deny", "managed"),
+    sourceRule({ toolName: "Edit", ruleContent: "~/.winter/projects/**" }, "deny", "managed"),
+    sourceRule({ toolName: "NotebookEdit", ruleContent: "~/.winter/projects" }, "deny", "managed"),
+    sourceRule({ toolName: "NotebookEdit", ruleContent: "~/.winter/projects/**" }, "deny", "managed"),
+  ];
+}
+
 export async function runEngine(opts: EngineOptions): Promise<number> {
   // Task 1 (P3): `tools` renamed to `providedTools` at the destructuring site ONLY -- every existing
   // reference to the bare name `tools` further down this function (both `tools.execute(...)` call
@@ -477,14 +531,7 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // header's own overclaimed "stops a direct Read/recognized-Bash-read" sentence covered up (the
   // OTHER gap -- "recognized-Bash-read" was never actually true -- is corrected in place above,
   // where that sentence lives).
-  const BASELINE_DENY_RULES = [
-    sourceRule({ toolName: "Read", ruleContent: "~/.winter/run" }, "deny", "managed"),
-    sourceRule({ toolName: "Read", ruleContent: "~/.winter/run/**" }, "deny", "managed"),
-    sourceRule({ toolName: "Glob", ruleContent: "~/.winter/run" }, "deny", "managed"),
-    sourceRule({ toolName: "Glob", ruleContent: "~/.winter/run/**" }, "deny", "managed"),
-    sourceRule({ toolName: "Grep", ruleContent: "~/.winter/run" }, "deny", "managed"),
-    sourceRule({ toolName: "Grep", ruleContent: "~/.winter/run/**" }, "deny", "managed"),
-  ];
+  const BASELINE_DENY_RULES = buildBaselineDenyRules();
   // Task 5 (WS-07 §3.3 / phase ruling 1) seeding: Options.{allowedTools,disallowedTools,permissions}
   // become source:"sdk" rule entries via T5's own builder — this is the wiring T5's own header
   // called "not wired into the engine by this task (that is a later task's job)". Runs the SAME

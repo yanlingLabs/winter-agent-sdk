@@ -598,12 +598,25 @@ export function findMatchingRuleEntry(
 // A BARE Read deny (no specifier, or `Tool(*)`) is out of scope by construction (same SCOPE
 // BOUNDARY paths.ts's own readDenyBlocksEdit documents) — it is an advertisement-layer schema
 // removal (WS-07 §1), not a path-pattern block.
-function findReadDenyBlockingEdit(call: PermissionCall, ctx: EvaluationContext): SourcedRuleEntry | undefined {
+// Fix wave follow-up (7), whole-branch M13: the tool names whose DENY rules block a write to the same
+// path. `Read` is the pre-existing WS-07 §3.1 rule ("a Read deny also blocks current Edit/Write
+// operations on the same path"); the write family joins it because the same sentence's other half --
+// "Recognized Bash file operations consult these rules" -- was only ever true for `Read`. Without
+// this, a `Write(~/.winter/projects/**)` deny stops the Write TOOL and lets
+// `echo x >> ~/.winter/projects/.../agent-1.jsonl` through, which is the same hole one tool over.
+// Strictly tightening: it can only ever turn an allowed Bash write into a denial, and only for a path
+// a deny rule already names.
+const WRITE_BLOCKING_DENY_TOOLS: ReadonlySet<string> = new Set(["Read", "Write", "Edit", "NotebookEdit"]);
+
+function findFileDenyBlockingEdit(call: PermissionCall, ctx: EvaluationContext): SourcedRuleEntry | undefined {
   const candidatePaths = extractCandidateWritePaths(call, ctx);
   if (candidatePaths.length === 0) return undefined;
   const pool = ctx.allowManagedPermissionRulesOnly ? ctx.policy.rules.entries.filter((e) => e.source === "managed") : ctx.policy.rules.entries;
   for (const entry of pool) {
-    if (entry.rule.toolName !== "Read" || entry.behavior !== "deny") continue;
+    // A rule for the SAME tool the call is already using is left to the ordinary stage-2 lookup
+    // above -- reaching it here too would only produce a differently-worded identical denial.
+    if (entry.rule.toolName === call.toolName) continue;
+    if (!WRITE_BLOCKING_DENY_TOOLS.has(entry.rule.toolName) || entry.behavior !== "deny") continue;
     const specifier = entry.rule.specifier;
     if (specifier?.kind !== "pattern") continue;
     const pattern = specifier.source;
@@ -1192,7 +1205,7 @@ export async function evaluate(call: PermissionCall, ctx: EvaluationContext): Pr
 
   // Task 7 / T6-review obligation: a Read deny also blocks Edit/Write on the same path (WS-07
   // §3.1), enforced generally at stage 2, for every mode — not merely inside acceptEdits.
-  const readBlockEntry = findReadDenyBlockingEdit(effectiveCall, ctx);
+  const readBlockEntry = findFileDenyBlockingEdit(effectiveCall, ctx);
   if (readBlockEntry) {
     return {
       decision: "deny",
@@ -1200,7 +1213,7 @@ export async function evaluate(call: PermissionCall, ctx: EvaluationContext): Pr
       policyVersion,
       source: readBlockEntry.source,
       ruleRef: formatRuleRef(readBlockEntry),
-      message: `Denied: Read deny rule ${formatRuleRef(readBlockEntry)} blocks Edit/Write on this path (WS-07 §3.1)`,
+      message: `Denied: deny rule ${formatRuleRef(readBlockEntry)} blocks writes to this path (WS-07 §3.1)`,
       ...(carriedTransform !== undefined ? { transformedInput: carriedTransform } : {}),
     };
   }
