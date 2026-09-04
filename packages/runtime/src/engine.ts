@@ -710,6 +710,22 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // a function that answers "was this requestId mine?", which is exactly what `handleResponse`
   // already returns.
   const childResponseHandlers: Array<(frame: ControlResponseFrame) => boolean> = [];
+  // Phase 4 fix wave (I5, whole-branch review): the FOREGROUND children this run has spawned. A
+  // foreground child is awaited by the Agent tool call that spawned it -- so when that call is
+  // ABANDONED by an interrupt (`raceInterrupt` stops waiting; Provider/ToolExecutor take no abort
+  // signal, P1-G), nothing else bounds the child: it is an unbounded engine loop that keeps
+  // executing tools, can spawn further children of its own, and -- unlike a background spawn -- has
+  // no task id for `TaskStop` to reach. The stall watchdog never fires either, because a child
+  // making real progress is not stalled. Interrupting the parent's turn therefore stops them.
+  const foregroundChildren = new Set<ChildHandle>();
+  function abortForegroundChildren(): void {
+    for (const child of foregroundChildren) {
+      // `stop()` is idempotent and routes through the child's own gated settle (child-engine.ts) --
+      // a child that already finished is a silent no-op, never a status overwrite.
+      if (child.status() === "running") void child.stop().catch(() => {});
+    }
+    foregroundChildren.clear();
+  }
   opts.onChildRosterReady?.(() => childRoster);
   // Phase 4 Task 8: contribute THIS run's roster to the process-level messaging runtime, so Lane D's
   // SendMessage/ListAgents can actually resolve this session's own children (WS-10 §11 rules 2/3).
@@ -1133,6 +1149,11 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
           const inheritance = buildChildInheritance(req);
           const handle = await deps.spawn(req, inheritance);
           childRoster.push(handle);
+          // Fix wave (I5): a BACKGROUND child deliberately outlives the call that spawned it (it is
+          // tracked by the background-task registry and reachable by TaskStop); a FOREGROUND child
+          // is owned by this turn, so an interrupt must take it down with the call that was
+          // awaiting it.
+          if (req.runInBackground !== true) foregroundChildren.add(handle);
           return handle;
         },
       },
@@ -1977,7 +1998,15 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
     const interruptSignal = new Promise<void>((resolve) => {
       interruptResolve = resolve;
     });
-    interruptCurrentTurn.current = interruptResolve;
+    // Fix wave (I5): an interrupt abandons the in-flight tool call -- including an Agent call that
+    // is awaiting a foreground child -- so the abandoned child is stopped with it. Ordered
+    // resolve-then-stop so the turn unwinds immediately; `stop()` is fire-and-forget and settles
+    // the child's own result promise (never awaited here: WS-04 §5's interrupt must not block on a
+    // child's teardown).
+    interruptCurrentTurn.current = () => {
+      interruptResolve();
+      abortForegroundChildren();
+    };
 
     // Finding 3 (P2 fix-wave, IMPORTANT): result.permission_denials, the array the frozen
     // derived-shapes doc calls "the record to trust ... the array is the ledger" (permission_denied
@@ -2551,6 +2580,20 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // caller-supplied state source/control seam is the caller's own to dispose.
   // Phase 4 Task 8: withdraw this run's child roster from the process-level messaging runtime --
   // a completed session's children must not keep appearing in another session's ListAgents.
+  // Fix wave (I5): a BACKGROUND child that is still running at teardown outlives the session in the
+  // in-memory leg (the child/compiled legs die with the process, main.ts) -- it kept executing tools
+  // while being WITHDRAWN from the messaging roster one line below, i.e. live but unaddressable by
+  // anything. Stopped here instead, BEFORE the withdrawal, and awaited (each `stop()` settles its
+  // own generation) so a host that returns from `runEngine` has no live background descendants.
+  //
+  // FOREGROUND children are deliberately NOT swept here (the review's teardown finding is about the
+  // background half): a foreground child is owned by the Agent call awaiting it -- it either
+  // completes, in which case there is nothing to stop, or its call is interrupted, in which case
+  // `abortForegroundChildren` above already stopped it. Residual, disclosed: a foreground-shaped
+  // spawn that some other caller abandons WITHOUT an interrupt (this file's own test fixtures do
+  // exactly that, deliberately, to interact with a child past its parent's turn) keeps its
+  // pre-existing lifetime.
+  await Promise.allSettled(childRoster.filter((c) => !foregroundChildren.has(c) && c.status() === "running").map((c) => c.stop()));
   removeChildRosterSource();
   disposeSessionMcpLifecycle?.();
   if (mcpLifecycle) await mcpLifecycle.dispose().catch(() => {});

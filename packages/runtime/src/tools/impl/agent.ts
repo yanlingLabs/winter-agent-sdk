@@ -338,8 +338,33 @@ export const agentExecutor: ToolExecutor = {
     }
 
     if (!fgbg.background) {
-      const result = await handle.result();
-      return foregroundResultToPayload(handle.record, result, prompt, subagentType);
+      // Phase 4 fix wave (I5): a FOREGROUND child is tracked in the same unified task namespace a
+      // background one is, so `TaskStop` can reach it -- before this, a foreground child had no
+      // task id at all and `stop()` was reachable through no tool. Deliberately SILENT: no
+      // `task_started`/`background_tasks_changed` frame is emitted (those describe a BACKGROUNDED
+      // task to the model, and emitting them here would both mislead and churn every committed
+      // spawn golden), and the row is moved to a terminal status the moment the child settles, so a
+      // later `background_tasks_changed` can never advertise a finished foreground child.
+      //
+      // Best-effort by construction: the tracking row is a convenience on top of a child this call
+      // is ALREADY awaiting, so a failure to create it (a hand-built ToolExecutionContext whose run
+      // never called configureBackgroundTaskRoot) must degrade to "no task id", never fail the call.
+      let foregroundTaskId: string | undefined;
+      try {
+        const { taskId, outputPath } = createBackgroundTask("agent");
+        startTracking({ taskId, kind: "agent", outputPath, description, stop: () => void handle.stop() });
+        foregroundTaskId = taskId;
+      } catch {
+        /* see above -- tracking is auxiliary to a child this call already owns */
+      }
+      try {
+        const result = await handle.result();
+        return foregroundResultToPayload(handle.record, result, prompt, subagentType);
+      } finally {
+        if (foregroundTaskId !== undefined) {
+          setTaskStatus(foregroundTaskId, handle.record.status === "completed" ? "completed" : handle.record.status === "stopped" ? "stopped" : "failed");
+        }
+      }
     }
 
     return startBackgroundAgentTask(handle, ctx, description, prompt, subagentType);

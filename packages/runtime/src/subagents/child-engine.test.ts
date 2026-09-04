@@ -1575,3 +1575,107 @@ describe("child-engine.ts: children share the session's MCP state (fix wave I2/I
     });
   }, 20_000);
 });
+
+// --- Phase 4 fix wave: I5 -- interrupt and teardown stop in-process children ---------------------
+
+// Spawns a child, stashes the handle for the test, AND awaits its result -- the FOREGROUND shape
+// (tools/impl/agent.ts's own non-background branch), so an interrupt genuinely abandons a call that
+// is mid-await on a live child.
+const SPAWN_AWAIT_REGISTER = "t6fw_spawn_await_register";
+function registerSpawnAwaitRegister(): void {
+  registerTool({
+    descriptor: {
+      canonicalName: SPAWN_AWAIT_REGISTER, advertisedName: SPAWN_AWAIT_REGISTER, source: "builtin", inputSchema: { type: "object" },
+      description: "spawns a child, stashes the handle, and awaits its result", exposure: "eager", permissionClass: "read",
+      availability: {}, capabilityRequirements: [], disposition: "implement-now",
+    },
+    executor: {
+      async execute(input: unknown, ctx: ToolExecutionContext) {
+        if (!ctx.session.spawnChild) return { output: "no spawnChild capability configured", isError: true };
+        const handle = await ctx.session.spawnChild(input as SpawnChildRequest);
+        liveHandles.set(handle.record.id, handle);
+        const result = await handle.result();
+        return { output: JSON.stringify({ agentId: handle.record.id, result }) };
+      },
+    },
+  });
+}
+
+describe("child-engine.ts: interrupt and teardown stop live children (fix wave I5, WS-04 §5)", () => {
+  test("interrupting the parent's turn STOPS the foreground child the abandoned Agent call was awaiting -- it executes no further tools", async () => {
+    registerSpawnAwaitRegister();
+    cleanupToolNames.push(SPAWN_AWAIT_REGISTER);
+    const SLOW = "t6fw_slow";
+    const MARKER = "t6fw_after_interrupt";
+    cleanupToolNames.push(SLOW, MARKER);
+    let slowStarted = false;
+    registerTool({
+      descriptor: {
+        canonicalName: SLOW, advertisedName: SLOW, source: "builtin", inputSchema: { type: "object" },
+        description: "returns after a short real delay", exposure: "eager", permissionClass: "read",
+        availability: {}, capabilityRequirements: [], disposition: "implement-now",
+      },
+      executor: {
+        async execute() {
+          slowStarted = true;
+          await new Promise((r) => setTimeout(r, 250));
+          return { output: "slow done" };
+        },
+      },
+    });
+    const marker = registerRecordingTool(MARKER);
+    const req: SpawnChildRequest = { parentToolUseId: "call-1", prompt: "work slowly", runInBackground: false };
+    const childProvider = scriptedProvider([
+      { kind: "tool_use", calls: [{ id: "c1", name: SLOW, input: {} }] },
+      // Reached ONLY if the child kept running past the parent's interrupt -- which is exactly the
+      // abandoned-but-alive engine loop the review describes ("an unbounded engine loop that can
+      // call further tools and spawn further children").
+      { kind: "tool_use", calls: [{ id: "c2", name: MARKER, input: {} }] },
+      { kind: "text", text: "child finished anyway" },
+    ]);
+    registerChildEngineFactory(createChildEngineFactory({ provider: childProvider }));
+    const { host, runtime } = createInMemoryChannel();
+    const provider = scriptedProvider([
+      { kind: "tool_use", calls: [{ id: "call-1", name: SPAWN_AWAIT_REGISTER, input: req }] },
+      { kind: "text", text: "parent done" },
+    ]);
+    const done = runEngine({ config: baseConfig({ sessionId: "parent-interrupt-s" }), input: runtime.input, output: runtime.output, provider });
+    host.output.write({ type: "user", text: "go" });
+    const drainPromise = drain(host.input);
+    await waitUntil(() => liveHandles.size === 1 && slowStarted);
+    const handle = [...liveHandles.values()][0]!;
+    host.output.write({ type: "control_request", requestId: "int-1", subtype: "interrupt", payload: undefined });
+    await waitUntil(() => handle.status() !== "running");
+    host.output.write({ type: "control_request", requestId: "end-1", subtype: "end_input", payload: undefined });
+    await drainPromise;
+    await done;
+    expect(handle.status()).toBe("stopped");
+    expect(marker.ran, "an abandoned foreground child must not keep executing tools").toEqual([]);
+  }, 15_000);
+
+  test("teardown STOPS a background child that is still running -- never withdrawn from the roster while still alive", async () => {
+    registerSpawnAndRegister();
+    cleanupToolNames.push(SPAWN_AND_REGISTER);
+    const BLOCKER = "t6fw_teardown_blocker";
+    cleanupToolNames.push(BLOCKER);
+    const gate = registerBlockingTool(BLOCKER);
+    try {
+      const req: SpawnChildRequest = { parentToolUseId: "call-1", prompt: "block forever", runInBackground: true };
+      const childProvider = scriptedProvider([
+        { kind: "tool_use", calls: [{ id: "c1", name: BLOCKER, input: {} }] },
+        { kind: "text", text: "child finished" },
+      ]);
+      const { code } = await driveParent({ provider: childProvider }, baseConfig({ sessionId: "parent-teardown-s" }), [
+        { kind: "tool_use", calls: [{ id: "call-1", name: SPAWN_AND_REGISTER, input: req }] },
+        { kind: "text", text: "parent done" },
+      ]);
+      expect(code).toBe(0);
+      const handle = [...liveHandles.values()][0]!;
+      // Before the fix: still "running" AFTER runEngine returned -- live, executing, and already
+      // withdrawn from the messaging roster, i.e. unaddressable by anything.
+      expect(handle.status()).toBe("stopped");
+    } finally {
+      gate.release();
+    }
+  }, 15_000);
+});
