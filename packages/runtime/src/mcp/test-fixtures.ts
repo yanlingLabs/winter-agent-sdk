@@ -195,9 +195,10 @@ export async function withSseFixture<T>(spec: FixtureServerSpec, fn: (url: URL) 
 //
 // A spawned process can't receive a JS closure, so the stdio fixture server (a SEPARATE file,
 // __fixtures__/stdio-server.ts) is a small, FIXED script -- not a spec builder like the three
-// helpers above. It registers the exact same "echo"/"boom" tools and text/blob resources
-// `defaultFixtureSpec()` describes, so a test exercising the stdio path can assert the identical
-// expectations as the in-memory/http/sse paths.
+// helpers above. It registers the same "echo"/"boom" tools and text/blob resources
+// `defaultFixtureSpec()` describes (plus, as of fix round 1, its own "env_dump" tool with no
+// in-memory/http/sse equivalent -- see that file's own header), so a test exercising the stdio path
+// can assert the identical echo/boom/resource expectations as the in-memory/http/sse paths.
 export function stdioFixtureCommand(): { command: string; args: string[] } {
   // process.execPath: the currently-running bun binary's own absolute path. Fix round 1 correction
   // (MAJOR M1's own report Deviations entry): this is NOT here to work around an empty-env PATH

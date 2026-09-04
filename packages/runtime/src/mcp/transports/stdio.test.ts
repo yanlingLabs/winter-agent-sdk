@@ -7,11 +7,18 @@ import { stdioFixtureCommand, grandchildSpawningCommand } from "../test-fixtures
 // Every test in this file spawns a REAL child process (the fixture at
 // __fixtures__/stdio-server.ts) -- the lane protocol's own stall discipline requires killing it in
 // `finally` with a deadline, every test, since a leaked child process hangs the linux runner.
-// `client.close()` reliably kills a direct (non-shell-wrapped) bun-script child in the success
-// path (verified empirically before writing this file); the `transport.pid`-based manual SIGKILL
-// below is the belt-and-suspenders fallback, since `transport.pid` is empirically NULLED OUT by the
-// SDK's own error handling on a failed/timed-out connect before a caller ever gets to read it --
-// captured proactively via a short poll instead so the fallback still has a real pid to act on.
+//
+// Fix round 1 correction (MAJOR M1): the paragraph this replaces described `transport.pid` as
+// "empirically NULLED OUT by the SDK's own error handling" -- true of the OLD `StdioClientTransport`
+// wrapper this file used to test (its own `close()` clears `_process` synchronously, before the kill
+// even completes), but no longer the actual mechanism here. `WinterStdioTransport.close()` now
+// performs its own unconditional process-GROUP kill (`detached: true` + `process.kill(-pid,
+// "SIGKILL")`) -- `client.close()` alone is reliable for every test in this file; the manual
+// deadline-bounded kill below is a true belt-and-suspenders fallback, not the primary mechanism.
+// `WinterStdioTransport.pid` only clears once the OS actually reports the child's own "close" event
+// (which may lag slightly behind `close()`'s own return), so the pid is still captured proactively
+// via a short poll rather than read once at the end, so the fallback (and this test file's own
+// process-group-gone verification) still has a real pid to act on.
 async function withStdioConnection<T>(
   env: Record<string, string>,
   fn: (client: Client, getPid: () => number | null) => Promise<T>,

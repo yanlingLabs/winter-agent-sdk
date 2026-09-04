@@ -1,6 +1,8 @@
 import { describe, test, expect } from "bun:test";
+import { randomUUID } from "node:crypto";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { ListToolsRequestSchema, CallToolRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { getRegisteredTool } from "../tools/registry.ts";
 import { createElicitationAsker } from "./elicitation.ts";
 import { createInMemoryDiscoveryCache, createMcpLifecycle, resolveMcpServerSources, type McpServerSource, type ResolvedMcpServerEntry } from "./lifecycle.ts";
@@ -646,6 +648,86 @@ describe("fix round 1 (MAJOR M2): connect-completion race protection (per-slot g
       expect(closeCount()).toBe(1); // only the superseded original's connection was closed -- 1 live
     } finally {
       await lifecycle.dispose();
+    }
+  });
+
+  // Holds EVERY request until `gate` resolves once (matching the advisor-suggested one-liner
+  // `fetch: async (req) => { await gate; return transport.handleRequest(req); }`) -- a request that
+  // arrives AFTER the one-time resolve passes straight through, since awaiting an already-resolved
+  // promise never blocks. `initializeCount` sniffs a CLONE of each POST body for the literal
+  // `"method":"initialize"` JSON-RPC method name -- the one thing this suite actually needs to prove
+  // "exactly one real handshake reached the server," which a single shared `Client`/session could
+  // never produce twice on its own.
+  async function createGatedHttpServer(spec: FixtureServerSpec, gate: Promise<void>) {
+    const server = createFixtureMcpServer(spec);
+    const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: () => randomUUID() });
+    await server.connect(transport);
+    let initializeCount = 0;
+    const bunServer = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch: async (req) => {
+        if (req.method === "POST") {
+          const text = await req
+            .clone()
+            .text()
+            .catch(() => "");
+          if (text.includes('"method":"initialize"')) initializeCount++;
+        }
+        await gate;
+        return transport.handleRequest(req);
+      },
+    });
+    return {
+      url: new URL(`http://127.0.0.1:${bunServer.port}/mcp`),
+      initializeCount: () => initializeCount,
+      stop: () => bunServer.stop(true),
+      server,
+    };
+  }
+
+  // Fix round 1, post-fix-round advisory finding: `beginAttempt`/`isCurrentAttempt`'s SUPERSEDE
+  // semantics (correct for disable/remove/reconnect/replace, which genuinely want a prior attempt
+  // dead) are WRONG for two concurrent on-demand connects racing each other on the SAME "cached"
+  // server -- neither one is trying to supersede the other, they are both just trying to satisfy the
+  // SAME "connect on first use" need at once. Applying supersede there made the SECOND beginAttempt
+  // call silently invalidate the FIRST, so whichever of two concurrent first-tool-calls happened to
+  // finish first discarded its own perfectly good connection and reported "not connected" -- a
+  // regression this fix round's own review introduced and caught before it shipped.
+  test("two concurrent first-tool-calls on the same 'cached' server both succeed (dedupe, not supersede)", async () => {
+    const gate = createDeferred();
+    const fixture = await createGatedHttpServer(defaultFixtureSpec(), gate.promise);
+    try {
+      const cache = createInMemoryDiscoveryCache();
+      cache.set("race-cached", [{ name: "echo", inputSchema: { type: "object", properties: { text: { type: "string" } }, required: ["text"] } }]);
+      const resolved: ResolvedMcpServerEntry[] = [{ name: "race-cached", origin: "explicit", config: { type: "http", url: fixture.url.toString() } }];
+      const lifecycle = createMcpLifecycle({ servers: resolved, envConfig: fastEnv({ discoveryCache: true }), elicitationAsk: NO_ELICIT, discoveryCache: cache });
+      try {
+        await lifecycle.start();
+        expect(lifecycle.stateSource.snapshot()[0]!.state).toBe("cached"); // served from the cache -- no real dial yet
+
+        const registered = getRegisteredTool("mcp__race-cached__echo")!;
+        const p1 = registered.executor!.execute({ text: "a" }, {} as never);
+        const p2 = registered.executor!.execute({ text: "b" }, {} as never);
+
+        gate.resolve(); // release both concurrent on-demand connects at once
+        const [r1, r2] = await Promise.all([p1, p2]);
+
+        expect(r1.isError).not.toBe(true);
+        expect(r2.isError).not.toBe(true);
+        expect(fixture.initializeCount()).toBe(1); // exactly one real handshake serves BOTH callers
+        // Pre-existing, unrelated-to-this-fix behavior: a successful on-demand connect never itself
+        // transitions the wire state past "cached" (WS-09 §2.1 -- tools stay advertised under
+        // "cached" either way; only `slot.client` internally distinguishes "not yet dialed" from
+        // "live"). This assertion exists to document that fact for this test's own reader, not to
+        // re-litigate it.
+        expect(lifecycle.stateSource.snapshot()[0]!.state).toBe("cached");
+      } finally {
+        await lifecycle.dispose();
+      }
+    } finally {
+      fixture.stop();
+      await fixture.server.close();
     }
   });
 

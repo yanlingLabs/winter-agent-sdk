@@ -221,6 +221,13 @@ interface ConnectionSlot {
   // visible side effect (slot.client, tool registration/executor install, setSlotState) -- see this
   // file's own report for the exact race this closes.
   gen: number;
+  // Post-fix-round advisory finding: two CONCURRENT on-demand connects (both hitting this same
+  // "cached -> connect" branch at once) must never race each other via beginAttempt/isCurrentAttempt
+  // -- that mechanism is for SUPERSEDING an attempt something else legitimately wants dead
+  // (disable/remove/reconnect/replace), not for two callers who both just want the SAME "connect on
+  // first use" outcome. `inflight` lets every concurrent on-demand caller share the ONE real attempt
+  // already in progress instead of starting a second that would invalidate the first's own gen.
+  inflight?: Promise<boolean> | undefined;
 }
 
 function toWireState(slot: ConnectionSlot): McpServerState {
@@ -461,22 +468,37 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
         async execute(input: unknown, _ctx: ToolExecutionContext): Promise<ToolResultPayload> {
           // WS-09 §2.1: a `cached` server's live connection is deferred to its first tool call.
           if (slot.state === "cached" && !slot.client) {
-            // Fix round 1 (MAJOR M2): this is a SECOND connect-attempt call site (the first is
-            // connectOneServer's own cache-miss path) -- it needs its own generation exactly the
-            // same way: a disable/remove/reconnect racing this on-demand connect must not let it
-            // commit a client, tool registration, or state transition for a slot that moved on.
-            const gen = beginAttempt(slot);
+            // Fix round 1 (MAJOR M2, then a post-fix-round correction): this is a SECOND
+            // connect-attempt call site (the first is connectOneServer's own cache-miss path) -- a
+            // disable/remove/reconnect racing it must not let it commit a client, tool registration,
+            // or state transition for a slot that moved on. But TWO CONCURRENT calls into THIS branch
+            // must never race EACH OTHER that way: `slot.inflight` lets every concurrent caller share
+            // the one real attempt already under way, instead of each minting its own generation and
+            // invalidating the other's (the exact regression this comment now prevents -- see
+            // ConnectionSlot.inflight's own doc comment).
+            let gen: number | undefined;
             try {
-              const committed = await connectSlotForReal(slot, gen);
+              const committed = await (slot.inflight ??= (async () => {
+                gen = beginAttempt(slot);
+                try {
+                  return await connectSlotForReal(slot, gen);
+                } finally {
+                  slot.inflight = undefined;
+                }
+              })());
               if (!committed) {
-                // Superseded while connecting -- whatever superseded this attempt owns the slot's
-                // state now; this call just reports "not connected" rather than resurrecting it.
+                // Superseded while connecting (by disable/remove/reconnect/replace -- never by a
+                // fellow concurrent on-demand caller, which shares this same attempt instead) --
+                // whatever superseded it owns the slot's state now; this call just reports "not
+                // connected" rather than resurrecting it.
                 return { output: `Error: mcp server "${slot.name}" is not connected (state: ${slot.state})`, isError: true };
               }
             } catch (err) {
-              if (!isCurrentAttempt(slot, gen)) {
+              if (gen === undefined || !isCurrentAttempt(slot, gen)) {
                 // Superseded while FAILING -- something else already owns this slot's state; a
-                // stale failure must never stomp it.
+                // stale failure must never stomp it. `gen === undefined` covers a caller that only
+                // ever AWAITED the shared `inflight` promise without minting its own generation (it
+                // was not the one that started the attempt, so it has nothing of its own to check).
                 return { output: `Error: mcp server "${slot.name}" is not connected (state: ${slot.state})`, isError: true };
               }
               const code = err instanceof McpConnectError ? err.code : "unknown";
