@@ -1548,6 +1548,47 @@ describe("child-engine.ts: children share the session's MCP state (fix wave I2/I
     expect(wait.connected).toEqual(["fixture"]); // EXACTLY the parent's set -- no more, no less
   }, 20_000);
 
+  // Fix wave follow-up (8), whole-branch M7: the session's programmatic `Options.agents` map reaches
+  // a child, so a GRANDCHILD spawn can resolve a `subagent_type` the host declared. Probed on
+  // `ctx.agents` because that is exactly the value `tools/impl/agent.ts` passes to
+  // `loadAgentDefinitions({programmatic})` -- whose "resolves a programmatic definition / answers
+  // unknown subagent_type when it cannot" behaviour is already pinned in `tools/impl/agent.test.ts`.
+  // Pre-fix this was `undefined` inside every child, so a nested Agent call answered "unknown
+  // subagent_type" for a definition the SAME call from the top-level session resolves.
+  test("M7: the parent's programmatic `agents` map reaches the child, so a grandchild can resolve a subagent_type", async () => {
+    registerSpawnProbe();
+    cleanupToolNames.push(SPAWN_PROBE);
+    const AGENTS_PROBE = "t6fw_agents_probe";
+    cleanupToolNames.push(AGENTS_PROBE);
+    let childAgents: unknown;
+    registerTool({
+      descriptor: {
+        canonicalName: AGENTS_PROBE, advertisedName: AGENTS_PROBE, source: "builtin", inputSchema: { type: "object" },
+        description: "reports this run's own ctx.agents", exposure: "eager", permissionClass: "read",
+        availability: {}, capabilityRequirements: [], disposition: "implement-now",
+      },
+      executor: {
+        async execute(_input: unknown, ctx: ToolExecutionContext) {
+          childAgents = ctx.agents;
+          return { output: "probed" };
+        },
+      },
+    });
+    const programmatic = { reviewer: { description: "reviews code", prompt: "You are a careful reviewer." } };
+    const req: SpawnChildRequest = { parentToolUseId: "call-1", prompt: "probe your agents map", runInBackground: false };
+    const childProvider = scriptedProvider([
+      { kind: "tool_use", calls: [{ id: "c1", name: AGENTS_PROBE, input: {} }] },
+      { kind: "text", text: "probed" },
+    ]);
+    const { code } = await driveParent(
+      { provider: childProvider },
+      baseConfig({ sessionId: "parent-agents-mirror", agents: programmatic }),
+      [{ kind: "tool_use", calls: [{ id: "call-1", name: SPAWN_PROBE, input: req }] }, { kind: "text", text: "parent done" }],
+    );
+    expect(code).toBe(0);
+    expect(childAgents, "ctx.agents is undefined inside a child until the map is mirrored").toEqual(programmatic);
+  }, 20_000);
+
   test("I2: the CHILD's own ToolSearch session runtime carries the parent's MCP state source, not an empty one", async () => {
     registerSpawnProbe();
     cleanupToolNames.push(SPAWN_PROBE);

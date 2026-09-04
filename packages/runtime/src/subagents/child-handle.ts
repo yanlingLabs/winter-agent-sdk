@@ -195,6 +195,19 @@ export interface ChildEngineRunContext {
   // "name a server this session already declares" spelling of `AgentMcpServerSpec` -- can be
   // resolved rather than silently dropped.
   getParentMcpState?(): ParentMcpState;
+  // Phase 4 fix wave, follow-up (8) -- whole-branch M7's ONE non-neutral entry. The session's own
+  // PROGRAMMATIC `Options.agents` map, mirrored down so a GRANDCHILD spawn can resolve a
+  // `subagent_type` the session declared. Without it, `ctx.agents` is undefined inside a child, so a
+  // nested `Agent(subagent_type: "reviewer")` answers "unknown subagent_type" for a definition the
+  // host demonstrably configured -- while the SAME call from the top-level session succeeds. Every
+  // other M7 gap is stricter-or-neutral; this one silently breaks a working configuration one level
+  // down.
+  //
+  // A definition-shaped WIDENING is impossible here: the map is the parent's own, verbatim, and a
+  // resolved definition is still bounded by the child's inherited tool pool and the parent's live
+  // rules (getParentRules above). Read at CALL time, like the two accessors above, so a host that
+  // mutates its own map between spawns is not serving a stale copy.
+  getParentAgents?(): Record<string, unknown> | undefined;
 }
 
 export interface ParentMcpState {

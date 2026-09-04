@@ -1218,6 +1218,10 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
               ...(effectiveMcpControlSeam !== undefined ? { controlSeam: effectiveMcpControlSeam } : {}),
               ...(config.mcpServers !== undefined ? { declaredServers: config.mcpServers } : {}),
             }),
+            // Fix wave follow-up (8), whole-branch M7: this session's own programmatic agents map,
+            // so a grandchild can resolve a `subagent_type` the host declared (see
+            // ChildEngineRunContext.getParentAgents).
+            getParentAgents: () => config.agents,
           });
           const inheritance = buildChildInheritance(req);
           const handle = await deps.spawn(req, inheritance);

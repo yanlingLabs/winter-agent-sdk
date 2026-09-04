@@ -44,16 +44,18 @@
 //     narrower than its parent's, never wider.
 //   * `toolAliases` -- absent: a child sees native names only; nothing is renamed, so no rule or
 //     hook matcher can be dodged by an alias the child alone knows.
-//   * `agents` -- absent, and NOT merely stricter: a GRANDCHILD spawn inside a child cannot resolve
-//     a programmatic `subagent_type` at all (ctx.agents is undefined there), so it answers the
-//     "unknown subagent_type" error even though the session declared one. Closing it means
-//     mirroring the parent's map onto the child config; carried, not done here.
+//   * `agents` -- CLOSED in the fix wave's follow-up round (item 8): mirrored from the live
+//     `runCtx.getParentAgents()` onto the child config, so a GRANDCHILD spawn resolves a
+//     programmatic `subagent_type` the session declared. This was the one entry in this list that
+//     was NOT merely stricter -- it silently broke a working host configuration one level down
+//     while the identical call from the top-level session succeeded.
 //   * `toolSearchEnabled` -- absent: a child's deferral activation comes from the environment
 //     alone, so a host that enabled Tool Search per-session does not have it inside children.
 //   * `approvalStore` / `autoStateStore` -- not passed to the child's `runEngine`: a child's
 //     durable approvals and auto-mode counters are in-memory for its own lifetime.
-// The fix wave closed the two entries that were NOT neutral -- the parent's live permission rules
-// (C1/I6) and the session's MCP state (I2/I4); this list is what genuinely remains.
+// The fix wave closed the three entries that were NOT neutral -- the parent's live permission rules
+// (C1/I6), the session's MCP state (I2/I4), and the programmatic `agents` map (M7, follow-up round);
+// this list is what genuinely remains.
 //
 // --- Fix round 1 (controller review): two in-authority defects found and closed -----------------
 //
@@ -270,6 +272,9 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
     // state above -- so it is satisfied by inheritance when the session declares that name, and a
     // legible warning (never a silent drop) when it does not.
     const parentMcp = runCtx.getParentMcpState?.();
+    // Fix wave follow-up (8): read at spawn, from the live accessor, never captured at factory
+    // construction (the C1/I6 lesson applied to the one remaining non-neutral M7 gap).
+    const parentAgents = runCtx.getParentAgents?.();
     const childScopedMcpServers: NonNullable<RuntimeConfig["mcpServers"]> = {};
     for (const spec of req.definition?.mcpServers ?? []) {
       if (typeof spec === "string") {
@@ -579,6 +584,10 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
       disallowedTools,
       capabilities,
       forwardSubagentText: deps.forwardSubagentText === true,
+      // Fix wave follow-up (8), whole-branch M7: the session's own programmatic `Options.agents`
+      // map, mirrored down so a GRANDCHILD spawn can resolve a `subagent_type` the host declared --
+      // see ChildEngineRunContext.getParentAgents for why this one gap was not merely stricter.
+      ...(parentAgents !== undefined ? { agents: parentAgents as NonNullable<RuntimeConfig["agents"]> } : {}),
       // Fix round 1 (finding I1), REPLACED by the fix wave's per-generation `generationConfig`
       // below: the parent's rules no longer live on this static base config at all, because they
       // must be re-read PER GENERATION (C1/I6) rather than frozen at spawn.
