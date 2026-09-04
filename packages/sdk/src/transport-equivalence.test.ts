@@ -135,9 +135,11 @@ registerBgTaskTestTool();
 // `${name}:${JSON.stringify(input)}` echo for the in-memory leg only -- discovered empirically: the
 // child leg (which always uses the real registry) genuinely forwarded through the fixture's
 // `callTool`, but the in-memory leg's "tool_result" content came back prefixed with the qualified
-// tool name (stubExecutor's own `name` parameter, the canonical `mcp__t8mcpsdk__echo`), a real
-// cross-leg equivalence divergence rather than a fixture bug -- compareTraces caught it exactly as
-// designed.
+// tool name (stubExecutor's own `name` parameter, the canonical `mcp__t8mcpsdk__echo`) -- a
+// harness-config gap (this set is spawnHook's own fixture-selection knob, never engine.ts), not an
+// engine-side divergence, but exactly the class of bug compareTraces exists to catch: the two legs
+// disagreeing on wire content is a release blocker per spec regardless of which side the actual
+// root cause sits on.
 const REGISTRY_BACKED_TEST_PROVIDERS: ReadonlySet<TestProviderName> = new Set(["bgtask", "lanea", "laneb", "lanec", "laned", "lanee", "mcpsdk"]);
 
 function sleep(ms: number): Promise<void> {
