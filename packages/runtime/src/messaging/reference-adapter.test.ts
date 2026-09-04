@@ -387,6 +387,29 @@ describe("reevaluateHeldFor / sweepExpiredHeld (WS-10 §13)", () => {
     expect(results).toHaveLength(1);
     expect(results[0]?.outcome.status).toBe("refused");
   });
+  test("an EXPLICIT hold has no dialog-expiry sweep of its own, but is still bounded by the message's own TTL (WS-10 §12)", async () => {
+    const { deps, peers, setNow } = makeAdapterDeps();
+    const { peer } = fakePeer({ mode: "default", crossSessionInbound: "hold" }); // forces kind: "explicit"
+    peers.register(peer);
+    const adapter = createReferenceMessagingAdapter(deps);
+    const held = await adapter.deliverToSession(peer.address, envelope({ senderPermissionClass: "prompts", expiresAt: 500 }));
+    expect(held.status).toBe("held");
+    // Well past the message's own TTL (500) but nowhere near the (irrelevant, explicit-hold-exempt)
+    // 5-minute default dialog expiry.
+    setNow(501);
+    const results = adapter.sweepExpiredHeld();
+    expect(results).toHaveLength(1);
+    expect(results[0]?.outcome).toEqual({ status: "refused", messageId: "m1", reason: expect.stringContaining("TTL") });
+  });
+  test("an EXPLICIT hold is left alone before its message TTL elapses", async () => {
+    const { deps, peers, setNow } = makeAdapterDeps();
+    const { peer } = fakePeer({ mode: "default", crossSessionInbound: "hold" });
+    peers.register(peer);
+    const adapter = createReferenceMessagingAdapter(deps);
+    await adapter.deliverToSession(peer.address, envelope({ senderPermissionClass: "prompts", expiresAt: 500 }));
+    setNow(499);
+    expect(adapter.sweepExpiredHeld()).toEqual([]);
+  });
 });
 
 describe("createDefaultMessagingRuntime: end-to-end wiring smoke test", () => {

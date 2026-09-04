@@ -375,12 +375,29 @@ export function createReferenceMessagingAdapter(deps: ReferenceAdapterDeps): Ref
     },
 
     sweepExpiredHeld() {
+      const now = deps.now();
       const receiverKeys = deps.peers.list().map((p) => serializeRuntimeAddress(p.address));
       const results: Array<{ messageId: string; outcome: DeliveryOutcome }> = [];
       for (const receiverKey of receiverKeys) {
-        for (const entry of mailbox.sweepExpired(receiverKey, deps.now())) {
+        // The 5-minute DEFAULT-class dialog expiry (WS-10 §13) -- mailbox.sweepExpired only ever
+        // removes "default" entries; an "explicit" hold is untouched by this call by design (it
+        // "persists ... until a later applicable accept, refusal, session end, or explicit bounded
+        // product-retention rule," WS-10 §13).
+        for (const entry of mailbox.sweepExpired(receiverKey, now)) {
           heldEnvelopes.delete(entry.messageId);
           results.push({ messageId: entry.messageId, outcome: refused(entry.messageId, "held message expired without a response (5-minute default dialog expiry, WS-10 §13)") });
+        }
+        // WS-10 §12's own "finite default TTL" MUST applies to EVERY message, independent of hold
+        // kind -- an explicit hold has no dialog-expiry sweep of its own, so without this second
+        // check it would sit in the mailbox forever. The message's own `expiresAt` (stamped at send
+        // time, router.ts) is exactly the "explicit bounded product-retention rule" WS-10 §13 itself
+        // names as the one thing that CAN still end an explicit hold's indefinite persistence.
+        for (const entry of mailbox.listHeld(receiverKey)) {
+          const envelope = heldEnvelopes.get(entry.messageId);
+          if (envelope === undefined || envelope.expiresAt > now) continue;
+          mailbox.takeHeld(receiverKey, entry.messageId);
+          heldEnvelopes.delete(entry.messageId);
+          results.push({ messageId: entry.messageId, outcome: refused(entry.messageId, "held message expired without a response (message TTL elapsed, WS-10 §12)") });
         }
       }
       return results;
