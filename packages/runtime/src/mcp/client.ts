@@ -32,7 +32,7 @@ import { StreamableHTTPError } from "@modelcontextprotocol/sdk/client/streamable
 import { SseError } from "@modelcontextprotocol/sdk/client/sse.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { McpServerConfigForProcessTransport } from "@yanlinglabs/winter-agent-sdk";
-import { buildStdioTransport } from "./transports/stdio.ts";
+import { buildStdioTransport, WinterStdioTransport } from "./transports/stdio.ts";
 import { buildHttpTransport } from "./transports/http.ts";
 import { buildSseTransport } from "./transports/sse.ts";
 import { buildSdkTransport, type InProcessMcpServer } from "./transports/sdk.ts";
@@ -290,11 +290,21 @@ export async function connectMcpServer(opts: ConnectMcpServerOptions): Promise<C
     // process-GROUP kill (RULING P4-H) -- verified empirically (transports/stdio.test.ts's
     // connect-timeout case) to reliably reap the child AND any grandchild it spawned, so no
     // additional pid-tracking or manual kill is needed at this layer for any transport kind.
+    // Whole-branch review N3: read the stderr tail BEFORE close() clears anything, so a stdio server
+    // that died or hung during startup leaves a diagnostic on the error a caller actually sees.
+    // A hung server produces no child `error` event at all (the transport's own spawn-path
+    // attachment cannot cover it) -- this is the handshake/timeout half of the same finding.
+    const stderrTail = transport! instanceof WinterStdioTransport ? (transport as WinterStdioTransport).stderrTail.trim() : "";
     try {
       await transport!.close();
     } catch {
       /* transport may never have started, or may already be closed -- either is fine here */
     }
-    throw classifyConnectError(err);
+    const classified = classifyConnectError(err);
+    if (stderrTail === "" || classified.message.includes(stderrTail)) throw classified;
+    // A NEW error of the same code, never a mutated one: McpConnectError.message is read back by
+    // lifecycle.ts into the slot's own `error` field, and rewriting a thrown object in place is the
+    // kind of aliasing that surprises a second reader of the same reference.
+    throw new McpConnectError(classified.code, `${classified.message}\n--- server stderr (last ${stderrTail.length} chars) ---\n${stderrTail}`);
   }
 }

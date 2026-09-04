@@ -19,6 +19,20 @@ import { stdioFixtureCommand, grandchildSpawningCommand } from "../test-fixtures
 // (which may lag slightly behind `close()`'s own return), so the pid is still captured proactively
 // via a short poll rather than read once at the end, so the fallback (and this test file's own
 // process-group-gone verification) still has a real pid to act on.
+// P4 fix wave, KNOWN (9): the unconditional `finally` reaper for the two grandchild fixtures below.
+// Their grandchild is a DETACHED `sleep 3600`, so a failed intermediate `expect` used to leak a
+// process for an HOUR. Best-effort by construction -- a group that is already gone throws ESRCH,
+// which is the success case, and this must never turn a real assertion failure into a different
+// error.
+function reapGroup(pid: number | null): void {
+  if (pid === null) return;
+  try {
+    process.kill(-pid, "SIGKILL");
+  } catch {
+    /* already reaped -- the expected outcome when close() did its job */
+  }
+}
+
 async function withStdioConnection<T>(
   env: Record<string, string>,
   fn: (client: Client, getPid: () => number | null) => Promise<T>,
@@ -227,24 +241,33 @@ describe("fix round 1 (MAJOR M1): process-GROUP semantics (detached: true) -- ge
       }
       if (grandchildPid === null) await new Promise((r) => setTimeout(r, 20));
     }
-    expect(grandchildPid).not.toBeNull();
-    expect(() => process.kill(grandchildPid!, 0)).not.toThrow(); // alive before close()
+    // P4 fix wave, KNOWN (9): every assertion from here on is inside a try/finally. The fixture's
+    // grandchild is a DETACHED `sleep 3600` -- a failed intermediate `expect` used to abandon the
+    // whole process group for an hour, on a developer machine and in CI alike. The `finally` reaps
+    // it unconditionally, INCLUDING when `close()` (the very thing under test) is what regressed.
+    try {
+      expect(grandchildPid).not.toBeNull();
+      expect(() => process.kill(grandchildPid!, 0)).not.toThrow(); // alive before close()
 
-    await transport.close();
+      await transport.close();
 
-    const deadline = Date.now() + 1000;
-    let groupGone = false;
-    while (Date.now() < deadline) {
-      try {
-        process.kill(-pid!, 0);
-      } catch {
-        groupGone = true;
-        break;
+      const deadline = Date.now() + 1000;
+      let groupGone = false;
+      while (Date.now() < deadline) {
+        try {
+          process.kill(-pid!, 0);
+        } catch {
+          groupGone = true;
+          break;
+        }
+        await new Promise((r) => setTimeout(r, 20));
       }
-      await new Promise((r) => setTimeout(r, 20));
+      expect(groupGone).toBe(true);
+      expect(() => process.kill(grandchildPid!, 0)).toThrow(); // the grandchild is reaped too, not orphaned
+    } finally {
+      await transport.close().catch(() => {});
+      reapGroup(pid);
     }
-    expect(groupGone).toBe(true);
-    expect(() => process.kill(grandchildPid!, 0)).toThrow(); // the grandchild is reaped too, not orphaned
   });
 
   test("a failed/timed-out connect ALSO reaps the whole group (mirrors mcp/client.ts's own catch-block close path)", async () => {
@@ -265,26 +288,76 @@ describe("fix round 1 (MAJOR M1): process-GROUP semantics (detached: true) -- ge
     } finally {
       clearInterval(pollTimer);
     }
-    expect(threw).toBe(true);
-    expect(capturedPid).not.toBeNull();
-    const pid = capturedPid!;
+    // P4 fix wave, KNOWN (9): same guard as the test above -- a failed `expect` here would otherwise
+    // abandon a detached `sleep 3600`.
+    try {
+      expect(threw).toBe(true);
+      expect(capturedPid).not.toBeNull();
+      const pid = capturedPid!;
 
-    // mcp/client.ts's own catch block calls `transport.close()` unconditionally on any connect
-    // failure -- reproduced directly here since this test talks to the transport without going
-    // through connectMcpServer.
-    await transport.close().catch(() => {});
+      // mcp/client.ts's own catch block calls `transport.close()` unconditionally on any connect
+      // failure -- reproduced directly here since this test talks to the transport without going
+      // through connectMcpServer.
+      await transport.close().catch(() => {});
 
-    const deadline = Date.now() + 1000;
-    let groupGone = false;
-    while (Date.now() < deadline) {
-      try {
-        process.kill(-pid, 0);
-      } catch {
-        groupGone = true;
-        break;
+      const deadline = Date.now() + 1000;
+      let groupGone = false;
+      while (Date.now() < deadline) {
+        try {
+          process.kill(-pid, 0);
+        } catch {
+          groupGone = true;
+          break;
+        }
+        await new Promise((r) => setTimeout(r, 20));
       }
-      await new Promise((r) => setTimeout(r, 20));
+      expect(groupGone).toBe(true);
+    } finally {
+      await transport.close().catch(() => {});
+      reapGroup(capturedPid);
     }
-    expect(groupGone).toBe(true);
+  });
+
+  // Whole-branch review N3: a stdio server that writes to stderr and dies leaves a diagnostic.
+  // Before this, `child.stderr.on("data", () => {})` discarded every byte, so a crashing server
+  // produced a bare `handshake_failed`/`timeout` with nothing anywhere to debug from.
+  test("N3: a server's stderr survives as a BOUNDED tail and reaches the connect error", async () => {
+    const canary = "WINTER_STDERR_CANARY_c0ffee";
+    // Writes to stderr, never speaks MCP, then exits -- so the handshake fails and the tail is the
+    // only evidence of why.
+    const transport = new WinterStdioTransport({ command: "/bin/sh", args: ["-c", `echo ${canary} 1>&2; sleep 0.2`], env: {} });
+    const client = new Client({ name: "stdio-stderr-test", version: "1.0.0" });
+    try {
+      await client.connect(transport, { timeout: 300 }).catch(() => {});
+      // Give the pipe a tick to deliver (the connect rejection can beat the stderr flush).
+      const deadline = Date.now() + 500;
+      while (!transport.stderrTail.includes(canary) && Date.now() < deadline) await new Promise((r) => setTimeout(r, 10));
+      expect(transport.stderrTail).toContain(canary);
+      // Bounded, not a log sink.
+      expect(transport.stderrTail.length).toBeLessThanOrEqual(4096);
+    } finally {
+      const pid = transport.pid;
+      await transport.close().catch(() => {});
+      reapGroup(pid);
+    }
+  });
+
+  test("N3: the tail is capped -- a chatty server can never grow this process's memory", async () => {
+    // 200 KB of stderr through a 4 KB tail.
+    const transport = new WinterStdioTransport({
+      command: "/bin/sh",
+      args: ["-c", "i=0; while [ $i -lt 200 ]; do printf '%01000d' 0 1>&2; i=$((i+1)); done; sleep 0.3"],
+      env: {},
+    });
+    try {
+      await transport.start();
+      const deadline = Date.now() + 1500;
+      while (transport.stderrTail.length < 4096 && Date.now() < deadline) await new Promise((r) => setTimeout(r, 10));
+      expect(transport.stderrTail.length).toBe(4096);
+    } finally {
+      const pid = transport.pid;
+      await transport.close().catch(() => {});
+      reapGroup(pid);
+    }
   });
 });
