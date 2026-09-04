@@ -486,6 +486,117 @@ export function unregisterMcpServerTools(server: string): void {
   notifyRegistryChange();
 }
 
+// --- Phase 4 Task 2: the deferral primitive (WS-09 §8.5/§9) ---------------------------------------
+
+// Per-session bookkeeping of which deferred tools Tool Search has materialized THIS session (WS-09
+// §8.5 "Loaded set"). One instance per session -- unlike the module-level `registry` Map above, this
+// is explicitly NOT a singleton (the interface + factory shape the task-2 brief pins verbatim), since
+// two concurrent sessions must never share load state.
+export interface LoadedToolSet {
+  isLoaded(name: string): boolean;
+  // Partitions `names` by whether a descriptor is currently registered under that name (existence,
+  // not exposure/disposition -- resolveDeferral is the separate, session-aware decision of WHETHER a
+  // name should have been deferred at all; this only tracks WHICH names are now loaded). Idempotent:
+  // an already-loaded name loading again stays loaded and is reported in `loaded` again.
+  load(names: string[]): { loaded: string[]; unknown: string[] };
+  // WS-09 §8.5 "Compaction reset": drops everything from the loaded set that is NOT in `evidenced`
+  // -- an INTERSECTION with the current set, never a union. A name in `evidenced` that was never
+  // loaded in the first place does NOT appear in the set afterward (this function only ever REMOVES
+  // membership, consistent with the spec's own "drops everything not in evidenced" phrasing, and
+  // with "MUST NOT drop tools that remained evidenced" -- the ones that remain are exactly the
+  // intersection, nothing is ever added back).
+  reset(evidenced: string[]): void;
+  snapshot(): string[];
+}
+
+export function createLoadedToolSet(): LoadedToolSet {
+  const loaded = new Set<string>();
+  return {
+    isLoaded(name: string): boolean {
+      return loaded.has(name);
+    },
+    load(names: string[]): { loaded: string[]; unknown: string[] } {
+      const loadedNow: string[] = [];
+      const unknown: string[] = [];
+      for (const name of names) {
+        if (getRegisteredTool(name) !== undefined) {
+          loaded.add(name);
+          loadedNow.push(name);
+        } else {
+          unknown.push(name);
+        }
+      }
+      return { loaded: loadedNow, unknown };
+    },
+    reset(evidenced: string[]): void {
+      const evidencedSet = new Set(evidenced);
+      for (const name of loaded) {
+        if (!evidencedSet.has(name)) loaded.delete(name);
+      }
+    },
+    snapshot(): string[] {
+      return Array.from(loaded);
+    },
+  };
+}
+
+// WS-09 §8.1: ENABLE_TOOL_SEARCH's exact value semantics, ALREADY PARSED (see
+// packages/runtime/src/mcp/env.ts's parseMcpEnvConfig, which imports this exact field's type rather
+// than redeclaring a second literal union that could drift from this one).
+export interface DeferralActivation {
+  enableToolSearch: "unset" | "true" | "false" | "auto" | { auto: number };
+  providerSupportsToolSearch: boolean;
+  // WS-09 §8.1 "auto"/"auto:N": a PERCENT (0-100), the SAME unit as the threshold values ("10%",
+  // "auto:N"'s own "custom percentage threshold") -- deliberately not a 0..1 fraction, so
+  // `deferrableContextShare >= 10` and `auto:15`'s own literal `15` compare directly with no
+  // conversion step at either producer (whoever computes the live share -- Lane B/T3) or consumer
+  // (resolveDeferral immediately below). A unit mismatch here is exactly the class of producer/
+  // consumer drift R4-2 exists to catch, so it is pinned in this doc comment, not left implicit.
+  deferrableContextShare: number;
+}
+
+// WS-09 §9's exposure-mapping table, resolved for one descriptor in one session. Boundary: a share
+// EXACTLY AT the threshold counts as active (>=, not >) -- pinned by a seam-contracts-p4.test.ts
+// fixture. `"unset"` is CAPTURE-PENDING (see the branch below, R4-8 class): treated identically to
+// bare "auto" (the 10% default) as the most defensible reading of "normal automatic behavior" this
+// pin can support without a live capture, but kept as its own case label (never silently merged into
+// the "auto" string) specifically so a future capture-driven correction is a one-line case-body
+// swap, not a restructure. Recorded as a concern in task-2-report.md.
+export function resolveDeferral(descriptor: ToolDescriptor, mode: PermissionMode, activation: DeferralActivation): "eager" | "deferred" | "hidden" {
+  // Floor: a descriptor already marked hidden on the pre-existing, static WS-06 axis (e.g. a
+  // correctly-absent placeholder, or a mode-gated internal) stays hidden regardless of any deferral
+  // input -- defends a future caller (Lane B) that runs this over registry output that was not
+  // pre-filtered by buildAdvertisedSet's own hidden-exclusion.
+  if (descriptor.exposure === "hidden") return "hidden";
+  // WS-09 §9 "hidden = registry mode-visibility exclusion": the SAME AvailabilityPredicate.modes
+  // gate buildAdvertisedSet's own isAvailable() already enforces, re-applied here so a caller that
+  // consults resolveDeferral directly gets an answer consistent with the advertised set without
+  // separately re-deriving mode-visibility itself.
+  const modes = descriptor.availability.modes;
+  if (modes !== undefined && !modes.includes(mode)) return "hidden";
+  // WS-09 §8: "Core built-ins... remain loaded up front... never deferred through the public
+  // surface" -- an unconditional override, checked before alwaysLoad/deferred so a builtin can never
+  // be mis-marked deferred by a future descriptor edit.
+  if (descriptor.source === "builtin") return "eager";
+  // WS-09 §2 table: "alwaysLoad: true forces the server's complete tools eager (never deferred)".
+  if (descriptor.alwaysLoad === true) return "eager";
+
+  const declared = descriptor.deferred;
+  const eligible = declared === true ? true : Array.isArray(declared) ? declared.includes(mode) : false;
+  if (!eligible) return "eager";
+
+  // WS-09 §8.1: "Provider fallbacks are part of the contract... alwaysLoad: false therefore means
+  // 'eligible for deferral', never a guarantee of deferral on every backend" -- a provider that
+  // cannot speak Tool Search at all gets full injection regardless of every other input.
+  if (activation.providerSupportsToolSearch === false) return "eager";
+
+  const etc = activation.enableToolSearch;
+  if (etc === "false") return "eager";
+  if (etc === "true") return "deferred";
+  if (etc === "unset" || etc === "auto") return activation.deferrableContextShare >= 10 ? "deferred" : "eager";
+  return activation.deferrableContextShare >= etc.auto ? "deferred" : "eager"; // { auto: N }
+}
+
 // --- §1.5: availability resolution + buildAdvertisedSet ---------------------------------------------
 
 // N1 (fix wave, P3 close-out): STALE as of T8 -- this paragraph described the T1-era state

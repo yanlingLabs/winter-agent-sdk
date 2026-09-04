@@ -21,9 +21,12 @@ import {
   registerMcpServerTools,
   unregisterMcpServerTools,
   onRegistryChange,
+  createLoadedToolSet,
+  resolveDeferral,
   type ToolDescriptor,
   type ToolExecutor,
   type RegistryToolExecutorDeps,
+  type DeferralActivation,
 } from "./registry.ts";
 import { createSessionReadState } from "./read-state.ts";
 
@@ -605,6 +608,124 @@ describe("registerMcpServerTools / unregisterMcpServerTools (Phase 4 Task 2, WS-
     expect(buildAdvertisedSet({ mode: "default", capabilities: ["winter.mcp"] }).map((d) => d.canonicalName)).toContain(`mcp__${SRV}__foo`);
     unregisterMcpServerTools(SRV);
     expect(buildAdvertisedSet({ mode: "default", capabilities: ["winter.mcp"] }).map((d) => d.canonicalName)).not.toContain(`mcp__${SRV}__foo`);
+  });
+});
+
+describe("LoadedToolSet (Phase 4 Task 2, WS-09 §8.5)", () => {
+  test("isLoaded/load/snapshot: a name is loaded only after load(), and load partitions by registry existence", () => {
+    const set = createLoadedToolSet();
+    expect(set.isLoaded("Read")).toBe(false);
+    const result = set.load(["Read", "__t2_totally_unknown_tool__"]);
+    expect(result.loaded).toEqual(["Read"]);
+    expect(result.unknown).toEqual(["__t2_totally_unknown_tool__"]);
+    expect(set.isLoaded("Read")).toBe(true);
+    expect(set.snapshot()).toEqual(["Read"]);
+  });
+
+  test("load is idempotent -- loading the same name twice does not duplicate it in the snapshot", () => {
+    const set = createLoadedToolSet();
+    set.load(["Read"]);
+    set.load(["Read"]);
+    expect(set.snapshot()).toEqual(["Read"]);
+  });
+
+  test("reset(evidenced) is an INTERSECTION: drops non-evidenced names, never adds a never-loaded one", () => {
+    const set = createLoadedToolSet();
+    set.load(["Read", "Edit"]);
+    set.reset(["Read", "Grep"]); // Grep was never loaded -- must NOT appear afterward
+    expect(set.snapshot().sort()).toEqual(["Read"]);
+    expect(set.isLoaded("Edit")).toBe(false);
+    expect(set.isLoaded("Grep")).toBe(false);
+  });
+
+  test("reset([]) drops everything", () => {
+    const set = createLoadedToolSet();
+    set.load(["Read", "Edit"]);
+    set.reset([]);
+    expect(set.snapshot()).toEqual([]);
+  });
+});
+
+describe("resolveDeferral (Phase 4 Task 2, WS-09 §8.5/§9)", () => {
+  const fullActivation: DeferralActivation = { enableToolSearch: "true", providerSupportsToolSearch: true, deferrableContextShare: 100 };
+
+  function mcpDescriptor(overrides?: Partial<ToolDescriptor>): ToolDescriptor {
+    return fixtureDescriptor("__t2_resolve_deferral_fixture__", { source: "mcp", ...overrides });
+  }
+
+  test("a core builtin is NEVER deferred, even when declared deferred: true and activation is fully on", () => {
+    const d = fixtureDescriptor("__t2_builtin_fixture__", { source: "builtin", deferred: true });
+    expect(resolveDeferral(d, "default", fullActivation)).toBe("eager");
+  });
+
+  test("alwaysLoad: true forces eager regardless of deferred/activation", () => {
+    const d = mcpDescriptor({ deferred: true, alwaysLoad: true });
+    expect(resolveDeferral(d, "default", fullActivation)).toBe("eager");
+  });
+
+  test("exposure: hidden is a floor -- hidden regardless of deferred/activation", () => {
+    const d = mcpDescriptor({ deferred: true, exposure: "hidden" });
+    expect(resolveDeferral(d, "default", fullActivation)).toBe("hidden");
+  });
+
+  test("mode-visibility exclusion (availability.modes) resolves to hidden", () => {
+    const d = mcpDescriptor({ deferred: true, availability: { modes: ["plan"] } });
+    expect(resolveDeferral(d, "default", fullActivation)).toBe("hidden");
+    expect(resolveDeferral(d, "plan", fullActivation)).not.toBe("hidden");
+  });
+
+  test("deferred absent/false is never eligible -- eager regardless of activation", () => {
+    const d = mcpDescriptor({ deferred: false });
+    expect(resolveDeferral(d, "default", fullActivation)).toBe("eager");
+    const noDeferredField = mcpDescriptor();
+    expect(resolveDeferral(noDeferredField, "default", fullActivation)).toBe("eager");
+  });
+
+  test("deferred: Mode[] is eligible only in listed modes -- eager (not deferred) outside them", () => {
+    const d = mcpDescriptor({ deferred: ["plan"] });
+    expect(resolveDeferral(d, "default", fullActivation)).toBe("eager");
+    expect(resolveDeferral(d, "plan", fullActivation)).toBe("deferred");
+  });
+
+  test("providerSupportsToolSearch: false forces full injection (eager) even when eligible and enableToolSearch: true", () => {
+    const d = mcpDescriptor({ deferred: true });
+    const activation: DeferralActivation = { enableToolSearch: "true", providerSupportsToolSearch: false, deferrableContextShare: 100 };
+    expect(resolveDeferral(d, "default", activation)).toBe("eager");
+  });
+
+  test("enableToolSearch: false fully injects (eager) even when eligible", () => {
+    const d = mcpDescriptor({ deferred: true });
+    const activation: DeferralActivation = { enableToolSearch: "false", providerSupportsToolSearch: true, deferrableContextShare: 100 };
+    expect(resolveDeferral(d, "default", activation)).toBe("eager");
+  });
+
+  test("enableToolSearch: true forces deferred when eligible, regardless of context share", () => {
+    const d = mcpDescriptor({ deferred: true });
+    const activation: DeferralActivation = { enableToolSearch: "true", providerSupportsToolSearch: true, deferrableContextShare: 0 };
+    expect(resolveDeferral(d, "default", activation)).toBe("deferred");
+  });
+
+  test("auto (bare) and unset share the 10% threshold, boundary inclusive (>=)", () => {
+    const d = mcpDescriptor({ deferred: true });
+    const below: DeferralActivation = { enableToolSearch: "auto", providerSupportsToolSearch: true, deferrableContextShare: 9.9 };
+    const atBoundary: DeferralActivation = { enableToolSearch: "auto", providerSupportsToolSearch: true, deferrableContextShare: 10 };
+    const above: DeferralActivation = { enableToolSearch: "auto", providerSupportsToolSearch: true, deferrableContextShare: 10.1 };
+    expect(resolveDeferral(d, "default", below)).toBe("eager");
+    expect(resolveDeferral(d, "default", atBoundary)).toBe("deferred");
+    expect(resolveDeferral(d, "default", above)).toBe("deferred");
+
+    const unsetActivation: DeferralActivation = { enableToolSearch: "unset", providerSupportsToolSearch: true, deferrableContextShare: 10 };
+    expect(resolveDeferral(d, "default", unsetActivation)).toBe("deferred");
+    const unsetBelow: DeferralActivation = { enableToolSearch: "unset", providerSupportsToolSearch: true, deferrableContextShare: 9.9 };
+    expect(resolveDeferral(d, "default", unsetBelow)).toBe("eager");
+  });
+
+  test("auto:N uses the custom percentage threshold instead of the 10% default", () => {
+    const d = mcpDescriptor({ deferred: true });
+    const activation: DeferralActivation = { enableToolSearch: { auto: 25 }, providerSupportsToolSearch: true, deferrableContextShare: 20 };
+    expect(resolveDeferral(d, "default", activation)).toBe("eager"); // below the custom 25% threshold
+    const activationAtBoundary: DeferralActivation = { enableToolSearch: { auto: 25 }, providerSupportsToolSearch: true, deferrableContextShare: 25 };
+    expect(resolveDeferral(d, "default", activationAtBoundary)).toBe("deferred");
   });
 });
 
