@@ -5,6 +5,11 @@ export type { Query, SdkMessage } from "./query.ts";
 // surface; T8 adds `respondPermission` to it for the canUseTool `null` escape).
 export type { QueryInternal, ControlRequestHandler, ControlRequestHandlerResult } from "./query.ts";
 export type { Options } from "./options.ts";
+// Phase 5 Task 2 (derived-shapes-p5.md items (b)/(c)/(d)/(e)): the P5 option shapes + the pinned
+// block-array sentinel + the four session defaults that are resolved runtime-side rather than baked
+// into the wire (see options.ts's own header for why they are constants and not wire values).
+export { SYSTEM_PROMPT_DYNAMIC_BOUNDARY, DEFAULT_CONTEXT_WINDOW_TOKENS, DEFAULT_COMPACTION_THRESHOLD, DEFAULT_PLANS_DIRECTORY, DEFAULT_OUTPUT_STYLE } from "./options.ts";
+export type { SdkPluginConfig, SystemPromptOption, SystemPromptPreset, OutputFormat, JsonSchemaOutputFormat, SkillsOption, RewindFilesResult, RewindFilesRequest, InitPluginInfo } from "./protocol/config.ts";
 // Phase 4 Task 2 (WS-09 derived-shapes item (a)/(d)): the HOST-facing MCP config union + subagent
 // definition shape a program writing `Options.mcpServers`/`Options.agents` types against — see
 // options.ts's own header comments for the full rationale (why `McpSdkServerConfigWithInstance`

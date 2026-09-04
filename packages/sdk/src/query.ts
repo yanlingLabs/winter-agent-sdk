@@ -416,6 +416,19 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
     ...(options.toolAliases !== undefined ? { toolAliases: options.toolAliases } : {}),
     ...(options.agents !== undefined ? { agents: options.agents } : {}),
     ...(options.forwardSubagentText !== undefined ? { forwardSubagentText: options.forwardSubagentText } : {}),
+    // Phase 5 Task 2 (WS-11): same pure-passthrough convention as every field above -- query.ts
+    // never interprets these itself (options.ts's own comment on each field names the real consumer,
+    // and why the four defaulted ones are resolved runtime-side rather than baked in here).
+    ...(options.systemPrompt !== undefined ? { systemPrompt: options.systemPrompt } : {}),
+    ...(options.plugins !== undefined ? { plugins: options.plugins } : {}),
+    ...(options.skills !== undefined ? { skills: options.skills } : {}),
+    ...(options.outputFormat !== undefined ? { outputFormat: options.outputFormat } : {}),
+    ...(options.enableFileCheckpointing !== undefined ? { enableFileCheckpointing: options.enableFileCheckpointing } : {}),
+    ...(options.contextWindowTokens !== undefined ? { contextWindowTokens: options.contextWindowTokens } : {}),
+    ...(options.compactionThreshold !== undefined ? { compactionThreshold: options.compactionThreshold } : {}),
+    ...(options.trustedWorkspace !== undefined ? { trustedWorkspace: options.trustedWorkspace } : {}),
+    ...(options.plansDirectory !== undefined ? { plansDirectory: options.plansDirectory } : {}),
+    ...(options.outputStyle !== undefined ? { outputStyle: options.outputStyle } : {}),
   };
 
   // A custom spawnClaudeCodeProcess hook owns process creation entirely (containers, VMs, remote

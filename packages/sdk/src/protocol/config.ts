@@ -11,7 +11,94 @@
 // Task 5 (WS-07 §3.3 / phase ruling 1): allowedTools/disallowedTools/permissions/settingSources
 // mirror Options' own fields (options.ts) exactly — same optional raw-string-grammar shapes, same
 // serialize-only posture. The runtime engine (a later task) is the actual consumer.
-import type { RuleSource, HookSource } from "../permissions/types.ts";
+import type { HookSource } from "../permissions/types.ts";
+import type { SettingSource } from "../settings/types.ts";
+
+// --- Phase 5 Task 2 (WS-11; derived-shapes-p5.md items (b)/(c)/(d)/(e)) ---------------------------
+//
+// The P5 wire-crossing shapes. Declared HERE, not options.ts, for the same reason
+// SandboxSettingsConfig/McpServerConfigForProcessTransport are: config.ts is the single source of
+// truth for every field the host-facing and wire layers share unchanged, and the runtime package
+// imports these back through the sdk barrel (WS-02 §3 -- the runtime imports sdk types, never the
+// reverse).
+
+/**
+ * `sdk.d.ts:4597-4610`. THREE fields — WS-11 §4 and the plan both name only the first two.
+ * `skipMcpDiscovery` (`4609`) loads the plugin's skills/hooks/agents/commands but does NOT read its
+ * `.mcp.json` or manifest `mcpServers`, for hosts that own the plugin's MCP connections themselves.
+ * `type: 'local'` is a closed one-member literal on the pin (remote/marketplace plugins must first
+ * exist locally, `1846`).
+ */
+export interface SdkPluginConfig {
+  type: "local";
+  path: string;
+  skipMcpDiscovery?: boolean;
+}
+
+/**
+ * `sdk.d.ts:2159-2164` verbatim (R5-9 as amended after Task 1). THREE arms: a replacement string, a
+ * block array split by `SYSTEM_PROMPT_DYNAMIC_BOUNDARY` (options.ts), or the preset object — whose
+ * `excludeDynamicSections` is NESTED (`2163`) and doc-asserted inert for a string prompt (`2124`).
+ * `preset: 'claude_code'` is the pinned closed literal; Winter's `"winter_code"` native spelling is
+ * an ALIAS Lane C resolves, deliberately not a widening of this union (a caller passing it to the
+ * pinned SDK would not typecheck, and this type exists to stay drop-in).
+ */
+export type SystemPromptPreset = {
+  type: "preset";
+  preset: "claude_code";
+  append?: string;
+  excludeDynamicSections?: boolean;
+};
+export type SystemPromptOption = string | string[] | SystemPromptPreset;
+
+/** `sdk.d.ts:963-966`; `OutputFormat = JsonSchemaOutputFormat` (`2207`) is currently a one-member union. */
+export interface JsonSchemaOutputFormat {
+  type: "json_schema";
+  schema: Record<string, unknown>;
+}
+export type OutputFormat = JsonSchemaOutputFormat;
+
+/**
+ * The main-session skill filter. DISCLOSED: the artifact records this option's doc lines but not its
+ * declared type; capture (4) shows the running engine accepts `'all'` (and that omission is not
+ * "skills off"). `string[] | "all"` is Winter's reading of those two facts — see options.ts.
+ */
+export type SkillsOption = string[] | "all";
+
+/**
+ * `sdk.d.ts:2848-2858` (R5-11 as amended). The typed result of `Query.rewindFiles(userMessageId,
+ * { dryRun? })` — the pinned parameter is `userMessageId` (`2641`, its own `@param` doc says the
+ * VALUE is a uuid), and both the second parameter and this result are absent from WS-11 §9.
+ *
+ * `skippedLinks` (`2857`) carries a behavioural rule, not just a count (doc `2855`): a tracked path
+ * that resolves to a symlink/hard link/non-regular file, or whose parent no longer resolves where it
+ * did at checkpoint time, or whose backup cannot be safely read, is REFUSED rather than restored —
+ * and the counter is populated on real rewinds only, never on a `dryRun`.
+ *
+ * Types only at Task 2: the control wiring is Task 3's and the mechanism is Lane K's.
+ */
+export interface RewindFilesResult {
+  canRewind: boolean;
+  error?: string;
+  filesChanged?: string[];
+  insertions?: number;
+  deletions?: number;
+  skippedLinks?: number;
+}
+
+/** The wire form of a rewind request (`sdk.d.ts:4146-4150`): snake_case, and it drops the result. */
+export interface RewindFilesRequest {
+  subtype: "rewind_files";
+  user_message_id: string;
+  dry_run?: boolean;
+}
+
+/** `sdk.d.ts:4881-4889`: one entry of `system/init.plugins`. `version` is plugin-author-controlled and doc-marked "validate before trusting". */
+export interface InitPluginInfo {
+  name: string;
+  path: string;
+  version?: string;
+}
 
 // Task 9 (WS-08 §1/§2; phase ruling 1: "the config carries the source-tagged registration list"):
 // the wire-safe shape of one `{matcher?, hooks: HookHandler[]}` registration group AFTER its actual
@@ -204,7 +291,10 @@ export interface RuntimeConfig {
   // Options' own field exactly (see options.ts's comment for the naming rationale) — a plain
   // boolean at P2; managed source-tagging arrives at P5.
   permissions?: { allow?: string[]; ask?: string[]; deny?: string[]; disableBypassPermissionsMode?: boolean };
-  settingSources?: RuleSource[];
+  // Phase 5 Task 2: narrowed from `RuleSource[]` to the pinned `SettingSource` union — see
+  // options.ts's own field comment for the full rationale (a rule ORIGIN is not a settings FILE
+  // tier). Omitted = all three tiers; `[]` = filesystem settings disabled.
+  settingSources?: SettingSource[];
   // Task 6 (WS-07 §6.4, Ruling 8): the wire's own permissionMode field ABOVE stays an open string —
   // only this new field is added here. Selecting/switching into "bypassPermissions" requires this to
   // be `true`; the runtime engine gates both the initial config value and every later
@@ -274,4 +364,28 @@ export interface RuntimeConfig {
   // carrying them).
   agentId?: string;
   isolationPinnedCwd?: boolean;
+
+  // --- Phase 5 Task 2 (WS-11): the P5 session options' wire mirrors --------------------------------
+  //
+  // Pure passthrough, same conditional-spread convention as every field above -- query.ts never
+  // interprets these, it only serializes them; see options.ts's own comment on each for the pinned
+  // citation and the real consumer. Every one is OPTIONAL and absent by default: the four that have
+  // defaults (`contextWindowTokens`, `compactionThreshold`, `plansDirectory`, `outputStyle`) resolve
+  // them runtime-side from options.ts's exported constants, so a session that configures none is
+  // byte-identical on the wire to every session before these fields existed.
+  systemPrompt?: SystemPromptOption;
+  plugins?: SdkPluginConfig[];
+  skills?: SkillsOption;
+  outputFormat?: OutputFormat;
+  enableFileCheckpointing?: boolean;
+  contextWindowTokens?: number;
+  compactionThreshold?: number;
+  // RULING P5-A: the host-declared workspace-trust bit. engine.ts's `trustedWorkspace` const --
+  // hard-`false` since P2, and shared by the permission evaluator, the hook registry, the MCP source
+  // resolver and the child-rule mirror -- is derived from THIS field through
+  // packages/runtime/src/settings/trust.ts's `defaultTrustSource`. Absent/false is fail-closed and
+  // byte-identical to every session before the field existed.
+  trustedWorkspace?: boolean;
+  plansDirectory?: string;
+  outputStyle?: string;
 }

@@ -1,5 +1,5 @@
 import type { SpawnClaudeCodeProcess } from "./transport.ts";
-import type { RuleSource, PermissionMode, CanUseTool, HookEvent, HookCallbackMatcher } from "./permissions/types.ts";
+import type { PermissionMode, CanUseTool, HookEvent, HookCallbackMatcher } from "./permissions/types.ts";
 import type {
   SandboxSettingsConfig,
   McpServerToolPolicy,
@@ -8,7 +8,37 @@ import type {
   McpSSEServerConfig,
   McpSdkServerConfig,
   RuntimeAgentDefinition,
+  SdkPluginConfig,
+  SystemPromptOption,
+  OutputFormat,
+  JsonSchemaOutputFormat,
+  SkillsOption,
 } from "./protocol/config.ts";
+import type { SettingSource } from "./settings/types.ts";
+export type { SdkPluginConfig, SystemPromptOption, OutputFormat, JsonSchemaOutputFormat, SkillsOption } from "./protocol/config.ts";
+
+// --- Phase 5 Task 2 (derived-shapes-p5.md item (c)): the pinned block-array sentinel --------------
+//
+// `sdk.d.ts:8157`, value verbatim; runtime-confirmed as a live export in Task 1's symbol sweep.
+// Placed as a STANDALONE element of `systemPrompt`'s `string[]` arm, it splits the globally-cacheable
+// static prefix (blocks before it) from the session-specific suffix (blocks after it).
+export const SYSTEM_PROMPT_DYNAMIC_BOUNDARY = "__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__";
+
+// --- Phase 5 Task 2: session defaults, as CONSTANTS rather than wire values ------------------------
+//
+// R5-3/R5-4/R5-9/R5-14 name defaults for four P5 options. They are exported here and applied
+// RUNTIME-side when the corresponding field is absent, never baked into `--config-json` by query.ts:
+// the established convention for every optional field on this surface is a conditional spread (an
+// unset option is an ABSENT key), and baking a default in would change the wire for every session
+// that never asked for one. `contextWindowTokens`/`compactionThreshold` are disclosed WINTER session
+// options (the pin's own analogue for the latter is the `autoCompactWindow` SETTING, `sdk.d.ts:7599`,
+// a different shape); `plansDirectory` mirrors the pinned settings key (`7693`) at the option layer;
+// `DEFAULT_OUTPUT_STYLE` is the value `system/init.output_style` (a REQUIRED pinned field, `4879`)
+// carries when no output style is configured.
+export const DEFAULT_CONTEXT_WINDOW_TOKENS = 200000;
+export const DEFAULT_COMPACTION_THRESHOLD = 0.92;
+export const DEFAULT_PLANS_DIRECTORY = ".winter/plans";
+export const DEFAULT_OUTPUT_STYLE = "default";
 
 // --- Phase 4 Task 2 (WS-09 derived-shapes item (a)): the HOST-facing MCP config union -------------
 //
@@ -145,10 +175,19 @@ export interface Options {
   // set it. Judgment call, flagged in the report. query.ts's existing `permissions` passthrough
   // spread carries this field automatically — no serialization code changes needed for it.
   permissions?: { allow?: string[]; ask?: string[]; deny?: string[]; disableBypassPermissionsMode?: boolean };
-  // Winter-original (WS-07 §3.2's prose source list, not a pinned upstream field): which rule
-  // sources a host wants loaded at all — e.g. omitting "project" avoids loading project rules
-  // entirely (WS-07 §3.2). Serialize-only for this task: P5's file loader is the actual consumer.
-  settingSources?: RuleSource[];
+  // Which settings-FILE tiers this session loads at all (WS-07 §3.2 / WS-11 §5).
+  //
+  // Phase 5 Task 2 NARROWING: this was typed `RuleSource[]` at P2 (a rule ORIGIN union, which
+  // additionally carries `managed`/`cliArg`/`session`/`sdk`). Task 1 item (a) pinned the real type:
+  // `SettingSource = 'user' | 'project' | 'local'` (`sdk.d.ts:7917`) — three FILE tiers, and the
+  // only three a host can select. Omitted means all three (the CLI default); `[]` means filesystem
+  // settings are disabled entirely (WS-01 §2.4's hermetic-host mode). No in-repo caller passed a
+  // value outside the narrowed union.
+  //
+  // Pinned coupling worth knowing (`sdk.d.ts:2050`, recorded as OQ-P5-1 for Lane C): on the pinned
+  // branch, project-context files load ONLY when `'project'` is selected — so context discovery is
+  // source-gated there, which R5-9's unconditional `WINTER.md` injection does not mirror.
+  settingSources?: SettingSource[];
 
   // Finding 6 (P2 fix-wave, IMPORTANT): pinned upstream Options member (derived-shapes item (g),
   // sdk.d.ts:1841) — omitting it is a drop-in Options-parity break under strict object-literal
@@ -307,4 +346,58 @@ export interface Options {
     },
     options: { signal: AbortSignal; requestId: string },
   ) => Promise<{ action: "accept" | "decline" | "cancel"; content?: Record<string, unknown> } | null>;
+
+  // --- Phase 5 Task 2 (WS-11; derived-shapes-p5.md items (b)/(c)/(d)/(e)) --------------------------
+  //
+  // Pure passthrough into RuntimeConfig, the same conditional-spread convention as every field
+  // above: query.ts interprets none of them, and an unset option is an ABSENT wire key (defaults are
+  // applied runtime-side from the constants at the top of this file, never baked into the wire).
+  // Lanes W/S/C/K and Task 3 are the real consumers.
+
+  // `sdk.d.ts:2159-2164`, THREE arms (R5-9 as amended): a plain string REPLACES the prompt; a
+  // `string[]` is the block-array form split by SYSTEM_PROMPT_DYNAMIC_BOUNDARY (above); the preset
+  // object selects the authored preset and appends. `excludeDynamicSections` lives INSIDE the preset
+  // object (`2163`) and is doc-asserted inert for a string prompt (`2124`) — there is deliberately no
+  // sibling option of that name, which is where R5-9 originally put it. Winter's own `"winter_code"`
+  // preset spelling is Lane C's alias to resolve, not a widening made here: this union carries the
+  // pinned one-member literal verbatim.
+  systemPrompt?: SystemPromptOption;
+  // `sdk.d.ts:1856` / `4597-4610`. THREE fields, not two — `skipMcpDiscovery` (`4609`) loads a
+  // plugin's skills/hooks/agents/commands while leaving its MCP servers to the host, which is exactly
+  // the Winter daemon's posture (OQ-P5-3, Lane S).
+  plugins?: SdkPluginConfig[];
+  // The main-session skill filter (the pinned wire twin is `SDKControlInitializeRequest.skills`,
+  // `sdk.d.ts:3775`). DISCLOSED SHAPE NOTE: Task 1's artifact records the option's own doc lines
+  // (`2055`, `2065` — unlisted skills are rejected by the Skill tool) but not its declared type, and
+  // capture (4) shows the running engine accepts `'all'`; the union below is Winter's reading of
+  // those two facts. Omission is NOT "skills off" (capture (4): 16 builtin skills listed with the
+  // option unset, and `'all'` changed neither list).
+  skills?: SkillsOption;
+  // `sdk.d.ts:1811` / `963-966` (R5-10). Registers a host-generated `StructuredOutput` descriptor
+  // whose `input_schema` IS this schema, byte-for-byte (capture (6) proved it verbatim).
+  outputFormat?: OutputFormat;
+  // `sdk.d.ts:1549` (R5-11). Backup-before-modify interception on Write/Edit/NotebookEdit; the
+  // settings twin is `fileCheckpointingEnabled` (`7850`). Capture (2): combining this with an
+  // external `sessionStore` is rejected at query() construction — that rejection is Lane K's, not
+  // this field's.
+  enableFileCheckpointing?: boolean;
+  // DISCLOSED WINTER session options (R5-3/R5-4). The pin has no per-session context-window option
+  // at all (P6's model catalogue is where per-model values come from) and expresses its compaction
+  // trigger as the `autoCompactWindow` SETTING (`sdk.d.ts:7599`), a different shape. Absent means
+  // DEFAULT_CONTEXT_WINDOW_TOKENS / DEFAULT_COMPACTION_THRESHOLD, applied runtime-side.
+  contextWindowTokens?: number;
+  compactionThreshold?: number;
+  // DISCLOSED WINTER option (RULING P5-A): host-declared workspace trust. Default false — a
+  // repository must never self-trust (WS-07 §3.2), and nothing infers this from `settingSources`.
+  // It sits ABOVE the pinned per-tier filter, never underneath it: capture (1) proved the pinned
+  // trust concept is a filter on PROJECT-tier permissive rules, so deriving that filter from this
+  // bit would leave an untrusted repo's project-tier `deny` silently unenforced.
+  trustedWorkspace?: boolean;
+  // Mirrors the pinned settings key (`sdk.d.ts:7693`) at the option layer. Absent means
+  // DEFAULT_PLANS_DIRECTORY, applied runtime-side.
+  plansDirectory?: string;
+  // Mirrors the pinned settings key (`sdk.d.ts:7270`). The resolved value is what
+  // `system/init.output_style` (a REQUIRED pinned field, `4879`) reports; absent means
+  // DEFAULT_OUTPUT_STYLE.
+  outputStyle?: string;
 }

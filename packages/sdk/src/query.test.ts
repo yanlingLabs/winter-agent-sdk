@@ -9,6 +9,14 @@ import { encodeFrame } from "./protocol/codec.ts";
 import { PROTOCOL_VERSION } from "./protocol/frames.ts";
 import type { WinterFrame, ControlResponseFrame } from "./protocol/frames.ts";
 import type { PermissionMode, PermissionResult, PermissionRequestPayload, HookInvocationPayload, HookInput, HookJSONOutput } from "./permissions/types.ts";
+// Phase 5 Task 2: the P5 session-option constants (see this file's own P5 block at the bottom).
+import {
+  SYSTEM_PROMPT_DYNAMIC_BOUNDARY,
+  DEFAULT_CONTEXT_WINDOW_TOKENS,
+  DEFAULT_COMPACTION_THRESHOLD,
+  DEFAULT_PLANS_DIRECTORY,
+  DEFAULT_OUTPUT_STYLE,
+} from "./options.ts";
 
 test("query yields system/init, assistant, result in order", async () => {
   const seen: string[] = [];
@@ -1433,4 +1441,86 @@ test("Item 1: BEFORE the generator has ever been iterated, a control call still 
        write above, this reaches recordingProcess's own expectedWrites=3 gate and lets it complete. */
   }
   expect(decodeWrites(writes).some((f) => f.type === "control_request" && (f as { subtype: string }).subtype === "interrupt")).toBe(true);
+});
+
+// --- Phase 5 Task 2 (WS-11; R5-3/R5-4/R5-9/R5-10/R5-11 as amended after Task 1): the P5 session
+// options serialize into --config-json exactly like every prior field above (same captureConfigJson
+// helper, same conditional-spread convention -- query.ts interprets none of them).
+
+test("P5 T2: the P5 option block is present in --config-json when set on Options", async () => {
+  const capture = captureConfigJson();
+  for await (const _msg of query({
+    prompt: "ping",
+    options: {
+      settingSources: ["project", "local"],
+      systemPrompt: { type: "preset", preset: "claude_code", append: "extra", excludeDynamicSections: true },
+      plugins: [{ type: "local", path: "/plugins/a", skipMcpDiscovery: true }],
+      skills: ["writing", "review"],
+      outputFormat: { type: "json_schema", schema: { type: "object" } },
+      enableFileCheckpointing: true,
+      contextWindowTokens: 123456,
+      compactionThreshold: 0.5,
+      trustedWorkspace: true,
+      plansDirectory: "custom/plans",
+      outputStyle: "explanatory",
+      spawnClaudeCodeProcess: capture.hook,
+    },
+  })) {
+    /* drain */
+  }
+
+  expect(capture.get()).toMatchObject({
+    settingSources: ["project", "local"],
+    systemPrompt: { type: "preset", preset: "claude_code", append: "extra", excludeDynamicSections: true },
+    plugins: [{ type: "local", path: "/plugins/a", skipMcpDiscovery: true }],
+    skills: ["writing", "review"],
+    outputFormat: { type: "json_schema", schema: { type: "object" } },
+    enableFileCheckpointing: true,
+    contextWindowTokens: 123456,
+    compactionThreshold: 0.5,
+    trustedWorkspace: true,
+    plansDirectory: "custom/plans",
+    outputStyle: "explanatory",
+  });
+});
+
+test("P5 T2: the string[] arm of systemPrompt round-trips verbatim, sentinel included", async () => {
+  const capture = captureConfigJson();
+  for await (const _msg of query({
+    prompt: "ping",
+    options: { systemPrompt: ["static", SYSTEM_PROMPT_DYNAMIC_BOUNDARY, "session-specific"], spawnClaudeCodeProcess: capture.hook },
+  })) {
+    /* drain */
+  }
+  expect(capture.get()["systemPrompt"]).toEqual(["static", "__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__", "session-specific"]);
+});
+
+test("P5 T2: every unset P5 option is OMITTED entirely from --config-json (defaults are applied runtime-side, never here)", async () => {
+  const capture = captureConfigJson();
+  for await (const _msg of query({ prompt: "ping", options: { spawnClaudeCodeProcess: capture.hook } })) {
+    /* drain */
+  }
+  const config = capture.get();
+  for (const key of [
+    "systemPrompt",
+    "plugins",
+    "skills",
+    "outputFormat",
+    "enableFileCheckpointing",
+    "contextWindowTokens",
+    "compactionThreshold",
+    "trustedWorkspace",
+    "plansDirectory",
+    "outputStyle",
+  ]) {
+    expect(config).not.toHaveProperty(key);
+  }
+});
+
+test("P5 T2: the pinned session defaults are exported as constants rather than baked into the wire", () => {
+  expect(DEFAULT_CONTEXT_WINDOW_TOKENS).toBe(200000);
+  expect(DEFAULT_COMPACTION_THRESHOLD).toBe(0.92);
+  expect(DEFAULT_PLANS_DIRECTORY).toBe(".winter/plans");
+  expect(DEFAULT_OUTPUT_STYLE).toBe("default");
+  expect(SYSTEM_PROMPT_DYNAMIC_BOUNDARY).toBe("__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__");
 });
