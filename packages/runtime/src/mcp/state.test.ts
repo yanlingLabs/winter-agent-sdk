@@ -59,10 +59,22 @@ describe("createFakeMcpServerStateSource: transition upsert semantics", () => {
     expect(source.snapshot()).toEqual([{ name: "brand-new", state: "pending", toolNames: [] }]);
   });
 
-  test("errorCode/error are set on transition and persist across a later transition that omits them", () => {
+  test("errorCode/error are set when supplied, and CLEARED (not carried forward) by a later transition that omits them", () => {
+    // Fix round 1, MAJOR item 3: this test's own title used to claim errorCode/error PERSIST across
+    // a later transition that omits them, but the test body never actually performed that second
+    // transition -- it only proved the first half (supplying them sets them). Rewritten to genuinely
+    // exercise both directions the fix touches.
     const source = createFakeMcpServerStateSource([state({ name: "a", state: "pending" })]);
     source.transition("a", "failed", { errorCode: "ECONNREFUSED", error: "connection refused" });
     expect(source.snapshot()[0]).toEqual({ name: "a", state: "failed", toolNames: [], errorCode: "ECONNREFUSED", error: "connection refused" });
+
+    // A later transition that does NOT mention errorCode/error must CLEAR them, not carry the stale
+    // failure forward -- a server that goes on to connect successfully must not still report its old
+    // error. `toEqual` against an object with no errorCode/error keys at all is the proof: bun's
+    // `toEqual` fails on an unexpected extra own property, so this would fail if either field rode
+    // along from the "failed" state above.
+    source.transition("a", "connected", { toolNames: ["t"] });
+    expect(source.snapshot()[0]).toEqual({ name: "a", state: "connected", toolNames: ["t"] });
   });
 });
 

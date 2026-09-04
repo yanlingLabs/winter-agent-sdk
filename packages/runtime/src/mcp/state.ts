@@ -99,8 +99,17 @@ export function createFakeMcpServerStateSource(
   function transition(name: string, next: McpServerStateKind, extra?: Partial<McpServerState>): void {
     const existing = states.get(name);
     const toolNames = extra?.toolNames ?? existing?.toolNames ?? [];
-    const errorCode = extra?.errorCode ?? existing?.errorCode;
-    const error = extra?.error ?? existing?.error;
+    // Fix round 1, MAJOR item 3: errorCode/error are CLEARED on every transition unless `extra`
+    // ITSELF supplies them -- unlike toolNames (which legitimately carries over from the prior state
+    // when a transition doesn't mention it), an error belongs to the state that produced it. The
+    // previous `extra?.errorCode ?? existing?.errorCode` treated "extra has no errorCode key at all"
+    // the same as "extra explicitly cleared it," so a stale "failed" error/errorCode silently rode
+    // along into every later transition that never mentioned the field (e.g. a subsequent successful
+    // "connected" transition would still report the OLD failure). Checked by key PRESENCE (`in`), not
+    // by the value's own truthiness, so `extra` can still explicitly re-set a NEW errorCode/error on a
+    // repeat "failed" transition.
+    const errorCode = extra && "errorCode" in extra ? extra.errorCode : undefined;
+    const error = extra && "error" in extra ? extra.error : undefined;
     states.set(name, {
       name,
       state: next,
