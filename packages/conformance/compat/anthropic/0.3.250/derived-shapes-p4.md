@@ -53,9 +53,11 @@ claims say so explicitly. Every doc-asserted claim below is a restatement in thi
 words, never a verbatim quotation.
 
 **A recurring shape in this task's own findings**: three of the seven lettered items below turned
-up a symbol name from this task's own brief, or from WS-09/WS-10's prose, that **does not exist**
-anywhere in the pinned declaration (`ToolSearch`/`WaitForMcpServers`/`tool_reference` in item (c);
-`SendMessage`/`ListAgents` in item (e); a dedicated MCP-status `SDKMessage` variant in item (b)).
+up a symbol name from this task's own brief, or from WS-09/WS-10's prose, that **does not exist as a
+schema/type** anywhere in the pinned declaration (`ToolSearch`/`WaitForMcpServers`/`tool_reference`
+in item (c); `SendMessage`/`ListAgents` in item (e) — though the bare string `SendMessage` itself
+does occur, four times, never as a schema name, see item (e)'s own addendum; a dedicated MCP-status
+`SDKMessage` variant in item (b)).
 In every one of these cases WS-09/WS-10's own prose already cites the *report* (a runtime capture),
 never a `.d.ts` line, for that exact shape — so each absence below is presented as a **confirmation**
 that the spec's own report-only sourcing was correct, not as a new divergence. This is the same
@@ -188,7 +190,7 @@ explanatory mechanism behind, the field's absence noted above. WS-09 §9's "per-
 type McpServerToolPolicy = {
   name: string;
   permission_policy?: 'always_allow' | 'always_ask' | 'always_deny';
-  org_max_permission?: 'allow' | 'ask' | 'blocked';  // doc-asserted: drives the auto-mode isOrgAskCeiling gate
+  org_max_permission?: 'allow' | 'ask' | 'blocked';  // doc-asserted: feeds the isOrgAskCeiling check auto-mode consults
 };
 ```
 
@@ -325,14 +327,19 @@ matching their own wire counterparts' field name exactly (`SDKControlMcpReconnec
 which use snake_case at the wire layer while their public callback/method counterparts use
 camelCase. The wire layer is not uniformly snake_case; it mixes conventions per subtype.
 
-**`setMcpServers`'s doc-asserted plugin exemption** (restated, `sdk.d.ts` doc comment directly above
-line `2705`): servers configured via settings files, and servers introduced by plugins, are **exempt**
-from `setMcpServers`'s replace-semantics — omitting a plugin-owned server from the payload does
-**not** remove it (it keeps running unless enterprise policy denies it), and `setMcpServers({})` does
-**not** guarantee zero dynamic MCP surface when plugins are loaded. Naming a plugin server explicitly
-in the payload still replaces it. **This is a real refinement of WS-09 §3's blanket "`setMcpServers`
-replaces the configured set live"** — the replace-semantics apply only to the dynamically-added-via-
-this-method-or-SDK-options subset, not the full advertised set (Open Question 3).
+**`setMcpServers`'s doc-asserted scope boundary** (`sdk.d.ts`, doc comment directly above line
+`2705`): the method's replace-semantics reach only the servers that arrived through this same
+method or through the SDK's own dynamic-server options in the first place. Two categories sit
+outside that reach entirely — a settings-file-configured server is untouched by any call, and a
+plugin-supplied server survives an omission (the plugin system owns it, so dropping it from the
+payload is not read as a removal request; it simply will not appear in the result's `removed`
+list, and keeps running unless enterprise policy denies it). The practical consequence: calling
+with an empty object no longer zeroes out a session's dynamic MCP surface once any plugin server
+is present. The one way to actually displace a plugin's own server is to reference it by name in a
+call's own payload — that overrides the plugin's ownership for that one entry only. **This is a
+real refinement of WS-09 §3's blanket "`setMcpServers` replaces the configured set live"** — the
+replace-semantics apply only to the dynamically-added-via-this-method-or-SDK-options subset, not
+the full advertised set (Open Question 3).
 
 ### DEVIATION: `SDKStatusMessage` is not an MCP-status message
 
@@ -481,14 +488,16 @@ the artifact this task fetched.
 toolAliases?: Record<string, string>;
 ```
 
-Doc-asserted (restated): resolution happens before name-based lookup of a model-emitted `tool_use`
-block; **single-hop** — an alias pointing at another aliased name resolves that target literally
-rather than chaining, so a cycle like `{A:'B', B:'A'}` cannot loop; complementary to
-`disallowedTools`, not a replacement, since the alias affects only name-based lookup while
-`disallowedTools` also blocks harness-internal direct calls holding a tool object without a name
-lookup. **Verdict: matches WS-09 §10 exactly** — single-hop (confirmed), no chain-following
-(confirmed), "aliases are not a security boundary" / `disallowedTools` remains the enforcement floor
-(confirmed by the same doc comment's own framing).
+Doc-asserted: the map is consulted exactly once, at the moment a model-emitted `tool_use` name is
+being resolved to an actual tool — never re-consulted on whatever the first lookup produced, which
+is precisely what keeps a two-entry loop (`{A:'B', B:'A'}`) from being a problem: the resolved name
+is treated as a destination, not as a further key to look up. This is also why the mechanism cannot
+substitute for a deny list: it only intercepts the model-emitted, name-based path into a tool,
+never a harness-internal caller that already holds a reference to the tool object and invokes it
+directly without going through a name at all — `disallowedTools` remains the thing actually closing
+that second door. **Verdict: matches WS-09 §10 exactly** — single-hop (confirmed), no
+chain-following (confirmed), aliasing is not itself a security boundary and `disallowedTools`
+remains the enforcement floor (confirmed by the same doc comment's own framing).
 
 **Verdict for the whole item (c)**: declaration-absent for `ToolSearch`/`WaitForMcpServers`/
 `tool_reference` — the spec's existing report-only citations stand; nothing to compare a
@@ -619,20 +628,26 @@ are additionally forwarded as assistant/user messages with `parent_tool_use_id` 
 transcript. **Verdict: matches WS-10 §4 exactly**, including the "only `tool_use`/`tool_result`
 without it" default behavior.
 
-`strictMcpConfig`'s doc comment (restated) is more precise than WS-09 §1.1/§1.2's own framing: strict
-mode allows servers from **both** the `mcpServers` option **and** servers declared by
-explicitly-passed agent definitions in `agents` — not `mcpServers` alone. WS-09 §1.2's precedence
-table names only "explicit SDK `mcpServers`" at the top of its precedence order; it does not mention
-that strict mode's allowlist also includes `agents[*].mcpServers`. **Open Question 4.**
+`strictMcpConfig`'s doc comment is more precise than WS-09 §1.1/§1.2's own framing: strict mode's
+own allowed-server surface draws from two sources at once, not one — whatever `mcpServers` supplies,
+plus whatever MCP configuration rides along inside any agent definition passed through `agents` in
+that same call. Every other source (a project-level `.mcp.json`, user settings, plugin-contributed
+servers, or on-disk agent frontmatter, subagent frontmatter included) is excluded once strict mode
+is on. WS-09 §1.2's precedence table names only "explicit SDK `mcpServers`" at the top of its
+precedence order; it does not mention that strict mode's allowlist also includes
+`agents[*].mcpServers`. **Open Question 4.**
 
 `agentProgressSummaries` (new find, not named in this task's brief but directly in-family with
-`forwardSubagentText`): doc-asserted — when `true`, a running subagent's conversation is forked
-roughly every 30 seconds to produce a short present-tense progress description, emitted on
-`task_progress` events via the `summary` field; applies to foreground and background subagents;
-default `false`. This is the **producer** of the field `derived-shapes-p3.md` item (e) already
-pinned on the wire side (`SDKTaskProgressMessage.summary?: string`) without knowing what populated
-it — this document closes that loop. Recorded here since it is squarely a subagent-progress-family
-Options field, adjacent to `forwardSubagentText`, and cheap to capture in the same pass.
+`forwardSubagentText`): doc-asserted — the mechanism is a periodic fork: roughly every 30 seconds,
+the running child's own conversation is branched off just long enough for the model to write one
+brief, present-tense status line, and that line is what lands in `task_progress`'s `summary` field.
+Because the fork reuses the child's own model and prompt-cache state rather than starting fresh,
+the doc comment characterizes the added cost as small. The toggle covers both foreground and
+background children and is off unless set. This is the **producer** of the field
+`derived-shapes-p3.md` item (e) already pinned on the wire side
+(`SDKTaskProgressMessage.summary?: string`) without knowing what populated it — this document
+closes that loop. Recorded here since it is squarely a subagent-progress-family Options field,
+adjacent to `forwardSubagentText`, and cheap to capture in the same pass.
 
 ### Subagent-progress correlation fields — `parent_tool_use_id` is on SDK messages; `agentID` is not
 
@@ -665,9 +680,12 @@ and cheap to record):
   retry_delay_ms: number; error_status: number | null; error_category: string }` (`5037-5044`) — a
   richer, retry-specific correlator scoped to one subagent's own retried tool call, distinct from the
   message-level `parent_tool_use_id` on the same type.
-- `SessionMessage.parent_agent_id: string | null` (`5225`, doc-asserted, restated: the agent ID of
-  the subagent that spawned *this* subagent, or `null` for a depth-1 subagent or the main session) —
-  a lineage/nesting-depth correlator, present only on `SessionMessage` (the type returned by the
+- `SessionMessage.parent_agent_id: string | null` (`5225`, doc-asserted) — a lineage pointer to
+  whichever subagent spawned the one this record belongs to, landing on `null` at exactly two
+  boundaries (a subagent one level below the main loop, and the main session's own entries) plus a
+  third case the field's own comment calls out separately: an older record whose stored metadata
+  never captured this field also reads back as `null`. A lineage/nesting-depth correlator, present
+  only on `SessionMessage` (the type returned by the
   exported `getSessionMessages()`/`getSubagentMessages()` functions, `792`/`829` — a **historical
   transcript read**, confirmed absent from the live-streamed `SDKMessage` union by the same
   independent recount used for the DEVIATION in item (b)). Not the same surface as the live stream;
@@ -731,13 +749,17 @@ loose, "MAY include"). This resolves that looseness into an exact, 3-branch disc
 
 An exhaustive search of all six `.d.ts` files for `SendMessageInput`, `SendMessageOutput`,
 `ListAgentsInput`, `ListAgentsOutput`, and any interface/type literally named `SendMessage` or
-`ListAgents` found **zero matches**. The only occurrence of either name anywhere in the pinned
-declaration is a single prose mention inside `AgentInput.name`'s own doc comment ("Makes it
-addressable via `SendMessage({to: name})` while running," `sdk-tools.d.ts:676`) — not a schema.
-By contrast, `ReadNotificationsInput`/`ReadNotificationsOutput` (`sdk-tools.d.ts:2859`, `3906-3929`)
-**do** exist as real, fully-shaped interfaces in the same file — confirming the absence of
-`SendMessage`/`ListAgents` is not a blind spot in this search method, since a sibling messaging-family
-tool in the very same file *is* found by the identical method.
+`ListAgents` found **zero matches** — as a *schema* name, neither tool exists anywhere in the pinned
+declaration. That is a narrower claim than "occurs once": a plain-text search for the string
+`SendMessage` itself (not a schema-name search) finds it **four** times, none of them a schema:
+`sdk-tools.d.ts:676` (a prose mention inside `AgentInput.name`'s own doc comment — "Makes it
+addressable via `SendMessage({to: name})` while running"); `sdk.d.ts:4440` (a doc comment on
+`SDKResultMessage`'s delivery-provenance field, naming a `'peer-send-message'` literal — see the
+addendum below); and `sdk.d.ts:7876`/`7884` (two `Settings` doc comments, also covered below). By
+contrast, `ReadNotificationsInput`/`ReadNotificationsOutput` (`sdk-tools.d.ts:2859`, `3906-3929`)
+**do** exist as real, fully-shaped interfaces in the same file — confirming the absence of a
+`SendMessage`/`ListAgents` *schema* is not a blind spot in this search method, since a sibling
+messaging-family tool in the very same file *is* found by the identical method.
 
 This is consistent with, and a confirmation of, WS-10 §10.1/§10.2's own citation practice: both
 schemas are already sourced there as "report §40.29, §125" / "report §40.16" — a runtime behavioral
@@ -747,9 +769,72 @@ so `SendMessage`/`ListAgents` are CLI-product built-ins with no reason to appear
 package's own tool-schema catalog (`sdk-tools.d.ts`'s `ToolInputSchemas`/`ToolOutputSchemas` unions,
 which do include `AgentInput`/`AgentOutput` and every core built-in, but not these two).
 
-**Verdict**: declaration-absent for both. WS-10 §10.1/§10.2's own report-only schemas stand
-unmodified; there is nothing in this pinned artifact to compare them against, confirm, or diverge
-from.
+### Addendum: the schema is absent, but the settings/wire surface around it is not
+
+The tool-schema absence above is real and unaffected by what follows — but `SendMessage` is not a
+name this pinned declaration is silent about everywhere. Three real, citable, comparable shapes sit
+immediately adjacent to it, none of them a tool schema, and all three bear directly on WS-10's own
+messaging contracts.
+
+**(a) `Settings.crossSessionInbound?: 'accept' | 'hold' | 'refuse'`** (`sdk.d.ts:7886`, doc
+`7883-7885`). Its own doc comment states outright that `'accept'`/`'hold'`/`'refuse'` behave exactly
+as their names suggest, that an explicit value always wins, and then gives the unset (default)
+behavior in three clauses: "a message auto-delivers only when the sending session's permission-mode
+class matches yours (bypass↔bypass or prompting↔prompting)"; "a mismatched sender's message is held
+for your approval"; "a sender that asserts no class is held only while this session bypasses
+permission prompts." Read against WS-10 §13's five-row class matrix (`prompts×prompts`→accept,
+`prompts×unknown`→accept, `prompts×bypasses`→hold, `bypasses×bypasses`→accept,
+`bypasses×{prompts,unknown}`→hold): the first clause covers the two match rows
+(`prompts×prompts`/`bypasses×bypasses`→accept); the second clause covers the two
+sender-declared-but-mismatched hold rows (`prompts×bypasses`/`bypasses×prompts`→hold); the third
+clause covers both remaining `unknown`-sender rows by stating the negative space directly — held
+only when the *receiver* bypasses (`bypasses×unknown`→hold) and, by the same statement, *not* held
+when the receiver does not (`prompts×unknown`→accept). **Verdict: this doc comment confirms all
+five rows of WS-10 §13's table**, not merely the ones a looser reading might catch — a genuine,
+citable match rather than an assumption the two are compatible.
+
+**(b) `Settings.isolatePeerMachines?: boolean`** (`sdk.d.ts:7878`, doc `7875-7877`). Its own doc
+comment: "Require explicit approval before SendMessage can reach a peer session on another machine
+via Remote Control." WS-10 §13's own closing invariant names this only in the abstract
+("cross-machine/phone delivery requires an authenticated Winter transport and its own policy gate")
+— this field is a real, pinned instance of that gate: a single boolean opt-in covering *all*
+cross-machine peer delivery at once, not a per-message decision. "Remote Control" is the pinned
+artifact's own transport name, not a claim about Winter's; Winter's equivalent gate is [WS-04]'s/
+[WS-15]'s own design, this only pins the shape of the mechanism it is answering to.
+
+**(c) `SDKMessageOrigin`** (`sdk.d.ts:4404-4455`, a 9-member discriminated union on `kind`:
+`human`, `channel`, `peer`, `task-notification`, `coordinator`, `unclassified`, `observer`,
+`auto-continuation`, `observer-activity`) — carried as `origin?: SDKMessageOrigin` on four sites:
+`SDKResultError` (`4705`), `SDKResultSuccess` (`4756`), `SDKUserMessage` (`5072`), and
+`SDKUserMessageReplay` (`5123`). The `kind:'peer'` branch (`4410-4436`) is the one WS-10's own
+addressing/permission-class contracts are directly comparable to:
+
+```ts
+{
+  kind: 'peer';
+  from: string;                              // sender-authored, reply-routing only — never authority
+  fromMode?: 'bypass' | 'prompting';         // sender's own declared permission class
+  name?: string;                             // normalized display name, sender-asserted
+  fromSession?: string;                      // sender's host-openable session id, sender-asserted
+  senderTaskId?: string;                     // in-process background-subagent sender only
+  body?: string;                             // envelope-stripped body, byte-exact with model view
+  verifiedPeerPid?: number;                  // kernel-verified via SO_PEERCRED/LOCAL_PEERPID, not payload
+}
+```
+
+This is the pinned artifact's own analog of two WS-10 concepts at once: `from`/`name`/`fromSession`
+parallel WS-10 §11's `RuntimeAddress`/`ListedRuntimeObject` addressing fields (a different shape by
+design — WS-10 §11 is Winter's own addressing scheme, not required to mirror this one), and
+`fromMode` parallels WS-10 §15's `RuntimeMessagingAdapter.senderPermissionClass(): Promise<"prompts"
+| "bypasses" | "unknown">` exactly in *purpose* — both exist to answer "what permission class did
+the sender declare" for the §13 inbound matrix above. **Open Question 7** records where the two
+diverge in *shape*.
+
+**Verdict**: the tool schemas remain declaration-absent — WS-10 §10.1/§10.2's own report-only
+citations stand unmodified there. The settings/wire layer *around* messaging is a different matter:
+`crossSessionInbound` and `isolatePeerMachines` both newly pin and confirm mechanisms WS-10 §13
+already specifies at the policy level, and `SDKMessageOrigin`'s `peer` branch newly pins a real,
+comparable analog of WS-10 §11/§15's addressing and sender-class concepts (Open Question 7).
 
 ---
 
@@ -827,11 +912,13 @@ the host-side elicitation callback"). Its own doc comment (doc-asserted, restate
 hook event (rendering 1) takes precedence; `onElicitation` is the fallback, not a parallel path.
 
 **Open Question 1 — the null-return contract is a hang trap, not a decline, unless answered
-out-of-band.** The same doc comment (doc-asserted, restated) states: return `null` **only** after the
-consumer has already sent the `control_response` out-of-band (e.g. a signed HTTP POST echoing the
-given `requestId`) — the SDK then skips its own transport write. It explicitly calls out the failure
-mode: "Fail-closed: an accidental null means no response is sent and the elicitation stays pending
-until the server times it out." This means "no callback returns a decline" and "the callback exists
+out-of-band.** The same doc comment draws a hard line around when a bare `null` return is even
+legitimate: only once the consumer's own code has already delivered the `control_response` through
+some side channel of its own (its own illustration: a caller that has already POSTed a signed reply
+out-of-band, carrying back the `requestId` the SDK originally handed it) does a `null` return mean
+"already handled, skip your own write" — and only then does the SDK skip its own transport write, so
+the two paths do not race. It explicitly calls out the failure mode: "Fail-closed: an accidental
+null means no response is sent and the elicitation stays pending until the server times it out." This means "no callback returns a decline" and "the callback exists
 but returns `null`" are **not the same outcome** under this pinned contract — the latter is a hang
 (bounded only by the server's own timeout), not a decline. WS-09 §5's own requirement ("When no
 appropriate callback is supplied, elicitation MUST be declined deterministically") is written about
@@ -946,6 +1033,19 @@ un-pinned fetch.
    with (not contrary to) the spec's own sourcing — recorded as an Open Question rather than a
    Note only because WS-09 §6 additionally imposes a MUST ("preserved... verbatim including the
    `anthropic/` key literal") that this pin cannot itself confirm the runtime honors.
+7. **`SDKMessageOrigin`'s `fromMode?: 'bypass' | 'prompting'` vs. WS-10 §15's
+   `senderPermissionClass(): Promise<"prompts" | "bypasses" | "unknown">` — a spelling gap and an
+   arity gap, not the same shape.** (item (e)) Spelling: the pinned field uses the singular forms
+   `'bypass'`/`'prompting'`; WS-10's own adapter method uses the plural forms `'bypasses'`/`'prompts'`.
+   Arity: the pinned field is a 2-member *optional* field — absence is the implicit third state,
+   never a literal value — while WS-10's method returns one of 3 *explicit* string members including
+   a real `"unknown"` literal. `Settings.crossSessionInbound`'s own doc comment (item (e) addendum)
+   treats "no declared `fromMode`" as functionally equivalent to WS-10's `"unknown"` ("a sender that
+   asserts no class is held only while this session bypasses"), which is evidence the two concepts
+   line up semantically — but semantic equivalence is not shape equivalence, and Winter's own
+   `senderPermissionClass` implementation needs to decide explicitly whether "field absent" maps to
+   `"unknown"` by convention or whether some other pinned signal should drive that mapping instead of
+   an absence check.
 
 ---
 
