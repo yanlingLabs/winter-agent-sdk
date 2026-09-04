@@ -70,11 +70,15 @@ describe("executeToolSearch -- select: (WS-09 §8.2, untruncated, resolves again
     }
   });
 
-  test("select: never resolves a HIDDEN name -- ground truth is the live partition, not the raw registry", async () => {
+  test("select: never resolves a name excluded from the advertised set -- ground truth is the live partition, not the raw registry", async () => {
     try {
-      // mode-gated to "plan" only -- outside plan mode this resolves "eager" (WS-09 §9: "treated
-      // exactly like false"), so use a mode this descriptor is genuinely absent from via the OTHER
-      // hiding axis instead: a capability the query never supplies. Every live MCP registration is
+      // NOTE: `partition.hidden` itself is structurally always `[]` here -- buildAdvertisedSet
+      // filters exposure==="hidden" and any mode mismatch out BEFORE resolveDeferral ever runs
+      // (registry.ts), so there is no live "hidden" descriptor this fixture could select against
+      // directly. What this proves instead is the broader, equally load-bearing claim: select:
+      // checks membership in the partition's own eager+deferred union (computeExposurePartition),
+      // never a raw getRegisteredTool(name) lookup that would ignore availability entirely -- using
+      // the capability-gate axis as the concrete exclusion mechanism. Every live MCP registration is
       // gated on "winter.mcp" -- omit it from deps entirely to prove select can't bypass that gate.
       registerMcpServerTools(SRV, [{ name: "capability_gated", inputSchema: { type: "object" } }], { deferredDefault: true });
       const name = `mcp__${SRV}__capability_gated`;

@@ -215,7 +215,19 @@ export async function executeToolSearch(input: unknown, deps: ToolSearchDeps): P
 // error for a session with nothing registered -- the exact same shape registry.ts's own
 // `session.spawnChild` uses for "no child engine factory is registered yet" (registry.ts's own
 // comment: "mirroring how a missing ChildEngineDeps factory registration is handled one level down").
-export type ToolSearchSessionRuntime = ToolSearchDeps;
+//
+// Deliberately `Omit<..., "emitToolReference">`, NOT the full `ToolSearchDeps` -- `emitToolReference`
+// is per-CALL (it comes from `ToolExecutionContext`, itself built fresh per tool call by
+// buildRegistryToolExecutor) whereas this record is per-SESSION (registered once, read on every
+// call). Keeping it out of the registered shape means a caller cannot accidentally register a
+// runtime carrying its own stale/synthetic `emitToolReference` that would then fire instead of (or
+// in addition to) the real `ctx.emitToolReference` a ToolExecutionContext supplies -- exactly the
+// split-brain T3's own seam comment on `ToolExecutionContext.emitToolReference` closed for the
+// engine ("a caller can never do one without the other"): a registered-but-not-ctx emitter would
+// mark a name loaded without ever emitting the matching wire `tool_reference` block. The impl-layer
+// executors (`tools/impl/tool-search.ts`) are the ONE place that recombines this record with the
+// call's own `ctx.emitToolReference` into a full `ToolSearchDeps`.
+export type ToolSearchSessionRuntime = Omit<ToolSearchDeps, "emitToolReference">;
 
 const sessionRuntimes = new Map<string, ToolSearchSessionRuntime>();
 
