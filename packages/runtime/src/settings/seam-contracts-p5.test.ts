@@ -45,6 +45,7 @@ import {
   unregisterMcpServerTools,
   type DeferralActivation,
 } from "../tools/registry.ts";
+import { loadAgentDefinitions } from "../subagents/definitions.ts";
 
 // --- (i) the provider seam extension (R5-3) -------------------------------------------------------
 
@@ -233,6 +234,82 @@ describe("(ii) onCompaction resets the deferred loaded set to `evidenced` and an
       const first = loaded.snapshot().sort();
       onCompaction(loaded, [`mcp__${SRV}__alpha`]);
       expect(loaded.snapshot().sort()).toEqual(first);
+    });
+  });
+});
+
+// --- (v) loadAgentDefinitions' pluginAgents tier (the P4 carry behind R4-7) ----------------------
+
+describe("(v) pluginAgents is a FOURTH definition source, at the BOTTOM of the precedence chain", () => {
+  function agentFile(dir: string, name: string, body: string, description: string): void {
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, `${name}.md`), `---\ndescription: ${description}\n---\n${body}\n`);
+  }
+
+  const pluginAgent = (plugin: string, prompt: string) => ({ description: `from ${plugin}`, prompt, plugin });
+
+  test("a plugin agent loads when no other source claims the name", () => {
+    withTempTree(({ cwd, home }) => {
+      const defs = loadAgentDefinitions({ cwd, home, trustedWorkspace: false, pluginAgents: { reviewer: pluginAgent("acme", "plugin body") } });
+      expect(defs.get("reviewer")?.prompt).toBe("plugin body");
+      expect(defs.get("reviewer")?._source).toBe("plugin");
+      expect(defs.get("reviewer")?._plugin).toBe("acme");
+    });
+  });
+
+  test("precedence is programmatic > project > user > plugin (R4-7), verified one rung at a time", () => {
+    withTempTree(({ cwd, home }) => {
+      agentFile(join(home, ".winter", "agents"), "reviewer", "user body", "user");
+      agentFile(join(cwd, ".winter", "agents"), "reviewer", "project body", "project");
+      const plugins = { reviewer: pluginAgent("acme", "plugin body") };
+
+      // plugin alone
+      expect(loadAgentDefinitions({ cwd: join(cwd, "empty"), home: join(home, "empty"), trustedWorkspace: true, pluginAgents: plugins }).get("reviewer")?._source).toBe("plugin");
+      // user beats plugin
+      expect(loadAgentDefinitions({ cwd: join(cwd, "empty"), home, trustedWorkspace: true, pluginAgents: plugins }).get("reviewer")?._source).toBe("user");
+      // project beats user (trusted)
+      expect(loadAgentDefinitions({ cwd, home, trustedWorkspace: true, pluginAgents: plugins }).get("reviewer")?._source).toBe("project");
+      // programmatic beats everything
+      const programmatic = { reviewer: { description: "prog", prompt: "programmatic body" } };
+      expect(loadAgentDefinitions({ cwd, home, trustedWorkspace: true, pluginAgents: plugins, programmatic }).get("reviewer")?._source).toBe("programmatic");
+    });
+  });
+
+  test("plugin agents are NOT workspace-trust gated -- loading the plugin at all is the host's own decision (R4-7 gates .winter/agents, not this)", () => {
+    withTempTree(({ cwd, home }) => {
+      const defs = loadAgentDefinitions({ cwd, home, trustedWorkspace: false, pluginAgents: { helper: pluginAgent("acme", "body") } });
+      expect(defs.get("helper")?._source).toBe("plugin");
+    });
+  });
+
+  test("the `plugin` marker never leaks into the definition itself -- it becomes _plugin, alongside _source", () => {
+    withTempTree(({ cwd, home }) => {
+      const def = loadAgentDefinitions({ cwd, home, trustedWorkspace: false, pluginAgents: { helper: pluginAgent("acme", "body") } }).get("helper");
+      expect(def).not.toHaveProperty("plugin");
+      expect(def?._plugin).toBe("acme");
+    });
+  });
+
+  test("two plugins contributing DIFFERENT names both load; only a name collision shadows", () => {
+    withTempTree(({ cwd, home }) => {
+      const defs = loadAgentDefinitions({
+        cwd,
+        home,
+        trustedWorkspace: false,
+        pluginAgents: { alpha: pluginAgent("acme", "a"), beta: pluginAgent("other", "b") },
+      });
+      expect([...defs.keys()].sort()).toEqual(["alpha", "beta"]);
+      expect(defs.get("beta")?._plugin).toBe("other");
+    });
+  });
+
+  test("omitting pluginAgents entirely is byte-identical to the pre-P5 behaviour", () => {
+    withTempTree(({ cwd, home }) => {
+      agentFile(join(home, ".winter", "agents"), "reviewer", "user body", "user");
+      const defs = loadAgentDefinitions({ cwd, home, trustedWorkspace: false });
+      expect([...defs.keys()]).toEqual(["reviewer"]);
+      expect(defs.get("reviewer")?._source).toBe("user");
+      expect(defs.get("reviewer")).not.toHaveProperty("_plugin");
     });
   });
 });

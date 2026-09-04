@@ -9,20 +9,30 @@
 // "most specific invocation-time value wins"; engine.ts's own buildChildInheritance prefers a
 // definition's own restriction over the session's ambient one).
 //
-// Plugin agents: WS-10 §2's own "plugin agents" clause is explicitly a P5 seam -- no plugin-agent
-// loader exists anywhere in this codebase yet (packages/plugin-sdk is a separate, pre-Winter
-// concept; nothing under packages/runtime/src loads a Winter plugin manifest today). Not
-// implemented here; a future phase's loader is expected to feed a THIRD filesystem-shaped source
-// into loadAgentDefinitions below, at whatever precedence position a real plugin design settles on.
+// Plugin agents: WS-10 §2's own "plugin agents" clause was a P5 seam at P4 -- Phase 5 Task 2 lands
+// the PARAMETER (the carry R4-7 named), at the BOTTOM of the precedence chain. Lane S owns the
+// producer: nothing under packages/runtime/src reads a Winter plugin manifest yet, so `pluginAgents`
+// arrives pre-parsed from whoever loaded the plugin bundle, exactly the way `programmatic` arrives
+// pre-parsed from the wire.
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, basename } from "node:path";
 import type { RuntimeAgentDefinition } from "@yanlinglabs/winter-agent-sdk";
 
-export type AgentDefinitionSource = "programmatic" | "project" | "user";
+export type AgentDefinitionSource = "programmatic" | "project" | "user" | "plugin";
 
 export interface SourcedAgentDefinition extends RuntimeAgentDefinition {
   readonly _source: AgentDefinitionSource;
+  /** Which plugin contributed this definition. Present iff `_source === "plugin"`. */
+  readonly _plugin?: string;
 }
+
+/**
+ * One plugin-contributed definition: a plain `RuntimeAgentDefinition` plus the CONTRIBUTING PLUGIN's
+ * name, which the loader lifts off into `_plugin` rather than leaving it on the definition (a
+ * `RuntimeAgentDefinition` is a wire shape; `plugin` is not one of its fields, and a stray extra key
+ * riding along into a child's config is the kind of thing that reads as a typo forever).
+ */
+export type PluginAgentDefinition = RuntimeAgentDefinition & { plugin: string };
 
 // --- Filesystem loading: a minimal, deliberately small frontmatter parser -------------------------
 //
@@ -162,13 +172,32 @@ export interface LoadAgentDefinitionsOptions {
   // regardless (WS-10 §2's own "~/.winter/agents/" carries no trust qualifier, unlike the
   // project-local path).
   trustedWorkspace: boolean;
+  /**
+   * Phase 5 Task 2 (the P4 carry behind R4-7): definitions contributed by loaded plugins, keyed by
+   * `subagent_type`, each carrying its contributing plugin's name.
+   *
+   * DELIBERATELY NOT TRUST-GATED, unlike the project directory above. Workspace trust answers "may
+   * this REPOSITORY configure the session"; a plugin is loaded because the HOST listed it
+   * (`Options.plugins`) or the user installed it under `~/.winter/plugins` -- a decision already
+   * made outside the repository, and the same decision that lets a plugin contribute hooks and MCP
+   * servers. Gating it on workspace trust would make plugin behaviour depend on which directory the
+   * session happens to be in, which is neither the pin's model nor Winter's.
+   */
+  pluginAgents?: Record<string, PluginAgentDefinition>;
 }
 
-// Merge precedence: programmatic > project (.winter/agents, trust-gated) > user (~/.winter/agents).
+// Merge precedence, highest first: programmatic > project (.winter/agents, trust-gated) >
+// user (~/.winter/agents) > plugin (R4-7's own order, extended at the bottom by Phase 5 Task 2 --
+// a plugin ships a DEFAULT any of the three more-specific sources may override, and a plugin agent
+// silently shadowed by a user's own file of the same name is the intended outcome, not a conflict).
 // A name collision at a LOWER-precedence source is silently shadowed (never an error) -- see this
 // file's own header for why.
 export function loadAgentDefinitions(opts: LoadAgentDefinitionsOptions): Map<string, SourcedAgentDefinition> {
   const out = new Map<string, SourcedAgentDefinition>();
+  for (const [name, def] of Object.entries(opts.pluginAgents ?? {})) {
+    const { plugin, ...definition } = def;
+    out.set(name, { ...definition, _source: "plugin", _plugin: plugin });
+  }
   const user = loadAgentDirectory(join(opts.home, ".winter", "agents"));
   for (const [name, def] of Object.entries(user)) out.set(name, { ...def, _source: "user" });
   if (opts.trustedWorkspace) {
