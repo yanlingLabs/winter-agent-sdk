@@ -12,6 +12,7 @@
     "winter": "./src/main.ts"
   },
   "dependencies": {
-    "@yanlinglabs/winter-agent-sdk": "workspace:*"
+    "@yanlinglabs/winter-agent-sdk": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.29.0"
   }
 }
