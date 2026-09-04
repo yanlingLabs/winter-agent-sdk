@@ -73,7 +73,7 @@ export const stubExecutor: ToolExecutor = {
 // AskUserQuestion/advisor). See transport-equivalence.test.ts's own "lane equivalence" scenarios
 // (the only consumers) and the "laneb" case below for why Write alone needs a real (non-scripted)
 // provider.
-export type TestProviderName = "boom" | "tooluse" | "hang" | "reflect" | "rpcprobe" | "modeswitch" | "bgtask" | "lanea" | "laneb" | "lanec" | "laned" | "lanee";
+export type TestProviderName = "boom" | "tooluse" | "hang" | "reflect" | "rpcprobe" | "modeswitch" | "bgtask" | "lanea" | "laneb" | "lanec" | "laned" | "lanee" | "mcpsdk";
 
 const TEST_PROVIDER_NAMES: ReadonlySet<string> = new Set([
   "boom",
@@ -88,6 +88,7 @@ const TEST_PROVIDER_NAMES: ReadonlySet<string> = new Set([
   "lanec",
   "laned",
   "lanee",
+  "mcpsdk",
 ]);
 
 export function isTestProviderName(v: string): v is TestProviderName {
@@ -240,8 +241,26 @@ export function testProviderByName(name: TestProviderName): Provider {
         },
       };
     }
+    // Phase 4 Task 3 (WS-04 addendum, "sdk_mcp_call host-side bridge" equivalence proof): a fixed,
+    // deterministic tool_use round targeting the standing MCP_SDK_TEST_TOOL_NAME fixture (below) --
+    // registered by the ENGINE ITSELF from RuntimeConfig.mcpServers (query.ts's own toWireMcpServers
+    // populates `tools[]` whenever the host's `instance` implements WinterMcpServerInstance), never
+    // by this file, on every leg alike (in-memory/child/compiled all run the identical engine.ts
+    // registration code from the identical wire config) -- see transport-equivalence.test.ts's own
+    // "MCP SDK tool round" scenario, the one consumer.
+    case "mcpsdk":
+      return scriptedProvider([
+        { kind: "tool_use", calls: [{ id: "mcpsdk-call-1", name: MCP_SDK_TEST_TOOL_NAME, input: { x: 1 } }] },
+        { kind: "text", text: "mcp sdk done" },
+      ]);
   }
 }
+
+// Phase 4 Task 3 (WS-04 addendum): the standing fixture name pair for the "mcpsdk" equivalence
+// scenario -- exported so transport-equivalence.test.ts's own Options.mcpServers construction and
+// this file's own scripted tool_use call can never independently drift on the literal.
+export const MCP_SDK_TEST_SERVER_NAME = "t8mcpsdk";
+export const MCP_SDK_TEST_TOOL_NAME = `mcp__${MCP_SDK_TEST_SERVER_NAME}__echo`;
 
 // --- P3 fix round 1 (RULING P3-C): the bgtask test tool, paired with the "bgtask" provider above ---
 //

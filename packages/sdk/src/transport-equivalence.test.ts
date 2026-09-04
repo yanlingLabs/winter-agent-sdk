@@ -43,7 +43,7 @@ import { encodeFrame, splitFrames } from "./protocol/codec.ts";
 import type { WinterFrame, ControlRequestFrame, ControlResponseFrame } from "./protocol/frames.ts";
 import type { RuntimeConfig } from "./protocol/config.ts";
 import type { CanUseTool, PermissionMode } from "./permissions/types.ts";
-import type { Options } from "./options.ts";
+import type { Options, WinterMcpServerInstance } from "./options.ts";
 import { inMemoryProcess } from "winter-agent-runtime/testing";
 import {
   echoProvider,
@@ -57,6 +57,10 @@ import {
   // here (this file, main.ts, and `allowedTools` below all need the identical literal).
   registerBgTaskTestTool,
   BGTASK_TEST_TOOL_NAME,
+  // Phase 4 Task 3 (WS-04 addendum): the "mcpsdk" scripted provider's own paired tool/server names --
+  // see provider/mock.ts's own comment for why these are exported rather than hand-copied here.
+  MCP_SDK_TEST_SERVER_NAME,
+  MCP_SDK_TEST_TOOL_NAME,
 } from "winter-agent-runtime";
 import { normalizeTrace, compareTraces, type ConformanceTraceEntry } from "winter-conformance/trace";
 
@@ -122,7 +126,19 @@ registerBgTaskTestTool();
 // snake_case doubles ("test_tool"/"mystery_tool") testing.ts pre-registers to mirror stubExecutor's
 // own echo. One shared set (not a repeated inline `=== "bgtask" || ...` chain) so a future addition
 // here can't independently drift between this file's own spawnHook branch and any other reader.
-const REGISTRY_BACKED_TEST_PROVIDERS: ReadonlySet<TestProviderName> = new Set(["bgtask", "lanea", "laneb", "lanec", "laned", "lanee"]);
+//
+// Phase 4 Task 3: "mcpsdk" joins this set for the identical reason -- its target tool
+// (mcp__<server>__echo) is registered dynamically by engine.ts's own SDK-MCP-server wiring
+// (registerMcpServerTools + a real sdk_mcp_call-forwarding executor, never a WS-06 descriptor), and
+// that registration+forwarding path only runs when the in-memory leg dispatches through the real
+// registry. Leaving "mcpsdk" out of this set silently swapped in stubExecutor's blind
+// `${name}:${JSON.stringify(input)}` echo for the in-memory leg only -- discovered empirically: the
+// child leg (which always uses the real registry) genuinely forwarded through the fixture's
+// `callTool`, but the in-memory leg's "tool_result" content came back prefixed with the qualified
+// tool name (stubExecutor's own `name` parameter, the canonical `mcp__t8mcpsdk__echo`), a real
+// cross-leg equivalence divergence rather than a fixture bug -- compareTraces caught it exactly as
+// designed.
+const REGISTRY_BACKED_TEST_PROVIDERS: ReadonlySet<TestProviderName> = new Set(["bgtask", "lanea", "laneb", "lanec", "laned", "lanee", "mcpsdk"]);
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -269,6 +285,11 @@ interface QueryScenarioOptions {
   // (Linux CI does not), proving the settings-threading wiring end-to-end rather than depending on
   // this suite running on a darwin box.
   sandbox?: Options["sandbox"];
+  // Phase 4 Task 3 (WS-04 addendum): lets a scenario configure Options.mcpServers -- the ONLY way to
+  // prove the sdk_mcp_call host-side bridge (query.ts's own makeSdkMcpCallHandler + toWireMcpServers)
+  // round-trips byte-identically on every leg, since the LIVE `instance` object lives entirely in
+  // THIS test process regardless of which leg actually runs the runtime.
+  mcpServers?: Options["mcpServers"];
   // Invoked once per yielded message, AFTER it's recorded into the trace — the kill/abort
   // scenarios use this to act at a precise, OBSERVED point in the stream (WS-04 events), never a
   // real-clock guess (unlike the raw-driven interrupt scenario, which has no such observable event
@@ -306,6 +327,7 @@ async function traceViaQuery(leg: LegName, scenario: QueryScenarioOptions): Prom
         ...(scenario.permissionMode !== undefined ? { permissionMode: scenario.permissionMode } : {}),
         ...(scenario.allowDangerouslySkipPermissions !== undefined ? { allowDangerouslySkipPermissions: scenario.allowDangerouslySkipPermissions } : {}),
         ...(scenario.sandbox !== undefined ? { sandbox: scenario.sandbox } : {}),
+        ...(scenario.mcpServers !== undefined ? { mcpServers: scenario.mcpServers } : {}),
       },
     });
     for await (const msg of gen) {
@@ -888,6 +910,55 @@ function registerEquivalenceScenarios(legA: LegName, legB: LegName): void {
       expect(JSON.parse(resultText)).toMatchObject({ mode: "plan" });
       const finalMsg = a.trace[3]!.payload as { message: { content: unknown } };
       expect(finalMsg.message.content).toEqual([{ type: "text", text: "lane e done" }]);
+    });
+  });
+
+  // Phase 4 Task 3 (WS-04 addendum, "sdk_mcp_call host-side bridge" -- BOTH halves): the ONE
+  // consumer of the "mcpsdk" scripted provider (provider/mock.ts). The live `instance` object lives
+  // entirely in THIS test process regardless of which leg actually runs the runtime (query.ts's own
+  // makeSdkMcpCallHandler is host-side code, never spawned) -- so this scenario proves the WHOLE
+  // bridge (runtime-side forwarding via bridge.request + host-side invocation of the live instance)
+  // is byte-identical across legs BY CONSTRUCTION, not merely by coincidence: the only thing that
+  // differs between legs is which process runs engine.ts's own registration/forwarding code, and
+  // that code is exactly what this task's own engine.test.ts unit-proves in isolation.
+  describe("Phase 4 Task 3: MCP SDK-server tool round (sdk_mcp_call both halves, every leg)", () => {
+    test("an in-process SDK server's tool is reachable end-to-end and byte-identical across legs", async () => {
+      function makeFixtureInstance(): { instance: WinterMcpServerInstance; calls: Array<{ name: string; args: Record<string, unknown> }> } {
+        const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
+        return {
+          calls,
+          instance: {
+            listTools: () => [{ name: "echo", inputSchema: { type: "object" } }],
+            async callTool(name: string, args: Record<string, unknown>) {
+              calls.push({ name, args });
+              return { content: [{ type: "text", text: `echo:${JSON.stringify(args)}` }] };
+            },
+          },
+        };
+      }
+      const fixtureA = makeFixtureInstance();
+      const fixtureB = makeFixtureInstance();
+      const mcpServersFor = (fixture: ReturnType<typeof makeFixtureInstance>): Options["mcpServers"] => ({
+        [MCP_SDK_TEST_SERVER_NAME]: { type: "sdk", name: MCP_SDK_TEST_SERVER_NAME, instance: fixture.instance },
+      });
+
+      const a = await traceViaQuery(legA, { prompt: "go", testProviderName: "mcpsdk", allowedTools: [MCP_SDK_TEST_TOOL_NAME], mcpServers: mcpServersFor(fixtureA) });
+      const b = await traceViaQuery(legB, { prompt: "go", testProviderName: "mcpsdk", allowedTools: [MCP_SDK_TEST_TOOL_NAME], mcpServers: mcpServersFor(fixtureB) });
+      expect(compareTraces(a.trace, b.trace)).toEqual([]);
+      expect(a.thrown).toBeUndefined();
+      expect(b.thrown).toBeUndefined();
+      expect(a.trace.map((e) => e.kind)).toEqual(["system/init", "assistant", "user", "assistant", "result", "exit"]);
+
+      // The live instance was genuinely invoked on BOTH legs, with the identical (name, arguments).
+      expect(fixtureA.calls).toEqual([{ name: "echo", args: { x: 1 } }]);
+      expect(fixtureB.calls).toEqual(fixtureA.calls);
+
+      const toolUseMsg = a.trace[1]!.payload as { message: { content: unknown } };
+      expect(toolUseMsg.message.content).toEqual([{ type: "tool_use", id: "mcpsdk-call-1", name: MCP_SDK_TEST_TOOL_NAME, input: { x: 1 } }]);
+      const toolResultMsg = a.trace[2]!.payload as { message: { content: Array<{ type: string; tool_use_id: string; content: string }> } };
+      expect(toolResultMsg.message.content[0]!.content).toBe('echo:{"x":1}');
+      const finalMsg = a.trace[3]!.payload as { message: { content: unknown } };
+      expect(finalMsg.message.content).toEqual([{ type: "text", text: "mcp sdk done" }]);
     });
   });
 
