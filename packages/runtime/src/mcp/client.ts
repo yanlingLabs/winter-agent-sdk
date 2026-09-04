@@ -221,23 +221,31 @@ export async function connectMcpServer(opts: ConnectMcpServerOptions): Promise<C
 
     if (pidPollTimer !== undefined) clearInterval(pidPollTimer);
 
-    const rawTools = await client.listTools();
-    const tools = dedupeTools(
-      rawTools.tools.map((t) => ({
-        name: t.name,
-        ...(t.description !== undefined ? { description: t.description } : {}),
-        inputSchema: t.inputSchema as Record<string, unknown>,
-        ...(t.outputSchema !== undefined ? { outputSchema: t.outputSchema as Record<string, unknown> } : {}),
-        ...(t.annotations !== undefined ? { annotations: t.annotations as McpToolAnnotationsInfo } : {}),
-        ...(t._meta !== undefined ? { _meta: t._meta as Record<string, unknown> } : {}),
-      })),
-    );
-
     let closed = false;
     return {
       serverName: name,
+      // A REAL, LIVE re-query every call -- NOT a snapshot frozen at connect time. This is
+      // load-bearing, not merely "more correct": mcp/lifecycle.ts's own `refreshServerTools`
+      // (RefreshMcpTools, WS-09 §1.4) exists specifically to observe a server's tool list changing
+      // AFTER the initial connection, and a caching `listTools()` here would make that mechanism a
+      // silent no-op regardless of what the connected server actually reports (found by this lane's
+      // own test suite: a fixture server whose tools/list answer genuinely changed between two
+      // calls kept reporting the ORIGINAL list until this was fixed). The real SDK's own
+      // `Client.listTools()` performs a real `tools/list` request every call (it only caches output-
+      // schema VALIDATORS, never the list itself, verified against the pinned 1.30.0 source) --
+      // this method mirrors that live-request behavior, not a stale wrapper around it.
       async listTools(): Promise<McpToolInfo[]> {
-        return tools;
+        const rawTools = await client.listTools();
+        return dedupeTools(
+          rawTools.tools.map((t) => ({
+            name: t.name,
+            ...(t.description !== undefined ? { description: t.description } : {}),
+            inputSchema: t.inputSchema as Record<string, unknown>,
+            ...(t.outputSchema !== undefined ? { outputSchema: t.outputSchema as Record<string, unknown> } : {}),
+            ...(t.annotations !== undefined ? { annotations: t.annotations as McpToolAnnotationsInfo } : {}),
+            ...(t._meta !== undefined ? { _meta: t._meta as Record<string, unknown> } : {}),
+          })),
+        );
       },
       async listResources(): Promise<McpResourceInfo[]> {
         const result = await client.listResources();

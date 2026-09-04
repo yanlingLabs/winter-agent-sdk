@@ -1,4 +1,6 @@
 import { describe, test, expect } from "bun:test";
+import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { ListToolsRequestSchema, CallToolRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import {
   connectMcpServer,
   McpConnectError,
@@ -180,6 +182,22 @@ describe("connectMcpServer: the sdk (in-process) transport", () => {
     await expect(connectMcpServer({ name: "s", config: { type: "sdk", name: "s" }, connectTimeoutMs: 1000, elicitationAsk: NO_ELICIT })).rejects.toMatchObject({
       code: "spawn_failed",
     });
+  });
+
+  test("listTools() is a LIVE re-query every call, never a snapshot frozen at connect time (regression pin -- mcp/lifecycle.ts's RefreshMcpTools depends on this)", async () => {
+    let toolName = "v1";
+    const server = new Server({ name: "mutable", version: "1.0.0" }, { capabilities: { tools: {} } });
+    server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: [{ name: toolName, inputSchema: { type: "object", properties: {} } }] }));
+    server.setRequestHandler(CallToolRequestSchema, async () => ({ content: [] }));
+    const client = await connectMcpServer({ name: "s", config: { type: "sdk", name: "s" }, connectTimeoutMs: 5000, elicitationAsk: NO_ELICIT, inProcessServer: server });
+    try {
+      expect((await client.listTools()).map((t) => t.name)).toEqual(["v1"]);
+      toolName = "v2";
+      expect((await client.listTools()).map((t) => t.name)).toEqual(["v2"]);
+    } finally {
+      await client.close();
+      await server.close();
+    }
   });
 });
 

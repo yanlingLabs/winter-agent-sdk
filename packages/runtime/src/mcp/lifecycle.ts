@@ -395,6 +395,8 @@ export interface McpLifecycleDeps {
   discoveryCache?: McpDiscoveryCache;
 }
 
+export type RefreshServerToolsResult = { ok: true; toolNames: string[] } | { ok: false; reason: string };
+
 export interface McpLifecycle {
   readonly stateSource: McpServerStateSource;
   readonly controlSeam: McpControlSeam;
@@ -407,6 +409,21 @@ export interface McpLifecycle {
   // tests and orderly shutdown; never called by production code today (this instance is not yet
   // wired into a live session's teardown path, see this task's own report).
   dispose(): Promise<void>;
+  // --- The bridge-tool surface (WS-09 §1.4; tools/impl/{list-mcp-resources-tool,
+  // read-mcp-resource-tool, read-mcp-resource-dir-tool, refresh-mcp-tools}.ts) -----------------
+  //
+  // Deliberately STRICT: only a server in the live `"connected"` state (a real, present `client`)
+  // is ever returned/refreshed here -- a `"cached"` server's tools are advertised (WS-09 §2.1: it
+  // "counts as ready"), but WS-09's own "first live call" trigger is scoped, in this
+  // implementation, to ORDINARY TOOL CALLS (installExecutorsForSlot's own on-demand connect) and
+  // deliberately NOT extended to these bridge tools -- a disclosed scope choice, not an oversight.
+  listConnectedServerNames(): string[];
+  getConnectedClient(server: string): ConnectedMcpClient | undefined;
+  // WS-09 §1.4: "re-queries connected servers' tool lists; never establishes a disconnected
+  // connection." Refusing (a typed `{ok:false}`, never a connection attempt) for any server not
+  // ALREADY `"connected"` is what makes that guarantee structural rather than a convention this
+  // function could accidentally violate.
+  refreshServerTools(server: string): Promise<RefreshServerToolsResult>;
 }
 
 export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
@@ -569,6 +586,49 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
     }
   }
 
+  function listConnectedServerNames(): string[] {
+    return Array.from(slots.values())
+      .filter((s) => s.state === "connected" && s.client !== undefined)
+      .map((s) => s.name);
+  }
+
+  function getConnectedClient(name: string): ConnectedMcpClient | undefined {
+    const slot = slots.get(name);
+    return slot?.state === "connected" ? slot.client : undefined;
+  }
+
+  async function refreshServerTools(name: string): Promise<RefreshServerToolsResult> {
+    const slot = slots.get(name);
+    if (!slot) return { ok: false, reason: `unknown MCP server "${name}"` };
+    if (slot.state !== "connected" || !slot.client) {
+      // WS-09 §1.4's own MUST: "never establishes a disconnected connection" -- refused, not
+      // upgraded into a connection attempt, for EVERY non-"connected" state (including "cached",
+      // which has no live client to re-query yet -- see this file's own header on that scope
+      // choice, and "pending"/"failed"/"needsAuth"/"disabled"/"unconfigured", none of which have
+      // one either).
+      return { ok: false, reason: `server "${name}" is not connected (state: ${slot?.state ?? "unconfigured"}) -- RefreshMcpTools never establishes a new connection` };
+    }
+    const client = slot.client;
+    try {
+      const tools = await client.listTools();
+      slot.toolNames = tools.map((t) => t.name);
+      slot.savedTools = tools;
+      registerMcpServerTools(name, tools.map(toolInfoToDefinition), {
+        deferredDefault: true,
+        ...alwaysLoadOpt(slot.config),
+      });
+      installExecutorsForSlot(slot, tools);
+      // Still "connected" -- a refresh is not itself a state TRANSITION, but subscribers (and a
+      // future `system/init.tools` re-derivation) need to observe the possibly-changed tool list,
+      // so this still notifies via setSlotState rather than mutating `slot.toolNames` silently.
+      setSlotState(name, "connected", { toolNames: slot.toolNames });
+      return { ok: true, toolNames: slot.toolNames };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { ok: false, reason: `refreshing server "${name}" failed: ${message}` };
+    }
+  }
+
   // --- McpLifecycleInternals: the seam control.ts implements McpControlSeam against ---------------
   const internals: McpLifecycleInternals = {
     hasSlot: (name) => slots.has(name),
@@ -650,7 +710,7 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
     },
   };
 
-  return { stateSource, controlSeam: createMcpControlSeam(internals), start, dispose };
+  return { stateSource, controlSeam: createMcpControlSeam(internals), start, dispose, listConnectedServerNames, getConnectedClient, refreshServerTools };
 }
 
 // Exported so control.ts (a sibling file, never a circular import back into this one -- it only

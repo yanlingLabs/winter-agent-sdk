@@ -1,4 +1,6 @@
 import { describe, test, expect } from "bun:test";
+import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { ListToolsRequestSchema, CallToolRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { getRegisteredTool } from "../tools/registry.ts";
 import { createElicitationAsker } from "./elicitation.ts";
 import { createInMemoryDiscoveryCache, createMcpLifecycle, resolveMcpServerSources, type McpServerSource, type ResolvedMcpServerEntry } from "./lifecycle.ts";
@@ -358,6 +360,99 @@ describe("createMcpLifecycle: the seven-state model driven by real connections",
     } finally {
       await lifecycle.dispose();
       await server.close();
+    }
+  });
+});
+
+describe("McpLifecycle bridge-tool surface: listConnectedServerNames / getConnectedClient / refreshServerTools", () => {
+  test("listConnectedServerNames/getConnectedClient report only truly-'connected' servers -- never pending/cached/failed/disabled", async () => {
+    const good = createFixtureMcpServer(defaultFixtureSpec());
+    const cache = createInMemoryDiscoveryCache();
+    cache.set("cachedsrv", [{ name: "t", inputSchema: {} }]);
+    const resolved: ResolvedMcpServerEntry[] = [
+      { name: "connectedsrv", origin: "explicit", config: { type: "sdk", name: "connectedsrv" } },
+      { name: "cachedsrv", origin: "explicit", config: { type: "http", url: "http://127.0.0.1:1/never-dialed" } },
+      { name: "failedsrv", origin: "explicit", config: { command: "/no/such/binary-bridge-surface-test" } },
+    ];
+    const lifecycle = createMcpLifecycle({
+      servers: resolved,
+      envConfig: fastEnv({ discoveryCache: true }),
+      elicitationAsk: NO_ELICIT,
+      inProcessServers: { connectedsrv: good },
+      discoveryCache: cache,
+    });
+    try {
+      await lifecycle.start();
+      await lifecycle.stateSource.waitForPending(undefined, 500);
+      expect(lifecycle.listConnectedServerNames()).toEqual(["connectedsrv"]);
+      expect(lifecycle.getConnectedClient("connectedsrv")).toBeDefined();
+      expect(lifecycle.getConnectedClient("cachedsrv")).toBeUndefined();
+      expect(lifecycle.getConnectedClient("failedsrv")).toBeUndefined();
+      expect(lifecycle.getConnectedClient("does-not-exist-at-all")).toBeUndefined();
+    } finally {
+      await lifecycle.dispose();
+      await good.close();
+    }
+  });
+
+  test("refreshServerTools: re-queries an already-connected server's tools/list and re-registers a genuinely changed list, without reconnecting", async () => {
+    // A hand-built low-level server (not test-fixtures.ts's own createFixtureMcpServer, which
+    // captures its tool list ONCE at construction from a plain spec object) -- this test needs the
+    // SERVER's own tools/list answer to genuinely change BETWEEN two calls over the SAME connection,
+    // which requires a live, mutable closure the server's own request handler reads fresh each time.
+    let toolName = "v1";
+    const server = new Server({ name: "mutable-fixture", version: "1.0.0" }, { capabilities: { tools: {} } });
+    server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: [{ name: toolName, inputSchema: { type: "object", properties: {} } }] }));
+    server.setRequestHandler(CallToolRequestSchema, async (req) => ({ content: [{ type: "text", text: `called:${req.params.name}` }] }));
+
+    const resolved: ResolvedMcpServerEntry[] = [{ name: "refreshable", origin: "explicit", config: { type: "sdk", name: "refreshable" } }];
+    const lifecycle = createMcpLifecycle({ servers: resolved, envConfig: fastEnv(), elicitationAsk: NO_ELICIT, inProcessServers: { refreshable: server } });
+    try {
+      await lifecycle.start();
+      expect(lifecycle.stateSource.snapshot()[0]!.toolNames).toEqual(["v1"]);
+      expect(getRegisteredTool("mcp__refreshable__v1")).toBeDefined();
+
+      toolName = "v2"; // the "server" changes its own tool list -- ordinary tool-call machinery would never see this on its own
+      const result = await lifecycle.refreshServerTools("refreshable");
+      expect(result).toEqual({ ok: true, toolNames: ["v2"] });
+      expect(lifecycle.stateSource.snapshot()[0]!.toolNames).toEqual(["v2"]);
+      // set-replace semantics (registry.ts's own contract, T2): the old name is gone, the new one
+      // is registered and executable -- proving this went through a REAL registerMcpServerTools
+      // call, not just a state-board bookkeeping update.
+      expect(getRegisteredTool("mcp__refreshable__v1")).toBeUndefined();
+      const callResult = await getRegisteredTool("mcp__refreshable__v2")!.executor!.execute({}, {} as never);
+      expect(callResult).toEqual({ output: "called:v2" });
+    } finally {
+      await lifecycle.dispose();
+      await server.close();
+    }
+  });
+
+  test("refreshServerTools never connects a disconnected server (WS-09 §1.4 MUST) -- pending/cached/failed/disabled/unknown all refuse", async () => {
+    const cache = createInMemoryDiscoveryCache();
+    cache.set("cachedsrv", [{ name: "t", inputSchema: {} }]);
+    const resolved: ResolvedMcpServerEntry[] = [
+      { name: "cachedsrv", origin: "explicit", config: { type: "http", url: "http://127.0.0.1:1/never-dialed" } },
+      { name: "failedsrv", origin: "explicit", config: { command: "/no/such/binary-refresh-test" } },
+    ];
+    const lifecycle = createMcpLifecycle({ servers: resolved, envConfig: fastEnv({ discoveryCache: true }), elicitationAsk: NO_ELICIT, discoveryCache: cache });
+    try {
+      await lifecycle.start();
+      await lifecycle.stateSource.waitForPending(undefined, 500);
+      expect(lifecycle.stateSource.snapshot().find((s) => s.name === "cachedsrv")!.state).toBe("cached");
+
+      const cachedResult = await lifecycle.refreshServerTools("cachedsrv");
+      expect(cachedResult.ok).toBe(false);
+      // Still "cached" afterward -- refreshServerTools never upgraded it into a real connection.
+      expect(lifecycle.stateSource.snapshot().find((s) => s.name === "cachedsrv")!.state).toBe("cached");
+
+      const failedResult = await lifecycle.refreshServerTools("failedsrv");
+      expect(failedResult.ok).toBe(false);
+
+      const unknownResult = await lifecycle.refreshServerTools("totally-unknown");
+      expect(unknownResult).toEqual({ ok: false, reason: expect.stringContaining("unknown") as unknown as string });
+    } finally {
+      await lifecycle.dispose();
     }
   });
 });
