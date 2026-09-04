@@ -560,7 +560,45 @@ function buildMcpToolDescriptor(server: string, tool: McpToolDefinition, opts: {
 // directly and asserts it against this literal, which is the drift tripwire without the cycle.
 const RESERVED_MCP_SERVER_NAMES = new Set<string>(["winter"]);
 
-export function registerMcpServerTools(server: string, tools: readonly McpToolDefinition[], opts: { alwaysLoad?: boolean; deferredDefault: boolean | readonly PermissionMode[] }): void {
+// P4 fix wave, KNOWN (1) -- SAME-BATCH duplicate names, ruled DEDUPE-FIRST-WINS (never throw).
+//
+// Two independent layers can hand this function a list with the same `name` twice: a real server's
+// `tools/list` response (deduped at the protocol layer by `mcp/client.ts`'s own `dedupeTools`, which
+// also keeps the FIRST occurrence and warns) and any direct caller -- an in-process SDK server, a
+// test, a future settings-driven registration -- that never goes through that client at all. Before
+// this, the second layer fell through to the commit loop's `registry.set`, i.e. LAST-write-wins, so
+// the two layers disagreed about which occurrence survives and the second definition silently
+// replaced the first at one layer and was silently dropped at the other.
+//
+// Ruled first-wins here, matching `client.ts`, and ruled NON-throwing: registry.test.ts's rider-16
+// fixture already pins "registers exactly one entry and never throws", a duplicate name is a
+// SERVER-side anomaly rather than a caller error, and throwing would take out an entire server's
+// registration over one malformed entry. Visible, never silent: one console diagnostic per dropped
+// occurrence, the same channel and shape `client.ts` uses.
+function dedupeSameBatch(server: string, tools: readonly McpToolDefinition[]): readonly McpToolDefinition[] {
+  const seen = new Set<string>();
+  const out: McpToolDefinition[] = [];
+  let dropped = false;
+  for (const tool of tools) {
+    if (seen.has(tool.name)) {
+      dropped = true;
+      console.error(
+        `winter: registerMcpServerTools: server "${server}" supplied duplicate tool name "${tool.name}" in ONE batch -- keeping the first occurrence, ignoring the rest`,
+      );
+      continue;
+    }
+    seen.add(tool.name);
+    out.push(tool);
+  }
+  // Identity-preserving for the overwhelmingly common clean batch: no copy, no allocation.
+  return dropped ? out : tools;
+}
+
+export function registerMcpServerTools(
+  server: string,
+  incomingTools: readonly McpToolDefinition[],
+  opts: { alwaysLoad?: boolean; deferredDefault: boolean | readonly PermissionMode[] },
+): void {
   if (RESERVED_MCP_SERVER_NAMES.has(server)) {
     throw new Error(
       `registerMcpServerTools: "${server}" is a RESERVED server name -- the standing Winter server ` +
@@ -569,6 +607,10 @@ export function registerMcpServerTools(server: string, tools: readonly McpToolDe
     );
   }
 
+  // Deduped BEFORE anything else reads the list, so the validate phase, the set-replace bookkeeping
+  // and the commit loop all see the identical, single-occurrence batch (a second occurrence surviving
+  // into the commit loop is precisely what made this last-write-wins).
+  const tools = dedupeSameBatch(server, incomingTools);
   const newNames = new Set(tools.map((t) => `mcp__${server}__${t.name}`));
   const previouslyOwned = mcpServerOwnedNames.get(server);
 
