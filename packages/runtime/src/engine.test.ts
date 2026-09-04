@@ -2772,6 +2772,58 @@ describe("Phase 4 Task 3: sdk_mcp_call runtime-side forwarding (MUST 4, WS-04 ad
   });
 });
 
+describe("Phase 4 Task 3: SDK-server registration failure cleanup (registry singleton hygiene, robustness)", () => {
+  test("a later server's registration collision throws, but an EARLIER server's own already-registered tools from the same run are still unregistered", async () => {
+    // A static stub sitting under the EXACT canonical name a live registration would compute --
+    // mirrors registry.test.ts's own "colliding with a name registered by a non-live-MCP mechanism"
+    // fixture (registerMcpServerTools's own guard, proven there in isolation). This test is at the
+    // ENGINE level instead: runEngine's own try/catch around its SDK-server registration loop (added
+    // this task) is what's under test -- without it, "earlyok"'s tools (fully registered and pushed
+    // to sdkMcpServerNames BEFORE "t3collide" ever throws) would never reach the teardown loop at
+    // all, because a thrown exception here aborts runEngine before that teardown code is reached
+    // (there is no top-level try/finally around the rest of the function body).
+    const collideCanonical = "mcp__t3collide__blocked";
+    registerTool({
+      descriptor: {
+        canonicalName: collideCanonical,
+        advertisedName: collideCanonical,
+        source: "builtin",
+        inputSchema: { type: "object" },
+        description: "fixture",
+        exposure: "eager",
+        permissionClass: "read",
+        availability: {},
+        capabilityRequirements: [],
+        disposition: "implement-now",
+      },
+    });
+    try {
+      const { runtime } = createInMemoryChannel();
+      const provider = scriptedProvider([{ kind: "text", text: "unreachable" }]);
+      // Object key order is insertion order for non-numeric string keys (ECMA-262) -- "earlyok"
+      // registers (and is pushed) BEFORE "t3collide" ever runs, which is the exact ordering this
+      // test needs to prove cleanup of an EARLIER success when a LATER entry fails.
+      const config = baseConfig({
+        permissionMode: "bypassPermissions",
+        allowDangerouslySkipPermissions: true,
+        mcpServers: {
+          earlyok: { type: "sdk", name: "earlyok", tools: [{ name: "foo", inputSchema: { type: "object" } }] },
+          t3collide: { type: "sdk", name: "t3collide", tools: [{ name: "blocked", inputSchema: { type: "object" } }] },
+        },
+      });
+      const donePromise = runEngine({ config, input: runtime.input, output: runtime.output, provider });
+      await expect(donePromise).rejects.toThrow();
+      // The point of this test: "earlyok"'s tool must not have leaked into the process-wide registry
+      // singleton just because THIS run aborted on a later, unrelated server's collision.
+      expect(getRegisteredTool("mcp__earlyok__foo")).toBeUndefined();
+    } finally {
+      unregisterToolForTest(collideCanonical);
+      unregisterMcpServerTools("earlyok"); // defensive no-op if the fix under test already cleaned it up
+      unregisterMcpServerTools("t3collide"); // defensive no-op: the throw prevented any real ownership
+    }
+  });
+});
+
 describe("Phase 4 Task 3: agentID threading (MUST 9)", () => {
   // Scope note: this proves PermissionCall.agentId's own threading end-to-end (config.agentId ->
   // the permission_denied stream message's own agent_id field) -- the ONE agentID call site

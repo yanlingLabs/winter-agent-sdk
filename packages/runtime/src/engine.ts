@@ -1069,35 +1069,55 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // the next in-memory-leg run sharing this process's module-level registry singleton.
   const mcpEnvConfig = parseMcpEnvConfig(engineEnv ?? process.env);
   const sdkMcpServerNames: string[] = [];
+  // Robustness note (Phase 4 Task 3): this run's own teardown (below, right before `output.end()`)
+  // only executes on NORMAL completion of this function -- there is no top-level try/finally around
+  // the rest of runEngine's body. Without this try/catch, a registerMcpServerTools throw (e.g. a
+  // genuine, permanent canonical-name collision with a static WS-06 descriptor -- registry.ts's own
+  // "already registered by a non-live-MCP mechanism" guard, which stays reachable even after T2's
+  // own mid-batch-atomicity fix lands, per the controller's mid-task FYI on that bug) would abort
+  // runEngine before the teardown loop ever runs, permanently leaking any EARLIER server in this
+  // same config.mcpServers that had already registered successfully into the process-wide registry
+  // singleton (tools/registry.ts's own header) -- corrupting every subsequent in-memory-leg run
+  // sharing this process. This catch does NOT paper over T2's own bug (a) (a single
+  // registerMcpServerTools call's own internal partial-registration orphans, which have no owner
+  // recorded and so are not addressed by calling unregisterMcpServerTools on that same server name --
+  // left exactly as the controller's FYI describes, for T2's own fix round); it only guarantees that
+  // servers THIS loop had already fully registered (pushed to sdkMcpServerNames only AFTER their own
+  // registerMcpServerTools call returned) are cleaned up before the error propagates.
   if (config.mcpServers) {
-    for (const [serverName, serverCfg] of Object.entries(config.mcpServers)) {
-      if (serverCfg.type !== "sdk" || !serverCfg.tools || serverCfg.tools.length === 0) continue;
-      const toolDefs: McpToolDefinition[] = serverCfg.tools;
-      registerMcpServerTools(serverName, toolDefs, { deferredDefault: false });
-      sdkMcpServerNames.push(serverName);
-      const perServerTimeoutMs = serverCfg.timeout;
-      for (const tool of toolDefs) {
-        const canonicalName = `mcp__${serverName}__${tool.name}`;
-        replaceExecutor(canonicalName, {
-          async execute(input: unknown) {
-            const timeoutMs = perServerTimeoutMs ?? mcpEnvConfig.toolTimeoutMs ?? 120_000;
-            try {
-              const result = await bridge.request<{ content?: Array<{ type?: string; text?: string; [k: string]: unknown }>; isError?: boolean }>(
-                "sdk_mcp_call",
-                { server: serverName, tool: tool.name, arguments: input && typeof input === "object" ? input : {} },
-                { timeoutMs },
-              );
-              const text = (result.content ?? [])
-                .map((block) => (typeof block.text === "string" ? block.text : JSON.stringify(block)))
-                .join("\n");
-              return { output: text, ...(result.isError === true ? { isError: true } : {}) };
-            } catch (err) {
-              const message = err instanceof Error ? err.message : String(err);
-              return { output: `Error: sdk_mcp_call failed for '${canonicalName}': ${message}`, isError: true };
-            }
-          },
-        });
+    try {
+      for (const [serverName, serverCfg] of Object.entries(config.mcpServers)) {
+        if (serverCfg.type !== "sdk" || !serverCfg.tools || serverCfg.tools.length === 0) continue;
+        const toolDefs: McpToolDefinition[] = serverCfg.tools;
+        registerMcpServerTools(serverName, toolDefs, { deferredDefault: false });
+        sdkMcpServerNames.push(serverName);
+        const perServerTimeoutMs = serverCfg.timeout;
+        for (const tool of toolDefs) {
+          const canonicalName = `mcp__${serverName}__${tool.name}`;
+          replaceExecutor(canonicalName, {
+            async execute(input: unknown) {
+              const timeoutMs = perServerTimeoutMs ?? mcpEnvConfig.toolTimeoutMs ?? 120_000;
+              try {
+                const result = await bridge.request<{ content?: Array<{ type?: string; text?: string; [k: string]: unknown }>; isError?: boolean }>(
+                  "sdk_mcp_call",
+                  { server: serverName, tool: tool.name, arguments: input && typeof input === "object" ? input : {} },
+                  { timeoutMs },
+                );
+                const text = (result.content ?? [])
+                  .map((block) => (typeof block.text === "string" ? block.text : JSON.stringify(block)))
+                  .join("\n");
+                return { output: text, ...(result.isError === true ? { isError: true } : {}) };
+              } catch (err) {
+                const message = err instanceof Error ? err.message : String(err);
+                return { output: `Error: sdk_mcp_call failed for '${canonicalName}': ${message}`, isError: true };
+              }
+            },
+          });
+        }
       }
+    } catch (err) {
+      for (const serverName of sdkMcpServerNames) unregisterMcpServerTools(serverName);
+      throw err;
     }
   }
 
