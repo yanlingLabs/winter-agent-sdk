@@ -56,6 +56,14 @@ export interface ToolSearchDeps {
   // perfectly well over whatever is already eagerly/deferredly registered; it simply never has
   // anything to wait for.
   stateSource?: McpServerStateSource;
+  // RULING P4-E amended (fix wave): the HOST's own `Options.toolAliases`, threaded through to
+  // `computeExposurePartition`'s alias-EXCLUSION pass so ToolSearch's candidate pool never offers a
+  // spelling `init.tools` withheld. Optional, and the Winter-branch DEFAULT canonical table is
+  // applied unconditionally regardless -- so a runtime registered without this field still gets the
+  // whole-branch C2 guarantee for the two canonical twins; this only widens the same guarantee to a
+  // host-configured alias edge. Present on the SESSION-scoped shape (engine.ts registers it once per
+  // run from `RuntimeConfig.toolAliases`), never per call.
+  toolAliases?: Record<string, string>;
   // WS-09 §8.2 "Successful selection returns tool_reference blocks" / [WS-06] §1.3 -- the SAME seam
   // `ToolExecutionContext.emitToolReference` already is (registry.ts, Task 3): marks `names` loaded
   // in the session's own LoadedToolSet AND emits the wire tool_reference block, as one atomic
@@ -93,6 +101,7 @@ function exposureQuery(deps: ToolSearchDeps) {
     ...(deps.disallowedTools !== undefined ? { disallowedTools: deps.disallowedTools } : {}),
     ...(deps.insideSubagent !== undefined ? { insideSubagent: deps.insideSubagent } : {}),
     ...(deps.familyMetadata !== undefined ? { familyMetadata: deps.familyMetadata } : {}),
+    ...(deps.toolAliases !== undefined ? { toolAliases: deps.toolAliases } : {}),
   };
 }
 
