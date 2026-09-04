@@ -38,6 +38,7 @@ import { parseMcpEnvConfig } from "./mcp/env.ts";
 import type { AssembledPrompt, SystemPromptAssembler, SystemPromptInput } from "./context/seam.ts";
 import type { CompactBoundaryRecord, CompactionController, CompactionResult } from "./compaction/seam.ts";
 import { STRUCTURED_OUTPUT_TOOL_NAME, resolveMaxStructuredOutputAttempts, type StructuredOutputSeam } from "./structured/seam.ts";
+import { isCheckpointedTool, type CheckpointedTool, type FileCheckpointSink } from "./checkpoint/seam.ts";
 import { resolveBuiltinCommand, looksLikeCommand, type CommandResolver } from "./commands/seam.ts";
 // Phase 4 Task 8 (rider 11): Lane A's real MCP client/lifecycle/control stack, wired into a live
 // session for the first time. Lane A shipped all of it as a self-contained subsystem with the exact
@@ -70,6 +71,9 @@ import {
   // dispatch loop reuse -- the IDENTICAL matcher `evaluate()`'s own stages 2/3/5 run, never a second
   // implementation of the deny/ask grammar living in the alias layer.
   findMatchingRuleEntry,
+  // Phase 5 Task 3 (R5-11): the SAME write-path extraction the permission layer uses -- see the
+  // checkpoint call site for why a second extraction would be a correctness bug, not a duplication nit.
+  extractCandidateWritePaths,
   type PermissionCall,
   type EvaluationContext,
 } from "./permissions/evaluator.ts";
@@ -523,6 +527,13 @@ export interface EngineOptions {
    * result and instead gets prose has no way to tell that from a model failure.
    */
   structuredOutput?: StructuredOutputSeam;
+  /**
+   * R5-11: file checkpointing (Lane K). Consulted before every Write/Edit/NotebookEdit when
+   * `config.enableFileCheckpointing` is on, and by the `rewind_files` control request. ABSENT with
+   * checkpointing enabled means nothing is backed up and `rewind_files` answers `canRewind: false` --
+   * never a throw, and never a silent "success" that restores nothing.
+   */
+  fileCheckpointSink?: FileCheckpointSink;
 }
 
 type RaceOutcome<T> = { kind: "ok"; value: T } | { kind: "interrupted" };
@@ -641,6 +652,7 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
     commandResolver,
     compactionController,
     structuredOutput,
+    fileCheckpointSink,
   } = opts;
 
   // Task 6 (WS-07 §2/§6.4, Ruling 8): permission startup validation — deliberately the very FIRST
@@ -1742,6 +1754,11 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // the `system/init` frame is computed from the registry a few lines below -- a registration placed
   // with the rest of the P5 turn-loop helpers advertised nothing on the first turn (observed, not
   // reasoned: the contract test's own init-frame assertion caught it).
+  // Phase 5 Task 3 (R5-11): read once, here, so every consumer (the interception check, the terminal
+  // result's `user_message_uuid`, the `rewind_files` handler) agrees about whether this session is
+  // checkpointing at all.
+  const enableFileCheckpointing = config.enableFileCheckpointing === true;
+
   const outputFormatSchema = config.outputFormat?.schema as JSONSchema | undefined;
   const structuredOutputActive = outputFormatSchema !== undefined;
   const maxStructuredOutputAttempts = resolveMaxStructuredOutputAttempts(engineEnv ?? process.env);
@@ -2161,6 +2178,41 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
             // Task 11: door 1 of 2 — see cancelPendingApprovalsOnModeSwitch's own header.
             cancelPendingApprovalsOnModeSwitch(previousMode, result.effectiveMode);
             output.write({ type: "control_response", requestId: cf.requestId, ok: true, payload: { effectiveMode: result.effectiveMode } });
+            continue;
+          }
+          // --- Phase 5 Task 3 (R5-11): `rewind_files` ------------------------------------------
+          //
+          // Wire shape (derived-shapes-p5 item (e), `sdk.d.ts:4146-4150`): snake_case, and it DROPS
+          // the result -- `{ subtype: "rewind_files", user_message_id, dry_run? }` in, the
+          // RewindFilesResult back on the control_response payload.
+          //
+          // Every failure mode answers `canRewind: false` with an `error` rather than an `ok:false`
+          // control response: `rewindFiles()` returns a typed result on the pin, so a host that gets
+          // a rejected promise instead of `{canRewind:false}` cannot tell "nothing to rewind" from a
+          // transport fault.
+          if (cf.subtype === "rewind_files") {
+            const payload = typeof cf.payload === "object" && cf.payload !== null ? (cf.payload as Record<string, unknown>) : {};
+            const userMessageId = typeof payload.user_message_id === "string" ? payload.user_message_id : undefined;
+            const dryRun = payload.dry_run === true;
+            if (userMessageId === undefined) {
+              output.write({ type: "control_response", requestId: cf.requestId, ok: true, payload: { canRewind: false, error: "rewind_files requires a string `user_message_id`" } });
+              continue;
+            }
+            if (!enableFileCheckpointing || fileCheckpointSink === undefined) {
+              output.write({
+                type: "control_response",
+                requestId: cf.requestId,
+                ok: true,
+                payload: { canRewind: false, error: enableFileCheckpointing ? "no file-checkpoint sink is registered for this session" : "file checkpointing is not enabled for this session (enableFileCheckpointing)" },
+              });
+              continue;
+            }
+            try {
+              const result = await fileCheckpointSink.rewind(userMessageId, { dryRun });
+              output.write({ type: "control_response", requestId: cf.requestId, ok: true, payload: result });
+            } catch (err) {
+              output.write({ type: "control_response", requestId: cf.requestId, ok: true, payload: { canRewind: false, error: err instanceof Error ? err.message : String(err) } });
+            }
             continue;
           }
           // Phase 4 Task 3 (MUST 4, WS-04 §3.1, WS-09 §3): the four host->runtime MCP control
@@ -2661,6 +2713,12 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
     // exhaust every later envelope's budget in a streaming session. Capture (6)'s harness is
     // single-shot, so the pin does not discriminate the two readings; this one is disclosed.
     let structuredOutputAttempts = 0;
+
+    // R5-11: the id this envelope's file checkpoints are keyed by, and the unit `rewindFiles`
+    // restores to. Minted per envelope even when checkpointing is off (it costs one uuid and keeps
+    // the two paths structurally identical), but only DISCLOSED to the host -- on the turn's terminal
+    // result, below -- when checkpointing is on, so no pre-P5 trace moves.
+    const turnUserMessageUuid = randomUUID();
 
     // T9-CARRY 2 (reassigned to T10; WS-08 §1.1): "user envelope accepted, BEFORE the turn's
     // provider call" — fired here, after the envelope is durably recorded but before
@@ -3179,6 +3237,38 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
           // callback that returns a shape the target tool cannot handle surfaces as that tool's own
           // execution error, not a permission-layer one.
           const executedCall = decision.transformedInput !== undefined ? { ...call, input: decision.transformedInput } : call;
+
+          // --- Phase 5 Task 3 (R5-11): backup-before-modify ---------------------------------------
+          //
+          // Placed HERE, after permission approval and after any transform, and before execution:
+          // backing up a file for a call that is about to be DENIED would write backups for edits
+          // that never happen, and backing up the pre-transform path would back up a file the
+          // approved call no longer touches.
+          //
+          // Keyed on the CANONICAL post-alias identity (`permissionCall.toolName`), not `call.name`,
+          // so a session that aliases `Write` still checkpoints -- the same identity rule WS-09 §10
+          // sets for hooks and permissions.
+          //
+          // Paths come from the SAME extraction the permission layer used (`extractCandidateWritePaths`),
+          // never a bespoke `input.file_path` read: a second extraction would drift from the one that
+          // decided whether the write was allowed at all.
+          //
+          // A sink that throws is AUXILIARY, exactly like a store failure: the user's edit still
+          // happens, and the failure surfaces as a status message rather than a dead turn. That is
+          // the safe direction for the user's work and the unsafe one for undo, which is why it is
+          // reported rather than swallowed.
+          if (enableFileCheckpointing && fileCheckpointSink !== undefined && isCheckpointedTool(permissionCall.toolName)) {
+            const checkpointTool: CheckpointedTool = permissionCall.toolName;
+            for (const path of extractCandidateWritePaths({ ...permissionCall, input: typeof executedCall.input === "object" && executedCall.input !== null ? (executedCall.input as Record<string, unknown>) : {} }, makeEvalCtx())) {
+              try {
+                await fileCheckpointSink.beforeMutation({ path, tool: checkpointTool, userMessageUuid: turnUserMessageUuid, sessionUuid: config.sessionId });
+              } catch (err) {
+                const text = err instanceof Error ? err.message : String(err);
+                output.write({ type: "data", message: { type: "system", subtype: "status", status: null, compact_result: undefined, uuid: randomUUID(), session_id: config.sessionId, checkpoint_error: text } });
+              }
+            }
+          }
+
           const raced = await raceInterrupt(tools.execute(executedCall), interruptSignal);
           if (raced.kind === "interrupted") {
             interrupted = true;
@@ -3317,7 +3407,12 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
     // optional) on the real declaration, so every result carries it, `[]` when this turn denied
     // nothing.
     if (finalResult) {
-      output.write({ type: "data", message: { ...finalResult, permission_denials: turnPermissionDenials } });
+      // R5-11: `user_message_uuid` is how a host learns the id to pass to `rewindFiles`. Winter emits
+      // no user-message frame of its own (the pinned surface's `SDKUserMessage.uuid` is its channel),
+      // so the envelope's terminal result is the one place the id can travel. CONDITIONAL on
+      // checkpointing being enabled, so every pre-P5 golden trace stays byte-identical. Disclosed as
+      // a Winter-defined discovery channel.
+      output.write({ type: "data", message: { ...finalResult, permission_denials: turnPermissionDenials, ...(enableFileCheckpointing ? { user_message_uuid: turnUserMessageUuid } : {}) } });
     } else {
       // Provisional shape pending official capture (standing controller ruling) — no `result` text.
       output.write({ type: "data", message: { type: "result", subtype: "success", is_error: false, interrupted: true, permission_denials: turnPermissionDenials } });

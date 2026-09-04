@@ -1449,6 +1449,7 @@ test("Item 1: BEFORE the generator has ever been iterated, a control call still 
 
 test("P5 T2: the P5 option block is present in --config-json when set on Options", async () => {
   const capture = captureConfigJson();
+  try {
   for await (const _msg of query({
     prompt: "ping",
     options: {
@@ -1467,6 +1468,13 @@ test("P5 T2: the P5 option block is present in --config-json when set on Options
     },
   })) {
     /* drain */
+  }
+  } catch {
+    // Phase 5 Task 3: `outputFormat` now has a real engine consumer, and this fixture supplies no
+    // structured-output seam, so the RUN legitimately terminates with the R5-10 configuration error
+    // (which query() surfaces by rejecting). That is the behaviour a separate contract test pins;
+    // THIS test is about the WIRE -- what `--config-json` carried -- which is captured before the
+    // run gets anywhere near a provider call.
   }
 
   expect(capture.get()).toMatchObject({

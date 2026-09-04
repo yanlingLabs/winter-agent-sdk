@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { SdkMessage as RuntimeSdkMessage, WinterFrame, InitFrame, ControlRequestFrame, ControlResponseFrame } from "./protocol/frames.ts";
 import { PROTOCOL_VERSION } from "./protocol/frames.ts";
 import { splitFrames, encodeFrame, ProtocolError } from "./protocol/codec.ts";
-import type { RuntimeConfig, RuntimeHooksConfig, RuntimeHookMatcherGroup, McpServerConfigForProcessTransport } from "./protocol/config.ts";
+import type { RuntimeConfig, RuntimeHooksConfig, RuntimeHookMatcherGroup, McpServerConfigForProcessTransport, RewindFilesResult } from "./protocol/config.ts";
 import { isWinterMcpServerInstance, type Options, type McpServerConfig } from "./options.ts";
 import type {
   PermissionMode,
@@ -54,6 +54,19 @@ export interface QueryInternal {
 export interface Query extends AsyncGenerator<SdkMessage> {
   interrupt(): Promise<void>;
   setModel(model?: string): Promise<void>;
+  /**
+   * Phase 5 Task 3 (R5-11, derived-shapes-p5 item (e)): restore every tracked file to its state at
+   * `userMessageId`. Requires `enableFileCheckpointing`; without it the result is
+   * `{canRewind: false, error}`, never a throw.
+   *
+   * The parameter is `userMessageId` on the pin -- its own `@param` line describes the VALUE as a
+   * uuid, so the name and the value disagree; WS-11 §9 and the phase plan both wrote
+   * `userMessageUuid` and are corrected here to the shape authority.
+   *
+   * `dryRun` previews without touching the filesystem -- and, per item (e), without populating
+   * `skippedLinks`, so a preview's counts do not reflect link-safety refusals.
+   */
+  rewindFiles(userMessageId: string, options?: { dryRun?: boolean }): Promise<RewindFilesResult>;
   // Ruling 8 (phase plan): tightened from `string` to the six-value public union. The WIRE payload
   // (sendControlRequest below) stays the bare value — an invalid string can still reach the runtime
   // (e.g. a non-TS caller, or a deliberately-cast test value) and gets a typed `invalid_mode`
@@ -349,6 +362,29 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
       const cause = options.permissionMode === "bypassPermissions" ? "permissionMode is 'bypassPermissions'" : "an allowedTools entry is bare (unscoped)";
       console.error(`winter: WINTER_SDK_CAN_USE_TOOL_SHADOWED: canUseTool is configured but ${cause} — some or all tool calls will never reach it`);
     }
+  }
+
+  // --- Phase 5 Task 3 (R5-11, capture (2)): the two `sessionStore` combination rejections ----------
+  //
+  // Both are PLAIN `Error`s thrown SYNCHRONOUSLY from query() itself, before any request reaches the
+  // transport -- capture (2) confirmed exactly that (request count 0, zero messages yielded), and
+  // deliberately NOT a typed `WinterUnsupportedCombinationError`: a named subclass would be STRICTER
+  // than the pin, which is a divergence to disclose rather than parity to claim.
+  //
+  // ORDER IS OBSERVABLE and is part of the contract: with all three options set, the pinned runtime
+  // reports the `persistSession` conflict, not the checkpointing one. A constructor that checked them
+  // the other way round would answer a triple-conflicting call differently from the pin, which is the
+  // kind of divergence only a three-option fixture ever catches.
+  //
+  // One documented deviation from verbatim: the pinned `persistSession` message names a BRANDED env
+  // var as its remedy; Winter's equivalent knob is `WINTER_HOME` (WS-01 §2.5's rename contract, a
+  // Global Constraint of this phase). The reason clause, the option names and the ordering are the
+  // captured ones.
+  if (options.sessionStore !== undefined && options.persistSession === false) {
+    throw new Error("sessionStore cannot be used with persistSession: false -- the storage adapter requires local writes to mirror from. Use WINTER_HOME=/tmp for ephemeral local writes with external mirroring.");
+  }
+  if (options.sessionStore !== undefined && options.enableFileCheckpointing === true) {
+    throw new Error("enableFileCheckpointing is not yet supported with sessionStore (backup blobs are not mirrored, so rewindFiles() fails after a store-backed resume).");
   }
 
   // Task 10: computed once, ahead of `config`, so it can be conditionally spread into it below.
@@ -864,6 +900,23 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
   gen.setModel = async () => {};
   gen.setPermissionMode = async (mode: PermissionMode) => {
     await sendControlRequest("set_permission_mode", mode); // WS-04 §3.1: bare PermissionMode value
+  };
+  // Phase 5 Task 3 (R5-11, derived-shapes-p5 item (e)): `rewindFiles(userMessageId, { dryRun? })`.
+  //
+  // The public parameter is spelled `userMessageId` and the WIRE is snake_case and result-dropping
+  // (`{ subtype: "rewind_files", user_message_id, dry_run? }`), which is why this method is a
+  // translation rather than a passthrough. `dry_run` is conditionally spread so an omitted option
+  // never puts an explicit `false` on the wire.
+  //
+  // A malformed/absent runtime payload becomes `{canRewind: false, error}` rather than a throw: the
+  // pinned method returns a typed result, so a host that got a rejected promise could not tell
+  // "nothing to rewind" from a transport fault.
+  gen.rewindFiles = async (userMessageId: string, options?: { dryRun?: boolean }): Promise<RewindFilesResult> => {
+    const payload = await sendControlRequest("rewind_files", { user_message_id: userMessageId, ...(options?.dryRun !== undefined ? { dry_run: options.dryRun } : {}) });
+    if (typeof payload !== "object" || payload === null || typeof (payload as { canRewind?: unknown }).canRewind !== "boolean") {
+      return { canRewind: false, error: "the runtime returned no rewind result" };
+    }
+    return payload as RewindFilesResult;
   };
   gen.__internal = {
     registerControlRequestHandler(subtype, handler) {

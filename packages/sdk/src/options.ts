@@ -14,6 +14,7 @@ import type {
   SkillsOption,
 } from "./protocol/config.ts";
 import type { SettingSource } from "./settings/types.ts";
+import type { SessionStore } from "./store/session-store.ts";
 export type { SdkPluginConfig, SystemPromptOption, OutputFormat, JsonSchemaOutputFormat, SkillsOption } from "./protocol/config.ts";
 
 // --- Phase 5 Task 2 (derived-shapes-p5.md item (c)): the pinned block-array sentinel --------------
@@ -380,6 +381,18 @@ export interface Options {
   // external `sessionStore` is rejected at query() construction — that rejection is Lane K's, not
   // this field's.
   enableFileCheckpointing?: boolean;
+  /**
+   * `sdk.d.ts:1672-1683`: an external session store the runtime MIRRORS transcript writes to. A
+   * DUAL-WRITE MIRROR, never a replacement -- local writes always still happen, which is exactly why
+   * the checkpointing rejection below is about backup blobs specifically rather than about external
+   * storage in general.
+   *
+   * A LIVE OBJECT, like `canUseTool`/`hooks`/`mcpServers[].instance`: it is never serialized into
+   * `--config-json`, so a spawned-process transport reaches it only through the wrapper. Winter does
+   * not yet mirror to it (Lane K / a later phase); it is declared here because two documented
+   * combination REJECTIONS depend on its presence and capture (2) pins both of them at construction.
+   */
+  sessionStore?: SessionStore;
   // DISCLOSED WINTER session options (R5-3/R5-4). The pin has no per-session context-window option
   // at all (P6's model catalogue is where per-model values come from) and expresses its compaction
   // trigger as the `autoCompactWindow` SETTING (`sdk.d.ts:7599`), a different shape. Absent means
