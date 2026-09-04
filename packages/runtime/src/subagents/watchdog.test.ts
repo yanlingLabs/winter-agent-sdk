@@ -68,3 +68,68 @@ describe("createStallWatchdog", () => {
     expect(fireCount).toBe(1);
   });
 });
+
+// ================================================================================================
+// Phase 4 Task 8 (rider 20, RULING P4-I companion): pause / resume.
+// ================================================================================================
+//
+// "An outstanding host control request (delivered, not yet answered) is NOT engine inactivity -- the
+// 600 s progress clock pauses while one is outstanding, so a human at a child's permission prompt
+// never trips it."
+describe("pause/resume (rider 20)", () => {
+  test("pause() stops the clock: no fire even well past the timeout, and resume() restarts it", async () => {
+    let fired = 0;
+    const wd = createStallWatchdog(30, () => {
+      fired++;
+    });
+    wd.pause();
+    await new Promise((r) => setTimeout(r, 120)); // 4x the timeout, paused
+    expect(fired).toBe(0);
+    wd.resume();
+    await new Promise((r) => setTimeout(r, 120));
+    expect(fired).toBe(1);
+    wd.cancel();
+  });
+
+  test("pause is DEPTH-COUNTED: two outstanding requests need two resumes before the clock restarts", async () => {
+    let fired = 0;
+    const wd = createStallWatchdog(30, () => {
+      fired++;
+    });
+    wd.pause();
+    wd.pause();
+    wd.resume(); // one answered, one still outstanding
+    await new Promise((r) => setTimeout(r, 120));
+    expect(fired).toBe(0);
+    wd.resume(); // the last one answered
+    await new Promise((r) => setTimeout(r, 120));
+    expect(fired).toBe(1);
+    wd.cancel();
+  });
+
+  test("a poke() while paused never re-arms the timer behind the pause's back", async () => {
+    let fired = 0;
+    const wd = createStallWatchdog(30, () => {
+      fired++;
+    });
+    wd.pause();
+    wd.poke();
+    wd.poke();
+    await new Promise((r) => setTimeout(r, 120));
+    expect(fired).toBe(0);
+    wd.cancel();
+  });
+
+  test("pause()/resume() after cancel() (or after a fire) are silent no-ops -- never a second callback", async () => {
+    let fired = 0;
+    const wd = createStallWatchdog(20, () => {
+      fired++;
+    });
+    await new Promise((r) => setTimeout(r, 80));
+    expect(fired).toBe(1);
+    wd.pause();
+    wd.resume();
+    await new Promise((r) => setTimeout(r, 80));
+    expect(fired).toBe(1);
+  });
+});

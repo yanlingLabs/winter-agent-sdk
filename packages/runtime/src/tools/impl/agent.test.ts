@@ -11,6 +11,11 @@ import { createSessionReadState } from "../read-state.ts";
 import { getRegisteredTool, type ToolExecutionContext } from "../registry.ts";
 import { AGENT_TOOL_NAME, agentExecutor } from "./agent.ts";
 import { configureBackgroundTaskRoot, resetBackgroundTaskRootForTest } from "../background-tasks.ts";
+// Phase 4 Task 8 (rider 24): the shared registry TaskStop/TaskOutput are implemented against, and
+// those two REAL executors -- driven by task id here, never by calling their internals.
+import { getTask } from "./background-task-runtime.ts";
+import { taskStopExecutor } from "./task-stop.ts";
+import { taskOutputExecutor } from "./task-output.ts";
 import { resetBackgroundTaskRuntimeForTest } from "./background-task-runtime.ts";
 import type { SessionTempDirPaths } from "../../paths/temp.ts";
 import type { ChildHandle, ChildResult, ChildSessionRecord, SpawnChildRequest } from "../../subagents/child-handle.ts";
@@ -406,5 +411,81 @@ describe("Agent tool: background spawn (run_in_background:true, WS-06 §3.5 / WS
     expect(capturedReq?.runInBackground).toBe(true);
     const parsed = JSON.parse(result.output);
     expect(parsed.status).toBe("async_launched");
+  });
+});
+
+// ================================================================================================
+// Phase 4 Task 8 (rider 24): TaskStop / TaskOutput reach a BACKGROUND AGENT task.
+// ================================================================================================
+//
+// Lane C disclosed the asymmetry: an agent task allocated a task id through the SPINE seam
+// (createBackgroundTask("agent")) but could not be tracked in background-task-runtime.ts's registry,
+// which is the entire implementation of TaskStop and TaskOutput -- so neither tool could ever reach
+// one. The mechanical blocker was that registry's own narrower BackgroundTaskKind union.
+describe("rider 24: a background agent task is reachable through the unified task namespace", () => {
+  // Same fixture setup as the background-spawn describe above -- createBackgroundTask("agent")
+  // throws without a configured root, which is exactly what a bare JSON.parse of the error string
+  // would surface as an unhelpful syntax error.
+  let paths: SessionTempDirPaths;
+  beforeEach(() => {
+    resetBackgroundTaskRootForTest();
+    resetBackgroundTaskRuntimeForTest();
+    const dir = mkTempDir("winter-agent-test-rider24-");
+    paths = { root: dir, scratchpad: join(dir, "scratchpad"), tasks: join(dir, "tasks") };
+    configureBackgroundTaskRoot(() => paths);
+  });
+  afterEach(() => {
+    resetBackgroundTaskRootForTest();
+    resetBackgroundTaskRuntimeForTest();
+  });
+
+  test("the spawned task is registered with kind 'agent' and a stop callback, and TaskStop genuinely aborts the child", async () => {
+    let stopped = false;
+    let resolveResult!: (r: ChildResult) => void;
+    const resultPromise = new Promise<ChildResult>((resolve) => {
+      resolveResult = resolve;
+    });
+    const handle = fakeHandle(resultPromise);
+    // A child is an in-process runEngine loop (RULING R4-4), so there is no OS process and no pid --
+    // the registry's generic `stop` callback is the whole mechanism, and this proves it is wired to
+    // the REAL handle rather than merely marking a row.
+    handle.stop = async () => {
+      stopped = true;
+      resolveResult({ status: "stopped", content: "stopped by request" });
+    };
+    const { ctx } = makeCtx({ spawnChild: async () => handle });
+
+    const launched = JSON.parse((await agentExecutor.execute({ description: "bg", prompt: "p", run_in_background: true }, ctx)).output) as { taskId: string };
+    const tracked = getTask(launched.taskId);
+    expect(tracked, "the agent task must be visible to the registry TaskStop/TaskOutput are built on").toBeDefined();
+    expect(tracked!.kind).toBe("agent");
+    expect(tracked!.pid).toBeUndefined(); // never a fabricated pid for a process that does not exist
+    expect(tracked!.status).toBe("running");
+
+    // Through the REAL TaskStop executor, by task id -- not by calling the callback directly.
+    const stopResult = await taskStopExecutor.execute({ task_id: launched.taskId }, ctx);
+    expect(stopResult.isError).toBeUndefined();
+    expect(stopped, "TaskStop must reach the child's own stop()").toBe(true);
+
+    await new Promise((r) => setTimeout(r, 20));
+    // The registry reflects the child's own terminal status, so listRunningTasks stops reporting it.
+    expect(getTask(launched.taskId)?.status).not.toBe("running");
+  });
+
+  test("TaskOutput reads the agent task's .output stub by task id", async () => {
+    let resolveResult!: (r: ChildResult) => void;
+    const resultPromise = new Promise<ChildResult>((resolve) => {
+      resolveResult = resolve;
+    });
+    const { ctx } = makeCtx({ spawnChild: async () => fakeHandle(resultPromise) });
+    const launched = JSON.parse((await agentExecutor.execute({ description: "bg", prompt: "p", run_in_background: true }, ctx)).output) as { taskId: string };
+    const out = await taskOutputExecutor.execute({ task_id: launched.taskId, block: false, timeout: 0 }, ctx);
+    // The stub's own CONTENT is what matters here -- it names the durable transcript, per WS-12
+    // §7.2's "expose a small generated reference/stub and return the durable transcript path". Note
+    // deliberately NOT asserting `isError` is unset: TaskOutput reports a still-RUNNING task through
+    // its own status channel, which is orthogonal to whether the stub was readable.
+    expect(out.output).toContain("Background agent task");
+    resolveResult({ status: "completed", content: "done" });
+    await new Promise((r) => setTimeout(r, 20));
   });
 });
