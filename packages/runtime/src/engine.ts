@@ -70,7 +70,7 @@ import "./tools/descriptors/index.ts";
 // import ORDER relative to the descriptors barrel above does not matter (every impl file is
 // self-sufficient: it imports its own descriptor before calling replaceExecutor).
 import "./tools/impl/index.ts";
-import { buildRegistryToolExecutor, buildRegistryToolExecutorWithFallback, buildAdvertisedSet, replaceExecutor, type RegistryToolExecutorDeps } from "./tools/registry.ts";
+import { buildRegistryToolExecutor, buildRegistryToolExecutorWithFallback, buildAdvertisedSet, replaceExecutor, getRegisteredTool, type RegistryToolExecutorDeps } from "./tools/registry.ts";
 // M6 (fix wave, P3 close-out): RULING R3-2's own "T8 wires the REAL source, from wherever the
 // engine's real turn history... actually lives" instruction -- this IS that wiring. A specific,
 // scoped cross-module dependency (engine.ts -> one lane's own tools/impl/*.ts file), unlike every
@@ -576,6 +576,12 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
       promptStage: realPromptStage,
       autoEngine: realAutoEngine,
       specialChecks: REAL_SPECIAL_CHECKS,
+      // Phase 4 Task 3 (WS-09 §6): the real fill for evaluator.ts's own injected
+      // `requiresInteraction` seam (that field's own header explains why this can't be a direct
+      // import instead) -- reads the SAME module-level registry `buildDefaultToolExecutor`'s own
+      // dispatch consults, so a live MCP registration (registerMcpServerTools) is reflected on the
+      // very next evaluate() call with no engine-side caching to go stale.
+      requiresInteraction: (toolName: string): boolean => getRegisteredTool(toolName)?.descriptor.interaction === "required",
     };
   };
 

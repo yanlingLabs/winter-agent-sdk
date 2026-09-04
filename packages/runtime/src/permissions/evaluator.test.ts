@@ -937,6 +937,88 @@ describe("Task 8 — RULING P3-J: Bash dangerouslyDisableSandbox as mandatory in
   });
 });
 
+// --- Phase 4 Task 3 (MUST 7, WS-09 §6): an MCP tool marked `_meta["anthropic/requiresUserInteraction"]`
+// (registry.ts's own derived `descriptor.interaction === "required"`) is mandatory interaction,
+// structurally identical to the P3-J dangerouslyDisableSandbox precedent immediately above --
+// same stage-3 gate, same dontAsk-denies/every-other-mode-prompts shape. The evaluator learns this
+// via a NEW injected ctx.requiresInteraction seam (never a direct registry.ts import -- that would
+// be a runtime import cycle, since registry.ts already imports evaluator.ts's own ReadAccessProbe
+// type) -- baseCtx omits it by default (every pre-existing test unaffected), these tests supply a
+// fake keyed on canonical tool name.
+describe("Phase 4 Task 3 — MCP requiresUserInteraction as mandatory interaction (WS-09 §6)", () => {
+  const interactiveCall = call("mcp__fixture__delete_repo", { repo: "important" });
+  const requiresInteraction = (toolName: string): boolean => toolName === "mcp__fixture__delete_repo";
+
+  for (const mode of ["default", "acceptEdits", "auto", "bypassPermissions"] as const) {
+    test(`mode=${mode}: the call reaches the prompt stage even with a BARE mcp__fixture__* allow rule present -- never rule-silenced, never auto-approved, prompted even under bypass`, async () => {
+      const promptSpy = spyPromptStage(() => ({ decision: "allow" }));
+      const ctx = baseCtx({
+        promptStage: promptSpy.stage,
+        policy: policy({ mode, rules: withRules(rule("mcp__fixture__delete_repo", "allow")) }),
+        requiresInteraction,
+        sessionBypassEnabled: mode === "bypassPermissions",
+      });
+      const record = await evaluate(interactiveCall, ctx);
+      expect(promptSpy.calls.length).toBe(1);
+      expect(record.mechanism).toBe("canUseTool");
+      expect(record.decision).toBe("allow");
+    });
+  }
+
+  test("dontAsk: denied outright, the prompt stage is NEVER invoked", async () => {
+    const promptSpy = spyPromptStage(() => ({ decision: "allow" }));
+    const ctx = baseCtx({ promptStage: promptSpy.stage, policy: policy({ mode: "dontAsk" }), requiresInteraction });
+    const record = await evaluate(interactiveCall, ctx);
+    expect(promptSpy.calls.length).toBe(0);
+    expect(record.decision).toBe("deny");
+    expect(record.mechanism).toBe("mode");
+    expect(record.message).toContain("requiresUserInteraction");
+  });
+
+  test("no answering host (no-opinion prompt stage) fails CLOSED -- never implicitly allowed", async () => {
+    const ctx = baseCtx({ policy: policy({ mode: "default" }), requiresInteraction }); // NO_OPINION_PROMPT_STAGE
+    const record = await evaluate(interactiveCall, ctx);
+    expect(record.decision).toBe("deny");
+    expect(record.message).toContain("requiresUserInteraction");
+  });
+
+  test("a deny rule still wins outright (stage 2 runs before stage 3's mandatory interaction)", async () => {
+    const promptSpy = spyPromptStage(() => ({ decision: "allow" }));
+    const ctx = baseCtx({
+      promptStage: promptSpy.stage,
+      policy: policy({ mode: "default", rules: withRules(rule("mcp__fixture__delete_repo", "deny")) }),
+      requiresInteraction,
+    });
+    const record = await evaluate(interactiveCall, ctx);
+    expect(promptSpy.calls.length).toBe(0);
+    expect(record.decision).toBe("deny");
+    expect(record.mechanism).toBe("rule");
+  });
+
+  test("decisionReason names the mandatory interaction explicitly (transcript legibility)", async () => {
+    const promptSpy = spyPromptStage(() => ({ decision: "deny" }));
+    const ctx = baseCtx({ promptStage: promptSpy.stage, policy: policy({ mode: "default" }), requiresInteraction });
+    await evaluate(interactiveCall, ctx);
+    expect(promptSpy.calls.length).toBe(1);
+    expect(promptSpy.calls[0]!.meta.matchedAskRule).toBeUndefined(); // no rule forced this -- the descriptor's own metadata did
+    expect(promptSpy.calls[0]!.meta.decisionReason).toContain("requiresUserInteraction");
+  });
+
+  test("a call for a DIFFERENT tool the seam doesn't mark as requiring interaction is completely unaffected", async () => {
+    const ctx = baseCtx({ policy: policy({ mode: "default" }), requiresInteraction });
+    const record = await evaluate(call("mcp__fixture__list_repos", {}), ctx);
+    // No rule, no mandatory interaction -- falls through to the ordinary unmatched-action outcome
+    // (WS-07 §6.1's own "never implicitly allowed"): denied, mechanism "mode", NOT prompted.
+    expect(record).toMatchObject({ decision: "deny", mechanism: "mode" });
+  });
+
+  test("omitting ctx.requiresInteraction entirely (every pre-existing EvaluationContext construction) never triggers this gate -- byte-identical to before this task", async () => {
+    const ctx = baseCtx({ policy: policy({ mode: "default" }) }); // no requiresInteraction at all
+    const record = await evaluate(interactiveCall, ctx);
+    expect(record).toMatchObject({ decision: "deny", mechanism: "mode" }); // ordinary unmatched-action denial, not a mandatory-interaction one
+  });
+});
+
 // --- read-only allowed; unmatched -> mode-specific outcome -----------------------------------------
 
 describe("§5 baseline matrix — read-only work and unmatched actions", () => {

@@ -16,7 +16,7 @@ import { WinterCompatibilitySessionStore, splitFrames, encodeFrame, compatibilit
 import type { SpawnedRuntimeProcess } from "@yanlinglabs/winter-agent-sdk";
 import { createInMemoryChannel } from "./protocol/channel.ts";
 import { runEngine, providerMessageContentToText, type Provider, type ProviderMessage, type ContentBlock, type ToolExecutor, type SessionPersistence } from "./engine.ts";
-import { getRegisteredTool } from "./tools/registry.ts";
+import { getRegisteredTool, registerMcpServerTools, unregisterMcpServerTools } from "./tools/registry.ts";
 import { ADVISOR_TOOL_NAME } from "./tools/impl/advisor.ts";
 import "./tools/impl/index.ts"; // guarantees advisor.ts's own module-load default is registered before the M6 tests below run
 import { echoProvider, scriptedProvider, stubExecutor } from "./provider/mock.ts";
@@ -2410,5 +2410,72 @@ test("Finding 6: config.additionalDirectories threads into the evaluator -- acce
     expect(executed).toBe(true);
   } finally {
     rmSync(tmpB, { recursive: true, force: true });
+  }
+});
+
+// Phase 4 Task 3 (MUST 7, WS-09 §6): the end-to-end wiring proof -- evaluator.test.ts already
+// proves the stage-3 gate logic in isolation with a fake `requiresInteraction`; this proves
+// engine.ts's own makeEvalCtx() actually fills that seam from the REAL, live tool registry (a
+// same-server registerMcpServerTools call, exactly like a real MCP connection would make).
+test("Phase 4 Task 3: an MCP tool marked requiresUserInteraction is denied under dontAsk through the REAL engine + registry wiring (WS-09 §6)", async () => {
+  const SRV = "t3-interaction-fixture";
+  registerMcpServerTools(SRV, [{ name: "delete_repo", inputSchema: { type: "object" }, _meta: { "anthropic/requiresUserInteraction": true } }], { deferredDefault: false });
+  try {
+    const { host, runtime } = createInMemoryChannel();
+    const provider = scriptedProvider([
+      { kind: "tool_use", calls: [{ id: "call-1", name: `mcp__${SRV}__delete_repo`, input: {} }] },
+      { kind: "text", text: "done" },
+    ]);
+    const done = runEngine({
+      config: baseConfig({ permissionMode: "dontAsk", capabilities: ["winter.mcp"] }),
+      input: runtime.input,
+      output: runtime.output,
+      provider,
+    });
+    host.output.write({ type: "user", text: "go" });
+    host.output.write({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined });
+    const frames = await drain(host.input);
+    await done;
+
+    const messages = dataMessages(frames);
+    const toolResultMsg = messages.find((m) => m.type === "user") as { message: { content: Array<{ tool_use_id: string; denied?: boolean; content: string }> } } | undefined;
+    expect(toolResultMsg).toBeDefined();
+    const block = toolResultMsg!.message.content.find((b) => b.tool_use_id === "call-1");
+    expect(block?.denied).toBe(true);
+    expect(block?.content).toContain("requiresUserInteraction");
+  } finally {
+    unregisterMcpServerTools(SRV);
+  }
+});
+
+// Same fixture, opposite mode -- an ordinary MCP tool with NO requiresUserInteraction metadata is
+// completely unaffected by this wiring (the seam only fires for descriptors the registry itself
+// marked `interaction: "required"`).
+test("Phase 4 Task 3: an ordinary MCP tool (no requiresUserInteraction) is unaffected by the new wiring", async () => {
+  const SRV = "t3-interaction-control-fixture";
+  registerMcpServerTools(SRV, [{ name: "list_repos", inputSchema: { type: "object" } }], { deferredDefault: false });
+  try {
+    const { host, runtime } = createInMemoryChannel();
+    const provider = scriptedProvider([
+      { kind: "tool_use", calls: [{ id: "call-1", name: `mcp__${SRV}__list_repos`, input: {} }] },
+      { kind: "text", text: "done" },
+    ]);
+    const done = runEngine({
+      config: baseConfig({ permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true, capabilities: ["winter.mcp"] }),
+      input: runtime.input,
+      output: runtime.output,
+      provider,
+    });
+    host.output.write({ type: "user", text: "go" });
+    host.output.write({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined });
+    const frames = await drain(host.input);
+    await done;
+
+    const messages = dataMessages(frames);
+    const toolResultMsg = messages.find((m) => m.type === "user") as { message: { content: Array<{ tool_use_id: string; denied?: boolean }> } } | undefined;
+    const block = toolResultMsg!.message.content.find((b) => b.tool_use_id === "call-1");
+    expect(block?.denied).toBeUndefined(); // bypassPermissions executes an ordinary MCP tool unconditionally
+  } finally {
+    unregisterMcpServerTools(SRV);
   }
 });

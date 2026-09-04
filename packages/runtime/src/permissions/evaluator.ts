@@ -294,6 +294,21 @@ export interface EvaluationContext {
   promptStage: PromptStage;
   autoEngine: AutoEngine;
   specialChecks: SpecialChecks;
+  // Phase 4 Task 3 (WS-09 §6): "a server can mark a tool `_meta['anthropic/requiresUserInteraction']`;
+  // Winter forces that call through interactive permission handling... and `dontAsk` denies it."
+  // The SIGNAL this seam answers (registry.ts's own `ToolDescriptor.interaction === 'required'`,
+  // derived at MCP registration time from that exact `_meta` key) lives on the tool REGISTRY, which
+  // this module cannot import directly: registry.ts already imports THIS module's own
+  // `ReadAccessProbe` type (type-only today, but registry.ts's own header explicitly notes "no
+  // runtime cycle since evaluator.ts never imports this file" as the reason that's safe) -- a real,
+  // value-level import in the other direction would create the exact cycle that comment depends on
+  // NOT existing. Injected instead, exactly like `specialChecks`/`promptStage`/`hookStage`/
+  // `autoEngine` above: engine.ts's own `makeEvalCtx()` builds this from `getRegisteredTool(name)?.
+  // descriptor.interaction === "required"`. Optional and OMITTED by every pre-existing
+  // EvaluationContext construction (every test file that builds one directly, and every fixture
+  // that predates this task) -- absence reads as "nothing requires interaction," byte-identical to
+  // before this field existed.
+  requiresInteraction?: (toolName: string) => boolean;
 }
 
 // --- The decision record (cross-task pin, verbatim shape + one T6 addition) ---------------------------
@@ -1270,14 +1285,23 @@ export async function evaluate(call: PermissionCall, ctx: EvaluationContext): Pr
   // and WS-12 §4's "the result MUST record the sandbox-override state"), never silently normalized
   // away by this stage regardless of allow/deny outcome.
   const isMandatoryDangerousBashOverride = effectiveCall.toolName === "Bash" && effectiveCall.input["dangerouslyDisableSandbox"] === true;
-  // T10-CARRY 1: a hook-forced ask (no rule matched) joins this gate as a FOURTH reason to reach the
-  // prompt path — priority among the four, when more than one applies simultaneously, is askEntry >
-  // isMandatoryAskUserQuestion > isMandatoryDangerousBashOverride > hookForcedAsk (a documented
-  // judgment call: the more specific attribution's own message/mechanism wins; every case still ends
-  // in the identical "prompt, then fail closed on no answer" behavior regardless of which one is
-  // picked). In practice the first three are mutually exclusive (a call cannot simultaneously BE
-  // AskUserQuestion and Bash), so this ordering is a tie-break with no live ambiguity today.
-  if (askEntry || isMandatoryAskUserQuestion || isMandatoryDangerousBashOverride || hookForcedAsk) {
+  // Phase 4 Task 3 (WS-09 §6): a FIFTH mandatory-interaction reason, structurally identical to
+  // RULING P3-J immediately above (same stage-3 placement, same "never rule-silenced, never
+  // auto-approved by acceptEdits/auto, dontAsk denies it" shape) -- see EvaluationContext.
+  // requiresInteraction's own header for why this is an injected seam rather than a direct registry
+  // lookup. `?.` + `=== true` mirrors this file's own established "exact boolean, never a
+  // truthy-coercion" posture for a descriptor-derived signal (registry.ts's own `_meta['anthropic/
+  // requiresUserInteraction'] === true` check for the identical reason).
+  const isMandatoryMcpInteraction = ctx.requiresInteraction?.(effectiveCall.toolName) === true;
+  // T10-CARRY 1: a hook-forced ask (no rule matched) joins this gate as a reason to reach the
+  // prompt path — priority among the five, when more than one applies simultaneously, is askEntry >
+  // isMandatoryAskUserQuestion > isMandatoryDangerousBashOverride > isMandatoryMcpInteraction >
+  // hookForcedAsk (a documented judgment call: the more specific attribution's own message/mechanism
+  // wins; every case still ends in the identical "prompt, then fail closed on no answer" behavior
+  // regardless of which one is picked). In practice the first four are mutually exclusive (a call
+  // cannot simultaneously BE AskUserQuestion and Bash and an MCP tool), so this ordering is a
+  // tie-break with no live ambiguity today.
+  if (askEntry || isMandatoryAskUserQuestion || isMandatoryDangerousBashOverride || isMandatoryMcpInteraction || hookForcedAsk) {
     if (policy.mode === "dontAsk") {
       // WS-07 §6.3: "dontAsk converts all of these into denial." An actual ask-RULE match keeps its
       // own rule-denial message/mechanism; AskUserQuestion / a hook-forced ask with no matching rule
@@ -1304,6 +1328,19 @@ export async function evaluate(call: PermissionCall, ctx: EvaluationContext): Pr
           mechanism: "mode",
           policyVersion,
           message: "Denied: dontAsk mode denies a Bash call requesting dangerouslyDisableSandbox (WS-07 §6.3; WS-12 §4/§11, RULING P3-J)",
+          ...(carriedTransform !== undefined ? { transformedInput: carriedTransform } : {}),
+        };
+      }
+      if (isMandatoryMcpInteraction) {
+        // Phase 4 Task 3 (WS-09 §6): mechanism "mode" — mirrors isMandatoryDangerousBashOverride's
+        // own dontAsk branch exactly (no rule was involved; the descriptor's own metadata forced
+        // this, and dontAsk's own §6.3 "every would-prompt outcome becomes a denial" applies
+        // identically here).
+        return {
+          decision: "deny",
+          mechanism: "mode",
+          policyVersion,
+          message: `Denied: dontAsk mode denies '${effectiveCall.toolName}' -- marked requiresUserInteraction (WS-07 §6.3; WS-09 §6)`,
           ...(carriedTransform !== undefined ? { transformedInput: carriedTransform } : {}),
         };
       }
@@ -1349,7 +1386,9 @@ export async function evaluate(call: PermissionCall, ctx: EvaluationContext): Pr
         ? "AskUserQuestion requires mandatory interaction (WS-07 §8)"
         : isMandatoryDangerousBashOverride
           ? "Bash dangerouslyDisableSandbox requires mandatory interaction (WS-12 §4/§11, RULING P3-J)"
-          : (hookAskMessage ?? "a PreToolUse hook requested interactive approval (WS-08 §3)");
+          : isMandatoryMcpInteraction
+            ? `'${effectiveCall.toolName}' is marked requiresUserInteraction and requires mandatory interaction (WS-09 §6)`
+            : (hookAskMessage ?? "a PreToolUse hook requested interactive approval (WS-08 §3)");
     const meta: PromptStageMeta = {
       decisionReason,
       ...(matchedAskRule !== undefined ? { matchedAskRule } : {}),
@@ -1380,6 +1419,15 @@ export async function evaluate(call: PermissionCall, ctx: EvaluationContext): Pr
           mechanism: "mode",
           policyVersion,
           message: "Denied: a Bash call requesting dangerouslyDisableSandbox requires interaction and no prompt handler answered it (WS-12 §4/§11, RULING P3-J)",
+          ...(carriedTransform !== undefined ? { transformedInput: carriedTransform } : {}),
+        };
+      }
+      if (isMandatoryMcpInteraction) {
+        return {
+          decision: "deny",
+          mechanism: "mode",
+          policyVersion,
+          message: `Denied: '${effectiveCall.toolName}' requires interaction (requiresUserInteraction, WS-09 §6) and no prompt handler answered it`,
           ...(carriedTransform !== undefined ? { transformedInput: carriedTransform } : {}),
         };
       }
