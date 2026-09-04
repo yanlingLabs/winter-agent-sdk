@@ -4,7 +4,7 @@
 // ctx.session.spawnChild -> the real factory -> a real nested runEngine() -> a real result back),
 // not merely the pure functions underneath it (already unit-proven in limits/watchdog/resolution/
 // policy/fork/workspace/definitions .test.ts).
-import { describe, test, expect, afterEach } from "bun:test";
+import { describe, test, expect, afterEach, spyOn } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -152,7 +152,11 @@ async function initFixtureRepo(dir: string): Promise<void> {
 }
 
 const cleanupToolNames: string[] = [];
+// Per-test teardown a test can append to (a console spy, a timer) -- always drained, even when the
+// test throws, so a mocked `console.error` can never leak into the next file.
+const afterEachRestore: Array<() => void> = [];
 afterEach(() => {
+  for (const restore of afterEachRestore.splice(0)) restore();
   resetChildEngineFactoryForTest();
   resetSpawnLimitsForTest();
   liveHandles.clear();
@@ -637,6 +641,12 @@ describe("child-engine.ts: durable resume (WS-10 §7)", () => {
 
 describe("child-engine.ts: child permission/hook control-RPC routing (RULING P4-I, closed by T8; was 'disclosed gap 2')", () => {
   test("RULING P4-I: a child under 'default' mode that reaches a real permission prompt RECEIVES its answer through the parent pump's child-bridge roster, and completes", async () => {
+    const droppedLogs: string[] = [];
+    const errorSpy = spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+      const line = args.map(String).join(" ");
+      if (line.includes("dropping control_response")) droppedLogs.push(line);
+    });
+    afterEachRestore.push(() => errorSpy.mockRestore());
     registerSpawnProbe();
     cleanupToolNames.push(SPAWN_PROBE);
     // Deliberately NOT bypassPermissions (the advisor's own instruction: testing only under bypass
@@ -704,6 +714,12 @@ describe("child-engine.ts: child permission/hook control-RPC routing (RULING P4-
     // RpcBridge had no matching requestId and dropped it, so the child's own bridge never saw it.
     expect(parsed.result.status).toBe("completed");
     expect(parsed.result.content).toContain("child finished after the prompt was answered");
+    // NEW-2 (residual round): the routing WORKS, and it must also be QUIET. The pump used to offer
+    // every response to the parent's own bridge FIRST, so the production P4-I path logged
+    // "dropping control_response for unknown or already-settled requestId" on stderr for every
+    // child-routed answer -- a misleading diagnostic for the success path, and one that would mask
+    // the real "nobody claimed this" case it exists to report.
+    expect(droppedLogs, `the child-routed answer must not log a drop: ${droppedLogs.join(" | ")}`).toEqual([]);
   }, 5000);
 
   // The complement, so rider 20's pause cannot silently disarm the watchdog altogether: a child that

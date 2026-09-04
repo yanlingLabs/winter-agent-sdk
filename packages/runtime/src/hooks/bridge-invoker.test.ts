@@ -24,7 +24,8 @@ function fakeBridge(impl: (subtype: string, payload: unknown, opts?: { timeoutMs
         calls.push({ subtype, payload, ...(opts !== undefined ? { opts } : {}) });
         return impl(subtype, payload, opts);
       }) as RpcBridge["request"],
-      handleResponse: () => false,
+      ownsRequest: () => false,
+    handleResponse: () => false,
       rejectAllPending: () => {},
       cancel: (requestId: string) => {
         cancelled.push(requestId);

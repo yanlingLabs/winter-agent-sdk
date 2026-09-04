@@ -20,6 +20,14 @@ export interface RpcBridge {
   // never throws) for a requestId this bridge never issued, or one that already settled (a
   // timed-out request's late answer) — a stale response must never kill the run (WS-04).
   handleResponse(frame: ControlResponseFrame): boolean;
+  // NEW-2 (P4 residual round): "is this id one of MY still-pending requests?", answered WITHOUT the
+  // side effects of `handleResponse` -- no settle, and no stderr line for a miss. The pump needs to
+  // ask that question before it decides whether an answer belongs to this run or to one of its
+  // children (RULING P4-I's roster), and asking it through `handleResponse` meant every
+  // child-routed answer logged "dropping control_response for unknown or already-settled requestId"
+  // on the SUCCESS path -- a misleading diagnostic that also masked the genuine unclaimed case the
+  // message exists to report.
+  ownsRequest(requestId: string): boolean;
   // Task 8 (termination edge, WS-04 §3's no-park-timeout combined with P2-B's inverted pump
   // direction): rejects every still-pending request. Call this when the underlying transport is
   // PROVABLY dead (the pump's input hit true EOF, not just end_input) — a no-timeout RPC like
@@ -97,6 +105,9 @@ export function createRpcBridge(output: FrameSink): RpcBridge {
         const frame: ControlRequestFrame = { type: "control_request", requestId, subtype, payload };
         output.write(frame);
       });
+    },
+    ownsRequest(requestId: string): boolean {
+      return pending.has(requestId);
     },
     handleResponse(frame: ControlResponseFrame): boolean {
       const entry = pending.get(frame.requestId);

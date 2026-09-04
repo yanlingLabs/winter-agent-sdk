@@ -1836,11 +1836,25 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
           // (transformChildFrame passes control frames through verbatim) -- so it is offered to
           // every registered child bridge until one claims it. An id no bridge claims is still
           // dropped harmlessly, exactly as before (a stale response must never kill the run).
-          if (!bridge.handleResponse(frame as ControlResponseFrame)) {
+          //
+          // NEW-2 (residual round): the ROSTER is consulted first for any id this run's own bridge
+          // does not own. The previous order asked the parent bridge first via `handleResponse`,
+          // whose miss path logs "dropping control_response for unknown or already-settled
+          // requestId" -- so the PRODUCTION P4-I success path emitted that line for every single
+          // child-routed answer, and the message stopped meaning what it says. `ownsRequest` asks
+          // the same question with no settle and no log; `handleResponse` is still what runs for an
+          // id this bridge owns, and is still what reports a genuinely unclaimed one.
+          const response = frame as ControlResponseFrame;
+          let claimed = false;
+          if (!bridge.ownsRequest(response.requestId)) {
             for (const handle of childResponseHandlers) {
-              if (handle(frame as ControlResponseFrame)) break;
+              if (handle(response)) {
+                claimed = true;
+                break;
+              }
             }
           }
+          if (!claimed) bridge.handleResponse(response);
           continue;
         }
         if (frame.type === "control_request") {
