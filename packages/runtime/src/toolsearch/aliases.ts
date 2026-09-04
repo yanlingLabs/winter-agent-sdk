@@ -135,19 +135,50 @@ export function suppressAliasedDuplicates(
 //       `winter.subagents`, `mcp__winter__send_message` requires `winter.global-messaging`), so a
 //       symmetric "any exclusion" rule here would let one family's capability gate silently take
 //       out the other family's tool.
+// The names this pass takes away, and WHY -- factored out of `hideAliasExcludedTwins` (NEW-5,
+// residual round) because the dispatch loop needs the same answer for a different purpose. A tool
+// hidden HERE is not "deferred and unloaded": no `select:` can ever load it, so refusing a call to
+// one with the load-first hint sends the model to a ToolSearch that will never return it. The reason
+// string is what lets the dispatch boundary say what actually happened instead.
+export interface AliasExclusion {
+  reason: string;
+  // WHICH of the two directions took the name away. It matters at dispatch: only
+  // `native-excluded` needs a bespoke refusal. A `target-denied` source still reaches the permission
+  // pipeline, where a real rule denies it -- a `permission_denied` frame and a
+  // `result.permission_denials` entry, which is strictly better than an availability-class refusal
+  // and is what the C2 fixtures pin.
+  cause: "native-excluded" | "target-denied";
+}
+
+export function aliasExclusionReasons(
+  partition: AdvertisedPartition,
+  hostAliases: Record<string, string> | undefined,
+  disallowedTools: readonly string[] | undefined,
+): Map<string, AliasExclusion> {
+  const table = effectiveAliasTable(hostAliases);
+  const advertised = new Set([...partition.eager, ...partition.deferred].map((d) => d.canonicalName));
+  const reasons = new Map<string, AliasExclusion>();
+  for (const [source, target] of Object.entries(table)) {
+    if (source === target) continue;
+    if (advertised.has(target) && !advertised.has(source) && getRegisteredTool(source) !== undefined) {
+      reasons.set(target, {
+        cause: "native-excluded",
+        reason: `its native spelling '${source}' is denied or excluded in this session, and RULING P4-E hides the canonical twin with it`,
+      });
+    }
+    if (advertised.has(source) && isBareDenied(target, disallowedTools)) {
+      reasons.set(source, { cause: "target-denied", reason: `it resolves to '${target}', which this session denies (disallowedTools)` });
+    }
+  }
+  return reasons;
+}
+
 export function hideAliasExcludedTwins(
   partition: AdvertisedPartition,
   hostAliases: Record<string, string> | undefined,
   disallowedTools: readonly string[] | undefined,
 ): AdvertisedPartition {
-  const table = effectiveAliasTable(hostAliases);
-  const advertised = new Set([...partition.eager, ...partition.deferred].map((d) => d.canonicalName));
-  const toHide = new Set<string>();
-  for (const [source, target] of Object.entries(table)) {
-    if (source === target) continue;
-    if (advertised.has(target) && !advertised.has(source) && getRegisteredTool(source) !== undefined) toHide.add(target);
-    if (advertised.has(source) && isBareDenied(target, disallowedTools)) toHide.add(source);
-  }
+  const toHide = new Set(aliasExclusionReasons(partition, hostAliases, disallowedTools).keys());
   if (toHide.size === 0) return partition;
 
   const eager: ToolDescriptor[] = [];

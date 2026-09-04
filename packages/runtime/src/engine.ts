@@ -141,7 +141,7 @@ import { DEFAULT_SANDBOX_SETTINGS } from "./sandbox/profile.ts";
 // resolution for the permission/hook axis, and duplicate suppression over the advertised partition.
 // Both shipped as pure functions with no engine call site (R4-10 forbade Lane B from adding one);
 // this file is that call site.
-import { effectiveAliasTable, resolvePermissionIdentity, suppressAliasedDuplicates } from "./toolsearch/aliases.ts";
+import { aliasExclusionReasons, effectiveAliasTable, resolvePermissionIdentity, suppressAliasedDuplicates } from "./toolsearch/aliases.ts";
 // Phase 4 Task 8 (rider 2, WS-09 §8): Lane B's session-keyed ToolSearch/WaitForMcpServers runtime
 // registry. Both of that lane's executors answer a typed "no session runtime registered" error until
 // a live run registers one -- this file is the one production registrar.
@@ -1663,6 +1663,21 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // a frozen startup snapshot, so a server registered/reconnected mid-session is covered too;
   // exported specifically so the seam contract tests exercise this IDENTICAL code path, not a
   // re-implementation).
+  // NEW-5 (residual round): "was this name taken away by the ALIAS-EXCLUSION pass, and why" --
+  // recomputed live against the CURRENT mode, exactly like `isDeferredAndUnloaded` below, so a
+  // mid-session mode switch is reflected on the very next call. Recomputing the partition here is
+  // the point: asking the same function the advertisement path asks is what keeps the dispatch
+  // refusal and the advertised set from ever disagreeing about why a name is missing.
+  function aliasExclusionLive(toolName: string): string | undefined {
+    const live = partitionAdvertisedTools({ ...advertisedCfg, mode: policyStateStore.getState().mode }, deferralActivation);
+    const exclusion = aliasExclusionReasons(live, suppressionAliasTable, config.disallowedTools).get(toolName);
+    // ONLY the twin-of-an-excluded-native direction is refused here. The other direction (a source
+    // whose alias TARGET is bare-denied) deliberately falls through to the permission pipeline,
+    // where a real rule denies it -- that produces a `permission_denied` frame and a
+    // `result.permission_denials` entry, which is strictly more informative than an
+    // availability-class refusal and is what the C2 fixtures pin.
+    return exclusion?.cause === "native-excluded" ? exclusion.reason : undefined;
+  }
   function isDeferredAndUnloaded(toolName: string): boolean {
     return isLoadFirstBlocked(toolName, policyStateStore.getState().mode, deferralActivation, loadedToolSet);
   }
@@ -2341,13 +2356,44 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
             });
             continue;
           }
+          // NEW-5 (residual round): an ALIAS-EXCLUDED name is refused with the reason it was taken
+          // away, not with the load-first hint. The two look identical from the load-first
+          // predicate's side -- a hidden Winter twin is still `deferred: true` at its source, so
+          // `resolveDeferral` says "deferred" and `isDeferredAndUnloaded` says "unloaded" -- but the
+          // hint it produces ("use ToolSearch to select it") is unfollowable: the same exclusion pass
+          // removed the name from ToolSearch's own pool, so the model is sent to a search that can
+          // never return it. Checked HERE, with the availability family, deliberately BEFORE the
+          // load-first boundary: it is an exclusion, not a not-yet-loaded state.
+          //
+          // Ordering is otherwise untouched -- load-first still precedes the permission pipeline
+          // (VERIFIED-CLEAN), and a genuinely deferred-but-loadable tool still gets the hint below.
           if (isDeferredAndUnloaded(call.name)) {
-            resultBlocks.push({
-              type: "tool_result",
-              tool_use_id: call.id,
-              content: `'${call.name}' is a deferred tool that has not been loaded this session yet -- use ToolSearch to select it before calling it (WS-09 §8.5)`,
-              loadFirst: true,
-            });
+            // NEW-5 (residual round): the load-first branch picks its MESSAGE by why the name is
+            // missing. A hidden Winter twin satisfies this predicate for the wrong reason -- it is
+            // still `deferred: true` at its source, so `resolveDeferral` says "deferred" -- but the
+            // hint "use ToolSearch to select it" is unfollowable: the same alias-exclusion pass
+            // removed it from ToolSearch's own pool, so the model is sent to a search that can never
+            // return it. Deciding INSIDE this branch (rather than ahead of it) is what keeps the
+            // change surgical: ordering is untouched, load-first still precedes the permission
+            // pipeline (VERIFIED-CLEAN), and every name that is NOT deferred-and-unloaded -- including
+            // the same twin with Tool Search inactive -- still falls through to the permission
+            // pipeline and gets a real rule denial with its `permission_denied` frame.
+            const excludedReason = aliasExclusionLive(call.name);
+            resultBlocks.push(
+              excludedReason !== undefined
+                ? {
+                    type: "tool_result",
+                    tool_use_id: call.id,
+                    content: `'${call.name}' is not available in this session: ${excludedReason}. It cannot be loaded with ToolSearch either -- the same exclusion removes it from the searchable pool.`,
+                    error: true,
+                  }
+                : {
+                    type: "tool_result",
+                    tool_use_id: call.id,
+                    content: `'${call.name}' is a deferred tool that has not been loaded this session yet -- use ToolSearch to select it before calling it (WS-09 §8.5)`,
+                    loadFirst: true,
+                  },
+            );
             continue;
           }
           // Task 6 (WS-07 §2, WS-04 §4 ordering rule 5): the permission gate slots HERE — between

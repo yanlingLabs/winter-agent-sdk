@@ -313,3 +313,57 @@ describe("follow-up (1): a host toolAliases edge excludes its twin in PRODUCTION
     }
   });
 });
+
+// --- Residual round, NEW-5: an alias-EXCLUDED name is refused with the reason, not a dead hint ------
+//
+// With Tool Search ACTIVE a hidden Winter twin is still `deferred: true` at its source, so the
+// load-first predicate says "deferred and unloaded" and the model was told to "use ToolSearch to
+// select it" -- advice it cannot follow, because the same exclusion pass removed the name from
+// ToolSearch's own pool. The refusal must say what actually happened.
+describe("residual (NEW-5): a hidden twin's refusal carries the exclusion reason, not the load-first hint", () => {
+  async function callWithSearchActive(name: string, overrides: Partial<RuntimeConfig> = {}): Promise<string> {
+    const { host, runtime } = createInMemoryChannel();
+    const provider = scriptedProvider([
+      { kind: "tool_use", calls: [{ id: "c1", name, input: { to: "nobody-here", message: "hi" } }] },
+      { kind: "text", text: "done" },
+    ]);
+    const done = runEngine({
+      config: baseConfig({ permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true, toolSearchEnabled: true, ...overrides }),
+      input: runtime.input,
+      output: runtime.output,
+      provider,
+    });
+    host.output.write({ type: "user", text: "go" });
+    host.output.write({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined });
+    const frames = await drain(host.input);
+    await done;
+    return JSON.stringify(dataMessages(frames).filter((m) => m.type === "user"));
+  }
+
+  test("the twin of a DENIED native is refused with the deny reason and never sent to ToolSearch", async () => {
+    const out = await callWithSearchActive(TWIN, { disallowedTools: [NATIVE] });
+    // THE NEW-5 ASSERTION. Pre-fix: "is a deferred tool that has not been loaded this session yet --
+    // use ToolSearch to select it before calling it".
+    expect(out, "the refusal must not hand the model an unfollowable hint").not.toContain("use ToolSearch to select it");
+    expect(out).toContain("is not available in this session");
+    expect(out).toContain(`its native spelling '${NATIVE}' is denied or excluded`);
+    expect(out).toContain("It cannot be loaded with ToolSearch either");
+    // ...and it still never executed.
+    expect(out).not.toContain("outcome");
+  });
+
+  test("control: a genuinely deferred-but-LOADABLE tool still gets the load-first hint", async () => {
+    const SRV = "fwnew5srv";
+    try {
+      registerMcpServerTools(SRV, [{ name: "loadable", inputSchema: { type: "object" } }], { deferredDefault: true });
+      const out = await callWithSearchActive(`mcp__${SRV}__loadable`, {
+        // winter.mcp has to be on for the tool to be advertisable at all.
+        capabilities: ["winter.mcp"],
+      });
+      expect(out, "an ordinary deferred tool's hint is correct and must stay").toContain("use ToolSearch to select it");
+      expect(out).not.toContain("It cannot be loaded with ToolSearch either");
+    } finally {
+      unregisterMcpServerTools(SRV);
+    }
+  });
+});
