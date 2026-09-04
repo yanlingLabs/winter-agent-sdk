@@ -15,7 +15,7 @@ import {
 import { serializeRuntimeAddress, type RuntimeAddress, type ListedRuntimeObject, type DeliveryOutcome, type GlobalAgentMessage, type RuntimeMessagingAdapter } from "./adapter.ts";
 import { createNotificationQueue } from "./idle.ts";
 import { createLoopGuard, MAX_GLOBAL_MESSAGE_SIZE, RAPID_REPEAT_WINDOW_MS } from "./outcomes.ts";
-import { createFakeChildHandle } from "../subagents/seam-contracts-p4.test.ts";
+import { createFakeChildHandle } from "../subagents/test-fakes.ts";
 import { ChildResumeModeIncomparableError } from "../permissions/auto/inheritance.ts";
 
 interface FakeAdapterCalls {

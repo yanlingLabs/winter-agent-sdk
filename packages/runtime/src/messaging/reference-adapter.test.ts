@@ -9,7 +9,7 @@ import {
 import { createNotificationQueue } from "./idle.ts";
 import { createSubscriberDirectory } from "./router.ts";
 import type { RuntimeAddress, GlobalAgentMessage, DeliveryOutcome } from "./adapter.ts";
-import { createFakeChildHandle } from "../subagents/seam-contracts-p4.test.ts";
+import { createFakeChildHandle } from "../subagents/test-fakes.ts";
 import { HELD_INBOX_CAP, ACCEPTED_QUEUE_CAP, DEFAULT_HOLD_EXPIRY_MS } from "./outcomes.ts";
 import type { CrossSessionInbound } from "./inbound.ts";
 import type { PermissionMode } from "@yanlinglabs/winter-agent-sdk";

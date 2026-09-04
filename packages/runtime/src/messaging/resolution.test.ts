@@ -1,7 +1,7 @@
 import { describe, test, expect } from "bun:test";
 import { resolveTarget, childToListedRuntimeObject, type ResolutionInputs } from "./resolution.ts";
 import { serializeRuntimeAddress, type ListedRuntimeObject } from "./adapter.ts";
-import { createFakeChildHandle } from "../subagents/seam-contracts-p4.test.ts";
+import { createFakeChildHandle } from "../subagents/test-fakes.ts";
 import type { ChildHandle } from "../subagents/child-handle.ts";
 
 const PARENT = "parent-1"; // matches createFakeChildHandle's own default ChildSessionRecord.parentSessionId

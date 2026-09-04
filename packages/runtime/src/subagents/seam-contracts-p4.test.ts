@@ -25,11 +25,9 @@
 // side without duplicating that suite.
 import { describe, test, expect } from "bun:test";
 import { isWinterMcpServerInstance, type WinterMcpServerInstance } from "@yanlinglabs/winter-agent-sdk";
-import {
-  type ChildHandle,
-  type ChildSessionRecord,
-  type ChildResult,
-} from "./child-handle.ts";
+import { createFakeChildHandle } from "./test-fakes.ts";
+import { createChildEngineFactory } from "./child-engine.ts";
+import type { ChildEngineRunContext } from "./child-handle.ts";
 import { createFakeMessagingRouterSeam } from "../messaging/adapter.ts";
 import { createFakeMcpControlSeam } from "../mcp/control-seam.ts";
 import { createFakeMcpServerStateSource } from "../mcp/state.ts";
@@ -37,69 +35,12 @@ import { handleMcpStatus, handleMcpReconnect, handleMcpToggle, handleMcpSetServe
 
 // --- (i) ChildHandle semantics against a fake -----------------------------------------------------
 
-// A minimal, REALISTIC state machine satisfying the ChildHandle contract -- not production code
-// (Lane C's own child-engine.ts is that), but a fixture proving the four outcomes MUST 10 pins are
-// mutually consistent and testable at all. Lane D's own router (consuming ChildHandle ONLY) can be
-// tested against this exact fake instead of a live child engine.
-// Fix round 1, MAJOR item 1: exported (was file-private) so engine.test.ts's own NEW spawn-seam
-// tests can drive a REAL runEngine against this exact fixture, per the controller's explicit
-// instruction, instead of hand-rolling a second, potentially-drifting fake ChildHandle. No test body
-// or assertion in THIS file changed -- this is the one, minimal, additive edit "keep it green" was
-// always going to tolerate: a seam-authority file staying the single source of the fixture its own
-// tests already prove correct, rather than becoming one of two.
-export function createFakeChildHandle(recordOverrides?: Partial<ChildSessionRecord>): ChildHandle & { simulateCompletion(content: string): void } {
-  let status: ChildSessionRecord["status"] = "running";
-  let resolveResult!: (r: ChildResult) => void;
-  let settled = false;
-  const resultPromise = new Promise<ChildResult>((resolve) => {
-    resolveResult = resolve;
-  });
-  const record: ChildSessionRecord = {
-    id: "child-1",
-    parentSessionId: "parent-1",
-    parentToolUseId: "tooluse-1",
-    transcript: "subagents/agent-child-1.jsonl",
-    status: "running",
-    runtime: "winter-agent",
-    model: { effectiveModel: "sonnet", effectiveEffort: "medium" },
-    permission: { effectiveMode: "default", parentPolicyHash: "h", parentPolicyVersion: 1 },
-    ...recordOverrides,
-  };
-  let messageCounter = 0;
-
-  return {
-    record,
-    status: () => status,
-    async steer(_msg) {
-      if (status !== "running") {
-        return { status: "not_found", messageId: `m${++messageCounter}`, reason: `child ${record.id} is not running (status: ${status})` };
-      }
-      return { status: "delivered", messageId: `m${++messageCounter}` };
-    },
-    async resume(_msg) {
-      if (status !== "completed" && status !== "stopped" && status !== "failed") {
-        return { status: "not_found", messageId: `m${++messageCounter}`, reason: `child ${record.id} is still running -- resume targets a TERMINAL child only` };
-      }
-      status = "running"; // WS-10 §7: an addressable terminal child auto-resumes
-      return { status: "resumed_and_delivered", messageId: `m${++messageCounter}` };
-    },
-    async result() {
-      return resultPromise;
-    },
-    async stop() {
-      if (settled) return; // already terminal -- idempotent
-      settled = true;
-      status = "stopped";
-      resolveResult({ status: "stopped", content: "stopped by request" });
-    },
-    simulateCompletion(content: string): void {
-      if (settled) return;
-      settled = true;
-      status = "completed";
-      resolveResult({ status: "completed", content });
-    },
-  };
-}
+// Phase 4 fix wave (KNOWN item 2): the fixture itself now lives in `subagents/test-fakes.ts` -- a
+// plain module (imported at the top of this file), so the four other test files that use it no
+// longer import a TEST file, which under bun's runner runs that file's whole suite as an import
+// side effect. THIS file goes on testing the identical fake; no test body or assertion below
+// changed, and this file remains the place where the fixture and the contract it satisfies are
+// proven together.
 
 describe("(i) ChildHandle semantics against a fake (WS-10 §7/§9/§15)", () => {
   test("steer() while running delivers", async () => {
@@ -145,6 +86,21 @@ describe("(i) ChildHandle semantics against a fake (WS-10 §7/§9/§15)", () => 
     // A SECOND completion attempt (e.g. a duplicate signal) never re-settles or throws.
     child.simulateCompletion("a different answer -- must never overwrite the first");
     expect(await child.result()).toEqual(r1);
+  });
+
+  // Phase 4 fix wave: the wave added three fields to `ChildEngineRunContext` (parentAgentId,
+  // getParentRules, getParentMcpState). Every one of them is OPTIONAL by contract -- a producer
+  // that predates them (this file's own fakes; any host that builds a run context by hand) must
+  // keep compiling AND keep working, degrading to the pre-wave behaviour rather than crashing.
+  test("fix wave: every ChildEngineRunContext field added by the wave is OPTIONAL -- a context with only the two original members still builds real ChildEngineDeps", () => {
+    const minimal: ChildEngineRunContext = { parentSessionId: "parent-1", forwardChildFrame: () => {} };
+    expect(minimal.parentAgentId).toBeUndefined();
+    expect(minimal.getParentRules).toBeUndefined();
+    expect(minimal.getParentMcpState).toBeUndefined();
+    expect(minimal.registerChildResponseHandler).toBeUndefined();
+    expect(minimal.getParentPolicy).toBeUndefined();
+    const deps = createChildEngineFactory({ provider: { async generate() { return { kind: "text", text: "unused" }; } } })(minimal);
+    expect(typeof deps.spawn).toBe("function");
   });
 
   test("steer() after termination is refused, never silently delivered to a dead child", async () => {
