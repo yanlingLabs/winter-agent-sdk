@@ -420,6 +420,37 @@ export function listRegisteredTools(): readonly RegisteredTool[] {
   return Array.from(registry.values());
 }
 
+// --- Phase 5 Task 3 (R5-10): host-generated tools -------------------------------------------------
+//
+// `registerTool` is the BOOTSTRAP primitive: one stub per WS-06 §2 name, registered once at module
+// load, throwing on a duplicate because a second registration under a WS-06 name is always a bug.
+// A HOST-GENERATED tool is the opposite shape in every respect: its descriptor is computed per
+// SESSION from that session's own options (`StructuredOutput`'s `input_schema` IS the caller's
+// `outputFormat` schema, capture (6)), it exists only while that session runs, and the registry is a
+// process-wide singleton every in-memory-leg run shares -- so registration must be idempotent within
+// a run and MUST be undone when the run ends, exactly as `registerMcpServerTools`/
+// `unregisterMcpServerTools` already are for the other per-session registration family.
+//
+// The returned disposer is IDENTITY-CHECKED rather than an unconditional delete-by-name, for the
+// same reason `disposeToolSearchSessionRuntime` is (engine.ts): two in-memory runs in one process can
+// overlap, and a by-name delete during one run's teardown would remove the OTHER run's live
+// registration. A disposer whose entry has since been replaced is a no-op.
+//
+// Refuses to shadow an existing WS-06 name: a host-generated descriptor colliding with a real tool
+// would silently replace it for the rest of the process, which is a far worse failure than a throw.
+export function registerHostGeneratedTool(t: RegisteredTool): () => void {
+  const name = t.descriptor.canonicalName;
+  const existing = registry.get(name);
+  if (existing !== undefined && existing.descriptor.source !== "host") {
+    throw new Error(`tools/registry: registerHostGeneratedTool("${name}") would shadow a non-host tool -- host-generated names must not collide with a WS-06 §2 name`);
+  }
+  const entry: RegisteredTool = t;
+  registry.set(name, entry);
+  return () => {
+    if (registry.get(name) === entry) registry.delete(name);
+  };
+}
+
 // Test-only escape hatch: registry.test.ts (and any future test) uses this ONLY on throwaway,
 // invented canonical names it registered itself -- never on a real WS-06 entry (see this file's
 // header for why: the registry is a shared, process-wide singleton under bun's test runner).

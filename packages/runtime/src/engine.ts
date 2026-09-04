@@ -37,6 +37,7 @@ import { parseMcpEnvConfig } from "./mcp/env.ts";
 // cycle the compiled binary resolves differently from the dev leg.
 import type { AssembledPrompt, SystemPromptAssembler, SystemPromptInput } from "./context/seam.ts";
 import type { CompactBoundaryRecord, CompactionController, CompactionResult } from "./compaction/seam.ts";
+import { STRUCTURED_OUTPUT_TOOL_NAME, resolveMaxStructuredOutputAttempts, type StructuredOutputSeam } from "./structured/seam.ts";
 import { resolveBuiltinCommand, looksLikeCommand, type CommandResolver } from "./commands/seam.ts";
 // Phase 4 Task 8 (rider 11): Lane A's real MCP client/lifecycle/control stack, wired into a live
 // session for the first time. Lane A shipped all of it as a self-contained subsystem with the exact
@@ -127,6 +128,9 @@ import {
   createLoadedToolSet,
   // Phase 5 Task 3 (R5-4 / WS-09 §8.5): the deferred loaded-set reset a committed compaction fires.
   onCompaction,
+  // Phase 5 Task 3 (R5-10): the per-session, host-generated `StructuredOutput` registration.
+  registerHostGeneratedTool,
+  type JSONSchema,
   isLoadFirstBlocked,
   // Phase 4 Task 8 (rider 27): the availability predicate, applied at the execution boundary.
   isToolAvailable,
@@ -511,6 +515,14 @@ export interface EngineOptions {
    * says so -- the engine never summarizes on its own.
    */
   compactionController?: CompactionController;
+  /**
+   * R5-10: structured output (Lane K). REQUIRED for `config.outputFormat` to do anything -- the
+   * engine registers the host-generated `StructuredOutput` descriptor this seam builds and validates
+   * every call through it. `outputFormat` set with NO seam is reported as a configuration error on
+   * the first turn rather than silently ignored: a session that believes it will get a structured
+   * result and instead gets prose has no way to tell that from a model failure.
+   */
+  structuredOutput?: StructuredOutputSeam;
 }
 
 type RaceOutcome<T> = { kind: "ok"; value: T } | { kind: "interrupted" };
@@ -628,6 +640,7 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
     agentSystemPrompt,
     commandResolver,
     compactionController,
+    structuredOutput,
   } = opts;
 
   // Task 6 (WS-07 §2/§6.4, Ruling 8): permission startup validation — deliberately the very FIRST
@@ -1715,6 +1728,28 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // been materialized this session (ToolSearch's own successful-selection consequence, Lane B's
   // future tool executor). Declared here (not module-level) since it is genuinely per-session state,
   // mirroring LoadedToolSet's own "NOT a singleton" header.
+  // --- Phase 5 Task 3 (R5-10): structured output ----------------------------------------------------
+  //
+  // Registered ONLY when `outputFormat` is set, and unregistered at teardown -- the descriptor
+  // registry is a process-wide singleton (registry.ts's own header), so a per-session,
+  // per-caller-schema descriptor that outlived its run would advertise another session's schema.
+  // Capture (4) is the pin for the gating: the default advertised set is 24 tools and
+  // `StructuredOutput` is NOT among them; capture (6) observed 25 with it, once `outputFormat` was set.
+  //
+  // `outputFormat` with no seam is a hard, VISIBLE failure rather than a silent degrade -- see
+  // EngineOptions.structuredOutput.
+  // Registered HERE, ahead of `loadedToolSet`/`advertisedCfg`, because the advertised set that feeds
+  // the `system/init` frame is computed from the registry a few lines below -- a registration placed
+  // with the rest of the P5 turn-loop helpers advertised nothing on the first turn (observed, not
+  // reasoned: the contract test's own init-frame assertion caught it).
+  const outputFormatSchema = config.outputFormat?.schema as JSONSchema | undefined;
+  const structuredOutputActive = outputFormatSchema !== undefined;
+  const maxStructuredOutputAttempts = resolveMaxStructuredOutputAttempts(engineEnv ?? process.env);
+  let disposeStructuredOutputTool: (() => void) | undefined;
+  if (structuredOutputActive && structuredOutput !== undefined) {
+    disposeStructuredOutputTool = registerHostGeneratedTool({ descriptor: structuredOutput.buildDescriptor(outputFormatSchema) });
+  }
+
   const loadedToolSet: LoadedToolSet = createLoadedToolSet();
 
   // T8 (WS-06 §6 obligation 1): the advertised tool list is no longer hardcoded empty --
@@ -2621,6 +2656,12 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
     // assembled-but-unrecorded turn) and BEFORE the first provider call of the turn.
     const assembled = assemblePrompt();
 
+    // R5-10: the attempt budget is PER ENVELOPE, not per run. Each user envelope is expected to
+    // produce its own structured result, so a run-wide counter would let one envelope's failures
+    // exhaust every later envelope's budget in a streaming session. Capture (6)'s harness is
+    // single-shot, so the pin does not discriminate the two readings; this one is disclosed.
+    let structuredOutputAttempts = 0;
+
     // T9-CARRY 2 (reassigned to T10; WS-08 §1.1): "user envelope accepted, BEFORE the turn's
     // provider call" — fired here, after the envelope is durably recorded but before
     // provider.generate() is ever invoked. Its own output shape (additionalContext/sessionTitle/
@@ -2638,6 +2679,19 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
     let interrupted = false;
 
     roundLoop: while (true) {
+      // Phase 5 Task 3 (R5-10): `outputFormat` with no seam fails LOUDLY, on the first round, before
+      // a single token is spent -- see EngineOptions.structuredOutput for why silence is the worse
+      // outcome here.
+      if (structuredOutputActive && structuredOutput === undefined) {
+        finalResult = {
+          type: "result",
+          subtype: "error_during_execution",
+          is_error: true,
+          result: "outputFormat is configured but no structured-output seam is registered for this session, so no StructuredOutput tool could be generated (R5-10).",
+        };
+        break roundLoop;
+      }
+
       // Phase 5 Task 3 (R5-4): the AUTO trigger. Checked before EVERY provider call of the turn, not
       // once per turn -- a long tool-using turn is exactly where a context window fills up, and a
       // check that only ran at turn start would let it overflow mid-turn with no recourse.
@@ -2734,7 +2788,48 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
       // never reaches this point in the same iteration; this flag only ever reflects a throw from
       // the loop directly below it.
       let toolThrowText: string | null = null;
+      // Phase 5 Task 3 (R5-10): set when a StructuredOutput call ENDED this turn (accepted or
+      // exhausted). Its own flag rather than a re-derivation from `finalResult`, for exactly the
+      // reason `toolThrowText` above is one -- `finalResult` has several other producers.
+      let structuredTerminated = false;
       for (const call of turn.calls) {
+        // --- Phase 5 Task 3 (R5-10): the host-generated StructuredOutput tool -----------------------
+        //
+        // Handled BEFORE every other execution-boundary check, and deliberately outside the try:
+        // this tool has no executor, no permission class a rule could sensibly name, and no WS-06
+        // descriptor -- the availability and load-first checks below would refuse it on all three
+        // counts. It is not a tool the model "uses"; it is how the model RETURNS.
+        //
+        // A valid call ENDS THE TURN with `result.structured_output`. An invalid one returns a
+        // validation-error tool result and burns one attempt, so the model can correct itself on the
+        // next round. Exhaustion terminates with BOTH pinned spellings on their own fields (item (d)):
+        // `subtype: "error_max_structured_output_retries"` and
+        // `terminal_reason: "structured_output_retry_exhausted"`, and NO `structured_output` at all
+        // (it is declared on the success variant only -- an exhausted run has no output, not a null one).
+        if (structuredOutputActive && structuredOutput !== undefined && call.name === STRUCTURED_OUTPUT_TOOL_NAME) {
+          structuredOutputAttempts++;
+          const validation = structuredOutput.validate(outputFormatSchema!, call.input);
+          if (validation.ok) {
+            resultBlocks.push({ type: "tool_result", tool_use_id: call.id, content: "Structured output accepted." });
+            finalResult = { type: "result", subtype: "success", is_error: false, structured_output: validation.value };
+            structuredTerminated = true;
+            break;
+          }
+          if (structuredOutputAttempts >= maxStructuredOutputAttempts) {
+            resultBlocks.push({ type: "tool_result", tool_use_id: call.id, content: `Structured output validation failed: ${validation.errors.join("; ")}`, error: true });
+            finalResult = {
+              type: "result",
+              subtype: "error_max_structured_output_retries",
+              is_error: true,
+              result: `Failed to provide valid structured output after ${structuredOutputAttempts} attempts`,
+              terminal_reason: "structured_output_retry_exhausted",
+            };
+            structuredTerminated = true;
+            break;
+          }
+          resultBlocks.push({ type: "tool_result", tool_use_id: call.id, content: `Structured output validation failed: ${validation.errors.join("; ")}. Call ${STRUCTURED_OUTPUT_TOOL_NAME} again with a corrected value.`, error: true });
+          continue;
+        }
         try {
           // Phase 4 Task 3 (MUST 6, WS-09 §8.2/§8.5): the load-first execution-boundary check runs
           // BEFORE permission evaluation even starts — an unloaded deferred tool is not yet
@@ -3149,6 +3244,19 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
         }
       }
 
+      if (structuredTerminated) {
+        // Ruling P1-G/P1-H's pairing invariant, third case (Phase 5 Task 3): a StructuredOutput call
+        // that ends the turn leaves any LATER call in the same round unexecuted, so each still needs
+        // a tool_result or the persisted history carries a dangling tool_use that a real provider
+        // rejects outright on the next request.
+        const resultedIds = new Set(resultBlocks.map((b) => (b as { tool_use_id: string }).tool_use_id));
+        for (const call of turn.calls) {
+          if (!resultedIds.has(call.id)) {
+            resultBlocks.push({ type: "tool_result", tool_use_id: call.id, content: "[not executed: the turn ended on a structured-output result]", error: true });
+          }
+        }
+      }
+
       if (interrupted) {
         // Ruling P1-G: the tool_use/tool_result pairing invariant must hold in ACCUMULATED HISTORY
         // even when a round is cut short — the assistant's tool_use was already pushed into
@@ -3283,6 +3391,10 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // generation 1's teardown is still draining, and a by-key delete would let the dead generation
   // remove the live one's runtime.
   disposeToolSearchSessionRuntime();
+  // Phase 5 Task 3 (R5-10): withdraw this run's host-generated StructuredOutput descriptor -- same
+  // singleton-hygiene argument as the MCP/ToolSearch withdrawals above, and the disposer is
+  // identity-checked so a concurrent in-memory run's own registration is never removed by this one.
+  disposeStructuredOutputTool?.();
   output.end();
   return 0;
 }
