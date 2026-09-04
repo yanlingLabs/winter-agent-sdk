@@ -241,6 +241,35 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
     // filesystem file gated by RULING R4-7).
     const definitionWarnings = req.definition !== undefined ? validateAgentDefinition(req.definition) : [];
 
+    // --- MCP (WS-10 §2 `AgentDefinition.mcpServers`; fix wave I2 + I4) ---------------------------
+    //
+    // I2: the parent's own resolved MCP state, so this child is not an MCP island -- its
+    // `WaitForMcpServers`/ToolSearch answers are computed against the SESSION's real server state
+    // instead of a child-local void (which answered a WRONG `ready:true`). The lifecycle half needs
+    // nothing here: a bridge tool resolves `getSessionMcpLifecycle(ctx.sessionId)`, and since I1 a
+    // child's ctx.sessionId IS the owning session's.
+    //
+    // I4: `AgentDefinition.mcpServers` was accepted, round-tripped and then SILENTLY DROPPED -- the
+    // one wrong option of the three the review names. `AgentMcpServerSpec` is
+    // `string | Record<name, config>`: an OBJECT entry declares a CHILD-SCOPED server (connected by
+    // this child's own lifecycle, torn down with it -- its tools are registered while the child
+    // lives and are absent from the parent's own frozen `init.tools`), while a STRING entry NAMES a
+    // server the session already declares, which the child already reaches through the inherited
+    // state above -- so it is satisfied by inheritance when the session declares that name, and a
+    // legible warning (never a silent drop) when it does not.
+    const parentMcp = runCtx.getParentMcpState?.();
+    const childScopedMcpServers: NonNullable<RuntimeConfig["mcpServers"]> = {};
+    for (const spec of req.definition?.mcpServers ?? []) {
+      if (typeof spec === "string") {
+        if (parentMcp?.declaredServers?.[spec] === undefined) {
+          definitionWarnings.push(`mcpServers names "${spec}", which this session does not declare -- ignored`);
+        }
+        continue;
+      }
+      for (const [name, cfg] of Object.entries(spec)) childScopedMcpServers[name] = cfg;
+    }
+    const hasChildScopedMcpServers = Object.keys(childScopedMcpServers).length > 0;
+
     // --- Isolation (WS-10 §8) --------------------------------------------------------------------
     const workspaceResult = await createWorkspace({ parentCwd: inherit.sessionRoot, ...(req.isolation !== undefined ? { isolation: req.isolation } : {}), agentId });
     if (!workspaceResult.ok) {
@@ -455,6 +484,16 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
         provider: deps.provider,
         ...(writer !== undefined ? { store: writer } : {}),
         ...(initialMessages.length > 0 ? { initialMessages } : {}),
+        // Fix wave (I2): the parent's live MCP state, injected as this child's own -- but ONLY when
+        // the child declares no servers of its own. A caller-supplied state source SUPPRESSES the
+        // engine's own lifecycle dial (engine.ts's precedence block), so injecting it alongside a
+        // definition's own `mcpServers` would silently prevent those servers from ever connecting.
+        // A child with its own servers therefore keeps its own lifecycle; its bridge tools still
+        // resolve the OWNING session's lifecycle (ctx.sessionId, per I1), so those child-scoped
+        // servers are CALLABLE from inside the child but not browsable through ListMcpResources --
+        // disclosed, not silent.
+        ...(!hasChildScopedMcpServers && parentMcp?.stateSource !== undefined ? { mcpServerStateSource: parentMcp.stateSource } : {}),
+        ...(!hasChildScopedMcpServers && parentMcp?.controlSeam !== undefined ? { mcpControlSeam: parentMcp.controlSeam } : {}),
         env,
       }).catch(() => {
         settle("failed", "child engine process exited unexpectedly");
@@ -527,6 +566,9 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
       ...(deps.parentIncludeHookEvents !== undefined ? { includeHookEvents: deps.parentIncludeHookEvents } : {}),
       ...(deps.parentSandbox !== undefined ? { sandbox: deps.parentSandbox } : {}),
       ...(req.definition?.maxTurns !== undefined ? { maxTurns: req.definition.maxTurns } : {}),
+      // I4: child-scoped servers only -- the parent's own declared servers are reached through the
+      // inherited state source below, never re-declared (and therefore never re-connected) here.
+      ...(hasChildScopedMcpServers ? { mcpServers: childScopedMcpServers } : {}),
     };
 
     // Phase 4 fix wave (C1 + I6): ONE generation's own RuntimeConfig -- `baseConfig` plus the mode

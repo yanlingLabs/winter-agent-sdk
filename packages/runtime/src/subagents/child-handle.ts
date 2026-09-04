@@ -11,7 +11,9 @@
 // the parent's real host connection (`transformChildFrame` below), since Lane C's own child-engine.ts
 // builds a child by calling `runEngine()` again with a synthetic input/output pair, and needs
 // something to bridge that pair to the ACTUAL host connection this run owns.
-import type { ControlResponseFrame, PermissionMode, RuntimeAgentDefinition, WinterFrame } from "@yanlinglabs/winter-agent-sdk";
+import type { ControlResponseFrame, McpServerConfigForProcessTransport, PermissionMode, RuntimeAgentDefinition, WinterFrame } from "@yanlinglabs/winter-agent-sdk";
+import type { McpServerStateSource } from "../mcp/state.ts"; // type-only -- see this file's own header; no runtime cycle
+import type { McpControlSeam } from "../mcp/control-seam.ts"; // type-only
 import type { ChildPolicyResult } from "../permissions/auto/inheritance.ts";
 import type { ProviderMessage } from "../engine.ts"; // type-only -- see this file's own header; no runtime cycle (Bun/tsc erase `import type` entirely)
 import type { GlobalAgentMessage, DeliveryOutcome } from "../messaging/adapter.ts"; // type-only; see messaging/adapter.ts's own header for why this is a safe mutual reference
@@ -178,6 +180,27 @@ export interface ChildEngineRunContext {
   // pre-fix-wave behaviour (`ChildEngineFactoryDeps.parentPermissionRules`, the construction-time
   // mirror, is the fallback).
   getParentRules?(): ParentRuleMirror;
+  // Phase 4 fix wave (I2, whole-branch review): the parent's LIVE MCP state, so a child is not an
+  // MCP island. Upstream's own model is that a subagent uses the SESSION's MCP servers; before this
+  // fix a child inherited `winter.mcp` (so the four WS-09 §1.4 bridge tools and `WaitForMcpServers`
+  // were ADVERTISED inside it) while its own `runEngine` registered a ToolSearch runtime with no
+  // state source and no lifecycle at all -- so the bridge tools answered "no MCP lifecycle is
+  // configured for this session" and `WaitForMcpServers` answered a WRONG `ready:true` with every
+  // requested name in `unknown`. Handing the child the parent's own state source + control seam
+  // makes its ToolSearch/WaitForMcpServers answers real; the lifecycle half falls out of I1 (a
+  // bridge tool resolves `getSessionMcpLifecycle(ctx.sessionId)`, which is now the owning session's).
+  //
+  // Returns the run's RESOLVED pair (caller-supplied or engine-built are indistinguishable here),
+  // plus the session's own declared server map so a definition's `mcpServers` string entries -- the
+  // "name a server this session already declares" spelling of `AgentMcpServerSpec` -- can be
+  // resolved rather than silently dropped.
+  getParentMcpState?(): ParentMcpState;
+}
+
+export interface ParentMcpState {
+  stateSource?: McpServerStateSource;
+  controlSeam?: McpControlSeam;
+  declaredServers?: Record<string, McpServerConfigForProcessTransport>;
 }
 
 // The three rule buckets a child's own `RuntimeConfig.permissions` carries. `allowedTools`/

@@ -37,7 +37,7 @@ import { createMcpLifecycle, resolveMcpServerSources, registerSessionMcpLifecycl
 import { createElicitationAsker } from "./mcp/elicitation.ts";
 // Phase 4 Task 3 (MUST 5/8): the child-spawn seam + host-stream correlation transform, and the
 // messaging router seam's own engine-side hook (children() from the live child roster).
-import { getChildEngineFactory, transformChildFrame, type ChildHandle, type ChildInheritance, type ParentRuleMirror, type SpawnChildRequest } from "./subagents/child-handle.ts";
+import { getChildEngineFactory, transformChildFrame, type ChildHandle, type ChildInheritance, type ParentMcpState, type ParentRuleMirror, type SpawnChildRequest } from "./subagents/child-handle.ts";
 import type { MessagingRouterSeam } from "./messaging/adapter.ts";
 // Phase 4 Task 8: the process-level default messaging runtime Lane D's three tool executors read --
 // see that function's own header for why it is process-level and why the roster is contributed
@@ -1118,6 +1118,17 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
               }
               return mirror;
             },
+            // Phase 4 fix wave (I2): this run's RESOLVED MCP state, handed down so a child is not
+            // an MCP island (see ChildEngineRunContext.getParentMcpState). Read at CALL time, not
+            // capture time -- `effectiveMcpStateSource`/`effectiveMcpControlSeam` are declared
+            // below this function and are always assigned long before any Agent tool call can run,
+            // the same "declared later, read at call time" closure binding `emitToolReference`
+            // already uses for `loadedToolSet`.
+            getParentMcpState: (): ParentMcpState => ({
+              ...(effectiveMcpStateSource !== undefined ? { stateSource: effectiveMcpStateSource } : {}),
+              ...(effectiveMcpControlSeam !== undefined ? { controlSeam: effectiveMcpControlSeam } : {}),
+              ...(config.mcpServers !== undefined ? { declaredServers: config.mcpServers } : {}),
+            }),
           });
           const inheritance = buildChildInheritance(req);
           const handle = await deps.spawn(req, inheritance);

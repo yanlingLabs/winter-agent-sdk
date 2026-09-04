@@ -20,6 +20,8 @@ import { createChildEngineFactory, type ChildEngineFactoryDeps } from "./child-e
 import { resetSpawnLimitsForTest } from "./limits.ts";
 import { loadAgentDefinitions } from "./definitions.ts";
 import { TranscriptWriter } from "../store/dialect.ts";
+import { withHttpFixture, defaultFixtureSpec } from "../mcp/test-fixtures.ts";
+import { getToolSearchSessionRuntime } from "../toolsearch/search.ts";
 
 async function drain(source: AsyncIterable<WinterFrame>): Promise<WinterFrame[]> {
   const out: WinterFrame[] = [];
@@ -1402,4 +1404,174 @@ describe("child-engine.ts: child session identity (fix wave I1, WS-10 addressing
     expect(parsed.result.content).not.toContain("not_found");
     expect(parsed.result.content).toMatch(/"status":"(delivered|queued|resumed_and_delivered)"/);
   }, 10_000);
+});
+
+// --- Phase 4 fix wave: I2 + I4 -- a child is not an MCP island ----------------------------------
+//
+// Every test here drives a REAL loopback MCP server (mcp/test-fixtures.ts's Streamable-HTTP
+// fixture) through a REAL parent `runEngine`, and executes the bridge family INSIDE a real child --
+// the P3-class gap the review named ("advertised in a golden, executed by nothing").
+
+describe("child-engine.ts: children share the session's MCP state (fix wave I2/I4, WS-09 §1.4/§8.4, WS-10 §2)", () => {
+  test("I2: WaitForMcpServers and ListMcpResourcesTool executed INSIDE a child answer with the PARENT's real server state", async () => {
+    registerSpawnProbe();
+    cleanupToolNames.push(SPAWN_PROBE);
+    await withHttpFixture(defaultFixtureSpec(), async (url) => {
+      const req: SpawnChildRequest = { parentToolUseId: "call-1", prompt: "inspect the session's MCP servers", runInBackground: false };
+      const childProvider = scriptedProvider([
+        { kind: "tool_use", calls: [{ id: "c1", name: "WaitForMcpServers", input: { servers: ["fixture"] } }] },
+        { kind: "tool_use", calls: [{ id: "c2", name: "ListMcpResourcesTool", input: {} }] },
+        { kind: "text", text: "child inspected mcp" },
+      ]);
+      const { code, frames } = await driveParent(
+        { provider: childProvider },
+        baseConfig({ sessionId: "parent-mcp-s", mcpServers: { fixture: { type: "http", url: url.href } } }),
+        [{ kind: "tool_use", calls: [{ id: "call-1", name: SPAWN_PROBE, input: req }] }, { kind: "text", text: "parent done" }],
+      );
+      expect(code).toBe(0);
+      // The child's own tool_result blocks are forwarded to the parent's stream stamped with the
+      // parent's tool_use id (WS-10 §4), which is where these answers are observed.
+      const blocks = dataMessages(frames)
+        .filter((m) => m.type === "user")
+        .flatMap((m) => ((m as unknown as { message: { content: Array<{ tool_use_id: string; content: string }> } }).message.content ?? []));
+      const wait = JSON.parse(blocks.find((b) => b.tool_use_id === "c1")!.content) as { ready: boolean; connected: string[]; unknown: string[] };
+      // Before the fix: `{ready:true, connected:[], unknown:["fixture"]}` -- a WRONG answer, not
+      // merely an inert one (wait-for-mcp-servers.ts's own no-state-source branch).
+      expect(wait.connected).toEqual(["fixture"]);
+      expect(wait.unknown).toEqual([]);
+      const listRaw = blocks.find((b) => b.tool_use_id === "c2")!.content;
+      // Before the fix: "no MCP lifecycle is configured for this session".
+      expect(listRaw).not.toContain("no MCP lifecycle");
+      expect(listRaw).toContain("fixture://text.txt");
+    });
+  }, 20_000);
+
+  test("I2: a child can CALL the session's own MCP tool -- through the PARENT's sdk_mcp_call bridge -- and sees exactly the parent's servers", async () => {
+    registerSpawnProbe();
+    cleanupToolNames.push(SPAWN_PROBE);
+    // An `sdk`-type server: its tools register synchronously at parent startup (engine.ts's
+    // sdk-wire path), so they are in the parent's advertised pool -- and therefore in the child's
+    // inherited pool -- deterministically, with no connect race. Its executor forwards the call as
+    // an `sdk_mcp_call` control_request on the PARENT's stream (the child has no second wire),
+    // which this host answers: the P4-I "by trace only" claim, now driven for real from a child.
+    const req: SpawnChildRequest = { parentToolUseId: "call-1", prompt: "call the session's mcp tool", runInBackground: false };
+    const childProvider = scriptedProvider([
+      { kind: "tool_use", calls: [{ id: "c1", name: "mcp__fixture__echo", input: { text: "from-the-child" } }] },
+      { kind: "tool_use", calls: [{ id: "c2", name: "WaitForMcpServers", input: {} }] },
+      { kind: "text", text: "child called mcp" },
+    ]);
+    let sawSdkMcpCall = false;
+    const { code, frames } = await driveParentAnswering(
+      { provider: childProvider },
+      baseConfig({ sessionId: "parent-mcp-call-s", mcpServers: { fixture: { type: "sdk", name: "fixture", tools: [{ name: "echo", inputSchema: { type: "object" } }] } } }),
+      [{ kind: "tool_use", calls: [{ id: "call-1", name: SPAWN_PROBE, input: req }] }, { kind: "text", text: "parent done" }],
+      (frame) => {
+        if (frame.subtype !== "sdk_mcp_call") return undefined;
+        sawSdkMcpCall = true;
+        const payload = frame.payload as { server: string; tool: string; arguments: Record<string, unknown> };
+        return { ok: true, payload: { content: [{ type: "text", text: `echo:${String(payload.arguments["text"])}` }] } };
+      },
+    );
+    expect(code).toBe(0);
+    expect(sawSdkMcpCall, "a child's MCP tool call must reach the host through the PARENT's own bridge").toBe(true);
+    const blocks = dataMessages(frames)
+      .filter((m) => m.type === "user")
+      .flatMap((m) => ((m as unknown as { message: { content: Array<{ tool_use_id: string; content: string }> } }).message.content ?? []));
+    expect(blocks.find((b) => b.tool_use_id === "c1")!.content).toContain("echo:from-the-child");
+    const wait = JSON.parse(blocks.find((b) => b.tool_use_id === "c2")!.content) as { connected: string[] };
+    expect(wait.connected).toEqual(["fixture"]); // EXACTLY the parent's set -- no more, no less
+  }, 20_000);
+
+  test("I2: the CHILD's own ToolSearch session runtime carries the parent's MCP state source, not an empty one", async () => {
+    registerSpawnProbe();
+    cleanupToolNames.push(SPAWN_PROBE);
+    const RUNTIME_PROBE = "t6fw_toolsearch_runtime_probe";
+    cleanupToolNames.push(RUNTIME_PROBE);
+    // White-box, deliberately: the two session-keyed lookups (`ctx.sessionId` for the owning
+    // session's registrations, the child's own `agentId` for its own) must BOTH answer correctly,
+    // or a later change to either lookup silently reintroduces the wrong `ready:true`.
+    let childRuntimeHadStateSource: boolean | undefined;
+    registerTool({
+      descriptor: {
+        canonicalName: RUNTIME_PROBE, advertisedName: RUNTIME_PROBE, source: "builtin", inputSchema: { type: "object" },
+        description: "reads this run's own registered ToolSearch session runtime", exposure: "eager", permissionClass: "read",
+        availability: {}, capabilityRequirements: [], disposition: "implement-now",
+      },
+      executor: {
+        async execute(_input: unknown, ctx: ToolExecutionContext) {
+          childRuntimeHadStateSource = getToolSearchSessionRuntime(ctx.agentId ?? ctx.sessionId)?.stateSource !== undefined;
+          return { output: "probed" };
+        },
+      },
+    });
+    const req: SpawnChildRequest = { parentToolUseId: "call-1", prompt: "probe your own runtime", runInBackground: false };
+    const childProvider = scriptedProvider([
+      { kind: "tool_use", calls: [{ id: "c1", name: RUNTIME_PROBE, input: {} }] },
+      { kind: "text", text: "probed" },
+    ]);
+    const { code } = await driveParent(
+      { provider: childProvider },
+      baseConfig({ sessionId: "parent-ts-runtime-s", mcpServers: { fixture: { type: "sdk", name: "fixture", tools: [{ name: "echo", inputSchema: { type: "object" } }] } } }),
+      [{ kind: "tool_use", calls: [{ id: "call-1", name: SPAWN_PROBE, input: req }] }, { kind: "text", text: "parent done" }],
+    );
+    expect(code).toBe(0);
+    expect(childRuntimeHadStateSource).toBe(true);
+  }, 20_000);
+
+  test("I4: a definition's own `mcpServers` connect as CHILD-SCOPED servers -- callable inside the child, absent from the parent's advertised set", async () => {
+    registerSpawnProbe();
+    cleanupToolNames.push(SPAWN_PROBE);
+    const childOnlySpec = {
+      tools: [{ name: "shout", description: "uppercases", inputSchema: { type: "object", properties: { text: { type: "string" } }, required: ["text"] }, handler: (args: Record<string, unknown>) => ({ content: [{ type: "text" as const, text: `SHOUT:${String(args.text)}` }] }) }],
+      resources: [],
+    };
+    await withHttpFixture(childOnlySpec, async (url) => {
+      const req: SpawnChildRequest = {
+        parentToolUseId: "call-1", prompt: "use your own server", runInBackground: false,
+        definition: {
+          description: "child with its own MCP server", prompt: "persona",
+          mcpServers: [{ childsrv: { type: "http", url: url.href } }, "not-declared-anywhere"],
+        },
+      };
+      const scripted = scriptedProvider([
+        { kind: "tool_use", calls: [{ id: "c1", name: "mcp__childsrv__shout", input: { text: "hi" } }] },
+        { kind: "text", text: "child used its own server" },
+      ]);
+      // Captures the child's own first turn so the STRING-entry warning can be asserted where it
+      // is actually delivered (child-engine.ts's firstTurnText).
+      let childFirstTurn = "";
+      const childProvider: Provider = {
+        async generate(args) {
+          if (childFirstTurn === "") {
+            const firstUser = args.messages.find((m) => m.role === "user");
+            childFirstTurn = typeof firstUser?.content === "string" ? firstUser.content : "";
+          }
+          return scripted.generate(args);
+        },
+      };
+      // MCP_CONNECTION_NONBLOCKING=0 makes the CHILD's own startup wait for its server batch, so
+      // its advertised set deterministically contains the server's tools (the same connect race
+      // engine.test.ts's own elicitation scenario had to close). `deps.env` is the child engine's
+      // own environment.
+      const { code, frames } = await driveParent({ provider: childProvider, env: { MCP_CONNECTION_NONBLOCKING: "0" } }, baseConfig({ sessionId: "parent-i4-s" }), [
+        { kind: "tool_use", calls: [{ id: "call-1", name: SPAWN_PROBE, input: req }] },
+        { kind: "text", text: "parent done" },
+      ]);
+      expect(code).toBe(0);
+      const blocks = dataMessages(frames)
+        .filter((m) => m.type === "user")
+        .flatMap((m) => ((m as unknown as { message: { content: Array<{ tool_use_id: string; content: string }> } }).message.content ?? []));
+      // Before the fix: `AgentDefinition.mcpServers` was dropped on the floor, so this name was
+      // never registered at all and the call answered an "unknown tool" error.
+      expect(blocks.find((b) => b.tool_use_id === "c1")!.content).toContain("SHOUT:hi");
+      // The PARENT declared no servers: its own init.tools carries neither the child's server's
+      // tool nor the winter.mcp-gated bridge family.
+      const init = frames.find((f) => f.type === "init") as { tools: string[] };
+      expect(init.tools).not.toContain("mcp__childsrv__shout");
+      expect(init.tools).not.toContain("ListMcpResourcesTool");
+      // A STRING entry naming a server the session does not declare is warned about, never dropped
+      // silently -- the warning rides the child's own first turn (child-engine.ts's firstTurnText).
+      expect(childFirstTurn).toContain('mcpServers names "not-declared-anywhere"');
+    });
+  }, 20_000);
 });
