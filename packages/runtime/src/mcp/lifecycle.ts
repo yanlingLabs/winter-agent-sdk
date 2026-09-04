@@ -488,7 +488,7 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
       const canonicalName = `mcp__${slot.name}__${tool.name}`;
       const toolName = tool.name;
       replaceExecutor(canonicalName, {
-        async execute(input: unknown, _ctx: ToolExecutionContext): Promise<ToolResultPayload> {
+        async execute(input: unknown, ctx: ToolExecutionContext): Promise<ToolResultPayload> {
           // WS-09 §2.1: a `cached` server's live connection is deferred to its first tool call.
           if (slot.state === "cached" && !slot.client) {
             // Fix round 1 (MAJOR M2, then a post-fix-round correction): this is a SECOND
@@ -539,7 +539,17 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
           const timeoutMs = resolveToolCallTimeoutMs(slot.config, deps.envConfig);
           try {
             const result = await slot.client.callTool(toolName, (input ?? {}) as Record<string, unknown>, { timeoutMs });
-            const capped = capMcpOutput(contentToText(result.content), deps.envConfig.maxOutputTokens);
+            // RULING P4-K: over the threshold, the full payload is PERSISTED and the model gets the
+            // `<persisted-output>` envelope naming the file. `ctx.tempDir` is a lazy getter (the
+            // registry's own ToolExecutionContext literal), so an ordinary under-threshold call still
+            // never materializes a session temp directory -- and it is the CALLING SESSION's root,
+            // never the process-global background-task root a nested child re-points mid-session
+            // (whole-branch review M3(a)).
+            const capped = capMcpOutput(contentToText(result.content), deps.envConfig.maxOutputTokens, {
+              sessionDir: () => ctx.tempDir,
+              serverName: slot.name,
+              toolName,
+            });
             return { output: capped.text, ...(result.isError === true ? { isError: true as const } : {}) };
           } catch (err) {
             const message = err instanceof Error ? err.message : String(err);

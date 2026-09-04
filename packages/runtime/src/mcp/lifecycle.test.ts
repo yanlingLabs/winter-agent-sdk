@@ -1,5 +1,8 @@
 import { describe, test, expect } from "bun:test";
 import { randomUUID } from "node:crypto";
+import { mkdtempSync, rmSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { ListToolsRequestSchema, CallToolRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
@@ -178,8 +181,13 @@ describe("createMcpLifecycle: the seven-state model driven by real connections",
     }
   });
 
-  test("output cap: a tool result exceeding MAX_MCP_OUTPUT_TOKENS is truncated with an explicit marker", async () => {
+  // RULING P4-K, end to end through a REAL fixture server: the model gets the `<persisted-output>`
+  // envelope and the full payload is on disk, under the CALLING SESSION's own temp root (which is
+  // what `ctx.tempDir` is -- never the process-global background-task root a nested child re-points
+  // mid-session, whole-branch review M3(a)). The retired inline truncation marker is asserted gone.
+  test("output cap (RULING P4-K): an oversized tool result is PERSISTED under the session's own dir and the model gets the envelope", async () => {
     const bigText = "x".repeat(10_000);
+    const sessionDir = mkdtempSync(join(tmpdir(), "winter-lifecycle-outcap-"));
     const server = createFixtureMcpServer({
       tools: [{ name: "big", inputSchema: { type: "object", properties: {} }, handler: () => ({ content: [{ type: "text", text: bigText }] }) }],
     });
@@ -187,9 +195,42 @@ describe("createMcpLifecycle: the seven-state model driven by real connections",
     const lifecycle = createMcpLifecycle({ servers: resolved, envConfig: fastEnv({ maxOutputTokens: 10 }), elicitationAsk: NO_ELICIT, inProcessServers: { fix: server } });
     try {
       await lifecycle.start();
-      const result = await getRegisteredTool("mcp__fix__big")!.executor!.execute({}, {} as never);
+      const result = await getRegisteredTool("mcp__fix__big")!.executor!.execute({}, { tempDir: sessionDir } as never);
       expect(result.output.length).toBeLessThan(bigText.length);
-      expect(result.output).toContain("truncated at 10 tokens");
+      expect(result.output).toContain("<persisted-output>");
+      expect(result.output).toContain("Output too large (9.8KB). Full output saved to: ");
+      expect(result.output).not.toContain("truncated at 10 tokens"); // the retired inline marker
+      const path = /Full output saved to: (.+)/.exec(result.output)![1]!.trim();
+      expect(path.startsWith(join(sessionDir, "mcp-output"))).toBe(true);
+      expect(readFileSync(path, "utf8")).toBe(bigText); // byte-exact, envelope-free
+    } finally {
+      rmSync(sessionDir, { recursive: true, force: true });
+      await lifecycle.dispose();
+      await server.close();
+    }
+  });
+
+  // The below-threshold half of the same seam: an ordinary result is untouched AND the session temp
+  // root is never even asked for (D18 lazy creation -- `ctx.tempDir` is a getter that materializes
+  // real directories on first read).
+  test("output cap (RULING P4-K): an ordinary result is returned verbatim and never touches the session dir", async () => {
+    let tempDirReads = 0;
+    const server = createFixtureMcpServer({
+      tools: [{ name: "small", inputSchema: { type: "object", properties: {} }, handler: () => ({ content: [{ type: "text", text: "tiny" }] }) }],
+    });
+    const resolved: ResolvedMcpServerEntry[] = [{ name: "fix", origin: "explicit", config: { type: "sdk", name: "fix" } }];
+    const lifecycle = createMcpLifecycle({ servers: resolved, envConfig: fastEnv(), elicitationAsk: NO_ELICIT, inProcessServers: { fix: server } });
+    try {
+      await lifecycle.start();
+      const ctx = {
+        get tempDir() {
+          tempDirReads += 1;
+          return "/nonexistent/never-used";
+        },
+      };
+      const result = await getRegisteredTool("mcp__fix__small")!.executor!.execute({}, ctx as never);
+      expect(result).toEqual({ output: "tiny" });
+      expect(tempDirReads).toBe(0);
     } finally {
       await lifecycle.dispose();
       await server.close();
