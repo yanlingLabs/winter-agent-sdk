@@ -302,9 +302,13 @@ export function testProviderByName(name: TestProviderName): Provider {
     // watchdog pause is proven end to end rather than in-process only.
     //
     // Same pure-function discipline as "subagent" (ONE provider instance serves the parent's turns
-    // AND the child's), and the same `test_tool` target every pre-existing scenario uses, whose echo
-    // output is byte-identical on all three legs (testing.ts's registered stand-in and main.ts's own
-    // stubExecutor fallback share one formula).
+    // AND the child's). The child's target is `ReadNotifications`, chosen for four properties no
+    // other candidate has together: it is a REAL registered tool on every leg (so it does not depend
+    // on a test stand-in the child leg's own process never registers), it is ADVERTISED by default
+    // (so it survives the child's inherited-pool deny complement), its permissionClass is
+    // "messaging" (so it genuinely PROMPTS under `default` mode -- the read-only pre-approval is
+    // Bash-only), and against an empty queue its output is the fixed, machine-independent
+    // `{"notifications":[],"remaining":0}` -- byte-identical on every leg and stable in a golden.
     case "subagentperm":
       return {
         async generate({ messages }) {
@@ -315,8 +319,8 @@ export function testProviderByName(name: TestProviderName): Provider {
           );
           if (firstText.includes(SUBAGENT_CHILD_PROBE_TEXT)) {
             // The CHILD's own conversation.
-            if (calls.includes("test_tool")) return { kind: "text", text: "child finished after its own tool call" };
-            return { kind: "tool_use", calls: [{ id: "child-call-1", name: "test_tool", input: { from: "child" } }] };
+            if (calls.includes("ReadNotifications")) return { kind: "text", text: "child finished after its own tool call" };
+            return { kind: "tool_use", calls: [{ id: "child-call-1", name: "ReadNotifications", input: {} }] };
           }
           if (calls.includes("Agent")) return { kind: "text", text: "parent finished" };
           return {
