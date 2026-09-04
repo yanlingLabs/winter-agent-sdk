@@ -48,6 +48,8 @@ import type { SessionReadState } from "./read-state.ts";
 // lane shipped against (Lane C's own report, "documented scope gaps": "no `sandbox` field exists
 // anywhere in packages/sdk/src").
 import type { SandboxSettings } from "../sandbox/profile.ts";
+// Phase 4 Task 3: type-only -- no runtime cycle (subagents/child-handle.ts never imports this file).
+import type { SpawnChildRequest, ChildHandle } from "../subagents/child-handle.ts";
 
 // --- §1.1: ToolDescriptor + supporting types -----------------------------------------------------
 
@@ -209,6 +211,31 @@ export interface ToolExecutionContext {
   // a CC-pinned field. Optional (most sessions configure none): absent means "no $OUTDIR export, no
   // extra writable root," byte-identical to before this field existed.
   outDir?: string;
+  // Phase 4 Task 3 (WS-10 §4/§9, WS-07 §11): true for a CHILD engine's own tool calls, absent/false
+  // for the main engine -- threaded straight from RuntimeConfig.insideSubagent (which already
+  // existed as a P3 wire field feeding ONLY buildAdvertisedSet's own AskUserQuestion exclusion;
+  // this is its first appearance on ToolExecutionContext itself, for a tool executor that needs to
+  // know its own nesting without threading a second, parallel signal). OPTIONAL (unlike
+  // `sandboxSettings`'s own "always a real value" precedent): ~20 pre-existing `impl/*.test.ts`
+  // files construct a ToolExecutionContext directly with no shared builder this task could extend
+  // in one place, and nothing in this phase's own tool code reads this field yet -- absent reads as
+  // `false`, matching RuntimeConfig.insideSubagent's own established "absent means not known-true"
+  // convention (buildAdvertisedSet's identical field, registry.ts's own AdvertisedSetInputs).
+  insideSubagent?: boolean;
+  // WS-10 §8: true when this run is a child spawned with `isolation: "worktree"` -- its filesystem
+  // root is PINNED to that isolation workspace. A signal only, at Task 3: no consumer in this
+  // codebase reads it yet (EnterWorktree/ExitWorktree's own future interaction with an
+  // already-isolated child is Lane C's own scope) -- exists so ToolExecutionContext's shape is
+  // already complete for that future consumer, mirroring this whole file's own "seam exists before
+  // its real consumer does" precedent (e.g. AutoEngine/HookStage at P1). Optional for the identical
+  // reason as `insideSubagent` immediately above.
+  isolationPinnedCwd?: boolean;
+  // The running child's own id, absent for the main engine -- threaded from RuntimeConfig.agentId
+  // (Phase 4 Task 3's own new wire field). The SAME identity already threaded through
+  // PermissionCall.agentId/PromptStageMeta.agentID/HookAuditRecord.agentID elsewhere in this run;
+  // exposed here too so a tool executor that needs to self-identify (e.g. a future messaging tool
+  // addressing itself) never has to reach back into engine-internal state for it.
+  agentId?: string;
   session: {
     setCwd(p: string): void;
     addBoundedRoot(p: string): void;
@@ -248,6 +275,25 @@ export interface ToolExecutionContext {
     // 'plan'" before deciding whether to flip it. Reads the SAME live PolicyStateStore
     // `setPermissionMode` itself mutates -- never a separate, potentially-stale snapshot.
     getPermissionMode(): PermissionMode;
+    // Phase 4 Task 3 (WS-10 §1/§3.5, R4-4): the Agent tool's own spawn seam -- a FOURTH,
+    // DELIBERATE addition to ToolExecutionContext.session beyond the three fields (insideSubagent/
+    // isolationPinnedCwd/agentId) MUST 5's own text enumerates by name. Called out explicitly here
+    // rather than left to be discovered as an undocumented extra: `buildChildInheritance` (engine.ts)
+    // needs live, run-closure-only state (the policy store, the current advertised tool set, the
+    // session root) that a bare ToolExecutionContext field cannot carry as static data the way
+    // insideSubagent/agentId can -- a METHOD is the only shape that can compute it lazily, on the
+    // actual call, from that closure.
+    //
+    // OPTIONAL, deliberately (unlike every other `session.*` method on this interface): every
+    // pre-existing `impl/*.test.ts` file (and registry.test.ts's own fixtures) builds its own
+    // minimal, ad hoc `session` fake with no central builder this task could extend in one place --
+    // making this required would force ~25 unrelated test files to grow a throwaway `spawnChild`
+    // stub for a capability nothing in THIS phase's own test suite exercises. The real engine
+    // (engine.ts's buildDefaultToolExecutor) always supplies a real implementation; Lane C's own
+    // tools/impl/agent.ts (the one production caller) is expected to treat an absent method as "no
+    // child-spawn capability configured for this run" (a typed, non-crashing tool-result error),
+    // mirroring how a missing `ChildEngineDeps` factory registration is handled one level down.
+    spawnChild?(req: SpawnChildRequest): Promise<ChildHandle>;
   };
 }
 
@@ -788,6 +834,14 @@ export interface RegistryToolExecutorDeps {
   // sandbox ?? DEFAULT_SANDBOX_SETTINGS) -- see ToolExecutionContext.sandboxSettings's own comment.
   sandboxSettings: SandboxSettings;
   outDir?: string;
+  // Phase 4 Task 3: mirrors ToolExecutionContext's own three fields exactly -- see that interface's
+  // own comments for the full rationale. `insideSubagent`/`isolationPinnedCwd` default `false` when
+  // omitted (every pre-existing caller), matching RuntimeConfig.insideSubagent's own existing
+  // "absent means not known-true" convention rather than requiring every call site to spell out the
+  // negative case explicitly.
+  insideSubagent?: boolean;
+  isolationPinnedCwd?: boolean;
+  agentId?: string;
 }
 
 export function buildRegistryToolExecutor(deps: RegistryToolExecutorDeps): EngineFacingToolExecutor {
@@ -814,6 +868,9 @@ export function buildRegistryToolExecutor(deps: RegistryToolExecutorDeps): Engin
         session: deps.session,
         sandboxSettings: deps.sandboxSettings,
         ...(deps.outDir !== undefined ? { outDir: deps.outDir } : {}),
+        insideSubagent: deps.insideSubagent === true,
+        isolationPinnedCwd: deps.isolationPinnedCwd === true,
+        ...(deps.agentId !== undefined ? { agentId: deps.agentId } : {}),
       };
       const result = await registered.executor.execute(call.input, ctx);
       return foldResult(result);

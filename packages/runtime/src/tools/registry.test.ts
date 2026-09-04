@@ -393,6 +393,80 @@ describe("buildRegistryToolExecutor (the engine-facing adapter)", () => {
     }
   });
 
+  // Phase 4 Task 3 (MUST 5): insideSubagent/isolationPinnedCwd/agentId thread from deps straight
+  // onto ctx -- absent deps fields default to `false`/`undefined`, matching this whole codebase's
+  // "absent means not known-true" convention for RuntimeConfig.insideSubagent's own sibling field.
+  test("insideSubagent/isolationPinnedCwd/agentId thread from deps onto ctx; absent deps default to false/undefined", async () => {
+    const name = "__t3_test_child_ctx_fields__";
+    registerTool({ descriptor: fixtureDescriptor(name) });
+    try {
+      let captured: { insideSubagent: boolean | undefined; isolationPinnedCwd: boolean | undefined; agentId: string | undefined } | undefined;
+      const echoExecutor: ToolExecutor = {
+        async execute(_input, ctx) {
+          captured = { insideSubagent: ctx.insideSubagent, isolationPinnedCwd: ctx.isolationPinnedCwd, agentId: ctx.agentId };
+          return { output: "ok" };
+        },
+      };
+      replaceExecutor(name, echoExecutor);
+
+      await buildRegistryToolExecutor(deps()).execute({ id: "1", name, input: {} });
+      expect(captured).toEqual({ insideSubagent: false, isolationPinnedCwd: false, agentId: undefined });
+
+      await buildRegistryToolExecutor(deps({ insideSubagent: true, isolationPinnedCwd: true, agentId: "agent-xyz" })).execute({ id: "2", name, input: {} });
+      expect(captured).toEqual({ insideSubagent: true, isolationPinnedCwd: true, agentId: "agent-xyz" });
+    } finally {
+      unregisterToolForTest(name);
+    }
+  });
+
+  test("session.spawnChild, when the deps' session object supplies it, is reachable from a real executor", async () => {
+    const name = "__t3_test_spawn_seam__";
+    registerTool({ descriptor: fixtureDescriptor(name) });
+    try {
+      let spawnCalledWithPrompt: string | undefined;
+      const spawningExecutor: ToolExecutor = {
+        async execute(_input, ctx) {
+          const handle = await ctx.session.spawnChild?.({ parentToolUseId: "t1", prompt: "do it", runInBackground: false });
+          return { output: handle ? "spawned" : "no-spawn-seam" };
+        },
+      };
+      replaceExecutor(name, spawningExecutor);
+      const session = deps().session;
+      const executor = buildRegistryToolExecutor(
+        deps({
+          session: {
+            ...session,
+            async spawnChild(req) {
+              spawnCalledWithPrompt = req.prompt;
+              return {
+                record: {
+                  id: "a1",
+                  parentSessionId: "p1",
+                  parentToolUseId: req.parentToolUseId,
+                  transcript: "subagents/agent-a1.jsonl",
+                  status: "running",
+                  runtime: "winter-agent",
+                  model: { effectiveModel: "sonnet", effectiveEffort: "medium" },
+                  permission: { effectiveMode: "default", parentPolicyHash: "h", parentPolicyVersion: 1 },
+                },
+                status: () => "running",
+                steer: async () => ({ status: "queued", messageId: "m1" }),
+                resume: async () => ({ status: "resumed_and_delivered", messageId: "m1" }),
+                result: async () => ({ status: "completed", content: "done" }),
+                stop: async () => {},
+              };
+            },
+          },
+        }),
+      );
+      const result = await executor.execute({ id: "1", name, input: {} });
+      expect(result.output).toBe("spawned");
+      expect(spawnCalledWithPrompt).toBe("do it");
+    } finally {
+      unregisterToolForTest(name);
+    }
+  });
+
   test("a real executor that actually reads ctx.tempDir DOES trigger getTempDir (laziness proof, positive half)", async () => {
     const name = "__t1_test_tempdir_reader__";
     registerTool({ descriptor: fixtureDescriptor(name) });
