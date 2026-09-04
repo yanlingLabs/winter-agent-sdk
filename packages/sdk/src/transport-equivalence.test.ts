@@ -290,6 +290,17 @@ interface QueryScenarioOptions {
   // round-trips byte-identically on every leg, since the LIVE `instance` object lives entirely in
   // THIS test process regardless of which leg actually runs the runtime.
   mcpServers?: Options["mcpServers"];
+  // Phase 4 Task 3: lets a scenario supply resolved runtime capability tokens (e.g. "winter.mcp") --
+  // registry.ts's own `isAvailable` gates every MCP-family descriptor (including a freshly
+  // registerMcpServerTools-registered one, buildMcpToolDescriptor's own capabilityRequirements) on
+  // this token, a pre-existing I4/P3 precedent this task's own SDK-server wiring did NOT change
+  // (deliberately -- see registry.ts's own comment on why: T8 flips it to runtime-derived later, not
+  // this task). Without it, a live-registered SDK server's tool is genuinely absent from
+  // `system/init.tools` on every leg alike -- both legs would silently agree on that (possibly
+  // wrong) shape, since compareTraces only diffs the two legs against EACH OTHER, never against the
+  // spec. The MCP SDK-server scenario below passes this explicitly so its own init-advertisement
+  // assertion means something.
+  capabilities?: Options["capabilities"];
   // Invoked once per yielded message, AFTER it's recorded into the trace — the kill/abort
   // scenarios use this to act at a precise, OBSERVED point in the stream (WS-04 events), never a
   // real-clock guess (unlike the raw-driven interrupt scenario, which has no such observable event
@@ -328,6 +339,7 @@ async function traceViaQuery(leg: LegName, scenario: QueryScenarioOptions): Prom
         ...(scenario.allowDangerouslySkipPermissions !== undefined ? { allowDangerouslySkipPermissions: scenario.allowDangerouslySkipPermissions } : {}),
         ...(scenario.sandbox !== undefined ? { sandbox: scenario.sandbox } : {}),
         ...(scenario.mcpServers !== undefined ? { mcpServers: scenario.mcpServers } : {}),
+        ...(scenario.capabilities !== undefined ? { capabilities: scenario.capabilities } : {}),
       },
     });
     for await (const msg of gen) {
@@ -942,12 +954,42 @@ function registerEquivalenceScenarios(legA: LegName, legB: LegName): void {
         [MCP_SDK_TEST_SERVER_NAME]: { type: "sdk", name: MCP_SDK_TEST_SERVER_NAME, instance: fixture.instance },
       });
 
-      const a = await traceViaQuery(legA, { prompt: "go", testProviderName: "mcpsdk", allowedTools: [MCP_SDK_TEST_TOOL_NAME], mcpServers: mcpServersFor(fixtureA) });
-      const b = await traceViaQuery(legB, { prompt: "go", testProviderName: "mcpsdk", allowedTools: [MCP_SDK_TEST_TOOL_NAME], mcpServers: mcpServersFor(fixtureB) });
+      // Phase 4 Task 3: "winter.mcp" is REQUIRED for a live-registered MCP tool to appear in
+      // system/init.tools at all -- registry.ts's own buildMcpToolDescriptor gates every
+      // registerMcpServerTools-registered descriptor on this capability token (the SAME pre-existing
+      // I4/P3 gate WebSearch/LSP/ToolSearch/WaitForMcpServers/ListMcpResourcesTool already carry;
+      // this task's own SDK-server wiring deliberately did not special-case around it -- see
+      // registry.ts's own comment: auto-derivation is a LATER task's job). Omitting it here would
+      // make BOTH legs silently agree the tool is unadvertised (compareTraces only diffs legs
+      // against each other, never against the spec) while this scenario's own scripted provider
+      // still "calls" it regardless -- proving only the wire mechanics, not MUST 3's advertisement
+      // obligation. Supplying it is what makes the init.tools assertion below mean something.
+      const a = await traceViaQuery(legA, {
+        prompt: "go",
+        testProviderName: "mcpsdk",
+        allowedTools: [MCP_SDK_TEST_TOOL_NAME],
+        mcpServers: mcpServersFor(fixtureA),
+        capabilities: ["winter.mcp"],
+      });
+      const b = await traceViaQuery(legB, {
+        prompt: "go",
+        testProviderName: "mcpsdk",
+        allowedTools: [MCP_SDK_TEST_TOOL_NAME],
+        mcpServers: mcpServersFor(fixtureB),
+        capabilities: ["winter.mcp"],
+      });
       expect(compareTraces(a.trace, b.trace)).toEqual([]);
       expect(a.thrown).toBeUndefined();
       expect(b.thrown).toBeUndefined();
       expect(a.trace.map((e) => e.kind)).toEqual(["system/init", "assistant", "user", "assistant", "result", "exit"]);
+
+      // MUST 3: the live-registered SDK server's tool is genuinely ADVERTISED (system/init.tools),
+      // not merely callable out-of-band of advertisement -- checked on both legs independently
+      // (compareTraces already proved them equal to each other; this pins the actual value).
+      const initA = a.trace[0]!.payload as { tools: string[] };
+      const initB = b.trace[0]!.payload as { tools: string[] };
+      expect(initA.tools).toContain(MCP_SDK_TEST_TOOL_NAME);
+      expect(initB.tools).toContain(MCP_SDK_TEST_TOOL_NAME);
 
       // The live instance was genuinely invoked on BOTH legs, with the identical (name, arguments).
       expect(fixtureA.calls).toEqual([{ name: "echo", args: { x: 1 } }]);
