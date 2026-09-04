@@ -2,7 +2,8 @@
 // matrix, its default-vs-explicit resolution, the fromMode mapping named by derived-shapes-p4.md
 // item (e)'s Open Question 7, and the bounded held/accepted mailbox.
 //
-// SCOPE BOUNDARY (WS-10 §10.3, cited again at the call site in router.ts): this whole file applies
+// SCOPE BOUNDARY (WS-10 §10.3, cited again at the call site in reference-adapter.ts's own
+// deliverToSession): this whole file applies
 // ONLY on the deliverToSession (peer top-level session) path. Steering a running child or resuming a
 // terminal one is "delivered inside the OWNING PARENT session" (WS-10 §10.3) -- there is no separate
 // receiver to apply an inbound policy against; the child already runs under the parent's own
