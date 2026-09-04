@@ -25,7 +25,7 @@
 // untrusted (see that function's own header for why the exclusion is wholesale, not partial, unlike
 // the rule-side precedent it otherwise mirrors). A P5 loader feeding this function's OUTPUT into
 // buildHookRegistry inherits that gate automatically; it must NOT re-implement its own filter here.
-import { HOOK_EVENTS, type HookEvent, type RuntimeHooksConfig } from "@yanlinglabs/winter-agent-sdk";
+import { HOOK_EVENTS, type HookEvent, type HookSource, type ResolvedSettingSource, type RuntimeHooksConfig } from "@yanlinglabs/winter-agent-sdk";
 import type { SourcedHookEntry } from "./registry.ts";
 
 const KNOWN_HOOK_EVENTS: ReadonlySet<string> = new Set(HOOK_EVENTS);
@@ -50,4 +50,128 @@ export function buildHookEntriesFromConfig(config: RuntimeHooksConfig | undefine
     });
   }
   return entries;
+}
+
+// --- Phase 5 Task 2: the SETTINGS-FILE hook block loader (WS-08 §13 OQ3, absorbed into P5) --------
+//
+// The sibling of buildHookEntriesFromConfig above: same output type, same positional id formula,
+// same "unknown event names are accepted, preserved and INERT" rule -- a different INPUT. Where that
+// one converts `Options.hooks` after query.ts stripped the callbacks out, this one converts the
+// `hooks` block of every settings tier the P5 resolver loaded, which is what finally gives the
+// `managed`/`user`/`project`/`local` HookSource values a real producer (P2 typed them and left them
+// inert; phase ruling 1 promised P5's loader).
+//
+// THE TRUST GATE IS DELIBERATELY NOT HERE. hooks/registry.ts's `buildHookRegistry(entries,
+// { trustedWorkspace })` already excludes `project`/`local` entries WHOLESALE when the workspace is
+// untrusted, and from-config.ts's own header (above) explicitly instructs a P5 loader not to
+// re-implement it: two independently-maintained filters over the same obligation is the exact
+// producer/consumer drift class R5-2's contract tests exist to catch. This function is a pure,
+// trust-blind converter; the seam-contract test (settings/seam-contracts-p5.test.ts section (vi))
+// pins the composition, feeding this output into buildHookRegistry and asserting the gate fires.
+// A caller MUST route these entries through buildHookRegistry -- never straight into a runner.
+//
+// RULING P5-A note for whoever wires the caller: the verdict to pass is
+// `defaultTrustSource(config).verdict(config.cwd).trusted`, the same value engine.ts already derives
+// once for all four trust consumers.
+
+/** A settings hook block that could not be turned into an entry. Reported, never thrown (the brief's own MUST). */
+export interface RejectedHookBlock {
+  source: ResolvedSettingSource;
+  path?: string;
+  event?: string;
+  reason: string;
+}
+
+export interface HookEntriesFromSettings {
+  entries: SourcedHookEntry[];
+  rejected: RejectedHookBlock[];
+}
+
+/** One settings tier's contribution, as `resolveSettingsDetailed` reports it (`perSource`) or as the pinned `ResolvedSettings.sources` does. */
+export interface SettingsHookSourceInput {
+  source: ResolvedSettingSource;
+  path?: string;
+  settings?: { hooks?: unknown; [key: string]: unknown };
+  values?: { hooks?: unknown; [key: string]: unknown };
+  // Declared but unread: BOTH real inputs -- `resolveSettingsDetailed`'s `perSource` entries
+  // (`loaded`/`error`) and the pinned `ResolvedSettings.sources` entries (`policyOrigin`) -- must be
+  // passable AS OBJECT LITERALS, which excess-property checking would otherwise reject at every
+  // call site that builds one inline. Named explicitly rather than swept under an index signature,
+  // which would break assignability the other way (neither real entry type declares one).
+  policyOrigin?: string;
+  loaded?: boolean;
+  error?: string;
+}
+
+// The two non-file tiers have no HookSource of their own: `flag` IS the sdk/inline tier (R5-8's own
+// "inline/sdk" position, which WS-08 §2 already calls `sdk`), and `managed` maps straight across.
+const HOOK_SOURCE_BY_SETTING_SOURCE: Record<ResolvedSettingSource, HookSource> = {
+  managed: "managed",
+  flag: "sdk",
+  user: "user",
+  project: "project",
+  local: "local",
+};
+
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+export function buildHookEntriesFromSettings(perSource: readonly SettingsHookSourceInput[] | undefined): HookEntriesFromSettings {
+  const entries: SourcedHookEntry[] = [];
+  const rejected: RejectedHookBlock[] = [];
+  if (!perSource) return { entries, rejected };
+
+  for (const tier of perSource) {
+    const settings = tier.settings ?? tier.values;
+    const hooks = settings?.["hooks"];
+    if (hooks === undefined) continue; // no hooks block at all -- not a rejection
+    const where = { source: tier.source, ...(tier.path !== undefined ? { path: tier.path } : {}) };
+    if (!isPlainObject(hooks)) {
+      rejected.push({ ...where, reason: `expected an object for "hooks", got ${Array.isArray(hooks) ? "an array" : typeof hooks}` });
+      continue;
+    }
+    const source = HOOK_SOURCE_BY_SETTING_SOURCE[tier.source];
+    for (const [event, groups] of Object.entries(hooks)) {
+      // WS-08 §1, identical to buildHookEntriesFromConfig above: an unknown event name is accepted,
+      // preserved and inert. It is NOT a rejection -- a settings file written for a newer engine
+      // must not start reporting errors on an older one.
+      if (!KNOWN_HOOK_EVENTS.has(event)) continue;
+      if (!Array.isArray(groups)) {
+        rejected.push({ ...where, event, reason: `expected an array of matcher groups, got ${typeof groups}` });
+        continue;
+      }
+      groups.forEach((group, groupIndex) => {
+        if (!isPlainObject(group)) {
+          rejected.push({ ...where, event, reason: `matcher group ${groupIndex} is not an object` });
+          return;
+        }
+        const groupHooks = group["hooks"];
+        if (!Array.isArray(groupHooks)) {
+          rejected.push({ ...where, event, reason: `matcher group ${groupIndex} has no "hooks" array` });
+          return;
+        }
+        const matcher = typeof group["matcher"] === "string" ? group["matcher"] : undefined;
+        groupHooks.forEach((handler, hookIndex) => {
+          if (!isPlainObject(handler) || typeof handler["command"] !== "string" || handler["command"].length === 0) {
+            rejected.push({ ...where, event, reason: `hook ${groupIndex}:${hookIndex} is not a { type: "command", command } handler` });
+            return;
+          }
+          // `timeout` is SECONDS in the file (HookCallbackMatcher.timeout's own pinned unit) and
+          // milliseconds on the entry -- converted exactly once, here, matching hooks/runner.ts's
+          // own requirement that the conversion never happen twice.
+          const timeout = handler["timeout"];
+          entries.push({
+            id: `${event}:${source}:${groupIndex}:${hookIndex}`,
+            event: event as HookEvent,
+            ...(matcher !== undefined ? { matcher } : {}),
+            source,
+            ...(typeof timeout === "number" && Number.isFinite(timeout) ? { timeoutMs: timeout * 1000 } : {}),
+            command: handler["command"],
+          });
+        });
+      });
+    }
+  }
+  return { entries, rejected };
 }

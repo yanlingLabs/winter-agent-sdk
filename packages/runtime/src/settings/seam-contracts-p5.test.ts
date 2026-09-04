@@ -46,6 +46,10 @@ import {
   type DeferralActivation,
 } from "../tools/registry.ts";
 import { loadAgentDefinitions } from "../subagents/definitions.ts";
+import { resolveSettingsDetailed, applyWorkspaceTrust, type DetailedSettingsSourceEntry, type Settings } from "./resolve.ts";
+import { defaultTrustSource, type WorkspaceTrustSource } from "./trust.ts";
+import { buildHookEntriesFromSettings, buildHookEntriesFromConfig } from "../hooks/from-config.ts";
+import { buildHookRegistry } from "../hooks/registry.ts";
 
 // --- (i) the provider seam extension (R5-3) -------------------------------------------------------
 
@@ -314,6 +318,128 @@ describe("(v) pluginAgents is a FOURTH definition source, at the BOTTOM of the p
   });
 });
 
+// --- (iii)+(iv) settings resolution, the trust source, and the ONE path lanes walk ----------------
+//
+// resolve.test.ts and trust.test.ts own the exhaustive cases. THIS section pins the composition: the
+// exact call sequence a lane performs, and the two places a mistake would be silent.
+
+describe("(iii)+(iv) resolve -> trust verdict -> effective settings", () => {
+  test("the full lane path: resolveSettingsDetailed -> defaultTrustSource -> applyWorkspaceTrust", async () => {
+    await withTempTreeAsync(async ({ cwd, home }) => {
+      writeJson(join(cwd, ".winter", "settings.json"), { permissions: { allow: ["Write"], deny: ["Bash"] }, outputStyle: "project-style" });
+      const resolved = await resolveSettingsDetailed({ cwd, winterHome: home });
+
+      const untrusted = defaultTrustSource({}).verdict(cwd);
+      expect(untrusted.trusted).toBe(false);
+      const effective = applyWorkspaceTrust(resolved, { trustedWorkspace: untrusted.trusted });
+      expect((effective["permissions"] as { allow?: string[]; deny?: string[] }).allow).toBeUndefined();
+      expect((effective["permissions"] as { deny?: string[] }).deny).toEqual(["Bash"]);
+      expect(effective["outputStyle"]).toBe("project-style"); // NON-permission keys are untouched by trust
+
+      const trusted = defaultTrustSource({ trustedWorkspace: true }).verdict(cwd);
+      expect(applyWorkspaceTrust(resolved, { trustedWorkspace: trusted.trusted })["permissions"]).toMatchObject({ allow: ["Write"] });
+    });
+  });
+
+  test("the WorkspaceTrustSource seam is satisfiable by a HOST implementation, not only by Winter's own", () => {
+    const perDirectory: WorkspaceTrustSource = {
+      verdict: (cwd) => (cwd.startsWith("/approved") ? { trusted: true, reason: "host-declared" } : { trusted: false, reason: "untrusted-default" }),
+    };
+    expect(perDirectory.verdict("/approved/repo").trusted).toBe(true);
+    expect(perDirectory.verdict("/elsewhere").trusted).toBe(false);
+  });
+
+  test("a malformed settings file NEVER throws through this path -- it degrades to an empty tier with an error recorded", async () => {
+    await withTempTreeAsync(async ({ cwd, home }) => {
+      mkdirSync(join(cwd, ".winter"), { recursive: true });
+      writeFileSync(join(cwd, ".winter", "settings.json"), "{{{ not json");
+      const resolved = await resolveSettingsDetailed({ cwd, winterHome: home });
+      expect(resolved.perSource.find((e) => e.source === "project")?.loaded).toBe(false);
+      expect(applyWorkspaceTrust(resolved, { trustedWorkspace: false })).toEqual({});
+    });
+  });
+});
+
+// --- (vi) buildHookEntriesFromSettings -> buildHookRegistry (WS-08 OQ3 absorbed here) -------------
+
+describe("(vi) settings-file hook blocks become source-tagged entries; the TRUST GATE is downstream", () => {
+  const sourceEntry = (source: "user" | "project" | "local" | "managed" | "flag", hooks: unknown, path?: string) =>
+    ({ source, settings: { hooks } as Settings, values: { hooks } as Settings, loaded: true, ...(path !== undefined ? { path } : {}) }) as DetailedSettingsSourceEntry;
+
+  const commandBlock = (command: string, extra: Record<string, unknown> = {}) => ({ PreToolUse: [{ matcher: "Bash", hooks: [{ type: "command", command, ...extra }] }] });
+
+  test("one settings hook block becomes one entry, carrying event/matcher/source/command", () => {
+    const { entries, rejected } = buildHookEntriesFromSettings([sourceEntry("user", commandBlock("echo hi"), "/home/settings.json")]);
+    expect(rejected).toEqual([]);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({ event: "PreToolUse", matcher: "Bash", source: "user", command: "echo hi" });
+  });
+
+  test("the id is the SAME positional formula from-config.ts and query.ts already agree on", () => {
+    const { entries } = buildHookEntriesFromSettings([sourceEntry("project", { PreToolUse: [{ hooks: [{ type: "command", command: "a" }, { type: "command", command: "b" }] }] })]);
+    expect(entries.map((e) => e.id)).toEqual(["PreToolUse:project:0:0", "PreToolUse:project:0:1"]);
+  });
+
+  test("`timeout` is SECONDS in the file and milliseconds on the entry -- converted exactly once, here", () => {
+    const { entries } = buildHookEntriesFromSettings([sourceEntry("user", commandBlock("x", { timeout: 5 }))]);
+    expect(entries[0]?.timeoutMs).toBe(5000);
+  });
+
+  test("the `flag` tier maps to HookSource 'sdk'; `managed` maps to 'managed'", () => {
+    const { entries } = buildHookEntriesFromSettings([sourceEntry("flag", commandBlock("f")), sourceEntry("managed", commandBlock("m"))]);
+    expect(entries.map((e) => e.source).sort()).toEqual(["managed", "sdk"]);
+  });
+
+  test("an UNKNOWN event name is accepted, preserved and INERT -- skipped, never an entry, never a rejection (WS-08 §1)", () => {
+    const { entries, rejected } = buildHookEntriesFromSettings([sourceEntry("user", { NotAHookEvent: [{ hooks: [{ type: "command", command: "x" }] }] })]);
+    expect(entries).toEqual([]);
+    expect(rejected).toEqual([]);
+  });
+
+  test("malformed blocks are REPORTED, never thrown -- and never silently dropped", () => {
+    const { entries, rejected } = buildHookEntriesFromSettings([
+      sourceEntry("user", "not-an-object"),
+      sourceEntry("project", { PreToolUse: "not-an-array" }),
+      sourceEntry("local", { PreToolUse: [{ hooks: [{ type: "command" }] }] }), // no command string
+      sourceEntry("user", { PreToolUse: [{ hooks: "nope" }] }),
+    ]);
+    expect(entries).toEqual([]);
+    expect(rejected).toHaveLength(4);
+    expect(rejected.map((r) => r.source).sort()).toEqual(["local", "project", "user", "user"]);
+    for (const r of rejected) expect(typeof r.reason).toBe("string");
+  });
+
+  test("a settings source with NO hooks block at all contributes nothing and rejects nothing", () => {
+    const { entries, rejected } = buildHookEntriesFromSettings([{ source: "user", settings: {}, values: {}, loaded: true }]);
+    expect(entries).toEqual([]);
+    expect(rejected).toEqual([]);
+  });
+
+  test("THE GATE IS DOWNSTREAM: this builder is trust-blind, and buildHookRegistry drops project/local wholesale when untrusted", () => {
+    const { entries } = buildHookEntriesFromSettings([
+      sourceEntry("user", commandBlock("u")),
+      sourceEntry("project", commandBlock("p")),
+      sourceEntry("local", commandBlock("l")),
+    ]);
+    // Trust-BLIND: all three survive the builder. Re-implementing the gate here would be two
+    // independent filters that can drift -- from-config.ts's own header forbids exactly that.
+    expect(entries.map((e) => e.source).sort()).toEqual(["local", "project", "user"]);
+
+    const untrusted = buildHookRegistry(entries, { trustedWorkspace: defaultTrustSource({}).verdict("/repo").trusted });
+    expect(untrusted.matching("PreToolUse", "Bash").map((e) => e.source)).toEqual(["user"]);
+
+    const trusted = buildHookRegistry(entries, { trustedWorkspace: defaultTrustSource({ trustedWorkspace: true }).verdict("/repo").trusted });
+    expect(trusted.matching("PreToolUse", "Bash").map((e) => e.source)).toEqual(["user", "project", "local"]);
+  });
+
+  test("entries compose with the sdk-sourced ones from-config.ts builds -- one registry, WS-08 §2's source order", () => {
+    const fromSettings = buildHookEntriesFromSettings([sourceEntry("managed", commandBlock("m")), sourceEntry("user", commandBlock("u"))]).entries;
+    const fromConfig = buildHookEntriesFromConfig({ PreToolUse: [{ matcher: "Bash", hookCount: 1, source: "sdk" }] });
+    const registry = buildHookRegistry([...fromSettings, ...fromConfig], { trustedWorkspace: true });
+    expect(registry.matching("PreToolUse", "Bash").map((e) => e.source)).toEqual(["managed", "user", "sdk"]);
+  });
+});
+
 // --- (vii) ajv (R5-7) -----------------------------------------------------------------------------
 
 describe("(vii) ajv is a real runtime dependency, in both dialects Lane K/Lane W need", () => {
@@ -349,6 +475,17 @@ export function withTempTree<T>(fn: (dirs: { cwd: string; home: string }) => T):
   const home = mkdtempSync(join(tmpdir(), "winter-p5-seam-home-"));
   try {
     return fn({ cwd, home });
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
+  }
+}
+
+export async function withTempTreeAsync<T>(fn: (dirs: { cwd: string; home: string }) => Promise<T>): Promise<T> {
+  const cwd = mkdtempSync(join(tmpdir(), "winter-p5-seam-cwd-"));
+  const home = mkdtempSync(join(tmpdir(), "winter-p5-seam-home-"));
+  try {
+    return await fn({ cwd, home });
   } finally {
     rmSync(cwd, { recursive: true, force: true });
     rmSync(home, { recursive: true, force: true });

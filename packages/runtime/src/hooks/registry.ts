@@ -58,6 +58,18 @@ export function isToolScopedHookEvent(event: HookEvent): boolean {
 // again downstream).
 export interface SourcedHookEntry extends HookParticipant {
   timeoutMs?: number;
+  // Phase 5 Task 2 (WS-08 OQ3, absorbed into P5): the shell command a SETTINGS-FILE hook block
+  // declares (`{ type: "command", command, timeout? }` -- see from-config.ts's
+  // buildHookEntriesFromSettings). Absent on every callback-registered entry, which is every entry
+  // that existed before this field: an `Options.hooks` registration is a JS function reached over
+  // the control bridge (hooks/bridge-invoker.ts) and has no command to carry.
+  //
+  // TYPED AND CARRIED, NOT YET EXECUTED. Winter has exactly one HookInvoker today
+  // (createBridgeHookInvoker), which dispatches to a host CALLBACK by positional id; nothing spawns
+  // a process for a hook. A command-hook executor is downstream work (T3/lane), and this field is
+  // what makes the entry it will need survive the settings loader instead of being parsed and
+  // thrown away -- the alternative was a builder that produces entries no executor could ever run.
+  command?: string;
 }
 
 export interface HookRegistry {
