@@ -59,6 +59,18 @@ function isTruthyEnv(v: string | undefined): boolean {
   return v === "1" || v === "true";
 }
 
+// RULING R4-7: `.winter/agents/*.md` loads only in a TRUSTED workspace (a checked-in definition is
+// code execution + a permission participant, WS-10 §2/§17). No settings-file/trust-store loader
+// exists anywhere in this codebase yet to derive a real signal from -- engine.ts's own
+// `trustedWorkspace` (Finding 4, P2 fix-wave) is hardcoded `false` process-wide for the identical
+// reason, and this function deliberately matches that SAME posture rather than inventing a
+// second, divergent notion of trust. A real signal (once one exists) replaces this ONE function's
+// body; every caller (today, only tools/impl/agent.ts's own `loadAgentDefinitions` call) is
+// already written against it as a seam, never a hardcoded literal at the call site.
+export function resolveWorkspaceTrust(): boolean {
+  return false;
+}
+
 export function resolveForegroundBackground(input: ResolveForegroundBackgroundInput): ForegroundBackgroundDecision {
   const env = input.env ?? process.env;
 

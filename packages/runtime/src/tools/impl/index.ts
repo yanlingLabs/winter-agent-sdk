@@ -22,6 +22,7 @@
 // and testing.ts import both barrels anyway (descriptors first, by existing convention), so the
 // registration order in practice is: every stub, then every real executor replacing its own stub.
 import "./advisor.ts";
+import "./agent.ts";
 import "./ask-user-question.ts";
 import "./bash.ts";
 import "./cron.ts";
