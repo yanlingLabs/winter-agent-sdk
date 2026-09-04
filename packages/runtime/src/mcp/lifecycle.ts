@@ -527,10 +527,15 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
     }
   }
 
-  // Fix round 1 (MAJOR M2): `slots.get(slot.name) === slot` catches every seam that REPLACES or
-  // REMOVES the slot object (addAndConnect, removeSlot); `slot.gen === gen` catches every seam that
-  // supersedes an in-flight attempt WITHOUT touching the map (disableSlot; a second connectOneServer/
-  // on-demand-connect call via beginAttempt's own unconditional bump). Deliberately state-agnostic --
+  // Fix round 1 (MAJOR M2, corrected post-`8939e0f`): `slots.get(slot.name) === slot` catches every
+  // seam that REPLACES or REMOVES the slot object (addAndConnect, removeSlot); `slot.gen === gen`
+  // catches every seam that supersedes an in-flight attempt WITHOUT touching the map (disableSlot; a
+  // second connectOneServer call via reconnectExisting/enableSlot, through beginAttempt's own
+  // unconditional bump). A second CONCURRENT on-demand-connect call (installExecutorsForSlot's own
+  // "cached -> connect" branch) is deliberately NOT on this list any more -- it shares the one
+  // in-flight attempt via `slot.inflight` instead of superseding it (the M2-correction fix); this
+  // check still protects that SHARED attempt against a genuine disable/remove/reconnect/replace race,
+  // it just no longer treats a second on-demand caller as one itself. Deliberately state-agnostic --
   // no `expected: "pending" | "cached"` parameter -- because EVERY mutation capable of invalidating
   // an attempt already bumps gen or replaces identity (enumerated in ConnectionSlot's own `gen`
   // comment); "same slot object, same gen" is therefore already sufficient proof that nothing else
