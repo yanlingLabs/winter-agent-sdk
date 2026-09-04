@@ -43,14 +43,16 @@ published in the pinned tarball**, not any file in this repository.
 
 **Naming discipline**: identical to P2/P3's own — the pinned identifier and field NAMES quoted below
 are Winter's own naming (WS-03's compatibility posture, WS-07 §4). Every sentence of description,
-every table, and this document's structure are original; nothing beyond individual pinned
-type/field names and literal union members is quoted from the artifact.
+every table, and this document's structure are original; nothing is quoted from the artifact beyond individual
+pinned type/field names, literal union members, and the explicitly quoted, line-cited passages
+marked as such in the body.
 
 **Claim provenance**: each item distinguishes a *type-level fact* (a field exists, its type, its
 optionality — directly evident from the declaration's code) from a *doc-asserted behavior* (a claim
 that rests on the artifact's own JSDoc comment). Both kinds carry a file:line citation; doc-asserted
 claims say so explicitly. Every doc-asserted claim below is a restatement in this document's own
-words, never a verbatim quotation.
+words, never an UNQUOTED verbatim passage; a passage shown inside quotation marks with a line
+citation is a deliberate, cited quote, used only where a paraphrase would lose precision.
 
 **A recurring shape in this task's own findings**: three of the seven lettered items below turned
 up a symbol name from this task's own brief, or from WS-09/WS-10's prose, that **does not exist as a
@@ -333,7 +335,7 @@ method or through the SDK's own dynamic-server options in the first place. Two c
 outside that reach entirely — a settings-file-configured server is untouched by any call, and a
 plugin-supplied server survives an omission (the plugin system owns it, so dropping it from the
 payload is not read as a removal request; it simply will not appear in the result's `removed`
-list, and keeps running unless enterprise policy denies it). The practical consequence: calling
+list, and stays alive after the call; only an enterprise-level denial can stop it). The practical consequence: calling
 with an empty object no longer zeroes out a session's dynamic MCP surface once any plugin server
 is present. The one way to actually displace a plugin's own server is to reference it by name in a
 call's own payload — that overrides the plugin's ownership for that one entry only. **This is a
@@ -916,7 +918,7 @@ out-of-band.** The same doc comment draws a hard line around when a bare `null` 
 legitimate: only once the consumer's own code has already delivered the `control_response` through
 some side channel of its own (its own illustration: a caller that has already POSTed a signed reply
 out-of-band, carrying back the `requestId` the SDK originally handed it) does a `null` return mean
-"already handled, skip your own write" — and only then does the SDK skip its own transport write, so
+"already handled, skip your own write" — and only then is the runtime's own reply suppressed, so
 the two paths do not race. It explicitly calls out the failure mode: "Fail-closed: an accidental
 null means no response is sent and the elicitation stays pending until the server times it out." This means "no callback returns a decline" and "the callback exists
 but returns `null`" are **not the same outcome** under this pinned contract — the latter is a hang
