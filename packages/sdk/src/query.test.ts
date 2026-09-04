@@ -353,6 +353,52 @@ test("Phase 4 Task 2: an in-process SDK server config's `instance` is stripped b
   expect(JSON.stringify(config.mcpServers)).not.toContain("instance");
 });
 
+// --- Phase 4 Task 3 (WS-04 addendum, "sdk_mcp_call host-side bridge"): tool-discovery gap closed --
+
+function fixtureMcpInstance(tools: Array<{ name: string; description?: string }> = [{ name: "echo" }]): {
+  instance: { listTools: () => unknown[]; callTool: (name: string, args: Record<string, unknown>) => Promise<{ content: unknown[]; isError?: boolean }> };
+  calls: Array<{ name: string; args: Record<string, unknown> }>;
+} {
+  const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
+  return {
+    calls,
+    instance: {
+      listTools: () => tools.map((t) => ({ name: t.name, ...(t.description !== undefined ? { description: t.description } : {}), inputSchema: { type: "object" } })),
+      async callTool(name: string, args: Record<string, unknown>) {
+        calls.push({ name, args });
+        return { content: [{ type: "text", text: `echo:${JSON.stringify(args)}` }] };
+      },
+    },
+  };
+}
+
+test("an instance implementing WinterMcpServerInstance populates McpSdkServerConfig.tools on the wire", async () => {
+  const capture = captureConfigJson();
+  const { instance } = fixtureMcpInstance([{ name: "echo", description: "echoes input" }]);
+  for await (const _msg of query({
+    prompt: "ping",
+    options: { mcpServers: { fixture: { type: "sdk", name: "fixture", instance } }, spawnClaudeCodeProcess: capture.hook },
+  })) {
+    /* drain */
+  }
+  const config = capture.get();
+  expect(config.mcpServers).toEqual({
+    fixture: { type: "sdk", name: "fixture", tools: [{ name: "echo", description: "echoes input", inputSchema: { type: "object" } }] },
+  });
+});
+
+test("an instance NOT implementing WinterMcpServerInstance still strips to the plain 3-field shape (no `tools` key at all)", async () => {
+  const capture = captureConfigJson();
+  for await (const _msg of query({
+    prompt: "ping",
+    options: { mcpServers: { fixture: { type: "sdk", name: "fixture", instance: { notCallable: true } } }, spawnClaudeCodeProcess: capture.hook },
+  })) {
+    /* drain */
+  }
+  const config = capture.get();
+  expect(config.mcpServers).toEqual({ fixture: { type: "sdk", name: "fixture" } });
+});
+
 test("Task 9: a pre-allocated Options.sessionId round-trips into the init frame's sessionId", async () => {
   const explicitId = "44444444-4444-4444-8444-444444444444";
   let sawInitSessionId: string | undefined;
@@ -414,6 +460,163 @@ function decodeControlResponse(writes: string[], requestId: string): ControlResp
     .map((l) => JSON.parse(l) as WinterFrame);
   return sent.find((f) => f.type === "control_response" && (f as ControlResponseFrame).requestId === requestId) as ControlResponseFrame | undefined;
 }
+
+// Phase 4 Task 3: same idiom as recordingProcessWithControlRequest above, generalized to carry an
+// arbitrary payload (that helper hardcodes `{probe: true}`, which the sdk_mcp_call/mcp_elicitation
+// handlers below don't consume) -- kept as its own function rather than widening the existing
+// helper's signature, so every pre-existing caller of it stays byte-for-byte unchanged.
+function recordingProcessWithControlRequestPayload(subtype: string, requestId: string, payload: unknown): { proc: SpawnedRuntimeProcess; writes: string[] } {
+  const writes: string[] = [];
+  let resolveGotResponse!: () => void;
+  const gotResponse = new Promise<void>((r) => {
+    resolveGotResponse = r;
+  });
+  const proc: SpawnedRuntimeProcess = {
+    stdin: {
+      write(chunk: string) {
+        writes.push(chunk);
+        for (const line of chunk.split("\n").filter((l) => l.length > 0)) {
+          const frame = JSON.parse(line) as { type: string; requestId?: string };
+          if (frame.type === "control_response" && frame.requestId === requestId) resolveGotResponse();
+        }
+      },
+      end() {},
+    },
+    stdout: (async function* () {
+      yield encodeFrame({ type: "init", protocolVersion: PROTOCOL_VERSION, sessionId: "s", cwd: "/x", model: "sonnet", permissionMode: "default", tools: [] });
+      yield encodeFrame({ type: "control_request", requestId, subtype, payload });
+      await gotResponse;
+      yield encodeFrame({ type: "data", message: { type: "result", subtype: "success", is_error: false, result: "ok" } });
+    })(),
+    kill() {},
+    exited: Promise.resolve({ code: 0, signal: null }),
+    pid: null,
+  };
+  return { proc, writes };
+}
+
+test("sdk_mcp_call: a runtime-originated call for a configured SDK server's tool invokes the live instance and returns its CallToolResult", async () => {
+  const requestId = "sdkcall-1";
+  const { instance, calls } = fixtureMcpInstance();
+  const { proc, writes } = recordingProcessWithControlRequestPayload("sdk_mcp_call", requestId, { server: "fixture", tool: "echo", arguments: { x: 1 } });
+  for await (const _msg of query({ prompt: "hi", options: { mcpServers: { fixture: { type: "sdk", name: "fixture", instance } }, spawnClaudeCodeProcess: () => proc } })) {
+    /* drain */
+  }
+  expect(calls).toEqual([{ name: "echo", args: { x: 1 } }]);
+  const response = decodeControlResponse(writes, requestId);
+  expect(response?.ok).toBe(true);
+  expect(response?.payload).toEqual({ content: [{ type: "text", text: 'echo:{"x":1}' }] });
+});
+
+test("sdk_mcp_call: an unconfigured server name answers ok:false, unknown_sdk_server", async () => {
+  const requestId = "sdkcall-2";
+  const { instance } = fixtureMcpInstance();
+  const { proc, writes } = recordingProcessWithControlRequestPayload("sdk_mcp_call", requestId, { server: "nope", tool: "echo", arguments: {} });
+  for await (const _msg of query({ prompt: "hi", options: { mcpServers: { fixture: { type: "sdk", name: "fixture", instance } }, spawnClaudeCodeProcess: () => proc } })) {
+    /* drain */
+  }
+  const response = decodeControlResponse(writes, requestId);
+  expect(response?.ok).toBe(false);
+  expect(response?.error?.code).toBe("unknown_sdk_server");
+});
+
+test("sdk_mcp_call: a configured server whose instance does not implement WinterMcpServerInstance answers ok:false, instance_not_callable", async () => {
+  const requestId = "sdkcall-3";
+  const { proc, writes } = recordingProcessWithControlRequestPayload("sdk_mcp_call", requestId, { server: "fixture", tool: "echo", arguments: {} });
+  for await (const _msg of query({
+    prompt: "hi",
+    options: { mcpServers: { fixture: { type: "sdk", name: "fixture", instance: { notCallable: true } } }, spawnClaudeCodeProcess: () => proc },
+  })) {
+    /* drain */
+  }
+  const response = decodeControlResponse(writes, requestId);
+  expect(response?.ok).toBe(false);
+  expect(response?.error?.code).toBe("instance_not_callable");
+});
+
+test("sdk_mcp_call: a throwing callTool fails closed to ok:false, sdk_tool_threw -- never a dropped request", async () => {
+  const requestId = "sdkcall-4";
+  const instance = { listTools: () => [], callTool: async () => { throw new Error("boom"); } };
+  const { proc, writes } = recordingProcessWithControlRequestPayload("sdk_mcp_call", requestId, { server: "fixture", tool: "echo", arguments: {} });
+  for await (const _msg of query({ prompt: "hi", options: { mcpServers: { fixture: { type: "sdk", name: "fixture", instance } }, spawnClaudeCodeProcess: () => proc } })) {
+    /* drain */
+  }
+  const response = decodeControlResponse(writes, requestId);
+  expect(response?.ok).toBe(false);
+  expect(response?.error?.code).toBe("sdk_tool_threw");
+  expect(response?.error?.message).toContain("boom");
+});
+
+test("sdk_mcp_call: with no SDK-type server configured at all, falls to the generic unhandled_subtype fallback (identical to any other unregistered subtype)", async () => {
+  const requestId = "sdkcall-5";
+  const { proc, writes } = recordingProcessWithControlRequestPayload("sdk_mcp_call", requestId, { server: "fixture", tool: "echo", arguments: {} });
+  for await (const _msg of query({ prompt: "hi", options: { spawnClaudeCodeProcess: () => proc } })) {
+    /* drain */
+  }
+  const response = decodeControlResponse(writes, requestId);
+  expect(response?.ok).toBe(false);
+  expect(response?.error?.code).toBe("unhandled_subtype");
+});
+
+// --- Phase 4 Task 3 (WS-09 §5): mcp_elicitation --------------------------------------------------
+
+test("mcp_elicitation: a configured onElicitation callback answers the runtime-originated request", async () => {
+  const requestId = "elicit-1";
+  let receivedRequest: unknown;
+  const onElicitation = async (request: unknown) => {
+    receivedRequest = request;
+    return { action: "accept" as const, content: { name: "Ada" } };
+  };
+  const { proc, writes } = recordingProcessWithControlRequestPayload("mcp_elicitation", requestId, {
+    serverName: "fixture",
+    message: "what is your name?",
+    requestedSchema: { type: "object" },
+  });
+  for await (const _msg of query({ prompt: "hi", options: { onElicitation, spawnClaudeCodeProcess: () => proc } })) {
+    /* drain */
+  }
+  expect(receivedRequest).toMatchObject({ serverName: "fixture", message: "what is your name?", requestedSchema: { type: "object" } });
+  const response = decodeControlResponse(writes, requestId);
+  expect(response?.ok).toBe(true);
+  expect(response?.payload).toEqual({ action: "accept", content: { name: "Ada" } });
+});
+
+test("mcp_elicitation: no onElicitation configured at all -- falls to unhandled_subtype (the runtime side maps this to a deterministic decline, WS-09 §5)", async () => {
+  const requestId = "elicit-2";
+  const { proc, writes } = recordingProcessWithControlRequestPayload("mcp_elicitation", requestId, { serverName: "fixture", message: "hi?" });
+  for await (const _msg of query({ prompt: "hi", options: { spawnClaudeCodeProcess: () => proc } })) {
+    /* drain */
+  }
+  const response = decodeControlResponse(writes, requestId);
+  expect(response?.ok).toBe(false);
+  expect(response?.error?.code).toBe("unhandled_subtype");
+});
+
+test("mcp_elicitation: a callback returning bare null declines deterministically (DELIBERATE safety deviation from the pinned hang-trap -- see Options.onElicitation's own header)", async () => {
+  const requestId = "elicit-3";
+  const onElicitation = async () => null;
+  const { proc, writes } = recordingProcessWithControlRequestPayload("mcp_elicitation", requestId, { serverName: "fixture", message: "hi?" });
+  for await (const _msg of query({ prompt: "hi", options: { onElicitation, spawnClaudeCodeProcess: () => proc } })) {
+    /* drain */
+  }
+  const response = decodeControlResponse(writes, requestId);
+  expect(response?.ok).toBe(true); // never a hang, never an unanswered request
+  expect(response?.payload).toEqual({ action: "decline" });
+});
+
+test("mcp_elicitation: a throwing callback fails closed to a decline, never an unanswered request", async () => {
+  const requestId = "elicit-4";
+  const onElicitation = async () => {
+    throw new Error("boom");
+  };
+  const { proc, writes } = recordingProcessWithControlRequestPayload("mcp_elicitation", requestId, { serverName: "fixture", message: "hi?" });
+  for await (const _msg of query({ prompt: "hi", options: { onElicitation, spawnClaudeCodeProcess: () => proc } })) {
+    /* drain */
+  }
+  const response = decodeControlResponse(writes, requestId);
+  expect(response?.ok).toBe(true);
+  expect(response?.payload).toEqual({ action: "decline" });
+});
 
 test("runtime-originated control_request reaches a registered handler; the response lands runtime-side", async () => {
   const requestId = "probe-1";

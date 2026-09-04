@@ -3,7 +3,7 @@ import type { SdkMessage as RuntimeSdkMessage, WinterFrame, InitFrame, ControlRe
 import { PROTOCOL_VERSION } from "./protocol/frames.ts";
 import { splitFrames, encodeFrame, ProtocolError } from "./protocol/codec.ts";
 import type { RuntimeConfig, RuntimeHooksConfig, RuntimeHookMatcherGroup, McpServerConfigForProcessTransport } from "./protocol/config.ts";
-import type { Options, McpServerConfig } from "./options.ts";
+import { isWinterMcpServerInstance, type Options, type McpServerConfig } from "./options.ts";
 import type {
   PermissionMode,
   CanUseTool,
@@ -94,19 +94,126 @@ function hookIdFor(event: string, source: "sdk", groupIndex: number, hookIndex: 
 // variant (stdio/http/sse) is already structurally identical at both layers (options.ts's own
 // header) and passes through completely unchanged.
 //
-// NOTED PLAN GAP (task-2-report.md): the bridging that would make an SDK-type entry's `instance`
-// actually reachable/callable from the spawned runtime process (an `mcp_message`-style
-// control-request bridge) is unbuilt on EITHER side of this boundary in this phase — no Phase 4
-// task's file list names query.ts for a host-side "mcp_message" handler (Task 3 owns rpc/*, Lane A
-// owns mcp/*); this function only guarantees the wire shape is safe and correct, it does not make an
-// SDK-type entry's tools actually callable end-to-end.
+// GAP CLOSED (Phase 4 Task 3, WS-04 addendum): task-2-report.md's own "PLAN GAP" concern named
+// exactly this bridging as unbuilt. It is now built in two halves: this function additionally
+// populates the wire-safe `tools` array (WireMcpToolDefinition, protocol/config.ts) whenever the
+// live `instance` structurally implements `WinterMcpServerInstance` (duck-typed — options.ts's own
+// `isWinterMcpServerInstance`), so a spawned runtime process that never sees the live instance
+// object still learns what tools the server has; `makeSdkMcpCallHandler` below is the other half —
+// the runtime forwards a call for one of those tools back over the wire as an `sdk_mcp_call`
+// control_request, and THIS function answers it by invoking the instance directly. An `instance`
+// that does NOT implement the interface (e.g. query.test.ts's own wire-stripping fixture,
+// `{ notJsonSafe: () => {} }`) produces the EXACT SAME `{type:"sdk", name, timeout}` shape as
+// before this task — the tool-discovery gap is closed additively, never by requiring every caller
+// to adopt the new interface.
 function toWireMcpServers(servers: Record<string, McpServerConfig> | undefined): Record<string, McpServerConfigForProcessTransport> | undefined {
   if (!servers) return undefined;
   const out: Record<string, McpServerConfigForProcessTransport> = {};
   for (const [name, cfg] of Object.entries(servers)) {
-    out[name] = cfg.type === "sdk" ? { type: "sdk", name: cfg.name, ...(cfg.timeout !== undefined ? { timeout: cfg.timeout } : {}) } : cfg;
+    out[name] =
+      cfg.type === "sdk"
+        ? {
+            type: "sdk",
+            name: cfg.name,
+            ...(cfg.timeout !== undefined ? { timeout: cfg.timeout } : {}),
+            ...(isWinterMcpServerInstance(cfg.instance) ? { tools: cfg.instance.listTools() } : {}),
+          }
+        : cfg;
   }
   return out;
+}
+
+// Phase 4 Task 3 (WS-04 addendum): the runtime-originated `sdk_mcp_call` responder — the "other
+// half" of the bridge described above. `mcpServers` here is the HOST-facing `Options.mcpServers`
+// (never the wire-stripped `RuntimeConfig.mcpServers`): this handler needs the LIVE `instance` the
+// wire copy deliberately never carries. Symmetric error taxonomy with makeHookHandler/
+// makePermissionHandler above: every failure mode is a structured `{ok:false, error:{code,
+// message}}`, never a thrown exception or a dropped request — WS-04 §3.1's own "a structured error,
+// never a dropped request."
+interface SdkMcpCallRequestPayload {
+  server?: string;
+  tool?: string;
+  arguments?: Record<string, unknown>;
+}
+function makeSdkMcpCallHandler(mcpServers: Record<string, McpServerConfig>): ControlRequestHandler {
+  return async (payload: unknown): Promise<ControlRequestHandlerResult> => {
+    const req = payload as SdkMcpCallRequestPayload;
+    const cfg = req.server !== undefined ? mcpServers[req.server] : undefined;
+    if (!cfg || cfg.type !== "sdk") {
+      return { ok: false, error: { code: "unknown_sdk_server", message: `no in-process SDK server named '${String(req.server)}' is configured` } };
+    }
+    if (!isWinterMcpServerInstance(cfg.instance)) {
+      return {
+        ok: false,
+        error: {
+          code: "instance_not_callable",
+          message: `server '${req.server}'s instance does not implement listTools()/callTool() (WinterMcpServerInstance) -- it is wire-safe but not end-to-end callable`,
+        },
+      };
+    }
+    try {
+      const result = await cfg.instance.callTool(req.tool ?? "", req.arguments ?? {});
+      return { ok: true, payload: result };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { ok: false, error: { code: "sdk_tool_threw", message } };
+    }
+  };
+}
+
+// Phase 4 Task 3 (WS-09 §5): the runtime-originated `mcp_elicitation` responder — registered ONLY
+// when `Options.onElicitation` is configured, mirroring makePermissionHandler's/makeHookHandler's
+// own "no callback = no handler" posture (from the runtime's point of view, an unregistered subtype
+// and "a subtype whose handler never gets a chance to answer" collapse to the identical wire
+// outcome: the generic `unhandled_subtype` fallback below). See Options.onElicitation's own header
+// for the deliberate, named null-decline safety deviation from the pinned artifact's hang-trap.
+interface McpElicitationRequestPayload {
+  serverName?: string;
+  message?: string;
+  mode?: "form" | "url";
+  url?: string;
+  elicitationId?: string;
+  requestedSchema?: Record<string, unknown>;
+  title?: string;
+  displayName?: string;
+  description?: string;
+}
+function makeElicitationHandler(onElicitation: NonNullable<Options["onElicitation"]>, abortController: AbortController | undefined): ControlRequestHandler {
+  return async (payload: unknown): Promise<ControlRequestHandlerResult> => {
+    const req = payload as McpElicitationRequestPayload;
+    const controller = new AbortController();
+    if (abortController?.signal.aborted) controller.abort();
+    else abortController?.signal.addEventListener("abort", () => controller.abort(), { once: true });
+
+    let result: Awaited<ReturnType<NonNullable<Options["onElicitation"]>>>;
+    try {
+      result = await onElicitation(
+        {
+          serverName: req.serverName ?? "",
+          message: req.message ?? "",
+          ...(req.mode !== undefined ? { mode: req.mode } : {}),
+          ...(req.url !== undefined ? { url: req.url } : {}),
+          ...(req.elicitationId !== undefined ? { elicitationId: req.elicitationId } : {}),
+          ...(req.requestedSchema !== undefined ? { requestedSchema: req.requestedSchema } : {}),
+          ...(req.title !== undefined ? { title: req.title } : {}),
+          ...(req.displayName !== undefined ? { displayName: req.displayName } : {}),
+          ...(req.description !== undefined ? { description: req.description } : {}),
+        },
+        { signal: controller.signal, requestId: randomUUID() },
+      );
+    } catch (err) {
+      // Same posture as makeHookHandler's own callback-throw handling: the runtime still gets a
+      // well-formed, deterministic answer -- a decline -- never an ok:false that could be confused
+      // with "no handler at all" (WS-09 §5's own MUST: "a defined decline result... never a hang").
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`winter: onElicitation callback threw for server '${req.serverName}': ${message} -- declining deterministically`);
+      return { ok: true, payload: { action: "decline" } };
+    }
+    // DELIBERATE SAFETY DEVIATION (Options.onElicitation's own header): a bare `null` here is an
+    // automatic decline, never a hang -- this callback has no out-of-band response escape hatch, so
+    // there is no "already answered elsewhere" case for a null to legitimately mean here.
+    return { ok: true, payload: result ?? { action: "decline" } };
+  };
 }
 
 // Builds the wire-safe RuntimeConfig.hooks shape from a real Options.hooks value — undefined when
@@ -493,6 +600,16 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
   // own registration guard immediately above).
   if (options.hooks && Object.keys(options.hooks).length > 0) {
     controlRequestHandlers.set("hook", makeHookHandler(options.hooks, config.cwd, options.abortController));
+  }
+  // Phase 4 Task 3 (WS-04 addendum): registered whenever AT LEAST ONE configured server is
+  // `type: "sdk"` -- regardless of whether ITS OWN instance turns out callable, since
+  // makeSdkMcpCallHandler's own per-request lookup already reports a more specific
+  // `instance_not_callable` error than the generic `unhandled_subtype` fallback would.
+  if (options.mcpServers && Object.values(options.mcpServers).some((cfg) => cfg.type === "sdk")) {
+    controlRequestHandlers.set("sdk_mcp_call", makeSdkMcpCallHandler(options.mcpServers));
+  }
+  if (options.onElicitation) {
+    controlRequestHandlers.set("mcp_elicitation", makeElicitationHandler(options.onElicitation, options.abortController));
   }
 
   // Stderr is diagnostics only, never frames (WS-04 §6) — forwarded eagerly, independent of

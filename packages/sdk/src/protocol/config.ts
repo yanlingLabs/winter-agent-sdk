@@ -115,10 +115,36 @@ export interface McpSSEServerConfig {
   timeout?: number;
   alwaysLoad?: boolean;
 }
+// Phase 4 Task 3 (WS-04 addendum -- "sdk_mcp_call host-side bridge", ledgered in T2's own report
+// concern 1 "PLAN GAP"): a JSON-safe mirror of registry.ts's own McpToolDefinition, WINTER-OWNED and
+// NOT part of the pinned official declaration (which has no `tools[]` field on this variant at all --
+// see McpSdkServerConfig's own comment). This is what closes the actual gap T2 flagged: an
+// `Options.mcpServers` entry of `type: "sdk"` has its live `instance` stripped before crossing this
+// package's OWN --config-json wire (query.ts's toWireMcpServers, unchanged behavior for that field),
+// but with NO tool list at all the spawned runtime process (the child/compiled legs, which never see
+// the live instance object) had no way to know the server has any tools to register in the first
+// place -- `sdk_mcp_call` alone bridges the CALL, never the DISCOVERY. `inputSchema`/`outputSchema`
+// are loosely typed (`Record<string, unknown>`) rather than importing registry.ts's own JSONSchema
+// type -- WS-02 §3 forbids this package from importing the runtime package, and a JSON Schema
+// object's own shape needs no runtime-side type to cross a wire losslessly.
+export interface WireMcpToolDefinition {
+  name: string;
+  description?: string;
+  inputSchema: Record<string, unknown>;
+  outputSchema?: Record<string, unknown>;
+  annotations?: { readOnlyHint?: boolean; destructiveHint?: boolean; openWorldHint?: boolean; title?: string; idempotentHint?: boolean };
+  _meta?: Record<string, unknown>;
+}
 export interface McpSdkServerConfig {
   type: "sdk";
   name: string;
-  timeout?: number; // no alwaysLoad, no tools[] -- an in-process SDK server's own "always load" knob is a per-tool _meta mechanism instead (see registry.ts's own ToolDescriptor.alwaysLoad)
+  timeout?: number; // no alwaysLoad, no tools[] on the PINNED official shape -- an in-process SDK server's own "always load" knob is a per-tool _meta mechanism instead (see registry.ts's own ToolDescriptor.alwaysLoad)
+  // Phase 4 Task 3, WINTER-OWNED EXTENSION (see WireMcpToolDefinition's own comment just above) --
+  // absent whenever the host's own `instance` doesn't structurally implement `listTools()` (see
+  // options.ts's own WinterMcpServerInstance), so every existing wire trace that carries a
+  // `type: "sdk"` entry with a non-conforming `instance` (e.g. query.test.ts's own stripping fixture)
+  // stays byte-identical to before this field existed.
+  tools?: WireMcpToolDefinition[];
 }
 export type McpServerConfigForProcessTransport = McpStdioServerConfig | McpHttpServerConfig | McpSSEServerConfig | McpSdkServerConfig;
 
@@ -234,4 +260,18 @@ export interface RuntimeConfig {
   toolAliases?: Record<string, string>;
   agents?: Record<string, RuntimeAgentDefinition>;
   forwardSubagentText?: boolean;
+  // Phase 4 Task 3 (WS-10 §7/§9, WS-07 §11): set ONLY on a CHILD engine's own RuntimeConfig -- a
+  // child is, per R4-4, an in-process `runEngine` instance built by Lane C's own ChildEngineDeps.spawn
+  // implementation from the spine's `buildChildInheritance`; these two fields are what let that child
+  // run identify itself AS a child to everything already keyed on `insideSubagent` (this field's own
+  // pre-existing sibling, above) plus the two things `insideSubagent` alone cannot express: WHICH
+  // child (for hook-audit/permission-call correlation, WS-07 §11's own "an agentID" precedent already
+  // threaded through HookStageDeps/RunHooksContext/PermissionCall/PromptStageMeta) and whether its
+  // filesystem root is pinned to an isolation workspace (WS-10 §8's `isolation: "worktree"` case) --
+  // absent for the main (non-child) engine, byte-identical to every session before these fields
+  // existed. Both are pure passthrough at the wire layer (query.ts never sets these for its own
+  // top-level `query()` call -- only Lane C's own child-spawn path would construct a RuntimeConfig
+  // carrying them).
+  agentId?: string;
+  isolationPinnedCwd?: boolean;
 }

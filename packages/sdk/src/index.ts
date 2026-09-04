@@ -14,6 +14,12 @@ export type { Options } from "./options.ts";
 // protocol/config.ts's own barrel entry below, to keep "the Options-facing MCP surface" one import
 // site for a host program.
 export type { McpServerConfig, McpSdkServerConfigWithInstance, McpServerToolPolicy, McpStdioServerConfig, McpHttpServerConfig, McpSSEServerConfig, McpSdkServerConfig, AgentDefinition } from "./options.ts";
+// Phase 4 Task 3 (WS-04 addendum, "sdk_mcp_call host-side bridge"): the structural contract an
+// in-process SDK server's `instance` MAY implement to be actually callable end-to-end (not merely
+// wire-safe) -- see options.ts's own header for why `instance` itself stays `unknown`.
+export { isWinterMcpServerInstance } from "./options.ts";
+export type { WinterMcpServerInstance } from "./options.ts";
+export type { WireMcpToolDefinition } from "./protocol/config.ts";
 export {
   WinterSDKError,
   CLIConnectionError,

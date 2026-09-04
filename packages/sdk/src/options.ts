@@ -41,6 +41,39 @@ export interface McpSdkServerConfigWithInstance extends McpSdkServerConfig {
 export type McpServerConfig = McpStdioServerConfig | McpHttpServerConfig | McpSSEServerConfig | McpSdkServerConfigWithInstance;
 export type { McpServerToolPolicy, McpStdioServerConfig, McpHttpServerConfig, McpSSEServerConfig, McpSdkServerConfig };
 
+// Phase 4 Task 3 (WS-04 addendum, "sdk_mcp_call host-side bridge"): `instance` stays `unknown` above
+// (T2's deviation 9's own reasoning holds unchanged -- no dependency added, no field retyped, the
+// existing query.test.ts stripping fixture's `{ notJsonSafe: () => {} }` still type-checks as
+// `instance` exactly as before). This is Winter's OWN, ADDITIONAL structural contract a caller's
+// `instance` MAY implement to make its tools actually reachable end-to-end (not merely wire-safe) --
+// query.ts's own sdk_mcp_call responder and toWireMcpServers duck-type-check for this shape at
+// runtime (isWinterMcpServerInstance) rather than the field's own declared type ever requiring it, so
+// a host that only cares about the (already-shipped) wire-safety guarantee pays no new type
+// obligation. `content`/`isError` loosely mirror the real MCP `CallToolResult` shape closely enough
+// for a host-authored adapter to wrap a real `@modelcontextprotocol/sdk` `McpServer` around this
+// interface (e.g. via an in-memory Client/Transport pair, exactly how T2's own winter-server.test.ts
+// already proves the real SDK's shape) without this package taking on that dependency itself.
+export interface WinterMcpServerInstance {
+  listTools(): Array<{
+    name: string;
+    description?: string;
+    inputSchema: Record<string, unknown>;
+    outputSchema?: Record<string, unknown>;
+    annotations?: { readOnlyHint?: boolean; destructiveHint?: boolean; openWorldHint?: boolean; title?: string; idempotentHint?: boolean };
+    _meta?: Record<string, unknown>;
+  }>;
+  callTool(name: string, args: Record<string, unknown>): Promise<{ content: unknown[]; isError?: boolean }>;
+}
+
+// Exported so query.ts's own two call sites (toWireMcpServers, makeSdkMcpCallHandler) and this
+// package's tests share the identical runtime check -- never two independently-written duck-type
+// guards that could silently drift apart on which methods are required.
+export function isWinterMcpServerInstance(value: unknown): value is WinterMcpServerInstance {
+  if (typeof value !== "object" || value === null) return false;
+  const candidate = value as { listTools?: unknown; callTool?: unknown };
+  return typeof candidate.listTools === "function" && typeof candidate.callTool === "function";
+}
+
 // --- Phase 4 Task 2 (WS-09 derived-shapes item (d)): the HOST-facing AgentDefinition ---------------
 //
 // Identical to protocol/config.ts's own wire-shaped `RuntimeAgentDefinition` on every field except
@@ -241,4 +274,37 @@ export interface Options {
   // text/thinking blocks as assistant/user messages carrying `parent_tool_use_id`, for a full nested
   // transcript. Absent/false preserves the pre-existing, already-shipped default behavior exactly.
   forwardSubagentText?: boolean;
+
+  // Phase 4 Task 3 (WS-09 §5; derived-shapes-p4.md item (f) rendering 3): the host-side elicitation
+  // callback -- "called when an MCP server requests user input and no [Elicitation] hook handles it."
+  // Never serialized into RuntimeConfig, same posture as `canUseTool`/`Options.hooks` above: it is a
+  // JS function, not wire-safe data. query.ts registers an `mcp_elicitation` control-request handler
+  // ONLY when this is set; absent means the runtime's own `bridge.request("mcp_elicitation", ...)`
+  // lands on the generic "no handler registered" fallback, which the runtime side maps to a
+  // DETERMINISTIC DECLINE (WS-09 §5's own MUST) -- never a hang, never a fabricated answer.
+  //
+  // DELIBERATE, NAMED SAFETY DEVIATION from the pinned artifact's own documented behavior
+  // (derived-shapes-p4.md item (f) Open Question 1): the pinned `OnElicitation` contract treats a
+  // bare `null` return as a HANG unless the consumer already answered out of band -- "an accidental
+  // null means no response is sent and the elicitation stays pending until the server times it out."
+  // Winter's own `query.ts` responder instead treats ANY `null` return as an automatic decline
+  // (mirrors the precedent WS-10 §10.4 already sets for inert `@`-mentions: an intentional,
+  // security/liveness-motivated waiver against the 2.1.250 baseline, recorded rather than silently
+  // reproduced) — this callback has no out-of-band response escape hatch at all, so "accidental null"
+  // and "deliberate decline" are the same signal here by construction, and the safer reading (never
+  // hang) is the one Winter ships.
+  onElicitation?: (
+    request: {
+      serverName: string;
+      message: string;
+      mode?: "form" | "url";
+      url?: string;
+      elicitationId?: string;
+      requestedSchema?: Record<string, unknown>;
+      title?: string;
+      displayName?: string;
+      description?: string;
+    },
+    options: { signal: AbortSignal; requestId: string },
+  ) => Promise<{ action: "accept" | "decline" | "cancel"; content?: Record<string, unknown> } | null>;
 }
