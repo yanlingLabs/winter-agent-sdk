@@ -128,6 +128,15 @@ function classifyConnectError(err: unknown): McpConnectError {
   if (err instanceof McpConnectError) return err;
   if (err instanceof UnauthorizedError) return new McpConnectError("needs_auth", err.message);
   if (err instanceof McpError && err.code === ErrorCode.RequestTimeout) return new McpConnectError("timeout", err.message);
+  // A bare 401 with NO authProvider configured (this connector never configures one) does NOT
+  // throw `UnauthorizedError` from these two transports -- verified empirically against the real
+  // SDK: that class is reserved for the case an authProvider EXISTS but authorization still fails.
+  // An unauthenticated 401 instead surfaces as an ordinary `StreamableHTTPError`/`SseError` whose
+  // own `code` carries the HTTP status -- checked here so a server that requires auth Winter has no
+  // credentials for still lands in WS-09 §2.1's `needsAuth` state, not a generic "failed".
+  if ((err instanceof StreamableHTTPError || err instanceof SseError) && err.code === 401) {
+    return new McpConnectError("needs_auth", err.message);
+  }
   if (err instanceof StreamableHTTPError || err instanceof SseError) return new McpConnectError("handshake_failed", err.message);
   const message = err instanceof Error ? err.message : String(err);
   // Node's own child_process spawn failure shape (verified empirically: `ENOENT: no such file or

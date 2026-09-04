@@ -213,6 +213,26 @@ describe("connectMcpServer: error classification", () => {
     expect((error as McpConnectError).code).toBe("spawn_failed");
   });
 
+  test("an HTTP 401 (auth required, no authProvider configured) classifies as needs_auth (WS-09 §2.1's 'needsAuth' state)", async () => {
+    // Verified against the real SDK's own source before writing this test:
+    // StreamableHTTPClientTransport throws UnauthorizedError('No auth provider') the moment a
+    // request comes back 401 and no authProvider was configured -- this connector never configures
+    // one (WS-09 doesn't ask Lane A to implement an OAuth flow), so any 401-gated server lands here.
+    const authServer = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("unauthorized", { status: 401 }) });
+    try {
+      let error: unknown;
+      try {
+        await connectMcpServer({ name: "s", config: { type: "http", url: `http://127.0.0.1:${authServer.port}/mcp` }, connectTimeoutMs: 2000, elicitationAsk: NO_ELICIT });
+      } catch (err) {
+        error = err;
+      }
+      expect(error).toBeInstanceOf(McpConnectError);
+      expect((error as McpConnectError).code).toBe("needs_auth");
+    } finally {
+      authServer.stop(true);
+    }
+  });
+
   test("a fully unresponsive http server classifies as timeout, bounded by connectTimeoutMs (not left hanging)", async () => {
     const hungServer = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Promise<Response>(() => {}) });
     try {

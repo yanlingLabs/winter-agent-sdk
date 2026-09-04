@@ -194,6 +194,21 @@ describe("createMcpLifecycle: the seven-state model driven by real connections",
     }
   });
 
+  test("a server requiring auth (401, no authProvider configured) lands in the 'needsAuth' state, not 'failed'", async () => {
+    const authServer = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("unauthorized", { status: 401 }) });
+    const resolved: ResolvedMcpServerEntry[] = [{ name: "gated", origin: "explicit", config: { type: "http", url: `http://127.0.0.1:${authServer.port}/mcp` } }];
+    const lifecycle = createMcpLifecycle({ servers: resolved, envConfig: fastEnv(), elicitationAsk: NO_ELICIT });
+    try {
+      await lifecycle.start();
+      await lifecycle.stateSource.waitForPending(undefined, 500);
+      expect(lifecycle.stateSource.snapshot()).toEqual([{ name: "gated", state: "needsAuth", toolNames: [], errorCode: "needs_auth", error: expect.any(String) as unknown as string }]);
+      expect(getRegisteredTool("mcp__gated__anything")).toBeUndefined();
+    } finally {
+      await lifecycle.dispose();
+      authServer.stop(true);
+    }
+  });
+
   test("an sdk-with-instance connection is always awaited by start(), regardless of alwaysLoad (which does not exist on McpSdkServerConfig at all)", async () => {
     const server = createFixtureMcpServer(defaultFixtureSpec());
     const resolved: ResolvedMcpServerEntry[] = [{ name: "eager", origin: "explicit", config: { type: "sdk", name: "eager" } }];
