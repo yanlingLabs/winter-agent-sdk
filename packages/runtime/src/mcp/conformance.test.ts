@@ -180,7 +180,7 @@ const ITEM_4: ConformanceRow[] = [
     spec: "WS-09 §11.4",
     bullet: "the interaction requirement forces interactive handling over a matching allow rule, and dontAsk denies it",
     status: "covered",
-    citations: [{ file: "../permissions/evaluator.test.ts", testName: "requiresInteraction" }],
+    citations: [{ file: "../permissions/evaluator.test.ts", testName: "no matching rule: matchedAskRule is absent, but decisionReason still names the mandatory interaction" }],
     note:
       "The evaluator's stage-3 mandatory-interaction gate is where this rule actually lives, and it is unit-tested there against the injected `requiresInteraction` seam. engine.ts fills that seam with a LIVE registry read (`getRegisteredTool(name)?.descriptor.interaction === 'required'`), so a server registered mid-session is reflected on the very next evaluate() with no engine-side cache to go stale -- the two halves compose without a third fixture.",
   },
@@ -365,7 +365,7 @@ const ITEM_8: ConformanceRow[] = [
     spec: "WS-09 §11.8",
     bullet: "the native schema stays advertised under an alias (an alias never replaces the model-visible schema)",
     status: "new",
-    citations: [{ file: "../tools/registry.test.ts", testName: "mirrors ${native}'s own input schema" }],
+    citations: [{ file: "../tools/registry.test.ts", testName: "is registered, declared deferred:true AT THE SOURCE, and mirrors" }],
     note:
       "The Winter branch satisfies this structurally rather than by configuration: the canonical `mcp__winter__send_message`/`mcp__winter__list_agents` descriptors this task created (rider 15) MIRROR the native input schemas byte-for-byte and are backed by the SAME executor object, so 'an alias target MUST accept the native arguments exactly' cannot drift. The cited test asserts both facts (schema equality and executor identity).",
   },
@@ -500,7 +500,7 @@ const ITEM_11: ConformanceRow[] = [
     spec: "WS-09 §11.11",
     bullet: "the `winter` server name is RESERVED against live registration (RULING P4-B)",
     status: "covered",
-    citations: [{ file: "../tools/registry.test.ts", testName: "RESERVED" }],
+    citations: [{ file: "../tools/registry.test.ts", testName: "the reserved-name guard fires even for an EMPTY tool list -- ahead of the empty-list no-op shortcut," }],
   },
   {
     id: "WS09-11c",
@@ -565,6 +565,23 @@ describe("WS-09 §11 conformance matrix (Phase 4 Task 8)", () => {
           occurrences >= required,
           `${row.id}: citation not found -- ${c.file} does not contain ${required} occurrence(s) of "${c.testName}" (found ${occurrences})`,
         ).toBe(true);
+      }
+    }
+  });
+
+  // Phase 4 Task 8 (advisor finding): a SHORT citation substring defeats the tripwire above -- "to",
+  // "name", "@" or "fork" would match almost any file and would survive the cited test being deleted,
+  // which is the exact rot this matrix exists to prevent. A minimum length makes the guard's own
+  // strength a checked property rather than a matter of the author's care. The one deliberate
+  // exception is a citation into a committed GOLDEN (a .json file), where the cited substring is a
+  // content pin rather than a test title. The bound is 18 rather than something rounder because two
+  // genuine, COMPLETE test titles are that short ("stale name -> refused", "cached counts as ready");
+  // the bound exists to reject one-word fragments, not to force titles to be verbose.
+  test("every citation substring is specific enough to be a real tripwire (never a one-word match)", () => {
+    for (const row of ALL_ROWS) {
+      for (const c of row.citations ?? []) {
+        if (c.file.endsWith(".json")) continue;
+        expect(c.testName.length, `${row.id}: citation "${c.testName}" (${c.file}) is too short to discriminate`).toBeGreaterThanOrEqual(18);
       }
     }
   });

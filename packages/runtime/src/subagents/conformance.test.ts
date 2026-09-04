@@ -35,8 +35,8 @@ const ROWS: ConformanceRow[] = [
     bullet: "the exact model-visible SendMessage/ListAgents schemas",
     status: "covered",
     citations: [
-      { file: "../tools/impl/send-message.test.ts", testName: "to" },
-      { file: "../tools/impl/list-agents.test.ts", testName: "listing" },
+      { file: "../tools/impl/send-message.test.ts", testName: "to over 300 chars is a validation error" },
+      { file: "../tools/impl/list-agents.test.ts", testName: "output is exactly {listing: string} (WS-10 §10.2 pinned shape), never the structured rows" },
     ],
     note:
       "CAPTURE NOTE (scripts/capture-official-golden.ts Scenario D, this task): derived-shapes-p4 item (e) recorded both schemas as DECLARATION-absent from the pinned artifact, and the capture adds the runtime half -- the official default session DOES advertise `SendMessage` and `ListAgents` to the model. So Winter advertising them is right; only the schema TEXT has no upstream declaration to mirror, which is why WS-10 §10.1/§10.2's own pinned shapes are the authority here rather than the artifact.",
@@ -59,7 +59,7 @@ const ROWS: ConformanceRow[] = [
     bullet: "direct/internal official calls cannot bypass the common deny floor",
     status: "deferred",
     owningPhase:
-      "The 'official/internal call path' this clause guards against is the [WS-14] Claude-branch surface, which does not exist in this repository -- WS-09 §10 states the reason plainly ('aliases are not a security boundary... disallowedTools remains the enforcement mechanism for those paths'). Winter's own equivalent floor IS proven: the engine applies BASELINE_DENY_RULES unconditionally and a forced-bypass CHILD still honours its parent's deny rules (see row WS10-14).",
+      "The 'official/internal call path' this clause guards against is the [WS-14] Claude-branch surface, which does not exist in this repository -- WS-09 §10 states the reason plainly ('aliases are not a security boundary... disallowedTools remains the enforcement mechanism for those paths'). Winter's own equivalent floor IS proven: the engine applies BASELINE_DENY_RULES unconditionally and a forced-bypass CHILD still honours its parent's deny rules (see row WS10-25).",
   },
 
   // --- addressing / resolution ------------------------------------------------------------------
@@ -210,7 +210,7 @@ const ROWS: ConformanceRow[] = [
     spec: "WS-10 §16 / §10.4",
     bullet: "inert `@` mentions, including the recorded 2.1.250 non-equivalence (a deliberate, security-motivated waiver)",
     status: "covered",
-    citations: [{ file: "../messaging/reference-adapter.test.ts", testName: "@" }],
+    citations: [{ file: "../messaging/reference-adapter.test.ts", testName: "@-mentions and slash-command-shaped text inside `message` are delivered byte-identically -- never expanded" }],
     note:
       "True by construction (nothing in messaging/** or the three tool executors parses `@` or `/` inside a body -- it flows as an opaque string into GlobalAgentMessage.body) AND directly pinned by Lane D's own fix-round rider test, which sends `@file.ts`/`/command`-shaped text through a full sendMessage call and asserts the delivered body is BYTE-IDENTICAL, not merely 'contains'.",
   },
@@ -238,7 +238,7 @@ const ROWS: ConformanceRow[] = [
     citations: [
       { file: "./fork.test.ts", testName: "fork messages are copied verbatim, in order" },
       { file: "./fork.test.ts", testName: "the returned array is a genuine COPY -- mutating it never touches the original inherit.messages" },
-      { file: "../engine.test.ts", testName: "fork" },
+      { file: "../engine.test.ts", testName: "(b) inherit.messages is present iff fork:true, both directions, within the same run" },
     ],
   },
 
@@ -284,7 +284,7 @@ const ROWS: ConformanceRow[] = [
     bullet: "an OUTSTANDING host control request is not inactivity -- the progress clock pauses while one is unanswered",
     status: "new",
     citations: [
-      { file: "./watchdog.test.ts", testName: "pause" },
+      { file: "./watchdog.test.ts", testName: "pause() stops the clock: no fire even well past the timeout, and resume() restarts it" },
       { file: "./child-engine.test.ts", testName: "rider 20 complement: a child with NO outstanding host request that makes no progress is still aborted by the watchdog" },
     ],
     note:
@@ -311,7 +311,7 @@ const ROWS: ConformanceRow[] = [
     status: "new",
     citations: [
       { file: "../../../sdk/src/transport-equivalence.test.ts", testName: "rider 25: a real subagent spawn round (Agent -> child -> result) is identical on every leg, and the child's frames are correlated, never flattened" },
-      { file: "./child-handle.test.ts", testName: "parent_tool_use_id" },
+      { file: "./child-handle.test.ts", testName: "assistant tool_use is ALWAYS forwarded, stamped with parent_tool_use_id, even with forwardSubagentTe" },
     ],
     note:
       "RULING P4-J(c) / rider 23 is enforced in the same path: a child's DATA-WRAPPED system/init is now swallowed alongside the wire-level init frame, because derived-shapes-p4 §(d) establishes that SDKSystemMessage carries no parent_tool_use_id -- a forwarded child init would be structurally uncorrelatable and would impersonate the session identity frame. The equivalence scenario asserts exactly one system/init and one result on the parent's stream.",
@@ -323,7 +323,7 @@ const ROWS: ConformanceRow[] = [
     status: "covered",
     citations: [
       { file: "./child-engine.test.ts", testName: "resume() applies the stricter-of comparator when the parent's current policy is stricter than the recorded one" },
-      { file: "../permissions/auto/inheritance.test.ts", testName: "resolveChildResumeMode" },
+      { file: "../permissions/auto/inheritance.test.ts", testName: "resolveChildResumeMode refuses both directions -- never silently widens (recorded dontAsk, current a" },
     ],
     note:
       "rider 26 is what makes this reachable in PRODUCTION: `resolveChildResumeMode` had ZERO call sites anywhere in the repository (policyStateStore is a runEngine local and no seam exposed it), so WS-10 §9's MUST was undelivered by anything, not merely under-exercised. `ChildEngineRunContext.getParentPolicy` -- read fresh per call, never a spawn-time snapshot -- is the missing seam.",
@@ -380,7 +380,7 @@ const ROWS: ConformanceRow[] = [
     spec: "WS-10 §8",
     bullet: "isolation: \"remote\" is a typed unsupported-capability error until a remote backend is configured",
     status: "covered",
-    citations: [{ file: "../tools/impl/agent.test.ts", testName: "remote" }],
+    citations: [{ file: "../tools/impl/agent.test.ts", testName: "isolation:\"remote\"" }],
   },
 
   // --- task namespace -----------------------------------------------------------------------------
@@ -389,7 +389,7 @@ const ROWS: ConformanceRow[] = [
     spec: "WS-12 §7.3 / rider 24",
     bullet: "TaskStop / TaskOutput reach a BACKGROUND AGENT task through the unified task namespace",
     status: "new",
-    citations: [{ file: "../tools/impl/agent.test.ts", testName: "rider 24" }],
+    citations: [{ file: "../tools/impl/agent.test.ts", testName: "the spawned task is registered with kind 'agent' and a stop callback, and TaskStop genuinely aborts the child" }],
     note:
       "Lane C disclosed the asymmetry ('TaskStop/TaskOutput do not reach background agent tasks'). The mechanical blocker was that background-task-runtime.ts's own BackgroundTaskKind union ('bash'|'monitor') was a strict SUBSET of the spine seam's four-member one, so an agent task allocated through createBackgroundTask('agent') could not be tracked in the registry those two tools are built on. Widened, and the agent task now registers with a generic `stop` callback rather than a pid -- a child is an in-process engine loop (R4-4), so there is no process group to signal.",
   },
@@ -401,8 +401,8 @@ const ROWS: ConformanceRow[] = [
     bullet: "`name` capability gating -- accepted host-side, withheld from the model schema until captured",
     status: "new",
     citations: [
-      { file: "../tools/descriptors/agent.ts", testName: "DELIBERATELY ABSENT from the model-visible schema" },
-      { file: "../tools/impl/agent.test.ts", testName: "name" },
+      { file: "../tools/descriptors/agent.ts", testName: "`name` is DELIBERATELY ABSENT from the model-visible schema" },
+      { file: "../tools/impl/agent.test.ts", testName: "model/isolation:worktree/name pass through to the SpawnChildRequest untouched" },
     ],
     note:
       "ANSWERED BY CAPTURE, not merely implemented. scripts/capture-official-golden.ts Scenario D (pinned 0.3.250, loopback-only) reports the Agent tool's own model-visible input_schema as exactly {description, prompt, subagent_type, model(enum of 4), run_in_background, isolation(enum of 2)}, required [description, prompt], additionalProperties:false -- and NO `name`. That is §17 OQ1's own evidence gap closed, and it confirms RULING P4-J(d) verbatim. Winter's descriptor now matches that shape exactly while the executor still accepts `name` host-side.",
@@ -464,6 +464,23 @@ describe("WS-10 §16 conformance matrix (Phase 4 Task 8)", () => {
           occurrences >= required,
           `${row.id}: citation not found -- ${c.file} does not contain ${required} occurrence(s) of "${c.testName}" (found ${occurrences})`,
         ).toBe(true);
+      }
+    }
+  });
+
+  // Phase 4 Task 8 (advisor finding): a SHORT citation substring defeats the tripwire above -- "to",
+  // "name", "@" or "fork" would match almost any file and would survive the cited test being deleted,
+  // which is the exact rot this matrix exists to prevent. A minimum length makes the guard's own
+  // strength a checked property rather than a matter of the author's care. The one deliberate
+  // exception is a citation into a committed GOLDEN (a .json file), where the cited substring is a
+  // content pin rather than a test title. The bound is 18 rather than something rounder because two
+  // genuine, COMPLETE test titles are that short ("stale name -> refused", "cached counts as ready");
+  // the bound exists to reject one-word fragments, not to force titles to be verbose.
+  test("every citation substring is specific enough to be a real tripwire (never a one-word match)", () => {
+    for (const row of ROWS) {
+      for (const c of row.citations ?? []) {
+        if (c.file.endsWith(".json")) continue;
+        expect(c.testName.length, `${row.id}: citation "${c.testName}" (${c.file}) is too short to discriminate`).toBeGreaterThanOrEqual(18);
       }
     }
   });
