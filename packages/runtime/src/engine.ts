@@ -427,8 +427,16 @@ export function buildBaselineDenyRules(): SourcedRuleEntry[] {
     // WRITE-SIDE ONLY, deliberately, and this is the load-bearing scoping decision: the `.output`
     // stub path is a MODEL-FACING contract (Lane C's M1 fix, WS-12 §7.2 "return the durable
     // transcript path through the tool result"), so denying READS here would regress a shipped
-    // behaviour to close a write hole. Read/Glob/Grep on `~/.winter/projects/**` therefore stay
+    // behaviour to close a write hole. `Read`/`Glob`/`Grep` on `~/.winter/projects/**` therefore stay
     // allowed, and a test pins that they do.
+    //
+    // "Read/Glob/Grep stay allowed", NOT "reads stay allowed" (NEW-7): a Bash `cp`/`mv` naming a
+    // protected path as its SOURCE is denied too, because `recognizeEditOperation` reports every
+    // operand of a blessed fs-op as a write-path candidate and cannot tell a source from a
+    // destination. Erring strict is right -- the same command with its operands swapped IS a write --
+    // but it is a deliberate consequence, pinned in baseline-projects-deny.test.ts rather than left
+    // to be discovered. A plain `cat` of the same file is unaffected, which is what actually keeps
+    // the `.output` stub's contract alive.
     //
     // Bash-shaped writes to the same paths are covered too, through `findFileDenyBlockingEdit`
     // (evaluator.ts), which extends the pre-existing "a Read deny also blocks Edit/Write on the same

@@ -105,7 +105,7 @@ describe("M13: writes under ~/.winter/projects are denied, even under bypassPerm
   });
 });
 
-describe("M13 scoping: READS stay allowed, because the .output stub hands the model these paths", () => {
+describe("M13 scoping: Read/Glob/Grep stay allowed, because the .output stub hands the model these paths", () => {
   // The load-bearing half of the scoping decision. `tools/impl/agent.ts`'s `.output` stub prints the
   // child's absolute transcript path and tells the model to "Read that file directly" (Lane C's M1
   // fix, WS-12 §7.2). A read deny here would close M13's write hole by regressing a shipped
@@ -123,6 +123,23 @@ describe("M13 scoping: READS stay allowed, because the .output stub hands the mo
       expect(notRuleDenied(out), `${tool} must not be RULE-denied: ${out.message ?? out.decision}`).toBe(true);
     });
   }
+
+  // NEW-7 (residual round), the precision this scoping claim needs: it is "Read/Glob/Grep stay
+  // allowed", NOT "reads stay allowed". A Bash `cp`/`mv` naming a protected path as its SOURCE is a
+  // read in intent, but `recognizeEditOperation` reports every operand of a blessed fs-op as a write
+  // path (it cannot tell a source from a destination for the deny check), so the floor denies it.
+  // That is the right side to err on -- `cp` with the operands swapped IS a write -- but it is a
+  // deliberate consequence rather than an accident, so it is pinned here. A plain `cat` of the same
+  // file is unaffected, which is what actually keeps the `.output` stub's contract alive.
+  test("NEW-7: a Bash `cp` naming a protected path as its SOURCE is denied, while `cat` of the same file is not", async () => {
+    const cp = await decide({ toolName: "Bash", input: { command: `cp ${TRANSCRIPT} /tmp/copy.jsonl` }, toolUseId: "n7a" });
+    expect(cp.decision, "cp's operands are all write-path candidates -- the floor errs strict").toBe("deny");
+    const mv = await decide({ toolName: "Bash", input: { command: `mv ${TRANSCRIPT} /tmp/moved.jsonl` }, toolUseId: "n7b" });
+    expect(mv.decision).toBe("deny");
+    // The read the `.output` stub's contract actually depends on: no RULE denies it.
+    const cat = await decide({ toolName: "Bash", input: { command: `cat ${TRANSCRIPT}` }, toolUseId: "n7c" }, "default");
+    expect(notRuleDenied(cat), `cat must not be RULE-denied: ${cat.message ?? cat.decision}`).toBe(true);
+  });
 
   test("...while ~/.winter/run stays unreadable through all three read tools (the pre-existing floor)", async () => {
     for (const [tool, input] of [
