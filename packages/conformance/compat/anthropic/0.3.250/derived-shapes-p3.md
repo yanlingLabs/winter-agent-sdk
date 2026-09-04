@@ -42,7 +42,10 @@ shapes, unlike several of P2's).
 
 ## (a) The six shapes' membership in the top-level `SDKMessage` union
 
-**Source**: `sdk.d.ts:4399`, the full `SDKMessage` union declaration (41 members). All six shapes
+**Source**: `sdk.d.ts:4399`, the full `SDKMessage` union declaration (39 members — corrected from
+"41" in the P4 fix wave, KNOWN (5); re-counted by splitting that single declaration line on `|` in
+an ephemeral re-extraction of the same verified tarball, which was deleted immediately afterwards).
+All six shapes
 this task pins appear there as **direct, top-level members** — never nested inside another
 variant's field — confirming each is independently discriminable on its own `.subtype`, the same
 guarantee the hook trio (P2) already established for its own three members.
