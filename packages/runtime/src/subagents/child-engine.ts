@@ -51,9 +51,48 @@
 // and independently tested -- but tools/impl/agent.ts always passes `undefined` for it today. Fixing
 // this needs one new field on `ToolExecutionContext` (registry.ts) plus one conditional-spread line
 // in engine.ts's `buildDefaultToolExecutor`, both outside this lane's file authority.
+//
+// --- Fix round 1 (controller review): two in-authority defects found and closed -----------------
+//
+// (C1, CRITICAL) `AgentDefinition.prompt` -- "System prompt of the child" (WS-10 §2) -- was parsed,
+// validated, and persisted, but never actually DELIVERED to the child: `firstTurnText` below
+// concatenated only `initialPrompt` + `req.prompt`. A `subagent_type` child ran with no persona at
+// all. RULING P4-J (controller): until P5 lands the engine's real system-prompt channel
+// (`Provider.generate` takes `{messages}` only -- no `system` parameter, engine.ts:200-202 -- so the
+// first-user-turn concatenation is genuinely the only channel that exists), `definition.prompt` is
+// delivered as the LEADING, clearly-delimited block of the child's first turn, layered onto
+// `inherit.systemPrompt` (engine.ts's own `buildChildInheritance` sets this to `""` as "the honest
+// base a definition's own prompt is expected to be layered onto") so a future engine that starts
+// populating that field is composed with, never silently overridden by, a definition's own prompt.
+// Fixed below (`resolvedSystemPrompt`); a dedicated end-to-end test proves the definition body
+// reaches the child's own first provider call, in the pinned order prompt -> initialPrompt ->
+// req.prompt.
+//
+// (I1, IMPORTANT) The child `RuntimeConfig` silently dropped the parent's `permissions.{allow,ask,
+// deny}` rules and `hooks` -- WS-07 §11's "same rules... over child actions" was not delivered, and
+// -- the security-relevant direction -- a forced-bypass child (WS-07 §11 forces bypass onto every
+// descendant of a bypass parent) auto-approved exactly what the parent's own deny/ask rules forbid
+// (the hardcoded `BASELINE_DENY_RULES` floor still bound; the SESSION's own configured rules did
+// not). Undisclosed in this file's own otherwise-meticulous gap list -- an oversight, not a judgment
+// call, now fixed the same way `disableBypassPermissionsMode`/`forwardSubagentText` already were:
+// `parentPermissionRules`/`parentHooks`/`parentSandbox` are construction-time mirrors on
+// `ChildEngineFactoryDeps` below, applied to every child's own `RuntimeConfig`. This closes the
+// STATIC case (a host that configures rules/hooks at startup now binds every descendant); it does
+// NOT close the LIVE case -- a rule/hook change made to the parent's OWN session mid-run has no
+// channel to reach an already-registered factory (the identical root cause as gap (2) above); a
+// real per-spawn fix needs a `ChildEngineRunContext` field carrying the parent's CURRENT rules/hooks,
+// which is T8's seam to add.
+//
+// (M1, MINOR) `record.transcript` was a hand-built, relative store KEY (missing the `~/.winter/
+// projects/` prefix a real path needs) computed UNCONDITIONALLY -- including when no store is
+// configured at all, in which case no transcript exists and the value named a file that would never
+// be created. Fixed: an optional `winterHome` construction-time mirror resolves a genuine absolute
+// path (WS-05's own documented layout) when supplied; a plain, honest sentinel string replaces it
+// entirely when no store is configured, so a consumer (tools/impl/agent.ts's own `.output` stub)
+// never points the model at a file that cannot exist.
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import type { RuntimeConfig, WinterFrame, SessionStore, ControlResponseFrame } from "@yanlinglabs/winter-agent-sdk";
+import type { RuntimeConfig, WinterFrame, SessionStore, ControlResponseFrame, RuntimeHooksConfig, SandboxSettingsConfig, PermissionMode } from "@yanlinglabs/winter-agent-sdk";
 import { compatibilityKeys } from "@yanlinglabs/winter-agent-sdk";
 import { runEngine, type Provider, type ProviderMessage } from "../engine.ts";
 import { createInMemoryChannel } from "../protocol/channel.ts";
@@ -77,6 +116,7 @@ import { resolveModelAlias, describeRequestedModel, resolveEffort, recordModelEf
 import { resolveForkInitialMessages } from "./fork.ts";
 import { createWorkspace, cleanupWorkspace } from "./workspace.ts";
 import { validateAgentDefinition } from "./definitions.ts";
+import { resolveChildResumeMode, ChildResumeModeIncomparableError } from "../permissions/auto/inheritance.ts";
 
 export interface ChildEngineFactoryDeps {
   provider: Provider;
@@ -85,6 +125,13 @@ export interface ChildEngineFactoryDeps {
   // runs fine with no store, it just does not survive a restart, and `resume()` degrades to
   // "starts fresh with no rebuilt history," disclosed at that call site below).
   store?: SessionStore;
+  // Fix round 1 (finding M1): an ABSOLUTE-path mirror for the SAME store `store` above points at --
+  // no public API resolves a SessionStore key to a real filesystem path (session-store.ts's own
+  // `winterHome` is a private field), so a genuine, model-readable transcript path (WS-12 §7.2's own
+  // "return the durable transcript path through the tool result") is only possible when the caller
+  // supplies this alongside `store`. Absent: `record.transcript` degrades to a relative store key
+  // (still meaningful to a caller holding the same store object, just not directly `cat`-able).
+  winterHome?: string;
   env?: Record<string, string | undefined>;
   modelCatalog?: ModelCatalog;
   // WS-10 §5's own fork-mode interactive default -- see policy.ts's own header for why this stays a
@@ -100,6 +147,40 @@ export interface ChildEngineFactoryDeps {
   // applies UNIFORMLY to every nesting level for the identical reason: the ORIGINAL top-level value
   // is not reachable through the frozen per-run seam once a grandchild spawns its own child.
   forwardSubagentText?: boolean;
+  // Fix round 1 (finding I1): construction-time mirrors of the top-level session's own
+  // `permissions.{allow,ask,deny}` and `hooks` -- the SAME "cannot be read fresh per spawn" caveat
+  // as `disableBypassPermissionsMode` above applies identically (gap (2)'s root cause: nothing
+  // reachable from a registered factory sees the parent's LIVE configuration, only whatever was true
+  // when the factory was constructed). Merged into every child's own `RuntimeConfig.permissions`/
+  // `.hooks` in `baseConfig` below. Absent (every pre-existing caller): a child gets NEITHER --
+  // exactly today's pre-fix-round behavior, never a silent behavior change for an existing caller
+  // that doesn't opt in.
+  parentPermissionRules?: { allow?: string[]; ask?: string[]; deny?: string[] };
+  parentHooks?: RuntimeHooksConfig;
+  // Mirrored alongside `parentHooks` (WS-08) -- without this, a mirrored hook config never actually
+  // causes the child's own engine to emit the hook_started/hook_progress/hook_response lifecycle
+  // frames a host would use to observe it (transformChildFrame's own catch-all already forwards
+  // them unmodified once emitted; this is what makes the child emit them at all).
+  parentIncludeHookEvents?: boolean;
+  // WS-12 §8: NOT a security fix (DEFAULT_SANDBOX_SETTINGS is already the strictest posture a child
+  // falls back to -- see this file's own fix-round-1 header) -- a fidelity mirror only, so a host
+  // that deliberately LOOSENED its own sandbox (e.g. a configured network exclusion) has that
+  // loosening reach its descendants too, rather than every child silently reverting to the default.
+  parentSandbox?: SandboxSettingsConfig;
+  // Fix round 1 (finding Q1, forward-compat): WS-07 §11's own "resume applies the stricter of
+  // recorded vs. current parent policy" is structurally unreachable in production today --
+  // `resolveChildResumeMode` (permissions/auto/inheritance.ts) has ZERO call sites anywhere in this
+  // repository (confirmed by direct grep), because nothing reachable from `ChildEngineRunContext`/
+  // `SpawnChildRequest`/`ChildInheritance` exposes the parent's CURRENT live policy -- the identical
+  // root cause as gap (2). This optional accessor is the SAME shape the controller's own review
+  // names as the real per-spawn seam T8 should eventually add to `ChildEngineRunContext` --
+  // supplying it here (today: only a test) makes `resume()` below apply P4-D's stricter-of
+  // comparator and surface its own `ChildResumeModeIncomparableError` as a typed, non-retryable
+  // refusal instead of either ignoring the parent's current policy or letting the error escape
+  // uncaught. Absent (production, until T8 wires the real per-spawn field): `resume()` falls back to
+  // the recorded mode verbatim -- exactly today's pre-fix-round behavior, a strict widening of
+  // capability, never a behavior change for any existing caller.
+  getParentPolicy?: () => { mode: PermissionMode; version: number; hash: string };
 }
 
 export function createChildEngineFactory(deps: ChildEngineFactoryDeps): ChildEngineFactory {
@@ -181,7 +262,18 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
       childStore !== undefined
         ? buildChildTranscriptWriter({ store: childStore, projectKey, parentSessionId: runCtx.parentSessionId, agentId, parentToolUseId: req.parentToolUseId, cwd: workspace.root })
         : undefined;
-    const transcriptPath = `${projectKey}/${runCtx.parentSessionId}/${childTranscriptSubpath(agentId)}.jsonl`;
+    // Fix round 1 (finding M1): never claim a transcript that cannot exist (no store configured),
+    // and prefer a genuine ABSOLUTE path (WS-05's own documented layout) over a bare, non-readable
+    // store key whenever this factory was given its own `winterHome` to resolve one -- the store's
+    // own `winterHome` is a PRIVATE field (no public API resolves a key to a real path; verified by
+    // reading session-store.ts), so an absolute path is only available when the caller supplies it
+    // itself as a construction-time value, exactly like every other mirror on `ChildEngineFactoryDeps`.
+    const transcriptPath =
+      childStore === undefined
+        ? "none -- no durable session store is configured for this run"
+        : deps.winterHome !== undefined
+          ? `${deps.winterHome}/projects/${projectKey}/${runCtx.parentSessionId}/${childTranscriptSubpath(agentId)}.jsonl`
+          : `${projectKey}/${runCtx.parentSessionId}/${childTranscriptSubpath(agentId)}.jsonl`; // a store exists but this factory has no winterHome to resolve an absolute path -- a relative store key, not directly readable by path, but still a meaningful identifier for a caller holding the same store object
 
     const record: ChildSessionRecord = {
       id: agentId,
@@ -351,17 +443,56 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
       disallowedTools,
       capabilities,
       forwardSubagentText: deps.forwardSubagentText === true,
-      ...(deps.disableBypassPermissionsMode !== undefined ? { permissions: { disableBypassPermissionsMode: deps.disableBypassPermissionsMode } } : {}),
+      // Fix round 1 (finding I1): the parent's own `permissions.{allow,ask,deny}` rules and `hooks`
+      // are now mirrored onto every child -- a construction-time SNAPSHOT (see ChildEngineFactoryDeps'
+      // own header on `parentPermissionRules`/`parentHooks` for the residual live-update gap this
+      // does NOT close). `disableBypassPermissionsMode` merges into the SAME `permissions` object
+      // (RuntimeConfig.permissions is one combined shape, never two independent fields).
+      ...(deps.disableBypassPermissionsMode !== undefined || deps.parentPermissionRules !== undefined
+        ? {
+            permissions: {
+              ...(deps.parentPermissionRules ?? {}),
+              ...(deps.disableBypassPermissionsMode !== undefined ? { disableBypassPermissionsMode: deps.disableBypassPermissionsMode } : {}),
+            },
+          }
+        : {}),
+      ...(deps.parentHooks !== undefined ? { hooks: deps.parentHooks } : {}),
+      ...(deps.parentIncludeHookEvents !== undefined ? { includeHookEvents: deps.parentIncludeHookEvents } : {}),
+      ...(deps.parentSandbox !== undefined ? { sandbox: deps.parentSandbox } : {}),
       ...(req.definition?.maxTurns !== undefined ? { maxTurns: req.definition.maxTurns } : {}),
     };
 
     const initialMessages = resolveForkInitialMessages(inherit);
+    // Fix round 1 (finding C1, CRITICAL, RULING P4-J): `AgentDefinition.prompt` -- WS-10 §2's
+    // "System prompt of the child" -- is delivered as the LEADING, clearly-delimited block of the
+    // child's first turn, layered onto `inherit.systemPrompt` (engine.ts's own `buildChildInheritance`
+    // sets this to `""` as the base a definition's prompt is expected to be layered onto -- read here
+    // rather than ignored, so a future engine that starts populating it composes correctly instead of
+    // being silently overridden). This is the ONLY channel that exists until P5 lands the engine's
+    // real system-prompt surface: `Provider.generate` takes `{messages}` only (no `system`
+    // parameter), and `ProviderMessage.role` is `"user"|"assistant"|"tool"` -- there is no
+    // system-role provider message shape anywhere in this codebase to deliver it through instead.
+    // P5 replaces this concatenation with a real `config.systemPrompt`-shaped field (none exists on
+    // `RuntimeConfig` today -- verified, none added) without touching how a definition's prompt is
+    // RESOLVED (definitions.ts/resolution.ts's own semantics are unchanged either way).
+    //
     // WS-10 §2: `initialPrompt` is documented as "First user message seed." No provider-message
     // shape exists in this codebase for "an unanswered seed message followed immediately by a
     // second live user turn" (two consecutive user-role entries with no assistant turn between
     // them) -- concatenated into ONE live turn instead, a disclosed, deliberate simplification
     // rather than inventing an unproven provider-message shape.
-    const firstTurnText = [req.definition?.initialPrompt, req.prompt, definitionWarnings.length > 0 ? `\n[winter: ${definitionWarnings.join("; ")}]` : undefined]
+    //
+    // Pinned ordering (RED test): definition.prompt -> definition.initialPrompt -> req.prompt ->
+    // definition-validation warnings.
+    const resolvedSystemPrompt = [inherit.systemPrompt, req.definition?.prompt]
+      .filter((s): s is string => s !== undefined && s.length > 0)
+      .join("\n\n");
+    const firstTurnText = [
+      resolvedSystemPrompt.length > 0 ? `[Agent system prompt]\n${resolvedSystemPrompt}\n[End system prompt]` : undefined,
+      req.definition?.initialPrompt,
+      req.prompt,
+      definitionWarnings.length > 0 ? `\n[winter: ${definitionWarnings.join("; ")}]` : undefined,
+    ]
       .filter((s): s is string => s !== undefined && s.length > 0)
       .join("\n\n");
 
@@ -427,16 +558,37 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
             rebuilt = []; // an unreadable/corrupted transcript degrades to "resume with no history," never a crash
           }
         }
-        // WS-07 §11's own "resume applies the stricter of recorded vs. current parent policy" is
-        // NOT applied here: neither this method's own `GlobalAgentMessage` parameter nor anything
-        // else reachable from child-engine.ts exposes the PARENT's CURRENT live policy state (gap
-        // (2)'s identical root cause -- the frozen seam has no channel for it). The recorded
-        // `record.permission.effectiveMode` is reused verbatim, which can only be EQUAL to or
-        // STRICTER than a parent that has since loosened, and is a real, disclosed residual gap
-        // only if the parent's own policy has since become STRICTER than what was recorded --
-        // flagged in this lane's own report rather than silently assumed safe.
+        // Fix round 1 (finding Q1, forward-compat): WS-07 §11's own "resume applies the stricter of
+        // recorded vs. current parent policy" -- applied when `deps.getParentPolicy` is supplied
+        // (today: only a test; T8 wires the real per-spawn accessor onto `ChildEngineRunContext`,
+        // see `ChildEngineFactoryDeps`'s own header on this field for why nothing reaches it in
+        // production yet). Absent, this falls back to `record.permission.effectiveMode` reused
+        // verbatim -- exactly the pre-fix-round behavior, which can only be EQUAL to or STRICTER
+        // than a parent that has since loosened (a real, disclosed residual gap only if the parent's
+        // own policy has since become STRICTER than what was recorded).
+        let resumeMode: PermissionMode = record.permission.effectiveMode;
+        if (deps.getParentPolicy !== undefined) {
+          const currentPolicy = deps.getParentPolicy();
+          try {
+            resumeMode = resolveChildResumeMode(record.permission, currentPolicy.mode);
+          } catch (err) {
+            if (err instanceof ChildResumeModeIncomparableError) {
+              // RULING P4-D: the one documented incomparable pair ({dontAsk, auto}, either
+              // direction) fails closed -- a legible, typed, NON-retryable refusal on the handle,
+              // never a silently-resolved composite mode and never an escaped throw.
+              return { status: "unavailable", messageId: msg.messageId, retryable: false, reason: err.message };
+            }
+            throw err;
+          }
+          // Persists the resumed mode + the parent policy state it was compared against, so a LATER
+          // resume (or a roster rebuild after restart) compares against this generation's own
+          // resolution rather than the original spawn-time snapshot.
+          record.permission = { effectiveMode: resumeMode, parentPolicyHash: currentPolicy.hash, parentPolicyVersion: currentPolicy.version };
+        }
         record.status = "running";
-        startGeneration(baseConfig, rebuilt, msg.body);
+        const resumeConfig: RuntimeConfig =
+          resumeMode === baseConfig.permissionMode ? baseConfig : { ...baseConfig, permissionMode: resumeMode, allowDangerouslySkipPermissions: resumeMode === "bypassPermissions" };
+        startGeneration(resumeConfig, rebuilt, msg.body);
         return { status: "resumed_and_delivered", messageId: msg.messageId };
       },
       async result(): Promise<ChildResult> {

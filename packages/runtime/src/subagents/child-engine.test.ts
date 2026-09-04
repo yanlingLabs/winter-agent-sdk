@@ -6,7 +6,7 @@
 // policy/fork/workspace/definitions .test.ts).
 import { describe, test, expect, afterEach } from "bun:test";
 import { randomUUID } from "node:crypto";
-import { mkdtempSync, rmSync, existsSync } from "node:fs";
+import { mkdtempSync, rmSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { WinterFrame, RuntimeConfig, ProtocolSdkMessage as SdkMessage } from "@yanlinglabs/winter-agent-sdk";
@@ -18,6 +18,7 @@ import { echoProvider, scriptedProvider } from "../provider/mock.ts";
 import { registerChildEngineFactory, resetChildEngineFactoryForTest, type SpawnChildRequest } from "./child-handle.ts";
 import { createChildEngineFactory, type ChildEngineFactoryDeps } from "./child-engine.ts";
 import { resetSpawnLimitsForTest } from "./limits.ts";
+import { loadAgentDefinitions } from "./definitions.ts";
 
 async function drain(source: AsyncIterable<WinterFrame>): Promise<WinterFrame[]> {
   const out: WinterFrame[] = [];
@@ -388,7 +389,23 @@ describe("child-engine.ts: durable resume (WS-10 §7)", () => {
     try {
       const store = new WinterCompatibilitySessionStore({ winterHome });
       const req: SpawnChildRequest = { parentToolUseId: "call-1", prompt: "first turn", runInBackground: false };
-      registerChildEngineFactory(createChildEngineFactory({ provider: echoProvider, store }));
+      // Fix round 1 (finding I2): NOT echoProvider -- it only ever looks at the LATEST user message,
+      // so `rebuilt = []` (the exact bug this test's own ORIGINAL assertions failed to catch) would
+      // pass unchanged. This fixture instead RECORDS what it was actually called with, directly into
+      // a closure-captured array -- never relying on the child's own reply being forwarded anywhere
+      // (the parent's own top-level engine has typically already finished and torn down its own
+      // output stream long before a TEST-driven resume() even starts a second generation, since
+      // SPAWN_AND_REGISTER never awaits the child -- observing via the wire would be racy by
+      // construction, not merely inconvenient).
+      const observedCalls: Array<{ messageCount: number; userTexts: string[] }> = [];
+      const historyRevealingProvider: Provider = {
+        async generate({ messages }) {
+          const userTexts = messages.filter((m) => m.role === "user").map((m) => (typeof m.content === "string" ? m.content : "[blocks]"));
+          observedCalls.push({ messageCount: messages.length, userTexts });
+          return { kind: "text", text: "ok" };
+        },
+      };
+      registerChildEngineFactory(createChildEngineFactory({ provider: historyRevealingProvider, store }));
 
       const { host, runtime } = createInMemoryChannel();
       const provider = scriptedProvider([{ kind: "tool_use", calls: [{ id: "call-1", name: SPAWN_AND_REGISTER, input: req }] }, { kind: "text", text: "done" }]);
@@ -401,20 +418,22 @@ describe("child-engine.ts: durable resume (WS-10 §7)", () => {
       await waitUntil(() => liveHandles.size === 1);
       const handle = [...liveHandles.values()][0]!;
       await waitUntil(() => handle.status() === "completed");
-      expect((await handle.result()).content).toBe("echo: first turn");
+      expect(observedCalls).toEqual([{ messageCount: 1, userTexts: ["first turn"] }]);
 
       const outcome = await handle.resume(fakeGlobalMessage("second turn"));
       expect(outcome.status).toBe("resumed_and_delivered");
       expect(handle.status()).toBe("running");
       await waitUntil(() => handle.status() === "completed");
 
-      // result() itself never re-settles past its FIRST completion (the seam-contracts-p4.test.ts
-      // fixture's own pinned behavior) -- the SECOND generation's own outcome is observable only
-      // through record.status, proven above, never through a second resolution of result().
-      expect((await handle.result()).content).toBe("echo: first turn");
-
       await drainPromise;
       await done;
+
+      // THE discriminating assertion (I2): the second generation's own provider call must have
+      // seen the REBUILT history (gen 1's own user+assistant turns) PLUS the new "second turn" --
+      // never just a bare single-message conversation, which is exactly what `rebuilt = []` (the
+      // bug this test previously could not detect) would produce.
+      expect(observedCalls).toHaveLength(2);
+      expect(observedCalls[1]).toEqual({ messageCount: 3, userTexts: ["first turn", "second turn"] });
     } finally {
       rmSync(winterHome, { recursive: true, force: true });
       rmSync(parentCwd, { recursive: true, force: true });
@@ -613,4 +632,312 @@ describe("child-engine.ts: disclosed gap -- child permission control-RPCs under 
     expect(parsed.result.status).toBe("failed");
     expect(parsed.result.content).toContain("stalled");
   }, 2000);
+});
+
+describe("child-engine.ts: fix round 1 (controller review) -- C1 CRITICAL: AgentDefinition.prompt reaches the child", () => {
+  test("a programmatic definition's own prompt is the leading block of the child's first turn, ordered before initialPrompt and req.prompt", async () => {
+    registerSpawnProbe();
+    cleanupToolNames.push(SPAWN_PROBE);
+    const req: SpawnChildRequest = {
+      parentToolUseId: "call-1",
+      prompt: "the actual task text",
+      runInBackground: false,
+      definition: { description: "d", prompt: "You are a meticulous code reviewer persona.", initialPrompt: "Seed context text." },
+    };
+    const { code, frames } = await driveParent(
+      { provider: echoProvider },
+      baseConfig(),
+      [{ kind: "tool_use", calls: [{ id: "call-1", name: SPAWN_PROBE, input: req }] }, { kind: "text", text: "parent done" }],
+    );
+    expect(code).toBe(0);
+    const msgs = dataMessages(frames);
+    const toolResult = msgs.find((m) => m.type === "user") as unknown as { message: { content: Array<{ tool_use_id: string; content: string }> } };
+    const block = toolResult.message.content.find((b) => b.tool_use_id === "call-1")!;
+    const parsed = JSON.parse(block.content) as { result: { content: string } };
+    const seenText = parsed.result.content; // echoProvider echoes the FULL first-turn text verbatim
+    expect(seenText).toContain("You are a meticulous code reviewer persona.");
+    const personaIndex = seenText.indexOf("You are a meticulous code reviewer persona.");
+    const seedIndex = seenText.indexOf("Seed context text.");
+    const taskIndex = seenText.indexOf("the actual task text");
+    expect(personaIndex).toBeGreaterThanOrEqual(0);
+    expect(seedIndex).toBeGreaterThan(personaIndex); // prompt -> initialPrompt
+    expect(taskIndex).toBeGreaterThan(seedIndex); // initialPrompt -> req.prompt
+  });
+
+  test("a filesystem AgentDefinition's own prompt (the .md file's full body) reaches the child, end-to-end from a real mkdtemp ~/.winter/agents/*.md file", async () => {
+    const home = mkdtempSync(join(tmpdir(), "winter-lane-c-c1-fs-"));
+    try {
+      mkdirSync(join(home, ".winter", "agents"), { recursive: true });
+      writeFileSync(join(home, ".winter", "agents", "reviewer.md"), "---\ndescription: reviews code\n---\nYou are a persona from a REAL markdown file on disk.");
+      const definitions = loadAgentDefinitions({ cwd: mkdtempSync(join(tmpdir(), "winter-lane-c-c1-cwd-")), home, trustedWorkspace: false });
+      const definition = definitions.get("reviewer");
+      expect(definition?.prompt).toBe("You are a persona from a REAL markdown file on disk.");
+
+      registerSpawnProbe();
+      cleanupToolNames.push(SPAWN_PROBE);
+      const req: SpawnChildRequest = { parentToolUseId: "call-1", prompt: "review this diff", runInBackground: false, definition: definition! };
+      const { code, frames } = await driveParent(
+        { provider: echoProvider },
+        baseConfig(),
+        [{ kind: "tool_use", calls: [{ id: "call-1", name: SPAWN_PROBE, input: req }] }, { kind: "text", text: "parent done" }],
+      );
+      expect(code).toBe(0);
+      const msgs = dataMessages(frames);
+      const toolResult = msgs.find((m) => m.type === "user") as unknown as { message: { content: Array<{ tool_use_id: string; content: string }> } };
+      const block = toolResult.message.content.find((b) => b.tool_use_id === "call-1")!;
+      const parsed = JSON.parse(block.content) as { result: { content: string } };
+      expect(parsed.result.content).toContain("You are a persona from a REAL markdown file on disk.");
+      expect(parsed.result.content).toContain("review this diff");
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("child-engine.ts: fix round 1 (controller review) -- I1: permission rules / hooks mirrored onto the child", () => {
+  test("a forced-bypass child still DENIES a parent-denied tool call (parentPermissionRules mirrored)", async () => {
+    const DENIED_TOOL = "t6_i1_denied_tool";
+    cleanupToolNames.push(DENIED_TOOL);
+    registerTool({
+      descriptor: {
+        canonicalName: DENIED_TOOL, advertisedName: DENIED_TOOL, source: "builtin", inputSchema: { type: "object" },
+        description: "would run normally if not denied", exposure: "eager", permissionClass: "read",
+        availability: {}, capabilityRequirements: [], disposition: "implement-now",
+      },
+      executor: { async execute() { return { output: "SHOULD NEVER RUN -- denied by a parent rule" }; } },
+    });
+    registerSpawnProbe();
+    cleanupToolNames.push(SPAWN_PROBE);
+    const childProvider = scriptedProvider([
+      { kind: "tool_use", calls: [{ id: "b1", name: DENIED_TOOL, input: {} }] },
+      { kind: "text", text: "acknowledged the denial" },
+    ]);
+    registerChildEngineFactory(createChildEngineFactory({ provider: childProvider, parentPermissionRules: { deny: [DENIED_TOOL] } }));
+    const req: SpawnChildRequest = { parentToolUseId: "call-1", prompt: "try the denied tool", runInBackground: false };
+    // baseConfig()'s own default is bypassPermissions -- WS-07 §11 forces this onto every
+    // descendant, so the child inherits bypass too. Without the parentPermissionRules mirror, a
+    // forced-bypass child would have NO deny rules at all and would auto-approve this call.
+    const { code, frames } = await driveParent(
+      { provider: echoProvider },
+      baseConfig(),
+      [{ kind: "tool_use", calls: [{ id: "call-1", name: SPAWN_PROBE, input: req }] }, { kind: "text", text: "parent done" }],
+    );
+    // The parent's own spawn-and-await tool call: registerSpawnProbe awaits the child's OWN
+    // result(), which is the CHILD's own generation outcome -- if the denial ever let the tool
+    // actually run, `content` would contain "SHOULD NEVER RUN".
+    void code;
+    const msgs = dataMessages(frames);
+    const toolResult = msgs.find((m) => m.type === "user") as unknown as { message: { content: Array<{ tool_use_id: string; content: string }> } };
+    const block = toolResult.message.content.find((b) => b.tool_use_id === "call-1")!;
+    const parsed = JSON.parse(block.content) as { result: { status: string; content: string } };
+    expect(parsed.result.content).not.toContain("SHOULD NEVER RUN");
+    expect(parsed.result.status).toBe("completed"); // the child gracefully finished (2nd scripted turn) after seeing the denial, never crashed
+  });
+
+  test("parentHooks + parentIncludeHookEvents cause the child's own engine to emit hook_started for a matching tool call (config-level mirroring proven; the hook's own RESPONSE is Gap #2's already-disclosed stall, not re-proven here)", async () => {
+    const HOOKED_TOOL = "t6_i1_hooked_tool";
+    cleanupToolNames.push(HOOKED_TOOL);
+    registerTool({
+      descriptor: {
+        canonicalName: HOOKED_TOOL, advertisedName: HOOKED_TOOL, source: "builtin", inputSchema: { type: "object" },
+        description: "a tool a PreToolUse hook matches", exposure: "eager", permissionClass: "read",
+        availability: {}, capabilityRequirements: [], disposition: "implement-now",
+      },
+      executor: { async execute() { return { output: "ran" }; } },
+    });
+    registerSpawnProbe();
+    cleanupToolNames.push(SPAWN_PROBE);
+    const childProvider = scriptedProvider([{ kind: "tool_use", calls: [{ id: "b1", name: HOOKED_TOOL, input: {} }] }]);
+    const req: SpawnChildRequest = { parentToolUseId: "call-1", prompt: "call the hooked tool", runInBackground: false };
+    const { code, frames } = await driveParent(
+      {
+        provider: childProvider,
+        parentHooks: { PreToolUse: [{ hookCount: 1, source: "sdk" }] },
+        parentIncludeHookEvents: true,
+        env: { WINTER_ASYNC_AGENT_STALL_TIMEOUT_MS: "150" }, // the hook's own control_request is Gap #2-blocked -- bound the stall
+      },
+      baseConfig(),
+      [{ kind: "tool_use", calls: [{ id: "call-1", name: SPAWN_PROBE, input: req }] }, { kind: "text", text: "parent done" }],
+    );
+    expect(code).toBe(0);
+    // hook_started is forwarded via transformChildFrame's own catch-all (every other system-subtype
+    // data frame forwarded unchanged) -- its presence proves the mirrored `hooks`/`includeHookEvents`
+    // config reached the child's own runEngine() and actually activated hook machinery for its call.
+    const hookStarted = frames.find((f) => f.type === "data" && (f as { message?: { subtype?: string } }).message?.subtype === "hook_started");
+    expect(hookStarted).toBeDefined();
+  }, 2000);
+});
+
+describe("child-engine.ts: fix round 1 (controller review) -- Q1 forward-compat: resolveChildResumeMode applied when getParentPolicy is supplied", () => {
+  test("resume() applies the stricter-of comparator when the parent's current policy is stricter than the recorded one", async () => {
+    registerSpawnAndRegister();
+    cleanupToolNames.push(SPAWN_AND_REGISTER);
+    // "auto" is recorded at spawn time; the parent's CURRENT policy has since tightened to "plan"
+    // (stricter on axis 1, RULING P2-M/P4-D: plan dominates every non-silencing mode including auto).
+    registerChildEngineFactory(createChildEngineFactory({ provider: echoProvider, getParentPolicy: () => ({ mode: "plan", version: 2, hash: "h2" }) }));
+    const req: SpawnChildRequest = { parentToolUseId: "call-1", prompt: "first turn", runInBackground: false };
+    const { host, runtime } = createInMemoryChannel();
+    const provider = scriptedProvider([{ kind: "tool_use", calls: [{ id: "call-1", name: SPAWN_AND_REGISTER, input: req }] }, { kind: "text", text: "done" }]);
+    const done = runEngine({ config: baseConfig({ permissionMode: "auto", allowDangerouslySkipPermissions: false, permissions: { allow: [SPAWN_AND_REGISTER] } }), input: runtime.input, output: runtime.output, provider });
+    host.output.write({ type: "user", text: "go" });
+    host.output.write({ type: "control_request", requestId: "end-1", subtype: "end_input", payload: undefined });
+    const drainPromise = drain(host.input);
+
+    await waitUntil(() => liveHandles.size === 1);
+    const handle = [...liveHandles.values()][0]!;
+    await waitUntil(() => handle.status() === "completed");
+    expect(handle.record.permission.effectiveMode).toBe("auto"); // recorded at spawn time
+
+    const outcome = await handle.resume(fakeGlobalMessage("second turn"));
+    expect(outcome.status).toBe("resumed_and_delivered");
+    await waitUntil(() => handle.status() === "completed");
+    // The resumed generation's own effective mode is the STRICTER of {recorded:"auto", current:"plan"} = "plan".
+    expect(handle.record.permission.effectiveMode).toBe("plan");
+    expect(handle.record.permission.parentPolicyVersion).toBe(2);
+    expect(handle.record.permission.parentPolicyHash).toBe("h2");
+
+    await drainPromise;
+    await done;
+  });
+
+  test("the incomparable pair (dontAsk<->auto) fails resume closed as a typed, non-retryable refusal, never a throw or a silently-resolved mode", async () => {
+    registerSpawnAndRegister();
+    cleanupToolNames.push(SPAWN_AND_REGISTER);
+    registerChildEngineFactory(createChildEngineFactory({ provider: echoProvider, getParentPolicy: () => ({ mode: "auto", version: 3, hash: "h3" }) }));
+    const req: SpawnChildRequest = { parentToolUseId: "call-1", prompt: "first turn", runInBackground: false };
+    const { host, runtime } = createInMemoryChannel();
+    const provider = scriptedProvider([{ kind: "tool_use", calls: [{ id: "call-1", name: SPAWN_AND_REGISTER, input: req }] }, { kind: "text", text: "done" }]);
+    const done = runEngine({ config: baseConfig({ permissionMode: "dontAsk", allowDangerouslySkipPermissions: false, permissions: { allow: [SPAWN_AND_REGISTER] } }), input: runtime.input, output: runtime.output, provider });
+    host.output.write({ type: "user", text: "go" });
+    host.output.write({ type: "control_request", requestId: "end-1", subtype: "end_input", payload: undefined });
+    const drainPromise = drain(host.input);
+
+    await waitUntil(() => liveHandles.size === 1);
+    const handle = [...liveHandles.values()][0]!;
+    await waitUntil(() => handle.status() === "completed");
+    expect(handle.record.permission.effectiveMode).toBe("dontAsk");
+
+    const outcome = await handle.resume(fakeGlobalMessage("second turn"));
+    expect(outcome.status).toBe("unavailable");
+    if (outcome.status === "unavailable") {
+      expect(outcome.retryable).toBe(false);
+      expect(outcome.reason).toContain("INCOMPARABLE");
+    }
+    // A failed-closed resume never flips status to "running" and never mutates the recorded policy.
+    expect(handle.status()).toBe("completed");
+    expect(handle.record.permission.effectiveMode).toBe("dontAsk");
+
+    await drainPromise;
+    await done;
+  });
+});
+
+describe("child-engine.ts: fix round 1 (controller review) -- I3: insideSubagent / isolationPinnedCwd carries", () => {
+  test("insideSubagent:true reaches a child's own tool calls, and a child calling AskUserQuestion is never advertised it -- but IF called anyway, it stalls via Gap #2 exactly like an unanswered permission prompt (never a clean refusal, never a clean success)", async () => {
+    registerSpawnProbe();
+    cleanupToolNames.push(SPAWN_PROBE);
+    const childProvider = scriptedProvider([
+      { kind: "tool_use", calls: [{ id: "auq-1", name: "AskUserQuestion", input: { questions: [{ question: "q?", header: "H", options: [{ label: "a" }, { label: "b" }] }] } }] },
+    ]);
+    const req: SpawnChildRequest = { parentToolUseId: "call-1", prompt: "ask something", runInBackground: false };
+    const { code, frames } = await driveParent(
+      { provider: childProvider, env: { WINTER_ASYNC_AGENT_STALL_TIMEOUT_MS: "60" } },
+      baseConfig(),
+      [{ kind: "tool_use", calls: [{ id: "call-1", name: SPAWN_PROBE, input: req }] }, { kind: "text", text: "unreachable" }],
+    );
+    expect(code).toBe(0);
+    const msgs = dataMessages(frames);
+    const toolResult = msgs.find((m) => m.type === "user") as unknown as { message: { content: Array<{ tool_use_id: string; content: string }> } };
+    const block = toolResult.message.content.find((b) => b.tool_use_id === "call-1")!;
+    const parsed = JSON.parse(block.content) as { result: { status: string; content: string } };
+    expect(parsed.result.status).toBe("failed");
+    expect(parsed.result.content).toContain("stalled");
+  }, 2000);
+
+  test("isolationPinnedCwd is true for an isolation:'worktree' child and false for a bare child (ctx plumbing correct; ExitWorktree's OWN executor is a cross-lane gap -- see NEEDS_CONTEXT below, not asserted here as 'refused')", async () => {
+    const PROBE_TOOL = "t6_i3_flags_probe";
+    cleanupToolNames.push(PROBE_TOOL);
+    const seen: Array<{ insideSubagent: boolean | undefined; isolationPinnedCwd: boolean | undefined }> = [];
+    registerTool({
+      descriptor: {
+        canonicalName: PROBE_TOOL, advertisedName: PROBE_TOOL, source: "builtin", inputSchema: { type: "object" },
+        description: "reports the two P3 carries it observes on its own ctx", exposure: "eager", permissionClass: "read",
+        availability: {}, capabilityRequirements: [], disposition: "implement-now",
+      },
+      executor: {
+        async execute(_input: unknown, ctx: ToolExecutionContext) {
+          seen.push({ insideSubagent: ctx.insideSubagent, isolationPinnedCwd: ctx.isolationPinnedCwd });
+          return { output: "ok" };
+        },
+      },
+    });
+    registerSpawnProbe();
+    cleanupToolNames.push(SPAWN_PROBE);
+    const cwd = mkdtempSync(join(tmpdir(), "winter-lane-c-i3-repo-"));
+    try {
+      await initFixtureRepo(cwd);
+      const childProvider = scriptedProvider([
+        { kind: "tool_use", calls: [{ id: "p1", name: PROBE_TOOL, input: {} }] },
+        { kind: "text", text: "done" },
+      ]);
+      registerChildEngineFactory(createChildEngineFactory({ provider: childProvider }));
+      const req: SpawnChildRequest = { parentToolUseId: "call-1", prompt: "probe flags", runInBackground: false, isolation: "worktree" };
+      await driveParent({ provider: childProvider }, baseConfig({ cwd }), [{ kind: "tool_use", calls: [{ id: "call-1", name: SPAWN_PROBE, input: req }] }, { kind: "text", text: "parent done" }]);
+      expect(seen).toHaveLength(1);
+      expect(seen[0]!.insideSubagent).toBe(true);
+      expect(seen[0]!.isolationPinnedCwd).toBe(true);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("child-engine.ts: fix round 1 (controller review) -- M1: record.transcript is a real, honest path", () => {
+  test("with winterHome supplied, record.transcript is a genuine absolute path under <winterHome>/projects/...", async () => {
+    registerSpawnAndRegister();
+    cleanupToolNames.push(SPAWN_AND_REGISTER);
+    const winterHome = mkdtempSync(join(tmpdir(), "winter-lane-c-m1-"));
+    try {
+      const store = new WinterCompatibilitySessionStore({ winterHome });
+      registerChildEngineFactory(createChildEngineFactory({ provider: echoProvider, store, winterHome }));
+      const req: SpawnChildRequest = { parentToolUseId: "call-1", prompt: "hi", runInBackground: false };
+      const { host, runtime } = createInMemoryChannel();
+      const provider = scriptedProvider([{ kind: "tool_use", calls: [{ id: "call-1", name: SPAWN_AND_REGISTER, input: req }] }, { kind: "text", text: "done" }]);
+      const parentConfig = baseConfig();
+      const done = runEngine({ config: parentConfig, input: runtime.input, output: runtime.output, provider });
+      host.output.write({ type: "user", text: "go" });
+      host.output.write({ type: "control_request", requestId: "end-1", subtype: "end_input", payload: undefined });
+      const drainPromise = drain(host.input);
+      await waitUntil(() => liveHandles.size === 1);
+      const handle = [...liveHandles.values()][0]!;
+      expect(handle.record.transcript.startsWith(winterHome)).toBe(true);
+      expect(handle.record.transcript).toContain("/projects/");
+      expect(handle.record.transcript.endsWith(`agent-${handle.record.id}.jsonl`)).toBe(true);
+      await waitUntil(() => handle.status() === "completed");
+      await drainPromise;
+      await done;
+    } finally {
+      rmSync(winterHome, { recursive: true, force: true });
+    }
+  });
+
+  test("with no store configured, record.transcript is an honest sentinel, never a path that will never exist", async () => {
+    registerSpawnAndRegister();
+    cleanupToolNames.push(SPAWN_AND_REGISTER);
+    registerChildEngineFactory(createChildEngineFactory({ provider: echoProvider })); // no store
+    const req: SpawnChildRequest = { parentToolUseId: "call-1", prompt: "hi", runInBackground: false };
+    const { host, runtime } = createInMemoryChannel();
+    const provider = scriptedProvider([{ kind: "tool_use", calls: [{ id: "call-1", name: SPAWN_AND_REGISTER, input: req }] }, { kind: "text", text: "done" }]);
+    const done = runEngine({ config: baseConfig(), input: runtime.input, output: runtime.output, provider });
+    host.output.write({ type: "user", text: "go" });
+    host.output.write({ type: "control_request", requestId: "end-1", subtype: "end_input", payload: undefined });
+    const drainPromise = drain(host.input);
+    await waitUntil(() => liveHandles.size === 1);
+    const handle = [...liveHandles.values()][0]!;
+    expect(handle.record.transcript).toContain("no durable session store is configured");
+    expect(handle.record.transcript).not.toContain(".jsonl");
+    await waitUntil(() => handle.status() === "completed");
+    await drainPromise;
+    await done;
+  });
 });
