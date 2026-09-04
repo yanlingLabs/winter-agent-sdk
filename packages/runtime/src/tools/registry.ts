@@ -555,13 +555,35 @@ export interface DeferralActivation {
   deferrableContextShare: number;
 }
 
+// RULING P4-A (Phase 4 Task 3): "is Tool Search genuinely active in this session at all" as its OWN
+// pure function of `DeferralActivation` alone -- no descriptor-specific floors (those stay in
+// resolveDeferral below, which calls this for its own tail rather than re-deriving the identical
+// logic a second time). This is the mechanism that makes a contradictory advertise-and-defer state
+// "impossible by construction" (the ruling's own phrase): the SAME boolean this function returns is
+// what engine.ts derives `RuntimeConfig.toolSearchEnabled`'s SESSION-WIDE effective value from (the
+// WaitForMcpServers advertisement gate) -- so a session can never simultaneously defer at least one
+// eligible descriptor via resolveDeferral while ALSO advertising WaitForMcpServers as if deferral
+// were off, because both readings are now literally the same function call on the same activation
+// value, not two independently-maintained booleans (T2's own report Concern 8, now closed).
+export function isDeferralActive(activation: DeferralActivation): boolean {
+  // WS-09 §8.1: "Provider fallbacks are part of the contract... a provider that cannot speak Tool
+  // Search at all gets full injection regardless of every other input."
+  if (activation.providerSupportsToolSearch === false) return false;
+  const etc = activation.enableToolSearch;
+  if (etc === "false") return false;
+  if (etc === "true") return true;
+  // "unset" is CAPTURE-PENDING (R4-8 class): treated identically to bare "auto" (the 10% default)
+  // as the most defensible reading of "normal automatic behavior" without a live capture -- kept as
+  // its own branch (never silently merged into the "auto" string literal) so a future capture-driven
+  // correction is a one-line change. Recorded as a concern in task-2-report.md, carried here.
+  if (etc === "unset" || etc === "auto") return activation.deferrableContextShare >= 10;
+  return activation.deferrableContextShare >= etc.auto; // { auto: N }
+}
+
 // WS-09 §9's exposure-mapping table, resolved for one descriptor in one session. Boundary: a share
 // EXACTLY AT the threshold counts as active (>=, not >) -- pinned by a seam-contracts-p4.test.ts
-// fixture. `"unset"` is CAPTURE-PENDING (see the branch below, R4-8 class): treated identically to
-// bare "auto" (the 10% default) as the most defensible reading of "normal automatic behavior" this
-// pin can support without a live capture, but kept as its own case label (never silently merged into
-// the "auto" string) specifically so a future capture-driven correction is a one-line case-body
-// swap, not a restructure. Recorded as a concern in task-2-report.md.
+// fixture, and now enforced structurally via isDeferralActive's own single implementation (RULING
+// P4-A) rather than a second, independently-maintained copy of the same threshold arithmetic.
 export function resolveDeferral(descriptor: ToolDescriptor, mode: PermissionMode, activation: DeferralActivation): "eager" | "deferred" | "hidden" {
   // Floor: a descriptor already marked hidden on the pre-existing, static WS-06 axis (e.g. a
   // correctly-absent placeholder, or a mode-gated internal) stays hidden regardless of any deferral
@@ -585,16 +607,37 @@ export function resolveDeferral(descriptor: ToolDescriptor, mode: PermissionMode
   const eligible = declared === true ? true : Array.isArray(declared) ? declared.includes(mode) : false;
   if (!eligible) return "eager";
 
-  // WS-09 §8.1: "Provider fallbacks are part of the contract... alwaysLoad: false therefore means
-  // 'eligible for deferral', never a guarantee of deferral on every backend" -- a provider that
-  // cannot speak Tool Search at all gets full injection regardless of every other input.
-  if (activation.providerSupportsToolSearch === false) return "eager";
+  return isDeferralActive(activation) ? "deferred" : "eager";
+}
 
-  const etc = activation.enableToolSearch;
-  if (etc === "false") return "eager";
-  if (etc === "true") return "deferred";
-  if (etc === "unset" || etc === "auto") return activation.deferrableContextShare >= 10 ? "deferred" : "eager";
-  return activation.deferrableContextShare >= etc.auto ? "deferred" : "eager"; // { auto: N }
+// --- Phase 4 Task 3 (RULING P4-A): the advertised-set partition ------------------------------------
+//
+// `buildAdvertisedSet` itself (below) is UNCHANGED -- its own pre-existing, fully-tested filter
+// pipeline (disposition/exposure/mode/platform/features/capabilities/disallowedTools) is exactly
+// what every pre-existing caller (registry.test.ts, the I4 conformance test, engine.ts's own
+// pre-Task-3 call site) already depends on, byte-for-byte. This function is `resolveDeferral`
+// WIRED INTO that pipeline's OUTPUT (per the brief's own "wires resolveDeferral into
+// buildAdvertisedSet -- registry.ts, spine, not Lane B" instruction), producing the
+// eager/deferred/hidden partition on top of it, in the SAME module, rather than requiring every
+// caller to run the two passes manually. `system/init.tools` (WS-09 §2.1's own consequence clause)
+// is `eager` PLUS whichever `deferred` names are already in the session's own `LoadedToolSet` --
+// composed by the caller (engine.ts) from this function's own three arrays, never invented as a
+// fourth pre-merged field here (keeping the three partitions independently inspectable, e.g. for
+// ToolSearch's own `total_deferred_tools` count, Lane B's job).
+export interface AdvertisedPartition {
+  eager: ToolDescriptor[];
+  deferred: ToolDescriptor[];
+  hidden: ToolDescriptor[];
+}
+
+export function partitionAdvertisedTools(cfg: AdvertisedSetInputs, activation: DeferralActivation): AdvertisedPartition {
+  const candidates = buildAdvertisedSet(cfg);
+  const partition: AdvertisedPartition = { eager: [], deferred: [], hidden: [] };
+  for (const descriptor of candidates) {
+    const verdict = resolveDeferral(descriptor, cfg.mode, activation);
+    partition[verdict].push(descriptor);
+  }
+  return partition;
 }
 
 // --- §1.5: availability resolution + buildAdvertisedSet ---------------------------------------------

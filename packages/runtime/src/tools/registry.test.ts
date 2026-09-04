@@ -8,7 +8,7 @@
 // an INVENTED, throwaway canonical name (never a real WS-06 entry) and cleans up via
 // `unregisterToolForTest` in a `finally`, so no test here can leak state into another file's
 // assertions.
-import { describe, test, expect, spyOn } from "bun:test";
+import { describe, test, expect, spyOn, afterEach } from "bun:test";
 import "./descriptors/index.ts"; // forces every WS-06 §2 stub to register before any test runs
 import {
   registerTool,
@@ -23,10 +23,13 @@ import {
   onRegistryChange,
   createLoadedToolSet,
   resolveDeferral,
+  isDeferralActive,
+  partitionAdvertisedTools,
   type ToolDescriptor,
   type ToolExecutor,
   type RegistryToolExecutorDeps,
   type DeferralActivation,
+  type AdvertisedSetInputs,
 } from "./registry.ts";
 import { createSessionReadState } from "./read-state.ts";
 
@@ -726,6 +729,105 @@ describe("resolveDeferral (Phase 4 Task 2, WS-09 §8.5/§9)", () => {
     expect(resolveDeferral(d, "default", activation)).toBe("eager"); // below the custom 25% threshold
     const activationAtBoundary: DeferralActivation = { enableToolSearch: { auto: 25 }, providerSupportsToolSearch: true, deferrableContextShare: 25 };
     expect(resolveDeferral(d, "default", activationAtBoundary)).toBe("deferred");
+  });
+});
+
+// Phase 4 Task 3 (RULING P4-A): isDeferralActive is a pure re-derivation of resolveDeferral's own
+// tail (no descriptor-specific floors) -- every one of resolveDeferral's own activation-level
+// assertions above must hold here too, by construction, since resolveDeferral now calls this
+// function for that exact logic rather than duplicating it.
+describe("isDeferralActive (Phase 4 Task 3, RULING P4-A)", () => {
+  test("providerSupportsToolSearch: false is never active, regardless of enableToolSearch", () => {
+    expect(isDeferralActive({ enableToolSearch: "true", providerSupportsToolSearch: false, deferrableContextShare: 100 })).toBe(false);
+  });
+  test("enableToolSearch: false is never active", () => {
+    expect(isDeferralActive({ enableToolSearch: "false", providerSupportsToolSearch: true, deferrableContextShare: 100 })).toBe(false);
+  });
+  test("enableToolSearch: true is always active, regardless of context share", () => {
+    expect(isDeferralActive({ enableToolSearch: "true", providerSupportsToolSearch: true, deferrableContextShare: 0 })).toBe(true);
+  });
+  test("auto/unset share the 10% boundary-inclusive threshold", () => {
+    expect(isDeferralActive({ enableToolSearch: "auto", providerSupportsToolSearch: true, deferrableContextShare: 9.9 })).toBe(false);
+    expect(isDeferralActive({ enableToolSearch: "auto", providerSupportsToolSearch: true, deferrableContextShare: 10 })).toBe(true);
+    expect(isDeferralActive({ enableToolSearch: "unset", providerSupportsToolSearch: true, deferrableContextShare: 10 })).toBe(true);
+    expect(isDeferralActive({ enableToolSearch: "unset", providerSupportsToolSearch: true, deferrableContextShare: 9.9 })).toBe(false);
+  });
+  test("auto:N uses the custom threshold", () => {
+    expect(isDeferralActive({ enableToolSearch: { auto: 25 }, providerSupportsToolSearch: true, deferrableContextShare: 20 })).toBe(false);
+    expect(isDeferralActive({ enableToolSearch: { auto: 25 }, providerSupportsToolSearch: true, deferrableContextShare: 25 })).toBe(true);
+  });
+
+  // The actual "impossible by construction" proof: resolveDeferral's own verdict for ANY eligible
+  // descriptor agrees with isDeferralActive on the SAME activation value, across a representative
+  // sweep -- these two can never independently disagree because resolveDeferral literally calls this
+  // function for its own tail.
+  test("resolveDeferral's own verdict for an eligible descriptor always agrees with isDeferralActive on the identical activation", () => {
+    const eligible = fixtureDescriptor("__t3_agree_fixture__", { source: "mcp", deferred: true });
+    const sweep: DeferralActivation[] = [
+      { enableToolSearch: "unset", providerSupportsToolSearch: true, deferrableContextShare: 0 },
+      { enableToolSearch: "auto", providerSupportsToolSearch: true, deferrableContextShare: 10 },
+      { enableToolSearch: "true", providerSupportsToolSearch: true, deferrableContextShare: 0 },
+      { enableToolSearch: "false", providerSupportsToolSearch: true, deferrableContextShare: 100 },
+      { enableToolSearch: "true", providerSupportsToolSearch: false, deferrableContextShare: 100 },
+      { enableToolSearch: { auto: 40 }, providerSupportsToolSearch: true, deferrableContextShare: 39 },
+    ];
+    for (const activation of sweep) {
+      const verdict = resolveDeferral(eligible, "default", activation);
+      expect(verdict === "deferred").toBe(isDeferralActive(activation));
+    }
+  });
+});
+
+// Phase 4 Task 3 (RULING P4-A): partitionAdvertisedTools wires resolveDeferral into
+// buildAdvertisedSet's own output -- buildAdvertisedSet itself stays completely unchanged (proven
+// separately by every pre-existing test above and the I4 conformance test remaining green).
+describe("partitionAdvertisedTools (Phase 4 Task 3, RULING P4-A)", () => {
+  const SRV = "t3partition";
+  afterEach(() => {
+    unregisterMcpServerTools(SRV);
+  });
+
+  test("partitions a live-registered deferred MCP tool into `deferred` when Tool Search is active, `eager` when it is not", () => {
+    registerMcpServerTools(SRV, [{ name: "search_docs", inputSchema: { type: "object" } }], { deferredDefault: true });
+    const cfg: AdvertisedSetInputs = { mode: "default", capabilities: ["winter.mcp"] };
+
+    const active: DeferralActivation = { enableToolSearch: "true", providerSupportsToolSearch: true, deferrableContextShare: 100 };
+    const partitionActive = partitionAdvertisedTools(cfg, active);
+    expect(partitionActive.deferred.map((d) => d.canonicalName)).toContain(`mcp__${SRV}__search_docs`);
+    expect(partitionActive.eager.map((d) => d.canonicalName)).not.toContain(`mcp__${SRV}__search_docs`);
+
+    const inactive: DeferralActivation = { enableToolSearch: "false", providerSupportsToolSearch: true, deferrableContextShare: 100 };
+    const partitionInactive = partitionAdvertisedTools(cfg, inactive);
+    expect(partitionInactive.eager.map((d) => d.canonicalName)).toContain(`mcp__${SRV}__search_docs`);
+    expect(partitionInactive.deferred.map((d) => d.canonicalName)).not.toContain(`mcp__${SRV}__search_docs`);
+  });
+
+  test("a descriptor excluded by buildAdvertisedSet's own pipeline (e.g. missing capability token) never appears in ANY partition bucket", () => {
+    registerMcpServerTools(SRV, [{ name: "search_docs", inputSchema: { type: "object" } }], { deferredDefault: true });
+    const cfgNoCapability: AdvertisedSetInputs = { mode: "default" }; // no "winter.mcp" -- buildAdvertisedSet itself excludes it
+    const activation: DeferralActivation = { enableToolSearch: "true", providerSupportsToolSearch: true, deferrableContextShare: 100 };
+    const partition = partitionAdvertisedTools(cfgNoCapability, activation);
+    const all = [...partition.eager, ...partition.deferred, ...partition.hidden].map((d) => d.canonicalName);
+    expect(all).not.toContain(`mcp__${SRV}__search_docs`);
+  });
+
+  test("system/init.tools composition (eager + already-loaded deferred) -- the caller's own responsibility, proven here at the seam boundary", () => {
+    registerMcpServerTools(SRV, [{ name: "search_docs", inputSchema: { type: "object" } }], { deferredDefault: true });
+    const cfg: AdvertisedSetInputs = { mode: "default", capabilities: ["winter.mcp"] };
+    const active: DeferralActivation = { enableToolSearch: "true", providerSupportsToolSearch: true, deferrableContextShare: 100 };
+    const partition = partitionAdvertisedTools(cfg, active);
+
+    const loadedSet = createLoadedToolSet();
+    const beforeLoad = [...partition.eager.map((d) => d.advertisedName)];
+    expect(beforeLoad).not.toContain(`mcp__${SRV}__search_docs`); // deferred + not yet loaded -- absent from init.tools
+
+    loadedSet.load([`mcp__${SRV}__search_docs`]);
+    const afterLoad = [
+      ...partition.eager.map((d) => d.advertisedName),
+      ...partition.deferred.filter((d) => loadedSet.isLoaded(d.canonicalName)).map((d) => d.advertisedName),
+    ];
+    expect(afterLoad).toContain(`mcp__${SRV}__search_docs`); // now present, exactly once
+    expect(afterLoad.filter((n) => n === `mcp__${SRV}__search_docs`).length).toBe(1);
   });
 });
 
