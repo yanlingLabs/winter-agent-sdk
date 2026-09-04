@@ -73,7 +73,7 @@ export const stubExecutor: ToolExecutor = {
 // AskUserQuestion/advisor). See transport-equivalence.test.ts's own "lane equivalence" scenarios
 // (the only consumers) and the "laneb" case below for why Write alone needs a real (non-scripted)
 // provider.
-export type TestProviderName = "boom" | "tooluse" | "hang" | "reflect" | "rpcprobe" | "modeswitch" | "bgtask" | "lanea" | "laneb" | "lanec" | "laned" | "lanee" | "mcpsdk";
+export type TestProviderName = "boom" | "tooluse" | "hang" | "reflect" | "rpcprobe" | "modeswitch" | "bgtask" | "lanea" | "laneb" | "lanec" | "laned" | "lanee" | "mcpsdk" | "subagent" | "childmsg";
 
 const TEST_PROVIDER_NAMES: ReadonlySet<string> = new Set([
   "boom",
@@ -89,6 +89,12 @@ const TEST_PROVIDER_NAMES: ReadonlySet<string> = new Set([
   "laned",
   "lanee",
   "mcpsdk",
+  // Phase 4 Task 8 (riders 6/25): the subagent spawn-round and SendMessage-to-child fixtures. This
+  // runtime Set is what main.ts's own WINTER_TEST_PROVIDER validation consults -- a name added to the
+  // TYPE alone compiles fine and then fails at RUNTIME on the child/compiled legs only ("unrecognized
+  // WINTER_TEST_PROVIDER"), which is exactly how this omission surfaced.
+  "subagent",
+  "childmsg",
 ]);
 
 export function isTestProviderName(v: string): v is TestProviderName {
@@ -253,8 +259,94 @@ export function testProviderByName(name: TestProviderName): Provider {
         { kind: "tool_use", calls: [{ id: "mcpsdk-call-1", name: MCP_SDK_TEST_TOOL_NAME, input: { x: 1 } }] },
         { kind: "text", text: "mcp sdk done" },
       ]);
+
+    // Phase 4 Task 8 (rider 25, Lane C's own OWED recipe): the subagent spawn-round provider. A PURE
+    // FUNCTION of the messages it receives, never a shared scriptedProvider queue -- required
+    // because the SAME provider instance serves BOTH the parent's turns and every spawned child's
+    // turns (createChildEngineFactory's `deps.provider` is handed straight to the child's nested
+    // runEngine). A queue-popping script shared across a parent and a child racing each other is
+    // exactly the class of bug Lane C hit, fixed, and then hit AGAIN in its own first draft of this
+    // recipe -- see that lane's report for the two independent ways it manifests.
+    //
+    // Discrimination is on the FIRST user message (which never changes for either party's own
+    // conversation) rather than "the last message with string content" (which lands back on the
+    // first message once a tool-result message with ContentBlock[] content is skipped, producing an
+    // infinite Agent-call loop). Completion is keyed on "has the Agent tool_use already been
+    // emitted in this conversation", for the same reason.
+    case "subagent":
+      return {
+        async generate({ messages }) {
+          const firstUser = messages.find((m) => m.role === "user");
+          const firstText = typeof firstUser?.content === "string" ? firstUser.content : "";
+          if (firstText.includes(SUBAGENT_CHILD_PROBE_TEXT)) return { kind: "text", text: "child finished" };
+          const alreadySpawned = messages.some(
+            (m) => m.role === "assistant" && Array.isArray(m.content) && m.content.some((b) => b.type === "tool_use" && b.name === "Agent"),
+          );
+          if (alreadySpawned) return { kind: "text", text: "parent finished" };
+          return {
+            kind: "tool_use",
+            calls: [{ id: "agent-call-1", name: "Agent", input: { description: "equivalence probe", prompt: SUBAGENT_CHILD_PROBE_TEXT } }],
+          };
+        },
+      };
+
+    // Phase 4 Task 8: the SendMessage-to-child round. Same pure-function discipline as "subagent"
+    // above and for the identical reason (one provider instance, two conversations). Turn 1 spawns a
+    // FOREGROUND child; turn 2 addresses it by its own agent id, read back out of the Agent call's
+    // own JSON tool_result. Foreground deliberately: a background spawn additionally emits the
+    // task_started/background_tasks_changed/task_notification family, whose `task_id` is a fresh
+    // randomUUID and whose `output_file` is a real machine-dependent temp path -- neither is
+    // comparable across two separately-spawned legs without scrubbing away most of the frame. The
+    // foreground shape also exercises the MORE interesting WS-10 §10.3 row: SendMessage to a
+    // TERMINAL addressable child is a resume, not a steer.
+    case "childmsg":
+      return {
+        async generate({ messages }) {
+          const firstUser = messages.find((m) => m.role === "user");
+          const firstText = typeof firstUser?.content === "string" ? firstUser.content : "";
+          if (firstText.includes(SUBAGENT_CHILD_PROBE_TEXT)) return { kind: "text", text: "child finished" };
+          const assistantCalls = messages.flatMap((m) =>
+            m.role === "assistant" && Array.isArray(m.content) ? m.content.filter((b) => b.type === "tool_use").map((b) => (b as { name: string }).name) : [],
+          );
+          if (!assistantCalls.includes("Agent")) {
+            return {
+              kind: "tool_use",
+              calls: [{ id: "agent-call-1", name: "Agent", input: { description: "message target", prompt: SUBAGENT_CHILD_PROBE_TEXT } }],
+            };
+          }
+          if (!assistantCalls.includes("SendMessage")) {
+            // The child's own agentId comes back inside the Agent tool_result's JSON payload -- read
+            // it out rather than inventing one, so the SendMessage genuinely addresses a real child.
+            const agentId = (() => {
+              for (const m of messages) {
+                if (!Array.isArray(m.content)) continue;
+                for (const b of m.content) {
+                  if (b.type !== "tool_result" || b.tool_use_id !== "agent-call-1") continue;
+                  try {
+                    const parsed = JSON.parse(b.content) as { agentId?: string };
+                    if (typeof parsed.agentId === "string") return parsed.agentId;
+                  } catch {
+                    /* not JSON -- fall through to the sentinel below */
+                  }
+                }
+              }
+              return "no-agent-id";
+            })();
+            return {
+              kind: "tool_use",
+              calls: [{ id: "sendmsg-call-1", name: "SendMessage", input: { to: agentId, message: "steer: wrap up" } }],
+            };
+          }
+          return { kind: "text", text: "messaging done" };
+        },
+      };
   }
 }
+
+// Phase 4 Task 8: the child's own first-turn text, shared by the two providers above and by the
+// scenarios that assert against them -- ONE definition rather than two hand-copies (this file's own
+// established doctrine for every other fixture-name pairing here).
+export const SUBAGENT_CHILD_PROBE_TEXT = "child probe text";
 
 // Phase 4 Task 3 (WS-04 addendum): the standing fixture name pair for the "mcpsdk" equivalence
 // scenario -- exported so transport-equivalence.test.ts's own Options.mcpServers construction and

@@ -2,7 +2,7 @@
 // the live registry (registerMcpServerTools/unregisterMcpServerTools) -- ground truth, never a
 // hand-built candidate list. `createFakeMcpServerStateSource` (mcp/state.ts, Lane A's own seam,
 // T2-authored) is the ONLY McpServerStateSource this file ever touches -- never a real transport.
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect, afterEach } from "bun:test";
 import {
   registerMcpServerTools,
   unregisterMcpServerTools,
@@ -279,5 +279,62 @@ describe("executeToolSearch -- post-compaction re-discovery (WS-09 §8.5, R4-6 r
     } finally {
       unregisterMcpServerTools(SRV);
     }
+  });
+});
+
+// ================================================================================================
+// Phase 4 Task 8 (rider 7): the default `max_results` of 5, end to end.
+// ================================================================================================
+//
+// WS-09 §8.2's own pinned input shape is `{ query: string; max_results?: number /* default 5 */ }`.
+// Lane B's ranking honours a supplied value; what had no fixture was the DEFAULT -- i.e. that
+// omitting the field truncates a keyword result to exactly 5, while `select:` (WS-09 §8.2: "direct
+// selection is NOT truncated to max_results") stays untruncated past it.
+describe("rider 7: max_results defaults to 5", () => {
+  const SRV = "t8maxresults";
+  afterEach(() => unregisterMcpServerTools(SRV));
+
+  function registerDeferred(count: number): string[] {
+    const names = Array.from({ length: count }, (_, i) => `probe_widget_${i}`);
+    registerMcpServerTools(
+      SRV,
+      names.map((n) => ({ name: n, description: "a probe widget for the max_results default fixture", inputSchema: { type: "object" } })),
+      { deferredDefault: true },
+    );
+    return names.map((n) => `mcp__${SRV}__${n}`);
+  }
+
+  // The file's own shared deps -- `capabilities: ["winter.mcp"]` matters: every live-registered MCP
+  // descriptor carries that capability requirement, so without it the pool is empty and every
+  // assertion below would vacuously read 0.
+  const activeDeps = () => baseDeps();
+
+  test("a KEYWORD query with no max_results returns at most 5 matches, out of a deferred pool of 12", async () => {
+    const all = registerDeferred(12);
+    const res = await executeToolSearch({ query: "probe widget" }, activeDeps());
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.result.matches.length).toBe(5);
+    // Every returned name is a REAL member of the pool (never an invented or duplicated entry).
+    for (const m of res.result.matches) expect(all).toContain(m);
+    expect(new Set(res.result.matches).size).toBe(res.result.matches.length);
+    expect(res.result.total_deferred_tools).toBeGreaterThanOrEqual(12);
+  });
+
+  test("an EXPLICIT max_results overrides the default in both directions", async () => {
+    registerDeferred(12);
+    const two = await executeToolSearch({ query: "probe widget", max_results: 2 }, activeDeps());
+    expect(two.ok && two.result.matches.length).toBe(2);
+    const nine = await executeToolSearch({ query: "probe widget", max_results: 9 }, activeDeps());
+    expect(nine.ok && nine.result.matches.length).toBe(9);
+  });
+
+  test("`select:` is NOT truncated by the default -- 8 explicitly selected names all come back (WS-09 §8.2)", async () => {
+    const all = registerDeferred(12);
+    const selected = all.slice(0, 8);
+    const res = await executeToolSearch({ query: `select:${selected.join(",")}` }, activeDeps());
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.result.matches.sort()).toEqual([...selected].sort());
   });
 });

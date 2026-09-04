@@ -61,6 +61,8 @@ import {
   // see provider/mock.ts's own comment for why these are exported rather than hand-copied here.
   MCP_SDK_TEST_SERVER_NAME,
   MCP_SDK_TEST_TOOL_NAME,
+  // Phase 4 Task 8 (riders 6/25): the subagent/messaging equivalence fixtures' own shared literal.
+  SUBAGENT_CHILD_PROBE_TEXT,
 } from "winter-agent-runtime";
 import { normalizeTrace, compareTraces, type ConformanceTraceEntry } from "winter-conformance/trace";
 
@@ -140,7 +142,10 @@ registerBgTaskTestTool();
 // engine-side divergence, but exactly the class of bug compareTraces exists to catch: the two legs
 // disagreeing on wire content is a release blocker per spec regardless of which side the actual
 // root cause sits on.
-const REGISTRY_BACKED_TEST_PROVIDERS: ReadonlySet<TestProviderName> = new Set(["bgtask", "lanea", "laneb", "lanec", "laned", "lanee", "mcpsdk"]);
+// Phase 4 Task 8: "subagent"/"childmsg" join for the identical reason -- their target tools (Agent,
+// SendMessage) are REAL WS-06 names with real executors reached through the impl barrel, so the
+// in-memory leg must dispatch through the real registry, not stubExecutor's blind echo.
+const REGISTRY_BACKED_TEST_PROVIDERS: ReadonlySet<TestProviderName> = new Set(["bgtask", "lanea", "laneb", "lanec", "laned", "lanee", "mcpsdk", "subagent", "childmsg"]);
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -677,6 +682,56 @@ async function traceResumeScenario(leg: LegName): Promise<{ trace: ConformanceTr
 
   pushExit(entries, describeThrown(undefined));
   return { trace: normalizeTrace(entries), sessionId, secondAssistantText };
+}
+
+
+// --- Phase 4 Task 8 (rider 25's normalization gap #2): scenario-local tool_result scrubbing -------
+//
+// Lane C's own finding, restated: a JSON-encoded tool_result `content` is a plain STRING, and
+// `normalizeTrace`'s VOLATILE stripping is a recursive walk over OBJECT keys -- it never parses JSON
+// found inside a string value, so `agentId`/`totalDurationMs`/`messageId` inside the Agent and
+// SendMessage payloads are structurally unreachable to it.
+//
+// Fixed HERE, scenario-locally, rather than by widening trace.ts's shared VOLATILE set -- which
+// would be actively wrong: `task_id` and `output_file` are MEANINGFUL fixed literals pinned by
+// scripts/differential.ts's own background-task golden and by this file's own bgtask scenario
+// (`task_id: "t2-fixture-task"`), and stripping them globally would delete real assertions'
+// subjects. Deliberately the same posture scripts/differential.ts's own bash-background scenario
+// already takes for its value-based scrub.
+const AGENT_RESULT_VOLATILE_KEYS = new Set(["agentId", "totalDurationMs", "totalToolUseCount", "taskId", "messageId", "transcript"]);
+
+function scrubJsonToolResults(entries: ConformanceTraceEntry[]): ConformanceTraceEntry[] {
+  const scrubValue = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(scrubValue);
+    if (value === null || typeof value !== "object") return value;
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      out[k] = AGENT_RESULT_VOLATILE_KEYS.has(k) ? "<scrubbed>" : scrubValue(v);
+    }
+    return out;
+  };
+  return entries.map((entry) => {
+    const message = (entry.payload as { message?: { content?: unknown } } | undefined)?.message;
+    if (!message || !Array.isArray(message.content)) return entry;
+    const content = message.content.map((block) => {
+      const b = block as { type?: string; content?: unknown; name?: string; input?: unknown };
+      // A tool_use whose INPUT embeds a volatile id -- SendMessage's `to` is the child's own agentId,
+      // read by the fixture provider out of the Agent result, so it is as machine-specific as the
+      // agentId itself. Scrubbed by the same key set, on the input object.
+      if (b.type === "tool_use" && typeof b.input === "object" && b.input !== null) {
+        const input = b.input as Record<string, unknown>;
+        if (b.name === "SendMessage" && typeof input.to === "string") return { ...b, input: { ...input, to: "<scrubbed>" } };
+        return block;
+      }
+      if (b.type !== "tool_result" || typeof b.content !== "string") return block;
+      try {
+        return { ...b, content: JSON.stringify(scrubValue(JSON.parse(b.content))) };
+      } catch {
+        return block; // not JSON (Glob's newline-joined list, Bash's text) -- left untouched
+      }
+    });
+    return { ...entry, payload: { ...(entry.payload as object), message: { ...message, content } } };
+  });
 }
 
 // --- the equivalence suite -----------------------------------------------------------------------
@@ -1247,6 +1302,111 @@ function registerEquivalenceScenarios(legA: LegName, legB: LegName): void {
     expect(persistedToolResult).toBeDefined();
     expect(persistedToolResult!.message.content).toEqual(expectedResultContent);
   });
+
+  // Phase 4 Task 8 (rider 6, Lane A's own OWED recipe verbatim): `system/init.mcp_servers`, across
+  // every leg. The config is the SAME `type: "sdk"` shape the MCP SDK-server scenario above already
+  // builds; what this adds is the LIFECYCLE half -- engine.ts now constructs a real McpLifecycle from
+  // `config.mcpServers`, and RULING P4-C's state-only feed path (`feedSdkSlotConnected`) reports an
+  // in-process SDK server as `connected` without any transport at all. Leg-independent BY
+  // CONSTRUCTION, not by luck: that feed path is pure and synchronous, with no transport dependency,
+  // and it reads the same wire-populated `RuntimeConfig.mcpServers.<name>.tools` field every leg
+  // receives identically through `--config-json`.
+  test("rider 6: system/init.mcp_servers reports an sdk-configured server as connected, identically on every leg", async () => {
+    const makeInstance = (): WinterMcpServerInstance => ({
+      listTools: () => [{ name: "echo", inputSchema: { type: "object" } }],
+      async callTool(_name: string, args: Record<string, unknown>) {
+        return { content: [{ type: "text", text: `echo:${JSON.stringify(args)}` }] };
+      },
+    });
+    const mcpServers = (): Options["mcpServers"] => ({ [MCP_SDK_TEST_SERVER_NAME]: { type: "sdk", name: MCP_SDK_TEST_SERVER_NAME, instance: makeInstance() } });
+    const a = await traceViaQuery(legA, { prompt: "hi", mcpServers: mcpServers() });
+    const b = await traceViaQuery(legB, { prompt: "hi", mcpServers: mcpServers() });
+    expect(compareTraces(a.trace, b.trace)).toEqual([]);
+    expect(a.thrown).toBeUndefined();
+    expect(b.thrown).toBeUndefined();
+    // compareTraces already proved the two legs agree; these pin the actual VALUE, so a shared
+    // regression (both legs silently dropping mcp_servers) cannot pass.
+    const initA = a.trace[0]!.payload as { mcp_servers?: Array<{ name: string; status: string }>; tools: string[] };
+    const initB = b.trace[0]!.payload as { mcp_servers?: Array<{ name: string; status: string }> };
+    expect(initA.mcp_servers).toEqual([{ name: MCP_SDK_TEST_SERVER_NAME, status: "connected" }]);
+    expect(initB.mcp_servers).toEqual(initA.mcp_servers);
+    // ...and the SAME session's `winter.mcp`-gated family is advertised, because declaring an MCP
+    // server is exactly the session fact that derivation is gated on (registry.ts's
+    // SessionCapabilityFacts) -- no host-supplied `capabilities` needed any more.
+    expect(initA.tools).toContain("ListMcpResourcesTool");
+    expect(initA.tools).toContain(MCP_SDK_TEST_TOOL_NAME);
+  });
+
+  // Phase 4 Task 8 (rider 25, Lane C's own "OWED to T8" recipe): a real subagent spawn round, on
+  // every leg. Blocked before this task on Lane C's Gap #1 -- a spawned/compiled process shares no
+  // module state with this test file, so the factory had to be registered by the ENTRYPOINTS
+  // themselves (main.ts AND testing.ts, via subagents/register-default-factory.ts) before any leg
+  // but in-memory could spawn at all.
+  //
+  // FOREGROUND deliberately (`run_in_background` omitted -> foreground per resolveForegroundBackground's
+  // own SDK-default branch): a foreground spawn's tool call synchronously awaits handle.result(), so
+  // the parent-turn / child-turn / parent-turn interleaving is deterministic under a single-threaded
+  // event loop with no synchronization primitive. A background variant is real but inherently harder
+  // to pin (fire-and-forget has no ordering guarantee against the parent's remaining turns).
+  test("rider 25: a real subagent spawn round (Agent -> child -> result) is identical on every leg, and the child's frames are correlated, never flattened", async () => {
+    const a = await traceViaQuery(legA, { prompt: "run the subagent", testProviderName: "subagent", allowedTools: ["Agent"] });
+    const b = await traceViaQuery(legB, { prompt: "run the subagent", testProviderName: "subagent", allowedTools: ["Agent"] });
+    expect(compareTraces(scrubJsonToolResults(a.trace), scrubJsonToolResults(b.trace))).toEqual([]);
+    expect(a.thrown).toBeUndefined();
+    expect(b.thrown).toBeUndefined();
+    expect(a.trace.map((e) => e.kind)).toEqual(["system/init", "assistant", "user", "assistant", "result", "exit"]);
+
+    const toolUse = a.trace[1]!.payload as { message: { content: Array<{ type: string; name: string }> } };
+    expect(toolUse.message.content[0]).toMatchObject({ type: "tool_use", name: "Agent" });
+
+    // WS-10 §4, the load-bearing assertion: the child's OWN init/result frames never surface on the
+    // parent's stream (P4-J(c) / rider 23), the child emitted no tool calls of its own, and
+    // `forwardSubagentText` is off by default -- so the ONLY thing the parent's stream carries about
+    // the child is the Agent tool's own result. "Never flatten child messages into the main stream."
+    expect(a.trace.filter((e) => e.kind === "system/init").length).toBe(1);
+    expect(a.trace.filter((e) => e.kind === "result").length).toBe(1);
+
+    // The Agent tool genuinely spawned and completed a real child -- not the "no child engine
+    // factory is registered" error every leg produced before this task's entrypoint registration.
+    const toolResult = a.trace[2]!.payload as { message: { content: Array<{ content: string }> } };
+    const payload = JSON.parse(toolResult.message.content[0]!.content) as { agentId: string; content: Array<{ text: string }>; prompt: string };
+    expect(payload.content[0]!.text).toBe("child finished");
+    expect(payload.prompt).toBe(SUBAGENT_CHILD_PROBE_TEXT);
+    expect(typeof payload.agentId).toBe("string");
+    // The correlation key is the MODEL's own tool_use id now (rider 14), never a synthetic uuid --
+    // asserted here on the wire rather than only at the unit level.
+    expect(JSON.stringify(a.trace)).not.toContain("no child engine factory");
+  }, 20_000);
+
+  // Phase 4 Task 8: a SendMessage-to-child round, on every leg. Composes THREE things this task
+  // wired that no earlier scenario could exercise together: the entrypoint child-engine factory
+  // (rider 18), the process-level messaging runtime with this run's roster contributed to it, and
+  // the real per-call `ctx.toolUseId` SendMessage derives its retry-stable messageId from (rider 14).
+  test("Task 8: SendMessage addressed to this session's own child RESUMES it (WS-10 §10.3), identically on every leg", async () => {
+    const run = (leg: LegName) => traceViaQuery(leg, { prompt: "spawn then steer", testProviderName: "childmsg", allowedTools: ["Agent", "SendMessage"] });
+    const a = await run(legA);
+    const b = await run(legB);
+    expect(compareTraces(scrubJsonToolResults(a.trace), scrubJsonToolResults(b.trace))).toEqual([]);
+    expect(a.thrown).toBeUndefined();
+    expect(b.thrown).toBeUndefined();
+
+    const sendResult = a.trace
+      .filter((e) => e.kind === "user")
+      .flatMap((e) => ((e.payload as { message: { content: Array<{ tool_use_id: string; content: string }> } }).message.content ?? []))
+      .find((blk) => blk.tool_use_id === "sendmsg-call-1");
+    expect(sendResult, "the SendMessage call must produce a tool_result").toBeDefined();
+    // The tool's own model-visible envelope is `{outcome: DeliveryOutcome, notify?}` (Lane D's
+    // send-message.ts) -- not a bare DeliveryOutcome.
+    const { outcome } = JSON.parse(sendResult!.content) as { outcome: { status: string; messageId?: string } };
+    // The router resolved a REAL child of this session and produced a real DeliveryOutcome -- never
+    // "no messaging runtime configured" (the pre-T8 answer) and never "not_found" (which is what a
+    // roster the messaging runtime cannot see would produce).
+    expect(sendResult!.content).not.toContain("no messaging runtime");
+    // WS-10 §10.3's own row for a TERMINAL addressable child: SendMessage resumes it, and
+    // `resumed_and_delivered` is claimed only when resume AND delivery both completed.
+    expect(outcome.status).toBe("resumed_and_delivered");
+    expect(typeof outcome.messageId).toBe("string");
+  }, 20_000);
 
   test("interrupt mid-turn", async () => {
     const a = await traceInterrupt(legA);

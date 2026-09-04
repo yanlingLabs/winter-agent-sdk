@@ -1,0 +1,176 @@
+[
+  {
+    "sequence": 0,
+    "direction": "runtime-to-host",
+    "kind": "system/init",
+    "payload": {
+      "type": "system",
+      "subtype": "init",
+      "cwd": "/winter-fixture",
+      "model": "sonnet",
+      "permissionMode": "default",
+      "tools": [
+        "Agent",
+        "AskUserQuestion",
+        "Bash",
+        "CronCreate",
+        "CronDelete",
+        "CronList",
+        "Edit",
+        "EnterPlanMode",
+        "EnterWorktree",
+        "ExitPlanMode",
+        "ExitWorktree",
+        "Glob",
+        "Grep",
+        "ListAgents",
+        "ListMcpResourcesTool",
+        "Monitor",
+        "NotebookEdit",
+        "PushNotification",
+        "Read",
+        "ReadMcpResourceDirTool",
+        "ReadMcpResourceTool",
+        "ReadNotifications",
+        "RefreshMcpTools",
+        "ReportFindings",
+        "ScheduleWakeup",
+        "SendMessage",
+        "TaskCreate",
+        "TaskGet",
+        "TaskList",
+        "TaskOutput",
+        "TaskStop",
+        "TaskUpdate",
+        "ToolSearch",
+        "Write"
+      ],
+      "mcp_servers": [
+        {
+          "name": "t8toolsearch",
+          "status": "connected"
+        }
+      ]
+    }
+  },
+  {
+    "sequence": 1,
+    "direction": "runtime-to-host",
+    "kind": "assistant",
+    "payload": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "type": "tool_use",
+            "id": "ts-call-1",
+            "name": "ToolSearch",
+            "input": {
+              "query": "select:mcp__t8toolsearch__echo"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "sequence": 2,
+    "direction": "runtime-to-host",
+    "kind": "assistant",
+    "payload": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "type": "tool_reference",
+            "tool_names": [
+              "mcp__t8toolsearch__echo"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  {
+    "sequence": 3,
+    "direction": "runtime-to-host",
+    "kind": "user",
+    "payload": {
+      "type": "user",
+      "message": {
+        "content": [
+          {
+            "type": "tool_result",
+            "tool_use_id": "ts-call-1",
+            "content": "{\"matches\":[\"mcp__t8toolsearch__echo\"],\"query\":\"select:mcp__t8toolsearch__echo\",\"total_deferred_tools\":3}"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "sequence": 4,
+    "direction": "runtime-to-host",
+    "kind": "assistant",
+    "payload": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "type": "tool_use",
+            "id": "mcp-call-1",
+            "name": "mcp__t8toolsearch__echo",
+            "input": {
+              "x": 1
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "sequence": 5,
+    "direction": "runtime-to-host",
+    "kind": "user",
+    "payload": {
+      "type": "user",
+      "message": {
+        "content": [
+          {
+            "type": "tool_result",
+            "tool_use_id": "mcp-call-1",
+            "content": "echo:{\"x\":1}"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "sequence": 6,
+    "direction": "runtime-to-host",
+    "kind": "assistant",
+    "payload": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "type": "text",
+            "text": "tool search done"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "sequence": 7,
+    "direction": "runtime-to-host",
+    "kind": "result",
+    "payload": {
+      "type": "result",
+      "subtype": "success",
+      "is_error": false,
+      "result": "tool search done",
+      "permission_denials": []
+    }
+  }
+]

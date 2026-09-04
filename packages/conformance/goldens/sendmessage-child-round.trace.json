@@ -1,0 +1,149 @@
+[
+  {
+    "sequence": 0,
+    "direction": "runtime-to-host",
+    "kind": "system/init",
+    "payload": {
+      "type": "system",
+      "subtype": "init",
+      "cwd": "/winter-fixture",
+      "model": "sonnet",
+      "permissionMode": "default",
+      "tools": [
+        "Agent",
+        "AskUserQuestion",
+        "Bash",
+        "CronCreate",
+        "CronDelete",
+        "CronList",
+        "Edit",
+        "EnterPlanMode",
+        "EnterWorktree",
+        "ExitPlanMode",
+        "ExitWorktree",
+        "Glob",
+        "Grep",
+        "ListAgents",
+        "Monitor",
+        "NotebookEdit",
+        "PushNotification",
+        "Read",
+        "ReadNotifications",
+        "ReportFindings",
+        "ScheduleWakeup",
+        "SendMessage",
+        "TaskCreate",
+        "TaskGet",
+        "TaskList",
+        "TaskOutput",
+        "TaskStop",
+        "TaskUpdate",
+        "Write"
+      ]
+    }
+  },
+  {
+    "sequence": 1,
+    "direction": "runtime-to-host",
+    "kind": "assistant",
+    "payload": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "type": "tool_use",
+            "id": "agent-call-1",
+            "name": "Agent",
+            "input": {
+              "description": "message target",
+              "prompt": "child probe text"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "sequence": 2,
+    "direction": "runtime-to-host",
+    "kind": "user",
+    "payload": {
+      "type": "user",
+      "message": {
+        "content": [
+          {
+            "type": "tool_result",
+            "tool_use_id": "agent-call-1",
+            "content": "{\"agentId\":\"<scrubbed>\",\"content\":[{\"type\":\"text\",\"text\":\"child finished\"}],\"totalToolUseCount\":\"<scrubbed>\",\"totalDurationMs\":\"<scrubbed>\",\"resolvedModel\":\"sonnet\",\"prompt\":\"child probe text\"}"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "sequence": 3,
+    "direction": "runtime-to-host",
+    "kind": "assistant",
+    "payload": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "type": "tool_use",
+            "id": "sendmsg-call-1",
+            "name": "SendMessage",
+            "input": {
+              "to": "<scrubbed>",
+              "message": "steer: wrap up"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "sequence": 4,
+    "direction": "runtime-to-host",
+    "kind": "user",
+    "payload": {
+      "type": "user",
+      "message": {
+        "content": [
+          {
+            "type": "tool_result",
+            "tool_use_id": "sendmsg-call-1",
+            "content": "{\"outcome\":{\"status\":\"resumed_and_delivered\",\"messageId\":\"<scrubbed>\"}}"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "sequence": 5,
+    "direction": "runtime-to-host",
+    "kind": "assistant",
+    "payload": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "type": "text",
+            "text": "messaging done"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "sequence": 6,
+    "direction": "runtime-to-host",
+    "kind": "result",
+    "payload": {
+      "type": "result",
+      "subtype": "success",
+      "is_error": false,
+      "result": "messaging done",
+      "permission_denials": []
+    }
+  }
+]

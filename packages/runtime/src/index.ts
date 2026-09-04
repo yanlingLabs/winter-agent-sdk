@@ -37,6 +37,8 @@ export {
   registerBgTaskTestTool,
   BGTASK_TEST_TOOL_NAME,
   MCP_SDK_TEST_SERVER_NAME,
+  // Phase 4 Task 8 (riders 6/25): the subagent/messaging equivalence fixtures' own shared literal.
+  SUBAGENT_CHILD_PROBE_TEXT,
   MCP_SDK_TEST_TOOL_NAME,
 } from "./provider/mock.ts";
 export type { TestProviderName } from "./provider/mock.ts";

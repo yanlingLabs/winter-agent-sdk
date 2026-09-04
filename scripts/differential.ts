@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { query, encodeFrame, splitFrames, type RuntimeConfig, type WinterFrame } from "@yanlinglabs/winter-agent-sdk";
 import { inMemoryProcess } from "winter-agent-runtime/testing";
-import { testProviderByName, scriptedProvider, registerTool } from "winter-agent-runtime";
+import { testProviderByName, scriptedProvider, registerTool, MCP_SDK_TEST_SERVER_NAME, MCP_SDK_TEST_TOOL_NAME } from "winter-agent-runtime";
 import { normalizeTrace, compareTraces, type ConformanceTraceEntry } from "winter-conformance/trace";
 
 // A pinned, synthetic cwd (never process.cwd()) so every recorded trace — and the committed golden
@@ -642,6 +642,197 @@ export async function traceWinterAdvertisedSetRound(): Promise<ConformanceTraceE
   }
 }
 
+
+// --- Phase 4 Task 8: the four P4-family differential scenarios ----------------------------------
+//
+// Each is the hermetic, in-memory-only, byte-frozen half of a shape the equivalence suite proves
+// across real transports (packages/sdk/src/transport-equivalence.test.ts) -- the same division of
+// labour every scenario above already follows.
+//
+// SCRUBBING: three of the four carry values that are genuinely non-deterministic across runs and
+// live inside a JSON-ENCODED tool_result string, which normalizeTrace's own VOLATILE stripping (a
+// recursive walk over OBJECT keys) structurally cannot reach. Handled by the scenario-local
+// `scrubJsonToolResults` below rather than by widening trace.ts's shared VOLATILE set -- widening it
+// would silently strip `task_id`/`output_file` from the background-task golden above, whose FIXED
+// LITERAL values are the whole point of that scenario.
+const P4_RESULT_VOLATILE_KEYS = new Set(["agentId", "totalDurationMs", "totalToolUseCount", "taskId", "messageId", "transcript"]);
+
+function scrubJsonToolResults(entries: ConformanceTraceEntry[]): ConformanceTraceEntry[] {
+  const scrubValue = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(scrubValue);
+    if (value === null || typeof value !== "object") return value;
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) out[k] = P4_RESULT_VOLATILE_KEYS.has(k) ? "<scrubbed>" : scrubValue(v);
+    return out;
+  };
+  return entries.map((entry) => {
+    const message = (entry.payload as { message?: { content?: unknown } } | undefined)?.message;
+    if (!message || !Array.isArray(message.content)) return entry;
+    const content = message.content.map((block) => {
+      const b = block as { type?: string; content?: unknown; name?: string; input?: unknown };
+      if (b.type === "tool_use" && b.name === "SendMessage" && typeof b.input === "object" && b.input !== null) {
+        return { ...b, input: { ...(b.input as Record<string, unknown>), to: "<scrubbed>" } };
+      }
+      if (b.type !== "tool_result" || typeof b.content !== "string") return block;
+      try {
+        return { ...b, content: JSON.stringify(scrubValue(JSON.parse(b.content))) };
+      } catch {
+        return block;
+      }
+    });
+    return { ...entry, payload: { ...(entry.payload as object), message: { ...message, content } } };
+  });
+}
+
+// (1) WS-09 §1.1/§2.1 + RULING P4-C: an in-process SDK MCP server -- its tool round AND the
+// `system/init.mcp_servers` snapshot the real McpLifecycle now feeds, byte-frozen. Note what the
+// golden pins beyond the tool call itself: `mcp_servers: [{name, status:"connected"}]`, and the
+// MCP-family tools appearing in `init.tools` because declaring a server is exactly the session fact
+// `winter.mcp`'s derivation is gated on (registry.ts's SessionCapabilityFacts).
+export async function traceWinterMcpToolRound(): Promise<ConformanceTraceEntry[]> {
+  const winterHome = mkdtempSync(join(tmpdir(), "winter-differential-mcp-"));
+  try {
+    const entries: ConformanceTraceEntry[] = [];
+    for await (const msg of query({
+      prompt: "go",
+      options: {
+        model: FIXTURE_MODEL,
+        cwd: FIXTURE_CWD,
+        allowedTools: [MCP_SDK_TEST_TOOL_NAME],
+        mcpServers: {
+          [MCP_SDK_TEST_SERVER_NAME]: {
+            type: "sdk",
+            name: MCP_SDK_TEST_SERVER_NAME,
+            instance: {
+              listTools: () => [{ name: "echo", inputSchema: { type: "object" } }],
+              async callTool(_name: string, args: Record<string, unknown>) {
+                return { content: [{ type: "text", text: `echo:${JSON.stringify(args)}` }] };
+              },
+            },
+          },
+        },
+        spawnClaudeCodeProcess: (opts) =>
+          inMemoryProcess(opts.args, testProviderByName("mcpsdk"), undefined, { ...opts.env, WINTER_HOME: winterHome }),
+      },
+    })) {
+      entries.push({ sequence: entries.length, direction: "runtime-to-host", kind: kindOf(msg), payload: msg });
+    }
+    return normalizeTrace(entries);
+  } finally {
+    rmSync(winterHome, { recursive: true, force: true });
+  }
+}
+
+// (2) WS-09 §8.2/§8.5: a ToolSearch `select:` round, then a CALL of the just-selected tool. Pins the
+// whole load-first mechanic on the wire: with activation ON the MCP tool is DEFERRED, so it is
+// absent from `init.tools` (the ground-truth array, §8.5) and a bare call would be load-first
+// rejected; the `select:` emits a real `tool_reference` block and marks it loaded; the following
+// call then executes for real. `total_deferred_tools` and the ToolSearch result shape are pinned
+// byte-exact in the same trace.
+// A DISTINCT server name from the mcp-tool-round scenario above, deliberately. Found empirically:
+// this script runs every scenario sequentially in ONE process over a process-wide tool registry, and
+// `query()` returns at the terminal `result` frame -- which the engine writes BEFORE its own teardown
+// runs. So the previous scenario's `unregisterMcpServerTools(<name>)` can fire AFTER the next
+// scenario has already registered the same name, silently deleting it (observed: an "unknown tool"
+// tool_result and `total_deferred_tools` counting only the two standing canonical entries). Distinct
+// names make the two scenarios independent regardless of teardown timing.
+const TOOLSEARCH_FIXTURE_SERVER = "t8toolsearch";
+const TOOLSEARCH_FIXTURE_TOOL = `mcp__${TOOLSEARCH_FIXTURE_SERVER}__echo`;
+
+export async function traceWinterToolSearchSelectRound(): Promise<ConformanceTraceEntry[]> {
+  const winterHome = mkdtempSync(join(tmpdir(), "winter-differential-toolsearch-"));
+  try {
+    const entries: ConformanceTraceEntry[] = [];
+    for await (const msg of query({
+      prompt: "find and call it",
+      options: {
+        model: FIXTURE_MODEL,
+        cwd: FIXTURE_CWD,
+        toolSearchEnabled: true,
+        allowedTools: ["ToolSearch", TOOLSEARCH_FIXTURE_TOOL],
+        mcpServers: {
+          [TOOLSEARCH_FIXTURE_SERVER]: {
+            type: "sdk",
+            name: TOOLSEARCH_FIXTURE_SERVER,
+            instance: {
+              listTools: () => [{ name: "echo", inputSchema: { type: "object" } }],
+              async callTool(_name: string, args: Record<string, unknown>) {
+                return { content: [{ type: "text", text: `echo:${JSON.stringify(args)}` }] };
+              },
+            },
+          },
+        },
+        spawnClaudeCodeProcess: (opts) =>
+          inMemoryProcess(
+            opts.args,
+            scriptedProvider([
+              { kind: "tool_use", calls: [{ id: "ts-call-1", name: "ToolSearch", input: { query: `select:${TOOLSEARCH_FIXTURE_TOOL}` } }] },
+              { kind: "tool_use", calls: [{ id: "mcp-call-1", name: TOOLSEARCH_FIXTURE_TOOL, input: { x: 1 } }] },
+              { kind: "text", text: "tool search done" },
+            ]),
+            undefined,
+            { ...opts.env, WINTER_HOME: winterHome },
+          ),
+      },
+    })) {
+      entries.push({ sequence: entries.length, direction: "runtime-to-host", kind: kindOf(msg), payload: msg });
+    }
+    return normalizeTrace(entries);
+  } finally {
+    rmSync(winterHome, { recursive: true, force: true });
+  }
+}
+
+// (3) WS-10 §1/§4: a real subagent spawn -> child turn -> result round through the full query()
+// wrapper. The equivalence suite proves the SAME choreography across real transports; this is its
+// frozen half. Deliberately FOREGROUND (see provider/mock.ts's "subagent" case for why a background
+// spawn cannot be pinned deterministically).
+export async function traceWinterSubagentSpawnRound(): Promise<ConformanceTraceEntry[]> {
+  const winterHome = mkdtempSync(join(tmpdir(), "winter-differential-subagent-"));
+  try {
+    const entries: ConformanceTraceEntry[] = [];
+    for await (const msg of query({
+      prompt: "run the subagent",
+      options: {
+        model: FIXTURE_MODEL,
+        cwd: FIXTURE_CWD,
+        allowedTools: ["Agent"],
+        spawnClaudeCodeProcess: (opts) =>
+          inMemoryProcess(opts.args, testProviderByName("subagent"), undefined, { ...opts.env, WINTER_HOME: winterHome }),
+      },
+    })) {
+      entries.push({ sequence: entries.length, direction: "runtime-to-host", kind: kindOf(msg), payload: msg });
+    }
+    return normalizeTrace(scrubJsonToolResults(entries));
+  } finally {
+    rmSync(winterHome, { recursive: true, force: true });
+  }
+}
+
+// (4) WS-10 §10.3: SendMessage addressed to this session's own (now terminal) child -- a RESUME,
+// with `resumed_and_delivered` claimed only because resume and delivery both completed.
+export async function traceWinterSendMessageToChildRound(): Promise<ConformanceTraceEntry[]> {
+  const winterHome = mkdtempSync(join(tmpdir(), "winter-differential-childmsg-"));
+  try {
+    const entries: ConformanceTraceEntry[] = [];
+    for await (const msg of query({
+      prompt: "spawn then steer",
+      options: {
+        model: FIXTURE_MODEL,
+        cwd: FIXTURE_CWD,
+        allowedTools: ["Agent", "SendMessage"],
+        spawnClaudeCodeProcess: (opts) =>
+          inMemoryProcess(opts.args, testProviderByName("childmsg"), undefined, { ...opts.env, WINTER_HOME: winterHome }),
+      },
+    })) {
+      entries.push({ sequence: entries.length, direction: "runtime-to-host", kind: kindOf(msg), payload: msg });
+    }
+    return normalizeTrace(scrubJsonToolResults(entries));
+  } finally {
+    rmSync(winterHome, { recursive: true, force: true });
+  }
+}
+
 // --- registry-driven check: every scenario against its committed golden --------------------------
 
 interface Scenario {
@@ -676,6 +867,13 @@ const SCENARIOS: Scenario[] = [
   // through the full query() wrapper, not just runEngine() directly).
   { name: "bash-background-round", trace: traceWinterBashBackgroundRound, goldenFile: "bash-background-round.trace.json" },
   { name: "advertised-set-round", trace: traceWinterAdvertisedSetRound, goldenFile: "advertised-set-round.trace.json" },
+  // Phase 4 Task 8: four new goldens, one per P4 family -- see each trace function's own header for
+  // its scope and for why it is the frozen half of a shape the equivalence suite proves across real
+  // transports.
+  { name: "mcp-tool-round", trace: traceWinterMcpToolRound, goldenFile: "mcp-tool-round.trace.json" },
+  { name: "toolsearch-select-round", trace: traceWinterToolSearchSelectRound, goldenFile: "toolsearch-select-round.trace.json" },
+  { name: "subagent-spawn-round", trace: traceWinterSubagentSpawnRound, goldenFile: "subagent-spawn-round.trace.json" },
+  { name: "sendmessage-child-round", trace: traceWinterSendMessageToChildRound, goldenFile: "sendmessage-child-round.trace.json" },
 ];
 
 // Sign-off 3 directive (whole-branch review): `--update` turns this script from a comparator into
