@@ -164,6 +164,13 @@ export function createReferenceMessagingAdapter(deps: ReferenceAdapterDeps): Ref
       objectKind: "session",
       runtimeKind: "winter-agent",
       status,
+      // T8 FLAG: see resolution.ts's own childToListedRuntimeObject for the identical note --
+      // WS-10 §11 leaves `mode` as an untyped `string`; the companion doc's directory record types
+      // it as the session/product mode ("code"|"chat"|"cowork"|"dispatch"|"build"), not a
+      // PermissionMode. `PeerSessionHandle` (this file's own in-process abstraction) exposes only
+      // `mode(): PermissionMode` -- there is no product-mode source to plug in here instead, so this
+      // reference adapter substitutes the permission axis. Nothing downstream consumes this field
+      // yet; a real daemon-side adapter (P8) would need an actual product-mode source.
       mode: peer.mode(),
       ...(peer.cwd !== undefined ? { cwd: peer.cwd } : {}),
       capabilities: {
