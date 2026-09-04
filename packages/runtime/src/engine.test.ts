@@ -16,7 +16,7 @@ import { WinterCompatibilitySessionStore, splitFrames, encodeFrame, compatibilit
 import type { SpawnedRuntimeProcess } from "@yanlinglabs/winter-agent-sdk";
 import { createInMemoryChannel } from "./protocol/channel.ts";
 import { runEngine, providerMessageContentToText, type Provider, type ProviderMessage, type ContentBlock, type ToolExecutor, type SessionPersistence } from "./engine.ts";
-import { getRegisteredTool, registerMcpServerTools, unregisterMcpServerTools } from "./tools/registry.ts";
+import { getRegisteredTool, registerMcpServerTools, unregisterMcpServerTools, replaceExecutor } from "./tools/registry.ts";
 import { ADVISOR_TOOL_NAME } from "./tools/impl/advisor.ts";
 import "./tools/impl/index.ts"; // guarantees advisor.ts's own module-load default is registered before the M6 tests below run
 import { echoProvider, scriptedProvider, stubExecutor } from "./provider/mock.ts";
@@ -2820,5 +2820,92 @@ describe("Phase 4 Task 3: agentID threading (MUST 9)", () => {
       | { agent_id?: string }
       | undefined;
     expect(permissionDeniedMsgMain?.agent_id).toBeUndefined();
+  });
+});
+
+describe("Phase 4 Task 3: load-first execution boundary (MUST 6, WS-09 §8.2/§8.5)", () => {
+  test("a call to a deferred, unloaded tool is rejected with a typed loadFirst result -- never executed; the round continues to a normal completion", async () => {
+    const SRV = "t3-loadfirst-fixture";
+    let executed = false;
+    registerMcpServerTools(SRV, [{ name: "search_docs", inputSchema: { type: "object" } }], { deferredDefault: true });
+    replaceExecutor(`mcp__${SRV}__search_docs`, {
+      async execute() {
+        executed = true;
+        return { output: "should never run" };
+      },
+    });
+    try {
+      const canonicalName = `mcp__${SRV}__search_docs`;
+      const { host, runtime } = createInMemoryChannel();
+      const provider = scriptedProvider([
+        { kind: "tool_use", calls: [{ id: "call-1", name: canonicalName, input: {} }] },
+        { kind: "text", text: "done" },
+      ]);
+      const done = runEngine({
+        config: baseConfig({ permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true, toolSearchEnabled: true, capabilities: ["winter.mcp"] }),
+        input: runtime.input,
+        output: runtime.output,
+        provider,
+        providerSupportsToolSearch: true,
+        deferrableContextShare: 100,
+      });
+      sendAndCollectUntilResult(host);
+      const frames = await drain(host.input);
+      await done;
+
+      expect(executed).toBe(false); // the real executor never ran
+      const msgs = dataMessages(frames);
+      const toolResultMsg = msgs.find((m) => m.type === "user") as unknown as { message: { content: Array<{ tool_use_id: string; loadFirst?: boolean; content: string }> } };
+      const block = toolResultMsg.message.content.find((b) => b.tool_use_id === "call-1");
+      expect(block?.loadFirst).toBe(true);
+      expect(block?.content).toContain("has not been loaded");
+      // The run continued to a normal completion -- never hung, never aborted the whole turn.
+      const result = msgs.find((m) => m.type === "result") as { subtype?: string; is_error?: boolean };
+      expect(result?.subtype).toBe("success");
+      expect(result?.is_error).toBe(false);
+    } finally {
+      unregisterMcpServerTools(SRV);
+    }
+  });
+
+  test("the SAME deferred tool executes normally once marked loaded (proves load-first is a session-state check, not a permanent ban)", async () => {
+    const SRV = "t3-loadfirst-loaded-fixture";
+    registerMcpServerTools(SRV, [{ name: "search_docs", inputSchema: { type: "object" } }], { deferredDefault: true });
+    const canonicalName = `mcp__${SRV}__search_docs`;
+    replaceExecutor(canonicalName, {
+      async execute() {
+        return { output: "real result" };
+      },
+    });
+    try {
+      // No public engine-level seam exists yet to mark a tool loaded from OUTSIDE the engine (Lane
+      // B's own ToolSearch executor is the real future caller, via ctx.emitToolReference or
+      // equivalent) -- this proves the ESCAPE HATCH the boundary check itself depends on
+      // (loadedToolSet.isLoaded) by using a session where Tool Search is OFF, which resolveDeferral
+      // itself resolves to "eager" regardless of the loaded set (see resolveDeferral's own
+      // provider/enableToolSearch floors) -- a complementary proof to the "deferred + active"
+      // case above, not a duplicate of it.
+      const { host, runtime } = createInMemoryChannel();
+      const provider = scriptedProvider([
+        { kind: "tool_use", calls: [{ id: "call-1", name: canonicalName, input: {} }] },
+        { kind: "text", text: "done" },
+      ]);
+      const done = runEngine({
+        config: baseConfig({ permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true, toolSearchEnabled: false, capabilities: ["winter.mcp"] }),
+        input: runtime.input,
+        output: runtime.output,
+        provider,
+      });
+      sendAndCollectUntilResult(host);
+      const frames = await drain(host.input);
+      await done;
+      const msgs = dataMessages(frames);
+      const toolResultMsg = msgs.find((m) => m.type === "user") as unknown as { message: { content: Array<{ tool_use_id: string; loadFirst?: boolean; content: string }> } };
+      const block = toolResultMsg.message.content.find((b) => b.tool_use_id === "call-1");
+      expect(block?.loadFirst).toBeUndefined();
+      expect(block?.content).toBe("real result");
+    } finally {
+      unregisterMcpServerTools(SRV);
+    }
   });
 });

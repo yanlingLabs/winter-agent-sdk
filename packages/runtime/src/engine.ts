@@ -99,6 +99,7 @@ import {
   isDeferralActive,
   partitionAdvertisedTools,
   createLoadedToolSet,
+  resolveDeferral,
   type RegistryToolExecutorDeps,
   type McpToolDefinition,
   type DeferralActivation,
@@ -123,17 +124,23 @@ import { DEFAULT_SANDBOX_SETTINGS } from "./sandbox/profile.ts";
 export type ContentBlock =
   | { type: "text"; text: string }
   | { type: "tool_use"; id: string; name: string; input: unknown }
-  // `interrupted`/`error`/`denied`/`deferred` are optional and set ONLY on a synthetic tool_result
-  // the engine manufactures instead of actually executing the call — `interrupted` for an
-  // abandoned-mid-interrupt call (Ruling P1-G), `error` for a call whose tool executor threw
+  // `interrupted`/`error`/`denied`/`deferred`/`loadFirst` are optional and set ONLY on a synthetic
+  // tool_result the engine manufactures instead of actually executing the call — `interrupted` for
+  // an abandoned-mid-interrupt call (Ruling P1-G), `error` for a call whose tool executor threw
   // (Ruling P1-H), `denied` for a call the six-stage permission evaluator (Task 6, WS-07 §2)
   // refused to execute at all, `deferred` for a call a PreToolUse hook parked into a durable
   // approval record instead of resolving now (Task 11, WS-08 §7) (cross-task pin: "a normal
-  // tool_result ... same provisional-marker class as interrupted/error/denied"). All four are
-  // provisional shapes pending official capture. Never set on a real tool_result; never two of the
-  // four set on the same block (a single call reaches at most one of denied-before-execution,
-  // deferred-before-execution, interrupted-during-execution, or errored-during-execution).
-  | { type: "tool_result"; tool_use_id: string; content: string; interrupted?: boolean; error?: boolean; denied?: boolean; deferred?: boolean };
+  // tool_result ... same provisional-marker class as interrupted/error/denied"). `loadFirst`
+  // (Phase 4 Task 3, WS-09 §8.5) marks a call for a tool this session's own registry marked
+  // DEFERRED that is NOT (yet) in the session's LoadedToolSet -- WS-09 §8.2's own "load ≠
+  // permission": this check runs BEFORE permission evaluation even starts (an unloaded deferred
+  // tool is not yet ELIGIBLE to run at all, independent of whether it would otherwise be allowed),
+  // so a load-first rejection never consumes a canUseTool prompt. All five are provisional shapes
+  // pending official capture. Never set on a real tool_result; never two of the five set on the
+  // same block (a single call reaches at most one of load-first-before-evaluation,
+  // denied-before-execution, deferred-before-execution, interrupted-during-execution, or
+  // errored-during-execution).
+  | { type: "tool_result"; tool_use_id: string; content: string; interrupted?: boolean; error?: boolean; denied?: boolean; deferred?: boolean; loadFirst?: boolean };
 
 // The engine's own turn-history record fed back to Provider.generate() on every call. Distinct
 // from the WIRE shape (assistant/user data frames, below): the wire has no "tool" role (tool
@@ -1158,6 +1165,17 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // to every committed differential golden by construction, not by coincidence.
   const advertisedPartition = partitionAdvertisedTools(advertisedCfg, deferralActivation);
   currentAdvertisedCanonicalNames = [...advertisedPartition.eager, ...advertisedPartition.deferred].map((d) => d.canonicalName);
+  // Phase 4 Task 3 (MUST 6, WS-09 §8.2/§8.5): the execution-boundary "load ≠ permission" check --
+  // re-derived from the LIVE registry per call (never a frozen startup snapshot), so a server
+  // registered/reconnected mid-session is covered too. An unknown name (no descriptor at all)
+  // is NOT this check's concern -- it falls through to the registry's own "unknown tool" result,
+  // unaffected.
+  function isDeferredAndUnloaded(toolName: string): boolean {
+    const descriptor = getRegisteredTool(toolName)?.descriptor;
+    if (!descriptor) return false;
+    const verdict = resolveDeferral(descriptor, policyStateStore.getState().mode, deferralActivation);
+    return verdict === "deferred" && !loadedToolSet.isLoaded(toolName);
+  }
   // WS-09 §8.5 "Ground truth... the live request's tools array": `system/init.tools` = eager PLUS
   // whichever deferred names are ALREADY loaded this session (none, at startup -- a fresh
   // LoadedToolSet.snapshot() is always `[]`, so this composition is presently equivalent to `eager`
@@ -1722,6 +1740,22 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
       let toolThrowText: string | null = null;
       for (const call of turn.calls) {
         try {
+          // Phase 4 Task 3 (MUST 6, WS-09 §8.2/§8.5): the load-first execution-boundary check runs
+          // BEFORE permission evaluation even starts — an unloaded deferred tool is not yet
+          // ELIGIBLE to run at all, independent of whether it would otherwise be allowed, so this
+          // rejection never consumes a canUseTool prompt (WS-09 §8.2's own "load ≠ permission": the
+          // inverse also holds -- loading a tool never authorizes it, and NOT having loaded it is
+          // resolved here, not by the permission pipeline at all). Never executed; the round
+          // continues to the next call.
+          if (isDeferredAndUnloaded(call.name)) {
+            resultBlocks.push({
+              type: "tool_result",
+              tool_use_id: call.id,
+              content: `'${call.name}' is a deferred tool that has not been loaded this session yet -- use ToolSearch to select it before calling it (WS-09 §8.5)`,
+              loadFirst: true,
+            });
+            continue;
+          }
           // Task 6 (WS-07 §2, WS-04 §4 ordering rule 5): the permission gate slots HERE — between
           // this round's tool_use emission (already written/pushed/recorded above) and execution.
           // Calls in one round evaluate SEQUENTIALLY in call order (this `for` loop's own order); a
