@@ -152,3 +152,52 @@ describe("M2: a session that declared no MCP servers can still gain one", () => 
     expect(init.mcp_servers, "an empty lifecycle must not put an empty mcp_servers on the wire").toBeUndefined();
   });
 });
+
+// --- Fix wave follow-up (4) / T8-review N2 ---------------------------------------------------------
+//
+// "caller-supplied always wins" was documented but only half-implemented: the gate tested
+// `mcpServerStateSource === undefined` alone, so a caller supplying `mcpControlSeam` (and no state
+// source) alongside declared servers got the engine building AND `start()`-ing its own lifecycle --
+// real connections, real child processes -- whose control seam was then discarded in favour of the
+// caller's. The caller's seam and the live connections belonged to two different stacks.
+describe("N2: a caller-supplied mcpControlSeam suppresses the engine's own dial", () => {
+  test("declared servers + a caller control seam: the engine dials nothing and reports no mcp_servers", async () => {
+    const seamCalls: string[] = [];
+    const { host, runtime } = createInMemoryChannel();
+    const done = runEngine({
+      config: {
+        sessionId: "n2-seam-only",
+        cwd: "/tmp/winter-n2",
+        model: "sonnet",
+        // A command that does not exist: if the engine dials its own lifecycle it will try to spawn
+        // this and land a `failed` slot in `init.mcp_servers`, which is the RED signal.
+        mcpServers: { declared: { command: "/nonexistent/winter-n2-should-never-spawn", args: [] } },
+      },
+      input: runtime.input,
+      output: runtime.output,
+      provider: echoProvider,
+      mcpControlSeam: {
+        reconnect: async (n: string) => {
+          seamCalls.push(`reconnect:${n}`);
+        },
+        toggle: async () => {},
+        setServers: async () => ({ added: [], removed: [], errors: {} }),
+      },
+    });
+    host.output.write({ type: "user", text: "hi" });
+    host.output.write({ type: "control_request", requestId: "rc", subtype: "mcp_reconnect", payload: { serverName: "declared" } });
+    host.output.write({ type: "control_request", requestId: "end", subtype: "end_input", payload: undefined });
+    const frames: WinterFrame[] = [];
+    for await (const f of host.input) frames.push(f);
+    await done;
+
+    const init = frames.find((f) => f.type === "init") as { mcp_servers?: unknown[] };
+    // THE N2 ASSERTION: no engine-built lifecycle, so no state of its own to report. Pre-fix this was
+    // `[{name:"declared", status:"failed", ...}]` -- the engine had genuinely tried to spawn it.
+    expect(init.mcp_servers, "the engine must not dial its own stack when the caller supplied a seam").toBeUndefined();
+    // ...and the caller's seam is the one that answers, which is the half that already worked.
+    expect(seamCalls).toEqual(["reconnect:declared"]);
+    const rc = frames.find((f) => f.type === "control_response" && (f as { requestId?: string }).requestId === "rc") as { ok: boolean };
+    expect(rc.ok).toBe(true);
+  }, 20_000);
+});

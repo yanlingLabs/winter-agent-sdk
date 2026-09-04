@@ -1349,7 +1349,15 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // unreachable from an empty set, and `winter.mcp` was frozen false at startup with no way back.
   // An empty server list is cheap -- `createMcpLifecycle` allocates a state board and `start()`
   // iterates zero slots.
-  if (mcpServerStateSource === undefined) {
+  //
+  // Fix wave follow-up (4), T8-review N2: the gate tests BOTH caller injection points, not just the
+  // state source. "Caller-supplied always wins" was documented but half-implemented -- a caller
+  // supplying only `mcpControlSeam` alongside declared servers got the engine building and
+  // `start()`-ing its own lifecycle (real connections, real child processes) whose control seam was
+  // then discarded in favour of the caller's, so the seam a host operated and the connections that
+  // actually existed belonged to two different stacks. Supplying either injection point now means
+  // "I own the MCP stack" and the engine dials nothing.
+  if (mcpServerStateSource === undefined && mcpControlSeam === undefined) {
     const sources: McpServerSource[] = [{ origin: "explicit", servers: config.mcpServers ?? {} }];
     const resolvedSources = resolveMcpServerSources(sources, {
       ...(config.strictMcpConfig !== undefined ? { strictMcpConfig: config.strictMcpConfig } : {}),
