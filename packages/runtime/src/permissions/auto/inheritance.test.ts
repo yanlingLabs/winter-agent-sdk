@@ -2,7 +2,7 @@
 // disableBypassPermissionsMode veto, and the child-resume stricter-of rule.
 import { describe, test, expect } from "bun:test";
 import type { PermissionMode } from "@yanlinglabs/winter-agent-sdk";
-import { computeChildPolicy, resolveChildResumeMode, stricterOf, AUTO_MODE_STRICTNESS_ORDER } from "./inheritance.ts";
+import { computeChildPolicy, resolveChildResumeMode, stricterOf, AUTO_MODE_STRICTNESS_ORDER, ChildResumeModeIncomparableError } from "./inheritance.ts";
 import { emptyRuleSet } from "../ruleset.ts";
 import type { PolicyState } from "../policy-state.ts";
 
@@ -100,13 +100,19 @@ describe("AUTO_MODE_STRICTNESS_ORDER / stricterOf", () => {
   // ONLY within the non-silencing partition {default, dontAsk, acceptEdits, bypassPermissions} --
   // it has NO rule-silencing property of its own (WS-07 §6.3: allow-rule/allowedTools matches still
   // proceed under dontAsk), so a rule-silencing mode (plan/auto) is judged stricter than it on axis 1.
-  test("dontAsk is the strictest of the non-silencing partition (default/acceptEdits/bypassPermissions), but NOT of plan/auto (a different, rule-silencing axis)", () => {
+  test("dontAsk is the strictest of the non-silencing partition (default/acceptEdits/bypassPermissions), and plan (rule-silencing) still wins over it -- but dontAsk vs auto is INCOMPARABLE, not a plan-like win (RULING P4-D)", () => {
     for (const other of ["default", "acceptEdits", "bypassPermissions", "dontAsk"] as const) {
       expect(stricterOf("dontAsk", other)).toBe("dontAsk");
     }
-    for (const other of ["plan", "auto"] as const) {
-      expect(stricterOf("dontAsk", other)).toBe(other); // the rule-silencing mode wins, not dontAsk
-    }
+    expect(stricterOf("dontAsk", "plan")).toBe("plan"); // plan's rule-silencing genuinely dominates -- no offsetting weakness
+    // RULING P4-D (fix round 1, MAJOR item 2): auto is NOT judged stricter than dontAsk the way plan
+    // is -- dontAsk denies every unresolved (no-matching-rule) action outright but still HONORS a
+    // pre-existing broad allow rule unmodified (WS-07 §6.3); auto classifies/auto-approves the
+    // unresolved residual but SUSPENDS a broad allow rule to classifier review. Each dominates the
+    // other on a DIFFERENT sub-question -- neither is "stricter." This is genuinely RED against the
+    // pre-fix-round `stricterOf`, which returned "auto" here (axis 1 treated as a total dominance
+    // order over ALL non-silencing modes, dontAsk included).
+    expect(() => stricterOf("dontAsk", "auto")).toThrow(ChildResumeModeIncomparableError);
   });
 
   test("bypassPermissions is the least strict of all", () => {
@@ -119,10 +125,60 @@ describe("AUTO_MODE_STRICTNESS_ORDER / stricterOf", () => {
     }
   });
 
-  test("axis 1 (rule-silencing) is lexicographically dominant over axis 2 (breadth) -- auto is judged stricter than default/acceptEdits/bypassPermissions/dontAsk despite auto's classifier auto-approving more in the ordinary case", () => {
-    for (const other of ["default", "acceptEdits", "bypassPermissions", "dontAsk"] as const) {
+  test("axis 1 (rule-silencing) is lexicographically dominant over axis 2 (breadth) -- auto is judged stricter than default/acceptEdits/bypassPermissions despite auto's classifier auto-approving more in the ordinary case; dontAsk is the ONE documented exception (RULING P4-D), refused rather than judged", () => {
+    for (const other of ["default", "acceptEdits", "bypassPermissions"] as const) {
       expect(stricterOf("auto", other)).toBe("auto");
     }
+    expect(() => stricterOf("auto", "dontAsk")).toThrow(ChildResumeModeIncomparableError);
+  });
+});
+
+// RULING P4-D (fix round 1, MAJOR item 2, WS-07 §11): dontAsk vs auto is the ONE pair this axis
+// model refuses to judge at all -- see inheritance.ts's own header + stricterOf's own doc comment
+// for the full mechanism-level reasoning. Fail-closed: never silently widen OR narrow, never invent
+// a composite mode; a future resume path (P8) may offer the host/user an explicit choice instead.
+describe("RULING P4-D -- dontAsk vs auto is INCOMPARABLE on axis 1: fail closed, both directions, both call sites", () => {
+  test("stricterOf refuses both directions", () => {
+    expect(() => stricterOf("dontAsk", "auto")).toThrow(ChildResumeModeIncomparableError);
+    expect(() => stricterOf("auto", "dontAsk")).toThrow(ChildResumeModeIncomparableError);
+  });
+
+  test("resolveChildResumeMode refuses both directions -- never silently widens (recorded dontAsk, current auto) or narrows (recorded auto, current dontAsk)", () => {
+    const recordedDontAsk = { effectiveMode: "dontAsk" as const, parentPolicyVersion: 1, parentPolicyHash: "h" };
+    const recordedAuto = { effectiveMode: "auto" as const, parentPolicyVersion: 1, parentPolicyHash: "h" };
+    expect(() => resolveChildResumeMode(recordedDontAsk, "auto")).toThrow(ChildResumeModeIncomparableError);
+    expect(() => resolveChildResumeMode(recordedAuto, "dontAsk")).toThrow(ChildResumeModeIncomparableError);
+  });
+
+  test("the thrown error names both modes, in the order given", () => {
+    try {
+      stricterOf("dontAsk", "auto");
+      throw new Error("expected stricterOf to throw");
+    } catch (e) {
+      expect(e).toBeInstanceOf(ChildResumeModeIncomparableError);
+      const err = e as ChildResumeModeIncomparableError;
+      expect(err.modeA).toBe("dontAsk");
+      expect(err.modeB).toBe("auto");
+    }
+    try {
+      resolveChildResumeMode({ effectiveMode: "auto", parentPolicyVersion: 1, parentPolicyHash: "h" }, "dontAsk");
+      throw new Error("expected resolveChildResumeMode to throw");
+    } catch (e) {
+      expect(e).toBeInstanceOf(ChildResumeModeIncomparableError);
+      const err = e as ChildResumeModeIncomparableError;
+      // resolveChildResumeMode(recorded, current) delegates to stricterOf(recorded.effectiveMode,
+      // current) positionally -- "recorded" first, "current" second -- so the error's own (modeA,
+      // modeB) naming carries that same (recorded, current) meaning for this call site, without
+      // resolveChildResumeMode needing its own separate error-construction path.
+      expect(err.modeA).toBe("auto"); // recorded
+      expect(err.modeB).toBe("dontAsk"); // current
+    }
+  });
+
+  test("a genuinely comparable pair is unaffected -- no over-broad refusal", () => {
+    expect(stricterOf("plan", "dontAsk")).toBe("plan");
+    expect(stricterOf("auto", "acceptEdits")).toBe("auto");
+    expect(resolveChildResumeMode({ effectiveMode: "bypassPermissions", parentPolicyVersion: 1, parentPolicyHash: "h" }, "dontAsk")).toBe("dontAsk");
   });
 });
 

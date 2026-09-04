@@ -88,14 +88,32 @@ import { computePolicyHash } from "./caches.ts";
 //   are CROSS-partition comparisons; this order was never the problem).
 //
 // Consequence, stated plainly because it reads as surprising at first: axis 1 is lexicographically
-// DOMINANT, so `auto` (and `plan`) are judged stricter than EVERY non-silencing mode INCLUDING
-// `dontAsk` and `bypassPermissions` — overturning the old comment's own claim that dontAsk is the
-// unconditional "global minimum." That claim was true only within the non-silencing partition; it
-// silently assumed dontAsk's mechanism (deny-the-unresolved-residual) dominates plan/auto's
-// mechanism (silence-a-whole-category-regardless-of-rule), which cell (ii) disproves directly. The
+// DOMINANT, so `auto` and `plan` are judged stricter than every non-silencing mode they are actually
+// COMPARABLE with — overturning the old comment's own claim that dontAsk is the unconditional
+// "global minimum." That claim was true only within the non-silencing partition; it silently
+// assumed dontAsk's mechanism (deny-the-unresolved-residual) dominates plan/auto's mechanism
+// (silence-a-whole-category-regardless-of-rule), which cell (ii) disproves directly for `plan`. The
 // two mechanisms answer different questions, and rule-silencing is the one that must never be
 // lost on resume (a mode that reviews/withholds a category by construction can never be replaced by
 // one that doesn't, no matter how "generally stricter" the replacement looks on a flattened scale).
+//
+// RULING P4-D (fix round 1, MAJOR item 2) — ONE documented exception to axis-1 dominance: `dontAsk`
+// vs `auto` specifically is NOT comparable at all, in EITHER direction, and this function REFUSES to
+// judge it (see `stricterOf`'s own doc comment + `INCOMPARABLE_MODE_PAIRS` below) rather than
+// silently picking one. `plan` genuinely dominates every non-silencing mode including `dontAsk`
+// (cell (ii): plan's write-withholding has no offsetting weakness dontAsk lacks) — but `auto` does
+// NOT dominate `dontAsk` the same way, because the two mechanisms each protect against something the
+// OTHER one doesn't:
+//   - the NO-MATCHING-RULE residual: `dontAsk` denies it outright; `auto` classifies it (and may
+//     auto-approve via the classifier) — `dontAsk` is stricter here.
+//   - an EXISTING BROAD ALLOW RULE (e.g. a standing `Bash(*)`): `dontAsk` honors it unmodified
+//     (WS-07 §6.3 — allow-rule/allowedTools matches "still permit" under dontAsk); `auto` SUSPENDS it
+//     to classifier review (isAutoSuspendedAllowRule) — `auto` is stricter here.
+// Neither sub-question's answer dominates the other, so "which of dontAsk/auto is stricter" has NO
+// defensible single answer — this is a genuine gap in the axis model, not a placement this file
+// merely didn't get around to fixing. `plan` has no such counterpart weakness (nothing dontAsk
+// protects against that plan doesn't ALSO protect against at least as strongly), which is exactly
+// why plan/dontAsk stays comparable while auto/dontAsk does not.
 //
 // `AUTO_MODE_STRICTNESS_ORDER` is kept ONLY as the axis-2 tie-break table (never again a
 // cross-partition total order) — `computeChildPolicy` (below) does not consume it at all (WS-07
@@ -126,10 +144,51 @@ function breadthRank(mode: PermissionMode): number {
   return strictnessRank(mode);
 }
 
+// RULING P4-D (fix round 1, MAJOR item 2): thrown by `stricterOf` (and therefore by
+// `resolveChildResumeMode`, its one production caller) for a documented INCOMPARABLE pair --
+// currently just {dontAsk, auto} -- instead of silently returning one of the two modes. Named for
+// its dominant real-world trigger (child resume is the only place this codebase compares two
+// ARBITRARY modes against each other today; `computeChildPolicy`'s own forced-mode table is a fixed
+// set-membership check and never reaches this class at all) even though the throw site is the
+// generic comparator itself: `stricterOf` has exactly one non-test caller, so there is no other
+// consumer to name this error after, and locating the check IN the comparator (rather than as a
+// separate pre-check bolted onto `resolveChildResumeMode`) is what keeps `stricterOf` from becoming
+// a comparator that LIES to some future second caller by claiming an answer that does not exist.
+export class ChildResumeModeIncomparableError extends Error {
+  constructor(
+    public readonly modeA: PermissionMode,
+    public readonly modeB: PermissionMode,
+  ) {
+    super(
+      `stricterOf(${modeA}, ${modeB}): these two modes are INCOMPARABLE on axis 1 (RULING P4-D) -- ` +
+        `neither dominates the other, so "which is stricter" has no defensible answer. Never silently ` +
+        `widened, narrowed, or resolved to an invented composite; a future resume path (P8) may offer ` +
+        `the host/user an explicit choice instead.`,
+    );
+    this.name = "ChildResumeModeIncomparableError";
+  }
+}
+
+// RULING P4-D: enumerated EXPLICITLY, both directions, rather than derived from some structural
+// property of the two modes -- this is a JUDGMENT CALL about these two SPECIFIC mechanisms (see the
+// header's own mechanism-level walkthrough), not a pattern that generalizes to some rule a future
+// mode addition could satisfy automatically. Extend this set (both directions) if a future mode
+// audit finds another genuinely incomparable pair; do not infer one from axis membership alone.
+const INCOMPARABLE_MODE_PAIRS: ReadonlySet<string> = new Set<string>(["dontAsk:auto", "auto:dontAsk"]);
+function incomparablePairKey(a: PermissionMode, b: PermissionMode): string {
+  return `${a}:${b}`;
+}
+
 // Per-axis comparator (RULING P2-M): axis 1 (rule-silencing) is checked first and is dominant --
-// only when it TIES (both modes in the same partition) does axis 2 (breadth) decide. Always returns
-// one of {a, b} verbatim (never a synthesized third mode); ties (identical mode) return `a`.
+// only when it TIES (both modes in the same partition) does axis 2 (breadth) decide. Returns one of
+// {a, b} verbatim (never a synthesized third mode) for every COMPARABLE pair; ties (identical mode)
+// return `a`. Throws `ChildResumeModeIncomparableError` for a documented incomparable pair
+// (RULING P4-D) -- checked FIRST, before either axis, so an incomparable pair is refused
+// unconditionally rather than accidentally judged by axis 1 agreeing on partition membership.
 export function stricterOf(a: PermissionMode, b: PermissionMode): PermissionMode {
+  if (INCOMPARABLE_MODE_PAIRS.has(incomparablePairKey(a, b))) {
+    throw new ChildResumeModeIncomparableError(a, b);
+  }
   const silA = isRuleSilencing(a);
   const silB = isRuleSilencing(b);
   if (silA !== silB) return silA ? a : b;
@@ -212,6 +271,11 @@ export interface RecordedChildPolicy {
   parentPolicyHash: string;
 }
 
+// RULING P4-D: throws `ChildResumeModeIncomparableError` (via `stricterOf`) when `recorded.
+// effectiveMode`/`currentParentMode` form the one documented incomparable pair ({dontAsk, auto}, in
+// either direction) -- a genuine resume-path failure mode, not swallowed here: the caller (Lane C's
+// own future resume call site) must surface it as a legible error rather than reviving the child in
+// a silently wrong mode.
 export function resolveChildResumeMode(recorded: RecordedChildPolicy, currentParentMode: PermissionMode): PermissionMode {
   return stricterOf(recorded.effectiveMode, currentParentMode);
 }
