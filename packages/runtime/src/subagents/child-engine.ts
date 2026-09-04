@@ -580,10 +580,17 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
             }
             throw err;
           }
-          // Persists the resumed mode + the parent policy state it was compared against, so a LATER
-          // resume (or a roster rebuild after restart) compares against this generation's own
-          // resolution rather than the original spawn-time snapshot.
+          // Fix round 2 (nit): mutating `record.permission` alone is an IN-MEMORY update only --
+          // the durable `.meta.json` sidecar would otherwise stay on the OLD (looser) recorded mode
+          // until the next settle(), which can be arbitrarily far in the future (the whole rest of
+          // this resumed generation's own run). A crash in that window must never leave the
+          // pre-resume, looser mode as the durable record of what this child is actually running
+          // under -- so the sidecar is rewritten HERE, synchronously with the mutation, not deferred
+          // to the next terminal settlement. A LATER resume (or a roster rebuild after restart) then
+          // compares against this generation's own resolution rather than the original spawn-time
+          // snapshot, durably, not just in this process's own memory.
           record.permission = { effectiveMode: resumeMode, parentPolicyHash: currentPolicy.hash, parentPolicyVersion: currentPolicy.version };
+          void writer?.writeMetadata({ ...record });
         }
         record.status = "running";
         const resumeConfig: RuntimeConfig =

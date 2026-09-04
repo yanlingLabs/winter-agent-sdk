@@ -10,7 +10,7 @@ import { mkdtempSync, rmSync, existsSync, mkdirSync, writeFileSync } from "node:
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { WinterFrame, RuntimeConfig, ProtocolSdkMessage as SdkMessage } from "@yanlinglabs/winter-agent-sdk";
-import { WinterCompatibilitySessionStore } from "@yanlinglabs/winter-agent-sdk";
+import { WinterCompatibilitySessionStore, compatibilityKeys } from "@yanlinglabs/winter-agent-sdk";
 import { runEngine, type Provider } from "../engine.ts";
 import { createInMemoryChannel } from "../protocol/channel.ts";
 import { registerTool, unregisterToolForTest, type ToolExecutionContext } from "../tools/registry.ts";
@@ -19,6 +19,7 @@ import { registerChildEngineFactory, resetChildEngineFactoryForTest, type SpawnC
 import { createChildEngineFactory, type ChildEngineFactoryDeps } from "./child-engine.ts";
 import { resetSpawnLimitsForTest } from "./limits.ts";
 import { loadAgentDefinitions } from "./definitions.ts";
+import { TranscriptWriter } from "../store/dialect.ts";
 
 async function drain(source: AsyncIterable<WinterFrame>): Promise<WinterFrame[]> {
   const out: WinterFrame[] = [];
@@ -696,6 +697,18 @@ describe("child-engine.ts: fix round 1 (controller review) -- C1 CRITICAL: Agent
 
 describe("child-engine.ts: fix round 1 (controller review) -- I1: permission rules / hooks mirrored onto the child", () => {
   test("a forced-bypass child still DENIES a parent-denied tool call (parentPermissionRules mirrored)", async () => {
+    // Fix round 2 (finding N1): the ORIGINAL version of this test had TWO bugs, both caught by the
+    // reviewer reverting the `parentPermissionRules` spread locally and finding the test still
+    // passed (1 pass / 0 fail with the fix fully reverted -- a false-positive test, not a real
+    // regression proof). (1) It registered the REAL factory (with parentPermissionRules) and then
+    // immediately called `driveParent({provider: echoProvider}, ...)`, whose own first statement
+    // re-registers the factory and CLOBBERS it -- the SAME `driveParent`-clobbers-a-prior-
+    // registration bug already found and fixed twice elsewhere in this file (the AskUserQuestion and
+    // hooks tests, same fix round) -- so the child actually ran under echoProvider and never called
+    // DENIED_TOOL at all: no `b1` tool_result ever existed. (2) `result.content` is the unconditional
+    // SECOND scripted turn ("acknowledged the denial") on EVERY path, denied or not, so
+    // `not.toContain("SHOULD NEVER RUN")` could never fail regardless -- the tool's own actual output
+    // lands in the `b1` tool_result block, which the test never inspected at all.
     const DENIED_TOOL = "t6_i1_denied_tool";
     cleanupToolNames.push(DENIED_TOOL);
     registerTool({
@@ -712,26 +725,28 @@ describe("child-engine.ts: fix round 1 (controller review) -- I1: permission rul
       { kind: "tool_use", calls: [{ id: "b1", name: DENIED_TOOL, input: {} }] },
       { kind: "text", text: "acknowledged the denial" },
     ]);
-    registerChildEngineFactory(createChildEngineFactory({ provider: childProvider, parentPermissionRules: { deny: [DENIED_TOOL] } }));
     const req: SpawnChildRequest = { parentToolUseId: "call-1", prompt: "try the denied tool", runInBackground: false };
     // baseConfig()'s own default is bypassPermissions -- WS-07 §11 forces this onto every
     // descendant, so the child inherits bypass too. Without the parentPermissionRules mirror, a
     // forced-bypass child would have NO deny rules at all and would auto-approve this call.
     const { code, frames } = await driveParent(
-      { provider: echoProvider },
+      { provider: childProvider, parentPermissionRules: { deny: [DENIED_TOOL] } },
       baseConfig(),
       [{ kind: "tool_use", calls: [{ id: "call-1", name: SPAWN_PROBE, input: req }] }, { kind: "text", text: "parent done" }],
     );
-    // The parent's own spawn-and-await tool call: registerSpawnProbe awaits the child's OWN
-    // result(), which is the CHILD's own generation outcome -- if the denial ever let the tool
-    // actually run, `content` would contain "SHOULD NEVER RUN".
-    void code;
+    expect(code).toBe(0);
+    // tool_use/tool_result blocks forward unconditionally (WS-10 §4) -- collected across ALL "user"
+    // data frames stamped with the child's own parent_tool_use_id, mirroring the established
+    // allowlist-denial test's own pattern exactly (a single-frame `find` throws once the child emits
+    // its own tool call, since more than one "user"-type frame then exists on the stream).
     const msgs = dataMessages(frames);
-    const toolResult = msgs.find((m) => m.type === "user") as unknown as { message: { content: Array<{ tool_use_id: string; content: string }> } };
-    const block = toolResult.message.content.find((b) => b.tool_use_id === "call-1")!;
-    const parsed = JSON.parse(block.content) as { result: { status: string; content: string } };
-    expect(parsed.result.content).not.toContain("SHOULD NEVER RUN");
-    expect(parsed.result.status).toBe("completed"); // the child gracefully finished (2nd scripted turn) after seeing the denial, never crashed
+    const userMsgs = msgs.filter((m): m is Extract<SdkMessage, { type: "user" }> => m.type === "user" && (m as { parent_tool_use_id?: string }).parent_tool_use_id === "call-1");
+    const deniedBlock = userMsgs
+      .flatMap((m) => (m as unknown as { message: { content: Array<{ tool_use_id: string; denied?: boolean; content?: string }> } }).message.content)
+      .find((b) => b.tool_use_id === "b1");
+    expect(deniedBlock?.denied).toBe(true);
+    expect(deniedBlock?.content).toContain("Denied by permission rule");
+    expect(deniedBlock?.content).not.toContain("SHOULD NEVER RUN");
   });
 
   test("parentHooks + parentIncludeHookEvents cause the child's own engine to emit hook_started for a matching tool call (config-level mirroring proven; the hook's own RESPONSE is Gap #2's already-disclosed stall, not re-proven here)", async () => {
@@ -798,6 +813,63 @@ describe("child-engine.ts: fix round 1 (controller review) -- Q1 forward-compat:
 
     await drainPromise;
     await done;
+  });
+
+  test("fix round 2 (nit): the tightened policy is persisted to the durable sidecar IMMEDIATELY on resume(), never deferred to the next settle()", async () => {
+    registerSpawnAndRegister();
+    cleanupToolNames.push(SPAWN_AND_REGISTER);
+    const BLOCK_TOOL = "t6_q1_persist_block";
+    cleanupToolNames.push(BLOCK_TOOL);
+    const gate = registerBlockingTool(BLOCK_TOOL);
+    const winterHome = mkdtempSync(join(tmpdir(), "winter-lane-c-q1-persist-"));
+    try {
+      const store = new WinterCompatibilitySessionStore({ winterHome });
+      // "auto" recorded at spawn; the parent's current policy has since tightened to "plan".
+      registerChildEngineFactory(createChildEngineFactory({ provider: echoProvider, store, getParentPolicy: () => ({ mode: "plan", version: 5, hash: "h5" }) }));
+      const req: SpawnChildRequest = { parentToolUseId: "call-1", prompt: "first turn", runInBackground: false };
+      const { host, runtime } = createInMemoryChannel();
+      const provider = scriptedProvider([{ kind: "tool_use", calls: [{ id: "call-1", name: SPAWN_AND_REGISTER, input: req }] }, { kind: "text", text: "done" }]);
+      const done = runEngine({ config: baseConfig({ permissionMode: "auto", allowDangerouslySkipPermissions: false, permissions: { allow: [SPAWN_AND_REGISTER] } }), input: runtime.input, output: runtime.output, provider });
+      host.output.write({ type: "user", text: "go" });
+      host.output.write({ type: "control_request", requestId: "end-1", subtype: "end_input", payload: undefined });
+      const drainPromise = drain(host.input);
+
+      await waitUntil(() => liveHandles.size === 1);
+      const handle = [...liveHandles.values()][0]!;
+      await waitUntil(() => handle.status() === "completed");
+
+      // The RESUMED generation's own provider immediately calls a tool that blocks forever (until
+      // `gate.release()`) -- this generation deliberately never reaches its own settle() within this
+      // test, so any sidecar update observed below can ONLY have come from resume() itself, not from
+      // a terminal write the next settlement would also have produced.
+      const resumeProvider = scriptedProvider([{ kind: "tool_use", calls: [{ id: "blk1", name: BLOCK_TOOL, input: {} }] }]);
+      registerChildEngineFactory(createChildEngineFactory({ provider: resumeProvider, store, getParentPolicy: () => ({ mode: "plan", version: 5, hash: "h5" }) }));
+
+      const outcome = await handle.resume(fakeGlobalMessage("second turn"));
+      expect(outcome.status).toBe("resumed_and_delivered");
+      // The in-memory record already reflects it (proven by the sibling test above) -- this test's
+      // own point is the DURABLE sidecar, read back independently through the store, not through
+      // `handle.record` at all.
+      expect(handle.status()).toBe("running"); // genuinely still running -- BLOCK_TOOL never released yet
+
+      // Matches child-engine.ts's own key construction exactly: projectKey derived from the
+      // PARENT's own cwd (baseConfig()'s own literal default, unoverridden in this test), sessionId
+      // the parent's own sessionId ("parent-s", baseConfig()'s own literal default).
+      const projectKey = compatibilityKeys("/tmp/winter-lane-c-child-engine-tests").transcriptProjectKey;
+      const childKey = { projectKey, sessionId: "parent-s", subpath: `subagents/agent-${handle.record.id}` };
+      const raw = await TranscriptWriter.readBack(store, childKey);
+      const metadata = raw.find((e) => e.type === "agent_metadata") as { permission?: { effectiveMode?: string; parentPolicyVersion?: number; parentPolicyHash?: string } } | undefined;
+      expect(metadata?.permission?.effectiveMode).toBe("plan");
+      expect(metadata?.permission?.parentPolicyVersion).toBe(5);
+      expect(metadata?.permission?.parentPolicyHash).toBe("h5");
+
+      gate.release();
+      await waitUntil(() => handle.status() !== "running");
+      await drainPromise;
+      await done;
+    } finally {
+      rmSync(winterHome, { recursive: true, force: true });
+    }
   });
 
   test("the incomparable pair (dontAsk<->auto) fails resume closed as a typed, non-retryable refusal, never a throw or a silently-resolved mode", async () => {
