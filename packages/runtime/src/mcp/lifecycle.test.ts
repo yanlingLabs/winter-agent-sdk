@@ -5,6 +5,7 @@ import { getRegisteredTool } from "../tools/registry.ts";
 import { createElicitationAsker } from "./elicitation.ts";
 import { createInMemoryDiscoveryCache, createMcpLifecycle, resolveMcpServerSources, type McpServerSource, type ResolvedMcpServerEntry } from "./lifecycle.ts";
 import type { McpEnvConfig } from "./env.ts";
+import type { InProcessMcpServer } from "./transports/sdk.ts";
 import { createFixtureMcpServer, defaultFixtureSpec, stdioFixtureCommand, type FixtureServerSpec } from "./test-fixtures.ts";
 
 const NO_ELICIT = createElicitationAsker(undefined);
@@ -469,5 +470,173 @@ describe("McpLifecycle bridge-tool surface: listConnectedServerNames / getConnec
     } finally {
       await lifecycle.dispose();
     }
+  });
+});
+
+// --- Fix round 1 (MAJOR M2): the unguarded connect-completion race -------------------------------
+//
+// `connectSlotForReal`/`connectOneServer` used to commit `slot.client`, tool registration, executor
+// installation, and `setSlotState` UNCONDITIONALLY on a captured slot reference, with no staleness
+// check -- a disable/remove/reconnect/replace issued while a connect was still in flight could be
+// silently undone (or leaked) the moment that stale attempt finally resolved. This lane's own
+// original suite never caught it because every fixture in it was always fully awaited before the
+// next assertion ran; the tests below deliberately hold a connect open (a `gate` deferred) so a
+// control operation can race it on purpose.
+function createDeferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
+}
+
+// A FRESH real fixture Server per connect() call, not one shared instance: the SDK's own
+// `Protocol.connect()` throws ("Already connected to a transport...") on a second connect against
+// the same instance, so reusing one Server across two concurrently-gated attempts is not just
+// unrealistic (a real stdio/http dial always gets its own server-side session) -- it is impossible.
+// `gate` holds EVERY attempt open until released; `connectCount`/`closeCount` tally across all of
+// them, so a test can assert "N attempts dialed, M were torn down, N-M genuinely survive."
+// `Server.onclose` (Protocol's own public hook) fires when `InMemoryTransport`'s linked-pair close
+// propagates to this side -- which it does the moment a discarded attempt's own
+// `ConnectedMcpClient.close()` runs.
+function gatedInProcessServer(gate: Promise<void>): { server: InProcessMcpServer; connectCount(): number; closeCount(): number } {
+  let connects = 0;
+  let closes = 0;
+  return {
+    server: {
+      async connect(transport) {
+        await gate;
+        connects++;
+        const inner = createFixtureMcpServer(defaultFixtureSpec());
+        inner.onclose = () => {
+          closes++;
+        };
+        await inner.connect(transport);
+      },
+    },
+    connectCount: () => connects,
+    closeCount: () => closes,
+  };
+}
+
+describe("fix round 1 (MAJOR M2): connect-completion race protection (per-slot generation guard)", () => {
+  test("toggling OFF while the initial connect is still pending discards it: no tools registered, state stays disabled, the connection is closed not leaked", async () => {
+    const gate = createDeferred();
+    const { server, connectCount, closeCount } = gatedInProcessServer(gate.promise);
+    const resolved: ResolvedMcpServerEntry[] = [{ name: "race-toggle", origin: "explicit", config: { type: "sdk", name: "race-toggle" } }];
+    const lifecycle = createMcpLifecycle({ servers: resolved, envConfig: fastEnv({ connectTimeoutMs: 50 }), elicitationAsk: NO_ELICIT, inProcessServers: { "race-toggle": server } });
+    try {
+      await lifecycle.start(); // start()'s own race gives up after 50ms; the gated attempt keeps running in the background
+      expect(lifecycle.stateSource.snapshot()[0]!.state).toBe("pending");
+
+      await lifecycle.controlSeam.toggle("race-toggle", false); // disable WHILE the attempt is still in flight
+      expect(lifecycle.stateSource.snapshot()[0]!.state).toBe("disabled");
+
+      gate.resolve(); // let the now-stale attempt actually proceed
+      await new Promise((r) => setTimeout(r, 100)); // give it time to finish connecting, discover it's superseded, and discard
+
+      expect(lifecycle.stateSource.snapshot()[0]!.state).toBe("disabled"); // never resurrected
+      expect(getRegisteredTool("mcp__race-toggle__echo")).toBeUndefined(); // never registered
+      expect(connectCount()).toBe(1); // the attempt DID dial
+      expect(closeCount()).toBe(1); // ...and its own connection was torn down once superseded -- 0 live
+    } finally {
+      await lifecycle.dispose();
+    }
+  });
+
+  test("removing a server while its initial connect is still pending discards it: no leaked registration, no leaked connection", async () => {
+    const gate = createDeferred();
+    const { server, connectCount, closeCount } = gatedInProcessServer(gate.promise);
+    const resolved: ResolvedMcpServerEntry[] = [{ name: "race-remove", origin: "explicit", config: { type: "sdk", name: "race-remove" } }];
+    const lifecycle = createMcpLifecycle({ servers: resolved, envConfig: fastEnv({ connectTimeoutMs: 50 }), elicitationAsk: NO_ELICIT, inProcessServers: { "race-remove": server } });
+    try {
+      await lifecycle.start();
+      expect(lifecycle.stateSource.snapshot()[0]!.state).toBe("pending");
+
+      const result = await lifecycle.controlSeam.setServers({}); // "explicit" origin is replace-eligible -- an omission removes it
+      expect(result.removed).toEqual(["race-remove"]);
+      expect(lifecycle.stateSource.snapshot()).toEqual([]); // slot gone immediately, synchronously
+
+      gate.resolve();
+      await new Promise((r) => setTimeout(r, 100));
+
+      expect(lifecycle.stateSource.snapshot()).toEqual([]); // still gone -- never resurrected
+      expect(getRegisteredTool("mcp__race-remove__echo")).toBeUndefined();
+      expect(connectCount()).toBe(1);
+      expect(closeCount()).toBe(1); // the orphaned connection was closed, not leaked -- 0 live
+    } finally {
+      await lifecycle.dispose();
+    }
+  });
+
+  test("reconnecting while the initial connect is still pending supersedes it: exactly one live connection survives", async () => {
+    const gate = createDeferred();
+    const { server, connectCount, closeCount } = gatedInProcessServer(gate.promise);
+    const resolved: ResolvedMcpServerEntry[] = [{ name: "race-reconnect", origin: "explicit", config: { type: "sdk", name: "race-reconnect" } }];
+    const lifecycle = createMcpLifecycle({ servers: resolved, envConfig: fastEnv({ connectTimeoutMs: 50 }), elicitationAsk: NO_ELICIT, inProcessServers: { "race-reconnect": server } });
+    try {
+      await lifecycle.start();
+      expect(lifecycle.stateSource.snapshot()[0]!.state).toBe("pending");
+
+      // Starts a SECOND attempt (bumping the slot's generation synchronously, right here) while the
+      // first is still gated -- reconnectExisting's own early "close slot.client if present" step is
+      // a no-op (nothing has committed yet).
+      const reconnectPromise = lifecycle.controlSeam.reconnect("race-reconnect");
+
+      gate.resolve(); // release BOTH the now-stale first attempt and the fresh second attempt
+      await reconnectPromise;
+
+      expect(lifecycle.stateSource.snapshot()[0]!.state).toBe("connected");
+      expect(getRegisteredTool("mcp__race-reconnect__echo")).toBeDefined();
+      expect(connectCount()).toBe(2); // both attempts dialed
+      expect(closeCount()).toBe(1); // only the superseded (first) attempt's connection was closed -- 1 live
+    } finally {
+      await lifecycle.dispose();
+    }
+  });
+
+  test("a setServers replacement issued while the initial connect is still pending supersedes it: only the replacement survives", async () => {
+    const gate = createDeferred();
+    const { server, connectCount, closeCount } = gatedInProcessServer(gate.promise);
+    const resolved: ResolvedMcpServerEntry[] = [{ name: "race-replace", origin: "explicit", config: { type: "sdk", name: "race-replace" } }];
+    const lifecycle = createMcpLifecycle({ servers: resolved, envConfig: fastEnv({ connectTimeoutMs: 50 }), elicitationAsk: NO_ELICIT, inProcessServers: { "race-replace": server } });
+    try {
+      await lifecycle.start();
+      expect(lifecycle.stateSource.snapshot()[0]!.state).toBe("pending");
+
+      // addAndConnect (naming the SAME server again) replaces the slot OBJECT outright and fires a
+      // fresh connectOneServer -- fire-and-forget, so this resolves quickly without waiting for
+      // either the stale original or the fresh replacement to actually finish connecting.
+      const result = await lifecycle.controlSeam.setServers({ "race-replace": { type: "sdk", name: "race-replace" } });
+      expect(result.added).toEqual(["race-replace"]);
+
+      gate.resolve(); // release both the now-stale original attempt and the fresh replacement attempt
+      await new Promise((r) => setTimeout(r, 100));
+
+      expect(lifecycle.stateSource.snapshot()[0]!.state).toBe("connected");
+      expect(getRegisteredTool("mcp__race-replace__echo")).toBeDefined();
+      expect(connectCount()).toBe(2); // original + replacement both dialed
+      expect(closeCount()).toBe(1); // only the superseded original's connection was closed -- 1 live
+    } finally {
+      await lifecycle.dispose();
+    }
+  });
+
+  test("dispose() while a connect is still pending invalidates it: nothing leaks after it resolves", async () => {
+    const gate = createDeferred();
+    const { server, connectCount, closeCount } = gatedInProcessServer(gate.promise);
+    const resolved: ResolvedMcpServerEntry[] = [{ name: "race-dispose", origin: "explicit", config: { type: "sdk", name: "race-dispose" } }];
+    const lifecycle = createMcpLifecycle({ servers: resolved, envConfig: fastEnv({ connectTimeoutMs: 50 }), elicitationAsk: NO_ELICIT, inProcessServers: { "race-dispose": server } });
+    await lifecycle.start();
+    expect(lifecycle.stateSource.snapshot()[0]!.state).toBe("pending");
+
+    await lifecycle.dispose(); // tears down while the connect is still gated/in flight (bumps gen; no live client to close yet)
+
+    gate.resolve();
+    await new Promise((r) => setTimeout(r, 100));
+
+    expect(getRegisteredTool("mcp__race-dispose__echo")).toBeUndefined(); // never registered post-dispose
+    expect(connectCount()).toBe(1);
+    expect(closeCount()).toBe(1); // the late-resolving connection was closed, not leaked
   });
 });

@@ -212,6 +212,15 @@ interface ConnectionSlot {
   // never through a fresh "pending" reconnect -- populated on a successful connect/cache-serve,
   // read (and left untouched) by enableSlot.
   savedTools?: McpToolInfo[] | undefined;
+  // Fix round 1 (MAJOR M2): a per-slot connect-ATTEMPT generation. Bumped by `beginAttempt` (every
+  // call site that starts a real connect: connectOneServer's cache-miss path, the on-demand
+  // "cached -> connect" path in installExecutorsForSlot) and by every operation that supersedes
+  // whatever is in flight (disableSlot, removeSlot, dispose -- addAndConnect and reconnectExisting
+  // supersede implicitly, via a fresh slot object or a nested connectOneServer call that bumps this
+  // itself). `isCurrentAttempt` is the single place that reads it back before any attempt commits a
+  // visible side effect (slot.client, tool registration/executor install, setSlotState) -- see this
+  // file's own report for the exact race this closes.
+  gen: number;
 }
 
 function toWireState(slot: ConnectionSlot): McpServerState {
@@ -441,7 +450,7 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
     // "pending")` anyway, so this placeholder is observable only in the narrow window between
     // construction and `start()` -- a real state, not a lie, since every one of these servers IS
     // about to attempt a connection.
-    slots.set(entry.name, { name: entry.name, origin: entry.origin, config: entry.config, toolNames: [], state: "pending" });
+    slots.set(entry.name, { name: entry.name, origin: entry.origin, config: entry.config, toolNames: [], state: "pending", gen: 0 });
   }
 
   function installExecutorsForSlot(slot: ConnectionSlot, tools: readonly McpToolInfo[]): void {
@@ -452,9 +461,24 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
         async execute(input: unknown, _ctx: ToolExecutionContext): Promise<ToolResultPayload> {
           // WS-09 §2.1: a `cached` server's live connection is deferred to its first tool call.
           if (slot.state === "cached" && !slot.client) {
+            // Fix round 1 (MAJOR M2): this is a SECOND connect-attempt call site (the first is
+            // connectOneServer's own cache-miss path) -- it needs its own generation exactly the
+            // same way: a disable/remove/reconnect racing this on-demand connect must not let it
+            // commit a client, tool registration, or state transition for a slot that moved on.
+            const gen = beginAttempt(slot);
             try {
-              await connectSlotForReal(slot);
+              const committed = await connectSlotForReal(slot, gen);
+              if (!committed) {
+                // Superseded while connecting -- whatever superseded this attempt owns the slot's
+                // state now; this call just reports "not connected" rather than resurrecting it.
+                return { output: `Error: mcp server "${slot.name}" is not connected (state: ${slot.state})`, isError: true };
+              }
             } catch (err) {
+              if (!isCurrentAttempt(slot, gen)) {
+                // Superseded while FAILING -- something else already owns this slot's state; a
+                // stale failure must never stomp it.
+                return { output: `Error: mcp server "${slot.name}" is not connected (state: ${slot.state})`, isError: true };
+              }
               const code = err instanceof McpConnectError ? err.code : "unknown";
               const message = err instanceof Error ? err.message : String(err);
               // WS-09 §2.1: "a cached server whose first live call fails re-classifies to failed and
@@ -481,7 +505,31 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
     }
   }
 
-  async function connectSlotForReal(slot: ConnectionSlot): Promise<void> {
+  // Fix round 1 (MAJOR M2): `slots.get(slot.name) === slot` catches every seam that REPLACES or
+  // REMOVES the slot object (addAndConnect, removeSlot); `slot.gen === gen` catches every seam that
+  // supersedes an in-flight attempt WITHOUT touching the map (disableSlot; a second connectOneServer/
+  // on-demand-connect call via beginAttempt's own unconditional bump). Deliberately state-agnostic --
+  // no `expected: "pending" | "cached"` parameter -- because EVERY mutation capable of invalidating
+  // an attempt already bumps gen or replaces identity (enumerated in ConnectionSlot's own `gen`
+  // comment); "same slot object, same gen" is therefore already sufficient proof that nothing else
+  // has touched this slot since the attempt began, whatever its state string happens to be.
+  function isCurrentAttempt(slot: ConnectionSlot, gen: number): boolean {
+    return slots.get(slot.name) === slot && slot.gen === gen;
+  }
+
+  // Bumps and returns the slot's own attempt generation -- called exactly once by whichever call
+  // site is STARTING a real connect (connectOneServer's cache-miss path; the on-demand
+  // "cached -> connect" path in installExecutorsForSlot). The returned value is what that attempt's
+  // own completion handling must present to `isCurrentAttempt` before committing any visible side
+  // effect.
+  function beginAttempt(slot: ConnectionSlot): number {
+    return ++slot.gen;
+  }
+
+  // Returns whether it actually committed (`false` means a caller-visible supersede happened while
+  // this attempt was connecting -- disable/remove/reconnect/on-demand-replace) -- every caller MUST
+  // branch on this rather than assuming a resolved promise means "connected."
+  async function connectSlotForReal(slot: ConnectionSlot, gen: number): Promise<boolean> {
     const client = await connectMcpServer({
       name: slot.name,
       config: slot.config,
@@ -492,6 +540,15 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
       ...(deps.inProcessServers?.[slot.name] !== undefined ? { inProcessServer: deps.inProcessServers[slot.name] } : {}),
     });
     const tools = await client.listTools();
+    if (!isCurrentAttempt(slot, gen)) {
+      // Superseded while connecting -- whatever superseded this attempt (disableSlot, removeSlot,
+      // reconnectExisting, a replacement addAndConnect, or a second connect attempt on this same
+      // slot) already owns the slot's visible state. Committing here would silently resurrect a
+      // disabled server, leak a registered tool for a removed one, or double-register against a
+      // replacement -- close what THIS attempt opened and walk away quietly (fix round 1, MAJOR M2).
+      await client.close().catch(() => {});
+      return false;
+    }
     slot.client = client;
     slot.toolNames = tools.map((t) => t.name);
     slot.savedTools = tools;
@@ -503,13 +560,17 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
     if (deps.envConfig.discoveryCache && isCacheableTransport(slot.config)) {
       discoveryCache.set(slot.name, tools);
     }
+    return true;
   }
 
   function connectOneServer(slot: ConnectionSlot): Promise<void> {
+    const gen = beginAttempt(slot);
     setSlotState(slot.name, "pending");
     if (deps.envConfig.discoveryCache && isCacheableTransport(slot.config)) {
       const cached = discoveryCache.get(slot.name);
       if (cached) {
+        // Synchronous, no I/O in between setSlotState("pending") above and here -- no staleness
+        // window exists for this branch (nothing else can run and supersede it mid-way).
         slot.toolNames = cached.map((t) => t.name);
         slot.savedTools = cached;
         registerMcpServerTools(slot.name, cached.map(toolInfoToDefinition), {
@@ -521,9 +582,19 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
         return Promise.resolve();
       }
     }
-    return connectSlotForReal(slot).then(
-      () => setSlotState(slot.name, "connected", { toolNames: slot.toolNames }),
+    return connectSlotForReal(slot, gen).then(
+      (committed) => {
+        // `committed` already implies `isCurrentAttempt` was true the instant connectSlotForReal
+        // checked it, and nothing asynchronous runs between that check and this callback -- but
+        // re-checking here costs nothing and keeps this callback correct even if that internal
+        // ordering ever changes.
+        if (!committed || !isCurrentAttempt(slot, gen)) return;
+        setSlotState(slot.name, "connected", { toolNames: slot.toolNames });
+      },
       (err: unknown) => {
+        // A stale FAILURE must never stomp a slot that has since moved on (e.g. disabled, or a
+        // replacement connect already succeeded) -- same staleness discipline as the success path.
+        if (!isCurrentAttempt(slot, gen)) return;
         const code = err instanceof McpConnectError ? err.code : "unknown";
         const message = err instanceof Error ? err.message : String(err);
         setSlotState(slot.name, code === "needs_auth" ? "needsAuth" : "failed", { errorCode: code, error: message });
@@ -578,6 +649,11 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
 
   async function dispose(): Promise<void> {
     for (const slot of slots.values()) {
+      // Fix round 1 (MAJOR M2): invalidate any in-flight connect attempt for EVERY slot before/while
+      // tearing down -- otherwise a pending attempt resolving after dispose() returns can re-register
+      // tools and reopen a client for a lifecycle instance that no longer exists from its caller's
+      // point of view.
+      slot.gen++;
       if (slot.client) {
         await slot.client.close().catch(() => {});
         slot.client = undefined;
@@ -612,8 +688,18 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
       return { ok: false, reason: `server "${name}" is not connected (state: ${slot.state}) -- RefreshMcpTools never establishes a new connection` };
     }
     const client = slot.client;
+    // Fix round 1 (MAJOR M2, disclosed extension -- no separate RED cycle): a SNAPSHOT, not a bump.
+    // A refresh does not itself start a new connect "attempt" in the gen sense (it reuses the live
+    // client, never opens a new one) -- this exists only so a disable/remove/reconnect racing this
+    // refresh's own listTools() call is detected before committing the refreshed tool list, the same
+    // staleness discipline as a real connect attempt, applied to the one other place this file
+    // commits registry/state changes after an unguarded `await`.
+    const gen = slot.gen;
     try {
       const tools = await client.listTools();
+      if (!isCurrentAttempt(slot, gen)) {
+        return { ok: false, reason: `server "${name}" changed state while refreshing (now: ${slot.state}) -- discarding this refresh's result` };
+      }
       slot.toolNames = tools.map((t) => t.name);
       slot.savedTools = tools;
       registerMcpServerTools(name, tools.map(toolInfoToDefinition), {
@@ -652,6 +738,12 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
     },
     disableSlot(name: string): void {
       const slot = slots.get(name)!;
+      // Fix round 1 (MAJOR M2): THE load-bearing bump for this seam -- disabling never replaces or
+      // removes the slot object (see below), so this is the ONLY signal an in-flight connect attempt
+      // has to detect "something superseded me." Without it: a connect started before this call
+      // resolves AFTER it, and its completion handler would re-register tools and flip the state
+      // straight back to "connected", silently undoing the disable.
+      slot.gen++;
       // Deliberately does NOT close `slot.client`: WS-09 §2.1 names this transition
       // "connected<->disabled via toggle" -- direct, never through `pending` -- which only makes
       // sense as a PURE VISIBILITY toggle (hide the tools from the model-visible registry) over an
@@ -693,10 +785,15 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
       // `replaceExecutor`'s own clean overwrite (installExecutorsForSlot, called from the fresh
       // slot's own connectOneServer) has no way to know a PRIOR connection needs closing first.
       const existing = slots.get(name);
+      // Fix round 1 (MAJOR M2): belt-and-suspenders -- `slots.set` below already replaces the slot
+      // OBJECT, which alone makes any in-flight attempt on the OLD slot fail its identity check
+      // (`slots.get(name) === slot`); bumping the old slot's own gen too costs nothing and keeps the
+      // invariant "supersede = bump" uniform across every seam, not just this one.
+      if (existing) existing.gen++;
       if (existing?.client) {
         await existing.client.close().catch(() => {});
       }
-      slots.set(name, { name, origin, config, toolNames: [], state: "pending" }); // see the constructor loop's own comment on this same choice
+      slots.set(name, { name, origin, config, toolNames: [], state: "pending", gen: 0 }); // see the constructor loop's own comment on this same choice
       // Fire-and-forget, matching WS-09 §2's own nonblocking startup default -- a live
       // `setMcpServers` call is not "startup," and nothing in WS-09 §3 asks it to block until the
       // new server actually finishes connecting.
@@ -705,6 +802,10 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
     async removeSlot(name: string): Promise<void> {
       const slot = slots.get(name);
       if (!slot) return;
+      // Fix round 1 (MAJOR M2): belt-and-suspenders -- `slots.delete` below already makes any
+      // in-flight attempt's identity check fail (`slots.get(name) === slot` becomes false once the
+      // map no longer has the name at all), but bumping keeps "supersede = bump" uniform.
+      slot.gen++;
       if (slot.client) {
         await slot.client.close().catch(() => {});
       }
