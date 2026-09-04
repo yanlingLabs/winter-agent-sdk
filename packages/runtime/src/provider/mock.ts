@@ -73,7 +73,7 @@ export const stubExecutor: ToolExecutor = {
 // AskUserQuestion/advisor). See transport-equivalence.test.ts's own "lane equivalence" scenarios
 // (the only consumers) and the "laneb" case below for why Write alone needs a real (non-scripted)
 // provider.
-export type TestProviderName = "boom" | "tooluse" | "hang" | "reflect" | "rpcprobe" | "modeswitch" | "bgtask" | "lanea" | "laneb" | "lanec" | "laned" | "lanee" | "mcpsdk" | "subagent" | "childmsg";
+export type TestProviderName = "boom" | "tooluse" | "hang" | "reflect" | "rpcprobe" | "modeswitch" | "bgtask" | "lanea" | "laneb" | "lanec" | "laned" | "lanee" | "mcpsdk" | "subagent" | "childmsg" | "subagentperm";
 
 const TEST_PROVIDER_NAMES: ReadonlySet<string> = new Set([
   "boom",
@@ -95,6 +95,9 @@ const TEST_PROVIDER_NAMES: ReadonlySet<string> = new Set([
   // WINTER_TEST_PROVIDER"), which is exactly how this omission surfaced.
   "subagent",
   "childmsg",
+  // Phase 4 fix wave (T8 review I2 + KNOWN 11): the parent_tool_use_id / late-permission-answer
+  // fixture -- see the "subagentperm" case below.
+  "subagentperm",
 ]);
 
 export function isTestProviderName(v: string): v is TestProviderName {
@@ -286,6 +289,39 @@ export function testProviderByName(name: TestProviderName): Provider {
           return {
             kind: "tool_use",
             calls: [{ id: "agent-call-1", name: "Agent", input: { description: "equivalence probe", prompt: SUBAGENT_CHILD_PROBE_TEXT } }],
+          };
+        },
+      };
+
+    // Phase 4 fix wave (T8 review I2 + whole-branch KNOWN 11): the same spawn round as "subagent"
+    // above, except the CHILD makes a real tool call of its own. That is the one shape no committed
+    // scenario had: with `forwardSubagentText` on, the child's own assistant/user frames reach the
+    // parent's wire stamped with `parent_tool_use_id`, so the field rider 6 named can finally be
+    // asserted ON THE WIRE, on every leg -- and the child's call needs a PERMISSION decision under
+    // `default` mode, which the host answers only after the (shortened) stall timeout, so rider 20's
+    // watchdog pause is proven end to end rather than in-process only.
+    //
+    // Same pure-function discipline as "subagent" (ONE provider instance serves the parent's turns
+    // AND the child's), and the same `test_tool` target every pre-existing scenario uses, whose echo
+    // output is byte-identical on all three legs (testing.ts's registered stand-in and main.ts's own
+    // stubExecutor fallback share one formula).
+    case "subagentperm":
+      return {
+        async generate({ messages }) {
+          const firstUser = messages.find((m) => m.role === "user");
+          const firstText = typeof firstUser?.content === "string" ? firstUser.content : "";
+          const calls = messages.flatMap((m) =>
+            m.role === "assistant" && Array.isArray(m.content) ? m.content.filter((b) => b.type === "tool_use").map((b) => (b as { name: string }).name) : [],
+          );
+          if (firstText.includes(SUBAGENT_CHILD_PROBE_TEXT)) {
+            // The CHILD's own conversation.
+            if (calls.includes("test_tool")) return { kind: "text", text: "child finished after its own tool call" };
+            return { kind: "tool_use", calls: [{ id: "child-call-1", name: "test_tool", input: { from: "child" } }] };
+          }
+          if (calls.includes("Agent")) return { kind: "text", text: "parent finished" };
+          return {
+            kind: "tool_use",
+            calls: [{ id: "agent-call-1", name: "Agent", input: { description: "permission probe", prompt: SUBAGENT_CHILD_PROBE_TEXT } }],
           };
         },
       };
