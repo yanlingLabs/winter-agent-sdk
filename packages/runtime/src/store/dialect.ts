@@ -120,12 +120,26 @@ function baseFields(ctx: SessionCtx, chain: Chain): BaseFields {
   };
 }
 
+// Phase 4 Task 3 (WS-05 §5.2, WS-10 §7): a child (subagent) transcript's own two extra fields --
+// `agentId` identifies WHICH child, `parentToolUseId` is the Agent-tool tool_use ID that spawned it
+// (WS-05 §5.2's own "preserve... agentId, parentUuid, parent_tool_use_id" list; not to be confused
+// with `parentUuid`, the CHAIN parent WITHIN this same child's own transcript, already carried by
+// `chain.parentUuid` above and completely independent of this field). When supplied, every entry
+// `userEntry`/`assistantEntry` produces carries `isSidechain: true` plus these two fields; when
+// omitted (every pre-existing call site), the entry is byte-identical to before this task --
+// `isSidechain: false`, no `agentId`/`parent_tool_use_id` keys at all (P1's own "persists only the
+// main chain" scope, now genuinely optional rather than hardcoded).
+export interface SidechainStamp {
+  agentId: string;
+  parentToolUseId: string;
+}
+
 // The brief's literal opts shape is `{ text: string; chain; ctx }`, but its own prose requires tool
 // results to route through userEntry as content BLOCKS ("tool results → userEntry with tool_result
 // blocks") — blocks are never a plain string. Read as a deliberate union: userEntry accepts EITHER
 // a plain `text` string OR pre-built `content` blocks, both producing the same `string | Block[]`
 // message.content the brief's own return type already declares.
-export type UserEntryOpts = { chain: Chain; ctx: SessionCtx } & ({ text: string } | { content: Block[] });
+export type UserEntryOpts = { chain: Chain; ctx: SessionCtx; sidechain?: SidechainStamp } & ({ text: string } | { content: Block[] });
 
 export function userEntry(
   opts: UserEntryOpts,
@@ -134,6 +148,10 @@ export function userEntry(
   return {
     type: "user",
     ...baseFields(opts.ctx, opts.chain),
+    // Overrides baseFields' own unconditional `isSidechain: false` -- see SidechainStamp's own
+    // header for why this is a POST-baseFields spread rather than a baseFields parameter (it keeps
+    // baseFields/BaseFields completely untouched for every existing caller).
+    ...(opts.sidechain !== undefined ? { isSidechain: true as const, agentId: opts.sidechain.agentId, parent_tool_use_id: opts.sidechain.parentToolUseId } : {}),
     message: { role: "user", content },
   };
 }
@@ -142,10 +160,12 @@ export function assistantEntry(opts: {
   content: Block[];
   chain: Chain;
   ctx: SessionCtx;
+  sidechain?: SidechainStamp;
 }): DialectEntryBase & { type: "assistant"; message: { role: "assistant"; content: Block[] } } {
   return {
     type: "assistant",
     ...baseFields(opts.ctx, opts.chain),
+    ...(opts.sidechain !== undefined ? { isSidechain: true as const, agentId: opts.sidechain.agentId, parent_tool_use_id: opts.sidechain.parentToolUseId } : {}),
     message: { role: "assistant", content: opts.content },
   };
 }
@@ -183,6 +203,11 @@ export interface TranscriptWriterOptions {
   // must link to the resumed target's last entry, not start a fresh chain. Omitted/undefined ->
   // null, i.e. exactly P1's pre-Task-9 behavior (every writer starts a fresh chain).
   initialParentUuid?: string | null;
+  // Phase 4 Task 3 (WS-05 §5.2, WS-10 §7): when supplied, EVERY entry this writer produces is
+  // stamped `isSidechain: true` + `agentId`/`parent_tool_use_id` (SidechainStamp's own header) --
+  // this is what `buildChildTranscriptWriter` below sets for a child's own writer; every
+  // pre-existing caller omits it, staying byte-identical to before this task.
+  sidechain?: SidechainStamp;
 }
 
 // Holds the chain head for one session and appends dialect entries through the Task-7 store — the
@@ -194,30 +219,53 @@ export class TranscriptWriter implements SessionPersistence {
   private readonly store: SessionStore;
   private readonly key: SessionKey;
   private readonly ctx: SessionCtx;
+  private readonly sidechain: SidechainStamp | undefined;
   private parentUuid: string | null;
 
   constructor(opts: TranscriptWriterOptions) {
     this.store = opts.store;
     this.key = opts.key;
     this.ctx = opts.ctx;
+    this.sidechain = opts.sidechain;
     // Task 9: a resumed/continued/forked session seeds this with the target's last entry's uuid so
     // the very next append continues the SAME chain; every pre-Task-9 caller (and every fresh
     // session) omits it, preserving the original "every writer starts fresh" behavior exactly.
+    // Phase 4 Task 3: a child writer ALSO always starts at `null` here (never a resumed position) --
+    // a child transcript's own chain is independent of the main session's, and this task builds no
+    // child-resume machinery (P4/Lane C's own future scope) that would ever pass a non-null value
+    // alongside a `sidechain` option.
     this.parentUuid = opts.initialParentUuid ?? null;
   }
 
   async recordUserEntry(content: string | Block[]): Promise<void> {
     const chain: Chain = { parentUuid: this.parentUuid };
-    const entry = typeof content === "string" ? userEntry({ text: content, chain, ctx: this.ctx }) : userEntry({ content, chain, ctx: this.ctx });
+    const sidechainOpt = this.sidechain !== undefined ? { sidechain: this.sidechain } : {};
+    const entry = typeof content === "string" ? userEntry({ text: content, chain, ctx: this.ctx, ...sidechainOpt }) : userEntry({ content, chain, ctx: this.ctx, ...sidechainOpt });
     await this.appendWithDialectRecord(entry);
     this.parentUuid = entry.uuid;
   }
 
   async recordAssistantEntry(content: Block[]): Promise<void> {
     const chain: Chain = { parentUuid: this.parentUuid };
-    const entry = assistantEntry({ content, chain, ctx: this.ctx });
+    const entry = assistantEntry({ content, chain, ctx: this.ctx, ...(this.sidechain !== undefined ? { sidechain: this.sidechain } : {}) });
     await this.appendWithDialectRecord(entry);
     this.parentUuid = entry.uuid;
+  }
+
+  // WS-05 §5.3 / WS-10 §3.4/§7: the `.meta.json` sidecar, via the store's own `agent_metadata`
+  // envelope partitioning (session-store.ts's append() -- NEVER written to the jsonl; the dialect
+  // layer's own contribution here is nothing more than the envelope TYPE tag, matching
+  // `appendWithDialectRecord`'s identical "the store partitions this, this writer just tags it"
+  // division of labor). Available on ANY TranscriptWriter (the store itself doesn't restrict
+  // `agent_metadata` to subpath keys), but its real caller is a CHILD writer
+  // (buildChildTranscriptWriter below) -- WS-10 §3.4's own recorded-resolution fields
+  // (requestedModel/effectiveModel/requestedEffort/effectiveEffort) and §7's ChildSessionRecord
+  // shape are exactly what a caller is expected to pass as `metadata`, though this method itself
+  // stays agnostic about the field set (a later task's own concern, not this store-plumbing seam's).
+  // Each call REPLACES the sidecar wholesale (store's own "only the latest [envelope] survives") --
+  // never a partial merge; a caller that wants to update one field re-sends the whole object.
+  async writeMetadata(metadata: Record<string, unknown>): Promise<void> {
+    await this.store.append(this.key, [{ type: "agent_metadata", ...metadata }]);
   }
 
   // No-op: every record*Entry call above already awaits store.append() before resolving, so there
@@ -338,6 +386,60 @@ function buildWriter(opts: {
     initialParentUuid: opts.initialParentUuid,
   });
   return withPermissionJournal(writer, { winterHome: opts.winterHome, projectKey: opts.projectKey, sessionId: opts.sessionId });
+}
+
+// --- Phase 4 Task 3 (WS-05 §4/§5.2/§5.3, WS-10 §7): child (subagent) transcripts ------------------
+//
+// Layout, verbatim from WS-05 §4: `~/.winter/projects/<projectKey>/<backend-session-uuid>/
+// subagents/agent-<agent-id>.jsonl` (+ `.meta.json`) -- the store's own SessionKey.subpath field
+// (session-store.ts) is exactly this nested path, relative to the OWNING (parent) session's own
+// key. `sessionId` on every entry stays the PARENT's own session id (a child transcript is "part
+// of" its owning session -- WS-10 §7's own ChildSessionRecord.parentSessionId is a separate,
+// out-of-band identity a caller already holds, not something re-derived from a transcript entry).
+
+export function childTranscriptSubpath(agentId: string): string {
+  return `subagents/agent-${agentId}`;
+}
+
+export interface ChildTranscriptWriterOptions {
+  store: SessionStore;
+  projectKey: string;
+  parentSessionId: string;
+  agentId: string;
+  parentToolUseId: string;
+  cwd: string;
+}
+
+// A child's own writer -- independent chain (always starts fresh, never resumed at construction;
+// see TranscriptWriter's own constructor comment), every entry stamped `isSidechain: true` +
+// `agentId`/`parent_tool_use_id`. Deliberately NO permission-journal wrapping (unlike buildWriter's
+// own withPermissionJournal below) -- a child's own permission-decision durability is P4/Lane C's
+// scope, not this store-plumbing MUST's.
+export function buildChildTranscriptWriter(opts: ChildTranscriptWriterOptions): TranscriptWriter {
+  return new TranscriptWriter({
+    store: opts.store,
+    key: { projectKey: opts.projectKey, sessionId: opts.parentSessionId, subpath: childTranscriptSubpath(opts.agentId) },
+    ctx: { sessionId: opts.parentSessionId, cwd: opts.cwd, version: RUNTIME_ENGINE_VERSION, projectDirName: opts.projectKey },
+    sidechain: { agentId: opts.agentId, parentToolUseId: opts.parentToolUseId },
+  });
+}
+
+const CHILD_SUBKEY_PATTERN = /^subagents\/agent-(.+)$/;
+
+// WS-05 §6/WS-10 §7 ("roster rebuild from durable storage"): enumerates a session's own children by
+// their bare agentId (never the raw "subagents/agent-<id>" subkey string). `listSubkeys` is
+// OPTIONAL on the exported `SessionStore` type (WS-03 §10 pins exactly six members, four required)
+// -- a store without it simply has no children to report, rather than throwing. Any subkey this
+// pattern doesn't recognize (a future, differently-shaped subpath -- e.g. `tool-results/*`, WS-05
+// §4's own sibling directory) is silently excluded, never mistaken for a child id.
+export async function listChildAgentIds(store: SessionStore, key: { projectKey: string; sessionId: string }): Promise<string[]> {
+  const subkeys = (await store.listSubkeys?.(key)) ?? [];
+  const ids: string[] = [];
+  for (const subkey of subkeys) {
+    const match = CHILD_SUBKEY_PATTERN.exec(subkey);
+    if (match) ids.push(match[1]!);
+  }
+  return ids;
 }
 
 // Ruling from task-8's brief: "wire store when persistSession !== false", shared by both main.ts

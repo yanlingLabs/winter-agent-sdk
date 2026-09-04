@@ -15,7 +15,17 @@ import { randomUUID } from "node:crypto";
 import { encodeFrame, splitFrames } from "@yanlinglabs/winter-agent-sdk";
 import type { RuntimeConfig, WinterFrame, SpawnedRuntimeProcess } from "@yanlinglabs/winter-agent-sdk";
 
-import { userEntry, assistantEntry, TranscriptWriter, RUNTIME_ENGINE_VERSION, type Chain, type SessionCtx } from "./dialect.ts";
+import {
+  userEntry,
+  assistantEntry,
+  TranscriptWriter,
+  RUNTIME_ENGINE_VERSION,
+  buildChildTranscriptWriter,
+  childTranscriptSubpath,
+  listChildAgentIds,
+  type Chain,
+  type SessionCtx,
+} from "./dialect.ts";
 // session-store.ts and paths/keys.ts moved to the sdk package (Task 10, WS-05 §6).
 import { WinterCompatibilitySessionStore, DIALECT_RECORD_ENTRY_TYPE, type SessionStoreEntry } from "@yanlinglabs/winter-agent-sdk";
 import { compatibilityKeys } from "@yanlinglabs/winter-agent-sdk";
@@ -227,6 +237,128 @@ describe("TranscriptWriter", () => {
       expect(entries[1]).toEqual(marker); // present, unchanged, in its actual append position
       // the two REAL chain entries still validated correctly around it
       expect(entries[2]!.parentUuid).toBe(entries[0]!.uuid);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+});
+
+// Phase 4 Task 3 (MUST 2, WS-05 §4/§5.2/§5.3, WS-10 §7): child (subagent) transcripts in the store.
+describe("child (subagent) transcripts", () => {
+  test("write/read round-trip: every entry carries isSidechain:true, agentId, and parent_tool_use_id; the main session's own key is untouched", async () => {
+    const home = freshHome();
+    try {
+      const store = new WinterCompatibilitySessionStore({ winterHome: home });
+      const child = buildChildTranscriptWriter({
+        store,
+        projectKey: "proj-a",
+        parentSessionId: "parent-1",
+        agentId: "agent-abc",
+        parentToolUseId: "tooluse-1",
+        cwd: "/winter-fixture",
+      });
+      await child.recordUserEntry("do the thing");
+      await child.recordAssistantEntry([{ type: "text", text: "done" }]);
+
+      const childKey = { projectKey: "proj-a", sessionId: "parent-1", subpath: childTranscriptSubpath("agent-abc") };
+      const entries = await TranscriptWriter.readBack(store, childKey);
+      expect(entries.length).toBe(2);
+      for (const e of entries) {
+        expect(e.isSidechain).toBe(true);
+        expect(e.agentId).toBe("agent-abc");
+        expect(e.parent_tool_use_id).toBe("tooluse-1");
+        expect(e.sessionId).toBe("parent-1"); // the OWNING parent's session id, not the agentId
+      }
+      // The child's own chain is independent -- its first entry has no parent.
+      expect(entries[0]!.parentUuid).toBeNull();
+      expect(entries[1]!.parentUuid).toBe(entries[0]!.uuid);
+
+      // The main session's own key (no subpath) has nothing written to it by the child writer.
+      const mainEntries = await store.load({ projectKey: "proj-a", sessionId: "parent-1" });
+      expect(mainEntries).toBeNull();
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test("sidecar separation: the agent_metadata envelope lands ONLY in .meta.json -- the raw *.jsonl file on disk never contains an agent_metadata line", async () => {
+    const home = freshHome();
+    try {
+      const store = new WinterCompatibilitySessionStore({ winterHome: home });
+      const child = buildChildTranscriptWriter({
+        store,
+        projectKey: "proj-a",
+        parentSessionId: "parent-1",
+        agentId: "agent-meta",
+        parentToolUseId: "tooluse-1",
+        cwd: "/winter-fixture",
+      });
+      await child.recordUserEntry("hi");
+      await child.writeMetadata({ id: "agent-meta", status: "completed", model: { effectiveModel: "sonnet", effectiveEffort: "medium" } });
+
+      // Read the RAW jsonl straight off disk -- store.load()/TranscriptWriter.readBack both
+      // deliberately RE-SYNTHESIZE the metadata as a trailing array entry (session-store.ts's own
+      // load()), so asserting against either of those would pass vacuously even if the envelope HAD
+      // leaked into the jsonl. This is the one test that can actually tell the two apart.
+      const jsonlPath = join(home, "projects", "proj-a", "parent-1", "subagents", "agent-agent-meta.jsonl");
+      const rawJsonl = readFileSync(jsonlPath, "utf8");
+      expect(rawJsonl).not.toContain("agent_metadata");
+      expect(rawJsonl.trim().split("\n").length).toBe(1); // only the one recordUserEntry line
+
+      const metaPath = join(home, "projects", "proj-a", "parent-1", "subagents", "agent-agent-meta.meta.json");
+      expect(existsSync(metaPath)).toBe(true);
+      const meta = JSON.parse(readFileSync(metaPath, "utf8")) as Record<string, unknown>;
+      expect(meta.type).toBe("agent_metadata");
+      expect(meta.id).toBe("agent-meta");
+      expect(meta.status).toBe("completed");
+
+      // load()'s own documented re-synthesis: the metadata DOES appear, but only as the LAST
+      // returned entry, after every native one -- confirms the sidecar is still reachable through
+      // the ordinary read path, just never mixed into the model-readable jsonl itself.
+      const childKey = { projectKey: "proj-a", sessionId: "parent-1", subpath: childTranscriptSubpath("agent-meta") };
+      const loaded = await store.load(childKey);
+      expect(loaded).not.toBeNull();
+      expect(loaded!.length).toBe(2);
+      expect(loaded![1]!.type).toBe("agent_metadata");
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test("a resumed session enumerates its own children via listChildAgentIds, including a metadata-only child that never produced native output", async () => {
+    const home = freshHome();
+    try {
+      const store = new WinterCompatibilitySessionStore({ winterHome: home });
+      const sessionKey = { projectKey: "proj-a", sessionId: "parent-1" };
+
+      const childA = buildChildTranscriptWriter({ store, projectKey: "proj-a", parentSessionId: "parent-1", agentId: "a1", parentToolUseId: "t1", cwd: "/winter-fixture" });
+      await childA.recordUserEntry("hi");
+      const childB = buildChildTranscriptWriter({ store, projectKey: "proj-a", parentSessionId: "parent-1", agentId: "a2", parentToolUseId: "t2", cwd: "/winter-fixture" });
+      await childB.recordUserEntry("hi");
+      // A third child registered via metadata ONLY (e.g. spawned, not yet produced a turn) -- WS-05
+      // §6's own "readable before it has ever produced native output" guarantee.
+      const childC = buildChildTranscriptWriter({ store, projectKey: "proj-a", parentSessionId: "parent-1", agentId: "a3", parentToolUseId: "t3", cwd: "/winter-fixture" });
+      await childC.writeMetadata({ id: "a3", status: "running" });
+
+      const ids = await listChildAgentIds(store, sessionKey);
+      expect([...ids].sort()).toEqual(["a1", "a2", "a3"]);
+
+      // A session with NO children at all reports none, without throwing.
+      const emptyIds = await listChildAgentIds(store, { projectKey: "proj-a", sessionId: "childless-session" });
+      expect(emptyIds).toEqual([]);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test("crash/partial-line rules are identical to the main chain: a duplicate uuid in a child transcript is rejected by readBack too", async () => {
+    const home = freshHome();
+    try {
+      const store = new WinterCompatibilitySessionStore({ winterHome: home });
+      const childKey = { projectKey: "proj-a", sessionId: "parent-1", subpath: childTranscriptSubpath("agent-dupe") };
+      const dupe: SessionStoreEntry = { type: "user", uuid: "dupe-1", parentUuid: null, timestamp: new Date().toISOString(), isSidechain: true, agentId: "agent-dupe" };
+      await store.append(childKey, [dupe, { ...dupe }]);
+      await expect(TranscriptWriter.readBack(store, childKey)).rejects.toThrow();
     } finally {
       rmSync(home, { recursive: true, force: true });
     }
