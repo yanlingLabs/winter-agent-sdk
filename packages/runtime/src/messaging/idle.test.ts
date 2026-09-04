@@ -78,7 +78,7 @@ describe("IdleSubscriptionStore (WS-10 §14 one-shot subscription + notice firin
     const store = createIdleSubscriptionStore();
     const queue = createNotificationQueue();
     store.subscribe({ messageId: "m1", subscriberKey: "sub-1", targetKey: "session:target" }, 0);
-    const fired = store.fireIdle("session:target", 1000, { reducedStatus: false }, queue, "session:target");
+    const fired = store.fireIdle("session:target", 1000, () => false, queue, "session:target");
     expect(fired).toBe(1);
     const { notifications } = queue.drain("sub-1");
     expect(notifications).toHaveLength(1);
@@ -88,7 +88,7 @@ describe("IdleSubscriptionStore (WS-10 §14 one-shot subscription + notice firin
     const store = createIdleSubscriptionStore();
     const queue = createNotificationQueue();
     store.subscribe({ messageId: "m1", subscriberKey: "sub-1", targetKey: "session:target" }, 0);
-    store.fireIdle("session:target", 1000, { reducedStatus: true }, queue, "session:target");
+    store.fireIdle("session:target", 1000, () => true, queue, "session:target");
     const { notifications } = queue.drain("sub-1");
     expect(notifications[0]?.content).toContain("reduced-status");
     expect(notifications[0]?.content).not.toBe("session:target is now idle");
@@ -97,25 +97,34 @@ describe("IdleSubscriptionStore (WS-10 §14 one-shot subscription + notice firin
     const store = createIdleSubscriptionStore();
     const queue = createNotificationQueue();
     store.subscribe({ messageId: "m1", subscriberKey: "sub-1", targetKey: "session:target" }, 0);
-    store.fireIdle("session:target", 1000, { reducedStatus: false }, queue, "session:target");
-    const secondFire = store.fireIdle("session:target", 2000, { reducedStatus: false }, queue, "session:target");
+    store.fireIdle("session:target", 1000, () => false, queue, "session:target");
+    const secondFire = store.fireIdle("session:target", 2000, () => false, queue, "session:target");
     expect(secondFire).toBe(0);
     expect(queue.pendingCount("sub-1")).toBe(1); // only the first notice ever arrived
   });
   test("firing a target with no pending subscriptions is a harmless no-op", () => {
     const store = createIdleSubscriptionStore();
     const queue = createNotificationQueue();
-    expect(store.fireIdle("session:nobody-watching", 0, { reducedStatus: false }, queue, "session:nobody-watching")).toBe(0);
+    expect(store.fireIdle("session:nobody-watching", 0, () => false, queue, "session:nobody-watching")).toBe(0);
   });
   test("multiple subscribers to the same target each get their own notice", () => {
     const store = createIdleSubscriptionStore();
     const queue = createNotificationQueue();
     store.subscribe({ messageId: "m1", subscriberKey: "sub-1", targetKey: "session:target" }, 0);
     store.subscribe({ messageId: "m2", subscriberKey: "sub-2", targetKey: "session:target" }, 0);
-    const fired = store.fireIdle("session:target", 1000, { reducedStatus: false }, queue, "session:target");
+    const fired = store.fireIdle("session:target", 1000, () => false, queue, "session:target");
     expect(fired).toBe(2);
     expect(queue.pendingCount("sub-1")).toBe(1);
     expect(queue.pendingCount("sub-2")).toBe(1);
+  });
+  test("computeReducedStatus is evaluated PER SUBSCRIBER -- two subscribers of the same target can get different notice kinds", () => {
+    const store = createIdleSubscriptionStore();
+    const queue = createNotificationQueue();
+    store.subscribe({ messageId: "m1", subscriberKey: "sub-full", targetKey: "session:target" }, 0);
+    store.subscribe({ messageId: "m2", subscriberKey: "sub-reduced", targetKey: "session:target" }, 0);
+    store.fireIdle("session:target", 1000, (subscriberKey) => subscriberKey === "sub-reduced", queue, "session:target");
+    expect(queue.drain("sub-full").notifications[0]?.content).toBe("session:target is now idle");
+    expect(queue.drain("sub-reduced").notifications[0]?.content).toContain("reduced-status");
   });
   test("an expired subscription (12h, WS-10 §14) never fires, and sweepExpired removes it", () => {
     const store = createIdleSubscriptionStore();
@@ -124,7 +133,7 @@ describe("IdleSubscriptionStore (WS-10 §14 one-shot subscription + notice firin
     expect(store.pendingCount("session:target")).toBe(1);
     store.sweepExpired(NOTIFY_IDLE_EXPIRY_MS + 1);
     expect(store.pendingCount("session:target")).toBe(0);
-    const fired = store.fireIdle("session:target", NOTIFY_IDLE_EXPIRY_MS + 2, { reducedStatus: false }, queue, "session:target");
+    const fired = store.fireIdle("session:target", NOTIFY_IDLE_EXPIRY_MS + 2, () => false, queue, "session:target");
     expect(fired).toBe(0);
   });
   test("a subscription exactly at its expiry boundary (not yet past) still fires", () => {
@@ -132,7 +141,7 @@ describe("IdleSubscriptionStore (WS-10 §14 one-shot subscription + notice firin
     const queue = createNotificationQueue();
     store.subscribe({ messageId: "m1", subscriberKey: "sub-1", targetKey: "session:target" }, 0);
     // expiresAt = NOTIFY_IDLE_EXPIRY_MS exactly; fireIdle at a time strictly before that must still match.
-    const fired = store.fireIdle("session:target", NOTIFY_IDLE_EXPIRY_MS - 1, { reducedStatus: false }, queue, "session:target");
+    const fired = store.fireIdle("session:target", NOTIFY_IDLE_EXPIRY_MS - 1, () => false, queue, "session:target");
     expect(fired).toBe(1);
   });
 });

@@ -87,6 +87,30 @@ export function createMessagingRouterSeam(): MessagingRouterSeamWithRoster {
   };
 }
 
+// WS-10 §15's own `subscribeIdle(addr, {messageId})` carries NO subscriber address at all -- by the
+// time an eventual idle notice fires, something must still know which session asked. This is the
+// documented, in-Lane-D-files-only answer to that gap (never a change to the frozen adapter
+// interface): the SAME messageId the seam already allocates 1:1 with the calling (senderSessionId,
+// toolUseId) pair is also the key this directory remembers the subscriber under.
+// reference-adapter.ts's own subscribeIdle-firing logic looks it up when it needs to know which
+// session's NotificationQueue receives the eventual notice.
+export interface SubscriberDirectory {
+  remember(messageId: string, subscriberSessionId: string): void;
+  lookup(messageId: string): string | undefined;
+}
+
+export function createSubscriberDirectory(): SubscriberDirectory {
+  const map = new Map<string, string>();
+  return {
+    remember(messageId, subscriberSessionId) {
+      map.set(messageId, subscriberSessionId);
+    },
+    lookup(messageId) {
+      return map.get(messageId);
+    },
+  };
+}
+
 // --- The module-singleton tool executors pull from ---------------------------------------------------
 
 export interface MessagingRuntimeDeps {
@@ -94,6 +118,7 @@ export interface MessagingRuntimeDeps {
   adapter: RuntimeMessagingAdapter;
   notifications: NotificationQueue;
   loopGuard: LoopGuard;
+  subscribers: SubscriberDirectory;
   now(): number;
 }
 
@@ -227,6 +252,13 @@ export async function sendMessage(deps: MessagingRuntimeDeps, caller: CallerCont
         "notify_when_idle: target does not support idle notification (subagents, teammates, remote peers, and adapters without a reliable idle signal refuse the WHOLE call, WS-10 §14)",
       ),
     );
+  }
+
+  if (wantsIdle) {
+    // Remembered BEFORE either subscribeIdle call site below (SubscriberDirectory's own header,
+    // above): the adapter has no other way to learn which session's NotificationQueue should
+    // eventually receive the notice.
+    deps.subscribers.remember(messageId, caller.sessionId);
   }
 
   if (isPureSubscription) {

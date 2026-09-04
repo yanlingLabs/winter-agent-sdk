@@ -1,0 +1,398 @@
+// Phase 4 Task 7 (Lane D, WS-10 §15, RULING R4-5): the in-process REFERENCE implementation of
+// `RuntimeMessagingAdapter`. "In-process reference" per R4-5: this file proves out every WS-10
+// §10-14 semantic against INJECTABLE, same-process constructs -- the live child roster (ChildHandle,
+// via router.ts's own MessagingRouterSeam.children()) and an in-memory PeerSessionHandle directory
+// this file itself defines. It is deliberately NOT the daemon-wide, durable, cross-process,
+// authenticated RuntimeDirectory [WS-15] owns.
+//
+// NAMED P8 SEAM -- what a real daemon-side router/adapter must additionally supply, never
+// implemented here:
+//   - durable, cross-restart outcome/message-id storage (router.ts's own MessagingRouterSeam is
+//     in-memory only; WS-10 §15's "the daemon authors canonical addresses, inbox state, name
+//     leases, and delivery records" is durable persistence this reference does not attempt);
+//   - cross-process/cross-machine delivery (every PeerSessionHandle here is same-process by
+//     construction; WS-10 §13's "cross-machine/phone delivery requires an authenticated Winter
+//     transport" and `Settings.isolatePeerMachines` (derived-shapes-p4.md item (e)) are both P8);
+//   - per-sender/per-target RATE LIMITS (WS-10 §12 lists them as a MUST alongside the bounds
+//     outcomes.ts implements; there is no notion of "scale" for a single in-process reference to
+//     rate-limit against, so this reference does not implement one);
+//   - authenticated routes (this reference treats every same-process peer as `authenticated: true`
+//     unconditionally in deliverToSession below -- a real remote/cross-machine route is exactly what
+//     inbound.ts's own `authenticated` parameter exists to gate, once a real transport exists);
+//   - an automatic "session went idle" event source (real engine/session lifecycle hooks are a P8
+//     wiring concern) -- this reference exposes `firePeerIdleTransition` for a caller (a real host,
+//     or this file's own tests) to call explicitly instead.
+import type { ChildHandle } from "../subagents/child-handle.ts";
+import type { PermissionMode } from "@yanlinglabs/winter-agent-sdk";
+import {
+  serializeRuntimeAddress,
+  type RuntimeAddress,
+  type ListedRuntimeObject,
+  type DeliveryOutcome,
+  type GlobalAgentMessage,
+  type RuntimeMessagingAdapter,
+} from "./adapter.ts";
+import { childToListedRuntimeObject } from "./resolution.ts";
+import {
+  classifyPermissionMode,
+  resolveInboundDecision,
+  createMailbox,
+  buildDefaultHoldEntry,
+  buildExplicitHoldEntry,
+  type CrossSessionInbound,
+  type PermissionClassLabel,
+} from "./inbound.ts";
+import { createIdleSubscriptionStore, createNotificationQueue, type NotificationQueue } from "./idle.ts";
+import { delivered, queued, held, subscribed, refused, notFound, unavailable, createLoopGuard } from "./outcomes.ts";
+import { createMessagingRouterSeam, createSubscriberDirectory, type MessagingRuntimeDeps, type SubscriberDirectory } from "./router.ts";
+
+// --- The reference's own "peer" abstraction (same-process top-level sessions) ----------------------
+
+export interface PeerSessionHandle {
+  readonly address: RuntimeAddress; // objectKind "session"
+  readonly name?: string;
+  readonly cwd?: string;
+  status(): "starting" | "running" | "idle" | "exited" | "unavailable" | "archived";
+  mode(): PermissionMode;
+  // WS-10 §13: "plan is classified as bypassing when bypass is available to that session." A fact
+  // about this peer's own gate configuration this reference cannot derive from `mode()` alone.
+  bypassAvailable(): boolean;
+  // Explicit `Settings.crossSessionInbound` override, when this peer has one configured. Absent =
+  // the default class matrix applies (inbound.ts's own resolveInboundDecision).
+  crossSessionInbound?(): CrossSessionInbound | undefined;
+  // WS-10 §14: "adapters without a reliable idle signal MUST refuse" notify_when_idle.
+  hasReliableIdleSignal(): boolean;
+  // Called only once inbound policy has already decided "accept": queue at the next tool boundary
+  // (running) or start a new turn (idle). The REAL engine-level mechanics of either are P8 (this
+  // file's own header) -- this reference only proves the decision was reached and the call made.
+  deliver(msg: GlobalAgentMessage): Promise<void>;
+}
+
+export interface PeerDirectory {
+  list(): PeerSessionHandle[];
+  find(address: RuntimeAddress): PeerSessionHandle | undefined;
+  register(handle: PeerSessionHandle): () => void;
+}
+
+export function createInMemoryPeerDirectory(): PeerDirectory {
+  let peers: PeerSessionHandle[] = [];
+  return {
+    list() {
+      return peers;
+    },
+    find(address) {
+      const key = serializeRuntimeAddress(address);
+      return peers.find((p) => serializeRuntimeAddress(p.address) === key);
+    },
+    register(handle) {
+      peers.push(handle);
+      return () => {
+        peers = peers.filter((p) => p !== handle);
+      };
+    },
+  };
+}
+
+// --- The adapter itself ------------------------------------------------------------------------
+
+export interface ReferenceAdapterDeps {
+  getChildren(): readonly ChildHandle[];
+  peers: PeerDirectory;
+  notifications: NotificationQueue;
+  // WS-10 §15's own `subscribeIdle(addr, {messageId})` carries NO subscriber address at all -- by
+  // the time an eventual idle notice fires, something must still know which session asked. This is
+  // this reference's own documented answer to that gap (never a spine change to the frozen adapter
+  // interface): router.ts's own SubscriberDirectory remembers the correlation, keyed by the SAME
+  // messageId the seam already allocated 1:1 with the calling session -- see router.ts's own header.
+  subscribers: SubscriberDirectory;
+  now(): number;
+}
+
+export interface ReferenceMessagingAdapter extends RuntimeMessagingAdapter {
+  // Not part of the frozen RuntimeMessagingAdapter contract: a host integration (or this file's own
+  // tests) calls this whenever a registered peer ACTUALLY transitions to idle or exited, so any
+  // pending notify_when_idle subscription on it fires exactly once (WS-10 §14). A real host would
+  // wire this to its own session-status-change event; R4-5's in-process reference has no such event
+  // source to observe on its own.
+  firePeerIdleTransition(address: RuntimeAddress): void;
+  sweepExpiredIdleSubscriptions(): void;
+  // WS-10 §13: "held messages are re-evaluated when the receiver's mode or settings change." Not
+  // automatic here for the identical reason firePeerIdleTransition is manual -- a caller invokes
+  // this once it knows `address`'s mode/settings changed. Returns every entry whose disposition
+  // changed so the caller can record the new outcome against the seam (the adapter itself never
+  // touches MessagingRouterSeam -- WS-10 §15's own "the daemon authors ... delivery records").
+  reevaluateHeldFor(address: RuntimeAddress): Promise<Array<{ messageId: string; outcome: DeliveryOutcome }>>;
+  // WS-10 §13's default-class 5-minute dialog expiry, swept lazily rather than on a timer. Same
+  // "caller records the outcome" contract as reevaluateHeldFor.
+  sweepExpiredHeld(): Array<{ messageId: string; outcome: DeliveryOutcome }>;
+}
+
+export function createReferenceMessagingAdapter(deps: ReferenceAdapterDeps): ReferenceMessagingAdapter {
+  const mailbox = createMailbox();
+  const idleSubs = createIdleSubscriptionStore();
+  // The envelope behind each currently-held messageId -- inbound.ts's own Mailbox is deliberately
+  // envelope-agnostic (cap/expiry/reevaluation bookkeeping only); re-evaluating a hold into an
+  // "accept" needs the ORIGINAL message to actually deliver, so this reference keeps it here.
+  const heldEnvelopes = new Map<string, GlobalAgentMessage>();
+
+  function findChild(addr: RuntimeAddress): ChildHandle | undefined {
+    if (addr.objectKind !== "agent") return undefined;
+    const owningParent = addr.parentWinterSessionId ?? addr.winterSessionId;
+    return deps.getChildren().find((c) => c.record.id === addr.childId && c.record.parentSessionId === owningParent);
+  }
+
+  function permissionClassFor(addr: RuntimeAddress): PermissionClassLabel {
+    if (addr.objectKind === "agent") {
+      const child = findChild(addr);
+      if (child === undefined) return "unknown";
+      // T8 FLAG: ChildSessionRecord carries no bypass-availability signal of its own (only the
+      // parent policy hash/version) -- conservatively `false` (see inbound.ts's own
+      // classifyPermissionMode doc for why this is never silently guessed as `true`).
+      return classifyPermissionMode(child.record.permission.effectiveMode, { bypassAvailable: false });
+    }
+    const peer = deps.peers.find(addr);
+    if (peer === undefined) return "unknown";
+    return classifyPermissionMode(peer.mode(), { bypassAvailable: peer.bypassAvailable() });
+  }
+
+  function peerRow(peer: PeerSessionHandle): ListedRuntimeObject {
+    const status = peer.status();
+    const reachableForMessage = status === "running" || status === "idle";
+    return {
+      address: serializeRuntimeAddress(peer.address),
+      ...(peer.name !== undefined ? { name: peer.name } : {}),
+      objectKind: "session",
+      runtimeKind: "winter-agent",
+      status,
+      mode: peer.mode(),
+      ...(peer.cwd !== undefined ? { cwd: peer.cwd } : {}),
+      capabilities: {
+        message: reachableForMessage,
+        resume: status === "exited",
+        notifyWhenIdle: peer.hasReliableIdleSignal(),
+        reply: reachableForMessage, // T8 FLAG: unpinned anywhere in WS-10/the companion doc; mirrors `message`
+      },
+    };
+  }
+
+  function reducedStatusFor(targetPeer: PeerSessionHandle, subscriberSessionId: string): boolean {
+    const senderClass = classifyPermissionMode(targetPeer.mode(), { bypassAvailable: targetPeer.bypassAvailable() });
+    const subscriberPeer = deps.peers.find({ objectKind: "session", runtimeKind: "winter-agent", winterSessionId: subscriberSessionId });
+    // T8 FLAG: the subscriber (an ordinary main top-level session) is not necessarily registered as
+    // a PEER of its own adapter instance -- when unknown, default conservatively to "prompts" (the
+    // class most likely to hold an unrecognized/bypassing sender, per the WS-10 §13 matrix).
+    const receiverClass: PermissionClassLabel = subscriberPeer !== undefined ? classifyPermissionMode(subscriberPeer.mode(), { bypassAvailable: subscriberPeer.bypassAvailable() }) : "prompts";
+    return resolveInboundDecision({ authenticated: true, receiverClass, senderClass }) === "hold";
+  }
+
+  function pushIdleNotice(peer: PeerSessionHandle, messageId: string): void {
+    const subscriberKey = deps.subscribers.lookup(messageId);
+    if (subscriberKey === undefined) return; // defensive: router.ts always remembers before calling subscribeIdle
+    const originLabel = peer.name !== undefined ? `${peer.name} (${serializeRuntimeAddress(peer.address)})` : serializeRuntimeAddress(peer.address);
+    const reducedStatus = reducedStatusFor(peer, subscriberKey);
+    deps.notifications.push(subscriberKey, {
+      origin: originLabel,
+      content: reducedStatus
+        ? `${originLabel} changed state (reduced-status notice: the subscribing session is currently holding cross-session messages from this sender's class)`
+        : `${originLabel} is now idle`,
+      queuedAtMs: deps.now(),
+    });
+  }
+
+  return {
+    async listReachable(scope) {
+      const rows: ListedRuntimeObject[] = [];
+      if (scope.parent !== undefined) {
+        const parentSessionId = scope.parent.winterSessionId;
+        for (const child of deps.getChildren()) {
+          if (child.record.parentSessionId === parentSessionId) rows.push(childToListedRuntimeObject(parentSessionId, child));
+        }
+      }
+      for (const peer of deps.peers.list()) rows.push(peerRow(peer));
+      return rows;
+    },
+
+    async steerChild(addr, msg) {
+      const child = findChild(addr);
+      if (child === undefined) return notFound(msg.messageId, "child no longer reachable");
+      if (child.status() !== "running") return notFound(msg.messageId, `child ${addr.childId ?? "?"} is not running`);
+      return child.steer(msg);
+    },
+
+    async resumeChild(addr, msg) {
+      const child = findChild(addr);
+      if (child === undefined) return notFound(msg.messageId, "child no longer reachable");
+      // May throw ChildResumeModeIncomparableError (RULING P4-D) -- router.ts's own deliverEnvelope
+      // is the catch boundary that turns it into a legible `refused` outcome; this adapter never
+      // swallows it.
+      return child.resume(msg);
+    },
+
+    async deliverToSession(addr, msg) {
+      const peer = deps.peers.find(addr);
+      if (peer === undefined) {
+        return unavailable(msg.messageId, false, "target session is not reachable in-process (a real cross-process peer is a P8/host-integration concern)");
+      }
+
+      const receiverKey = serializeRuntimeAddress(addr);
+      const receiverClass = classifyPermissionMode(peer.mode(), { bypassAvailable: peer.bypassAvailable() });
+      const explicitSetting = peer.crossSessionInbound?.();
+      const decision = resolveInboundDecision({
+        authenticated: true, // R4-5: every same-process peer here IS authenticated by construction; see this file's own header.
+        ...(explicitSetting !== undefined ? { explicitSetting } : {}),
+        receiverClass,
+        senderClass: msg.senderPermissionClass,
+      });
+
+      if (decision === "refuse") {
+        return refused(msg.messageId, "receiver's inbound policy refuses messages from this sender's permission class");
+      }
+
+      if (decision === "hold") {
+        const now = deps.now();
+        const entry =
+          explicitSetting === "hold"
+            ? buildExplicitHoldEntry(msg.messageId, "receiver holds all cross-session messages (explicit crossSessionInbound: hold)", now)
+            : buildDefaultHoldEntry(msg.messageId, "receiver's default inbound policy holds this sender's permission class (WS-10 §13)", now);
+        const ok = mailbox.hold(receiverKey, entry);
+        if (!ok) return refused(msg.messageId, "held-message inbox is full (cap 100, WS-10 §13); refused visibly rather than silently dropped");
+        heldEnvelopes.set(msg.messageId, msg);
+        return held(msg.messageId, entry.reason);
+      }
+
+      // decision === "accept"
+      const acceptedOk = mailbox.accept(receiverKey);
+      if (!acceptedOk) return refused(msg.messageId, "accepted-message queue is full (cap 50, WS-10 §13); refused visibly rather than silently dropped");
+      const wasRunning = peer.status() === "running";
+      await peer.deliver(msg);
+      // This reference's own `deliver` call is synchronous-complete (a direct, fire-and-forget call
+      // into the fake/real peer) -- a real host's own queue would drain this over time (P8); this
+      // reference releases the accepted-slot immediately rather than pretending to model that delay.
+      mailbox.releaseAccepted(receiverKey);
+      return wasRunning ? queued(msg.messageId) : delivered(msg.messageId);
+    },
+
+    async subscribeIdle(addr, req) {
+      if (addr.objectKind !== "session") {
+        return refused(req.messageId, "notify_when_idle targets a top-level session only (WS-10 §14)");
+      }
+      const peer = deps.peers.find(addr);
+      if (peer === undefined || !peer.hasReliableIdleSignal()) {
+        return refused(req.messageId, "adapter has no reliable idle signal for this target (WS-10 §14)");
+      }
+      const status = peer.status();
+      if (status === "idle" || status === "exited") {
+        // WS-10 §14: "send the notice immediately when the target is already idle."
+        pushIdleNotice(peer, req.messageId);
+        return subscribed(req.messageId);
+      }
+      // Deferred case: register a pending subscription keyed by the SUBSCRIBER's own session (via
+      // SubscriberDirectory, this file's own header) -- NOT the target's address, which is what
+      // `targetKey` already is. Getting these two swapped silently pushes every future notice into
+      // the wrong queue (the target's own, which nothing ever drains).
+      const subscriberKey = deps.subscribers.lookup(req.messageId);
+      if (subscriberKey === undefined) {
+        return refused(req.messageId, "internal: no subscriber was recorded for this messageId before subscribeIdle was called");
+      }
+      idleSubs.subscribe({ messageId: req.messageId, subscriberKey, targetKey: serializeRuntimeAddress(addr) }, deps.now());
+      return subscribed(req.messageId);
+    },
+
+    async senderPermissionClass(addr) {
+      return permissionClassFor(addr);
+    },
+
+    firePeerIdleTransition(address) {
+      const peer = deps.peers.find(address);
+      const targetKey = serializeRuntimeAddress(address);
+      if (peer === undefined) {
+        idleSubs.sweepExpired(deps.now());
+        return;
+      }
+      const originLabel = peer.name !== undefined ? `${peer.name} (${targetKey})` : targetKey;
+      // Each firing subscriber gets its OWN reducedStatus computation (idle.ts's own fireIdle
+      // signature) -- a target with several simultaneous subscribers may owe a full notice to one
+      // and a reduced-status notice to another, since each subscriber's own class against the SAME
+      // idling target's class can differ.
+      idleSubs.fireIdle(targetKey, deps.now(), (subscriberKey) => reducedStatusFor(peer, subscriberKey), deps.notifications, originLabel);
+    },
+
+    sweepExpiredIdleSubscriptions() {
+      idleSubs.sweepExpired(deps.now());
+    },
+
+    async reevaluateHeldFor(address) {
+      const peer = deps.peers.find(address);
+      if (peer === undefined) return [];
+      const receiverKey = serializeRuntimeAddress(address);
+      const receiverClass = classifyPermissionMode(peer.mode(), { bypassAvailable: peer.bypassAvailable() });
+      const explicitSetting = peer.crossSessionInbound?.();
+      const promoted = mailbox.reevaluate(receiverKey, (entry) => {
+        const envelope = heldEnvelopes.get(entry.messageId);
+        const senderClass = envelope?.senderPermissionClass ?? "unknown";
+        return resolveInboundDecision({ authenticated: true, ...(explicitSetting !== undefined ? { explicitSetting } : {}), receiverClass, senderClass });
+      });
+
+      const results: Array<{ messageId: string; outcome: DeliveryOutcome }> = [];
+      for (const { entry, next } of promoted) {
+        const envelope = heldEnvelopes.get(entry.messageId);
+        heldEnvelopes.delete(entry.messageId);
+        if (next === "refuse" || envelope === undefined) {
+          results.push({ messageId: entry.messageId, outcome: refused(entry.messageId, "receiver's inbound policy now refuses this sender's permission class") });
+          continue;
+        }
+        // next === "accept"
+        const acceptedOk = mailbox.accept(receiverKey);
+        if (!acceptedOk) {
+          results.push({ messageId: entry.messageId, outcome: refused(entry.messageId, "accepted-message queue is full (cap 50, WS-10 §13); refused visibly rather than silently dropped") });
+          continue;
+        }
+        const wasRunning = peer.status() === "running";
+        await peer.deliver(envelope);
+        mailbox.releaseAccepted(receiverKey);
+        results.push({ messageId: entry.messageId, outcome: wasRunning ? queued(entry.messageId) : delivered(entry.messageId) });
+      }
+      return results;
+    },
+
+    sweepExpiredHeld() {
+      const receiverKeys = deps.peers.list().map((p) => serializeRuntimeAddress(p.address));
+      const results: Array<{ messageId: string; outcome: DeliveryOutcome }> = [];
+      for (const receiverKey of receiverKeys) {
+        for (const entry of mailbox.sweepExpired(receiverKey, deps.now())) {
+          heldEnvelopes.delete(entry.messageId);
+          results.push({ messageId: entry.messageId, outcome: refused(entry.messageId, "held message expired without a response (5-minute default dialog expiry, WS-10 §13)") });
+        }
+      }
+      return results;
+    },
+  };
+}
+
+// --- One-call wiring for a real host (or an integration test) --------------------------------------
+
+export interface DefaultMessagingRuntime extends MessagingRuntimeDeps {
+  adapter: ReferenceMessagingAdapter;
+  peers: PeerDirectory;
+}
+
+// Builds a complete, self-consistent MessagingRuntimeDeps: the real seam (router.ts) + the reference
+// adapter (this file) + a fresh peer directory + a fresh notification queue, all sharing the SAME
+// clock. `getChildren` defaults to the seam's own aggregated roster (the ordinary case: the adapter
+// sees every child any session in this process has registered); a caller MAY override it to scope
+// the adapter to a narrower roster in a test.
+export function createDefaultMessagingRuntime(opts: { now?: () => number; getChildren?: () => readonly ChildHandle[] } = {}): DefaultMessagingRuntime {
+  const seam = createMessagingRouterSeam();
+  const now = opts.now ?? (() => Date.now());
+  const peers = createInMemoryPeerDirectory();
+  const notifications = createNotificationQueue();
+  const subscribers = createSubscriberDirectory();
+  const adapter = createReferenceMessagingAdapter({
+    getChildren: opts.getChildren ?? (() => seam.children()),
+    peers,
+    notifications,
+    subscribers,
+    now,
+  });
+  return { seam, adapter, notifications, loopGuard: createLoopGuard(), subscribers, now, peers };
+}

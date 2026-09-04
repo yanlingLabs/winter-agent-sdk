@@ -1,6 +1,7 @@
 import { describe, test, expect } from "bun:test";
 import {
   createMessagingRouterSeam,
+  createSubscriberDirectory,
   registerMessagingRuntime,
   getMessagingRuntime,
   resetMessagingRuntimeForTest,
@@ -76,6 +77,7 @@ function makeDeps(adapter: RuntimeMessagingAdapter, opts: { now?: () => number }
     adapter,
     notifications: createNotificationQueue(),
     loopGuard: createLoopGuard(),
+    subscribers: createSubscriberDirectory(),
     now: opts.now ?? (() => 0),
   };
 }

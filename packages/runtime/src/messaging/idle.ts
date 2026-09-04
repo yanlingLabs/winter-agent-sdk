@@ -79,13 +79,11 @@ export interface PendingIdleSubscription {
   expiresAt: number;
 }
 
-export interface FireIdleOptions {
-  // WS-10 §14 + item (e) addendum's "apply inbound policy to the returning notice ... held
-  // subscriptions deliver a reduced-status notice, not treated as ordinary delivered text." The
-  // caller (reference-adapter.ts) computes this by running the SAME inbound-policy decision used for
-  // ordinary messages, treating the idling target as the "sender" of its own notice.
-  reducedStatus: boolean;
-}
+// WS-10 §14 + item (e) addendum's "apply inbound policy to the returning notice ... held
+// subscriptions deliver a reduced-status notice, not treated as ordinary delivered text." The
+// caller (reference-adapter.ts) computes each firing subscriber's own `computeReducedStatus` result
+// (IdleSubscriptionStore.fireIdle, below) by running the SAME inbound-policy decision used for
+// ordinary messages, treating the idling target as the "sender" of its own notice.
 
 export interface IdleSubscriptionStore {
   subscribe(sub: Omit<PendingIdleSubscription, "createdAt" | "expiresAt">, now: number): void;
@@ -94,7 +92,13 @@ export interface IdleSubscriptionStore {
   // subscriber. Returns how many notices were pushed. WS-10 §14: "emit AT MOST ONE notice" per
   // subscription -- guaranteed structurally here since a fired (or expired) subscription is removed
   // from `pending` and can never fire twice.
-  fireIdle(targetKey: string, now: number, opts: FireIdleOptions, queue: NotificationQueue, originLabel: string): number;
+  //
+  // `computeReducedStatus` is a FUNCTION of the firing subscriber, not a single shared flag: a
+  // target with multiple simultaneous subscribers may owe a full notice to one and a reduced-status
+  // notice to another (each subscriber's own inbound-policy decision against the SAME idling
+  // target's class can differ) -- a static boolean shared across every match in one `fireIdle` call
+  // would silently pick one subscriber's answer for all of them.
+  fireIdle(targetKey: string, now: number, computeReducedStatus: (subscriberKey: string) => boolean, queue: NotificationQueue, originLabel: string): number;
   sweepExpired(now: number): void;
   pendingCount(targetKey: string): number;
 }
@@ -105,13 +109,14 @@ export function createIdleSubscriptionStore(): IdleSubscriptionStore {
     subscribe(sub, now) {
       pending.push({ ...sub, createdAt: now, expiresAt: now + NOTIFY_IDLE_EXPIRY_MS });
     },
-    fireIdle(targetKey, now, opts, queue, originLabel) {
+    fireIdle(targetKey, now, computeReducedStatus, queue, originLabel) {
       const matches = pending.filter((p) => p.targetKey === targetKey && p.expiresAt > now);
       pending = pending.filter((p) => p.targetKey !== targetKey);
       for (const m of matches) {
+        const reducedStatus = computeReducedStatus(m.subscriberKey);
         queue.push(m.subscriberKey, {
           origin: originLabel,
-          content: opts.reducedStatus
+          content: reducedStatus
             ? `${originLabel} changed state (reduced-status notice: the subscribing session is currently holding cross-session messages from this sender's class)`
             : `${originLabel} is now idle`,
           queuedAtMs: now,
