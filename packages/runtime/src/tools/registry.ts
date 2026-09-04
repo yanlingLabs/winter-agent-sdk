@@ -909,11 +909,34 @@ export interface RuntimeDerivedCapability {
   // per family (never the whole family) -- every tool in a family lands through the same barrel
   // import, so a partial family is a build error, not a runtime state to model.
   probeTool: string;
+  // An ADDITIONAL, session-scoped condition beyond "the family shipped". Only `winter.mcp` has one,
+  // and it exists because of direct capture evidence rather than a judgment call -- see
+  // SessionCapabilityFacts below.
+  requiresSessionFact?: keyof SessionCapabilityFacts;
+}
+
+// Per-session facts the derivation consults. Every field must be threaded IDENTICALLY on all three
+// transports (it comes off RuntimeConfig, which is serialized into `--config-json`), or
+// `system/init.tools` diverges between legs -- which WS-04 §12 makes a release blocker.
+export interface SessionCapabilityFacts {
+  // Does this session declare any MCP server at all?
+  //
+  // EVIDENCE (scripts/capture-official-golden.ts Scenario D, run against the pinned 0.3.250 runtime
+  // against a loopback endpoint): the official runtime's own DEFAULT session -- zero MCP config --
+  // advertises 24 tools, and NONE of ListMcpResourcesTool / ReadMcpResourceTool /
+  // ReadMcpResourceDirTool / RefreshMcpTools / WaitForMcpServers / ToolSearch is among them. The
+  // same capture confirms Agent, SendMessage and ListAgents ARE advertised by default. So the
+  // MCP-family tools are not "shipped or not"; they are conditional on the session actually having
+  // MCP, and the subagent/messaging families are not conditional at all. WS-00 §1: evidence wins
+  // over a symmetric-looking derivation.
+  hasMcpServers: boolean;
 }
 
 export const RUNTIME_DERIVED_CAPABILITIES: readonly RuntimeDerivedCapability[] = [
-  // WS-09 §1.4 bridge tools + §8's ToolSearch/WaitForMcpServers (Lane A + Lane B).
-  { token: "winter.mcp", probeTool: "ListMcpResourcesTool" },
+  // WS-09 §1.4 bridge tools + §8's ToolSearch/WaitForMcpServers (Lane A + Lane B). Gated ALSO on the
+  // session declaring at least one MCP server -- see SessionCapabilityFacts.hasMcpServers for the
+  // capture evidence behind that second condition.
+  { token: "winter.mcp", probeTool: "ListMcpResourcesTool", requiresSessionFact: "hasMcpServers" },
   // WS-10 §1 Agent (Lane C). SendMessage/ListAgents also carry this token (an I4-era choice this
   // task does not re-file), so Agent is the family's least ambiguous probe.
   { token: "winter.subagents", probeTool: "Agent" },
@@ -922,15 +945,17 @@ export const RUNTIME_DERIVED_CAPABILITIES: readonly RuntimeDerivedCapability[] =
   { token: "winter.global-messaging", probeTool: "SendMessage" },
 ];
 
-export function deriveRuntimeCapabilities(): string[] {
-  return RUNTIME_DERIVED_CAPABILITIES.filter((c) => getRegisteredTool(c.probeTool)?.executor !== undefined).map((c) => c.token);
+export function deriveRuntimeCapabilities(facts: SessionCapabilityFacts): string[] {
+  return RUNTIME_DERIVED_CAPABILITIES.filter(
+    (c) => getRegisteredTool(c.probeTool)?.executor !== undefined && (c.requiresSessionFact === undefined || facts[c.requiresSessionFact]),
+  ).map((c) => c.token);
 }
 
 // The one place a session's EFFECTIVE capability token set is computed: derived tokens unioned with
 // whatever the host supplied. Order is derived-then-host, deduped; nothing downstream depends on
 // order (every consumer is a membership test), but keeping it stable keeps a fixture stable.
-export function resolveSessionCapabilities(hostSupplied: readonly string[] | undefined): string[] {
-  return [...new Set([...deriveRuntimeCapabilities(), ...(hostSupplied ?? [])])];
+export function resolveSessionCapabilities(hostSupplied: readonly string[] | undefined, facts: SessionCapabilityFacts): string[] {
+  return [...new Set([...deriveRuntimeCapabilities(facts), ...(hostSupplied ?? [])])];
 }
 
 function isBareDenied(canonicalName: string, disallowedTools: readonly string[] | undefined): boolean {

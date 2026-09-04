@@ -3406,9 +3406,13 @@ describe("Phase 4 Task 8: init.tools reflects derived capabilities, the activati
     return init?.tools ?? [];
   }
 
-  test("rider 1: the three P4 families are advertised with NO host-supplied capabilities at all", async () => {
+  // A session with at least one MCP server declared -- the `hasMcpServers` fact `winter.mcp`'s own
+  // derivation is gated on (registry.ts's SessionCapabilityFacts, and the capture evidence there).
+  const withMcp = { mcpServers: { probe: { type: "sdk" as const, name: "probe", tools: [{ name: "echo", inputSchema: { type: "object" } }] } } };
+
+  test("rider 1: the subagent + messaging families are advertised with NO host-supplied capabilities at all", async () => {
     const tools = await initTools();
-    for (const n of ["Agent", "SendMessage", "ListAgents", "ReadNotifications", "ListMcpResourcesTool", "ReadMcpResourceTool", "ReadMcpResourceDirTool", "RefreshMcpTools"]) {
+    for (const n of ["Agent", "SendMessage", "ListAgents", "ReadNotifications"]) {
       expect(tools, `"${n}" should be advertised once its family token is runtime-derived`).toContain(n);
     }
     // A token that is NOT derived stays host-supplied-only -- proves the union is additive, not a
@@ -3417,12 +3421,26 @@ describe("Phase 4 Task 8: init.tools reflects derived capabilities, the activati
     expect(await initTools({ capabilities: ["winter.reviewer-model"] })).toContain("mcp__winter__advisor");
   });
 
-  test("rider 4: ToolSearch is advertised iff activation is ON; WaitForMcpServers iff it is OFF", async () => {
-    const off = await initTools();
+  // The session-scoped half of the derivation, on the real wire. Capture evidence
+  // (capture-official-golden.ts Scenario D against the pinned 0.3.250 runtime): the OFFICIAL default
+  // session advertises none of the MCP-family tools, and does advertise Agent/SendMessage/ListAgents.
+  test("rider 1: the MCP family appears ONLY when this session actually declares an MCP server", async () => {
+    const none = await initTools();
+    for (const n of ["ListMcpResourcesTool", "ReadMcpResourceTool", "ReadMcpResourceDirTool", "RefreshMcpTools", "WaitForMcpServers"]) {
+      expect(none, `"${n}" must not be advertised in a session with no MCP servers`).not.toContain(n);
+    }
+    const some = await initTools(withMcp);
+    for (const n of ["ListMcpResourcesTool", "ReadMcpResourceTool", "ReadMcpResourceDirTool", "RefreshMcpTools", "WaitForMcpServers"]) {
+      expect(some, `"${n}" should be advertised once this session declares an MCP server`).toContain(n);
+    }
+  });
+
+  test("rider 4: ToolSearch is advertised iff activation is ON; WaitForMcpServers iff it is OFF (both need winter.mcp)", async () => {
+    const off = await initTools(withMcp);
     expect(off).toContain("WaitForMcpServers");
     expect(off).not.toContain("ToolSearch");
 
-    const on = await initTools({ toolSearchEnabled: true });
+    const on = await initTools({ ...withMcp, toolSearchEnabled: true });
     expect(on).toContain("ToolSearch");
     expect(on).not.toContain("WaitForMcpServers");
   });

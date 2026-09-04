@@ -1350,7 +1350,7 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // is `disallowedTools`' job, WS-07 §3). Computed ONCE here and reused by the dispatch-time
   // availability check (buildDefaultToolExecutor's getAvailabilityInputs, which spreads this same
   // object) and by the ToolSearch session runtime below -- one authority, never three derivations.
-  const sessionCapabilities = resolveSessionCapabilities(config.capabilities);
+  const sessionCapabilities = resolveSessionCapabilities(config.capabilities, { hasMcpServers: config.mcpServers !== undefined && Object.keys(config.mcpServers).length > 0 });
   // Phase 4 Task 8 (rider 3, WS-09 §10 / RULING P4-E): the Winter branch's own canonical alias pair.
   // WS-10 §15 names it verbatim -- [WS-14] redirects the model-visible `SendMessage`/`ListAgents`
   // built-ins at `mcp__winter__send_message`/`mcp__winter__list_agents`. On the WINTER branch those

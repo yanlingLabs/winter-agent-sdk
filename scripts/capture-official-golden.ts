@@ -450,13 +450,17 @@ async function runPermissionsAndHooksCapture(officialSdk: OfficialSdk): Promise<
 // PROSE IS NEVER PRINTED: only property names, `required` lists, enum members, and types. Every
 // `description` field is stripped before printing (this repo's own hermeticity rule: no Anthropic
 // prose beyond names). Report-only, like every other scenario here.
-function schemaShapeOnly(schema: unknown): unknown {
-  if (Array.isArray(schema)) return schema.map(schemaShapeOnly);
+function schemaShapeOnly(schema: unknown, insidePropertiesMap = false): unknown {
+  if (Array.isArray(schema)) return schema.map((v) => schemaShapeOnly(v));
   if (schema === null || typeof schema !== "object") return schema;
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(schema as Record<string, unknown>)) {
-    if (k === "description" || k === "title" || k === "$comment") continue; // prose -- never printed
-    out[k] = schemaShapeOnly(v);
+    // Strip prose ANNOTATIONS only. Correction found by the first real run of this scenario: the
+    // naive version also deleted a PROPERTY whose own name happens to be `description` -- which
+    // Agent's schema has -- making the printed shape wrongly look like `description` was required
+    // but not declared. Inside a `properties` map the keys are FIELD NAMES, never annotations.
+    if (!insidePropertiesMap && (k === "description" || k === "title" || k === "$comment")) continue;
+    out[k] = schemaShapeOnly(v, k === "properties");
   }
   return out;
 }
@@ -598,7 +602,12 @@ async function runMcpOutputCapCapture(officialSdk: OfficialSdk, maxOutputTokens:
       console.log(`\n--- Scenario E (${label}): SKIPPED -- the installed package does not export createSdkMcpServer/tool ---`);
       return;
     }
-    const bigTool = sdkAny.tool("bigoutput", "returns a very large payload", { type: "object", properties: {} }, async () => ({
+    // `tool()` takes "a Zod schema or raw shape", NOT a JSON Schema object -- the first real run of
+    // this scenario failed with exactly that error. An empty RAW SHAPE (`{}`, i.e. a zero-field
+    // object of Zod types) is the dependency-free way to say "no arguments"; this repository does not
+    // declare `zod` as a dependency of its own (it is a peer of the MCP SDK), and taking one just to
+    // describe an empty input would be a real dependency for a report-only probe.
+    const bigTool = sdkAny.tool("bigoutput", "returns a very large payload", {}, async () => ({
       content: [{ type: "text", text: HUGE }],
     }));
     const mcpServer = sdkAny.createSdkMcpServer({ name: "capfixture", version: "1.0.0", tools: [bigTool] });

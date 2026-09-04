@@ -1142,7 +1142,7 @@ describe("deriveRuntimeCapabilities / resolveSessionCapabilities (Phase 4 Task 8
     // The impl barrel is what installs every real executor; nothing about test FILE order guarantees
     // it has loaded yet (same precedent as tools/conformance.test.ts's own explicit import).
     await import("./impl/index.ts");
-    const derived = deriveRuntimeCapabilities();
+    const derived = deriveRuntimeCapabilities({ hasMcpServers: true });
     for (const { token, probeTool } of RUNTIME_DERIVED_CAPABILITIES) {
       const hasExecutor = getRegisteredTool(probeTool)?.executor !== undefined;
       expect(hasExecutor, `probe tool "${probeTool}" for token "${token}" must be a registered descriptor`).toBe(true);
@@ -1164,20 +1164,27 @@ describe("deriveRuntimeCapabilities / resolveSessionCapabilities (Phase 4 Task 8
 
   test("host-supplied tokens union on top of derived ones; a derived token cannot be dropped by omission", async () => {
     await import("./impl/index.ts");
-    const resolved = resolveSessionCapabilities(["winter.reviewer-model", "pwsh"]);
+    const resolved = resolveSessionCapabilities(["winter.reviewer-model", "pwsh"], { hasMcpServers: true });
     expect(resolved).toContain("winter.reviewer-model"); // host token survives
     expect(resolved).toContain("pwsh");
     expect(resolved).toContain("winter.mcp"); // derived token present even though the host never named it
     // Deduped, and an explicitly-supplied derived token does not appear twice.
-    const withDup = resolveSessionCapabilities(["winter.mcp"]);
+    const withDup = resolveSessionCapabilities(["winter.mcp"], { hasMcpServers: true });
     expect(withDup.filter((t) => t === "winter.mcp").length).toBe(1);
     // Undefined (the overwhelmingly common case) still yields the derived set, never [].
-    expect(resolveSessionCapabilities(undefined).length).toBeGreaterThan(0);
+    expect(resolveSessionCapabilities(undefined, { hasMcpServers: true }).length).toBeGreaterThan(0);
+    // The session-scoped half of the derivation, per the Scenario D capture: with NO MCP servers
+    // declared, `winter.mcp` is NOT derived (the official default session advertises none of the
+    // MCP-family tools either), while the subagent/messaging tokens are unconditional.
+    const noMcp = resolveSessionCapabilities(undefined, { hasMcpServers: false });
+    expect(noMcp).not.toContain("winter.mcp");
+    expect(noMcp).toContain("winter.subagents");
+    expect(noMcp).toContain("winter.global-messaging");
   });
 
   test("with the derived tokens supplied, the P4 families are genuinely advertised (the golden churn, at its source)", async () => {
     await import("./impl/index.ts");
-    const cfg: AdvertisedSetInputs = { mode: "default", capabilities: resolveSessionCapabilities(undefined), toolSearchEnabled: false };
+    const cfg: AdvertisedSetInputs = { mode: "default", capabilities: resolveSessionCapabilities(undefined, { hasMcpServers: true }), toolSearchEnabled: false };
     const names = new Set(buildAdvertisedSet(cfg).map((d) => d.canonicalName));
     for (const n of ["Agent", "SendMessage", "ListAgents", "ReadNotifications", "ListMcpResourcesTool", "ReadMcpResourceTool", "ReadMcpResourceDirTool", "RefreshMcpTools", "WaitForMcpServers"]) {
       expect(names.has(n), `"${n}" should be advertised once its family token is runtime-derived`).toBe(true);

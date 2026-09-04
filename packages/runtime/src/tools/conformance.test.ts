@@ -192,7 +192,7 @@ test("I4: every advertised implement-now descriptor has a real executor -- no sc
   // call site), the P4 families ARE advertised, and every one of them has a real executor, so the
   // first loop above still holds under that cfg too. Without this second assertion the test would
   // read as "these are permanently excluded", which is no longer true of a live session.
-  const derivedAdvertised = buildAdvertisedSet({ mode: "bypassPermissions", capabilities: resolveSessionCapabilities(undefined), toolSearchEnabled: false });
+  const derivedAdvertised = buildAdvertisedSet({ mode: "bypassPermissions", capabilities: resolveSessionCapabilities(undefined, { hasMcpServers: true }), toolSearchEnabled: false });
   const derivedNames = new Set(derivedAdvertised.map((d) => d.canonicalName));
   for (const name of ["Agent", "SendMessage", "ListAgents", "ReadNotifications", "ListMcpResourcesTool", "ReadMcpResourceTool", "ReadMcpResourceDirTool", "RefreshMcpTools", "WaitForMcpServers"]) {
     expect(derivedNames.has(name), `"${name}" should be advertised once its family token is runtime-derived`).toBe(true);

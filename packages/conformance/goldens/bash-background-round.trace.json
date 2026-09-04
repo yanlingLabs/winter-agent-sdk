@@ -24,15 +24,11 @@
         "Glob",
         "Grep",
         "ListAgents",
-        "ListMcpResourcesTool",
         "Monitor",
         "NotebookEdit",
         "PushNotification",
         "Read",
-        "ReadMcpResourceDirTool",
-        "ReadMcpResourceTool",
         "ReadNotifications",
-        "RefreshMcpTools",
         "ReportFindings",
         "ScheduleWakeup",
         "SendMessage",
@@ -42,7 +38,6 @@
         "TaskOutput",
         "TaskStop",
         "TaskUpdate",
-        "WaitForMcpServers",
         "Write"
       ]
     }
