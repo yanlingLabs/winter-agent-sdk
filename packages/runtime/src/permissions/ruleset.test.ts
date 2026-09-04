@@ -722,8 +722,8 @@ describe("resolveRules: project allow rules require workspace trust; project den
     expect(untrusted.ask?.source).toBe("project");
   });
 
-  test("allow rules from every OTHER source are never trust-gated (local is now EXCLUDED from this list -- Ruling P2-H, see the sibling describe block below)", () => {
-    for (const source of ["user", "cliArg", "session", "sdk", "managed"] as const) {
+  test("allow rules from every OTHER source are never trust-gated (RULING P5-D restored `local` to this list -- see the sibling describe block below)", () => {
+    for (const source of ["local", "user", "cliArg", "session", "sdk", "managed"] as const) {
       const set = seed([sourceRule(rv("Bash", "ls *"), "allow", source)]);
       const result = resolveRules(set, call("Bash", { command: "ls -la" }), { trustedWorkspace: false });
       expect(result.allow?.source).toBe(source);
@@ -731,19 +731,24 @@ describe("resolveRules: project allow rules require workspace trust; project den
   });
 });
 
-describe("resolveRules: local rules require workspace trust too, exactly like project (fix round 1, Ruling P2-H)", () => {
-  // Ruling P2-H basis: .winter/settings.local.json is repo-committable (WS-07 §3.2 never says it
-  // isn't), so it carries the identical untrusted-clone self-grant risk project settings do -- this
-  // codebase's own history rates that shape Critical. The spec's silence on local's trust posture
-  // resolves to the safe direction here (this is a controller ruling, not a differential capture --
-  // see the report's fix-round section: it may loosen later, but never starts fail-open).
-  test("a local-sourced allow rule is INERT when the workspace is untrusted", () => {
+describe("resolveRules: local rules widen WITHOUT trust, unlike project (RULING P5-D; supersedes P2-H)", () => {
+  // P2-H gated `local` exactly like `project`, reasoning that .winter/settings.local.json is
+  // repo-committable and therefore carries the same untrusted-clone self-grant risk. That was a
+  // controller ruling taken while the spec was silent, explicitly marked "it may loosen later."
+  // derived-shapes-p5 capture (1) ran the discriminator against the pinned runtime and it HAS
+  // loosened: trust there is a per-tier filter in which only PROJECT-tier permissive rules are
+  // inert. `settings.local.json` is gitignored by construction and user-authored -- the same
+  // authority as ~/.winter/settings.json.
+  //
+  // The two tests below are REPLACEMENTS, not additions: the originals asserted the gated behaviour
+  // and would have to fail for P5-D to be true.
+  test("a local-sourced allow rule is ACTIVE even when the workspace is untrusted", () => {
     const set = seed([sourceRule(rv("Bash", "ls *"), "allow", "local")]);
     const result = resolveRules(set, call("Bash", { command: "ls -la" }), { trustedWorkspace: false });
-    expect(result.allow).toBeUndefined();
+    expect(result.allow?.source).toBe("local");
   });
 
-  test("the SAME local-sourced allow rule is ACTIVE when the workspace is trusted", () => {
+  test("the SAME local-sourced allow rule is ACTIVE when the workspace is trusted -- trust changes nothing for this tier", () => {
     const set = seed([sourceRule(rv("Bash", "ls *"), "allow", "local")]);
     const result = resolveRules(set, call("Bash", { command: "ls -la" }), { trustedWorkspace: true });
     expect(result.allow?.source).toBe("local");
@@ -787,18 +792,18 @@ describe("effectiveDirectories: project-sourced directory grants require workspa
   });
 });
 
-describe("effectiveDirectories: local-sourced directory grants require workspace trust too (fix round 1, Ruling P2-H)", () => {
-  test("a local-sourced directory is excluded when untrusted", () => {
+describe("effectiveDirectories: local-sourced directory grants apply WITHOUT trust (RULING P5-D; supersedes P2-H)", () => {
+  test("a local-sourced directory is included even when untrusted", () => {
     const set = seed([], [{ path: "/repo/.winter-local-extra", source: "local" }]);
-    expect(effectiveDirectories(set, { trustedWorkspace: false })).toEqual([]);
+    expect(effectiveDirectories(set, { trustedWorkspace: false })).toEqual(["/repo/.winter-local-extra"]);
   });
 
-  test("a local-sourced directory is included when trusted", () => {
+  test("a local-sourced directory is included when trusted -- trust changes nothing for this tier", () => {
     const set = seed([], [{ path: "/repo/.winter-local-extra", source: "local" }]);
     expect(effectiveDirectories(set, { trustedWorkspace: true })).toEqual(["/repo/.winter-local-extra"]);
   });
 
-  test("project and local sources are BOTH excluded when untrusted, but a user-sourced entry among them survives", () => {
+  test("only the PROJECT source is excluded when untrusted; local and user entries among them survive", () => {
     const set = seed(
       [],
       [
@@ -807,7 +812,8 @@ describe("effectiveDirectories: local-sourced directory grants require workspace
         { path: "/home/extra", source: "user" },
       ],
     );
-    expect(effectiveDirectories(set, { trustedWorkspace: false })).toEqual(["/home/extra"]);
+    expect(effectiveDirectories(set, { trustedWorkspace: false })).toEqual(["/repo/.winter-local-extra", "/home/extra"]);
+    expect(effectiveDirectories(set, { trustedWorkspace: true })).toEqual(["/repo/vendor", "/repo/.winter-local-extra", "/home/extra"]);
   });
 });
 

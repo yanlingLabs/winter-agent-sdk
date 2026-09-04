@@ -482,13 +482,17 @@ export function resolveRules(
       if (entry.behavior !== behavior) continue;
       // WS-07 §3.2: project ALLOW rules require workspace trust; project deny/ask "restrict and
       // apply without it" — so the trust gate applies to the allow behavior only, never deny/ask.
-      // Fix round 1, Ruling P2-H: `local` is gated identically to `project` (not just `project`
-      // alone) — `.winter/settings.local.json` is repo-committable, carrying the same
-      // untrusted-clone self-grant risk WS-07 §3.2 explicitly calls out for project settings; the
-      // spec's silence on local's own trust posture resolves to the safe (gated) direction here,
-      // per controller ruling — see the report's fix-round section (this supersedes the original
-      // report's Open Question 2, which had left `local` ungated).
-      if (behavior === "allow" && (entry.source === "project" || entry.source === "local") && !opts.trustedWorkspace) continue;
+      // RULING P5-D (Phase 5 Task 3, from derived-shapes-p5 capture (1)): the gate is PROJECT-TIER ONLY.
+      // P2-H extended it to `local` on the reasoning that `.winter/settings.local.json` is
+      // repo-committable and therefore carries the same untrusted-clone self-grant risk. Capture (1)
+      // ran the discriminator against the pinned runtime and it does not: trust there is a per-tier
+      // filter in which project-tier permissive rules never widen, while LOCAL and USER permissive
+      // rules widen without any trust at all. `settings.local.json` is gitignored by construction and
+      // user-authored, giving it the same authority as `~/.winter/settings.json`.
+      //
+      // deny/ask from EVERY tier still apply regardless of trust -- unchanged, and the half of
+      // WS-07 §3.2 that was never in question.
+      if (behavior === "allow" && entry.source === "project" && !opts.trustedWorkspace) continue;
       if (matchesRule(entry.rule, call, { direction })) return entry;
     }
     return undefined;
@@ -522,10 +526,13 @@ export function resolveRules(
 // isn't about one tool call), so this is a small sibling helper — the ready-made consumption point
 // a later task's evaluator (checking whether a path falls inside cwd/additionalDirectories) can use
 // directly, rather than leaving `SourcedRuleSet.directories`' source-tagging inert and untested.
-// Fix round 1, Ruling P2-H: `local` is gated exactly like `project`, for the identical reason
-// resolveRules' own trust gate now covers both (see that function's comment).
+// RULING P5-D (Phase 5 Task 3): PROJECT-TIER ONLY, for the same captured reason resolveRules' own
+// gate is -- see that function's comment. A local-tier `additionalDirectories` grant widens without
+// trust; a project-tier one does not. This was the least visible of P5-D's four sites: nothing in the
+// rule-matching path touches it, so a fix that only corrected the rule gates would have left every
+// local directory grant silently inert in an untrusted workspace.
 export function effectiveDirectories(set: SourcedRuleSet, opts: { trustedWorkspace: boolean }): string[] {
-  return set.directories.filter((d) => (d.source !== "project" && d.source !== "local") || opts.trustedWorkspace).map((d) => d.path);
+  return set.directories.filter((d) => d.source !== "project" || opts.trustedWorkspace).map((d) => d.path);
 }
 
 // ---------------------------------------------------------------------------------------------

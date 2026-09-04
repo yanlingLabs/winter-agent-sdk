@@ -1397,8 +1397,8 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
                 // BASELINE_DENY_RULES itself, so mirroring them would only re-tag a `managed` rule
                 // as `sdk` in the child -- a strictly weaker authority for zero added coverage.
                 if (entry.source === "managed") continue;
-                // WS-07 §3.2 / Ruling P2-H, and the ONE way this accessor could WIDEN rather than
-                // bind: a `project`/`local`-sourced ALLOW entry is INERT in an untrusted workspace
+                // WS-07 §3.2 as amended by RULING P5-D, and the ONE way this accessor could WIDEN
+                // rather than bind: a `project`-sourced ALLOW entry is INERT in an untrusted workspace
                 // (evaluator.ts's own `findMatchingRuleEntry` skips it, exactly as ruleset.ts's
                 // resolveRules does). Mirroring it here would re-tag it `sdk` in the child, where
                 // that gate no longer applies -- a child auto-approving what its own parent still
@@ -1409,7 +1409,14 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
                 // "projectSettings", behavior:"allow", ...}` under `session` authority. DENY/ASK
                 // entries from those same sources apply WITHOUT trust and are mirrored unchanged --
                 // the skip is allow-side only, matching the evaluator's own predicate verbatim.
-                if (entry.behavior === "allow" && (entry.source === "project" || entry.source === "local") && !trustedWorkspace) continue;
+                //
+                // P5-D narrowed it from `project`/`local` to `project` alone: capture (1) shows the
+                // pinned runtime lets local/user permissive rules widen without trust. "Matching the
+                // evaluator's own predicate verbatim" is the invariant -- this is the fourth of four
+                // hand-mirrored copies of one gate (evaluator.ts's findMatchingRuleEntry,
+                // ruleset.ts's resolveRules and effectiveDirectories are the others), and they move
+                // together or a child ends up with a different permission surface than its parent.
+                if (entry.behavior === "allow" && entry.source === "project" && !trustedWorkspace) continue;
                 const raw = entry.ruleValue.ruleContent === undefined ? entry.ruleValue.toolName : `${entry.ruleValue.toolName}(${entry.ruleValue.ruleContent})`;
                 mirror[entry.behavior].push(raw);
               }

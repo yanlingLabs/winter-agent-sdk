@@ -570,9 +570,13 @@ export function findMatchingRuleEntry(
   for (const entry of pool) {
     if (entry.behavior !== behavior) continue;
     if (opts?.skip?.(entry)) continue;
-    // Mirrors ruleset.ts's resolveRules() trust gate exactly: project/local ALLOW rules require
-    // workspace trust; deny/ask apply without it (WS-07 §3.2; Ruling P2-H extends this to `local`).
-    if (behavior === "allow" && (entry.source === "project" || entry.source === "local") && !ctx.trustedWorkspace) continue;
+    // Mirrors ruleset.ts's resolveRules() trust gate exactly: PROJECT-tier ALLOW rules require
+    // workspace trust; local/user allow widen without it, and deny/ask from every tier apply
+    // regardless (WS-07 §3.2 as amended by RULING P5-D -- see ruleset.ts's own note for the capture
+    // that discriminated it). "Mirrors exactly" is load-bearing: these two gates are hand-mirrored
+    // and must move together, which is why the full-tier x behaviour x trust matrix in
+    // permissions/p5d-trust-matrix.test.ts drives BOTH.
+    if (behavior === "allow" && entry.source === "project" && !ctx.trustedWorkspace) continue;
     if (matchesRuleForCall(entry.rule, call, direction, ctx)) return entry;
   }
   return undefined;
