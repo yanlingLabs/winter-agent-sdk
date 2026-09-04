@@ -46,6 +46,10 @@
         "Write",
         "mcp__t8mcpsdk__echo"
       ],
+      "slash_commands": [],
+      "output_style": "default",
+      "skills": [],
+      "plugins": [],
       "mcp_servers": [
         {
           "name": "t8mcpsdk",

@@ -18,6 +18,8 @@ import {
   // Phase 5 Task 2 (R5-3/R5-4): the session defaults are exported CONSTANTS, resolved here when the
   // corresponding RuntimeConfig field is absent -- never baked into the wire by query.ts.
   DEFAULT_CONTEXT_WINDOW_TOKENS,
+  DEFAULT_OUTPUT_STYLE,
+  type InitPluginInfo,
 } from "@yanlinglabs/winter-agent-sdk";
 import type { FrameSource, FrameSink } from "./protocol/channel.ts";
 import { Queue } from "./protocol/channel.ts";
@@ -1870,6 +1872,20 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
     tools: advertisedToolNames,
     ...(mcpServersWire !== undefined ? { mcp_servers: mcpServersWire } : {}),
   });
+  // Phase 5 Task 2 (derived-shapes-p5.md item (b), `sdk.d.ts:4853-4913`): the loaded-surface fields.
+  // Emitted with WINTER DEFAULTS, unconditionally -- `output_style` and `skills` are REQUIRED on the
+  // pin, so a conditional spread (the convention `mcp_servers` above uses precisely to keep goldens
+  // byte-identical) would leave the frame diverging on shape. Task 8 populates the three empty
+  // arrays once the command/skill/plugin registries exist; `output_style` is real TODAY because
+  // `Options.outputStyle` landed in this same task. `terminal_slash_commands` is optional on the pin
+  // and stays absent: it is the subset of commands bound to a local terminal, which Winter has no
+  // surface for. These four keys are the ONLY differential-golden movement in this task.
+  const initLoadedSurface = {
+    slash_commands: [] as string[],
+    output_style: config.outputStyle ?? DEFAULT_OUTPUT_STYLE,
+    skills: [] as string[],
+    plugins: [] as InitPluginInfo[],
+  };
   output.write({
     type: "data",
     message: {
@@ -1880,6 +1896,7 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
       model: config.model,
       permissionMode: policyStateStore.getState().mode,
       tools: advertisedToolNames,
+      ...initLoadedSurface,
       ...(mcpServersWire !== undefined ? { mcp_servers: mcpServersWire } : {}),
     },
   });

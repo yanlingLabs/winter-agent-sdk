@@ -39,7 +39,11 @@
         "TaskStop",
         "TaskUpdate",
         "Write"
-      ]
+      ],
+      "slash_commands": [],
+      "output_style": "default",
+      "skills": [],
+      "plugins": []
     }
   },
   {
@@ -110,7 +114,11 @@
         "TaskStop",
         "TaskUpdate",
         "Write"
-      ]
+      ],
+      "slash_commands": [],
+      "output_style": "default",
+      "skills": [],
+      "plugins": []
     }
   },
   {

@@ -3831,3 +3831,39 @@ test("P5 T2: RuntimeConfig.trustedWorkspace:false is the same fail-closed verdic
 test("P5 T2: RuntimeConfig.trustedWorkspace:true makes the project-sourced ALLOW live -- the seam really is wired into the engine's one trust constant", async () => {
   expect(await countPermissionPromptsWithProjectAllow(baseConfig({ trustedWorkspace: true }))).toBe(1);
 });
+
+// --- Phase 5 Task 2 (derived-shapes-p5.md item (b)): system/init's pinned loaded-surface fields ----
+//
+// `sdk.d.ts:4853-4913`: `slash_commands: string[]`, `terminal_slash_commands?: string[]`,
+// `output_style: string` (REQUIRED), `skills: string[]` (REQUIRED), `plugins: {name,path,version?}[]`.
+// Task 1's item (b) is explicit that a Winter init frame omitting the two required ones DIVERGES --
+// so they are emitted now, with Winter defaults, and Task 8 populates them once the skill/command/
+// plugin registries exist.
+test("P5 T2: system/init carries the pinned slash_commands/output_style/skills/plugins fields", async () => {
+  const { host, runtime } = createInMemoryChannel();
+  const done = runEngine({ config: baseConfig(), input: runtime.input, output: runtime.output, provider: echoProvider, tools: stubExecutor });
+  host.output.write({ type: "user", text: "go" });
+  host.output.write({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined });
+  const frames = await drain(host.input);
+  await done;
+
+  const init = dataMessages(frames).find((m) => m.type === "system" && (m as { subtype?: string }).subtype === "init") as Record<string, unknown>;
+  expect(init["slash_commands"]).toEqual([]);
+  expect(init["skills"]).toEqual([]);
+  expect(init["plugins"]).toEqual([]);
+  expect(init["output_style"]).toBe("default");
+  // Optional on the pin, and Winter has no terminal-bound command surface -- absent, not `[]`.
+  expect(init).not.toHaveProperty("terminal_slash_commands");
+});
+
+test("P5 T2: a configured outputStyle is what system/init.output_style reports", async () => {
+  const { host, runtime } = createInMemoryChannel();
+  const done = runEngine({ config: baseConfig({ outputStyle: "explanatory" }), input: runtime.input, output: runtime.output, provider: echoProvider, tools: stubExecutor });
+  host.output.write({ type: "user", text: "go" });
+  host.output.write({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined });
+  const frames = await drain(host.input);
+  await done;
+
+  const init = dataMessages(frames).find((m) => m.type === "system" && (m as { subtype?: string }).subtype === "init") as Record<string, unknown>;
+  expect(init["output_style"]).toBe("explanatory");
+});

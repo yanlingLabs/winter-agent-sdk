@@ -1,3 +1,7 @@
+// Phase 5 Task 2: `system/init.plugins`' own entry shape (`sdk.d.ts:4881-4889`), declared alongside
+// every other wire-crossing P5 shape in protocol/config.ts.
+import type { InitPluginInfo } from "./config.ts";
+
 export type ProtocolVersion = `${number}.${number}`;
 export const PROTOCOL_VERSION = "1.0" as const;
 
@@ -269,7 +273,31 @@ export interface SDKStatusMessage {
 }
 
 export type SdkMessage =
-  | { type: "system"; subtype: "init"; session_id: string; cwd: string; model: string; permissionMode: string; tools: string[]; mcp_servers?: WireMcpServerStatus[]; [k: string]: unknown }
+  // Phase 5 Task 2 (derived-shapes-p5.md item (b), `sdk.d.ts:4853-4913`): the LOADED-SURFACE fields.
+  // `output_style` and `skills` are REQUIRED on the pin -- Task 1's own finding is that a Winter
+  // init frame omitting them diverges -- so they are declared required here and emitted with Winter
+  // defaults (`"default"`, `[]`), which is what makes the frame pinned-SHAPED before Task 8 has
+  // registries to populate it FROM. `terminal_slash_commands` is optional on the pin and stays
+  // absent: it is the subset of commands bound to a local terminal, and Winter has no such surface.
+  //
+  // This is the ONE change in this task that moves committed differential goldens -- see the
+  // accompanying golden commit for the exact four keys.
+  | {
+      type: "system";
+      subtype: "init";
+      session_id: string;
+      cwd: string;
+      model: string;
+      permissionMode: string;
+      tools: string[];
+      slash_commands: string[];
+      terminal_slash_commands?: string[];
+      output_style: string;
+      skills: string[];
+      plugins: InitPluginInfo[];
+      mcp_servers?: WireMcpServerStatus[];
+      [k: string]: unknown;
+    }
   | SDKHookStartedMessage
   | SDKHookProgressMessage
   | SDKHookResponseMessage
