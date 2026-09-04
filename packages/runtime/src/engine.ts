@@ -1456,7 +1456,18 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // ToolSearch session runtime, both below). `system/init.tools` cannot -- it is written once, before
   // the turn loop, and no re-init frame exists in this protocol (rider 5's recorded gap) -- so the
   // startup snapshot keeps the value it had, which is what keeps the goldens byte-identical.
-  const sessionHasMcp = (): boolean => mcpServerStateSource !== undefined || (mcpLifecycle?.stateSource.snapshot().length ?? 0) > 0;
+  //
+  // RULING P4-N (residual round): the predicate is the LIVE SLOT COUNT ALONE, at every nesting level.
+  // The previous form also short-circuited on "a caller supplied a state source", on the heuristic
+  // that such a caller owns an MCP stack. Lane X's I2 made that heuristic false for the commonest
+  // caller there is: a PARENT engine hands its own board down through `getParentMcpState()`, and
+  // after M2 every parent has one -- so a child of a ZERO-MCP session derived `winter.mcp` from an
+  // empty board. Harmless in practice (the child's inherited-pool deny complement bare-denies the
+  // family three separate ways) but wrong in principle, and exactly the kind of "true for a reason
+  // that no longer holds" the capture-driven gate exists to prevent. Counting slots is uniform:
+  // a host that owns its stack and has servers still reports them, and an empty board is an empty
+  // board whoever owns it.
+  const sessionHasMcp = (): boolean => (effectiveMcpStateSource?.snapshot().length ?? 0) > 0;
 
   // `init` MUST be the first runtime→host frame (WS-04 §4.1 `initializing`), from resolved runtime
   // state. T8 (WS-06 §6 obligation 1): the advertised tool list is no longer hardcoded empty --

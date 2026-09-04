@@ -13,7 +13,7 @@ import type { WinterFrame, RuntimeConfig, ProtocolSdkMessage as SdkMessage } fro
 import { WinterCompatibilitySessionStore, compatibilityKeys } from "@yanlinglabs/winter-agent-sdk";
 import { runEngine, type Provider } from "../engine.ts";
 import { createInMemoryChannel } from "../protocol/channel.ts";
-import { registerTool, unregisterToolForTest, type ToolExecutionContext } from "../tools/registry.ts";
+import { registerTool, unregisterToolForTest, buildAdvertisedSet, type ToolExecutionContext } from "../tools/registry.ts";
 import { echoProvider, scriptedProvider, testProviderByName } from "../provider/mock.ts";
 import { registerChildEngineFactory, resetChildEngineFactoryForTest, type SpawnChildRequest } from "./child-handle.ts";
 import { createChildEngineFactory, type ChildEngineFactoryDeps } from "./child-engine.ts";
@@ -1587,6 +1587,71 @@ describe("child-engine.ts: children share the session's MCP state (fix wave I2/I
     );
     expect(code).toBe(0);
     expect(childAgents, "ctx.agents is undefined inside a child until the map is mirrored").toEqual(programmatic);
+  }, 20_000);
+
+  // RULING P4-N (residual round): the `winter.mcp` family follows the LIVE SLOT COUNT at every
+  // nesting level -- a child of a zero-MCP session advertises none of it.
+  //
+  // The regression this pins: after M2 every parent builds a lifecycle (so it always has a state
+  // source, possibly over an EMPTY board), and Lane X's I2 hands that board down to every child. The
+  // predicate used to short-circuit on "a caller supplied a state source", on the heuristic that such
+  // a caller owns an MCP stack -- true of a daemon, false of the commonest caller there is, a parent
+  // engine. So a child of a session with no MCP at all derived `winter.mcp` from an empty board.
+  test("P4-N: a child of a ZERO-MCP session advertises NONE of the winter.mcp family; a child of a real one advertises it", async () => {
+    registerSpawnProbe();
+    cleanupToolNames.push(SPAWN_PROBE);
+    const CAPS_PROBE = "t6fw_child_caps_probe";
+    cleanupToolNames.push(CAPS_PROBE);
+    const MCP_FAMILY = ["ListMcpResourcesTool", "ReadMcpResourceTool", "ReadMcpResourceDirTool", "RefreshMcpTools"] as const;
+    let childAdvertised: string[] | undefined;
+    let childCaps: string[] = [];
+    registerTool({
+      descriptor: {
+        canonicalName: CAPS_PROBE, advertisedName: CAPS_PROBE, source: "builtin", inputSchema: { type: "object" },
+        description: "reports which MCP-family tools this run can dispatch", exposure: "eager", permissionClass: "read",
+        availability: {}, capabilityRequirements: [], disposition: "implement-now",
+      },
+      executor: {
+        // Read off the CHILD's own registered ToolSearch session runtime (the same lookup Lane X's
+        // I2 test uses), because a child's `system/init` is swallowed by `transformChildFrame` and
+        // its advertised set is therefore not observable on the parent's wire at all. That runtime's
+        // `capabilities` is the live getter this ruling changed, and it is the exact value the
+        // child's own advertised partition and dispatch-time availability check both consult.
+        async execute(_input: unknown, ctx: ToolExecutionContext) {
+          const caps = [...(getToolSearchSessionRuntime(ctx.agentId ?? ctx.sessionId)?.capabilities ?? [])];
+          childCaps = caps;
+          childAdvertised = MCP_FAMILY.filter((n) => buildAdvertisedSet({ mode: "default", capabilities: caps }).some((d) => d.canonicalName === n));
+          return { output: "probed" };
+        },
+      },
+    });
+
+    async function childCapabilities(parentConfig: RuntimeConfig): Promise<string[]> {
+      childAdvertised = undefined;
+      childCaps = [];
+      const req: SpawnChildRequest = { parentToolUseId: "call-1", prompt: "probe your caps", runInBackground: false };
+      const childProvider = scriptedProvider([
+        { kind: "tool_use", calls: [{ id: "c1", name: CAPS_PROBE, input: {} }] },
+        { kind: "text", text: "probed" },
+      ]);
+      await driveParent({ provider: childProvider }, parentConfig, [
+        { kind: "tool_use", calls: [{ id: "call-1", name: SPAWN_PROBE, input: req }] },
+        { kind: "text", text: "parent done" },
+      ]);
+      return childCaps;
+    }
+
+    // A parent with NO MCP at all -> the child must not derive winter.mcp.
+    const none = await childCapabilities(baseConfig({ sessionId: "p4n-zero-mcp" }));
+    expect(none, "a child of a zero-MCP session must not derive winter.mcp").not.toContain("winter.mcp");
+    expect(childAdvertised).toEqual([]);
+
+    // The control: a parent that declares a REAL server -> the child does derive it, so the
+    // assertion above is about the empty board and not about children never getting the token.
+    const some = await childCapabilities(
+      baseConfig({ sessionId: "p4n-real-mcp", mcpServers: { fixture: { type: "sdk", name: "fixture", tools: [{ name: "echo", inputSchema: { type: "object" } }] } } }),
+    );
+    expect(some, "a child of a session with a live server still derives winter.mcp").toContain("winter.mcp");
   }, 20_000);
 
   test("I2: the CHILD's own ToolSearch session runtime carries the parent's MCP state source, not an empty one", async () => {
