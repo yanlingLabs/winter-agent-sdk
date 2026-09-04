@@ -200,3 +200,65 @@ describe("resolveChildResumeMode -- stricter of recorded vs current parent polic
     expect(resolveChildResumeMode(recorded, "auto")).toBe("plan");
   });
 });
+
+// --- Phase 4 fix wave (whole-branch M8): the FULL 36-cell comparator matrix ----------------------
+//
+// RULING P4-D's own process lesson, verbatim from the ledger: "comparator rulings get a full-matrix
+// FIXTURE, not a hand trace." The tests above cover one full row (bypassPermissions) and hand-picked
+// subsets elsewhere, which is exactly the shape that let the {dontAsk, auto} cell hide in the first
+// place. Every cell below is written out BY HAND from the axis model in inheritance.ts's own header
+// -- deliberately NOT re-derived from `stricterOf`'s implementation, which would make the table a
+// tautology instead of a fixture:
+//
+//   axis 1 (dominant) -- rule-silencing = {plan, auto}: a silencing mode beats a non-silencing one.
+//   axis 2 (tie-break, same partition) -- breadth rank dontAsk < plan < default < acceptEdits <
+//     auto < bypassPermissions; the lower rank wins, ties return `a`.
+//   the ONE documented exception: {dontAsk, auto}, either direction, is INCOMPARABLE and throws.
+//
+// A 7th mode, or any change to either axis, must land here as a deliberate full re-audit of 49
+// cells -- which is the point.
+const STRICTER_OF_MATRIX: Record<PermissionMode, Record<PermissionMode, PermissionMode | "INCOMPARABLE">> = {
+  //          b:      default          acceptEdits        bypassPermissions  plan     dontAsk           auto
+  default: { default: "default", acceptEdits: "default", bypassPermissions: "default", plan: "plan", dontAsk: "dontAsk", auto: "auto" },
+  acceptEdits: { default: "default", acceptEdits: "acceptEdits", bypassPermissions: "acceptEdits", plan: "plan", dontAsk: "dontAsk", auto: "auto" },
+  bypassPermissions: { default: "default", acceptEdits: "acceptEdits", bypassPermissions: "bypassPermissions", plan: "plan", dontAsk: "dontAsk", auto: "auto" },
+  plan: { default: "plan", acceptEdits: "plan", bypassPermissions: "plan", plan: "plan", dontAsk: "plan", auto: "plan" },
+  dontAsk: { default: "dontAsk", acceptEdits: "dontAsk", bypassPermissions: "dontAsk", plan: "plan", dontAsk: "dontAsk", auto: "INCOMPARABLE" },
+  auto: { default: "auto", acceptEdits: "auto", bypassPermissions: "auto", plan: "plan", dontAsk: "INCOMPARABLE", auto: "auto" },
+};
+
+describe("RULING P4-D: the full 6x6 stricterOf matrix (fix wave M8)", () => {
+  test("every one of the 36 cells matches the hand-written expectation", () => {
+    const seen: string[] = [];
+    for (const a of ALL_MODES) {
+      for (const b of ALL_MODES) {
+        const expected = STRICTER_OF_MATRIX[a][b];
+        seen.push(`${a}:${b}`);
+        if (expected === "INCOMPARABLE") {
+          expect(() => stricterOf(a, b), `${a} vs ${b} must be refused`).toThrow(ChildResumeModeIncomparableError);
+        } else {
+          expect(stricterOf(a, b), `${a} vs ${b}`).toBe(expected);
+        }
+      }
+    }
+    expect(seen.length).toBe(36); // a mode added to ALL_MODES without extending the table fails above, loudly
+  });
+
+  test("the matrix is SYMMETRIC -- stricterOf(a,b) and stricterOf(b,a) agree on the winner (or both refuse)", () => {
+    for (const a of ALL_MODES) {
+      for (const b of ALL_MODES) {
+        expect(STRICTER_OF_MATRIX[a][b], `${a}/${b} vs ${b}/${a}`).toBe(STRICTER_OF_MATRIX[b][a]);
+      }
+    }
+  });
+
+  test("resolveChildResumeMode agrees with the matrix in every comparable cell (recorded = a, current parent = b)", () => {
+    for (const a of ALL_MODES) {
+      for (const b of ALL_MODES) {
+        const expected = STRICTER_OF_MATRIX[a][b];
+        if (expected === "INCOMPARABLE") continue;
+        expect(resolveChildResumeMode({ effectiveMode: a, parentPolicyVersion: 1, parentPolicyHash: "h" }, b), `recorded ${a}, parent now ${b}`).toBe(expected);
+      }
+    }
+  });
+});

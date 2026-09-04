@@ -716,7 +716,12 @@ async function traceResumeScenario(leg: LegName): Promise<{ trace: ConformanceTr
 // (`task_id: "t2-fixture-task"`), and stripping them globally would delete real assertions'
 // subjects. Deliberately the same posture scripts/differential.ts's own bash-background scenario
 // already takes for its value-based scrub.
-const AGENT_RESULT_VOLATILE_KEYS = new Set(["agentId", "totalDurationMs", "totalToolUseCount", "taskId", "messageId", "transcript"]);
+// Phase 4 fix wave (whole-branch N5): `totalToolUseCount` is deliberately NOT in this set. It is
+// the one key here that could MASK a real cross-leg divergence (a child counting its own tool calls
+// differently on two transports is exactly the kind of drift this corpus exists to catch), and it
+// is not volatile at all for these fixtures -- every scenario's child makes a fixed number of tool
+// calls. The rest genuinely are volatile: uuids, wall-clock durations, and machine-specific paths.
+const AGENT_RESULT_VOLATILE_KEYS = new Set(["agentId", "totalDurationMs", "taskId", "messageId", "transcript"]);
 
 function scrubJsonToolResults(entries: ConformanceTraceEntry[]): ConformanceTraceEntry[] {
   const scrubValue = (value: unknown): unknown => {

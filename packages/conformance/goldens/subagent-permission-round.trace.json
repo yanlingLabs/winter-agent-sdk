@@ -128,7 +128,7 @@
           {
             "type": "tool_result",
             "tool_use_id": "agent-call-1",
-            "content": "{\"agentId\":\"<scrubbed>\",\"content\":[{\"type\":\"text\",\"text\":\"child finished after its own tool call\"}],\"totalToolUseCount\":\"<scrubbed>\",\"totalDurationMs\":\"<scrubbed>\",\"resolvedModel\":\"sonnet\",\"prompt\":\"child probe text\"}"
+            "content": "{\"agentId\":\"<scrubbed>\",\"content\":[{\"type\":\"text\",\"text\":\"child finished after its own tool call\"}],\"totalToolUseCount\":1,\"totalDurationMs\":\"<scrubbed>\",\"resolvedModel\":\"sonnet\",\"prompt\":\"child probe text\"}"
           }
         ]
       }

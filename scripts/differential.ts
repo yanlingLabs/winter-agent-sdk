@@ -655,7 +655,12 @@ export async function traceWinterAdvertisedSetRound(): Promise<ConformanceTraceE
 // `scrubJsonToolResults` below rather than by widening trace.ts's shared VOLATILE set -- widening it
 // would silently strip `task_id`/`output_file` from the background-task golden above, whose FIXED
 // LITERAL values are the whole point of that scenario.
-const P4_RESULT_VOLATILE_KEYS = new Set(["agentId", "totalDurationMs", "totalToolUseCount", "taskId", "messageId", "transcript"]);
+// Phase 4 fix wave (whole-branch N5): `totalToolUseCount` is deliberately NOT in this set. It is
+// the one key here that could MASK a real cross-leg divergence (a child counting its own tool calls
+// differently on two transports is exactly the kind of drift this corpus exists to catch), and it
+// is not volatile at all for these fixtures -- every scenario's child makes a fixed number of tool
+// calls. The rest genuinely are volatile: uuids, wall-clock durations, and machine-specific paths.
+const P4_RESULT_VOLATILE_KEYS = new Set(["agentId", "totalDurationMs", "taskId", "messageId", "transcript"]);
 
 function scrubJsonToolResults(entries: ConformanceTraceEntry[]): ConformanceTraceEntry[] {
   const scrubValue = (value: unknown): unknown => {

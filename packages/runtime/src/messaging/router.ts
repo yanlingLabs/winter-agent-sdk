@@ -54,6 +54,29 @@ export interface MessagingRouterSeamWithRoster extends MessagingRouterSeam {
   addChildRosterSource(getChildren: () => readonly ChildHandle[]): () => void;
 }
 
+// Phase 4 fix wave (whole-branch M10): every messageId-keyed map in this runtime was
+// PROCESS-LIFETIME unbounded -- one entry per SendMessage, forever, in a host that never restarts.
+// They are retry memory (WS-10 §12's "stable across a retry of the identical (sender, tool-call)
+// pair"), not durable state, so the honest bound is a cap with oldest-first eviction: a retry
+// window measured in turns is preserved, while a long-lived daemon's footprint stops growing. An
+// evicted id simply behaves as a fresh allocation would -- the outcome was already delivered; only
+// the ability to short-circuit an identical RE-send is lost, which is exactly the property a
+// long-past message no longer needs. Deliberately not a TTL sweep: nothing here has a clock, and a
+// size cap needs no timer to be correct.
+export const MAX_TRACKED_MESSAGE_IDS = 10_000;
+
+export function rememberBounded<V>(map: Map<string, V>, key: string, value: V, cap: number = MAX_TRACKED_MESSAGE_IDS): void {
+  // Re-insert on update so a key that is still being used moves to the YOUNG end (a Map iterates in
+  // insertion order, so deleting the first key evicts the least recently written).
+  if (map.has(key)) map.delete(key);
+  map.set(key, value);
+  while (map.size > cap) {
+    const oldest = map.keys().next();
+    if (oldest.done === true) break;
+    map.delete(oldest.value);
+  }
+}
+
 export function createMessagingRouterSeam(): MessagingRouterSeamWithRoster {
   const outcomes = new Map<string, DeliveryOutcome>();
   const idsBySenderAndTool = new Map<string, string>();
@@ -66,11 +89,11 @@ export function createMessagingRouterSeam(): MessagingRouterSeamWithRoster {
       const existing = idsBySenderAndTool.get(key);
       if (existing !== undefined) return existing;
       const id = `msg-${++counter}`;
-      idsBySenderAndTool.set(key, id);
+      rememberBounded(idsBySenderAndTool, key, id);
       return id;
     },
     recordOutcome(messageId, outcome) {
-      outcomes.set(messageId, outcome);
+      rememberBounded(outcomes, messageId, outcome);
     },
     lookupOutcome(messageId) {
       return outcomes.get(messageId);
@@ -103,7 +126,7 @@ export function createSubscriberDirectory(): SubscriberDirectory {
   const map = new Map<string, string>();
   return {
     remember(messageId, subscriberSessionId) {
-      map.set(messageId, subscriberSessionId);
+      rememberBounded(map, messageId, subscriberSessionId); // M10: see rememberBounded's own header
     },
     lookup(messageId) {
       return map.get(messageId);

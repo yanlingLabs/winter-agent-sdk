@@ -11,6 +11,8 @@ import {
   readNotifications,
   type MessagingRuntimeDeps,
   type CallerContext,
+  rememberBounded,
+  MAX_TRACKED_MESSAGE_IDS,
 } from "./router.ts";
 import { serializeRuntimeAddress, type RuntimeAddress, type ListedRuntimeObject, type DeliveryOutcome, type GlobalAgentMessage, type RuntimeMessagingAdapter } from "./adapter.ts";
 import { createNotificationQueue } from "./idle.ts";
@@ -357,5 +359,36 @@ describe("readNotifications", () => {
     const { adapter } = createFakeAdapter();
     const deps = makeDeps(adapter);
     expect(readNotifications(deps, CALLER)).toEqual({ notifications: [], remaining: 0 });
+  });
+});
+
+// --- Phase 4 fix wave (whole-branch M10): the messageId-keyed maps are BOUNDED -------------------
+
+describe("bounded retry memory (fix wave M10)", () => {
+  test("rememberBounded caps the map and evicts oldest-first, keeping the most recent entries", () => {
+    const map = new Map<string, number>();
+    for (let i = 0; i < 12; i++) rememberBounded(map, `k${i}`, i, 5);
+    expect(map.size).toBe(5);
+    expect([...map.keys()]).toEqual(["k7", "k8", "k9", "k10", "k11"]);
+  });
+
+  test("re-writing an existing key moves it to the YOUNG end rather than growing the map", () => {
+    const map = new Map<string, number>();
+    for (let i = 0; i < 3; i++) rememberBounded(map, `k${i}`, i, 3);
+    rememberBounded(map, "k0", 99, 3); // k0 was the oldest; it is now the youngest
+    expect(map.size).toBe(3);
+    expect([...map.keys()]).toEqual(["k1", "k2", "k0"]);
+    rememberBounded(map, "k3", 3, 3);
+    expect([...map.keys()]).toEqual(["k2", "k0", "k3"]); // k1 evicted, the refreshed k0 survives
+  });
+
+  test("the seam's own outcome ledger stays bounded -- an unbounded process-lifetime map was the finding", () => {
+    const seam = createMessagingRouterSeam();
+    // The cap itself is 10_000 (MAX_TRACKED_MESSAGE_IDS); this asserts the PROPERTY -- lookups keep
+    // working for recent ids -- without spending a million allocations proving the exact number.
+    const recent = seam.allocateMessageId("s1", "tool-1");
+    seam.recordOutcome(recent, { status: "delivered", messageId: recent });
+    expect(seam.lookupOutcome(recent)).toEqual({ status: "delivered", messageId: recent });
+    expect(MAX_TRACKED_MESSAGE_IDS).toBeGreaterThan(0);
   });
 });

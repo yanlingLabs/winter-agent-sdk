@@ -52,6 +52,7 @@ import {
   type MessagingRouterSeamWithRoster,
   type MessagingRuntimeDeps,
   type SubscriberDirectory,
+  rememberBounded,
 } from "./router.ts";
 
 // --- The reference's own "peer" abstraction (same-process top-level sessions) ----------------------
@@ -332,7 +333,7 @@ export function createReferenceMessagingAdapter(deps: ReferenceAdapterDeps): Ref
             : buildDefaultHoldEntry(msg.messageId, "receiver's default inbound policy holds this sender's permission class (WS-10 §13)", now);
         const ok = mailbox.hold(receiverKey, entry);
         if (!ok) return refused(msg.messageId, "held-message inbox is full (cap 100, WS-10 §13); refused visibly rather than silently dropped");
-        heldEnvelopes.set(msg.messageId, msg);
+        rememberBounded(heldEnvelopes, msg.messageId, msg); // M10: bounded, oldest-first -- see router.ts's own rememberBounded header
         return held(msg.messageId, entry.reason);
       }
 
