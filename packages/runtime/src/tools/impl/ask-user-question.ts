@@ -7,16 +7,24 @@
 // this executor, exactly the same "if you run, it already happened" relationship ExitPlanMode has
 // with its own gate (exit-plan-mode.ts's header).
 //
-// ANSWERS/ANNOTATIONS KEYING -- a genuine Lane E judgment call, T8 FLAG: WS-06 §3.3 types
-// `answers?: Record<string, string>` and `annotations?: Record<string, {...}>` but never pins what
-// the record KEY actually is. permissions/evaluator.ts's own comment is explicit that this is left
-// to this file ("the tool itself (schema, real answer-application via `updatedInput.answers`) is
-// P3's job"). This executor keys BOTH records by each question's own `header` -- the short
-// (<=12-char), model-authored, per-question identifier that is already the natural "which question
-// is this" label in any UI built around this schema. Duplicate headers within one call are therefore
-// rejected as a validation error (see validateQuestions below) -- the keying convention is only
-// self-consistent if headers are unique per call. Whichever host-side implementation lands at a
-// later phase MUST either adopt this convention or this file (and its tests) need to move with it.
+// ANSWERS/ANNOTATIONS KEYING -- PINNED as of RULING P5-C (Phase 5 Task 3). This executor keys BOTH
+// records by each question's own QUESTION TEXT, and duplicate question text within one call is a
+// validation error (see validateQuestions below) -- the keying convention is only self-consistent if
+// the key is unique per call.
+//
+// It did not start there. P3's Lane E read WS-06 §3.3's `answers?: Record<string, string>` /
+// `annotations?: Record<string, {...}>` as leaving the KEY unpinned and chose `header` by
+// convention. derived-shapes-p5.md capture (5) falsified that with a two-run discriminator against
+// the pinned runtime: answers keyed by question text were applied; answers keyed by header left
+// every question reported UNANSWERED. The declaration agrees independently -- the pinned
+// `AskUserQuestionOutput.answers`/`annotations` are both documented as question-text-keyed, which is
+// the evidence P3 could not find because it is on the OUTPUT side of the schema, not the input.
+//
+// Two consequences a host integration must know. (1) Headers no longer need to be unique within one
+// call -- a header is a display label again, not an identity; question TEXT is the identity. (2) The
+// key is the question string verbatim, including punctuation and case: a host that normalizes the
+// text before building the `answers` record produces a silent miss (the question reports unanswered,
+// never an error), which is exactly the failure capture (5) run B observed on the pinned runtime.
 //
 // askUserQuestionTimeout (WS-06 §3.3: "open indefinitely by default, `askUserQuestionTimeout` opts
 // into 60s/5m/10m with activity reset... this timeout never auto-resolves permission or plan
@@ -29,16 +37,17 @@ import { replaceExecutor, type ToolExecutionContext, type ToolExecutor, type Too
 
 export const ASK_USER_QUESTION_TOOL_NAME = "AskUserQuestion";
 
-// M7 (fix wave, ledger carry, P3 close-out): the ONE thing a future host-side implementation
-// (WS-15's own canUseTool answer path) MUST agree on to interoperate with this executor -- see this
-// file's own "ANSWERS/ANNOTATIONS KEYING" header comment for why the key was never pinned by any
-// spec/cross-file protocol in the first place. Exported so every consumer in this codebase (this
-// file's own accesses below included) reads the key name from ONE place rather than hand-copying the
-// literal "header" string, which is exactly the class of drift that would silently break
-// interoperability if a future host chose a different convention independently. Capture-checking
-// this against the pinned artifact (does the REAL runtime key by header, or by question text, or
-// something else) is a separate, ledgered WS-17 carry -- not attempted in this fix wave.
-export const ASK_USER_QUESTION_ANSWER_KEY_FIELD = "header" as const;
+// M7 (fix wave, P3 close-out) / RULING P5-C (P5 T3): the ONE thing a host-side implementation
+// (WS-15's own canUseTool answer path) MUST agree on to interoperate with this executor. Exported so
+// every consumer in this codebase (this file's own accesses below included) reads the key name from
+// ONE place rather than hand-copying the literal string, which is exactly the class of drift that
+// would silently break interoperability.
+//
+// The P3 carry this constant was created to hold ("capture-check this against the pinned artifact")
+// is DISCHARGED: derived-shapes-p5.md capture (5) ran the discriminator and the pinned key is the
+// question text. See this file's own "ANSWERS/ANNOTATIONS KEYING" header for the evidence and for
+// the two consequences a host must know.
+export const ASK_USER_QUESTION_ANSWER_KEY_FIELD = "question" as const;
 
 interface OptionInput {
   label: string;
@@ -79,7 +88,7 @@ function validateQuestions(raw: unknown): ValidationResult {
   if (raw.length < 1 || raw.length > 4) {
     return { ok: false, message: `questions must contain between 1 and 4 entries (got ${raw.length})` };
   }
-  const seenHeaders = new Set<string>();
+  const seenAnswerKeys = new Set<string>();
   const questions: QuestionInput[] = [];
   for (let i = 0; i < raw.length; i++) {
     const q: unknown = raw[i];
@@ -93,13 +102,18 @@ function validateQuestions(raw: unknown): ValidationResult {
     if (typeof rec.header !== "string" || rec.header.length === 0 || rec.header.length > 12) {
       return { ok: false, message: `questions[${i}].header must be a string of 1-12 characters (got ${JSON.stringify(rec.header)})` };
     }
-    if (seenHeaders.has(rec.header)) {
+    // RULING P5-C: the uniqueness constraint moved from `header` to the ANSWER KEY, which is now the
+    // question text (capture (5)). A duplicate key would make the `answers`/`annotations` records
+    // ambiguous -- two questions would read the same entry and one of them would be silently wrong.
+    // Duplicate HEADERS are now legal: a header is a display label, and nothing keys off it.
+    const answerKey = rec[ASK_USER_QUESTION_ANSWER_KEY_FIELD] as string;
+    if (seenAnswerKeys.has(answerKey)) {
       return {
         ok: false,
-        message: `duplicate header ${JSON.stringify(rec.header)} across questions -- answers/annotations are keyed by header (Lane E convention, see this file's own header comment), so headers must be unique within one call`,
+        message: `duplicate question text ${JSON.stringify(answerKey)} across questions -- answers/annotations are keyed by question text (RULING P5-C, see this file's own header comment), so question text must be unique within one call`,
       };
     }
-    seenHeaders.add(rec.header);
+    seenAnswerKeys.add(answerKey);
     if (!Array.isArray(rec.options) || rec.options.length < 2 || rec.options.length > 4) {
       return { ok: false, message: `questions[${i}].options must contain between 2 and 4 entries` };
     }
@@ -146,7 +160,7 @@ export const askUserQuestionExecutor: ToolExecutor = {
       };
     }
     if (typeof rawAnswers !== "object" || rawAnswers === null || Array.isArray(rawAnswers)) {
-      return { output: 'Error: AskUserQuestion input.answers must be an object mapping question header to answer string.', isError: true };
+      return { output: 'Error: AskUserQuestion input.answers must be an object mapping question text to answer string.', isError: true };
     }
     const answers = rawAnswers as Record<string, unknown>;
 

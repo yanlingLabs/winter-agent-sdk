@@ -11,7 +11,6 @@ import type {
   SdkPluginConfig,
   SystemPromptOption,
   OutputFormat,
-  JsonSchemaOutputFormat,
   SkillsOption,
 } from "./protocol/config.ts";
 import type { SettingSource } from "./settings/types.ts";
