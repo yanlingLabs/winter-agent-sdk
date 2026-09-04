@@ -3114,7 +3114,13 @@ function registerSpawnProbeTool(): void {
 // Captures every (req, inherit, runCtx) triple the registered factory is called with, in call
 // order, and hands back the SAME createFakeChildHandle() instance every time (assertion (d) checks
 // object IDENTITY against this, not merely a structurally-similar handle).
-function installCapturingFactory(): { calls: Array<{ req: SpawnChildRequest; inherit: ChildInheritance; runCtx: ChildEngineRunContext }>; handleToReturn: ChildHandle } {
+// NEW-3 (residual round): the return type now names `simulateCompletion` (already present on the
+// fake, `subagents/test-fakes.ts`) instead of widening it away to bare `ChildHandle` -- a test that
+// needs to settle the child had no typed way to say so.
+function installCapturingFactory(): {
+  calls: Array<{ req: SpawnChildRequest; inherit: ChildInheritance; runCtx: ChildEngineRunContext }>;
+  handleToReturn: ReturnType<typeof createFakeChildHandle>;
+} {
   const calls: Array<{ req: SpawnChildRequest; inherit: ChildInheritance; runCtx: ChildEngineRunContext }> = [];
   const handleToReturn = createFakeChildHandle();
   const factory: ChildEngineFactory = (runCtx) => ({
@@ -3338,6 +3344,65 @@ describe("Fix round 1, MAJOR item 1: spawn seam engine-level proof (MUST 5, WS-1
       const children = getChildren!();
       expect(children.length).toBe(1);
       expect(children[0]).toBe(handleToReturn); // identity, not merely structural equality
+    } finally {
+      unregisterToolForTest(SPAWN_PROBE_TOOL_NAME);
+      resetChildEngineFactoryForTest();
+    }
+  });
+
+  // NEW-3 (P4 residual round): the foreground set is pruned when a child SETTLES, not only when an
+  // interrupt clears it. It exists so an interrupt can stop the children a turn still owns (fix wave
+  // I5); a finished child is not one of those, and keeping it grew the set by one per foreground
+  // spawn for the life of the session. Invisible by any other route -- a settled child's `stop()` is
+  // already a no-op -- which is why the set gets the same live-getter exposure the roster has.
+  test("NEW-3: a COMPLETED foreground child is removed from the interrupt set, while staying in the roster", async () => {
+    resetChildEngineFactoryForTest();
+    registerSpawnProbeTool();
+    const { handleToReturn } = installCapturingFactory();
+    let getChildren: (() => readonly ChildHandle[]) | undefined;
+    let getForeground: (() => readonly ChildHandle[]) | undefined;
+    // `createFakeChildHandle`'s `result()` parks until `simulateCompletion` -- which is what lets
+    // this test observe BOTH sides of the invariant on one handle: still tracked while running,
+    // gone once settled.
+    try {
+      const { host, runtime } = createInMemoryChannel();
+      const provider = scriptedProvider([
+        { kind: "tool_use", calls: [{ id: "spawn-fg", name: SPAWN_PROBE_TOOL_NAME, input: { parentToolUseId: "spawn-fg", prompt: "go", runInBackground: false } }] },
+        { kind: "text", text: "done" },
+      ]);
+      const done = runEngine({
+        config: baseConfig({ permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true }),
+        input: runtime.input,
+        output: runtime.output,
+        provider,
+        onChildRosterReady: (fn) => {
+          getChildren = fn;
+        },
+        onForegroundChildrenReady: (fn) => {
+          getForeground = fn;
+        },
+      });
+      expect(getForeground!()).toEqual([]);
+      host.output.write({ type: "user", text: "go" });
+      host.output.write({ type: "control_request", requestId: "end-fg", subtype: "end_input", payload: undefined });
+      await drain(host.input);
+      await done;
+
+      // Still RUNNING (the fake never resolved its result), so it is still a child an interrupt owns.
+      // This is the half that makes the assertion below mean "pruned", not "never added".
+      expect(getChildren!()).toEqual([handleToReturn]);
+      expect(getForeground!(), "a still-running foreground child must stay in the interrupt set").toEqual([handleToReturn]);
+
+      handleToReturn.simulateCompletion("child done");
+      // The settle observer is a `.catch().finally()` chain on the child's own result promise --
+      // several microtask hops. Polled with a short deadline rather than a fixed sleep so this can
+      // never flake on a loaded box, and so a NON-pruning build fails on the assertion rather than
+      // on a timeout.
+      const deadline = Date.now() + 1000;
+      while (getForeground!().length > 0 && Date.now() < deadline) await new Promise((r) => setTimeout(r, 5));
+
+      expect(getChildren!(), "the ROSTER keeps every child it ever spawned").toEqual([handleToReturn]);
+      expect(getForeground!(), "a settled foreground child must not be retained for the session's life").toEqual([]);
     } finally {
       unregisterToolForTest(SPAWN_PROBE_TOOL_NAME);
       resetChildEngineFactoryForTest();

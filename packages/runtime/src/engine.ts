@@ -358,6 +358,13 @@ export interface EngineOptions {
   // MessagingRouterSeam.children() (messaging/adapter.ts) is meant to be built from. No routing
   // logic lives in the engine; this is purely "here is where the children actually are."
   onChildRosterReady?: (getChildren: () => readonly ChildHandle[]) => void;
+  // NEW-3 (P4 residual round): the same shape as `onChildRosterReady` above, over the set of
+  // still-running FOREGROUND children an interrupt must take down (fix wave I5). Its own exposure
+  // point, because the invariant it carries -- entries are removed when the child SETTLES, not only
+  // when an interrupt clears the whole set -- has no other observable: a settled child's `stop()` is
+  // a no-op, so a stale entry is invisible right up until a long-lived session has accumulated one
+  // per foreground spawn.
+  onForegroundChildrenReady?: (getForeground: () => readonly ChildHandle[]) => void;
 }
 
 type RaceOutcome<T> = { kind: "ok"; value: T } | { kind: "interrupted" };
@@ -774,6 +781,7 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
     foregroundChildren.clear();
   }
   opts.onChildRosterReady?.(() => childRoster);
+  opts.onForegroundChildrenReady?.(() => [...foregroundChildren]);
   // Phase 4 Task 8: contribute THIS run's roster to the process-level messaging runtime, so Lane D's
   // SendMessage/ListAgents can actually resolve this session's own children (WS-10 §11 rules 2/3).
   // `ensureDefaultMessagingRuntimeRegistered` builds the in-process reference runtime once per
@@ -1226,7 +1234,19 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
           // tracked by the background-task registry and reachable by TaskStop); a FOREGROUND child
           // is owned by this turn, so an interrupt must take it down with the call that was
           // awaiting it.
-          if (req.runInBackground !== true) foregroundChildren.add(handle);
+          if (req.runInBackground !== true) {
+            foregroundChildren.add(handle);
+            // NEW-3 (residual round): PRUNED ON SETTLE, not merely cleared by an interrupt. The set
+            // exists so an interrupt can stop the children a turn still owns; a child that has
+            // already finished is not one of those, and keeping it only grew the set by one per
+            // foreground spawn for the life of the session. `result()` is a memoized promise
+            // (child-engine.ts), so observing it here costs nothing and cannot double-settle
+            // anything -- `agent.ts` awaits the same promise for its own result.
+            void handle
+              .result()
+              .catch(() => undefined)
+              .finally(() => foregroundChildren.delete(handle));
+          }
           return handle;
         },
       },
