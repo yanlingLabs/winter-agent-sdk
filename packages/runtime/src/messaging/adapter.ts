@@ -104,10 +104,15 @@ export interface RuntimeMessagingAdapter {
 //
 // Lane D (Task 7) implements the actual routing/dedup/idempotency logic; this interface is the
 // contract their router satisfies, proven by the seam contract tests (subagents/seam-contracts-p4.
-// test.ts). `children()` is filled by the ENGINE (not Lane D) from the live child roster -- see
-// engine.ts's own MessagingRouterSeam construction, which is the ONE place this spine wires a real
-// implementation together (allocateMessageId/recordOutcome/lookupOutcome stay Lane D's own job; this
-// spine ships only a fake for its own contract tests).
+// test.ts). `children()` should be filled from the live child roster, but this spine does NOT
+// construct a real MessagingRouterSeam anywhere -- engine.ts exposes only the roster DATA SOURCE,
+// via `EngineOptions.onChildRosterReady?(getChildren)` (called once, synchronously, near the start
+// of the run, handing the caller a live `() => readonly ChildHandle[]` getter -- see that field's
+// own doc comment in engine.ts). Lane D's own router is what actually builds a real
+// MessagingRouterSeam object, plugging `children()` in as `() => getChildren()` (or equivalent)
+// against the getter this callback hands it; allocateMessageId/recordOutcome/lookupOutcome are
+// entirely Lane D's own job, with no partial/fake version of them shipped here. This spine ships
+// only `createFakeMessagingRouterSeam` (below), for its own contract tests.
 export interface MessagingRouterSeam {
   allocateMessageId(senderSessionId: string, toolUseId: string): string;
   recordOutcome(messageId: string, outcome: DeliveryOutcome): void;
