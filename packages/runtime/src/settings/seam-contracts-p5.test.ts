@@ -349,6 +349,42 @@ describe("(iii)+(iv) resolve -> trust verdict -> effective settings", () => {
     expect(perDirectory.verdict("/elsewhere").trusted).toBe(false);
   });
 
+  test("PERMISSION-RULE arrays UNION across tiers; the trust filter SUBTRACTS the project tier rather than deleting the key", async () => {
+    await withTempTreeAsync(async ({ cwd, home }) => {
+      writeJson(join(home, "settings.json"), { permissions: { deny: ["Curl"] } });
+      writeJson(join(cwd, ".winter", "settings.json"), { permissions: { deny: ["Bash"], allow: ["Write", "Shared"] } });
+      writeJson(join(cwd, ".winter", "settings.local.json"), { permissions: { deny: ["Rm"], allow: ["Shared", "Bash"] } });
+      const resolved = await resolveSettingsDetailed({ cwd, winterHome: home });
+
+      // Every tier's deny applies simultaneously (capture (1) cell K). Replacement here would be a
+      // silent FAIL-OPEN: a project deny erased by a local file that only ever ADDED a rule.
+      expect((resolved.effective["permissions"] as { deny: string[] }).deny).toEqual(["Curl", "Bash", "Rm"]);
+
+      const untrusted = applyWorkspaceTrust(resolved, { trustedWorkspace: false });
+      const perms = untrusted["permissions"] as { allow: string[]; deny: string[] };
+      expect(perms.deny).toEqual(["Curl", "Bash", "Rm"]); // deny is never subtracted, from any tier
+      // `Write` was project-only -> gone. `Shared`/`Bash` survive because LOCAL asserts them too --
+      // deleting the whole key would over-restrict as silently as replacement under-restricted.
+      expect(perms.allow).toEqual(["Shared", "Bash"]);
+    });
+  });
+
+  test("PER-TIER ATTRIBUTION lives on `sources`, never on `effective` -- a rule evaluator MUST read it there", async () => {
+    await withTempTreeAsync(async ({ cwd, home }) => {
+      writeJson(join(cwd, ".winter", "settings.json"), { permissions: { deny: ["Bash"] } });
+      writeJson(join(cwd, ".winter", "settings.local.json"), { permissions: { deny: ["Rm"] } });
+      const resolved = await resolveSettingsDetailed({ cwd, winterHome: home });
+      // `effective` is a flat union with NO source tags: it answers "which rules apply", never "who
+      // authored this one". The P2 evaluator folds rules in by RuleSource, so it must build its
+      // SourcedRuleSet from `sources`/`perSource` -- one entry per tier, each with its own arrays.
+      const byTier = Object.fromEntries(
+        resolved.sources.map((s) => [s.source, ((s.settings["permissions"] as { deny?: string[] } | undefined)?.deny) ?? []]),
+      );
+      expect(byTier["project"]).toEqual(["Bash"]);
+      expect(byTier["local"]).toEqual(["Rm"]);
+    });
+  });
+
   test("a malformed settings file NEVER throws through this path -- it degrades to an empty tier with an error recorded", async () => {
     await withTempTreeAsync(async ({ cwd, home }) => {
       mkdirSync(join(cwd, ".winter"), { recursive: true });
@@ -467,10 +503,14 @@ describe("(vii) ajv is a real runtime dependency, in both dialects Lane K/Lane W
   });
 });
 
-// Shared throwaway-directory helper for the sections that touch the filesystem (added by the later
-// slices below). Every one uses mkdtemp roots -- never ~/.winter, ~/.norma, ~/.claude (phase Global
-// Constraints).
-export function withTempTree<T>(fn: (dirs: { cwd: string; home: string }) => T): T {
+// Shared throwaway-directory helpers for the sections that touch the filesystem. Every one uses
+// mkdtemp roots -- never ~/.winter, ~/.norma, ~/.claude (phase Global Constraints).
+//
+// DELIBERATELY NOT EXPORTED (P4's own KNOWN-2 trap, which engine.test.ts's header records): importing
+// a symbol from a test file RUNS that file's whole suite as a side effect. A lane that grabbed
+// `withTempTree` from this seam-authority file would silently re-run all 35 contracts inside its own
+// suite. Copy these three lines instead.
+function withTempTree<T>(fn: (dirs: { cwd: string; home: string }) => T): T {
   const cwd = mkdtempSync(join(tmpdir(), "winter-p5-seam-cwd-"));
   const home = mkdtempSync(join(tmpdir(), "winter-p5-seam-home-"));
   try {
@@ -481,7 +521,7 @@ export function withTempTree<T>(fn: (dirs: { cwd: string; home: string }) => T):
   }
 }
 
-export async function withTempTreeAsync<T>(fn: (dirs: { cwd: string; home: string }) => Promise<T>): Promise<T> {
+async function withTempTreeAsync<T>(fn: (dirs: { cwd: string; home: string }) => Promise<T>): Promise<T> {
   const cwd = mkdtempSync(join(tmpdir(), "winter-p5-seam-cwd-"));
   const home = mkdtempSync(join(tmpdir(), "winter-p5-seam-home-"));
   try {
@@ -492,7 +532,7 @@ export async function withTempTreeAsync<T>(fn: (dirs: { cwd: string; home: strin
   }
 }
 
-export function writeJson(path: string, value: unknown): void {
+function writeJson(path: string, value: unknown): void {
   mkdirSync(join(path, ".."), { recursive: true });
   writeFileSync(path, JSON.stringify(value));
 }

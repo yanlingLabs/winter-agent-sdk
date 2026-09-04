@@ -17,7 +17,21 @@ export type {
   ToolExecutor,
   SessionPersistence,
   EngineOptions,
+  // Phase 5 Task 2 (R5-3): the provider-seam extension. Named on the barrel because the consumers
+  // that live OUTSIDE this package -- packages/sdk/src/transport-equivalence.test.ts and
+  // scripts/differential.ts, neither of which can use a relative import -- are exactly the ones T8
+  // needs for a cross-leg `system`/usage scenario. Lanes use relative imports and do not need this.
+  ProviderRequest,
+  ProviderUsage,
+  ContextAccountant,
+  ContextAccountantOptions,
 } from "./engine.ts";
+export { createContextAccountant, DEFAULT_CONTEXT_WINDOW_TOKENS } from "./engine.ts";
+// Phase 5 Task 2: the mock family's `system` recorder (provider/mock.ts) -- same out-of-package
+// reasoning as above; T8's cross-leg assertion reads it from here.
+export { recordedProviderSystems, resetRecordedProviderSystems } from "./provider/mock.ts";
+// Phase 5 Task 2 (R5-4 / WS-09 §8.5): the compaction reset seam.
+export { onCompaction } from "./tools/registry.ts";
 
 export { createInMemoryChannel } from "./protocol/channel.ts";
 export type { Duplex, FrameSource, FrameSink } from "./protocol/channel.ts";

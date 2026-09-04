@@ -24,14 +24,14 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
 }
 
 /**
- * Precedence-aware merge, HIGHEST-first accumulation is NOT what happens here -- callers hand
- * `entries` lowest-precedence first and each later entry overwrites. Nested plain objects merge
- * recursively (capture (1): `effective.permissions` carried `allow` from one tier and `defaultMode`
- * from another); arrays and scalars are REPLACED wholesale by the higher tier, never concatenated.
+ * Precedence-aware merge: callers hand `entries` lowest-precedence first and each later entry
+ * overwrites. Nested plain objects merge recursively (capture (1): `effective.permissions` carried
+ * `allow` from one tier and `defaultMode` from another); arrays and scalars are REPLACED wholesale
+ * by the higher tier, never concatenated.
  *
- * Array replacement is deliberate and is why R5-8 keeps permission-rule arrays per-source: a merged
- * `effective.permissions.allow` is the winning tier's list alone, while `sources`/`perSource` still
- * carry every tier's own list for the P2 evaluator to fold in by `RuleSource`.
+ * The PERMISSION-RULE arrays are the deliberate exception and are handled separately, after this
+ * merge, by `unionPermissionRuleArrays` below -- see its own comment for the fail-open bug that
+ * replacement would otherwise cause.
  */
 function deepMergeInto(target: Record<string, unknown>, overlay: Record<string, unknown>): void {
   for (const [key, value] of Object.entries(overlay)) {
@@ -56,6 +56,61 @@ function withoutOverlayNeverKeys(values: Settings): Settings {
   const out: Record<string, unknown> = { ...values };
   for (const key of OVERLAY_NEVER_KEYS) delete out[key];
   return out as Settings;
+}
+
+/**
+ * The four `permissions` arrays that are RULE SETS rather than "the winning tier's value", and the
+ * one place the ordinary replace-by-higher-tier merge would be actively unsafe.
+ *
+ * Capture (1) cell K proves the pinned engine applies several tiers' rules SIMULTANEOUSLY: a project
+ * `deny` is enforced while a local `allow` is also in effect. Under plain replacement, a project
+ * `deny: ["Bash"]` plus a local `deny: ["Write"]` would leave `effective.permissions.deny ===
+ * ["Write"]` and the Bash denial would silently vanish -- a FAIL-OPEN under-restriction, produced by
+ * a settings file that only ever added a rule. So these four union across every contributing tier
+ * (lowest-tier-first, de-duplicated), and the per-tier attribution the P2 evaluator needs to fold
+ * them in by `RuleSource` stays available on `sources`/`perSource`, which are never touched by this.
+ *
+ * `defaultMode`/`disableBypassPermissionsMode` are NOT here: they are single values, where "the
+ * winning tier's value" is exactly right.
+ */
+const PERMISSION_RULE_ARRAY_KEYS: readonly string[] = ["allow", "ask", "deny", "additionalDirectories"] as const;
+
+function stringArrayOrUndefined(v: unknown): string[] | undefined {
+  if (!Array.isArray(v)) return undefined;
+  const strings = v.filter((item): item is string => typeof item === "string");
+  return strings.length > 0 ? strings : undefined;
+}
+
+/** Union of one rule-array key across the given tiers, lowest-precedence first, de-duplicated. */
+function unionRuleArray(tiersLowestFirst: readonly { values: Settings }[], key: string): string[] | undefined {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const tier of tiersLowestFirst) {
+    const permissions = tier.values["permissions"];
+    if (!isPlainObject(permissions)) continue;
+    for (const rule of stringArrayOrUndefined(permissions[key]) ?? []) {
+      if (seen.has(rule)) continue;
+      seen.add(rule);
+      out.push(rule);
+    }
+  }
+  return out.length > 0 ? out : undefined;
+}
+
+/** Replaces `effective.permissions`' four rule arrays with the union across `tiersLowestFirst`. */
+function unionPermissionRuleArrays(effective: Record<string, unknown>, tiersLowestFirst: readonly { values: Settings }[]): void {
+  const merged = effective["permissions"];
+  const permissions: Record<string, unknown> = isPlainObject(merged) ? { ...merged } : {};
+  let any = isPlainObject(merged);
+  for (const key of PERMISSION_RULE_ARRAY_KEYS) {
+    const unioned = unionRuleArray(tiersLowestFirst, key);
+    if (unioned === undefined) delete permissions[key];
+    else {
+      permissions[key] = unioned;
+      any = true;
+    }
+  }
+  if (any) effective["permissions"] = permissions;
 }
 
 const SOURCE_ORDER_LOWEST_FIRST: readonly SettingSource[] = ["user", "project", "local"] as const;
@@ -128,6 +183,14 @@ export async function resolveSettingsDetailed(opts: ResolveSettingsDetailedOptio
       };
     }
   }
+
+  // The one exception to the replace-by-higher-tier merge above. Runs on the OVERLAY-FILTERED view
+  // for the same reason the merge does -- a project tier's own contribution is filtered identically
+  // in both places, so a never-key can never sneak back in through the union.
+  unionPermissionRuleArrays(
+    effective,
+    lowestFirst.map((entry) => ({ values: entry.source === "project" ? withoutOverlayNeverKeys(entry.values) : entry.values })),
+  );
 
   const perSource = [...lowestFirst].reverse();
   return {
@@ -243,13 +306,26 @@ export function applyWorkspaceTrust(resolved: ResolvedSettings, opts: WorkspaceT
   if (opts.trustedWorkspace === true) return afterModeFilter;
   const permissions = afterModeFilter["permissions"];
   if (!isPlainObject(permissions)) return afterModeFilter;
+
+  // SUBTRACTIVE, not key-deleting. Because the rule arrays are a UNION across tiers (see
+  // PERMISSION_RULE_ARRAY_KEYS above), dropping the whole `allow` key when the project tier happens
+  // to contribute to it would also throw away the local and user tiers' entries -- an
+  // over-restriction as silent as the fail-open it replaced. Instead the untrusted view is rebuilt
+  // from the NON-project tiers only, so an entry the project file merely also mentions survives on
+  // the strength of whoever else asserted it.
+  const nonProject = resolved.sources.filter((s) => s.source !== "project").map((s) => ({ values: s.settings }));
+  // `sources` is highest-first; the union wants lowest-first so the surviving order matches an
+  // ordinary resolve's.
+  const nonProjectLowestFirst = [...nonProject].reverse();
   const nextPermissions: Record<string, unknown> = { ...permissions };
   let changed = false;
   for (const key of PROJECT_PERMISSIVE_KEYS) {
     if (!(key in nextPermissions)) continue;
-    if (winningSourceFor(resolved, ["permissions", key])?.source !== "project") continue;
-    delete nextPermissions[key];
-    changed = true;
+    const withoutProject = unionRuleArray(nonProjectLowestFirst, key);
+    const before = nextPermissions[key];
+    if (withoutProject === undefined) delete nextPermissions[key];
+    else nextPermissions[key] = withoutProject;
+    if (JSON.stringify(before) !== JSON.stringify(withoutProject)) changed = true;
   }
   return changed ? ({ ...afterModeFilter, permissions: nextPermissions } as Settings) : afterModeFilter;
 }

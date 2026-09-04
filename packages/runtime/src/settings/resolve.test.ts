@@ -140,13 +140,38 @@ describe("precedence + provenance", () => {
     expect(r.provenance["permissions"]?.source).toBe("local");
   });
 
-  test("arrays are REPLACED by the higher tier, never concatenated -- and every tier's own array stays visible per source", async () => {
+  test("PERMISSION-RULE arrays UNION across tiers -- a lower tier's rules are never replaced away", async () => {
     writeProject({ permissions: { allow: ["Write"] } });
     writeLocal({ permissions: { allow: ["Bash"] } });
     const r = await resolve();
-    expect((r.effective["permissions"] as { allow: string[] }).allow).toEqual(["Bash"]);
+    expect((r.effective["permissions"] as { allow: string[] }).allow).toEqual(["Write", "Bash"]);
     const project = r.perSource.find((e) => e.source === "project");
     expect((project?.values["permissions"] as { allow: string[] }).allow).toEqual(["Write"]);
+  });
+
+  test("a PROJECT deny survives a local deny -- the fail-open case: replacement would silently unenforce it", async () => {
+    writeProject({ permissions: { deny: ["Bash"] } });
+    writeLocal({ permissions: { deny: ["Write"] } });
+    const r = await resolve();
+    expect((r.effective["permissions"] as { deny: string[] }).deny).toEqual(["Bash", "Write"]);
+  });
+
+  test("the union dedupes and keeps lowest-tier-first order", async () => {
+    writeUser({ permissions: { deny: ["Bash", "Write"] } });
+    writeProject({ permissions: { deny: ["Write", "Read"] } });
+    const r = await resolve();
+    expect((r.effective["permissions"] as { deny: string[] }).deny).toEqual(["Bash", "Write", "Read"]);
+  });
+
+  test("all four rule arrays union; a NON-rule array is still replaced by the higher tier", async () => {
+    writeProject({ permissions: { allow: ["a"], ask: ["b"], deny: ["c"], additionalDirectories: ["/p"] }, claudeMdExcludes: ["p.md"] });
+    writeLocal({ permissions: { allow: ["A"], ask: ["B"], deny: ["C"], additionalDirectories: ["/l"] }, claudeMdExcludes: ["l.md"] });
+    const perms = (await resolve()).effective["permissions"] as Record<string, string[]>;
+    expect(perms["allow"]).toEqual(["a", "A"]);
+    expect(perms["ask"]).toEqual(["b", "B"]);
+    expect(perms["deny"]).toEqual(["c", "C"]);
+    expect(perms["additionalDirectories"]).toEqual(["/p", "/l"]);
+    expect((await resolve()).effective["claudeMdExcludes"]).toEqual(["l.md"]); // NOT a rule array
   });
 
   test("managedSettings and serverManagedSettings both report source 'managed' with a policyOrigin", async () => {
@@ -273,6 +298,25 @@ describe("applyWorkspaceTrust (RULING P5-A)", () => {
     const perms = filtered["permissions"] as { allow?: string[]; additionalDirectories?: string[] };
     expect(perms.allow).toEqual(["Write"]);
     expect(perms.additionalDirectories).toEqual(["/elsewhere"]);
+  });
+
+  test("untrusted: only the PROJECT contribution is subtracted -- a local allow in the SAME array survives", async () => {
+    writeProject({ permissions: { allow: ["ProjectOnly", "Shared"] } });
+    writeLocal({ permissions: { allow: ["LocalOnly", "Shared"] } });
+    const trusted = applyWorkspaceTrust(await resolve(), { trustedWorkspace: true });
+    expect((trusted["permissions"] as { allow: string[] }).allow).toEqual(["ProjectOnly", "Shared", "LocalOnly"]);
+    const untrusted = applyWorkspaceTrust(await resolve(), { trustedWorkspace: false });
+    // "Shared" survives because LOCAL also asserts it -- dropping it would over-restrict on the
+    // strength of the repo having merely mentioned it.
+    expect((untrusted["permissions"] as { allow: string[] }).allow).toEqual(["LocalOnly", "Shared"]);
+  });
+
+  test("untrusted: a project deny stays in the unioned deny list alongside every other tier's", async () => {
+    writeProject({ permissions: { deny: ["Bash"], allow: ["Write"] } });
+    writeUser({ permissions: { deny: ["Curl"] } });
+    const perms = applyWorkspaceTrust(await resolve(), { trustedWorkspace: false })["permissions"] as { deny: string[]; allow?: string[] };
+    expect(perms.deny).toEqual(["Curl", "Bash"]);
+    expect(perms.allow).toBeUndefined();
   });
 
   test("untrusted: a LOCAL allow list still widens (P5-A: the filter is per TIER, not per directory)", async () => {
