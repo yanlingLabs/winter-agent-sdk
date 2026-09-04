@@ -20,6 +20,23 @@ import { getMessagingRuntime, sendMessage, type CallerContext } from "../../mess
 
 export const SEND_MESSAGE_TOOL_NAME = "SendMessage";
 
+// NEEDS_CONTEXT (mid-task controller note, Lane B review finding; not built by this lane -- see the
+// task report): WS-10 §15/WS-14 name a CANONICAL MCP-aliased duplicate of this tool,
+// `mcp__winter__send_message` (`Options.toolAliases` redirects the model-visible built-in name
+// `SendMessage` to it, WS-09 §10, packages/sdk/src/options.ts). No descriptor for that canonical
+// name exists anywhere in this repo yet, and creating one is out of THIS lane's file permissions
+// (a new `tools/descriptors/*.ts` entry is T1/T8's own descriptor-authoring territory; the standing
+// `winter` MCP server that would host it, `mcp/winter-server.ts`, is R4-10-forbidden to this lane) --
+// mirrors mcp/winter-server.ts's own "the other standing-server tools ... are P7/P8 ... owned by
+// [WS-14]/[WS-15]; nothing registers them here yet" posture for send_message/list_agents
+// specifically. WHOEVER adds that descriptor MUST declare it `deferred: true` at the source: the §10
+// duplicate-suppression Lane B built only moves entries between advertised-partition buckets --
+// `resolveDeferral`/`isLoadFirstBlocked` (registry.ts) read the descriptor's own declared `deferred`
+// field, so an eager canonical entry would vanish from `system/init.tools` (LOOKS deferred) yet
+// still resolve eager at the execution boundary (callable by name with no `select:` first) -- a real
+// visibility/gating mismatch, not merely a cosmetic duplicate. Declaring it deferred at the source is
+// what makes runtime suppression a safety net on top of real deferral, rather than the only guard.
+
 const MAX_SUMMARY_LENGTH = 200; // WS-10 §10.1 verbatim
 
 function asRecord(input: unknown): Record<string, unknown> {

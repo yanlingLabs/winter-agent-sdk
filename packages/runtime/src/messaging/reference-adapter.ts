@@ -234,6 +234,25 @@ export function createReferenceMessagingAdapter(deps: ReferenceAdapterDeps): Ref
         return unavailable(msg.messageId, false, "target session is not reachable in-process (a real cross-process peer is a P8/host-integration concern)");
       }
 
+      // WS-10 §10.3: "Cold-resume an exited top-level session ... is a separate session-resume
+      // operation, never SendMessage; resumed_and_delivered MUST NOT be claimed for resume alone."
+      // Only "running" and "idle" are ordinary deliverable states -- every other status is a
+      // reachability short-circuit BEFORE inbound policy even runs (there is no receiver to apply a
+      // policy decision against yet).
+      const status = peer.status();
+      if (status === "exited") {
+        return unavailable(msg.messageId, false, "target session has exited; cold-resuming an exited session is a separate product operation, never a SendMessage side effect (WS-10 §10.3)");
+      }
+      if (status === "archived") {
+        // Companion doc §10: "Archived session: refuse until a deliberate user/product resume
+        // unarchives it" -- a policy refusal, not a transient unavailability.
+        return refused(msg.messageId, "target session is archived; refused until a deliberate product-level resume unarchives it");
+      }
+      if (status === "starting" || status === "unavailable") {
+        return unavailable(msg.messageId, true, `target session is currently "${status}", not yet reachable`);
+      }
+      // status is "running" or "idle" from here on -- ordinary deliverable states.
+
       const receiverKey = serializeRuntimeAddress(addr);
       const receiverClass = classifyPermissionMode(peer.mode(), { bypassAvailable: peer.bypassAvailable() });
       const explicitSetting = peer.crossSessionInbound?.();

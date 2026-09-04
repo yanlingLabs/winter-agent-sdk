@@ -129,6 +129,46 @@ describe("steerChild / resumeChild", () => {
   });
 });
 
+describe("deliverToSession: reachability short-circuit BEFORE inbound policy (WS-10 §10.3)", () => {
+  test("an EXITED peer is unavailable, never silently cold-resumed -- resumed_and_delivered/delivered MUST NOT be claimed for this", async () => {
+    const { deps, peers } = makeAdapterDeps();
+    const { peer, delivered } = fakePeer({ status: "exited" });
+    peers.register(peer);
+    const adapter = createReferenceMessagingAdapter(deps);
+    const outcome = await adapter.deliverToSession(peer.address, envelope({ senderPermissionClass: "prompts" }));
+    expect(outcome.status).toBe("unavailable");
+    if (outcome.status === "unavailable") expect(outcome.retryable).toBe(false);
+    expect(delivered).toHaveLength(0);
+  });
+  test("an ARCHIVED peer is refused (a policy decision), not merely unavailable", async () => {
+    const { deps, peers } = makeAdapterDeps();
+    const { peer, delivered } = fakePeer({ status: "archived" });
+    peers.register(peer);
+    const adapter = createReferenceMessagingAdapter(deps);
+    const outcome = await adapter.deliverToSession(peer.address, envelope({ senderPermissionClass: "prompts" }));
+    expect(outcome.status).toBe("refused");
+    expect(delivered).toHaveLength(0);
+  });
+  test("a STARTING peer is unavailable but retryable", async () => {
+    const { deps, peers } = makeAdapterDeps();
+    const { peer } = fakePeer({ status: "starting" });
+    peers.register(peer);
+    const adapter = createReferenceMessagingAdapter(deps);
+    const outcome = await adapter.deliverToSession(peer.address, envelope({ senderPermissionClass: "prompts" }));
+    expect(outcome.status).toBe("unavailable");
+    if (outcome.status === "unavailable") expect(outcome.retryable).toBe(true);
+  });
+  test("a peer reporting its own status as UNAVAILABLE is retryable", async () => {
+    const { deps, peers } = makeAdapterDeps();
+    const { peer } = fakePeer({ status: "unavailable" });
+    peers.register(peer);
+    const adapter = createReferenceMessagingAdapter(deps);
+    const outcome = await adapter.deliverToSession(peer.address, envelope({ senderPermissionClass: "prompts" }));
+    expect(outcome.status).toBe("unavailable");
+    if (outcome.status === "unavailable") expect(outcome.retryable).toBe(true);
+  });
+});
+
 describe("deliverToSession: inbound policy (WS-10 §13)", () => {
   test("unavailable when the target peer isn't registered", async () => {
     const { deps } = makeAdapterDeps();
