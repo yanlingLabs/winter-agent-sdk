@@ -2502,7 +2502,7 @@ test("Phase 4 Task 3: an ordinary MCP tool (no requiresUserInteraction) is unaff
 // Phase 4 Task 3: MCP control subtypes, mcp_servers on init, deferral activation, sdk_mcp_call
 // runtime-side registration, agentID threading (MUSTs 3/4/6/9).
 // ================================================================================================
-import { createFakeMcpServerStateSource } from "./mcp/state.ts";
+import { createFakeMcpServerStateSource, type McpServerStateSource } from "./mcp/state.ts";
 import { createFakeMcpControlSeam } from "./mcp/control-seam.ts";
 
 function sendAndCollectUntilResult(host: { output: { write(f: WinterFrame): void } }): void {
@@ -2585,9 +2585,15 @@ describe("Phase 4 Task 3: mcp_status / mcp_reconnect / mcp_toggle / mcp_set_serv
     await done;
   });
 
-  test("mcp_reconnect with no control seam configured answers a structured mcp_unavailable error, never unknown_subtype", async () => {
+  // REWRITTEN in the fix wave's follow-up round (item 3, whole-branch M2). This test used to drive a
+  // plain `baseConfig()` session -- which declared no MCP servers and therefore had NO lifecycle and
+  // no control seam at all. M2 makes the lifecycle unconditional (that "no way to ever gain a server"
+  // state was the finding), so a bare session now HAS a seam and an unknown server name gets the
+  // precise `mcp_reconnect_failed` instead of the blanket `mcp_unavailable`. Both codes are still
+  // reachable and both are pinned here; only which INPUT produces which changed.
+  async function reconnectUnknownServer(extra: { mcpServerStateSource?: McpServerStateSource } = {}): Promise<{ ok: boolean; error?: { code: string } }> {
     const { host, runtime } = createInMemoryChannel();
-    const done = runEngine({ config: baseConfig(), input: runtime.input, output: runtime.output, provider: echoProvider, tools: stubExecutor });
+    const done = runEngine({ config: baseConfig(), input: runtime.input, output: runtime.output, provider: echoProvider, tools: stubExecutor, ...extra });
     host.output.write({ type: "control_request", requestId: "r1", subtype: "mcp_reconnect", payload: { serverName: "gh" } });
     let response: ControlResponseFrame | undefined;
     for await (const f of host.input) {
@@ -2596,11 +2602,25 @@ describe("Phase 4 Task 3: mcp_status / mcp_reconnect / mcp_toggle / mcp_set_serv
         break;
       }
     }
-    expect(response?.ok).toBe(false);
-    expect((response as { error: { code: string } }).error.code).toBe("mcp_unavailable");
     sendAndCollectUntilResult(host);
     await drain(host.input);
     await done;
+    return response as unknown as { ok: boolean; error?: { code: string } };
+  }
+
+  test("mcp_reconnect for an UNKNOWN server answers the precise mcp_reconnect_failed, never unknown_subtype (M2: a bare session now has a seam)", async () => {
+    const response = await reconnectUnknownServer();
+    expect(response.ok).toBe(false);
+    expect(response.error?.code).toBe("mcp_reconnect_failed");
+  });
+
+  test("mcp_unavailable is still the answer when the caller genuinely configured no control seam", async () => {
+    // A host that owns its own MCP stack supplies a state source and (here) no control seam: the
+    // engine's own dial is suppressed, so there is no seam to fall back to -- the one input that
+    // still produces `mcp_unavailable` after M2.
+    const response = await reconnectUnknownServer({ mcpServerStateSource: createFakeMcpServerStateSource([]) });
+    expect(response.ok).toBe(false);
+    expect(response.error?.code).toBe("mcp_unavailable");
   });
 });
 

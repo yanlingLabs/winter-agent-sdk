@@ -1211,7 +1211,11 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
       // frozen startup value `advertisedCfg` captured (a mid-session setPermissionMode must be able
       // to make a mode-gated tool refuse, exactly like `isDeferredAndUnloaded` already reads mode
       // live at the same execution boundary).
-      getAvailabilityInputs: () => ({ ...advertisedCfg, mode: policyStateStore.getState().mode }),
+      // Fix wave follow-up (3): `capabilities` is re-resolved LIVE here, not taken from the frozen
+      // startup snapshot -- a server added mid-run by `mcp_set_servers` must make the winter.mcp
+      // family dispatchable, or M2's "a session can gain its first server" would stop one step short
+      // (rider 27's availability check would still refuse every call).
+      getAvailabilityInputs: () => ({ ...advertisedCfg, mode: policyStateStore.getState().mode, capabilities: resolveLiveSessionCapabilities() }),
     };
     // Fix round 1 (RULING P3-C): main.ts is the one caller that supplies `unregisteredToolExecutor`
     // (stubExecutor) -- every OTHER caller of this default (testing.ts's inMemoryProcess, when ITS
@@ -1338,8 +1342,15 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   const sessionStateKey = config.agentId ?? config.sessionId;
   let mcpLifecycle: McpLifecycle | undefined;
   let disposeSessionMcpLifecycle: (() => void) | undefined;
-  if (mcpServerStateSource === undefined && config.mcpServers !== undefined && Object.keys(config.mcpServers).length > 0) {
-    const sources: McpServerSource[] = [{ origin: "explicit", servers: config.mcpServers }];
+  // Fix wave follow-up (3), whole-branch review M2: the lifecycle is now built UNCONDITIONALLY, from
+  // whatever this session declared -- including nothing at all. Before, a session that declared no
+  // servers got no lifecycle, hence no control seam, hence `mcp_set_servers` answering
+  // `mcp_unavailable` FOREVER: WS-09 §3's "setMcpServers replaces the configured set live" was
+  // unreachable from an empty set, and `winter.mcp` was frozen false at startup with no way back.
+  // An empty server list is cheap -- `createMcpLifecycle` allocates a state board and `start()`
+  // iterates zero slots.
+  if (mcpServerStateSource === undefined) {
+    const sources: McpServerSource[] = [{ origin: "explicit", servers: config.mcpServers ?? {} }];
     const resolvedSources = resolveMcpServerSources(sources, {
       ...(config.strictMcpConfig !== undefined ? { strictMcpConfig: config.strictMcpConfig } : {}),
       trustedWorkspace,
@@ -1369,6 +1380,24 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // indistinguishable downstream.
   const effectiveMcpStateSource: McpServerStateSource | undefined = mcpServerStateSource ?? mcpLifecycle?.stateSource;
   const effectiveMcpControlSeam: McpControlSeam | undefined = mcpControlSeam ?? mcpLifecycle?.controlSeam;
+
+  // Fix wave follow-up (3): "does this session actually HAVE MCP", re-derived LIVE.
+  //
+  // THE TRAP this exists for, stated plainly because getting it wrong is invisible in a unit test and
+  // loud in the golden corpus: the first round's B-M1 derived `hasMcpServers` from
+  // `effectiveMcpStateSource !== undefined`, which was exactly right while the lifecycle was
+  // conditional. Building it unconditionally (above) makes that predicate ALWAYS true, which would
+  // advertise the whole `winter.mcp` family in every session and churn every committed `init.tools`
+  // golden -- contradicting the 24-tool capture that gated the family in the first place. So the fact
+  // is the LIVE SLOT COUNT instead: a caller-supplied state source (a host that owns its own MCP
+  // stack -- B-M1's case, preserved) or at least one real slot on the state board.
+  //
+  // A FUNCTION, not a value: `mcp_set_servers` can add the session's first server mid-run, and every
+  // consumer that can honour a live answer does (the dispatch-time availability check and the
+  // ToolSearch session runtime, both below). `system/init.tools` cannot -- it is written once, before
+  // the turn loop, and no re-init frame exists in this protocol (rider 5's recorded gap) -- so the
+  // startup snapshot keeps the value it had, which is what keeps the goldens byte-identical.
+  const sessionHasMcp = (): boolean => mcpServerStateSource !== undefined || (mcpLifecycle?.stateSource.snapshot().length ?? 0) > 0;
 
   // `init` MUST be the first runtime→host frame (WS-04 §4.1 `initializing`), from resolved runtime
   // state. T8 (WS-06 §6 obligation 1): the advertised tool list is no longer hardcoded empty --
@@ -1457,7 +1486,10 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // refused at dispatch by rider 27's availability check. Equivalent to the old predicate for every
   // other input by construction: the engine builds `mcpLifecycle` (hence a state source) exactly when
   // no source was supplied and `config.mcpServers` is non-empty.
-  const sessionCapabilities = resolveSessionCapabilities(config.capabilities, { hasMcpServers: effectiveMcpStateSource !== undefined });
+  const resolveLiveSessionCapabilities = (): string[] => resolveSessionCapabilities(config.capabilities, { hasMcpServers: sessionHasMcp() });
+  // The STARTUP snapshot, for `init.tools` and the advertised partition (see sessionHasMcp above for
+  // why this one cannot be live).
+  const sessionCapabilities = resolveLiveSessionCapabilities();
   // Phase 4 Task 8 (rider 3, WS-09 §10 / RULING P4-E): the Winter branch's own canonical alias pair.
   // WS-10 §15 names it verbatim -- [WS-14] redirects the model-visible `SendMessage`/`ListAgents`
   // built-ins at `mcp__winter__send_message`/`mcp__winter__list_agents`. On the WINTER branch those
@@ -1566,7 +1598,13 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
     getMode: () => policyStateStore.getState().mode,
     activation: deferralActivation,
     platform: process.platform,
-    capabilities: sessionCapabilities,
+    // Fix wave follow-up (3): a GETTER, so ToolSearch ranges over a pool that reflects a server added
+    // mid-run -- the same live-vs-frozen argument as `getAvailabilityInputs` above, and the same trick
+    // registry.ts already uses for `ToolExecutionContext.tempDir`. Satisfies `capabilities?: readonly
+    // string[]` structurally, so no interface changes.
+    get capabilities() {
+      return resolveLiveSessionCapabilities();
+    },
     ...(config.disallowedTools !== undefined ? { disallowedTools: config.disallowedTools } : {}),
     ...(config.insideSubagent !== undefined ? { insideSubagent: config.insideSubagent } : {}),
     ...(config.familyMetadata !== undefined ? { familyMetadata: config.familyMetadata } : {}),
@@ -1595,7 +1633,11 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // SDK server as `connected` with no transport at all, and the decision this note said was owed is
   // made and proven: `mcp_servers: [{name, status:"connected"}]` is asserted on every leg by the
   // rider-6 equivalence scenario and pinned in the `mcp-tool-round` golden.
-  const mcpServersWire = effectiveMcpStateSource ? mcpServerStatesToWire(effectiveMcpStateSource.snapshot()) : undefined;
+  // Fix wave follow-up (3): gated on `sessionHasMcp()`, not on the state source merely EXISTING --
+  // an unconditionally-built empty lifecycle must not start putting `mcp_servers: []` on a wire that
+  // omitted the key entirely. (A caller-supplied state source always reports, even when its snapshot
+  // is empty: that is a host declaring it owns the MCP stack.)
+  const mcpServersWire = sessionHasMcp() && effectiveMcpStateSource ? mcpServerStatesToWire(effectiveMcpStateSource.snapshot()) : undefined;
   output.write({
     type: "init",
     protocolVersion: PROTOCOL_VERSION,
