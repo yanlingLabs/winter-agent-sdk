@@ -33,6 +33,18 @@ import {
   type ProviderUsage,
 } from "../engine.ts";
 import { echoProvider, scriptedProvider, testProviderByName, recordedProviderSystems, resetRecordedProviderSystems } from "../provider/mock.ts";
+import "../tools/descriptors/index.ts";
+import {
+  createLoadedToolSet,
+  getRegisteredTool,
+  isLoadFirstBlocked,
+  onCompaction,
+  onRegistryChange,
+  registerMcpServerTools,
+  resolveDeferral,
+  unregisterMcpServerTools,
+  type DeferralActivation,
+} from "../tools/registry.ts";
 
 // --- (i) the provider seam extension (R5-3) -------------------------------------------------------
 
@@ -118,6 +130,110 @@ describe("(i) provider seam: system prompt in, usage out, and the accountant tha
     expect(overThreshold(0.92)).toBe(false); // 919 < 920
     accountant.record({ inputTokens: 900, outputTokens: 20 });
     expect(overThreshold(0.92)).toBe(true); // 920 >= 920 -- AT the threshold counts
+  });
+});
+
+// --- (ii) onCompaction: the deferred loaded-set reset (R5-4 / WS-09 §8.5) -------------------------
+
+describe("(ii) onCompaction resets the deferred loaded set to `evidenced` and announces it", () => {
+  const SRV = "p5onCompactionSrv";
+
+  function withMcpServer<T>(fn: () => T): T {
+    registerMcpServerTools(
+      SRV,
+      [
+        { name: "alpha", inputSchema: { type: "object" } },
+        { name: "beta", inputSchema: { type: "object" } },
+        { name: "gamma", inputSchema: { type: "object" } },
+      ],
+      { deferredDefault: true },
+    );
+    try {
+      return fn();
+    } finally {
+      unregisterMcpServerTools(SRV);
+    }
+  }
+
+  test("a deferred tool NOT in `evidenced` becomes searchable-not-loaded again; an evidenced one stays loaded", () => {
+    withMcpServer(() => {
+      const alpha = `mcp__${SRV}__alpha`;
+      const beta = `mcp__${SRV}__beta`;
+      const activation: DeferralActivation = { enableToolSearch: "true", providerSupportsToolSearch: true, deferrableContextShare: 100 };
+      const loaded = createLoadedToolSet();
+      loaded.load([alpha, beta]);
+      expect(isLoadFirstBlocked(alpha, "default", activation, loaded)).toBe(false);
+      expect(isLoadFirstBlocked(beta, "default", activation, loaded)).toBe(false);
+
+      onCompaction(loaded, [alpha]);
+
+      expect(loaded.isLoaded(alpha)).toBe(true);
+      expect(loaded.isLoaded(beta)).toBe(false);
+      // "searchable-not-loaded": still a registered, still a DEFERRED descriptor -- so ToolSearch can
+      // find it again -- but blocked from execution until it is re-loaded.
+      expect(resolveDeferral(getRegisteredTool(beta)!.descriptor, "default", activation)).toBe("deferred");
+      expect(isLoadFirstBlocked(beta, "default", activation, loaded)).toBe(true);
+    });
+  });
+
+  test("it INTERSECTS -- a name in `evidenced` that was never loaded does not become loaded", () => {
+    withMcpServer(() => {
+      const loaded = createLoadedToolSet();
+      loaded.load([`mcp__${SRV}__alpha`]);
+      onCompaction(loaded, [`mcp__${SRV}__alpha`, `mcp__${SRV}__gamma`]);
+      expect(loaded.snapshot().sort()).toEqual([`mcp__${SRV}__alpha`]);
+    });
+  });
+
+  test("an evidenced name whose descriptor is GONE (its server disconnected mid-session) is dropped too", () => {
+    const alpha = `mcp__${SRV}__alpha`;
+    const loaded = createLoadedToolSet();
+    withMcpServer(() => {
+      loaded.load([alpha]);
+      expect(loaded.isLoaded(alpha)).toBe(true);
+    });
+    // server unregistered by withMcpServer's finally -- the name is evidenced but no longer registered
+    onCompaction(loaded, [alpha]);
+    expect(loaded.isLoaded(alpha)).toBe(false);
+  });
+
+  test("an empty `evidenced` clears the set entirely", () => {
+    withMcpServer(() => {
+      const loaded = createLoadedToolSet();
+      loaded.load([`mcp__${SRV}__alpha`, `mcp__${SRV}__beta`]);
+      onCompaction(loaded, []);
+      expect(loaded.snapshot()).toEqual([]);
+    });
+  });
+
+  test("it fires onRegistryChange EXACTLY ONCE per call -- the advertised set changed, and a consumer that re-derives init.tools must be told", () => {
+    withMcpServer(() => {
+      const loaded = createLoadedToolSet();
+      loaded.load([`mcp__${SRV}__alpha`, `mcp__${SRV}__beta`]);
+      let changes = 0;
+      const unsubscribe = onRegistryChange(() => {
+        changes++;
+      });
+      try {
+        onCompaction(loaded, [`mcp__${SRV}__alpha`]);
+        expect(changes).toBe(1);
+        onCompaction(loaded, []);
+        expect(changes).toBe(2);
+      } finally {
+        unsubscribe();
+      }
+    });
+  });
+
+  test("it is idempotent: compacting twice with the same evidence changes nothing the second time", () => {
+    withMcpServer(() => {
+      const loaded = createLoadedToolSet();
+      loaded.load([`mcp__${SRV}__alpha`, `mcp__${SRV}__beta`]);
+      onCompaction(loaded, [`mcp__${SRV}__alpha`]);
+      const first = loaded.snapshot().sort();
+      onCompaction(loaded, [`mcp__${SRV}__alpha`]);
+      expect(loaded.snapshot().sort()).toEqual(first);
+    });
   });
 });
 

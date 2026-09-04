@@ -486,14 +486,15 @@ function notifyRegistryChange(): void {
   }
 }
 
-// WS-09 §3/§57/§64: subscribe to LIVE registry mutations (registerMcpServerTools/
-// unregisterMcpServerTools only -- see those functions' own headers). Fires ONCE per call to either
-// function, never once per tool, so a caller that re-derives e.g. system/init.tools on change does
-// so exactly once per server-level event. Deliberately NOT fired by registerTool/replaceExecutor/
-// unregisterToolForTest (P3's bootstrap-time and test-only primitives) -- see this section's own
-// header for the scoping rationale. Returns an unsubscribe function, mirroring McpServerStateSource
-// .subscribe's own shape (mcp/state.ts) and this codebase's existing HookCallbackMatcher-adjacent
-// subscribe/unsubscribe idiom.
+// WS-09 §3/§57/§64: subscribe to LIVE registry mutations. THREE producers, and only three:
+// registerMcpServerTools / unregisterMcpServerTools (see those functions' own headers) and, since
+// Phase 5 Task 2, `onCompaction` below -- a compaction reset changes which deferred tools are
+// advertised, which is the same "re-derive system/init.tools" obligation a server-level event
+// carries. Fires ONCE per call in every case, never once per tool. Deliberately NOT fired by
+// registerTool/replaceExecutor/unregisterToolForTest (P3's bootstrap-time and test-only
+// primitives) -- see this section's own header for the scoping rationale. Returns an unsubscribe
+// function, mirroring McpServerStateSource.subscribe's own shape (mcp/state.ts) and this codebase's
+// existing HookCallbackMatcher-adjacent subscribe/unsubscribe idiom.
 export function onRegistryChange(cb: () => void): () => void {
   registryChangeListeners.add(cb);
   return () => {
@@ -754,6 +755,34 @@ export function createLoadedToolSet(): LoadedToolSet {
       return Array.from(loaded);
     },
   };
+}
+
+// --- Phase 5 Task 2 (R5-4 / WS-09 §8.5 "Compaction reset"; the P4 carry R4-6 named) --------------
+//
+// The seam a compaction calls when it has finished summarizing: everything Tool Search materialized
+// this session goes back to searchable-not-loaded EXCEPT the names that survived into the compacted
+// context ("evidenced" -- a tool whose call/result the summary still carries, so the model can
+// legitimately keep calling it without re-discovery).
+//
+// SHAPE NOTE vs the Task 2 brief. The brief writes `onCompaction(registry: ToolRegistry, evidenced)`.
+// There is no `ToolRegistry` type in this codebase and there deliberately cannot be one here: the
+// descriptor registry is a process-wide SINGLETON (this module's own `registry` Map), shared by
+// every session in a process, and resetting it per-compaction would blow away another session's
+// tools. The only per-SESSION registry state is the `LoadedToolSet` -- exactly what WS-09 §8.5's
+// reset is about -- so that is what this takes.
+//
+// Three behaviours the contract test pins, none of which `LoadedToolSet.reset` gives on its own:
+//   1. the kept set is `evidenced` INTERSECT still-registered -- an evidenced name whose descriptor
+//      vanished mid-session (its MCP server disconnected) must not stay loaded, or the very next
+//      turn advertises a tool that cannot be called;
+//   2. it only ever REMOVES: an evidenced name that was never loaded does not become loaded;
+//   3. it announces once, through the same `onRegistryChange` a server-level mutation uses, because
+//      the advertised set genuinely changed and a consumer re-deriving `system/init.tools` has to
+//      hear about it.
+export function onCompaction(loaded: LoadedToolSet, evidencedToolNames: readonly string[]): void {
+  const stillRegistered = evidencedToolNames.filter((name) => getRegisteredTool(name) !== undefined);
+  loaded.reset(stillRegistered);
+  notifyRegistryChange();
 }
 
 // WS-09 §8.1: ENABLE_TOOL_SEARCH's exact value semantics, ALREADY PARSED (see
