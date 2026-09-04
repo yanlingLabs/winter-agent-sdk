@@ -1,0 +1,165 @@
+[
+  {
+    "sequence": 0,
+    "direction": "runtime-to-host",
+    "kind": "system/init",
+    "payload": {
+      "type": "system",
+      "subtype": "init",
+      "cwd": "/winter-fixture",
+      "model": "sonnet",
+      "permissionMode": "default",
+      "tools": [
+        "Agent",
+        "AskUserQuestion",
+        "Bash",
+        "CronCreate",
+        "CronDelete",
+        "CronList",
+        "Edit",
+        "EnterPlanMode",
+        "EnterWorktree",
+        "ExitPlanMode",
+        "ExitWorktree",
+        "Glob",
+        "Grep",
+        "ListAgents",
+        "Monitor",
+        "NotebookEdit",
+        "PushNotification",
+        "Read",
+        "ReadNotifications",
+        "ReportFindings",
+        "ScheduleWakeup",
+        "SendMessage",
+        "TaskCreate",
+        "TaskGet",
+        "TaskList",
+        "TaskOutput",
+        "TaskStop",
+        "TaskUpdate",
+        "Write"
+      ]
+    }
+  },
+  {
+    "sequence": 1,
+    "direction": "runtime-to-host",
+    "kind": "assistant",
+    "payload": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "type": "tool_use",
+            "id": "agent-call-1",
+            "name": "Agent",
+            "input": {
+              "description": "permission probe",
+              "prompt": "child probe text"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "sequence": 2,
+    "direction": "runtime-to-host",
+    "kind": "assistant",
+    "payload": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "type": "tool_use",
+            "id": "child-call-1",
+            "name": "ReadNotifications",
+            "input": {}
+          }
+        ]
+      },
+      "parent_tool_use_id": "agent-call-1"
+    }
+  },
+  {
+    "sequence": 3,
+    "direction": "runtime-to-host",
+    "kind": "user",
+    "payload": {
+      "type": "user",
+      "message": {
+        "content": [
+          {
+            "type": "tool_result",
+            "tool_use_id": "child-call-1",
+            "content": "{\"notifications\":[],\"remaining\":0}"
+          }
+        ]
+      },
+      "parent_tool_use_id": "agent-call-1"
+    }
+  },
+  {
+    "sequence": 4,
+    "direction": "runtime-to-host",
+    "kind": "assistant",
+    "payload": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "type": "text",
+            "text": "child finished after its own tool call"
+          }
+        ]
+      },
+      "parent_tool_use_id": "agent-call-1"
+    }
+  },
+  {
+    "sequence": 5,
+    "direction": "runtime-to-host",
+    "kind": "user",
+    "payload": {
+      "type": "user",
+      "message": {
+        "content": [
+          {
+            "type": "tool_result",
+            "tool_use_id": "agent-call-1",
+            "content": "{\"agentId\":\"<scrubbed>\",\"content\":[{\"type\":\"text\",\"text\":\"child finished after its own tool call\"}],\"totalToolUseCount\":\"<scrubbed>\",\"totalDurationMs\":\"<scrubbed>\",\"resolvedModel\":\"sonnet\",\"prompt\":\"child probe text\"}"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "sequence": 6,
+    "direction": "runtime-to-host",
+    "kind": "assistant",
+    "payload": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "type": "text",
+            "text": "parent finished"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "sequence": 7,
+    "direction": "runtime-to-host",
+    "kind": "result",
+    "payload": {
+      "type": "result",
+      "subtype": "success",
+      "is_error": false,
+      "result": "parent finished",
+      "permission_denials": []
+    }
+  }
+]

@@ -145,7 +145,7 @@ registerBgTaskTestTool();
 // Phase 4 Task 8: "subagent"/"childmsg" join for the identical reason -- their target tools (Agent,
 // SendMessage) are REAL WS-06 names with real executors reached through the impl barrel, so the
 // in-memory leg must dispatch through the real registry, not stubExecutor's blind echo.
-const REGISTRY_BACKED_TEST_PROVIDERS: ReadonlySet<TestProviderName> = new Set(["bgtask", "lanea", "laneb", "lanec", "laned", "lanee", "mcpsdk", "subagent", "childmsg"]);
+const REGISTRY_BACKED_TEST_PROVIDERS: ReadonlySet<TestProviderName> = new Set(["bgtask", "lanea", "laneb", "lanec", "laned", "lanee", "mcpsdk", "subagent", "childmsg", "subagentperm"]);
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -162,11 +162,21 @@ function sleep(ms: number): Promise<void> {
 // SYNCHRONOUSLY — query() invokes the hook before returning its generator, and the two manually-
 // driven scenarios below invoke it directly — so every caller may assume `capture.proc` is set
 // before it starts reading.
-function spawnHook(leg: LegName, testProviderName: TestProviderName | undefined, capture: { proc?: SpawnedRuntimeProcess }): SpawnClaudeCodeProcess {
+function spawnHook(
+  leg: LegName,
+  testProviderName: TestProviderName | undefined,
+  capture: { proc?: SpawnedRuntimeProcess },
+  // Phase 4 fix wave: per-scenario environment, merged LAST so a scenario can shorten a control
+  // that is otherwise unreachable through Options -- specifically WINTER_ASYNC_AGENT_STALL_TIMEOUT_MS,
+  // which the CHILD engine reads from the runtime's own environment on every leg (main.ts hands
+  // `process.env` to registerDefaultChildEngineFactory; testing.ts hands inMemoryProcess's own env
+  // parameter, which is this same object).
+  scenarioEnv?: Record<string, string | undefined>,
+): SpawnClaudeCodeProcess {
   return (opts: SpawnRuntimeOptions): SpawnedRuntimeProcess => {
     // WINTER_HOME merged in for every leg (Task 8 HARD CONSTRAINT) — ahead of the
     // WINTER_TEST_PROVIDER merge, which stays conditional exactly as before.
-    const env = { ...opts.env, WINTER_HOME: TEST_WINTER_HOME, ...(testProviderName ? { WINTER_TEST_PROVIDER: testProviderName } : {}) };
+    const env = { ...opts.env, WINTER_HOME: TEST_WINTER_HOME, ...(testProviderName ? { WINTER_TEST_PROVIDER: testProviderName } : {}), ...(scenarioEnv ?? {}) };
     let proc: SpawnedRuntimeProcess;
     if (leg === "inMemory") {
       // The in-memory leg has no real child env to merge into — inMemoryProcess's own 4th `env`
@@ -316,6 +326,13 @@ interface QueryScenarioOptions {
   // fire a genuine mid-stream mode switch from an OBSERVED point (e.g. "the first round's result"),
   // never a real-clock guess.
   onMessage?: (msg: { type: string }, ctx: { proc: SpawnedRuntimeProcess | undefined; abort: () => void; setPermissionMode: (mode: PermissionMode) => Promise<void> }) => void;
+  // Phase 4 fix wave (T8 review I2): WS-10 §4's own forwarding gate -- with it ON, a child's text
+  // and its tool_use/tool_result blocks reach the parent's wire stamped with `parent_tool_use_id`,
+  // which is the whole point of the scenario below. Off (the default) for every pre-existing
+  // scenario, so none of their traces move.
+  forwardSubagentText?: boolean;
+  // Phase 4 fix wave: extra environment for the runtime process on every leg -- see spawnHook.
+  env?: Record<string, string | undefined>;
 }
 
 interface ScenarioResult {
@@ -334,7 +351,7 @@ async function traceViaQuery(leg: LegName, scenario: QueryScenarioOptions): Prom
       options: {
         model: FIXTURE_MODEL,
         cwd: FIXTURE_CWD,
-        spawnClaudeCodeProcess: spawnHook(leg, scenario.testProviderName, capture),
+        spawnClaudeCodeProcess: spawnHook(leg, scenario.testProviderName, capture, scenario.env),
         ...(abortController ? { abortController } : {}),
         ...(scenario.sessionId !== undefined ? { sessionId: scenario.sessionId } : {}),
         ...(scenario.resume !== undefined ? { resume: scenario.resume } : {}),
@@ -347,6 +364,7 @@ async function traceViaQuery(leg: LegName, scenario: QueryScenarioOptions): Prom
         ...(scenario.sandbox !== undefined ? { sandbox: scenario.sandbox } : {}),
         ...(scenario.mcpServers !== undefined ? { mcpServers: scenario.mcpServers } : {}),
         ...(scenario.capabilities !== undefined ? { capabilities: scenario.capabilities } : {}),
+        ...(scenario.forwardSubagentText !== undefined ? { forwardSubagentText: scenario.forwardSubagentText } : {}),
       },
     });
     for await (const msg of gen) {
@@ -1373,10 +1391,87 @@ function registerEquivalenceScenarios(legA: LegName, legB: LegName): void {
     expect(payload.content[0]!.text).toBe("child finished");
     expect(payload.prompt).toBe(SUBAGENT_CHILD_PROBE_TEXT);
     expect(typeof payload.agentId).toBe("string");
-    // The correlation key is the MODEL's own tool_use id now (rider 14), never a synthetic uuid --
-    // asserted here on the wire rather than only at the unit level.
+    // Phase 4 fix wave (T8 review I2): this assertion is a NEGATIVE control -- the Agent tool
+    // genuinely spawned rather than answering the "no child engine factory" error. The comment that
+    // used to sit here claimed it asserted `parent_tool_use_id` on the wire, which it never did (and
+    // could not: this scenario runs with forwardSubagentText OFF and a child that emits no tool
+    // calls, so no child frame reaches the wire at all). The real cross-leg proof is the scenario
+    // immediately below, added by the fix wave.
     expect(JSON.stringify(a.trace)).not.toContain("no child engine factory");
   }, 20_000);
+
+  // Phase 4 fix wave (task-8 review I2 + whole-branch KNOWN 11): the ONE scenario that closes both
+  // halves rider 6 named and the P4-I cross-leg gap.
+  //
+  //  * `forwardSubagentText: true` -- so the child's own frames actually reach the parent's wire.
+  //  * the child makes a REAL tool call of its own ("subagentperm"), under `default` mode with no
+  //    matching rule, so it reaches a genuine permission `control_request`.
+  //  * that request is answered by the host THROUGH THE WRAPPER (query()'s own canUseTool handler),
+  //    and only AFTER twice the (shortened) child stall timeout -- so rider 20's watchdog pause is
+  //    load-bearing here rather than trivially beaten, exactly as the in-process test now is.
+  //
+  // Everything asserted is leg-invariant by construction: `test_tool`'s echo output is byte-
+  // identical across the in-memory stand-in and main.ts's stubExecutor fallback, and the ids are the
+  // fixture provider's own fixed literals, never uuids.
+  test("fix wave: a child's own tool call is forwarded to the wire stamped with parent_tool_use_id, its late permission answer is honoured, identically on every leg", async () => {
+    const CHILD_STALL_MS = 120;
+    const run = (leg: LegName) =>
+      traceViaQuery(leg, {
+        prompt: "run the subagent",
+        testProviderName: "subagentperm",
+        allowedTools: ["Agent"], // the PARENT's own Agent call is pre-approved; only the CHILD's call prompts
+        permissionMode: "default",
+        forwardSubagentText: true,
+        env: { WINTER_ASYNC_AGENT_STALL_TIMEOUT_MS: String(CHILD_STALL_MS) },
+        canUseTool: async () => {
+          // Answer LATE: twice the child's stall timeout, with the request outstanding. Without the
+          // rider-20 pause the child would be reaped before this resolves and the tool_result below
+          // would never exist.
+          await new Promise((r) => setTimeout(r, CHILD_STALL_MS * 2));
+          return { behavior: "allow", updatedInput: {} };
+        },
+      });
+    const a = await run(legA);
+    const b = await run(legB);
+    expect(compareTraces(scrubJsonToolResults(a.trace), scrubJsonToolResults(b.trace))).toEqual([]);
+    expect(a.thrown).toBeUndefined();
+    expect(b.thrown).toBeUndefined();
+
+    // The parent's own Agent tool_use id -- read from the wire, never hardcoded here, so the
+    // assertion below compares two values the RUNTIME produced rather than two literals this test
+    // chose.
+    const parentToolUseId = (a.trace.find((e) => e.kind === "assistant")!.payload as { message: { content: Array<{ type: string; id?: string; name?: string }> } }).message.content.find(
+      (blk) => blk.type === "tool_use" && blk.name === "Agent",
+    )!.id;
+    expect(parentToolUseId).toBe("agent-call-1");
+
+    // The CHILD's own tool_use block, forwarded onto the parent's stream and stamped with the
+    // parent's tool_use id (WS-10 §4). Before the fix wave `parent_tool_use_id` appeared in ZERO
+    // equivalence scenarios and ZERO goldens.
+    const childToolUse = a.trace.find(
+      (e) =>
+        e.kind === "assistant" &&
+        (e.payload as { parent_tool_use_id?: string }).parent_tool_use_id !== undefined &&
+        ((e.payload as { message: { content: Array<{ type: string; name?: string }> } }).message.content ?? []).some((blk) => blk.type === "tool_use" && blk.name === "ReadNotifications"),
+    );
+    expect(childToolUse, "the child's own tool_use must reach the wire").toBeDefined();
+    expect((childToolUse!.payload as { parent_tool_use_id?: string }).parent_tool_use_id).toBe(parentToolUseId);
+
+    // ...and the child's tool actually EXECUTED (the late answer was honoured), with its
+    // tool_result likewise correlated.
+    const childToolResult = a.trace.find(
+      (e) =>
+        e.kind === "user" &&
+        (e.payload as { parent_tool_use_id?: string }).parent_tool_use_id === parentToolUseId &&
+        ((e.payload as { message: { content: Array<{ tool_use_id?: string }> } }).message.content ?? []).some((blk) => blk.tool_use_id === "child-call-1"),
+    );
+    expect(childToolResult, "the child's tool must have executed after the late permission answer").toBeDefined();
+    const resultBlock = (childToolResult!.payload as { message: { content: Array<{ tool_use_id?: string; content?: string }> } }).message.content.find((blk) => blk.tool_use_id === "child-call-1")!;
+    expect(resultBlock.content).toContain('"notifications":[]');
+    // Same on the other leg, pinned by VALUE so a shared regression (both legs dropping the field)
+    // cannot pass compareTraces alone.
+    expect(JSON.stringify(b.trace)).toContain('"parent_tool_use_id":"agent-call-1"');
+  }, 30_000);
 
   // Phase 4 Task 8: a SendMessage-to-child round, on every leg. Composes THREE things this task
   // wired that no earlier scenario could exercise together: the entrypoint child-engine factory
