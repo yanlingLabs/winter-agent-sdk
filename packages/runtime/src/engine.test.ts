@@ -16,7 +16,7 @@ import { WinterCompatibilitySessionStore, splitFrames, encodeFrame, compatibilit
 import type { SpawnedRuntimeProcess } from "@yanlinglabs/winter-agent-sdk";
 import { createInMemoryChannel } from "./protocol/channel.ts";
 import { runEngine, providerMessageContentToText, type Provider, type ProviderMessage, type ContentBlock, type ToolExecutor, type SessionPersistence } from "./engine.ts";
-import { getRegisteredTool, registerMcpServerTools, unregisterMcpServerTools, replaceExecutor } from "./tools/registry.ts";
+import { getRegisteredTool, registerMcpServerTools, unregisterMcpServerTools, replaceExecutor, registerTool, unregisterToolForTest } from "./tools/registry.ts";
 import { ADVISOR_TOOL_NAME } from "./tools/impl/advisor.ts";
 import "./tools/impl/index.ts"; // guarantees advisor.ts's own module-load default is registered before the M6 tests below run
 import { echoProvider, scriptedProvider, stubExecutor } from "./provider/mock.ts";
@@ -2906,6 +2906,69 @@ describe("Phase 4 Task 3: load-first execution boundary (MUST 6, WS-09 §8.2/§8
       expect(block?.content).toBe("real result");
     } finally {
       unregisterMcpServerTools(SRV);
+    }
+  });
+});
+
+describe("Phase 4 Task 3: ctx.emitToolReference (MUST 6, WS-09 §8.2/§8.3)", () => {
+  test("emits a tool_reference block on the wire AND marks the names loaded, making a previously load-first-rejected call succeed on a later turn", async () => {
+    const SRV = "t3-toolref-fixture";
+    registerMcpServerTools(SRV, [{ name: "search_docs", inputSchema: { type: "object" } }], { deferredDefault: true });
+    const canonicalName = `mcp__${SRV}__search_docs`;
+    replaceExecutor(canonicalName, { async execute() { return { output: "real result" }; } });
+    const SELECT_TOOL = "__t3_select_stand_in__";
+    registerTool({
+      descriptor: {
+        canonicalName: SELECT_TOOL,
+        advertisedName: SELECT_TOOL,
+        source: "sdk",
+        inputSchema: { type: "object" },
+        description: "test-only stand-in for Lane B's own ToolSearch executor",
+        exposure: "hidden",
+        permissionClass: "read",
+        availability: {},
+        capabilityRequirements: [],
+        disposition: "implement-now",
+      },
+      executor: {
+        async execute(_input, ctx) {
+          ctx.emitToolReference?.([canonicalName]);
+          return { output: "selected" };
+        },
+      },
+    });
+    try {
+      const { host, runtime } = createInMemoryChannel();
+      const provider = scriptedProvider([
+        { kind: "tool_use", calls: [{ id: "call-1", name: SELECT_TOOL, input: {} }] },
+        { kind: "tool_use", calls: [{ id: "call-2", name: canonicalName, input: {} }] },
+        { kind: "text", text: "done" },
+      ]);
+      const done = runEngine({
+        config: baseConfig({ permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true, toolSearchEnabled: true, capabilities: ["winter.mcp"] }),
+        input: runtime.input,
+        output: runtime.output,
+        provider,
+        providerSupportsToolSearch: true,
+        deferrableContextShare: 100,
+      });
+      sendAndCollectUntilResult(host);
+      const frames = await drain(host.input);
+      await done;
+
+      const msgs = dataMessages(frames);
+      const toolRefMsg = msgs.find((m) => m.type === "assistant" && Array.isArray((m as { message: { content: Array<{ type: string }> } }).message.content) && (m as { message: { content: Array<{ type: string }> } }).message.content[0]?.type === "tool_reference") as
+        | { message: { content: Array<{ type: string; tool_names: string[] }> } }
+        | undefined;
+      expect(toolRefMsg?.message.content[0]?.tool_names).toEqual([canonicalName]);
+
+      const userMsgs = msgs.filter((m) => m.type === "user") as unknown as Array<{ message: { content: Array<{ tool_use_id: string; loadFirst?: boolean; content: string }> } }>;
+      const call2Result = userMsgs.flatMap((m) => m.message.content).find((b) => b.tool_use_id === "call-2");
+      expect(call2Result?.loadFirst).toBeUndefined();
+      expect(call2Result?.content).toBe("real result");
+    } finally {
+      unregisterMcpServerTools(SRV);
+      unregisterToolForTest(SELECT_TOOL);
     }
   });
 });

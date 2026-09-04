@@ -124,6 +124,12 @@ import { DEFAULT_SANDBOX_SETTINGS } from "./sandbox/profile.ts";
 export type ContentBlock =
   | { type: "text"; text: string }
   | { type: "tool_use"; id: string; name: string; input: unknown }
+  // Phase 4 Task 3 (MUST 6, WS-09 §8.2/§8.3): "successful selection returns tool_reference blocks
+  // making the tools callable next step." WINTER-OWNED shape -- T1's own item (c) finding is that
+  // `tool_reference` is declaration-absent from the pinned official artifact entirely (sourced there
+  // only from a runtime capture, never a .d.ts line), so there is nothing to mirror byte-for-byte;
+  // `tool_names` is this shape's own, most direct rendering of "which names just became callable."
+  | { type: "tool_reference"; tool_names: string[] }
   // `interrupted`/`error`/`denied`/`deferred`/`loadFirst` are optional and set ONLY on a synthetic
   // tool_result the engine manufactures instead of actually executing the call — `interrupted` for
   // an abandoned-mid-interrupt call (Ruling P1-G), `error` for a call whose tool executor threw
@@ -168,6 +174,11 @@ export function providerMessageContentToText(content: string | ContentBlock[]): 
     .map((block) => {
       if (block.type === "text") return block.text;
       if (block.type === "tool_use") return `[called ${block.name}]`;
+      // Phase 4 Task 3: tool_reference is a streaming-only block (emitToolReference below writes it
+      // straight to `output`, never into this engine's own `messages` turn history) -- reachable
+      // here only if a future caller ever DOES push one into `messages`; a short, human-legible
+      // summary rather than a `.content` access that (unlike tool_result) this variant has none of.
+      if (block.type === "tool_reference") return `[tools now callable: ${block.tool_names.join(", ")}]`;
       return block.content;
     })
     .join("\n");
@@ -934,6 +945,18 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
       // "delivers these frames onto the wire in order").
       emitFrame: (frame: BackgroundTaskMessage): void => {
         output.write({ type: "data", message: frame });
+      },
+      // Phase 4 Task 3 (MUST 6, WS-09 §8.2/§8.3): the real fill for ToolExecutionContext.
+      // emitToolReference -- see that field's own comment for why this bundles BOTH marking
+      // `names` loaded (closing the load-first execution-boundary check, isDeferredAndUnloaded
+      // above) and the wire emission into one call. `loadedToolSet` is referenced here by
+      // CLOSURE-BINDING, not by value -- this callback only ever runs when a real executor (Lane
+      // B's future ToolSearch tool) actually invokes it, well after `loadedToolSet` is assigned
+      // below (the identical "declared later, read at call time" pattern buildChildInheritance's
+      // own `messages` reference already uses in this same function).
+      emitToolReference: (names: string[]): void => {
+        loadedToolSet.load(names);
+        output.write({ type: "data", message: { type: "assistant", message: { content: [{ type: "tool_reference", tool_names: names }] } } });
       },
       session: {
         setCwd(p: string): void {

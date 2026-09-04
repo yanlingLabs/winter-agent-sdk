@@ -198,6 +198,19 @@ export interface ToolExecutionContext {
   // emitFrame closure can hand the value straight to `output.write` with no unchecked cast (see that
   // closure's own header comment, and this field's sibling on RegistryToolExecutorDeps below).
   emitFrame: (frame: BackgroundTaskMessage) => void;
+  // Phase 4 Task 3 (MUST 6, WS-09 §8.2/§8.3): the `tool_reference`-emission seam Lane B's own
+  // ToolSearch executor calls immediately after a successful selection ("Successful selection
+  // returns tool_reference blocks making the tools callable next step"). Deliberately bundles BOTH
+  // halves of "make it callable" into one call: it marks `names` loaded in this session's own
+  // LoadedToolSet (satisfying the load-first execution-boundary check, engine.ts's own
+  // isDeferredAndUnloaded) AND emits the wire-level tool_reference block telling the MODEL those
+  // names are now callable -- a caller can never do one without the other, closing the split-brain
+  // a two-seam design would allow. No pinned official shape exists to mirror (T1's own item (c)
+  // finding: `tool_reference` is declaration-absent, sourced only from a runtime capture) -- the
+  // wire shape this emits is WINTER-OWNED (see engine.ts's own real implementation). OPTIONAL, same
+  // "~25 unrelated test files with no central ctx builder" reason as insideSubagent/agentId/
+  // spawnChild above; the real engine always supplies it.
+  emitToolReference?: (names: string[]) => void;
   permissions: { probeReadAccess(filePath: string): ReadAccessProbe };
   tempDir: string;
   // Task 8 (P3 close-out, "Settings threading" MUST): the session's EFFECTIVE sandbox configuration
@@ -823,6 +836,9 @@ export interface RegistryToolExecutorDeps {
   // Phase 3 Task 2: same narrowing as ToolExecutionContext.emitFrame above -- this is the deps-level
   // value that field is built from, just below.
   emitFrame: (frame: BackgroundTaskMessage) => void;
+  // Phase 4 Task 3 (MUST 6): the deps-level value ToolExecutionContext.emitToolReference is built
+  // from -- see that field's own comment.
+  emitToolReference?: (names: string[]) => void;
   session: ToolExecutionContext["session"];
   readState: SessionReadState;
   // A getter, not a string: see this module's own `ToolExecutionContext.tempDir` field and
@@ -861,6 +877,7 @@ export function buildRegistryToolExecutor(deps: RegistryToolExecutorDeps): Engin
         sessionId: deps.sessionId,
         readState: deps.readState,
         emitFrame: deps.emitFrame,
+        ...(deps.emitToolReference !== undefined ? { emitToolReference: deps.emitToolReference } : {}),
         permissions: { probeReadAccess: deps.probeReadAccess },
         get tempDir() {
           return deps.getTempDir();
