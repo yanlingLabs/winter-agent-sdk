@@ -606,7 +606,10 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
       // which has no live client to re-query yet -- see this file's own header on that scope
       // choice, and "pending"/"failed"/"needsAuth"/"disabled"/"unconfigured", none of which have
       // one either).
-      return { ok: false, reason: `server "${name}" is not connected (state: ${slot?.state ?? "unconfigured"}) -- RefreshMcpTools never establishes a new connection` };
+      // `slot` is guaranteed defined here (the `!slot` branch above already returned) -- no `??`
+      // fallback needed, and none of this state board's real states is ever literally
+      // "unconfigured" (see the constructor's own comment on that deliberate choice).
+      return { ok: false, reason: `server "${name}" is not connected (state: ${slot.state}) -- RefreshMcpTools never establishes a new connection` };
     }
     const client = slot.client;
     try {
