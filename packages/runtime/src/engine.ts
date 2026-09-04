@@ -15,6 +15,9 @@ import {
   type PermissionMode,
   type BackgroundTaskMessage,
   compatibilityKeys,
+  // Phase 5 Task 2 (R5-3/R5-4): the session defaults are exported CONSTANTS, resolved here when the
+  // corresponding RuntimeConfig field is absent -- never baked into the wire by query.ts.
+  DEFAULT_CONTEXT_WINDOW_TOKENS,
 } from "@yanlinglabs/winter-agent-sdk";
 import type { FrameSource, FrameSink } from "./protocol/channel.ts";
 import { Queue } from "./protocol/channel.ts";
@@ -214,9 +217,47 @@ export function providerMessageContentToText(content: string | ContentBlock[]): 
     .join("\n");
 }
 
+// --- Phase 5 Task 2 (R5-3): the provider seam extension -------------------------------------------
+//
+// P1 fixed `Provider.generate` at `{ messages }`. Two things P5 needs cross that boundary and had
+// nowhere to ride: the assembled SYSTEM PROMPT (WS-11 §6 -- and, per R5-3, the channel that RETIRES
+// P4-J's first-turn concatenation of `AgentDefinition.prompt` into the message history) and the
+// per-generation TOKEN USAGE the compaction trigger reads (R5-4).
+//
+// Both are OPTIONAL and both are ADDITIVE: every pre-existing Provider implementation -- the mock
+// family, every test double, every scripted fixture -- keeps satisfying this interface unchanged,
+// and a producer that has nothing to say omits the key entirely rather than sending `undefined`
+// (`exactOptionalPropertyTypes`). P6's real provider adapters CONSUME this seam and must never
+// redefine it.
+export interface ProviderRequest {
+  messages: ProviderMessage[];
+  /**
+   * The assembled system prompt for this generation.
+   *
+   * ONE PRODUCER, deliberately. At Task 2 nothing in runEngine sets it -- Task 3 owns prompt
+   * assembly, and a second producer here is exactly the failure mode a new optional field invites
+   * (nothing fails to compile when a producer simply doesn't set it, so the sweep has to be by
+   * MEANING, not by build breakage). A consumer must therefore treat an absent `system` as "this
+   * host supplied no system prompt", never as an error.
+   */
+  system?: string;
+}
+
+/**
+ * Per-generation token accounting (R5-3). `inputTokens`/`outputTokens` are required because a
+ * provider that reports usage at all always knows both; the cache counters are optional because not
+ * every provider family exposes them.
+ */
+export interface ProviderUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
+}
+
 export type ProviderTurn =
-  | { kind: "text"; text: string }
-  | { kind: "tool_use"; calls: Array<{ id: string; name: string; input: unknown }> }
+  | { kind: "text"; text: string; usage?: ProviderUsage }
+  | { kind: "tool_use"; calls: Array<{ id: string; name: string; input: unknown }>; usage?: ProviderUsage }
   // Task 2 (WS-04 §3.1): a P1-only test-affordance turn kind (WINTER_TEST_PROVIDER=rpcprobe,
   // provider/mock.ts) that proves the runtime-originated control-RPC bridge round trip end-to-end
   // on every transport leg (the transport-equivalence suite's rpcprobe scenario). The ENGINE
@@ -225,10 +266,52 @@ export type ProviderTurn =
   // plain, transport-agnostic function for every other turn kind. REMOVE at P6 alongside
   // provider/mock.ts's whole test-provider family; a real permission/hook RPC (Tasks 8/10) is
   // issued from the evaluator/hook runner, not from this turn kind.
-  | { kind: "rpc_probe"; subtype: string; payload: unknown };
+  | { kind: "rpc_probe"; subtype: string; payload: unknown; usage?: ProviderUsage };
 
 export interface Provider {
-  generate(input: { messages: ProviderMessage[] }): Promise<ProviderTurn>;
+  generate(input: ProviderRequest): Promise<ProviderTurn>;
+}
+
+/**
+ * The session's running context-window accounting (R5-3), and the input R5-4's compaction trigger
+ * reads: compact when `contextTokens() >= compactionThreshold * limit()`.
+ *
+ * `contextTokens()` is the LAST generation's input + output, not a running total -- an accumulated
+ * sum would grow without bound across a conversation and cross any threshold regardless of how much
+ * context actually survives, which is the opposite of what the trigger means. Cache read/write
+ * counters are informational and deliberately excluded: they describe how the same input was BILLED,
+ * not how much of the window it occupies.
+ *
+ * `limit()` is `contextWindowTokens` -- a DISCLOSED Winter session option, default 200000, until P6's
+ * model catalogue supplies real per-model values. The pin has no per-session equivalent at all (its
+ * nearest relative is the `autoCompactWindow` SETTING, `sdk.d.ts:7599`).
+ */
+export interface ContextAccountant {
+  contextTokens(): number;
+  limit(): number;
+  record(usage: ProviderUsage): void;
+}
+
+// Re-exported so a lane reads the seam's default from the SAME module the seam itself lives in
+// rather than reaching for the sdk barrel for one number (the value is declared once, in
+// packages/sdk/src/options.ts).
+export { DEFAULT_CONTEXT_WINDOW_TOKENS };
+
+export interface ContextAccountantOptions {
+  /** Defaults to DEFAULT_CONTEXT_WINDOW_TOKENS. A non-positive value is ignored (the default stands) rather than producing a limit no session could ever sit under. */
+  limit?: number;
+}
+
+export function createContextAccountant(opts: ContextAccountantOptions = {}): ContextAccountant {
+  const limit = typeof opts.limit === "number" && Number.isFinite(opts.limit) && opts.limit > 0 ? opts.limit : DEFAULT_CONTEXT_WINDOW_TOKENS;
+  let last = 0;
+  return {
+    contextTokens: () => last,
+    limit: () => limit,
+    record(usage: ProviderUsage) {
+      last = usage.inputTokens + usage.outputTokens;
+    },
+  };
 }
 
 export interface ToolExecutor {
@@ -357,6 +440,11 @@ export interface EngineOptions {
   // three mutating subtypes answer a structured `mcp_unavailable` error (the subtype IS recognized;
   // it just has nothing to dispatch to yet) rather than the pump's generic `unknown_subtype`.
   mcpControlSeam?: McpControlSeam;
+  // Phase 5 Task 2 (R5-3): this run's context accounting. Caller-supplied always wins (the same
+  // "I own this stack" precedence `mcpServerStateSource`/`mcpControlSeam` above already have);
+  // otherwise the engine builds one from `config.contextWindowTokens` (absent = the disclosed
+  // 200000 default). Task 3/Lane K are the consumers -- the engine itself only RECORDS into it.
+  contextAccountant?: ContextAccountant;
   // Phase 4 Task 3 (MUST 8): called ONCE, synchronously, near the start of the run, handing the
   // caller a live getter over this run's own child roster -- the ONE exposure point
   // MessagingRouterSeam.children() (messaging/adapter.ts) is meant to be built from. No routing
@@ -481,6 +569,7 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
     deferrableContextShare,
     mcpServerStateSource,
     mcpControlSeam,
+    contextAccountant: injectedContextAccountant,
   } = opts;
 
   // Task 6 (WS-07 §2/§6.4, Ruling 8): permission startup validation — deliberately the very FIRST
@@ -614,6 +703,13 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // the settings layer (`applyWorkspaceTrust`), never here — deriving it from this bit would leave
   // an untrusted repository's project-tier `deny` silently unenforced.
   const trustedWorkspace = defaultTrustSource(config).verdict(config.cwd).trusted;
+  // Phase 5 Task 2 (R5-3): this run's context accounting. A CALLER-SUPPLIED accountant always wins
+  // -- that is how Task 3's contract tests inject a fake, and how a host that owns cross-session
+  // accounting (a daemon) hands one in; otherwise the engine builds its own from the session's own
+  // `contextWindowTokens` (absent = the disclosed 200000 default, resolved here rather than on the
+  // wire). Same precedence convention as `mcpServerStateSource`/`mcpControlSeam` below.
+  const contextAccountant: ContextAccountant =
+    injectedContextAccountant ?? createContextAccountant(config.contextWindowTokens !== undefined ? { limit: config.contextWindowTokens } : {});
   const hookRegistry = buildHookRegistry(buildHookEntriesFromConfig(config.hooks), { trustedWorkspace });
   const hookInvoker: HookInvoker = createBridgeHookInvoker(bridge);
   // Auxiliary, exactly like recordUser/recordAssistant/recordPermissionUpdate further down (same
@@ -2277,6 +2373,13 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
           break roundLoop;
         }
         turn = raced.value;
+        // Phase 5 Task 2 (R5-3): the ONE place this run folds a generation's reported usage into
+        // the session's context accounting. A provider that reports no usage (every P1/P3/P4 test
+        // double, and any real provider family that omits it) simply leaves the accountant reading
+        // whatever the last reporting turn said -- never a fabricated number. Nothing in this phase
+        // ACTS on the accountant yet: R5-4's threshold read and the compaction it triggers are Task
+        // 3's and Lane K's, which is why the accountant is also an EngineOptions injection point.
+        if (turn.usage !== undefined) contextAccountant.record(turn.usage);
       } catch (err) {
         const text = err instanceof Error ? err.message : String(err);
         finalResult = { type: "result", subtype: "error_during_execution", is_error: true, result: text };

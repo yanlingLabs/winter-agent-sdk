@@ -1,6 +1,58 @@
 import { randomUUID } from "node:crypto";
-import type { Provider, ProviderTurn, ToolExecutor } from "../engine.ts";
+import type { Provider, ProviderRequest, ProviderTurn, ProviderUsage, ToolExecutor } from "../engine.ts";
 import { registerTool } from "../tools/registry.ts";
+
+// --- Phase 5 Task 2 (R5-3): the mock family's half of the provider-seam extension ------------------
+//
+// Two obligations, applied UNIFORMLY to every provider this module hands out (echoProvider,
+// scriptedProvider, and all seventeen `WINTER_TEST_PROVIDER` modes) rather than to a new
+// "usage-aware" mode nobody's existing fixture selects:
+//
+//   1. RECORD the `system` it was handed, so a producer/consumer contract test can prove the field
+//      actually crossed the seam rather than merely type-checking;
+//   2. report SYNTHETIC per-generation usage, so ContextAccountant has something to accumulate on
+//      every transport leg -- including the compiled binary, which can only select a provider by
+//      env name and could never be handed an in-process usage-reporting closure.
+//
+// Neither changes any mode's own behaviour: the recorded value is write-only test state, the
+// synthetic usage rides an OPTIONAL field nothing in this phase serializes onto the wire (so every
+// committed differential golden stays byte-identical), a turn that already carries its own `usage`
+// keeps it, and a mode that throws still throws with the same message.
+
+const recordedSystems: Array<string | undefined> = [];
+
+/** Every `system` value handed to a mock provider this process, in call order. Test-only. */
+export function recordedProviderSystems(): readonly (string | undefined)[] {
+  return recordedSystems;
+}
+
+/** Clears the recording. A test that asserts on the log MUST call this first -- the log is process-wide, like the tool registry. */
+export function resetRecordedProviderSystems(): void {
+  recordedSystems.length = 0;
+}
+
+// Deterministic by construction: the same request and the same turn always produce the same
+// numbers, on every leg and every run. A crude chars/4 estimate -- this is a stand-in for a real
+// provider's reported usage (P6), never a tokenizer.
+function syntheticUsage(input: ProviderRequest, turn: ProviderTurn): ProviderUsage {
+  const messageChars = input.messages.reduce((n, m) => n + (typeof m.content === "string" ? m.content.length : JSON.stringify(m.content).length), 0);
+  const inputChars = (input.system?.length ?? 0) + messageChars;
+  const outputChars =
+    turn.kind === "text" ? turn.text.length : turn.kind === "tool_use" ? JSON.stringify(turn.calls).length : JSON.stringify(turn.payload ?? null).length;
+  return { inputTokens: Math.max(1, Math.ceil(inputChars / 4)), outputTokens: Math.max(1, Math.ceil(outputChars / 4)) };
+}
+
+/** Wraps one mock Provider with the two seam obligations above. Applied at every hand-out point in this file. */
+function instrumentMockProvider(provider: Provider): Provider {
+  return {
+    async generate(input: ProviderRequest): Promise<ProviderTurn> {
+      recordedSystems.push(input.system);
+      const turn = await provider.generate(input);
+      if (turn.usage !== undefined) return turn;
+      return { ...turn, usage: syntheticUsage(input, turn) };
+    },
+  };
+}
 
 // Task 3 moved Provider from prompt-based (`generate({prompt}): Promise<{text}>`) to
 // messages-based (`generate({messages}): Promise<ProviderTurn>`) to support multi-turn
@@ -8,25 +60,25 @@ import { registerTool } from "../tools/registry.ts";
 // the latest user turn's text — so the differential golden (which pins this provider's output)
 // stays unchanged; it just reads that text out of the accumulated history instead of a single
 // `{prompt}` field.
-export const echoProvider: Provider = {
+export const echoProvider: Provider = instrumentMockProvider({
   async generate({ messages }) {
     const lastUser = [...messages].reverse().find((m) => m.role === "user");
     const text = typeof lastUser?.content === "string" ? lastUser.content : "";
     return { kind: "text", text: `echo: ${text}` };
   },
-};
+});
 
 // Pops one scripted turn per generate() call, in the array's given order. Throws once exhausted
 // (a scripted conversation that ran longer than scripted is a test bug, not a silent echo).
 export function scriptedProvider(turns: ProviderTurn[]): Provider {
   const queue = [...turns];
-  return {
+  return instrumentMockProvider({
     async generate() {
       const next = queue.shift();
       if (!next) throw new Error("scriptedProvider: no more scripted turns");
       return next;
     },
-  };
+  });
 }
 
 // Deterministic, dependency-free tool double: echoes `${name}:${JSON.stringify(input)}`.
@@ -107,7 +159,13 @@ export function isTestProviderName(v: string): v is TestProviderName {
   return TEST_PROVIDER_NAMES.has(v);
 }
 
+// Phase 5 Task 2 (R5-3): the seventeen env-selectable modes are instrumented at the ONE hand-out
+// point, so no mode's own body had to change and no mode can be added later that forgets to.
 export function testProviderByName(name: TestProviderName): Provider {
+  return instrumentMockProvider(rawTestProviderByName(name));
+}
+
+function rawTestProviderByName(name: TestProviderName): Provider {
   switch (name) {
     // error-result-then-throw fixture (WS-03 §11 / report §9): a provider that always throws,
     // so the engine's catch-and-convert-to-error-result path is reachable from a real child too.

@@ -1,0 +1,168 @@
+// RULING R5-2 (2026-09-04-winter-phase-05-workflows-skills-context.md): every seam Task 2/Task 3
+// ships is accompanied by an executable contract test -- a PRODUCER FAKE plus the CONSUMER
+// SEMANTICS -- that both sides keep green. This is the P4 file's own shape (tools/
+// seam-contracts-p4.test.ts, subagents/seam-contracts-p4.test.ts) carried into Phase 5.
+//
+// LANES W/S/C/K: THIS FILE IS THE SEAM AUTHORITY -- keep it green; do not edit it. If your change
+// makes one of these tests fail, your change is inconsistent with the seam contract Task 2 pinned,
+// not a reason to relax the assertion. If the contract itself is genuinely wrong, that is a spine
+// change: raise it with the controller rather than editing this file from a lane worktree (R5-12's
+// no-touch list names this task's files, not lane territory).
+//
+// Sections, one per seam Task 2 produces:
+//   (i)   the provider seam extension -- ProviderRequest.system, ProviderTurn.usage, ContextAccountant (R5-3)
+//   (ii)  onCompaction -- the deferred loaded-set reset (R5-4 / WS-09 §8.5)
+//   (iii) settings resolution + the two trust filters (R5-8 as amended, RULING P5-A)
+//   (iv)  the WorkspaceTrustSource seam (R5-6 -> P5-A)
+//   (v)   loadAgentDefinitions' pluginAgents tier (R4-7 carry)
+//   (vi)  buildHookEntriesFromSettings -> buildHookRegistry (WS-08 OQ3 absorbed here)
+//   (vii) ajv (R5-7) -- both dialects, and the error shape capture (6) observed
+import { describe, test, expect } from "bun:test";
+import Ajv from "ajv";
+import Ajv2020 from "ajv/dist/2020.js";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  createContextAccountant,
+  DEFAULT_CONTEXT_WINDOW_TOKENS,
+  type ContextAccountant,
+  type Provider,
+  type ProviderRequest,
+  type ProviderTurn,
+  type ProviderUsage,
+} from "../engine.ts";
+import { echoProvider, scriptedProvider, testProviderByName, recordedProviderSystems, resetRecordedProviderSystems } from "../provider/mock.ts";
+
+// --- (i) the provider seam extension (R5-3) -------------------------------------------------------
+
+describe("(i) provider seam: system prompt in, usage out, and the accountant that reads it", () => {
+  test("a PRODUCER passes `system` alongside `messages`; a CONSUMER may ignore it and still satisfy Provider", async () => {
+    let seen: ProviderRequest | undefined;
+    const consumer: Provider = {
+      async generate(input) {
+        seen = input;
+        return { kind: "text", text: "ok" };
+      },
+    };
+    await consumer.generate({ messages: [{ role: "user", content: "hi" }], system: "you are winter" });
+    expect(seen?.system).toBe("you are winter");
+    expect(seen?.messages).toHaveLength(1);
+    // `system` is OPTIONAL: a producer that has no assembled prompt yet omits the key entirely,
+    // which is exactly what runEngine does at Task 2 (Task 3 owns the one producer -- there must
+    // never be a second, per the "sweep producers by MEANING" lesson).
+    await consumer.generate({ messages: [] });
+    expect(seen).not.toHaveProperty("system");
+  });
+
+  test("the mock provider records the `system` it was handed, on EVERY mode", async () => {
+    resetRecordedProviderSystems();
+    await echoProvider.generate({ messages: [{ role: "user", content: "hi" }], system: "S1" });
+    await scriptedProvider([{ kind: "text", text: "x" }]).generate({ messages: [], system: "S2" });
+    await testProviderByName("reflect").generate({ messages: [], system: "S3" });
+    expect(recordedProviderSystems()).toEqual(["S1", "S2", "S3"]);
+  });
+
+  test("recording never changes a mock mode's own behaviour", async () => {
+    resetRecordedProviderSystems();
+    const echoed = await echoProvider.generate({ messages: [{ role: "user", content: "hi" }] });
+    expect(echoed).toMatchObject({ kind: "text", text: "echo: hi" });
+
+    const scripted = scriptedProvider([{ kind: "tool_use", calls: [{ id: "c1", name: "t", input: {} }] }]);
+    expect(await scripted.generate({ messages: [] })).toMatchObject({ kind: "tool_use" });
+    // still throws once exhausted -- the wrapper must not swallow it
+    await expect(scripted.generate({ messages: [] })).rejects.toThrow("no more scripted turns");
+
+    const boom = testProviderByName("boom");
+    await expect(boom.generate({ messages: [] })).rejects.toThrow("scripted failure");
+  });
+
+  test("a mock turn carries synthetic `usage` -- deterministic, and never overwriting a turn that already has one", async () => {
+    const a = await echoProvider.generate({ messages: [{ role: "user", content: "hello there" }] });
+    const b = await echoProvider.generate({ messages: [{ role: "user", content: "hello there" }] });
+    expect(a.usage).toBeDefined();
+    expect(a.usage).toEqual(b.usage as ProviderUsage); // same input -> same synthetic usage
+    expect(a.usage!.inputTokens).toBeGreaterThan(0);
+    expect(a.usage!.outputTokens).toBeGreaterThan(0);
+
+    const explicit: ProviderTurn = { kind: "text", text: "x", usage: { inputTokens: 7, outputTokens: 9 } };
+    const scripted = await scriptedProvider([explicit]).generate({ messages: [] });
+    expect(scripted.usage).toEqual({ inputTokens: 7, outputTokens: 9 });
+  });
+
+  test("ContextAccountant: contextTokens() is the LAST turn's input+output, not a running total (R5-3 verbatim)", () => {
+    const accountant: ContextAccountant = createContextAccountant();
+    expect(accountant.contextTokens()).toBe(0); // nothing recorded yet
+    accountant.record({ inputTokens: 100, outputTokens: 20 });
+    expect(accountant.contextTokens()).toBe(120);
+    accountant.record({ inputTokens: 500, outputTokens: 5 });
+    expect(accountant.contextTokens()).toBe(505); // replaced, never 625
+  });
+
+  test("ContextAccountant: cache counters are informational and never enter contextTokens()", () => {
+    const accountant = createContextAccountant();
+    accountant.record({ inputTokens: 10, outputTokens: 1, cacheReadTokens: 9000, cacheWriteTokens: 9000 });
+    expect(accountant.contextTokens()).toBe(11);
+  });
+
+  test("ContextAccountant: limit() defaults to the disclosed 200000 and is configurable per session", () => {
+    expect(createContextAccountant().limit()).toBe(DEFAULT_CONTEXT_WINDOW_TOKENS);
+    expect(createContextAccountant().limit()).toBe(200000);
+    expect(createContextAccountant({ limit: 8000 }).limit()).toBe(8000);
+  });
+
+  test("ContextAccountant: the compaction trigger a consumer computes from it (R5-4's threshold read)", () => {
+    const accountant = createContextAccountant({ limit: 1000 });
+    const overThreshold = (threshold: number) => accountant.contextTokens() >= threshold * accountant.limit();
+    accountant.record({ inputTokens: 900, outputTokens: 19 });
+    expect(overThreshold(0.92)).toBe(false); // 919 < 920
+    accountant.record({ inputTokens: 900, outputTokens: 20 });
+    expect(overThreshold(0.92)).toBe(true); // 920 >= 920 -- AT the threshold counts
+  });
+});
+
+// --- (vii) ajv (R5-7) -----------------------------------------------------------------------------
+
+describe("(vii) ajv is a real runtime dependency, in both dialects Lane K/Lane W need", () => {
+  test("draft-07 compiles and validates through the default entry point", () => {
+    const ajv = new Ajv({ allErrors: true });
+    const validate = ajv.compile({ type: "object", properties: { x: { type: "number" } }, required: ["x"], additionalProperties: false });
+    expect(validate({ x: 1 })).toBe(true);
+    expect(validate({ x: "no" })).toBe(false);
+  });
+
+  test("2020-12 compiles through ajv/dist/2020 -- a SEPARATE constructor, not a flag on the default one", () => {
+    const ajv = new Ajv2020({ allErrors: true });
+    const validate = ajv.compile({ $schema: "https://json-schema.org/draft/2020-12/schema", type: "object", properties: { x: { type: "number" } }, required: ["x"] });
+    expect(validate({ x: 1 })).toBe(true);
+    expect(validate({})).toBe(false);
+  });
+
+  test("a validation failure names the JSON-Pointer path and the expected type -- capture (6)'s observed error shape", () => {
+    const ajv = new Ajv({ allErrors: true });
+    const validate = ajv.compile({ type: "object", properties: { x: { type: "number" } }, required: ["x"] });
+    validate({ x: "not-a-number" });
+    const first = validate.errors?.[0];
+    expect(first?.instancePath).toBe("/x");
+    expect(first?.message).toContain("number");
+  });
+});
+
+// Shared throwaway-directory helper for the sections that touch the filesystem (added by the later
+// slices below). Every one uses mkdtemp roots -- never ~/.winter, ~/.norma, ~/.claude (phase Global
+// Constraints).
+export function withTempTree<T>(fn: (dirs: { cwd: string; home: string }) => T): T {
+  const cwd = mkdtempSync(join(tmpdir(), "winter-p5-seam-cwd-"));
+  const home = mkdtempSync(join(tmpdir(), "winter-p5-seam-home-"));
+  try {
+    return fn({ cwd, home });
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
+  }
+}
+
+export function writeJson(path: string, value: unknown): void {
+  mkdirSync(join(path, ".."), { recursive: true });
+  writeFileSync(path, JSON.stringify(value));
+}
