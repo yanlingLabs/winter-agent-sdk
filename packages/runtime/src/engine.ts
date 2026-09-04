@@ -79,6 +79,10 @@ import type { AttributedContext } from "./hooks/reducer.ts";
 import { createHookStage } from "./hooks/hook-stage.ts";
 import { buildHookRegistry } from "./hooks/registry.ts";
 import { buildHookEntriesFromConfig } from "./hooks/from-config.ts";
+// Phase 5 Task 2 (R5-6 -> RULING P5-A): the seam that replaces this file's own P2-era
+// `const trustedWorkspace = false`. See settings/trust.ts's header for what capture (1) actually
+// found and why the per-tier permissive filter deliberately does NOT live here.
+import { defaultTrustSource } from "./settings/trust.ts";
 import { createBridgeHookInvoker } from "./hooks/bridge-invoker.ts";
 import { runHooks, type HookAuditRecord, type HookAuditRecorder, type HookInvoker, type RunHooksCallInfo } from "./hooks/runner.ts";
 // Task 11 (WS-07 §9 / WS-08 §7): the durable approval store a `defer` decision parks into, and the
@@ -596,11 +600,20 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // Finding 4 (P2 fix-wave): the SAME trust signal makeEvalCtx's own `trustedWorkspace` field
   // (below) already threads to the permission-rule side — declared once, here, so the hook registry
   // and the evaluation context can never independently drift on what "this session's workspace
-  // trust" means. Constant `false` for the identical reason makeEvalCtx's own comment gives: no
-  // settings-file loader exists yet to have actually established trust (P5); this is the SAFE
-  // direction (project/local rules stay gated; project/local hooks are now excluded wholesale, per
-  // registry.ts's own header) and P5 is the one that wires a real signal in, at both call sites.
-  const trustedWorkspace = false;
+  // trust" means.
+  //
+  // Phase 5 Task 2 (R5-6 -> RULING P5-A): this used to be a hard `false` with a comment promising
+  // "P5 is the one that wires a real signal in, at both call sites" — this is that wiring, and it is
+  // still ONE value feeding all four consumers (evaluator context, hook registry, MCP source
+  // resolver, child-rule mirror). The signal is `RuntimeConfig.trustedWorkspace`, read through
+  // settings/trust.ts's `defaultTrustSource` rather than inline, so the fail-closed default and the
+  // "never inferred from settingSources" rule live in one testable place. Absent/false is
+  // byte-identical to the P2 constant.
+  //
+  // What this is NOT: the pinned per-TIER filter on permissive rules (capture (1)). That lives in
+  // the settings layer (`applyWorkspaceTrust`), never here — deriving it from this bit would leave
+  // an untrusted repository's project-tier `deny` silently unenforced.
+  const trustedWorkspace = defaultTrustSource(config).verdict(config.cwd).trusted;
   const hookRegistry = buildHookRegistry(buildHookEntriesFromConfig(config.hooks), { trustedWorkspace });
   const hookInvoker: HookInvoker = createBridgeHookInvoker(bridge);
   // Auxiliary, exactly like recordUser/recordAssistant/recordPermissionUpdate further down (same

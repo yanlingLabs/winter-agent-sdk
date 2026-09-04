@@ -3782,3 +3782,52 @@ test("Phase 4 Task 8: a live session's ListAgents call reaches the real messagin
   // WS-10 §10.2's pinned output shape: exactly `{ listing: string }`.
   expect(Object.keys(JSON.parse(text))).toEqual(["listing"]);
 });
+
+// --- Phase 5 Task 2 (R5-6 -> RULING P5-A): the workspace-trust seam replaces `const
+// trustedWorkspace = false` ------------------------------------------------------------------------
+//
+// engine.ts has carried a hard-`false` trust constant since P2, shared by the permission evaluator,
+// the hook registry, the MCP source resolver and the child-rule mirror precisely so those four can
+// never disagree. It is now DERIVED, through settings/trust.ts's `defaultTrustSource`, from
+// `RuntimeConfig.trustedWorkspace` -- the one disclosed Winter option RULING P5-A adds.
+//
+// The discriminator is the same one the Phase-ruling-2 test above documents in its own comment: a
+// `canUseTool` answer whose `addRules` lands on `projectSettings` becomes a `source: "project"`
+// ALLOW rule, which resolveRules'/findMatchingRuleEntry's trust gate makes LIVE-INERT while the
+// workspace is untrusted. Two prompts means the project rule never widened; one means it did.
+async function countPermissionPromptsWithProjectAllow(config: RuntimeConfig): Promise<number> {
+  const { host, runtime } = createInMemoryChannel();
+  const provider = scriptedProvider([
+    { kind: "tool_use", calls: [{ id: "call1", name: "unmatched_tool", input: {} }] },
+    { kind: "tool_use", calls: [{ id: "call2", name: "unmatched_tool", input: {} }] },
+    { kind: "text", text: "done" },
+  ]);
+  const done = runEngine({ config, input: runtime.input, output: runtime.output, provider, tools: stubExecutor });
+  host.output.write({ type: "user", text: "go" });
+  host.output.write({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined });
+
+  let prompts = 0;
+  for await (const f of host.input) {
+    if (f.type === "control_request" && (f as ControlRequestFrame).subtype === "permission") {
+      prompts++;
+      const cf = f as ControlRequestFrame;
+      const projectAllow: PermissionUpdate = { type: "addRules", rules: [{ toolName: "unmatched_tool" }], behavior: "allow", destination: "projectSettings" };
+      const result: PermissionResult = { behavior: "allow", updatedPermissions: [projectAllow] };
+      host.output.write({ type: "control_response", requestId: cf.requestId, ok: true, payload: result });
+    }
+  }
+  await done;
+  return prompts;
+}
+
+test("P5 T2: with no trustedWorkspace declared, a project-sourced ALLOW stays live-inert -- byte-identical to the P2 hard-false constant", async () => {
+  expect(await countPermissionPromptsWithProjectAllow(baseConfig())).toBe(2);
+});
+
+test("P5 T2: RuntimeConfig.trustedWorkspace:false is the same fail-closed verdict as omitting it", async () => {
+  expect(await countPermissionPromptsWithProjectAllow(baseConfig({ trustedWorkspace: false }))).toBe(2);
+});
+
+test("P5 T2: RuntimeConfig.trustedWorkspace:true makes the project-sourced ALLOW live -- the seam really is wired into the engine's one trust constant", async () => {
+  expect(await countPermissionPromptsWithProjectAllow(baseConfig({ trustedWorkspace: true }))).toBe(1);
+});
