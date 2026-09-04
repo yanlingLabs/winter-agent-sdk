@@ -272,6 +272,87 @@ test("Finding 6: unset permissionPromptToolName/additionalDirectories are OMITTE
   expect(config).not.toHaveProperty("additionalDirectories");
 });
 
+// --- Phase 4 Task 2 (WS-09 derived-shapes item (a)/(c)/(d)): Options.{mcpServers,strictMcpConfig,
+// toolAliases,agents,forwardSubagentText} serialize into --config-json exactly like every prior
+// field above (same captureConfigJson helper) -----------------------------------------------------
+
+test("Phase 4 Task 2: strictMcpConfig/toolAliases/agents/forwardSubagentText are present in --config-json when set on Options", async () => {
+  const capture = captureConfigJson();
+  for await (const _msg of query({
+    prompt: "ping",
+    options: {
+      strictMcpConfig: true,
+      toolAliases: { SendMessage: "mcp__winter__send_message" },
+      agents: { reviewer: { description: "reviews code", prompt: "You review code.", permissionMode: "acceptEdits" } },
+      forwardSubagentText: true,
+      spawnClaudeCodeProcess: capture.hook,
+    },
+  })) {
+    /* drain */
+  }
+
+  expect(capture.get()).toMatchObject({
+    strictMcpConfig: true,
+    toolAliases: { SendMessage: "mcp__winter__send_message" },
+    agents: { reviewer: { description: "reviews code", prompt: "You review code.", permissionMode: "acceptEdits" } },
+    forwardSubagentText: true,
+  });
+});
+
+test("Phase 4 Task 2: unset strictMcpConfig/toolAliases/agents/forwardSubagentText/mcpServers are OMITTED entirely from --config-json", async () => {
+  const capture = captureConfigJson();
+  for await (const _msg of query({ prompt: "ping", options: { spawnClaudeCodeProcess: capture.hook } })) {
+    /* drain */
+  }
+  const config = capture.get();
+  for (const key of ["strictMcpConfig", "toolAliases", "agents", "forwardSubagentText", "mcpServers"]) {
+    expect(config).not.toHaveProperty(key);
+  }
+});
+
+test("Phase 4 Task 2: mcpServers' stdio/http/sse variants pass through --config-json completely unchanged", async () => {
+  const capture = captureConfigJson();
+  for await (const _msg of query({
+    prompt: "ping",
+    options: {
+      mcpServers: {
+        gh: { command: "gh-mcp-server", args: ["--stdio"], env: { TOKEN: "x" } },
+        remote: { type: "http", url: "https://example.com/mcp", timeout: 9000 },
+        sse: { type: "sse", url: "https://example.com/sse", alwaysLoad: true },
+      },
+      spawnClaudeCodeProcess: capture.hook,
+    },
+  })) {
+    /* drain */
+  }
+
+  expect(capture.get()).toMatchObject({
+    mcpServers: {
+      gh: { command: "gh-mcp-server", args: ["--stdio"], env: { TOKEN: "x" } },
+      remote: { type: "http", url: "https://example.com/mcp", timeout: 9000 },
+      sse: { type: "sse", url: "https://example.com/sse", alwaysLoad: true },
+    },
+  });
+});
+
+test("Phase 4 Task 2: an in-process SDK server config's `instance` is stripped before crossing the wire", async () => {
+  const capture = captureConfigJson();
+  const fakeInstance = { notJsonSafe: () => {} }; // a non-serializable stand-in -- if this leaked through raw, JSON.stringify would silently drop the function property rather than error, so the REAL proof is the assertion below: `instance` must not appear as a KEY at all.
+  for await (const _msg of query({
+    prompt: "ping",
+    options: {
+      mcpServers: { winterlike: { type: "sdk", name: "winterlike", timeout: 5000, instance: fakeInstance } },
+      spawnClaudeCodeProcess: capture.hook,
+    },
+  })) {
+    /* drain */
+  }
+
+  const config = capture.get();
+  expect(config.mcpServers).toEqual({ winterlike: { type: "sdk", name: "winterlike", timeout: 5000 } });
+  expect(JSON.stringify(config.mcpServers)).not.toContain("instance");
+});
+
 test("Task 9: a pre-allocated Options.sessionId round-trips into the init frame's sessionId", async () => {
   const explicitId = "44444444-4444-4444-8444-444444444444";
   let sawInitSessionId: string | undefined;

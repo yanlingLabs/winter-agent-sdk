@@ -70,6 +70,95 @@ export interface SandboxSettingsConfig {
   network?: { allowedDomains?: string[]; deniedDomains?: string[]; [key: string]: unknown };
 }
 
+// --- Phase 4 Task 2 (WS-09 derived-shapes item (a)/(d)): MCP server config + AgentDefinition -------
+//
+// These are the WIRE-CROSSING shapes options.ts's own host-facing types are built FROM (see that
+// file's own header for the full rationale). Defined here, not options.ts, so config.ts stays the
+// single source of truth for every field the two layers share unchanged -- mirroring
+// SandboxSettingsConfig's own precedent immediately above (one declaration, reused as-is where no
+// layer needs to diverge).
+//
+// `McpServerConfigForProcessTransport` deliberately excludes the one variant options.ts's own
+// `McpServerConfig` union adds on top (`McpSdkServerConfigWithInstance`, carrying a live,
+// non-serializable `@modelcontextprotocol/sdk` object) -- exactly matching the pinned OFFICIAL SDK's
+// own twin-union split for the identical reason (derived-shapes-p4.md item (a)): a live instance can
+// never cross this package's own process/wire boundary (query.ts's `--config-json` argv). This is
+// the type RuntimeConfig.mcpServers below actually carries, and the type Lane A (Task 4)/Task 3
+// consume runtime-side (imported via this package's index.ts, never options.ts, which the runtime
+// package never imports -- WS-02 §3).
+export interface McpServerToolPolicy {
+  name: string;
+  permission_policy?: "always_allow" | "always_ask" | "always_deny";
+  org_max_permission?: "allow" | "ask" | "blocked"; // doc-asserted: drives the auto-mode isOrgAskCeiling gate
+}
+export interface McpStdioServerConfig {
+  type?: "stdio"; // the ONLY optional discriminant of the four transport variants (derived-shapes item (a))
+  command: string;
+  args?: string[];
+  env?: Record<string, string>;
+  timeout?: number; // milliseconds; values below 1000ms are doc-asserted ignored (derived-shapes item (a))
+  alwaysLoad?: boolean;
+}
+export interface McpHttpServerConfig {
+  type: "http";
+  url: string;
+  headers?: Record<string, string>;
+  tools?: McpServerToolPolicy[]; // present on http/sse only -- absent from stdio (no remote-admin-policy surface for a local child process)
+  timeout?: number;
+  alwaysLoad?: boolean;
+}
+export interface McpSSEServerConfig {
+  type: "sse";
+  url: string;
+  headers?: Record<string, string>;
+  tools?: McpServerToolPolicy[];
+  timeout?: number;
+  alwaysLoad?: boolean;
+}
+export interface McpSdkServerConfig {
+  type: "sdk";
+  name: string;
+  timeout?: number; // no alwaysLoad, no tools[] -- an in-process SDK server's own "always load" knob is a per-tool _meta mechanism instead (see registry.ts's own ToolDescriptor.alwaysLoad)
+}
+export type McpServerConfigForProcessTransport = McpStdioServerConfig | McpHttpServerConfig | McpSSEServerConfig | McpSdkServerConfig;
+
+// derived-shapes item (d): AgentDefinition.mcpServers is a heterogeneous ARRAY (a bare string
+// referencing an already-configured session-level server BY NAME, or an inline name-keyed record) --
+// never a flat Record like the session-level Options.mcpServers/RuntimeConfig.mcpServers above.
+// Always the process-transport-only union, even at the OPTIONS layer (options.ts): a filesystem/
+// frontmatter-defined agent can never embed a live JS instance.
+export type AgentMcpServerSpec = string | Record<string, McpServerConfigForProcessTransport>;
+
+// The WIRE twin of options.ts's own (bare-named) `AgentDefinition` -- identical on every field
+// EXCEPT `permissionMode`, which stays an OPEN string here for the exact reason RuntimeConfig's own
+// top-level `permissionMode` field does (Ruling 8, this file's own precedent: "the wire stays an open
+// string; the runtime is what interprets it") -- this value crosses the SAME `--config-json` JSON
+// boundary, nested inside `RuntimeConfig.agents` below, so an invalid string arriving over the wire
+// must degrade to a typed startup error at the RUNTIME layer, not be assumed pre-validated by a
+// compile-time union that JSON cannot itself enforce. `memory`/`effort` are ALSO closed unions at
+// this pinned shape (derived-shapes item (d)) but carry no equivalent established precedent forcing
+// them open at the wire layer -- a wrong string surviving there is a narrow semantic-choice bug, not
+// a capability/security gate the way an invalid `permissionMode` would be, so only `permissionMode`
+// is widened here.
+export interface RuntimeAgentDefinition {
+  description: string;
+  prompt: string;
+  tools?: string[];
+  disallowedTools?: string[];
+  model?: string; // bare string, no literal union at all (derived-shapes item (d): materially looser than AgentInput.model's 4-member alias union)
+  mcpServers?: AgentMcpServerSpec[];
+  criticalSystemReminder_EXPERIMENTAL?: string;
+  skills?: string[];
+  initialPrompt?: string;
+  maxTurns?: number;
+  background?: boolean;
+  memory?: "user" | "project" | "local";
+  effort?: "low" | "medium" | "high" | "xhigh" | "max" | number;
+  permissionMode?: string;
+  observer?: string;
+  observerMessage?: string;
+}
+
 export interface RuntimeConfig {
   sessionId: string;
   cwd: string;
@@ -136,4 +225,13 @@ export interface RuntimeConfig {
   toolSearchEnabled?: boolean;
   insideSubagent?: boolean;
   familyMetadata?: { taskNative?: boolean };
+  // Phase 4 Task 2 (WS-09 item (a)/(c)/(d)): pure passthrough, same conditional-spread convention as
+  // every field above -- query.ts never interprets these. Lane A (Task 4)/Lane C (Task 6)/[WS-14]
+  // (toolAliases' official-branch redirection)/T3 (engine wiring, forwardSubagentText's forwarding
+  // gate) are the real consumers.
+  mcpServers?: Record<string, McpServerConfigForProcessTransport>;
+  strictMcpConfig?: boolean;
+  toolAliases?: Record<string, string>;
+  agents?: Record<string, RuntimeAgentDefinition>;
+  forwardSubagentText?: boolean;
 }

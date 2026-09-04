@@ -1,6 +1,55 @@
 import type { SpawnClaudeCodeProcess } from "./transport.ts";
 import type { RuleSource, PermissionMode, CanUseTool, HookEvent, HookCallbackMatcher } from "./permissions/types.ts";
-import type { SandboxSettingsConfig } from "./protocol/config.ts";
+import type {
+  SandboxSettingsConfig,
+  McpServerToolPolicy,
+  McpStdioServerConfig,
+  McpHttpServerConfig,
+  McpSSEServerConfig,
+  McpSdkServerConfig,
+  RuntimeAgentDefinition,
+} from "./protocol/config.ts";
+
+// --- Phase 4 Task 2 (WS-09 derived-shapes item (a)): the HOST-facing MCP config union -------------
+//
+// Re-exports the four shared, structurally-identical-at-both-layers variants from protocol/config.ts
+// unchanged (mirroring that file's own SandboxSettingsConfig precedent: one declaration, reused
+// as-is) and adds the ONE variant the wire-safe `McpServerConfigForProcessTransport` union
+// deliberately excludes: an in-process SDK server carrying a LIVE, non-serializable instance.
+//
+// `instance` is typed `unknown`, NOT the real `@modelcontextprotocol/sdk` `McpServer` type: nothing
+// in this package constructs one -- Winter has no `createSdkMcpServer()`-equivalent public factory
+// yet (out of this task's scope; the standing Winter server, packages/runtime/src/mcp/
+// winter-server.ts, builds one directly runtime-side instead, never through this Options surface).
+// Adding `@modelcontextprotocol/sdk` as a dependency of this Node-fenced, portable sdk package for
+// one field nothing produces or reads would be a needless footprint increase; a host that already
+// depends on that package directly can still build this shape by hand (TypeScript structurally
+// accepts any value under `unknown`), and query.ts's own serialization (see its own
+// `toWireMcpServers`) strips `instance` before it ever reaches the wire regardless of its declared
+// type -- matching the pinned OFFICIAL SDK's own wire behavior, not working around it: derived-
+// shapes-p4.md item (a) shows the `initialize` frame's own `sdkMcpServerConfigs` carries only
+// `{name, timeout}` for this variant, never a live object, in the pinned artifact too.
+//
+// A NOTED PLAN GAP (task-2-report.md): the bridging that would make an SDK-type entry's `instance`
+// actually reachable/callable from the spawned runtime process (an `mcp_message`-style
+// control-request bridge, derived-shapes-p4.md item (b)) is unbuilt on EITHER side of this boundary
+// in this phase -- no Phase 4 task's file list names query.ts for a host-side "mcp_message" handler
+// (Task 3 owns rpc/*, Lane A owns mcp/*).
+export interface McpSdkServerConfigWithInstance extends McpSdkServerConfig {
+  instance: unknown;
+}
+export type McpServerConfig = McpStdioServerConfig | McpHttpServerConfig | McpSSEServerConfig | McpSdkServerConfigWithInstance;
+export type { McpServerToolPolicy, McpStdioServerConfig, McpHttpServerConfig, McpSSEServerConfig, McpSdkServerConfig };
+
+// --- Phase 4 Task 2 (WS-09 derived-shapes item (d)): the HOST-facing AgentDefinition ---------------
+//
+// Identical to protocol/config.ts's own wire-shaped `RuntimeAgentDefinition` on every field except
+// `permissionMode`, tightened here to the closed `PermissionMode` union -- see that file's own
+// comment on `RuntimeAgentDefinition` for the full "wire stays open, host-facing tightens" rationale
+// (Ruling 8's own precedent, applied to this nested field for the identical reason). A host
+// application authoring `Options.agents` in TypeScript gets the same compile-time checking on this
+// field that the top-level `Options.permissionMode` already has.
+export type AgentDefinition = Omit<RuntimeAgentDefinition, "permissionMode"> & { permissionMode?: PermissionMode };
 
 export interface Options {
   model?: string;
@@ -160,4 +209,36 @@ export interface Options {
   // Setup's own lifecycle messages emit unconditionally) — see engine.ts's own lifecycle-sink
   // comment for where that exception actually lives.
   includeHookEvents?: boolean;
+
+  // --- Phase 4 Task 2 (WS-09 derived-shapes item (a)/(c)/(d)): MCP config, Tool Search aliases, and
+  // subagent definitions. Pure passthrough into RuntimeConfig, same conditional-spread convention as
+  // every field above — query.ts never interprets these itself.
+  //
+  // Source precedence / trust-gating / strictMcpConfig's own allowlist semantics ([WS-09] §1.2) are
+  // ALL runtime behavior, not an sdk-layer concern — this field only carries the explicit SDK-level
+  // configuration WS-09 §1.2's precedence table calls "explicit SDK `mcpServers`," the top of that
+  // order.
+  mcpServers?: Record<string, McpServerConfig>;
+  // WS-09 §1.1/§1.2: when set, only explicitly supplied servers exist for this session (ambient
+  // project/user discovery is skipped). Doc-asserted upstream nuance (derived-shapes item (b)):
+  // strict mode's own allowlist also includes servers declared by `agents[*].mcpServers`, not just
+  // this field alone — recorded as an Open Question for whichever task implements the actual gate
+  // (Lane A), not resolved here.
+  strictMcpConfig?: boolean;
+  // WS-09 §10: redirects a model-emitted BUILT-IN tool name to another implementation before
+  // name-based `tool_use` lookup (e.g. `SendMessage -> mcp__winter__send_message`) — single-hop,
+  // never a security boundary (`disallowedTools` remains the enforcement floor). [WS-14] is the
+  // primary consumer on the official branch; the Winter branch applies it at the registry's own
+  // name-lookup boundary (a later task's own wiring, not this field's own concern).
+  toolAliases?: Record<string, string>;
+  // WS-10 §1–§2: named subagent definitions a host supplies programmatically, keyed by
+  // `subagent_type`. Merges with (and, per WS-10 §1's own precedence, is overridden by) filesystem
+  // `.winter/agents/*.md`/`~/.winter/agents/*.md` definitions — Lane C (Task 6) owns that resolution;
+  // this field only carries the programmatic half across the wire.
+  agents?: Record<string, AgentDefinition>;
+  // WS-10 §4: by default only `tool_use`/`tool_result` blocks from a subagent are forwarded to the
+  // host stream (a heartbeat counter's worth); `true` additionally forwards the subagent's own
+  // text/thinking blocks as assistant/user messages carrying `parent_tool_use_id`, for a full nested
+  // transcript. Absent/false preserves the pre-existing, already-shipped default behavior exactly.
+  forwardSubagentText?: boolean;
 }

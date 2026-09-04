@@ -2,8 +2,8 @@ import { randomUUID } from "node:crypto";
 import type { SdkMessage as RuntimeSdkMessage, WinterFrame, InitFrame, ControlRequestFrame, ControlResponseFrame } from "./protocol/frames.ts";
 import { PROTOCOL_VERSION } from "./protocol/frames.ts";
 import { splitFrames, encodeFrame, ProtocolError } from "./protocol/codec.ts";
-import type { RuntimeConfig, RuntimeHooksConfig, RuntimeHookMatcherGroup } from "./protocol/config.ts";
-import type { Options } from "./options.ts";
+import type { RuntimeConfig, RuntimeHooksConfig, RuntimeHookMatcherGroup, McpServerConfigForProcessTransport } from "./protocol/config.ts";
+import type { Options, McpServerConfig } from "./options.ts";
 import type {
   PermissionMode,
   CanUseTool,
@@ -85,6 +85,28 @@ const KILL_GRACE_MS = 50;
 // exact config shape (packages/runtime/src/hooks -- see that side's own converter).
 function hookIdFor(event: string, source: "sdk", groupIndex: number, hookIndex: number): string {
   return `${event}:${source}:${groupIndex}:${hookIndex}`;
+}
+
+// Phase 4 Task 2 (WS-09 derived-shapes item (a)): strips the one host-only field (`instance`) an
+// in-process SDK server config carries — never JSON-serializable, and per the pinned OFFICIAL SDK's
+// OWN wire behavior (derived-shapes-p4.md item (a): a SEPARATE, instance-free union crosses its
+// `initialize` frame too) this is the CORRECT wire shape, not a lossy workaround. Every other
+// variant (stdio/http/sse) is already structurally identical at both layers (options.ts's own
+// header) and passes through completely unchanged.
+//
+// NOTED PLAN GAP (task-2-report.md): the bridging that would make an SDK-type entry's `instance`
+// actually reachable/callable from the spawned runtime process (an `mcp_message`-style
+// control-request bridge) is unbuilt on EITHER side of this boundary in this phase — no Phase 4
+// task's file list names query.ts for a host-side "mcp_message" handler (Task 3 owns rpc/*, Lane A
+// owns mcp/*); this function only guarantees the wire shape is safe and correct, it does not make an
+// SDK-type entry's tools actually callable end-to-end.
+function toWireMcpServers(servers: Record<string, McpServerConfig> | undefined): Record<string, McpServerConfigForProcessTransport> | undefined {
+  if (!servers) return undefined;
+  const out: Record<string, McpServerConfigForProcessTransport> = {};
+  for (const [name, cfg] of Object.entries(servers)) {
+    out[name] = cfg.type === "sdk" ? { type: "sdk", name: cfg.name, ...(cfg.timeout !== undefined ? { timeout: cfg.timeout } : {}) } : cfg;
+  }
+  return out;
 }
 
 // Builds the wire-safe RuntimeConfig.hooks shape from a real Options.hooks value — undefined when
@@ -224,6 +246,10 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
 
   // Task 10: computed once, ahead of `config`, so it can be conditionally spread into it below.
   const runtimeHooksConfig = buildRuntimeHooksConfig(options.hooks);
+  // Phase 4 Task 2: same "computed once, ahead of `config`" convention, for the identical reason —
+  // toWireMcpServers's own undefined-in/undefined-out shape lets the spread below stay a plain
+  // `!== undefined` check like every other field.
+  const wireMcpServers = toWireMcpServers(options.mcpServers);
 
   const config: RuntimeConfig = {
     // Task 9: a caller-supplied sessionId wins over the default auto-generated uuid — this is what
@@ -270,6 +296,19 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
     // hooks-free scenario's wire trace byte-identical to before this task.
     ...(runtimeHooksConfig !== undefined ? { hooks: runtimeHooksConfig } : {}),
     ...(options.includeHookEvents !== undefined ? { includeHookEvents: options.includeHookEvents } : {}),
+    // Phase 4 Task 2 (WS-09 derived-shapes item (a)/(c)/(d)): same pure-passthrough convention as
+    // every field above -- query.ts never interprets these itself (see options.ts's own comment on
+    // each field for the real runtime consumer). `agents` needs no conversion function the way
+    // `mcpServers` does: AgentDefinition carries no live-instance field anywhere in its own shape
+    // (its own `mcpServers` sub-field already uses the wire-safe McpServerConfigForProcessTransport
+    // union, per protocol/config.ts's own RuntimeAgentDefinition), and its one TIGHTENED field
+    // (permissionMode: PermissionMode, a subtype of RuntimeAgentDefinition's own bare `string`) is
+    // structurally assignable with no runtime transformation at all.
+    ...(wireMcpServers !== undefined ? { mcpServers: wireMcpServers } : {}),
+    ...(options.strictMcpConfig !== undefined ? { strictMcpConfig: options.strictMcpConfig } : {}),
+    ...(options.toolAliases !== undefined ? { toolAliases: options.toolAliases } : {}),
+    ...(options.agents !== undefined ? { agents: options.agents } : {}),
+    ...(options.forwardSubagentText !== undefined ? { forwardSubagentText: options.forwardSubagentText } : {}),
   };
 
   // A custom spawnClaudeCodeProcess hook owns process creation entirely (containers, VMs, remote

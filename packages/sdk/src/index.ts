@@ -5,6 +5,15 @@ export type { Query, SdkMessage } from "./query.ts";
 // surface; T8 adds `respondPermission` to it for the canUseTool `null` escape).
 export type { QueryInternal, ControlRequestHandler, ControlRequestHandlerResult } from "./query.ts";
 export type { Options } from "./options.ts";
+// Phase 4 Task 2 (WS-09 derived-shapes item (a)/(d)): the HOST-facing MCP config union + subagent
+// definition shape a program writing `Options.mcpServers`/`Options.agents` types against — see
+// options.ts's own header comments for the full rationale (why `McpSdkServerConfigWithInstance`
+// exists, why `AgentDefinition` here differs from `RuntimeAgentDefinition` below by exactly one
+// field). The plain per-transport variants (McpStdioServerConfig et al.) are ALSO re-exported from
+// this same module (options.ts re-exports them unchanged from protocol/config.ts) rather than from
+// protocol/config.ts's own barrel entry below, to keep "the Options-facing MCP surface" one import
+// site for a host program.
+export type { McpServerConfig, McpSdkServerConfigWithInstance, McpServerToolPolicy, McpStdioServerConfig, McpHttpServerConfig, McpSSEServerConfig, McpSdkServerConfig, AgentDefinition } from "./options.ts";
 export {
   WinterSDKError,
   CLIConnectionError,
@@ -22,6 +31,13 @@ export {
 export { resolveRuntimeExecutable, defaultSpawn } from "./transport.ts";
 export type { SpawnedRuntimeProcess, SpawnRuntimeOptions, SpawnClaudeCodeProcess } from "./transport.ts";
 export type { RuntimeConfig, RuntimeHooksConfig, RuntimeHookMatcherGroup, SandboxSettingsConfig } from "./protocol/config.ts";
+// Phase 4 Task 2: the WIRE-shaped twins (RuntimeConfig.mcpServers/.agents's own value types) --
+// what packages/runtime code actually imports (engine.ts et al. already consume RuntimeConfig
+// itself from this exact barrel; Lane A/Lane C are this phase's own new consumers of these two).
+// `RuntimeAgentDefinition` is intentionally NOT re-exported under the bare name `AgentDefinition`
+// (options.ts's own export above owns that name) -- see protocol/config.ts's own header for why the
+// two differ by exactly one field (`permissionMode`).
+export type { McpServerConfigForProcessTransport, AgentMcpServerSpec, RuntimeAgentDefinition } from "./protocol/config.ts";
 
 // Wire protocol (WS-02 §3: owned by the sdk, the runtime depends on it — never the reverse).
 // Previously reachable only via the runtime; now the sdk's own public surface.
