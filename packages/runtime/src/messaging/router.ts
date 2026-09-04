@@ -355,7 +355,14 @@ function formatListing(rows: readonly ListedRuntimeObject[]): string {
     .join("\n");
 }
 
-export async function listAgents(deps: MessagingRuntimeDeps, caller: CallerContext, _input: ListAgentsInput): Promise<{ listing: string; rows: ListedRuntimeObject[] }> {
+// Narrower than CallerContext (which also carries agentId/toolUseId -- neither ListAgents nor
+// ReadNotifications needs either): both only ever scope to the calling session itself, so the tool
+// executors never need to fabricate a toolUseId just to satisfy an unused required field.
+export interface SessionCallerContext {
+  sessionId: string;
+}
+
+export async function listAgents(deps: MessagingRuntimeDeps, caller: SessionCallerContext, _input: ListAgentsInput): Promise<{ listing: string; rows: ListedRuntimeObject[] }> {
   const selfAddr = buildSessionAddress(caller.sessionId);
   const selfKey = serializeRuntimeAddress(selfAddr);
   const reachable = await deps.adapter.listReachable({ parent: selfAddr });
@@ -365,7 +372,7 @@ export async function listAgents(deps: MessagingRuntimeDeps, caller: CallerConte
 
 // --- ReadNotifications ---------------------------------------------------------------------------
 
-export function readNotifications(deps: MessagingRuntimeDeps, caller: CallerContext): { notifications: NotificationRecord[]; remaining: number } {
+export function readNotifications(deps: MessagingRuntimeDeps, caller: SessionCallerContext): { notifications: NotificationRecord[]; remaining: number } {
   return deps.notifications.drain(caller.sessionId);
 }
 
