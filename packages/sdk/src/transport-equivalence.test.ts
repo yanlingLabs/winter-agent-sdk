@@ -145,7 +145,7 @@ registerBgTaskTestTool();
 // Phase 4 Task 8: "subagent"/"childmsg" join for the identical reason -- their target tools (Agent,
 // SendMessage) are REAL WS-06 names with real executors reached through the impl barrel, so the
 // in-memory leg must dispatch through the real registry, not stubExecutor's blind echo.
-const REGISTRY_BACKED_TEST_PROVIDERS: ReadonlySet<TestProviderName> = new Set(["bgtask", "lanea", "laneb", "lanec", "laned", "lanee", "mcpsdk", "subagent", "childmsg", "subagentperm"]);
+const REGISTRY_BACKED_TEST_PROVIDERS: ReadonlySet<TestProviderName> = new Set(["bgtask", "lanea", "laneb", "lanec", "laned", "lanee", "mcpsdk", "subagent", "childmsg", "subagentperm", "toolsearch"]);
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -318,6 +318,11 @@ interface QueryScenarioOptions {
   // spec. The MCP SDK-server scenario below passes this explicitly so its own init-advertisement
   // assertion means something.
   capabilities?: Options["capabilities"];
+  // Phase 4 fix wave, follow-up (9) / whole-branch M9: lets a scenario turn Tool Search on. Activation
+  // travels as `RuntimeConfig.toolSearchEnabled` and is leg-invariant BY CONSTRUCTION -- which is
+  // exactly why the two things that are NOT (the `tool_reference` emission and the load-first
+  // execution boundary) needed a scenario rather than an argument.
+  toolSearchEnabled?: boolean;
   // Invoked once per yielded message, AFTER it's recorded into the trace — the kill/abort
   // scenarios use this to act at a precise, OBSERVED point in the stream (WS-04 events), never a
   // real-clock guess (unlike the raw-driven interrupt scenario, which has no such observable event
@@ -364,6 +369,7 @@ async function traceViaQuery(leg: LegName, scenario: QueryScenarioOptions): Prom
         ...(scenario.sandbox !== undefined ? { sandbox: scenario.sandbox } : {}),
         ...(scenario.mcpServers !== undefined ? { mcpServers: scenario.mcpServers } : {}),
         ...(scenario.capabilities !== undefined ? { capabilities: scenario.capabilities } : {}),
+        ...(scenario.toolSearchEnabled !== undefined ? { toolSearchEnabled: scenario.toolSearchEnabled } : {}),
         ...(scenario.forwardSubagentText !== undefined ? { forwardSubagentText: scenario.forwardSubagentText } : {}),
       },
     });
@@ -1081,6 +1087,93 @@ function registerEquivalenceScenarios(legA: LegName, legB: LegName): void {
       expect(toolResultMsg.message.content[0]!.content).toBe('echo:{"x":1}');
       const finalMsg = a.trace[3]!.payload as { message: { content: unknown } };
       expect(finalMsg.message.content).toEqual([{ type: "text", text: "mcp sdk done" }]);
+    });
+  });
+
+  // Phase 4 fix wave, follow-up (9) -- whole-branch review M9, the Minor Lane X could not take
+  // ("it needs a SECOND provider/mock.ts arm... a second ownership deviation for a Minor in the
+  // ToolSearch family, whose files Lane Y owns, is not defensible").
+  //
+  // What was unproven, precisely: `toolsearch-select-round` is an IN-MEMORY golden only. Activation
+  // itself travels as `RuntimeConfig.toolSearchEnabled` and is leg-invariant by construction, so the
+  // gap was never "does the flag arrive" -- it is the two mechanisms activation switches ON: the
+  // `tool_reference` block the runtime emits after a successful `select:`, and the load-first
+  // execution boundary that makes the selected name callable only afterwards. Both are runtime-side
+  // emissions, and neither had ever run on the child or compiled leg.
+  describe("ToolSearch select -> tool_reference -> call, on both legs (whole-branch M9)", () => {
+    test("the deferred tool is withheld from init.tools, selected by ToolSearch, and then executes -- identically on both legs", async () => {
+      function makeFixtureInstance(): { instance: NonNullable<Options["mcpServers"]>[string] extends { instance?: infer I } ? I : never; calls: Array<{ name: string; args: Record<string, unknown> }> } {
+        const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
+        return {
+          calls,
+          instance: {
+            listTools: () => [{ name: "echo", inputSchema: { type: "object" } }],
+            async callTool(name: string, args: Record<string, unknown>) {
+              calls.push({ name, args });
+              return { content: [{ type: "text", text: `echo:${JSON.stringify(args)}` }] };
+            },
+          } as never,
+        };
+      }
+      const fixtureA = makeFixtureInstance();
+      const fixtureB = makeFixtureInstance();
+      const mcpServersFor = (fixture: ReturnType<typeof makeFixtureInstance>): Options["mcpServers"] => ({
+        [MCP_SDK_TEST_SERVER_NAME]: { type: "sdk", name: MCP_SDK_TEST_SERVER_NAME, instance: fixture.instance },
+      });
+      // `ToolSearch` must be in the allowlist alongside the deferred target: a bare allowlist is a
+      // PRE-APPROVAL, not a visibility filter (WS-06 §1.3), so this only pre-approves the two calls
+      // this scenario makes -- the deferral partition is what decides what the model is SHOWN.
+      const scenarioFor = (fixture: ReturnType<typeof makeFixtureInstance>) => ({
+        prompt: "find and call it",
+        testProviderName: "toolsearch" as const,
+        toolSearchEnabled: true,
+        allowedTools: ["ToolSearch", MCP_SDK_TEST_TOOL_NAME],
+        mcpServers: mcpServersFor(fixture),
+        capabilities: ["winter.mcp"],
+      });
+      const a = await traceViaQuery(legA, scenarioFor(fixtureA));
+      const b = await traceViaQuery(legB, scenarioFor(fixtureB));
+      expect(compareTraces(a.trace, b.trace)).toEqual([]);
+      expect(a.thrown).toBeUndefined();
+      expect(b.thrown).toBeUndefined();
+
+      // Both legs pinned by VALUE, not merely equal to each other -- `compareTraces` diffs the legs
+      // against each other and would happily agree on a shared regression.
+      for (const [leg, trace] of [[legA, a.trace], [legB, b.trace]] as const) {
+        const init = trace[0]!.payload as { tools: string[] };
+        // RULING P4-A's partition, on the real wire of a real transport: `ToolSearch` is advertised,
+        // and the deferred MCP tool is NOT -- the model has to search for it.
+        expect(init.tools, `${leg}: ToolSearch must be advertised when activation is on`).toContain("ToolSearch");
+        expect(init.tools, `${leg}: a deferred tool must be withheld from init.tools`).not.toContain(MCP_SDK_TEST_TOOL_NAME);
+        expect(init.tools, `${leg}: WaitForMcpServers partitions against ToolSearch`).not.toContain("WaitForMcpServers");
+
+        // The `tool_reference` block -- the emission that had never run off the in-memory leg.
+        // Read structurally off the trace, never by substring: an escaped-JSON `toContain` would
+        // pass on a block that merely MENTIONED the name somewhere.
+        const blocks = trace
+          .filter((e) => e.kind === "assistant" || e.kind === "user")
+          .flatMap((e) => ((e.payload as { message?: { content?: unknown } }).message?.content ?? []) as Array<Record<string, unknown>>);
+        const reference = blocks.find((bl) => bl["type"] === "tool_reference");
+        expect(reference, `${leg}: a real tool_reference block must reach the wire`).toBeDefined();
+        expect(reference!["tool_names"], `${leg}: the tool_reference must name the selected tool`).toEqual([MCP_SDK_TEST_TOOL_NAME]);
+
+        // ...and the selected name then EXECUTED, rather than being refused by the load-first
+        // boundary (which would have produced a `loadFirst` tool_result instead of the echo).
+        const echoResult = blocks.find((bl) => bl["type"] === "tool_result" && bl["tool_use_id"] === "ts-call-2");
+        expect(echoResult?.["content"], `${leg}: the selected tool must have executed`).toBe('echo:{"x":1}');
+        expect(echoResult?.["loadFirst"], `${leg}: nothing may have been refused as unloaded`).toBeUndefined();
+
+        // The `select:` itself came back as a real match against a genuinely deferred pool.
+        const searchResult = blocks.find((bl) => bl["type"] === "tool_result" && bl["tool_use_id"] === "ts-call-1");
+        const parsed = JSON.parse(String(searchResult?.["content"])) as { matches: string[]; total_deferred_tools: number };
+        expect(parsed.matches, `${leg}: select: must resolve the deferred name`).toEqual([MCP_SDK_TEST_TOOL_NAME]);
+        expect(parsed.total_deferred_tools, `${leg}: the deferred pool must be non-empty`).toBeGreaterThan(0);
+      }
+
+      // The live instance was genuinely invoked on BOTH legs, with the identical (name, arguments) --
+      // the fixture object lives in THIS process, so this is proof the whole round-trip happened.
+      expect(fixtureA.calls).toEqual([{ name: "echo", args: { x: 1 } }]);
+      expect(fixtureB.calls).toEqual(fixtureA.calls);
     });
   });
 

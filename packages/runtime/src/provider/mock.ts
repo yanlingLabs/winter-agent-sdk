@@ -73,7 +73,7 @@ export const stubExecutor: ToolExecutor = {
 // AskUserQuestion/advisor). See transport-equivalence.test.ts's own "lane equivalence" scenarios
 // (the only consumers) and the "laneb" case below for why Write alone needs a real (non-scripted)
 // provider.
-export type TestProviderName = "boom" | "tooluse" | "hang" | "reflect" | "rpcprobe" | "modeswitch" | "bgtask" | "lanea" | "laneb" | "lanec" | "laned" | "lanee" | "mcpsdk" | "subagent" | "childmsg" | "subagentperm";
+export type TestProviderName = "boom" | "tooluse" | "hang" | "reflect" | "rpcprobe" | "modeswitch" | "bgtask" | "lanea" | "laneb" | "lanec" | "laned" | "lanee" | "mcpsdk" | "subagent" | "childmsg" | "subagentperm" | "toolsearch";
 
 const TEST_PROVIDER_NAMES: ReadonlySet<string> = new Set([
   "boom",
@@ -98,6 +98,9 @@ const TEST_PROVIDER_NAMES: ReadonlySet<string> = new Set([
   // Phase 4 fix wave (T8 review I2 + KNOWN 11): the parent_tool_use_id / late-permission-answer
   // fixture -- see the "subagentperm" case below.
   "subagentperm",
+  // Phase 4 fix wave, follow-up (9) / whole-branch M9: the ToolSearch cross-transport fixture --
+  // see the "toolsearch" case below.
+  "toolsearch",
 ]);
 
 export function isTestProviderName(v: string): v is TestProviderName {
@@ -261,6 +264,27 @@ export function testProviderByName(name: TestProviderName): Provider {
       return scriptedProvider([
         { kind: "tool_use", calls: [{ id: "mcpsdk-call-1", name: MCP_SDK_TEST_TOOL_NAME, input: { x: 1 } }] },
         { kind: "text", text: "mcp sdk done" },
+      ]);
+
+    // Phase 4 fix wave, follow-up (9) -- whole-branch M9: "ToolSearch has no cross-transport
+    // equivalence scenario; `toolsearch-select-round` is an in-memory golden only." Activation
+    // travels as `RuntimeConfig.toolSearchEnabled` and is leg-invariant BY CONSTRUCTION, but the
+    // two things that are not -- the `tool_reference` emission and the load-first execution boundary
+    // -- were unproven on the child and compiled legs. This is the arm that makes them observable
+    // there: an inline `scriptedProvider` cannot reach a spawned leg at all (it selects its provider
+    // by `WINTER_TEST_PROVIDER` name), which is exactly why M9 could not be done from a lane that
+    // could not touch this file.
+    //
+    // Reuses the mcpsdk fixture server/tool deliberately: with `toolSearchEnabled` on, every
+    // live-registered MCP tool is DEFERRED by default (engine.ts's `deferredDefault: true` on the
+    // sdk-wire path, rider 12), so the same fixture that proves "advertised and called" in the
+    // mcpsdk scenario proves "deferred, then selected, then called" here -- one fixture, two
+    // exposure states, no second server to keep in sync.
+    case "toolsearch":
+      return scriptedProvider([
+        { kind: "tool_use", calls: [{ id: "ts-call-1", name: "ToolSearch", input: { query: `select:${MCP_SDK_TEST_TOOL_NAME}` } }] },
+        { kind: "tool_use", calls: [{ id: "ts-call-2", name: MCP_SDK_TEST_TOOL_NAME, input: { x: 1 } }] },
+        { kind: "text", text: "tool search done" },
       ]);
 
     // Phase 4 Task 8 (rider 25, Lane C's own OWED recipe): the subagent spawn-round provider. A PURE
