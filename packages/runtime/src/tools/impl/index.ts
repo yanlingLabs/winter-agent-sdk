@@ -45,6 +45,34 @@ import "./task-stop.ts";
 import "./todo-write.ts";
 import "./write.ts";
 
+// --- Phase 4 Task 8: the four P4 lanes' own executors --------------------------------------------
+//
+// Every file below shipped correct and independently tested inside its own lane, and every one of
+// those lane reports flagged the identical thing: "inert in any live session until the barrel lands"
+// (Lane A's own OWED item, Lane B's "T8 owes / Impl barrel wiring", Lane D's tool executors). The
+// barrel is the one file each lane was forbidden to touch, so this is where their `replaceExecutor`
+// calls actually start running in production.
+//
+// Lane A (WS-09 §1.4) -- the four MCP bridge tools. Each installs an INERT default at module load
+// (`resolveLifecycle: () => undefined`, mirroring advisor.ts's own pattern), so importing them is
+// safe in a session with no MCP lifecycle at all: they answer a typed "no MCP lifecycle" tool error
+// rather than throwing. engine.ts's own live wiring is what makes them do real work.
+import "./list-mcp-resources-tool.ts";
+import "./read-mcp-resource-tool.ts";
+import "./read-mcp-resource-dir-tool.ts";
+import "./refresh-mcp-tools.ts";
+// Lane B (WS-09 §8) -- ToolSearch + WaitForMcpServers. Both read a session-KEYED side registry
+// (toolsearch/search.ts's registerToolSearchSessionRuntime, which engine.ts now populates per run);
+// with no registration they answer a typed "no session runtime registered" error, never a crash.
+import "./tool-search.ts";
+import "./wait-for-mcp-servers.ts";
+// Lane D (WS-10 §10) -- the three messaging tools. They read a module singleton
+// (messaging/router.ts's registerMessagingRuntime, engine.ts's own per-run registration below);
+// absent, each answers a typed "no messaging runtime" error.
+import "./send-message.ts";
+import "./list-agents.ts";
+import "./read-notifications.ts";
+
 // Named export mirroring `descriptors/index.ts`'s own `DESCRIPTORS_REGISTERED` precedent -- lets a
 // consumer force this module to evaluate at an explicit point, and lets a future test assert "the
 // impl barrel imported without throwing" as a real value.

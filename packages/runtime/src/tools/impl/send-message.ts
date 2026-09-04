@@ -4,39 +4,21 @@
 // sendMessage owns every outcome that DOES get a messageId once the call is well-formed
 // (messaging/addressing.ts's own header: "an invalid call never enters the messaging system").
 //
-// NEEDS_CONTEXT (flagged in the task report; see messaging/router.ts's own header for the full
-// citation): `ToolExecutionContext` (registry.ts) carries no per-call tool-use id --
-// `EngineToolCall.id` exists but `buildRegistryToolExecutor` never threads it through. Until a spine
-// change adds one, every call here allocates a FRESH fallback id -- the safe direction (never
-// falsely treating two different model calls as "the same retry"). Genuine retry-idempotency
-// (WS-10 §12) is fully correct and fully tested at the router.ts layer against a real, stable
-// toolUseId; this file is where a real id needs to start flowing from once the spine gap closes --
-// `callerContextFrom` below reads an optional, forward-compatible `toolUseId` field off `ctx` first
-// and only falls back when it's absent, so no further change will be needed here at that point.
+// CLOSED by Phase 4 Task 8: `ToolExecutionContext.toolUseId` is real now (registry.ts threads
+// `EngineToolCall.id` onto every context it builds), so WS-10 §12's retry-stable messageId
+// derivation is live in production, not only at the router layer -- see `callerContextFrom` below.
 import "../descriptors/send-message.ts";
+import "../descriptors/winter-send-message.ts"; // rider 15: the canonical alias-target descriptor this file also installs an executor for.
 import { replaceExecutor, type ToolExecutionContext, type ToolExecutor, type ToolResultPayload } from "../registry.ts";
 import { validateToField } from "../../messaging/addressing.ts";
 import { getMessagingRuntime, sendMessage, type CallerContext } from "../../messaging/router.ts";
 
 export const SEND_MESSAGE_TOOL_NAME = "SendMessage";
 
-// NEEDS_CONTEXT (mid-task controller note, Lane B review finding; not built by this lane -- see the
-// task report): WS-10 §15/WS-14 name a CANONICAL MCP-aliased duplicate of this tool,
-// `mcp__winter__send_message` (`Options.toolAliases` redirects the model-visible built-in name
-// `SendMessage` to it, WS-09 §10, packages/sdk/src/options.ts). No descriptor for that canonical
-// name exists anywhere in this repo yet, and creating one is out of THIS lane's file permissions
-// (a new `tools/descriptors/*.ts` entry is T1/T8's own descriptor-authoring territory; the standing
-// `winter` MCP server that would host it, `mcp/winter-server.ts`, is R4-10-forbidden to this lane) --
-// mirrors mcp/winter-server.ts's own "the other standing-server tools ... are P7/P8 ... owned by
-// [WS-14]/[WS-15]; nothing registers them here yet" posture for send_message/list_agents
-// specifically. WHOEVER adds that descriptor MUST declare it `deferred: true` at the source: the §10
-// duplicate-suppression Lane B built only moves entries between advertised-partition buckets --
-// `resolveDeferral`/`isLoadFirstBlocked` (registry.ts) read the descriptor's own declared `deferred`
-// field, so an eager canonical entry would vanish from `system/init.tools` (LOOKS deferred) yet
-// still resolve eager at the execution boundary (callable by name with no `select:` first) -- a real
-// visibility/gating mismatch, not merely a cosmetic duplicate. Declaring it deferred at the source is
-// what makes runtime suppression a safety net on top of real deferral, rather than the only guard.
-
+// CLOSED by Phase 4 Task 8 (rider 15): the canonical `mcp__winter__send_message` duplicate
+// WS-10 §15/WS-14 name now exists -- `descriptors/winter-send-message.ts`, declared `deferred: true`
+// AT THE SOURCE exactly as the controller's own mid-task note required, with this file's own
+// executor installed under it (see the bottom of this file).
 const MAX_SUMMARY_LENGTH = 200; // WS-10 §10.1 verbatim
 
 function asRecord(input: unknown): Record<string, unknown> {
@@ -120,3 +102,14 @@ export const sendMessageExecutor: ToolExecutor = {
 };
 
 replaceExecutor(SEND_MESSAGE_TOOL_NAME, sendMessageExecutor);
+
+// Phase 4 Task 8 (rider 15, WS-09 §10 / WS-10 §15): the CANONICAL standing-Winter-server name
+// [WS-14]'s official-branch `toolAliases` redirects `SendMessage` to. Registered here, over the
+// SAME executor object (never a copy, never a wrapper), because WS-09 §10 requires an alias target
+// to "accept the native arguments exactly" -- one implementation is the only way that can never
+// drift. RULING P4-E's "there is NO dispatch redirection [on the Winter branch] -- the native
+// name's executor is the implementation" is satisfied structurally: both names ARE the same
+// executor, so nothing needs to redirect. The descriptor (descriptors/winter-send-message.ts,
+// `deferred: true` at the source) is what keeps the model from normally seeing both.
+export const WINTER_CANONICAL_SEND_MESSAGE_TOOL_NAME = "mcp__winter__send_message";
+replaceExecutor(WINTER_CANONICAL_SEND_MESSAGE_TOOL_NAME, sendMessageExecutor);

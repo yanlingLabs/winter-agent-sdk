@@ -100,6 +100,10 @@ import {
   partitionAdvertisedTools,
   createLoadedToolSet,
   isLoadFirstBlocked,
+  // Phase 4 Task 8 (rider 1): the runtime-derived capability tokens (winter.mcp/winter.subagents/
+  // winter.global-messaging), unioned with whatever the host supplied -- see that function's own
+  // header in registry.ts.
+  resolveSessionCapabilities,
   type RegistryToolExecutorDeps,
   type McpToolDefinition,
   type DeferralActivation,
@@ -120,6 +124,15 @@ import { sessionTempDir, type SessionTempDirPaths } from "./paths/temp.ts";
 // executor (bash.ts, monitor.ts) used to hardcode as a module constant -- see
 // RegistryToolExecutorDeps.sandboxSettings's own comment (registry.ts) for the seam this feeds.
 import { DEFAULT_SANDBOX_SETTINGS } from "./sandbox/profile.ts";
+// Phase 4 Task 8 (rider 3, WS-09 §10): Lane B's pure alias helpers -- single-hop canonical-identity
+// resolution for the permission/hook axis, and duplicate suppression over the advertised partition.
+// Both shipped as pure functions with no engine call site (R4-10 forbade Lane B from adding one);
+// this file is that call site.
+import { resolveToolAlias, suppressAliasedDuplicates } from "./toolsearch/aliases.ts";
+// Phase 4 Task 8 (rider 2, WS-09 §8): Lane B's session-keyed ToolSearch/WaitForMcpServers runtime
+// registry. Both of that lane's executors answer a typed "no session runtime registered" error until
+// a live run registers one -- this file is the one production registrar.
+import { registerToolSearchSessionRuntime, unregisterToolSearchSessionRuntime } from "./toolsearch/search.ts";
 
 export type ContentBlock =
   | { type: "text"; text: string }
@@ -1213,11 +1226,48 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // registry.test.ts pins that buildAdvertisedSet must never filter on it -- §1.3's
   // pre-approval-is-not-a-visibility-allowlist rule), so `cfg.tools` is left unset here (its
   // documented default: "no restriction on this axis").
+  // Phase 4 Task 8 (rider 1): the three P4 family tokens (winter.mcp / winter.subagents /
+  // winter.global-messaging) are now RUNTIME-DERIVED rather than host-supplied -- see
+  // registry.ts's own RUNTIME_DERIVED_CAPABILITIES header for the full argument (they were I4-era
+  // placeholders for "no executor exists yet", and Phase 4's lanes shipped every one of those
+  // executors). Host-supplied tokens union on top, never replaced: `winter.reviewer-model`, `pwsh`,
+  // `mcp:<server>` and anything else a host knows about keep working exactly as before, and a
+  // derived token cannot be turned off by omitting it (suppressing a tool the runtime genuinely has
+  // is `disallowedTools`' job, WS-07 §3). Computed ONCE here and reused by the dispatch-time
+  // availability check (buildDefaultToolExecutor's getAvailabilityInputs, which spreads this same
+  // object) and by the ToolSearch session runtime below -- one authority, never three derivations.
+  const sessionCapabilities = resolveSessionCapabilities(config.capabilities);
+  // Phase 4 Task 8 (rider 3, WS-09 §10 / RULING P4-E): the Winter branch's own canonical alias pair.
+  // WS-10 §15 names it verbatim -- [WS-14] redirects the model-visible `SendMessage`/`ListAgents`
+  // built-ins at `mcp__winter__send_message`/`mcp__winter__list_agents`. On the WINTER branch those
+  // canonical names are real, registered descriptors (descriptors/winter-*.ts, `deferred: true` at
+  // the source) backed by the SAME executor objects as the native names, so WS-09 §10's
+  // "the model normally sees ONE SendMessage" is a Winter-branch obligation that holds whether or not
+  // a host configured `Options.toolAliases` at all.
+  //
+  // *** THE ONE DELIBERATE SPLIT, stated plainly because it deviates from a literal reading of
+  // P4-E's "canonical-IDENTITY mapping plus duplicate suppression" as one indivisible mechanism: ***
+  // this default table feeds DUPLICATE SUPPRESSION ONLY. It is deliberately NOT folded into the
+  // permission/hook identity resolution below, which stays scoped to `config.toolAliases` (what the
+  // HOST actually configured). Reason: identity mapping rewrites the name every permission rule and
+  // hook matcher is matched against, so a default-on table would silently stop
+  // `disallowedTools: ["SendMessage"]` and a `PreToolUse` matcher on "SendMessage" from matching in
+  // every session that never asked for aliasing -- a security-relevant regression, in a spec section
+  // (WS-09 §10) whose own text says "aliases are not a security boundary... `disallowedTools` remains
+  // the enforcement mechanism". Suppression has no such hazard: it only changes which of two names
+  // for one executor the model is shown. A host that genuinely wants the canonical identity gets it
+  // by setting `Options.toolAliases` explicitly, exactly as the official branch does.
+  const WINTER_CANONICAL_ALIASES: Readonly<Record<string, string>> = {
+    SendMessage: "mcp__winter__send_message",
+    ListAgents: "mcp__winter__list_agents",
+  };
+  // Host entries win on collision (a host that redirects `SendMessage` somewhere else means it).
+  const suppressionAliasTable: Record<string, string> = { ...WINTER_CANONICAL_ALIASES, ...(config.toolAliases ?? {}) };
   const advertisedCfg = {
     mode: policyStateStore.getState().mode,
     platform: process.platform,
     ...(config.disallowedTools !== undefined ? { disallowedTools: config.disallowedTools } : {}),
-    ...(config.capabilities !== undefined ? { capabilities: config.capabilities } : {}),
+    capabilities: sessionCapabilities,
     toolSearchEnabled: toolSearchEnabledDerived,
     ...(config.insideSubagent !== undefined ? { insideSubagent: config.insideSubagent } : {}),
     ...(config.familyMetadata !== undefined ? { familyMetadata: config.familyMetadata } : {}),
@@ -1229,7 +1279,13 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // every scenario that registers no MCP server, `partition.eager` is EXACTLY `buildAdvertisedSet`'s
   // own pre-existing output and `partition.deferred`/`partition.hidden` are empty -- byte-identical
   // to every committed differential golden by construction, not by coincidence.
-  const advertisedPartition = partitionAdvertisedTools(advertisedCfg, deferralActivation);
+  //
+  // Phase 4 Task 8 (rider 3, WS-09 §10 "Duplicate suppression"): the partition is post-processed so
+  // the model "normally sees ONE SendMessage and ONE ListAgents". `suppressAliasedDuplicates` moves
+  // an alias TARGET that is currently eager into `deferred` whenever its SOURCE name is also
+  // advertised -- never removes it (WS-09 §10: "keeps the canonical entry deferred", not hidden; a
+  // model that already knows the exact canonical name can still ToolSearch-select it).
+  const advertisedPartition = suppressAliasedDuplicates(partitionAdvertisedTools(advertisedCfg, deferralActivation), suppressionAliasTable);
   currentAdvertisedCanonicalNames = [...advertisedPartition.eager, ...advertisedPartition.deferred].map((d) => d.canonicalName);
   // Phase 4 Task 3 (MUST 6, WS-09 §8.2/§8.5): the execution-boundary "load ≠ permission" check --
   // registry.ts's own exported isLoadFirstBlocked (re-derived from the LIVE registry per call, never
@@ -1244,6 +1300,30 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // LoadedToolSet.snapshot() is always `[]`, so this composition is presently equivalent to `eager`
   // alone; it becomes observable once a later system/init-refresh reflects a ToolSearch selection,
   // Lane B's own future wiring).
+  // Phase 4 Task 8 (rider 2, WS-09 §8.2/§8.4): register THIS run's own ToolSearch/WaitForMcpServers
+  // session runtime. Lane B's executors read a session-keyed side registry rather than a
+  // ToolExecutionContext field, because (unlike "one child-engine implementation for the whole
+  // process") MCP state and deferral activation are genuinely per-session -- see
+  // toolsearch/search.ts's own header. Placed HERE, not inside `buildDefaultToolExecutor`, for the
+  // ordering hazard Lane B's own report named: that function is CALLED before `deferralActivation`
+  // and `mcpServerStateSource` are in scope. `getMode` reads the LIVE policy on every call (a
+  // ToolSearch result must never be computed against a stale mode); `capabilities` is the SAME
+  // resolved token set the advertised partition used, never a second derivation.
+  //
+  // Unregistered in this run's own teardown (below): the registry is keyed by session id in a
+  // process-wide module singleton, so a long-lived host running many sessions would otherwise leak
+  // one entry per run.
+  registerToolSearchSessionRuntime(config.sessionId, {
+    getMode: () => policyStateStore.getState().mode,
+    activation: deferralActivation,
+    platform: process.platform,
+    capabilities: sessionCapabilities,
+    ...(config.disallowedTools !== undefined ? { disallowedTools: config.disallowedTools } : {}),
+    ...(config.insideSubagent !== undefined ? { insideSubagent: config.insideSubagent } : {}),
+    ...(config.familyMetadata !== undefined ? { familyMetadata: config.familyMetadata } : {}),
+    ...(mcpServerStateSource !== undefined ? { stateSource: mcpServerStateSource } : {}),
+  });
+
   const loadedNames = new Set(loadedToolSet.snapshot());
   const advertisedToolNames = [
     ...advertisedPartition.eager.map((d) => d.advertisedName),
@@ -1834,7 +1914,17 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
           // does not `break` the round, matching "each-call-independent" semantics (unlike an
           // interrupt or a thrown executor, which legitimately do stop the round early below).
           const permissionCall: PermissionCall = {
-            toolName: call.name,
+            // Phase 4 Task 8 (rider 3, RULING P4-E precision, VERBATIM): "The unresolved call name
+            // drives registry lookup, execution, and the load-first predicate" -- so `call.name` is
+            // untouched everywhere else in this loop (the load-first check above, `executedCall`
+            // below, `tools.execute`). `resolveToolAlias(call.name)` computes ONLY the hook/
+            // permission identity, which is exactly WS-09 §10's "hook and permission matching run on
+            // the canonical post-alias identity". Single-hop by construction (aliases.ts).
+            //
+            // Scoped to `config.toolAliases` -- the table the HOST configured -- never the
+            // Winter-branch default suppression table (see WINTER_CANONICAL_ALIASES above for why
+            // that split exists and what it protects).
+            toolName: resolveToolAlias(call.name, config.toolAliases),
             input: typeof call.input === "object" && call.input !== null ? (call.input as Record<string, unknown>) : {},
             toolUseId: call.id,
             // Phase 4 Task 3 (MUST 9): the identical agentID a child engine's own hook stage/audit
@@ -2236,6 +2326,9 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   for (const serverName of sdkMcpServerNames) {
     unregisterMcpServerTools(serverName);
   }
+  // Phase 4 Task 8 (rider 2): drop this run's ToolSearch session runtime -- same singleton-hygiene
+  // argument as the MCP unregistration immediately above (one leaked entry per run otherwise).
+  unregisterToolSearchSessionRuntime(config.sessionId);
   output.end();
   return 0;
 }

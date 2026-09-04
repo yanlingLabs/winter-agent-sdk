@@ -5,6 +5,7 @@
 // (WS-10 §10.2 pinned) -- the structured `ListedRuntimeObject[]` rows router.ts's own listAgents
 // also returns are product/UI data, never part of the model-visible result here.
 import "../descriptors/list-agents.ts";
+import "../descriptors/winter-list-agents.ts"; // rider 15: the canonical alias-target descriptor this file also installs an executor for.
 import { replaceExecutor, type ToolExecutionContext, type ToolExecutor, type ToolResultPayload } from "../registry.ts";
 import { getMessagingRuntime, listAgents } from "../../messaging/router.ts";
 
@@ -27,3 +28,8 @@ export const listAgentsExecutor: ToolExecutor = {
 };
 
 replaceExecutor(LIST_AGENTS_TOOL_NAME, listAgentsExecutor);
+
+// Phase 4 Task 8 (rider 15): the canonical standing-Winter-server name, over the SAME executor
+// object -- see send-message.ts's own identical block for the full rationale.
+export const WINTER_CANONICAL_LIST_AGENTS_TOOL_NAME = "mcp__winter__list_agents";
+replaceExecutor(WINTER_CANONICAL_LIST_AGENTS_TOOL_NAME, listAgentsExecutor);

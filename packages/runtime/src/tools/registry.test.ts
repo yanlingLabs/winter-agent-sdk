@@ -25,6 +25,9 @@ import {
   resolveDeferral,
   isDeferralActive,
   partitionAdvertisedTools,
+  deriveRuntimeCapabilities,
+  resolveSessionCapabilities,
+  RUNTIME_DERIVED_CAPABILITIES,
   type ToolDescriptor,
   type ToolExecutor,
   type RegistryToolExecutorDeps,
@@ -1130,3 +1133,115 @@ function fixtureDescriptor(canonicalName: string, overrides?: Partial<ToolDescri
     ...overrides,
   };
 }
+
+// ================================================================================================
+// Phase 4 Task 8 (rider 1): runtime-DERIVED capability tokens.
+// ================================================================================================
+describe("deriveRuntimeCapabilities / resolveSessionCapabilities (Phase 4 Task 8, rider 1)", () => {
+  test("each of the three P4 family tokens resolves iff its probe tool has a live executor", async () => {
+    // The impl barrel is what installs every real executor; nothing about test FILE order guarantees
+    // it has loaded yet (same precedent as tools/conformance.test.ts's own explicit import).
+    await import("./impl/index.ts");
+    const derived = deriveRuntimeCapabilities();
+    for (const { token, probeTool } of RUNTIME_DERIVED_CAPABILITIES) {
+      const hasExecutor = getRegisteredTool(probeTool)?.executor !== undefined;
+      expect(hasExecutor, `probe tool "${probeTool}" for token "${token}" must be a registered descriptor`).toBe(true);
+      expect(derived.includes(token), `"${token}" should be derived because "${probeTool}" has an executor`).toBe(true);
+    }
+  });
+
+  test("a token whose probe tool has NO executor is not derived (the pre-P4 state, reproduced)", () => {
+    // Proves the derivation is a real predicate, not a constant list: a synthetic family whose probe
+    // is executorless derives nothing. Uses the SAME predicate shape the production list uses.
+    const probe = "__t8_test_unshipped_family_probe__";
+    registerTool({ descriptor: fixtureDescriptor(probe) }); // descriptor only -- no replaceExecutor
+    try {
+      expect(getRegisteredTool(probe)?.executor).toBeUndefined();
+    } finally {
+      unregisterToolForTest(probe);
+    }
+  });
+
+  test("host-supplied tokens union on top of derived ones; a derived token cannot be dropped by omission", async () => {
+    await import("./impl/index.ts");
+    const resolved = resolveSessionCapabilities(["winter.reviewer-model", "pwsh"]);
+    expect(resolved).toContain("winter.reviewer-model"); // host token survives
+    expect(resolved).toContain("pwsh");
+    expect(resolved).toContain("winter.mcp"); // derived token present even though the host never named it
+    // Deduped, and an explicitly-supplied derived token does not appear twice.
+    const withDup = resolveSessionCapabilities(["winter.mcp"]);
+    expect(withDup.filter((t) => t === "winter.mcp").length).toBe(1);
+    // Undefined (the overwhelmingly common case) still yields the derived set, never [].
+    expect(resolveSessionCapabilities(undefined).length).toBeGreaterThan(0);
+  });
+
+  test("with the derived tokens supplied, the P4 families are genuinely advertised (the golden churn, at its source)", async () => {
+    await import("./impl/index.ts");
+    const cfg: AdvertisedSetInputs = { mode: "default", capabilities: resolveSessionCapabilities(undefined), toolSearchEnabled: false };
+    const names = new Set(buildAdvertisedSet(cfg).map((d) => d.canonicalName));
+    for (const n of ["Agent", "SendMessage", "ListAgents", "ReadNotifications", "ListMcpResourcesTool", "ReadMcpResourceTool", "ReadMcpResourceDirTool", "RefreshMcpTools", "WaitForMcpServers"]) {
+      expect(names.has(n), `"${n}" should be advertised once its family token is runtime-derived`).toBe(true);
+    }
+    // NOT advertised, for two independent reasons this same cfg proves:
+    expect(names.has("ToolSearch")).toBe(false); // rider 4's activation gate: deferral is off here
+    expect(names.has("mcp__winter__advisor")).toBe(false); // winter.reviewer-model is NOT derived
+  });
+});
+
+// ================================================================================================
+// Phase 4 Task 8 (rider 4): the ToolSearch activation gate, and its complement.
+// ================================================================================================
+describe("requiresToolSearchEnabled (Phase 4 Task 8, rider 4)", () => {
+  test("ToolSearch and WaitForMcpServers partition on the activation axis -- exactly one is ever advertised", () => {
+    const caps = ["winter.mcp"];
+    const off = new Set(buildAdvertisedSet({ mode: "default", capabilities: caps, toolSearchEnabled: false }).map((d) => d.canonicalName));
+    expect(off.has("WaitForMcpServers")).toBe(true);
+    expect(off.has("ToolSearch")).toBe(false);
+
+    const on = new Set(buildAdvertisedSet({ mode: "default", capabilities: caps, toolSearchEnabled: true }).map((d) => d.canonicalName));
+    expect(on.has("ToolSearch")).toBe(true);
+    expect(on.has("WaitForMcpServers")).toBe(false);
+  });
+
+  test("an UNSET toolSearchEnabled axis advertises neither (both gates fail closed on 'not known')", () => {
+    const unset = new Set(buildAdvertisedSet({ mode: "default", capabilities: ["winter.mcp"] }).map((d) => d.canonicalName));
+    expect(unset.has("ToolSearch")).toBe(false);
+    expect(unset.has("WaitForMcpServers")).toBe(false);
+  });
+});
+
+// ================================================================================================
+// Phase 4 Task 8 (rider 15): the canonical mcp__winter__* alias-target descriptors.
+// ================================================================================================
+describe("canonical mcp__winter__* alias targets (Phase 4 Task 8, rider 15)", () => {
+  for (const [canonical, native] of [
+    ["mcp__winter__send_message", "SendMessage"],
+    ["mcp__winter__list_agents", "ListAgents"],
+  ] as const) {
+    test(`${canonical} is registered, declared deferred:true AT THE SOURCE, and mirrors ${native}'s own input schema`, async () => {
+      await import("./impl/index.ts");
+      const entry = getRegisteredTool(canonical);
+      expect(entry, `${canonical} must be a registered descriptor`).toBeDefined();
+      // RULING P4-E, verbatim: "the canonical mcp__winter__* entry stays deferred and is declared
+      // deferred: true at its source". Declared here, resolveDeferral and the advertised partition
+      // agree whenever Tool Search is active -- rather than the entry merely being suppressed at the
+      // partition layer while still resolving eager at the execution boundary.
+      expect(entry!.descriptor.deferred).toBe(true);
+      // NOT source:"builtin" -- resolveDeferral short-circuits builtins to "eager" unconditionally,
+      // which would make `deferred: true` structurally unreachable.
+      expect(entry!.descriptor.source).toBe("mcp");
+      // WS-09 §10: "an alias target MUST accept the native arguments exactly."
+      expect(entry!.descriptor.inputSchema).toEqual(getRegisteredTool(native)!.descriptor.inputSchema);
+      // ...and is backed by the SAME executor object, so the two can never drift behaviourally.
+      expect(entry!.executor).toBe(getRegisteredTool(native)!.executor);
+    });
+  }
+
+  test("with Tool Search ACTIVE, the canonical entries resolve deferred (never eager) -- so a call needs a select: first", async () => {
+    await import("./impl/index.ts");
+    const activation: DeferralActivation = { enableToolSearch: "true", providerSupportsToolSearch: true, deferrableContextShare: 0 };
+    for (const canonical of ["mcp__winter__send_message", "mcp__winter__list_agents"]) {
+      expect(resolveDeferral(getRegisteredTool(canonical)!.descriptor, "default", activation)).toBe("deferred");
+    }
+  });
+});

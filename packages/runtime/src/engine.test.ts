@@ -3386,3 +3386,140 @@ describe("Fix round 1, MAJOR item 1: spawn seam engine-level proof (MUST 5, WS-1
     expect(textFrame.message.content).toEqual([{ type: "text", text: "child thinking out loud" }]);
   });
 });
+
+// ================================================================================================
+// Phase 4 Task 8 (riders 1/3/4/15): runtime-derived capability tokens, the ToolSearch activation
+// gate, and WS-09 §10 duplicate suppression -- all observed on the REAL wire, at system/init.tools.
+// ================================================================================================
+describe("Phase 4 Task 8: init.tools reflects derived capabilities, the activation gate, and alias suppression", () => {
+  async function initTools(overrides: Partial<RuntimeConfig> = {}): Promise<string[]> {
+    const { host, runtime } = createInMemoryChannel();
+    const done = runEngine({ config: baseConfig(overrides), input: runtime.input, output: runtime.output, provider: echoProvider });
+    host.output.write({ type: "user", text: "hi" });
+    host.output.write({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined });
+    const frames = await drain(host.input);
+    await done;
+    const init = frames.find((f) => f.type === "init") as { tools: string[] } | undefined;
+    return init?.tools ?? [];
+  }
+
+  test("rider 1: the three P4 families are advertised with NO host-supplied capabilities at all", async () => {
+    const tools = await initTools();
+    for (const n of ["Agent", "SendMessage", "ListAgents", "ReadNotifications", "ListMcpResourcesTool", "ReadMcpResourceTool", "ReadMcpResourceDirTool", "RefreshMcpTools"]) {
+      expect(tools, `"${n}" should be advertised once its family token is runtime-derived`).toContain(n);
+    }
+    // A token that is NOT derived stays host-supplied-only -- proves the union is additive, not a
+    // blanket "advertise everything".
+    expect(tools).not.toContain("mcp__winter__advisor");
+    expect(await initTools({ capabilities: ["winter.reviewer-model"] })).toContain("mcp__winter__advisor");
+  });
+
+  test("rider 4: ToolSearch is advertised iff activation is ON; WaitForMcpServers iff it is OFF", async () => {
+    const off = await initTools();
+    expect(off).toContain("WaitForMcpServers");
+    expect(off).not.toContain("ToolSearch");
+
+    const on = await initTools({ toolSearchEnabled: true });
+    expect(on).toContain("ToolSearch");
+    expect(on).not.toContain("WaitForMcpServers");
+  });
+
+  test("riders 3/15: WS-09 §10 duplicate suppression -- the model sees ONE SendMessage and ONE ListAgents, never the canonical duplicate", async () => {
+    for (const toolSearchEnabled of [false, true]) {
+      const tools = await initTools({ toolSearchEnabled });
+      expect(tools).toContain("SendMessage");
+      expect(tools).toContain("ListAgents");
+      expect(tools, `canonical duplicate leaked with toolSearchEnabled=${toolSearchEnabled}`).not.toContain("mcp__winter__send_message");
+      expect(tools).not.toContain("mcp__winter__list_agents");
+    }
+  });
+
+  // RULING P4-E precision, VERBATIM: "The unresolved call name drives registry lookup, execution,
+  // and the load-first predicate; resolveToolAlias(call.name) computes ONLY the hook/permission
+  // identity." Both halves are asserted here against a REAL host-configured alias table.
+  test("rider 3 / P4-E: an alias changes the PERMISSION identity only -- lookup and execution still use the unresolved call name", async () => {
+    const srcName = "__t8_alias_source__";
+    const targetName = "__t8_alias_target__";
+    registerTool({
+      descriptor: {
+        canonicalName: srcName, advertisedName: srcName, source: "sdk", inputSchema: { type: "object" },
+        description: "alias source fixture", exposure: "eager", permissionClass: "read", availability: {}, capabilityRequirements: [], disposition: "implement-now",
+      },
+    });
+    replaceExecutor(srcName, { async execute() { return { output: "SOURCE EXECUTOR RAN" }; } });
+    try {
+      const { host, runtime } = createInMemoryChannel();
+      const provider = scriptedProvider([{ kind: "tool_use", calls: [{ id: "c1", name: srcName, input: {} }] }, { kind: "text", text: "done" }]);
+      const config = baseConfig({
+        // `dontAsk` so an UNMATCHED call is denied outright by the mode floor (WS-07 §6.3) instead
+        // of parking on an unanswerable permission RPC -- this makes the control test below a fair
+        // comparison (identical config, alias table removed) rather than a hang.
+        permissionMode: "dontAsk",
+        toolAliases: { [srcName]: targetName },
+        // The DENY is written against the ALIAS TARGET, a name the model never emitted. It can only
+        // match if the permission identity was resolved through the alias -- which is exactly
+        // WS-09 §10's "hook and permission matching run on the canonical post-alias identity".
+        permissions: { deny: [`${targetName}`] },
+      });
+      const done = runEngine({ config, input: runtime.input, output: runtime.output, provider });
+      host.output.write({ type: "user", text: "go" });
+      host.output.write({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined });
+      const frames = await drain(host.input);
+      await done;
+      const denied = dataMessages(frames).find((m) => m.type === "system" && (m as { subtype?: string }).subtype === "permission_denied") as
+        | { tool_name?: string; decision_reason_type?: string }
+        | undefined;
+      expect(denied).toBeDefined();
+      // THE DISCRIMINATING ASSERTION: `decision_reason_type` is "rule", not "mode". A denial alone
+      // proves nothing here -- an unmatched call under `default` mode is denied by the mode floor
+      // anyway (Ruling P2-I). Only a RULE match can produce "rule", and the only rule configured is
+      // written against the ALIAS TARGET, a name the model never emitted -- so this is exactly
+      // WS-09 §10's "hook and permission matching run on the canonical post-alias identity",
+      // and it fails (falling back to "mode") the moment alias resolution is removed.
+      expect(denied!.decision_reason_type).toBe("rule");
+      // The MODEL-FACING report still names the tool the MODEL actually called (the unresolved
+      // name) -- engine.ts's `denyCall` uses `call.name` for the stream message on purpose: the
+      // alias is an internal identity mapping, not something to re-label the model's own call with.
+      expect(denied!.tool_name).toBe(srcName);
+      // ...and no dispatch redirection happened: the target name has no descriptor at all, so a
+      // redirected call would have failed as "unknown tool" -- P4-E's "the unresolved call name
+      // drives registry lookup [and] execution".
+      const toolResults = dataMessages(frames).filter((m) => m.type === "user");
+      expect(JSON.stringify(toolResults)).not.toContain("unknown tool");
+      expect(JSON.stringify(toolResults)).not.toContain("SOURCE EXECUTOR RAN"); // the deny stopped it
+    } finally {
+      unregisterToolForTest(srcName);
+    }
+  });
+
+  // The control for the test above: the IDENTICAL config with NO alias table denies by the MODE
+  // floor instead of the rule -- which is what makes "rule" above a real, falsifiable signal rather
+  // than an incidental value.
+  test("rider 3 / P4-E control: without the alias table, the same target-name rule cannot match (mode floor instead)", async () => {
+    const srcName = "__t8_alias_control_source__";
+    const targetName = "__t8_alias_control_target__";
+    registerTool({
+      descriptor: {
+        canonicalName: srcName, advertisedName: srcName, source: "sdk", inputSchema: { type: "object" },
+        description: "alias control fixture", exposure: "eager", permissionClass: "read", availability: {}, capabilityRequirements: [], disposition: "implement-now",
+      },
+    });
+    replaceExecutor(srcName, { async execute() { return { output: "SOURCE EXECUTOR RAN" }; } });
+    try {
+      const { host, runtime } = createInMemoryChannel();
+      const provider = scriptedProvider([{ kind: "tool_use", calls: [{ id: "c1", name: srcName, input: {} }] }, { kind: "text", text: "done" }]);
+      const config = baseConfig({ permissionMode: "dontAsk", permissions: { deny: [`${targetName}`] } });
+      const done = runEngine({ config, input: runtime.input, output: runtime.output, provider });
+      host.output.write({ type: "user", text: "go" });
+      host.output.write({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined });
+      const frames = await drain(host.input);
+      await done;
+      const denied = dataMessages(frames).find((m) => m.type === "system" && (m as { subtype?: string }).subtype === "permission_denied") as
+        | { decision_reason_type?: string }
+        | undefined;
+      expect(denied?.decision_reason_type).toBe("mode");
+    } finally {
+      unregisterToolForTest(srcName);
+    }
+  });
+});

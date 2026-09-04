@@ -16,7 +16,21 @@ stub({
       model: { type: "string", enum: ["sonnet", "opus", "haiku", "fable"] },
       run_in_background: { type: "boolean" },
       isolation: { type: "string", enum: ["worktree", "remote"] },
-      name: { type: "string", description: "capability-gated: named teammates" },
+      // `name` is DELIBERATELY ABSENT from the model-visible schema (Phase 4 Task 8, rider 22).
+      // WS-10 §17 Open Question 1, verbatim: "the pinned default session did not advertise `name`
+      // (report §41); the exact capability predicate that turns it on (teams feature state) must be
+      // captured before Winter advertises it -- until then Winter accepts the field host-side and
+      // withholds it from the model schema." R4-8 restates it as a capture-pending obligation.
+      // Lane C's own report raised this descriptor as a live conflict with that ruling, and RULING
+      // P4-J(d) settled it: "§17 OQ1 stands verbatim -- the Agent descriptor withholds `name` from
+      // the model schema while the host-side field is accepted."
+      //
+      // HOST-SIDE ACCEPTANCE IS UNAFFECTED and is regression-pinned: `tools/impl/agent.ts` reads
+      // `name` off its raw `input` and threads it onto `SpawnChildRequest.name` regardless of what
+      // this schema advertises (nothing in this codebase validates a call against a descriptor's
+      // inputSchema -- registry.ts's own JSONSchema type is explicitly "not a validator"), so this
+      // change is purely about what the MODEL is told exists. Restoring the field is a one-line
+      // edit here once a real capture pins the teams-feature predicate.
     },
     required: ["description", "prompt"],
   },

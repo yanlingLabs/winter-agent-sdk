@@ -65,6 +65,11 @@ import "./tool-search.ts";
 import "./wait-for-mcp-servers.ts";
 import "./web-fetch.ts";
 import "./web-search.ts";
+// Phase 4 Task 8 (rider 15): the two CANONICAL standing-Winter-server entries WS-10 §15 names as
+// [WS-14]'s alias targets -- see winter-send-message.ts's own header. Listed out of the otherwise
+// alphabetical order deliberately, as a pair, so the two are impossible to add one-of.
+import "./winter-list-agents.ts";
+import "./winter-send-message.ts";
 import "./workflow.ts";
 import "./write.ts";
 

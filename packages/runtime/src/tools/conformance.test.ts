@@ -31,7 +31,7 @@ import { createInMemoryChannel } from "../protocol/channel.ts";
 import { runEngine } from "../engine.ts";
 import { scriptedProvider, stubExecutor } from "../provider/mock.ts";
 import "./descriptors/index.ts";
-import { getRegisteredTool, listRegisteredTools, buildAdvertisedSet, registerTool, unregisterToolForTest, type ToolDescriptor } from "./registry.ts";
+import { getRegisteredTool, listRegisteredTools, buildAdvertisedSet, registerTool, unregisterToolForTest, resolveSessionCapabilities, type ToolDescriptor } from "./registry.ts";
 
 // --- shared local test helpers (file-private, mirroring permissions/conformance.test.ts's own
 // "self-sufficient, not cross-file-shared" judgment call) -------------------------------------------
@@ -160,7 +160,14 @@ test("I4: every advertised implement-now descriptor has a real executor -- no sc
   // still a real, falsifiable assertion: if a future task wires a real executor for one of these and
   // forgets to drop its capabilityRequirements, this line (not the loop above) is what would need
   // updating -- the loop above stays correct regardless.
-  const stillExecutorlessImplementNow = [
+  // Phase 4 Task 8 CORRECTION: this list is no longer "still executorless" -- Phase 4's four lanes
+  // shipped a real executor for every one of these, and T8's impl barrel wires them all. What the
+  // list still proves, and why it is kept rather than deleted, is the CAPABILITY GATE itself: under a
+  // cfg that supplies NO capability tokens (this direct buildAdvertisedSet call, unlike engine.ts's
+  // own call site, which now unions in the runtime-DERIVED tokens -- registry.ts's own
+  // resolveSessionCapabilities), every one of these stays correctly excluded. The gate is what
+  // decides advertisement; executor presence is now what decides the token. Renamed accordingly.
+  const capabilityGatedImplementNow = [
     "Agent",
     "SendMessage",
     "ListAgents",
@@ -176,8 +183,22 @@ test("I4: every advertised implement-now descriptor has a real executor -- no sc
     "WaitForMcpServers",
   ];
   const advertisedNames = new Set(advertised.map((d) => d.canonicalName));
-  for (const name of stillExecutorlessImplementNow) {
-    expect(advertisedNames.has(name), `"${name}" should stay excluded under the default (no-capabilities) cfg until it has a real executor`).toBe(false);
+  for (const name of capabilityGatedImplementNow) {
+    expect(advertisedNames.has(name), `"${name}" should stay excluded under a cfg that supplies no capability tokens`).toBe(false);
+  }
+
+  // Phase 4 Task 8 (rider 1), the OTHER half of the same fact -- the flip this task performed: with
+  // the runtime-DERIVED tokens supplied (which is what every real session now gets, engine.ts's own
+  // call site), the P4 families ARE advertised, and every one of them has a real executor, so the
+  // first loop above still holds under that cfg too. Without this second assertion the test would
+  // read as "these are permanently excluded", which is no longer true of a live session.
+  const derivedAdvertised = buildAdvertisedSet({ mode: "bypassPermissions", capabilities: resolveSessionCapabilities(undefined), toolSearchEnabled: false });
+  const derivedNames = new Set(derivedAdvertised.map((d) => d.canonicalName));
+  for (const name of ["Agent", "SendMessage", "ListAgents", "ReadNotifications", "ListMcpResourcesTool", "ReadMcpResourceTool", "ReadMcpResourceDirTool", "RefreshMcpTools", "WaitForMcpServers"]) {
+    expect(derivedNames.has(name), `"${name}" should be advertised once its family token is runtime-derived`).toBe(true);
+  }
+  for (const d of derivedAdvertised.filter((x) => x.disposition === "implement-now")) {
+    expect(getRegisteredTool(d.canonicalName)?.executor, `"${d.canonicalName}" is advertised under the derived-capability cfg but has no executor`).toBeDefined();
   }
 
   // WaitForMcpServers's own gate is `availability: { requiresToolSearchDisabled: true }`, not the

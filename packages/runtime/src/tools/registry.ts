@@ -110,6 +110,16 @@ export interface AvailabilityPredicate {
   requiresFeatures?: readonly string[];
   // WS-09: WaitForMcpServers is advertised only when ToolSearch is disabled.
   requiresToolSearchDisabled?: true;
+  // Phase 4 Task 8 (rider 4), the exact inverse of the gate immediately above: the ToolSearch tool
+  // ITSELF is advertised only when Tool Search is genuinely ACTIVE for this session. Lane B's own
+  // report flagged the absence: the descriptor was unconditionally `exposure: "eager"`, so a session
+  // with deferral inactive (the default -- `ENABLE_TOOL_SEARCH` unset, deferrable share 0) advertised
+  // a search tool whose entire deferred pool is empty by construction (resolveDeferral collapses every
+  // `deferred: true` descriptor to "eager" when activation is off, so `total_deferred_tools` is 0 and
+  // every query returns nothing). WS-09 §8.4's "advertised only when ToolSearch is disabled" pins the
+  // complement for WaitForMcpServers explicitly; the pair now partitions cleanly -- exactly one of the
+  // two is advertised in any session, never both and never neither.
+  requiresToolSearchEnabled?: true;
   // R3-4 (WS-06 open question 3, provisional default): the task graph + TodoWrite are HIDDEN when
   // the resolved model family is marked task-native; absent familyMetadata (no catalog populated
   // yet, P6) reads as "not task-native" -- i.e. SHOWN by default, matching CC's own "older models
@@ -833,10 +843,68 @@ function isAvailable(descriptor: ToolDescriptor, cfg: AdvertisedSetInputs): bool
   if (a.platforms !== undefined && cfg.platform !== undefined && !a.platforms.includes(cfg.platform)) return false;
   if (a.requiresFeatures !== undefined && !a.requiresFeatures.every((f) => cfg.features?.[f] === true)) return false;
   if (a.requiresToolSearchDisabled === true && cfg.toolSearchEnabled !== false) return false;
+  if (a.requiresToolSearchEnabled === true && cfg.toolSearchEnabled !== true) return false;
   if (a.hiddenWhenFamilyTaskNative === true && cfg.familyMetadata?.taskNative === true) return false;
   if (a.insideSubagent === false && cfg.insideSubagent === true) return false;
   if (!descriptor.capabilityRequirements.every((c) => cfg.capabilities?.includes(c) === true)) return false;
   return true;
+}
+
+// --- Phase 4 Task 8: runtime-DERIVED capability tokens --------------------------------------------
+//
+// The I4 fix wave (P3 close-out) introduced `winter.mcp` / `winter.subagents` /
+// `winter.global-messaging` as capability gates on the MCP, subagent, and messaging descriptor
+// families, for one stated reason, quoted from those descriptor files verbatim: "this descriptor has
+// no `impl/*.ts` executor anywhere in the codebase yet (owned by P4/WS-09|WS-10), so advertising it
+// unconditionally handed a real model a schema for a tool that always answers 'registered but not
+// yet executable'". They were placeholders for a fact about the BUILD, not about a session's
+// configuration -- and the registry's own comment (mirrored in transport-equivalence.test.ts) named
+// the flip explicitly: "T8 flips it to runtime-derived later, not this task."
+//
+// Phase 4's four lanes shipped every one of those executors, and Task 8's own impl barrel
+// (tools/impl/index.ts) is what makes them reach a live session. So the derivation is exactly the
+// original rationale, inverted: a family's token resolves iff that family's representative tool
+// actually HAS an executor in the live registry.
+//
+// Why executor-presence and not, say, "this session configured MCP servers" or "a child engine
+// factory is registered": both of those are LEG-DEPENDENT. `system/init.tools` must be byte-identical
+// across the in-memory, spawned-child, and compiled-binary transports (WS-04 §12 makes a divergence a
+// release blocker), and a process-global factory registration or a per-session config knob differs
+// between a test harness driving runEngine in-process and a real spawned `winter`. Executor presence
+// does not: engine.ts imports the impl barrel unconditionally, on every leg, at module load. The
+// tokens a host supplies explicitly (`Options.capabilities`) are UNIONED on top -- never replaced --
+// so a host can still add tokens this function knows nothing about (`winter.reviewer-model`,
+// `pwsh`, `mcp:<server>`), and no host can turn a derived one off (a session where the executor
+// genuinely exists but the tool is unwanted is `disallowedTools`' job, WS-07 §3, not a capability
+// gate's).
+export interface RuntimeDerivedCapability {
+  token: string;
+  // The canonical name whose live executor presence proves the family shipped. One representative
+  // per family (never the whole family) -- every tool in a family lands through the same barrel
+  // import, so a partial family is a build error, not a runtime state to model.
+  probeTool: string;
+}
+
+export const RUNTIME_DERIVED_CAPABILITIES: readonly RuntimeDerivedCapability[] = [
+  // WS-09 §1.4 bridge tools + §8's ToolSearch/WaitForMcpServers (Lane A + Lane B).
+  { token: "winter.mcp", probeTool: "ListMcpResourcesTool" },
+  // WS-10 §1 Agent (Lane C). SendMessage/ListAgents also carry this token (an I4-era choice this
+  // task does not re-file), so Agent is the family's least ambiguous probe.
+  { token: "winter.subagents", probeTool: "Agent" },
+  // WS-10 §10 messaging (Lane D). ReadNotifications is the token's only descriptor consumer, but
+  // SendMessage is the family's own entry point and lands through the same barrel import.
+  { token: "winter.global-messaging", probeTool: "SendMessage" },
+];
+
+export function deriveRuntimeCapabilities(): string[] {
+  return RUNTIME_DERIVED_CAPABILITIES.filter((c) => getRegisteredTool(c.probeTool)?.executor !== undefined).map((c) => c.token);
+}
+
+// The one place a session's EFFECTIVE capability token set is computed: derived tokens unioned with
+// whatever the host supplied. Order is derived-then-host, deduped; nothing downstream depends on
+// order (every consumer is a membership test), but keeping it stable keeps a fixture stable.
+export function resolveSessionCapabilities(hostSupplied: readonly string[] | undefined): string[] {
+  return [...new Set([...deriveRuntimeCapabilities(), ...(hostSupplied ?? [])])];
 }
 
 function isBareDenied(canonicalName: string, disallowedTools: readonly string[] | undefined): boolean {
