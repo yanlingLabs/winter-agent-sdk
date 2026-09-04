@@ -180,6 +180,15 @@ export function inMemoryProcess(
         ...(approvalStore !== undefined ? { approvalStore } : {}),
         // Task 12 (WS-07 §10.5): same precedent, same resolved triple.
         ...(autoStateStore !== undefined ? { autoStateStore } : {}),
+        // Phase 4 Task 3: `inMemoryProcess`'s own `env` param, UNMODIFIED (never the `env ?? {}`
+        // widening resolveEngineSession's own call just above uses for winterHome resolution -- that
+        // widening is deliberately winterHome-specific, per resolveInMemoryWinterHome's own "must
+        // NEVER reach the real process.env fallback" header). Passing `{}` here instead of leaving
+        // this field OMITTED would make runEngine's own MCP-env parsing see no variables at all
+        // rather than falling back to the real `process.env` (its own documented default, matching
+        // main.ts's production posture) -- silently breaking any test that relies on an ambient env
+        // var. Omitted (the common case) lets runEngine's own default take over unchanged.
+        ...(env !== undefined ? { env } : {}),
       });
       if (!settled) {
         settled = true;

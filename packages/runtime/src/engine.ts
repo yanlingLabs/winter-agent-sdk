@@ -6,6 +6,7 @@ import {
   type ControlRequestFrame,
   type ControlResponseFrame,
   type UserFrame,
+  type WinterFrame,
   type ProtocolSdkMessage as SdkMessage,
   type PermissionUpdate,
   type RuleSource,
@@ -13,11 +14,26 @@ import {
   type SDKPermissionDenial,
   type PermissionMode,
   type BackgroundTaskMessage,
+  type McpServerConfigForProcessTransport,
   compatibilityKeys,
 } from "@yanlinglabs/winter-agent-sdk";
 import type { FrameSource, FrameSink } from "./protocol/channel.ts";
 import { Queue } from "./protocol/channel.ts";
 import { createRpcBridge } from "./rpc/bridge.ts";
+// Phase 4 Task 3 (MUST 4): the host->runtime MCP control-request handlers, as pure functions --
+// this file's own pump (below) becomes a thin per-subtype dispatcher over these.
+import { handleMcpStatus, handleMcpReconnect, handleMcpToggle, handleMcpSetServers, mcpServerStatesToWire } from "./rpc/mcp-control.ts";
+import type { McpServerStateSource } from "./mcp/state.ts";
+import type { McpControlSeam } from "./mcp/control-seam.ts";
+// Phase 4 Task 2/3 (WS-09 §2/§7/§8.1): the unbranded MCP/Tool-Search env controls, parsed once per
+// run (mirrors how every other env-derived value in this file is resolved exactly once at startup).
+import { parseMcpEnvConfig } from "./mcp/env.ts";
+// Phase 4 Task 3 (MUST 5/8): the child-spawn seam + host-stream correlation transform, and the
+// messaging router seam's own engine-side hook (children() from the live child roster).
+import { getChildEngineFactory, transformChildFrame, type ChildHandle, type ChildInheritance, type SpawnChildRequest } from "./subagents/child-handle.ts";
+import type { MessagingRouterSeam } from "./messaging/adapter.ts";
+// Phase 4 Task 3 (WS-07 §11 / RULING P2-M): the child permission-policy comparator.
+import { computeChildPolicy } from "./permissions/auto/inheritance.ts";
 import { PolicyStateStore, WinterPermissionError, assertKnownPermissionMode, isPermissionMode } from "./permissions/policy-state.ts";
 import { emptyRuleSet, buildSdkSourcedEntries, sourceRule } from "./permissions/ruleset.ts";
 import { createBridgePromptStage } from "./permissions/prompt-stage.ts";
@@ -70,7 +86,24 @@ import "./tools/descriptors/index.ts";
 // import ORDER relative to the descriptors barrel above does not matter (every impl file is
 // self-sufficient: it imports its own descriptor before calling replaceExecutor).
 import "./tools/impl/index.ts";
-import { buildRegistryToolExecutor, buildRegistryToolExecutorWithFallback, buildAdvertisedSet, replaceExecutor, getRegisteredTool, type RegistryToolExecutorDeps } from "./tools/registry.ts";
+import {
+  buildRegistryToolExecutor,
+  buildRegistryToolExecutorWithFallback,
+  buildAdvertisedSet,
+  replaceExecutor,
+  getRegisteredTool,
+  registerMcpServerTools,
+  unregisterMcpServerTools,
+  // Phase 4 Task 3 (RULING P4-A): the single "Tool Search on" activation authority + the
+  // eager/deferred/hidden partition wired on top of buildAdvertisedSet's own output.
+  isDeferralActive,
+  partitionAdvertisedTools,
+  createLoadedToolSet,
+  type RegistryToolExecutorDeps,
+  type McpToolDefinition,
+  type DeferralActivation,
+  type LoadedToolSet,
+} from "./tools/registry.ts";
 // M6 (fix wave, P3 close-out): RULING R3-2's own "T8 wires the REAL source, from wherever the
 // engine's real turn history... actually lives" instruction -- this IS that wiring. A specific,
 // scoped cross-module dependency (engine.ts -> one lane's own tools/impl/*.ts file), unlike every
@@ -244,6 +277,43 @@ export interface EngineOptions {
   // the fallback still counts correctly for the life of THIS process, it just does not survive a
   // restart, exactly as WS-07 §10.5 says a non-persistent session need not.
   autoStateStore?: AutoCounterStore;
+  // Phase 4 Task 3 (WS-09 §2/§7/§8.1): the environment the MCP/Tool-Search unbranded env controls
+  // (ENABLE_TOOL_SEARCH et al.) are parsed from -- defaults to the real `process.env` (main.ts's own
+  // production posture) but a caller (a test) may inject a controlled snapshot, mirroring
+  // dialect.ts's own resolveEngineSession `env` parameter precedent ("every caller states explicitly
+  // which environment governs" env-derived resolution) one level up.
+  env?: Record<string, string | undefined>;
+  // Phase 4 Task 3 (RULING P4-A): the "provider predicate seam defaulting per the catalog carry" the
+  // brief names -- WS-13's own provider capability catalog (which surface would compute this for
+  // real, per WS-09 §8.1's "Winter models these as provider-capability predicates in the catalog")
+  // does not exist yet at this phase. Defaults to `true` (assume Tool Search is supported) when
+  // omitted -- CAPTURE-PENDING (R4-8 class, same posture as mcp/env.ts's own documented gaps):
+  // recorded as a concern in this task's own report, one line to correct once a real catalog exists.
+  providerSupportsToolSearch?: boolean;
+  // Phase 4 Task 3 (RULING P4-A): "the deferrable-context share" the brief names -- a real
+  // computation needs an actual token-counting pass against the live provider's own context window
+  // (WS-13/provider-layer scope, not this spine task's). Defaults to `0` (percent) when omitted --
+  // the SAFE, conservative default: `auto`/`unset` activation never crosses the 10% threshold on a
+  // fabricated number, so Tool Search activation stays off until a real share computation exists,
+  // rather than silently deferring tools based on an invented figure. CAPTURE-PENDING, same class as
+  // `providerSupportsToolSearch` above.
+  deferrableContextShare?: number;
+  // Phase 4 Task 3 (WS-09 §2.1/§3): the live MCP server connection-state source -- populates
+  // `system/init.mcp_servers` and answers the `mcp_status` control subtype. Absent for every session
+  // with no MCP servers configured at all, and for every session before Lane A's own real transports
+  // exist -- `mcp_servers` is then omitted from both init frames entirely (conditional presence,
+  // never an unconditional `[]`), keeping every pre-existing differential golden byte-identical.
+  mcpServerStateSource?: McpServerStateSource;
+  // Phase 4 Task 3 (WS-09 §3): the live MCP server MUTATION seam (reconnect/toggle/setServers) --
+  // Lane A's own real implementation; a fake for this task's own contract tests. Absent means the
+  // three mutating subtypes answer a structured `mcp_unavailable` error (the subtype IS recognized;
+  // it just has nothing to dispatch to yet) rather than the pump's generic `unknown_subtype`.
+  mcpControlSeam?: McpControlSeam;
+  // Phase 4 Task 3 (MUST 8): called ONCE, synchronously, near the start of the run, handing the
+  // caller a live getter over this run's own child roster -- the ONE exposure point
+  // MessagingRouterSeam.children() (messaging/adapter.ts) is meant to be built from. No routing
+  // logic lives in the engine; this is purely "here is where the children actually are."
+  onChildRosterReady?: (getChildren: () => readonly ChildHandle[]) => void;
 }
 
 type RaceOutcome<T> = { kind: "ok"; value: T } | { kind: "interrupted" };
@@ -278,7 +348,23 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // declared once, below, right where its own dependencies (makeEvalCtx, cancelPendingApprovalsOn
   // ModeSwitch) already exist, so the two call sites shadow right back onto this new binding without
   // a single further textual change to either of them.
-  const { config, input, output, provider, tools: providedTools, unregisteredToolExecutor, store, initialMessages, approvalStore, autoStateStore } = opts;
+  const {
+    config,
+    input,
+    output,
+    provider,
+    tools: providedTools,
+    unregisteredToolExecutor,
+    store,
+    initialMessages,
+    approvalStore,
+    autoStateStore,
+    env: engineEnv,
+    providerSupportsToolSearch,
+    deferrableContextShare,
+    mcpServerStateSource,
+    mcpControlSeam,
+  } = opts;
 
   // Task 6 (WS-07 §2/§6.4, Ruling 8): permission startup validation — deliberately the very FIRST
   // thing runEngine does, before any `await` and before the `init` frame is written. A throw here
@@ -517,6 +603,11 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
     audit: hookAuditRecorder,
     sessionId: config.sessionId,
     lifecycle: hookLifecycleSink,
+    // Phase 4 Task 3 (MUST 9): populated for a child engine's own hook runs (config.agentId is set
+    // ONLY on a child's own RuntimeConfig, per that field's own comment), absent for the main
+    // engine -- HookStageDeps.agentID already existed as a seam (createHookStage's own header) with
+    // no production caller supplying it until now.
+    ...(config.agentId !== undefined ? { agentID: config.agentId } : {}),
   });
   // Task 12 (WS-07 §10.4/§10.6-8): T9's PostToolUse-accumulated classifierContext, threaded to the
   // auto engine below. Appended to, never cleared, for the life of this run (reducer.ts's own
@@ -556,6 +647,19 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // `config.cwd`, exactly like `currentCwd`, but is moved ONLY by EnterWorktree/ExitWorktree
   // (tools/impl/{enter,exit}-worktree.ts), never by a plain `cd` (bash.ts's own cwd-carry).
   let sessionRoot = config.cwd;
+  // Phase 4 Task 3 (MUST 5): the current session's own advertised tool pool (canonical names, eager
+  // + deferred -- computed once the deferral partition exists, below) -- `buildChildInheritance`
+  // closes over this BY REFERENCE (declared here, assigned later) exactly like `currentCwd`/
+  // `sessionRoot` above: it is only ever READ when a real Agent-tool call actually spawns a child,
+  // long after the assignment below has already run.
+  let currentAdvertisedCanonicalNames: string[] = [];
+  // Phase 4 Task 3 (MUST 8): the live child roster this run's own spawns append to -- what
+  // `MessagingRouterSeam.children()` (messaging/adapter.ts) is defined to read from. No routing
+  // logic lives here (WS-10 §15's own split); `onChildRosterReady` (EngineOptions) is this run's own
+  // ONE exposure point, called once below, for whichever host-level code constructs Lane D's own
+  // real MessagingRouterSeam to wire its `children()` against.
+  const childRoster: ChildHandle[] = [];
+  opts.onChildRosterReady?.(() => childRoster);
   const makeEvalCtx = (): EvaluationContext => {
     // Preserves the EXACT pre-existing "include the key only when config.additionalDirectories
     // itself was ever set" contract (Finding 6, P2 fix-wave) — union in extraBoundedRoots WITHOUT
@@ -628,6 +732,9 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
       sessionId: config.sessionId,
       policyVersion: policyStateStore.getState().version,
       lifecycle: hookLifecycleSink,
+      // Phase 4 Task 3 (MUST 9): same posture as realHookStage's own construction above --
+      // RunHooksContext.agentID populated for a child engine's own observational hook firings only.
+      ...(config.agentId !== undefined ? { agentID: config.agentId } : {}),
     });
   }
 
@@ -734,6 +841,74 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
     }
     return cachedSessionTempPaths;
   }
+
+  // Phase 4 Task 3 (MUST 5, WS-10 §3.1/§3.5): the STRUCTURAL model precedence chain --
+  // WINTER_SUBAGENT_MODEL -> per-invocation -> definition -> session, "inherit" meaning "continue
+  // resolving," a fork ignoring an override BY CONTRACT. Real alias resolution against a provider
+  // catalog (org `availableModels` substitution, an unresolvable-alias typed error) is WS-13/Lane
+  // C's own deeper scope -- no such catalog exists in this codebase yet, so this chain operates on
+  // plain strings only, exactly the base layer Lane C's own spawn() implementation is expected to
+  // compose with (it already receives BOTH `req` and this function's own `inherit.model`, so it can
+  // re-derive the identical chain with real alias resolution layered on top without this function
+  // needing to know about that layer at all).
+  function resolveChildModel(req: SpawnChildRequest): string {
+    if (req.fork === true) return config.model; // WS-10 §3.5: fork ignores a model override by contract
+    const envModel = (engineEnv ?? process.env)["WINTER_SUBAGENT_MODEL"];
+    if (envModel !== undefined && envModel !== "" && envModel !== "inherit") return envModel;
+    if (req.model !== undefined && req.model !== "inherit") return req.model;
+    const defModel = req.definition?.model;
+    if (defModel !== undefined && defModel !== "inherit") return defModel;
+    return config.model;
+  }
+
+  // Phase 4 Task 3 (MUST 5, WS-10 §3.5/§9, WS-07 §11): the live-session-state inheritance builder --
+  // `ctx.session.spawnChild` (below) calls this immediately before handing the result to the
+  // registered ChildEngineDeps.spawn(). A fork copies live state (messages, by value); a
+  // definition-backed (or bare) child gets the definition's own restrictions where declared, falling
+  // back to this session's own current pool otherwise.
+  function buildChildInheritance(req: SpawnChildRequest): ChildInheritance {
+    const parentState = policyStateStore.getState();
+    const requestedMode = req.definition?.permissionMode;
+    const validMode = requestedMode !== undefined && isPermissionMode(requestedMode) ? requestedMode : undefined;
+    // RULING P2-M (permissions/auto/inheritance.ts): computeChildPolicy needs no per-axis change of
+    // its own for this call site -- WS-07 §11's forced-mode table is a fixed set-membership check,
+    // not a "which is stricter" comparison; the per-axis comparator only matters at RESUME
+    // (resolveChildResumeMode), Lane C's own future call site once children durably persist across
+    // restarts.
+    const policyResult = computeChildPolicy(
+      parentState,
+      { ...(validMode !== undefined ? { permissionMode: validMode } : {}) },
+      { disableBypassPermissionsMode: config.permissions?.disableBypassPermissionsMode === true },
+    );
+    return {
+      policy: policyResult,
+      // WS-10 §2: AgentDefinition.tools restricts availability when declared; a fork (WS-10 §3.5
+      // "exact tool pool") and a bare/unrestricted definition both inherit this session's own
+      // CURRENT advertised pool (eager + deferred canonical names -- see currentAdvertisedCanonicalNames's
+      // own header for why this is safe to read here, well after assignment).
+      tools: req.definition?.tools ?? [...currentAdvertisedCanonicalNames],
+      model: resolveChildModel(req),
+      // WS-10 §3.2: AgentInput/SpawnChildRequest carry no effort field at all; definition effort
+      // overrides the session's own. No session-level effort CONCEPT is surfaced on RuntimeConfig
+      // anywhere in this codebase yet (a genuine WS-13/provider-layer gap, disclosed rather than
+      // papered over) -- "inherit" is the honest base value Lane C's own resolution applies
+      // definition.effort on top of.
+      effort: req.definition?.effort !== undefined ? String(req.definition.effort) : "inherit",
+      // WS-10 §3.3: non-fork children inherit whether extended thinking is enabled -- RuntimeConfig
+      // carries no such flag yet either (same disclosed gap) -- `undefined` is an honest "not
+      // configured," never a fabricated value.
+      thinking: undefined,
+      // WS-10 §2's real per-child system prompt is AgentDefinition.prompt (Lane C's own resolution);
+      // no session-level system-prompt concept is surfaced on RuntimeConfig at P1-P4 either -- ""
+      // is the honest base a definition's own prompt is expected to be layered onto, never a guess.
+      systemPrompt: "",
+      // WS-10 §3.5: "a fork inherits EVERYTHING... conversation." Copied BY VALUE (a fresh array of
+      // the same message objects) so a child can never mutate the parent's own live turn history.
+      ...(req.fork === true ? { messages: [...messages] } : {}),
+      sessionRoot,
+    };
+  }
+
   function buildDefaultToolExecutor(): ToolExecutor {
     configureBackgroundTaskRoot(resolveSessionTempPaths);
     const deps: RegistryToolExecutorDeps = {
@@ -800,6 +975,30 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
         getPermissionMode(): PermissionMode {
           return policyStateStore.getState().mode;
         },
+        // Phase 4 Task 3 (MUST 5, R4-4): the Agent tool's own spawn seam -- registry.ts's own
+        // ToolExecutionContext.session.spawnChild doc comment for the full contract. Builds this
+        // run's own ChildEngineRunContext (the correlation closure Lane C's real child-engine.ts
+        // needs to reach the ACTUAL host connection this run owns) fresh per call -- cheap,
+        // side-effect-free until a factory is actually registered and invoked.
+        async spawnChild(req: SpawnChildRequest): Promise<ChildHandle> {
+          const factory = getChildEngineFactory();
+          if (!factory) {
+            throw new Error(
+              "winter: Agent spawn requested but no child engine factory is registered (registerChildEngineFactory, subagents/child-handle.ts) -- Lane C's own child-engine.ts must register one before any Agent tool call can succeed",
+            );
+          }
+          const deps = factory({
+            parentSessionId: config.sessionId,
+            forwardChildFrame: (frame: WinterFrame, correlation: { parentToolUseId: string; agentId: string }): void => {
+              const forwarded = transformChildFrame(frame, correlation, config.forwardSubagentText === true);
+              if (forwarded !== null) output.write(forwarded);
+            },
+          });
+          const inheritance = buildChildInheritance(req);
+          const handle = await deps.spawn(req, inheritance);
+          childRoster.push(handle);
+          return handle;
+        },
       },
       // Ruling P3-D carry (task-1 report, spine amendment section): `config.cwd` -- the run's own
       // STARTING cwd -- was in scope here all along; passing it is what lets the read-before-edit
@@ -814,6 +1013,11 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
       getTempDir: () => resolveSessionTempPaths().root,
       sandboxSettings: config.sandbox ?? DEFAULT_SANDBOX_SETTINGS,
       ...(config.outputsDir !== undefined ? { outDir: config.outputsDir } : {}),
+      // Phase 4 Task 3 (MUST 5): threaded straight from this child (or main) run's own RuntimeConfig
+      // -- see ToolExecutionContext's own comments on each field for the full rationale.
+      ...(config.insideSubagent !== undefined ? { insideSubagent: config.insideSubagent } : {}),
+      ...(config.isolationPinnedCwd !== undefined ? { isolationPinnedCwd: config.isolationPinnedCwd } : {}),
+      ...(config.agentId !== undefined ? { agentId: config.agentId } : {}),
     };
     // Fix round 1 (RULING P3-C): main.ts is the one caller that supplies `unregisteredToolExecutor`
     // (stubExecutor) -- every OTHER caller of this default (testing.ts's inMemoryProcess, when ITS
@@ -822,6 +1026,50 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
     return unregisteredToolExecutor !== undefined ? buildRegistryToolExecutorWithFallback(deps, unregisteredToolExecutor) : buildRegistryToolExecutor(deps);
   }
   const tools: ToolExecutor = providedTools ?? buildDefaultToolExecutor();
+
+  // Phase 4 Task 3 (WS-04 addendum, "sdk_mcp_call host-side bridge"): registers an in-process SDK
+  // server's own tools directly from RuntimeConfig.mcpServers (populated by query.ts's own
+  // toWireMcpServers whenever the host's `instance` implements WinterMcpServerInstance.listTools())
+  // -- closes T2's own report "PLAN GAP": the child/compiled legs never see the live `instance`
+  // object, so without this the runtime would have no way to know an SDK server has any tools at
+  // all. Each tool's own executor forwards the call back over the wire as `sdk_mcp_call`
+  // (bridge.request, per-server `timeout` else MCP_TOOL_TIMEOUT) -- the runtime side of the bridge;
+  // query.ts's makeSdkMcpCallHandler is the host side that actually invokes the live instance.
+  // Unregistered in this run's own teardown (below) so a leaked registration never survives into
+  // the next in-memory-leg run sharing this process's module-level registry singleton.
+  const mcpEnvConfig = parseMcpEnvConfig(engineEnv ?? process.env);
+  const sdkMcpServerNames: string[] = [];
+  if (config.mcpServers) {
+    for (const [serverName, serverCfg] of Object.entries(config.mcpServers)) {
+      if (serverCfg.type !== "sdk" || !serverCfg.tools || serverCfg.tools.length === 0) continue;
+      const toolDefs: McpToolDefinition[] = serverCfg.tools;
+      registerMcpServerTools(serverName, toolDefs, { deferredDefault: false });
+      sdkMcpServerNames.push(serverName);
+      const perServerTimeoutMs = serverCfg.timeout;
+      for (const tool of toolDefs) {
+        const canonicalName = `mcp__${serverName}__${tool.name}`;
+        replaceExecutor(canonicalName, {
+          async execute(input: unknown) {
+            const timeoutMs = perServerTimeoutMs ?? mcpEnvConfig.toolTimeoutMs ?? 120_000;
+            try {
+              const result = await bridge.request<{ content?: Array<{ type?: string; text?: string; [k: string]: unknown }>; isError?: boolean }>(
+                "sdk_mcp_call",
+                { server: serverName, tool: tool.name, arguments: input && typeof input === "object" ? input : {} },
+                { timeoutMs },
+              );
+              const text = (result.content ?? [])
+                .map((block) => (typeof block.text === "string" ? block.text : JSON.stringify(block)))
+                .join("\n");
+              return { output: text, ...(result.isError === true ? { isError: true } : {}) };
+            } catch (err) {
+              const message = err instanceof Error ? err.message : String(err);
+              return { output: `Error: sdk_mcp_call failed for '${canonicalName}': ${message}`, isError: true };
+            }
+          },
+        });
+      }
+    }
+  }
 
   // `init` MUST be the first runtime→host frame (WS-04 §4.1 `initializing`), from resolved runtime
   // state. T8 (WS-06 §6 obligation 1): the advertised tool list is no longer hardcoded empty --
@@ -847,15 +1095,84 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // exists for documentation only, and a test in registry.test.ts pins that buildAdvertisedSet must
   // never filter on it -- §1.3's pre-approval-is-not-a-visibility-allowlist rule), so `cfg.tools` is
   // left unset here (its documented default: "no restriction on this axis").
-  const advertisedToolNames = buildAdvertisedSet({
+  // Phase 4 Task 3 (RULING P4-A): ONE resolved DeferralActivation is the single "Tool Search on"
+  // authority for this whole run -- `config.toolSearchEnabled` (the pre-existing P3 host-facing wire
+  // boolean) folds in as an EXPLICIT OVERRIDE of `enableToolSearch` when the host set it, taking
+  // precedence over the ambient `ENABLE_TOOL_SEARCH` env var; when the host left it unset, the env
+  // var (or its own "unset" default) governs. This closes T2's own report Concern 8 (two
+  // independent, un-reconciled "is Tool Search on" signals) by making the wire boolean ONE INPUT
+  // INTO the single activation resolution, never a second, independently-consulted gate.
+  const enableToolSearch: DeferralActivation["enableToolSearch"] =
+    config.toolSearchEnabled === true ? "true" : config.toolSearchEnabled === false ? "false" : mcpEnvConfig.enableToolSearch;
+  const deferralActivation: DeferralActivation = {
+    enableToolSearch,
+    providerSupportsToolSearch: providerSupportsToolSearch ?? true,
+    deferrableContextShare: deferrableContextShare ?? 0,
+  };
+  // The SAME activation value derives BOTH readings from here on -- resolveDeferral's own per-
+  // descriptor verdicts (via partitionAdvertisedTools, below) and this session-wide boolean can
+  // never disagree, because both are, structurally, calls into isDeferralActive (registry.ts).
+  const toolSearchEnabledDerived = isDeferralActive(deferralActivation);
+
+  // Phase 4 Task 3 (WS-09 §8.5): per-session Tool Search bookkeeping -- which deferred tools have
+  // been materialized this session (ToolSearch's own successful-selection consequence, Lane B's
+  // future tool executor). Declared here (not module-level) since it is genuinely per-session state,
+  // mirroring LoadedToolSet's own "NOT a singleton" header.
+  const loadedToolSet: LoadedToolSet = createLoadedToolSet();
+
+  // T8 (WS-06 §6 obligation 1): the advertised tool list is no longer hardcoded empty --
+  // buildAdvertisedSet's own header comment named this exact wiring as "T8's own job... once every
+  // lane's real executor/capability story exists to describe", which is now true (all five P3 lanes
+  // merged).
+  //
+  // Part B item 1 (fix wave, P3 close-out): `familyMetadata`/`capabilities`/`insideSubagent` are
+  // threaded from `config` (RuntimeConfig's own wire mirrors, options.ts's own header for the full
+  // rationale) rather than left permanently unset -- a session with none of these configured sees
+  // byte-identical behavior to before this fix (every field's own documented absent-default: no
+  // capabilities supplied -> every capability-gated descriptor stays excluded, exactly as it always
+  // was; absent familyMetadata reads as "not task-native", i.e. shown; absent insideSubagent is
+  // simply not known-true). `toolSearchEnabled` is now DERIVED (RULING P4-A, above) rather than a
+  // raw config passthrough -- WaitForMcpServers is advertised iff activation is OFF, by construction.
+  // `disallowedTools` threads the run's own deny-grammar config straight through, matching what the
+  // permissions engine already sees from the same `config` object -- RuntimeConfig carries no
+  // separate "requested tool config" allowlist distinct from `allowedTools` (which stays OUT of this
+  // call by design: AdvertisedSetInputs.allowedTools exists for documentation only, and a test in
+  // registry.test.ts pins that buildAdvertisedSet must never filter on it -- §1.3's
+  // pre-approval-is-not-a-visibility-allowlist rule), so `cfg.tools` is left unset here (its
+  // documented default: "no restriction on this axis").
+  const advertisedCfg = {
     mode: policyStateStore.getState().mode,
     platform: process.platform,
     ...(config.disallowedTools !== undefined ? { disallowedTools: config.disallowedTools } : {}),
     ...(config.capabilities !== undefined ? { capabilities: config.capabilities } : {}),
-    ...(config.toolSearchEnabled !== undefined ? { toolSearchEnabled: config.toolSearchEnabled } : {}),
+    toolSearchEnabled: toolSearchEnabledDerived,
     ...(config.insideSubagent !== undefined ? { insideSubagent: config.insideSubagent } : {}),
     ...(config.familyMetadata !== undefined ? { familyMetadata: config.familyMetadata } : {}),
-  }).map((d) => d.advertisedName);
+  };
+  // RULING P4-A: resolveDeferral wired into buildAdvertisedSet's own output -- the advertised set is
+  // partitioned into EAGER (always advertised), DEFERRED (searchable; callable only after
+  // LoadedToolSet.load), and HIDDEN. Every EXISTING static WS-06 descriptor sets no `deferred` field
+  // at all (only a LIVE MCP registration does, via registerMcpServerTools's own factory), so for
+  // every scenario that registers no MCP server, `partition.eager` is EXACTLY `buildAdvertisedSet`'s
+  // own pre-existing output and `partition.deferred`/`partition.hidden` are empty -- byte-identical
+  // to every committed differential golden by construction, not by coincidence.
+  const advertisedPartition = partitionAdvertisedTools(advertisedCfg, deferralActivation);
+  currentAdvertisedCanonicalNames = [...advertisedPartition.eager, ...advertisedPartition.deferred].map((d) => d.canonicalName);
+  // WS-09 §8.5 "Ground truth... the live request's tools array": `system/init.tools` = eager PLUS
+  // whichever deferred names are ALREADY loaded this session (none, at startup -- a fresh
+  // LoadedToolSet.snapshot() is always `[]`, so this composition is presently equivalent to `eager`
+  // alone; it becomes observable once a later system/init-refresh reflects a ToolSearch selection,
+  // Lane B's own future wiring).
+  const loadedNames = new Set(loadedToolSet.snapshot());
+  const advertisedToolNames = [
+    ...advertisedPartition.eager.map((d) => d.advertisedName),
+    ...advertisedPartition.deferred.filter((d) => loadedNames.has(d.canonicalName)).map((d) => d.advertisedName),
+  ];
+  // WS-09 §2.1/§3: the live MCP server connection-state snapshot, wire-mapped (T1's Open Question 5
+  // spelling: needsAuth -> 'needs-auth'). Conditionally present -- absent whenever no state source
+  // is configured for this run (every session before Lane A's own real transports exist, and every
+  // pre-existing test/golden), keeping every committed differential golden byte-identical.
+  const mcpServersWire = mcpServerStateSource ? mcpServerStatesToWire(mcpServerStateSource.snapshot()) : undefined;
   output.write({
     type: "init",
     protocolVersion: PROTOCOL_VERSION,
@@ -864,6 +1181,7 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
     model: config.model,
     permissionMode: policyStateStore.getState().mode,
     tools: advertisedToolNames,
+    ...(mcpServersWire !== undefined ? { mcp_servers: mcpServersWire } : {}),
   });
   output.write({
     type: "data",
@@ -875,6 +1193,7 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
       model: config.model,
       permissionMode: policyStateStore.getState().mode,
       tools: advertisedToolNames,
+      ...(mcpServersWire !== undefined ? { mcp_servers: mcpServersWire } : {}),
     },
   });
 
@@ -1019,6 +1338,26 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
             // Task 11: door 1 of 2 — see cancelPendingApprovalsOnModeSwitch's own header.
             cancelPendingApprovalsOnModeSwitch(previousMode, result.effectiveMode);
             output.write({ type: "control_response", requestId: cf.requestId, ok: true, payload: { effectiveMode: result.effectiveMode } });
+            continue;
+          }
+          // Phase 4 Task 3 (MUST 4, WS-04 §3.1, WS-09 §3): the four host->runtime MCP control
+          // subtypes -- thin dispatch over rpc/mcp-control.ts's own pure handlers, mirroring
+          // set_permission_mode's own "validate/delegate/respond" shape immediately above.
+          if (cf.subtype === "mcp_status" || cf.subtype === "mcp_reconnect" || cf.subtype === "mcp_toggle" || cf.subtype === "mcp_set_servers") {
+            const mcpDeps = { ...(mcpServerStateSource !== undefined ? { stateSource: mcpServerStateSource } : {}), ...(mcpControlSeam !== undefined ? { controlSeam: mcpControlSeam } : {}) };
+            const result =
+              cf.subtype === "mcp_status"
+                ? await handleMcpStatus(mcpDeps)
+                : cf.subtype === "mcp_reconnect"
+                  ? await handleMcpReconnect(mcpDeps, cf.payload)
+                  : cf.subtype === "mcp_toggle"
+                    ? await handleMcpToggle(mcpDeps, cf.payload)
+                    : await handleMcpSetServers(mcpDeps, cf.payload);
+            output.write(
+              result.ok
+                ? { type: "control_response", requestId: cf.requestId, ok: true, ...(result.payload !== undefined ? { payload: result.payload } : {}) }
+                : { type: "control_response", requestId: cf.requestId, ok: false, error: result.error },
+            );
             continue;
           }
           // WS-04 §3.1: an unrecognized subtype gets a structured error response, never a dropped
@@ -1393,6 +1732,13 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
             toolName: call.name,
             input: typeof call.input === "object" && call.input !== null ? (call.input as Record<string, unknown>) : {},
             toolUseId: call.id,
+            // Phase 4 Task 3 (MUST 9): the identical agentID a child engine's own hook stage/audit
+            // already carry (createHookStage/fireObservationalHook above) -- PermissionCall.agentId
+            // existed as a P3-era seam (evaluator.ts's own header) with no production caller
+            // supplying it until now; feeds PromptStageMeta.agentID and the `permission_denied`/
+            // `permission_deferred` stream messages' own `agent_id` field (both already conditional
+            // on this field being set, unchanged since P2/T8).
+            ...(config.agentId !== undefined ? { agentId: config.agentId } : {}),
           };
           const decisionRaced = await raceInterrupt(evaluateWithFreshPolicy(permissionCall), interruptSignal);
           if (decisionRaced.kind === "interrupted") {
@@ -1777,6 +2123,14 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // was seen but `input` itself never closed), this is what actually stops it.
   stopReading();
   await pump.catch(() => {}); // the pump only throws on a truly unexpected input-source error; never let that crash teardown
+  // Phase 4 Task 3 (registry singleton hygiene): unregisters every SDK-MCP-server tool this run
+  // registered at startup -- the module-level tool registry (tools/registry.ts) is a process-wide
+  // singleton every in-memory-leg run in one process shares (registry.ts's own header), so a
+  // registration this run's own config.mcpServers introduced must not silently leak into the next
+  // run's own advertised set once THIS run ends.
+  for (const serverName of sdkMcpServerNames) {
+    unregisterMcpServerTools(serverName);
+  }
   output.end();
   return 0;
 }
