@@ -5,6 +5,12 @@
 // file's own absolute path. Mirrors mcp/test-fixtures.ts's defaultFixtureSpec() tool/resource set
 // exactly, so a stdio-path test can assert the identical expectations as the in-memory/http/sse
 // fixtures. Zod-free (see test-fixtures.ts's own header for why).
+//
+// Fix round 1 (MAJOR M1): also exposes "env_dump", a tool with no other purpose than reporting
+// THIS process's own `process.env` back over the wire -- the only way a test can observe what
+// `WinterStdioTransport.buildStdioEnv()` actually handed to a real, separately-spawned child
+// (a same-process check can only ever prove what the FUNCTION computes, never what a real spawned
+// child actually receives).
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { ListToolsRequestSchema, CallToolRequestSchema, ListResourcesRequestSchema, ReadResourceRequestSchema } from "@modelcontextprotocol/sdk/types.js";
@@ -15,6 +21,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [
     { name: "echo", description: "echoes text back", inputSchema: { type: "object", properties: { text: { type: "string" } }, required: ["text"] } },
     { name: "boom", description: "always fails", inputSchema: { type: "object", properties: {} } },
+    { name: "env_dump", description: "reports this process's own env", inputSchema: { type: "object", properties: {} } },
   ],
 }));
 
@@ -25,6 +32,13 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
   }
   if (req.params.name === "boom") {
     return { content: [{ type: "text", text: "boom" }], isError: true };
+  }
+  if (req.params.name === "env_dump") {
+    // The whole point is fidelity: report every key this process's env actually has, not a
+    // pre-selected subset -- a test asserting "the canary name is ABSENT from keys" would be
+    // meaningless against a payload that only ever includes names the test already expects.
+    const payload = { keys: Object.keys(process.env), values: { ...process.env } };
+    return { content: [{ type: "text", text: JSON.stringify(payload) }] };
   }
   throw new Error(`fixture: unknown tool "${req.params.name}"`);
 });

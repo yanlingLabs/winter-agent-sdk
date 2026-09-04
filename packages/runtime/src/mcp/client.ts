@@ -30,7 +30,6 @@ import { McpError, ErrorCode } from "@modelcontextprotocol/sdk/types.js";
 import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
 import { StreamableHTTPError } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { SseError } from "@modelcontextprotocol/sdk/client/sse.js";
-import type { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { McpServerConfigForProcessTransport } from "@yanlinglabs/winter-agent-sdk";
 import { buildStdioTransport } from "./transports/stdio.ts";
@@ -188,12 +187,6 @@ export async function connectMcpServer(opts: ConnectMcpServerOptions): Promise<C
   const { name, config, connectTimeoutMs, elicitationAsk } = opts;
 
   let transport: Transport;
-  // stdio-only: a real OS pid to hard-kill on a failed/timed-out connect. Captured via a short poll
-  // rather than read once after failure -- empirically, the SDK's own `transport.pid` getter is
-  // NULLED OUT by its internal error-handling before a caller ever gets to read it post-failure
-  // (transports/stdio.test.ts's own header documents the identical finding for this lane's tests).
-  let capturedStdioPid: number | null = null;
-  let pidPollTimer: ReturnType<typeof setInterval> | undefined;
 
   try {
     if (config.type === "sdk") {
@@ -207,13 +200,13 @@ export async function connectMcpServer(opts: ConnectMcpServerOptions): Promise<C
       transport = buildSseTransport(config);
     } else {
       // WS-09 derived-shapes item (a): `type` is the ONLY optional discriminant of the four
-      // variants -- an absent `type` field is structurally a stdio config.
-      const stdioTransport: StdioClientTransport = buildStdioTransport(config);
-      transport = stdioTransport;
-      pidPollTimer = setInterval(() => {
-        if (capturedStdioPid === null && stdioTransport.pid !== null) capturedStdioPid = stdioTransport.pid;
-      }, 5);
-      pidPollTimer.unref?.();
+      // variants -- an absent `type` field is structurally a stdio config. `WinterStdioTransport`
+      // (fix round 1, RULING P4-H) owns its own process lifecycle end-to-end -- including a reliable
+      // process-GROUP kill on close() -- so, unlike the SDK's own `StdioClientTransport` this file
+      // used to wrap, no separate pid-capture/hard-kill fallback is needed here: the generic
+      // `transport!.close()` in this function's own catch block below is sufficient for every
+      // transport kind, stdio included.
+      transport = buildStdioTransport(config);
     }
 
     const client = new Client(
@@ -227,8 +220,6 @@ export async function connectMcpServer(opts: ConnectMcpServerOptions): Promise<C
     installElicitationHandler(client, name, elicitationAsk);
 
     await raceConnect(client, transport, connectTimeoutMs);
-
-    if (pidPollTimer !== undefined) clearInterval(pidPollTimer);
 
     let closed = false;
     return {
@@ -293,22 +284,16 @@ export async function connectMcpServer(opts: ConnectMcpServerOptions): Promise<C
       },
     };
   } catch (err) {
-    if (pidPollTimer !== undefined) clearInterval(pidPollTimer);
     // Best-effort cleanup on a failed connect -- never let a classification failure mask the
     // original error, and never let a SECOND failure (from cleanup itself) propagate over the first.
+    // For stdio specifically, `WinterStdioTransport.close()` performs its own unconditional
+    // process-GROUP kill (RULING P4-H) -- verified empirically (transports/stdio.test.ts's
+    // connect-timeout case) to reliably reap the child AND any grandchild it spawned, so no
+    // additional pid-tracking or manual kill is needed at this layer for any transport kind.
     try {
       await transport!.close();
     } catch {
       /* transport may never have started, or may already be closed -- either is fine here */
-    }
-    if (capturedStdioPid !== null) {
-      // Hard fallback (see this function's own header): the SDK's own close() is NOT reliably
-      // sufficient after a failed/timed-out stdio connect (transports/stdio.test.ts's own finding).
-      try {
-        process.kill(capturedStdioPid, "SIGKILL");
-      } catch {
-        /* already gone */
-      }
     }
     throw classifyConnectError(err);
   }

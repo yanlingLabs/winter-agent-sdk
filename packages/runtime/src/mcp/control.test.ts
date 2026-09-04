@@ -223,7 +223,7 @@ describe("createMcpControlSeam via the REAL rpc/mcp-control.ts handlers (this la
       await lifecycle.stateSource.waitForPending(undefined, 2000);
       // Now backed by the real stdio fixture's own tools, not the in-process one -- proves the
       // override actually took effect, not merely that the call didn't error.
-      expect(lifecycle.stateSource.snapshot()[0]!.toolNames.sort()).toEqual(["boom", "echo"]);
+      expect(lifecycle.stateSource.snapshot()[0]!.toolNames.sort()).toEqual(["boom", "echo", "env_dump"]);
     } finally {
       await lifecycle.dispose();
       await inner.close();

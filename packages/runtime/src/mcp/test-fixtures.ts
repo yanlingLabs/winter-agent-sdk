@@ -199,17 +199,34 @@ export async function withSseFixture<T>(spec: FixtureServerSpec, fn: (url: URL) 
 // `defaultFixtureSpec()` describes, so a test exercising the stdio path can assert the identical
 // expectations as the in-memory/http/sse paths.
 export function stdioFixtureCommand(): { command: string; args: string[] } {
-  // process.execPath: the currently-running bun binary's own absolute path -- resolves with NO
-  // PATH lookup, which matters because WS-09 §1.2's own env-allowlist discipline means the spawned
-  // child's env is `{}` (or whatever explicit allowlist a test passes), never inheriting this
-  // process's own PATH. Verified empirically before writing this file (a bare "bun" command string
-  // fails to resolve under an empty env; process.execPath does not).
+  // process.execPath: the currently-running bun binary's own absolute path. Fix round 1 correction
+  // (MAJOR M1's own report Deviations entry): this is NOT here to work around an empty-env PATH
+  // failure -- `WinterStdioTransport`'s own env allowlist (transports/stdio.ts's
+  // `STDIO_BASE_ENV_NAMES`) always carries PATH through from this process's own env when present,
+  // so a bare "bun" command string would in fact resolve correctly via that inherited PATH under
+  // the CURRENT transport too. `process.execPath` is used regardless, for a reason that has nothing
+  // to do with env content: it is an absolute path requiring no PATH lookup or shell resolution at
+  // all, and it is correct by construction whatever runtime this test suite itself happens to be
+  // running under (bun today; nothing here assumes a literal "bun" name is on any PATH, allowlisted
+  // or otherwise).
   //
   // fileURLToPath, NOT `new URL(...).pathname`: this repository's own working-copy path contains a
   // literal space ("Xcode progects") -- `URL.pathname` percent-encodes it to a literal "%20"
   // substring, which is not a valid filesystem path and made the spawned child fail to find its own
   // script (found empirically: this exact bug, once, while writing this file's own test).
   return { command: process.execPath, args: [fileURLToPath(new URL("./transports/__fixtures__/stdio-server.ts", import.meta.url))] };
+}
+
+// Fix round 1 (MAJOR M1): a command that never speaks MCP at all -- `/bin/sh -c "sleep 3600 & wait"`
+// forks a genuine GRANDCHILD (the backgrounded `sleep`) under a `sh` parent that then blocks on
+// `wait`, rather than exec-optimizing into a single process the way a bare `sh -c "sleep 3600"`
+// would (verified empirically: without the `&`+`wait`, there is only ever one process to find,
+// which would make a "does the GRANDCHILD also die" test vacuous). Used only by
+// transports/stdio.test.ts's own process-group-kill tests, which talk to the spawned
+// `WinterStdioTransport` directly (no `Client`/handshake involved) and confirm group death via
+// `pgrep -P`/`process.kill(pid, 0)`, not via any MCP-level exchange.
+export function grandchildSpawningCommand(): { command: string; args: string[] } {
+  return { command: "/bin/sh", args: ["-c", "sleep 3600 & wait"] };
 }
 
 // --- Fake McpLifecycle / ConnectedMcpClient (for the bridge tools' own tests) -------------------

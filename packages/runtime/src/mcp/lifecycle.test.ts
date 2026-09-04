@@ -319,7 +319,7 @@ describe("createMcpLifecycle: the seven-state model driven by real connections",
       await lifecycle.stateSource.waitForPending(undefined, 3000);
       const snap = lifecycle.stateSource.snapshot()[0]!;
       expect(snap.state).toBe("connected"); // a REAL connection, never "cached"
-      expect(snap.toolNames.sort()).toEqual(["boom", "echo"]);
+      expect(snap.toolNames.sort()).toEqual(["boom", "echo", "env_dump"]);
     } finally {
       await lifecycle.dispose();
     }

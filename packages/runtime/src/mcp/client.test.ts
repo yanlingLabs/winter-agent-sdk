@@ -256,7 +256,7 @@ describe("connectMcpServer: error classification", () => {
     const client = await connectMcpServer({ name: "stdio-srv", config: { command, args, env: {} }, connectTimeoutMs: 5000, elicitationAsk: NO_ELICIT });
     try {
       const tools = await client.listTools();
-      expect(tools.map((t) => t.name).sort()).toEqual(["boom", "echo"]);
+      expect(tools.map((t) => t.name).sort()).toEqual(["boom", "echo", "env_dump"]);
       const result = await client.callTool("echo", { text: "hi" });
       expect(result).toEqual({ content: [{ type: "text", text: "echo:hi" }] });
     } finally {
