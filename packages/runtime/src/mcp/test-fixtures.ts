@@ -211,3 +211,58 @@ export function stdioFixtureCommand(): { command: string; args: string[] } {
   // script (found empirically: this exact bug, once, while writing this file's own test).
   return { command: process.execPath, args: [fileURLToPath(new URL("./transports/__fixtures__/stdio-server.ts", import.meta.url))] };
 }
+
+// --- Fake McpLifecycle / ConnectedMcpClient (for the bridge tools' own tests) -------------------
+//
+// The four WS-09 §1.4 bridge tools (tools/impl/{list-mcp-resources-tool,read-mcp-resource-tool,
+// read-mcp-resource-dir-tool,refresh-mcp-tools}.ts) each depend on an INJECTED
+// `(ctx) => McpLifecycle | undefined` resolver (see list-mcp-resources-tool.ts's own header). Their
+// own tests care about input validation, per-server error shaping, and wiring -- NOT about real
+// connection lifecycle mechanics (already covered end to end by lifecycle.test.ts/control.test.ts)
+// -- so a lightweight fake satisfying the full `McpLifecycle` interface is the right fixture here,
+// not another real fixture-server dance.
+import type { McpLifecycle, RefreshServerToolsResult } from "./lifecycle.ts";
+import type { ConnectedMcpClient, McpResourceContent, McpResourceInfo, McpToolCallResult, McpToolInfo } from "./client.ts";
+
+export interface FakeConnectedMcpClientOverrides {
+  listTools?: () => Promise<McpToolInfo[]>;
+  listResources?: () => Promise<McpResourceInfo[]>;
+  readResource?: (uri: string, opts?: { timeoutMs?: number }) => Promise<McpResourceContent[]>;
+  callTool?: (name: string, args: Record<string, unknown>, opts?: { timeoutMs?: number }) => Promise<McpToolCallResult>;
+  close?: () => Promise<void>;
+}
+
+export function createFakeConnectedMcpClient(serverName: string, overrides: FakeConnectedMcpClientOverrides = {}): ConnectedMcpClient {
+  return {
+    serverName,
+    listTools: overrides.listTools ?? (async () => []),
+    listResources: overrides.listResources ?? (async () => []),
+    readResource: overrides.readResource ?? (async () => []),
+    callTool: overrides.callTool ?? (async () => ({ content: [] })),
+    close: overrides.close ?? (async () => {}),
+  };
+}
+
+export interface FakeMcpLifecycleOverrides {
+  connectedServers?: Readonly<Record<string, ConnectedMcpClient>>;
+  refreshServerTools?: (server: string) => Promise<RefreshServerToolsResult>;
+}
+
+export function createFakeMcpLifecycle(overrides: FakeMcpLifecycleOverrides = {}): McpLifecycle {
+  const connected = overrides.connectedServers ?? {};
+  return {
+    // Never exercised by any bridge-tool test (they only ever reach listConnectedServerNames/
+    // getConnectedClient/refreshServerTools) -- present only to satisfy the full interface honestly.
+    stateSource: { snapshot: () => [], subscribe: () => () => {}, waitForPending: async () => [] },
+    controlSeam: {
+      reconnect: async () => {},
+      toggle: async () => {},
+      setServers: async () => ({ added: [], removed: [], errors: {} }),
+    },
+    start: async () => {},
+    dispose: async () => {},
+    listConnectedServerNames: () => Object.keys(connected),
+    getConnectedClient: (name: string) => connected[name],
+    refreshServerTools: overrides.refreshServerTools ?? (async (name: string) => ({ ok: false, reason: `unknown MCP server "${name}"` })),
+  };
+}
