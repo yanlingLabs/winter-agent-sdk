@@ -45,6 +45,16 @@ describe("isDirectChildUri (R4-8: the chosen 'direct children' interpretation)",
   test("an unrelated URI (different scheme/host entirely) is excluded", () => {
     expect(isDirectChildUri("file:///a/b", "https://example.com/a/b/c")).toBe(false);
   });
+
+  test("fix round 1 (Minor 5): a direct child that is ITSELF directory-shaped (single trailing slash) is still recognized", () => {
+    expect(isDirectChildUri("file:///a/b", "file:///a/b/subdir/")).toBe(true);
+    expect(isDirectChildUri("file:///a/b/", "file:///a/b/subdir/")).toBe(true);
+    // A deeper, directory-shaped descendant is still excluded -- the trailing slash alone must not
+    // change the segment count.
+    expect(isDirectChildUri("file:///a/b", "file:///a/b/subdir/nested/")).toBe(false);
+    // The parent itself, spelled with a trailing slash, is still not its own child.
+    expect(isDirectChildUri("file:///a/b", "file:///a/b/")).toBe(false);
+  });
 });
 
 describe("ReadMcpResourceDirTool executor", () => {

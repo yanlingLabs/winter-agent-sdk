@@ -149,6 +149,33 @@ describe("createMcpLifecycle: the seven-state model driven by real connections",
     }
   });
 
+  test("fix round 1 (Minor 4): a server tool's annotations and _meta survive createMcpLifecycle's own registration, all the way into getRegisteredTool(...).descriptor", async () => {
+    const server = createFixtureMcpServer({
+      tools: [
+        {
+          name: "annotated",
+          description: "carries annotations and _meta",
+          inputSchema: { type: "object", properties: {} },
+          annotations: { readOnlyHint: true, title: "Annotated Tool", idempotentHint: true },
+          _meta: { "anthropic/requiresUserInteraction": true, "some-vendor/extra": "value" },
+          handler: () => ({ content: [{ type: "text", text: "ok" }] }),
+        },
+      ],
+    });
+    const resolved: ResolvedMcpServerEntry[] = [{ name: "annot-srv", origin: "explicit", config: { type: "sdk", name: "annot-srv" } }];
+    const lifecycle = createMcpLifecycle({ servers: resolved, envConfig: fastEnv(), elicitationAsk: NO_ELICIT, inProcessServers: { "annot-srv": server } });
+    try {
+      await lifecycle.start();
+      const registered = getRegisteredTool("mcp__annot-srv__annotated");
+      expect(registered).toBeDefined();
+      expect(registered!.descriptor.annotations).toEqual({ readOnlyHint: true, title: "Annotated Tool", idempotentHint: true });
+      expect(registered!.descriptor._meta).toEqual({ "anthropic/requiresUserInteraction": true, "some-vendor/extra": "value" });
+    } finally {
+      await lifecycle.dispose();
+      await server.close();
+    }
+  });
+
   test("output cap: a tool result exceeding MAX_MCP_OUTPUT_TOKENS is truncated with an explicit marker", async () => {
     const bigText = "x".repeat(10_000);
     const server = createFixtureMcpServer({

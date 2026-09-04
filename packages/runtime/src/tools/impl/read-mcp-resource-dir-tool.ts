@@ -40,8 +40,13 @@ function parseInput(raw: unknown): { ok: true; input: ReadMcpResourceDirInput } 
 // comparing -- a caller may pass either "scheme://a/b" or "scheme://a/b/" for the same directory.
 export function isDirectChildUri(parent: string, candidate: string): boolean {
   const normalizedParent = parent.endsWith("/") ? parent : `${parent}/`;
-  if (!candidate.startsWith(normalizedParent)) return false;
-  const rest = candidate.slice(normalizedParent.length);
+  // Fix round 1 (Minor 5): a directory-shaped CANDIDATE (e.g. "base/subdir/") carries its own single
+  // trailing slash -- strip exactly one before the segment-count check below, so it isn't mistaken
+  // for a deeper descendant just because it also ends in "/". Only one slash is stripped (not a
+  // repeated trim): a candidate ending in "//" still correctly reads as having an extra segment.
+  const normalizedCandidate = candidate.endsWith("/") ? candidate.slice(0, -1) : candidate;
+  if (!normalizedCandidate.startsWith(normalizedParent)) return false;
+  const rest = normalizedCandidate.slice(normalizedParent.length);
   if (rest.length === 0) return false; // identical to the parent itself, not a child of it
   return !rest.includes("/"); // exactly one more segment -- a deeper descendant is excluded
 }
