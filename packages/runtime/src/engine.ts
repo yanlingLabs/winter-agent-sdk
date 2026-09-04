@@ -149,7 +149,7 @@ import { effectiveAliasTable, resolvePermissionIdentity, suppressAliasedDuplicat
 // Phase 4 Task 8 (rider 2, WS-09 §8): Lane B's session-keyed ToolSearch/WaitForMcpServers runtime
 // registry. Both of that lane's executors answer a typed "no session runtime registered" error until
 // a live run registers one -- this file is the one production registrar.
-import { registerToolSearchSessionRuntime, unregisterToolSearchSessionRuntime } from "./toolsearch/search.ts";
+import { registerToolSearchSessionRuntime } from "./toolsearch/search.ts";
 
 export type ContentBlock =
   | { type: "text"; text: string }
@@ -1562,7 +1562,7 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // Unregistered in this run's own teardown (below): the registry is keyed by session id in a
   // process-wide module singleton, so a long-lived host running many sessions would otherwise leak
   // one entry per run.
-  registerToolSearchSessionRuntime(sessionStateKey, {
+  const disposeToolSearchSessionRuntime = registerToolSearchSessionRuntime(sessionStateKey, {
     getMode: () => policyStateStore.getState().mode,
     activation: deferralActivation,
     platform: process.platform,
@@ -2672,7 +2672,13 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   if (mcpLifecycle) await mcpLifecycle.dispose().catch(() => {});
   // Phase 4 Task 8 (rider 2): drop this run's ToolSearch session runtime -- same singleton-hygiene
   // argument as the MCP unregistration immediately above (one leaked entry per run otherwise).
-  unregisterToolSearchSessionRuntime(sessionStateKey); // fix wave (I1): the paired disposer for the registration above -- never `config.sessionId`, which a child shares with its parent
+  // Fix wave (I1): keyed by `sessionStateKey`, never `config.sessionId`, which a child shares with its
+  // parent. Fix wave follow-up (2) / whole-branch M3(c): the IDENTITY-CHECKED disposer returned by the
+  // registration, never the unconditional by-key `unregisterToolSearchSessionRuntime` -- a child
+  // `stop()`ped and immediately `resume()`d registers generation 2 under the same agent key while
+  // generation 1's teardown is still draining, and a by-key delete would let the dead generation
+  // remove the live one's runtime.
+  disposeToolSearchSessionRuntime();
   output.end();
   return 0;
 }

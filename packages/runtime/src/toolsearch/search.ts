@@ -225,13 +225,11 @@ export async function executeToolSearch(input: unknown, deps: ToolSearchDeps): P
 // same shape registry.ts's own `session.spawnChild` uses for "no child engine factory is registered
 // yet" ("mirroring how a missing ChildEngineDeps factory registration is handled one level down").
 //
-// STILL OWED (fix wave, whole-branch M3(c), reported as NEEDS_CONTEXT to the controller): the
-// teardown unregisters BY KEY, not by identity. `registerToolSearchSessionRuntime` already returns
-// an identity-checked disposer -- engine.ts should keep and call THAT instead of
-// `unregisterToolSearchSessionRuntime(config.sessionId)`, so a resumed child generation registering
-// under the same agentId cannot have its runtime deleted by the previous generation's still-draining
-// teardown. `registerSessionMcpLifecycle`'s disposer (mcp/lifecycle.ts) is already identity-checked;
-// this one's call site is the asymmetry.
+// M3(c) -- CLOSED in the fix wave's follow-up round (item 2), both halves: the disposer returned by
+// `registerToolSearchSessionRuntime` is identity-checked (below), and engine.ts's teardown calls THAT
+// rather than the unconditional by-key `unregisterToolSearchSessionRuntime`. Before both, a resumed
+// child generation registering under the same agent key could have its runtime deleted by generation
+// 1's still-draining teardown.
 //
 // Deliberately `Omit<..., "emitToolReference">`, NOT the full `ToolSearchDeps` -- `emitToolReference`
 // is per-CALL (it comes from `ToolExecutionContext`, itself built fresh per tool call by
@@ -252,13 +250,23 @@ const sessionRuntimes = new Map<string, ToolSearchSessionRuntime>();
 // (McpServerStateSource.subscribe, onRegistryChange) -- a caller (engine.ts, once wired) can register
 // at run start and unregister via the returned closure at run end without needing to keep the
 // sessionId around separately for a second, differently-named teardown call.
+// The disposer is IDENTITY-CHECKED (whole-branch review M3(c), fix wave follow-up item 2), mirroring
+// `registerSessionMcpLifecycle`'s own disposer verbatim. Deleting by KEY alone is unsafe the moment
+// two generations can share one key: a child's `stop()` immediately followed by `resume()` registers
+// generation 2 under the same agent key while generation 1's teardown is still draining, and a
+// key-only delete lets the DEAD generation remove the LIVE one's runtime -- after which every
+// ToolSearch/WaitForMcpServers call in that child answers "no session runtime registered" forever.
+// Checking identity makes a late disposer a no-op instead.
 export function registerToolSearchSessionRuntime(sessionId: string, runtime: ToolSearchSessionRuntime): () => void {
   sessionRuntimes.set(sessionId, runtime);
   return () => {
-    sessionRuntimes.delete(sessionId);
+    if (sessionRuntimes.get(sessionId) === runtime) sessionRuntimes.delete(sessionId);
   };
 }
 
+// The UNCONDITIONAL by-key delete. Kept for tests and for a caller that genuinely means "whatever is
+// registered under this key, drop it" -- production teardown must use the disposer returned by
+// `registerToolSearchSessionRuntime` instead (engine.ts does), for the generation race above.
 export function unregisterToolSearchSessionRuntime(sessionId: string): void {
   sessionRuntimes.delete(sessionId);
 }

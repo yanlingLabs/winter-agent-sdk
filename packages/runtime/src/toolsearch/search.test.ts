@@ -11,7 +11,14 @@ import {
   type DeferralActivation,
 } from "../tools/registry.ts";
 import { createFakeMcpServerStateSource } from "../mcp/state.ts";
-import { executeToolSearch, type ToolSearchDeps } from "./search.ts";
+import {
+  executeToolSearch,
+  registerToolSearchSessionRuntime,
+  unregisterToolSearchSessionRuntime,
+  getToolSearchSessionRuntime,
+  type ToolSearchDeps,
+  type ToolSearchSessionRuntime,
+} from "./search.ts";
 
 const SRV = "t5searchsrv";
 const ACTIVE: DeferralActivation = { enableToolSearch: "true", providerSupportsToolSearch: true, deferrableContextShare: 100 };
@@ -336,5 +343,37 @@ describe("rider 7: max_results defaults to 5", () => {
     expect(res.ok).toBe(true);
     if (!res.ok) return;
     expect(res.result.matches.sort()).toEqual([...selected].sort());
+  });
+});
+
+// --- Fix wave follow-up (2) / whole-branch M3(c): the disposer is identity-checked ----------------
+describe("session runtime registry: a stale generation's disposer cannot delete a live one (M3(c))", () => {
+  const KEY = "m3c-shared-agent-key";
+  const runtimeA: ToolSearchSessionRuntime = { getMode: () => "default", activation: { enableToolSearch: "true", providerSupportsToolSearch: true, deferrableContextShare: 100 } };
+  const runtimeB: ToolSearchSessionRuntime = { getMode: () => "plan", activation: { enableToolSearch: "true", providerSupportsToolSearch: true, deferrableContextShare: 100 } };
+
+  test("generation 1's late teardown is a NO-OP once generation 2 has registered under the same key", () => {
+    try {
+      const disposeA = registerToolSearchSessionRuntime(KEY, runtimeA);
+      // A `stop()` immediately followed by `resume()`: generation 2 registers under the SAME agent
+      // key while generation 1's teardown is still draining.
+      registerToolSearchSessionRuntime(KEY, runtimeB);
+      expect(getToolSearchSessionRuntime(KEY)).toBe(runtimeB);
+
+      disposeA(); // generation 1's teardown finally runs
+
+      // Pre-fix this deleted by KEY, so the LIVE generation's runtime vanished and every
+      // ToolSearch/WaitForMcpServers call in that child answered "no session runtime registered".
+      expect(getToolSearchSessionRuntime(KEY), "a dead generation's disposer must not remove the live one").toBe(runtimeB);
+    } finally {
+      unregisterToolSearchSessionRuntime(KEY);
+    }
+  });
+
+  test("the disposer still removes its OWN registration when nothing displaced it", () => {
+    const dispose = registerToolSearchSessionRuntime(KEY, runtimeA);
+    expect(getToolSearchSessionRuntime(KEY)).toBe(runtimeA);
+    dispose();
+    expect(getToolSearchSessionRuntime(KEY)).toBeUndefined();
   });
 });
