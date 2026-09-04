@@ -36,6 +36,7 @@ import { parseMcpEnvConfig } from "./mcp/env.ts";
 // nothing from this module, and a value import in either direction would make the pair a runtime
 // cycle the compiled binary resolves differently from the dev leg.
 import type { AssembledPrompt, SystemPromptAssembler, SystemPromptInput } from "./context/seam.ts";
+import { resolveBuiltinCommand, looksLikeCommand, type CommandResolver } from "./commands/seam.ts";
 // Phase 4 Task 8 (rider 11): Lane A's real MCP client/lifecycle/control stack, wired into a live
 // session for the first time. Lane A shipped all of it as a self-contained subsystem with the exact
 // integration recipe in its own report, and could not perform the integration itself: the
@@ -484,6 +485,12 @@ export interface EngineOptions {
    * a top-level host.
    */
   agentSystemPrompt?: string;
+  /**
+   * R5-14: slash-command resolution (Lane S owns the filesystem half; the engine owns the built-ins
+   * and the ordering between them). Consulted BEFORE the model sees a prompt. ABSENT => only the
+   * built-ins resolve and every other prompt passes through verbatim.
+   */
+  commandResolver?: CommandResolver;
 }
 
 type RaceOutcome<T> = { kind: "ok"; value: T } | { kind: "interrupted" };
@@ -599,6 +606,7 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
     contextAccountant: injectedContextAccountant,
     systemPromptAssembler,
     agentSystemPrompt,
+    commandResolver,
   } = opts;
 
   // Task 6 (WS-07 §2/§6.4, Ruling 8): permission startup validation — deliberately the very FIRST
@@ -2374,6 +2382,14 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // R5-16: with no assembler registered this returns the caller's `agentSystemPrompt` (a child's
   // persona, R5-3) or an EMPTY prompt. No authored text lives here, deliberately -- the only authored
   // minimal prompt is Lane C's (see context/seam.ts's header).
+  // Phase 5 Task 3 (R5-4/R5-14): the `/compact` action. The compaction slice replaces this body's
+  // no-controller arm with the real PreCompact -> compact() -> persist -> frame -> PostCompact ->
+  // onCompaction sequence; the NO-CONTROLLER answer is permanent and deliberate -- an engine that
+  // silently ignored `/compact` would look identical to one whose controller failed.
+  const runManualCompaction = async (_customInstructions: string): Promise<string> => {
+    return "No compaction controller is configured for this session, so /compact did nothing. (R5-4: the compaction vehicle is supplied by the host; the engine never summarizes on its own.)";
+  };
+
   const assemblePrompt = (): AssembledPrompt => {
     const base: SystemPromptInput = {
       config,
@@ -2437,7 +2453,39 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
     // failed) already route through — nothing else needs separate instrumentation.
     const turnPermissionDenials: SDKPermissionDenial[] = [];
 
-    const userText = userFrame.text;
+    // --- Phase 5 Task 3 (R5-14): command resolution, BEFORE the model sees the prompt -------------
+    //
+    // Three outcomes, in this order. (1) An engine BUILT-IN (`/compact [instructions]`) never becomes
+    // a provider turn at all -- it runs its own engine-side action and produces this envelope's own
+    // terminal result. (2) An `expand` resolution REPLACES the prompt text with the fully expanded
+    // body; the model never observes the `/name args` form, which is the entire reason resolution
+    // cannot be a tool. (3) Anything else -- not a command, or a `/name` no resolver claims -- is used
+    // verbatim; an unknown command is never an error and never a dropped turn.
+    //
+    // The built-in is recognised FIRST, so a `.winter/commands/compact.md` in an untrusted clone
+    // cannot shadow a built-in with real engine-side power (the same self-grant shape P5-A closes on
+    // the settings side). The resolver is only ever offered a `/name` the engine did not claim.
+    const builtinCommand = resolveBuiltinCommand(userFrame.text);
+    let resolvedPromptText = userFrame.text;
+    if (builtinCommand === undefined && commandResolver !== undefined && looksLikeCommand(userFrame.text)) {
+      const resolution = await commandResolver.resolve(userFrame.text, config.cwd);
+      if (resolution.kind === "expand") resolvedPromptText = resolution.text;
+    }
+
+    if (builtinCommand !== undefined) {
+      // `/compact`. Deliberately produces a terminal `result` of its own: WS-04 §4.1 gives every
+      // accepted user envelope exactly one terminal result, and a built-in that silently produced
+      // none would hang any single-shot caller (query.ts's readLoop breaks on the result frame).
+      // `permission_denials` is stamped here for the same reason every other terminal write does:
+      // the field is pin-verified always-present.
+      interruptCurrentTurn.current = null;
+      const compactOutcome = await runManualCompaction(builtinCommand.args);
+      output.write({ type: "data", message: { type: "result", subtype: "success", is_error: false, result: compactOutcome, permission_denials: [] } });
+      await flushStore();
+      continue;
+    }
+
+    const userText = resolvedPromptText;
     messages.push({ role: "user", content: userText });
     const turnUserIndex = messages.length - 1;
     await recordUser(userText);
