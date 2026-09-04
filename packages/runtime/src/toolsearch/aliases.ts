@@ -4,13 +4,16 @@
 // Record<string, string>` is REAL (sdk.d.ts:1461-1486, wire twin 3759-3762) and is already threaded
 // end to end on the Winter side as plain data -- `packages/sdk/src/options.ts`, `protocol/config.ts`
 // (`RuntimeConfig.toolAliases`), and `query.ts`'s own `--config-json` serialization all carry it
-// today (query.test.ts's own "Phase 4 Task 2" fixture). What does NOT exist yet is the actual
-// RESOLUTION HOOK POINT inside engine.ts's tool-dispatch loop -- confirmed by grep: zero reads of
-// `toolAliases`/`config.toolAliases` anywhere in engine.ts as of this lane's fork point (b883a48).
-// R4-10 forbids this lane from editing engine.ts, so this file supplies exactly what the brief asks
-// for on that basis ("provide the resolver as a pure function + tests and report NEEDS_CONTEXT for
-// the engine call site rather than editing engine.ts") -- see task-5-report.md for the precise call
-// sites this still needs.
+// today (query.test.ts's own "Phase 4 Task 2" fixture).
+//
+// STALE-COMMENT SWEEP (P4 fix wave, KNOWN (8)): the two paragraphs replaced here said the resolution
+// HOOK POINT inside engine.ts's dispatch loop "does NOT exist yet" and that R4-10 forbade that lane
+// from adding it, so this file was to ship the resolver unwired and report NEEDS_CONTEXT. Both were
+// true at the fork point (b883a48) and both are now DISCHARGED: engine.ts calls
+// `suppressAliasedDuplicates` at its advertised-partition site (Task 8 rider 3) and
+// `resolvePermissionIdentity` at its dispatch loop (this fix wave, RULING P4-E amended), and
+// `effectiveAliasTable` supplies the default table to both plus `computeExposurePartition`. Nothing
+// in this file is unwired.
 //
 // Pinned doc-comment behavior (derived-shapes-p4.md item (c), verbatim verdict: "matches WS-09 §10
 // exactly"): the map is consulted EXACTLY ONCE, at the moment a model-emitted `tool_use` name is

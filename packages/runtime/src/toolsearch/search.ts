@@ -206,15 +206,23 @@ export async function executeToolSearch(input: unknown, deps: ToolSearchDeps): P
 // concurrent `runEngine` calls in one process (tests do exactly this) must never observe each other's
 // registrations.
 //
-// NEEDS_CONTEXT (task-5-report.md carries the full text): no file this lane may edit can actually
-// CALL `registerToolSearchSessionRuntime` -- that line belongs in engine.ts's own
-// `buildDefaultToolExecutor` (paired with an `unregisterToolSearchSessionRuntime` once the run ends,
-// to avoid leaking an entry per run in a long-lived process). Until that one call lands, the real
-// engine wires no session here at all, and both `tools/impl/tool-search.ts` and
-// `tools/impl/wait-for-mcp-servers.ts` deliberately answer with a typed, NON-crashing tool-result
-// error for a session with nothing registered -- the exact same shape registry.ts's own
-// `session.spawnChild` uses for "no child engine factory is registered yet" (registry.ts's own
-// comment: "mirroring how a missing ChildEngineDeps factory registration is handled one level down").
+// STALE-COMMENT SWEEP (P4 fix wave, KNOWN (8)): this paragraph used to be a NEEDS_CONTEXT saying no
+// file that lane could edit was able to CALL `registerToolSearchSessionRuntime`. DISCHARGED by Task
+// 8 rider 2 -- engine.ts registers this run's runtime right after `deferralActivation` and the
+// effective MCP state source are in scope, and unregisters it in the run's own teardown. What
+// remains true, and is why it is written down: a session with nothing registered (a hand-built test
+// context, or a tool call arriving after teardown) still gets a typed, NON-crashing tool-result
+// error from both `tools/impl/tool-search.ts` and `tools/impl/wait-for-mcp-servers.ts` -- the exact
+// same shape registry.ts's own `session.spawnChild` uses for "no child engine factory is registered
+// yet" ("mirroring how a missing ChildEngineDeps factory registration is handled one level down").
+//
+// STILL OWED (fix wave, whole-branch M3(c), reported as NEEDS_CONTEXT to the controller): the
+// teardown unregisters BY KEY, not by identity. `registerToolSearchSessionRuntime` already returns
+// an identity-checked disposer -- engine.ts should keep and call THAT instead of
+// `unregisterToolSearchSessionRuntime(config.sessionId)`, so a resumed child generation registering
+// under the same agentId cannot have its runtime deleted by the previous generation's still-draining
+// teardown. `registerSessionMcpLifecycle`'s disposer (mcp/lifecycle.ts) is already identity-checked;
+// this one's call site is the asymmetry.
 //
 // Deliberately `Omit<..., "emitToolReference">`, NOT the full `ToolSearchDeps` -- `emitToolReference`
 // is per-CALL (it comes from `ToolExecutionContext`, itself built fresh per tool call by

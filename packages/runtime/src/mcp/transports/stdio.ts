@@ -102,8 +102,10 @@ export class WinterStdioTransport implements Transport {
         // stderr is ALWAYS piped, never inherited -- WS-04 owns exactly two stdio streams already
         // (this process's own stdin/stdout frame pipe, and the host's stderr diagnostics callback
         // for THIS process); a daemon process must never let a connected server's stderr fall
-        // through to a TTY or fd it does not own. Piped-but-drained below (see the "data" listener)
-        // so a chatty server's own stderr writes can never block on a full, unread pipe.
+        // through to a TTY or fd it does not own. Piped, drained, and TAIL-RETAINED below (see the
+        // "data" listener) so a chatty server's own stderr writes can never block on a full, unread
+        // pipe -- and so a server that dies during startup still leaves a bounded diagnostic
+        // (whole-branch review N3).
         stdio: ["pipe", "pipe", "pipe"],
         shell: false,
         // RULING P4-H: `detached: true` makes this child its own session/process-group leader
