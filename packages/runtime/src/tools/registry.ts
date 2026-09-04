@@ -958,7 +958,11 @@ export function resolveSessionCapabilities(hostSupplied: readonly string[] | und
   return [...new Set([...deriveRuntimeCapabilities(facts), ...(hostSupplied ?? [])])];
 }
 
-function isBareDenied(canonicalName: string, disallowedTools: readonly string[] | undefined): boolean {
+// Exported (fix wave, LANE Y / RULING P4-E amended) so `toolsearch/aliases.ts`'s own alias-exclusion
+// pass asks the IDENTICAL question `buildAdvertisedSet` below asks -- a second copy of "is this name
+// bare-denied?" living in the alias layer is exactly the producer/consumer drift R4-2 exists to catch,
+// and this one is security-relevant.
+export function isBareDenied(canonicalName: string, disallowedTools: readonly string[] | undefined): boolean {
   if (!disallowedTools) return false;
   return disallowedTools.some((raw) => {
     const parsed = parseRule(raw);

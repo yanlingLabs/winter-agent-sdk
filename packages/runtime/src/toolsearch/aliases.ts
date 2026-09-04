@@ -20,7 +20,29 @@
 // because a harness-internal caller that already holds a reference to the tool object and invokes it
 // directly (never going through a name at all) is untouched by it -- `disallowedTools` remains the
 // thing that actually closes that second door (WS-09 §10, same verdict).
-import type { AdvertisedPartition, ToolDescriptor } from "../tools/registry.ts";
+import { getRegisteredTool, isBareDenied, type AdvertisedPartition, type ToolDescriptor } from "../tools/registry.ts";
+
+// The Winter branch's own canonical alias pair, declared ONCE (it moved here from a `const` inside
+// engine.ts's `runEngine` when RULING P4-E was amended): it is now read by THREE consumers -- the
+// advertised-partition suppression below, `computeExposurePartition` (exposure.ts, so ToolSearch's
+// own candidate pool agrees with `init.tools`), and the permission/hook identity resolution at
+// engine.ts's dispatch loop. A security-relevant table living in more than one file is exactly the
+// producer/consumer drift class R4-2 exists to catch.
+//
+// WS-10 §15 names this pair verbatim: [WS-14] redirects the model-visible `SendMessage`/`ListAgents`
+// built-ins at `mcp__winter__send_message`/`mcp__winter__list_agents`. On the WINTER branch those
+// canonical names are real, registered descriptors (descriptors/winter-*.ts, `deferred: true` at the
+// source) backed by the SAME executor objects as the native names.
+export const WINTER_CANONICAL_ALIASES: Readonly<Record<string, string>> = {
+  SendMessage: "mcp__winter__send_message",
+  ListAgents: "mcp__winter__list_agents",
+};
+
+// The effective table for a session: the Winter-branch defaults with the HOST's own
+// `Options.toolAliases` layered on top (a host that redirects `SendMessage` somewhere else means it).
+export function effectiveAliasTable(hostAliases: Record<string, string> | undefined): Record<string, string> {
+  return { ...WINTER_CANONICAL_ALIASES, ...(hostAliases ?? {}) };
+}
 
 export function resolveToolAlias(name: string, toolAliases: Record<string, string> | undefined): string {
   if (!toolAliases) return name;
@@ -52,23 +74,148 @@ export function resolveToolAlias(name: string, toolAliases: Record<string, strin
 // post-processing step on real registry output, never a second, independently-derived guess at what
 // is advertised. aliases.test.ts drives it against a real partition built from real registrations,
 // per this file's own package-level convention (exposure.test.ts's identical discipline).
-export function suppressAliasedDuplicates(partition: AdvertisedPartition, toolAliases: Record<string, string> | undefined): AdvertisedPartition {
-  if (!toolAliases) return partition;
+//
+// RULING P4-E AMENDED (whole-branch C2): this is now the SECOND of two passes. `hideAliasExcludedTwins`
+// runs FIRST -- suppression's own "is the source advertised?" test is exactly what made a DENIED
+// native surface its canonical twin eagerly, so the exclusion pass has to have settled before this
+// one asks the question.
+export function suppressAliasedDuplicates(
+  partition: AdvertisedPartition,
+  toolAliases: Record<string, string> | undefined,
+  disallowedTools?: readonly string[],
+): AdvertisedPartition {
+  const base = hideAliasExcludedTwins(partition, toolAliases, disallowedTools);
+  if (!toolAliases) return base;
 
-  const allAdvertisedNames = new Set([...partition.eager, ...partition.deferred].map((d) => d.canonicalName));
+  const allAdvertisedNames = new Set([...base.eager, ...base.deferred].map((d) => d.canonicalName));
   const targetsToDefer = new Set<string>();
   for (const [source, target] of Object.entries(toolAliases)) {
     if (allAdvertisedNames.has(source) && allAdvertisedNames.has(target)) {
       targetsToDefer.add(target);
     }
   }
-  if (targetsToDefer.size === 0) return partition;
+  if (targetsToDefer.size === 0) return base;
 
   const eager: ToolDescriptor[] = [];
-  const deferred = [...partition.deferred];
-  for (const descriptor of partition.eager) {
+  const deferred = [...base.deferred];
+  for (const descriptor of base.eager) {
     if (targetsToDefer.has(descriptor.canonicalName)) deferred.push(descriptor);
     else eager.push(descriptor);
   }
-  return { eager, deferred, hidden: partition.hidden };
+  return { eager, deferred, hidden: base.hidden };
+}
+
+// --- RULING P4-E amended: exclusion travels along the alias edge ---------------------------------
+//
+// The whole-branch review's CRITICAL C2, restated as the invariant this function enforces: a name
+// this session EXCLUDES must not be reachable under a second spelling. `suppressAliasedDuplicates`
+// alone could never enforce it -- it keys on the source being advertised, so `disallowedTools:
+// ["SendMessage"]` (which unadvertises the source) silently DISABLED suppression and let
+// `mcp__winter__send_message` -- the identical executor object under the canonical spelling -- resolve
+// EAGER into `system/init.tools`, callable with no deny rule and no hook matcher matching it.
+//
+// Two directions, deliberately asymmetric in their trigger:
+//
+//   (1) source REGISTERED but not advertised  ->  hide the TARGET.
+//       "Denied or excluded" per the amendment: a bare deny, a capability/platform/mode gate, an
+//       `exposure:"hidden"` descriptor -- every reason the native spelling is not on offer is a
+//       reason its twin must not be either. Keyed on `getRegisteredTool(source)` so a host alias
+//       whose SOURCE is not a Winter tool at all (an arbitrary model-facing label, which is a
+//       perfectly ordinary `Options.toolAliases` use) is a no-op rather than a mass hide.
+//
+//   (2) target BARE-DENIED  ->  hide the SOURCE.
+//       The T8 review's M6, second door: a deny written against the alias TARGET already gates
+//       EXECUTION (identity resolution below resolves the source's call to the target), but the
+//       source stayed advertised -- the model was offered a tool every call to which is refused.
+//       Restricted to a BARE DENY rather than "excluded for any reason" on purpose: the native and
+//       its twin do not carry identical availability axes (`SendMessage` requires
+//       `winter.subagents`, `mcp__winter__send_message` requires `winter.global-messaging`), so a
+//       symmetric "any exclusion" rule here would let one family's capability gate silently take
+//       out the other family's tool.
+export function hideAliasExcludedTwins(
+  partition: AdvertisedPartition,
+  hostAliases: Record<string, string> | undefined,
+  disallowedTools: readonly string[] | undefined,
+): AdvertisedPartition {
+  const table = effectiveAliasTable(hostAliases);
+  const advertised = new Set([...partition.eager, ...partition.deferred].map((d) => d.canonicalName));
+  const toHide = new Set<string>();
+  for (const [source, target] of Object.entries(table)) {
+    if (source === target) continue;
+    if (advertised.has(target) && !advertised.has(source) && getRegisteredTool(source) !== undefined) toHide.add(target);
+    if (advertised.has(source) && isBareDenied(target, disallowedTools)) toHide.add(source);
+  }
+  if (toHide.size === 0) return partition;
+
+  const eager: ToolDescriptor[] = [];
+  const deferred: ToolDescriptor[] = [];
+  const hidden = [...partition.hidden];
+  for (const descriptor of partition.eager) {
+    if (toHide.has(descriptor.canonicalName)) hidden.push(descriptor);
+    else eager.push(descriptor);
+  }
+  for (const descriptor of partition.deferred) {
+    if (toHide.has(descriptor.canonicalName)) hidden.push(descriptor);
+    else deferred.push(descriptor);
+  }
+  return { eager, deferred, hidden };
+}
+
+// --- RULING P4-E amended: permission/hook identity is alias-aware in BOTH directions --------------
+
+// Every spelling one call may be judged under, PRIMARY FIRST. The primary is still exactly what
+// P4-E pinned -- `resolveToolAlias(call.name, config.toolAliases)`, the HOST's own forward mapping --
+// so a session that configures no aliases and writes no rule against a canonical twin behaves
+// byte-identically to before this amendment. The alternates are the rest of the single-hop
+// equivalence set over the EFFECTIVE table (defaults + host): the call's own unresolved name, its
+// forward target, and every source that aliases TO it.
+//
+// Single-hop by construction, exactly as `resolveToolAlias` is: a resolved name is a destination,
+// never a further key to look up, so a two-entry loop `{A:'B', B:'A'}` terminates here too.
+export function aliasPermissionIdentities(name: string, hostAliases: Record<string, string> | undefined): string[] {
+  const table = effectiveAliasTable(hostAliases);
+  const primary = resolveToolAlias(name, hostAliases);
+  const out = [primary];
+  const push = (candidate: string | undefined): void => {
+    if (candidate !== undefined && !out.includes(candidate)) out.push(candidate);
+  };
+  push(name);
+  push(table[name]);
+  for (const [source, target] of Object.entries(table)) {
+    if (target === name) push(source);
+  }
+  return out;
+}
+
+// What a caller must be able to answer about ONE candidate identity. Every probe is a pure lookup
+// against state the engine already holds (the live rule set; the hook registry) -- deliberately
+// injected rather than imported, so this module stays free of `permissions/**` and `hooks/**` and
+// can be unit-tested with plain literals.
+export interface AliasIdentityProbes {
+  deniedByRule(name: string): boolean;
+  askedByRule(name: string): boolean;
+  // A hook registration with an EXPLICIT matcher selects this name. Matcher-absent ("matches every
+  // occurrence", WS-08 §2.1) registrations must NOT count -- they match every identity equally, so
+  // letting them vote would flip the identity of every call in a session with one global hook.
+  hookScoped(name: string): boolean;
+  allowedByRule(name: string): boolean;
+}
+
+// STRICTEST-OF over the identity set, in one pass, producing the ONE name the permission pipeline is
+// then run against. Running `evaluate()` once per identity and combining afterwards was the obvious
+// alternative and is wrong: an `ask` identity would prompt the user twice.
+//
+// Order is the strictness order WS-07 already uses -- deny beats ask beats allow -- with the hook
+// probe slotted between ask and allow so "hooks match both spellings" (the amendment, verbatim)
+// holds without a hook ever being able to loosen a rule-derived outcome. When nothing matches on any
+// identity, the primary wins and behaviour is unchanged.
+export function resolvePermissionIdentity(name: string, hostAliases: Record<string, string> | undefined, probes: AliasIdentityProbes): string {
+  const identities = aliasPermissionIdentities(name, hostAliases);
+  if (identities.length === 1) return identities[0]!;
+  for (const probe of [probes.deniedByRule, probes.askedByRule, probes.hookScoped, probes.allowedByRule]) {
+    for (const identity of identities) {
+      if (probe(identity)) return identity;
+    }
+  }
+  return identities[0]!;
 }
