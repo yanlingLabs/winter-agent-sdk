@@ -679,6 +679,13 @@ describe("registerMcpServerTools / unregisterMcpServerTools (Phase 4 Task 2, WS-
     expect(getRegisteredTool(`mcp__${WINTER_SERVER_NAME}__browser`)).toBeUndefined(); // never created
   });
 
+  test("the reserved-name guard fires even for an EMPTY tool list -- ahead of the empty-list no-op shortcut, not behind it (fix round 1 MAJOR item 2)", () => {
+    // Pins the ordering: RULING P4-B reserves "winter" independent of what `tools` contains, so this
+    // must throw rather than silently taking the NIT item 4 no-op path (tools.length === 0, nothing
+    // previously owned) that a future refactor might accidentally reorder ahead of this guard.
+    expect(() => registerMcpServerTools(WINTER_SERVER_NAME, [], { deferredDefault: false })).toThrow();
+  });
+
   test('the reserved-name guard is exact-match only -- "Winter"/"WINTER" are NOT reserved (documented choice, fix round 1 MAJOR item 2)', () => {
     try {
       expect(() =>

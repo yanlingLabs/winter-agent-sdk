@@ -26,10 +26,14 @@
 // collide with (and, by registry.ts's own collision guard, throw against) the P3-installed static
 // stub under the exact same canonical name. Building a real McpServer object directly, as this file
 // does, is how WS-09 §1.3's "byte-identical descriptors" obligation is met WITHOUT going through that
-// live-registration mechanism at all for this one already-registered name. A future task that wants
-// to feed the standing server's OWN tools/list through registerMcpServerTools (e.g. if it is ever
-// exposed over a real transport Lane A treats like any other configured server) will hit that exact
-// collision for "advisor" specifically and must resolve it deliberately, not by surprise.
+// live-registration mechanism at all for this one already-registered name. Updated, fix round 1
+// RULING P4-B: a future task that tries to feed the standing server's OWN tools/list through
+// registerMcpServerTools no longer merely hits the per-name collision this comment used to describe
+// for "advisor" specifically -- "winter" is now a RESERVED server name (registry.ts's own
+// RESERVED_MCP_SERVER_NAMES), so ANY registerMcpServerTools("winter", ...) call throws unconditionally,
+// for any tool name, before the per-name check even runs. Resolving the two mechanisms deliberately
+// (rather than by surprise) now means removing "winter" from that reserved set, not just working
+// around one collided name.
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import "../tools/descriptors/advisor.ts"; // self-sufficiency: guarantees the mcp__winter__advisor stub is registered before createWinterServer() ever runs.
 import { getRegisteredTool } from "../tools/registry.ts";

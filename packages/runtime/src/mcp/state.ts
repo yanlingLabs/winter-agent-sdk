@@ -35,11 +35,14 @@ export interface McpServerStateSource {
 }
 
 // Lane B's tests drive state transitions through `.transition` rather than reconstructing a whole
-// new source per scenario. Upsert semantics: a name already in `initial` is updated in place
-// (unspecified `extra` fields carry over from the PRIOR state, mirroring how a real server's error/
-// toolNames persist across an incremental status update); a name not yet known is added fresh
-// (a legitimate real-world case too -- e.g. `setMcpServers` introducing a brand-new server name mid-
-// session, WS-09 §3, which enters `pending` without ever having appeared in an initial snapshot).
+// new source per scenario. Upsert semantics: a name already in `initial` is updated in place; a name
+// not yet known is added fresh (a legitimate real-world case too -- e.g. `setMcpServers` introducing
+// a brand-new server name mid-session, WS-09 §3, which enters `pending` without ever having appeared
+// in an initial snapshot). Unspecified fields do NOT all carry over the same way (fix round 1, MAJOR
+// item 3): `toolNames` persists from the prior state when a transition omits it, but `errorCode`/
+// `error` are CLEARED unless `extra` itself supplies them -- an error belongs to the state that
+// produced it, so a later transition (e.g. a successful "connected" after a "failed") must not still
+// report the old failure. See `transition`'s own comment below for the mechanism.
 export function createFakeMcpServerStateSource(
   initial: readonly McpServerState[],
 ): McpServerStateSource & { transition(name: string, next: McpServerStateKind, extra?: Partial<McpServerState>): void } {
