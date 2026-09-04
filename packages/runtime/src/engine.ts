@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { homedir } from "node:os";
+import { homedir, release as osRelease } from "node:os";
 import {
   PROTOCOL_VERSION,
   type RuntimeConfig,
@@ -32,6 +32,10 @@ import type { McpControlSeam } from "./mcp/control-seam.ts";
 // Phase 4 Task 2/3 (WS-09 §2/§7/§8.1): the unbranded MCP/Tool-Search env controls, parsed once per
 // run (mirrors how every other env-derived value in this file is resolved exactly once at startup).
 import { parseMcpEnvConfig } from "./mcp/env.ts";
+// Phase 5 Task 3 (spine): the lane seams. `import type` throughout -- context/seam.ts imports
+// nothing from this module, and a value import in either direction would make the pair a runtime
+// cycle the compiled binary resolves differently from the dev leg.
+import type { AssembledPrompt, SystemPromptAssembler, SystemPromptInput } from "./context/seam.ts";
 // Phase 4 Task 8 (rider 11): Lane A's real MCP client/lifecycle/control stack, wired into a live
 // session for the first time. Lane A shipped all of it as a self-contained subsystem with the exact
 // integration recipe in its own report, and could not perform the integration itself: the
@@ -459,6 +463,27 @@ export interface EngineOptions {
   // a no-op, so a stale entry is invisible right up until a long-lived session has accumulated one
   // per foreground spawn.
   onForegroundChildrenReady?: (getForeground: () => readonly ChildHandle[]) => void;
+  // --- Phase 5 Task 3: the lane seams ------------------------------------------------------------
+  //
+  // All five follow the `mcpServerStateSource`/`contextAccountant` precedent exactly: an optional
+  // injection point, absent by default, whose absence reproduces pre-P5 behaviour byte-for-byte.
+  // The seams are INERT until a lane (or T8's production wiring) supplies a real implementation --
+  // which is what lets four lanes build against a frozen engine without touching this file.
+
+  /**
+   * R5-16: prompt assembly (Lane C). Called once per user envelope; its `system` goes on the live
+   * `ProviderRequest`, its `userContextBlocks` are prepended to that envelope's own user message on
+   * the request only. ABSENT => the engine sends `agentSystemPrompt` (or nothing) and authors no
+   * text of its own -- see context/seam.ts.
+   */
+  systemPromptAssembler?: SystemPromptAssembler;
+  /**
+   * R5-3 / P4-J retirement: the child persona a subagent runs with (`AgentDefinition.prompt`
+   * composed over any inherited base). Reaches the assembler as `SystemPromptInput.agentPrompt`, and
+   * IS the system prompt when no assembler is registered. Set by subagents/child-engine.ts; never by
+   * a top-level host.
+   */
+  agentSystemPrompt?: string;
 }
 
 type RaceOutcome<T> = { kind: "ok"; value: T } | { kind: "interrupted" };
@@ -572,6 +597,8 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
     mcpServerStateSource,
     mcpControlSeam,
     contextAccountant: injectedContextAccountant,
+    systemPromptAssembler,
+    agentSystemPrompt,
   } = opts;
 
   // Task 6 (WS-07 §2/§6.4, Ruling 8): permission startup validation — deliberately the very FIRST
@@ -2335,6 +2362,55 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // text-only envelope always succeeds regardless of how much of the budget prior turns spent.
   let rounds = 0;
 
+  // --- Phase 5 Task 3 (R5-9/R5-16): system-prompt assembly, ONE producer -----------------------------
+  //
+  // Called once per USER ENVELOPE (never once per run, never once per provider call): R5-9's dynamic
+  // sections include the date and a git summary, which a long-lived streaming session must not freeze
+  // at connect time, and `planMode` can change mid-session through set_permission_mode. Called once
+  // per envelope rather than per provider call because the result must be STABLE across a turn's tool
+  // rounds -- a system prompt that changed between rounds of the same turn would invalidate provider
+  // prompt caching and make the turn's own history internally inconsistent.
+  //
+  // R5-16: with no assembler registered this returns the caller's `agentSystemPrompt` (a child's
+  // persona, R5-3) or an EMPTY prompt. No authored text lives here, deliberately -- the only authored
+  // minimal prompt is Lane C's (see context/seam.ts's header).
+  const assemblePrompt = (): AssembledPrompt => {
+    const base: SystemPromptInput = {
+      config,
+      cwd: config.cwd,
+      env: engineEnv ?? process.env,
+      platform: process.platform,
+      osVersion: osRelease(),
+      shell: (engineEnv ?? process.env)["SHELL"] ?? "",
+      date: new Date().toISOString().slice(0, 10),
+      planMode: policyStateStore.getState().mode === "plan",
+      ...(agentSystemPrompt !== undefined ? { agentPrompt: agentSystemPrompt } : {}),
+    };
+    if (systemPromptAssembler === undefined) return { system: agentSystemPrompt ?? "", userContextBlocks: [] };
+    return systemPromptAssembler.assemble(base);
+  };
+
+  // Builds the LIVE request's message list: the engine's own history, with this envelope's
+  // user-context blocks prepended to THIS TURN's user message only.
+  //
+  // Applied to a COPY, never to `messages` -- Ruling P1-B keeps persistence and history free of
+  // presentation concerns, and a block that entered history would be re-sent on every later turn,
+  // re-persisted, and eventually summarized into a compaction as if the model had said it. The
+  // blocks are re-attached each turn instead, which is what R5-9's "always injected as user-context"
+  // means operationally.
+  //
+  // `turnUserIndex` is the index of the user message this envelope pushed. Anchoring on it (rather
+  // than "the first user message") is what makes the behaviour correct on a RESUMED session, whose
+  // first user message belongs to a previous run entirely.
+  const requestMessages = (blocks: string[], turnUserIndex: number): ProviderMessage[] => {
+    const copy = messages.map((m) => ({ ...m }));
+    if (blocks.length === 0) return copy;
+    const target = copy[turnUserIndex];
+    if (target === undefined || target.role !== "user" || typeof target.content !== "string") return copy;
+    target.content = `${blocks.join("\n\n")}\n\n${target.content}`;
+    return copy;
+  };
+
   for await (const userFrame of userFrames) {
     // Set BEFORE any await this turn (including recordUser below) so the entire turn — from the
     // moment its envelope is accepted — is interruptible (WS-04 §5).
@@ -2363,7 +2439,12 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
 
     const userText = userFrame.text;
     messages.push({ role: "user", content: userText });
+    const turnUserIndex = messages.length - 1;
     await recordUser(userText);
+
+    // Phase 5 Task 3: assembled AFTER the envelope is recorded (so a store failure never leaves an
+    // assembled-but-unrecorded turn) and BEFORE the first provider call of the turn.
+    const assembled = assemblePrompt();
 
     // T9-CARRY 2 (reassigned to T10; WS-08 §1.1): "user envelope accepted, BEFORE the turn's
     // provider call" — fired here, after the envelope is durably recorded but before
@@ -2384,7 +2465,17 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
     roundLoop: while (true) {
       let turn: ProviderTurn;
       try {
-        const raced = await raceInterrupt(provider.generate({ messages: [...messages] }), interruptSignal);
+        const raced = await raceInterrupt(
+          provider.generate({
+            messages: requestMessages(assembled.userContextBlocks, turnUserIndex),
+            // `exactOptionalPropertyTypes`: an empty assembled prompt omits the key entirely rather
+            // than sending `system: ""`. The two are equivalent to a provider ("this host supplied no
+            // system prompt" -- ProviderRequest's own contract), and omitting keeps every
+            // pre-P5 consumer, fixture and recorded trace byte-identical to before this task.
+            ...(assembled.system.length > 0 ? { system: assembled.system } : {}),
+          }),
+          interruptSignal,
+        );
         if (raced.kind === "interrupted") {
           interrupted = true;
           break roundLoop;
