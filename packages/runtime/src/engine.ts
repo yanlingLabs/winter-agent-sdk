@@ -37,7 +37,7 @@ import { createMcpLifecycle, resolveMcpServerSources, registerSessionMcpLifecycl
 import { createElicitationAsker } from "./mcp/elicitation.ts";
 // Phase 4 Task 3 (MUST 5/8): the child-spawn seam + host-stream correlation transform, and the
 // messaging router seam's own engine-side hook (children() from the live child roster).
-import { getChildEngineFactory, transformChildFrame, type ChildHandle, type ChildInheritance, type SpawnChildRequest } from "./subagents/child-handle.ts";
+import { getChildEngineFactory, transformChildFrame, type ChildHandle, type ChildInheritance, type ParentRuleMirror, type SpawnChildRequest } from "./subagents/child-handle.ts";
 import type { MessagingRouterSeam } from "./messaging/adapter.ts";
 // Phase 4 Task 8: the process-level default messaging runtime Lane D's three tool executors read --
 // see that function's own header for why it is process-level and why the roster is contributed
@@ -943,7 +943,15 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
       // "exact tool pool") and a bare/unrestricted definition both inherit this session's own
       // CURRENT advertised pool (eager + deferred canonical names -- see currentAdvertisedCanonicalNames's
       // own header for why this is safe to read here, well after assignment).
-      tools: req.definition?.tools ?? [...currentAdvertisedCanonicalNames],
+      // Phase 4 fix wave (C1 CRITICAL, whole-branch review): a definition's own `tools` list
+      // NARROWS the parent's pool, it never REPLACES it. Before this fix the `??` handed the
+      // definition's list through verbatim, so a definition naming a tool the PARENT had
+      // bare-denied (`disallowedTools:["t"]` -> `t` is absent from `currentAdvertisedCanonicalNames`)
+      // put that tool back into `inherit.tools`, out of the child's complement-deny, and -- under
+      // WS-07 §11's forced bypass -- straight into execution. Probe-confirmed, not hypothetical.
+      // An intersection is also the only reading consistent with WS-10 §2 ("AgentDefinition.tools
+      // RESTRICTS availability"): a restriction that can widen is not a restriction.
+      tools: req.definition?.tools !== undefined ? req.definition.tools.filter((name) => currentAdvertisedCanonicalNames.includes(name)) : [...currentAdvertisedCanonicalNames],
       model: resolveChildModel(req),
       // WS-10 §3.2: AgentInput/SpawnChildRequest carry no effort field at all; definition effort
       // overrides the session's own. No session-level effort CONCEPT is surfaced on RuntimeConfig
@@ -1085,6 +1093,25 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
             getParentPolicy: () => {
               const st = policyStateStore.getState();
               return { mode: st.mode, version: st.version, hash: computePolicyHash(st) };
+            },
+            // Phase 4 fix wave (C1 + I6): the parent's CURRENT LIVE rule set, read fresh on every
+            // call (never a spawn-time or factory-construction-time snapshot) -- see
+            // ChildEngineRunContext.getParentRules for the two escapes this closes. The live
+            // `PolicyStateStore` is the ONE authority: it already carries the config-seeded `sdk`
+            // entries (allowedTools/disallowedTools/permissions.* alike, WS-07 §3.3), WS-07 §9's
+            // journal-restored rules, and every mid-session `PermissionUpdate` -- so a child cannot
+            // observe a different rule set from the one the parent's own next tool call would.
+            getParentRules: (): ParentRuleMirror => {
+              const mirror: ParentRuleMirror = { allow: [], ask: [], deny: [] };
+              for (const entry of policyStateStore.getState().rules.entries) {
+                // The engine's own hardcoded floor: every `runEngine` (a child's included) seeds
+                // BASELINE_DENY_RULES itself, so mirroring them would only re-tag a `managed` rule
+                // as `sdk` in the child -- a strictly weaker authority for zero added coverage.
+                if (entry.source === "managed") continue;
+                const raw = entry.ruleValue.ruleContent === undefined ? entry.ruleValue.toolName : `${entry.ruleValue.toolName}(${entry.ruleValue.ruleContent})`;
+                mirror[entry.behavior].push(raw);
+              }
+              return mirror;
             },
           });
           const inheritance = buildChildInheritance(req);

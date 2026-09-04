@@ -1134,3 +1134,188 @@ describe("child-engine.ts: fix round 1 (controller review) -- M1: record.transcr
     await done;
   });
 });
+
+// --- Phase 4 fix wave: C1 (CRITICAL) + I6 -- the parent's LIVE rules bind every child ------------
+//
+// The whole-branch review's own two escapes, plus the two directions of the same omission. Every
+// test here registers the factory through `driveParent`/`driveParentAnswering`, which pass NO
+// `parentPermissionRules` at all -- so a test that passes here is passing through the LIVE
+// `runCtx.getParentRules()` accessor, never the construction-time mirror (that mirror keeps its own
+// pre-existing tests; this block is what proves the accessor is the one production uses).
+
+// A fixture tool that RECORDS every input it is called with -- "did the child actually execute
+// this?" is the only assertion that distinguishes "denied" from "denied-looking" for a tool whose
+// result text a denial would never produce anyway.
+function registerRecordingTool(name: string, opts: { capabilityRequirements?: string[] } = {}): { ran: Array<Record<string, unknown>> } {
+  const ran: Array<Record<string, unknown>> = [];
+  registerTool({
+    descriptor: {
+      canonicalName: name, advertisedName: name, source: "builtin", inputSchema: { type: "object" },
+      description: "fix-wave fixture: records every execution", exposure: "eager", permissionClass: "read",
+      availability: {}, capabilityRequirements: opts.capabilityRequirements ?? [], disposition: "implement-now",
+    },
+    executor: {
+      async execute(input: unknown) {
+        ran.push((input ?? {}) as Record<string, unknown>);
+        return { output: `${name} RAN` };
+      },
+    },
+  });
+  return { ran };
+}
+
+describe("child-engine.ts: the parent's LIVE permission rules bind every child (fix wave C1/I6, WS-07 §3.3/§11)", () => {
+  test("C1(a): a SCOPED parent deny (disallowedTools: 'Tool(rm *)') survives into a forced-bypass child -- the matching call is denied, a non-matching one still runs", async () => {
+    registerSpawnProbe();
+    cleanupToolNames.push(SPAWN_PROBE);
+    const CMD = "t6fw_scoped_cmd";
+    cleanupToolNames.push(CMD);
+    const probe = registerRecordingTool(CMD);
+    const req: SpawnChildRequest = { parentToolUseId: "call-1", prompt: "run two commands", runInBackground: false };
+    // The child tries the DENIED shape first, then a benign one -- so a green result cannot come
+    // from the tool being unreachable/unregistered altogether (the benign call proves it is live).
+    const childProvider = scriptedProvider([
+      { kind: "tool_use", calls: [{ id: "c1", name: CMD, input: { command: "rm -rf /tmp/winter-fixwave-must-never-run" } }] },
+      { kind: "tool_use", calls: [{ id: "c2", name: CMD, input: { command: "ls" } }] },
+      { kind: "text", text: "child done" },
+    ]);
+    // bypassPermissions (baseConfig's default) is the security-relevant case: WS-07 §11 FORCES it
+    // onto the child, and before this fix the scoped rule reached the child through no channel at
+    // all -- `CMD` stays in the parent's advertised set (isBareDenied only removes bare-equivalent
+    // rules), so the child's complement-deny never covered it either.
+    const { code } = await driveParent(
+      { provider: childProvider },
+      baseConfig({ disallowedTools: [`${CMD}(rm *)`] }),
+      [{ kind: "tool_use", calls: [{ id: "call-1", name: SPAWN_PROBE, input: req }] }, { kind: "text", text: "parent done" }],
+    );
+    expect(code).toBe(0);
+    expect(probe.ran.map((i) => i["command"])).toEqual(["ls"]);
+  }, 10_000);
+
+  test("C1(b): a definition's `tools` INTERSECTS the parent's advertised pool -- it can never re-enable a tool the parent does not have", async () => {
+    registerSpawnProbe();
+    cleanupToolNames.push(SPAWN_PROBE);
+    // Excluded from the PARENT's advertised set by a capability gate, NOT by a deny rule -- so this
+    // test isolates the `engine.ts` intersection itself. (The review's own PROBE 2 shape -- a
+    // bare `disallowedTools` deny plus a definition naming that tool -- is now closed twice over:
+    // by this intersection AND by the live deny rule reaching the child; the next test pins that
+    // one directly.)
+    const WIDENED = "t6fw_capability_gated";
+    cleanupToolNames.push(WIDENED);
+    const probe = registerRecordingTool(WIDENED, { capabilityRequirements: ["winter.fixwave-absent"] });
+    const req: SpawnChildRequest = {
+      parentToolUseId: "call-1", prompt: "use the widened tool", runInBackground: false,
+      definition: { description: "widener", prompt: "you may use the widened tool", tools: [WIDENED] },
+    };
+    const childProvider = scriptedProvider([
+      { kind: "tool_use", calls: [{ id: "c1", name: WIDENED, input: {} }] },
+      { kind: "text", text: "child done" },
+    ]);
+    const { code } = await driveParent({ provider: childProvider }, baseConfig(), [
+      { kind: "tool_use", calls: [{ id: "call-1", name: SPAWN_PROBE, input: req }] },
+      { kind: "text", text: "parent done" },
+    ]);
+    expect(code).toBe(0);
+    expect(probe.ran).toEqual([]);
+  }, 10_000);
+
+  test("C1(b) / PROBE 2: a definition naming a parent-BARE-DENIED tool still cannot execute it under forced bypass", async () => {
+    registerSpawnProbe();
+    cleanupToolNames.push(SPAWN_PROBE);
+    const DENIED = "t6fw_probe_denied";
+    cleanupToolNames.push(DENIED);
+    const probe = registerRecordingTool(DENIED);
+    const req: SpawnChildRequest = {
+      parentToolUseId: "call-1", prompt: "child-probe", runInBackground: false,
+      definition: { description: "prober", prompt: "persona", tools: [DENIED] },
+    };
+    const childProvider = scriptedProvider([
+      { kind: "tool_use", calls: [{ id: "cc1", name: DENIED, input: {} }] },
+      { kind: "text", text: "child done" },
+    ]);
+    const { code } = await driveParent({ provider: childProvider }, baseConfig({ disallowedTools: [DENIED] }), [
+      { kind: "tool_use", calls: [{ id: "call-1", name: SPAWN_PROBE, input: req }] },
+      { kind: "text", text: "parent done" },
+    ]);
+    expect(code).toBe(0);
+    expect(probe.ran).toEqual([]);
+  }, 10_000);
+
+  test("I6: a parent's `allowedTools` pre-approval reaches a `default`-mode child -- the child never re-prompts for it", async () => {
+    registerSpawnProbe();
+    cleanupToolNames.push(SPAWN_PROBE);
+    const ALLOWED = "t6fw_preapproved";
+    cleanupToolNames.push(ALLOWED);
+    const probe = registerRecordingTool(ALLOWED);
+    const req: SpawnChildRequest = { parentToolUseId: "call-1", prompt: "use the pre-approved tool", runInBackground: false };
+    const childProvider = scriptedProvider([
+      { kind: "tool_use", calls: [{ id: "c1", name: ALLOWED, input: {} }] },
+      { kind: "text", text: "child done" },
+    ]);
+    // Every permission request is answered DENY, so the two assertions are independent: no prompt
+    // was issued at all (the allow rule resolved the call at stage 5), and the tool genuinely ran.
+    // Before the fix the child prompted, got the deny, and never ran the parent's own pre-approved
+    // tool -- the exact "a default-mode child re-prompts for what the parent pre-approved" failure.
+    let sawPermissionRequest = false;
+    const { code } = await driveParentAnswering(
+      { provider: childProvider, env: { WINTER_ASYNC_AGENT_STALL_TIMEOUT_MS: "2000" } },
+      baseConfig({ permissionMode: "default", allowDangerouslySkipPermissions: false, allowedTools: [SPAWN_PROBE, ALLOWED] }),
+      [{ kind: "tool_use", calls: [{ id: "call-1", name: SPAWN_PROBE, input: req }] }, { kind: "text", text: "parent done" }],
+      (frame) => {
+        if (frame.subtype !== "permission") return undefined;
+        sawPermissionRequest = true;
+        return { ok: true, payload: { behavior: "deny", message: "no prompt should ever have been issued" } };
+      },
+    );
+    expect(code).toBe(0);
+    expect(sawPermissionRequest, "an allowedTools pre-approval must resolve the child's call without a prompt").toBe(false);
+    expect(probe.ran.length).toBe(1);
+  }, 10_000);
+
+  test("I6 (live): a rule added to the PARENT mid-run (updatedPermissions) binds a child spawned afterwards", async () => {
+    registerSpawnProbe();
+    cleanupToolNames.push(SPAWN_PROBE);
+    const GATE = "t6fw_gate";
+    const LIVE_DENIED = "t6fw_live_denied";
+    cleanupToolNames.push(GATE, LIVE_DENIED);
+    registerRecordingTool(GATE);
+    const probe = registerRecordingTool(LIVE_DENIED);
+    const req: SpawnChildRequest = { parentToolUseId: "call-2", prompt: "use the live-denied tool", runInBackground: false };
+    const childProvider = scriptedProvider([
+      { kind: "tool_use", calls: [{ id: "c1", name: LIVE_DENIED, input: {} }] },
+      { kind: "text", text: "child done" },
+    ]);
+    const { code } = await driveParentAnswering(
+      { provider: childProvider, env: { WINTER_ASYNC_AGENT_STALL_TIMEOUT_MS: "2000" } },
+      baseConfig({ permissionMode: "default", allowDangerouslySkipPermissions: false }),
+      [
+        // Turn 1: an ordinary call the host approves -- carrying a session-scoped deny for a tool
+        // NOTHING has denied at config time. Nothing about this rule exists when the child engine
+        // factory is constructed, which is exactly why a construction-time mirror cannot see it.
+        { kind: "tool_use", calls: [{ id: "call-1", name: GATE, input: {} }] },
+        // Turn 2: NOW spawn. The child must inherit the rule added during turn 1.
+        { kind: "tool_use", calls: [{ id: "call-2", name: SPAWN_PROBE, input: req }] },
+        { kind: "text", text: "parent done" },
+      ],
+      (frame) => {
+        if (frame.subtype !== "permission") return undefined;
+        const payload = frame.payload as { toolName?: string } | undefined;
+        if (payload?.toolName === GATE) {
+          return {
+            ok: true,
+            payload: {
+              behavior: "allow",
+              updatedPermissions: [{ type: "addRules", rules: [{ toolName: LIVE_DENIED }], behavior: "deny", destination: "session" }],
+            },
+          };
+        }
+        // Everything else (the parent's own spawn call, and -- before the fix -- the child's call to
+        // the live-denied tool) is ALLOWED, so the assertion below can only be satisfied by the rule
+        // itself having reached the child.
+        return { ok: true, payload: { behavior: "allow" } };
+      },
+    );
+    expect(code).toBe(0);
+    expect(probe.ran).toEqual([]);
+  }, 10_000);
+});

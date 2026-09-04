@@ -461,6 +461,41 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
       channel.host.output.write({ type: "user", text: liveText });
     }
 
+    // Phase 4 fix wave (C1 CRITICAL + I6): the parent's LIVE rules, preferred over the
+    // construction-time mirror whenever the run context supplies the accessor (every production
+    // spawn does; only a pre-existing hand-built runCtx fake does not). Called once per GENERATION
+    // -- at spawn below, and again at every `resume()` -- so a rule the host added after this
+    // factory was constructed (a mid-session PermissionUpdate, or WS-07 §9's journal-restored
+    // rules) binds the next child generation instead of being invisible forever.
+    //
+    // RESIDUAL, disclosed rather than papered over: a rule change made WHILE a generation is
+    // already running does not reach that generation's own already-seeded PolicyStateStore. There
+    // is no channel for it -- `runEngine` seeds its rules once from `config` and the pump handles
+    // exactly one permission-shaped host->runtime control subtype (`set_permission_mode`, a MODE,
+    // not rules), so closing that last gap needs either a new `permission_update` control subtype
+    // or a shared PolicyStateStore across parent and child. Recorded as a carry.
+    // MERGE, not replace, when BOTH sources exist (the review's "the construction-time mirrors
+    // become the fallback" plus the one direction that phrasing leaves open): a RESTRICTION from
+    // either source binds -- `deny`/`ask` are the UNION of both -- while `allow` comes from the
+    // LIVE set alone whenever there is one. That asymmetry is the whole point: a stale
+    // construction-time deny can only ever be too strict (harmless), but a stale construction-time
+    // ALLOW would resurrect a pre-approval the host has since removed from its live rule set. In
+    // production both sources are built from the same `effectiveConfig`, so the union IS the live
+    // set; the mirror only matters to a caller that registers a factory without the engine's own
+    // run-context seam (this file's own tests, and any future non-engine host).
+    function resolveParentRules(): { allow?: string[]; ask?: string[]; deny?: string[] } | undefined {
+      const live = runCtx.getParentRules?.();
+      if (live === undefined) return deps.parentPermissionRules;
+      const mirror = deps.parentPermissionRules;
+      const ask = [...new Set([...(mirror?.ask ?? []), ...live.ask])];
+      const deny = [...new Set([...(mirror?.deny ?? []), ...live.deny])];
+      return {
+        ...(live.allow.length > 0 ? { allow: live.allow } : {}),
+        ...(ask.length > 0 ? { ask } : {}),
+        ...(deny.length > 0 ? { deny } : {}),
+      };
+    }
+
     const baseConfig: RuntimeConfig = {
       sessionId: agentId,
       cwd: workspace.root,
@@ -473,24 +508,34 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
       disallowedTools,
       capabilities,
       forwardSubagentText: deps.forwardSubagentText === true,
-      // Fix round 1 (finding I1): the parent's own `permissions.{allow,ask,deny}` rules and `hooks`
-      // are now mirrored onto every child -- a construction-time SNAPSHOT (see ChildEngineFactoryDeps'
-      // own header on `parentPermissionRules`/`parentHooks` for the residual live-update gap this
-      // does NOT close). `disableBypassPermissionsMode` merges into the SAME `permissions` object
-      // (RuntimeConfig.permissions is one combined shape, never two independent fields).
-      ...(deps.disableBypassPermissionsMode !== undefined || deps.parentPermissionRules !== undefined
-        ? {
-            permissions: {
-              ...(deps.parentPermissionRules ?? {}),
-              ...(deps.disableBypassPermissionsMode !== undefined ? { disableBypassPermissionsMode: deps.disableBypassPermissionsMode } : {}),
-            },
-          }
-        : {}),
+      // Fix round 1 (finding I1), REPLACED by the fix wave's per-generation `generationConfig`
+      // below: the parent's rules no longer live on this static base config at all, because they
+      // must be re-read PER GENERATION (C1/I6) rather than frozen at spawn.
       ...(deps.parentHooks !== undefined ? { hooks: deps.parentHooks } : {}),
       ...(deps.parentIncludeHookEvents !== undefined ? { includeHookEvents: deps.parentIncludeHookEvents } : {}),
       ...(deps.parentSandbox !== undefined ? { sandbox: deps.parentSandbox } : {}),
       ...(req.definition?.maxTurns !== undefined ? { maxTurns: req.definition.maxTurns } : {}),
     };
+
+    // Phase 4 fix wave (C1 + I6): ONE generation's own RuntimeConfig -- `baseConfig` plus the mode
+    // this generation actually runs under plus the parent's rules AS THEY ARE RIGHT NOW. Built
+    // afresh for every `startGeneration` call (spawn and every resume), which is what makes the
+    // rule mirror live at generation granularity instead of factory-construction granularity.
+    // `disableBypassPermissionsMode` merges into the SAME `permissions` object (RuntimeConfig.
+    // permissions is one combined shape, never two independent fields).
+    function generationConfig(mode: PermissionMode): RuntimeConfig {
+      const parentRules = resolveParentRules();
+      const permissions = {
+        ...(parentRules ?? {}),
+        ...(deps.disableBypassPermissionsMode !== undefined ? { disableBypassPermissionsMode: deps.disableBypassPermissionsMode } : {}),
+      };
+      return {
+        ...baseConfig,
+        permissionMode: mode,
+        allowDangerouslySkipPermissions: mode === "bypassPermissions",
+        ...(Object.keys(permissions).length > 0 ? { permissions } : {}),
+      };
+    }
 
     const initialMessages = resolveForkInitialMessages(inherit);
     // Fix round 1 (finding C1, CRITICAL, RULING P4-J): `AgentDefinition.prompt` -- WS-10 §2's
@@ -526,7 +571,7 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
       .filter((s): s is string => s !== undefined && s.length > 0)
       .join("\n\n");
 
-    startGeneration(baseConfig, initialMessages, firstTurnText);
+    startGeneration(generationConfig(inherit.policy.effectiveMode), initialMessages, firstTurnText);
 
     const handle: ChildHandle = {
       record,
@@ -623,9 +668,11 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
           void writer?.writeMetadata({ ...record });
         }
         record.status = "running";
-        const resumeConfig: RuntimeConfig =
-          resumeMode === baseConfig.permissionMode ? baseConfig : { ...baseConfig, permissionMode: resumeMode, allowDangerouslySkipPermissions: resumeMode === "bypassPermissions" };
-        startGeneration(resumeConfig, rebuilt, msg.body);
+        // Fix wave (C1 + I6): the resumed generation re-reads the parent's LIVE rules too -- a
+        // resume is exactly the moment WS-07 §11's "the same rules apply over child actions" is
+        // most likely to have moved since the spawn (it already re-reads the parent's live MODE,
+        // immediately above).
+        startGeneration(generationConfig(resumeMode), rebuilt, msg.body);
         return { status: "resumed_and_delivered", messageId: msg.messageId };
       },
       async result(): Promise<ChildResult> {

@@ -142,6 +142,44 @@ export interface ChildEngineRunContext {
   // actually be handed per-spawn. Optional for the same fake-compatibility reason as above; absent
   // means the pre-P4-D behaviour (reuse the recorded mode verbatim).
   getParentPolicy?(): { mode: PermissionMode; version: number; hash: string };
+  // Phase 4 fix wave (C1 CRITICAL + I6, whole-branch review): the parent's CURRENT LIVE permission
+  // RULES, in the raw `disallowedTools`/`permissions.*` spelling a child's own `RuntimeConfig` takes.
+  //
+  // WHY THIS EXISTS AT ALL. WS-07 §3.3 makes `allowedTools`, `disallowedTools` and
+  // `permissions.{allow,ask,deny}` ONE rule source (`buildSdkSourcedEntries` turns all five into
+  // `source:"sdk"` entries) -- but Lane C's I1 fix mirrored only the second spelling, at CONSTRUCTION
+  // time, so two escapes stood open: (a) a scoped `disallowedTools:["Bash(rm *)"]` never reached a
+  // child at all (`Bash` stays advertised, so the child's complement-deny does not cover it, and the
+  // scoped rule was never rebuilt) -- and under WS-07 §11's forced bypass the child ran `rm` with no
+  // prompt; (b) `allowedTools` was not mirrored either, so a `default`-mode child re-prompted for
+  // every tool the parent had pre-approved. Both directions of the same omission, plus the LIVE gap:
+  // a rule added mid-session (a `PermissionUpdate`, or WS-07 §9's journal-restored rules) never
+  // reached ANY child, because a factory registered once at startup can only see its own
+  // construction-time snapshot.
+  //
+  // Read FRESH per generation (spawn AND resume) from the parent's live `PolicyStateStore`, exactly
+  // like `getParentPolicy` above -- never a spawn-time snapshot. Returns raw rule strings
+  // (`Bash(rm *)`, `Read`) rebuilt from the live `SourcedRuleSet`, deliberately flattened onto the
+  // `sdk` source in the child: the engine's own `managed` BASELINE_DENY_RULES floor is re-seeded by
+  // every `runEngine` on its own and is therefore excluded here (mirroring it would re-tag a managed
+  // rule as `sdk` in the child, weakening its authority for no gain).
+  //
+  // OPTIONAL for the same fake-compatibility reason as the two fields above; absent means the
+  // pre-fix-wave behaviour (`ChildEngineFactoryDeps.parentPermissionRules`, the construction-time
+  // mirror, is the fallback).
+  getParentRules?(): ParentRuleMirror;
+}
+
+// The three rule buckets a child's own `RuntimeConfig.permissions` carries. `allowedTools`/
+// `disallowedTools` are deliberately NOT separate fields here: they are the SAME rule source (WS-07
+// §3.3), and the parent's live rule set no longer distinguishes which of the five spellings an entry
+// arrived through -- so the child receives every one of them as `permissions.{allow,ask,deny}`,
+// which is exactly equivalent at evaluation time and cannot drift into a two-spelling asymmetry
+// again.
+export interface ParentRuleMirror {
+  allow: string[];
+  ask: string[];
+  deny: string[];
 }
 
 export type ChildEngineFactory = (runCtx: ChildEngineRunContext) => ChildEngineDeps;
