@@ -353,7 +353,7 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
     // its own forwarded frames (WS-10 §4), never a second settlement of THIS promise (a native
     // Promise's `resolve` is itself idempotent, so calling `resolveResultOnce` again from a later
     // generation is a harmless no-op, never a second, conflicting value).
-    function startGeneration(config: RuntimeConfig, initialMessages: ProviderMessage[], liveText: string): void {
+    function startGeneration(config: RuntimeConfig, initialMessages: ProviderMessage[], liveText: string, agentSystemPrompt?: string): void {
       const channel = createInMemoryChannel();
       currentSink = channel.host.output;
       const startedAt = Date.now();
@@ -507,6 +507,11 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
         input: channel.runtime.input,
         output: channel.runtime.output,
         provider: deps.provider,
+        // Phase 5 Task 3 (R5-3): P4-J RETIRED. The child's persona now travels on the engine's real
+        // system-prompt channel (`ProviderRequest.system`) instead of being concatenated into the
+        // first user turn -- see the resolution site below for the full note. Conditionally spread so
+        // a child with no definition prompt sends nothing, exactly as before.
+        ...(agentSystemPrompt !== undefined && agentSystemPrompt.length > 0 ? { agentSystemPrompt } : {}),
         ...(writer !== undefined ? { store: writer } : {}),
         ...(initialMessages.length > 0 ? { initialMessages } : {}),
         // Fix wave (I2): the parent's live MCP state, injected as this child's own -- but ONLY when
@@ -595,6 +600,12 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
       ...(deps.parentIncludeHookEvents !== undefined ? { includeHookEvents: deps.parentIncludeHookEvents } : {}),
       ...(deps.parentSandbox !== undefined ? { sandbox: deps.parentSandbox } : {}),
       ...(req.definition?.maxTurns !== undefined ? { maxTurns: req.definition.maxTurns } : {}),
+      // Phase 5 Task 3 (R5-10): the child's structured-output contract, straight through to its own
+      // generation config -- so Lane W's `agent({schema})` reaches the engine's ONE StructuredOutput
+      // implementation rather than a parallel one. A child whose parent set `outputFormat` does NOT
+      // inherit it: structured output is a per-request contract, and a subagent asked for prose
+      // should not be forced to return the parent's schema.
+      ...(req.outputFormat !== undefined ? { outputFormat: req.outputFormat } : {}),
       // I4: child-scoped servers only -- the parent's own declared servers are reached through the
       // inherited state source below, never re-declared (and therefore never re-connected) here.
       ...(hasChildScopedMcpServers ? { mcpServers: childScopedMcpServers } : {}),
@@ -645,16 +656,21 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
     const resolvedSystemPrompt = [inherit.systemPrompt, req.definition?.prompt]
       .filter((s): s is string => s !== undefined && s.length > 0)
       .join("\n\n");
-    const firstTurnText = [
-      resolvedSystemPrompt.length > 0 ? `[Agent system prompt]\n${resolvedSystemPrompt}\n[End system prompt]` : undefined,
-      req.definition?.initialPrompt,
-      req.prompt,
-      definitionWarnings.length > 0 ? `\n[winter: ${definitionWarnings.join("; ")}]` : undefined,
-    ]
+    // Phase 5 Task 3 (R5-3): P4-J IS RETIRED HERE. The `[Agent system prompt] ... [End system prompt]`
+    // block no longer enters the first user turn; `resolvedSystemPrompt` is handed to the child engine
+    // as `agentSystemPrompt` and reaches the provider on `ProviderRequest.system` -- the real channel
+    // P4-J's own comment said it was waiting for. RESOLUTION is untouched (the composition order
+    // inherit.systemPrompt -> definition.prompt is the same string it always was); only its DELIVERY
+    // moved. Transcripts written under P4-J stay valid: they record what was actually sent then.
+    //
+    // `initialPrompt` and the definition warnings STAY in the first user turn -- neither is a system
+    // prompt. WS-10 §2 calls `initialPrompt` a "first user message seed," and a warning is a note to
+    // the model about its own configuration.
+    const firstTurnText = [req.definition?.initialPrompt, req.prompt, definitionWarnings.length > 0 ? `\n[winter: ${definitionWarnings.join("; ")}]` : undefined]
       .filter((s): s is string => s !== undefined && s.length > 0)
       .join("\n\n");
 
-    startGeneration(generationConfig(inherit.policy.effectiveMode), initialMessages, firstTurnText);
+    startGeneration(generationConfig(inherit.policy.effectiveMode), initialMessages, firstTurnText, resolvedSystemPrompt);
 
     const handle: ChildHandle = {
       record,
@@ -757,7 +773,11 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
         // resume is exactly the moment WS-07 §11's "the same rules apply over child actions" is
         // most likely to have moved since the spawn (it already re-reads the parent's live MODE,
         // immediately above).
-        startGeneration(generationConfig(resumeMode), rebuilt, msg.body);
+        // Phase 5 Task 3 (R5-3): the persona is re-sent on EVERY generation, not only the first.
+        // Under P4-J it survived a resume only because it sat in the rebuilt message history; now
+        // that it rides `system`, a resume that omitted it would silently run a persona-less child --
+        // exactly the C1 defect P4-J was created to fix, reintroduced by the move.
+        startGeneration(generationConfig(resumeMode), rebuilt, msg.body, resolvedSystemPrompt);
         return { status: "resumed_and_delivered", messageId: msg.messageId };
       },
       async result(): Promise<ChildResult> {

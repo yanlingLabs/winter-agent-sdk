@@ -11,7 +11,7 @@
 // the parent's real host connection (`transformChildFrame` below), since Lane C's own child-engine.ts
 // builds a child by calling `runEngine()` again with a synthetic input/output pair, and needs
 // something to bridge that pair to the ACTUAL host connection this run owns.
-import type { ControlResponseFrame, McpServerConfigForProcessTransport, PermissionMode, RuntimeAgentDefinition, WinterFrame } from "@yanlinglabs/winter-agent-sdk";
+import type { ControlResponseFrame, McpServerConfigForProcessTransport, OutputFormat, PermissionMode, RuntimeAgentDefinition, WinterFrame } from "@yanlinglabs/winter-agent-sdk";
 import type { McpServerStateSource } from "../mcp/state.ts"; // type-only -- see this file's own header; no runtime cycle
 import type { McpControlSeam } from "../mcp/control-seam.ts"; // type-only
 import type { ChildPolicyResult } from "../permissions/auto/inheritance.ts";
@@ -77,6 +77,14 @@ export interface SpawnChildRequest {
   runInBackground: boolean;
   isolation?: "worktree";
   name?: string;
+  // Phase 5 Task 3 (R5-10): the child's own structured-output contract. Set by Lane W's `agent({schema})`
+  // so a workflow-spawned agent rides the IDENTICAL StructuredOutput path the top-level session uses
+  // -- registration, validation, the retry counter and the exhaustion result are all the engine's,
+  // reached through `RuntimeConfig.outputFormat` on the child's generation config. A child that sets
+  // it needs no second validator and no bespoke result shape.
+  //
+  // Typed as the pinned `OutputFormat` union rather than a bare schema so the two cannot drift.
+  outputFormat?: OutputFormat;
 }
 
 export interface ChildInheritance {

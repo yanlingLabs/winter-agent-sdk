@@ -14,7 +14,7 @@ import { WinterCompatibilitySessionStore, compatibilityKeys } from "@yanlinglabs
 import { runEngine, type Provider } from "../engine.ts";
 import { createInMemoryChannel } from "../protocol/channel.ts";
 import { registerTool, unregisterToolForTest, buildAdvertisedSet, type ToolExecutionContext } from "../tools/registry.ts";
-import { echoProvider, scriptedProvider, testProviderByName } from "../provider/mock.ts";
+import { echoProvider, scriptedProvider, testProviderByName, recordedProviderSystems, resetRecordedProviderSystems } from "../provider/mock.ts";
 import { registerChildEngineFactory, resetChildEngineFactoryForTest, type SpawnChildRequest } from "./child-handle.ts";
 import { createChildEngineFactory, type ChildEngineFactoryDeps } from "./child-engine.ts";
 import { resetSpawnLimitsForTest } from "./limits.ts";
@@ -744,8 +744,15 @@ describe("child-engine.ts: child permission/hook control-RPC routing (RULING P4-
   }, 5000);
 });
 
-describe("child-engine.ts: fix round 1 (controller review) -- C1 CRITICAL: AgentDefinition.prompt reaches the child", () => {
-  test("a programmatic definition's own prompt is the leading block of the child's first turn, ordered before initialPrompt and req.prompt", async () => {
+// Phase 5 Task 3 (R5-3): P4-J is RETIRED. The guarantee these tests exist for is unchanged -- a
+// definition's `prompt` must reach the child -- but the CHANNEL moved from the first user turn to
+// `ProviderRequest.system`, so the assertions move with it. They now read the LIVE provider request
+// (recordedProviderSystems), which is the ground truth the Global Constraints name; the old
+// first-turn-text assertions would have kept passing on a stale channel if the move were ever
+// reverted halfway.
+describe("child-engine.ts: C1 CRITICAL (P4-J, RETIRED by R5-3): AgentDefinition.prompt reaches the child -- now on `system`", () => {
+  test("a programmatic definition's prompt is the child's SYSTEM prompt; initialPrompt and req.prompt stay in the first user turn, in order", async () => {
+    resetRecordedProviderSystems(); // the recorder is process-wide -- a reader MUST clear it first
     registerSpawnProbe();
     cleanupToolNames.push(SPAWN_PROBE);
     const req: SpawnChildRequest = {
@@ -765,12 +772,17 @@ describe("child-engine.ts: fix round 1 (controller review) -- C1 CRITICAL: Agent
     const block = toolResult.message.content.find((b) => b.tool_use_id === "call-1")!;
     const parsed = JSON.parse(block.content) as { result: { content: string } };
     const seenText = parsed.result.content; // echoProvider echoes the FULL first-turn text verbatim
-    expect(seenText).toContain("You are a meticulous code reviewer persona.");
-    const personaIndex = seenText.indexOf("You are a meticulous code reviewer persona.");
+
+    // The persona is on `system` now -- and is NOT in the first user turn any more.
+    expect(recordedProviderSystems()).toContain("You are a meticulous code reviewer persona.");
+    expect(seenText).not.toContain("You are a meticulous code reviewer persona.");
+    expect(seenText).not.toContain("[Agent system prompt]");
+
+    // The other two are user-turn content by definition (WS-10 §2 calls initialPrompt a "first user
+    // message seed") and keep their pinned order.
     const seedIndex = seenText.indexOf("Seed context text.");
     const taskIndex = seenText.indexOf("the actual task text");
-    expect(personaIndex).toBeGreaterThanOrEqual(0);
-    expect(seedIndex).toBeGreaterThan(personaIndex); // prompt -> initialPrompt
+    expect(seedIndex).toBeGreaterThanOrEqual(0);
     expect(taskIndex).toBeGreaterThan(seedIndex); // initialPrompt -> req.prompt
   });
 
@@ -779,6 +791,7 @@ describe("child-engine.ts: fix round 1 (controller review) -- C1 CRITICAL: Agent
     try {
       mkdirSync(join(home, ".winter", "agents"), { recursive: true });
       writeFileSync(join(home, ".winter", "agents", "reviewer.md"), "---\ndescription: reviews code\n---\nYou are a persona from a REAL markdown file on disk.");
+      resetRecordedProviderSystems(); // the recorder is process-wide -- a reader MUST clear it first
       const definitions = loadAgentDefinitions({ cwd: mkdtempSync(join(tmpdir(), "winter-lane-c-c1-cwd-")), home, trustedWorkspace: false });
       const definition = definitions.get("reviewer");
       expect(definition?.prompt).toBe("You are a persona from a REAL markdown file on disk.");
@@ -796,7 +809,7 @@ describe("child-engine.ts: fix round 1 (controller review) -- C1 CRITICAL: Agent
       const toolResult = msgs.find((m) => m.type === "user") as unknown as { message: { content: Array<{ tool_use_id: string; content: string }> } };
       const block = toolResult.message.content.find((b) => b.tool_use_id === "call-1")!;
       const parsed = JSON.parse(block.content) as { result: { content: string } };
-      expect(parsed.result.content).toContain("You are a persona from a REAL markdown file on disk.");
+      expect(recordedProviderSystems()).toContain("You are a persona from a REAL markdown file on disk.");
       expect(parsed.result.content).toContain("review this diff");
     } finally {
       rmSync(home, { recursive: true, force: true });
