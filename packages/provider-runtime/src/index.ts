@@ -43,3 +43,7 @@ export {
   withRetry,
 } from "./retry.ts";
 export type { RetryPolicy, RetryPolicyOptions } from "./retry.ts";
+export { DEFAULT_MAX_REDIRECTS, ProviderBodyLimitError, ProviderRequestError, boundedFetch } from "./http.ts";
+export type { BoundedFetchInit } from "./http.ts";
+export { parseSse } from "./sse.ts";
+export type { SseEvent, SseOptions } from "./sse.ts";

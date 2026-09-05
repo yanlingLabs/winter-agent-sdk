@@ -138,6 +138,22 @@ describe("createEndpointPolicy — redirect revalidation (R6-11: no credential f
     expect(created.policy.evaluateRedirect("https://api.example.test/v1")).toEqual({ ok: true, origin: "https://api.example.test", sameOrigin: false });
   });
 
+  test("a LOCAL policy may follow a SAME-ORIGIN hop but never pivots into the rest of the private space", () => {
+    // The host declared ONE local endpoint. A local server redirecting the client to cloud metadata
+    // (or to a neighbour on the LAN) is a request the host never authorised, and carrying the
+    // `local: true` declaration across a cross-origin hop is exactly how that would slip through.
+    const created = createEndpointPolicy("http://127.0.0.1:11434/v1", { generated: false, local: true });
+    if (!created.ok) throw new Error(created.reason);
+    expect(created.policy.evaluateRedirect("http://127.0.0.1:11434/v1/chat")).toEqual({ ok: true, origin: "http://127.0.0.1:11434", sameOrigin: true });
+    // Another PORT on the same machine is an ordinary local reverse-proxy hop: allowed, but still
+    // cross-origin, so the caller must drop credentials.
+    expect(created.policy.evaluateRedirect("http://127.0.0.1:9999/v1")).toEqual({ ok: true, origin: "http://127.0.0.1:9999", sameOrigin: false });
+    // Another MACHINE is not: cloud metadata and LAN neighbours stay refused.
+    expect(created.policy.evaluateRedirect("http://169.254.169.254/latest/meta-data").ok).toBe(false);
+    expect(created.policy.evaluateRedirect("http://192.168.1.9/v1").ok).toBe(false);
+    expect(created.policy.evaluateRedirect("http://10.0.0.5/v1").ok).toBe(false);
+  });
+
   test("refuses a relative or unparseable redirect target rather than guessing at a base", () => {
     const created = createEndpointPolicy("https://api.example.test/v1", { generated: true });
     if (!created.ok) throw new Error(created.reason);

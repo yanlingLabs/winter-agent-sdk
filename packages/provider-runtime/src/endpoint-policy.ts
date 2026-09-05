@@ -155,6 +155,15 @@ export interface EndpointPolicy {
   evaluateRedirect(target: string): { ok: true; origin: string; sameOrigin: boolean } | { ok: false; reason: string };
 }
 
+/** True when two origins name the same host, whatever their ports. Used only for the local-installation relaxation below. */
+function sameHost(a: string, b: string): boolean {
+  try {
+    return new URL(a).hostname === new URL(b).hostname;
+  } catch {
+    return false;
+  }
+}
+
 export function createEndpointPolicy(
   baseUrl: string,
   opts: EndpointEvaluationOptions,
@@ -170,12 +179,31 @@ export function createEndpointPolicy(
       local,
       generated,
       evaluateRedirect(target: string) {
-        // A redirect target is re-evaluated as a USER endpoint with the SAME local declaration the
-        // original carried — never as `generated`, whatever the original was. A reviewed descriptor
-        // endpoint vouches for itself, not for wherever it points next.
-        const result = evaluateEndpoint(target, local ? { generated: false, local: true } : { generated: false });
-        if (!result.ok) return { ok: false, reason: `redirect refused: ${result.reason}` };
-        return { ok: true, origin: result.origin, sameOrigin: result.origin === origin };
+        // A redirect target is re-evaluated as a USER endpoint — never as `generated`, whatever the
+        // original was. A reviewed descriptor endpoint vouches for itself, not for wherever it
+        // points next.
+        //
+        // The STRICT rule is applied first, with no local relaxation at all. The host's
+        // `local: true` declaration described ONE endpoint, and carrying it across a cross-origin
+        // hop would let a local server redirect the client into the rest of the private address
+        // space — a `http://127.0.0.1:11434` connection pivoting to `http://169.254.169.254`,
+        // credentials aside, is still a request the host never authorised. So the declaration is
+        // re-applied ONLY when the target is the very origin it was made about, which is what keeps
+        // an ordinary same-origin `/v1` -> `/v1/` hop on a local server working.
+        const strict = evaluateEndpoint(target, { generated: false });
+        if (strict.ok) return { ok: true, origin: strict.origin, sameOrigin: strict.origin === origin };
+        if (local) {
+          const lenient = evaluateEndpoint(target, { generated: false, local: true });
+          // SAME HOST, any port. A local reverse proxy handing off between ports on the same machine
+          // is an ordinary local-installation shape, and the host already declared it trusts a local
+          // installation HERE. What the host did not declare is trust in any OTHER machine, so a hop
+          // to link-local metadata or to a LAN neighbour still falls through to the refusal below.
+          // The hop is still cross-origin, so credentials are still dropped.
+          if (lenient.ok && sameHost(lenient.origin, origin)) {
+            return { ok: true, origin: lenient.origin, sameOrigin: lenient.origin === origin };
+          }
+        }
+        return { ok: false, reason: `redirect refused: ${strict.reason}` };
       },
     },
   };
