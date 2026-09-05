@@ -25,10 +25,18 @@ export interface OpenAiModelsFakeOptions {
    * N's last id — so a fixture proves the adapter actually PAGED rather than asking twice.
    */
   pages: ModelsPage[];
-  /** Answer the Nth call (1-based) with this status instead. The discovery-failure / cached-fallback probe. */
+  /**
+   * Answer the Nth call (1-based) AND EVERY CALL AFTER IT with this status.
+   *
+   * Persistent rather than a single blip, and the distinction is load-bearing: the cached-fallback
+   * probe needs a SECOND failure to prove that a failure with no cache PROPAGATES, and a one-shot
+   * failure quietly succeeds on that call instead.
+   */
   failOnCall?: { call: number; status: number; body?: unknown };
   /** Serve a body that is not JSON. */
   notJson?: boolean;
+  /** Path prefix, for a surface whose discovery does not sit at the root (Azure's `/openai/models`). */
+  pathPrefix?: string;
 }
 
 /**
@@ -42,7 +50,7 @@ export function openAiModelsRoutes(opts: OpenAiModelsFakeOptions): FakeRoute[] {
   let calls = 0;
   const handler = (_req: Request, recorded: RecordedRequest): Response => {
     calls += 1;
-    if (opts.failOnCall !== undefined && opts.failOnCall.call === calls) {
+    if (opts.failOnCall !== undefined && calls >= opts.failOnCall.call) {
       return jsonResponse(opts.failOnCall.body ?? { error: { message: "discovery is unavailable", type: "server_error", code: "server_error" } }, opts.failOnCall.status);
     }
     if (opts.notJson === true) return new Response("not json at all", { status: 200, headers: { "content-type": "application/json" } });
@@ -58,9 +66,10 @@ export function openAiModelsRoutes(opts: OpenAiModelsFakeOptions): FakeRoute[] {
     const page = opts.pages[index] ?? { rows: [] };
     return jsonResponse({ object: "list", data: page.rows, has_more: page.hasMore === true });
   };
+  const prefix = opts.pathPrefix ?? "";
   return [
-    { path: "/models", method: "GET", handler },
-    { path: "/v1/models", method: "GET", handler },
+    { path: `${prefix}/models`, method: "GET", handler },
+    { path: `${prefix}/v1/models`, method: "GET", handler },
   ];
 }
 

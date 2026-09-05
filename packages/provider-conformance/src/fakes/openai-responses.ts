@@ -207,3 +207,38 @@ export function htmlErrorResponse(status: number): Response {
 export function notSseResponse(): Response {
   return jsonResponse({ definitely: "not a stream" }, 200);
 }
+
+/**
+ * A response that opens and then says nothing — the STALL scenario, cancel-safe.
+ *
+ * NOT `stalledResponse` from the frozen base, and the difference is a real defect rather than a
+ * preference. That helper arms an unconditional `setTimeout(() => controller.close(), holdMs)` with
+ * no `cancel` handler, so when the consumer tears the stream down FIRST — which is the only way a
+ * stall scenario ever ends, because the watchdog fires long before `holdMs` — the timer still runs
+ * and throws `TypeError: Invalid state: Controller is already closed`. Bun attributes that to
+ * whichever test happens to be running when it fires, so it surfaces as an unrelated file failing:
+ * measured here, it took down `corpus/runner.test.ts` (a SPINE test that passes alone) and two Azure
+ * cases, purely by timing.
+ *
+ * This version clears the timer on cancel and guards the close. The frozen helper needs the same
+ * two lines; that is reported rather than edited (R6-12).
+ */
+export function silentStream(holdMs = 500): Response {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode(": open\n\n"));
+      timer = setTimeout(() => {
+        try {
+          controller.close();
+        } catch {
+          // The consumer tore the stream down first — the normal end of a stall scenario.
+        }
+      }, holdMs);
+    },
+    cancel() {
+      if (timer !== undefined) clearTimeout(timer);
+    },
+  });
+  return new Response(body, { status: 200, headers: { "content-type": "text/event-stream", "cache-control": "no-cache" } });
+}
