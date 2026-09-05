@@ -149,7 +149,7 @@ describe("compaction -- resume across a compaction (R5-4 / WS-11 §7)", () => {
   // message (never `keep: 0`), which is what makes `preserved_messages` non-empty and therefore
   // present at all.
   // ================================================================================================
-  test.skip("[pending T3 fix] the emitted compact_boundary frame carries preserved_messages and post_tokens", async () => {
+  test("the emitted compact_boundary frame carries preserved_messages and post_tokens", async () => {
     const home = mkdtempSync(join(tmpdir(), "winter-lane-k-resume-"));
     try {
       const cwd = join(home, "work");
