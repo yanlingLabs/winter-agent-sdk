@@ -28,6 +28,9 @@ import { sourceRule, rawToRuleValue, type SourcedRuleEntry } from "./permissions
 import type { RuleSource } from "@yanlinglabs/winter-agent-sdk";
 import type { DetailedResolvedSettings } from "./settings/resolve.ts";
 import { defaultTrustSource } from "./settings/trust.ts";
+// rn-1 (residual round 2): the child-mirror seam is typed AGAINST the factory's own options, so an
+// undeclared field is a compile error here rather than a silent drop there. Type-only, no cycle.
+import type { DefaultChildEngineFactoryOptions } from "./subagents/register-default-factory.ts";
 import { resolveOutputStyle } from "./context/output-styles.ts";
 import { isAuthoredPromptRegion } from "./context/assembler.ts";
 import { loadPlugins } from "./plugins/loader.ts";
@@ -340,26 +343,27 @@ export interface ProductionWiring {
    * Mirrors handed to `registerDefaultChildEngineFactory`, so a CHILD engine gets the same context
    * surface its parent does -- see that function's own fields for the two gaps this closes.
    */
-  childFactoryOptions: {
-    systemPromptAssembler: SystemPromptAssembler;
-    skillRuntime: { index: SkillIndex; skillOverrides?: SkillOverrides };
-    skillListing: SkillListing;
-    /**
-     * NEW-4 (residual round): the SAME seed `engineOptions` carries, so a child's evaluator is
-     * seeded from the same tiers its parent's was. See `ChildEngineFactoryDeps.settingsRules`.
-     */
-    settingsRules: SettingsRuleSeed;
-    structuredOutput: StructuredOutputSeam;
-    /** I4: a user-tier `PreToolUse` deny must govern a child's tool calls too. */
-    extraHookEntries: readonly SourcedHookEntry[];
-    /**
-     * I4 + NEW-2: children auto-compact, and each gets its OWN controller because the
-     * carried-summary memo is per-instance. A FACTORY rather than an instance, called once per
-     * spawn: one shared instance made siblings share a memo, which is the same defect the parent/
-     * child separation exists to prevent, one level down.
-     */
-    compactionControllerFactory: () => CompactionController;
-  };
+  /**
+   * Mirrors handed to `registerDefaultChildEngineFactory`, so a CHILD engine gets the same context
+   * surface its parent does.
+   *
+   * TYPED AS A `Pick` OF THE FACTORY'S OWN OPTIONS (rn-1, residual round 2), which is a tripwire and
+   * not tidiness. This was an independent object literal spread into the factory, and a spread of a
+   * property the destination has not declared is NOT an excess-property error -- so `skillListing`
+   * was declared here, type-checked, arrived on `opts`, and was dropped one line before `deps`,
+   * inert in production for a whole round while a review recorded it as landed. Against a `Pick`,
+   * a field the factory has not declared is a compile error AT THE PRODUCER, where the mistake is
+   * made, instead of a silent drop at the consumer, where nobody is looking.
+   *
+   * Adding a mirror is therefore now a two-file edit by construction: declare it on
+   * `DefaultChildEngineFactoryOptions` first, then produce it here.
+   */
+  childFactoryOptions: Required<
+    Pick<
+      DefaultChildEngineFactoryOptions,
+      "systemPromptAssembler" | "skillRuntime" | "skillListing" | "settingsRules" | "structuredOutput" | "extraHookEntries" | "compactionControllerFactory"
+    >
+  >;
   /**
    * Non-fatal problems worth telling a host about: a malformed `.winter/mcp.json`, a plugin that
    * would not load, a `skills` option naming something unknown. NEVER thrown -- Lane S's
