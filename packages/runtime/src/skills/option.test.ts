@@ -5,7 +5,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SkillIndex, PROJECT_PLUGIN_NAME } from "./store.ts";
-import { validateSkillsOption, autoSkillPermissionEntries, isSkillEnabled, SKILL_TOOL_NAME } from "./option.ts";
+import { validateSkillsOption, autoSkillPermissionEntries, isSkillEnabled, isLegalSkillIdentity, SKILL_TOOL_NAME } from "./option.ts";
 
 const tempDirs: string[] = [];
 function mkTemp(prefix: string): string {
@@ -19,13 +19,13 @@ afterEach(() => {
 
 function indexWith(names: string[]): SkillIndex {
   const repo = mkTemp("winter-opt-repo-");
-  const home = mkTemp("winter-opt-home-");
+  const winterHome = mkTemp("winter-opt-home-");
   for (const name of names) {
     const dir = join(repo, ".winter", "skills", name);
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, "SKILL.md"), `---\nname: ${name}\ndescription: ${name} does things\n---\n\nbody of ${name}`, "utf8");
   }
-  return SkillIndex.build({ cwd: repo, home });
+  return SkillIndex.build({ cwd: repo, winterHome });
 }
 
 describe("validateSkillsOption (report §60: names validated before the runtime spawns)", () => {
@@ -89,6 +89,25 @@ describe("validateSkillsOption: the `tools`-must-include-Skill rule (WS-11 §2.2
 
   test("with `skills` unset there is nothing to warn about, whatever `tools` says", () => {
     expect(validateSkillsOption(undefined, indexWith(["alpha"]), { tools: ["Read"] }).warnings).toEqual([]);
+  });
+});
+
+describe("isLegalSkillIdentity: the executor's jail agrees with the index's", () => {
+  test("every plugin name the INDEX admits is one the executor will also accept", () => {
+    const repo = mkTemp("winter-jail-repo-");
+    const winterHome = mkTemp("winter-jail-home-");
+    // `.acme` is admissible under PLUGIN_NAME_PATTERN (the leading dot exists for `.winter`), so the
+    // index qualifies `.acme:ship`. A stricter check in the executor would advertise a skill it then
+    // refuses -- the two jails must be the same jail.
+    const index = SkillIndex.build({ cwd: repo, winterHome, plugins: [{ plugin: ".acme", skills: [{ name: "ship", description: "d", path: "/p/SKILL.md" }] }] });
+    for (const name of index.names()) expect(isLegalSkillIdentity(name)).toBe(true);
+    expect(index.names()).toEqual([".acme:ship"]);
+  });
+
+  test("a traversing or malformed identity is still refused", () => {
+    for (const bad of ["../escape", "a/b", "plug/in:ship", "acme:../ship", "ACME:ship"]) {
+      expect(isLegalSkillIdentity(bad)).toBe(false);
+    }
   });
 });
 

@@ -105,7 +105,7 @@ describe("project tier: the parent-walk (WS-11 §2.1, report §60)", () => {
     mkdirSync(sub, { recursive: true });
     writeSkill(join(repo, ".winter", "skills"), "shared", { name: "shared", description: "root one" }, "root body");
     writeSkill(join(sub, ".winter", "skills"), "shared", { name: "shared", description: "near one" }, "near body");
-    const index = SkillIndex.build({ cwd: sub, home: mkTemp("winter-home-") });
+    const index = SkillIndex.build({ cwd: sub, winterHome: mkTemp("winter-home-") });
     expect(index.get("shared")?.description).toBe("near one");
     expect(index.load("shared")?.body).toBe("near body");
   });
@@ -127,19 +127,19 @@ describe("SkillIndex: tiers, precedence and source gating (WS-11 §2.1, P5 amend
   function tree() {
     const repo = mkTemp("winter-tiers-repo-");
     mkdirSync(join(repo, ".git"), { recursive: true });
-    const home = mkTemp("winter-tiers-home-");
+    const winterHome = join(mkTemp("winter-tiers-home-"), ".winter");
     writeSkill(join(repo, ".winter", "skills"), "alpha", { name: "alpha", description: "project alpha" }, "project body");
-    writeSkill(join(home, ".winter", "skills"), "alpha", { name: "alpha", description: "user alpha" }, "user body");
-    writeSkill(join(home, ".winter", "skills"), "beta", { name: "beta", description: "user beta" }, "user beta body");
-    writeSkill(join(home, ".winter", "skills", "self"), "gamma", { name: "gamma", description: "self gamma", author: "winter" }, "self body");
-    return { repo, home };
+    writeSkill(join(winterHome, "skills"), "alpha", { name: "alpha", description: "user alpha" }, "user body");
+    writeSkill(join(winterHome, "skills"), "beta", { name: "beta", description: "user beta" }, "user beta body");
+    writeSkill(join(winterHome, "skills", "self"), "gamma", { name: "gamma", description: "self gamma", author: "winter" }, "self body");
+    return { repo, winterHome };
   }
 
   test("precedence is project > user > self > plugin > builtin, first occurrence of a name wins", () => {
-    const { repo, home } = tree();
+    const { repo, winterHome } = tree();
     const index = SkillIndex.build({
       cwd: repo,
-      home,
+      winterHome,
       plugins: [{ plugin: "acme", skills: [{ name: "beta", description: "plugin beta", path: "/p/acme/skills/beta/SKILL.md" }] }],
       builtinSkills: [{ name: "delta", description: "builtin delta", source: "builtin", path: "/b/delta/SKILL.md" }],
     });
@@ -151,31 +151,53 @@ describe("SkillIndex: tiers, precedence and source gating (WS-11 §2.1, P5 amend
     expect(index.get("delta")?.source).toBe("builtin");
   });
 
+  test("the user tier is addressed by the RESOLVED winter root, so a WINTER_HOME not named `.winter` works", () => {
+    // The regression this pins: an option field taking the OS home and appending `.winter` itself
+    // CANNOT honour WINTER_HOME, whose value may be any directory under any name. A fixture whose
+    // root happens to be called `.winter` cannot see the difference, so this one deliberately is not.
+    const repo = mkTemp("winter-envhome-repo-");
+    const winterHome = join(mkTemp("winter-envhome-"), "custom-winter-root");
+    writeSkill(join(winterHome, "skills"), "fromenv", { name: "fromenv", description: "d" }, "ENV BODY");
+    const index = SkillIndex.build({ cwd: repo, winterHome });
+    expect(index.get("fromenv")?.source).toBe("user");
+    expect(index.load("fromenv")?.body).toBe("ENV BODY");
+  });
+
+  test("the `self` tier lives under the user root and is therefore gated on the `user` source too", () => {
+    // DISCLOSED divergence from Norma, whose `self` tier always loads: `~/.winter/skills/self` is a
+    // subdirectory of the user root, so a session that has not enabled the `user` source has not
+    // enabled the directory `self` lives in either. Gating them together is the only reading under
+    // which `settingSources: []` means what WS-01 §2.4 says it means -- no filesystem discovery.
+    const { repo, winterHome } = tree();
+    expect(SkillIndex.build({ cwd: repo, winterHome }).get("gamma")?.source).toBe("self");
+    expect(SkillIndex.build({ cwd: repo, winterHome, settingSources: ["project"] }).get("gamma")).toBeUndefined();
+  });
+
   test("the user tier's reserved `self/` subdirectory is never listed as a user skill", () => {
-    const { repo, home } = tree();
-    const index = SkillIndex.build({ cwd: repo, home });
+    const { repo, winterHome } = tree();
+    const index = SkillIndex.build({ cwd: repo, winterHome });
     expect(index.list().map((s) => s.name)).not.toContain("self");
   });
 
   test("PROJECT skills are SOURCE-gated: absent from `settingSources`, they do not load at all", () => {
-    const { repo, home } = tree();
-    const gated = SkillIndex.build({ cwd: repo, home, settingSources: ["user"] });
+    const { repo, winterHome } = tree();
+    const gated = SkillIndex.build({ cwd: repo, winterHome, settingSources: ["user"] });
     expect(gated.get("alpha")?.source).toBe("user");
-    const off = SkillIndex.build({ cwd: repo, home, settingSources: [] });
+    const off = SkillIndex.build({ cwd: repo, winterHome, settingSources: [] });
     expect(off.list()).toEqual([]);
   });
 
   test("USER skills are source-gated on `user`, and `settingSources: undefined` means all three tiers", () => {
-    const { repo, home } = tree();
-    expect(SkillIndex.build({ cwd: repo, home, settingSources: ["project"] }).get("beta")).toBeUndefined();
-    expect(SkillIndex.build({ cwd: repo, home }).get("beta")?.source).toBe("user");
+    const { repo, winterHome } = tree();
+    expect(SkillIndex.build({ cwd: repo, winterHome, settingSources: ["project"] }).get("beta")).toBeUndefined();
+    expect(SkillIndex.build({ cwd: repo, winterHome }).get("beta")?.source).toBe("user");
   });
 
   test("plugin and builtin tiers are NOT source-gated -- a host-listed plugin survives `settingSources: []`", () => {
-    const { repo, home } = tree();
+    const { repo, winterHome } = tree();
     const index = SkillIndex.build({
       cwd: repo,
-      home,
+      winterHome,
       settingSources: [],
       plugins: [{ plugin: "acme", skills: [{ name: "beta", description: "plugin beta", path: "/p/acme/skills/beta/SKILL.md" }] }],
       builtinSkills: [{ name: "delta", description: "builtin delta", source: "builtin", path: "/b/delta/SKILL.md" }],
@@ -184,41 +206,41 @@ describe("SkillIndex: tiers, precedence and source gating (WS-11 §2.1, P5 amend
   });
 
   test("`disableBundledSkills` removes the builtin tier and nothing else", () => {
-    const { repo, home } = tree();
-    const index = SkillIndex.build({ cwd: repo, home, disableBundledSkills: true, builtinSkills: [{ name: "delta", description: "d", source: "builtin", path: "/b" }] });
+    const { repo, winterHome } = tree();
+    const index = SkillIndex.build({ cwd: repo, winterHome, disableBundledSkills: true, builtinSkills: [{ name: "delta", description: "d", source: "builtin", path: "/b" }] });
     expect(index.get("delta")).toBeUndefined();
     expect(index.get("alpha")?.source).toBe("project");
   });
 
   test("`strictPluginOnlyCustomization` covering skills leaves ONLY the plugin tier", () => {
-    const { repo, home } = tree();
+    const { repo, winterHome } = tree();
     const plugins = [{ plugin: "acme", skills: [{ name: "beta", description: "plugin beta", path: "/p/acme/skills/beta/SKILL.md" }] }];
     const builtinSkills = [{ name: "delta", description: "builtin delta", source: "builtin" as const, path: "/b" }];
     for (const value of [true, ["skills"]] as const) {
-      const index = SkillIndex.build({ cwd: repo, home, plugins, builtinSkills, strictPluginOnlyCustomization: value });
+      const index = SkillIndex.build({ cwd: repo, winterHome, plugins, builtinSkills, strictPluginOnlyCustomization: value });
       expect(index.names()).toEqual(["acme:beta"]);
     }
   });
 
   test("`strictPluginOnlyCustomization` naming OTHER areas, or a malformed value, restricts nothing", () => {
-    const { repo, home } = tree();
+    const { repo, winterHome } = tree();
     for (const value of [false, [], ["agents", "hooks"], "yes" as unknown as boolean] as const) {
-      expect(SkillIndex.build({ cwd: repo, home, strictPluginOnlyCustomization: value }).get("alpha")?.source).toBe("project");
+      expect(SkillIndex.build({ cwd: repo, winterHome, strictPluginOnlyCustomization: value }).get("alpha")?.source).toBe("project");
     }
   });
 
   test("the builtin registry is an EMPTY seam by default -- Winter ships no bundled skills yet", () => {
-    const { repo, home } = tree();
-    expect(SkillIndex.build({ cwd: repo, home }).list().filter((s) => s.source === "builtin")).toEqual([]);
+    const { repo, winterHome } = tree();
+    expect(SkillIndex.build({ cwd: repo, winterHome }).list().filter((s) => s.source === "builtin")).toEqual([]);
   });
 });
 
 describe("SkillIndex: `.winter:<skill>` qualification (WS-11 §4)", () => {
   test("a project skill answers to BOTH its bare name and `.winter:<name>`, and lists under the bare one", () => {
     const repo = mkTemp("winter-qual-repo-");
-    const home = mkTemp("winter-qual-home-");
+    const winterHome = mkTemp("winter-qual-home-");
     writeSkill(join(repo, ".winter", "skills"), "review", { name: "review", description: "d" }, "the body");
-    const index = SkillIndex.build({ cwd: repo, home });
+    const index = SkillIndex.build({ cwd: repo, winterHome });
     expect(index.get("review")?.name).toBe("review");
     expect(index.get(`${PROJECT_PLUGIN_NAME}:review`)?.name).toBe("review");
     expect(index.load(`${PROJECT_PLUGIN_NAME}:review`)?.body).toBe("the body");
@@ -227,9 +249,9 @@ describe("SkillIndex: `.winter:<skill>` qualification (WS-11 §4)", () => {
 
   test("the SAME `.winter` tree reached as a loaded PLUGIN qualifies identically -- one name, not two entries", () => {
     const repo = mkTemp("winter-qual2-repo-");
-    const home = mkTemp("winter-qual2-home-");
+    const winterHome = mkTemp("winter-qual2-home-");
     const path = writeSkill(join(repo, ".winter", "skills"), "review", { name: "review", description: "d" }, "the body");
-    const index = SkillIndex.build({ cwd: repo, home, plugins: [{ plugin: PROJECT_PLUGIN_NAME, skills: [{ name: "review", description: "d", path }] }] });
+    const index = SkillIndex.build({ cwd: repo, winterHome, plugins: [{ plugin: PROJECT_PLUGIN_NAME, skills: [{ name: "review", description: "d", path }] }] });
     expect(index.list().filter((s) => s.name.endsWith("review"))).toHaveLength(1);
     expect(index.get(`${PROJECT_PLUGIN_NAME}:review`)?.source).toBe("project");
   });
@@ -238,9 +260,9 @@ describe("SkillIndex: `.winter:<skill>` qualification (WS-11 §4)", () => {
 describe("SkillIndex: the lazy-body contract (WS-11 §2.1 -- bodies are never bulk-loaded)", () => {
   test("the index carries name+description only; `load()` reads the CURRENT file, so a post-index edit is visible", () => {
     const repo = mkTemp("winter-lazy-repo-");
-    const home = mkTemp("winter-lazy-home-");
+    const winterHome = mkTemp("winter-lazy-home-");
     const path = writeSkill(join(repo, ".winter", "skills"), "lazy", { name: "lazy", description: "d" }, "ORIGINAL");
-    const index = SkillIndex.build({ cwd: repo, home });
+    const index = SkillIndex.build({ cwd: repo, winterHome });
     expect(JSON.stringify(index.list())).not.toContain("ORIGINAL");
     writeFileSync(path, "---\nname: lazy\ndescription: d\n---\n\nREPLACED", "utf8");
     expect(index.load("lazy")?.body).toBe("REPLACED");
@@ -248,9 +270,9 @@ describe("SkillIndex: the lazy-body contract (WS-11 §2.1 -- bodies are never bu
 
   test("`load()` byte-caps the body and reports a miss as null", () => {
     const repo = mkTemp("winter-cap-repo-");
-    const home = mkTemp("winter-cap-home-");
+    const winterHome = mkTemp("winter-cap-home-");
     writeSkill(join(repo, ".winter", "skills"), "big", { name: "big", description: "d" }, "x".repeat(DEFAULT_SKILL_BODY_BYTES + 500));
-    const index = SkillIndex.build({ cwd: repo, home, bodyBytes: 64 });
+    const index = SkillIndex.build({ cwd: repo, winterHome, bodyBytes: 64 });
     const loaded = index.load("big");
     expect(loaded?.body.endsWith(SKILL_TRUNCATION_MARKER)).toBe(true);
     expect(loaded?.body.length).toBe(64 + SKILL_TRUNCATION_MARKER.length);
@@ -259,9 +281,9 @@ describe("SkillIndex: the lazy-body contract (WS-11 §2.1 -- bodies are never bu
 
   test("a skill deleted from disk after indexing loads as null rather than throwing", () => {
     const repo = mkTemp("winter-gone-repo-");
-    const home = mkTemp("winter-gone-home-");
+    const winterHome = mkTemp("winter-gone-home-");
     writeSkill(join(repo, ".winter", "skills"), "gone", { name: "gone", description: "d" }, "b");
-    const index = SkillIndex.build({ cwd: repo, home });
+    const index = SkillIndex.build({ cwd: repo, winterHome });
     rmSync(join(repo, ".winter", "skills", "gone"), { recursive: true, force: true });
     expect(index.load("gone")).toBeNull();
   });

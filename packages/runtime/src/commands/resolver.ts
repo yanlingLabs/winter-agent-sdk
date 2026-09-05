@@ -52,8 +52,8 @@ export interface PluginCommandContribution {
 
 export interface FilesystemCommandResolverOptions {
   cwd: string;
-  /** The `~/.winter` root -- always explicit; this module never reads `process.env`. */
-  home: string;
+  /** The RESOLVED `~/.winter` root (`WINTER_HOME` when set) -- see `SkillIndexOptions.winterHome` for why this is not called `home`. */
+  winterHome: string;
   settingSources?: SettingSource[] | undefined;
   /** The session's skill index. Skills create `/name` too (WS-11 §2.4) and WIN an overlap. */
   skills?: SkillIndex | undefined;
@@ -203,7 +203,7 @@ export class FilesystemCommandResolver implements CommandResolver {
       }
     }
     if (sourcesAllow(this.opts.settingSources, "user")) {
-      found.push(...scanCommandDir(join(this.opts.home, ".winter", "commands"), "user"));
+      found.push(...scanCommandDir(join(this.opts.winterHome, "commands"), "user"));
     }
     for (const contribution of this.opts.plugins ?? []) {
       for (const command of contribution.commands) {

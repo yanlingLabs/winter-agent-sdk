@@ -57,8 +57,23 @@ export interface PluginSkillContribution {
 
 export interface SkillIndexOptions {
   cwd: string;
-  /** The `~/.winter` root. ALWAYS explicit -- this module never reads `process.env` (tests would race). */
-  home: string;
+  /**
+   * The RESOLVED `~/.winter` root -- i.e. what `resolveWinterHome(env)` / `resolveProductionWinterHome`
+   * return, which is `WINTER_HOME` when set and `<os home>/.winter` otherwise.
+   *
+   * NAMED `winterHome`, NOT `home`, DELIBERATELY. Two conventions exist side by side in this
+   * codebase and they are not interchangeable: `ResolveSettingsDetailedOptions.winterHome` is the
+   * `.winter` root itself, while `LoadAgentDefinitionsOptions.home` is the OS home directory and
+   * appends `.winter` internally. Only the first can honour `WINTER_HOME` -- an override may point
+   * anywhere and need not be named `.winter` at all -- and WS-01 §2.5 makes `WINTER_HOME` the
+   * user tier's address. A field called `home` here would be handed
+   * `resolveProductionWinterHome(...)` by a caller reading the settings convention and
+   * `ctx.home`/`homedir()` by one reading the agents convention; one of the two silently finds an
+   * empty user tier. The name is the only thing that stops that.
+   *
+   * ALWAYS explicit -- this module never reads `process.env` (a shared-process `bun test` would race).
+   */
+  winterHome: string;
   /** Omitted = all three tiers; `[]` = filesystem discovery disabled. */
   settingSources?: SettingSource[] | undefined;
   plugins?: readonly PluginSkillContribution[] | undefined;
@@ -96,7 +111,7 @@ function discover(opts: SkillIndexOptions): DiscoveredSkill[] {
     for (const root of projectSkillRoots(opts.cwd)) all.push(...scanSkillRoot(root, "project"));
   }
   if (!pluginOnly && sourcesAllow(opts.settingSources, "user")) {
-    const userRoot = join(opts.home, ".winter", "skills");
+    const userRoot = join(opts.winterHome, "skills");
     all.push(...scanUserSkillRoot(userRoot));
     all.push(...scanSkillRoot(join(userRoot, SELF_SUBDIR), "self"));
   }

@@ -18,8 +18,8 @@
 // staying silent would leave a caller with a skill list that quietly does nothing. A warning is the
 // only reading that is both honest and non-diverging.
 import type { SkillsOption } from "@yanlinglabs/winter-agent-sdk";
-import { skillNameError } from "./frontmatter.ts";
-import { PROJECT_PLUGIN_NAME, type SkillIndex } from "./store.ts";
+import { pluginNameError, skillNameError } from "./frontmatter.ts";
+import type { SkillIndex } from "./store.ts";
 
 /** The one tool every skill is invoked through (WS-11 §2.3 -- never one tool per skill). */
 export const SKILL_TOOL_NAME = "Skill";
@@ -130,14 +130,16 @@ export function autoSkillPermissionEntries(skills: SkillsOption | undefined): st
 
 /**
  * A name is rejected before it ever reaches the filesystem if it is not a legal identity: a bare
- * slug, or `<plugin>:<slug>` (the `.winter` project plugin included). Used by the executor, which
- * receives its name from the MODEL and must not hand an arbitrary string to a path join.
+ * slug, or `<plugin>:<slug>`. Used by the executor, which receives its name from the MODEL and must
+ * not hand an arbitrary string to a path join.
+ *
+ * The plugin half uses `pluginNameError`, THE SAME JAIL `SkillIndex.build` admits plugin names by --
+ * not a stricter one. Two jails that disagree produce a skill the index advertises and the executor
+ * refuses: `PLUGIN_NAME_PATTERN` admits any leading-dot name, so a plugin named `.acme` indexes
+ * `.acme:ship`, and a check that special-cased only `.winter` would reject it at invocation.
  */
 export function isLegalSkillIdentity(name: string): boolean {
   const colon = name.indexOf(":");
   if (colon === -1) return skillNameError(name) === null;
-  const plugin = name.slice(0, colon);
-  const bare = name.slice(colon + 1);
-  const pluginOk = plugin === PROJECT_PLUGIN_NAME || skillNameError(plugin) === null;
-  return pluginOk && skillNameError(bare) === null;
+  return pluginNameError(name.slice(0, colon)) === null && skillNameError(name.slice(colon + 1)) === null;
 }

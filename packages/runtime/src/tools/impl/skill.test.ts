@@ -49,13 +49,13 @@ function ctx(sessionId: string): ToolExecutionContext {
 
 function fixture(opts?: { skills?: string[] | "all"; overrides?: Record<string, string> }): { sessionId: string; attachments: InvokedSkillsAttachment[]; repo: string } {
   const repo = mkTemp("winter-skillexec-repo-");
-  const home = mkTemp("winter-skillexec-home-");
+  const winterHome = mkTemp("winter-skillexec-home-");
   for (const name of ["review", "lint"]) {
     const dir = join(repo, ".winter", "skills", name);
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, "SKILL.md"), `---\nname: ${name}\ndescription: ${name} desc\n---\n\nINSTRUCTIONS FOR ${name.toUpperCase()}`, "utf8");
   }
-  const index = SkillIndex.build({ cwd: repo, home });
+  const index = SkillIndex.build({ cwd: repo, winterHome });
   const attachments: InvokedSkillsAttachment[] = [];
   const sessionId = `sess-${Math.random().toString(36).slice(2)}`;
   sessions.push(sessionId);
