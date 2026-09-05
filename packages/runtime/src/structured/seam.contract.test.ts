@@ -9,6 +9,7 @@ import { stubExecutor } from "../provider/mock.ts";
 import { getRegisteredTool, registerHostGeneratedTool, registerTool, unregisterToolForTest, type ToolDescriptor } from "../tools/registry.ts";
 import {
   DEFAULT_MAX_STRUCTURED_OUTPUT_ATTEMPTS,
+  HOST_GENERATABLE_TOOL_NAMES,
   MAX_STRUCTURED_OUTPUT_RETRIES_ENV,
   STRUCTURED_OUTPUT_TOOL_NAME,
   fakeStructuredOutputSeam,
@@ -81,26 +82,65 @@ describe("structured/seam.ts -- StructuredOutputSeam (Lane K implements over ajv
   // --- registerHostGeneratedTool ---------------------------------------------------------------------
 
   test("registerHostGeneratedTool is idempotent within a run and returns an IDENTITY-CHECKED disposer", () => {
-    const name = "__winter_test_host_tool__";
-    const make = (): ToolDescriptor => ({ ...fakeStructuredOutputSeam().buildDescriptor(SCHEMA), canonicalName: name, advertisedName: name });
+    const before = getRegisteredTool(STRUCTURED_OUTPUT_TOOL_NAME);
+    const make = (): ToolDescriptor => fakeStructuredOutputSeam().buildDescriptor(SCHEMA);
     const disposeA = registerHostGeneratedTool({ descriptor: make() });
-    expect(getRegisteredTool(name)).toBeDefined();
+    expect(getRegisteredTool(STRUCTURED_OUTPUT_TOOL_NAME)?.descriptor.inputSchema).toBe(SCHEMA);
     // A second run re-registers under the same name; the FIRST run's disposer must then be a no-op,
     // or one in-memory run's teardown would unregister a concurrent run's live tool.
     const disposeB = registerHostGeneratedTool({ descriptor: make() });
     disposeA();
-    expect(getRegisteredTool(name)).toBeDefined();
+    expect(getRegisteredTool(STRUCTURED_OUTPUT_TOOL_NAME)?.descriptor.inputSchema).toBe(SCHEMA);
     disposeB();
-    expect(getRegisteredTool(name)).toBeUndefined();
+    expect(getRegisteredTool(STRUCTURED_OUTPUT_TOOL_NAME)).toEqual(before!);
   });
 
-  test("registerHostGeneratedTool REFUSES to shadow a non-host tool -- a silent replacement would outlive the run", () => {
-    const name = "__winter_test_builtin_collision__";
-    registerTool({ descriptor: { ...fakeStructuredOutputSeam().buildDescriptor(SCHEMA), canonicalName: name, advertisedName: name, source: "builtin" } });
+  // Fix round 1 (M1). EIGHT registered WS-06 descriptors carry `source: "host"` -- Artifact,
+  // ClaudeDesign, Projects, RemoteTrigger, SendUserFile, ShareOnboardingGuide,
+  // ShowOnboardingRolePicker and StructuredOutput -- so a `source === "host"` guard excluded nothing:
+  // registering under "Artifact" replaced the real descriptor and the disposer then DELETED it from
+  // the process-wide registry for the rest of the process.
+  test("M1: a name outside the host-generatable set is REFUSED, even though its descriptor is itself source:'host'", () => {
+    const before = getRegisteredTool("Artifact");
+    expect(before, "fixture assumption: Artifact is a registered WS-06 descriptor").toBeDefined();
+    expect(before!.descriptor.source, "and it is source:'host', which is exactly why the old guard missed it").toBe("host");
+
+    expect(() =>
+      registerHostGeneratedTool({ descriptor: { ...fakeStructuredOutputSeam().buildDescriptor(SCHEMA), canonicalName: "Artifact", advertisedName: "Artifact" } }),
+    ).toThrow(/not a host-generatable name/);
+
+    // Byte-identical afterwards: same object, untouched description and schema.
+    expect(getRegisteredTool("Artifact")).toBe(before!);
+  });
+
+  test("M1: the host-generatable set is exactly the names WS-06 declares as generated-per-session", () => {
+    expect([...HOST_GENERATABLE_TOOL_NAMES]).toEqual([STRUCTURED_OUTPUT_TOOL_NAME]);
+    for (const name of HOST_GENERATABLE_TOOL_NAMES) {
+      expect(getRegisteredTool(name), `${name} must have a WS-06 stub to shadow`).toBeDefined();
+    }
+  });
+
+  test("M1: disposing a host-generated registration RESTORES the WS-06 stub it shadowed -- the registry is byte-identical", () => {
+    const stub = getRegisteredTool(STRUCTURED_OUTPUT_TOOL_NAME);
+    expect(stub).toBeDefined();
+    const dispose = registerHostGeneratedTool({ descriptor: fakeStructuredOutputSeam().buildDescriptor(SCHEMA) });
+    expect(getRegisteredTool(STRUCTURED_OUTPUT_TOOL_NAME)).not.toBe(stub!);
+    dispose();
+    expect(getRegisteredTool(STRUCTURED_OUTPUT_TOOL_NAME)).toBe(stub!);
+  });
+
+  test("M1: a registration claiming a name nothing holds is deleted on dispose, not resurrected as undefined", () => {
+    // Guards the other direction of the restore: `undefined` must mean "delete", never "set undefined".
+    const name = STRUCTURED_OUTPUT_TOOL_NAME;
+    const stub = getRegisteredTool(name)!;
+    unregisterToolForTest(name);
     try {
-      expect(() => registerHostGeneratedTool({ descriptor: { ...fakeStructuredOutputSeam().buildDescriptor(SCHEMA), canonicalName: name, advertisedName: name } })).toThrow("would shadow a non-host tool");
+      const dispose = registerHostGeneratedTool({ descriptor: fakeStructuredOutputSeam().buildDescriptor(SCHEMA) });
+      expect(getRegisteredTool(name)).toBeDefined();
+      dispose();
+      expect(getRegisteredTool(name)).toBeUndefined();
     } finally {
-      unregisterToolForTest(name);
+      registerTool(stub); // put the WS-06 stub back for every later test in this process
     }
   });
 
@@ -119,8 +159,12 @@ describe("structured/seam.ts -- StructuredOutputSeam (Lane K implements over ajv
     await done;
     const init = dataMessages(frames).find((m) => (m as { subtype?: string }).subtype === "init") as { tools: string[] };
     expect(init.tools).not.toContain(STRUCTURED_OUTPUT_TOOL_NAME);
-    // ...and the registry no longer carries it either -- the per-run registration was withdrawn.
-    expect(getRegisteredTool(STRUCTURED_OUTPUT_TOOL_NAME)).toBeUndefined();
+    // ...and the run's own registration was withdrawn, leaving the WS-06 stub exactly as it found it.
+    // This previously asserted `toBeUndefined()`, which was OBSERVING M1: the disposer had deleted the
+    // P3 stub from the process-wide registry along with the per-run descriptor.
+    const afterRun = getRegisteredTool(STRUCTURED_OUTPUT_TOOL_NAME);
+    expect(afterRun).toBeDefined();
+    expect(afterRun!.descriptor.inputSchema).not.toBe(SCHEMA);
   });
 
   test("a VALID call ends the turn with result.structured_output", async () => {

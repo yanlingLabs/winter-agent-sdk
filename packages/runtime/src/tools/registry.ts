@@ -436,20 +436,63 @@ export function listRegisteredTools(): readonly RegisteredTool[] {
 // overlap, and a by-name delete during one run's teardown would remove the OTHER run's live
 // registration. A disposer whose entry has since been replaced is a no-op.
 //
-// Refuses to shadow an existing WS-06 name: a host-generated descriptor colliding with a real tool
-// would silently replace it for the rest of the process, which is a far worse failure than a throw.
+/**
+ * The ONLY names a host-generated registration may claim (fix round 1, M1).
+ *
+ * WS-06 §3.6 declares `StructuredOutput`'s `input_schema` as "GENERATED per-call from the caller's
+ * requested output schema -- never one static interface", and its own P3 descriptor
+ * (descriptors/structured-output.ts) calls its schema a placeholder the host substitutes. That
+ * declaration is what makes the name generatable; nothing else in the catalogue carries it.
+ *
+ * Defined HERE rather than in structured/seam.ts so the registry depends on nothing to enforce its
+ * own guard; that module re-exports it for Lane K.
+ */
+export const HOST_GENERATABLE_TOOL_NAMES: ReadonlySet<string> = new Set(["StructuredOutput"]);
+
+// THE NAME GUARD IS AN ALLOWLIST, not a property check (fix round 1, M1). The first version refused
+// to shadow a descriptor whose `source !== "host"` -- which excluded nothing, because EIGHT
+// registered WS-06 descriptors are themselves `source: "host"` (Artifact, ClaudeDesign, Projects,
+// RemoteTrigger, SendUserFile, ShareOnboardingGuide, ShowOnboardingRolePicker, StructuredOutput).
+// Registering under "Artifact" therefore replaced the real descriptor, and the disposer deleted it
+// from the process-wide registry for the rest of the process. `HOST_GENERATABLE_TOOL_NAMES`
+// (structured/seam.ts) is sourced from the CATALOGUE's own "generated per-call" declaration instead.
+//
+// SHADOW-AND-RESTORE, not create-and-delete: the one generatable name ALREADY has a WS-06 stub
+// (descriptors/structured-output.ts), so a registration necessarily shadows it and the disposer must
+// put it back. `undefined` means "there was nothing here" and deletes -- never `set(name, undefined)`.
 export function registerHostGeneratedTool(t: RegisteredTool): () => void {
   const name = t.descriptor.canonicalName;
-  const existing = registry.get(name);
-  if (existing !== undefined && existing.descriptor.source !== "host") {
-    throw new Error(`tools/registry: registerHostGeneratedTool("${name}") would shadow a non-host tool -- host-generated names must not collide with a WS-06 §2 name`);
+  if (!HOST_GENERATABLE_TOOL_NAMES.has(name)) {
+    throw new Error(
+      `tools/registry: registerHostGeneratedTool("${name}") -- "${name}" is not a host-generatable name. Only names the WS-06 catalogue declares as generated-per-session may be claimed (see HOST_GENERATABLE_TOOL_NAMES); every other name belongs to a static descriptor a registration here would silently replace for the life of the process.`,
+    );
+  }
+  // The PRISTINE descriptor -- what was there before ANY host-generated registration claimed this
+  // name -- not merely "whatever the previous registration was". Two overlapping in-memory runs
+  // nest: run B shadows run A's descriptor, so restoring "what B shadowed" would put A's per-session
+  // schema back and lose the WS-06 stub permanently. Observed, not theorised: the idempotence test
+  // caught exactly that on the first run of this fix.
+  if (!hostGeneratedPristine.has(name)) {
+    const existing = registry.get(name);
+    hostGeneratedPristine.set(name, existing);
   }
   const entry: RegisteredTool = t;
   registry.set(name, entry);
   return () => {
-    if (registry.get(name) === entry) registry.delete(name);
+    // Identity-checked (the disposeToolSearchSessionRuntime precedent): two overlapping in-memory
+    // runs share this process, and an unconditional restore during one teardown would clobber the
+    // other's live registration. Only the LAST live generated registration restores.
+    if (registry.get(name) !== entry) return;
+    const pristine = hostGeneratedPristine.get(name);
+    hostGeneratedPristine.delete(name);
+    if (pristine !== undefined) registry.set(name, pristine);
+    else registry.delete(name); // `undefined` means "nothing was here" -- never set(name, undefined)
   };
 }
+
+// Keyed by canonical name; holds `undefined` when the name was genuinely unregistered before the
+// first host-generated claim, which is why `.has()` and not `.get() !== undefined` gates the write.
+const hostGeneratedPristine = new Map<string, RegisteredTool | undefined>();
 
 // Test-only escape hatch: registry.test.ts (and any future test) uses this ONLY on throwaway,
 // invented canonical names it registered itself -- never on a real WS-06 entry (see this file's

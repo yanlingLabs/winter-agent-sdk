@@ -19,6 +19,14 @@ export type JsonSchema = JSONSchema;
 export const STRUCTURED_OUTPUT_TOOL_NAME = "StructuredOutput";
 
 /**
+ * The ONLY names a host-generated registration may claim (fix round 1, M1). Re-exported here for
+ * Lane K's convenience; it is DEFINED in `tools/registry.ts`, which is what enforces it -- the
+ * registry must not depend on this module, and a second copy of the set is exactly the drift the
+ * allowlist exists to prevent.
+ */
+export { HOST_GENERATABLE_TOOL_NAMES } from "../tools/registry.ts";
+
+/**
  * The default number of ATTEMPTS, not retries. Capture (6) is explicit and was run both ways: with
  * the env unset the pinned runtime produced FIVE validation-failure tool results and terminated with
  * "after 5 attempts"; with `MAX_STRUCTURED_OUTPUT_RETRIES=2` it produced TWO. Reading the name as
