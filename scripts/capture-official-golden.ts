@@ -52,7 +52,8 @@
 // acquired resource is cleaned up in a `finally`, mirroring the T11 review's own
 // resource-exhaustion-safety fix (acquire-then-register-cleanup, never a batch of acquisitions
 // ahead of one shared try).
-import { mkdtempSync, readFileSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync, rmSync, readdirSync, statSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fetchAndVerifyUpstream } from "./fetch-upstream.ts";
@@ -712,17 +713,1064 @@ async function runMcpOutputCapCapture(officialSdk: OfficialSdk, maxOutputTokens:
   }
 }
 
+// ===============================================================================================
+// Phase 6 Task 1 (WS-13) scenarios F-K.
+//
+// LETTERING NOTE: the phase plan and this task's brief both say "scenarios D-H". D and E were
+// already taken by Phase 4 Task 8 (rider 8) above — reusing those letters would overwrite committed
+// P4 evidence — so this task's six scenarios continue the sequence at F. The mapping from the
+// brief's capture numbers is: (1)=F streaming, (2)=G retry/rate-limit/fallback, (3)=H the WS-17
+// probe (a) neighbour-file survival, (4)=I failure shapes, (5)=J model control API, (6)=K cost.
+//
+// Every one of them follows scenarios A-C's structure exactly: its own loopback `Bun.serve` on
+// 127.0.0.1:0, its own fresh mkdtemp CLAUDE_CONFIG_DIR / HOME / cwd, `settingSources: []`, an `env`
+// that is EXACTLY the four hermetic vars with no process.env spread, every received request logged
+// to stderr as evidence the loopback was the only endpoint, and cleanup in a `finally`. Two
+// additions this phase needs and A-E did not:
+//   * a WALL-CLOCK DEADLINE per run (`abortController` + a timer): scenario G deliberately makes the
+//     runtime retry, and a retrying runtime with no deadline can hang the harness indefinitely;
+//   * SSE. A-E return plain JSON bodies, which the runtime tolerates for non-streaming requests, but
+//     `stream_event` frames only exist when the response is real `text/event-stream` framing. The
+//     helpers below branch on the request body's own `stream` flag.
+//
+// PROSE IS NEVER PRINTED, exactly as scenario D established: request bodies are summarised
+// structurally (roles, block types, key presence) and their `system`/`tools` fields are never read
+// or logged. The only string values printed are ones this script itself authored.
+// ===============================================================================================
+
+type OfficialMessage = { type: string; subtype?: string; [k: string]: unknown };
+type OfficialQueryHandle = AsyncIterable<{ type: string; subtype?: string }> & {
+  supportedModels?: () => Promise<unknown>;
+  setModel?: (model?: string) => Promise<void>;
+  accountInfo?: () => Promise<unknown>;
+};
+
+interface ScenarioDirs {
+  claudeConfigDir: string;
+  homeDir: string;
+  fixtureCwd: string;
+}
+
+/** The three fresh mkdtemp dirs every scenario needs, each registered for cleanup as it is acquired
+ *  (acquire-then-register, never a batch ahead of one try — the T11 review's own rule). */
+function makeScenarioDirs(tag: string, cleanups: Array<() => void>): ScenarioDirs {
+  const claudeConfigDir = mkdtempSync(join(tmpdir(), `winter-official-capture-config-${tag}-`));
+  cleanups.push(() => rmSync(claudeConfigDir, { recursive: true, force: true }));
+  const homeDir = mkdtempSync(join(tmpdir(), `winter-official-capture-home-${tag}-`));
+  cleanups.push(() => rmSync(homeDir, { recursive: true, force: true }));
+  const fixtureCwd = mkdtempSync(join(tmpdir(), `winter-official-capture-cwd-${tag}-`));
+  cleanups.push(() => rmSync(fixtureCwd, { recursive: true, force: true }));
+  return { claudeConfigDir, homeDir, fixtureCwd };
+}
+
+/** EXACTLY the four hermetic vars (plus any scenario-specific extra). `env` replaces the child's
+ *  environment wholesale, so anything not listed here is genuinely absent from the runtime. */
+function hermeticEnv(dirs: ScenarioDirs, baseUrl: string, extra: Record<string, string> = {}): Record<string, string> {
+  return {
+    ANTHROPIC_BASE_URL: baseUrl.replace(/\/$/, ""),
+    ANTHROPIC_API_KEY: "test",
+    CLAUDE_CONFIG_DIR: dirs.claudeConfigDir,
+    HOME: dirs.homeDir,
+    ...extra,
+  };
+}
+
+/** Drains a query to completion under a wall-clock deadline, collecting trace entries. Returns
+ *  whatever the iteration threw (or undefined). The deadline aborts via the caller's
+ *  AbortController — the pinned `Options.abortController` contract — and also stops waiting. */
+async function drainWithDeadline(
+  q: AsyncIterable<{ type: string; subtype?: string }>,
+  entries: ConformanceTraceEntry[],
+  label: string,
+  deadlineMs: number,
+  ac?: AbortController,
+): Promise<{ thrown: unknown; deadlineHit: boolean }> {
+  let deadlineHit = false;
+  const timer = setTimeout(() => {
+    deadlineHit = true;
+    console.error(`[${label}] WALL-CLOCK DEADLINE ${deadlineMs}ms reached — aborting the run`);
+    ac?.abort();
+  }, deadlineMs);
+  let thrown: unknown;
+  try {
+    for await (const msg of q) {
+      entries.push({
+        sequence: entries.length,
+        direction: "runtime-to-host",
+        kind: msg.type === "system" ? `system/${msg.subtype}` : msg.type,
+        payload: msg,
+      });
+    }
+  } catch (e) {
+    thrown = e;
+  } finally {
+    clearTimeout(timer);
+  }
+  return { thrown, deadlineHit };
+}
+
+function describeThrown(thrown: unknown): unknown {
+  if (thrown === undefined) return undefined;
+  if (thrown instanceof Error) {
+    return { class: thrown.constructor.name, name: thrown.name, message: thrown.message };
+  }
+  return { class: typeof thrown, value: String(thrown) };
+}
+
+/** Server-sent-events framing, the shape the streaming Messages API uses. */
+function sseResponse(events: Array<{ event: string; data: unknown }>): Response {
+  const body = events.map((e) => `event: ${e.event}\ndata: ${JSON.stringify(e.data)}\n\n`).join("");
+  return new Response(body, {
+    status: 200,
+    headers: { "content-type": "text/event-stream", "cache-control": "no-cache" },
+  });
+}
+
+function jsonResponse(body: unknown, status = 200, headers: Record<string, string> = {}): Response {
+  return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json", ...headers } });
+}
+
+const CAPTURE_STREAM_SIGNATURE = "WinterCaptureFakeThinkingSignature0123456789ABCDEF";
+
+/** SHAPE-ONLY rendering of a request body's `messages` — roles, block types, and the presence (never
+ *  the value) of the fields item (f) turns on. `system`, `tools` and every text value are excluded. */
+function messagesShape(body: unknown): unknown {
+  const messages = (body as { messages?: unknown[] }).messages;
+  if (!Array.isArray(messages)) return "(no messages array)";
+  return messages.map((m) => {
+    const rec = m as Record<string, unknown>;
+    const content = rec.content;
+    if (typeof content === "string") return { role: rec.role, content: `<string:${content.length} chars>` };
+    if (!Array.isArray(content)) return { role: rec.role, content: typeof content };
+    return {
+      role: rec.role,
+      blocks: content.map((b) => {
+        const block = b as Record<string, unknown>;
+        const out: Record<string, unknown> = { type: block.type };
+        if (block.type === "thinking") {
+          out.hasSignature = Object.prototype.hasOwnProperty.call(block, "signature");
+          out.signatureIsTheCannedOne = block.signature === CAPTURE_STREAM_SIGNATURE;
+          out.thinkingChars = typeof block.thinking === "string" ? block.thinking.length : null;
+        }
+        if (block.type === "redacted_thinking") out.hasData = Object.prototype.hasOwnProperty.call(block, "data");
+        if (block.type === "tool_use") out.name = block.name;
+        if (block.type === "tool_result") {
+          out.contentKind = Array.isArray(block.content) ? "blocks" : typeof block.content;
+          if (Array.isArray(block.content)) out.blockTypes = block.content.map((c) => (c as { type?: unknown }).type);
+        }
+        if (block.type === "image") out.sourceType = (block.source as { type?: unknown } | undefined)?.type;
+        return out;
+      }),
+    };
+  });
+}
+
+/** The request's own top-level shape, minus everything prose-bearing. `thinking` is a small config
+ *  object this script itself set, so printing it is free evidence for item (c)'s wire spelling. */
+function requestEnvelopeShape(body: unknown): unknown {
+  const rec = body as Record<string, unknown>;
+  return {
+    model: rec.model,
+    stream: rec.stream,
+    max_tokens: rec.max_tokens,
+    thinking: rec.thinking,
+    topLevelKeys: Object.keys(rec).sort(),
+    toolCount: Array.isArray(rec.tools) ? rec.tools.length : null,
+  };
+}
+
+// --- Scenario F (capture 1): includePartialMessages over text + thinking + tool_use --------------
+//
+// The brief's capture (1). The canned SSE stream carries a `thinking` block (with a `signature_delta`
+// in run (i), WITHOUT one in run (ii)), a `text` block, and a `tool_use` block for the built-in
+// `Read` tool pointed at a fresh mkdtemp file, so the ordering under `includePartialMessages: true`
+// covers all three block kinds; the second request (after the tool result) returns a plain text
+// end_turn. A `ping` event is included deliberately — the pinned JSDoc's six-name event list omits it
+// while `user_message_uuid`'s own JSDoc names it, so whether it reaches the consumer is a real
+// question about the union's true membership.
+//
+// The two runs are what makes this capture answer R6-8 (derived-shapes item (f)): the pinned
+// artifact does NOT declare the assistant `thinking` block, so "is `signature` required?" can only be
+// answered by watching what the runtime does with a signed vs. unsigned block — specifically whether
+// the block survives verbatim into the NEXT request's `messages`.
+function streamTurn1Events(readTargetPath: string, withSignature: boolean): Array<{ event: string; data: unknown }> {
+  const model = "claude-sonnet-4-5-20250929";
+  const evs: Array<{ event: string; data: unknown }> = [];
+  evs.push({
+    event: "message_start",
+    data: {
+      type: "message_start",
+      message: {
+        id: "msg_capture_stream_01",
+        type: "message",
+        role: "assistant",
+        model,
+        content: [],
+        stop_reason: null,
+        stop_sequence: null,
+        usage: { input_tokens: 11, output_tokens: 1 },
+      },
+    },
+  });
+  evs.push({
+    event: "content_block_start",
+    data: {
+      type: "content_block_start",
+      index: 0,
+      content_block: withSignature ? { type: "thinking", thinking: "", signature: "" } : { type: "thinking", thinking: "" },
+    },
+  });
+  evs.push({ event: "ping", data: { type: "ping" } });
+  evs.push({
+    event: "content_block_delta",
+    data: { type: "content_block_delta", index: 0, delta: { type: "thinking_delta", thinking: "winter capture: weighing two options" } },
+  });
+  if (withSignature) {
+    evs.push({
+      event: "content_block_delta",
+      data: { type: "content_block_delta", index: 0, delta: { type: "signature_delta", signature: CAPTURE_STREAM_SIGNATURE } },
+    });
+  }
+  evs.push({ event: "content_block_stop", data: { type: "content_block_stop", index: 0 } });
+  evs.push({ event: "content_block_start", data: { type: "content_block_start", index: 1, content_block: { type: "text", text: "" } } });
+  evs.push({ event: "content_block_delta", data: { type: "content_block_delta", index: 1, delta: { type: "text_delta", text: "reading the " } } });
+  evs.push({ event: "content_block_delta", data: { type: "content_block_delta", index: 1, delta: { type: "text_delta", text: "capture fixture" } } });
+  evs.push({ event: "content_block_stop", data: { type: "content_block_stop", index: 1 } });
+  evs.push({
+    event: "content_block_start",
+    data: { type: "content_block_start", index: 2, content_block: { type: "tool_use", id: "toolu_capture_stream_01", name: "Read", input: {} } },
+  });
+  evs.push({
+    event: "content_block_delta",
+    data: { type: "content_block_delta", index: 2, delta: { type: "input_json_delta", partial_json: '{"file_path": ' } },
+  });
+  evs.push({
+    event: "content_block_delta",
+    data: { type: "content_block_delta", index: 2, delta: { type: "input_json_delta", partial_json: `${JSON.stringify(readTargetPath)}}` } },
+  });
+  evs.push({ event: "content_block_stop", data: { type: "content_block_stop", index: 2 } });
+  evs.push({
+    event: "message_delta",
+    data: { type: "message_delta", delta: { stop_reason: "tool_use", stop_sequence: null }, usage: { output_tokens: 42 } },
+  });
+  evs.push({ event: "message_stop", data: { type: "message_stop" } });
+  return evs;
+}
+
+function streamTurn2Events(): Array<{ event: string; data: unknown }> {
+  const model = "claude-sonnet-4-5-20250929";
+  return [
+    {
+      event: "message_start",
+      data: {
+        type: "message_start",
+        message: { id: "msg_capture_stream_02", type: "message", role: "assistant", model, content: [], stop_reason: null, stop_sequence: null, usage: { input_tokens: 20, output_tokens: 1 } },
+      },
+    },
+    { event: "content_block_start", data: { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } } },
+    { event: "content_block_delta", data: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "capture: stream round complete" } } },
+    { event: "content_block_stop", data: { type: "content_block_stop", index: 0 } },
+    { event: "message_delta", data: { type: "message_delta", delta: { stop_reason: "end_turn", stop_sequence: null }, usage: { output_tokens: 9 } } },
+    { event: "message_stop", data: { type: "message_stop" } },
+  ];
+}
+
+async function runStreamEventCapture(officialSdk: OfficialSdk, withSignature: boolean): Promise<void> {
+  const label = withSignature ? "signed" : "unsigned";
+  const cleanups: Array<() => void> = [];
+  let server: ReturnType<typeof Bun.serve> | undefined;
+  try {
+    const dirs = makeScenarioDirs(`f-${label}`, cleanups);
+    const readTargetPath = join(dirs.fixtureCwd, "capture-stream-fixture.txt");
+    writeFileSync(readTargetPath, "winter capture fixture -- not real data\n");
+
+    let requestCount = 0;
+    const envelopes: unknown[] = [];
+    const messageShapes: unknown[] = [];
+    server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      async fetch(req) {
+        requestCount++;
+        const url = new URL(req.url);
+        let body: unknown;
+        try {
+          body = await req.json();
+        } catch {
+          console.error(`[loopback F/${label}] #${requestCount} ${req.method} ${url.pathname} (non-JSON body)`);
+          return jsonResponse(CANNED_TEXT_RESPONSE);
+        }
+        envelopes.push(requestEnvelopeShape(body));
+        messageShapes.push(messagesShape(body));
+        const sawToolResult = requestAlreadySawToolResult(body);
+        const wantsStream = (body as { stream?: unknown }).stream === true;
+        console.error(`[loopback F/${label}] #${requestCount} ${req.method} ${url.pathname} stream=${wantsStream} sawToolResult=${sawToolResult}`);
+        if (!wantsStream) return jsonResponse(sawToolResult ? CANNED_TEXT_AFTER_TOOL_RESPONSE : CANNED_TEXT_RESPONSE);
+        return sseResponse(sawToolResult ? streamTurn2Events() : streamTurn1Events(readTargetPath, withSignature));
+      },
+    });
+    console.error(`\n=== Scenario F (${label}): includePartialMessages over text + thinking + tool_use ===`);
+    console.error(`[capture F/${label}] loopback ${server.url.href}; CLAUDE_CONFIG_DIR=${dirs.claudeConfigDir} HOME=${dirs.homeDir} (fresh mkdtemp)`);
+
+    const entries: ConformanceTraceEntry[] = [];
+    const ac = new AbortController();
+    const q = officialSdk.query({
+      prompt: "please read the capture fixture file",
+      options: {
+        model: "sonnet",
+        cwd: dirs.fixtureCwd,
+        settingSources: [],
+        includePartialMessages: true,
+        // Free evidence for derived-shapes item (c): whatever the runtime puts on the wire for this
+        // is the pinned ThinkingConfig's actual request spelling, printed by requestEnvelopeShape.
+        thinking: { type: "enabled", budgetTokens: 1024 },
+        permissionMode: "bypassPermissions",
+        abortController: ac,
+        env: hermeticEnv(dirs, server.url.href),
+      },
+    });
+    const { thrown, deadlineHit } = await drainWithDeadline(q, entries, `capture F/${label}`, 120_000, ac);
+
+    console.error(`[capture F/${label}] ${requestCount} loopback request(s); ${entries.length} message(s) yielded; deadlineHit=${deadlineHit}`);
+    if (thrown) console.error(`[capture F/${label}] query() threw: ${thrown instanceof Error ? (thrown.stack ?? thrown.message) : String(thrown)}`);
+
+    const normalized = normalizeTrace(entries);
+    const streamEvents = entries
+      .map((e) => e.payload as OfficialMessage)
+      .filter((p) => p.type === "stream_event");
+
+    console.log(`\n--- Scenario F (${label}) normalized trace ---`);
+    console.log(JSON.stringify(normalized, null, 2));
+    console.log(`\n--- Scenario F (${label}): the raw stream_event list, in order (event.type / delta.type / index) ---`);
+    console.log(
+      JSON.stringify(
+        streamEvents.map((p, i) => {
+          const ev = p.event as Record<string, unknown> | undefined;
+          const delta = ev?.delta as Record<string, unknown> | undefined;
+          const cb = ev?.content_block as Record<string, unknown> | undefined;
+          return {
+            i,
+            eventType: ev?.type,
+            index: ev?.index,
+            deltaType: delta?.type,
+            contentBlockType: cb?.type,
+            parent_tool_use_id: p.parent_tool_use_id,
+            hasUuid: typeof p.uuid === "string",
+            hasSessionId: typeof p.session_id === "string",
+            ttft_ms: p.ttft_ms,
+            user_message_uuid: p.user_message_uuid === undefined ? "(absent)" : "(present)",
+          };
+        }),
+        null,
+        2,
+      ),
+    );
+    console.log(`\n--- Scenario F (${label}): every stream_event's own top-level key set (union) ---`);
+    console.log(JSON.stringify([...new Set(streamEvents.flatMap((p) => Object.keys(p)))].sort(), null, 2));
+    console.log(`\n--- Scenario F (${label}): request envelope shapes (item (c) wire spelling of ThinkingConfig) ---`);
+    console.log(JSON.stringify(envelopes, null, 2));
+    console.log(`\n--- Scenario F (${label}): request messages SHAPE ONLY (item (f) — does the thinking block survive replay?) ---`);
+    console.log(JSON.stringify(messageShapes, null, 2));
+    console.log(`\n--- Scenario F (${label}) verdicts ---`);
+    console.log(
+      JSON.stringify(
+        {
+          "stream_event frames observed": streamEvents.length,
+          "distinct event.type values, in first-seen order": [...new Set(streamEvents.map((p) => (p.event as { type?: unknown } | undefined)?.type))],
+          "did a ping reach the consumer?": streamEvents.some((p) => (p.event as { type?: unknown } | undefined)?.type === "ping"),
+          "frames carrying user_message_uuid": streamEvents.filter((p) => p.user_message_uuid !== undefined).length,
+          "frames carrying ttft_ms": streamEvents.filter((p) => p.ttft_ms !== undefined).length,
+          "completed assistant frames": entries.filter((e) => (e.payload as OfficialMessage).type === "assistant").length,
+          "query() threw": describeThrown(thrown) ?? false,
+          deadlineHit,
+        },
+        null,
+        2,
+      ),
+    );
+  } finally {
+    server?.stop(true);
+    for (const cleanup of cleanups) cleanup();
+  }
+}
+
+// --- Scenario G (capture 2): api_retry / rate_limit_event / fallback ----------------------------
+//
+// Three runs against three loopback policies:
+//   (i)  529 overloaded_error on the first N requests, then 200 — captures api_retry's attempt
+//        numbering, max_retries, retry_delay_ms progression and the mapped `error` taxonomy member;
+//   (ii) 429 with `retry-after: 2` and the anthropic-ratelimit-* headers, then 200 — captures
+//        whether retry_delay_ms honours retry-after, and whether ANY rate_limit_event appears (the
+//        pinned type's own JSDoc scopes it to claude.ai subscription users, so its ABSENCE under an
+//        API key is the finding, and a real one for OQ-P6-4);
+//   (iii) PERSISTENT 529 with `fallbackModel` set — captures whatever refusal/fallback frame appears
+//        (the pinned pair are both `trigger: 'refusal'`, so possibly none) and, decisively, whether
+//        the `model` field of the outgoing requests ever changes to the fallback id.
+// Every run is deadline-bounded: a retrying runtime with no deadline can hang the harness.
+type RetryPolicy = "overloaded-then-ok" | "ratelimit-then-ok" | "persistent-overloaded";
+
+async function runRetryCapture(officialSdk: OfficialSdk, policy: RetryPolicy): Promise<void> {
+  const cleanups: Array<() => void> = [];
+  let server: ReturnType<typeof Bun.serve> | undefined;
+  const failuresBeforeSuccess = 2;
+  try {
+    const dirs = makeScenarioDirs(`g-${policy}`, cleanups);
+    let requestCount = 0;
+    const requestLog: Array<{ n: number; model: unknown; atMs: number }> = [];
+    const t0 = Date.now();
+    server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      async fetch(req) {
+        requestCount++;
+        const n = requestCount;
+        let body: unknown;
+        try {
+          body = await req.json();
+        } catch {
+          body = {};
+        }
+        const model = (body as { model?: unknown }).model;
+        requestLog.push({ n, model, atMs: Date.now() - t0 });
+        const url = new URL(req.url);
+        console.error(`[loopback G/${policy}] #${n} ${req.method} ${url.pathname} model=${JSON.stringify(model)} t+${Date.now() - t0}ms`);
+        if (policy === "overloaded-then-ok") {
+          if (n <= failuresBeforeSuccess) return jsonResponse({ type: "error", error: { type: "overloaded_error", message: "capture: synthetic overload" } }, 529);
+          return jsonResponse(CANNED_TEXT_RESPONSE);
+        }
+        if (policy === "ratelimit-then-ok") {
+          if (n <= failuresBeforeSuccess) {
+            return jsonResponse({ type: "error", error: { type: "rate_limit_error", message: "capture: synthetic rate limit" } }, 429, {
+              "retry-after": "2",
+              "anthropic-ratelimit-requests-limit": "1000",
+              "anthropic-ratelimit-requests-remaining": "0",
+              "anthropic-ratelimit-requests-reset": new Date(Date.now() + 2000).toISOString(),
+              "anthropic-ratelimit-unified-status": "rejected",
+              "anthropic-ratelimit-unified-reset": new Date(Date.now() + 2000).toISOString(),
+            });
+          }
+          return jsonResponse(CANNED_TEXT_RESPONSE);
+        }
+        return jsonResponse({ type: "error", error: { type: "overloaded_error", message: "capture: synthetic persistent overload" } }, 529);
+      },
+    });
+    console.error(`\n=== Scenario G (${policy}): api_retry / rate_limit_event / fallback ===`);
+    console.error(`[capture G/${policy}] loopback ${server.url.href}; CLAUDE_CONFIG_DIR=${dirs.claudeConfigDir} HOME=${dirs.homeDir} (fresh mkdtemp)`);
+
+    const entries: ConformanceTraceEntry[] = [];
+    const ac = new AbortController();
+    const q = officialSdk.query({
+      prompt: "hi",
+      options: {
+        model: "sonnet",
+        cwd: dirs.fixtureCwd,
+        settingSources: [],
+        abortController: ac,
+        ...(policy === "persistent-overloaded" ? { fallbackModel: "haiku" } : {}),
+        env: hermeticEnv(dirs, server.url.href),
+      },
+    });
+    const { thrown, deadlineHit } = await drainWithDeadline(q, entries, `capture G/${policy}`, 180_000, ac);
+
+    console.error(`[capture G/${policy}] ${requestCount} loopback request(s); ${entries.length} message(s) yielded; deadlineHit=${deadlineHit}`);
+    if (thrown) console.error(`[capture G/${policy}] query() threw: ${thrown instanceof Error ? (thrown.stack ?? thrown.message) : String(thrown)}`);
+
+    const payloads = entries.map((e) => e.payload as OfficialMessage);
+    const retries = payloads.filter((p) => p.type === "system" && p.subtype === "api_retry");
+    const rateLimits = payloads.filter((p) => p.type === "rate_limit_event");
+    const refusals = payloads.filter((p) => p.type === "system" && (p.subtype === "model_refusal_fallback" || p.subtype === "model_refusal_no_fallback"));
+    const results = payloads.filter((p) => p.type === "result");
+
+    console.log(`\n--- Scenario G (${policy}) normalized trace ---`);
+    console.log(JSON.stringify(normalizeTrace(entries), null, 2));
+    console.log(`\n--- Scenario G (${policy}): every api_retry frame, verbatim ---`);
+    console.log(JSON.stringify(retries, null, 2));
+    console.log(`\n--- Scenario G (${policy}): every rate_limit_event frame ---`);
+    console.log(JSON.stringify(rateLimits.length > 0 ? rateLimits : "(none observed)", null, 2));
+    console.log(`\n--- Scenario G (${policy}): every refusal/fallback frame ---`);
+    console.log(JSON.stringify(refusals.length > 0 ? refusals : "(none observed)", null, 2));
+    console.log(`\n--- Scenario G (${policy}): the model on each outgoing request, with arrival times ---`);
+    console.log(JSON.stringify(requestLog, null, 2));
+    console.log(`\n--- Scenario G (${policy}) verdicts ---`);
+    console.log(
+      JSON.stringify(
+        {
+          "api_retry frames": retries.length,
+          "attempt / max_retries / retry_delay_ms / error_status / error": retries.map((r) => ({
+            attempt: r.attempt,
+            max_retries: r.max_retries,
+            retry_delay_ms: r.retry_delay_ms,
+            error_status: r.error_status,
+            error: r.error,
+          })),
+          "rate_limit_event frames": rateLimits.length,
+          "refusal/fallback frames": refusals.map((r) => r.subtype),
+          "distinct models the loopback was asked for": [...new Set(requestLog.map((r) => String(r.model)))],
+          "result subtype / is_error": results.map((r) => ({ subtype: r.subtype, is_error: r.is_error, api_error_status: r.api_error_status, terminal_reason: r.terminal_reason })),
+          "query() threw": describeThrown(thrown) ?? false,
+          deadlineHit,
+        },
+        null,
+        2,
+      ),
+    );
+  } finally {
+    server?.stop(true);
+    for (const cleanup of cleanups) cleanup();
+  }
+}
+
+// --- Scenario H (capture 3): WS-17 probe (a) — neighbour-file survival ---------------------------
+//
+// THE probe the controller rules on before Lane C is briefed (R6-7 / R6-7a). Sequence:
+//   run 1  — a real turn with a FIXED sessionId under a fresh CLAUDE_CONFIG_DIR, so the official
+//            runtime creates its own resumable transcript wherever it likes;
+//   drop   — `<sessionId>.provider-state.jsonl` is written BESIDE that transcript (same directory),
+//            a few JSON lines carrying a distinctive high-entropy marker; sha256 recorded;
+//   run 2  — `resume: <sessionId>` + one more turn against the same loopback, REUSING the same cwd,
+//            CLAUDE_CONFIG_DIR and HOME (a fresh cwd would change the derived project key and make
+//            an untouched sidecar prove nothing);
+//   run 3  — a `/compact` attempt in the same single-shot shape, recorded as a limitation if the
+//            runtime cannot drive it that way (P2 found streaming-input captures stall).
+// Assertions: (i) the sidecar's sha256 is unchanged, (ii) the marker appears in NO request body the
+// loopback received, (iii) the transcript still parses as JSONL. Plus: the directory's file NAMES
+// before and after, since a renamed/moved/indexed sidecar is a finding even with identical bytes.
+function findFileRecursive(root: string, predicate: (name: string, full: string) => boolean, depth = 0): string[] {
+  if (depth > 6) return [];
+  const out: string[] = [];
+  let names: string[];
+  try {
+    names = readdirSync(root);
+  } catch {
+    return out;
+  }
+  for (const name of names) {
+    const full = join(root, name);
+    let isDir = false;
+    try {
+      isDir = statSync(full).isDirectory();
+    } catch {
+      continue;
+    }
+    if (isDir) out.push(...findFileRecursive(full, predicate, depth + 1));
+    else if (predicate(name, full)) out.push(full);
+  }
+  return out;
+}
+
+function sha256OfFile(path: string): string {
+  return createHash("sha256").update(readFileSync(path)).digest("hex");
+}
+
+async function runNeighborFileProbe(officialSdk: OfficialSdk): Promise<void> {
+  const cleanups: Array<() => void> = [];
+  let server: ReturnType<typeof Bun.serve> | undefined;
+  try {
+    // ONE set of dirs, reused across every run — see this scenario's header for why.
+    const dirs = makeScenarioDirs("h", cleanups);
+    const sessionId = "0192f4c8-6f21-7c3a-9d55-1b8e2a7c40d1"; // fixed, valid-UUID-shaped, this script's own
+    const marker = `WINTER-PROVIDER-STATE-MARKER-${createHash("sha256").update(sessionId).digest("hex").slice(0, 32)}`;
+
+    let requestCount = 0;
+    let markerSeenInAnyRequestBody = false;
+    const requestPaths: string[] = [];
+    server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      async fetch(req) {
+        requestCount++;
+        const url = new URL(req.url);
+        requestPaths.push(`${req.method} ${url.pathname}`);
+        let raw = "";
+        try {
+          raw = await req.clone().text();
+        } catch {
+          /* body already consumed or absent */
+        }
+        // Substring check only — the body is NEVER printed (it carries the system prompt).
+        if (raw.includes(marker)) markerSeenInAnyRequestBody = true;
+        console.error(`[loopback H] #${requestCount} ${req.method} ${url.pathname} bodyBytes=${raw.length} markerPresent=${raw.includes(marker)}`);
+        return jsonResponse(CANNED_TEXT_RESPONSE);
+      },
+    });
+    console.error(`\n=== Scenario H: WS-17 probe (a) — neighbour-file survival across resume ===`);
+    console.error(`[capture H] loopback ${server.url.href}; CLAUDE_CONFIG_DIR=${dirs.claudeConfigDir} HOME=${dirs.homeDir} cwd=${dirs.fixtureCwd} (all fresh mkdtemp, REUSED across runs)`);
+
+    // ---- run 1: create the resumable transcript -------------------------------------------------
+    const entries1: ConformanceTraceEntry[] = [];
+    const ac1 = new AbortController();
+    const r1 = await drainWithDeadline(
+      officialSdk.query({
+        prompt: "hi from run one",
+        options: { model: "sonnet", cwd: dirs.fixtureCwd, settingSources: [], sessionId, abortController: ac1, env: hermeticEnv(dirs, server.url.href) },
+      }),
+      entries1,
+      "capture H/run1",
+      120_000,
+      ac1,
+    );
+    const init1 = entries1.map((e) => e.payload as OfficialMessage).find((p) => p.type === "system" && p.subtype === "init");
+    console.error(`[capture H] run 1: ${entries1.length} message(s); session_id on init = ${String(init1?.session_id)}`);
+    if (r1.thrown) console.error(`[capture H] run 1 threw: ${r1.thrown instanceof Error ? (r1.thrown.stack ?? r1.thrown.message) : String(r1.thrown)}`);
+
+    const observedSessionId = typeof init1?.session_id === "string" ? init1.session_id : sessionId;
+    const transcripts = findFileRecursive(dirs.claudeConfigDir, (name) => name === `${observedSessionId}.jsonl`);
+    console.error(`[capture H] transcript search under <CLAUDE_CONFIG_DIR> found ${transcripts.length} match(es)`);
+    if (transcripts.length === 0) {
+      console.log(`\n--- Scenario H: NOT CAPTURABLE — no <sessionId>.jsonl transcript was written under <CLAUDE_CONFIG_DIR> after run 1 ---`);
+      console.log(JSON.stringify({ observedSessionId, filesUnderConfigDir: findFileRecursive(dirs.claudeConfigDir, () => true).map((f) => f.replace(dirs.claudeConfigDir, "<CLAUDE_CONFIG_DIR>")) }, null, 2));
+      return;
+    }
+    const transcriptPath = transcripts[0]!;
+    const projectDir = dirname(transcriptPath);
+    const namesBefore = readdirSync(projectDir).sort();
+
+    // ---- drop the sidecar BESIDE the transcript -------------------------------------------------
+    const sidecarPath = join(projectDir, `${observedSessionId}.provider-state.jsonl`);
+    const sidecarLines = [
+      { type: "provider-state", kind: "origin", sessionId: observedSessionId, anchorUuid: "00000000-0000-4000-8000-000000000001", provider: "winter-capture", model: "winter-capture-model", family: "capture", itemIndex: 0, marker, payload: {} },
+      { type: "provider-state", kind: "native-state", sessionId: observedSessionId, anchorUuid: "00000000-0000-4000-8000-000000000001", itemIndex: 1, marker, payload: { opaque: marker } },
+      { type: "provider-state", kind: "summary", sessionId: observedSessionId, anchorUuid: "00000000-0000-4000-8000-000000000001", itemIndex: 2, marker, payload: { text: "capture-only summary" } },
+    ];
+    writeFileSync(sidecarPath, sidecarLines.map((l) => JSON.stringify(l)).join("\n") + "\n");
+    const sidecarSha256Before = sha256OfFile(sidecarPath);
+    const sidecarBytesBefore = readFileSync(sidecarPath).length;
+    const transcriptLinesBefore = readFileSync(transcriptPath, "utf8").split("\n").filter((l) => l.trim().length > 0).length;
+    console.error(`[capture H] sidecar written beside the transcript: ${sidecarBytesBefore} bytes, sha256=${sidecarSha256Before}`);
+
+    // ---- run 2: resume + one more turn ----------------------------------------------------------
+    const entries2: ConformanceTraceEntry[] = [];
+    const ac2 = new AbortController();
+    const r2 = await drainWithDeadline(
+      officialSdk.query({
+        prompt: "hi from run two",
+        options: { model: "sonnet", cwd: dirs.fixtureCwd, settingSources: [], resume: observedSessionId, abortController: ac2, env: hermeticEnv(dirs, server.url.href) },
+      }),
+      entries2,
+      "capture H/run2",
+      120_000,
+      ac2,
+    );
+    const init2 = entries2.map((e) => e.payload as OfficialMessage).find((p) => p.type === "system" && p.subtype === "init");
+    if (r2.thrown) console.error(`[capture H] run 2 threw: ${r2.thrown instanceof Error ? (r2.thrown.stack ?? r2.thrown.message) : String(r2.thrown)}`);
+
+    // ---- run 3: the /compact attempt (recorded as a limitation if it cannot be driven) ----------
+    const entries3: ConformanceTraceEntry[] = [];
+    const ac3 = new AbortController();
+    const r3 = await drainWithDeadline(
+      officialSdk.query({
+        prompt: "/compact",
+        options: { model: "sonnet", cwd: dirs.fixtureCwd, settingSources: [], resume: observedSessionId, abortController: ac3, env: hermeticEnv(dirs, server.url.href) },
+      }),
+      entries3,
+      "capture H/run3",
+      120_000,
+      ac3,
+    );
+    const payloads3 = entries3.map((e) => e.payload as OfficialMessage);
+    if (r3.thrown) console.error(`[capture H] run 3 (/compact) threw: ${r3.thrown instanceof Error ? (r3.thrown.stack ?? r3.thrown.message) : String(r3.thrown)}`);
+
+    // ---- assertions -----------------------------------------------------------------------------
+    const sidecarStillThere = findFileRecursive(dirs.claudeConfigDir, (name) => name === `${observedSessionId}.provider-state.jsonl`);
+    const sidecarSha256After = sidecarStillThere.length > 0 ? sha256OfFile(sidecarStillThere[0]!) : "(FILE GONE)";
+    const namesAfter = readdirSync(projectDir).sort();
+    let transcriptParses = true;
+    let transcriptLinesAfter = 0;
+    try {
+      for (const line of readFileSync(transcriptPath, "utf8").split("\n")) {
+        if (line.trim().length === 0) continue;
+        JSON.parse(line);
+        transcriptLinesAfter++;
+      }
+    } catch {
+      transcriptParses = false;
+    }
+
+    console.log(`\n--- Scenario H: WS-17 probe (a) verdicts (R6-7 / R6-7a) ---`);
+    console.log(
+      JSON.stringify(
+        {
+          sessionIdRequested: sessionId,
+          sessionIdObservedOnInit: observedSessionId,
+          "run 2 resumed the same session": init2?.session_id === observedSessionId,
+          transcriptPath: transcriptPath.replace(dirs.claudeConfigDir, "<CLAUDE_CONFIG_DIR>"),
+          sidecarPath: sidecarPath.replace(dirs.claudeConfigDir, "<CLAUDE_CONFIG_DIR>"),
+          "ASSERTION 1 — sidecar sha256 unchanged": sidecarSha256Before === sidecarSha256After,
+          sidecarSha256Before,
+          sidecarSha256After,
+          sidecarBytesBefore,
+          sidecarBytesAfter: sidecarStillThere.length > 0 ? readFileSync(sidecarStillThere[0]!).length : null,
+          "ASSERTION 2 — marker absent from EVERY request body": !markerSeenInAnyRequestBody,
+          "ASSERTION 3 — transcript still parses as JSONL": transcriptParses,
+          transcriptLinesBefore,
+          transcriptLinesAfter,
+          "transcript grew across resume": transcriptLinesAfter > transcriptLinesBefore,
+          "project dir file NAMES before the resume": namesBefore,
+          "project dir file NAMES after the resume + compact": namesAfter,
+          "names added": namesAfter.filter((n) => !namesBefore.includes(n)),
+          "names removed": namesBefore.filter((n) => !namesAfter.includes(n)),
+          "run 3 (/compact): message kinds": payloads3.map((p) => (p.type === "system" ? `system/${p.subtype}` : p.type)),
+          "run 3 (/compact): a compact_boundary frame appeared": payloads3.some((p) => p.type === "system" && p.subtype === "compact_boundary"),
+          "run 3 threw": describeThrown(r3.thrown) ?? false,
+          "loopback saw": requestPaths,
+          "deadlines hit (run1/run2/run3)": [r1.deadlineHit, r2.deadlineHit, r3.deadlineHit],
+        },
+        null,
+        2,
+      ),
+    );
+    console.log(`\n--- Scenario H: run 2 normalized trace ---`);
+    console.log(JSON.stringify(normalizeTrace(entries2), null, 2));
+    console.log(`\n--- Scenario H: run 3 (/compact) normalized trace ---`);
+    console.log(JSON.stringify(normalizeTrace(entries3), null, 2));
+  } finally {
+    server?.stop(true);
+    for (const cleanup of cleanups) cleanup();
+  }
+}
+
+// --- Scenario I (capture 4): the failure shape ---------------------------------------------------
+//
+// Two runs: (i) NO ANTHROPIC_API_KEY in the child env at all (the other three vars kept), and
+// (ii) an unknown model against a loopback answering 404 not_found_error. What is captured is the
+// SHAPE — result subtype, is_error, the thrown error's class+name, whether an auth_status frame
+// appears, whether the process exits — never prose beyond the identifiers.
+//
+// HERMETICITY CAVEAT, stated rather than assumed: HOME and CLAUDE_CONFIG_DIR do NOT redirect the
+// macOS Keychain, and the pinned declaration has no knob that does. Run (i) may therefore find an
+// ambient OAuth credential belonging to the real user. That is itself the finding if it happens —
+// it is recorded, and the run is deadline-bounded so an interactive login prompt cannot wedge the
+// harness. No credential value is ever read or printed; only `apiKeySource` (an enum) is reported.
+async function runFailureShapeCapture(officialSdk: OfficialSdk, variant: "no-key" | "unknown-model"): Promise<void> {
+  const cleanups: Array<() => void> = [];
+  let server: ReturnType<typeof Bun.serve> | undefined;
+  try {
+    const dirs = makeScenarioDirs(`i-${variant}`, cleanups);
+    let requestCount = 0;
+    server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req) {
+        requestCount++;
+        const url = new URL(req.url);
+        console.error(`[loopback I/${variant}] #${requestCount} ${req.method} ${url.pathname}`);
+        if (variant === "unknown-model") {
+          return jsonResponse({ type: "error", error: { type: "not_found_error", message: "capture: synthetic unknown model" } }, 404);
+        }
+        return jsonResponse(CANNED_TEXT_RESPONSE);
+      },
+    });
+    console.error(`\n=== Scenario I (${variant}): the failure shape ===`);
+    console.error(`[capture I/${variant}] loopback ${server.url.href}; CLAUDE_CONFIG_DIR=${dirs.claudeConfigDir} HOME=${dirs.homeDir} (fresh mkdtemp)`);
+
+    const fullEnv = hermeticEnv(dirs, server.url.href);
+    const env: Record<string, string> = { ...fullEnv };
+    if (variant === "no-key") {
+      delete env.ANTHROPIC_API_KEY;
+      console.error(`[capture I/no-key] the child env is EXACTLY ${JSON.stringify(Object.keys(env).sort())} — no API key of any kind`);
+    }
+
+    const entries: ConformanceTraceEntry[] = [];
+    const ac = new AbortController();
+    const q = officialSdk.query({
+      prompt: "hi",
+      options: {
+        model: variant === "unknown-model" ? "definitely-not-a-model" : "sonnet",
+        cwd: dirs.fixtureCwd,
+        settingSources: [],
+        abortController: ac,
+        env,
+      },
+    });
+    const { thrown, deadlineHit } = await drainWithDeadline(q, entries, `capture I/${variant}`, 90_000, ac);
+
+    const payloads = entries.map((e) => e.payload as OfficialMessage);
+    const init = payloads.find((p) => p.type === "system" && p.subtype === "init");
+    const auth = payloads.filter((p) => p.type === "auth_status");
+    const results = payloads.filter((p) => p.type === "result");
+
+    console.error(`[capture I/${variant}] ${requestCount} loopback request(s); ${entries.length} message(s) yielded; deadlineHit=${deadlineHit}`);
+    console.log(`\n--- Scenario I (${variant}) normalized trace ---`);
+    console.log(JSON.stringify(normalizeTrace(entries), null, 2));
+    console.log(`\n--- Scenario I (${variant}) verdicts ---`);
+    console.log(
+      JSON.stringify(
+        {
+          "messages yielded": entries.length,
+          "loopback requests": requestCount,
+          "system/init observed": init !== undefined,
+          "init.apiKeySource": init?.apiKeySource ?? "(no init frame)",
+          "init.model": init?.model ?? "(no init frame)",
+          "auth_status frames": auth.length,
+          "auth_status payloads": auth.length > 0 ? auth : "(none)",
+          "result frames": results.map((r) => ({
+            subtype: r.subtype,
+            is_error: r.is_error,
+            api_error_status: r.api_error_status,
+            terminal_reason: r.terminal_reason,
+            num_turns: r.num_turns,
+            total_cost_usd: r.total_cost_usd,
+            "result string length": typeof r.result === "string" ? r.result.length : null,
+          })),
+          "query() threw": describeThrown(thrown) ?? false,
+          deadlineHit,
+        },
+        null,
+        2,
+      ),
+    );
+  } finally {
+    server?.stop(true);
+    for (const cleanup of cleanups) cleanup();
+  }
+}
+
+// --- Scenario J (capture 5): supportedModels() / setModel() --------------------------------------
+//
+// Both are Query methods, so the query has to still be ALIVE when they are called: the loopback
+// holds its first response behind a gate this scenario resolves only after both control calls have
+// settled, otherwise a single-shot process is gone before the questions are asked. `setModel` is
+// doc-marked streaming-input-only, so a throw here is a real captured fact, not a harness bug.
+// Also recorded: whether ANY request reaches the loopback other than /v1/messages — `list_models` is
+// a CONTROL subtype in the pin, not an HTTP path, so a /v1/models request would be a surprise.
+async function runModelControlCapture(officialSdk: OfficialSdk): Promise<void> {
+  const cleanups: Array<() => void> = [];
+  let server: ReturnType<typeof Bun.serve> | undefined;
+  try {
+    const dirs = makeScenarioDirs("j", cleanups);
+    let requestCount = 0;
+    const requestPaths: string[] = [];
+    let releaseGate: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      releaseGate = resolve;
+    });
+    const gateTimer = setTimeout(() => releaseGate(), 60_000); // never let the gate wedge the run
+    cleanups.push(() => clearTimeout(gateTimer));
+    server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      async fetch(req) {
+        requestCount++;
+        const url = new URL(req.url);
+        requestPaths.push(`${req.method} ${url.pathname}`);
+        console.error(`[loopback J] #${requestCount} ${req.method} ${url.pathname} (holding behind the control-call gate)`);
+        await gate;
+        return jsonResponse(CANNED_TEXT_RESPONSE);
+      },
+    });
+    console.error(`\n=== Scenario J: supportedModels() / setModel() ===`);
+    console.error(`[capture J] loopback ${server.url.href}; CLAUDE_CONFIG_DIR=${dirs.claudeConfigDir} HOME=${dirs.homeDir} (fresh mkdtemp)`);
+
+    const entries: ConformanceTraceEntry[] = [];
+    const ac = new AbortController();
+    const q = officialSdk.query({
+      prompt: "hi",
+      options: { model: "sonnet", cwd: dirs.fixtureCwd, settingSources: [], abortController: ac, env: hermeticEnv(dirs, server.url.href) },
+    }) as unknown as OfficialQueryHandle;
+
+    const drained = drainWithDeadline(q, entries, "capture J", 120_000, ac);
+
+    const withTimeout = async <T>(p: Promise<T>, ms: number): Promise<{ ok: true; value: T } | { ok: false; error: unknown }> => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const value = await Promise.race([
+          p,
+          new Promise<never>((_, reject) => {
+            timer = setTimeout(() => reject(new Error(`capture J: control call timed out after ${ms}ms`)), ms);
+          }),
+        ]);
+        return { ok: true, value };
+      } catch (e) {
+        return { ok: false, error: e };
+      } finally {
+        if (timer !== undefined) clearTimeout(timer);
+      }
+    };
+
+    const modelsResult = typeof q.supportedModels === "function" ? await withTimeout(q.supportedModels(), 45_000) : ({ ok: false, error: new Error("supportedModels is not a function on the returned query") } as const);
+    const setModelResult = typeof q.setModel === "function" ? await withTimeout(q.setModel("haiku"), 45_000) : ({ ok: false, error: new Error("setModel is not a function on the returned query") } as const);
+    const accountResult = typeof q.accountInfo === "function" ? await withTimeout(q.accountInfo(), 45_000) : ({ ok: false, error: new Error("accountInfo is not a function on the returned query") } as const);
+
+    releaseGate();
+    const { thrown, deadlineHit } = await drained;
+
+    const models = modelsResult.ok ? (modelsResult.value as unknown[]) : [];
+    console.error(`[capture J] ${requestCount} loopback request(s); ${entries.length} message(s) yielded; deadlineHit=${deadlineHit}`);
+    if (thrown) console.error(`[capture J] query() threw: ${thrown instanceof Error ? (thrown.stack ?? thrown.message) : String(thrown)}`);
+
+    console.log(`\n--- Scenario J: supportedModels() return shape ---`);
+    console.log(
+      JSON.stringify(
+        modelsResult.ok
+          ? {
+              isArray: Array.isArray(models),
+              count: Array.isArray(models) ? models.length : null,
+              "union of row key names": Array.isArray(models) ? [...new Set(models.flatMap((m) => Object.keys(m as Record<string, unknown>)))].sort() : null,
+              "first row (a ModelInfo, printed whole — it is a public catalog row, not prose)": Array.isArray(models) ? models[0] : null,
+            }
+          : { threw: describeThrown(modelsResult.error) },
+        null,
+        2,
+      ),
+    );
+    console.log(`\n--- Scenario J: setModel("haiku") outcome ---`);
+    console.log(JSON.stringify(setModelResult.ok ? { resolved: true, value: setModelResult.value } : { threw: describeThrown(setModelResult.error) }, null, 2));
+    console.log(`\n--- Scenario J: accountInfo() outcome (item (d) — the account surface a query() stream never carries) ---`);
+    console.log(
+      JSON.stringify(
+        accountResult.ok
+          ? { resolved: true, "key names present": Object.keys((accountResult.value ?? {}) as Record<string, unknown>).sort() }
+          : { threw: describeThrown(accountResult.error) },
+        null,
+        2,
+      ),
+    );
+    console.log(`\n--- Scenario J verdicts ---`);
+    console.log(
+      JSON.stringify(
+        {
+          "every request path the loopback saw": requestPaths,
+          "did any /v1/models request reach the loopback?": requestPaths.some((p) => p.includes("/models")),
+          "system/init.model": (entries.map((e) => e.payload as OfficialMessage).find((p) => p.type === "system" && p.subtype === "init"))?.model ?? "(no init frame)",
+          "query() threw": describeThrown(thrown) ?? false,
+          deadlineHit,
+        },
+        null,
+        2,
+      ),
+    );
+  } finally {
+    server?.stop(true);
+    for (const cleanup of cleanups) cleanup();
+  }
+}
+
+// --- Scenario K (capture 6): total_cost_usd / modelUsage / costBasis for a fake model -------------
+//
+// A plain-query shape whose canned response reports a model id nothing could have a price row for.
+// The findings: which string KEYS modelUsage (the option alias, a resolved id, or the response's own
+// `model`), what costBasis reads (item (e) predicts 'unknown'), what costUSD/total_cost_usd become,
+// and the actual key set of `usage` — which is the only way to learn NonNullableUsage's field names,
+// since the type maps over an unpinned external one.
+async function runCostCapture(officialSdk: OfficialSdk): Promise<void> {
+  const cleanups: Array<() => void> = [];
+  let server: ReturnType<typeof Bun.serve> | undefined;
+  const fakeModel = "winter-capture-fake-model-1";
+  try {
+    const dirs = makeScenarioDirs("k", cleanups);
+    let requestCount = 0;
+    const modelsAsked: unknown[] = [];
+    server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      async fetch(req) {
+        requestCount++;
+        let body: unknown = {};
+        try {
+          body = await req.json();
+        } catch {
+          /* non-JSON */
+        }
+        modelsAsked.push((body as { model?: unknown }).model);
+        const url = new URL(req.url);
+        console.error(`[loopback K] #${requestCount} ${req.method} ${url.pathname} model=${JSON.stringify((body as { model?: unknown }).model)}`);
+        return jsonResponse({
+          id: "msg_capture_cost_01",
+          type: "message",
+          role: "assistant",
+          model: fakeModel,
+          content: [{ type: "text", text: "echo: cost" }],
+          stop_reason: "end_turn",
+          stop_sequence: null,
+          usage: { input_tokens: 17, output_tokens: 5, cache_read_input_tokens: 3, cache_creation_input_tokens: 2 },
+        });
+      },
+    });
+    console.error(`\n=== Scenario K: total_cost_usd / modelUsage / costBasis for a fake model id ===`);
+    console.error(`[capture K] loopback ${server.url.href}; CLAUDE_CONFIG_DIR=${dirs.claudeConfigDir} HOME=${dirs.homeDir} (fresh mkdtemp)`);
+
+    const entries: ConformanceTraceEntry[] = [];
+    const ac = new AbortController();
+    const q = officialSdk.query({
+      prompt: "hi",
+      options: { model: fakeModel, cwd: dirs.fixtureCwd, settingSources: [], abortController: ac, env: hermeticEnv(dirs, server.url.href) },
+    });
+    const { thrown, deadlineHit } = await drainWithDeadline(q, entries, "capture K", 90_000, ac);
+
+    const payloads = entries.map((e) => e.payload as OfficialMessage);
+    const result = payloads.find((p) => p.type === "result");
+    const modelUsage = (result?.modelUsage ?? {}) as Record<string, Record<string, unknown>>;
+
+    console.error(`[capture K] ${requestCount} loopback request(s); ${entries.length} message(s) yielded; deadlineHit=${deadlineHit}`);
+    if (thrown) console.error(`[capture K] query() threw: ${thrown instanceof Error ? (thrown.stack ?? thrown.message) : String(thrown)}`);
+
+    console.log(`\n--- Scenario K normalized trace ---`);
+    console.log(JSON.stringify(normalizeTrace(entries), null, 2));
+    console.log(`\n--- Scenario K verdicts ---`);
+    console.log(
+      JSON.stringify(
+        {
+          "option model / response model / models the loopback was asked for": { option: fakeModel, response: fakeModel, requested: modelsAsked },
+          "system/init.model": payloads.find((p) => p.type === "system" && p.subtype === "init")?.model ?? "(no init frame)",
+          "result subtype / is_error": { subtype: result?.subtype, is_error: result?.is_error },
+          total_cost_usd: result?.total_cost_usd,
+          "modelUsage KEYS": Object.keys(modelUsage),
+          "modelUsage rows": modelUsage,
+          "costBasis per row": Object.fromEntries(Object.entries(modelUsage).map(([k, v]) => [k, v.costBasis ?? "(absent)"])),
+          "usage (NonNullableUsage) key names — the only pinned way to learn them": Object.keys((result?.usage ?? {}) as Record<string, unknown>).sort(),
+          usage: result?.usage,
+          "query() threw": describeThrown(thrown) ?? false,
+          deadlineHit,
+        },
+        null,
+        2,
+      ),
+    );
+  } finally {
+    server?.stop(true);
+    for (const cleanup of cleanups) cleanup();
+  }
+}
+
 async function runCapture(): Promise<void> {
+  // Scenario filter: RUN_OFFICIAL_CAPTURE_ONLY=F,H runs only those. Empty/unset runs everything.
+  // The ephemeral install happens once either way; this only skips the scenarios themselves, so an
+  // iteration on one scenario does not re-run the other nine.
+  const only = (process.env.RUN_OFFICIAL_CAPTURE_ONLY ?? "")
+    .split(",")
+    .map((s) => s.trim().toUpperCase())
+    .filter((s) => s.length > 0);
+  const want = (letter: string): boolean => only.length === 0 || only.includes(letter);
+
   const cleanups: Array<() => void> = [];
   try {
     const officialSdk = await installOfficialSdk(cleanups);
-    await runPlainQueryCapture(officialSdk);
-    await runPermissionsAndHooksCapture(officialSdk);
-    await runInitToolsCapture(officialSdk);
+    if (want("A")) await runPlainQueryCapture(officialSdk);
+    if (want("B")) await runPermissionsAndHooksCapture(officialSdk);
+    if (want("C")) await runInitToolsCapture(officialSdk);
     // Phase 4 Task 8 (rider 8): the P4 capture-pending cells.
-    await runAdvertisedSchemaCapture(officialSdk);
-    await runMcpOutputCapCapture(officialSdk, undefined);
-    await runMcpOutputCapCapture(officialSdk, "100");
+    if (want("D")) await runAdvertisedSchemaCapture(officialSdk);
+    if (want("E")) {
+      await runMcpOutputCapCapture(officialSdk, undefined);
+      await runMcpOutputCapCapture(officialSdk, "100");
+    }
+    // Phase 6 Task 1 (WS-13): see the block header above for why these are F-K, not D-H.
+    if (want("F")) {
+      await runStreamEventCapture(officialSdk, true);
+      await runStreamEventCapture(officialSdk, false);
+    }
+    if (want("G")) {
+      await runRetryCapture(officialSdk, "overloaded-then-ok");
+      await runRetryCapture(officialSdk, "ratelimit-then-ok");
+      await runRetryCapture(officialSdk, "persistent-overloaded");
+    }
+    if (want("H")) await runNeighborFileProbe(officialSdk);
+    if (want("I")) {
+      await runFailureShapeCapture(officialSdk, "no-key");
+      await runFailureShapeCapture(officialSdk, "unknown-model");
+    }
+    if (want("J")) await runModelControlCapture(officialSdk);
+    if (want("K")) await runCostCapture(officialSdk);
   } finally {
     for (const cleanup of cleanups) cleanup();
   }
