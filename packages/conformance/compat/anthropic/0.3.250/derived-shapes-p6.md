@@ -70,8 +70,9 @@ capture harness logs request *method + path*, tool *names*, and structural count
 **Naming discipline**: identical to P2–P5's — the pinned identifier and field NAMES quoted below *are*
 Winter's own naming (WS-03's compatibility posture, WS-07 §4). Every sentence of description, every
 table, and this document's structure are original. Vendor prose is restated in this document's own
-words throughout; the only vendor strings reproduced verbatim are runtime **error/identifier** strings
-a capture exists specifically to pin, each labelled as such at its capture.
+words throughout; the only vendor strings reproduced verbatim are runtime **error** strings, labelled
+as such wherever the string itself is the finding (capture (I)'s two thrown messages, which item (4)
+scopes explicitly, and capture (H)'s and (G)'s single-clause refusal/abort strings).
 
 **Claim provenance**: as P4/P5 — each item distinguishes a *type-level fact* (a field exists, its type,
 its optionality — evident from the declaration's code) from a *doc-asserted behavior* (a claim resting
@@ -1014,7 +1015,8 @@ Request log (model per `POST`, ms from run start):
 **`subtype: "success"` carrying `is_error: true`, `api_error_status: 529`,
 `terminal_reason: "api_error"`** — i.e. an API failure rides the *success* subtype, exactly the
 possibility item (e) flagged (there is no provider-specific `SDKResultError` subtype). The run was
-also deadline-terminated at 180 s and `query()` threw `Error: "Operation aborted"`, and the fallback
+also deadline-terminated at 180 s and `query()` threw a plain `Error` whose message is the runtime
+string `Operation aborted`, verbatim, and the fallback
 model had by then reached `attempt: 10` of `max_retries: 10`, so exhaustion and abort coincide: the
 frame's *shape* is the finding here; its precise trigger is disentangled by capture (I)'s
 unknown-model run, which fails without any deadline in play.
@@ -1057,6 +1059,12 @@ directory name matches `SessionKey.projectKey`'s documented default (`sdk.d.ts:5
 `run 2 resumed the same session` is `true` (run 2's `system/init.session_id` equals run 1's), so the
 resume genuinely reloaded the transcript the sidecar sits beside rather than starting a new session.
 
+**One unexplained observation, recorded rather than diagnosed** (it touches no assertion): run 1 issued
+**four** `POST /v1/messages` for a single turn, in two near-identical size pairs (4056/4057 bytes and
+90609/90610 bytes), where every other one-turn scenario in this file issued two. The doubling is
+visible in the harness's stderr log; this task did not chase it. It is adjacent to capture (F)'s
+auxiliary-call finding (OQ-P6-10) and may be the same mechanism seen from a different angle.
+
 **What this settles.** **R6-7's "beside the transcript" filesystem layout is safe under the pinned
 runtime.** A `<sessionId>.provider-state.jsonl` neighbour is not read, not rewritten, not renamed, not
 swept, and not sent to the model across session creation, resume, six appending turns, and a
@@ -1077,7 +1085,8 @@ Lane C can be briefed on R6-7 as written.
    result         subtype: "success", is_error: false, num_turns: 0, result: "Not enough messages to compact."
    ```
 
-   The refusal is **not** about size — the third attempt had a 300 KB request body's worth of history.
+   (`compact_error` and `result` are runtime error strings, verbatim.) The refusal is **not** about
+   size — the third attempt had a 300 KB request body's worth of history.
    The evidence points at ordering: the `system/init` frame arrives **after** the compaction status
    frames, `num_turns` is `0`, and **the loopback received no `POST /v1/messages` at all during that
    run** (one `HEAD /api/hello` and nothing else). The local slash command runs before the resumed
