@@ -32,13 +32,15 @@ export async function runGit(args: string[], cwd: string): Promise<GitRunResult>
   // fire-and-forget sites (child-engine.ts's workspace cleanup) where an escaped throw becomes an
   // unhandled rejection attributed to whatever test or turn happens to be running -- exactly what
   // the linux CI runner showed, intermittently, from a fixture whose PATH did not carry git.
-  let proc: ReturnType<typeof Bun.spawn>;
-  try {
-    proc = Bun.spawn(["git", ...args], { cwd, stdout: "pipe", stderr: "pipe" });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return { ok: false, stdout: "", stderr: `git could not be started: ${message}` };
-  }
+  const spawned = (() => {
+    try {
+      return { ok: true as const, proc: Bun.spawn(["git", ...args], { cwd, stdout: "pipe", stderr: "pipe" }) };
+    } catch (err) {
+      return { ok: false as const, message: err instanceof Error ? err.message : String(err) };
+    }
+  })();
+  if (!spawned.ok) return { ok: false, stdout: "", stderr: `git could not be started: ${spawned.message}` };
+  const proc = spawned.proc;
   const [stdout, stderr, exitCode] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
   return { ok: exitCode === 0, stdout: stdout.trim(), stderr: stderr.trim() };
 }
