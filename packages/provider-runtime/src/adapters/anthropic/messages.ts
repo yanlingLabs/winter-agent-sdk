@@ -47,7 +47,7 @@ import { normalizeHttpError, normalizeThrown } from "../../errors.ts";
 import { createRetryPolicy, withRetry, type RetryPolicyOptions } from "../../retry.ts";
 import { applyPrivilegedHeaders, createEndpointPolicy, type EndpointPolicy } from "../../endpoint-policy.ts";
 import { hostHeaders } from "../privileged-headers.ts";
-import { containsImage, renderDecoration } from "../content-blocks.ts";
+import { containsImage } from "../content-blocks.ts";
 import { parseSse } from "../../sse.ts";
 import type {
   ContentBlockLike,
@@ -181,16 +181,41 @@ function normalizeContent(content: string | ContentBlockLike[]): Record<string, 
  *     which this endpoint rejects. Merging preserves block ORDER exactly, which is what the replay
  *     rule cares about.
  */
+/**
+ * Splices a decoration's text in after any LEADING in-dialect thinking blocks.
+ *
+ * The position is a wire constraint, not a preference: with thinking enabled this endpoint rejects a
+ * text block that precedes the turn's own thinking blocks. Placing it at index 0 made a decoration on
+ * a reasoning turn into an unsendable request.
+ */
+function insertDecoration(blocks: Record<string, unknown>[], text: string): Record<string, unknown>[] {
+  let at = 0;
+  while (at < blocks.length && (blocks[at]?.["type"] === "thinking" || blocks[at]?.["type"] === "redacted_thinking")) at++;
+  return [...blocks.slice(0, at), { type: "text", text }, ...blocks.slice(at)];
+}
+
 export function toWireMessages(messages: ProviderMessageLike[]): Array<{ role: "user" | "assistant"; content: Record<string, unknown>[] }> {
   const out: Array<{ role: "user" | "assistant"; content: Record<string, unknown>[] }> = [];
   for (const message of messages) {
     const role: "user" | "assistant" = message.role === "assistant" ? "assistant" : "user";
-    // A Winter-authored annotation rides LEADING and PLAINLY (R6-3 / R6-8). Lane C produces these;
-    // without this rendering they are inert, which is a whole feature silently doing nothing.
-    const blocks = [
-      ...(message.decoration !== undefined ? [{ type: "text", text: renderDecoration(message.decoration) }] : []),
-      ...normalizeContent(message.content),
-    ];
+    // A Winter-authored annotation rides PLAINLY (R6-3 / R6-8), and its text goes on the wire
+    // VERBATIM. `decoration.text` is already the FINISHED, DELIMITED string Lane C produced -- the
+    // `<recovered_reasoning_summary provider=… model=…>` tag WS-13 §8.2 names for the tag door, or
+    // the `[prior-model reasoning, carried as data — …]` label for the thinking-channel door -- and
+    // the §9.6 budget is counted on that finished text.
+    //
+    // AN EXTRA WRAPPER HERE WAS WRONG THREE WAYS and none of them is cosmetic: it double-labels the
+    // thinking-channel door, it puts a delimiter on the wire that WS-13 does not name, and -- the
+    // one that matters -- Lane C's `neutralizeDelimiters` neutralises only its OWN tag, so a foreign
+    // summary containing this layer's closing delimiter would break straight out of it. A wrapper
+    // nobody neutralises is an injection hole; the only safe delimiter is the one whose producer
+    // also neutralises it.
+    //
+    // PLACED AFTER ANY LEADING THINKING BLOCKS, not at index 0: with thinking enabled this endpoint
+    // rejects a text block that precedes the turn's own `thinking`/`redacted_thinking` blocks, so a
+    // decoration on a message that carries them would have made the whole request unsendable.
+    const own = normalizeContent(message.content);
+    const blocks = message.decoration === undefined ? own : insertDecoration(own, message.decoration.text);
     if (blocks.length === 0) continue;
     const last = out[out.length - 1];
     if (last !== undefined && last.role === role) last.content.push(...blocks);

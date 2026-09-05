@@ -46,7 +46,7 @@ import { normalizeHttpError, normalizeThrown } from "../../errors.ts";
 import { createRetryPolicy, withRetry, type RetryPolicyOptions } from "../../retry.ts";
 import { applyPrivilegedHeaders, createEndpointPolicy, type EndpointPolicy } from "../../endpoint-policy.ts";
 import { hostHeaders } from "../privileged-headers.ts";
-import { collectImages, containsImage, renderDecoration } from "../content-blocks.ts";
+import { collectImages, containsImage } from "../content-blocks.ts";
 import { parseSse } from "../../sse.ts";
 import type {
   ContentBlockLike,
@@ -126,17 +126,32 @@ function capabilityRefusal(reason: string): ProviderRequestError {
 /**
  * Which chunk this family treats as COMPLETING, from the descriptor's own `completionEvent` evidence.
  *
- * MATCHED LENIENTLY, by mention rather than by equality, because the field is a prose-ish
- * `CapabilityEvidence<string>` and the catalog's existing values read like sentences (Lane A's row
- * says `response.completed`; this lane's own fixtures say "the chunk carrying finishReason"). An
- * unrecognised value falls back to the DEFAULT rather than refusing: the default is the conservative
- * marker, so a fallback can only ever capture LATER, never earlier -- and capturing earlier is the
- * one failure the completion-event rule exists to prevent.
+ * THIS FAMILY HAS EXACTLY ONE HONOURABLE MARKER: the chunk carrying `finishReason`. There is no
+ * per-block terminator to choose instead, and `usageMetadata` -- the only other candidate a row might
+ * plausibly name -- is shipped on EVERY chunk, so treating it as the completion signal would report
+ * the turn finished from the first chunk and capture continuation state the provider had not finished
+ * minting. That is precisely the failure the completion-event rule exists to prevent, so a row naming
+ * it is REFUSED before the request rather than honoured into an early capture.
+ *
+ * Everything else falls back to `finish-reason`, and the asymmetry is deliberate: an UNRECOGNISED
+ * value means "this adapter does not know what the row meant", and the safe answer to that is the
+ * conservative default (a fallback can only ever capture later, never earlier). A value this adapter
+ * DOES recognise and cannot honour safely is a different thing entirely — it is a claim, and the
+ * honest answer to a claim that cannot be met is a refusal.
+ *
+ * Matched by MENTION rather than equality, because the field is a prose-ish
+ * `CapabilityEvidence<string>` whose existing catalog values read like sentences (Lane A's row says
+ * `response.completed`; this lane's fixtures say "the chunk carrying finishReason").
  */
-export function googleCompletionMarker(descriptor: WinterModelDescriptor | undefined): "finish-reason" | "usage-metadata" {
+export function googleCompletionMarker(descriptor: WinterModelDescriptor | undefined): { ok: true; marker: "finish-reason" } | { ok: false; reason: string } {
   const declared = descriptor?.reasoning?.completionEvent?.value;
-  if (typeof declared === "string" && /usagemetadata|usage_metadata/i.test(declared)) return "usage-metadata";
-  return "finish-reason";
+  if (typeof declared === "string" && /usagemetadata|usage_metadata/i.test(declared)) {
+    return {
+      ok: false,
+      reason: `model "${descriptor?.key ?? "(unlisted)"}" declares its reasoning completion event as ${JSON.stringify(declared)}, which this family cannot honour: it ships \`usageMetadata\` on every chunk, so that marker does not distinguish a completing one and would capture continuation state the provider had not finished minting`,
+    };
+  }
+  return { ok: true, marker: "finish-reason" };
 }
 
 function malformed(detail: string): ProviderError {
@@ -250,10 +265,24 @@ export function toContents(messages: ProviderMessageLike[]): SerializeResult {
     const textItems = items.filter((i) => i.kind === "text");
     let textOrdinal = 0;
 
-    // A Winter-authored annotation rides LEADING and PLAINLY (R6-3 / R6-8) -- and BEFORE the text
-    // ordinal is consumed, so a decoration never takes a `thoughtSignature` meant for the model's
-    // own text part.
-    if (message.decoration !== undefined) parts.push({ text: renderDecoration(message.decoration) });
+    // A Winter-authored annotation rides PLAINLY (R6-3 / R6-8), and its text goes on the wire
+    // VERBATIM. `decoration.text` is already the FINISHED, DELIMITED string Lane C produced -- the
+    // `<recovered_reasoning_summary provider=… model=…>` tag WS-13 §8.2 names for the tag door, or
+    // the `[prior-model reasoning, carried as data — …]` label for the thinking-channel door -- and
+    // the §9.6 budget is counted on that finished text.
+    //
+    // AN EXTRA WRAPPER HERE WAS WRONG THREE WAYS and none of them is cosmetic: it double-labels the
+    // thinking-channel door, it puts a delimiter on the wire that WS-13 does not name, and -- the
+    // one that matters -- Lane C's `neutralizeDelimiters` neutralises only its OWN tag, so a foreign
+    // summary containing this layer's closing delimiter would break straight out of it. A wrapper
+    // nobody neutralises is an injection hole; the only safe delimiter is the one whose producer
+    // also neutralises it.
+    //
+    // It goes in BEFORE the text ordinal is consumed, so a decoration never takes a
+    // `thoughtSignature` meant for the model's own text part. No thinking-block ordering constraint
+    // applies here: another dialect's thinking is dropped at this boundary, so it produces no part
+    // for a decoration to precede.
+    if (message.decoration !== undefined) parts.push({ text: message.decoration.text });
     const blocks: ContentBlockLike[] = typeof message.content === "string" ? (message.content.length > 0 ? [{ type: "text", text: message.content }] : []) : message.content;
     for (const block of blocks) {
       switch (block.type) {
@@ -492,8 +521,6 @@ interface PreparedGoogleRequest {
   policy: EndpointPolicy;
   body: Record<string, unknown>;
   headers: Record<string, string>;
-  /** Minor 7: the descriptor's own completion marker, resolved once per request. */
-  completionMarker: "finish-reason" | "usage-metadata";
 }
 
 export function createGoogleFamilyAdapter(transport: GoogleTransport, opts: GoogleAdapterOptions = {}): ProviderAdapter {
@@ -515,7 +542,12 @@ export function createGoogleFamilyAdapter(transport: GoogleTransport, opts: Goog
     const url = `${base}${transport.streamPath(ctx, req.model)}`;
     const body = buildRequestBody(req, descriptor, opts, ctx);
     const headers = await transport.headers(ctx, policy, true);
-    return { url, policy, body, headers, completionMarker: googleCompletionMarker(descriptor) };
+    // Minor 7: the descriptor's completion evidence is VALIDATED here and carries no state onward,
+    // because this family has exactly one honourable marker. A row naming another is refused before
+    // the request; there is nothing left to branch on downstream.
+    const marker = googleCompletionMarker(descriptor);
+    if (!marker.ok) throw capabilityRefusal(marker.reason);
+    return { url, policy, body, headers };
   }
 
   async function* streamTurn(req: TurnRequest, ctx: ProviderContext): AsyncGenerator<ProviderEvent> {
@@ -607,9 +639,6 @@ export function createGoogleFamilyAdapter(transport: GoogleTransport, opts: Goog
         }
 
         const usage = payload["usageMetadata"] as Record<string, unknown> | undefined;
-        // Minor 7: a row whose evidence names the usage chunk as its completion event holds the
-        // capture until that chunk arrives, rather than taking the finish-reason chunk's word for it.
-        if (prepared.completionMarker === "usage-metadata" && usage !== undefined) finished = true;
         if (typeof usage?.["promptTokenCount"] === "number") inputTokens = usage["promptTokenCount"];
         if (typeof usage?.["candidatesTokenCount"] === "number") candidatesTokens = usage["candidatesTokenCount"];
         // The family bills reasoning separately from the visible answer, so the two are SUMMED into
@@ -664,10 +693,11 @@ export function createGoogleFamilyAdapter(transport: GoogleTransport, opts: Goog
         }
 
         if (candidate.finishReason !== undefined && candidate.finishReason !== null) {
-          // The stop REASON is read wherever it appears; whether this chunk COMPLETES the turn is the
-          // descriptor's call.
+          // The stop REASON is read wherever it appears, and for this family it is also the one
+          // honourable completion marker -- `googleCompletionMarker` refused anything else before the
+          // request was ever built.
           stopReason = toStopReason(candidate.finishReason, sawCall);
-          if (prepared.completionMarker === "finish-reason") finished = true;
+          finished = true;
         }
       }
     } catch (err) {

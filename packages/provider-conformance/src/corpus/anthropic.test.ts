@@ -358,28 +358,69 @@ describe("Anthropic Messages: countTokens is not a generation (Minor 4)", () => 
   });
 });
 
+/**
+ * Lane C's REAL output, verbatim.
+ *
+ * `decoration.text` arrives already finished and already delimited -- the `<recovered_reasoning_summary>`
+ * tag WS-13 §8.2 names for the tag door, and the bracketed label for the thinking-channel door -- and
+ * Lane C's §9.6 budget is counted on exactly these strings. The fixtures assert the wire carries them
+ * BYTE-FOR-BYTE, because anything this layer added would double-label the second door and would add a
+ * delimiter Lane C's own `neutralizeDelimiters` does not neutralise: a foreign summary containing the
+ * added closing delimiter would break straight out of it.
+ */
+const LANE_C_DECORATIONS = {
+  tag: { text: '<recovered_reasoning_summary provider="openai" model="gpt-5.6-sol">the model weighed two options.</recovered_reasoning_summary>', door: "tag" as const },
+  "thinking-channel": { text: "[prior-model reasoning, carried as data \u2014 provider: openai, model: gpt-5.6-sol]\nthe model weighed two options.", door: "thinking-channel" as const },
+};
+
 describe("Anthropic Messages: a Lane C decoration is RENDERED, not inert (Minor 9)", () => {
-  test("both doors ride as LEADING PLAIN TEXT — never as a thinking block with a fabricated signature", async () => {
-    // The tripwire the review asks for: Lane C produces decorations, and without this rendering they
-    // are a whole feature silently doing nothing. `thinking-channel` DEGRADES to the same plain text
-    // here, because this family's thinking channel is signed and capture (F) shows the runtime
-    // materialising a signature for a signatureless block — a Winter-authored note placed there would
-    // ride a fabricated one, which is the impersonation R6-8 exists to forbid.
+  test("both doors ride as PLAIN TEXT, byte-for-byte as Lane C produced them, with NO wrapper of this layer's own", async () => {
     const adapter = testAnthropicAdapter();
     await withFake({ routes: anthropicCorpusRoutes() }, async (fake) => {
       for (const door of ["tag", "thinking-channel"] as const) {
         await foldTurn(
           adapter,
-          { model: ANTHROPIC_MODELS.main, messages: [{ role: "assistant", content: [{ type: "text", text: "the answer" }], decoration: { text: `note-${door}`, door } }] },
+          { model: ANTHROPIC_MODELS.main, messages: [{ role: "assistant", content: [{ type: "text", text: "the answer" }], decoration: LANE_C_DECORATIONS[door] }] },
           testContext(fake.url),
         );
       }
-      expect(messageBlocks(fake.requests[0]!, 0)).toEqual([{ type: "text", text: "<winter-note>note-tag</winter-note>" }, { type: "text", text: "the answer" }]);
-      expect(messageBlocks(fake.requests[1]!, 0)).toEqual([{ type: "text", text: "<winter-note>note-thinking-channel</winter-note>" }, { type: "text", text: "the answer" }]);
+      expect(messageBlocks(fake.requests[0]!, 0)).toEqual([{ type: "text", text: LANE_C_DECORATIONS.tag.text }, { type: "text", text: "the answer" }]);
+      expect(messageBlocks(fake.requests[1]!, 0)).toEqual([{ type: "text", text: LANE_C_DECORATIONS["thinking-channel"].text }, { type: "text", text: "the answer" }]);
       for (const recorded of fake.requests) {
+        // Never dressed as reasoning the model did, and never re-delimited by this layer.
         expect(recorded.body).not.toContain('"type":"thinking"');
         expect(recorded.body).not.toContain('"signature"');
+        expect(recorded.body).not.toContain("winter-note");
       }
+    });
+  });
+
+  test("the decoration is placed AFTER any leading thinking blocks, which this endpoint requires", async () => {
+    // With thinking enabled the endpoint rejects a text block that precedes the turn's own thinking
+    // blocks -- so a decoration at index 0 made a decorated reasoning turn unsendable.
+    const adapter = testAnthropicAdapter();
+    await withFake({ routes: anthropicCorpusRoutes() }, async (fake) => {
+      await foldTurn(
+        adapter,
+        {
+          model: ANTHROPIC_MODELS.main,
+          messages: [
+            {
+              role: "assistant",
+              content: [
+                { type: "thinking", thinking: "why", signature: "sig-place-1" },
+                { type: "redacted_thinking", data: "opaque-place-1" },
+                { type: "text", text: "the answer" },
+              ],
+              decoration: LANE_C_DECORATIONS.tag,
+            },
+          ],
+          thinking: { type: "enabled", budgetTokens: 1024 },
+        },
+        testContext(fake.url),
+      );
+      assertAnthropicRequest(fake.requests[0]!, { blockTypes: ["thinking", "redacted_thinking", "text", "text"] });
+      expect(messageBlocks(fake.requests[0]!, 0)[2]).toEqual({ type: "text", text: LANE_C_DECORATIONS.tag.text });
     });
   });
 });

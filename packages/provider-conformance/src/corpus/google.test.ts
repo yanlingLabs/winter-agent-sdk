@@ -254,22 +254,27 @@ describe("Google GenerateContent: a thought part's signature is never re-keyed (
     });
   });
 
-  test("a descriptor naming a DIFFERENT completion event is honoured, and the marker is the only variable (Minor 7)", async () => {
-    // A/B on ONE stream: it finishes, and it never sends `usageMetadata`. The default row completes
-    // and captures; the row whose evidence names the usage chunk as its completion event never sees
-    // that chunk, so it captures NOTHING and does not report a completed turn — which is the
-    // completion-event rule stated at whichever event a row names.
+  test("a completion event this family CANNOT honour is refused before the request (Minor 7/r2-3)", async () => {
+    // `usageMetadata` ships on EVERY chunk, so naming it as the completion marker would report the
+    // turn finished from the first one and capture continuation state the provider had not finished
+    // minting -- the exact failure the completion-event rule exists to prevent. A row that names it
+    // is a claim this family cannot meet, so it is a typed refusal with nothing on the wire; a row
+    // with no evidence, or one naming the finish-reason chunk, runs normally.
     const adapter = testGoogleAdapter();
     await withFake({ routes: googleCorpusRoutes() }, async (fake) => {
       const ctx = googleContext(fake.url);
       const byDefault = [];
       for await (const e of adapter.streamTurn({ model: GOOGLE_MODELS.lateUsageDefault, messages: [{ role: "user", content: "go" }] }, ctx)) byDefault.push(e);
       expect(byDefault.map((e) => e.type)).toEqual(["message_start", "text_delta", "native_state", "usage", "done"]);
+      const before = fake.requests.length;
 
-      const evidenced = [];
-      for await (const e of adapter.streamTurn({ model: GOOGLE_MODELS.lateUsage, messages: [{ role: "user", content: "go" }] }, ctx)) evidenced.push(e);
-      expect(evidenced.map((e) => e.type)).toEqual(["message_start", "text_delta", "error"]);
-      expect(evidenced.some((e) => e.type === "native_state")).toBe(false);
+      const refused = [];
+      for await (const e of adapter.streamTurn({ model: GOOGLE_MODELS.lateUsage, messages: [{ role: "user", content: "go" }] }, ctx)) refused.push(e);
+      expect(refused).toHaveLength(1);
+      expect(refused[0]).toMatchObject({ type: "error", error: { code: "capability" } });
+      const first = refused[0];
+      expect(first?.type === "error" && first.error.message).toContain("ships `usageMetadata` on every chunk");
+      expect(fake.requests).toHaveLength(before);
     });
   });
 });
@@ -367,27 +372,44 @@ describe("Google GenerateContent: the pure mapping", () => {
   });
 });
 
+/**
+ * Lane C's REAL output, verbatim.
+ *
+ * `decoration.text` arrives already finished and already delimited -- the `<recovered_reasoning_summary>`
+ * tag WS-13 §8.2 names for the tag door, and the bracketed label for the thinking-channel door -- and
+ * Lane C's §9.6 budget is counted on exactly these strings. The fixtures assert the wire carries them
+ * BYTE-FOR-BYTE, because anything this layer added would double-label the second door and would add a
+ * delimiter Lane C's own `neutralizeDelimiters` does not neutralise: a foreign summary containing the
+ * added closing delimiter would break straight out of it.
+ */
+const LANE_C_DECORATIONS = {
+  tag: { text: '<recovered_reasoning_summary provider="openai" model="gpt-5.6-sol">the model weighed two options.</recovered_reasoning_summary>', door: "tag" as const },
+  "thinking-channel": { text: "[prior-model reasoning, carried as data \u2014 provider: openai, model: gpt-5.6-sol]\nthe model weighed two options.", door: "thinking-channel" as const },
+};
+
 describe("Google GenerateContent: a Lane C decoration is RENDERED, not inert (Minor 9)", () => {
-  test("both doors ride as a LEADING PLAIN TEXT part — never as a `thought` part the model did not produce", async () => {
+  test("both doors ride as a PLAIN TEXT part, byte-for-byte as Lane C produced them", async () => {
     const adapter = testGoogleAdapter();
     await withFake({ routes: googleCorpusRoutes() }, async (fake) => {
       for (const door of ["tag", "thinking-channel"] as const) {
         await foldTurn(
           adapter,
-          { model: GOOGLE_MODELS.main, messages: [{ role: "assistant", content: [{ type: "text", text: "the answer" }], decoration: { text: `note-${door}`, door } }] },
+          { model: GOOGLE_MODELS.main, messages: [{ role: "assistant", content: [{ type: "text", text: "the answer" }], decoration: LANE_C_DECORATIONS[door] }] },
           googleContext(fake.url),
         );
       }
-      expect(geminiContents(fake.requests[0]!)[0]?.parts).toEqual([{ text: "<winter-note>note-tag</winter-note>" }, { text: "the answer" }]);
-      expect(geminiContents(fake.requests[1]!)[0]?.parts).toEqual([{ text: "<winter-note>note-thinking-channel</winter-note>" }, { text: "the answer" }]);
-      // A decoration is Winter's, not the model's: it must never be marked as reasoning the model did.
-      for (const recorded of fake.requests) expect(recorded.body).not.toContain('"thought"');
+      expect(geminiContents(fake.requests[0]!)[0]?.parts).toEqual([{ text: LANE_C_DECORATIONS.tag.text }, { text: "the answer" }]);
+      expect(geminiContents(fake.requests[1]!)[0]?.parts).toEqual([{ text: LANE_C_DECORATIONS["thinking-channel"].text }, { text: "the answer" }]);
+      for (const recorded of fake.requests) {
+        // A decoration is Winter's, not the model's: never marked as reasoning the model did, and
+        // never re-delimited by this layer.
+        expect(recorded.body).not.toContain('"thought"');
+        expect(recorded.body).not.toContain("winter-note");
+      }
     });
   });
 
   test("a decoration does not consume the text ordinal a `thoughtSignature` is keyed to", async () => {
-    // The decoration is prepended BEFORE the model's own text part, so a naive "first text part"
-    // lookup would stamp the signature onto Winter's note instead of the model's answer.
     const adapter = testGoogleAdapter();
     await withFake({ routes: googleCorpusRoutes() }, async (fake) => {
       await foldTurn(
@@ -398,7 +420,7 @@ describe("Google GenerateContent: a Lane C decoration is RENDERED, not inert (Mi
             {
               role: "assistant",
               content: [{ type: "text", text: "the answer" }],
-              decoration: { text: "a note", door: "tag" },
+              decoration: LANE_C_DECORATIONS.tag,
               nativeState: { family: "google", continuationDomain: "google/gemini-2.5-pro", items: [{ partIndex: 0, kind: "text", signature: GOOGLE_SIGNATURE }] },
             },
           ],
@@ -406,7 +428,7 @@ describe("Google GenerateContent: a Lane C decoration is RENDERED, not inert (Mi
         googleContext(fake.url),
       );
       expect(geminiContents(fake.requests[0]!)[0]?.parts).toEqual([
-        { text: "<winter-note>a note</winter-note>" },
+        { text: LANE_C_DECORATIONS.tag.text },
         { text: "the answer", thoughtSignature: GOOGLE_SIGNATURE },
       ]);
     });
