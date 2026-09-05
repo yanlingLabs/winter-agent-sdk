@@ -187,11 +187,16 @@ export function substituteArguments(body: string, args: string): string {
  * One entry of the resolver's single ordered enumeration -- the shared source of truth `list()` and
  * `resolve()` are both views of (fix round 1, Medium 1).
  *
- * `kind: "blocked"` is a name a skill CLAIMS but nobody may answer: an `off` skill. It is neither
- * listed nor resolvable, and it stops a same-named command file from claiming the name behind it.
+ * `kind: "skill"` carries BOTH the name this entry is reached by and the skill's PRIMARY name, so an
+ * alias entry loads the same body its primary does. `listed` is false for an alias: an alias is
+ * RESOLVABLE BUT NEVER ADVERTISED (fix round 2, Medium A).
+ *
+ * `kind: "blocked"` is a name a skill CLAIMS but nobody may answer: an `off` skill, and every alias
+ * of one. It is neither listed nor resolvable, and it stops a same-named command file from claiming
+ * the name behind it.
  */
 type EnumeratedCommand =
-  | { kind: "skill"; name: string; description: string }
+  | { kind: "skill"; name: string; primary: string; description: string; listed: boolean }
   | { kind: "file"; name: string; file: CommandFile }
   | { kind: "blocked"; name: string };
 
@@ -257,12 +262,30 @@ export class FilesystemCommandResolver implements CommandResolver {
     if (cached) return cached;
     const map = new Map<string, EnumeratedCommand>();
     for (const skill of this.opts.skills?.list() ?? []) {
-      if (map.has(skill.name)) continue;
-      // `off` CLAIMS the name without answering it: `off` means off, and letting a same-named command
-      // file answer instead would silently substitute a different producer's text for a skill the
-      // user deliberately disabled. `user-invocable-only` is the opposite -- it removes a skill from
-      // the MODEL's door and this is exactly the door it keeps (listing.ts).
-      map.set(skill.name, isUserInvocable(this.opts.skillOverrides, skill) ? { kind: "skill", name: skill.name, description: skill.description } : { kind: "blocked", name: skill.name });
+      const invocable = isUserInvocable(this.opts.skillOverrides, skill);
+      // EVERY IDENTITY, not just the primary name (fix round 2, Medium A). `skills.list()` returns
+      // primary names only; the `.winter:<skill>` aliases live in the index's own name map, which the
+      // pre-enumeration `resolve()` reached through `get()`. Seeding only primaries silently dropped
+      // `/.winter:review` -- and worse, left the qualified name UNCLAIMED, so a plugin NAMED `.winter`
+      // contributing a command `review` answered it with a command file: the P5-H inversion this
+      // resolver exists to prevent, re-opened in the alias dimension. An alias claims its name here
+      // for exactly the same reason a primary does.
+      const identities = [skill.name, ...(skill.aliases ?? [])];
+      for (let i = 0; i < identities.length; i++) {
+        const identity = identities[i]!;
+        if (map.has(identity)) continue;
+        // `off` CLAIMS the name without answering it -- primary AND aliases: `off` means off, and
+        // letting a same-named command file answer instead would silently substitute a different
+        // producer's text for a skill the user deliberately disabled. `user-invocable-only` is the
+        // opposite -- it removes a skill from the MODEL's door and this is exactly the door it keeps
+        // (listing.ts).
+        map.set(
+          identity,
+          invocable
+            ? { kind: "skill", name: identity, primary: skill.name, description: skill.description, listed: i === 0 }
+            : { kind: "blocked", name: identity },
+        );
+      }
     }
     for (const file of this.scanCommandFiles(cwd)) {
       if (map.has(file.name)) continue;
@@ -272,12 +295,24 @@ export class FilesystemCommandResolver implements CommandResolver {
     return map;
   }
 
-  /** Every `/name` this resolver answers to, in enumeration order. Feeds `system/init.slash_commands`. */
+  /**
+   * Every `/name` this resolver ADVERTISES, in enumeration order. Feeds `system/init.slash_commands`.
+   *
+   * PER CWD (fix round 2, Minor B): command files are discovered by a parent-walk from the cwd, so
+   * the answer differs between cwds and `cwd` defaults to the CONSTRUCTION cwd, not the live one.
+   * A caller must feed the SAME cwd to `list()` and `resolve()` for the "everything listed resolves"
+   * invariant to hold -- `slashCommandNames(resolver, cwd)` exists for exactly that.
+   *
+   * ALIASES ARE NOT LISTED (Medium A): `/.winter:review` resolves, but `slash_commands` carries
+   * `review` alone. Advertising both would double every project skill in the init frame and imply two
+   * commands where there is one.
+   */
   list(cwd?: string): SlashCommandInfo[] {
     const out: SlashCommandInfo[] = [];
     for (const entry of this.enumerate(cwd ?? this.opts.cwd).values()) {
       if (entry.kind === "blocked") continue;
       if (entry.kind === "skill") {
+        if (!entry.listed) continue; // an alias resolves but is never advertised
         out.push({ name: entry.name, description: entry.description, source: "skill" });
         continue;
       }
@@ -301,7 +336,12 @@ export class FilesystemCommandResolver implements CommandResolver {
     if (entry === undefined || entry.kind === "blocked") return { kind: "none" };
 
     if (entry.kind === "skill") {
-      const loaded = this.opts.skills?.load(name);
+      // By the PRIMARY name. DEFENSIVE, and honestly labelled: `SkillIndex.load()` is itself
+      // alias-aware, so `load(entry.name)` returns the same thing today -- a revert probe confirms no
+      // fixture discriminates the two. `primary` is kept because it makes this entry self-describing
+      // (an alias entry says which skill owns it without a second lookup) and because it stops this
+      // door from depending on the index's name map staying alias-resolving.
+      const loaded = this.opts.skills?.load(entry.primary);
       // A skill whose file VANISHED since indexing answers `none` -- it does NOT hand the name to a
       // command file behind it (fix round 1, Minor 4). The enumeration decides who owns a name, and
       // ownership must not change because a file disappeared mid-session: that is exactly the

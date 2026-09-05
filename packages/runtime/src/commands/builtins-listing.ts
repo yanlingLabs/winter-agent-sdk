@@ -25,12 +25,24 @@ export const BUILTIN_SLASH_COMMANDS: readonly SlashCommandInfo[] = [
  * The full listing: built-ins, then whatever the resolver enumerates (skills, then command files
  * project > user > plugin), first occurrence winning.
  *
- * THE INVARIANT, AND WHAT NOW ENFORCES IT: every name listed here resolves, and to the producer this
- * listing names. That used to be a claim resting on two loops happening to agree, and they did not --
- * `list()` walked command files first while `resolve()` walked skills first, so a shadowed name was
- * listed with the LOSING producer's description and source, and an `off` skill put a name into
- * `system/init.slash_commands` that `resolve()` answered `none` to. It now rests on
- * `FilesystemCommandResolver.enumerate()` being the single ordered map both methods read.
+ * THE INVARIANT, STATED EXACTLY: **for a given `cwd`**, every name listed here resolves at that same
+ * `cwd`, and to the producer this listing names. Two qualifications, both load-bearing:
+ *
+ *  - **The `cwd` is part of the statement** (fix round 2, Minor B). Command files are discovered by a
+ *    parent-walk from the cwd, so the enumeration genuinely differs between cwds, and
+ *    `FilesystemCommandResolver.list()` defaults to the resolver's CONSTRUCTION cwd while
+ *    `resolve()` always uses the live one it is handed. A caller that lists at one cwd and resolves
+ *    at another is comparing two different namespaces, and the invariant says nothing about that
+ *    pair. Pass `cwd` here whenever the session's cwd may have moved since construction.
+ *  - **Aliases resolve but are not listed** (fix round 2, Medium A). `/.winter:review` resolves to
+ *    the same skill `/review` does; only `review` is advertised. So the invariant is one-directional:
+ *    everything listed resolves, but not everything that resolves is listed.
+ *
+ * WHAT ENFORCES IT: `FilesystemCommandResolver.enumerate()` is the single ordered map both `list()`
+ * and `resolve()` read. It used to be a claim resting on two loops happening to agree, and they did
+ * not -- `list()` walked command files first while `resolve()` walked skills first, so a shadowed
+ * name was listed with the LOSING producer's description and source, and an `off` skill put a name
+ * into `system/init.slash_commands` that `resolve()` answered `none` to.
  */
 export function buildSlashCommandListing(resolver?: FilesystemCommandResolver, cwd?: string): SlashCommandInfo[] {
   const out: SlashCommandInfo[] = [];
@@ -47,7 +59,13 @@ export function buildSlashCommandListing(resolver?: FilesystemCommandResolver, c
   return out;
 }
 
-/** `system/init.slash_commands` (`4874`): names only, in listing order. */
+/**
+ * `system/init.slash_commands` (`4874`): names only, in listing order.
+ *
+ * PASS `cwd` when the session's working directory may have moved since the resolver was built -- see
+ * the invariant above. Omitting it lists the construction cwd's namespace, which is correct at
+ * startup (when the init frame is emitted) and stale afterwards.
+ */
 export function slashCommandNames(resolver?: FilesystemCommandResolver, cwd?: string): string[] {
   return buildSlashCommandListing(resolver, cwd).map((c) => c.name);
 }

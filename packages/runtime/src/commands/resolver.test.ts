@@ -7,7 +7,7 @@ import { describe, test, expect, afterEach } from "bun:test";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { SkillIndex } from "../skills/store.ts";
+import { SkillIndex, PROJECT_PLUGIN_NAME } from "../skills/store.ts";
 import { FilesystemCommandResolver } from "./resolver.ts";
 import { BUILTIN_SLASH_COMMANDS, buildSlashCommandListing, slashCommandNames } from "./builtins-listing.ts";
 
@@ -254,6 +254,110 @@ describe("the listing and resolve() are two views of ONE enumeration (fix round 
     // not change because a file disappeared mid-session -- that is the listing/resolve divergence
     // this round fixed, displaced in time.
     expect(await resolver.resolve("/review", repo)).toEqual({ kind: "none" });
+  });
+});
+
+// --- Fix round 2, Medium A ----------------------------------------------------------------------
+//
+// `enumerate()` seeds from `skills.list()`, which returns PRIMARY names only. The pre-fix `resolve()`
+// reached aliases through `index.get()`, so `/.winter:review` worked; the enumeration lost it, and a
+// plugin NAMED `.winter` could then answer the qualified name with a command file -- the P5-H
+// inversion, re-opened in the alias dimension.
+describe("the enumeration carries ALIASES as resolvable-but-unlisted (fix round 2, Medium A)", () => {
+  function aliased(opts?: { overrides?: Record<string, string>; dotWinterPlugin?: boolean }) {
+    const repo = mkTemp("winter-alias-repo-");
+    const winterHome = mkTemp("winter-alias-home-");
+    writeSkill(repo, "review", "SKILL DESCRIPTION", "SKILL BODY");
+    const pluginRoot = mkTemp("winter-alias-plugin-");
+    mkdirSync(join(pluginRoot, "commands"), { recursive: true });
+    writeFileSync(join(pluginRoot, "commands", "review.md"), "PLUGIN COMMAND BODY", "utf8");
+    return FilesystemCommandResolver.build({
+      cwd: repo,
+      winterHome,
+      skills: SkillIndex.build({ cwd: repo, winterHome }),
+      ...(opts?.overrides !== undefined ? { skillOverrides: opts.overrides } : {}),
+      ...(opts?.dotWinterPlugin ? { plugins: [{ plugin: ".winter", commands: [{ name: "review", path: join(pluginRoot, "commands", "review.md") }] }] } : {}),
+    });
+  }
+
+  test("`/.winter:<name>` resolves to the skill body, exactly as the bare name does", async () => {
+    const resolver = aliased();
+    const bare = await resolver.resolve("/review", "/anywhere");
+    const qualified = await resolver.resolve(`/${PROJECT_PLUGIN_NAME}:review`, "/anywhere");
+    expect(bare).toMatchObject({ kind: "expand", text: "SKILL BODY" });
+    expect(qualified).toMatchObject({ kind: "expand", text: "SKILL BODY" });
+    expect(qualified).toEqual(bare); // same source path too -- one owner, one answer
+  });
+
+  test("a plugin NAMED `.winter` cannot take the qualified name from the skill that owns it", async () => {
+    const resolver = aliased({ dotWinterPlugin: true });
+    expect(await resolver.resolve(`/${PROJECT_PLUGIN_NAME}:review`, "/anywhere")).toMatchObject({ text: "SKILL BODY" });
+  });
+
+  test("an alias is NEVER advertised -- `slash_commands` carries the primary name only", () => {
+    const resolver = aliased({ dotWinterPlugin: true });
+    expect(resolver.list().map((c) => c.name)).toEqual(["review"]);
+    expect(slashCommandNames(resolver)).toEqual(["compact", "review"]);
+  });
+
+  test("an `off` skill blocks its ALIAS too -- and a `.winter` plugin command may not answer behind it", async () => {
+    const resolver = aliased({ overrides: { review: "off" }, dotWinterPlugin: true });
+    expect(await resolver.resolve("/review", "/anywhere")).toEqual({ kind: "none" });
+    expect(await resolver.resolve(`/${PROJECT_PLUGIN_NAME}:review`, "/anywhere")).toEqual({ kind: "none" });
+    expect(resolver.list()).toEqual([]);
+  });
+
+  test("SWEEP: every resolvable name is either LISTED, or an unlisted alias of a listed name", async () => {
+    const repo = mkTemp("winter-alias-sweep-repo-");
+    const winterHome = mkTemp("winter-alias-sweep-home-");
+    writeSkill(repo, "shadowed", "d", "S1");
+    writeCommand(repo, "shadowed", "C1");
+    writeSkill(repo, "hidden", "d", "S2");
+    writeSkill(repo, "skillonly", "d", "S3");
+    writeCommand(repo, "cmdonly", "C4");
+    const index = SkillIndex.build({ cwd: repo, winterHome });
+    const resolver = FilesystemCommandResolver.build({ cwd: repo, winterHome, skills: index, skillOverrides: { hidden: "off" } });
+    const listed = resolver.list().map((c) => c.name);
+    expect(listed.sort()).toEqual(["cmdonly", "shadowed", "skillonly"]);
+
+    // Every alias of a LISTED skill resolves, and none of them is itself listed.
+    for (const name of ["shadowed", "skillonly"]) {
+      for (const alias of index.identities(name).slice(1)) {
+        expect(listed).not.toContain(alias);
+        expect((await resolver.resolve(`/${alias}`, repo)).kind).toBe("expand");
+      }
+    }
+    // A disabled skill's aliases resolve to nothing, same as its primary name.
+    for (const alias of index.identities("hidden")) {
+      expect(await resolver.resolve(`/${alias}`, repo)).toEqual({ kind: "none" });
+    }
+  });
+});
+
+// --- Fix round 2, Minor B -------------------------------------------------------------------------
+describe("the listing/resolve invariant is PER CWD (fix round 2, Minor B)", () => {
+  test("the invariant holds when the SAME cwd feeds both, and the listing follows the cwd it is given", async () => {
+    const repo = mkTemp("winter-cwd-repo-");
+    mkdirSync(join(repo, ".git"), { recursive: true });
+    const other = join(repo, "other");
+    mkdirSync(other, { recursive: true });
+    const winterHome = mkTemp("winter-cwd-home-");
+    writeCommand(repo, "atroot", "ROOT");
+    writeCommand(other, "atother", "OTHER");
+    const resolver = FilesystemCommandResolver.build({ cwd: repo, winterHome });
+
+    // The construction cwd sees only the root command; `other` additionally sees its own.
+    expect(slashCommandNames(resolver)).toEqual(["compact", "atroot"]);
+    expect(slashCommandNames(resolver, other).sort()).toEqual(["atother", "atroot", "compact"]);
+
+    // The invariant: pass the SAME cwd to both and every listed name resolves there.
+    for (const cwd of [repo, other]) {
+      for (const name of resolver.list(cwd).map((c) => c.name)) {
+        expect((await resolver.resolve(`/${name}`, cwd)).kind).toBe("expand");
+      }
+    }
+    // And the failure it guards against: a name listed at one cwd need not resolve at another.
+    expect(await resolver.resolve("/atother", repo)).toEqual({ kind: "none" });
   });
 });
 
