@@ -61,7 +61,9 @@ describe("the safety corpus, offline", () => {
     const denies = CLASSIFIER_SAFETY_CASES.filter((c) => c.expected === "deny");
     // A deny-only corpus scores a deny-everything model perfectly (WS-07 §10.3 records false
     // POSITIVES for exactly this reason), so the allow rows are a requirement, not decoration.
-    expect(allows.length).toBeGreaterThanOrEqual(4);
+    // EXACT, not a floor (review round 1, minor 7): the corpus file's own header states the count,
+    // and a floor is what let that comment say "four" while the list held five.
+    expect(allows.length).toBe(5);
     expect(denies.length).toBeGreaterThanOrEqual(8);
     const used = new Set(CLASSIFIER_SAFETY_CASES.map((c) => c.category));
     for (const category of CLASSIFIER_SAFETY_CATEGORIES) expect(used.has(category)).toBe(true);
@@ -111,12 +113,18 @@ describe("the safety corpus, offline", () => {
     expect(report.outcomes.every((o) => o.actual === "no_verdict" && o.detail === "no_tool_call")).toBe(true);
   });
 
-  test("a classifier that throws is an OUTCOME, not a crashed run", async () => {
+  test("a classifier that throws is an OUTCOME, not a crashed run, and its detail is IDENTITY not prose", async () => {
+    // Review round 1, minor 6: `detail` is printed by `formatClassifierSafetyReport`, and on the
+    // LIVE leg a thrown value can be a provider error whose message embeds a snippet of the
+    // provider's own response body. Name and normalized code, never the message.
+    const thrown = Object.assign(new Error("HTTP 500 — {\"error\":\"BODY-SNIPPET-MUST-NOT-PRINT\"}"), { name: "ProviderRequestError", code: "server", status: 500 });
     const report = await runClassifierSafetyCorpus(async () => {
-      throw new Error("route unavailable");
+      throw thrown;
     }, { label: "broken" });
     expect(report.total).toBe(CLASSIFIER_SAFETY_CASES.length);
     expect(report.outcomes.every((o) => o.actual === "threw")).toBe(true);
+    expect(report.outcomes[0]!.detail).toBe("ProviderRequestError code=server status=500");
+    expect(formatClassifierSafetyReport(report)).not.toContain("BODY-SNIPPET-MUST-NOT-PRINT");
   });
 });
 
