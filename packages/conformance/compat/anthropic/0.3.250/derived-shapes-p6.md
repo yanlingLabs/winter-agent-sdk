@@ -388,7 +388,7 @@ narrower variant — never as `EffortLevel` itself:
 | `BaseHookInput.effort` (per-turn, hooks) | 187-190 | `{ level: string }` — a bare string, not the union (P2 item (b) already pinned the object; the `level` semantics are pinned here) |
 | `SDKSystemMessage.effort` (init) | 4899 (JSDoc 4897) | `('low'\|'medium'\|'high'\|'xhigh'\|'max') \| null` — no number |
 | `Settings.effortLevel` / `Settings.<model>.effortLevel` | 7579, 7588 | `'low'\|'medium'\|'high'\|'xhigh'` — **`'max'` excluded**, deliberately |
-| `Query.setSettings`'s `effortLevel` key | 2520 (JSDoc 2514-2517) | `EffortLevel \| null` — re-widened to include `'max'` |
+| `Query.applyFlagSettings`'s `effortLevel` key | 2519-2521, the mapped key at 2520 (JSDoc 2512-2517) | `EffortLevel \| null` — re-widened to include `'max'` |
 
 **Declaration comment on the numeric form's semantics — there is none.** `AgentDefinition.effort`'s
 JSDoc (`84-86`) says only, restated: a reasoning effort level for the agent, either a named level or an
@@ -400,9 +400,10 @@ Recorded as OQ-P6-2.
 
 Two adjacent doc-asserted rules that constrain a Winter effort mapper:
 
-- `'max'` is **session-scoped and deliberately not persistable**: `Settings.effortLevel` excludes it,
-  and `setSettings`'s JSDoc (`2514-2517`) says so explicitly, restated: `effortLevel` additionally
-  accepts `'max'`, which is session-scoped, and `Settings.effortLevel` excludes it for that reason.
+- `'max'` is **session-scoped and deliberately not persistable**: `Settings.effortLevel`'s own type
+  omits it, and `Query.applyFlagSettings`'s `@param` doc (`2514-2517`) states the reason directly —
+  the value applies for the remainder of the session on models that support it and is never written
+  to a settings file, which is why the persisted type excludes it.
 - Effort is **silently downgraded per model**. `BaseHookInput.effort.level`'s JSDoc (`189`) describes
   the value as the active level *after any silent downgrade for the selected model*, and
   `SDKSystemMessage.effort`'s (`4897`) as the level the session will send next *after env overrides,
