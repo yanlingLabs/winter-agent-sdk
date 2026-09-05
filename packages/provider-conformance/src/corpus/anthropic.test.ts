@@ -125,6 +125,34 @@ describe("Anthropic Messages: thinking, effort and the summary request", () => {
     });
   });
 
+  test("`{ type: \"enabled\" }` with NO budget is refused BEFORE the request, not sent for the endpoint to 400", async () => {
+    // The pin types `budgetTokens` optional while its own JSDoc renders the arm as requiring one --
+    // and this endpoint requires it. Forwarding the arm budget-less is a request we KNOW will fail
+    // upstream, which is exactly what the reject-before rule exists for.
+    const adapter = testAnthropicAdapter();
+    await withFake({ routes: anthropicCorpusRoutes() }, async (fake) => {
+      await expect(
+        foldTurn(adapter, { model: ANTHROPIC_MODELS.main, messages: [{ role: "user", content: "go" }], thinking: { type: "enabled" } }, testContext(fake.url)),
+      ).rejects.toThrow(/no budgetTokens/);
+      expect(fake.requests).toHaveLength(0);
+    });
+  });
+
+  test("a host `connection.headers` entry cannot override `anthropic-version` or `content-type`", async () => {
+    const adapter = testAnthropicAdapter();
+    await withFake({ routes: anthropicCorpusRoutes() }, async (fake) => {
+      await foldTurn(
+        adapter,
+        { model: ANTHROPIC_MODELS.main, messages: [{ role: "user", content: "go" }] },
+        testContext(fake.url, { connection: { providerId: "anthropic", baseUrl: fake.url, local: true, headers: { "anthropic-version": "1999-01-01", "x-host-own": "kept" } } }),
+      );
+      // A wrong API version surfaces as an unexplained upstream 400 rather than anything local, so
+      // the adapter's own value wins.
+      assertAnthropicRequest(fake.requests[0]!, {});
+      expect(fake.requests[0]!.headers["x-host-own"]).toBe("kept");
+    });
+  });
+
   test("thinking on a model with NO reasoning evidence is refused before the request", async () => {
     const adapter = testAnthropicAdapter();
     await withFake({ routes: anthropicCorpusRoutes() }, async (fake) => {

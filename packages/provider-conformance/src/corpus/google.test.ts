@@ -64,6 +64,16 @@ describe("Google GenerateContent: the live request", () => {
     });
   });
 
+  test("reasoning tokens reported on an EARLY chunk survive a later chunk that restates only the visible count", async () => {
+    // Accumulating both counters into one variable loses the reasoning half the moment a provider
+    // restates only what changed -- an under-report of a reasoning turn's real cost, silently.
+    const adapter = testGoogleAdapter();
+    await withFake({ routes: googleCorpusRoutes() }, async (fake) => {
+      const turn = await foldTurn(adapter, { model: GOOGLE_MODELS.splitUsage, messages: [{ role: "user", content: "go" }] }, googleContext(fake.url));
+      expect(turn.usage).toEqual({ inputTokens: 10, outputTokens: 13 });
+    });
+  });
+
   test("a SAFETY finish reason is a `refusal`, not a completed empty turn", async () => {
     const adapter = testGoogleAdapter();
     await withFake({ routes: googleCorpusRoutes() }, async (fake) => {
@@ -108,7 +118,7 @@ describe("Google GenerateContent: opaque state never leaks", () => {
     const logged: unknown[] = [];
     await withFake({ routes: googleCorpusRoutes() }, async (fake) => {
       const turn = await foldTurn(adapter, { model: GOOGLE_MODELS.replay, messages: [{ role: "user", content: "go" }] }, googleContext(fake.url, { log: (e) => logged.push(e) }));
-      expect(turn.nativeState?.items).toEqual([{ partIndex: 2, callId: "google-call-0", signature: GOOGLE_SIGNATURE }]);
+      expect(turn.nativeState?.items).toEqual([{ partIndex: 2, callId: (turn as { calls: Array<{ id: string }> }).calls[0]!.id, signature: GOOGLE_SIGNATURE }]);
       // Never in a log line...
       expect(JSON.stringify(logged)).not.toContain(GOOGLE_SIGNATURE);
       // ...never in the first request (it had not been minted yet)...
@@ -148,6 +158,72 @@ describe("Google GenerateContent: the pure mapping", () => {
       { role: "user", parts: [{ functionResponse: { name: "Read", response: { output: "out" } } }, { text: "b" }] },
     ]);
     expect(() => toContents([{ role: "tool", content: [{ type: "tool_result", tool_use_id: "nope", content: "x" }] }])).toThrow(/has no matching tool_use/);
+  });
+
+  test("a tool_result resolves to the NEAREST PRECEDING call, not to the last one in the history", () => {
+    // THE REGRESSION TEST for a live bug: this family's `functionCall` carries no id, so Winter mints
+    // one -- and a per-turn counter re-mints the same first id every turn. A flat pre-pass name map
+    // was therefore last-write-wins across the conversation, and turn 1's `functionResponse` went on
+    // the wire naming turn 2's tool. Wrong tool, silently, on the ordinary multi-tool-loop shape.
+    const { contents } = toContents([
+      { role: "user", content: "go" },
+      { role: "assistant", content: [{ type: "tool_use", id: "shared-id", name: "Read", input: {} }] },
+      { role: "tool", content: [{ type: "tool_result", tool_use_id: "shared-id", content: "read output" }] },
+      { role: "assistant", content: [{ type: "tool_use", id: "shared-id", name: "Write", input: {} }] },
+      { role: "tool", content: [{ type: "tool_result", tool_use_id: "shared-id", content: "write output" }] },
+    ]);
+    const responses = contents.flatMap((c) => c.parts).filter((p): p is { functionResponse: { name: string } } => "functionResponse" in p);
+    expect(responses.map((r) => r.functionResponse.name)).toEqual(["Read", "Write"]);
+  });
+
+  test("two turns in one session never share a minted call id", async () => {
+    const adapter = testGoogleAdapter();
+    await withFake({ routes: googleCorpusRoutes() }, async (fake) => {
+      const ctx = googleContext(fake.url);
+      const first = await foldTurn(adapter, { model: GOOGLE_MODELS.full, messages: [{ role: "user", content: "a" }] }, ctx);
+      const second = await foldTurn(adapter, { model: GOOGLE_MODELS.full, messages: [{ role: "user", content: "b" }] }, ctx);
+      const idOf = (turn: unknown) => (turn as { calls: Array<{ id: string }> }).calls[0]!.id;
+      // The engine correlates a subagent's frames to its parent BY tool_use id, so a collision across
+      // turns is not cosmetic.
+      expect(idOf(first)).not.toBe(idOf(second));
+      expect(idOf(first)).toMatch(/^google-call-[0-9a-f]{8}-0$/);
+    });
+  });
+
+  test("`{ type: \"enabled\" }` with NO budget is refused BEFORE the request, never sent as the model's default", async () => {
+    const adapter = testGoogleAdapter();
+    await withFake({ routes: googleCorpusRoutes() }, async (fake) => {
+      await expect(
+        foldTurn(adapter, { model: GOOGLE_MODELS.main, messages: [{ role: "user", content: "a" }], thinking: { type: "enabled" } }, googleContext(fake.url)),
+      ).rejects.toThrow(/no budgetTokens/);
+      expect(fake.requests).toHaveLength(0);
+    });
+  });
+
+  test("a host header cannot override a PROTOCOL header; an EXPLICIT privileged one stays the host's own call", async () => {
+    const adapter = testGoogleAdapter();
+    await withFake({ routes: googleCorpusRoutes() }, async (fake) => {
+      await foldTurn(
+        adapter,
+        { model: GOOGLE_MODELS.main, messages: [{ role: "user", content: "a" }] },
+        googleContext(fake.url, {
+          connection: { providerId: "google", baseUrl: fake.url, local: true, headers: { "content-type": "text/plain", "x-goog-user-project": "smuggled-project", "x-host-own": "kept" } },
+        }),
+      );
+      const recorded = fake.requests[0]!;
+      // Winter's own values win: a host header spread LAST could replace `content-type`, and a wrong
+      // one surfaces as an unexplained upstream 400 rather than as anything local.
+      expect(recorded.headers["content-type"]).toContain("application/json");
+      // A header that collides with nothing is still the host's to send.
+      expect(recorded.headers["x-host-own"]).toBe("kept");
+      // THE BOUNDARY, DECIDED AND PINNED: R6-L governs what the ADAPTER INFERS from a reviewed
+      // descriptor -- `connection.project` does NOT become `x-goog-user-project` on a user endpoint,
+      // which the fixture above proves. It does NOT govern what the host explicitly writes into its
+      // own connection profile: the same config object names the `baseUrl` and the header, by the
+      // same author, so there is no confused deputy to protect against, and stripping it would break
+      // a self-hosted proxy that legitimately needs it. Disclosed.
+      expect(recorded.headers["x-goog-user-project"]).toBe("smuggled-project");
+    });
   });
 
   test("`mapEffort` refuses a tier the model does not declare, and maps a number onto the nearest one", () => {

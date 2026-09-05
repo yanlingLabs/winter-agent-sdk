@@ -153,18 +153,6 @@ function coerceItem(value: unknown): GoogleThoughtSignatureItem | undefined {
 
 type WirePart = Record<string, unknown>;
 
-/** The name a `functionResponse` must carry, recovered from the assistant `tool_use` that minted the id. */
-function toolNamesById(messages: ProviderMessageLike[]): Map<string, string> {
-  const names = new Map<string, string>();
-  for (const message of messages) {
-    if (typeof message.content === "string") continue;
-    for (const block of message.content) {
-      if (block.type === "tool_use") names.set(block.id, block.name);
-    }
-  }
-  return names;
-}
-
 /**
  * A tool result's payload as this family's `response` object.
  *
@@ -196,7 +184,16 @@ interface SerializeResult {
  * endpoint rejects.
  */
 export function toContents(messages: ProviderMessageLike[]): SerializeResult {
-  const names = toolNamesById(messages);
+  // INCREMENTAL, not a pre-pass over the whole history, and the difference is a live bug rather than
+  // a style choice. This family's `functionCall` carries no id, so Winter mints one -- and a
+  // per-stream counter re-mints the same first id on every turn. A flat pre-pass map is therefore
+  // last-write-wins across the conversation: in a history where turn 1 called `Read` and turn 2
+  // called `Write` under the same minted id, turn 1's `functionResponse` went on the wire naming
+  // `Write`. Wrong tool, silently, on the ordinary multi-tool-loop shape. Building the map as the
+  // walk proceeds resolves every result to the NEAREST PRECEDING call, which is what history order
+  // already guarantees. (The ids are additionally made unique per stream below -- both fixes,
+  // because either one alone leaves the other's failure mode reachable.)
+  const names = new Map<string, string>();
   const contents: SerializeResult["contents"] = [];
   let droppedForeignReasoning = 0;
 
@@ -222,6 +219,7 @@ export function toContents(messages: ProviderMessageLike[]): SerializeResult {
           parts.push({ inlineData: { mimeType: block.source.media_type, data: block.source.data } });
           break;
         case "tool_use": {
+          names.set(block.id, block.name);
           const signature = items.find((i) => i.callId === block.id)?.signature;
           parts.push({
             functionCall: { name: block.name, args: typeof block.input === "object" && block.input !== null ? block.input : {} },
@@ -318,8 +316,17 @@ function buildThinkingConfig(req: TurnRequest, descriptor: WinterModelDescriptor
       };
     }
     if (req.thinking.type === "disabled") config = { thinkingBudget: 0 };
-    else if (req.thinking.type === "enabled") config = req.thinking.budgetTokens !== undefined ? { thinkingBudget: req.thinking.budgetTokens } : {};
-    else config = {};
+    else if (req.thinking.type === "enabled") {
+      // The pin types `budgetTokens` OPTIONAL and its own JSDoc renders the arm as requiring one --
+      // "a well-typed value with undefined semantics in the pin" (derived-shapes item (c)). Sending
+      // it budget-less would mean silently serving `enabled` as the model's own default, which for
+      // some models is no thinking at all: a silent downgrade, which WS-13 §8.2 prohibits outright.
+      // The caller is told to say which it meant.
+      if (req.thinking.budgetTokens === undefined) {
+        return { ok: false, reason: 'thinking `{ type: "enabled" }` carries no budgetTokens, and this family expresses a budget-less request as the model\'s own default — which is a silent downgrade. Pass `budgetTokens`, or ask for `{ type: "adaptive" }` if the model should decide.' };
+      }
+      config = { thinkingBudget: req.thinking.budgetTokens };
+    } else config = {};
   }
 
   if (req.effort !== undefined) {
@@ -485,12 +492,22 @@ export function createGoogleFamilyAdapter(transport: GoogleTransport, opts: Goog
 
     let bytes = 0;
     let started = false;
+    // UNIQUE PER STREAM. A bare per-turn counter re-mints `google-call-0` on every turn of a
+    // conversation, so two calls in one session share an id -- and the engine correlates a subagent's
+    // frames to its parent BY tool_use id (`parent_tool_use_id`). A colliding id there mixes two
+    // turns' children together. The nonce costs nothing and closes the whole class.
+    const callNonce = crypto.randomUUID().replace(/-/g, "").slice(0, 8);
     let callIndex = 0;
     let sawCall = false;
     let finished = false;
     let stopReason: "end_turn" | "tool_use" | "max_tokens" | "refusal" = "end_turn";
     let inputTokens = 0;
-    let outputTokens = 0;
+    // The two output counters are tracked SEPARATELY and summed once at the end. Accumulating them
+    // into one variable as chunks arrive loses the reasoning count the moment a later chunk reports
+    // `candidatesTokenCount` without repeating `thoughtsTokenCount` -- which is exactly the shape a
+    // provider that only restates what changed produces.
+    let candidatesTokens = 0;
+    let thoughtsTokens = 0;
     let cacheReadTokens: number | undefined;
     const signatures: GoogleThoughtSignatureItem[] = [];
     let partIndex = 0;
@@ -519,11 +536,11 @@ export function createGoogleFamilyAdapter(transport: GoogleTransport, opts: Goog
 
         const usage = payload["usageMetadata"] as Record<string, unknown> | undefined;
         if (typeof usage?.["promptTokenCount"] === "number") inputTokens = usage["promptTokenCount"];
-        if (typeof usage?.["candidatesTokenCount"] === "number") outputTokens = usage["candidatesTokenCount"];
+        if (typeof usage?.["candidatesTokenCount"] === "number") candidatesTokens = usage["candidatesTokenCount"];
         // The family bills reasoning separately from the visible answer, so the two are SUMMED into
         // the seam's single `outputTokens` -- reporting only the visible half would under-report a
         // reasoning turn's real cost.
-        if (typeof usage?.["thoughtsTokenCount"] === "number") outputTokens += usage["thoughtsTokenCount"];
+        if (typeof usage?.["thoughtsTokenCount"] === "number") thoughtsTokens = usage["thoughtsTokenCount"];
         if (typeof usage?.["cachedContentTokenCount"] === "number") cacheReadTokens = usage["cachedContentTokenCount"];
 
         const promptFeedback = payload["promptFeedback"] as { blockReason?: unknown } | undefined;
@@ -545,8 +562,9 @@ export function createGoogleFamilyAdapter(transport: GoogleTransport, opts: Goog
           if (typeof part["functionCall"] === "object" && part["functionCall"] !== null) {
             const call = part["functionCall"] as { name?: unknown; args?: unknown };
             // The id is MINTED here: this family's `functionCall` carries none, and the engine keys
-            // a tool result on one. It is stable within the turn, which is all a replay needs.
-            const id = `google-call-${callIndex++}`;
+            // a tool result on one. Nonce-prefixed so it is unique across the whole session, not
+            // merely within this turn.
+            const id = `google-call-${callNonce}-${callIndex++}`;
             sawCall = true;
             yield { type: "tool_call_start", id, name: typeof call.name === "string" ? call.name : "" };
             yield { type: "tool_call_delta", id, argumentsJsonDelta: JSON.stringify(call.args ?? {}) };
@@ -583,7 +601,7 @@ export function createGoogleFamilyAdapter(transport: GoogleTransport, opts: Goog
     // a partial accumulation. A stream that dies mid-turn reaches the `!finished` return above and
     // emits no native state at all.
     if (signatures.length > 0) yield { type: "native_state", items: signatures };
-    yield { type: "usage", inputTokens, outputTokens, ...(cacheReadTokens !== undefined ? { cacheReadTokens } : {}) };
+    yield { type: "usage", inputTokens, outputTokens: candidatesTokens + thoughtsTokens, ...(cacheReadTokens !== undefined ? { cacheReadTokens } : {}) };
     yield { type: "done", stopReason };
   }
 
@@ -752,10 +770,20 @@ export function geminiTransport(): GoogleTransport {
     },
     async headers(ctx, policy, json) {
       const material = await ctx.credentials.get(ctx.authRef);
+      // HOST HEADERS FIRST, so nothing below can be silently overridden -- a host header spread LAST
+      // could replace `content-type`, or (for Vertex) the bearer token this transport just minted.
+      //
+      // THE R6-L BOUNDARY, stated once: this governs what the ADAPTER INFERS from a reviewed
+      // descriptor. `connection.project` does NOT become `x-goog-user-project` on a user endpoint --
+      // `applyPrivilegedHeaders` returns `{}` there, and a fixture proves it. It does NOT govern a
+      // header the host EXPLICITLY wrote into its own connection profile: the same config object
+      // names the base URL and the header, by the same author, so there is no confused deputy to
+      // protect against, and stripping it would break a self-hosted proxy that needs it. Disclosed,
+      // and pinned by a fixture so it stays a decision rather than an accident.
       const headers: Record<string, string> = {
+        ...(ctx.connection.headers ?? {}),
         ...(json ? { "content-type": "application/json" } : {}),
         ...applyPrivilegedHeaders(policy, ctx.connection.project !== undefined ? { "x-goog-user-project": ctx.connection.project } : {}),
-        ...(ctx.connection.headers ?? {}),
       };
       if (material !== null) {
         if (material.kind === "api-key") headers["x-goog-api-key"] = material.key;

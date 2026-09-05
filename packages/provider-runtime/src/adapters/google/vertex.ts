@@ -132,13 +132,23 @@ export function vertexTransport(opts: VertexAdapterOptions = {}): GoogleTranspor
         sources.set(key, source);
       }
       const token = await source.token();
+      // HOST HEADERS FIRST, so nothing below can be silently overridden -- a host header spread LAST
+      // could replace `content-type`, or (for Vertex) the bearer token this transport just minted.
+      //
+      // THE R6-L BOUNDARY, stated once: this governs what the ADAPTER INFERS from a reviewed
+      // descriptor. `connection.project` does NOT become `x-goog-user-project` on a user endpoint --
+      // `applyPrivilegedHeaders` returns `{}` there, and a fixture proves it. It does NOT govern a
+      // header the host EXPLICITLY wrote into its own connection profile: the same config object
+      // names the base URL and the header, by the same author, so there is no confused deputy to
+      // protect against, and stripping it would break a self-hosted proxy that needs it. Disclosed,
+      // and pinned by a fixture so it stays a decision rather than an accident.
       return {
+        ...(ctx.connection.headers ?? {}),
         authorization: `Bearer ${token}`,
         ...(json ? { "content-type": "application/json" } : {}),
         // PRIVILEGED (R6-L): an account identifier. It rides the composed, reviewed endpoint and is
         // dropped for a user-supplied `baseUrl`.
         ...applyPrivilegedHeaders(policy, ctx.connection.project !== undefined ? { "x-goog-user-project": ctx.connection.project } : {}),
-        ...(ctx.connection.headers ?? {}),
       };
     },
 

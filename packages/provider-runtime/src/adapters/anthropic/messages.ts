@@ -266,10 +266,17 @@ function buildThinking(req: TurnRequest, descriptor: WinterModelDescriptor | und
             : `model "${descriptor.key}" does not declare reasoning support, so a thinking config cannot be honoured`,
       };
     }
-    base =
-      req.thinking.type === "enabled"
-        ? { type: "enabled", ...(req.thinking.budgetTokens !== undefined ? { budget_tokens: req.thinking.budgetTokens } : {}) }
-        : { type: req.thinking.type };
+    const requestedBudget = req.thinking.type === "enabled" ? req.thinking.budgetTokens : undefined;
+    if (req.thinking.type === "enabled" && requestedBudget === undefined) {
+      // The pin types `budgetTokens` OPTIONAL while its own JSDoc renders the arm as requiring one --
+      // "a well-typed value with undefined semantics in the pin" (derived-shapes item (c)). This
+      // endpoint requires `budget_tokens` on an enabled thinking config, so forwarding the arm
+      // budget-less is a request we KNOW will fail upstream. That is exactly what the
+      // reject-before-the-request rule exists for, and the `budget >= max_tokens` check below cannot
+      // catch it (an absent budget skips it).
+      return { ok: false, reason: 'thinking `{ type: "enabled" }` carries no budgetTokens, which this endpoint requires. Pass `budgetTokens`, or ask for `{ type: "adaptive" }` if the model should decide.' };
+    }
+    base = requestedBudget !== undefined ? { type: "enabled", budget_tokens: requestedBudget } : { type: req.thinking.type };
   }
 
   if (req.effort !== undefined) {
@@ -398,12 +405,19 @@ function resolveEndpoint(ctx: ProviderContext, defaultBaseUrl: string): Endpoint
  */
 async function buildHeaders(ctx: ProviderContext, policy: EndpointPolicy, opts: AnthropicAdapterOptions, json: boolean): Promise<Record<string, string>> {
   const material = await ctx.credentials.get(ctx.authRef);
+  // HOST HEADERS FIRST, so nothing below can be silently overridden. Spread LAST, a host header
+  // could replace `anthropic-version` or `content-type` -- and a wrong API version is a class of
+  // failure that surfaces as an unexplained upstream 400 rather than as anything local. What a host
+  // attaches to its own connection profile is still its own choice; what the ADAPTER decides now
+  // always wins.
   const headers: Record<string, string> = {
+    ...(ctx.connection.headers ?? {}),
     "anthropic-version": ANTHROPIC_API_VERSION,
     ...(json ? { "content-type": "application/json" } : {}),
     ...(opts.betas !== undefined && opts.betas.length > 0 ? { "anthropic-beta": opts.betas.join(",") } : {}),
+    // This family has no privileged header of its own; the call site exists so the R6-L rule is
+    // enforced by code rather than by a comment, and so a later account-scoped header lands here.
     ...applyPrivilegedHeaders(policy, {}),
-    ...(ctx.connection.headers ?? {}),
   };
   if (material !== null) {
     if (material.kind === "api-key") headers["x-api-key"] = material.key;

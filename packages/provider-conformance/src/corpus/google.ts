@@ -82,10 +82,12 @@ export const GOOGLE_MODELS = {
   noVision: "sc-g-no-vision",
   capped: "sc-g-capped",
   noEfforts: "sc-g-no-efforts",
+  /** Reports `thoughtsTokenCount` on an EARLY chunk and only `candidatesTokenCount` on the last one. */
+  splitUsage: "sc-g-split-usage",
 } as const;
 
 export function testGoogleCatalog(): WinterCatalog {
-  const reasoningIds = [GOOGLE_MODELS.main, GOOGLE_MODELS.full, GOOGLE_MODELS.multiTool, GOOGLE_MODELS.dropBeforeFinish, GOOGLE_MODELS.usage, GOOGLE_MODELS.replay, GOOGLE_MODELS.refusal];
+  const reasoningIds = [GOOGLE_MODELS.main, GOOGLE_MODELS.full, GOOGLE_MODELS.multiTool, GOOGLE_MODELS.dropBeforeFinish, GOOGLE_MODELS.usage, GOOGLE_MODELS.replay, GOOGLE_MODELS.refusal, GOOGLE_MODELS.splitUsage];
   return {
     schemaVersion: 1,
     catalogVersion: "0.0.0-lane-b-fixture",
@@ -119,6 +121,15 @@ export function testGoogleCatalog(): WinterCatalog {
 export const GOOGLE_TEST_KEY = "test-key-google";
 /** The opaque marker every `thoughtSignature` negative searches for. Distinctive on purpose: a vague value makes the negative vacuous. */
 export const GOOGLE_SIGNATURE = "OPAQUE-THOUGHT-SIG-1";
+/**
+ * The shape of a minted tool-call id.
+ *
+ * This family's `functionCall` carries no id, so the adapter mints one -- NONCE-PREFIXED, so two
+ * turns in one session can never share an id (the engine correlates a subagent's frames to its
+ * parent by tool_use id). A fixture therefore asserts the SHAPE and reads the value, rather than
+ * pinning a counter that would make the collision it prevents invisible again.
+ */
+export const CALL_ID = /^google-call-[0-9a-f]{8}-(\d+)$/;
 
 export function googleContext(baseUrl: string, over: Partial<ProviderContext> = {}): ProviderContext {
   return {
@@ -224,6 +235,11 @@ export function googleScenarioStream(): NonNullable<Parameters<typeof geminiFake
       ]),
     [GOOGLE_MODELS.replay]: (_rec, attempt) => (attempt === 1 ? geminiStreamResponse(REPLAY_CHUNKS) : geminiStreamResponse([{ parts: [{ text: "done" }] }, { finishReason: "STOP" }])),
     [GOOGLE_MODELS.refusal]: () => geminiStreamResponse([{ parts: [{ text: "" }], finishReason: "SAFETY" }]),
+    [GOOGLE_MODELS.splitUsage]: () =>
+      geminiStreamResponse([
+        { parts: [{ text: "thought about it", thought: true }], usageMetadata: { promptTokenCount: 10, thoughtsTokenCount: 9 } },
+        { parts: [{ text: "answer" }], finishReason: "STOP", usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 4 } },
+      ]),
     [GOOGLE_MODELS.slow]: () => {
       const frames = geminiSseFrames([{ parts: [{ text: "first" }] }, { parts: [{ text: "second" }] }, { finishReason: "STOP" }]);
       return sseResponse(frames.map((frame, index) => (index >= 1 ? { ...frame, delayMs: 1_000 } : frame)));
@@ -346,7 +362,8 @@ export function googleFamilyCorpusCases(config: GoogleFamilyCorpusConfig): Parti
     "tool-call-single": async ({ fake }) => {
       const turn = await foldTurn(adapter, { model: MODELS.full, messages: [user("go")] }, ctxFor(fake));
       assert(turn.kind === "tool_use", `expected a tool_use turn, saw ${turn.kind}`);
-      eq(turn.calls, [{ id: "google-call-0", name: "Read", input: { path: "/tmp/x" } }], "the single parsed call");
+      assert(CALL_ID.test(turn.calls[0]?.id ?? ""), `the minted call id should be nonce-prefixed, saw ${JSON.stringify(turn.calls[0]?.id)}`);
+      eq(turn.calls.map((c) => ({ name: c.name, input: c.input })), [{ name: "Read", input: { path: "/tmp/x" } }], "the single parsed call");
       eq(turn.text, "hello world", "the leading text a real model returns alongside its call");
       // R6-8: the foreign summary lands on `thinking.summary`, NEVER on the turn's text.
       eq(turn.thinking?.summary, "reasoning summary", "the foreign reasoning summary");
@@ -356,7 +373,12 @@ export function googleFamilyCorpusCases(config: GoogleFamilyCorpusConfig): Parti
     "tool-call-multiple": async ({ fake }) => {
       const turn = await foldTurn(adapter, { model: MODELS.multiTool, messages: [user("go")] }, ctxFor(fake));
       assert(turn.kind === "tool_use", "expected a tool_use turn");
-      eq(turn.calls, [{ id: "google-call-0", name: "Read", input: { path: "/a" } }, { id: "google-call-1", name: "Write", input: { path: "/b" } }], "both calls, each with its own minted id");
+      eq(turn.calls.map((c) => ({ name: c.name, input: c.input })), [{ name: "Read", input: { path: "/a" } }, { name: "Write", input: { path: "/b" } }], "both calls, each with its own name and arguments");
+      const ordinals = turn.calls.map((c) => CALL_ID.exec(c.id)?.[1]);
+      eq(ordinals, ["0", "1"], "each call keeps its own ordinal within the turn");
+      // ONE nonce per stream: the two calls belong to the same turn and must be distinguishable
+      // from any other turn's, not from each other's stream.
+      assert(new Set(turn.calls.map((c) => c.id.slice(0, -1))).size === 1, "both calls should share one stream nonce");
     },
 
     "tool-call-fragmented": async () => ({
@@ -484,7 +506,8 @@ export function googleFamilyCorpusCases(config: GoogleFamilyCorpusConfig): Parti
       // (a) The signature is captured, keyed to the EXACT part it arrived on.
       const turn = await foldTurn(adapter, { model: MODELS.replay, messages: [user("go")] }, ctxFor(fake));
       assert(turn.kind === "tool_use", "expected the first turn to end in a tool call");
-      eq(turn.nativeState?.items, [{ partIndex: 2, callId: "google-call-0", signature: GOOGLE_SIGNATURE }], "the captured continuation item");
+      const callId = turn.calls[0]!.id;
+      eq(turn.nativeState?.items, [{ partIndex: 2, callId, signature: GOOGLE_SIGNATURE }], "the captured continuation item, keyed to the call it arrived on");
 
       // (b) A stream that never reaches its completing chunk captures NOTHING -- even though the
       //     signature was already on the wire.
@@ -500,10 +523,10 @@ export function googleFamilyCorpusCases(config: GoogleFamilyCorpusConfig): Parti
             user("go"),
             {
               role: "assistant",
-              content: [{ type: "text", text: turn.text ?? "" }, { type: "tool_use", id: "google-call-0", name: "Read", input: { path: "/r" } }],
+              content: [{ type: "text", text: turn.text ?? "" }, { type: "tool_use", id: callId, name: "Read", input: { path: "/r" } }],
               nativeState: { family: "google", continuationDomain: `google/${MODELS.replay}`, items: turn.nativeState?.items ?? [] },
             },
-            { role: "tool", content: [{ type: "tool_result", tool_use_id: "google-call-0", content: "ok" }] },
+            { role: "tool", content: [{ type: "tool_result", tool_use_id: callId, content: "ok" }] },
           ],
         },
         ctxFor(fake),
