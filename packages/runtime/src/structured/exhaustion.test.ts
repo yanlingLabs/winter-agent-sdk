@@ -13,6 +13,7 @@ import type { RuntimeConfig, WinterFrame, ProtocolSdkMessage as SdkMessage } fro
 import { createInMemoryChannel } from "../protocol/channel.ts";
 import { runEngine, type Provider, type ProviderTurn } from "../engine.ts";
 import { stubExecutor } from "../provider/mock.ts";
+import { getRegisteredTool } from "../tools/registry.ts";
 import { MAX_STRUCTURED_OUTPUT_RETRIES_ENV, STRUCTURED_OUTPUT_TOOL_NAME, type JsonSchema } from "./seam.ts";
 import { createStructuredOutputSeam } from "./ajv-seam.ts";
 
@@ -116,9 +117,30 @@ describe("structured output -- the exhaustion path on the real ajv seam (R5-10)"
     expect(toolResultTexts(messages).filter((t) => t.startsWith("Structured output validation failed"))).toHaveLength(1);
   });
 
-  test("the advertised schema IS the caller's schema -- what the model is shown is what it is validated against", async () => {
-    const messages = await run({ inputs: [{ answer: 1 }] });
-    const init = messages.find((m) => (m as { subtype?: string }).subtype === "init") as { tools: string[] };
+  test("the schema the ENGINE registered is the caller's own object, and the tool is advertised", async () => {
+    // The title used to claim schema identity and assert only the advertised NAME. The identity is
+    // now read out of the live registry MID-RUN -- registration is withdrawn at teardown, so after
+    // the run there is nothing left to look at -- against the very object the config carries. This
+    // is the engine's leg of the identity that `validator.test.ts` pins on `buildDescriptor` alone;
+    // a normalization step anywhere between the two would break exactly here.
+    const seen: Array<unknown> = [];
+    const { host, runtime } = createInMemoryChannel();
+    const config: RuntimeConfig = { sessionId: "s", cwd: "/tmp/x", model: "sonnet", outputFormat: { type: "json_schema", schema: SCHEMA as Record<string, unknown> } };
+    const provider: Provider = {
+      async generate(): Promise<ProviderTurn> {
+        seen.push(getRegisteredTool(STRUCTURED_OUTPUT_TOOL_NAME)?.descriptor.inputSchema);
+        return { kind: "tool_use", calls: [{ id: "so-1", name: STRUCTURED_OUTPUT_TOOL_NAME, input: { answer: 1 } }] };
+      },
+    };
+    const done = runEngine({ config, input: runtime.input, output: runtime.output, provider, tools: stubExecutor, structuredOutput: createStructuredOutputSeam() });
+    host.output.write({ type: "user", text: "go" });
+    host.output.write({ type: "control_request", requestId: "r", subtype: "end_input", payload: undefined });
+    const frames = await drain(host.input);
+    await done;
+
+    // The SAME object the caller put on `config.outputFormat.schema`, not a copy of it.
+    expect(seen[0]).toBe(config.outputFormat!.schema);
+    const init = dataMessages(frames).find((m) => (m as { subtype?: string }).subtype === "init") as { tools: string[] };
     expect(init.tools).toContain(STRUCTURED_OUTPUT_TOOL_NAME);
   });
 });

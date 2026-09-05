@@ -6,7 +6,7 @@
 import { test, expect, describe } from "bun:test";
 import { STRUCTURED_OUTPUT_TOOL_NAME, type JsonSchema } from "./seam.ts";
 import { createStructuredOutputSeam } from "./ajv-seam.ts";
-import { formatValidationErrors } from "./validator.ts";
+import { createSchemaValidatorCache, formatValidationErrors } from "./validator.ts";
 
 const SIMPLE: JsonSchema = { type: "object", properties: { x: { type: "number" }, s: { type: "string" } }, required: ["x"], additionalProperties: false };
 
@@ -86,11 +86,24 @@ describe("structured/validator.ts -- validate (ajv, R5-7)", () => {
     expect(wrong.ok === false && wrong.errors.some((e) => e.startsWith("/pair/0"))).toBe(true);
   });
 
-  test("no `$schema` means draft-07 -- the default dialect, and it still validates", () => {
-    const draft7: JsonSchema = { $schema: "http://json-schema.org/draft-07/schema#", type: "object", properties: { n: { type: "integer" } }, required: ["n"] };
+  test("draft-07 is the default dialect -- with an explicit `$schema` AND with none at all", () => {
+    // Two fixtures, because they exercise different code: an explicit draft-07 `$schema` sends ajv
+    // through meta-validation against a schema the draft-07 instance DOES hold, while no `$schema`
+    // at all skips the dialect branch entirely. An earlier title claimed the second and supplied
+    // only the first.
     const seam = createStructuredOutputSeam();
-    expect(seam.validate(draft7, { n: 3 }).ok).toBe(true);
-    expect(seam.validate(draft7, { n: 3.5 }).ok).toBe(false);
+    const explicit: JsonSchema = { $schema: "http://json-schema.org/draft-07/schema#", type: "object", properties: { n: { type: "integer" } }, required: ["n"] };
+    expect(seam.validate(explicit, { n: 3 }).ok).toBe(true);
+    expect(seam.validate(explicit, { n: 3.5 }).ok).toBe(false);
+
+    const bare: JsonSchema = { type: "object", properties: { n: { type: "integer" } }, required: ["n"] };
+    expect((bare as { $schema?: unknown }).$schema).toBeUndefined();
+    expect(seam.validate(bare, { n: 3 }).ok).toBe(true);
+    expect(seam.validate(bare, { n: 3.5 }).ok).toBe(false);
+    // draft-07 semantics specifically: `integer` rejects 3.5, and `prefixItems` (2020-12) is merely
+    // an unknown keyword here rather than an error.
+    const withUnknown2020Keyword: JsonSchema = { type: "object", properties: { pair: { type: "array", prefixItems: [{ type: "number" }] } } } as unknown as JsonSchema;
+    expect(seam.validate(withUnknown2020Keyword, { pair: ["not a number"] }).ok).toBe(true);
   });
 
   test("a THIRD dialect is refused loudly, never silently validated under draft-07", () => {
@@ -118,13 +131,17 @@ describe("structured/validator.ts -- validate (ajv, R5-7)", () => {
   });
 
   test("the compiled validator is CACHED per schema object -- the same schema arrives on every attempt", () => {
-    const seam = createStructuredOutputSeam();
-    const before = process.hrtime.bigint();
-    for (let i = 0; i < 200; i++) seam.validate(SIMPLE, { x: i });
-    const elapsedMs = Number(process.hrtime.bigint() - before) / 1e6;
-    // Recompiling 200 times is orders of magnitude slower than this bound; the assertion is a
-    // tripwire on the cache disappearing, not a benchmark.
-    expect(elapsedMs).toBeLessThan(200);
+    // Asserted by IDENTITY, not by wall clock: 200 compiles of a tiny schema can finish inside any
+    // time bound on a fast machine, so a timing tripwire would false-pass on the very regression it
+    // exists to catch.
+    const cache = createSchemaValidatorCache();
+    const first = cache(SIMPLE);
+    expect(cache(SIMPLE)).toBe(first);
+    expect(cache(SIMPLE)).toBe(first);
+    // A DIFFERENT schema object compiles separately, even with identical contents -- the cache is
+    // keyed on identity because that is what the engine hands over on every attempt.
+    const twin: JsonSchema = { type: "object", properties: { x: { type: "number" }, s: { type: "string" } }, required: ["x"], additionalProperties: false };
+    expect(cache(twin)).not.toBe(first);
   });
 
   test("formatValidationErrors renders a null/empty error list rather than producing nothing", () => {
