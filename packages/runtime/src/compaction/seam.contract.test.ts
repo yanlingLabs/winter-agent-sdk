@@ -288,7 +288,7 @@ describe("compaction/seam.ts -- CompactionController (Lane K implements, the eng
         output: runtime.output,
         provider: usageProvider([{ kind: "text", text: "done", usage: { inputTokens: 7, outputTokens: 3 } }]),
         tools: stubExecutor,
-        store: resolved.store,
+        store: resolved.store!,
         compactionController: fakeCompactionController({ keep: 1, summary: "S" }),
       });
       host.output.write({ type: "user", text: "hello" });

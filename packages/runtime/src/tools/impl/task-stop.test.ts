@@ -69,6 +69,31 @@ describe("TaskStop executor", () => {
     expect(res.output).toContain("unknown task_id");
   });
 
+  // Fix round 1 (M4): TaskStop is the THIRD producer of the pinned `task_type` field and was emitting
+  // the INTERNAL kind. `"workflow"` is Winter's ergonomic internal spelling; the pin says
+  // `"local_workflow"` (derived-shapes item (g), confirmed on the running engine by capture (3)).
+  // Both TaskStop result paths are covered -- the stop path and the already-finished path -- because
+  // they are two separate `formatResult` call sites.
+  test("M4: a WORKFLOW task reports the WIRE task_type `local_workflow`, never the internal `workflow`", async () => {
+    startTracking({ taskId: "wf-1", kind: "workflow", outputPath: "/x/wf-1.output", description: "build" });
+    const stopped = await taskStop()({ task_id: "wf-1" }, fakeCtx());
+    const parsed = JSON.parse(stopped.output) as { task_type: string };
+    expect(parsed.task_type).toBe("local_workflow");
+    expect(parsed.task_type).not.toBe("workflow");
+
+    // The already-finished arm is a SECOND formatResult call site with its own argument list.
+    const again = await taskStop()({ task_id: "wf-1" }, fakeCtx());
+    expect((JSON.parse(again.output) as { task_type: string }).task_type).toBe("local_workflow");
+  });
+
+  test("M4: every other kind is spelled identically on both sides -- the mapping exists for workflow alone", async () => {
+    for (const kind of ["bash", "monitor", "agent"] as const) {
+      startTracking({ taskId: `k-${kind}`, kind, outputPath: `/x/k-${kind}.output`, description: "d" });
+      const result = await taskStop()({ task_id: `k-${kind}` }, fakeCtx());
+      expect((JSON.parse(result.output) as { task_type: string }).task_type).toBe(kind);
+    }
+  });
+
   test("stops a running task: kills the process group, sets status stopped, emits frames, returns the pinned {message,task_id,task_type,command?} shape", async () => {
     const frames: BackgroundTaskMessage[] = [];
     const ctx = fakeCtx({ emitFrame: (f) => frames.push(f) });

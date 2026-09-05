@@ -7,7 +7,11 @@
 import { randomUUID } from "node:crypto";
 import "../descriptors/task-stop.ts";
 import { replaceExecutor, type ToolExecutor } from "../registry.ts";
-import { getTask, setTaskStatus, stopTask, listRunningTasks, toBackgroundTasksChangedEntry } from "./background-task-runtime.ts";
+import { getTask, setTaskStatus, stopTask, listRunningTasks, toBackgroundTasksChangedEntry, type BackgroundTaskKind } from "./background-task-runtime.ts";
+// Fix round 1 (M4): the internal-kind -> wire-`task_type` mapping. TaskStop is the THIRD producer of
+// that pinned field (after task_started and background_tasks_changed) and was missing from the
+// inventory the mapping's own header lists.
+import { wireTaskType } from "../background-tasks.ts";
 
 interface TaskStopInput {
   task_id?: string;
@@ -36,8 +40,14 @@ function parseTaskStopInput(input: unknown): TaskStopInput | { error: string } {
 // required. ToolResultPayload.output is plain text (T1's own "spine, not the wire format" -- see
 // registry.ts's header), so this renders the structured shape as JSON text -- the most faithful
 // text encoding of a pinned object result short of a real structured-output wire field.
-function formatResult(message: string, taskId: string, taskType: string, command: string | undefined): string {
-  return JSON.stringify({ message, task_id: taskId, task_type: taskType, ...(command !== undefined ? { command } : {}) });
+//
+// Fix round 1 (M4): `taskType` is a BackgroundTaskKind and is mapped through `wireTaskType` HERE, at
+// the one place this result is built -- both call sites passed `task.kind` verbatim, which put the
+// internal `"workflow"` on the PINNED `task_type` field where the pin says `"local_workflow"`
+// (derived-shapes item (g) + capture (3)). Taking the kind rather than a pre-mapped string is
+// deliberate: a caller cannot forget the mapping if it has no opportunity to.
+function formatResult(message: string, taskId: string, taskKind: BackgroundTaskKind, command: string | undefined): string {
+  return JSON.stringify({ message, task_id: taskId, task_type: wireTaskType(taskKind), ...(command !== undefined ? { command } : {}) });
 }
 
 const taskStopExecutor: ToolExecutor = {

@@ -47,9 +47,14 @@ export type BackgroundTaskKind = "bash" | "monitor" | "workflow" | "agent";
 // `task_started.task_type` -- Winter's own kind stays `"workflow"`, which is the ergonomic internal
 // name and the one `createBackgroundTask("workflow")` takes.
 //
-// ONE mapping, here, rather than a literal at each emission site: `task_started.task_type`,
-// `task_progress`, and `background_tasks_changed[].task_type` are three separate producers, and a
-// hand-written spelling at any one of them is invisible until a conformance comparison runs.
+// ONE mapping, here, rather than a literal at each emission site. THE PRODUCER INVENTORY, kept
+// current (fix round 1, M4 -- TaskStop was missing from it and was emitting the internal kind):
+//   1. `tools/impl/background-task-runtime.ts`  toBackgroundTasksChangedEntry -> background_tasks_changed[].task_type
+//   2. `tools/impl/task-stop.ts`                formatResult                  -> the pinned TaskStop result's task_type
+//   3. `tools/impl/agent.ts`                    task_started / the agent roster (literal "agent", which maps to itself)
+//   4. Lane W's own `task_started`/`task_progress` emissions (WorkflowRunHost)
+// A hand-written spelling at any one of them is invisible until a conformance comparison runs, which
+// is why every new producer belongs on this list.
 const WIRE_TASK_TYPES: Readonly<Record<BackgroundTaskKind, string>> = Object.freeze({
   bash: "bash",
   monitor: "monitor",
