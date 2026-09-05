@@ -1274,6 +1274,12 @@ async function runNeighborFileProbe(officialSdk: OfficialSdk): Promise<void> {
     let requestCount = 0;
     let markerSeenInAnyRequestBody = false;
     const requestPaths: string[] = [];
+    // The append turns answer with a LARGE canned reply so the resumed conversation actually has
+    // something to compact: the first pass of this probe drove /compact against six short turns and
+    // the runtime answered "Not enough messages to compact", which would have left the compaction
+    // half of the probe unexercised. Synthetic filler authored here, never upstream content.
+    let bulkyReplies = false;
+    const BULK_TEXT = "winter capture filler sentence for the compaction threshold. ".repeat(700);
     server = Bun.serve({
       port: 0,
       hostname: "127.0.0.1",
@@ -1290,7 +1296,12 @@ async function runNeighborFileProbe(officialSdk: OfficialSdk): Promise<void> {
         // Substring check only — the body is NEVER printed (it carries the system prompt).
         if (raw.includes(marker)) markerSeenInAnyRequestBody = true;
         console.error(`[loopback H] #${requestCount} ${req.method} ${url.pathname} bodyBytes=${raw.length} markerPresent=${raw.includes(marker)}`);
-        return jsonResponse(CANNED_TEXT_RESPONSE);
+        if (!bulkyReplies) return jsonResponse(CANNED_TEXT_RESPONSE);
+        return jsonResponse({
+          ...CANNED_TEXT_RESPONSE,
+          content: [{ type: "text", text: BULK_TEXT }],
+          usage: { input_tokens: 12_000, output_tokens: 12_000 },
+        });
       },
     });
     console.error(`\n=== Scenario H: WS-17 probe (a) — neighbour-file survival across resume ===`);
@@ -1338,21 +1349,38 @@ async function runNeighborFileProbe(officialSdk: OfficialSdk): Promise<void> {
     const transcriptLinesBefore = readFileSync(transcriptPath, "utf8").split("\n").filter((l) => l.trim().length > 0).length;
     console.error(`[capture H] sidecar written beside the transcript: ${sidecarBytesBefore} bytes, sha256=${sidecarSha256Before}`);
 
-    // ---- run 2: resume + one more turn ----------------------------------------------------------
+    // ---- run 2: resume + more turns -------------------------------------------------------------
+    // Several append turns rather than one: the first pass of this probe drove `/compact` and the
+    // runtime refused it with "Not enough messages to compact", which would have left the probe
+    // covering resume + append + an ATTEMPTED compaction only. Enough turns to clear that threshold
+    // makes the compaction real, which is what the brief actually asks the probe to survive.
     const entries2: ConformanceTraceEntry[] = [];
-    const ac2 = new AbortController();
-    const r2 = await drainWithDeadline(
-      officialSdk.query({
-        prompt: "hi from run two",
-        options: { model: "sonnet", cwd: dirs.fixtureCwd, settingSources: [], resume: observedSessionId, abortController: ac2, env: hermeticEnv(dirs, server.url.href) },
-      }),
-      entries2,
-      "capture H/run2",
-      120_000,
-      ac2,
-    );
+    let r2: { thrown: unknown; deadlineHit: boolean } = { thrown: undefined, deadlineHit: false };
+    const appendTurns = 6;
+    bulkyReplies = true; // run 1's transcript is already created; the append turns are the bulky ones
+    for (let turn = 0; turn < appendTurns; turn++) {
+      const ac2 = new AbortController();
+      const r = await drainWithDeadline(
+        officialSdk.query({
+          prompt: `hi from append turn ${turn + 1}`,
+          options: { model: "sonnet", cwd: dirs.fixtureCwd, settingSources: [], resume: observedSessionId, abortController: ac2, env: hermeticEnv(dirs, server.url.href) },
+        }),
+        entries2,
+        `capture H/run2.${turn + 1}`,
+        120_000,
+        ac2,
+      );
+      if (r.thrown !== undefined) r2 = { thrown: r.thrown, deadlineHit: r2.deadlineHit || r.deadlineHit };
+      else r2 = { thrown: r2.thrown, deadlineHit: r2.deadlineHit || r.deadlineHit };
+      if (r.thrown) console.error(`[capture H] append turn ${turn + 1} threw: ${r.thrown instanceof Error ? (r.thrown.stack ?? r.thrown.message) : String(r.thrown)}`);
+    }
     const init2 = entries2.map((e) => e.payload as OfficialMessage).find((p) => p.type === "system" && p.subtype === "init");
-    if (r2.thrown) console.error(`[capture H] run 2 threw: ${r2.thrown instanceof Error ? (r2.thrown.stack ?? r2.thrown.message) : String(r2.thrown)}`);
+    // Attribution: hash the sidecar again BEFORE the /compact run, so a change can be pinned to the
+    // resume/append half or the compaction half rather than to "somewhere in the whole probe".
+    const afterResumeMatches = findFileRecursive(dirs.claudeConfigDir, (name) => name === `${observedSessionId}.provider-state.jsonl`);
+    const sidecarSha256AfterResume = afterResumeMatches.length > 0 ? sha256OfFile(afterResumeMatches[0]!) : "(FILE GONE)";
+    const transcriptLinesAfterResume = readFileSync(transcriptPath, "utf8").split("\n").filter((l) => l.trim().length > 0).length;
+    console.error(`[capture H] after ${appendTurns} append turns: transcript ${transcriptLinesBefore} -> ${transcriptLinesAfterResume} lines; sidecar sha256=${sidecarSha256AfterResume}`);
 
     // ---- run 3: the /compact attempt (recorded as a limitation if it cannot be driven) ----------
     const entries3: ConformanceTraceEntry[] = [];
@@ -1395,9 +1423,13 @@ async function runNeighborFileProbe(officialSdk: OfficialSdk): Promise<void> {
           "run 2 resumed the same session": init2?.session_id === observedSessionId,
           transcriptPath: transcriptPath.replace(dirs.claudeConfigDir, "<CLAUDE_CONFIG_DIR>"),
           sidecarPath: sidecarPath.replace(dirs.claudeConfigDir, "<CLAUDE_CONFIG_DIR>"),
+          appendTurnsDriven: appendTurns,
           "ASSERTION 1 — sidecar sha256 unchanged": sidecarSha256Before === sidecarSha256After,
+          "ASSERTION 1a — unchanged after the resume+append half alone": sidecarSha256Before === sidecarSha256AfterResume,
           sidecarSha256Before,
+          sidecarSha256AfterResume,
           sidecarSha256After,
+          transcriptLinesAfterResume,
           sidecarBytesBefore,
           sidecarBytesAfter: sidecarStillThere.length > 0 ? readFileSync(sidecarStillThere[0]!).length : null,
           "ASSERTION 2 — marker absent from EVERY request body": !markerSeenInAnyRequestBody,

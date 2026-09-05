@@ -832,6 +832,81 @@ letters would have overwritten committed P4 evidence, so this task's six scenari
 | (5) | **J** | `supportedModels()` / `setModel()` | _pending_ |
 | (6) | **K** | `total_cost_usd` / `modelUsage` / `costBasis` for a fake model id | _pending_ |
 
+### Capture (H) — WS-17 probe (a): the sidecar survives byte-untouched. **R6-7 CONFIRMED.**
+
+**This is the capture the controller rules on before Lane C is briefed.** It passes.
+
+**Design.** One set of mkdtemp dirs (`CLAUDE_CONFIG_DIR`, `HOME`, `cwd`) **reused across every run** —
+a fresh cwd for the second run would change the derived project key and make an untouched sidecar
+prove nothing. Sequence: run 1 creates the transcript under a fixed `sessionId`; the sidecar is
+written **beside** it; sha256 recorded; six `resume` append turns; sha256 re-checked (attribution
+split); a `/compact` run; sha256 checked again. The marker is a high-entropy token derived by sha256;
+every request body the loopback receives is substring-checked for it and **never printed** (bodies
+carry the system prompt).
+
+**Where the runtime actually put things** (the path shape, templated):
+
+```
+<CLAUDE_CONFIG_DIR>/projects/<sanitized-cwd>/<sessionId>.jsonl                    ← the transcript
+<CLAUDE_CONFIG_DIR>/projects/<sanitized-cwd>/<sessionId>.provider-state.jsonl     ← the sidecar
+```
+
+The `projects/<sanitized-cwd>/` layout was discovered by globbing, not assumed, and the sanitized-cwd
+directory name matches `SessionKey.projectKey`'s documented default (`sdk.d.ts:5197-5200`).
+
+**Verdicts — all three assertions pass:**
+
+| Assertion | Result |
+| --- | --- |
+| 1. sidecar sha256 unchanged end-to-end | **true** — `5d2bf482…ffa7a0` before, after the appends, and after `/compact`; 921 bytes throughout |
+| 1a. unchanged after the resume+append half alone | **true** (attribution split, so a later change could not be blamed on the wrong half) |
+| 2. the marker appears in **no** request body the loopback received | **true** — 24 requests checked, zero hits |
+| 3. the transcript still parses as JSONL | **true** — 8 → 50 → 56 lines, every line parsed |
+| bonus: file NAMES in the project dir | nothing renamed, moved, or removed; the only name added across the whole probe is the sidecar this probe itself wrote |
+
+`run 2 resumed the same session` is `true` (run 2's `system/init.session_id` equals run 1's), so the
+resume genuinely reloaded the transcript the sidecar sits beside rather than starting a new session.
+
+**What this settles.** **R6-7's "beside the transcript" filesystem layout is safe under the pinned
+runtime.** A `<sessionId>.provider-state.jsonl` neighbour is not read, not rewritten, not renamed, not
+swept, and not sent to the model across session creation, resume, six appending turns, and a
+compaction attempt. WS-05's recorded in-transcript alternative does **not** need to be re-opened, and
+Lane C can be briefed on R6-7 as written.
+
+**Two limits, stated rather than implied:**
+
+1. **The compaction half is NOT CAPTURABLE in this shape** — recorded as the brief permits.
+   `query({ prompt: "/compact" })` with `resume` was driven three times (short turns, then six turns,
+   then six turns with ~250 KB of synthetic filler in context) and answered identically every time:
+
+   ```
+   system/status  status: "compacting"
+   system/status  status: null, compact_result: "failed", compact_error: "Not enough messages to compact."
+   system/init
+   assistant
+   result         subtype: "success", is_error: false, num_turns: 0, result: "Not enough messages to compact."
+   ```
+
+   The refusal is **not** about size — the third attempt had a 300 KB request body's worth of history.
+   The evidence points at ordering: the `system/init` frame arrives **after** the compaction status
+   frames, `num_turns` is `0`, and **the loopback received no `POST /v1/messages` at all during that
+   run** (one `HEAD /api/hello` and nothing else). The local slash command runs before the resumed
+   conversation is materialised into the loop, so there is nothing in memory for it to compact. This
+   is the same class of structural limit P2 recorded for streaming-input captures, and the same one
+   T10 hit for `SessionEnd`. **No compaction was therefore performed on the transcript the sidecar sits
+   beside**; the probe covers session creation, resume, six appends, and an attempted compaction.
+   Carried as **OQ-P6-11**: whether a *completed* compaction rewrites or replaces the transcript file
+   (which would matter for a neighbour that must stay paired with it) needs a streaming-input harness.
+2. **This probe covers the FILESYSTEM store only.** R6-7a's external-`SessionStore` variant is a
+   different mechanism and is answered from the declaration in item (h), not here — including the three
+   constraints (`SessionStoreEntry` needs a `type`, `anchorUuid` must not double as the entry `uuid`,
+   and `listSubkeys` is optional so resume must `load()` the key directly) recorded as OQ-P6-7.
+
+**Free finding for item (b).** `SDKStatusMessage` was observed carrying `status: "compacting"` and
+then `status: null` **with** `compact_result: "failed"` and `compact_error` on the same frame —
+confirming from the runtime that the three-state `SDKStatus` (`sdk.d.ts:4836`) really does use `null`
+as a transition-to-idle value, and that the frame is the compaction-outcome carrier item (b) derived.
+
 ### Capture (G) — `max_retries` is 10, `retry-after` is honoured, `rate_limit_event` never fires, and the overload fallback is FRAME-INVISIBLE
 
 **Design.** Three runs, three loopback policies, each deadline-bounded at 180 s via
@@ -1062,6 +1137,14 @@ is handled differently (no such block was streamed — its shape stays underived
    whether its own auxiliary calls (classifier, compaction, title) are likewise frame-invisible —
    matching the pin — or observable, and whether `modelUsage` still books them (the pin says it does
    for pipeline calls and does not for the classifier, item (e)).
+
+11. **OQ-P6-11 — a *completed* compaction was never observed.** Capture (H) proves a neighbour file
+   survives session creation, resume, six appending turns and an attempted compaction, but the pinned
+   runtime refuses `/compact` in single-shot `query({prompt})` mode (the local command runs ahead of
+   session materialisation; no request reaches the provider). Whether a completed compaction rewrites
+   or replaces the transcript **file** — which would matter for a neighbour that must stay paired with
+   it — needs a streaming-input harness this task's shape cannot build. Recorded as a residual risk on
+   an otherwise clean R6-7 confirmation.
 
 ## Notes recorded but not treated as Open Questions
 
