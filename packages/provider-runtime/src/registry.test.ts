@@ -116,6 +116,54 @@ describe("createRegistry — resolution", () => {
   });
 });
 
+describe("createRegistry — session-provider-first resolution (RULING R6-K)", () => {
+  test("a slash-bearing id that IS the session provider's own model resolves to THAT provider", () => {
+    // The live regression: OpenRouter's upstreamId is literally `openai/gpt-4.1`, so reading any
+    // slash as a provider prefix resolved this to the OPENAI provider — a different vendor, a
+    // different credential, a different bill, silently. WS-13 §9 forbids substitution outright.
+    const resolved = ok(fullRegistry().resolve({ model: "openai/gpt-4.1", provider: { providerId: "openrouter" } }));
+    expect(resolved.providerId).toBe("openrouter");
+    expect(resolved.modelKey).toBe("openrouter/openai/gpt-4.1");
+    expect(resolved.providerModelId).toBe("openai/gpt-4.1");
+  });
+
+  test("a qualified id naming ANOTHER provider is a typed provider-mismatch, never a substitution", () => {
+    const err = failure(fullRegistry().resolve({ model: "openai/gpt-4.1", provider: { providerId: "anthropic" } }));
+    expect(err.code).toBe("provider-mismatch");
+    expect(err.message).toContain("openai");
+    expect(err.message).toContain("anthropic");
+  });
+
+  test("a qualified id for the session's OWN provider still resolves", () => {
+    expect(ok(fullRegistry().resolve({ model: "anthropic/claude-sonnet-5", provider: { providerId: "anthropic" } })).modelKey).toBe("anthropic/claude-sonnet-5");
+    expect(ok(fullRegistry().resolve({ model: "openrouter/openai/gpt-4.1", provider: { providerId: "openrouter" } })).modelKey).toBe("openrouter/openai/gpt-4.1");
+  });
+
+  test("allowUnlisted can no longer swallow a CROSS-provider id — the mismatch wins", () => {
+    // allowUnlisted means "trust my ids for THIS provider", not "reinterpret another vendor's
+    // qualified id as mine". The mismatch check runs first for exactly that reason.
+    const err = failure(fullRegistry().resolve({ model: "openai/gpt-4.1", provider: { providerId: "ollama-local", allowUnlisted: true } }));
+    expect(err.code).toBe("provider-mismatch");
+  });
+
+  test("an unlisted slash-bearing id whose prefix names NO provider still passes through under allowUnlisted", () => {
+    const resolved = ok(fullRegistry().resolve({ model: "library/qwen3:14b", provider: { providerId: "ollama-local", allowUnlisted: true } }));
+    expect(resolved.providerId).toBe("ollama-local");
+    expect(resolved.providerModelId).toBe("library/qwen3:14b");
+  });
+
+  test("with NO configured provider the qualified split is unchanged, and a bare id still refuses", () => {
+    expect(ok(fullRegistry().resolve({ model: "openai/gpt-4.1" })).providerId).toBe("openai");
+    expect(ok(fullRegistry().resolve({ model: "openrouter/openai/gpt-4.1" })).providerId).toBe("openrouter");
+    expect(failure(fullRegistry().resolve({ model: "nosuch/model" })).code).toBe("unknown-provider");
+    expect(failure(fullRegistry().resolve({ model: "claude-sonnet-5" })).code).toBe("no-provider-for-bare-model");
+  });
+
+  test("an unknown SESSION provider is still unknown-provider", () => {
+    expect(failure(fullRegistry().resolve({ model: "anything", provider: { providerId: "nosuch" } })).code).toBe("unknown-provider");
+  });
+});
+
 describe("createRegistry — allowUnlisted (R6-F)", () => {
   test("passes an unlisted id through for a NON-authoritative provider, with NO descriptor", () => {
     const resolved = ok(fullRegistry().resolve({ model: "ollama-local/qwen3:14b", provider: { allowUnlisted: true } }));

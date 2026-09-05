@@ -38,6 +38,8 @@ export type ResolutionErrorCode =
   | "no-adapter"
   | "blocked"
   | "no-provider-for-bare-model"
+  /** RULING R6-K: the model id is qualified for one provider while the session is configured for another. Never resolved either way — see `resolve`'s own header. */
+  | "provider-mismatch"
   | "capability";
 
 export class WinterProviderResolutionError extends Error {
@@ -203,35 +205,76 @@ export function createRegistry(catalog: WinterCatalog): ProviderRegistry {
       adapters.set(adapter.id, adapter);
     },
 
+    /**
+     * RULING R6-K. When the session has a configured provider, that provider's OWN namespace is
+     * tried FIRST, and only then is the id read as a qualified `<providerId>/<model>` key.
+     *
+     * The ordering is not a preference — the previous "any slash means a provider prefix" reading
+     * was a live cross-provider substitution, and the seed catalog contains the case: OpenRouter's
+     * `upstreamId` IS `openai/gpt-4.1`, so `{ model: "openai/gpt-4.1", provider: { providerId:
+     * "openrouter" } }` resolved to the OPENAI provider — a different vendor, different credential,
+     * different bill, silently. WS-13 §9 forbids substitution in this layer outright.
+     *
+     * A qualified prefix that names a provider OTHER than the configured one is now a typed
+     * `provider-mismatch`, never a resolution: the caller has said two contradictory things, and
+     * picking one of them is exactly the silent behaviour the constraint prohibits.
+     */
     resolve(request: ResolveRequest): ResolvedModel | WinterProviderResolutionError {
       const allowUnlisted = request.provider?.allowUnlisted === true;
       const slash = request.model.indexOf("/");
-      if (slash > 0) {
-        // FIRST slash only: an OpenRouter upstreamId is itself slash-bearing (`openai/gpt-4.1`), so
-        // splitting on the last one would address a provider that does not exist.
-        const providerId = request.model.slice(0, slash);
-        const rest = request.model.slice(slash + 1);
-        const provider = providersById.get(providerId);
-        if (provider === undefined) {
-          return new WinterProviderResolutionError("unknown-provider", `no provider "${providerId}" in catalog ${catalog.catalogVersion}`);
+      // FIRST slash only: an OpenRouter upstreamId is itself slash-bearing, so splitting on the last
+      // one would address a provider that does not exist.
+      const prefix = slash > 0 ? request.model.slice(0, slash) : undefined;
+      const rest = slash > 0 ? request.model.slice(slash + 1) : undefined;
+      const sessionProviderId = request.provider?.providerId;
+
+      if (sessionProviderId !== undefined) {
+        const sessionProvider = providersById.get(sessionProviderId);
+        if (sessionProvider === undefined) {
+          return new WinterProviderResolutionError("unknown-provider", `no provider "${sessionProviderId}" in catalog ${catalog.catalogVersion}`);
         }
-        // The exact key wins before the per-provider name index, so a key and an alias that collide
-        // across the two indexes still resolve deterministically.
-        const byKey = modelsByKey.get(request.model);
-        if (byKey !== undefined) return build(provider, byKey, byKey.upstreamId);
-        return resolveWithin(provider, rest, allowUnlisted);
+        // 1. The whole id, as a name inside the session provider. This is what makes OpenRouter's
+        //    slash-bearing ids resolve to OpenRouter.
+        const own = namesByProvider.get(sessionProviderId)?.get(request.model);
+        if (own !== undefined) return build(sessionProvider, own, own.upstreamId);
+
+        // 2. A qualified key for the session's OWN provider still works (`anthropic/claude-sonnet-5`
+        //    with providerId "anthropic"), and a prefix naming ANOTHER provider is the mismatch.
+        if (prefix !== undefined && rest !== undefined) {
+          if (prefix === sessionProviderId) return resolveWithin(sessionProvider, rest, allowUnlisted);
+          if (providersById.has(prefix)) {
+            return new WinterProviderResolutionError(
+              "provider-mismatch",
+              `model "${request.model}" is qualified for provider "${prefix}" but this session's provider is "${sessionProviderId}" — Winter never substitutes one provider for another (WS-13 §9); pass an id in "${sessionProviderId}"'s own namespace, or change the session provider`,
+            );
+          }
+        }
+
+        // 3. allowUnlisted pass-through, under the SESSION provider. Reached only when the id named
+        //    nothing in that provider and no other provider claimed the prefix, so it can no longer
+        //    swallow a cross-provider id.
+        if (allowUnlisted && sessionProvider.liveCatalogAuthority !== "authoritative") {
+          return build(sessionProvider, undefined, request.model);
+        }
+        return resolveWithin(sessionProvider, request.model, false);
       }
 
-      const providerId = request.provider?.providerId;
-      if (providerId === undefined) {
+      // No configured provider: the id must carry its own qualification, exactly as before.
+      if (prefix === undefined || rest === undefined) {
         return new WinterProviderResolutionError(
           "no-provider-for-bare-model",
           `bare model id "${request.model}" needs a provider — pass a qualified "<providerId>/<model>" key or set \`provider.providerId\``,
         );
       }
-      const provider = providersById.get(providerId);
-      if (provider === undefined) return new WinterProviderResolutionError("unknown-provider", `no provider "${providerId}" in catalog ${catalog.catalogVersion}`);
-      return resolveWithin(provider, request.model, allowUnlisted);
+      const provider = providersById.get(prefix);
+      if (provider === undefined) {
+        return new WinterProviderResolutionError("unknown-provider", `no provider "${prefix}" in catalog ${catalog.catalogVersion}`);
+      }
+      // The exact key wins before the per-provider name index, so a key and an alias that collide
+      // across the two indexes still resolve deterministically.
+      const byKey = modelsByKey.get(request.model);
+      if (byKey !== undefined) return build(provider, byKey, byKey.upstreamId);
+      return resolveWithin(provider, rest, allowUnlisted);
     },
 
     list(): RegistryListing {
