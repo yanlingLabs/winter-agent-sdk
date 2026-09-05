@@ -58,10 +58,22 @@ export interface WorkerProcess {
 
 export type WorkerSpawner = (command: WorkerCommand, opts: { home?: string }) => WorkerProcess;
 
-/** The production spawner: `sandbox-exec -p <profile> <worker>`, its own process-group leader. */
-export function realWorkerSpawner(): WorkerSpawner {
-  return (command, opts) => {
-    const spawnTarget = buildWorkerSpawn({ command, ...(opts.home !== undefined ? { home: opts.home } : {}) });
+/**
+ * The production spawner: `sandbox-exec -p <profile> <worker>`, its own process-group leader.
+ *
+ * `sandbox: false` spawns the worker DIRECTLY, with no seatbelt. It exists for exactly one caller --
+ * `scripts/verify-workflow.ts` on a host that has no `/usr/bin/sandbox-exec` (the linux CI runner),
+ * where that gate's subject is the COMPILED ARGV DISPATCH and refusing to run at all would leave that
+ * leg unverified. It is NOT a production posture and nothing in the runtime reaches it: `launch`
+ * refuses outright when the sandbox is required and unavailable, and the seatbelt's own claims are
+ * proved separately in `workflows/worker.darwin.test.ts`.
+ */
+export function realWorkerSpawner(opts: { sandbox?: boolean } = {}): WorkerSpawner {
+  const sandbox = opts.sandbox ?? true;
+  return (command, spawnOpts) => {
+    const spawnTarget = sandbox
+      ? buildWorkerSpawn({ command, ...(spawnOpts.home !== undefined ? { home: spawnOpts.home } : {}) })
+      : command;
     const child = spawnProcess(spawnTarget.file, spawnTarget.args, { stdio: ["pipe", "pipe", "pipe"], detached: true });
     return {
       stdin: child.stdin!,
