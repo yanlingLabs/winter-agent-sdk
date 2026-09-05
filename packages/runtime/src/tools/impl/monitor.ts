@@ -18,6 +18,7 @@ import { randomUUID } from "node:crypto";
 import { createWriteStream } from "node:fs";
 import { lookup as dnsLookup } from "node:dns/promises";
 import { isIP } from "node:net";
+import { isDisallowedAddress } from "@yanlinglabs/winter-provider-runtime";
 import "../descriptors/monitor.ts";
 import { replaceExecutor, type ToolExecutor, type ToolExecutionContext, type ToolResultPayload } from "../registry.ts";
 import { createBackgroundTask } from "../background-tasks.ts";
@@ -298,58 +299,16 @@ async function runMonitorCommand(input: MonitorInput & { command: string }, ctx:
 // ws half -- endpoint validation (defense-in-depth beyond WS-07's own approval/network checks).
 // ---------------------------------------------------------------------------------------------
 
-function isDisallowedIPv4(ip: string): boolean {
-  const parts = ip.split(".").map(Number);
-  if (parts.length !== 4 || parts.some((n) => Number.isNaN(n) || n < 0 || n > 255)) return true; // unparseable -- fail closed
-  const [a, b] = parts as [number, number, number, number];
-  if (a === 127 || a === 10 || a === 0) return true; // loopback / private / unspecified (0.0.0.0/8 falls out of `a === 0` already)
-  if (a === 172 && b >= 16 && b <= 31) return true; // private
-  if (a === 192 && b === 168) return true; // private
-  if (a === 169 && b === 254) return true; // link-local -- covers cloud metadata 169.254.169.254
-  // N5 (fix wave, nit, P3 close-out): two gaps this classifier's own defense-in-depth posture
-  // (WS-07 is the PRIMARY gate; this file's own header) had left open -- neither is a cloud-metadata
-  // or loopback-adjacent risk on the scale of the ranges above, but both were plainly unclassified.
-  if (a === 100 && b >= 64 && b <= 127) return true; // 100.64.0.0/10, Carrier-Grade NAT (RFC 6598)
-  if (a >= 224 && a <= 239) return true; // 224.0.0.0/4, multicast
-  return false;
-}
+// RULING R6-11 (P6 T2): the address classifier itself now lives in
+// `@yanlinglabs/winter-provider-runtime` (src/address-classifier.ts) and is MOVED there, not
+// copied — the provider endpoint policy needs the identical classification and WS-13's own rule
+// is one classifier with one fixture set. The move direction is forced: packages/runtime depends
+// on the provider-runtime package and the reverse import would be a cycle (R6-4).
+//
+// It is RE-EXPORTED below (see this file's own export list) so this module's public surface, and
+// the ~30 address assertions monitor.test.ts already runs against it, are unchanged — those
+// fixtures are now the shared classifier's fixtures, which is exactly the intent.
 
-// An IPv4-mapped IPv6 address's two trailing 16-bit groups ARE the IPv4 address, just split across
-// group boundaries rather than byte boundaries: each group's high byte then low byte, concatenated,
-// is the dotted-quad. E.g. "a9fe:a9fe" -> 0xa9fe=169.254 twice -> "169.254.169.254" (cloud metadata).
-function ipv4FromHexGroups(g1: string, g2: string): string {
-  const h1 = parseInt(g1, 16);
-  const h2 = parseInt(g2, 16);
-  return `${(h1 >> 8) & 0xff}.${h1 & 0xff}.${(h2 >> 8) & 0xff}.${h2 & 0xff}`;
-}
-
-function isDisallowedIPv6(ip: string): boolean {
-  const lower = ip.toLowerCase();
-  const mappedDotted = /^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/.exec(lower);
-  if (mappedDotted) return isDisallowedIPv4(mappedDotted[1]!);
-  // IPv4-mapped, HEX-GROUP form (e.g. "::ffff:a9fe:a9fe" for 169.254.169.254) -- a resolver can hand
-  // this shape back just as readily as the dotted-quad form above. Without this arm, the two
-  // trailing hex groups fail the dotted-quad regex, and `lower.split(":")[0]` (used below for the
-  // fe80::/fc00:: checks) is "" (the leading "::" splits to two empty leading segments) -- an empty
-  // string fails the `.length > 0` guard, so `firstGroup` stays NaN and NEITHER link-local check
-  // ever fires either. The address fell all the way through to the final `return false`: silently
-  // ALLOWED. Converting both groups to their four constituent bytes and re-running them through
-  // isDisallowedIPv4 gives this one shared source of truth with the dotted-quad arm above.
-  const mappedHex = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(lower);
-  if (mappedHex) return isDisallowedIPv4(ipv4FromHexGroups(mappedHex[1]!, mappedHex[2]!));
-  if (lower === "::1" || lower === "::") return true; // loopback / unspecified
-  const firstGroupText = lower.split(":")[0] ?? "";
-  const firstGroup = firstGroupText.length > 0 ? parseInt(firstGroupText, 16) : NaN;
-  if (!Number.isNaN(firstGroup)) {
-    if (firstGroup >= 0xfe80 && firstGroup <= 0xfebf) return true; // fe80::/10 link-local
-    if (firstGroup >= 0xfc00 && firstGroup <= 0xfdff) return true; // fc00::/7 unique-local
-  }
-  return false;
-}
-
-function isDisallowedAddress(address: string, family: number): boolean {
-  return family === 6 ? isDisallowedIPv6(address) : isDisallowedIPv4(address);
-}
 
 // RULING P3-I (Task 8, P3 close-out): `connectUrl` is keyed by the VALIDATED ADDRESS itself (never
 // the original hostname) and `hostHeader` preserves the original `host[:port]` for the WS upgrade
