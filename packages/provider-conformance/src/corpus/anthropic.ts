@@ -96,6 +96,8 @@ export const ANTHROPIC_MODELS = {
   slow: "sc-slow",
   /** Its row's evidence names `message_stop` as the completion event, not the per-block terminator. */
   lateCapture: "sc-late-capture",
+  /** The SAME row and blocks, on a stream that dies before `message_stop` ever arrives. */
+  lateCaptureDropped: "sc-late-capture-dropped",
 } as const;
 
 export function testAnthropicCatalog(): WinterCatalog {
@@ -113,6 +115,11 @@ export function testAnthropicCatalog(): WinterCatalog {
       key: `anthropic/${ANTHROPIC_MODELS.lateCapture}`,
       upstreamId: ANTHROPIC_MODELS.lateCapture,
       reasoning: { ...anthropicReasoning(`anthropic/${ANTHROPIC_MODELS.lateCapture}`), completionEvent: evidence("message_stop") },
+    }),
+    model({
+      key: `anthropic/${ANTHROPIC_MODELS.lateCaptureDropped}`,
+      upstreamId: ANTHROPIC_MODELS.lateCaptureDropped,
+      reasoning: { ...anthropicReasoning(`anthropic/${ANTHROPIC_MODELS.lateCaptureDropped}`), completionEvent: evidence("message_stop") },
     }),
   ];
   return {
@@ -251,6 +258,20 @@ export function anthropicCorpusRoutes(): FakeRoute[] {
           ],
           stopReason: "tool_use",
         }),
+      // The SAME frames, cut one short of `message_stop`: the thinking block is COMPLETE at its own
+      // `content_block_stop` and is being held, and the event its row names never arrives.
+      [ANTHROPIC_MODELS.lateCaptureDropped]: () =>
+        anthropicTurnResponse(
+          {
+            blocks: [
+              { type: "thinking", chunks: ["deferred"], signature: "sig-late-1" },
+              { type: "text", chunks: ["after"] },
+              { type: "tool_use", id: "call_l", name: "Read", jsonChunks: ['{"path":"/l"}'] },
+            ],
+            stopReason: "tool_use",
+          },
+          { dropAfter: 12 },
+        ),
       [ANTHROPIC_MODELS.slow]: () => {
         // Frames after the first text delta are DELAYED, so the abort in the mid-stream cancellation
         // case interrupts a read that is genuinely in flight -- aborting between two already-buffered

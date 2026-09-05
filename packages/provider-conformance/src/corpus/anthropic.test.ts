@@ -267,6 +267,15 @@ describe("Anthropic Messages: the descriptor's own completion event (Minor 7)", 
       ]);
       const turn = await foldTurn(adapter, { model: ANTHROPIC_MODELS.lateCapture, messages: [{ role: "user", content: "go" }] }, testContext(fake.url));
       expect(turn.thinking?.blocks).toEqual([{ type: "thinking", thinking: "deferred", signature: "sig-late-1" }]);
+
+      // ...AND A BROKEN STREAM RELEASES NONE. The same frames, cut one short of `message_stop`: the
+      // block is complete at its own `content_block_stop` and is being held, and the event its row
+      // names never arrives -- so the completion-event rule holds at whichever event a row names,
+      // not just at the default one.
+      const dropped = [];
+      for await (const e of adapter.streamTurn({ model: ANTHROPIC_MODELS.lateCaptureDropped, messages: [{ role: "user", content: "go" }] }, testContext(fake.url))) dropped.push(e);
+      expect(dropped.some((e) => e.type === "native_thinking_block")).toBe(false);
+      expect(dropped.at(-1)).toMatchObject({ type: "error", error: { code: "network" } });
     });
   });
 
