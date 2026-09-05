@@ -138,6 +138,20 @@ function capBody(body: ReadableStream<Uint8Array>, maxBodyBytes: number, signal:
   });
 }
 
+/**
+ * True for a request body that CANNOT be sent a second time.
+ *
+ * Both spellings are checked, and the second is not theoretical: Bun accepts a plain async iterable
+ * as a body, and such a body has no `getReader` — so a `ReadableStream`-only guard let it through
+ * and "replayed" an iterator the first attempt had already drained, silently sending a truncated
+ * request or an empty one.
+ */
+function isNonReplayableBody(body: BodyInit | null | undefined): boolean {
+  if (body === undefined || body === null || typeof body !== "object") return false;
+  const candidate = body as object;
+  return "getReader" in candidate || Symbol.asyncIterator in candidate;
+}
+
 /** Normalizes whatever `fetch` threw into a typed provider error, distinguishing a caller abort from our own header deadline. */
 function transportError(err: unknown, callerAborted: boolean, timedOut: boolean, timeoutMs: number): ProviderRequestError {
   if (callerAborted) return new ProviderRequestError({ code: "aborted", message: "provider request aborted by the caller", retryable: false });
@@ -221,8 +235,29 @@ export async function boundedFetch(url: string, init: BoundedFetchInit): Promise
     if (!verdict.ok) throw policyRefusal(verdict.reason);
     // Drain the 3xx body so the connection can be reused rather than left half-read.
     void response.body?.cancel().catch(() => {});
+    // METHOD AND BODY FIRST, then the cross-origin rule. The order is load-bearing: a 303 DROPS the
+    // body, so evaluating the cross-origin body refusal before that drop refused a cross-origin 303
+    // of a POST that was, by then, going to carry no payload at all — over-strict, and with a
+    // message that described a re-send which would not have happened.
+    if (response.status === 303) {
+      // 303 means "go GET this other thing" — the classic POST-then-redirect-to-a-result shape.
+      // Replaying the original method and body would re-submit the request against a URL that
+      // explicitly asked for a GET, which for a turn request means submitting it twice.
+      method = "GET";
+      body = undefined;
+      // A body-shaped header on a request that no longer has one is a lie the server may act on.
+      headers.delete("content-type");
+      headers.delete("content-length");
+    } else if (isNonReplayableBody(body)) {
+      // 307/308 (and a 301/302 kept as-is) must replay the body verbatim — and a streaming body is
+      // already partly consumed by the first attempt, so "replaying" it would send a truncated
+      // request or none at all. Refused with a typed error rather than silently mangled; an adapter
+      // that needs redirect-following must buffer its body.
+      throw policyRefusal(`provider redirected a request whose body is a stream, which cannot be replayed — buffer the body or point the connection at the final URL`);
+    }
+
     if (!verdict.sameOrigin) {
-      // A CROSS-ORIGIN redirect of a request that HAS A BODY is refused outright, not merely
+      // A CROSS-ORIGIN redirect of a request that STILL has a body is refused outright, not merely
       // stripped of its credentials.
       //
       // Dropping the Authorization header protects the KEY. It does nothing for the PAYLOAD, and a
@@ -233,31 +268,14 @@ export async function boundedFetch(url: string, init: BoundedFetchInit): Promise
       // provider named in a Location header is precisely the disclosure that rule exists to prevent.
       //
       // Nor is there a legitimate case to preserve: no provider in the cohort answers a turn request
-      // with a cross-origin redirect. A GET (discovery, a token endpoint) still follows, with its
-      // credentials stripped.
+      // with a cross-origin redirect. A GET (discovery, a token endpoint) still follows with its
+      // credentials stripped — and so does a 303, which has already become one.
       if (body !== undefined && body !== null) {
         throw policyRefusal(
           `provider redirected a request WITH A BODY from ${policy.origin} to ${verdict.origin}; refusing to re-send the request payload (which may carry conversation content and opaque provider state) to another origin`,
         );
       }
       headers = stripCredentialHeaders(headers);
-    }
-
-    if (response.status === 303) {
-      // 303 means "go GET this other thing" — the classic POST-then-redirect-to-a-result shape.
-      // Replaying the original method and body would re-submit the request against a URL that
-      // explicitly asked for a GET, which for a turn request means submitting it twice.
-      method = "GET";
-      body = undefined;
-      // A body-shaped header on a request that no longer has one is a lie the server may act on.
-      headers.delete("content-type");
-      headers.delete("content-length");
-    } else if (body !== undefined && body !== null && typeof body === "object" && "getReader" in (body as object)) {
-      // 307/308 (and a 301/302 kept as-is) must replay the body verbatim — and a ReadableStream body
-      // is already partly consumed by the first attempt, so "replaying" it would send a truncated
-      // request or none at all. Refused with a typed error rather than silently mangled; an adapter
-      // that needs redirect-following must buffer its body.
-      throw policyRefusal(`provider redirected a request whose body is a stream, which cannot be replayed — buffer the body or point the connection at the final URL`);
     }
     currentUrl = target;
   }

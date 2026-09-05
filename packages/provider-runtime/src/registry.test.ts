@@ -139,6 +139,40 @@ describe("createRegistry — session-provider-first resolution (RULING R6-K)", (
     expect(ok(fullRegistry().resolve({ model: "openrouter/openai/gpt-4.1", provider: { providerId: "openrouter" } })).modelKey).toBe("openrouter/openai/gpt-4.1");
   });
 
+  test("a SELF-QUALIFIED catalog key resolves to its CATALOGUED row, allowUnlisted or not", () => {
+    // `<providerId>/<upstreamId>` is exactly what `listModelInfo` puts in a row's `value`, so it is
+    // what a model picker and `set_model` hand back. When the pass-through saw it first, a
+    // CATALOGUED model resolved as unlisted: `descriptor: undefined` silently discarded its
+    // capability, pricing and continuation-domain evidence, the key doubled, and the doubled id
+    // went on the wire. Worst for the twelve local providers, where allowUnlisted is the NORMAL
+    // configuration.
+    for (const allowUnlisted of [false, true]) {
+      const provider = allowUnlisted ? { providerId: "openrouter", allowUnlisted: true } : { providerId: "openrouter" };
+      const resolved = ok(fullRegistry().resolve({ model: "openrouter/openai/gpt-4.1", provider }));
+      expect(resolved.providerId).toBe("openrouter");
+      expect(resolved.modelKey).toBe("openrouter/openai/gpt-4.1");
+      expect(resolved.providerModelId).toBe("openai/gpt-4.1");
+      expect(resolved.descriptor).toBeDefined();
+      expect(resolved.descriptor!.key).toBe("openrouter/openai/gpt-4.1");
+    }
+  });
+
+  test("the same holds for a LOCAL provider, where allowUnlisted is the normal configuration", () => {
+    const resolved = ok(fullRegistry().resolve({ model: "ollama-local/llama3.1:8b", provider: { providerId: "ollama-local", allowUnlisted: true } }));
+    expect(resolved.modelKey).toBe("ollama-local/llama3.1:8b");
+    expect(resolved.providerModelId).toBe("llama3.1:8b");
+    expect(resolved.descriptor).toBeDefined();
+  });
+
+  test("an UNSEEDED id in the self-qualified spelling passes through with the prefix STRIPPED", () => {
+    // The pass-through is still the right answer here — the model simply is not catalogued — but the
+    // redundant self-qualification must not reach the wire or the composed key.
+    const resolved = ok(fullRegistry().resolve({ model: "ollama-local/qwen3:14b", provider: { providerId: "ollama-local", allowUnlisted: true } }));
+    expect(resolved.providerModelId).toBe("qwen3:14b");
+    expect(resolved.modelKey).toBe("ollama-local/qwen3:14b");
+    expect(resolved.descriptor).toBeUndefined();
+  });
+
   test("GATEWAY: allowUnlisted passes an UNSEEDED vendor-qualified id through to the session provider", () => {
     // The case the ordering exists for. OpenRouter's real model ids ARE other vendors' qualified
     // ids, and the overwhelming majority will never be seeded into the compiled catalog. A session

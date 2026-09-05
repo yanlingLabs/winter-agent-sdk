@@ -277,6 +277,44 @@ describe("boundedFetch — redirect method/body semantics", () => {
     ]);
   });
 
+  test("a CROSS-ORIGIN 303 of a POST follows — the 303 already dropped the body", async () => {
+    // Evaluating the cross-origin body refusal BEFORE the 303 drop refused a hop that was, by then,
+    // going to carry no payload at all: over-strict, with a message describing a re-send that would
+    // not have happened. Ordering the drop first is what makes both rules mean what they say.
+    const second = fake(async (req) => new Response(`method=${req.method} body=${(await req.text()).length}`));
+    const first = fake(() => new Response(null, { status: 303, headers: { location: `${second.origin}/v1/result` } }));
+    const res = await boundedFetch(`${first.origin}/v1/submit`, {
+      method: "POST",
+      body: JSON.stringify({ a: 1 }),
+      headers: { authorization: `Bearer ${TEST_KEY}`, "content-type": "application/json" },
+      timeoutMs: 5000,
+      maxBodyBytes: 1024,
+      policy: policyFor(first.origin),
+    });
+    expect(await res.text()).toBe("method=GET body=0");
+    // Cross-origin, so credentials are still stripped.
+    expect(second.log[0]!.hasAuthorization).toBe(false);
+  });
+
+  test("REFUSES to follow a redirect when the body is an ASYNC ITERABLE, not just a ReadableStream", async () => {
+    // Bun accepts a plain async iterable as a body, and it has no `getReader` — so a
+    // ReadableStream-only guard let it through and "replayed" an iterator the first attempt had
+    // already drained, sending a truncated or empty request.
+    const f = fake(() => new Response(null, { status: 307, headers: { location: "/v1/b" } }));
+    async function* chunks(): AsyncGenerator<Uint8Array> {
+      yield new TextEncoder().encode("streamed");
+    }
+    await expect(
+      boundedFetch(`${f.origin}/v1/a`, {
+        method: "POST",
+        body: chunks() as unknown as BodyInit,
+        timeoutMs: 5000,
+        maxBodyBytes: 1024,
+        policy: policyFor(f.origin),
+      }),
+    ).rejects.toMatchObject({ code: "capability" });
+  });
+
   test("REFUSES to follow a redirect when the body is a stream — it cannot be replayed", async () => {
     // The first attempt has already consumed it, so "replaying" would send a truncated request or
     // none at all. A typed refusal beats a silently mangled retry.

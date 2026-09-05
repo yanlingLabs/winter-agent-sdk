@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { scanForSecrets } from "@yanlinglabs/winter-provider-catalog";
 import {
   ProviderStallError,
   normalizeHttpError,
@@ -153,6 +154,13 @@ describe("toSdkAssistantMessageError — the pinned 11-member taxonomy (item (b)
     expect(toSdkAssistantMessageError(normalizeHttpError(400, h(), ""))).toBe("invalid_request");
   });
 
+  test("402 Payment Required is `billing_error`, not `invalid_request` (Minor 13)", () => {
+    // Telling a user their REQUEST was invalid when their card expired sends them to debug entirely
+    // the wrong thing.
+    expect(toSdkAssistantMessageError(normalizeHttpError(402, h(), ""))).toBe("billing_error");
+    expect(normalizeHttpError(402, h(), "").retryable).toBe(false);
+  });
+
   test("transport failures collapse to `unknown` — the pinned union has no transport member", () => {
     for (const code of ["network", "timeout", "stall", "aborted", "capability"] as const) {
       expect(toSdkAssistantMessageError({ code, message: "x", retryable: false })).toBe("unknown");
@@ -202,5 +210,56 @@ describe("normalizeThrown", () => {
     // it must never be a header value. This asserts the function adds no such context of its own.
     const normalized = normalizeThrown(new Error("connect ECONNREFUSED 127.0.0.1:11434"));
     expect(normalized.message).not.toContain("Authorization");
+  });
+});
+
+// --- Minor 2 (round 1) / new Minor (round 2): the body snippet is SCRUBBED, and scanned on the FULL
+// body. These tests did not exist when the round-1 report claimed them; the code was correct, the
+// coverage was not.
+describe("normalizeHttpError — the body snippet is scrubbed (Minor 2)", () => {
+  const KEYS = [
+    "sk-proj-Abcdefghijklmnopqrstuvwxyz012345",
+    "AIzaSyA1234567890abcdefghijklmnopqrstuvw",
+  ];
+
+  test("a 401 body echoing a key-shaped string is redacted, and the structured code SURVIVES", () => {
+    // A 401 body routinely echoes part of the credential it rejected, and `ProviderError.message` is
+    // one of the most reliably-logged strings in the system.
+    for (const key of KEYS) {
+      const body = JSON.stringify({ error: { message: `Incorrect API key provided: ${key}`, type: "invalid_request_error", code: "invalid_api_key" } });
+      const err = normalizeHttpError(401, h(), body);
+      expect(err.message).toContain("[redacted");
+      expect(err.message).not.toContain(key);
+      // The redaction must not cost the caller the one machine-readable field it needs.
+      expect(err.providerCode).toBe("invalid_api_key");
+      expect(err.code).toBe("auth");
+    }
+  });
+
+  test("a key STRADDLING the 200-char truncation boundary is still caught", () => {
+    // The regression this pins: scanning the truncated snippet leaves only the key's PREFIX to
+    // match against length-based patterns, so the partial slips through while still disclosing the
+    // prefix. Scanning the full body first is what closes it.
+    const key = KEYS[0]!;
+    // A realistic body shape: the key is preceded by a delimiter, as it is in every provider
+    // envelope. That matters, because the scanner's `sk-` pattern is word-boundary anchored on
+    // purpose (the catalog validator documents why — an unanchored `contains` matches things like
+    // `subcontext_length_exceeded`). A key glued directly to preceding word characters, with no
+    // delimiter at all, is outside what the scanner claims to catch and is not a body shape any
+    // provider produces; this test pins the shape that IS real.
+    const body = `${"z".repeat(185)} ${key}`;
+    const snippet = body.slice(0, 200);
+    expect(snippet).toContain("sk-proj-"); // the prefix really is inside the snippet
+    expect(snippet).not.toContain(key); // and the whole key really is not
+    expect(scanForSecrets(snippet)).toEqual([]); // ...so scanning the SNIPPET alone finds nothing
+    const err = normalizeHttpError(401, h(), body);
+    expect(err.message).toContain("[redacted");
+    expect(err.message).not.toContain("sk-proj-");
+  });
+
+  test("an ordinary body is NOT redacted — the scrubber must not eat every diagnostic", () => {
+    const err = normalizeHttpError(400, h(), JSON.stringify({ error: { message: "messages: at least one message is required", code: "invalid_request_error" } }));
+    expect(err.message).toContain("at least one message is required");
+    expect(err.message).not.toContain("[redacted");
   });
 });

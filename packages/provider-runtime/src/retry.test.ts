@@ -275,3 +275,65 @@ describe("withRetry — what is NOT retried", () => {
     expect(calls).toBe(1);
   });
 });
+
+// --- Minor 3 (round 1): the backoff is ABORTABLE. This test did not exist when the round-1 report
+// claimed it; the code was correct, the coverage was not.
+describe("withRetry — the backoff is abortable (Minor 3)", () => {
+  test("an abort during a long backoff rejects PROMPTLY rather than running the timer down", async () => {
+    // With a clamped Retry-After the backoff can be a full minute, so an unabortable sleep makes
+    // `interrupt` feel broken for up to that long. A REAL policy is used here (no injected sleep) —
+    // an injected sleep would prove nothing about the thing under test.
+    const policy = createRetryPolicy({ maxRetries: 5, random: () => 1 });
+    const controller = new AbortController();
+    let calls = 0;
+    const started = Date.now();
+    setTimeout(() => controller.abort(), 30);
+    const err = await withRetry(
+      async () => {
+        calls += 1;
+        // A 5000 ms Retry-After, clamped to the ceiling and far longer than this test's patience.
+        throw normalizeHttpError(429, h({ "retry-after": "5" }), "");
+      },
+      policy,
+      () => {},
+      controller.signal,
+    ).then(() => undefined, (e: unknown) => e);
+    const elapsed = Date.now() - started;
+    expect((err as Error).name).toBe("AbortError");
+    expect(elapsed).toBeLessThan(500);
+    expect(calls).toBe(1);
+  });
+
+  test("an ALREADY-aborted signal does not sit through the first backoff either", async () => {
+    const policy = createRetryPolicy({ maxRetries: 3, random: () => 1 });
+    const controller = new AbortController();
+    controller.abort();
+    const started = Date.now();
+    const err = await withRetry(
+      async () => {
+        throw normalizeHttpError(503, h(), "");
+      },
+      policy,
+      () => {},
+      controller.signal,
+    ).then(() => undefined, (e: unknown) => e);
+    expect((err as Error).name).toBe("AbortError");
+    expect(Date.now() - started).toBeLessThan(500);
+  });
+
+  test("with NO signal the backoff still completes normally — the addition is opt-in", async () => {
+    const policy = createRetryPolicy({ maxRetries: 2, random: () => 0 }); // full jitter's floor: ~0ms
+    let calls = 0;
+    const value = await withRetry(
+      async () => {
+        calls += 1;
+        if (calls === 1) throw normalizeHttpError(503, h(), "");
+        return "recovered";
+      },
+      policy,
+      () => {},
+    );
+    expect(value).toBe("recovered");
+    expect(calls).toBe(2);
+  });
+});
