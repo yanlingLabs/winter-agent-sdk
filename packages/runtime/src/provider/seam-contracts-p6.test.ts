@@ -118,18 +118,12 @@ describe("R6-3 by-meaning sweep: every consumer of ContentBlock/ProviderTurn/Pro
     }
   });
 
-  test("consumer 6 -- a ProviderMessage's annotations survive a by-value copy (the child fork mirror)", () => {
-    // `buildChildInheritance` forks with `messages: [...messages]`. A copy that rebuilt each element
-    // as `{role, content}` would silently drop `origin`/`nativeState`, and the child would replay a
-    // foreign history as if it were its own provider's.
-    const origin: MessageOrigin = { providerId: "openai", modelKey: "openai/o-test", family: "openai", continuationDomain: "openai:responses" };
-    const nativeState: ProviderNativeState = { family: "openai", continuationDomain: "openai:responses", items: ["opaque"] };
-    const parent: ProviderMessage[] = [{ role: "assistant", content: "hi", uuid: "u-1", origin, nativeState }];
-    const forked = [...parent];
-    expect(forked[0]!.origin).toEqual(origin);
-    expect(forked[0]!.nativeState).toEqual(nativeState);
-    expect(forked[0]!.uuid).toBe("u-1");
-  });
+  // CONSUMER 6 (the child fork mirror) IS NOT HERE. It was, and the test it replaced spread the
+  // array ITSELF and asserted the annotations survived -- which tests JavaScript's spread operator,
+  // not `engine.ts`'s `buildChildInheritance`. Reverting the real consumer to a `{role, content}`
+  // rebuild left it green. The real fixture drives a live `runEngine` fork and lives in
+  // `engine-seam-p6.test.ts` ("a FORK's inherited history keeps the parent's provider annotations"),
+  // because a mirror can only be tested through the thing that mirrors.
 
   test("consumer 7 -- a tool_use turn carries its leading TEXT (a real model returns both)", () => {
     // R6-3, stated as the reason the field exists: "a real model returns text AND calls in one turn
