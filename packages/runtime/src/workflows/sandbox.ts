@@ -10,11 +10,11 @@
 //    The dev entry is `main.ts`, not `subprocess-entry.ts`: main.ts owns the argv dispatch (R5-15),
 //    and subprocess-entry.ts has no `import.meta.main` self-exec of its own.
 //
-// 2. THE SEATBELT, WITH `home`. `buildWorkflowWorkerSeatbeltProfile`'s `home` parameter is OPTIONAL
-//    for pre-P5 callers, and omitting it silently drops the `~/.winter/run` read-deny (T3's Lane W
-//    item 2, verbatim: "your spawner MUST pass `{ home }` or the pre-P5 gap comes back silently").
-//    `buildWorkerSpawn` is the ONE place a worker command becomes a spawn, so the obligation is
-//    discharged once, here, rather than at each call site.
+// 2. THE SEATBELT, WITH `home`. T3's fix round made `buildWorkflowWorkerSeatbeltProfile`'s second
+//    argument REQUIRED (`opts: { home: string | undefined }`) precisely so that "Lane W's spawner
+//    must remember to pass it" is a compile error rather than a silent gap -- omitting it used to
+//    drop the `~/.winter/run` read-deny with nothing to notice. `buildWorkerSpawn` is still the ONE
+//    place a worker command becomes a spawn, so the value is threaded through exactly one call site.
 import { fileURLToPath } from "node:url";
 import { buildWorkflowWorkerSeatbeltProfile } from "../sandbox/profile.ts";
 import { isSandboxAvailable } from "../sandbox/spawn.ts";
@@ -61,16 +61,17 @@ export function resolveWorkerCommand(opts: ResolveWorkerCommandOptions = {}): Wo
 export interface BuildWorkerSpawnOptions {
   command: WorkerCommand;
   /**
-   * The session's WINTER HOME. Supplying it is what emits the `~/.winter/run` read-deny (R5-5).
-   * Optional in the TYPE only because the profile builder's own parameter is; every production call
-   * site passes it, and worker.test.ts pins the difference between the two profiles.
+   * The session's WINTER HOME. Supplying it is what emits the `~/.winter/run` read-deny (R5-5);
+   * `undefined` opts out EXPLICITLY, which is the only way to opt out now that the profile builder's
+   * own argument is required. Every production call site passes a real value, and worker.test.ts pins
+   * the difference between the two profiles.
    */
   home?: string;
 }
 
 /** The actual `(file, args)` to spawn: sandbox-exec wrapping the worker command under the tight profile. */
 export function buildWorkerSpawn(opts: BuildWorkerSpawnOptions): WorkerCommand {
-  const profile = buildWorkflowWorkerSeatbeltProfile(opts.command.file, opts.home !== undefined ? { home: opts.home } : {});
+  const profile = buildWorkflowWorkerSeatbeltProfile(opts.command.file, { home: opts.home });
   return { file: SANDBOX_EXEC_PATH, args: ["-p", profile, opts.command.file, ...opts.command.args] };
 }
 

@@ -29,17 +29,15 @@ import type { AgentOpts } from "./types.ts";
 // --- The argv contract ---------------------------------------------------------------------------
 //
 // BOTH FLAGS LIVE HERE, in the worker-entry module, because they ARE this entry's argv contract and
-// because `main.ts` -- which today declares the first of them -- CANNOT BE IMPORTED. It has no
-// `import.meta.main` guard: importing it runs the worker dispatch and then
-// `parseConfigFromArgv(process.argv)`, which throws and `process.exit`s the importing process. Any
-// spawner or test that reached for the constant by import would kill itself.
+// because `main.ts` CANNOT BE IMPORTED. It is a top-level SCRIPT with no `import.meta.main` guard:
+// importing it runs the worker dispatch and then `parseConfigFromArgv(process.argv)`, which throws
+// and `process.exit`s the importing process. Any spawner or test that reached for the constant by
+// import would kill itself.
 //
-// TODO(T3 fix round): main.ts is expected to IMPORT `WORKFLOW_WORKER_ARGV_FLAG` from this module
-// rather than declare its own. Until that lands, the value below is the same literal main.ts
-// declares (`git show ff2561e:packages/runtime/src/main.ts`), and worker.test.ts pins the two
-// together by reading main.ts's SOURCE -- the literal-parity technique this codebase already uses
-// for its hand-mirrored constants (P5-D gate 4). The parity test tolerates BOTH shapes, so it stays
-// green across that fix instead of turning red the moment the duplicate declaration goes away.
+// T3's fix round reached the same conclusion independently and moved `WORKFLOW_WORKER_ARGV_FLAG`
+// here; `main.ts` imports it from this module today, so there is exactly one declaration. Everything
+// in this file above `workflowWorkerMain` is a declaration, which is what makes importing it safe --
+// the spine's own contract test pins that with a fresh-subprocess no-side-effects probe.
 
 /** The argv marker that selects the worker role. */
 export const WORKFLOW_WORKER_ARGV_FLAG = "__workflow-worker";

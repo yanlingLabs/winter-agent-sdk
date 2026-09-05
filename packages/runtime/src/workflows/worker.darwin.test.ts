@@ -51,7 +51,7 @@ function scratch(prefix: string): string {
  * removed. So each probe prints a sentinel on each branch and the assertion reads the sentinel.
  */
 function underProfile(code: string, opts: { home?: string } = {}): { status: number | null; stderr: string; stdout: string } {
-  const profile = buildWorkflowWorkerSeatbeltProfile(process.execPath, opts.home !== undefined ? { home: opts.home } : {});
+  const profile = buildWorkflowWorkerSeatbeltProfile(process.execPath, { home: opts.home });
   const res = spawnSync("/usr/bin/sandbox-exec", ["-p", profile, process.execPath, "-e", code], { encoding: "utf8", timeout: 20_000 });
   return { status: res.status, stderr: res.stderr ?? "", stdout: res.stdout ?? "" };
 }

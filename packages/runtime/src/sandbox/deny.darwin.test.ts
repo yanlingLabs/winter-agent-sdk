@@ -279,19 +279,53 @@ describe("sandbox deny suite (real sandbox-exec, WS-12 §5.2 carried corpus)", (
   // from one that is silently malformed. `--version` is used as the self-exec probe (not `-e "1"`)
   // because it needs no shell/quoting and every real binary this profile could ever wrap supports it.
   describe("buildWorkflowWorkerSeatbeltProfile loads under real sandbox-exec (WS-12 §5.2 process-fork* trap)", () => {
-    t("the profile parses and loads: self-exec succeeds (proves no unbound-variable parse failure)", () => {
-      const profile = buildWorkflowWorkerSeatbeltProfile(process.execPath);
+    // Fix round 1 (low): every case here now builds the profile WITH a `home`, so the R5-5
+    // `~/.winter/run` deny is present in the string these real `sandbox-exec` loads parse. Building
+    // it without one left the phase's own new rule untested under the only tool that can actually
+    // reject it -- a malformed subpath rule fails the whole profile load, not just that rule.
+    t("the profile parses and loads WITH the ~/.winter/run deny: self-exec succeeds (proves no unbound-variable or malformed-subpath parse failure)", () => {
+      const profile = buildWorkflowWorkerSeatbeltProfile(process.execPath, { home: proj() });
+      expect(profile).toContain(".winter/run");
       const res = spawnSync("/usr/bin/sandbox-exec", ["-p", profile, process.execPath, "--version"], { encoding: "utf8" });
       expect(res.status).toBe(0);
     });
 
     t("exec of anything OTHER than the self binary is denied -- /bin/sh cannot run, so its write never happens", () => {
-      const profile = buildWorkflowWorkerSeatbeltProfile(process.execPath);
+      const profile = buildWorkflowWorkerSeatbeltProfile(process.execPath, { home: proj() });
       const probeDir = proj();
       const probe = join(probeDir, "escape.txt");
       const res = spawnSync("/usr/bin/sandbox-exec", ["-p", profile, "/bin/sh", "-c", `echo pwned > ${probe}`], { encoding: "utf8" });
       expect(res.status).not.toBe(0);
       expect(existsSync(probe)).toBe(false);
+    });
+
+    // R5-5's own rule, proven under the real sandbox rather than by string inspection: the worker
+    // profile is read-anywhere EXCEPT this one subtree, so a read inside it must be REFUSED while a
+    // read just outside it succeeds. Without the sibling half, a profile that denied reads everywhere
+    // would pass; without the missing-file control, a broken probe would.
+    //
+    // THE PROBE MUST SET ITS OWN EXIT CODE. `bun -e "<code that throws>"` exits **0** on an uncaught
+    // throw, so the obvious "assert the read command failed" shape is green whether the read was
+    // denied or succeeded -- it was, on the first run of this test, and the missing-file control is
+    // what exposed it. Each probe therefore distinguishes EPERM (denied, 3) from any other failure
+    // (4) from success (0).
+    t("the ~/.winter/run deny BINDS under real sandbox-exec: EPERM inside, success on a sibling, ENOENT-class for a missing path", () => {
+      const home = proj();
+      mkdirSync(join(home, ".winter", "run"), { recursive: true });
+      const inside = join(home, ".winter", "run", "core.sock");
+      const outside = join(home, ".winter", "settings.json");
+      writeFileSync(inside, "secret");
+      writeFileSync(outside, "{}");
+      const profile = buildWorkflowWorkerSeatbeltProfile(process.execPath, { home });
+
+      const readStatus = (path: string): number | null => {
+        const code = `try { require("node:fs").readFileSync(${JSON.stringify(path)}); process.exit(0); } catch (e) { process.exit(e && e.code === "EPERM" ? 3 : 4); }`;
+        return spawnSync("/usr/bin/sandbox-exec", ["-p", profile, process.execPath, "-e", code], { encoding: "utf8" }).status;
+      };
+
+      expect(readStatus(inside), "a read inside ~/.winter/run must be refused by the sandbox").toBe(3);
+      expect(readStatus(outside), "a sibling read must still succeed -- the profile is read-anywhere apart from this subtree").toBe(0);
+      expect(readStatus("/nope/nope/nope"), "control: the probe reports a non-EPERM failure distinctly, so 'denied' cannot be confused with 'broken probe'").toBe(4);
     });
   });
 });
