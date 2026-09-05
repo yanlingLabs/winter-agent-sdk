@@ -132,7 +132,7 @@ function readCurrent(path: string): Buffer | undefined {
  * These are evaluated on a `dryRun` TOO -- see `rewindToCheckpoint` for why that is not the
  * "previews do not reflect refusals" clause.
  */
-function pathIdentityRefusal(record: CheckpointRecord): string | undefined {
+export function describeRefusal(record: Pick<CheckpointRecord, "path" | "anchorPath" | "anchorRealPath" | "parentRealPath">): string | undefined {
   if (record.anchorPath !== undefined && record.anchorRealPath !== undefined) {
     let nowReal: string | undefined;
     try {
@@ -141,8 +141,8 @@ function pathIdentityRefusal(record: CheckpointRecord): string | undefined {
       nowReal = undefined;
     }
     if (nowReal !== record.anchorRealPath) return "its nearest checkpointed ancestor directory no longer resolves where it did";
-    const linked = firstLinkedComponent(record.anchorPath, record.path);
-    if (linked !== undefined) return `the path component ${linked} is now a symbolic link`;
+    const componentIssue = componentRefusal(record.anchorPath, record.path);
+    if (componentIssue !== undefined) return componentIssue;
   }
   if (record.parentRealPath !== undefined && parentRealPathOf(record.path) !== record.parentRealPath) {
     return "its parent directory no longer resolves where it did at checkpoint time";
@@ -150,24 +150,36 @@ function pathIdentityRefusal(record: CheckpointRecord): string | undefined {
   return undefined;
 }
 
+/** The internal name, kept so the call site below reads as the CLASS of refusal it is applying. */
+const pathIdentityRefusal = describeRefusal;
+
 /**
- * The first directory between `anchorPath` (exclusive) and `target` (exclusive) that is now a
- * symlink, or is present but not a directory. The LEAF is deliberately not examined here -- its own
- * state is `leafStateRefusal`'s business and carries a more specific message. A component that does
- * not exist is fine: nothing can be followed through it, and the write/delete arms handle absence.
+ * A refusal describing the first directory between `anchorPath` (exclusive) and `target` (exclusive)
+ * that can no longer be walked as it was: it has become a symlink, or it exists and is not a
+ * directory. The LEAF is deliberately not examined here -- its own state is `leafStateRefusal`'s
+ * business and carries a more specific message. A component that does not exist is fine: nothing can
+ * be followed through it, and the write/delete arms handle absence.
+ *
+ * RETURNS THE WHOLE PHRASE, not a component name (A-12b). It used to return a bare segment that the
+ * caller pasted into "the path component X is now a symbolic link", which made this function's two
+ * OTHER answers say something untrue: a component that is merely no longer a directory was reported
+ * as a symlink, and the defensive climb-out arm returned the literal `".."` -- rendering "the path
+ * component .. is now a symbolic link", naming a component that is not one and a cause that is not
+ * the cause. A refusal message is what a host shows a user about a file it declined to restore; it
+ * has to be true.
  */
-function firstLinkedComponent(anchorPath: string, target: string): string | undefined {
+function componentRefusal(anchorPath: string, target: string): string | undefined {
   const rest = relative(anchorPath, target).split(sep).filter((s) => s.length > 0);
   // `anchorPath` is an ancestor of `target` by construction; anything else is a record this build
   // did not write, and refusing to reason about it is the safe answer.
-  if (rest.some((s) => s === "..")) return "..";
+  if (rest.some((s) => s === "..")) return "its recorded path is not inside the ancestor directory it was checkpointed under";
   let walked = anchorPath;
   for (const segment of rest.slice(0, -1)) {
     walked = join(walked, segment);
     try {
       const stat = lstatSync(walked);
-      if (stat.isSymbolicLink()) return segment;
-      if (!stat.isDirectory()) return segment;
+      if (stat.isSymbolicLink()) return `the path component "${segment}" is now a symbolic link`;
+      if (!stat.isDirectory()) return `the path component "${segment}" is no longer a directory`;
     } catch {
       /* not there yet -- nothing to follow */
     }
