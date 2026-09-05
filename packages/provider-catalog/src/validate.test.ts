@@ -286,10 +286,26 @@ describe("the COMMITTED catalog", () => {
     expect(scanForSecrets(loadCatalog())).toEqual([]);
   });
 
-  test("is clearly marked as a SEED in two independent, schema-required places", () => {
+  // RULING R6-M: this test pinned the SEED markers (`catalogVersion === "0.0.0-seed"`,
+  // `upstream.commit === ""`). Lane X's extraction replaced them, so the pin is inverted rather than
+  // dropped — the property worth keeping is that the markers are GONE, and gone in the exact places
+  // the seed put them.
+  test("is pinned to a REAL upstream extraction, in the two places the seed marked itself", () => {
     const catalog = loadCatalog();
-    expect(catalog.catalogVersion).toBe("0.0.0-seed");
-    expect(catalog.upstream.commit).toBe("");
+    expect(catalog.catalogVersion).not.toBe("0.0.0-seed");
+    // The composed shape is the frozen builder's `${tag}+${extractorVersion}` (scripts/
+    // provider-catalog.ts), so the upstream release and the Winter extraction revision are both
+    // recoverable from a shipped artifact, exactly as WS-13 §2 requires. R6-M's illustrative
+    // spelling was `3.8.50-winter.1`; that literal is unreachable without editing the frozen
+    // builder's separator, and `tag` must stay the REAL git tag because `fetch.ts` clones by it.
+    expect(catalog.catalogVersion).toMatch(/^v?\d+\.\d+\.\d+\+winter\.\d+$/);
+    expect(catalog.catalogVersion).toBe("v3.8.50+winter.1");
+    // The PEELED commit, and the annotated tag's own object beside it. `6f5d4e00…` is what the
+    // OmniRoute report records as "resolving to" v3.8.50 — it is the TAG OBJECT, not a commit, and
+    // pinning it alone would have pinned nothing a re-tag could not move.
+    expect(catalog.upstream.commit).toBe("5458026c216f77a3da68ea49152dc33470cfe2cb");
+    expect(catalog.upstream.tagObject).toBe("6f5d4e00e817bc01b2ac16fdd66db3840c296416");
+    expect(catalog.upstream.tagObject).not.toBe(catalog.upstream.commit);
   });
 
   test("carries the WS-13 §12 cohort and all twelve local ids, every local one on `local` discovery", () => {
@@ -319,11 +335,19 @@ describe("the COMMITTED catalog", () => {
     expect(openrouter?.liveCatalogAuthority).toBe("partial");
   });
 
-  test("every seed model row is `candidate`, unpriced, and not classifier-eligible", () => {
+  // RULING R6-M: "every row unpriced" was the SEED's disclosed gap, which Lane X closed for the
+  // cohort. What replaces it is the invariant that outlives the gap — a price is either a
+  // CITED PUBLISHED one or absent, never an unattributed number. `costBasis: "list"` is reachable
+  // only through `official-doc` evidence (packages/provider-runtime/src/registry.ts), so a row
+  // priced from an extraction or an inference would launder a guess into that assurance.
+  test("every model row is `candidate` and not classifier-eligible; a priced row cites a published price", () => {
     for (const m of loadCatalog().models) {
       expect(m.status).toBe("candidate");
-      expect(m.pricing).toBeUndefined();
       expect(m.classifierEligible).toBeUndefined();
+      if (m.pricing === undefined) continue;
+      expect([m.key, m.pricing.source]).toEqual([m.key, "official-doc"]);
+      expect(m.pricing.sourceRef).toMatch(/^https:\/\//);
+      expect(m.pricing.observedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     }
   });
 });

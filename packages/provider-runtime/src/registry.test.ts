@@ -365,10 +365,26 @@ describe("estimateCostUsd (R6-H)", () => {
     expect(estimateCostUsd({ inputTokens: 1_000_000, outputTokens: 1_000_000 }, inferred)).toEqual({ costUsd: 0, costBasis: "unknown" });
   });
 
-  test("every seed model is currently unpriced — the disclosed seed gap, pinned as a test", () => {
+  // RULING R6-M: this pinned the SEED's disclosed gap ("every model unpriced"), which Lane X closed
+  // for the cohort with `official-doc` prices read from the vendors' own pages. The replacement is
+  // the invariant that survives it, proven END TO END through the real committed catalog rather
+  // than a hand-built descriptor: a row the overlay priced reports `list`, and every other row —
+  // extracted, gateway, native-cloud, subscription or local — still reports 0/`unknown`.
+  test("an overlay-PRICED row reports `list`; every other row still reports 0 / `unknown`", () => {
+    let pricedRows = 0;
     for (const model of catalog.models) {
-      expect(estimateCostUsd({ inputTokens: 1_000_000, outputTokens: 1_000_000 }, model)).toEqual({ costUsd: 0, costBasis: "unknown" });
+      const result = estimateCostUsd({ inputTokens: 1_000_000, outputTokens: 1_000_000 }, model);
+      if (model.pricing?.source === "official-doc") {
+        pricedRows++;
+        expect([model.key, result.costBasis]).toEqual([model.key, "list"]);
+        expect(result.costUsd).toBeGreaterThan(0);
+        continue;
+      }
+      expect([model.key, result]).toEqual([model.key, { costUsd: 0, costBasis: "unknown" }]);
     }
+    // A guard against the test passing vacuously if the overlay ever loses its prices: `maxBudgetUsd`
+    // is inert for every unpriced model, so "nothing is priced" must never be silently acceptable.
+    expect(pricedRows).toBeGreaterThan(0);
   });
 });
 
