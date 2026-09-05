@@ -110,9 +110,17 @@ const OVERLOADED_CODES = new Set(["overloaded_error", "overloaded", "server_over
  * one the catalog gate enforces and cannot drift into a second, weaker copy here.
  */
 function scrubbedSnippet(body: string): string {
-  const snippet = body.slice(0, BODY_SNIPPET_CHARS);
-  if (snippet.length === 0) return "";
-  return scanForSecrets(snippet).length > 0 ? "[redacted: the provider's error body contained a credential-shaped string]" : snippet;
+  if (body.length === 0) return "";
+  // Scanned on the FULL body, BEFORE truncation. Truncating first is worse than not scanning at
+  // all in one specific way: a key straddling the 200-char boundary leaves only its PREFIX in the
+  // snippet, and the scanner's patterns are length-based, so the partial no longer matches — the
+  // truncation turns a detectable secret into an undetectable fragment that still discloses the
+  // key's prefix (verified: a body ending `…zzzsk-proj-Ab` passed the snippet-only scan).
+  //
+  // On any hit the whole snippet goes, not just the matching span: a partial mask still discloses
+  // length and prefix, and the snippet is a diagnostic aid rather than evidence worth that cost.
+  if (scanForSecrets(body).length > 0) return "[redacted: the provider's error body contained a credential-shaped string]";
+  return body.slice(0, BODY_SNIPPET_CHARS);
 }
 
 export function normalizeHttpError(status: number, headers: Headers, body: string): ProviderError {
