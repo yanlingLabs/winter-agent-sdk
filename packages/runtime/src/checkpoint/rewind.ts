@@ -16,7 +16,7 @@
 import type { RewindFilesResult } from "@yanlinglabs/winter-agent-sdk";
 import { lstatSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join, relative, resolve, sep } from "node:path";
-import { blobName, parentRealPathOf, readCheckpointIndex, sessionBackupsDir, type CheckpointRecord } from "./file-history.ts";
+import { blobName, nearestExistingAncestor, parentRealPathOf, readCheckpointIndex, sessionBackupsDir, type CheckpointRecord } from "./file-history.ts";
 
 /**
  * T8 rider 25 (SECURITY): is `absPath` inside one of the session's own writable roots?
@@ -34,19 +34,36 @@ import { blobName, parentRealPathOf, readCheckpointIndex, sessionBackupsDir, typ
  * deleted.
  */
 function isInsideSessionRoots(absPath: string, roots: readonly string[]): boolean {
+  // RESOLVED, NOT COMPARED AS STRINGS. A string prefix check is defeated by one symlink: a Bash round
+  // inside the session's own cwd may legitimately `ln -s /etc cwd/link`, and a forged record naming
+  // `cwd/link/passwd` then starts with the root prefix while resolving entirely outside it. The
+  // path-identity guards below do not save it either -- they are SKIPPED whenever a record carries
+  // neither `anchorPath` nor `parentRealPath`, which a hand-written record simply omits, and
+  // `leafStateRefusal` only lstats the LEAF (a real regular file, reached through a linked ancestor).
+  //
+  // `nearestExistingAncestor` walks upward until something resolves, so this answers for a path
+  // several not-yet-created directories deep as well as for one that exists -- and it is the SAME
+  // primitive the anchor guard uses, so the two cannot disagree about what "resolves" means.
   const target = resolve(absPath);
+  const anchor = nearestExistingAncestor(target);
+  // The portion of the path BELOW the nearest existing ancestor cannot contain a link (nothing exists
+  // there to be one), so appending it to the anchor's REAL path gives the path the write would
+  // actually reach.
+  const realTarget = anchor === undefined ? target : join(anchor.anchorRealPath, relative(anchor.anchorPath, target));
   for (const raw of roots) {
     const root = resolve(raw);
-    if (target === root) return true;
-    if (target.startsWith(root.endsWith(sep) ? root : root + sep)) return true;
-    // The recorded path and the configured root may disagree only by a symlinked ancestor
-    // (`/var` -> `/private/var` on every macOS temp path). Compare real paths too, when both sides
-    // resolve -- a check that fails on a real machine's own tmpdir is not a check.
+    // Compare against BOTH spellings of the root: as written, and canonicalised. Every macOS mkdtemp
+    // path is a `/var` -> `/private/var` link, so a check that only used one form would refuse a
+    // session's own legitimate files on a real machine.
+    let realRoot: string | undefined;
     try {
-      const realRoot = realpathSync(root);
-      if (target === realRoot || target.startsWith(realRoot.endsWith(sep) ? realRoot : realRoot + sep)) return true;
+      realRoot = realpathSync(root);
     } catch {
-      /* the root is gone -- the written-form comparison above is the answer */
+      /* the root is gone -- the written form below is the only answer available */
+    }
+    for (const candidate of new Set([root, ...(realRoot !== undefined ? [realRoot] : [])])) {
+      if (realTarget === candidate) return true;
+      if (realTarget.startsWith(candidate.endsWith(sep) ? candidate : candidate + sep)) return true;
     }
   }
   return false;

@@ -573,3 +573,105 @@ describe("rider 25: the rewind is fenced to the session's own writable roots", (
     }
   });
 });
+
+// ================================================================================================
+// T8 rider 25, second round: the root fence must resolve SYMLINKS, not compare strings.
+// ================================================================================================
+//
+// The first round's fence compared the record's path STRING against the session's roots, which a
+// symlink defeats: `/cwd/link` -> `/etc` is a directory a Bash round inside cwd may legitimately
+// create, and a forged record naming `/cwd/link/passwd` starts with the root prefix while resolving
+// entirely outside it. The path-identity guards do not save it either -- they are skipped whenever a
+// record carries NEITHER `anchorPath` NOR `parentRealPath`, which a hand-written record simply omits,
+// and `leafStateRefusal` only lstats the LEAF (a real file, through a linked ancestor).
+//
+// Fences 1 and 2 (the managed write floor and the seatbelt) still stop a model from writing the index
+// at all, so this was defence-in-depth of defence-in-depth -- but the fence's own stated claim, "even
+// given a hostile index, only inside the session's roots", was false as written.
+describe("rider 25 (round 2): the root fence resolves symlinks -- a linked ancestor cannot smuggle a path out", () => {
+  function tamperIndex(sessionUuid: string, record: Record<string, unknown>): void {
+    const dir = join(home, CHECKPOINT_BACKUPS_DIRNAME, sessionUuid);
+    mkdirSync(dir, { recursive: true });
+    appendFileSync(join(dir, "index.jsonl"), `${JSON.stringify(record)}\n`);
+  }
+
+  test("a record whose path only LOOKS in-root, through a symlinked directory, cannot DELETE outside it", async () => {
+    const outside = mkdtempSync(join(tmpdir(), "winter-rider25b-victim-"));
+    const victim = join(outside, "authorized_keys");
+    writeFileSync(victim, "ssh-ed25519 REAL\n");
+    // The link a Bash round inside cwd may legitimately create.
+    const link = join(work, "link");
+    symlinkSync(outside, link, "dir");
+    try {
+      const sink = sinkFor();
+      writeFileSync(join(work, "a.ts"), "v0\n");
+      await sink.beforeMutation({ path: join(work, "a.ts"), tool: "Write", userMessageUuid: "u-1", sessionUuid: "sess-1" });
+      writeFileSync(join(work, "a.ts"), "v1\n");
+      // NO anchor and NO parentRealPath -- which is exactly what a hand-written record omits, and
+      // what makes every path-identity guard skip it.
+      const through = join(link, "authorized_keys");
+      tamperIndex("sess-1", {
+        kind: "snapshot",
+        userMessageUuid: "u-1",
+        path: through,
+        pathHash: checkpointPathHash(through),
+        tool: "Write",
+        at: new Date().toISOString(),
+        version: 1,
+        absent: true,
+      });
+
+      const result = await sink.rewind("u-1");
+      expect(existsSync(victim), "the victim survives").toBe(true);
+      expect(readFileSync(victim, "utf8")).toBe("ssh-ed25519 REAL\n");
+      expect(result.filesChanged).not.toContain(through);
+      // The legitimate half still restores -- one record refused, never the whole rewind.
+      expect(readFileSync(join(work, "a.ts"), "utf8")).toBe("v0\n");
+    } finally {
+      rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
+  test("a REAL file reached through a symlinked ancestor is refused on a dryRun too, so no preview promises it", async () => {
+    const outside = mkdtempSync(join(tmpdir(), "winter-rider25b-victim2-"));
+    const victim = join(outside, "id_rsa");
+    writeFileSync(victim, "REAL KEY\n");
+    const link = join(work, "link2");
+    symlinkSync(outside, link, "dir");
+    try {
+      const sink = sinkFor();
+      writeFileSync(join(work, "a.ts"), "v0\n");
+      await sink.beforeMutation({ path: join(work, "a.ts"), tool: "Write", userMessageUuid: "u-1", sessionUuid: "sess-1" });
+      writeFileSync(join(work, "a.ts"), "v1\n");
+      const through = join(link, "id_rsa");
+      const hash = checkpointPathHash(through);
+      writeFileSync(join(home, CHECKPOINT_BACKUPS_DIRNAME, "sess-1", `${hash}@v1`), "ATTACKER KEY\n");
+      tamperIndex("sess-1", { kind: "snapshot", userMessageUuid: "u-1", path: through, pathHash: hash, tool: "Write", at: new Date().toISOString(), version: 1 });
+
+      expect((await sink.rewind("u-1", { dryRun: true })).filesChanged).not.toContain(through);
+      await sink.rewind("u-1");
+      expect(readFileSync(victim, "utf8")).toBe("REAL KEY\n");
+    } finally {
+      rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
+  test("a symlinked directory INSIDE the roots still restores -- the fence resolves, it does not ban links", async () => {
+    // The discriminating control. A fence that simply refused every linked path would pass both
+    // tests above while breaking a session whose own work tree contains an internal symlink.
+    const realDir = join(work, "real");
+    mkdirSync(realDir, { recursive: true });
+    const link = join(work, "alias");
+    symlinkSync(realDir, link, "dir");
+    const file = join(link, "b.ts");
+    writeFileSync(file, "v0\n");
+    const sink = sinkFor();
+    await sink.beforeMutation({ path: file, tool: "Write", userMessageUuid: "u-1", sessionUuid: "sess-1" });
+    writeFileSync(file, "v1\n");
+
+    const result = await sink.rewind("u-1");
+    expect(result.filesChanged?.length).toBe(1);
+    expect(readFileSync(file, "utf8")).toBe("v0\n");
+    expect(result.skippedLinks).toBe(0);
+  });
+});

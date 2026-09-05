@@ -198,6 +198,26 @@ describe("T8 production wiring: the guards it carries", () => {
     expect(() => assertEffectiveSettings({}, resolved)).not.toThrow();
   });
 
+  test("rider 24: the guard compares by VALUE -- a raw project view with the same PRESENCE as effective is still caught", () => {
+    // The case a presence check misses, and the one that matters most: when the PROJECT tier and a
+    // higher tier BOTH set the key, `effective` holds the higher tier's value while a raw project
+    // view holds the project's. Same presence, different value -- exactly what OVERLAY_NEVER_KEYS
+    // exists to drop, and exactly what a `key in settings` test would wave through.
+    const projectRaw = { autoMemoryDirectory: "/repo/chosen" };
+    const userRaw = { autoMemoryDirectory: "/home/chosen" };
+    const resolved = {
+      effective: userRaw,
+      provenance: {},
+      sources: [],
+      perSource: [
+        { source: "user" as const, settings: userRaw, values: userRaw, loaded: true },
+        { source: "project" as const, settings: projectRaw, values: projectRaw, loaded: true },
+      ],
+    } as unknown as DetailedResolvedSettings;
+    expect(() => assertEffectiveSettings(projectRaw, resolved)).toThrow(/RAW settings view/);
+    expect(() => assertEffectiveSettings(userRaw, resolved)).not.toThrow();
+  });
+
   test("rider 24: a USER-tier `autoMemoryDirectory` is NOT a raw view -- the guard fires on the project tier alone", () => {
     const userRaw = { autoMemoryDirectory: "/home/chosen" };
     const resolved = {

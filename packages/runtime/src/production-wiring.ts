@@ -21,7 +21,6 @@
 // is a live GETTER rather than a snapshot, so a host that re-resolves does not have to rebuild the
 // assembler -- see `SystemPromptAssemblerDeps.settings`' own header for why a snapshot would fail
 // invisibly.
-import { homedir } from "node:os";
 import type { InitPluginInfo, RuntimeConfig, Settings, SettingSource } from "@yanlinglabs/winter-agent-sdk";
 import { OVERLAY_NEVER_KEYS, resolveWinterHome } from "@yanlinglabs/winter-agent-sdk";
 import { resolveSettingsDetailed } from "./settings/resolve.ts";
@@ -105,14 +104,17 @@ function asStrictPluginOnly(v: unknown): StrictPluginOnlyCustomization | undefin
  */
 export function assertEffectiveSettings(settings: Settings | undefined, resolved: DetailedResolvedSettings): void {
   if (settings === undefined) return;
+  const view = settings as Record<string, unknown>;
+  const effective = resolved.effective as Record<string, unknown>;
   for (const key of OVERLAY_NEVER_KEYS) {
-    if (!(key in settings)) continue;
-    const projectTier = resolved.perSource.find((tier) => tier.source === "project");
-    if (projectTier !== undefined && key in (projectTier.values as Record<string, unknown>) && !resolved.perSource.some((t) => t.source !== "project" && key in (t.values as Record<string, unknown>))) {
-      throw new Error(
-        `winter: production wiring was handed a RAW settings view -- "${key}" reached it from the project tier, which OVERLAY_NEVER_KEYS forbids. Hand the assembler resolveSettings().effective, never a per-source value.`,
-      );
-    }
+    // COMPARED BY VALUE, not by presence. A presence check is defeated by the case that matters most:
+    // when the project tier AND a higher tier both set the key, a raw project view has the SAME
+    // presence as `effective` and a different VALUE -- so the project's value would sail through a
+    // presence test while being exactly what OVERLAY_NEVER_KEYS exists to drop.
+    if (view[key] === effective[key]) continue;
+    throw new Error(
+      `winter: production wiring was handed a RAW settings view -- "${key}" differs from resolveSettings().effective, which is the only view OVERLAY_NEVER_KEYS has been applied to. Hand the assembler \`effective\`, never a per-source value.`,
+    );
   }
 }
 
@@ -128,15 +130,12 @@ export interface ProductionWiringOptions {
    * interchangeable, and picking the wrong one silently empties the user tier).
    */
   winterHome?: string;
-  /**
-   * The OS HOME directory, for `~`-anchored rules and `loadAgentDefinitions` (which appends
-   * `.winter` itself). DELIBERATELY DISTINCT from `winterHome` above. Defaults to `homedir()`,
-   * matching `engine.ts`'s own `permissionHome`.
-   *
-   * Fix-wave item 6 is expected to move user AGENT definitions onto the resolved winter root; until
-   * it does, this stays the OS home so nothing here changes a shipped behaviour by accident.
-   */
-  permissionHome?: string;
+  // NO `permissionHome` HERE, deliberately. Nothing this module builds needs the OS home: the skill
+  // index, the command resolver and the settings resolution are all addressed by the RESOLVED winter
+  // root, and `loadAgentDefinitions` (the one consumer that takes an OS home and appends `.winter`
+  // itself) is called from `engine.ts` and `tools/impl/agent.ts`, both of which already hold
+  // `permissionHome`. An unused option here would be a second place for the two conventions to be
+  // confused -- which is the exact hazard `SkillIndexOptions.winterHome`'s own header describes.
   /**
    * The session's durable transcript sink (`resolveEngineSession`'s own `store`), so the two P5
    * dialect entries have somewhere to land: Lane S's `invoked_skills` attachment and Lane K's
@@ -197,7 +196,6 @@ export interface ProductionWiring {
 export async function buildProductionWiring(opts: ProductionWiringOptions): Promise<ProductionWiring> {
   const { config, env } = opts;
   const winterHome = opts.winterHome ?? config.winterHome ?? resolveWinterHome(env);
-  const permissionHome = opts.permissionHome ?? homedir();
   const warnings: string[] = [];
   const settingSources: SettingSource[] | undefined = config.settingSources;
 

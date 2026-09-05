@@ -16,6 +16,9 @@ import { createInMemoryChannel } from "../protocol/channel.ts";
 import { registerTool, unregisterToolForTest, buildAdvertisedSet, type ToolExecutionContext } from "../tools/registry.ts";
 import { echoProvider, scriptedProvider, testProviderByName, recordedProviderSystems, resetRecordedProviderSystems } from "../provider/mock.ts";
 import { registerChildEngineFactory, resetChildEngineFactoryForTest, type SpawnChildRequest } from "./child-handle.ts";
+// Phase 5 Task 8: the two child threads with no fixture of their own until now.
+import { createStructuredOutputSeam } from "../structured/ajv-seam.ts";
+import { SkillIndex } from "../skills/store.ts";
 import { createChildEngineFactory, type ChildEngineFactoryDeps } from "./child-engine.ts";
 import { resetSpawnLimitsForTest } from "./limits.ts";
 import { loadAgentDefinitions } from "./definitions.ts";
@@ -2035,5 +2038,110 @@ describe("child-engine.ts: rider 12 -- a dispatch-child inherits its parent's ou
     expect(code).toBe(0);
     expect(seenChildStyles.length).toBeGreaterThan(0);
     expect(seenChildStyles.every((s) => s === undefined)).toBe(true);
+  });
+});
+
+// ================================================================================================
+// T8: the two OTHER child threads, which the persona and output-style fixtures above do not reach.
+// ================================================================================================
+//
+// `systemPromptAssembler` and `outputStyle` each have their own fixture; `structuredOutput` and
+// `skillRuntime` reached children through conditional spreads with no test at all -- implied-covered
+// by their neighbours, which is exactly the shape a review catches. Each has an obvious RED probe
+// (drop the spread), and each closes a failure a caller would meet on their first real use.
+describe("child-engine.ts: T8 -- the structured seam and the skill index reach a child", () => {
+  test("a child with `outputFormat` set does NOT hard-fail its first round -- the parent's structured seam reaches it", async () => {
+    registerSpawnProbe();
+    cleanupToolNames.push(SPAWN_PROBE);
+    // WITHOUT the thread this is T3's concern 3 verbatim: `outputFormat` with no seam is a hard
+    // `error_during_execution` on the child's first round -- which is what Lane W's `agent({schema})`
+    // would hit on every schema'd call, since it rides exactly this field.
+    const schema = { type: "object", properties: { verdict: { type: "string" } }, required: ["verdict"] };
+    const req: SpawnChildRequest = {
+      parentToolUseId: "call-1",
+      prompt: "decide",
+      runInBackground: false,
+      outputFormat: { type: "json_schema", schema },
+    };
+    const { code, frames } = await driveParent(
+      { provider: echoProvider, structuredOutput: createStructuredOutputSeam() },
+      baseConfig(),
+      [{ kind: "tool_use", calls: [{ id: "call-1", name: SPAWN_PROBE, input: req }] }, { kind: "text", text: "parent done" }],
+    );
+    expect(code).toBe(0);
+    const msgs = dataMessages(frames);
+    const toolResult = msgs.find((m) => m.type === "user") as unknown as { message: { content: Array<{ tool_use_id: string; content: string }> } };
+    const block = toolResult.message.content.find((b) => b.tool_use_id === "call-1")!;
+    // The child ran a real turn. The specific thing being excluded is the configuration error:
+    // "outputFormat is configured but no structured-output seam is registered for this session".
+    expect(block.content).not.toContain("no structured-output seam is registered");
+  });
+
+  test("WITHOUT the seam, the same child fails with the R5-10 configuration error -- the RED half, kept as the discriminator", async () => {
+    registerSpawnProbe();
+    cleanupToolNames.push(SPAWN_PROBE);
+    const schema = { type: "object", properties: { verdict: { type: "string" } }, required: ["verdict"] };
+    const req: SpawnChildRequest = { parentToolUseId: "call-1", prompt: "decide", runInBackground: false, outputFormat: { type: "json_schema", schema } };
+    const { code, frames } = await driveParent(
+      { provider: echoProvider }, // no structuredOutput -- a factory built the way every pre-T8 one was
+      baseConfig(),
+      [{ kind: "tool_use", calls: [{ id: "call-1", name: SPAWN_PROBE, input: req }] }, { kind: "text", text: "parent done" }],
+    );
+    expect(code).toBe(0);
+    const msgs = dataMessages(frames);
+    const toolResult = msgs.find((m) => m.type === "user") as unknown as { message: { content: Array<{ tool_use_id: string; content: string }> } };
+    const block = toolResult.message.content.find((b) => b.tool_use_id === "call-1")!;
+    expect(block.content).toContain("no structured-output seam is registered");
+  });
+
+  test("a `Skill` call INSIDE a child resolves -- the parent's index is registered under the CHILD's own agent id", async () => {
+    // `skills/runtime.ts` is keyed `agentId ?? sessionId`, deliberately, so a child never resolves
+    // against its PARENT's `skills` option -- which also means a child with no registration of its
+    // own answers "no skills runtime" to every `Skill` call. The registration is per GENERATION and
+    // is withdrawn at settle.
+    const skillHome = mkdtempSync(join(tmpdir(), "winter-t8-childskill-"));
+    try {
+      mkdirSync(join(skillHome, "skills", "childprobe"), { recursive: true });
+      writeFileSync(join(skillHome, "skills", "childprobe", "SKILL.md"), "---\nname: childprobe\ndescription: a child skill probe\n---\nCHILD SKILL BODY MARKER\n");
+      const index = SkillIndex.build({ cwd: mkdtempSync(join(tmpdir(), "winter-t8-childskill-cwd-")), winterHome: skillHome, settingSources: ["user"] });
+      expect(index.names()).toEqual(["childprobe"]);
+
+      registerSpawnProbe();
+      cleanupToolNames.push(SPAWN_PROBE);
+      const seen: string[] = [];
+      const req: SpawnChildRequest = { parentToolUseId: "call-1", prompt: "use it", runInBackground: false };
+      // The CHILD's own provider script: one `Skill` call, then text. `driveParent`'s scripted
+      // provider is the PARENT's; a child gets `deps.provider`, which is this one.
+      const childProvider: Provider = {
+        async generate({ messages }) {
+          // The CHILD's own view of its Skill call's result -- read straight off the messages the
+          // child engine hands its provider on the next round. That is the only place the body
+          // appears without `forwardSubagentText`, and it is the ground truth for "did the executor
+          // resolve, or answer a typed refusal".
+          for (const m of messages) {
+            if (m.role !== "tool" || !Array.isArray(m.content)) continue;
+            for (const b of m.content as Array<{ tool_use_id?: string; content?: unknown }>) {
+              if (b.tool_use_id === "child-skill-1" && typeof b.content === "string") seen.push(b.content);
+            }
+          }
+          if (seen.length > 0) return { kind: "text", text: "child done" };
+          return { kind: "tool_use", calls: [{ id: "child-skill-1", name: "Skill", input: { skill: "childprobe" } }] };
+        },
+      };
+      const { code, frames } = await driveParent(
+        { provider: childProvider, skillRuntime: { index } },
+        { ...baseConfig(), allowedTools: [SPAWN_PROBE, "Skill"] },
+        [{ kind: "tool_use", calls: [{ id: "call-1", name: SPAWN_PROBE, input: req }] }, { kind: "text", text: "parent done" }],
+      );
+      expect(code).toBe(0);
+      void frames;
+      expect(seen.length, "the child's Skill call produced a tool_result").toBeGreaterThan(0);
+      // THE RESULT IS THE BODY (WS-11 §2.3). A typed refusal is also a tool_result, so the marker is
+      // what distinguishes "resolved and loaded" from "answered politely" -- the same discriminator
+      // the cross-leg skill round uses.
+      expect(seen[0]).toContain("CHILD SKILL BODY MARKER");
+    } finally {
+      rmSync(skillHome, { recursive: true, force: true });
+    }
   });
 });
