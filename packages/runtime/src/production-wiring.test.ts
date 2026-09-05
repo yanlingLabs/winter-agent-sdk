@@ -428,3 +428,136 @@ describe("P5-G: a refused project-tier prompt replacement is reported", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------------------------
+// Phase 5 residual round, NEW-1 + the I3 residual: the tier `error` channel reaches an operator.
+// ---------------------------------------------------------------------------------------------
+describe("NEW-1: a settings tier's own `error` becomes a wiring warning", () => {
+  test("a malformed USER-tier rule array is reported, naming the tier, the path and the reason", async () => {
+    // A-2's shape: `deny` as a STRING. It parses, contributes no rules, and before A-2 reported
+    // nothing at all; after A-2 it reported into a channel nothing read.
+    writeSettings(home, { permissions: { deny: "Bash" } });
+    const wiring = await buildProductionWiring({
+      config: { sessionId: "s-new1", cwd, model: "m" } as unknown as RuntimeConfig,
+      env: {},
+      winterHome: home,
+    });
+    try {
+      const warning = wiring.warnings.find((w) => w.startsWith("settings (user"));
+      expect(warning).toBeDefined();
+      expect(warning).toContain(join(home, "settings.json"));
+      expect(warning).toContain("deny");
+    } finally {
+      wiring.dispose();
+    }
+  });
+
+  test("I3 residual: a refused project `plansDirectory` names `plansDirectory` in the operator's line", async () => {
+    // RULING P5-L refuses an absolute project-tier value. The reviewer's probe recorded
+    // `stderr mentions plansDirectory=false` -- the refusal worked and said so to nobody.
+    writeSettings(join(cwd, ".winter"), { plansDirectory: "/etc" });
+    const wiring = await buildProductionWiring({
+      config: { sessionId: "s-new1-plans", cwd, model: "m" } as unknown as RuntimeConfig,
+      env: {},
+      winterHome: home,
+    });
+    try {
+      const warning = wiring.warnings.find((w) => w.includes("plansDirectory"));
+      expect(warning).toBeDefined();
+      expect(warning).toContain("settings (project");
+      expect(warning).toContain("RELATIVE");
+    } finally {
+      wiring.dispose();
+    }
+  });
+
+  test("a clean settings tree produces NO `settings (` warning -- the discriminating half", async () => {
+    writeSettings(home, { permissions: { deny: ["Bash"] } });
+    const wiring = await buildProductionWiring({
+      config: { sessionId: "s-new1-clean", cwd, model: "m" } as unknown as RuntimeConfig,
+      env: {},
+      winterHome: home,
+    });
+    try {
+      expect(wiring.warnings.filter((w) => w.startsWith("settings ("))).toEqual([]);
+    } finally {
+      wiring.dispose();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// Phase 5 residual round, NEW-3: a settings file may not make the session unstartable.
+// ---------------------------------------------------------------------------------------------
+describe("NEW-3: a user-tier bypass defaultMode degrades with a warning instead of aborting", () => {
+  async function runOnce(config: Record<string, unknown>): Promise<{ frames: WinterFrame[]; code: number | null }> {
+    const proc = inMemoryProcess(["--config-json", JSON.stringify({ sessionId: "s-new3", cwd, model: "m", persistSession: false, ...config })], undefined, undefined, { WINTER_HOME: home });
+    proc.stdin.write(encodeFrame({ type: "user", text: "go" } as WinterFrame));
+    proc.stdin.write(encodeFrame({ type: "control_request", requestId: "e", subtype: "end_input", payload: undefined } as WinterFrame));
+    const frames: WinterFrame[] = [];
+    let carry = "";
+    for await (const chunk of proc.stdout) {
+      const split = splitFrames(chunk, carry);
+      carry = split.carry;
+      for (const f of split.frames as WinterFrame[]) frames.push(f);
+    }
+    const { code } = await proc.exited;
+    return { frames, code };
+  }
+
+  test("the session STARTS, reports the reason, and runs in the default mode", async () => {
+    writeSettings(home, { permissions: { defaultMode: "bypassPermissions" } });
+    const out = await runOnce({});
+    // Before this fix: ZERO frames and exit 1. `system/init` is the assertion that matters -- it is
+    // the frame the abort happened before.
+    const init = out.frames.map((f) => (f.type === "data" ? (f as { message: SdkMessage }).message : undefined)).find((m) => m?.type === "system" && (m as { subtype?: string }).subtype === "init") as { permissionMode?: string } | undefined;
+    expect(init, "the session must reach system/init").toBeDefined();
+    expect(init?.permissionMode, "the unhonourable file mode falls back, it does not apply").not.toBe("bypassPermissions");
+    expect(out.code).toBe(0);
+  });
+
+  test("with `allowDangerouslySkipPermissions` the user's own choice still applies", async () => {
+    // The discriminating half: the degradation must be about the missing FLAG, not about the tier.
+    writeSettings(home, { permissions: { defaultMode: "bypassPermissions" } });
+    const out = await runOnce({ allowDangerouslySkipPermissions: true });
+    const init = out.frames.map((f) => (f.type === "data" ? (f as { message: SdkMessage }).message : undefined)).find((m) => m?.type === "system" && (m as { subtype?: string }).subtype === "init") as { permissionMode?: string } | undefined;
+    expect(init?.permissionMode).toBe("bypassPermissions");
+  });
+
+  test("the wiring names the reason, and says nothing when there is nothing to say", async () => {
+    writeSettings(home, { permissions: { defaultMode: "bypassPermissions" } });
+    const blocked = await buildProductionWiring({ config: { sessionId: "s-new3-w", cwd, model: "m" } as unknown as RuntimeConfig, env: {}, winterHome: home });
+    try {
+      const w = blocked.warnings.find((x) => x.includes("defaultMode"));
+      expect(w).toBeDefined();
+      expect(w).toContain("allowDangerouslySkipPermissions is not set");
+      expect(blocked.engineOptions.settingsRules?.defaultMode).toBeUndefined();
+    } finally {
+      blocked.dispose();
+    }
+
+    const allowed = await buildProductionWiring({ config: { sessionId: "s-new3-w2", cwd, model: "m", allowDangerouslySkipPermissions: true } as unknown as RuntimeConfig, env: {}, winterHome: home });
+    try {
+      expect(allowed.warnings.filter((x) => x.includes("defaultMode"))).toEqual([]);
+      expect(allowed.engineOptions.settingsRules?.defaultMode).toBe("bypassPermissions");
+    } finally {
+      allowed.dispose();
+    }
+  });
+
+  test("a MANAGED veto also degrades it, and says which reason applied", async () => {
+    writeSettings(home, { permissions: { defaultMode: "bypassPermissions" } });
+    const wiring = await buildProductionWiring({
+      config: { sessionId: "s-new3-veto", cwd, model: "m", allowDangerouslySkipPermissions: true, managedSettings: { permissions: { disableBypassPermissionsMode: true } } } as unknown as RuntimeConfig,
+      env: {},
+      winterHome: home,
+    });
+    try {
+      const w = wiring.warnings.find((x) => x.includes("defaultMode"));
+      expect(w).toContain("managed policy");
+      expect(wiring.engineOptions.settingsRules?.defaultMode).toBeUndefined();
+    } finally {
+      wiring.dispose();
+    }
+  });
+});

@@ -195,7 +195,7 @@ function isPlainSettings(v: unknown): v is Settings {
  * a single bad string in a checked-in `.winter/settings.json` must not make the session unstartable.
  * The bad entry is dropped and named in `warnings`; every other rule in the same file still binds.
  */
-export function buildSettingsRuleSeed(resolved: DetailedResolvedSettings): SettingsRuleSeed {
+export function buildSettingsRuleSeed(resolved: DetailedResolvedSettings, opts?: { allowDangerouslySkipPermissions?: boolean; disableBypassPermissionsMode?: boolean }): SettingsRuleSeed {
   const entries: SourcedRuleEntry[] = [];
   const directories: Array<{ path: string; source: RuleSource }> = [];
   const warnings: string[] = [];
@@ -226,7 +226,7 @@ export function buildSettingsRuleSeed(resolved: DetailedResolvedSettings): Setti
   // which no per-entry view can. Zero non-test callers before this.
   const filtered = filterEscalatingDefaultMode(resolved) as Record<string, unknown>;
   const filteredPermissions = filtered["permissions"];
-  const defaultMode =
+  const rawDefaultMode =
     typeof filteredPermissions === "object" && filteredPermissions !== null && typeof (filteredPermissions as Record<string, unknown>)["defaultMode"] === "string"
       ? ((filteredPermissions as Record<string, unknown>)["defaultMode"] as string)
       : undefined;
@@ -238,6 +238,37 @@ export function buildSettingsRuleSeed(resolved: DetailedResolvedSettings): Setti
     const permissions = (tier.values as Record<string, unknown> | undefined)?.["permissions"];
     return typeof permissions === "object" && permissions !== null && (permissions as Record<string, unknown>)["disableBypassPermissionsMode"] === true;
   });
+
+  // NEW-3 (residual round): A SETTINGS FILE MAY NOT MAKE THE SESSION UNSTARTABLE.
+  //
+  // `filterEscalatingDefaultMode` drops an escalating mode from the PROJECT tier only -- correct,
+  // and by design a USER-tier `bypassPermissions` survives, because it is the user's own file. But
+  // C1 gave that value a consumer for the first time: `initialMode` now reads it, and
+  // `PolicyStateStore`'s bypass gate then THROWS when `allowDangerouslySkipPermissions` is not set
+  // or a managed veto is in force. That throw is startup validation -- it happens before the `init`
+  // frame -- so the session emitted zero frames and exited 1. Before the wave the same line in the
+  // same file was simply inert.
+  //
+  // The failure is silent in a way that is worth naming: on the in-memory leg nothing is printed at
+  // all, and on a spawned leg the operator gets `winter: fatal` with no indication that a line in
+  // their own `settings.json` is responsible.
+  //
+  // DEGRADED, NOT ABORTED, matching exactly how the project tier is already treated one function
+  // up: the mode falls back to the pre-wave behaviour (no file-supplied default) and the reason is
+  // reported. A file supplies a DEFAULT; a default that cannot be honoured is not an error, it is a
+  // default that does not apply. An explicit `Options.permissionMode` is untouched either way --
+  // it never passes through here.
+  const bypassBlocked = opts?.allowDangerouslySkipPermissions !== true || disableBypassPermissionsMode || opts?.disableBypassPermissionsMode === true;
+  const defaultMode = rawDefaultMode === "bypassPermissions" && bypassBlocked ? undefined : rawDefaultMode;
+  if (defaultMode !== rawDefaultMode) {
+    warnings.push(
+      `settings: permissions.defaultMode "bypassPermissions" is ignored -- ${
+        disableBypassPermissionsMode || opts?.disableBypassPermissionsMode === true
+          ? "a managed policy disables bypassPermissions (WS-07 §6.4)"
+          : "Options.allowDangerouslySkipPermissions is not set"
+      }; this session starts in its default mode instead`,
+    );
+  }
 
   return {
     entries,
@@ -355,6 +386,24 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
   });
   const effective = resolved.effective;
   assertEffectiveSettings(effective, resolved);
+
+  // NEW-1 (residual round): THE TIER `error` CHANNEL HAD NO PRODUCTION CONSUMER.
+  //
+  // `resolve.ts` merges four independent reports into `DetailedSettingsSourceEntry.error` -- A-2's
+  // value-level malformed rule arrays, m1's `outputStyle` drop, RULING P5-L's `plansDirectory`
+  // refusal, and plain JSON parse failures -- and this file read only `perSource[].values`. So four
+  // separate fixes each landed a message that reached nobody: the reviewer's I3 probe recorded
+  // `stderr mentions plansDirectory=false` against a refusal that had been implemented, tested and
+  // shipped. A report with no consumer is not a report.
+  //
+  // ALSO THE I3 RESIDUAL. The `plansDirectory` refusal now names the key in the operator's line,
+  // because `resolve.ts` writes the key into its own reason string and this simply carries it.
+  for (const tier of resolved.perSource) {
+    if (tier.error === undefined || tier.error.length === 0) continue;
+    // `path` is `undefined` for the managed/flag tiers, which have no file. Same conditional shape
+    // the malformed-rule warning below uses -- never "settings (managed at undefined)".
+    warnings.push(`settings (${tier.source}${tier.path !== undefined ? ` at ${tier.path}` : ""}): ${tier.error}`);
+  }
   // A LIVE GETTER, not the value: see the field's own header on `SystemPromptAssemblerDeps`.
   const settingsGetter = (): Settings | undefined => effective;
 
@@ -613,7 +662,13 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
   // same for directory grants). Seeding tagged entries gets P5-A for free and keeps ONE
   // implementation of it. `filterEscalatingDefaultMode` IS called -- it is a whole-resolution
   // question (which tier set the mode), not a per-entry one.
-  const settingsRules = buildSettingsRuleSeed(resolved);
+  const settingsRules = buildSettingsRuleSeed(resolved, {
+    // NEW-3: the two conditions `PolicyStateStore`'s bypass gate throws on, so the seed never hands
+    // the engine a mode the engine will refuse. Passed rather than re-derived inside the seed
+    // builder, which sees only settings.
+    allowDangerouslySkipPermissions: config.allowDangerouslySkipPermissions === true,
+    disableBypassPermissionsMode: config.permissions?.disableBypassPermissionsMode === true,
+  });
   for (const warning of settingsRules.warnings) warnings.push(warning);
 
   return {
