@@ -46,6 +46,7 @@ import { normalizeHttpError, normalizeThrown } from "../../errors.ts";
 import { createRetryPolicy, withRetry, type RetryPolicyOptions } from "../../retry.ts";
 import { applyPrivilegedHeaders, createEndpointPolicy, type EndpointPolicy } from "../../endpoint-policy.ts";
 import { hostHeaders } from "../privileged-headers.ts";
+import { collectImages, containsImage } from "../content-blocks.ts";
 import { parseSse } from "../../sse.ts";
 import type {
   ContentBlockLike,
@@ -157,17 +158,27 @@ type WirePart = Record<string, unknown>;
 /**
  * A tool result's payload as this family's `response` object.
  *
- * The wire wants an OBJECT. A string result is wrapped under a single key rather than being
- * stringified into JSON-inside-JSON, which is what makes the model see the text it was given.
+ * The wire wants an OBJECT (`functionResponse.response` is a Struct), so a string result is wrapped
+ * under a single key rather than stringified into JSON-inside-JSON, which is what makes the model see
+ * the text it was given.
+ *
+ * IMAGES DO NOT FIT IN A STRUCT, and that is why they do not travel through here. A Struct is JSON:
+ * there is no field on it that carries binary, so the earlier version reduced a blocks-valued result
+ * to `{ output, imageCount }` and the image reached the wire for NO model — a silent drop, in a file
+ * whose whole discipline is that a drop is either represented or refused. `toContents` now emits each
+ * one as a SIBLING `inlineData` part (`Part.inline_data`, the same field a user-supplied image rides)
+ * on the same `user` entry, immediately after this response. `imageCount` stays as the structured
+ * association: it tells the model how many of the parts beside this response belong to it.
  */
 function toFunctionResponsePayload(content: string | ContentBlockLike[]): Record<string, unknown> {
   if (typeof content === "string") return { output: content };
   const text = content
-    .map((block) => (block.type === "text" ? block.text : block.type === "image" ? "" : ""))
+    .filter((block): block is Extract<ContentBlockLike, { type: "text" }> => block.type === "text")
+    .map((block) => block.text)
     .filter((s) => s.length > 0)
     .join("\n");
-  const images = content.filter((b): b is Extract<ContentBlockLike, { type: "image" }> => b.type === "image");
-  return { output: text, ...(images.length > 0 ? { imageCount: images.length } : {}) };
+  const imageCount = collectImages(content).length;
+  return { output: text, ...(imageCount > 0 ? { imageCount } : {}) };
 }
 
 interface SerializeResult {
@@ -238,6 +249,11 @@ export function toContents(messages: ProviderMessageLike[]): SerializeResult {
             );
           }
           parts.push({ functionResponse: { name, response: toFunctionResponsePayload(block.content) } });
+          // The images the Struct cannot carry, as sibling parts on the same entry, in wire order.
+          // Reaching here at all means the vision gate passed, so the model advertises image input.
+          for (const image of collectImages(block.content)) {
+            parts.push({ inlineData: { mimeType: image.source.media_type, data: image.source.data } });
+          }
           break;
         }
         case "thinking":
@@ -355,9 +371,12 @@ function buildRequestBody(req: TurnRequest, descriptor: WinterModelDescriptor | 
     );
   }
   if (descriptor !== undefined && !descriptor.inputModalities.value.includes("image")) {
+    // RECURSIVE, and that is the whole point: P3-M's multimodal `Read` delivers its page images
+    // SOLELY as image blocks inside a model-facing `tool_result` (derived-shapes item (f)), so a
+    // top-level-only scan saw none of them and let exactly the interesting case reach a non-vision
+    // model -- an upstream 400 in place of the typed refusal this gate exists to produce.
     for (const message of req.messages) {
-      if (typeof message.content === "string") continue;
-      if (message.content.some((b) => b.type === "image")) {
+      if (containsImage(message.content)) {
         throw capabilityRefusal(`model "${descriptor.key}" does not advertise image input, so an image block is refused before the request rather than sent and rejected upstream`);
       }
     }

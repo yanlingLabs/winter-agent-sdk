@@ -47,6 +47,7 @@ import { normalizeHttpError, normalizeThrown } from "../../errors.ts";
 import { createRetryPolicy, withRetry, type RetryPolicyOptions } from "../../retry.ts";
 import { applyPrivilegedHeaders, createEndpointPolicy, type EndpointPolicy } from "../../endpoint-policy.ts";
 import { hostHeaders } from "../privileged-headers.ts";
+import { containsImage } from "../content-blocks.ts";
 import { parseSse } from "../../sse.ts";
 import type {
   ContentBlockLike,
@@ -315,9 +316,12 @@ function buildRequestBody(req: TurnRequest, descriptor: WinterModelDescriptor | 
 
   // Vision: an image block reaches the wire only where the descriptor advertises it.
   if (descriptor !== undefined && !descriptor.inputModalities.value.includes("image")) {
+    // RECURSIVE, and that is the whole point: P3-M's multimodal `Read` delivers its page images
+    // SOLELY as image blocks inside a model-facing `tool_result` (derived-shapes item (f)), so a
+    // top-level-only scan saw none of them and let exactly the interesting case reach a non-vision
+    // model -- an upstream 400 in place of the typed refusal this gate exists to produce.
     for (const message of req.messages) {
-      if (typeof message.content === "string") continue;
-      if (message.content.some((b) => b.type === "image")) {
+      if (containsImage(message.content)) {
         throw capabilityRefusal(`model "${descriptor.key}" does not advertise image input, so an image block is refused before the request rather than sent and rejected upstream`);
       }
     }
@@ -631,7 +635,15 @@ export function createAnthropicMessagesAdapter(opts: AnthropicAdapterOptions = {
               // signatureless block, and the bridge's own coercion reproduces exactly that -- so
               // omitting it here keeps ONE normalizer for the rule instead of two that can drift.
               yield { type: "native_thinking_block", block: { type: "thinking", thinking: open.thinking, ...(open.signature !== undefined ? { signature: open.signature } : {}) } };
-            } else if (open.type === "redacted_thinking" && open.data !== undefined) {
+            } else if (open.type === "redacted_thinking") {
+              if (open.data === undefined) {
+                // The block IS the opaque continuation state. Dropping it silently breaks the
+                // signature chain on the next replay, and the failure would surface as an upstream
+                // rejection of a request this adapter had already decided was fine -- so it is the
+                // same typed, unrepresentable refusal every other undecodable frame in this file gets.
+                yield { type: "error", error: malformed("a redacted_thinking block completed with no `data`, so its opaque continuation state cannot be carried") };
+                return;
+              }
               yield { type: "native_thinking_block", block: { type: "redacted_thinking", data: open.data } };
             } else if (open.type === "tool_use" && open.toolId !== undefined) {
               yield { type: "tool_call_end", id: open.toolId };

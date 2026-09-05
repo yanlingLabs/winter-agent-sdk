@@ -102,6 +102,48 @@ describe("Google GenerateContent: the live request", () => {
   });
 });
 
+describe("Google GenerateContent: images nested inside a tool_result (I2/I3)", () => {
+  const history = (model: string) => ({
+    model,
+    messages: [
+      { role: "assistant" as const, content: [{ type: "tool_use" as const, id: "c1", name: "Read", input: {} }] },
+      {
+        role: "tool" as const,
+        content: [
+          {
+            type: "tool_result" as const,
+            tool_use_id: "c1",
+            content: [{ type: "text" as const, text: "page 1" }, { type: "image" as const, source: { type: "base64" as const, media_type: "image/png", data: "aGVsbG8=" } }],
+          },
+        ],
+      },
+    ],
+  });
+
+  test("a NESTED image is refused before the request for a non-vision model", async () => {
+    const adapter = testGoogleAdapter();
+    await withFake({ routes: googleCorpusRoutes() }, async (fake) => {
+      await expect(foldTurn(adapter, history(GOOGLE_MODELS.noVision), googleContext(fake.url))).rejects.toThrow(/does not advertise image input/);
+      expect(fake.requests).toHaveLength(0);
+    });
+  });
+
+  test("a NESTED image rides as a SIBLING `inlineData` part, never silently filtered out", async () => {
+    // `functionResponse.response` is a Struct -- JSON, with no field that carries binary -- so the
+    // image cannot travel inside the response. It goes beside it, on the same `user` entry, in the
+    // same `inline_data` field a user-supplied image rides; `imageCount` is what associates the two.
+    const adapter = testGoogleAdapter();
+    await withFake({ routes: googleCorpusRoutes() }, async (fake) => {
+      await foldTurn(adapter, history(GOOGLE_MODELS.main), googleContext(fake.url));
+      const contents = geminiContents(fake.requests[0]!);
+      expect(contents[1]?.parts).toEqual([
+        { functionResponse: { name: "Read", response: { output: "page 1", imageCount: 1 } } },
+        { inlineData: { mimeType: "image/png", data: "aGVsbG8=" } },
+      ]);
+    });
+  });
+});
+
 describe("Google GenerateContent: foreign reasoning at the family boundary", () => {
   test("an Anthropic thinking block is DROPPED and COUNTED, never written into `parts`", async () => {
     const adapter = testGoogleAdapter();

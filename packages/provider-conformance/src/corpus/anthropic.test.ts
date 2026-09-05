@@ -10,7 +10,7 @@
 // publishes only `.` and its barrel is frozen (R6-12) -- a deep specifier does not resolve. Same for
 // the adapter itself.
 import { describe, expect, test } from "bun:test";
-import { withFake, noRequestContains, requestsTo } from "../fakes/server.ts";
+import { withFake, noRequestContains, requestsTo, sseResponse } from "../fakes/server.ts";
 import { anthropicError, anthropicFakeRoutes, anthropicTurnResponse, assertAnthropicRequest, anthropicBody, messageBlocks } from "../fakes/anthropic-messages.ts";
 import { createAnthropicMessagesAdapter, ANTHROPIC_ADAPTER_ID, ANTHROPIC_DEFAULT_BASE_URL, mapAnthropicEffort } from "../../../provider-runtime/src/adapters/anthropic/index.ts";
 import { loadCatalog } from "@yanlinglabs/winter-provider-catalog";
@@ -190,6 +190,59 @@ describe("Anthropic Messages: thinking, effort and the summary request", () => {
     expect(mapAnthropicEffort("high", noEfforts)).toMatchObject({ ok: false });
     // An UNLISTED model has no verified vocabulary, so an effort for it is refused rather than guessed.
     expect(mapAnthropicEffort("high", undefined)).toMatchObject({ ok: false });
+  });
+});
+
+describe("Anthropic Messages: images nested inside a tool_result (I2)", () => {
+  const nestedImage = (id: string) => ({
+    role: "tool" as const,
+    content: [{ type: "tool_result" as const, tool_use_id: id, content: [{ type: "text" as const, text: "page 1" }, { type: "image" as const, source: { type: "base64" as const, media_type: "image/png", data: "aGVsbG8=" } }] }],
+  });
+
+  test("a NESTED image is refused before the request for a non-vision model, exactly like a top-level one", async () => {
+    // P3-M's multimodal `Read` delivers its page images SOLELY as image blocks inside a model-facing
+    // `tool_result`, so a top-level-only gate let precisely the interesting case reach the wire.
+    const adapter = testAnthropicAdapter();
+    await withFake({ routes: anthropicCorpusRoutes() }, async (fake) => {
+      await expect(
+        foldTurn(
+          adapter,
+          { model: ANTHROPIC_MODELS.noVision, messages: [{ role: "assistant", content: [{ type: "tool_use", id: "c1", name: "Read", input: {} }] }, nestedImage("c1")] },
+          testContext(fake.url),
+        ),
+      ).rejects.toThrow(/does not advertise image input/);
+      expect(fake.requests).toHaveLength(0);
+    });
+  });
+
+  test("a NESTED image reaches the wire in the family's own shape where the model DOES advertise vision", async () => {
+    const adapter = testAnthropicAdapter();
+    await withFake({ routes: anthropicCorpusRoutes() }, async (fake) => {
+      await foldTurn(
+        adapter,
+        { model: ANTHROPIC_MODELS.main, messages: [{ role: "assistant", content: [{ type: "tool_use", id: "c1", name: "Read", input: {} }] }, nestedImage("c1")] },
+        testContext(fake.url),
+      );
+      expect(messageBlocks(fake.requests[0]!, 1)).toEqual([
+        { type: "tool_result", tool_use_id: "c1", content: [{ type: "text", text: "page 1" }, { type: "image", source: { type: "base64", media_type: "image/png", data: "aGVsbG8=" } }] },
+      ]);
+    });
+  });
+
+  test("a `redacted_thinking` block that completes with NO data is a typed failure, not a silent drop", async () => {
+    // The block IS the opaque continuation state; dropping it silently breaks the signature chain on
+    // the next replay, and the failure would then surface as an upstream rejection of a request this
+    // adapter had already decided was fine.
+    const adapter = testAnthropicAdapter();
+    const frames = [
+      { event: "message_start", data: JSON.stringify({ type: "message_start", message: { id: "m", model: "m", usage: { input_tokens: 1, output_tokens: 0 } } }) },
+      { event: "content_block_start", data: JSON.stringify({ type: "content_block_start", index: 0, content_block: { type: "redacted_thinking" } }) },
+      { event: "content_block_stop", data: JSON.stringify({ type: "content_block_stop", index: 0 }) },
+      { event: "message_stop", data: JSON.stringify({ type: "message_stop" }) },
+    ];
+    await withFake({ routes: anthropicFakeRoutes({ messages: { "sc-redacted-nodata": () => sseResponse(frames) } }) }, async (fake) => {
+      await expect(foldTurn(adapter, { model: "sc-redacted-nodata", messages: [{ role: "user", content: "go" }] }, testContext(fake.url))).rejects.toThrow(/redacted_thinking block completed with no/);
+    });
   });
 });
 
