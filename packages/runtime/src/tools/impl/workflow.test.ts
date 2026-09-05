@@ -15,7 +15,7 @@ import { getRegisteredTool, type ToolExecutionContext, type ToolResultPayload } 
 import { createSessionReadState } from "../read-state.ts";
 import { stopTask, getTask, resetBackgroundTaskRuntimeForTest } from "./background-task-runtime.ts";
 import { configureBackgroundTaskRoot, resetBackgroundTaskRootForTest } from "../background-tasks.ts";
-import { registerWorkflowSession, resetWorkflowSessionForTest } from "../../workflows/host-registry.ts";
+import { registerWorkflowSession, clearWorkflowSession, resetWorkflowSessionForTest } from "../../workflows/host-registry.ts";
 import { inProcessWorkerSpawner } from "../../workflows/worker-harness.ts";
 import { fakeStructuredOutputSeam } from "../../structured/seam.ts";
 import { createContextAccountant } from "../../engine.ts";
@@ -375,5 +375,48 @@ describe("F10 -- the THREE ways this lane is inert until T8 wires it, each pinne
   test("leg 3: the descriptor is gated on the `winter.workflows` capability -- something must grant it or the tool is never advertised", () => {
     const descriptor = getRegisteredTool("Workflow")?.descriptor;
     expect(descriptor?.capabilityRequirements).toContain("winter.workflows");
+  });
+});
+
+describe("I5 (fix wave) -- two live sessions, end to end through the executor", () => {
+  // host-registry.test.ts pins the registry's own semantics; this is the consequence the finding is
+  // actually about: WHERE each session's script lands, and whether one session's teardown can
+  // silence another. Both sessions run through the real executor, the real runtime and the real
+  // in-process worker.
+  test("each session persists its script under its OWN project key, and A's teardown leaves B running", async () => {
+    resetWorkflowSessionForTest();
+    const homeA = mkdtempSync(join(tmpdir(), "winter-wf-i5-a-"));
+    const homeB = mkdtempSync(join(tmpdir(), "winter-wf-i5-b-"));
+    registerWorkflowSession({
+      sessionId: "sess-A",
+      winterHome: homeA,
+      projectKey: "-proj-a",
+      sessionTempDir,
+      structured: fakeStructuredOutputSeam(),
+      accountant: createContextAccountant({ limit: 100_000 }),
+    });
+    const disposeB = registerWorkflowSession({
+      sessionId: "sess-B",
+      winterHome: homeB,
+      projectKey: "-proj-b",
+      sessionTempDir,
+      structured: fakeStructuredOutputSeam(),
+      accountant: createContextAccountant({ limit: 100_000 }),
+    });
+
+    const outA = await output({ script: SCRIPT }, makeCtx({ sessionId: "sess-A" }));
+    const outB = await output({ script: SCRIPT }, makeCtx({ sessionId: "sess-B" }));
+
+    expect(outA.scriptPath).toContain(join(homeA, "projects", "-proj-a", "sess-A"));
+    expect(outB.scriptPath).toContain(join(homeB, "projects", "-proj-b", "sess-B"));
+
+    // Session A finishes and withdraws its registration. B is untouched: pre-fix, the single
+    // process-global slot meant this cleared B's runtime too.
+    clearWorkflowSession("sess-A");
+    const stillB = await run({ script: SCRIPT }, makeCtx({ sessionId: "sess-B" }));
+    expect(stillB.isError).toBeUndefined();
+    expect((await run({ script: SCRIPT }, makeCtx({ sessionId: "sess-A" }))).isError).toBe(true);
+
+    disposeB();
   });
 });

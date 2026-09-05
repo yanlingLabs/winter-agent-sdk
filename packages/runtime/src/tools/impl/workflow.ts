@@ -245,7 +245,11 @@ function resolveSource(input: WorkflowInput, ctx: ToolExecutionContext): { ok: t
 const executor: ToolExecutor = {
   async execute(rawInput: unknown, ctx: ToolExecutionContext): Promise<ToolResultPayload> {
     const input = asInput(rawInput);
-    const session = getWorkflowSession();
+    // Fix wave (whole-branch I5): resolved BY SESSION. `runtimeFor` already caches one
+    // `WorkflowRuntime` per session id, but it cached it against whatever runtime happened to be
+    // registered process-wide at the first call -- so in a two-session host the key was right and
+    // the VALUE behind it was another session's.
+    const session = getWorkflowSession(ctx.sessionId);
     if (session === undefined) {
       // The inert default (host-registry.ts): registered, not wired. A typed answer, never a crash.
       return toolError("no workflow runtime is configured for this session, so Workflow cannot run");
