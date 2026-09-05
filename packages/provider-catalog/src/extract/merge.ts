@@ -39,6 +39,13 @@ export interface AllowlistProviderRow {
   upstreamId: string;
   winterId: string;
   expectedCategory: string;
+  /**
+   * The `status` every extracted model of this provider starts at. Absent means `candidate`.
+   *
+   * R6-16 puts the native-cloud families in the catalog as `experimental`; nothing here can ever
+   * reach `supported`, which requires the behavioural corpus (WS-13 §13).
+   */
+  initialModelStatus?: "candidate" | "experimental";
   risk: { class: "approved" | "review-required" | "blocked"; reasons: string[] };
 }
 
@@ -53,6 +60,8 @@ export interface Allowlist {
   paths: Array<{ pattern: string; role: "extract" | "claim" | "notice"; why: string }>;
   providers: AllowlistProviderRow[];
   categoryDispositions: Record<string, CategoryDisposition>;
+  /** providerId -> upstream model id -> the corrected wire id, reviewed by hand. */
+  modelIdCorrections?: Record<string, Record<string, { to: string; why: string }>>;
   blocked: Array<{ upstreamId: string; reason: string }>;
   importBoundary: { resolveIdentifiersWithin: string; failOnUnresolvedFields: string[] };
 }
@@ -426,6 +435,15 @@ export function buildUpstreamLayer(input: BuildUpstreamLayerInput): UpstreamLaye
         }
       }
 
+      // A REVIEWED id correction: an upstream id that is not what the provider documents on its own
+      // wire. Applied here and RECORDED, never silently — the ledger row is what makes it auditable
+      // against the pinned source, which is the whole reason `copied verbatim` is a provenance class.
+      const correction = allowlist.modelIdCorrections?.[allowed.upstreamId]?.[id];
+      const wireId = correction?.to ?? id;
+      if (correction !== undefined) {
+        reject(allowed.upstreamId, "model", "unrepresentable-protocol", `${allowed.upstreamId}.models[${id}].id`, registryPath, `reviewed model-id correction: upstream lists ${JSON.stringify(id)}, Winter records ${JSON.stringify(correction.to)}. ${correction.why}`);
+      }
+
       seen.add(id);
       const endpoints: Array<"chat" | "responses"> =
         targetFormat !== undefined && MODEL_TARGET_FORMAT_ENDPOINT[targetFormat] === "responses"
@@ -446,7 +464,8 @@ export function buildUpstreamLayer(input: BuildUpstreamLayerInput): UpstreamLaye
       const efforts = strArray(raw, "supportedThinkingEfforts") ?? providerEfforts ?? [];
       const reasoningSupported = bool(raw, "supportsReasoning") === true || efforts.length > 0;
       const unsupportedParameters = strArray(raw, "unsupportedParams") ?? [];
-      const aliases = (strArray(raw, "aliases") ?? []).filter((alias) => alias !== id);
+      // A corrected id keeps the upstream spelling as an ALIAS, so both resolve to the corrected wire id.
+      const aliases = [...(strArray(raw, "aliases") ?? []), ...(correction !== undefined ? [id] : [])].filter((alias) => alias !== wireId);
       const ref = `${registryPath}#${id}`;
 
       const reasoning: ReasoningCapabilities | undefined = reasoningSupported
@@ -462,9 +481,9 @@ export function buildUpstreamLayer(input: BuildUpstreamLayerInput): UpstreamLaye
         : undefined;
 
       models.push({
-        key: `${allowed.winterId}/${id}`,
+        key: `${allowed.winterId}/${wireId}`,
         providerId: allowed.winterId,
-        upstreamId: id,
+        upstreamId: wireId,
         displayName: str(raw, "name") ?? id,
         aliases,
         endpoints,
@@ -489,7 +508,7 @@ export function buildUpstreamLayer(input: BuildUpstreamLayerInput): UpstreamLaye
             : upstreamEvidence(toolCalling, observedAt, ref),
         ...(reasoning !== undefined ? { reasoning } : {}),
         unsupportedParameters,
-        status: "candidate",
+        status: allowed.initialModelStatus ?? "candidate",
       });
     }
   }

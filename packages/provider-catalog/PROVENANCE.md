@@ -190,6 +190,56 @@ onto `winter.google-generate-content` and serialize the wrong dialect on the wir
 refused with the reason recorded. Anthropic-on-Vertex is a recorded carry (R6-16), and a Winter row
 for it belongs under a provider whose protocol matches.
 
+## Adapter ids are read from the lanes, not guessed
+
+Every cohort provider row's `adapterId` is the id constant the adapter that serves it actually
+exports, read from the lane branches (`git show p6/lane-a:…/adapters/openai/*.ts`,
+`git show p6/lane-b:…/adapters/google/*.ts`). Two were wrong, and a registry resolves an adapter **by
+that id**, so both were live misroutes rather than cosmetic drift:
+
+- **`vertex` named `winter.google-generate-content`** — the plain Gemini adapter. Lane B's Vertex
+  adapter is `winter.vertex-gemini` (`VERTEX_ADAPTER_ID`). A Vertex session would have been served by
+  the Gemini API adapter: no location-scoped URL, no ADC credential, and
+  `generativelanguage.googleapis.com` on the wire. `family` stays `google` deliberately — Vertex is a
+  *transport* over the same GenerateContent mapping (ruling R6-A), not a second dialect.
+- **The twelve local rows named `winter.openai-chat-completions`.** They now name
+  `winter.local-openai`, the default `createLocalOpenAIAdapter` exports. The old value forced a host
+  to register the local adapter *under the chat adapter's id*, which **shadowed** the real Chat
+  Completions adapter for `openai`, `openrouter` and `deepseek`. Lane A can drop the `id:` override
+  from its wiring line.
+
+`azure-openai` and `vertex` model rows are `experimental` per R6-16 (native cloud enters as
+experimental, and both adapters are live). `bedrock` rows stay `candidate`: Lane N has not landed an
+adapter, and R6-16's own demotion criterion covers that case. Nothing anywhere is `supported` —
+that requires the behavioural corpus (WS-13 §13).
+
+## Reviewed model-id corrections
+
+`allowlist.json`'s `modelIdCorrections` is a hand-maintained map from an upstream model id to the id
+the provider documents on its own wire. One entry exists: OpenRouter's auto-router, which upstream
+lists as a bare `{ id: "auto" }` while OpenRouter documents `openrouter/auto`. Upstream's spelling
+put `auto` on the wire from **both** resolution paths — step 1 (the seeded row's own `upstreamId`)
+and the `allowUnlisted` pass-through, which strips a self-prefix — so correcting it at the source
+fixes both. The upstream spelling survives as an **alias**, so a caller writing bare `auto` still
+reaches the corrected wire id, and no row remains that would send a bare `auto`.
+
+Every correction is written into `generated/rejections.json` with its reason. It is a *mechanical
+normalization*, never a silent edit: a reader can diff the catalog against the pinned source and
+find the one place they differ, with the justification attached.
+
+## Why `google/gemini-2.5-pro` ships `efforts: []`
+
+Not an omission. Gemini's `generateContent` surface has **no effort vocabulary at all** — thinking is
+*budgeted* (`thinkingConfig.thinkingBudget`), not tiered into named levels. WS-13 §8.2 forbids
+treating vocabularies as interchangeable, so borrowing OpenAI's `low`/`medium`/`high` here would
+invent a control the endpoint does not accept, and the adapter would (correctly) reject the selection
+before sending. The row **does** carry `summaryRequest`
+(`thinkingConfig.includeThoughts`, `official-doc`, continuity report §6.1), so summaries are
+requestable from session start per WS-13 §8.2's proactive-summaries rule; it is only the *effort
+tiers* that do not exist. The overlay states this in a `$comment` on the `reasoning` block, but
+`scripts/provider-catalog.ts` strips `$comment` keys from the merged catalog — which is why the
+reason lives here, where a reader of the shipped artifact can find it.
+
 ## Blocked stays blocked
 
 A provider reaches the catalog only through a reviewed edit to

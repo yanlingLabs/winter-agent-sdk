@@ -64,8 +64,9 @@ describe("the seed is fully replaced", () => {
     expect(upstreamKeys.size).toBeGreaterThan(40);
     for (const key of upstreamKeys) expect([key, catalog.models.some((m) => m.key === key)]).toEqual([key, true]);
     // The gateway's OWN-namespace row, which the registry's self-prefix stripping would otherwise
-    // send to the wire without it (T2 re-review r2).
-    expect(catalog.models.some((m) => m.key === "openrouter/auto")).toBe(true);
+    // send to the wire without it (T2 re-review r2). Its key is doubly qualified because the wire id
+    // OpenRouter documents IS `openrouter/auto` — see the dedicated test below.
+    expect(catalog.models.some((m) => m.key === "openrouter/openrouter/auto")).toBe(true);
   });
 
   test("the pinned alias `opus` now resolves to a real row", () => {
@@ -125,8 +126,47 @@ describe("standing floors", () => {
     for (const model of upstreamLayer.models) expect((model as { classifierEligible?: unknown }).classifierEligible).toBeUndefined();
   });
 
-  test("every row is still `candidate` — upstream presence promotes nothing (WS-13 §13)", () => {
-    for (const model of catalog.models) expect(model.status).toBe("candidate");
+  test("no row is `supported` — upstream presence promotes nothing (WS-13 §13)", () => {
+    for (const model of catalog.models) expect(["candidate", "experimental"]).toContain(model.status);
+    // R6-16: the native-cloud families enter as `experimental`, and only where an adapter is live.
+    const experimental = catalog.models.filter((m) => m.status === "experimental").map((m) => m.providerId);
+    expect([...new Set(experimental)].sort()).toEqual(["azure-openai", "vertex"]);
+  });
+
+  test("every cohort provider names the adapter id its lane actually exports", () => {
+    // Read from the lane branches at authoring time (`git show p6/lane-a:…`, `p6/lane-b:…`). The one
+    // that was wrong is the reason this test exists: `vertex` named the plain Gemini adapter, which
+    // a registry resolves BY ID — a Vertex session would have been served the Gemini API endpoint
+    // with no location scope and no ADC credential.
+    const expected: Record<string, string> = {
+      openai: "winter.openai-responses",
+      anthropic: "winter.anthropic-messages",
+      google: "winter.google-generate-content",
+      vertex: "winter.vertex-gemini",
+      "azure-openai": "winter.azure-openai",
+      "codex-oauth": "winter.codex-oauth",
+      openrouter: "winter.openai-chat-completions",
+      deepseek: "winter.openai-chat-completions",
+      bedrock: "winter.bedrock-converse",
+    };
+    for (const [id, adapterId] of Object.entries(expected)) {
+      expect([id, catalog.providers.find((p) => p.id === id)?.adapterId]).toEqual([id, adapterId]);
+    }
+    // The twelve locals name the DEFAULT id `createLocalOpenAIAdapter` exports. They previously named
+    // `winter.openai-chat-completions`, which forced a host to register the local adapter under the
+    // chat adapter's id and SHADOW it for openai/openrouter/deepseek.
+    for (const provider of catalog.providers.filter((p) => p.family === "local-openai")) {
+      expect([provider.id, provider.adapterId]).toEqual([provider.id, "winter.local-openai"]);
+    }
+  });
+
+  test("OpenRouter's own-namespace row carries the wire id OpenRouter documents", () => {
+    const auto = catalog.models.find((m) => m.key === "openrouter/openrouter/auto")!;
+    expect(auto.upstreamId).toBe("openrouter/auto");
+    // The bare upstream spelling survives as an ALIAS, so both resolve to the corrected wire id —
+    // and no row remains that would put a bare `auto` on the wire.
+    expect(auto.aliases).toContain("auto");
+    expect(catalog.models.some((m) => m.providerId === "openrouter" && m.upstreamId === "auto")).toBe(false);
   });
 
   test("no credential-shaped field or value in ANY committed artefact", () => {

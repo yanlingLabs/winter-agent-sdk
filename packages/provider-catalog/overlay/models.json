@@ -224,7 +224,7 @@
       "toolCalling": { "value": "native", "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
       "nativeTools": { "value": true, "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "experimental"
     },
     {
       "key": "bedrock/anthropic.claude-3-5-sonnet-20241022-v2:0",
@@ -261,7 +261,7 @@
         "continuationDomain": { "value": ["vertex/gemini-2.5-pro"], "source": "official-doc", "sourceRef": "continuity report §2.5 — a shared HTTP shape is never evidence of a shared domain; the Vertex endpoint is a different provider boundary from the Gemini API even for the same model name", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" }
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "experimental"
     },
     {
       "key": "ollama-local/llama3.1:8b",

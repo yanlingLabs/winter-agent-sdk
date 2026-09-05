@@ -4025,6 +4025,14 @@
       "reason": "provider request headers carry client-identity mirroring (vendor CLI user-agents, beta flags, stainless versions) — WS-13 §5: never imported; Winter adapters author their own"
     },
     {
+      "upstreamId": "openrouter",
+      "scope": "model",
+      "exclusionClass": "unrepresentable-protocol",
+      "path": "openrouter.models[auto].id",
+      "sourcePath": "open-sse/config/providers/registry/openrouter/index.ts",
+      "reason": "reviewed model-id correction: upstream lists \"auto\", Winter records \"openrouter/auto\". OpenRouter documents its auto-router as the qualified id `openrouter/auto`; the pinned upstream entry lists a bare `{ id: \"auto\" }`. Keeping upstream's spelling put `auto` on the wire from BOTH resolution paths — step 1 (the seeded row's own upstreamId) and the `allowUnlisted` pass-through, which strips a self-prefix. Correcting it here fixes both at once, and the `auto` alias keeps the bare spelling resolvable."
+    },
+    {
       "upstreamId": "openvecta",
       "scope": "field",
       "exclusionClass": "executable-value",

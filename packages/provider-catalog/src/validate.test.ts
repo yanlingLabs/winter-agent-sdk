@@ -340,9 +340,13 @@ describe("the COMMITTED catalog", () => {
   // CITED PUBLISHED one or absent, never an unattributed number. `costBasis: "list"` is reachable
   // only through `official-doc` evidence (packages/provider-runtime/src/registry.ts), so a row
   // priced from an extraction or an inference would launder a guess into that assurance.
-  test("every model row is `candidate` and not classifier-eligible; a priced row cites a published price", () => {
+  test("no model row is `supported`; none is classifier-eligible; a priced row cites a published price", () => {
     for (const m of loadCatalog().models) {
-      expect(m.status).toBe("candidate");
+      // `candidate` OR `experimental` — R6-16 puts the native-cloud families (Azure, Vertex,
+      // Bedrock) in at `experimental`. What no row may be is `supported`: that requires the
+      // behavioural corpus (WS-13 §13), and upstream presence promotes nothing.
+      expect([m.key, m.status]).toEqual([m.key, m.status === "experimental" ? "experimental" : "candidate"]);
+      expect(["candidate", "experimental"]).toContain(m.status);
       expect(m.classifierEligible).toBeUndefined();
       if (m.pricing === undefined) continue;
       expect([m.key, m.pricing.source]).toEqual([m.key, "official-doc"]);

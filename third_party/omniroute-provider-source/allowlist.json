@@ -36,8 +36,19 @@
     { "upstreamId": "azure-openai", "winterId": "azure-openai", "expectedCategory": "apikey", "risk": { "class": "review-required", "reasons": ["native cloud: deployment/api-version identity and Entra auth need their own proof (WS-13 §5)"] },
       "$comment": "PRODUCT-CATALOG ONLY at this pin: `azure-openai` has a row in src/shared/constants/providers/apikey/enterprise-cloud.ts but NO backend RegistryEntry, so upstream contributes its identity and nothing executable. Its endpoints and auth are Winter-authored in the overlay; the rejection ledger records the absence." },
     { "upstreamId": "bedrock", "winterId": "bedrock", "expectedCategory": "apikey", "risk": { "class": "review-required", "reasons": ["native cloud: SigV4 signing + event-stream decoding need their own proof (WS-13 §5)"] } },
-    { "upstreamId": "vertex", "winterId": "vertex", "expectedCategory": "apikey", "risk": { "class": "review-required", "reasons": ["native cloud: project/location auth and partner-protocol differences need their own proof (WS-13 §5)"] } }
+    { "upstreamId": "vertex", "winterId": "vertex", "expectedCategory": "apikey", "initialModelStatus": "experimental", "risk": { "class": "review-required", "reasons": ["native cloud: project/location auth and partner-protocol differences need their own proof (WS-13 §5)"] },
+      "$comment": "`initialModelStatus: \"experimental\"` per R6-16 — the native-cloud families enter the catalog as `experimental`, and Lane B's `winter.vertex-gemini` adapter is live. Absent this field a row is `candidate`, which is what every other provider gets: upstream presence promotes nothing." }
   ],
+
+  "modelIdCorrections": {
+    "$comment": "REVIEWED per-provider corrections to an upstream model id, applied by the mapper and RECORDED in the rejection ledger as a mechanical normalization (never silently). This exists for one narrow class: an upstream id that is not the id the provider documents on its own wire. Presence here is a claim that a human checked the vendor's documentation, so it is deliberately a hand-maintained map rather than a heuristic.",
+    "openrouter": {
+      "auto": {
+        "to": "openrouter/auto",
+        "why": "OpenRouter documents its auto-router as the qualified id `openrouter/auto`; the pinned upstream entry lists a bare `{ id: \"auto\" }`. Keeping upstream's spelling put `auto` on the wire from BOTH resolution paths — step 1 (the seeded row's own upstreamId) and the `allowUnlisted` pass-through, which strips a self-prefix. Correcting it here fixes both at once, and the `auto` alias keeps the bare spelling resolvable."
+      }
+    }
+  },
 
   "categoryDispositions": {
     "$comment": "WS-13 §1's disposition table, as DATA the extractor applies. `candidate-pool` means \"eligible for the `providers` intake list above\" — never \"included\": an api-key row absent from that list is still rejected, with class `not-allowlisted`. Every other category fails closed at import time, whatever the allowlist says (the check runs BOTH ways: an allowlisted id whose upstream category is not `candidate-pool` fails the run, which is the class transition WS-13 §3 step 7 blocks).",

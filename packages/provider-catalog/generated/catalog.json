@@ -176,7 +176,7 @@
       },
       "modelDiscovery": "local",
       "liveCatalogAuthority": "unknown",
-      "adapterId": "winter.openai-chat-completions",
+      "adapterId": "winter.local-openai",
       "family": "local-openai",
       "upstream": {
         "project": "winter",
@@ -233,7 +233,7 @@
       },
       "modelDiscovery": "local",
       "liveCatalogAuthority": "unknown",
-      "adapterId": "winter.openai-chat-completions",
+      "adapterId": "winter.local-openai",
       "family": "local-openai",
       "upstream": {
         "project": "winter",
@@ -260,7 +260,7 @@
       },
       "modelDiscovery": "local",
       "liveCatalogAuthority": "unknown",
-      "adapterId": "winter.openai-chat-completions",
+      "adapterId": "winter.local-openai",
       "family": "local-openai",
       "upstream": {
         "project": "winter",
@@ -287,7 +287,7 @@
       },
       "modelDiscovery": "local",
       "liveCatalogAuthority": "unknown",
-      "adapterId": "winter.openai-chat-completions",
+      "adapterId": "winter.local-openai",
       "family": "local-openai",
       "upstream": {
         "project": "winter",
@@ -314,7 +314,7 @@
       },
       "modelDiscovery": "local",
       "liveCatalogAuthority": "unknown",
-      "adapterId": "winter.openai-chat-completions",
+      "adapterId": "winter.local-openai",
       "family": "local-openai",
       "upstream": {
         "project": "winter",
@@ -341,7 +341,7 @@
       },
       "modelDiscovery": "local",
       "liveCatalogAuthority": "unknown",
-      "adapterId": "winter.openai-chat-completions",
+      "adapterId": "winter.local-openai",
       "family": "local-openai",
       "upstream": {
         "project": "winter",
@@ -368,7 +368,7 @@
       },
       "modelDiscovery": "local",
       "liveCatalogAuthority": "unknown",
-      "adapterId": "winter.openai-chat-completions",
+      "adapterId": "winter.local-openai",
       "family": "local-openai",
       "upstream": {
         "project": "winter",
@@ -395,7 +395,7 @@
       },
       "modelDiscovery": "local",
       "liveCatalogAuthority": "unknown",
-      "adapterId": "winter.openai-chat-completions",
+      "adapterId": "winter.local-openai",
       "family": "local-openai",
       "upstream": {
         "project": "winter",
@@ -422,7 +422,7 @@
       },
       "modelDiscovery": "local",
       "liveCatalogAuthority": "unknown",
-      "adapterId": "winter.openai-chat-completions",
+      "adapterId": "winter.local-openai",
       "family": "local-openai",
       "upstream": {
         "project": "winter",
@@ -513,7 +513,7 @@
       },
       "modelDiscovery": "local",
       "liveCatalogAuthority": "unknown",
-      "adapterId": "winter.openai-chat-completions",
+      "adapterId": "winter.local-openai",
       "family": "local-openai",
       "upstream": {
         "project": "winter",
@@ -538,7 +538,7 @@
       "defaultEndpoints": {},
       "modelDiscovery": "provider-native",
       "liveCatalogAuthority": "partial",
-      "adapterId": "winter.google-generate-content",
+      "adapterId": "winter.vertex-gemini",
       "family": "google",
       "upstream": {
         "project": "OmniRoute",
@@ -570,7 +570,7 @@
       },
       "modelDiscovery": "local",
       "liveCatalogAuthority": "unknown",
-      "adapterId": "winter.openai-chat-completions",
+      "adapterId": "winter.local-openai",
       "family": "local-openai",
       "upstream": {
         "project": "winter",
@@ -597,7 +597,7 @@
       },
       "modelDiscovery": "local",
       "liveCatalogAuthority": "unknown",
-      "adapterId": "winter.openai-chat-completions",
+      "adapterId": "winter.local-openai",
       "family": "local-openai",
       "upstream": {
         "project": "winter",
@@ -1419,7 +1419,7 @@
         "observedAt": "2026-09-05T00:00:00Z"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "experimental"
     },
     {
       "key": "bedrock/anthropic.claude-3-5-sonnet-20241022-v2:0",
@@ -3760,11 +3760,54 @@
       "status": "candidate"
     },
     {
-      "key": "openrouter/auto",
+      "key": "openrouter/openai/gpt-4.1",
       "providerId": "openrouter",
-      "upstreamId": "auto",
-      "displayName": "Auto (Best Available)",
+      "upstreamId": "openai/gpt-4.1",
+      "displayName": "GPT-4.1 (via OpenRouter)",
       "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text",
+          "image"
+        ],
+        "source": "upstream-static",
+        "confidence": "inferred",
+        "observedAt": "2026-09-05T00:00:00Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "confidence": "inferred",
+        "observedAt": "2026-09-05T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "upstream-static",
+        "confidence": "inferred",
+        "observedAt": "2026-09-05T00:00:00Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "upstream-static",
+        "confidence": "inferred",
+        "observedAt": "2026-09-05T00:00:00Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "openrouter/openrouter/auto",
+      "providerId": "openrouter",
+      "upstreamId": "openrouter/auto",
+      "displayName": "Auto (Best Available)",
+      "aliases": [
+        "auto"
+      ],
       "endpoints": [
         "chat"
       ],
@@ -3811,47 +3854,6 @@
       "status": "candidate"
     },
     {
-      "key": "openrouter/openai/gpt-4.1",
-      "providerId": "openrouter",
-      "upstreamId": "openai/gpt-4.1",
-      "displayName": "GPT-4.1 (via OpenRouter)",
-      "aliases": [],
-      "endpoints": [
-        "chat"
-      ],
-      "inputModalities": {
-        "value": [
-          "text",
-          "image"
-        ],
-        "source": "upstream-static",
-        "confidence": "inferred",
-        "observedAt": "2026-09-05T00:00:00Z"
-      },
-      "outputModalities": {
-        "value": [
-          "text"
-        ],
-        "source": "upstream-static",
-        "confidence": "inferred",
-        "observedAt": "2026-09-05T00:00:00Z"
-      },
-      "toolCalling": {
-        "value": "native",
-        "source": "upstream-static",
-        "confidence": "inferred",
-        "observedAt": "2026-09-05T00:00:00Z"
-      },
-      "nativeTools": {
-        "value": true,
-        "source": "upstream-static",
-        "confidence": "inferred",
-        "observedAt": "2026-09-05T00:00:00Z"
-      },
-      "unsupportedParameters": [],
-      "status": "candidate"
-    },
-    {
       "key": "vertex/DeepSeek-V4-Flash",
       "providerId": "vertex",
       "upstreamId": "DeepSeek-V4-Flash",
@@ -3893,7 +3895,7 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "experimental"
     },
     {
       "key": "vertex/DeepSeek-V4-Pro",
@@ -3937,7 +3939,7 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "experimental"
     },
     {
       "key": "vertex/GLM-5.1-FP8",
@@ -3981,7 +3983,7 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "experimental"
     },
     {
       "key": "vertex/Qwen3.6-35B-A3B",
@@ -4025,7 +4027,7 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "experimental"
     },
     {
       "key": "vertex/gemini-2.5-pro",
@@ -4094,7 +4096,7 @@
         }
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "experimental"
     },
     {
       "key": "vertex/gemini-3-flash-preview",
@@ -4138,7 +4140,7 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "experimental"
     },
     {
       "key": "vertex/gemini-3.1-flash-lite",
@@ -4182,7 +4184,7 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "experimental"
     },
     {
       "key": "vertex/gemini-3.1-pro-preview",
@@ -4226,7 +4228,7 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "experimental"
     },
     {
       "key": "vertex/gemma-4-31b-it",
@@ -4270,7 +4272,7 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "candidate"
+      "status": "experimental"
     }
   ]
 }
