@@ -444,3 +444,83 @@ describe("R6-7 / I1: the identity block is what distinguishes a DELETED sidecar 
       }
     }));
 });
+
+describe("round 2: a forked CHILD of a persisted parent emits NO continuity warning", () => {
+  // The end-to-end leg (c). The two unit legs in `continuation-attach.test.ts` and the subpath guard
+  // in `dialect.ts` each close half the mechanism; this asserts the whole path a real fork takes --
+  // a child writer keyed on the PARENT's sessionId, its own empty sidecar, and inherited messages
+  // that already carry `origin` -- produces no frame at all, on the parent's stream or anywhere.
+  test("a child writer keyed on the parent's sessionId reports NO identity of its own", () =>
+    withTempHome(async (home) => {
+      const cwd = mkdtempSync(join(tmpdir(), "winter-p6-child-id-"));
+      try {
+        const { buildChildTranscriptWriter } = await import("./dialect.ts");
+        const { WinterCompatibilitySessionStore } = await import("@yanlinglabs/winter-agent-sdk");
+        const projectKey = compatibilityKeys(cwd).transcriptProjectKey;
+        const store = new WinterCompatibilitySessionStore({ winterHome: home });
+
+        // A PARENT with a written identity block…
+        const parent = await resolveEngineSession({ config: { sessionId: "sess-parent", cwd, model: "m", permissionMode: "default" } as never, resolveWinterHome: () => home, env: {} });
+        parent.store!.setProviderIdentity!({ providerId: "openai", modelKey: "openai/o-test", adapterId: "openai-responses", adapterVersion: "1.0.0", catalogVersion: "0.0.0-seed", authRefKind: "env" });
+        await parent.store!.recordAssistantEntry([{ type: "text", text: "one" }]);
+        expect(await parent.store!.loadProviderIdentity!()).toEqual({ providerId: "openai", modelKey: "openai/o-test" });
+
+        // …and a CHILD whose key reuses that very sessionId with a subpath.
+        const child = buildChildTranscriptWriter({ store, projectKey, parentSessionId: "sess-parent", agentId: "agent-1", parentToolUseId: "t1", cwd, winterHome: home });
+        // Without the subpath guard this returns the PARENT's identity, and the child -- whose own
+        // sidecar is legitimately empty -- is told the sidecar was DELETED.
+        expect(await child.loadProviderIdentity()).toBeUndefined();
+        expect(await child.loadProviderState()).toEqual([]);
+      } finally {
+        rmSync(cwd, { recursive: true, force: true });
+      }
+    }));
+
+  test("a FORK inheriting annotated messages produces zero continuity warnings, while a genuinely deleted sidecar still warns", () =>
+    withTempHome(async (home) => {
+      const cwd = mkdtempSync(join(tmpdir(), "winter-p6-fork-warn-"));
+      try {
+        const { attachContinuationChain } = await import("./continuation-attach.ts");
+        const warnings: unknown[] = [];
+        const annotated = [
+          { role: "assistant" as const, uuid: "a-1", origin: { providerId: "openai", modelKey: "openai/o-test", family: "openai" } },
+          { role: "user" as const },
+        ];
+        // The child's own store: the parent's identity is NOT visible (leg (b)) and its sidecar is
+        // empty by construction.
+        await attachContinuationChain({
+          messages: annotated,
+          store: { loadProviderState: async () => [], loadProviderIdentity: async () => undefined },
+          sessionId: "sess-parent",
+          warn: (m) => warnings.push(m),
+          newUuid: () => "u",
+        });
+        expect(warnings).toHaveLength(0);
+
+        // …and even if leg (b) were bypassed, leg (a) alone holds: the inherited history is
+        // provenance-complete, so the identity being visible changes nothing.
+        await attachContinuationChain({
+          messages: annotated,
+          store: { loadProviderState: async () => [], loadProviderIdentity: async () => ({ providerId: "openai", modelKey: "openai/o-test" }) },
+          sessionId: "sess-parent",
+          warn: (m) => warnings.push(m),
+          newUuid: () => "u",
+        });
+        expect(warnings).toHaveLength(0);
+
+        // THE PARENT-SIDE CASE IS UNCHANGED: an UNANNOTATED history with an identity and no records
+        // is still a deleted sidecar, and still warns.
+        await attachContinuationChain({
+          messages: [{ role: "assistant" as const, uuid: "a-9" }],
+          store: { loadProviderState: async () => [], loadProviderIdentity: async () => ({ providerId: "openai", modelKey: "openai/o-test" }) },
+          sessionId: "sess-parent",
+          warn: (m) => warnings.push(m),
+          newUuid: () => "u",
+        });
+        expect(warnings).toHaveLength(1);
+        expect((warnings[0] as { warning: string }).warning).toBe("provider_state_deleted");
+      } finally {
+        rmSync(cwd, { recursive: true, force: true });
+      }
+    }));
+});

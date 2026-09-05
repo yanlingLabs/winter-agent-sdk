@@ -589,6 +589,15 @@ export class TranscriptWriter implements SessionPersistence {
    * path derivation is the drift `providerStateSidecarPath` exists to avoid.
    */
   async loadProviderIdentity(): Promise<{ providerId: string; modelKey: string } | undefined> {
+    // A SUBPATH WRITER HAS NO IDENTITY OF ITS OWN (review round 2, leg (b)).
+    //
+    // A child writer's key reuses the PARENT's `sessionId` (see `buildChildTranscriptWriter`), so a
+    // lookup by session would match the PARENT's summary row and report an identity this writer never
+    // wrote. The consequence was concrete: a forked child, whose own sidecar is legitimately empty,
+    // would be told its parent's sidecar had been DELETED -- and the frame escapes onto the parent's
+    // own host stream. Absence here reads as "unknown", which is the honest answer for a writer that
+    // has no summary of its own to consult.
+    if (this.key.subpath !== undefined) return undefined;
     const list = this.store.listSessionSummaries;
     if (list === undefined) return undefined;
     let summaries: Awaited<ReturnType<NonNullable<SessionStore["listSessionSummaries"]>>>;
