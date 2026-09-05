@@ -562,6 +562,10 @@ describe("NEW-3: a user-tier bypass defaultMode degrades with a warning instead 
       const w = blocked.warnings.find((x) => x.includes("defaultMode"));
       expect(w).toBeDefined();
       expect(w).toContain("allowDangerouslySkipPermissions is not set");
+      // Names the TIER and its file: "ignored" with neither sends the operator to the wrong one of
+      // the three tiers that can still carry the value.
+      expect(w).toContain("settings (user");
+      expect(w).toContain(join(home, "settings.json"));
       expect(blocked.engineOptions.settingsRules?.defaultMode).toBeUndefined();
     } finally {
       blocked.dispose();

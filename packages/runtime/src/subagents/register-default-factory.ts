@@ -65,7 +65,15 @@ export interface DefaultChildEngineFactoryOptions {
   structuredOutput?: StructuredOutputSeam;
   /** Phase 5 fix wave, I4: the settings-file + plugin hook entries -- see ChildEngineFactoryDeps. */
   extraHookEntries?: readonly SourcedHookEntry[];
-  /** Phase 5 fix wave, I4: a compaction controller for children -- see ChildEngineFactoryDeps. */
+  /**
+   * Phase 5 fix wave, I4: a compaction controller for children -- see ChildEngineFactoryDeps.
+   *
+   * A DELIBERATE COMPAT SHIM SINCE NEW-2, and named as such so it is not mistaken for a live path:
+   * `production-wiring.ts` no longer produces this field (it produces the factory below), so in
+   * Winter's own two entrypoints nothing sets it. It stays for a host that constructs the factory
+   * itself with a single controller, and `child-engine.ts` falls back to it when no factory is
+   * given. Delete it when the deps type stops accepting an instance.
+   */
   compactionController?: CompactionController;
   /** Phase 5 residual round, NEW-2: one controller per SPAWN -- see `ChildEngineFactoryDeps`. */
   compactionControllerFactory?: () => CompactionController;

@@ -262,8 +262,16 @@ export function buildSettingsRuleSeed(resolved: DetailedResolvedSettings, opts?:
   const bypassBlocked = opts?.allowDangerouslySkipPermissions !== true || disableBypassPermissionsMode || opts?.disableBypassPermissionsMode === true;
   const defaultMode = rawDefaultMode === "bypassPermissions" && bypassBlocked ? undefined : rawDefaultMode;
   if (defaultMode !== rawDefaultMode) {
+    // NAME THE TIER. `perSource` is ordered highest-precedence-first, so the first tier still
+    // declaring the value is the one that won -- and after `filterEscalatingDefaultMode` it can only
+    // be user, local or managed. "Ignored" without a file to open sends the operator looking in the
+    // wrong one of the three.
+    const tier = resolved.perSource.find((t) => {
+      const perms = (t.values as Record<string, unknown> | undefined)?.["permissions"];
+      return typeof perms === "object" && perms !== null && (perms as Record<string, unknown>)["defaultMode"] === rawDefaultMode;
+    });
     warnings.push(
-      `settings: permissions.defaultMode "bypassPermissions" is ignored -- ${
+      `settings (${tier?.source ?? "unknown"}${tier?.path !== undefined ? ` at ${tier.path}` : ""}): permissions.defaultMode "bypassPermissions" is ignored -- ${
         disableBypassPermissionsMode || opts?.disableBypassPermissionsMode === true
           ? "a managed policy disables bypassPermissions (WS-07 §6.4)"
           : "Options.allowDangerouslySkipPermissions is not set"
