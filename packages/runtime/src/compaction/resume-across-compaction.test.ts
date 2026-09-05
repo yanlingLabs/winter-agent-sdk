@@ -134,6 +134,68 @@ describe("compaction -- resume across a compaction (R5-4 / WS-11 §7)", () => {
     }
   });
 
+  // ================================================================================================
+  // PENDING ON A SPINE FIX -- flip `test.skip` to `test` when T3's fix round merges.
+  //
+  // The T3 review found that resume correctness holds for the TRANSCRIPT (the boundary + summary
+  // rebuild, proven above) but NOT for the emitted `compact_boundary` FRAME: `recordCompactBoundary`
+  // returns `void`, so the engine never learns the uuids the writer minted and can put neither
+  // `preserved_messages` nor `post_tokens` on the frame. The fix (on main, not in this lane's
+  // ownership) makes the method return `{ boundaryUuid, preservedUuids }` and the engine put
+  // `preserved_messages` on the frame when non-empty plus `post_tokens` read after the swap.
+  //
+  // Written now, against the INTENDED shape, and skipped rather than softened: an assertion loose
+  // enough to pass both ways would still pass if the fix landed half-done. This scenario retains ONE
+  // message (never `keep: 0`), which is what makes `preserved_messages` non-empty and therefore
+  // present at all.
+  // ================================================================================================
+  test.skip("[pending T3 fix] the emitted compact_boundary frame carries preserved_messages and post_tokens", async () => {
+    const home = mkdtempSync(join(tmpdir(), "winter-lane-k-resume-"));
+    try {
+      const cwd = join(home, "work");
+      const sessionId = "sess-lane-k-frame";
+      const config: RuntimeConfig = { sessionId, cwd, model: "sonnet", winterHome: home, contextWindowTokens: 1000 };
+      const resolved = await resolveEngineSession({ config, resolveWinterHome: () => home, env: {} });
+      const results: CompactionResult[] = [];
+      const controller = spyOn(createCompactionController({ retainedPairs: 1 }), results);
+
+      const { host, runtime } = createInMemoryChannel();
+      const done = runEngine({
+        config: resolved.config,
+        input: runtime.input,
+        output: runtime.output,
+        provider: overThresholdProvider(["reply one", "reply two", "reply three"]),
+        tools: stubExecutor,
+        ...(resolved.store !== undefined ? { store: resolved.store } : {}),
+        compactionController: controller,
+      });
+      host.output.write({ type: "user", text: "turn one" });
+      host.output.write({ type: "user", text: "turn two" });
+      host.output.write({ type: "user", text: "turn three" });
+      host.output.write({ type: "control_request", requestId: "r", subtype: "end_input", payload: undefined });
+      const frames = await drain(host.input);
+      await done;
+
+      const live = results[0]!;
+      expect(live.retained).toHaveLength(1);
+      const boundary = dataMessages(frames).find((m) => (m as { subtype?: string }).subtype === "compact_boundary") as {
+        compact_metadata: { pre_tokens: number; post_tokens?: number; preserved_messages?: { anchor_uuid: string; uuids: string[] } };
+      };
+      // The uuids on the FRAME must be the same ones the transcript's own boundary names -- a host
+      // relinking from the frame and a resume relinking from the file have to agree.
+      const store = new WinterCompatibilitySessionStore({ winterHome: home });
+      const raw = (await store.load({ projectKey: compatibilityKeys(cwd).transcriptProjectKey, sessionId })) ?? [];
+      const persisted = raw.find((e) => e.type === "compact_boundary") as unknown as { compact_metadata: { preserved_messages?: { anchor_uuid: string; uuids: string[] } } };
+      expect(boundary.compact_metadata.preserved_messages).toEqual(persisted.compact_metadata.preserved_messages!);
+      expect(boundary.compact_metadata.preserved_messages!.uuids).toHaveLength(live.retained.length);
+      // `post_tokens` is the accountant's reading AFTER the swap, so it is a real number rather than
+      // the dead field it is today.
+      expect(typeof boundary.compact_metadata.post_tokens).toBe("number");
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   test("the summary the model wrote is what resume replays -- not a paraphrase and not the raw messages", async () => {
     const home = mkdtempSync(join(tmpdir(), "winter-lane-k-resume-"));
     try {
