@@ -87,9 +87,14 @@ export function projectSkillRoots(cwd: string): string[] {
 export function scanSkillRoot(root: string, source: SkillTier, exclude?: ReadonlySet<string>): DiscoveredSkill[] {
   let dirs: string[];
   try {
+    // SORTED, not readdir order: `readdirSync` returns directory order, which differs between
+    // filesystems and changes as entries are created and removed. The listing's budget drops from
+    // the tail (listing.ts), so an unstable within-root order would make WHICH skills the model can
+    // see depend on the order they happened to be written to disk.
     dirs = readdirSync(root, { withFileTypes: true })
       .filter((e) => e.isDirectory())
-      .map((e) => e.name);
+      .map((e) => e.name)
+      .sort();
   } catch {
     return [];
   }
