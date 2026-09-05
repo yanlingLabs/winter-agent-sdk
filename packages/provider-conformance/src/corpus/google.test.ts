@@ -254,6 +254,18 @@ describe("Google GenerateContent: a thought part's signature is never re-keyed (
     });
   });
 
+  test("an UNRECOGNISED completion event falls back to the conservative default (Minor r3-2)", async () => {
+    // "I do not know what this row meant" and "I know and cannot honour it safely" are different
+    // states. The first gets the default -- which can only ever capture LATER, never earlier -- and
+    // Lane A's own row carries exactly such a value (`response.completed`) for a different family.
+    const { googleCompletionMarker } = await import("../../../provider-runtime/src/adapters/google/index.ts");
+    const row = testGoogleCatalog().models.find((m) => m.upstreamId === GOOGLE_MODELS.main)!;
+    const unrecognised = { ...row, reasoning: { ...row.reasoning!, completionEvent: { value: "response.completed", source: "upstream-static" as const, confidence: "declared" as const } } };
+    expect(googleCompletionMarker(unrecognised)).toEqual({ ok: true, marker: "finish-reason" });
+    expect(googleCompletionMarker(undefined)).toEqual({ ok: true, marker: "finish-reason" });
+    expect(googleCompletionMarker(row)).toEqual({ ok: true, marker: "finish-reason" });
+  });
+
   test("a completion event this family CANNOT honour is refused before the request (Minor 7/r2-3)", async () => {
     // `usageMetadata` ships on EVERY chunk, so naming it as the completion marker would report the
     // turn finished from the first one and capture continuation state the provider had not finished

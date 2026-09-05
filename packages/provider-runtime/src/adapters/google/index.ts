@@ -14,6 +14,7 @@ export {
   createGoogleGenerateContentAdapter,
   findDescriptor,
   geminiTransport,
+  googleCompletionMarker,
   mapGoogleEffort,
   toContents,
 } from "./generate-content.ts";

@@ -309,6 +309,34 @@ describe("Vertex Gemini: the shared wire mapping", () => {
     });
   });
 
+  test("a Lane C decoration rides VERBATIM and after the tool response here too — the mapping is genuinely shared", async () => {
+    // Round 2's report claimed "2 pass (both families)" for the decoration fixtures; it was counting
+    // two same-named Gemini/Anthropic cases, and Vertex had no decoration coverage at all. It does
+    // now, driven through the Vertex transport rather than through `toContents` directly, so the
+    // claim is about the wire rather than about a shared function.
+    const decoration = { text: '<recovered_reasoning_summary provider="openai" model="gpt-5.6-sol">the model weighed two options.</recovered_reasoning_summary>', door: "tag" as const };
+    const adapter = testVertexAdapter();
+    const harness = await createVertexHarness();
+    await withFake({ routes: harness.routes }, async (fake) => {
+      harness.bind(fake.url);
+      await foldProviderStream(
+        adapter.streamTurn(
+          {
+            model: GOOGLE_MODELS.main,
+            messages: [
+              { role: "assistant", content: [{ type: "tool_use", id: "c1", name: "Read", input: {} }] },
+              { role: "tool", content: [{ type: "tool_result", tool_use_id: "c1", content: "out" }], decoration },
+            ],
+          },
+          vertexContext(harness, fake.url),
+        ),
+      );
+      const generate = requestsTo(fake, vertexGeneratePath(GOOGLE_MODELS.main))[0]!;
+      expect(geminiContents(generate)[1]?.parts).toEqual([{ functionResponse: { name: "Read", response: { output: "out" } } }, { text: decoration.text }]);
+      expect(generate.body).not.toContain("winter-note");
+    });
+  });
+
   test("`x-goog-user-project` is dropped for a user endpoint (R6-L), and the project still reaches the PATH", async () => {
     const adapter = testVertexAdapter();
     const harness = await createVertexHarness();
