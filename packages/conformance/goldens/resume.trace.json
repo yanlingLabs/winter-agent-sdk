@@ -42,7 +42,9 @@
         "Workflow",
         "Write"
       ],
-      "slash_commands": [],
+      "slash_commands": [
+        "compact"
+      ],
       "output_style": "default",
       "skills": [],
       "plugins": []
@@ -58,7 +60,7 @@
         "content": [
           {
             "type": "text",
-            "text": "[{\"role\":\"user\",\"content\":\"first\"}]"
+            "text": "[{\"role\":\"user\",\"content\":\"<system-reminder>\\nAuto-memory (injected by the runtime, not typed by the user):\\nAuto-memory for this project lives at /winter-home/projects/-winter-fixture/memory. The directory is created on demand and there are no memory tools: read and write it with the ordinary file tools, exactly like any other directory.\\n\\n/winter-home/projects/-winter-fixture/memory/MEMORY.md is the INDEX, and only its first 200 lines / 25 KB are loaded into a session. Keep every index entry to one line; the substance belongs in the topic file it points at, which you can read on demand when it turns out to matter.\\n\\nTo record something worth having in a LATER session -- a standing preference, a correction you were given, a durable constraint of this project -- write it to its own `<slug>.md` in that directory and add a one-line pointer to the index: `- [<slug>](<slug>.md) — <one-line summary>`.\\n\\nRevise a fact by rewriting its file and its index line, never by adding a near-duplicate under a new name; remove both once it stops being true. An index full of stale near-duplicates is worse than an empty one, because it costs the same and misleads.\\n\\nDo not record what the repository already records. Code, configuration, documentation and WINTER.md are durable on their own; memory is for what is true about this project or this user and lives nowhere in the tree.\\n</system-reminder>\\n\\nfirst\"}]"
           }
         ]
       }
@@ -72,7 +74,7 @@
       "type": "result",
       "subtype": "success",
       "is_error": false,
-      "result": "[{\"role\":\"user\",\"content\":\"first\"}]",
+      "result": "[{\"role\":\"user\",\"content\":\"<system-reminder>\\nAuto-memory (injected by the runtime, not typed by the user):\\nAuto-memory for this project lives at /winter-home/projects/-winter-fixture/memory. The directory is created on demand and there are no memory tools: read and write it with the ordinary file tools, exactly like any other directory.\\n\\n/winter-home/projects/-winter-fixture/memory/MEMORY.md is the INDEX, and only its first 200 lines / 25 KB are loaded into a session. Keep every index entry to one line; the substance belongs in the topic file it points at, which you can read on demand when it turns out to matter.\\n\\nTo record something worth having in a LATER session -- a standing preference, a correction you were given, a durable constraint of this project -- write it to its own `<slug>.md` in that directory and add a one-line pointer to the index: `- [<slug>](<slug>.md) — <one-line summary>`.\\n\\nRevise a fact by rewriting its file and its index line, never by adding a near-duplicate under a new name; remove both once it stops being true. An index full of stale near-duplicates is worse than an empty one, because it costs the same and misleads.\\n\\nDo not record what the repository already records. Code, configuration, documentation and WINTER.md are durable on their own; memory is for what is true about this project or this user and lives nowhere in the tree.\\n</system-reminder>\\n\\nfirst\"}]",
       "permission_denials": []
     }
   },
@@ -119,7 +121,9 @@
         "Workflow",
         "Write"
       ],
-      "slash_commands": [],
+      "slash_commands": [
+        "compact"
+      ],
       "output_style": "default",
       "skills": [],
       "plugins": []
@@ -135,7 +139,7 @@
         "content": [
           {
             "type": "text",
-            "text": "[{\"role\":\"user\",\"content\":\"first\"},{\"role\":\"assistant\",\"content\":\"[{\\\"role\\\":\\\"user\\\",\\\"content\\\":\\\"first\\\"}]\"},{\"role\":\"user\",\"content\":\"second\"}]"
+            "text": "[{\"role\":\"user\",\"content\":\"first\"},{\"role\":\"assistant\",\"content\":\"[{\\\"role\\\":\\\"user\\\",\\\"content\\\":\\\"<system-reminder>\\\\nAuto-memory (injected by the runtime, not typed by the user):\\\\nAuto-memory for this project lives at /winter-home/projects/-winter-fixture/memory. The directory is created on demand and there are no memory tools: read and write it with the ordinary file tools, exactly like any other directory.\\\\n\\\\n/winter-home/projects/-winter-fixture/memory/MEMORY.md is the INDEX, and only its first 200 lines / 25 KB are loaded into a session. Keep every index entry to one line; the substance belongs in the topic file it points at, which you can read on demand when it turns out to matter.\\\\n\\\\nTo record something worth having in a LATER session -- a standing preference, a correction you were given, a durable constraint of this project -- write it to its own `<slug>.md` in that directory and add a one-line pointer to the index: `- [<slug>](<slug>.md) — <one-line summary>`.\\\\n\\\\nRevise a fact by rewriting its file and its index line, never by adding a near-duplicate under a new name; remove both once it stops being true. An index full of stale near-duplicates is worse than an empty one, because it costs the same and misleads.\\\\n\\\\nDo not record what the repository already records. Code, configuration, documentation and WINTER.md are durable on their own; memory is for what is true about this project or this user and lives nowhere in the tree.\\\\n</system-reminder>\\\\n\\\\nfirst\\\"}]\"},{\"role\":\"user\",\"content\":\"<system-reminder>\\nAuto-memory (injected by the runtime, not typed by the user):\\nAuto-memory for this project lives at /winter-home/projects/-winter-fixture/memory. The directory is created on demand and there are no memory tools: read and write it with the ordinary file tools, exactly like any other directory.\\n\\n/winter-home/projects/-winter-fixture/memory/MEMORY.md is the INDEX, and only its first 200 lines / 25 KB are loaded into a session. Keep every index entry to one line; the substance belongs in the topic file it points at, which you can read on demand when it turns out to matter.\\n\\nTo record something worth having in a LATER session -- a standing preference, a correction you were given, a durable constraint of this project -- write it to its own `<slug>.md` in that directory and add a one-line pointer to the index: `- [<slug>](<slug>.md) — <one-line summary>`.\\n\\nRevise a fact by rewriting its file and its index line, never by adding a near-duplicate under a new name; remove both once it stops being true. An index full of stale near-duplicates is worse than an empty one, because it costs the same and misleads.\\n\\nDo not record what the repository already records. Code, configuration, documentation and WINTER.md are durable on their own; memory is for what is true about this project or this user and lives nowhere in the tree.\\n</system-reminder>\\n\\nsecond\"}]"
           }
         ]
       }
@@ -149,7 +153,7 @@
       "type": "result",
       "subtype": "success",
       "is_error": false,
-      "result": "[{\"role\":\"user\",\"content\":\"first\"},{\"role\":\"assistant\",\"content\":\"[{\\\"role\\\":\\\"user\\\",\\\"content\\\":\\\"first\\\"}]\"},{\"role\":\"user\",\"content\":\"second\"}]",
+      "result": "[{\"role\":\"user\",\"content\":\"first\"},{\"role\":\"assistant\",\"content\":\"[{\\\"role\\\":\\\"user\\\",\\\"content\\\":\\\"<system-reminder>\\\\nAuto-memory (injected by the runtime, not typed by the user):\\\\nAuto-memory for this project lives at /winter-home/projects/-winter-fixture/memory. The directory is created on demand and there are no memory tools: read and write it with the ordinary file tools, exactly like any other directory.\\\\n\\\\n/winter-home/projects/-winter-fixture/memory/MEMORY.md is the INDEX, and only its first 200 lines / 25 KB are loaded into a session. Keep every index entry to one line; the substance belongs in the topic file it points at, which you can read on demand when it turns out to matter.\\\\n\\\\nTo record something worth having in a LATER session -- a standing preference, a correction you were given, a durable constraint of this project -- write it to its own `<slug>.md` in that directory and add a one-line pointer to the index: `- [<slug>](<slug>.md) — <one-line summary>`.\\\\n\\\\nRevise a fact by rewriting its file and its index line, never by adding a near-duplicate under a new name; remove both once it stops being true. An index full of stale near-duplicates is worse than an empty one, because it costs the same and misleads.\\\\n\\\\nDo not record what the repository already records. Code, configuration, documentation and WINTER.md are durable on their own; memory is for what is true about this project or this user and lives nowhere in the tree.\\\\n</system-reminder>\\\\n\\\\nfirst\\\"}]\"},{\"role\":\"user\",\"content\":\"<system-reminder>\\nAuto-memory (injected by the runtime, not typed by the user):\\nAuto-memory for this project lives at /winter-home/projects/-winter-fixture/memory. The directory is created on demand and there are no memory tools: read and write it with the ordinary file tools, exactly like any other directory.\\n\\n/winter-home/projects/-winter-fixture/memory/MEMORY.md is the INDEX, and only its first 200 lines / 25 KB are loaded into a session. Keep every index entry to one line; the substance belongs in the topic file it points at, which you can read on demand when it turns out to matter.\\n\\nTo record something worth having in a LATER session -- a standing preference, a correction you were given, a durable constraint of this project -- write it to its own `<slug>.md` in that directory and add a one-line pointer to the index: `- [<slug>](<slug>.md) — <one-line summary>`.\\n\\nRevise a fact by rewriting its file and its index line, never by adding a near-duplicate under a new name; remove both once it stops being true. An index full of stale near-duplicates is worse than an empty one, because it costs the same and misleads.\\n\\nDo not record what the repository already records. Code, configuration, documentation and WINTER.md are durable on their own; memory is for what is true about this project or this user and lives nowhere in the tree.\\n</system-reminder>\\n\\nsecond\"}]",
       "permission_denials": []
     }
   }

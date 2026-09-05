@@ -78,10 +78,21 @@ export function getWorkflowSession(): WorkflowSessionRuntime | undefined {
 }
 
 /**
- * Test-only escape hatch, same rationale as every sibling singleton in this codebase: bun's test
- * runner shares ONE module instance across every file in a run, so one file's registration would
- * otherwise leak into another's assertions.
+ * Withdraw the active registration. PRODUCTION teardown calls this (engine.ts, at the end of every
+ * run) for the reason this module's one-active-runtime shape makes concrete: a run that left its
+ * registration standing would let a LATER session's Workflow call persist its script under the
+ * finished session's `projects/<key>/<uuid>/` directory.
+ */
+export function clearWorkflowSession(): void {
+  active = undefined;
+}
+
+/**
+ * Test-only alias of `clearWorkflowSession`, kept under its original name so every fixture written
+ * against it still reads correctly. Same rationale as every sibling singleton in this codebase:
+ * bun's test runner shares ONE module instance across every file in a run, so one file's
+ * registration would otherwise leak into another's assertions.
  */
 export function resetWorkflowSessionForTest(): void {
-  active = undefined;
+  clearWorkflowSession();
 }

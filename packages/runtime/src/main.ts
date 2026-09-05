@@ -23,6 +23,12 @@ import { resolveEngineSession, resolveProductionWinterHome } from "./store/diale
 // an in-process harness, so registering in only one of the two would make the Agent tool behave
 // differently per transport, which WS-04 §12 treats as a release blocker).
 import { registerDefaultChildEngineFactory } from "./subagents/register-default-factory.ts";
+// Phase 5 Task 8: the SHARED production wiring both entrypoints call -- see that module's own header
+// for why every P5 seam is registered from one function rather than twice. Without it a real
+// spawned/compiled `winter` would have no system prompt, no skills, no slash commands, no
+// compaction and no checkpointing, while the in-memory harness had all five (or vice versa) --
+// which WS-04 §12 makes a release blocker.
+import { buildProductionWiring, withAutoSkillPermissions } from "./production-wiring.ts";
 import { WinterCompatibilitySessionStore, compatibilityKeys } from "@yanlinglabs/winter-agent-sdk";
 import { restoreChildRoster } from "./subagents/restore.ts";
 // Phase 5 Task 3 (RULING R5-15): the pinned worker entry. Lane W replaces the BODY of
@@ -172,8 +178,21 @@ try {
     childStore !== undefined && config.forkSession !== true && (config.resume !== undefined || config.continue === true)
       ? await restoreChildRoster(childStore, { projectKey: compatibilityKeys(effectiveConfig.cwd).transcriptProjectKey, sessionId: effectiveConfig.sessionId })
       : undefined;
+  // Phase 5 Task 8. Built BEFORE runEngine, because two of its outputs must reach the engine's own
+  // startup: the rule set (`withAutoSkillPermissions`, WS-11 §2.2's automatic `Skill(...)` entries,
+  // which `runEngine` seeds once and never re-reads) and the init frame's four P5 fields.
+  //
+  // `withAutoSkillPermissions` is applied to the config the ENGINE gets, not to the one the wiring
+  // reads -- the wiring's own `validateSkillsOption` must see the host's original `allowedTools` to
+  // decide whether `Skill` is reachable at all.
+  const wiring = await buildProductionWiring({ config: effectiveConfig, env: process.env, winterHome: resolveProductionWinterHome(config, process.env) });
+  // Non-fatal, and STDERR only: stdout is the frame stream exclusively (WS-04 §2/§6). A malformed
+  // `.winter/mcp.json`, a plugin that would not load, or a `skills` entry naming something unknown
+  // must be visible to an operator without taking the session down.
+  for (const warning of wiring.warnings) process.stderr.write(`winter: ${warning}\n`);
   const code = await runEngine({
-    config: effectiveConfig,
+    config: withAutoSkillPermissions(effectiveConfig),
+    ...wiring.engineOptions,
     input: stdinFrameSource(),
     output: stdoutFrameSink,
     provider,
@@ -202,6 +221,9 @@ try {
   // is about to end either way, so it is hygiene, not a leak fix (testing.ts's in-memory leg, where
   // ONE process runs many sessions, is where it genuinely matters).
   restoredChildren?.remove();
+  // Hygiene only here (this process is about to exit); genuinely load-bearing on the in-memory leg,
+  // where ONE process runs many sessions -- see testing.ts's own `finally`.
+  wiring.dispose();
   process.exit(code);
 } catch (err) {
   const text = err instanceof Error ? (err.stack ?? err.message) : String(err);

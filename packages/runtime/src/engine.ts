@@ -35,7 +35,7 @@ import { parseMcpEnvConfig } from "./mcp/env.ts";
 // Phase 5 Task 3 (spine): the lane seams. `import type` throughout -- context/seam.ts imports
 // nothing from this module, and a value import in either direction would make the pair a runtime
 // cycle the compiled binary resolves differently from the dev leg.
-import type { AssembledPrompt, SystemPromptAssembler, SystemPromptInput } from "./context/seam.ts";
+import type { AssembledPrompt, SkillListing, SystemPromptAssembler, SystemPromptInput } from "./context/seam.ts";
 import type { CompactBoundaryRecord, CompactBoundaryWriteResult, CompactionController, CompactionResult } from "./compaction/seam.ts";
 import { STRUCTURED_OUTPUT_TOOL_NAME, resolveMaxStructuredOutputAttempts, type StructuredOutputSeam } from "./structured/seam.ts";
 import { isCheckpointedTool, type CheckpointedTool, type FileCheckpointSink } from "./checkpoint/seam.ts";
@@ -93,8 +93,21 @@ import type { AttributedContext } from "./hooks/reducer.ts";
 // engine owns itself for the events that are NOT stage-1 PreToolUse/PermissionRequest (those two
 // flow through createHookStage; everything else here fires ad hoc, at its own lifecycle point).
 import { createHookStage } from "./hooks/hook-stage.ts";
-import { buildHookRegistry } from "./hooks/registry.ts";
+import { buildHookRegistry, type SourcedHookEntry } from "./hooks/registry.ts";
+// The advertised name of the Skill tool, so the withheld-listing check below cannot drift from
+// the descriptor it is about.
+const SKILL_TOOL_ADVERTISED_NAME = "Skill";
+// Phase 5 Task 8 (rider 21): the workflow session registration -- see its call site below for why
+// it lives inside this closure rather than in production-wiring.ts.
+import { registerWorkflowSession, clearWorkflowSession } from "./workflows/host-registry.ts";
+import { resolveProjectDirName } from "./paths/project-dir-name.ts";
+import { loadAgentDefinitions, type PluginAgentDefinition } from "./subagents/definitions.ts";
+import { getPluginAgents } from "./subagents/plugin-agents.ts";
 import { buildHookEntriesFromConfig } from "./hooks/from-config.ts";
+// Phase 5 Task 8 (rider 5): a `{type:"command"}` hook entry from a settings file or a plugin manifest
+// has a real executor now -- see the `allHookEntries` block below for why the invoker and the
+// registry must be built from ONE array.
+import { createCommandHookInvoker } from "./hooks/command-invoker.ts";
 // Phase 5 Task 2 (R5-6 -> RULING P5-A): the seam that replaces this file's own P2-era
 // `const trustedWorkspace = false`. See settings/trust.ts's header for what capture (1) actually
 // found and why the per-tier permissive filter deliberately does NOT live here.
@@ -538,6 +551,62 @@ export interface EngineOptions {
    * never a throw, and never a silent "success" that restores nothing.
    */
   fileCheckpointSink?: FileCheckpointSink;
+
+  // --- Phase 5 Task 8: the production-wiring inputs ----------------------------------------------
+  //
+  // Every field below is plain data resolved ONCE PER SESSION by `production-wiring.ts` (the shared
+  // helper both entrypoints call, so all three transport legs derive from one piece of code) and
+  // handed here because the engine is where it is consumed. None of them can be resolved inside this
+  // closure: they need `resolveSettings` (async, and needed before the run starts), the plugin
+  // loader, and the skill index -- all of which several other consumers share.
+  //
+  // ABSENT reproduces pre-P5 behaviour byte-for-byte, exactly like the five seams above.
+
+  /**
+   * The resolved `~/.winter` root for THIS session (`config.winterHome ?? resolveWinterHome(env)`).
+   * Passed rather than re-derived so this file and `store/dialect.ts` can never disagree about where
+   * a session lives -- and because `dialect.ts` imports types from this module, so the reverse import
+   * would be circular. Consumed by the workflow session registration below.
+   */
+  winterHome?: string;
+  /**
+   * Hook entries from SETTINGS FILES and PLUGIN MANIFESTS, already parsed by
+   * `buildHookEntriesFromSettings` (the one parser for that block shape). Concatenated with this
+   * session's own `config.hooks` entries; the WHOLE array feeds both `buildHookRegistry` (which
+   * applies the workspace-trust filter) and `createCommandHookInvoker` (which dispatches
+   * `{type:"command"}` entries BY ID -- so it must be built from the same array, or an id will not
+   * be found).
+   */
+  extraHookEntries?: readonly SourcedHookEntry[];
+  /**
+   * MCP server sources beyond the host's own `config.mcpServers`: the settings tiers,
+   * `.winter/mcp.json`, and plugin manifests. Appended AFTER the explicit source, so an explicitly
+   * configured server still wins; `resolveMcpServerSources` owns precedence, duplicate names, the
+   * reserved `winter` name and the stdio trust gate, exactly as before.
+   */
+  extraMcpServerSources?: readonly McpServerSource[];
+  /**
+   * `system/init.slash_commands`. Produced by `slashCommandNames(resolver, cwd)`, which ALREADY
+   * includes the engine's own `/compact` -- the engine must not prepend it a second time.
+   */
+  initSlashCommands?: readonly string[];
+  /** `system/init.skills` -- this session's EFFECTIVE set (the `skills` filter applied), not the whole index. */
+  initSkills?: readonly string[];
+  /** `system/init.plugins` -- `pluginInitInfo(bundles)`, with resolved absolute paths. */
+  initPlugins?: readonly InitPluginInfo[];
+  /** `system/init.output_style` -- the CONFIGURED name (`config.outputStyle ?? settings.outputStyle ?? "default"`). */
+  initOutputStyle?: string;
+  /**
+   * The POST-TRUNCATION model-facing skill listing (R5-17). Lane S produces it; Lane C's assembler
+   * places it; neither re-derives the other's caps.
+   *
+   * The engine's own contribution is the one thing neither lane can see: it withholds the listing
+   * whenever `Skill` is NOT in this session's advertised set. Lane C's NEEDS_CONTEXT 3 named that
+   * gap exactly -- a listing tells the model to "call the `Skill` tool", and a session with a
+   * restricted `tools` list would be instructed to call a tool it does not have. `Skill` is in the
+   * pinned default 24 (capture (g)), so the default path is unaffected.
+   */
+  skillListing?: SkillListing;
 }
 
 type RaceOutcome<T> = { kind: "ok"; value: T } | { kind: "interrupted" };
@@ -684,6 +753,14 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
     compactionController,
     structuredOutput,
     fileCheckpointSink,
+    winterHome: wiredWinterHome,
+    extraHookEntries,
+    extraMcpServerSources,
+    initSlashCommands,
+    initSkills,
+    initPlugins,
+    initOutputStyle,
+    skillListing,
   } = opts;
 
   // Task 6 (WS-07 §2/§6.4, Ruling 8): permission startup validation — deliberately the very FIRST
@@ -824,8 +901,25 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // wire). Same precedence convention as `mcpServerStateSource`/`mcpControlSeam` below.
   const contextAccountant: ContextAccountant =
     injectedContextAccountant ?? createContextAccountant(config.contextWindowTokens !== undefined ? { limit: config.contextWindowTokens } : {});
-  const hookRegistry = buildHookRegistry(buildHookEntriesFromConfig(config.hooks), { trustedWorkspace });
-  const hookInvoker: HookInvoker = createBridgeHookInvoker(bridge);
+  // Phase 5 Task 8 (rider 5 / T2's rider): `SourcedHookEntry.command` EXECUTES now (T3's
+  // `createCommandHookInvoker`), so settings-file and plugin-manifest hook blocks are real behaviour
+  // rather than typed-but-inert declarations. `production-wiring.ts` parses both through
+  // `buildHookEntriesFromSettings` -- never a second parser, and never straight into a runner (T2's
+  // divergence 8) -- and hands the entries here.
+  //
+  // ONE ARRAY, TWO CONSUMERS, and that is the load-bearing part. `buildHookRegistry` applies the
+  // workspace-trust filter and the source ranking; `createCommandHookInvoker` builds `commandsById`
+  // from the SAME entries. An invoker built from a different array than the registry would look up a
+  // hook id the registry emitted and not find it, falling through to the host bridge -- a settings
+  // hook that silently never runs.
+  const allHookEntries: SourcedHookEntry[] = [...buildHookEntriesFromConfig(config.hooks), ...(extraHookEntries ?? [])];
+  const hookRegistry = buildHookRegistry(allHookEntries, { trustedWorkspace });
+  // The bridge invoker stays the fallback for every entry with no `command` (an SDK callback the
+  // host answers), so a session with no command hooks behaves exactly as it did before this wiring.
+  const bridgeHookInvoker: HookInvoker = createBridgeHookInvoker(bridge);
+  const hookInvoker: HookInvoker = allHookEntries.some((e) => e.command !== undefined && e.command.length > 0)
+    ? createCommandHookInvoker(allHookEntries, { next: bridgeHookInvoker, cwd: config.cwd, ...(engineEnv !== undefined ? { env: engineEnv } : {}) })
+    : bridgeHookInvoker;
   // Auxiliary, exactly like recordUser/recordAssistant/recordPermissionUpdate further down (same
   // "a store failure never fails the turn or blocks the hook it accompanies" policy) — defined here
   // rather than alongside its siblings because hookAuditRecorder (right below) needs it before
@@ -1671,7 +1765,12 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // actually existed belonged to two different stacks. Supplying either injection point now means
   // "I own the MCP stack" and the engine dials nothing.
   if (mcpServerStateSource === undefined && mcpControlSeam === undefined) {
-    const sources: McpServerSource[] = [{ origin: "explicit", servers: config.mcpServers ?? {} }];
+    // Phase 5 Task 8 (Lane S's "What T8 must wire" item 4): the explicit host source FIRST, then the
+    // settings tiers, `.winter/mcp.json`, and plugin manifests -- assembled by `production-wiring.ts`
+    // in that order and appended here. `resolveMcpServerSources` breaks a within-origin tie by array
+    // order, so the ordering inside `extraMcpServerSources` is load-bearing and lives with the code
+    // that documents it. RULING P4-F's "Options-level `mcpServers` only" scope is what this closes.
+    const sources: McpServerSource[] = [{ origin: "explicit", servers: config.mcpServers ?? {} }, ...(extraMcpServerSources ?? [])];
     const resolvedSources = resolveMcpServerSources(sources, {
       ...(config.strictMcpConfig !== undefined ? { strictMcpConfig: config.strictMcpConfig } : {}),
       trustedWorkspace,
@@ -1803,6 +1902,48 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   let disposeStructuredOutputTool: (() => void) | undefined;
   if (structuredOutputActive && structuredOutput !== undefined) {
     disposeStructuredOutputTool = registerHostGeneratedTool({ descriptor: structuredOutput.buildDescriptor(outputFormatSchema) });
+  }
+
+  // --- Phase 5 Task 8 (rider 21): THE WORKFLOW SESSION REGISTRATION ------------------------------
+  //
+  // Lane W's second NEEDS_CONTEXT item, and the second of the three legs its report says must land
+  // together. Without it the Workflow tool answers a typed "no workflow runtime is configured for
+  // this session" -- installed, advertised, and inert.
+  //
+  // IT LIVES HERE AND NOT IN `production-wiring.ts` because three of its five ingredients are
+  // closure-local to this function and unreachable from one level up: `resolveSessionTempPaths()`
+  // (memoized per run against this session's own cwd/id -- the SAME memo `ToolExecutionContext.
+  // tempDir` reads, so a workflow journal and a tool's scratch land under one root),
+  // `contextAccountant` (caller-supplied or built here), and `structuredOutput` (the session's own
+  // seam instance, shared so the workflow's `agent({schema})` uses one compiled-validator cache).
+  //
+  // `resolveAgentType` mirrors `tools/impl/agent.ts:296` exactly, INCLUDING its `home: permissionHome`
+  // -- the OS home, never `winterHome`, because `loadAgentDefinitions` joins `.winter/agents` itself.
+  // Handing it the resolved winter root would silently find an empty user tier. (Fix-wave item 6 is
+  // the deliberate, separate change that moves BOTH call sites onto the resolved root; doing it here
+  // alone would make the Workflow tool and the Agent tool disagree about which definitions exist.)
+  //
+  // `spentTokens` is DELIBERATELY OMITTED: RULING P5-J's cumulative counter does not exist yet, and
+  // `contextAccountant.contextTokens()` is the last call's context SIZE -- an overwrite, not an
+  // accumulation, and blind to a workflow's own child agents. `budget.spent()` therefore reports an
+  // honest 0 rather than a plausible wrong number, exactly as Lane W's own disclosure states.
+  const workflowWinterHome = structuredOutput !== undefined ? (wiredWinterHome ?? config.winterHome) : undefined;
+  if (workflowWinterHome !== undefined && structuredOutput !== undefined) {
+    registerWorkflowSession({
+      winterHome: workflowWinterHome,
+      projectKey: resolveProjectDirName(compatibilityKeys(config.cwd).transcriptProjectKey, engineEnv ?? process.env),
+      sessionTempDir: resolveSessionTempPaths().root,
+      structured: structuredOutput,
+      accountant: contextAccountant,
+      resolveAgentType: (agentType, ctx) =>
+        loadAgentDefinitions({
+          home: permissionHome,
+          cwd: ctx.cwd,
+          trustedWorkspace: ctx.trustedWorkspace,
+          ...(config.agents !== undefined ? { programmatic: config.agents as Record<string, PluginAgentDefinition> } : {}),
+          ...(getPluginAgents(config.sessionId) !== undefined ? { pluginAgents: getPluginAgents(config.sessionId) as Record<string, PluginAgentDefinition> } : {}),
+        }).get(agentType),
+    });
   }
 
   const loadedToolSet: LoadedToolSet = createLoadedToolSet();
@@ -2025,16 +2166,23 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // Phase 5 Task 2 (derived-shapes-p5.md item (b), `sdk.d.ts:4853-4913`): the loaded-surface fields.
   // Emitted with WINTER DEFAULTS, unconditionally -- `output_style` and `skills` are REQUIRED on the
   // pin, so a conditional spread (the convention `mcp_servers` above uses precisely to keep goldens
-  // byte-identical) would leave the frame diverging on shape. Task 8 populates the three empty
-  // arrays once the command/skill/plugin registries exist; `output_style` is real TODAY because
-  // `Options.outputStyle` landed in this same task. `terminal_slash_commands` is optional on the pin
-  // and stays absent: it is the subset of commands bound to a local terminal, which Winter has no
-  // surface for. These four keys are the ONLY differential-golden movement in this task.
+  // byte-identical) would leave the frame diverging on shape.
+  //
+  // PHASE 5 TASK 8 (rider 4) POPULATES ALL FOUR from `production-wiring.ts`'s real producers --
+  // Lane S's `slashCommandNames(resolver, cwd)` / skill index / `pluginInitInfo(bundles)`, and Lane
+  // C's resolved style. Each falls back to its T2 default when the wiring is absent (every
+  // engine-level unit test, and any host driving `runEngine` directly), so those callers stay
+  // byte-identical.
+  //
+  // `slash_commands` is taken WHOLE from the producer and never prepended to: `slashCommandNames`
+  // already emits the engine's own built-in `/compact` first, and prepending it here would advertise
+  // it twice. `terminal_slash_commands` is optional on the pin and stays absent: it is the subset of
+  // commands bound to a local terminal, which Winter has no surface for.
   const initLoadedSurface = {
-    slash_commands: [] as string[],
-    output_style: config.outputStyle ?? DEFAULT_OUTPUT_STYLE,
-    skills: [] as string[],
-    plugins: [] as InitPluginInfo[],
+    slash_commands: initSlashCommands !== undefined ? [...initSlashCommands] : ([] as string[]),
+    output_style: initOutputStyle ?? config.outputStyle ?? DEFAULT_OUTPUT_STYLE,
+    skills: initSkills !== undefined ? [...initSkills] : ([] as string[]),
+    plugins: initPlugins !== undefined ? [...initPlugins] : ([] as InitPluginInfo[]),
   };
   output.write({
     type: "data",
@@ -2676,6 +2824,9 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
       date: new Date().toISOString().slice(0, 10),
       planMode: policyStateStore.getState().mode === "plan",
       ...(agentSystemPrompt !== undefined ? { agentPrompt: agentSystemPrompt } : {}),
+      // Withheld when `Skill` is not advertised -- see EngineOptions.skillListing for why the engine
+      // rather than either lane owns this check.
+      ...(skillListing !== undefined && skillListing.length > 0 && advertisedToolNames.includes(SKILL_TOOL_ADVERTISED_NAME) ? { skillListing } : {}),
     };
     if (systemPromptAssembler === undefined) return { system: agentSystemPrompt ?? "", userContextBlocks: [] };
     return systemPromptAssembler.assemble(base);
@@ -3566,6 +3717,11 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // singleton-hygiene argument as the MCP/ToolSearch withdrawals above, and the disposer is
   // identity-checked so a concurrent in-memory run's own registration is never removed by this one.
   disposeStructuredOutputTool?.();
+  // Phase 5 Task 8: withdraw this run's workflow session, same singleton-hygiene argument as every
+  // withdrawal above. `workflows/host-registry.ts` holds ONE active runtime per process (Lane W's
+  // own documented shape), so a run that left its registration standing would let a later session's
+  // Workflow call persist its script under the FINISHED session's project/uuid directory.
+  if (workflowWinterHome !== undefined) clearWorkflowSession();
   output.end();
   return 0;
 }

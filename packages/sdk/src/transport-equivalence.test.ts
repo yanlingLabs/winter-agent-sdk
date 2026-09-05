@@ -147,6 +147,36 @@ registerBgTaskTestTool();
 // in-memory leg must dispatch through the real registry, not stubExecutor's blind echo.
 const REGISTRY_BACKED_TEST_PROVIDERS: ReadonlySet<TestProviderName> = new Set(["bgtask", "lanea", "laneb", "lanec", "laned", "lanee", "mcpsdk", "subagent", "childmsg", "subagentperm", "toolsearch"]);
 
+// --- Phase 5 Task 8: the echoed prompt, after the assembler is wired ------------------------------
+//
+// `echoProvider` echoes the LAST USER MESSAGE it was handed. With Lane C's assembler registered in
+// production (production-wiring.ts, on every leg), that message is `<user-context blocks>\n\n<the
+// prompt>` on the live request -- R5-9's "always injected as user-context", re-attached every turn
+// and never persisted. The default session carries one such block (the auto-memory guidance), whose
+// text names this session's own resolved memory directory: a machine- and run-specific absolute
+// path that no byte-exact literal can hold.
+//
+// So the shape a scenario actually cares about is asserted instead: exactly one text block, echoing
+// exactly this prompt, with the prompt LAST. That is strictly stronger than a `toContain` on the
+// prompt (a stray later block would slip past that) and it still fails if a turn echoes the wrong
+// envelope, which is what the multi-turn scenarios below are for.
+//
+// CROSS-LEG EQUIVALENCE IS UNAFFECTED and is checked separately, byte-for-byte: every scenario's
+// `compareTraces(a.trace, b.trace)` runs both legs under one shared TEST_WINTER_HOME, so the two
+// legs' blocks are identical strings and a divergence in the injected context would still fail
+// there -- which is the assertion this file exists for.
+function expectEchoedPrompt(content: unknown, prompt: string): void {
+  expect(Array.isArray(content)).toBe(true);
+  const blocks = content as Array<{ type: string; text: string }>;
+  expect(blocks.length).toBe(1);
+  expect(blocks[0]?.type).toBe("text");
+  const text = blocks[0]!.text;
+  expect(text.startsWith("echo: ")).toBe(true);
+  // Either no user-context block at all (a session that disabled auto-memory) or the prompt after
+  // the blocks -- never the prompt merely appearing somewhere in the middle.
+  expect(text === `echo: ${prompt}` || text.endsWith(`\n\n${prompt}`)).toBe(true);
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -782,7 +812,7 @@ function registerEquivalenceScenarios(legA: LegName, legB: LegName): void {
     expect(a.thrown).toBeUndefined();
     expect(a.trace.map((e) => e.kind)).toEqual(["system/init", "assistant", "result", "exit"]);
     const assistantMsg = a.trace[1]!.payload as { message: { content: unknown } };
-    expect(assistantMsg.message.content).toEqual([{ type: "text", text: "echo: hi" }]);
+    expectEchoedPrompt(assistantMsg.message.content, "hi");
   });
 
   test("multi-turn (streaming input, 2 envelopes) — raw wire, independent of query()", async () => {
@@ -791,9 +821,9 @@ function registerEquivalenceScenarios(legA: LegName, legB: LegName): void {
     expect(compareTraces(a, b)).toEqual([]);
     expect(a.map((e) => e.kind)).toEqual(["init", "system/init", "assistant", "result", "assistant", "result", "control_response", "exit"]);
     const first = a[2]!.payload as { message: { content: unknown } };
-    expect(first.message.content).toEqual([{ type: "text", text: "echo: first" }]);
+    expectEchoedPrompt(first.message.content, "first");
     const second = a[4]!.payload as { message: { content: unknown } };
-    expect(second.message.content).toEqual([{ type: "text", text: "echo: second" }]);
+    expectEchoedPrompt(second.message.content, "second");
   });
 
   // Controller Ruling P1-I: query()'s own streaming-input iteration, exercised directly (not the
@@ -812,9 +842,9 @@ function registerEquivalenceScenarios(legA: LegName, legB: LegName): void {
     expect(a.thrown).toBeUndefined();
     expect(a.trace.map((e) => e.kind)).toEqual(["system/init", "assistant", "result", "assistant", "result", "exit"]);
     const first = a.trace[1]!.payload as { message: { content: unknown } };
-    expect(first.message.content).toEqual([{ type: "text", text: "echo: first" }]);
+    expectEchoedPrompt(first.message.content, "first");
     const second = a.trace[3]!.payload as { message: { content: unknown } };
-    expect(second.message.content).toEqual([{ type: "text", text: "echo: second" }]);
+    expectEchoedPrompt(second.message.content, "second");
   });
 
   test("tool round", async () => {
@@ -1614,7 +1644,7 @@ function registerEquivalenceScenarios(legA: LegName, legB: LegName): void {
     expect(compareTraces(a, b)).toEqual([]);
     expect(a.map((e) => e.kind)).toEqual(["init", "system/init", "assistant", "result", "control_response", "exit"]);
     const assistantMsg = a[2]!.payload as { message: { content: unknown } };
-    expect(assistantMsg.message.content).toEqual([{ type: "text", text: "echo: carried" }]);
+    expectEchoedPrompt(assistantMsg.message.content, "carried");
   });
 
   // Task 2 (WS-04 §3.1, direction inversion): the runtime originates its OWN control_request
@@ -1690,7 +1720,12 @@ function registerEquivalenceScenarios(legA: LegName, legB: LegName): void {
       const reflected = JSON.parse(result.secondAssistantText) as Array<{ role: string; content: unknown }>;
       expect(reflected).toContainEqual({ role: "user", content: "first" });
       expect(reflected.some((m) => m.role === "assistant")).toBe(true); // the first run's OWN reply is present too
-      expect(reflected.at(-1)).toEqual({ role: "user", content: "second" });
+      // Phase 5 Task 8: the LIVE request's last user message carries this session's user-context
+      // blocks ahead of the prompt (R5-9), so this asserts the composition rather than a byte-exact
+      // string -- the prompt is still last, which is what "the second run's own envelope" means.
+      const last = reflected.at(-1) as { role: string; content: string };
+      expect(last.role).toBe("user");
+      expect(last.content === "second" || last.content.endsWith("\n\nsecond")).toBe(true);
     }
 
     // Chain continuity: one continuous parentUuid graph, first entry's parent null, every later

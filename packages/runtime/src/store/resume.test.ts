@@ -459,7 +459,14 @@ describe("resume wiring end-to-end (temp WINTER_HOME, in-memory leg)", () => {
           throw new Error("tool boom");
         },
       };
-      const continuousHome = freshHome();
+      // Phase 5 Task 8: the continuous run shares the SPLIT run's `home`, where it used to get a
+      // fresh one of its own. The two runs use different session ids, so nothing collides -- and it
+      // is now load-bearing: with the assembler wired in production, every request's user message
+      // carries this session's auto-memory block, whose text NAMES the resolved memory directory.
+      // Two different homes therefore produce two different (correct) messages, and the comparison
+      // below -- whose whole subject is "does a resumed run rebuild the same messages" -- would fail
+      // on a difference that has nothing to do with resume.
+      const continuousHome = home;
       try {
         // Ruling P2-I: allowedTools pre-approves both tool names so they execute — this test is
         // about resume fidelity, not permissions.
@@ -473,7 +480,7 @@ describe("resume wiring end-to-end (temp WINTER_HOME, in-memory leg)", () => {
         await drainAll(proc);
         await proc.exited;
       } finally {
-        rmSync(continuousHome, { recursive: true, force: true });
+        // `continuousHome` IS `home`, removed by this test's own outer finally -- nothing to do here.
       }
       expect(continuousCalls.length).toBe(2);
 
@@ -537,7 +544,14 @@ describe("resume wiring end-to-end (temp WINTER_HOME, in-memory leg)", () => {
           return new Promise(() => {}); // never resolves — abandoned on interrupt
         },
       };
-      const continuousHome = freshHome();
+      // Phase 5 Task 8: the continuous run shares the SPLIT run's `home`, where it used to get a
+      // fresh one of its own. The two runs use different session ids, so nothing collides -- and it
+      // is now load-bearing: with the assembler wired in production, every request's user message
+      // carries this session's auto-memory block, whose text NAMES the resolved memory directory.
+      // Two different homes therefore produce two different (correct) messages, and the comparison
+      // below -- whose whole subject is "does a resumed run rebuild the same messages" -- would fail
+      // on a difference that has nothing to do with resume.
+      const continuousHome = home;
       try {
         // Ruling P2-I: allowedTools:["slow_tool"] pre-approves so execution genuinely starts.
         const continuousConfig: RuntimeConfig = { sessionId: randomUUID(), cwd, model: "sonnet", allowedTools: ["slow_tool"] };
@@ -552,7 +566,7 @@ describe("resume wiring end-to-end (temp WINTER_HOME, in-memory leg)", () => {
         await drainAll(proc);
         await proc.exited;
       } finally {
-        rmSync(continuousHome, { recursive: true, force: true });
+        // `continuousHome` IS `home`, removed by this test's own outer finally -- nothing to do here.
       }
       expect(continuousCalls.length).toBe(2);
 

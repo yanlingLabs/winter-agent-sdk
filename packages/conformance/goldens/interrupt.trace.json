@@ -87,7 +87,9 @@
         "Workflow",
         "Write"
       ],
-      "slash_commands": [],
+      "slash_commands": [
+        "compact"
+      ],
       "output_style": "default",
       "skills": [],
       "plugins": []

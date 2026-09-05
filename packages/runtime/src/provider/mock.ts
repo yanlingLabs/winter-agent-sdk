@@ -304,7 +304,14 @@ function rawTestProviderByName(name: TestProviderName): Provider {
           if (step === 0) {
             step++;
             const lastUser = [...messages].reverse().find((m) => m.role === "user");
-            const filePath = typeof lastUser?.content === "string" ? lastUser.content : "";
+            // Phase 5 Task 8: the LAST LINE, not the whole content. With Lane C's assembler wired in
+            // production, the live request's last user message is `<user-context blocks>\n\n<the
+            // prompt>` (R5-9's "always injected as user-context"), so reading the whole content here
+            // handed `Write` a multi-kilobyte "path" -- observed as a real `ENAMETOOLONG` on both
+            // legs, identically. The scenario's own prompt is a single-line absolute path, and the
+            // blocks are always separated from it by a blank line, so the last line IS the prompt.
+            const raw = typeof lastUser?.content === "string" ? lastUser.content : "";
+            const filePath = raw.slice(raw.lastIndexOf("\n") + 1);
             return { kind: "tool_use", calls: [{ id: "laneb-call-1", name: "Write", input: { file_path: filePath, content: "winter-t8-laneb-fixture-content\n" } }] };
           }
           return { kind: "text", text: "lane b done" };

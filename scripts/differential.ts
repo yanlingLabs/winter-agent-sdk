@@ -15,25 +15,62 @@ import { normalizeTrace, compareTraces, type ConformanceTraceEntry } from "winte
 const FIXTURE_CWD = "/winter-fixture";
 const FIXTURE_MODEL = "sonnet";
 
+// --- Phase 5 Task 8: the injected-context scrub ---------------------------------------------------
+//
+// With Lane C's assembler wired in production (production-wiring.ts, on every leg), every provider
+// request's last user message carries this session's user-context blocks ahead of the prompt (R5-9,
+// "always injected as user-context"). The default session's one block is the auto-memory guidance,
+// and its text NAMES the resolved memory directory -- `<winterHome>/projects/<key>/memory`, where
+// `winterHome` is this scenario's own `mkdtemp` root.
+//
+// Every scenario here uses `echoProvider` or a `reflect`-style double that puts the user message
+// back on the wire, so that absolute path reaches the recorded trace. It is machine- AND run-
+// specific, which a byte-frozen golden cannot hold: without this scrub `--update` would write a
+// different file on every run, which is the exact regenerate-twice determinism WS-17 §4 requires.
+//
+// SCRUBBED BY EXACT VALUE, never by pattern -- the same design `traceWinterBashBackgroundRound`'s
+// own task-id scrub already uses, and for the same reason: this replaces THIS run's own known home
+// string, so it can never accidentally eat a meaningful literal that merely looks path-shaped. The
+// memory guidance TEXT itself is deliberately left in the goldens: it is stable authored prose, and
+// pinning it is how a silent change to what every session tells the model becomes visible.
+const FIXTURE_WINTER_HOME = "/winter-home";
+
+function scrubWinterHome(entries: ConformanceTraceEntry[], winterHome: string): ConformanceTraceEntry[] {
+  return JSON.parse(JSON.stringify(entries).split(winterHome).join(FIXTURE_WINTER_HOME)) as ConformanceTraceEntry[];
+}
+
 function kindOf(msg: { type: string; subtype?: string }): string {
   return msg.type === "system" ? `system/${msg.subtype}` : msg.type;
 }
 
 export async function traceWinterPlainQuery(): Promise<ConformanceTraceEntry[]> {
-  const entries: ConformanceTraceEntry[] = [];
-  let seq = 0;
-  // cwd is pinned to a synthetic constant (never process.cwd()'s default) so the recorded trace —
-  // and the committed golden compared against it — is byte-identical across machines and CI
-  // runners, whose checkout paths differ. The in-memory runtime never touches the filesystem with
-  // it (WS-17 §4: differential traces must be deterministic).
-  for await (const msg of query({
-    prompt: "hi",
-    options: { model: "sonnet", cwd: "/winter-fixture", spawnClaudeCodeProcess: (opts) => inMemoryProcess(opts.args) },
-  })) {
-    const kind = msg.type === "system" ? `system/${(msg as { subtype: string }).subtype}` : msg.type;
-    entries.push({ sequence: seq++, direction: "runtime-to-host", kind, payload: msg });
+  // Phase 5 Task 8: an OWNED temp WINTER_HOME, where this scenario used to rely on inMemoryProcess's
+  // own per-call mkdtemp fallback. The fallback was always hermetic, but this scenario now needs the
+  // home's VALUE (to scrub the memory directory out of the recorded trace), and only an injected one
+  // is knowable from here. Every sibling scenario below already did this.
+  const winterHome = mkdtempSync(join(tmpdir(), "winter-differential-plainquery-"));
+  try {
+    const entries: ConformanceTraceEntry[] = [];
+    let seq = 0;
+    // cwd is pinned to a synthetic constant (never process.cwd()'s default) so the recorded trace —
+    // and the committed golden compared against it — is byte-identical across machines and CI
+    // runners, whose checkout paths differ. The in-memory runtime never touches the filesystem with
+    // it (WS-17 §4: differential traces must be deterministic).
+    for await (const msg of query({
+      prompt: "hi",
+      options: {
+        model: "sonnet",
+        cwd: "/winter-fixture",
+        spawnClaudeCodeProcess: (opts) => inMemoryProcess(opts.args, undefined, undefined, { ...opts.env, WINTER_HOME: winterHome }),
+      },
+    })) {
+      const kind = msg.type === "system" ? `system/${(msg as { subtype: string }).subtype}` : msg.type;
+      entries.push({ sequence: seq++, direction: "runtime-to-host", kind, payload: msg });
+    }
+    return normalizeTrace(scrubWinterHome(entries, winterHome));
+  } finally {
+    rmSync(winterHome, { recursive: true, force: true });
   }
-  return normalizeTrace(entries);
 }
 
 // --- Task 11: multi-turn / tool-round / interrupt / resume ---------------------------------------
@@ -70,7 +107,7 @@ export async function traceWinterMultiTurn(): Promise<ConformanceTraceEntry[]> {
     })) {
       entries.push({ sequence: entries.length, direction: "runtime-to-host", kind: kindOf(msg), payload: msg });
     }
-    return normalizeTrace(entries);
+    return normalizeTrace(scrubWinterHome(entries, winterHome));
   } finally {
     rmSync(winterHome, { recursive: true, force: true });
   }
@@ -98,7 +135,7 @@ export async function traceWinterToolRound(): Promise<ConformanceTraceEntry[]> {
     })) {
       entries.push({ sequence: entries.length, direction: "runtime-to-host", kind: kindOf(msg), payload: msg });
     }
-    return normalizeTrace(entries);
+    return normalizeTrace(scrubWinterHome(entries, winterHome));
   } finally {
     rmSync(winterHome, { recursive: true, force: true });
   }
@@ -131,7 +168,7 @@ export async function traceWinterHookedToolRound(): Promise<ConformanceTraceEntr
     })) {
       entries.push({ sequence: entries.length, direction: "runtime-to-host", kind: kindOf(msg), payload: msg });
     }
-    return normalizeTrace(entries);
+    return normalizeTrace(scrubWinterHome(entries, winterHome));
   } finally {
     rmSync(winterHome, { recursive: true, force: true });
   }
@@ -201,7 +238,7 @@ export async function traceWinterInterrupt(): Promise<ConformanceTraceEntry[]> {
     send({ type: "control_request", requestId: "end-input-1", subtype: "end_input", payload: undefined });
     push(await need("the end_input ack")); // control_response
 
-    return normalizeTrace(entries);
+    return normalizeTrace(scrubWinterHome(entries, winterHome));
   } finally {
     proc.kill();
     await proc.exited;
@@ -235,7 +272,7 @@ export async function traceWinterDeniedToolRound(): Promise<ConformanceTraceEntr
     })) {
       entries.push({ sequence: entries.length, direction: "runtime-to-host", kind: kindOf(msg), payload: msg });
     }
-    return normalizeTrace(entries);
+    return normalizeTrace(scrubWinterHome(entries, winterHome));
   } finally {
     rmSync(winterHome, { recursive: true, force: true });
   }
@@ -262,7 +299,7 @@ export async function traceWinterCanUseToolApprovedRound(): Promise<ConformanceT
     })) {
       entries.push({ sequence: entries.length, direction: "runtime-to-host", kind: kindOf(msg), payload: msg });
     }
-    return normalizeTrace(entries);
+    return normalizeTrace(scrubWinterHome(entries, winterHome));
   } finally {
     rmSync(winterHome, { recursive: true, force: true });
   }
@@ -304,7 +341,7 @@ export async function traceWinterHookDeniedRound(): Promise<ConformanceTraceEntr
     })) {
       entries.push({ sequence: entries.length, direction: "runtime-to-host", kind: kindOf(msg), payload: msg });
     }
-    return normalizeTrace(entries);
+    return normalizeTrace(scrubWinterHome(entries, winterHome));
   } finally {
     rmSync(winterHome, { recursive: true, force: true });
   }
@@ -353,7 +390,7 @@ export async function traceWinterModeSwitchMidSession(): Promise<ConformanceTrac
       }
     }
     await modeSwitchPromise;
-    return normalizeTrace(entries);
+    return normalizeTrace(scrubWinterHome(entries, winterHome));
   } finally {
     rmSync(winterHome, { recursive: true, force: true });
   }
@@ -388,7 +425,7 @@ export async function traceWinterResume(): Promise<ConformanceTraceEntry[]> {
     await runLeg("first", { sessionId }); // establishes history under a pre-allocated sessionId
     await runLeg("second", { resume: sessionId }); // a NEW query()/process-shaped instance resumes it
 
-    return normalizeTrace(entries);
+    return normalizeTrace(scrubWinterHome(entries, winterHome));
   } finally {
     rmSync(winterHome, { recursive: true, force: true });
   }
@@ -518,7 +555,7 @@ export async function traceWinterBackgroundTaskRound(): Promise<ConformanceTrace
     })) {
       entries.push({ sequence: entries.length, direction: "runtime-to-host", kind: kindOf(msg), payload: msg });
     }
-    return normalizeTrace(entries);
+    return normalizeTrace(scrubWinterHome(entries, winterHome));
   } finally {
     rmSync(winterHome, { recursive: true, force: true });
   }
@@ -600,7 +637,7 @@ export async function traceWinterBashBackgroundRound(): Promise<ConformanceTrace
     if (taskIdMatch) scrubbed = scrubbed.split(taskIdMatch[1]!).join("TASKID");
     const scrubbedEntries = JSON.parse(scrubbed) as ConformanceTraceEntry[];
 
-    return normalizeTrace(scrubbedEntries);
+    return normalizeTrace(scrubWinterHome(scrubbedEntries, winterHome));
   } finally {
     rmSync(winterHome, { recursive: true, force: true });
     // Known, accepted leak (same structural shape as transport-equivalence.test.ts's own real-process
@@ -636,7 +673,7 @@ export async function traceWinterAdvertisedSetRound(): Promise<ConformanceTraceE
     })) {
       entries.push({ sequence: entries.length, direction: "runtime-to-host", kind: kindOf(msg), payload: msg });
     }
-    return normalizeTrace(entries);
+    return normalizeTrace(scrubWinterHome(entries, winterHome));
   } finally {
     rmSync(winterHome, { recursive: true, force: true });
   }
@@ -722,7 +759,7 @@ export async function traceWinterMcpToolRound(): Promise<ConformanceTraceEntry[]
     })) {
       entries.push({ sequence: entries.length, direction: "runtime-to-host", kind: kindOf(msg), payload: msg });
     }
-    return normalizeTrace(entries);
+    return normalizeTrace(scrubWinterHome(entries, winterHome));
   } finally {
     rmSync(winterHome, { recursive: true, force: true });
   }
@@ -782,7 +819,7 @@ export async function traceWinterToolSearchSelectRound(): Promise<ConformanceTra
     })) {
       entries.push({ sequence: entries.length, direction: "runtime-to-host", kind: kindOf(msg), payload: msg });
     }
-    return normalizeTrace(entries);
+    return normalizeTrace(scrubWinterHome(entries, winterHome));
   } finally {
     rmSync(winterHome, { recursive: true, force: true });
   }
@@ -808,7 +845,7 @@ export async function traceWinterSubagentSpawnRound(): Promise<ConformanceTraceE
     })) {
       entries.push({ sequence: entries.length, direction: "runtime-to-host", kind: kindOf(msg), payload: msg });
     }
-    return normalizeTrace(scrubJsonToolResults(entries));
+    return normalizeTrace(scrubWinterHome(scrubJsonToolResults(entries), winterHome));
   } finally {
     rmSync(winterHome, { recursive: true, force: true });
   }
@@ -856,7 +893,7 @@ export async function traceWinterSubagentPermissionRound(): Promise<ConformanceT
     })) {
       entries.push({ sequence: entries.length, direction: "runtime-to-host", kind: kindOf(msg), payload: msg });
     }
-    return normalizeTrace(scrubJsonToolResults(entries));
+    return normalizeTrace(scrubWinterHome(scrubJsonToolResults(entries), winterHome));
   } finally {
     rmSync(winterHome, { recursive: true, force: true });
   }
@@ -889,7 +926,7 @@ export async function traceWinterSendMessageToChildRound(): Promise<ConformanceT
     })) {
       entries.push({ sequence: entries.length, direction: "runtime-to-host", kind: kindOf(msg), payload: msg });
     }
-    return normalizeTrace(scrubJsonToolResults(entries));
+    return normalizeTrace(scrubWinterHome(scrubJsonToolResults(entries), winterHome));
   } finally {
     rmSync(winterHome, { recursive: true, force: true });
   }

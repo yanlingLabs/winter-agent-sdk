@@ -10,6 +10,9 @@ import { echoProvider } from "./provider/mock.ts";
 import { resolveEngineSession } from "./store/dialect.ts";
 // Phase 4 Task 8 (rider 18): see main.ts's own identical import comment.
 import { registerDefaultChildEngineFactory } from "./subagents/register-default-factory.ts";
+// Phase 5 Task 8: see main.ts's own identical import comment. The IDENTICAL call, so the in-memory
+// leg and a real spawned/compiled `winter` cannot diverge on which P5 seams a session has.
+import { buildProductionWiring, withAutoSkillPermissions } from "./production-wiring.ts";
 import { restoreChildRoster } from "./subagents/restore.ts";
 import { WinterCompatibilitySessionStore, compatibilityKeys } from "@yanlinglabs/winter-agent-sdk";
 // Task 1 (P3, WS-06 §1): test-tool registration goes through the registry. The equivalence corpus
@@ -197,9 +200,15 @@ export function inMemoryProcess(
         childStore !== undefined && config.forkSession !== true && (config.resume !== undefined || config.continue === true)
           ? await restoreChildRoster(childStore, { projectKey: compatibilityKeys(effectiveConfig.cwd).transcriptProjectKey, sessionId: effectiveConfig.sessionId })
           : undefined;
+      // Phase 5 Task 8: the same wiring main.ts builds, from the same function, against this leg's
+      // own hermetic `resolveInMemoryWinterHome` root -- which must NEVER reach the real
+      // `process.env` fallback (that function's own header), so a differential/equivalence run can
+      // not read a developer's real skills, commands, plugins or settings.
+      const wiring = await buildProductionWiring({ config: effectiveConfig, env: env ?? {}, winterHome: resolveInMemoryWinterHome(config, env) });
       try {
       const code = await runEngine({
-        config: effectiveConfig,
+        config: withAutoSkillPermissions(effectiveConfig),
+        ...wiring.engineOptions,
         input,
         output,
         provider,
@@ -226,6 +235,9 @@ export function inMemoryProcess(
       }
       } finally {
         restoredChildren?.remove();
+        // LOAD-BEARING here, unlike main.ts: one process runs many sessions on this leg, so a skill
+        // index or plugin-agent map left registered would leak into the next session's own lookups.
+        wiring.dispose();
       }
     } catch {
       if (!settled) {

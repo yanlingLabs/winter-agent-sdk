@@ -48,7 +48,9 @@
         "Write",
         "mcp__t8mcpsdk__echo"
       ],
-      "slash_commands": [],
+      "slash_commands": [
+        "compact"
+      ],
       "output_style": "default",
       "skills": [],
       "plugins": [],

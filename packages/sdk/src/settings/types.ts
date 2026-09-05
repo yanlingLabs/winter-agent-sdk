@@ -104,6 +104,35 @@ export interface Settings {
    * the PROJECT tier only (the pinned analogue at `autoMemoryDirectory` is project-only).
    */
   autoMode?: string;
+  // --- Phase 5 Task 8 (rider 26): the six keys P5's lanes consume ---------------------------------
+  //
+  // Every one of them shipped in Phase 5 reaching a real consumer through this interface's `[key:
+  // string]: unknown` index signature -- so a lane's typed parameter had to be fed by a cast at the
+  // call site, and a typo in a key name was indistinguishable from an absent key. Declared here so
+  // the narrowing happens once (production-wiring.ts) and the compiler carries the contract.
+  //
+  // NONE of them is an overlay-never key: `skillOverrides`/`disableBundledSkills`/
+  // `strictPluginOnlyCustomization` only ever REMOVE capability, the two listing caps only bound a
+  // prompt region, and `mcpServers` is already trust-gated at its own consumer (P5-A, via
+  // `origin: "project"` on the project tier). Widening `OVERLAY_NEVER_KEYS` for a restrictive key
+  // would let a repository lose a protection it is allowed to add.
+  /** `sdk.d.ts:5651`. Per-skill visibility: `on` | `name-only` | `user-invocable-only` | `off`; an unrecognised value reads as `on`. */
+  skillOverrides?: Record<string, string>;
+  /** `sdk.d.ts:5657`. Removes the BUILTIN skill tier and nothing else. */
+  disableBundledSkills?: boolean;
+  /** `sdk.d.ts:5988`. `true`, or the areas (`skills`/`agents`/`hooks`/`mcp`) restricted to plugin contributions only. */
+  strictPluginOnlyCustomization?: boolean | string[];
+  /** `sdk.d.ts:5499`. Per-description cap in the model-facing skill listing (default 1536 chars). */
+  skillListingMaxDescChars?: number;
+  /** `sdk.d.ts:5503`. The listing's share of the context window (default 0.01). */
+  skillListingBudgetFraction?: number;
+  /**
+   * A settings-tier MCP server block. Deliberately `Record<string, unknown>` rather than a typed
+   * server union: `settings/loaders/mcp-config.ts` validates each entry and `resolveMcpServerSources`
+   * is the sole authority on the shapes, so a type here would be a second, drift-prone declaration
+   * of a contract that already has one.
+   */
+  mcpServers?: Record<string, unknown>;
   [key: string]: unknown;
 }
 

@@ -21,6 +21,7 @@ import { createBackgroundTask } from "../background-tasks.ts";
 // Phase 4 Task 8 (rider 24): the shared background-task runtime TaskStop/TaskOutput are built on.
 import { startTracking, setTaskStatus, listRunningTasks, toBackgroundTasksChangedEntry } from "./background-task-runtime.ts";
 import { loadAgentDefinitions } from "../../subagents/definitions.ts";
+import { getPluginAgents } from "../../subagents/plugin-agents.ts";
 import { resolveForegroundBackground, resolveWorkspaceTrust } from "../../subagents/policy.ts";
 import type { ChildHandle, ChildResult, ChildSessionRecord, SpawnChildRequest } from "../../subagents/child-handle.ts";
 
@@ -286,11 +287,19 @@ export const agentExecutor: ToolExecutor = {
       // ToolExecutionContext -- never a second hardcoded constant that could drift from the one the
       // permission evaluator and hook registry already use.
       const trustedWorkspace = resolveWorkspaceTrust(ctx);
+      // Phase 5 Task 8 (Lane S's "What T8 must wire" item 3): plugin-contributed definitions, out of
+      // the session-keyed registry `production-wiring.ts` populates. NOT folded into `ctx.agents` --
+      // that field is the PROGRAMMATIC tier, and a plugin agent must sit at the BOTTOM of
+      // `loadAgentDefinitions`' precedence (programmatic > project > user > plugin), never above a
+      // user's own `~/.winter/agents/<name>.md`. See subagents/plugin-agents.ts for why the key is
+      // the session id rather than the agent id.
+      const pluginAgents = getPluginAgents(ctx.sessionId);
       const definitions = loadAgentDefinitions({
         cwd: ctx.cwd,
         home: ctx.home,
         trustedWorkspace,
         ...(ctx.agents !== undefined ? { programmatic: ctx.agents as Record<string, RuntimeAgentDefinition> } : {}),
+        ...(pluginAgents !== undefined ? { pluginAgents } : {}),
       });
       const found = definitions.get(subagentType);
       if (found === undefined) {
