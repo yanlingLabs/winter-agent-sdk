@@ -826,11 +826,93 @@ letters would have overwritten committed P4 evidence, so this task's six scenari
 | Brief capture | Scenario | Subject | Verdict |
 | --- | --- | --- | --- |
 | (1) | **F** | `includePartialMessages` — `stream_event` ordering over text + thinking + tool_use | **captured** — and it answers R6-8 |
-| (2) | **G** | 529→200, 429 + `retry-after`/`anthropic-ratelimit-*`, persistent 529 + `fallbackModel` | _pending_ |
+| (2) | **G** | 529→200, 429 + `retry-after`/`anthropic-ratelimit-*`, persistent 529 + `fallbackModel` | **captured** — decisive on OQ-P6-4 and OQ-P6-5 |
 | (3) | **H** | **WS-17 probe (a)** — neighbour-file survival across resume | _pending_ |
 | (4) | **I** | no API key; unknown model — the failure shape | _pending_ |
 | (5) | **J** | `supportedModels()` / `setModel()` | _pending_ |
 | (6) | **K** | `total_cost_usd` / `modelUsage` / `costBasis` for a fake model id | _pending_ |
+
+### Capture (G) — `max_retries` is 10, `retry-after` is honoured, `rate_limit_event` never fires, and the overload fallback is FRAME-INVISIBLE
+
+**Design.** Three runs, three loopback policies, each deadline-bounded at 180 s via
+`Options.abortController`: (i) 529 `overloaded_error` on the first requests then 200; (ii) 429
+`rate_limit_error` with `retry-after: 2` plus `anthropic-ratelimit-requests-limit/-remaining/-reset`
+and `anthropic-ratelimit-unified-status/-reset`, then 200; (iii) **persistent** 529 with
+`fallbackModel: "haiku"`. Every request's `model` field and arrival time is logged, because item (b)
+predicted the request `model` might be the only observable of a fallback. (The loopback's failure
+counter also covers the runtime's `HEAD /api/hello` preflight, so runs (i)/(ii) delivered exactly one
+failing `POST` each — which is what produced their single retry.)
+
+**`api_retry` — full frame, verbatim shape** (run (i)):
+
+```json
+{ "type": "system", "subtype": "api_retry", "attempt": 1, "max_retries": 10,
+  "retry_delay_ms": 577, "error_status": 529, "error": "overloaded",
+  "session_id": "<uuid>", "uuid": "<uuid>" }
+```
+
+Nine keys, exactly the pinned nine (`sdk.d.ts:3085-3095`), no extras. **`max_retries` is 10** in every
+frame of all three runs — the pinned default, which the declaration itself never states.
+
+**Run (i) 529 → 200.** One `api_retry` (`attempt: 1`, `retry_delay_ms: 577`, `error_status: 529`,
+`error: "overloaded"`), then success. `529` maps to the `'overloaded'` member of
+`SDKAssistantMessageError`. Measured inter-request gap 586 ms against the announced 577 ms — the frame
+announces the delay *before* it is taken, and it is accurate.
+
+**Run (ii) 429 + `retry-after: 2`.** One `api_retry` with **`retry_delay_ms: 2000`** — exactly the
+`retry-after: 2` header, not the computed backoff (run (i)'s first delay was 577 ms, run (iii)'s
+622 ms; both jittered, neither round). Measured gap 2008 ms. **`retry-after` is honoured verbatim and
+overrides the backoff schedule.** `429` maps to `error: "rate_limit"`, `error_status: 429`.
+
+**Run (ii)'s decisive negative: `rate_limit_event` frames = 0.** The loopback returned the full
+`anthropic-ratelimit-*` header set including a `rejected` unified status, and **not one
+`rate_limit_event` reached the consumer**. This settles **OQ-P6-4**: under API-key auth the pinned
+runtime never emits `rate_limit_event`, exactly as its JSDoc's claude.ai-subscription scoping implies.
+The HTTP-429 path is `api_retry` with `error_status: 429` and `error: "rate_limit"`, full stop. A
+Winter adapter that raises `rate_limit_event` on a provider 429 is *repurposing* the frame, and
+Winter's own catalog/credential layer should route provider 429s to `api_retry` for parity, keeping
+`rate_limit_event` for genuinely subscription-shaped providers or disclosing the widening.
+
+**Run (iii) persistent 529 + `fallbackModel: "haiku"` — three findings, one of them decisive.**
+
+Request log (model per `POST`, ms from run start):
+
+| # | model | t+ms |
+| --- | --- | --- |
+| 2 | `claude-sonnet-5` | 510 |
+| 3 | `claude-sonnet-5` | 1138 |
+| 4 | `claude-sonnet-5` | 2167 |
+| 5 | **`claude-haiku-4-5-20251001`** | 2243 |
+| 6-15 | `claude-haiku-4-5-20251001` | 2804 … 180648 |
+
+1. **The fallback happens, and the ONLY observable is the request's `model` field.**
+   `"refusal/fallback frames": []` — **zero** `model_refusal_fallback`, zero
+   `model_refusal_no_fallback`, zero frames of any kind announcing the swap. This settles **OQ-P6-5**:
+   the pin documents an overload fallback (`Options.fallbackModel`, `sdk.d.ts:1535-1539`) and emits
+   **no frame for it**. A host watching only the SDK message stream cannot tell that the session
+   silently changed models. Winter can close this as a disclosed extension, but it must **not** spell
+   it `model_refusal_fallback` — that name is pinned to `trigger: 'refusal'`.
+2. **The primary is abandoned after 3 attempts, not after `max_retries`.** Two `api_retry` frames fire
+   on `claude-sonnet-5` (`attempt: 1`, then `attempt: 2`); the third failure switches to the fallback
+   — while every frame reports `max_retries: 10`. So `max_retries` is the **per-model** retry budget
+   and a *separate, undeclared* threshold (3 attempts) governs the model swap. The `attempt` counter
+   then **restarts at 1** on the fallback model and runs the full 1…10.
+3. **Backoff shape**, measured on the fallback model's ten attempts: `retry_delay_ms` = 557, 1162,
+   2189, 4026, 9290, 16675, 36061, 39010, 32216, 37133 — roughly exponential with jitter to about
+   40 s, then flat. Winter's own retry policy has a pinned curve to match or diverge from
+   deliberately.
+
+**Terminal shape (attribution stated, not assumed).** Run (iii) ended with a `result` frame of
+**`subtype: "success"` carrying `is_error: true`, `api_error_status: 529`,
+`terminal_reason: "api_error"`** — i.e. an API failure rides the *success* subtype, exactly the
+possibility item (e) flagged (there is no provider-specific `SDKResultError` subtype). The run was
+also deadline-terminated at 180 s and `query()` threw `Error: "Operation aborted"`, and the fallback
+model had by then reached `attempt: 10` of `max_retries: 10`, so exhaustion and abort coincide: the
+frame's *shape* is the finding here; its precise trigger is disentangled by capture (I)'s
+unknown-model run, which fails without any deadline in play.
+
+**`error_status` was never `null`** in any run — the connection-error case the JSDoc describes
+(`sdk.d.ts:3083`) is not reachable through a responding loopback, and is recorded as **not captured**.
 
 ### Capture (F) — the six-name union is exactly right, `ping` is filtered, and an unsigned thinking block is normalised to `signature: ""`
 
