@@ -29,6 +29,7 @@ import type { RuleSource } from "@yanlinglabs/winter-agent-sdk";
 import type { DetailedResolvedSettings } from "./settings/resolve.ts";
 import { defaultTrustSource } from "./settings/trust.ts";
 import { resolveOutputStyle } from "./context/output-styles.ts";
+import { isAuthoredPromptRegion } from "./context/assembler.ts";
 import { loadPlugins } from "./plugins/loader.ts";
 import { pluginAgentDefinitions, pluginCommandContributions, pluginInitInfo, pluginSkillContributions } from "./plugins/bundle.ts";
 import { SkillIndex } from "./skills/store.ts";
@@ -343,8 +344,13 @@ export interface ProductionWiring {
     structuredOutput: StructuredOutputSeam;
     /** I4: a user-tier `PreToolUse` deny must govern a child's tool calls too. */
     extraHookEntries: readonly SourcedHookEntry[];
-    /** I4: children auto-compact. Its OWN controller -- the carried-summary memo is per-controller. */
-    compactionController: CompactionController;
+    /**
+     * I4 + NEW-2: children auto-compact, and each gets its OWN controller because the
+     * carried-summary memo is per-instance. A FACTORY rather than an instance, called once per
+     * spawn: one shared instance made siblings share a memo, which is the same defect the parent/
+     * child separation exists to prevent, one level down.
+     */
+    compactionControllerFactory: () => CompactionController;
   };
   /**
    * Non-fatal problems worth telling a host about: a malformed `.winter/mcp.json`, a plugin that
@@ -606,7 +612,12 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
   // Resolved here rather than plumbed back out of the assembler: this is a pure filesystem read of
   // the same name through the same chain, and it keeps the disclosure in the one place every other
   // wiring warning already lives. The assembler remains the authority for the PROMPT.
-  const styleForWarning = resolveOutputStyle(initOutputStyle, {
+  // T8 re-review NEW-1 (residual round): the guard the assembler has and this second resolution did
+  // not. A caller-supplied `systemPrompt` suppresses output styles ENTIRELY -- Winter does not edit
+  // a host's own text -- so warning that the style "has been applied as an ADDITION" on that arm
+  // states something untrue about a real configuration. Errs toward more disclosure, which is not
+  // the same as being right.
+  const styleForWarning = !isAuthoredPromptRegion(config.systemPrompt) ? null : resolveOutputStyle(initOutputStyle, {
     cwd: config.cwd,
     home: winterHome,
     trustedWorkspace,
@@ -707,13 +718,16 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
       // `error_during_execution` on the first round (T3's concern 3).
       structuredOutput,
       extraHookEntries,
-      // A SECOND controller, deliberately, not the parent's object: `createCompactionController`
-      // memoises the prior summary per instance so it is carried forward verbatim rather than
-      // re-summarized, and a child folding its own history into the parent's memo would carry a
-      // child's summary into the parent's next compaction.
-      compactionController: createCompactionController({
-        ...(config.compactionThreshold !== undefined ? { compactionThreshold: config.compactionThreshold } : {}),
-      }),
+      // A FACTORY, not an object (NEW-2, residual round). `createCompactionController` memoises the
+      // prior summary per instance, so the parent must not share its own -- that was the stated
+      // reason and it was met. What the code did NOT do is what the comment claimed: it built ONE
+      // second instance for the whole session, so every SIBLING child shared a `lastSummary`, and
+      // the reason given ("a child folding its own history into the parent's memo") applies between
+      // siblings word for word. Called once per spawn by `child-engine.ts`.
+      compactionControllerFactory: () =>
+        createCompactionController({
+          ...(config.compactionThreshold !== undefined ? { compactionThreshold: config.compactionThreshold } : {}),
+        }),
     },
     warnings,
     dispose(): void {

@@ -78,6 +78,24 @@ interface PromptRegion {
   excludeDynamicSections: boolean;
 }
 
+/**
+ * Phase 5 residual round (T8 re-review NEW-1): "would an output style apply at all?", for a caller
+ * that needs the answer WITHOUT assembling a prompt.
+ *
+ * `production-wiring.ts` resolves the style a second time to report RULING P5-G's downgrade as an
+ * operator warning, and had no equivalent of the `region.authored` guard below -- so with a
+ * caller-supplied `systemPrompt` it told the operator the style "has been applied as an ADDITION"
+ * when it was not applied in any form.
+ *
+ * EXPORTED RATHER THAN HAND-MIRRORED. The condition is one line today ("a string or an array
+ * replaces the prompt"), and one line is exactly what gets copied and then drifts -- this codebase
+ * has four hand-mirrored copies of one trust predicate already, kept in step only by a tripwire
+ * test. One implementation, two callers, no drift possible.
+ */
+export function isAuthoredPromptRegion(systemPrompt: RuntimeConfig["systemPrompt"]): boolean {
+  return resolveRegion(systemPrompt).authored;
+}
+
 function resolveRegion(systemPrompt: RuntimeConfig["systemPrompt"]): PromptRegion {
   if (systemPrompt === undefined) {
     return { staticBlocks: [MINIMAL_PROMPT], callerDynamicBlocks: [], authored: true, presetVersion: MINIMAL_PROMPT_VERSION, excludeDynamicSections: false };

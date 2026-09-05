@@ -253,6 +253,23 @@ export interface ChildEngineFactoryDeps {
   // and a long-running child never compacts. Inert against a mock provider, live at P6.
   extraHookEntries?: readonly SourcedHookEntry[];
   compactionController?: CompactionController;
+  /**
+   * Phase 5 residual round, NEW-2: ONE CONTROLLER PER SPAWN, not one per session.
+   *
+   * `compactionController` above is a single instance built once for the whole factory, so every
+   * SIBLING child shared one `lastSummary` memo. The comment at its construction site claimed
+   * "per-parent", and the reason it gives -- a child folding its own history into the parent's memo
+   * -- applies between siblings just as exactly.
+   *
+   * Bounded rather than dramatic: `compaction/controller.ts`'s carry-forward is gated on the input's
+   * head message being content-equal to `lastSummary`, so a sibling's summary can only be carried
+   * into a child whose own head is byte-identical to it. That is rare, and it is also not a property
+   * anyone reasoned about -- it is the accident that kept a shared memo from being visible.
+   *
+   * Per SPAWN and not per GENERATION: a child that compacts and then resumes must keep its own memo
+   * across generations, which is exactly what the memo is for.
+   */
+  compactionControllerFactory?: () => CompactionController;
 }
 
 export function createChildEngineFactory(deps: ChildEngineFactoryDeps): ChildEngineFactory {
@@ -274,6 +291,9 @@ interface ResultLikeMessage {
 
 async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritance, runCtx: ChildEngineRunContext, deps: ChildEngineFactoryDeps): Promise<ChildHandle> {
   const agentId = randomUUID();
+  // NEW-2: this child's OWN controller, minted once here and reused by every generation below. Falls
+  // back to the shared instance so a host that supplies only `compactionController` keeps working.
+  const ownCompactionController = deps.compactionControllerFactory !== undefined ? deps.compactionControllerFactory() : deps.compactionController;
   const env = deps.env ?? process.env;
 
   // WS-10 §6: depth/concurrency checked BEFORE any real work (workspace creation, store I/O) --
@@ -674,7 +694,7 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
         // I4: children auto-compact. Same controller instance -- it is stateless per call except for
         // the carried-summary memo, which is per-CONTROLLER and therefore per-parent; a child's own
         // compaction would poison that memo, so a child gets its own via the factory below.
-        ...(deps.compactionController !== undefined ? { compactionController: deps.compactionController } : {}),
+        ...(ownCompactionController !== undefined ? { compactionController: ownCompactionController } : {}),
         env,
       }).catch(() => {
         settle("failed", "child engine process exited unexpectedly");

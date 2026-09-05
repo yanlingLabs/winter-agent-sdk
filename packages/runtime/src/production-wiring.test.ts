@@ -400,6 +400,37 @@ describe("P5-G: a refused project-tier prompt replacement is reported", () => {
     }
   });
 
+  // T8 re-review NEW-1 (residual round): the arm where the warning was true of nothing.
+  test("a caller-supplied `systemPrompt` suppresses styles entirely, so there is nothing to report", async () => {
+    writeProjectStyle(cwd, "repo-style", false);
+    const wiring = await buildProductionWiring({
+      config: { sessionId: "s-p5g-authored", cwd, model: "m", outputStyle: "repo-style", systemPrompt: "CALLER PROMPT ONLY" } as unknown as RuntimeConfig,
+      env: {},
+      winterHome: home,
+    });
+    try {
+      // Before the guard: "output style ... has been applied as an ADDITION instead" -- about a
+      // style the assembler never consulted, in a session whose prompt is the caller's text alone.
+      expect(wiring.warnings.filter((w) => w.includes("output style"))).toEqual([]);
+    } finally {
+      wiring.dispose();
+    }
+  });
+
+  test("the SAME configuration WITHOUT a caller prompt still reports -- the discriminating half", async () => {
+    writeProjectStyle(cwd, "repo-style", false);
+    const wiring = await buildProductionWiring({
+      config: { sessionId: "s-p5g-authored-2", cwd, model: "m", outputStyle: "repo-style" } as unknown as RuntimeConfig,
+      env: {},
+      winterHome: home,
+    });
+    try {
+      expect(wiring.warnings.filter((w) => w.includes("output style"))).toHaveLength(1);
+    } finally {
+      wiring.dispose();
+    }
+  });
+
   test("a project style that never asked to replace is NOT reported", async () => {
     writeProjectStyle(cwd, "polite", true);
     const wiring = await buildProductionWiring({

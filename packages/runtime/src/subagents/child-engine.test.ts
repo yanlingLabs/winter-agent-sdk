@@ -2454,6 +2454,10 @@ describe("child-engine.ts: NEW-4 -- managed-tier settings rules and the resolved
     allow: string[];
     permissionMode?: string;
     parentCallsToolDirectly?: { name: string; input: Record<string, unknown> };
+    /** NEW-2: spawn a SECOND child in the same run -- the sibling case. */
+    spawnTwice?: boolean;
+    /** Overrides applied AFTER the wiring's own `childFactoryOptions`, to observe what a child got. */
+    childFactoryOverrides?: Record<string, unknown>;
   }): Promise<{ prompts: number; frames: WinterFrame[] }> {
     // Registered at most ONCE per test: `registerTool` throws on a duplicate canonical name, and the
     // control/measurement pairs below call this helper twice in one body.
@@ -2480,6 +2484,7 @@ describe("child-engine.ts: NEW-4 -- managed-tier settings rules and the resolved
       env: {},
       winterHome: opts.home,
       ...wiring.childFactoryOptions,
+      ...(opts.childFactoryOverrides ?? {}),
     });
 
     const { host, runtime } = createInMemoryChannel();
@@ -2492,10 +2497,16 @@ describe("child-engine.ts: NEW-4 -- managed-tier settings rules and the resolved
           { kind: "tool_use" as const, calls: [{ id: "call-1", name: SPAWN_PROBE, input: req }] },
           { kind: "text" as const, text: "parent done" },
         ]
-      : [
-          { kind: "tool_use" as const, calls: [{ id: "call-1", name: SPAWN_PROBE, input: req }] },
-          { kind: "text" as const, text: "parent done" },
-        ];
+      : opts.spawnTwice === true
+        ? [
+            { kind: "tool_use" as const, calls: [{ id: "call-1", name: SPAWN_PROBE, input: req }] },
+            { kind: "tool_use" as const, calls: [{ id: "call-2", name: SPAWN_PROBE, input: { ...req, parentToolUseId: "call-2" } }] },
+            { kind: "text" as const, text: "parent done" },
+          ]
+        : [
+            { kind: "tool_use" as const, calls: [{ id: "call-1", name: SPAWN_PROBE, input: req }] },
+            { kind: "text" as const, text: "parent done" },
+          ];
 
     let prompts = 0;
     const done = runEngine({
@@ -2628,6 +2639,44 @@ describe("child-engine.ts: NEW-4 -- managed-tier settings rules and the resolved
   // `DefaultChildEngineFactoryOptions`. Both entrypoints spread that object into the factory, and a
   // spread of an undeclared property is NOT an excess-property error -- so the value type-checked,
   // arrived on `opts`, and was dropped one line before `deps`. Nothing asserted it end to end.
+  // NEW-2 (residual round). `production-wiring.ts` built ONE second controller for the whole
+  // session, so every SIBLING child shared a `lastSummary` memo -- while the comment at its
+  // construction site said "per-parent", and the reason it gave (a child folding its own history
+  // into the parent's memo) applies between siblings word for word.
+  test("NEW-2: each spawn gets its OWN compaction controller, so siblings never share a memo", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "winter-new2-cwd-"));
+    const home = mkdtempSync(join(tmpdir(), "winter-new2-home-"));
+    try {
+      const built: CompactionController[] = [];
+      // TWO REAL SIBLING SPAWNS in one run, through the real factory -- a hand-built
+      // `ChildInheritance` is not worth constructing here and a first draft that tried it crashed on
+      // the fields it omitted.
+      await runWithWiring({
+        cwd,
+        home,
+        childProvider: { async generate() { return { kind: "text", text: "child done" }; } },
+        allow: [],
+        spawnTwice: true,
+        childFactoryOverrides: {
+          compactionControllerFactory: (): CompactionController => {
+            const c: CompactionController = {
+              shouldCompact: () => false,
+              async compact(input) { return { summary: "s", retained: input.messages.slice(-1), preTokens: 0, evidencedToolNames: [] }; },
+            };
+            built.push(c);
+            return c;
+          },
+        },
+      });
+      // IDENTITY is the assertion, because a shared memo IS "the same object" -- nothing observable
+      // downstream distinguishes one instance from two equal-looking ones.
+      expect(built.length, "the factory must be called once per SPAWN").toBe(2);
+      expect(built[0]).not.toBe(built[1]);
+    } finally {
+      for (const d of [cwd, home]) rmSync(d, { recursive: true, force: true });
+    }
+  });
+
   test("the skill LISTING actually reaches a child's system prompt (it was declared upstream and dropped)", async () => {
     const home = mkdtempSync(join(tmpdir(), "winter-new4-skill-home-"));
     const cwd = mkdtempSync(join(tmpdir(), "winter-new4-skill-cwd-"));

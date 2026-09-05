@@ -67,6 +67,8 @@ export interface DefaultChildEngineFactoryOptions {
   extraHookEntries?: readonly SourcedHookEntry[];
   /** Phase 5 fix wave, I4: a compaction controller for children -- see ChildEngineFactoryDeps. */
   compactionController?: CompactionController;
+  /** Phase 5 residual round, NEW-2: one controller per SPAWN -- see `ChildEngineFactoryDeps`. */
+  compactionControllerFactory?: () => CompactionController;
   /**
    * Phase 5 residual round: the model-facing skill LISTING.
    *
@@ -143,6 +145,7 @@ export function registerDefaultChildEngineFactory(opts: DefaultChildEngineFactor
       ...(opts.structuredOutput !== undefined ? { structuredOutput: opts.structuredOutput } : {}),
       ...(opts.extraHookEntries !== undefined ? { extraHookEntries: opts.extraHookEntries } : {}),
       ...(opts.compactionController !== undefined ? { compactionController: opts.compactionController } : {}),
+      ...(opts.compactionControllerFactory !== undefined ? { compactionControllerFactory: opts.compactionControllerFactory } : {}),
       // Residual round: the two that were declared upstream and never arrived (see this interface).
       ...(opts.skillListing !== undefined ? { skillListing: opts.skillListing } : {}),
       ...(opts.settingsRules !== undefined ? { settingsRules: opts.settingsRules } : {}),
