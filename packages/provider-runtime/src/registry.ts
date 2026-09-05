@@ -236,10 +236,32 @@ export function createRegistry(catalog: WinterCatalog): ProviderRegistry {
         if (sessionProvider === undefined) {
           return new WinterProviderResolutionError("unknown-provider", `no provider "${sessionProviderId}" in catalog ${catalog.catalogVersion}`);
         }
-        // 1. The whole id, as a name inside the session provider. This is what makes OpenRouter's
-        //    slash-bearing ids resolve to OpenRouter.
-        const own = namesByProvider.get(sessionProviderId)?.get(request.model);
+        const sessionNames = namesByProvider.get(sessionProviderId);
+        // A redundant self-qualification — `openrouter/openai/gpt-4.1` while the session provider IS
+        // openrouter — names the same model as the bare `openai/gpt-4.1`. Stripping it is what keeps
+        // the prefix off the wire and out of the composed key.
+        const selfQualified = prefix === sessionProviderId && rest !== undefined;
+        const withinProvider = selfQualified ? rest : request.model;
+
+        // 1. The session provider's OWN namespace, in both spellings a caller may legitimately use:
+        //    the bare provider-local id (which is what makes OpenRouter's slash-bearing ids resolve
+        //    to OpenRouter), and the fully-qualified CATALOG KEY for this same provider.
+        //
+        //    The second spelling is not hypothetical: `<providerId>/<upstreamId>` is exactly what
+        //    `listModelInfo` puts in a row's `value`, so it is what a model picker and `set_model`
+        //    hand back. Letting the pass-through below see it first resolved a CATALOGUED model as
+        //    unlisted — `descriptor: undefined` (silently discarding its capability, pricing and
+        //    continuation-domain evidence), a doubled `modelKey`, and a doubled id on the wire. That
+        //    combination is worst for the twelve local providers, where `allowUnlisted` is the
+        //    NORMAL configuration.
+        const own = sessionNames?.get(request.model);
         if (own !== undefined) return build(sessionProvider, own, own.upstreamId);
+        if (selfQualified) {
+          const byKey = modelsByKey.get(request.model);
+          if (byKey !== undefined && byKey.providerId === sessionProviderId) return build(sessionProvider, byKey, byKey.upstreamId);
+          const byName = sessionNames?.get(rest);
+          if (byName !== undefined) return build(sessionProvider, byName, byName.upstreamId);
+        }
 
         // 2. The `allowUnlisted` pass-through, under the SESSION provider — BEFORE the qualified
         //    split, deliberately.
@@ -255,25 +277,23 @@ export function createRegistry(catalog: WinterCatalog): ProviderRegistry {
         //    The door is still narrow: it needs an explicit `allowUnlisted` AND a provider whose
         //    live catalog is not authoritative. An authoritative provider (OpenAI) falls straight
         //    through to the mismatch below, because for it an absent id is a fact rather than a gap.
+        //    It passes the SELF-STRIPPED id, so an unlisted model addressed by its self-qualified
+        //    spelling reaches the wire as the provider-local id rather than a doubled one.
         if (allowUnlisted && sessionProvider.liveCatalogAuthority !== "authoritative") {
-          return build(sessionProvider, undefined, request.model);
+          return build(sessionProvider, undefined, withinProvider);
         }
 
-        // 3. A qualified key for the session's OWN provider still works (`anthropic/claude-sonnet-5`
-        //    with providerId "anthropic"), and a prefix naming ANOTHER provider is the mismatch:
-        //    the caller has said two contradictory things and picking one is the silent
-        //    substitution WS-13 §9 forbids.
-        if (prefix !== undefined && rest !== undefined) {
-          if (prefix === sessionProviderId) return resolveWithin(sessionProvider, rest, allowUnlisted);
-          if (providersById.has(prefix)) {
-            return new WinterProviderResolutionError(
-              "provider-mismatch",
-              `model "${request.model}" is qualified for provider "${prefix}" but this session's provider is "${sessionProviderId}" — Winter never substitutes one provider for another (WS-13 §9); pass an id in "${sessionProviderId}"'s own namespace, or change the session provider`,
-            );
-          }
+        // 3. A prefix naming ANOTHER provider is the mismatch: the caller has said two contradictory
+        //    things and picking one is the silent substitution WS-13 §9 forbids. (A prefix naming
+        //    the session's OWN provider was already handled in step 1, in both spellings.)
+        if (prefix !== undefined && rest !== undefined && prefix !== sessionProviderId && providersById.has(prefix)) {
+          return new WinterProviderResolutionError(
+            "provider-mismatch",
+            `model "${request.model}" is qualified for provider "${prefix}" but this session's provider is "${sessionProviderId}" — Winter never substitutes one provider for another (WS-13 §9); pass an id in "${sessionProviderId}"'s own namespace, or change the session provider`,
+          );
         }
 
-        return resolveWithin(sessionProvider, request.model, false);
+        return resolveWithin(sessionProvider, withinProvider, false);
       }
 
       // No configured provider: the id must carry its own qualification, exactly as before.
