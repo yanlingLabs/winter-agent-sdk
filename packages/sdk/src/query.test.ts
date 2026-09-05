@@ -1598,3 +1598,74 @@ describe("rider 6 / P5-E: the pinned rejection messages, with the brand rename a
     expect(err.message).toBe(PINNED_PERSIST_SESSION_MESSAGE);
   });
 });
+
+// --- Phase 6 Task 2 (WS-13): the provider option fields serialize into --config-json ---------------
+//
+// The reason this test exists rather than being taken on faith: a RuntimeConfig field with no
+// PRODUCER is this repo's own recorded defect shape (options.ts's comments on
+// `permissionPromptToolName` and `additionalDirectories` are two prior instances, both found only
+// during a later fix wave). Declaring `provider?: ProviderSelection` on both sides type-checks
+// perfectly while the value never crosses the wire — and R6-9 makes `config.provider.providerId`
+// the ONLY resolution input for a bare model id, so silence there is a session that cannot
+// resolve a model at all.
+
+test("Phase 6 Task 2: every provider-layer option is present in --config-json when set on Options", async () => {
+  const capture = captureConfigJson();
+  for await (const _msg of query({
+    prompt: "ping",
+    options: {
+      provider: {
+        providerId: "openai",
+        authRef: { kind: "env", name: "WINTER_TEST_OPENAI_KEY" },
+        connection: { baseUrl: "https://api.example.test/v1", region: "us-east-1", local: false },
+        allowUnlisted: false,
+      },
+      fallbackModel: "anthropic/claude-haiku-4-5-20251001,anthropic/claude-sonnet-5",
+      thinking: { type: "enabled", budgetTokens: 4096, display: "summarized" },
+      effort: "high",
+      maxThinkingTokens: 0,
+      includePartialMessages: true,
+      maxBudgetUsd: 2.5,
+      providerStallTimeoutMs: 45000,
+      keychainService: "com.winter.core.dev",
+      autoClassifier: { model: "openai/gpt-4.1", authRef: { kind: "none" } },
+      advisor: { model: "anthropic/claude-sonnet-5" },
+      spawnClaudeCodeProcess: capture.hook,
+    },
+  })) {
+    /* drain */
+  }
+  const config = capture.get();
+  expect(config["provider"]).toEqual({
+    providerId: "openai",
+    authRef: { kind: "env", name: "WINTER_TEST_OPENAI_KEY" },
+    connection: { baseUrl: "https://api.example.test/v1", region: "us-east-1", local: false },
+    allowUnlisted: false,
+  });
+  // The comma-separated STRING form, not an array (derived-shapes-p6.md item (g), finding 1).
+  expect(config["fallbackModel"]).toBe("anthropic/claude-haiku-4-5-20251001,anthropic/claude-sonnet-5");
+  expect(config["thinking"]).toEqual({ type: "enabled", budgetTokens: 4096, display: "summarized" });
+  expect(config["effort"]).toBe("high");
+  // `0` is the deprecated field's DISABLE spelling — it must survive a falsy-check-shaped bug.
+  expect(config["maxThinkingTokens"]).toBe(0);
+  expect(config["includePartialMessages"]).toBe(true);
+  expect(config["maxBudgetUsd"]).toBe(2.5);
+  expect(config["providerStallTimeoutMs"]).toBe(45000);
+  expect(config["keychainService"]).toBe("com.winter.core.dev");
+  expect(config["autoClassifier"]).toEqual({ model: "openai/gpt-4.1", authRef: { kind: "none" } });
+  expect(config["advisor"]).toEqual({ model: "anthropic/claude-sonnet-5" });
+});
+
+test("Phase 6 Task 2: unset provider-layer options are OMITTED entirely — an unconfigured session's wire is byte-identical to before they existed", async () => {
+  const capture = captureConfigJson();
+  for await (const _msg of query({ prompt: "ping", options: { spawnClaudeCodeProcess: capture.hook } })) {
+    /* drain */
+  }
+  const config = capture.get();
+  for (const key of [
+    "provider", "fallbackModel", "thinking", "effort", "maxThinkingTokens", "includePartialMessages",
+    "maxBudgetUsd", "providerStallTimeoutMs", "keychainService", "autoClassifier", "advisor",
+  ]) {
+    expect(key in config).toBe(false);
+  }
+});
