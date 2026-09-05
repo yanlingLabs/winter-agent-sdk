@@ -46,6 +46,7 @@ import { boundedFetch, ProviderRequestError } from "../../http.ts";
 import { normalizeHttpError, normalizeThrown } from "../../errors.ts";
 import { createRetryPolicy, withRetry, type RetryPolicyOptions } from "../../retry.ts";
 import { applyPrivilegedHeaders, createEndpointPolicy, type EndpointPolicy } from "../../endpoint-policy.ts";
+import { hostHeaders } from "../privileged-headers.ts";
 import { parseSse } from "../../sse.ts";
 import type {
   ContentBlockLike,
@@ -405,13 +406,17 @@ function resolveEndpoint(ctx: ProviderContext, defaultBaseUrl: string): Endpoint
  */
 async function buildHeaders(ctx: ProviderContext, policy: EndpointPolicy, opts: AnthropicAdapterOptions, json: boolean): Promise<Record<string, string>> {
   const material = await ctx.credentials.get(ctx.authRef);
-  // HOST HEADERS FIRST, so nothing below can be silently overridden. Spread LAST, a host header
-  // could replace `anthropic-version` or `content-type` -- and a wrong API version is a class of
-  // failure that surfaces as an unexplained upstream 400 rather than as anything local. What a host
-  // attaches to its own connection profile is still its own choice; what the ADAPTER decides now
-  // always wins.
+  // HOST HEADERS FIRST, so nothing below can be silently overridden: spread LAST, a host header could
+  // replace `anthropic-version` or `content-type`, and a wrong API version is a class of failure that
+  // surfaces as an unexplained upstream 400 rather than as anything local.
+  //
+  // AND FILTERED (R6-L): `applyPrivilegedHeaders` gates the set the ADAPTER builds but cannot remove
+  // a name from a map it never saw, so an identity header a host wrote into its own
+  // `connection.headers` would otherwise ride a user endpoint past the rule. This family defines no
+  // organisation header of its own today, so it adds nothing to the shared list -- the call site
+  // exists so that when it does, the enforcement is already here.
   const headers: Record<string, string> = {
-    ...(ctx.connection.headers ?? {}),
+    ...hostHeaders(policy, ctx.connection.headers),
     "anthropic-version": ANTHROPIC_API_VERSION,
     ...(json ? { "content-type": "application/json" } : {}),
     ...(opts.betas !== undefined && opts.betas.length > 0 ? { "anthropic-beta": opts.betas.join(",") } : {}),

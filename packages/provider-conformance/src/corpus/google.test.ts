@@ -35,6 +35,25 @@ describe("Google GenerateContent: the live request", () => {
     });
   });
 
+  test("`hostHeaders` keeps an identity header on a GENERATED endpoint and drops it on a user one", async () => {
+    const { createEndpointPolicy } = await import("@yanlinglabs/winter-provider-runtime");
+    const { hostHeaders, PRIVILEGED_IDENTITY_HEADERS } = await import("../../../provider-runtime/src/adapters/privileged-headers.ts");
+    const generated = createEndpointPolicy(GOOGLE_DEFAULT_BASE_URL, { generated: true });
+    const user = createEndpointPolicy("https://example.invalid", { generated: false });
+    expect(generated.ok && user.ok).toBe(true);
+    if (!generated.ok || !user.ok) return;
+    const supplied = { "x-goog-user-project": "p", "X-GOOG-USER-PROJECT": "p2", "openai-organization": "o", "x-trace": "keep" };
+    // A reviewed descriptor endpoint vouches for the identity headers that belong to it.
+    expect(hostHeaders(generated.policy, supplied)).toEqual(supplied);
+    // Case-INSENSITIVELY on a user endpoint: a plain record compares keys case-sensitively, so an
+    // upper-case spelling was the obvious way past a naive filter.
+    expect(hostHeaders(user.policy, supplied)).toEqual({ "x-trace": "keep" });
+    // A family's own extra name is honoured, and the input is never mutated.
+    expect(hostHeaders(user.policy, { "x-family-org": "o", "x-trace": "keep" }, ["X-Family-Org"])).toEqual({ "x-trace": "keep" });
+    expect(supplied["x-goog-user-project"]).toBe("p");
+    expect(PRIVILEGED_IDENTITY_HEADERS).toContain("x-goog-user-project");
+  });
+
   test("the privileged header IS built for a generated endpoint", async () => {
     const { applyPrivilegedHeaders, createEndpointPolicy } = await import("@yanlinglabs/winter-provider-runtime");
     const generated = createEndpointPolicy(GOOGLE_DEFAULT_BASE_URL, { generated: true });
@@ -103,10 +122,13 @@ describe("Google GenerateContent: foreign reasoning at the family boundary", () 
       expect(noRequestContains(fake, "ANOTHER-DIALECTS-REASONING")).toBe(true);
       expect(noRequestContains(fake, "OPAQUE-Y")).toBe(true);
       expect(geminiContents(fake.requests[0]!)[1]?.parts).toEqual([{ text: "answer" }]);
-      // The drop is REPORTED as a count. Silence here would be the failure mode; content here would
-      // be a worse one.
-      const drop = logged.find((e) => e.kind === "provider.request.foreign-reasoning-dropped");
-      expect(drop).toMatchObject({ bytes: 2 });
+      // The drop is REPORTED, once per dropped block. Silence here would be the failure mode; content
+      // here would be a worse one -- and the count rides the NUMBER OF EVENTS rather than a field
+      // named `bytes`, because the seam's frozen telemetry shape has no count field and a block count
+      // wedged into a byte field is read as a size by whatever consumes it.
+      const drops = logged.filter((e) => e.kind === "provider.request.foreign-reasoning-dropped");
+      expect(drops).toHaveLength(2);
+      expect(drops.every((e) => e.bytes === undefined)).toBe(true);
       expect(JSON.stringify(logged)).not.toContain("ANOTHER-DIALECTS-REASONING");
     });
   });
@@ -200,7 +222,7 @@ describe("Google GenerateContent: the pure mapping", () => {
     });
   });
 
-  test("a host header cannot override a PROTOCOL header; an EXPLICIT privileged one stays the host's own call", async () => {
+  test("a host header cannot override a PROTOCOL header, and an identity header it smuggles is STRIPPED on a user endpoint (R6-L)", async () => {
     const adapter = testGoogleAdapter();
     await withFake({ routes: googleCorpusRoutes() }, async (fake) => {
       await foldTurn(
@@ -216,13 +238,13 @@ describe("Google GenerateContent: the pure mapping", () => {
       expect(recorded.headers["content-type"]).toContain("application/json");
       // A header that collides with nothing is still the host's to send.
       expect(recorded.headers["x-host-own"]).toBe("kept");
-      // THE BOUNDARY, DECIDED AND PINNED: R6-L governs what the ADAPTER INFERS from a reviewed
-      // descriptor -- `connection.project` does NOT become `x-goog-user-project` on a user endpoint,
-      // which the fixture above proves. It does NOT govern what the host explicitly writes into its
-      // own connection profile: the same config object names the `baseUrl` and the header, by the
-      // same author, so there is no confused deputy to protect against, and stripping it would break
-      // a self-hosted proxy that legitimately needs it. Disclosed.
-      expect(recorded.headers["x-goog-user-project"]).toBe("smuggled-project");
+      // R6-L, ENFORCED ON THE HOST'S OWN MAP TOO. `applyPrivilegedHeaders` gates the set the ADAPTER
+      // builds; it cannot remove a name from a map it never saw, so before `hostHeaders` this exact
+      // request put the operator's account topology on a user endpoint past the rule. R6-L is strict
+      // as written: an endpoint that legitimately needs an organisation header must be marked
+      // GENERATED by the host.
+      expect(recorded.headers["x-goog-user-project"]).toBeUndefined();
+      expect(noRequestContains(fake, "smuggled-project")).toBe(true);
     });
   });
 
