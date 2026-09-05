@@ -162,6 +162,68 @@ describe("context/seam.ts -- SystemPromptAssembler (Lane C implements, the engin
     expect(noAssembler[0]!.system).toBe("you are the reviewer");
   });
 
+  // RULING P5-F (fix round 1, M2). The attachment point is recomputed from the REBUILT message list on
+  // every provider call. The first version cached `turnUserIndex` once per envelope, which a mid-turn
+  // compaction strands: the engine replaces `messages` with `[summary, ...retained]`.
+  describe("RULING P5-F: user-context blocks survive a MID-TURN compaction", () => {
+    async function withCompaction(keep: number): Promise<ProviderRequest[]> {
+      const { host, runtime } = createInMemoryChannel();
+      const { provider, requests } = recordingProvider(["done", "done"]);
+      let compacted = false;
+      const done = runEngine({
+        config: baseConfig(),
+        input: runtime.input,
+        output: runtime.output,
+        provider,
+        tools: stubExecutor,
+        systemPromptAssembler: fakeSystemPromptAssembler({ system: "S", userContextBlocks: ["WINTER-MD-BLOCK"] }),
+        compactionController: {
+          // Compacts exactly once, on the SECOND envelope, so request 1 is the un-compacted control
+          // and request 2 is the post-re-anchor case.
+          shouldCompact: () => {
+            if (compacted) return false;
+            return requests.length > 0;
+          },
+          async compact(input) {
+            compacted = true;
+            return { summary: "THE SUMMARY", retained: keep > 0 ? input.messages.slice(-keep) : [], preTokens: 1, evidencedToolNames: [] };
+          },
+        },
+      });
+      host.output.write({ type: "user", text: "first" });
+      host.output.write({ type: "user", text: "second" });
+      host.output.write({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined });
+      await drain(host.input);
+      await done;
+      return requests;
+    }
+
+    test("retained: [] -- the blocks attach to the summary-anchored user message, and are NEVER prepended inside the summary text", async () => {
+      const requests = await withCompaction(0);
+      expect(requests).toHaveLength(2);
+      // Turn 1 (no compaction yet): the ordinary case.
+      expect(requests[0]!.messages.at(-1)!.content).toBe("WINTER-MD-BLOCK\n\nfirst");
+      // Turn 2 (compacted to the summary alone): the blocks are still present exactly once, and the
+      // summary text itself is intact -- the defect prepended them INSIDE the summary.
+      const post = requests[1]!.messages;
+      const joined = post.map((m) => String(m.content)).join("\n---\n");
+      expect(joined).toContain("WINTER-MD-BLOCK");
+      expect(joined.match(/WINTER-MD-BLOCK/g)).toHaveLength(1);
+      expect(post.at(-1)!.content).toBe("WINTER-MD-BLOCK\n\nTHE SUMMARY");
+    });
+
+    test("retained: N -- an index shift no longer DROPS the blocks", async () => {
+      const requests = await withCompaction(2);
+      expect(requests).toHaveLength(2);
+      const post = requests[1]!.messages;
+      const joined = post.map((m) => String(m.content)).join("\n---\n");
+      // The defect's signature here was ZERO occurrences: the cached index pointed past the end of
+      // the rebuilt list, so the blocks were silently dropped for the rest of the turn.
+      expect(joined.match(/WINTER-MD-BLOCK/g)).toHaveLength(1);
+      expect(String(post.at(-1)!.content).startsWith("WINTER-MD-BLOCK\n\n")).toBe(true);
+    });
+  });
+
   test("the fake echoes its inputs and records call order -- a lane can develop against it before Lane C lands", () => {
     const calls: SystemPromptInput[] = [];
     const fake = fakeSystemPromptAssembler({ calls, presetVersion: "v9" });

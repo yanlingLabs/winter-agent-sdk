@@ -2628,7 +2628,7 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   };
 
   // Builds the LIVE request's message list: the engine's own history, with this envelope's
-  // user-context blocks prepended to THIS TURN's user message only.
+  // user-context blocks prepended to a user message in it.
   //
   // Applied to a COPY, never to `messages` -- Ruling P1-B keeps persistence and history free of
   // presentation concerns, and a block that entered history would be re-sent on every later turn,
@@ -2636,15 +2636,31 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // blocks are re-attached each turn instead, which is what R5-9's "always injected as user-context"
   // means operationally.
   //
-  // `turnUserIndex` is the index of the user message this envelope pushed. Anchoring on it (rather
-  // than "the first user message") is what makes the behaviour correct on a RESUMED session, whose
-  // first user message belongs to a previous run entirely.
-  const requestMessages = (blocks: string[], turnUserIndex: number): ProviderMessage[] => {
+  // RULING P5-F (fix round 1, M2): THE ATTACHMENT POINT IS RECOMPUTED FROM THE REBUILT MESSAGE LIST
+  // ON EVERY PROVIDER CALL -- never a cached index. The first version captured
+  // `turnUserIndex = messages.length - 1` once per envelope, which a MID-TURN COMPACTION strands: the
+  // engine replaces `messages` wholesale with `[summary, ...retained]`, so with `retained: []` index
+  // 0 is the SUMMARY and the WINTER.md/memory blocks were prepended INSIDE the summary text, and with
+  // any other retention count the index pointed at an unrelated message or past the end and the
+  // blocks were silently dropped for the rest of that turn.
+  //
+  // "The LAST user-role message" is the correct anchor after re-anchoring: it is this envelope's own
+  // prompt when nothing has compacted, and the summary-anchored first user message when everything
+  // was summarized away (the summary is pushed as a `user` message, and the envelope's prompt is
+  // inside it) -- in both cases the newest thing the model is being asked about. Searching from the
+  // END also makes it correct on a resumed session, whose FIRST user message belongs to an earlier
+  // run.
+  const requestMessages = (blocks: string[]): ProviderMessage[] => {
     const copy = messages.map((m) => ({ ...m }));
     if (blocks.length === 0) return copy;
-    const target = copy[turnUserIndex];
-    if (target === undefined || target.role !== "user" || typeof target.content !== "string") return copy;
-    target.content = `${blocks.join("\n\n")}\n\n${target.content}`;
+    for (let i = copy.length - 1; i >= 0; i--) {
+      const target = copy[i];
+      if (target === undefined || target.role !== "user" || typeof target.content !== "string") continue;
+      target.content = `${blocks.join("\n\n")}\n\n${target.content}`;
+      return copy;
+    }
+    // No string-content user message anywhere (a tool-result-only history): nothing to attach to, and
+    // inventing a message would put context in the transcript the model never asked for.
     return copy;
   };
 
@@ -2708,7 +2724,6 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
 
     const userText = resolvedPromptText;
     messages.push({ role: "user", content: userText });
-    const turnUserIndex = messages.length - 1;
     await recordUser(userText);
 
     // Phase 5 Task 3: assembled AFTER the envelope is recorded (so a store failure never leaves an
@@ -2766,7 +2781,7 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
       try {
         const raced = await raceInterrupt(
           provider.generate({
-            messages: requestMessages(assembled.userContextBlocks, turnUserIndex),
+            messages: requestMessages(assembled.userContextBlocks),
             // `exactOptionalPropertyTypes`: an empty assembled prompt omits the key entirely rather
             // than sending `system: ""`. The two are equivalent to a provider ("this host supplied no
             // system prompt" -- ProviderRequest's own contract), and omitting keeps every
