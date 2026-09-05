@@ -135,7 +135,7 @@ describe("compaction -- resume across a compaction (R5-4 / WS-11 §7)", () => {
   });
 
   // ================================================================================================
-  // PENDING ON A SPINE FIX -- flip `test.skip` to `test` when T3's fix round merges.
+  // Landed with the T3 fix round (2ca7ef7): the frame carries preserved_messages + post_tokens.
   //
   // The T3 review found that resume correctness holds for the TRANSCRIPT (the boundary + summary
   // rebuild, proven above) but NOT for the emitted `compact_boundary` FRAME: `recordCompactBoundary`
