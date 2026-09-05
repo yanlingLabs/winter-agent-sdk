@@ -83,6 +83,37 @@ describe("mapResponsesInput", () => {
     ]);
   });
 
+  test("a `tool` role NEVER reaches the wire — the Responses input has no such role (minor 4)", () => {
+    // Residual text on a tool message rides as a USER message; a literal `role: "tool"` is a 400.
+    // The flush paths ahead of a tool_use / tool_result block used the raw role and hit exactly that.
+    const out = mapResponsesInput([
+      { role: "tool", content: [{ type: "text", text: "a note about the result" }, { type: "tool_result", tool_use_id: "call_1", content: "ok" }] },
+    ]);
+    expect(JSON.stringify(out)).not.toContain('"role":"tool"');
+    expect(out[0]).toEqual({ type: "message", role: "user", content: [{ type: "input_text", text: "a note about the result" }] });
+    expect(out[1]).toEqual({ type: "function_call_output", call_id: "call_1", output: "ok" });
+  });
+
+  test("a Winter DECORATION leads its message as plain text, on either door (minor 11)", () => {
+    // Lane C's annotations were built, persisted, and then silently dropped at the wire. Both doors
+    // render plainly: no OpenAI surface has a caller-writable reasoning slot, and writing one would
+    // present Winter's prose as the model's own reasoning (R6-8).
+    for (const door of ["tag", "thinking-channel"] as const) {
+      const out = mapResponsesInput([{ role: "user", content: "the question", decoration: { text: "prior model summarised: X", door } }]);
+      expect(out[0]).toEqual({
+        type: "message",
+        role: "user",
+        content: [
+          { type: "input_text", text: "[winter:context] prior model summarised: X" },
+          { type: "input_text", text: "the question" },
+        ],
+      });
+    }
+    // An assistant-side annotation uses that role's own part type.
+    const assistant = mapResponsesInput([{ role: "assistant", content: "answer", decoration: { text: "note", door: "tag" } }]);
+    expect(assistant[0]).toEqual({ type: "message", role: "assistant", content: [{ type: "output_text", text: "[winter:context] note" }, { type: "output_text", text: "answer" }] });
+  });
+
   test("Anthropic-family blocks have no Responses representation and are NOT dressed up as one", () => {
     // R6-8: a thinking block carries a signature only Anthropic can validate. Inventing an
     // equivalent here would be the impersonation the ruling exists to forbid.
@@ -239,6 +270,38 @@ describe("ResponsesStreamMapper", () => {
       expect(events[0]!.type).toBe("error");
       expect(events[0]!.type === "error" ? events[0]!.error.code : "").toBe("capability");
     }
+  });
+
+  test("ONE unrepresentable call produces ONE error, not one per lifecycle event (minor 5)", () => {
+    // A call appears twice (`added`, then `.done`); reporting on both read as two problems.
+    const events = drive(new ResponsesStreamMapper(), [
+      { type: "response.output_item.added", output_index: 0, item: { id: "cc_0", type: "computer_call" } },
+      { type: "response.output_item.done", output_index: 0, item: { id: "cc_0", type: "computer_call" } },
+    ]);
+    expect(events.filter((e) => e.type === "error")).toHaveLength(1);
+  });
+
+  test("two reasoning items with NO output_index both survive, in arrival order (minor 6)", () => {
+    // Defaulting a missing `output_index` to 0 made them collide on one key, so a stream carrying
+    // two replayed ONE — a silently truncated continuation that fails at the provider next turn.
+    const events = drive(new ResponsesStreamMapper(), [
+      { type: "response.output_item.done", item: { id: "rs_a", type: "reasoning", encrypted_content: "FIRST" } },
+      { type: "response.output_item.done", item: { id: "rs_b", type: "reasoning", encrypted_content: "SECOND" } },
+      { type: "response.completed", response: {} },
+    ]);
+    const state = events.find((e) => e.type === "native_state");
+    expect(state).toEqual({ type: "native_state", items: [{ type: "reasoning", encrypted_content: "FIRST" }, { type: "reasoning", encrypted_content: "SECOND" }] });
+  });
+
+  test("an indexless item sorts AFTER everything the response positioned", () => {
+    const events = drive(new ResponsesStreamMapper(), [
+      { type: "response.output_item.done", item: { id: "rs_x", type: "reasoning", encrypted_content: "NO-INDEX" } },
+      { type: "response.output_item.done", output_index: 3, item: { id: "rs_3", type: "reasoning", encrypted_content: "INDEX-3" } },
+      { type: "response.output_item.done", output_index: 1, item: { id: "rs_1", type: "reasoning", encrypted_content: "INDEX-1" } },
+      { type: "response.completed", response: {} },
+    ]);
+    const state = events.find((e) => e.type === "native_state");
+    expect(state?.type === "native_state" ? state.items.map((i) => (i as { encrypted_content: string }).encrypted_content) : []).toEqual(["INDEX-1", "INDEX-3", "NO-INDEX"]);
   });
 
   test("a stream that ends before `response.completed` is a typed, NON-retryable failure", () => {

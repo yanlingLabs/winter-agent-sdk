@@ -394,6 +394,70 @@ describe("live wire details the corpus does not ask about", () => {
     }
   }, 20_000);
 
+  test("a DECORATION reaches the LIVE wire on both surfaces (minor 11 tripwire)", async () => {
+    // The unit tests pin the mapping; this pins that nothing between the mapper and the socket drops
+    // it. Lane C's decorations were inert before this — built, persisted, then silently discarded,
+    // with the switch coordinator already reporting the context as carried.
+    const marker = "DECORATION-REACHED-THE-WIRE";
+    await withResponsesFake(async (fake) => {
+      const adapter = createResponsesAdapter({ generatedBaseUrl: fake.url, retry: FAST_RETRY, descriptors: () => undefined });
+      await drain(adapter.streamTurn({ model: SCENARIO.happy, messages: [{ role: "user", content: "q", decoration: { text: marker, door: "tag" } }] }, testContext({ stallTimeoutMs: STALL_MS })));
+      expect(fake.requests.at(-1)!.body).toContain(marker);
+    });
+    await withChatFake(async (fake) => {
+      const adapter = createChatCompletionsAdapter({ generatedBaseUrl: fake.url, retry: FAST_RETRY, descriptors: () => undefined });
+      await drain(adapter.streamTurn({ model: SCENARIO.happy, messages: [{ role: "user", content: "q", decoration: { text: marker, door: "thinking-channel" } }] }, testContext({ stallTimeoutMs: STALL_MS })));
+      expect(fake.requests.at(-1)!.body).toContain(marker);
+      // Carried PLAINLY, never dressed as the model's own reasoning channel (R6-8).
+      expect(JSON.parse(fake.requests.at(-1)!.body)).not.toHaveProperty("reasoning_content");
+    });
+  });
+
+  test("I3: a DeepSeek profile WITH a descriptor captures and replays `reasoning_content`; with `() => undefined` it does not", async () => {
+    // The ruling's own fixture. Without a lookup, `captureExposed` is false, so nothing is captured,
+    // nothing is replayed, and the second leg of every tool loop 400s at DeepSeek — silently, and
+    // only in production. The `continuationReplay` scenario answers 400 exactly as §6.3 documents,
+    // so the two branches are told apart by the PROVIDER's own verdict.
+    const deepSeekDescriptors = descriptorsFor({ efforts: ["low", "medium", "high"], readableState: "full-exposed", continuation: "plaintext" });
+
+    await withChatFake(async (fake) => {
+      const withEvidence = createChatCompletionsAdapter({ generatedBaseUrl: fake.url, retry: FAST_RETRY, descriptors: deepSeekDescriptors });
+      const ctx = testContext({ providerId: "deepseek", stallTimeoutMs: STALL_MS });
+      const first = await drain(withEvidence.streamTurn({ model: SCENARIO.reasoning, messages: [], tools: [{ name: "Read", description: "d", inputSchema: { type: "object" } }] }, ctx));
+      const state = first.find((e) => e.type === "native_state");
+      expect(state).toBeDefined();
+
+      const items = state?.type === "native_state" ? state.items : [];
+      const second = await drain(
+        withEvidence.streamTurn(
+          {
+            model: SCENARIO.continuationReplay,
+            tools: [{ name: "Read", description: "d", inputSchema: { type: "object" } }],
+            messages: [
+              { role: "user", content: "go" },
+              { role: "assistant", content: [{ type: "tool_use", id: "call_1", name: "Read", input: {} }], nativeState: { family: "openai", continuationDomain: "corpus-domain", items } },
+              { role: "tool", content: [{ type: "tool_result", tool_use_id: "call_1", content: "ok" }] },
+            ],
+          },
+          ctx,
+        ),
+      );
+      expect(second.some((e) => e.type === "done")).toBe(true);
+      expect(fake.requests.at(-1)!.body).toContain("reasoning_content");
+    });
+
+    await withChatFake(async (fake) => {
+      // The SAME turn against an adapter that says, explicitly, that this model has no evidence.
+      const unlisted = createChatCompletionsAdapter({ generatedBaseUrl: fake.url, retry: FAST_RETRY, descriptors: () => undefined });
+      const events = await drain(
+        unlisted.streamTurn({ model: SCENARIO.reasoning, messages: [], tools: [{ name: "Read", description: "d", inputSchema: { type: "object" } }] }, testContext({ providerId: "deepseek", stallTimeoutMs: STALL_MS })),
+      );
+      // The reasoning is still OBSERVABLE — what is absent is the replayable state.
+      expect(events.some((e) => e.type === "thinking_exposed_delta")).toBe(true);
+      expect(events.some((e) => e.type === "native_state")).toBe(false);
+    });
+  });
+
   test("local: discovery falls back to Ollama's /api/tags when /v1/models is absent", async () => {
     const { startFake } = await import("../fakes/server.ts");
     const { modelsNotFoundRoutes, ollamaTagsRoute } = await import("../fakes/openai-models.ts");

@@ -251,6 +251,10 @@ export function snapNumericEffort(value: number, verified: readonly string[]): s
   const wanted = clamped - 1;
   let best = available[0]!;
   for (const candidate of available) {
+    // STRICTLY closer, so an EQUIDISTANT candidate never displaces the one already held — and since
+    // `available` is in ladder order, a tie resolves to the LOWER tier. Deliberate: spending more
+    // reasoning than the caller can be shown to have asked for is the costlier direction to guess
+    // in, and the rule is disclosed with the mapping it belongs to.
     const better = Math.abs(candidate.index - wanted) < Math.abs(best.index - wanted);
     if (better) best = candidate;
   }
@@ -425,6 +429,26 @@ export function toolResultText(content: string | ContentBlockLike[]): string {
     .map((block) => (block.type === "text" ? block.text : block.type === "image" ? "[image]" : ""))
     .filter((s) => s.length > 0)
     .join("\n");
+}
+
+/**
+ * A Winter-authored annotation -> the text that actually rides the wire (minor 11).
+ *
+ * BOTH DOORS RENDER AS PLAIN TEXT on this family, and that is a decision rather than a shortcut.
+ * `thinking-channel` names an in-dialect reasoning slot; no OpenAI-family surface has one a caller
+ * may write into, and the nearest thing (`reasoning_content`) is the MODEL's own output channel —
+ * putting Winter's prose there would present an annotation as something the model reasoned, which is
+ * the impersonation R6-8 exists to forbid. So the annotation is carried plainly and visibly, tagged
+ * as what it is, on both doors.
+ *
+ * Without this, Lane C's decorations were built, persisted and then silently dropped at the wire:
+ * a cross-family handoff note that never reaches the model is worse than none, because the switch
+ * coordinator has already reported the context as carried.
+ */
+export function decorationText(message: ProviderMessageLike): string | undefined {
+  const decoration = message.decoration;
+  if (decoration === undefined || decoration.text.length === 0) return undefined;
+  return `[winter:context] ${decoration.text}`;
 }
 
 /** An `image` block -> the data URL every OpenAI surface accepts. */

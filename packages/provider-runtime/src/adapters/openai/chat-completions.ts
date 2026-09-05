@@ -27,6 +27,7 @@ import {
   buildHeaders,
   capabilitiesFrom,
   capabilityRefusal,
+  decorationText,
   errorEvent,
   fetchOpenAiModels,
   imageDataUrl,
@@ -63,10 +64,11 @@ function isExposedReasoningItem(item: unknown): item is ExposedReasoningItem {
 
 // --- request mapping ----------------------------------------------------------------------------------
 
-function userContentParts(blocks: ReturnType<typeof asBlocks>): { content: unknown; hasParts: boolean } {
+function userContentParts(blocks: ReturnType<typeof asBlocks>, decoration?: string): { content: unknown; hasParts: boolean } {
   const parts: unknown[] = [];
-  let text = "";
+  let text = decoration ?? "";
   let sawImage = false;
+  if (decoration !== undefined) parts.push({ type: "text", text: decoration });
   for (const block of blocks) {
     if (block.type === "text") {
       text += text.length > 0 ? `\n${block.text}` : block.text;
@@ -103,7 +105,9 @@ export function mapChatMessages(messages: readonly ProviderMessageLike[], replay
 
     if (message.role === "assistant") {
       const toolCalls: unknown[] = [];
-      let text = "";
+      // The Winter annotation LEADS its message, so the model reads it before the content it
+      // annotates (minor 11).
+      let text = decorationText(message) ?? "";
       for (const block of blocks) {
         if (block.type === "text") text += text.length > 0 ? `\n${block.text}` : block.text;
         else if (block.type === "tool_use") {
@@ -132,10 +136,10 @@ export function mapChatMessages(messages: readonly ProviderMessageLike[], replay
         if (block.type === "tool_result") out.push({ role: "tool", tool_call_id: block.tool_use_id, content: toolResultText(block.content) });
       }
       const rest = blocks.filter((b) => b.type !== "tool_result");
-      if (rest.length > 0) out.push({ role: "user", content: userContentParts(rest).content });
+      if (rest.length > 0) out.push({ role: "user", content: userContentParts(rest, decorationText(message)).content });
       continue;
     }
-    out.push({ role: "user", content: userContentParts(blocks).content });
+    out.push({ role: "user", content: userContentParts(blocks, decorationText(message)).content });
   }
   return out;
 }

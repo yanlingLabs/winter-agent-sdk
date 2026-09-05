@@ -64,7 +64,10 @@ describe("effort: mapped onto the model's verified vocabulary, or refused", () =
     expect(mapEffortAgainst(1, three)).toEqual({ ok: true, value: "low" });
     expect(mapEffortAgainst(3, three)).toEqual({ ok: true, value: "high" });
     expect(mapEffortAgainst(5, three)).toEqual({ ok: true, value: "high" });
-    // And on a model that verifies only the ends, 3 lands on whichever end is closer.
+    // On a model that verifies only the ends, an EQUIDISTANT number takes the LOWER tier: 3 is
+    // ladder position 2, exactly two steps from `low` (0) and from `max` (4), and Winter resolves
+    // that tie downward rather than spending more reasoning than the caller can be shown to have
+    // asked for. 4 is genuinely closer to `max`.
     expect(snapNumericEffort(3, ["low", "max"])).toBe("low");
     expect(snapNumericEffort(4, ["low", "max"])).toBe("max");
   });

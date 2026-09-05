@@ -12,6 +12,7 @@
 import { describe, expect, test } from "bun:test";
 import { startCodexLogin } from "../../../provider-runtime/src/adapters/openai/codex-oauth.ts";
 import { CODEX } from "../../../provider-runtime/src/adapters/openai/codex-config.ts";
+import { base64Url } from "../../../provider-runtime/src/adapters/openai/pkce.ts";
 import { createMemoryCredentialStore } from "../../../provider-runtime/src/credentials/memory.ts";
 import { startFake } from "../fakes/server.ts";
 import { FAKE_ACCOUNT_ID, FAKE_ACCESS_TOKEN, FAKE_REFRESH_TOKEN, codexTokenRoute } from "../fakes/codex-oauth.ts";
@@ -44,8 +45,12 @@ describe("startCodexLogin", () => {
     await withTokenEndpoint({}, async (tokenUrl, requests) => {
       const store = createMemoryCredentialStore();
       const statuses: Array<{ isAuthenticating: boolean; output?: string[]; error?: string }> = [];
+      let authorizeUrl: string | undefined;
       const result = await startCodexLogin(store, {
-        openUrl: browserThatApproves(),
+        openUrl: async (url) => {
+          authorizeUrl = url;
+          await browserThatApproves()(url);
+        },
         authorizeUrl: "https://auth.example.test/oauth/authorize",
         tokenUrl,
         callbackPort: 0,
@@ -68,7 +73,16 @@ describe("startCodexLogin", () => {
       expect(form.get("grant_type")).toBe("authorization_code");
       expect(form.get("client_id")).toBe(CODEX.clientId);
       expect(form.get("code")).toBe("test-code-authorization");
-      expect((form.get("code_verifier") ?? "").length).toBeGreaterThanOrEqual(43);
+      const verifier = form.get("code_verifier") ?? "";
+      expect(verifier.length).toBeGreaterThanOrEqual(43);
+      // THE BINDING ITSELF (minor 13): the verifier sent to the token endpoint must be the S256
+      // preimage of the challenge the authorize URL carried. Asserting both exist proves neither is
+      // empty; asserting they HASH proves the exchange is actually PKCE-bound rather than two
+      // unrelated random strings, which is the whole security of a loopback flow.
+      const challenge = new URL(authorizeUrl!).searchParams.get("code_challenge");
+      expect(challenge).toBeTruthy();
+      const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier));
+      expect(base64Url(new Uint8Array(digest))).toBe(challenge ?? "");
 
       // `auth_status` is a login-flow PROGRESS channel (R6-F), and it never carries material.
       expect(statuses.length).toBeGreaterThanOrEqual(2);

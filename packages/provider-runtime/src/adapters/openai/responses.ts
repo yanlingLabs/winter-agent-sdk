@@ -46,6 +46,7 @@ import {
   resolveAuth,
   resolveEndpoint,
   resolveReasoning,
+  decorationText,
   toolResultText,
   validateViaModels,
   type OpenAiAdapterOptions,
@@ -78,12 +79,20 @@ export function mapResponsesInput(messages: readonly ProviderMessageLike[]): unk
       // `items` is `unknown[]` precisely so nothing here is tempted to look inside.
       for (const item of message.nativeState.items) out.push(item);
     }
+    // The Responses `input` has NO "tool" role — a tool result is a standalone
+    // `function_call_output` item, and any residual text on such a message rides as a user message.
+    // Emitting `role: "tool"` is a 400 (minor 4).
+    const wireRole = message.role === "tool" ? "user" : message.role;
+    const partType = wireRole === "assistant" ? "output_text" : "input_text";
     const blocks = asBlocks(message.content);
     const contentParts: unknown[] = [];
+    // A Winter annotation LEADS its message, so the model reads it before the content it annotates.
+    const decoration = decorationText(message);
+    if (decoration !== undefined) contentParts.push({ type: partType, text: decoration });
     for (const block of blocks) {
       switch (block.type) {
         case "text":
-          if (block.text.length > 0) contentParts.push({ type: message.role === "assistant" ? "output_text" : "input_text", text: block.text });
+          if (block.text.length > 0) contentParts.push({ type: partType, text: block.text });
           break;
         case "image":
           // The Responses shape is `input_image` + `image_url` as a PLAIN data-URL string — not the
@@ -93,14 +102,14 @@ export function mapResponsesInput(messages: readonly ProviderMessageLike[]): unk
         case "tool_use":
           // Flushed before the call so the assistant's own text keeps its position ahead of it.
           if (contentParts.length > 0) {
-            out.push({ type: "message", role: message.role, content: [...contentParts] });
+            out.push({ type: "message", role: wireRole, content: [...contentParts] });
             contentParts.length = 0;
           }
           out.push({ type: "function_call", call_id: block.id, name: block.name, arguments: typeof block.input === "string" ? block.input : JSON.stringify(block.input ?? {}) });
           break;
         case "tool_result":
           if (contentParts.length > 0) {
-            out.push({ type: "message", role: message.role, content: [...contentParts] });
+            out.push({ type: "message", role: wireRole, content: [...contentParts] });
             contentParts.length = 0;
           }
           out.push({ type: "function_call_output", call_id: block.tool_use_id, output: toolResultText(block.content) });
@@ -113,7 +122,7 @@ export function mapResponsesInput(messages: readonly ProviderMessageLike[]): unk
           break;
       }
     }
-    if (contentParts.length > 0) out.push({ type: "message", role: message.role === "tool" ? "user" : message.role, content: contentParts });
+    if (contentParts.length > 0) out.push({ type: "message", role: wireRole, content: contentParts });
   }
   return out;
 }
@@ -174,8 +183,18 @@ export class ResponsesStreamMapper {
   private sawToolCall = false;
   private sawRefusal = false;
   private started = false;
-  /** output_index -> the completed reasoning item, so `native_state` can be emitted in OUTPUT order. */
-  private readonly reasoningItems = new Map<number, unknown>();
+  /**
+   * The completed reasoning items, ordered by the response's OWN `output_index` and, for anything
+   * that carried none, by arrival after everything that did.
+   *
+   * A list rather than a `Map<number, unknown>` keyed on `output_index ?? 0` (minor 6): that default
+   * made every indexless item collide on key 0, so a stream carrying two of them replayed ONE — a
+   * silently truncated continuation whose next turn fails at the provider, far from here.
+   */
+  private readonly reasoningItems: Array<{ index: number; arrival: number; item: unknown }> = [];
+  private arrivals = 0;
+  /** Item ids already reported as unrepresentable, so `added` + `done` for one call is ONE error (minor 5). */
+  private readonly reportedUnrepresentable = new Set<string>();
   /** item_id -> call_id, so an arguments delta (which carries only the item id) can name its call. */
   private readonly callIdByItem = new Map<string, string>();
   /** call_ids whose arguments arrived as deltas — the final item must not re-send them. */
@@ -250,7 +269,7 @@ export class ResponsesStreamMapper {
     const item = itemOf(payload);
     if (item === undefined) return [];
     const itemType = typeof item.type === "string" ? item.type : "";
-    if (isUnrepresentableCall(itemType)) return [this.unrepresentable(itemType)];
+    if (isUnrepresentableCall(itemType)) return this.unrepresentable(itemType, item);
     if (itemType !== "function_call") return [];
     const callId = typeof item.call_id === "string" ? item.call_id : typeof item.id === "string" ? item.id : undefined;
     const name = typeof item.name === "string" ? item.name : undefined;
@@ -285,12 +304,15 @@ export class ResponsesStreamMapper {
       const encrypted = item.encrypted_content;
       if (typeof encrypted === "string" && encrypted.length > 0) {
         const { id: _id, status: _status, ...replayable } = item;
-        this.reasoningItems.set(outputIndexOf(payload), replayable);
+        // `Number.MAX_SAFE_INTEGER` for an item with no `output_index`: it sorts after everything
+        // the response DID position, and the arrival counter keeps two such items distinct.
+        const index = typeof payload.output_index === "number" ? payload.output_index : Number.MAX_SAFE_INTEGER;
+        this.reasoningItems.push({ index, arrival: this.arrivals++, item: replayable });
       }
       return [];
     }
 
-    if (isUnrepresentableCall(itemType)) return [this.unrepresentable(itemType)];
+    if (isUnrepresentableCall(itemType)) return this.unrepresentable(itemType, item);
 
     if (itemType === "function_call") {
       const callId = typeof item.call_id === "string" ? item.call_id : undefined;
@@ -319,8 +341,8 @@ export class ResponsesStreamMapper {
 
     // THE COMPLETION EVENT IS THE ONLY SOURCE OF NATIVE STATE. Emitted once, complete, in output
     // order — the order §5.3 requires them to be replayed in.
-    if (this.reasoningItems.size > 0) {
-      const ordered = [...this.reasoningItems.entries()].sort((a, b) => a[0] - b[0]).map(([, item]) => item);
+    if (this.reasoningItems.length > 0) {
+      const ordered = [...this.reasoningItems].sort((a, b) => a.index - b.index || a.arrival - b.arrival).map((entry) => entry.item);
       events.push({ type: "native_state", items: ordered });
     }
 
@@ -355,7 +377,20 @@ export class ResponsesStreamMapper {
     }
   }
 
-  private unrepresentable(itemType: string): ProviderEvent {
+  /**
+   * ONE error per unrepresentable CALL, not one per lifecycle event (minor 5).
+   *
+   * A call appears twice in the stream (`output_item.added`, then `.done`), so reporting on both
+   * emitted two errors for one refusal — which a consumer counting failures reads as two problems.
+   */
+  private unrepresentable(itemType: string, item: Record<string, unknown>): ProviderEvent[] {
+    const id = typeof item.id === "string" ? item.id : itemType;
+    if (this.reportedUnrepresentable.has(id)) return [];
+    this.reportedUnrepresentable.add(id);
+    return [this.unrepresentableError(itemType)];
+  }
+
+  private unrepresentableError(itemType: string): ProviderEvent {
     return {
       type: "error",
       error: {
@@ -377,10 +412,6 @@ export class ResponsesStreamMapper {
 function itemOf(payload: Record<string, unknown>): Record<string, unknown> | undefined {
   const item = payload.item;
   return item !== null && typeof item === "object" ? (item as Record<string, unknown>) : undefined;
-}
-
-function outputIndexOf(payload: Record<string, unknown>): number {
-  return typeof payload.output_index === "number" ? payload.output_index : 0;
 }
 
 // --- the shared turn driver --------------------------------------------------------------------------------

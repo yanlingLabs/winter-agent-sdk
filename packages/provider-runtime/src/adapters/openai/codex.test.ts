@@ -9,7 +9,9 @@ import { describe, expect, test } from "bun:test";
 import { CODEX, CODEX_MODELS, CODEX_MODELS_VERIFIED, CODEX_ORIGINATOR, DEFAULT_CODEX_MODEL, codexCredentialAccount } from "./codex-config.ts";
 import { base64Url, buildAuthorizeUrl, decodeAccountId, generatePkce } from "./pkce.ts";
 import { QuotaManager, quotaEvent } from "./quota.ts";
-import { codexCredentialRef } from "./codex-oauth.ts";
+import { codexCredentialRef, createCodexOauthAdapter } from "./codex-oauth.ts";
+import { descriptor, testContext } from "./testing.ts";
+import type { ProviderEvent, TurnRequest } from "../../types.ts";
 
 describe("codex constants: the parity set, and the one deliberate divergence", () => {
   test("`originator` is `winter` — NEVER a first-party value", () => {
@@ -45,6 +47,33 @@ describe("codex constants: the parity set, and the one deliberate divergence", (
     expect(codexCredentialRef("acct-1")).toEqual({ kind: "keychain", account: "codex-oauth:acct-1" });
     expect(codexCredentialRef("acct-1", "com.winter.core.dev")).toEqual({ kind: "keychain", account: "codex-oauth:acct-1", service: "com.winter.core.dev" });
   });
+});
+
+describe("codex refuses the SAME unsupported parameters the plain Responses adapter does (minor 7)", () => {
+  // It sends the identical body, so a model listing `include` or `tools` as unsupported has to be
+  // refused here too — the set had drifted, and only `reasoning`/`max_output_tokens` were checked.
+  const ctx = () => testContext({ providerId: "codex-oauth" });
+  const model = "gpt-5.6-sol";
+
+  const cases: Array<[string, Partial<TurnRequest>]> = [
+    ["include", { effort: "high" }],
+    ["tools", { tools: [{ name: "Read", description: "d", inputSchema: { type: "object" } }] }],
+    ["reasoning.effort", { effort: "high" }],
+    ["max_output_tokens", { maxOutputTokens: 10 }],
+  ];
+  for (const [parameter, request] of cases) {
+    test(`a model that rejects "${parameter}" refuses the turn before sending`, async () => {
+      const adapter = createCodexOauthAdapter({
+        generatedBaseUrl: "https://chatgpt.example.test/backend-api/codex",
+        descriptors: () => descriptor({ key: `codex-oauth/${model}`, upstreamId: model, unsupportedParameters: [parameter] }),
+      });
+      const events: ProviderEvent[] = [];
+      for await (const event of adapter.streamTurn({ model, messages: [], ...request }, ctx())) events.push(event);
+      const error = events.find((e) => e.type === "error");
+      expect(error?.type === "error" ? error.error.code : "").toBe("capability");
+      expect(error?.type === "error" ? error.error.message : "").toContain(parameter);
+    });
+  }
 });
 
 describe("PKCE", () => {

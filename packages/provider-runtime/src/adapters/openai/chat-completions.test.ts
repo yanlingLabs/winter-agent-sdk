@@ -60,6 +60,27 @@ describe("mapChatMessages", () => {
   });
 });
 
+describe("decorations (minor 11)", () => {
+  test("a Winter annotation leads its message, on both doors and both roles", () => {
+    for (const door of ["tag", "thinking-channel"] as const) {
+      expect(mapChatMessages([{ role: "user", content: "the question", decoration: { text: "prior model summarised: X", door } }], false)).toEqual([
+        { role: "user", content: "[winter:context] prior model summarised: X\nthe question" },
+      ]);
+    }
+    expect(mapChatMessages([{ role: "assistant", content: "answer", decoration: { text: "note", door: "tag" } }], false)).toEqual([
+      { role: "assistant", content: "[winter:context] note\nanswer" },
+    ]);
+  });
+
+  test("an annotation on a message carrying an IMAGE rides as its own text part", () => {
+    const out = mapChatMessages(
+      [{ role: "user", content: [{ type: "image", source: { type: "base64", media_type: "image/png", data: "QUJD" } }], decoration: { text: "note", door: "tag" } }],
+      false,
+    );
+    expect(out[0]).toEqual({ role: "user", content: [{ type: "text", text: "[winter:context] note" }, { type: "image_url", image_url: { url: "data:image/png;base64,QUJD" } }] });
+  });
+});
+
 describe("buildChatBody", () => {
   test("`stream_options.include_usage` is always on — usage does not arrive at all without it", () => {
     const body = buildChatBody(req(), resolveReasoning(req(), DEEPSEEK), DEEPSEEK, true);
