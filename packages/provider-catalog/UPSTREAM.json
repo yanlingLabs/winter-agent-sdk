@@ -1,10 +1,10 @@
 {
-  "$comment": "The upstream PIN the generated layer came from. All-empty on the hand-authored SEED: nothing was extracted, and the emptiness is the honest marker (scripts/provider-catalog.ts turns an empty `commit` into catalogVersion \"0.0.0-seed\"). Lane X fills these in when it lands scripts/provider-source-sync.ts, and `tagObject` records the annotated tag's own object id so a re-tag cannot silently change what \"the same pin\" means.",
+  "$comment": "GENERATED — do not edit. The pin `scripts/provider-catalog.ts` stamps onto the merged catalog; the extractor's INPUT pin lives in third_party/omniroute-provider-source/UPSTREAM.json. `tagObject` is the annotated tag's own object id and `commit` is that tag PEELED — they are different objects, and recording only one of them would not be a pin.",
   "upstream": {
-    "tag": "",
-    "tagObject": "",
-    "commit": "",
-    "extractorVersion": "",
-    "overlayVersion": ""
+    "tag": "v3.8.50",
+    "tagObject": "6f5d4e00e817bc01b2ac16fdd66db3840c296416",
+    "commit": "5458026c216f77a3da68ea49152dc33470cfe2cb",
+    "extractorVersion": "winter.1",
+    "overlayVersion": "1"
   }
 }
