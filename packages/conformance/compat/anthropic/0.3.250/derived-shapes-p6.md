@@ -828,9 +828,9 @@ letters would have overwritten committed P4 evidence, so this task's six scenari
 | (1) | **F** | `includePartialMessages` — `stream_event` ordering over text + thinking + tool_use | **captured** — and it answers R6-8 |
 | (2) | **G** | 529→200, 429 + `retry-after`/`anthropic-ratelimit-*`, persistent 529 + `fallbackModel` | **captured** — decisive on OQ-P6-4 and OQ-P6-5 |
 | (3) | **H** | **WS-17 probe (a)** — neighbour-file survival across resume | _pending_ |
-| (4) | **I** | no API key; unknown model — the failure shape | _pending_ |
-| (5) | **J** | `supportedModels()` / `setModel()` | _pending_ |
-| (6) | **K** | `total_cost_usd` / `modelUsage` / `costBasis` for a fake model id | _pending_ |
+| (4) | **I** | no API key; unknown model — the failure shape | **captured** |
+| (5) | **J** | `supportedModels()` / `setModel()` | **captured** — the catalog is in-binary |
+| (6) | **K** | `total_cost_usd` / `modelUsage` / `costBasis` for a fake model id | **captured** — `costBasis: "unknown"`, cost still non-zero |
 
 ### Capture (H) — WS-17 probe (a): the sidecar survives byte-untouched. **R6-7 CONFIRMED.**
 
@@ -1083,6 +1083,182 @@ belongs in the sidecar and on the Winter-only `reasoning_summary` frame.
 endpoint rejects an empty signature (the loopback accepts everything), and whether `redacted_thinking`
 is handled differently (no such block was streamed — its shape stays underived, item (f)).
 
+### Capture (I) — an API failure rides `subtype: "success"` with `is_error: true`, AND `query()` throws
+
+**Design.** Two runs. (i) The child env is **exactly** `["ANTHROPIC_BASE_URL", "CLAUDE_CONFIG_DIR",
+"HOME"]` — no `ANTHROPIC_API_KEY`, no key of any kind. (ii) `model: "definitely-not-a-model"` against a
+loopback answering `404 {"type":"error","error":{"type":"not_found_error",…}}`.
+
+**Hermeticity result, and the Keychain caveat discharged.** Run (i) reached `system/init` with
+**`apiKeySource: "none"`** and then failed closed: the loopback received **one `HEAD /api/hello` and
+zero `POST /v1/messages`**. The runtime did **not** find an ambient credential — the caveat stated in
+this scenario's design (that `HOME`/`CLAUDE_CONFIG_DIR` do not redirect the macOS Keychain) did not
+materialise, and no real user credential was consulted, used or observed. Recorded as a discharged
+risk, not an untested assumption.
+
+| | run (i) no key | run (ii) unknown model |
+| --- | --- | --- |
+| `system/init` emitted | yes | yes |
+| `init.apiKeySource` | `"none"` | `"ANTHROPIC_API_KEY"` |
+| `init.model` | `claude-sonnet-5` | **`definitely-not-a-model`** — echoed unvalidated |
+| `auth_status` frames | **0** | **0** |
+| POSTs reaching the loopback | **0** | 2 |
+| `result.subtype` | `"success"` | `"success"` |
+| `result.is_error` | **true** | **true** |
+| `result.api_error_status` | `null` | **404** |
+| `result.terminal_reason` | `"api_error"` | `"api_error"` |
+| `result.num_turns` / `total_cost_usd` | 1 / 0 | 1 / 0 |
+| `query()` threw | **yes** | **yes** |
+| thrown class / `name` | `Error` / `"Error"` | `Error` / `"Error"` |
+
+**Three findings, each load-bearing for WS-13's error surface:**
+
+1. **`SDKAuthStatusMessage` is not the credential-failure frame.** Zero `auth_status` frames in a run
+   with no credential at all. Item (b)'s reading of its shape (`isAuthenticating`, `output: string[]`)
+   as a *login-flow progress* channel rather than a per-request verdict is confirmed. Winter must not
+   model `auth_status` as "the auth error frame"; the auth error is a `result`.
+2. **Every failure lands on `subtype: "success"` with `is_error: true`** — never on one of
+   `SDKResultError`'s four subtypes, which item (e) already showed contain nothing provider-shaped.
+   `api_error_status` carries the HTTP status (`404`) or `null` when there was no HTTP response at all
+   (run (i) never made a request), and `terminal_reason: "api_error"` is the discriminator. **A Winter
+   consumer keying on `subtype === "success"` to mean "it worked" is wrong**, and so is one keying on
+   `subtype.startsWith("error_")` to mean "it failed".
+3. **`query()` throws *in addition to* yielding the result frame.** Both runs yielded the `result` and
+   *then* threw a plain built-in `Error` (`constructor.name === "Error"`, `err.name === "Error"` — **no
+   typed subclass**, matching what P5 capture (2) found for the construction-time rejections). The
+   messages are runtime error strings, captured verbatim because the brief scopes item (4) to "thrown
+   error class+message":
+   - run (i): `Claude Code returned an error result: Not logged in · Please run /login`
+   - run (ii): `Claude Code returned an error result: There's an issue with the selected model (definitely-not-a-model). It may not exist or you may not have access to it.`
+
+   The shared prefix is the wrapper; the tail is the branch identifier. A host that only iterates and
+   never wraps the loop in `try` will see an uncaught throw on every provider failure.
+
+**Unknown model ids are not validated up front.** `init.model` echoed `definitely-not-a-model`
+verbatim and the request went out with it. There is no client-side catalog check — consistent with
+`Options.model`'s JSDoc saying nothing about validation (item (g)). Winter's own catalog validator is
+therefore *stricter* than the pin: a defensible divergence, but one to disclose.
+
+**This also disentangles capture (G)'s terminal shape**: the same
+`success`/`is_error: true`/`terminal_reason: "api_error"` triple appears here with no deadline and no
+abort anywhere in play, so it is the genuine API-failure result shape, not an artifact of G's
+deadline.
+
+### Capture (J) — the model catalog is IN-BINARY; `setModel` resolves but is a no-op in single-shot mode
+
+**Design.** The loopback holds every response behind a gate this scenario releases only after the
+control calls have settled, so the single-shot process is still alive to answer them.
+
+**`supportedModels()` returned 5 rows.** The union of row keys is exactly nine —
+`value`, `resolvedModel`, `displayName`, `description`, `supportsEffort`, `supportedEffortLevels`,
+`supportsAdaptiveThinking`, `supportsFastMode`, `supportsAutoMode` — i.e. **exactly `ModelInfo`'s nine
+declared fields (item (d)), no more and no fewer**. Row shapes, prose stripped (`displayName` and
+`description` values are vendor-authored and are recorded as lengths only, per scenario D's rule):
+
+| `value` | `resolvedModel` | `supportsEffort` | `supportedEffortLevels` | `supportsAdaptiveThinking` | `supportsFastMode` | `supportsAutoMode` |
+| --- | --- | --- | --- | --- | --- | --- |
+| `default` | `claude-opus-5[1m]` | true | low, medium, high, xhigh, max | true | true | true |
+| `opus[1m]` | `claude-opus-5[1m]` | true | low, medium, high, xhigh, max | true | true | true |
+| `sonnet` | `claude-sonnet-5` | true | low, medium, high, xhigh, max | true | *(absent)* | true |
+| `sonnet[1m]` | `claude-sonnet-5[1m]` | true | low, medium, high, xhigh, max | true | *(absent)* | true |
+| `haiku` | `claude-haiku-4-5-20251001` | *(absent)* | *(absent)* | *(absent)* | *(absent)* | *(absent)* |
+
+Four structural facts for the catalog lane:
+
+- **Every row is an ALIAS row.** `value` is always the alias (`default`, `opus[1m]`, `sonnet`, …) and
+  `resolvedModel` always the canonical wire id. Item (d)'s reading of `resolvedModel` is confirmed by
+  the data: a host matches a persisted explicit id against the alias row covering it.
+- **`value: "default"` is a real, selectable row**, not a sentinel — which is the same literal
+  `set_model` treats as a reset (item (d), `sdk.d.ts:4184`) and that `Settings.fallbackModel` expands
+  (item (g), `5574-5576`). Three surfaces, one magic string.
+- **Optional capability booleans are genuinely omitted, not `false`.** The `haiku` row carries only
+  `value`/`resolvedModel`/`displayName`/`description`. A Winter consumer must treat absent as unknown,
+  not as "not supported" — and `supportsFastMode` absent on the sonnet rows while present on the opus
+  rows shows the omission is per-capability, not per-row.
+- **`description` carries pricing text**, so a Winter catalog row's `description` is a display string
+  with commercial content in it, not a neutral capability blurb.
+
+**No `/v1/models` request ever reached the loopback.** Zero. Combined with the fact that the returned
+rows name real, current model ids, **the catalog is served from a table inside the CLI binary** — it is
+not fetched, and it is not derivable from the loopback the runtime is pointed at. For WS-13's bounded
+live discovery this is the pinned baseline: `supportedModels()` is a *static* answer, and
+`SDKControlListModelsRequest`'s JSDoc (`sdk.d.ts:3852-3854`) frames it as "ask the worker", never "ask
+the provider".
+
+**`setModel("haiku")` resolved — it did not throw** — despite `Query.setModel`'s JSDoc saying it is
+only available in streaming input mode (`sdk.d.ts:2469`). But **both `POST /v1/messages` requests
+carried `model: "claude-sonnet-5"`**, the original. **Caveat stated rather than glossed:** both
+requests had already been *issued* when `setModel` was called (the gate holds responses, not requests),
+and a single-shot turn has no later request, so this shows the call is a **silent no-op in this shape**
+— resolving instead of throwing, and changing nothing observable — rather than proving it would be
+ignored in streaming-input mode. A Winter implementation that throws here would be *stricter* than the
+pin; one that silently resolves matches it. Recorded as OQ-P6-12.
+
+**`accountInfo()` resolved** with exactly three keys present: `apiKeySource`, `apiProvider`,
+`tokenSource`. `email`, `organization` and `subscriptionType` are **absent** under API-key auth —
+confirming item (d)'s reading of `AccountInfo`'s all-optional shape and of `apiProvider`'s JSDoc (for
+non-first-party/keyed auth the other fields are absent). Values are not recorded here; only key
+presence.
+
+### Capture (K) — `costBasis: "unknown"`, a non-zero cost anyway, and `NonNullableUsage`'s real field set
+
+**Design.** A plain-query shape whose option `model` and canned response `model` are both
+`winter-capture-fake-model-1` — an id no price table can contain.
+
+**Result — `modelUsage`:**
+
+```json
+"winter-capture-fake-model-1": {
+  "inputTokens": 17, "outputTokens": 5,
+  "cacheReadInputTokens": 3, "cacheCreationInputTokens": 2,
+  "webSearchRequests": 0, "costUSD": 0.00022400000000000002,
+  "contextWindow": 200000, "maxOutputTokens": 32000,
+  "canonicalModel": "winter-capture-fake-model-1",
+  "provider": "firstParty", "costBasis": "unknown"
+}
+```
+
+Five findings:
+
+1. **`modelUsage` is keyed by the RAW model string** — the fake id, verbatim, and `canonicalModel`
+   echoes it rather than resolving to anything. Item (e)'s raw/canonical split is confirmed, and the
+   canonical field degrades to the raw value rather than going absent.
+2. **`costBasis` is `"unknown"`** — exactly as item (e) predicted for a model with no pricing row.
+3. **`costUSD` is non-zero anyway** (0.000224, and `total_cost_usd` equals it). This is the
+   doc-asserted "guess at the default model's rate" (`sdk.d.ts:1319-1321`) observed directly: **the pin
+   reports a confident-looking number for a model it has never heard of**, and `costBasis` is the only
+   thing that says so. This is the strongest single argument for OQ-P6-8: Winter must not adopt the
+   "absent means `'list'`" default without deciding it deliberately, because the number itself gives no
+   hint that it is fiction.
+4. **`contextWindow: 200000` / `maxOutputTokens: 32000` are DEFAULTS applied to an unknown model** —
+   more invented facts presented without a marker of their own. Winter's capability-honesty layer
+   should carry an evidence flag on these two the way `costBasis` does for price.
+5. **`provider: "firstParty"`** for a model that exists nowhere — the field reports the *transport*
+   family, not a verified provider identity.
+
+**`usage` (`NonNullableUsage`) — the field set, which the pin cannot give.** Because the type maps over
+the unpinned external `BetaUsage` (headline finding), this capture is the only authority in this
+document for its keys. Eleven observed:
+
+```
+cache_creation, cache_creation_input_tokens, cache_read_input_tokens, inference_geo,
+input_tokens, iterations, output_tokens, output_tokens_details, server_tool_use,
+service_tier, speed
+```
+
+with nested shapes `output_tokens_details: { thinking_tokens }`,
+`server_tool_use: { web_search_requests, web_fetch_requests }`,
+`cache_creation: { ephemeral_1h_input_tokens, ephemeral_5m_input_tokens }`, and scalar
+`service_tier`/`speed`/`inference_geo` plus an `iterations` array. **Six of these eleven names
+(`inference_geo`, `iterations`, `service_tier`, `speed`, `output_tokens_details`, `cache_creation`)
+have no counterpart anywhere in `ModelUsage`**, so the two usage surfaces are genuinely different
+shapes, not two renderings of one.
+
+**One caveat, recorded because it is easy to over-read**: every numeric value inside `usage` came back
+**zero** while `modelUsage` carried the real 17/5/3/2 — a live demonstration of the JSDoc's
+"MAIN AGENT LOOP ONLY … prefer `modelUsage`" instruction (`sdk.d.ts:4737-4739`). The *names* above are
+the finding; the values are not.
+
 ---
 
 ## Open questions / divergences
@@ -1145,6 +1321,11 @@ is handled differently (no such block was streamed — its shape stays underived
    or replaces the transcript **file** — which would matter for a neighbour that must stay paired with
    it — needs a streaming-input harness this task's shape cannot build. Recorded as a residual risk on
    an otherwise clean R6-7 confirmation.
+
+12. **OQ-P6-12 — `setModel()` resolves in a mode its own JSDoc excludes.** Capture (J) called it in
+   single-shot mode, where `sdk.d.ts:2469` says it is unavailable; it resolved without throwing and
+   changed nothing observable. Winter can match that (silent no-op) or be stricter (throw). Stricter is
+   friendlier and is a disclosed divergence; matching is parity for a host that calls it defensively.
 
 ## Notes recorded but not treated as Open Questions
 

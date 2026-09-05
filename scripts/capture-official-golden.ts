@@ -1572,6 +1572,7 @@ async function runModelControlCapture(officialSdk: OfficialSdk): Promise<void> {
     const dirs = makeScenarioDirs("j", cleanups);
     let requestCount = 0;
     const requestPaths: string[] = [];
+    const modelsAsked: unknown[] = [];
     let releaseGate: () => void = () => {};
     const gate = new Promise<void>((resolve) => {
       releaseGate = resolve;
@@ -1585,7 +1586,12 @@ async function runModelControlCapture(officialSdk: OfficialSdk): Promise<void> {
         requestCount++;
         const url = new URL(req.url);
         requestPaths.push(`${req.method} ${url.pathname}`);
-        console.error(`[loopback J] #${requestCount} ${req.method} ${url.pathname} (holding behind the control-call gate)`);
+        try {
+          modelsAsked.push((await req.json() as { model?: unknown }).model);
+        } catch {
+          modelsAsked.push(null); // the HEAD preflight has no body
+        }
+        console.error(`[loopback J] #${requestCount} ${req.method} ${url.pathname} model=${JSON.stringify(modelsAsked[modelsAsked.length - 1])} (holding behind the control-call gate)`);
         await gate;
         return jsonResponse(CANNED_TEXT_RESPONSE);
       },
@@ -1638,7 +1644,18 @@ async function runModelControlCapture(officialSdk: OfficialSdk): Promise<void> {
               isArray: Array.isArray(models),
               count: Array.isArray(models) ? models.length : null,
               "union of row key names": Array.isArray(models) ? [...new Set(models.flatMap((m) => Object.keys(m as Record<string, unknown>)))].sort() : null,
-              "first row (a ModelInfo, printed whole — it is a public catalog row, not prose)": Array.isArray(models) ? models[0] : null,
+              // SHAPE ONLY, per scenario D's own rule: `displayName` and `description` are
+              // vendor-authored prose, so their LENGTHS are reported, never their text.
+              "every row, prose stripped": Array.isArray(models)
+                ? models.map((m) => {
+                    const row = m as Record<string, unknown>;
+                    return {
+                      ...row,
+                      displayName: typeof row.displayName === "string" ? `<${row.displayName.length} chars>` : row.displayName,
+                      description: typeof row.description === "string" ? `<${row.description.length} chars>` : row.description,
+                    };
+                  })
+                : null,
             }
           : { threw: describeThrown(modelsResult.error) },
         null,
@@ -1662,6 +1679,7 @@ async function runModelControlCapture(officialSdk: OfficialSdk): Promise<void> {
       JSON.stringify(
         {
           "every request path the loopback saw": requestPaths,
+          "the model on each request (did setModel take effect on the wire?)": modelsAsked,
           "did any /v1/models request reach the loopback?": requestPaths.some((p) => p.includes("/models")),
           "system/init.model": (entries.map((e) => e.payload as OfficialMessage).find((p) => p.type === "system" && p.subtype === "init"))?.model ?? "(no init frame)",
           "query() threw": describeThrown(thrown) ?? false,
