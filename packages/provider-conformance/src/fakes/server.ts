@@ -308,10 +308,14 @@ export function scenarioTable(opts: ScenarioTableOptions): (req: Request, record
       return jsonResponse({ error: { message: `fake: no scenario for model ${JSON.stringify(model)}` } }, 400);
     }
     if (Array.isArray(entry)) {
-      // A response is single-use (its body stream is consumed), so a list is indexed by attempt and
-      // the LAST entry repeats -- which is what "529 then 200 forever" means.
+      // A list is indexed by attempt and the LAST entry repeats -- which is what "529 then 200
+      // forever" means. The stored Responses are TEMPLATES: a Response body can be sent exactly once
+      // (Bun on the linux CI runner refuses a second send outright -- "Response body already used"),
+      // so every request is answered with a clone and the template itself is never sent. Templates
+      // with a live stream body (sseResponse/stalledResponse) are single-use by nature: put those in
+      // a FUNCTION entry that builds a fresh Response per attempt, not in an array.
       const index = Math.min(attempt - 1, entry.length - 1);
-      return entry[index]!;
+      return entry[index]!.clone();
     }
     return entry(recorded, attempt);
   };
