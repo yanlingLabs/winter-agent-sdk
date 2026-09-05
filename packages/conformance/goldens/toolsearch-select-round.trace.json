@@ -36,6 +36,7 @@
         "ReportFindings",
         "ScheduleWakeup",
         "SendMessage",
+        "Skill",
         "TaskCreate",
         "TaskGet",
         "TaskList",
@@ -43,6 +44,7 @@
         "TaskStop",
         "TaskUpdate",
         "ToolSearch",
+        "Workflow",
         "Write"
       ],
       "slash_commands": [],

@@ -345,7 +345,7 @@ describe("F10 -- the THREE ways this lane is inert until T8 wires it, each pinne
   // Each leg fails differently and silently, so each gets its own assertion rather than one test
   // standing in for all three.
 
-  test("leg 1: the tools/impl barrel does NOT install the Workflow executor -- T8 owes `import \"./workflow.ts\"`", () => {
+  test("leg 1: the tools/impl barrel DOES install the Workflow executor -- T8's `import \"./workflow.ts\"` landed", () => {
     // A FRESH process, because this file imports ./workflow.ts directly (line 11) and therefore
     // always has the executor installed -- the very reason the gap is invisible to the suite. The
     // probe imports only the barrel, exactly as a live session does.
@@ -356,9 +356,13 @@ describe("F10 -- the THREE ways this lane is inert until T8 wires it, each pinne
     ].join("\n");
     const result = Bun.spawnSync(["bun", "-e", probe], { stdout: "pipe", stderr: "pipe" });
     expect(result.exitCode).toBe(0);
-    // FALSE today. When T8 adds the barrel import this flips to "true" and this expectation is what
-    // tells them the gap is closed -- the test is the ledger entry, not a permanent invariant.
-    expect(new TextDecoder().decode(result.stdout)).toBe("false");
+    // FLIPPED BY T8 (rider 21), exactly as this fixture's own comment said it would be: "when T8
+    // adds the barrel import this flips to 'true' and this expectation is what tells them the gap is
+    // closed -- the test is the ledger entry, not a permanent invariant." It is now a permanent
+    // invariant: a barrel that stops importing ./workflow.ts fails HERE, in the lane's own file, as
+    // well as in tools/impl/partial-wiring.test.ts, which carries the same probe for both P5 tools
+    // plus the counterfactual (descriptors-only => "false,false").
+    expect(new TextDecoder().decode(result.stdout)).toBe("true");
   }, 20_000);
 
   test("leg 2: with NO session registered the tool answers a typed error rather than crashing", async () => {

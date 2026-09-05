@@ -73,6 +73,28 @@ import "./send-message.ts";
 import "./list-agents.ts";
 import "./read-notifications.ts";
 
+// --- Phase 5 Task 8: the two P5 lanes' own executors ---------------------------------------------
+//
+// Lane S (WS-11 §2.3) -- the Skill tool. Reads `skills/runtime.ts`'s session-keyed side registry
+// (T8's production wiring populates it per run, in production-wiring.ts); with no registration it
+// answers a typed "no skills runtime" tool error, never a crash.
+//
+// Lane W (WS-11 §1) -- the Workflow tool. Reads `workflows/host-registry.ts`'s module singleton
+// (registered per run by the same wiring); absent, it answers a typed "no workflow runtime is
+// configured for this session".
+//
+// EACH LANE'S REPORT NAMED THIS LINE AS ITS FIRST NEEDS_CONTEXT ITEM, and Lane W's named the trap:
+// the tool is inert in THREE independent ways -- no barrel import (the descriptor's stub answers
+// "registered but not yet executable"), no session registration (a typed "no runtime"), no
+// capability token (never advertised at all) -- and each fails differently and silently, so a wiring
+// that lands two of three looks like a working feature until someone calls it. All three land
+// together: this import, `registerWorkflowSession`/`registerSkillSessionRuntime` in
+// production-wiring.ts, and the `winter.skills`/`winter.workflows` entries in
+// registry.ts's RUNTIME_DERIVED_CAPABILITIES (which derive FROM this import, so leg 3 cannot land
+// without leg 1). `tools/impl/partial-wiring.test.ts` pins each leg's own failure text.
+import "./skill.ts";
+import "./workflow.ts";
+
 // Named export mirroring `descriptors/index.ts`'s own `DESCRIPTORS_REGISTERED` precedent -- lets a
 // consumer force this module to evaluate at an explicit point, and lets a future test assert "the
 // impl barrel imported without throwing" as a real value.

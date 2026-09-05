@@ -36,6 +36,7 @@
         "ReportFindings",
         "ScheduleWakeup",
         "SendMessage",
+        "Skill",
         "TaskCreate",
         "TaskGet",
         "TaskList",
@@ -43,6 +44,7 @@
         "TaskStop",
         "TaskUpdate",
         "WaitForMcpServers",
+        "Workflow",
         "Write",
         "mcp__t8mcpsdk__echo"
       ],

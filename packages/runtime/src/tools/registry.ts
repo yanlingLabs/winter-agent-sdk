@@ -1099,6 +1099,20 @@ export const RUNTIME_DERIVED_CAPABILITIES: readonly RuntimeDerivedCapability[] =
   // WS-10 §10 messaging (Lane D). ReadNotifications is the token's only descriptor consumer, but
   // SendMessage is the family's own entry point and lands through the same barrel import.
   { token: "winter.global-messaging", probeTool: "SendMessage" },
+  // --- Phase 5 Task 8: the two P5 families ------------------------------------------------------
+  //
+  // Identical derivation, identical rationale. Both descriptors carry their token because the I4 fix
+  // wave gated them on "this descriptor has no impl/*.ts executor anywhere in the codebase yet
+  // (owned by P5/WS-11)"; P5's lanes shipped both executors and `tools/impl/index.ts` is what makes
+  // them reach a live session, so the token now resolves iff that executor is genuinely present.
+  //
+  // NO `requiresSessionFact` on either, and that is a POSITIVE finding rather than an omission:
+  // capture (g) pins the default advertised set at exactly 24 tools INCLUDING `Workflow` and
+  // `Skill`, in a session with no skills, no plugins and no workflows on disk -- so neither is
+  // conditional on configuration the way the MCP family is. An empty skills index still advertises
+  // the tool; it just has nothing to load.
+  { token: "winter.skills", probeTool: "Skill" },
+  { token: "winter.workflows", probeTool: "Workflow" },
 ];
 
 export function deriveRuntimeCapabilities(facts: SessionCapabilityFacts): string[] {
