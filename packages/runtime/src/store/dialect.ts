@@ -57,6 +57,7 @@ import { createFileAutoCounterStore, type AutoCounterStore } from "../permission
 import {
   PROVIDER_STATE_SUBPATH,
   appendProviderState,
+  copyProviderStateForFork,
   coerceProviderStateRecord,
   providerStateSidecarPath,
   readProviderState,
@@ -160,6 +161,14 @@ export interface DialectProviderSwitch {
   to: string;
   reason: "fallback" | "set_model" | "interrupt";
 }
+
+/**
+ * The Winter-only per-session summary read (review round 2, M2), reached through a LOCAL intersection
+ * exactly as `resume.ts` reaches `listProjectKeys`: WS-03 §10 pins `SessionStore` as exactly its six
+ * members, and a Winter capability must never widen that exported type. A foreign store without the
+ * method still type-checks and degrades gracefully.
+ */
+type StoreWithSummaryRead = SessionStore & { readSessionSummary?(key: { projectKey: string; sessionId: string }): Promise<{ [k: string]: unknown } | null> };
 
 // The dialect's own name for a content block. Same shapes engine.ts's ContentBlock already
 // produces (text/tool_use/tool_result, P1-G's `interrupted` and P1-H's `error` markers included) —
@@ -584,20 +593,35 @@ export class TranscriptWriter implements SessionPersistence {
    * marker that tells them apart, and it lives in the summary sidecar because that is where the
    * store folds every dialect record.
    *
-   * Read through `listSessionSummaries` -- the store's own surface -- rather than by re-deriving the
-   * summary path here: this writer already holds the key the store resolves paths from, and a second
-   * path derivation is the drift `providerStateSidecarPath` exists to avoid.
+   * Read through the store's OWN per-session reader rather than by re-deriving the summary path here:
+   * this writer already holds the key the store resolves paths from, and a second path derivation is
+   * the drift `providerStateSidecarPath` exists to avoid.
+   *
+   * `readSessionSummary` is a Winter-only capability on the concrete store, reached through a LOCAL
+   * intersection type so the pinned six-member `SessionStore` surface stays untouched (the same
+   * pattern `resume.ts` uses for `listProjectKeys`). It replaces a `listSessionSummaries` scan that
+   * read and parsed EVERY summary in the project directory -- O(#sessions) on every resume, paid by
+   * the busiest projects (review round 2, M2). A store without it degrades to `undefined`, which
+   * reads as "unknown" and keeps the resume silent rather than guessing.
    */
   async loadProviderIdentity(): Promise<{ providerId: string; modelKey: string } | undefined> {
-    const list = this.store.listSessionSummaries;
-    if (list === undefined) return undefined;
-    let summaries: Awaited<ReturnType<NonNullable<SessionStore["listSessionSummaries"]>>>;
+    // A SUBPATH WRITER HAS NO IDENTITY OF ITS OWN (review round 2, leg (b)).
+    //
+    // A child writer's key reuses the PARENT's `sessionId` (see `buildChildTranscriptWriter`), so a
+    // lookup by session would match the PARENT's summary row and report an identity this writer never
+    // wrote. The consequence was concrete: a forked child, whose own sidecar is legitimately empty,
+    // would be told its parent's sidecar had been DELETED -- and the frame escapes onto the parent's
+    // own host stream. Absence here reads as "unknown", which is the honest answer for a writer that
+    // has no summary of its own to consult.
+    if (this.key.subpath !== undefined) return undefined;
+    const store = this.store as StoreWithSummaryRead;
+    if (store.readSessionSummary === undefined) return undefined;
+    let row: Awaited<ReturnType<NonNullable<StoreWithSummaryRead["readSessionSummary"]>>>;
     try {
-      summaries = await list.call(this.store, this.key.projectKey);
+      row = await store.readSessionSummary({ projectKey: this.key.projectKey, sessionId: this.key.sessionId });
     } catch {
       return undefined; // an unreadable summary is "unknown", never a fabricated verdict
     }
-    const row = summaries.find((entry) => entry.sessionId === this.key.sessionId);
     const providerId = row?.providerId;
     const modelKey = row?.modelKey;
     return typeof providerId === "string" && typeof modelKey === "string" ? { providerId, modelKey } : undefined;
@@ -618,6 +642,19 @@ export class TranscriptWriter implements SessionPersistence {
   /** R6-C: records a model swap in the dialect record's `providerHistory`, alongside the Winter-only `system/model_switch` frame the engine emits. */
   recordProviderSwitch(entry: DialectProviderSwitch): void {
     this.providerHistory.push(entry);
+  }
+
+  /**
+   * Appends the dialect record ALONE -- no transcript entry beside it.
+   *
+   * The store partitions `DIALECT_RECORD_ENTRY_TYPE` out of the jsonl by construction and folds its
+   * fields into the summary sidecar, and `append()` explicitly allows a batch with zero native
+   * entries. So this writes the identity block and nothing else, which is exactly what a FORK needs:
+   * its transcript is already a byte-for-byte copy of the source's, and re-appending an entry to
+   * carry the block would corrupt the chain it just copied (review round 2, M3).
+   */
+  async stampDialectRecord(): Promise<void> {
+    await this.store.append(this.key, [this.dialectRecord()]);
   }
 
   private trackConversational(uuid: string): void {
@@ -736,7 +773,12 @@ export class TranscriptWriter implements SessionPersistence {
   // before the fresh record, so even a corrupted/missing summary sidecar is restored on the very
   // next append rather than staying wrong until some explicit repair step).
   private async appendWithDialectRecord(entry: SessionStoreEntry): Promise<void> {
-    const dialectRecord: SessionStoreEntry = {
+    await this.store.append(this.key, [entry, this.dialectRecord()]);
+  }
+
+  /** The dialect record this writer stamps beside every append. Factored out so the fork path can write it ALONE (`stampDialectRecord`). */
+  private dialectRecord(): SessionStoreEntry {
+    return {
       type: DIALECT_RECORD_ENTRY_TYPE,
       producerRuntime: "winter-agent",
       producerEngineVersion: this.ctx.version,
@@ -770,7 +812,6 @@ export class TranscriptWriter implements SessionPersistence {
       // one written before this field existed.
       ...(this.providerHistory.length > 0 ? { providerHistory: [...this.providerHistory] } : {}),
     };
-    await this.store.append(this.key, [entry, dialectRecord]);
   }
 
   // Reads a transcript back through `store` (independent of any writer instance's own held
@@ -1075,6 +1116,47 @@ export async function resolveEngineSession(opts: {
     // below runs AFTER this block, against whichever identity (original or forked) is the ACTUAL
     // target from here on, so a fork never needs (and never takes) the pre-fork session's lease.
     const forked = await forkSessionByKey(store, { projectKey: targetProjectKey, sessionId: targetSessionId });
+    // Phase 6 Task 3 (review round 2, M3): the fork carries its PROVIDER STATE too.
+    //
+    // `forkSessionByKey` copies entries with `uuid`/`parentUuid` untouched, so the fork's assistant
+    // entries carry the SAME anchors -- which is what makes copying the chain meaningful rather than
+    // a guess. Without it a forked session landed with no chain and no identity block, took the
+    // pre-P6 silent path on its very first resume, and lost every native continuation the source had
+    // accumulated with nothing said.
+    //
+    // AUXILIARY, like every other store side effect on this path: a fork whose sidecar could not be
+    // copied is a fork with a degraded chain, which the resume warning already reports. It is never a
+    // reason to fail a fork whose CONVERSATION copied fine.
+    try {
+      copyProviderStateForFork(
+        providerStateSidecarPath(join(winterHome, "projects", targetProjectKey, `${targetSessionId}.jsonl`)),
+        providerStateSidecarPath(join(winterHome, "projects", targetProjectKey, `${forked.sessionId}.jsonl`)),
+        forked.sessionId,
+      );
+      // The IDENTITY BLOCK travels with it. It is what the resume side reads to tell "this session
+      // had provider state" from "this session predates the concept", so a fork that copied the
+      // records but not the block would still take the silent path.
+      const summaryStore = store as { readSessionSummary?(key: { projectKey: string; sessionId: string }): Promise<Record<string, unknown> | null> };
+      const sourceSummary = summaryStore.readSessionSummary !== undefined ? await summaryStore.readSessionSummary({ projectKey: targetProjectKey, sessionId: targetSessionId }) : null;
+      if (sourceSummary !== null && typeof sourceSummary.providerId === "string" && typeof sourceSummary.modelKey === "string") {
+        const identity: DialectProviderIdentity = {
+          providerId: sourceSummary.providerId,
+          modelKey: sourceSummary.modelKey,
+          ...(typeof sourceSummary.adapterId === "string" ? { adapterId: sourceSummary.adapterId } : {}),
+          ...(typeof sourceSummary.adapterVersion === "string" ? { adapterVersion: sourceSummary.adapterVersion } : {}),
+          ...(typeof sourceSummary.catalogVersion === "string" ? { catalogVersion: sourceSummary.catalogVersion } : {}),
+          ...(typeof sourceSummary.authRef === "string" ? { authRefKind: sourceSummary.authRef } : {}),
+          ...(typeof sourceSummary.classifierPin === "string" ? { classifierPin: sourceSummary.classifierPin } : {}),
+        };
+        const stamp = new TranscriptWriter({ store, key: { projectKey: targetProjectKey, sessionId: forked.sessionId }, ctx: { sessionId: forked.sessionId, cwd: config.cwd, version: RUNTIME_ENGINE_VERSION, projectDirName: targetProjectKey } });
+        stamp.setProviderIdentity(identity);
+        // One dialect-only append: the store folds the record into the fork's summary and writes NO
+        // transcript line for it (`DIALECT_RECORD_ENTRY_TYPE` is partitioned out by construction).
+        await stamp.stampDialectRecord();
+      }
+    } catch {
+      /* auxiliary — see the comment above */
+    }
     targetSessionId = forked.sessionId;
   }
 
