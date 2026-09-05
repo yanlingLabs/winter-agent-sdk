@@ -14,6 +14,12 @@ importers:
       '@yanlinglabs/winter-agent-sdk':
         specifier: workspace:*
         version: link:packages/sdk
+      '@yanlinglabs/winter-provider-catalog':
+        specifier: workspace:*
+        version: link:packages/provider-catalog
+      '@yanlinglabs/winter-provider-runtime':
+        specifier: workspace:*
+        version: link:packages/provider-runtime
       typescript:
         specifier: ^5.6.0
         version: 5.9.3
@@ -23,10 +29,33 @@ importers:
       winter-conformance:
         specifier: workspace:*
         version: link:packages/conformance
+      winter-provider-conformance:
+        specifier: workspace:*
+        version: link:packages/provider-conformance
 
   packages/conformance: {}
 
   packages/platform/darwin-arm64: {}
+
+  packages/provider-catalog: {}
+
+  packages/provider-conformance:
+    dependencies:
+      '@yanlinglabs/winter-provider-catalog':
+        specifier: workspace:*
+        version: link:../provider-catalog
+      '@yanlinglabs/winter-provider-runtime':
+        specifier: workspace:*
+        version: link:../provider-runtime
+
+  packages/provider-runtime:
+    dependencies:
+      '@yanlinglabs/winter-agent-sdk':
+        specifier: workspace:*
+        version: link:../sdk
+      '@yanlinglabs/winter-provider-catalog':
+        specifier: workspace:*
+        version: link:../provider-catalog
 
   packages/runtime:
     dependencies:
@@ -36,6 +65,9 @@ importers:
       '@yanlinglabs/winter-agent-sdk':
         specifier: workspace:*
         version: link:../sdk
+      '@yanlinglabs/winter-provider-runtime':
+        specifier: workspace:*
+        version: link:../provider-runtime
       ajv:
         specifier: ^8.20.0
         version: 8.20.0

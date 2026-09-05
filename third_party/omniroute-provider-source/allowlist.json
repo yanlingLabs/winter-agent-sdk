@@ -1,0 +1,22 @@
+{
+  "$comment": "Extractor INPUT contract (WS-13 §3/§13). Hand-maintained and reviewed: a row's `risk` is what the extractor stamps onto the generated WinterProviderDescriptor, and promoting one to \"approved\" is a deliberate, reviewed edit. Lane X's scripts/provider-source-sync.ts is the consumer; the spine only establishes the file. No upstream source is vendored under this directory — see README.md.",
+  "allowlistVersion": 1,
+  "upstreamProject": "OmniRoute",
+  "providers": [
+    { "upstreamId": "openai", "winterId": "openai", "risk": { "class": "approved", "reasons": [] } },
+    { "upstreamId": "anthropic", "winterId": "anthropic", "risk": { "class": "approved", "reasons": [] } },
+    { "upstreamId": "google", "winterId": "google", "risk": { "class": "approved", "reasons": [] } },
+    { "upstreamId": "openrouter", "winterId": "openrouter", "risk": { "class": "review-required", "reasons": ["gateway: capability parity is model-by-model (WS-13 §14.4); per-request provider/data-policy controls must be preserved"] } },
+    { "upstreamId": "deepseek", "winterId": "deepseek", "risk": { "class": "review-required", "reasons": ["reasoning continuity is tool-loop fragile (WS-13 §8.2: missing reasoning state mid-loop is a hard error)"] } },
+    { "upstreamId": "azure-openai", "winterId": "azure-openai", "risk": { "class": "review-required", "reasons": ["native cloud: deployment/api-version identity and Entra auth need their own proof (WS-13 §5)"] } },
+    { "upstreamId": "bedrock", "winterId": "bedrock", "risk": { "class": "review-required", "reasons": ["native cloud: SigV4 signing + event-stream decoding need their own proof (WS-13 §5)"] } },
+    { "upstreamId": "vertex", "winterId": "vertex", "risk": { "class": "review-required", "reasons": ["native cloud: project/location auth and partner-protocol differences need their own proof (WS-13 §5)"] } }
+  ],
+  "blocked": [
+    { "upstreamId": "*", "reason": "Any upstream row whose transport is a browser session, a private/undocumented API, or a consumer subscription is blocked categorically and is never promotable by this file alone (WS-13 §5/§6)." }
+  ],
+  "notes": [
+    "`codex-oauth` is NOT extracted from upstream — it is a Winter-owned provider carried over per D11 with originator \"winter\" (WS-01 §3), and its descriptor's `upstream.project` is \"winter\".",
+    "The twelve local OpenAI-compatible ids (WS-13 §12) are likewise Winter-owned: their inventories are machine-specific and always come from live discovery, so there is no upstream row to extract."
+  ]
+}

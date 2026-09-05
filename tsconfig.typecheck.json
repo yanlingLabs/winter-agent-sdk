@@ -3,5 +3,13 @@
   "compilerOptions": {
     "noEmit": true
   },
-  "include": ["packages/sdk/src/**/*.ts", "packages/runtime/src/**/*.ts", "packages/conformance/src/**/*.ts", "scripts/**/*.ts"]
+  "include": [
+    "packages/sdk/src/**/*.ts",
+    "packages/runtime/src/**/*.ts",
+    "packages/conformance/src/**/*.ts",
+    "packages/provider-catalog/src/**/*.ts",
+    "packages/provider-runtime/src/**/*.ts",
+    "packages/provider-conformance/src/**/*.ts",
+    "scripts/**/*.ts"
+  ]
 }

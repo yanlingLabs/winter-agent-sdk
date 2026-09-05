@@ -20,6 +20,23 @@
 // location). Without this override, `types: ["node"]` fails closed with TS2688 ("cannot find type
 // definition file for 'node'") rather than silently finding nothing — a config bug here cannot
 // masquerade as a clean pass.
+//
+// --- Phase 6 Task 2: fence MEMBERSHIP for the three new provider packages, decided explicitly ---
+//
+// `packages/provider-catalog` ENTERS the fence. It is inert catalog DATA plus a hand-rolled,
+// dependency-free validator: no Bun API, no fetch, no filesystem (the catalog is a bundled JSON
+// module import, never `fs.readFile`), and WS-13 §4's own requirement is that descriptors are
+// "safe inert data, decodable in Bun and Swift without executing upstream code" — a package that
+// must be decodable off-Bun has to be type-checked off-Bun, or the constraint is unenforced in
+// exactly the way this file's own header describes.
+//
+// `packages/provider-runtime` does NOT enter it, deliberately: it is Bun-only by construction
+// (`Bun.serve`-shaped loopback fakes in its tests, and production code that reaches for Bun's fetch/
+// stream behaviour), and `packages/provider-conformance` likewise (it stands up loopback servers).
+// Both are still fully covered by tsconfig.typecheck.json.
+//
+// Tests are excluded here for the same reason sdk's are (they use Bun APIs legitimately and never
+// ship to a Node consumer).
 {
   "extends": "./tsconfig.base.json",
   "compilerOptions": {
@@ -27,6 +44,6 @@
     "typeRoots": ["./packages/sdk/node_modules/@types"],
     "types": ["node"]
   },
-  "include": ["packages/sdk/src/**/*.ts"],
-  "exclude": ["packages/sdk/src/**/*.test.ts"]
+  "include": ["packages/sdk/src/**/*.ts", "packages/provider-catalog/src/**/*.ts"],
+  "exclude": ["packages/sdk/src/**/*.test.ts", "packages/provider-catalog/src/**/*.test.ts"]
 }
