@@ -154,3 +154,17 @@ export type {
   UnknownFrame,
   RuntimeConfig,
 } from "@yanlinglabs/winter-agent-sdk";
+
+// --- Phase 6 Task 8 (Lane D): the credential host doors and the model classifier ------------------
+//
+// Named on the barrel because their consumers are OUTSIDE this package: R6-10's credential doors are
+// what a host application (a settings pane, a `login` command) calls, and T10 re-exports them through
+// the sdk barrel from here rather than reaching in by relative path. The classifier is named for the
+// same reason -- T10 wires the route and the session pin, and does so from `production-wiring.ts`.
+export { deleteProviderCredential, providerCredentialRef, storeProviderCredential, validateProviderCredential } from "./provider/credential-api.ts";
+export type { ProviderCredentialLocator, ProviderCredentialRef, StoreProviderCredentialInput } from "./provider/credential-api.ts";
+export { createModelClassifier, selectClassifierRoute, DEFAULT_CLASSIFIER_TIMEOUT_MS } from "./provider/classifier/model-classifier.ts";
+export type { ClassifierRoute, ClassifierRouteConfig, ModelClassifierOptions } from "./provider/classifier/model-classifier.ts";
+export { CLASSIFIER_TOOL_NAME, CLASSIFIER_NO_VERDICT_REASONS, CLASSIFIER_VERDICT_SCHEMA } from "./provider/classifier/verdict-schema.ts";
+export type { ClassifierNoVerdictReason } from "./provider/classifier/verdict-schema.ts";
+export { CLASSIFIER_SYSTEM_PROMPT, DEFAULT_MAX_CONTEXT_CHARS } from "./provider/classifier/prompt.ts";

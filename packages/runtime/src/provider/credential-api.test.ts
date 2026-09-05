@@ -1,0 +1,372 @@
+// Phase 6 Task 8 (Lane D, R6-10): the credential host doors.
+//
+// IN-MEMORY STORES ONLY. Global Constraints: tests never touch `~/.winter`, `~/.norma`, `~/.claude`
+// or the Keychain, and `Bun.secrets` is never called under test (`keychain-store.test.ts` holds the
+// repo-wide grep tripwire that pins it). Every fixture here drives
+// `createMemoryCredentialStore` or a hand-written double.
+//
+// The redaction assertions are the reason this file is long. "Material is redacted in every thrown
+// error" is not provable by reading the implementation, because the STORE these doors are handed can
+// be a host's own — so the fixtures hand them stores that deliberately put the secret in their error
+// message and assert it does not come back out.
+import { test, expect, describe } from "bun:test";
+import { createMemoryCredentialStore, createRegistry, CredentialResolutionError, type CredentialMaterial, type CredentialRef, type CredentialStatus, type CredentialStore, type ProviderAdapter, type ProviderContext } from "@yanlinglabs/winter-provider-runtime";
+import type { WinterCatalog, WinterModelDescriptor, WinterProviderDescriptor } from "@yanlinglabs/winter-provider-catalog";
+import { deleteProviderCredential, providerCredentialRef, storeProviderCredential, validateProviderCredential } from "./credential-api.ts";
+
+const SECRET = "test-key-do-not-use-4d9f2a";
+
+function apiKey(key = SECRET): CredentialMaterial {
+  return { kind: "api-key", key };
+}
+
+describe("the keychain account spelling (R6-10)", () => {
+  test('is exactly "<providerId>:<accountId>"', () => {
+    expect(providerCredentialRef({ providerId: "openai", accountId: "work" })).toEqual({ kind: "keychain", account: "openai:work" });
+  });
+
+  test("carries an explicit service, and omits the key when there is none", () => {
+    expect(providerCredentialRef({ providerId: "openai", accountId: "work", service: "com.winter.core.dev" })).toEqual({
+      kind: "keychain",
+      account: "openai:work",
+      service: "com.winter.core.dev",
+    });
+    expect("service" in providerCredentialRef({ providerId: "openai", accountId: "work" })).toBe(false);
+  });
+
+  test("a hyphenated provider id is fine -- every local provider has one", () => {
+    expect(providerCredentialRef({ providerId: "codex-oauth", accountId: "a@b.example" }).account).toBe("codex-oauth:a@b.example");
+  });
+
+  test("an accountId MAY contain a colon (read left-to-right at the first one); a providerId may not", () => {
+    expect(providerCredentialRef({ providerId: "openai", accountId: "urn:acct:1" }).account).toBe("openai:urn:acct:1");
+    expect(() => providerCredentialRef({ providerId: "open:ai", accountId: "work" })).toThrow(/separator/);
+  });
+
+  test("blank ids and control characters are refused", () => {
+    expect(() => providerCredentialRef({ providerId: "", accountId: "work" })).toThrow(/non-empty providerId/);
+    expect(() => providerCredentialRef({ providerId: "openai", accountId: "  " })).toThrow(/non-empty accountId/);
+    expect(() => providerCredentialRef({ providerId: "openai", accountId: `work${String.fromCharCode(10)}x` })).toThrow(/control characters/);
+    expect(() => providerCredentialRef({ providerId: "openai", accountId: "work", service: " " })).toThrow(/may not be blank/);
+  });
+});
+
+describe("storeProviderCredential", () => {
+  test("writes ONE record per provider/account and answers with the ref that addresses it", async () => {
+    const store = createMemoryCredentialStore();
+    const first = await storeProviderCredential(store, { providerId: "openai", accountId: "work", material: apiKey() });
+    const second = await storeProviderCredential(store, { providerId: "openai", accountId: "personal", material: apiKey("test-key-second") });
+    expect(store.size()).toBe(2);
+    expect(await store.get(first)).toEqual(apiKey());
+    expect(await store.get(second)).toEqual(apiKey("test-key-second"));
+  });
+
+  test("the returned ref is the one a session config uses -- it round-trips through get()", async () => {
+    const store = createMemoryCredentialStore();
+    const ref = await storeProviderCredential(store, { providerId: "anthropic", accountId: "default", material: apiKey() });
+    expect(await store.get(ref)).toEqual(apiKey());
+  });
+
+  test("an EMPTY secret is refused at the write door, not discovered as a 401 later", async () => {
+    const store = createMemoryCredentialStore();
+    await expect(storeProviderCredential(store, { providerId: "openai", accountId: "work", material: { kind: "api-key", key: "  " } })).rejects.toThrow(/empty "key"/);
+    await expect(storeProviderCredential(store, { providerId: "openai", accountId: "work", material: { kind: "bearer", token: "" } })).rejects.toThrow(/empty "token"/);
+    await expect(storeProviderCredential(store, { providerId: "openai", accountId: "work", material: { kind: "oauth", accessToken: "" } })).rejects.toThrow(/empty "accessToken"/);
+    await expect(storeProviderCredential(store, { providerId: "bedrock", accountId: "work", material: { kind: "aws", accessKeyId: "AKIA", secretAccessKey: "" } })).rejects.toThrow(/empty "secretAccessKey"/);
+    await expect(
+      storeProviderCredential(store, { providerId: "vertex", accountId: "work", material: { kind: "gcp-service-account", clientEmail: "a@b.example", privateKeyPem: "", tokenUri: "https://t.example" } }),
+    ).rejects.toThrow(/empty "privateKeyPem"/);
+    await expect(storeProviderCredential(store, { providerId: "vertex", accountId: "work", material: { kind: "gcp-access-token", token: "" } })).rejects.toThrow(/empty "token"/);
+    expect(store.size()).toBe(0);
+  });
+
+  test("a rejection for empty material never quotes the material", async () => {
+    const store = createMemoryCredentialStore();
+    let message = "";
+    try {
+      await storeProviderCredential(store, { providerId: "vertex", accountId: "work", material: { kind: "gcp-service-account", clientEmail: "svc@p.example", privateKeyPem: "", tokenUri: "https://t.example" } });
+    } catch (err) {
+      message = (err as Error).message;
+    }
+    // The FIELD is named; the sibling secret values are not.
+    expect(message).toContain("privateKeyPem");
+    expect(message).not.toContain("svc@p.example");
+    expect(message).not.toContain("https://t.example");
+  });
+});
+
+describe("deleteProviderCredential", () => {
+  test("removes the record the matching store call wrote", async () => {
+    const store = createMemoryCredentialStore();
+    const ref = await storeProviderCredential(store, { providerId: "openai", accountId: "work", material: apiKey() });
+    expect(store.size()).toBe(1);
+    expect(await deleteProviderCredential(store, { providerId: "openai", accountId: "work" })).toEqual(ref);
+    expect(store.size()).toBe(0);
+    expect(await store.get(ref)).toBeNull();
+  });
+
+  test("deleting an absent record is not an error", async () => {
+    const store = createMemoryCredentialStore();
+    await expect(deleteProviderCredential(store, { providerId: "openai", accountId: "never-stored" })).resolves.toEqual({ kind: "keychain", account: "openai:never-stored" });
+  });
+
+  test("only the named record goes", async () => {
+    const store = createMemoryCredentialStore();
+    await storeProviderCredential(store, { providerId: "openai", accountId: "a", material: apiKey("test-key-a") });
+    await storeProviderCredential(store, { providerId: "openai", accountId: "b", material: apiKey("test-key-b") });
+    await deleteProviderCredential(store, { providerId: "openai", accountId: "a" });
+    expect(store.size()).toBe(1);
+    expect(await store.get({ kind: "keychain", account: "openai:b" })).toEqual(apiKey("test-key-b"));
+  });
+});
+
+describe("MATERIAL IS REDACTED IN EVERY THROWN ERROR", () => {
+  /** A store whose errors are as hostile as a third-party store's realistically could be. */
+  function leakyStore(): CredentialStore {
+    return {
+      async get(): Promise<CredentialMaterial | null> {
+        return null;
+      },
+      async set(ref, material): Promise<void> {
+        throw new Error(`keychain write failed for item ${ref.account}: value was ${JSON.stringify(material)}`);
+      },
+      async delete(ref): Promise<void> {
+        throw new Error(`keychain delete failed for item ${ref.account}, whose stored value is ${SECRET}`);
+      },
+    };
+  }
+
+  test("a store that puts the secret in its own error message does not get it back out of store()", async () => {
+    let message = "";
+    try {
+      await storeProviderCredential(leakyStore(), { providerId: "openai", accountId: "work", material: apiKey() });
+    } catch (err) {
+      message = `${(err as Error).message}${JSON.stringify(err)}`;
+    }
+    expect(message).not.toContain(SECRET);
+    expect(message).not.toContain("value was");
+    // What survives is the LOCATOR and the failure class -- what makes the failure actionable.
+    expect(message).toContain("keychain(default:openai:work)");
+    expect(message).toContain("Error");
+  });
+
+  test("...nor out of delete()", async () => {
+    let message = "";
+    try {
+      await deleteProviderCredential(leakyStore(), { providerId: "openai", accountId: "work" });
+    } catch (err) {
+      message = `${(err as Error).message}${JSON.stringify(err)}`;
+    }
+    expect(message).not.toContain(SECRET);
+    expect(message).toContain("keychain(default:openai:work)");
+  });
+
+  test("no `cause` chain carries the original error out either", async () => {
+    let caught: unknown;
+    try {
+      await storeProviderCredential(leakyStore(), { providerId: "openai", accountId: "work", material: apiKey() });
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(CredentialResolutionError);
+    expect((caught as { cause?: unknown }).cause).toBeUndefined();
+  });
+
+  test("a typed store failure keeps its code", async () => {
+    const store: CredentialStore = {
+      async get() {
+        return null;
+      },
+      async set() {
+        throw new CredentialResolutionError("unsupported", "this store does not persist");
+      },
+      async delete() {},
+    };
+    await expect(storeProviderCredential(store, { providerId: "openai", accountId: "work", material: apiKey() })).rejects.toMatchObject({ code: "unsupported" });
+  });
+
+  test("the leak detector is REAL: the raw store error does contain the secret", async () => {
+    // A negative-only assertion passes just as happily when the fixture stopped leaking.
+    let raw = "";
+    try {
+      await leakyStore().set({ kind: "keychain", account: "openai:work" }, apiKey());
+    } catch (err) {
+      raw = (err as Error).message;
+    }
+    expect(raw).toContain(SECRET);
+  });
+});
+
+// -------------------------------------------------------------------------------------------------
+// validateProviderCredential
+// -------------------------------------------------------------------------------------------------
+
+function catalog(models: Array<{ key: string; providerId: string; upstreamId: string; aliases?: string[] }>, providerId = "fake"): WinterCatalog {
+  const provider: WinterProviderDescriptor = {
+    id: providerId,
+    displayName: "Fake",
+    protocols: ["openai-chat-completions"],
+    authKinds: ["api-key"],
+    defaultEndpoints: { chat: "https://fake.invalid/v1/chat/completions" },
+    modelDiscovery: "openai-models",
+    liveCatalogAuthority: "partial",
+    adapterId: "winter.fake",
+    family: "openai",
+    upstream: { project: "winter", commit: "", sourcePaths: [] },
+    risk: { class: "approved", reasons: [] },
+    scope: "llm",
+  };
+  const verified = { source: "official-doc", confidence: "verified" } as const;
+  return {
+    schemaVersion: 1,
+    catalogVersion: "0.0.0-test",
+    upstream: { tag: "", tagObject: "", commit: "", extractorVersion: "", overlayVersion: "" },
+    providers: [provider],
+    models: models.map(
+      (m): WinterModelDescriptor => ({
+        key: m.key,
+        providerId: m.providerId,
+        upstreamId: m.upstreamId,
+        displayName: m.upstreamId,
+        aliases: m.aliases ?? [],
+        endpoints: ["chat"],
+        inputModalities: { value: ["text"], ...verified },
+        outputModalities: { value: ["text"], ...verified },
+        toolCalling: { value: "native", ...verified },
+        nativeTools: { value: true, ...verified },
+        unsupportedParameters: [],
+        status: "candidate",
+      }),
+    ),
+  };
+}
+
+function fakeAdapter(validate: (ref: CredentialRef) => Promise<CredentialStatus>): ProviderAdapter {
+  return {
+    id: "winter.fake",
+    version: "1.0.0",
+    family: "openai",
+    protocol: "openai-chat-completions",
+    validateCredential: (ref) => validate(ref),
+    listModels: async () => ({ models: [], partial: false, cached: false, warnings: [] }),
+    streamTurn: async function* () {},
+    mapEffort: () => ({ ok: true, value: undefined }),
+    capabilities: () => ({ toolCalling: "native", readableState: "none" }),
+  };
+}
+
+function ctxFor(providerId: string): ProviderContext {
+  return { connection: { providerId }, credentials: createMemoryCredentialStore(), authRef: { kind: "none" }, stallTimeoutMs: 1000, log: () => {} };
+}
+
+describe("validateProviderCredential", () => {
+  test("asks the provider's OWN adapter, and hands it the ref verbatim", async () => {
+    const seen: CredentialRef[] = [];
+    const registry = createRegistry(catalog([{ key: "fake/m", providerId: "fake", upstreamId: "m" }]));
+    registry.register(
+      fakeAdapter(async (ref) => {
+        seen.push(ref);
+        return { ok: true, accountId: "acct-1", scopes: ["chat"] };
+      }),
+    );
+    const ref: CredentialRef = { kind: "keychain", account: "fake:work" };
+    expect(await validateProviderCredential(registry, ref, ctxFor("fake"))).toEqual({ ok: true, accountId: "acct-1", scopes: ["chat"] });
+    expect(seen).toEqual([ref]);
+  });
+
+  test("resolves through an ALIAS row without a provider prefix", async () => {
+    // `listModelInfo` emits alias rows whose `value` is a bare alias -- resolvable only inside a
+    // named provider's namespace. A lookup that forgot to name the provider would fall through
+    // every row and report "no model resolves", which is why this case has its own fixture.
+    const registry = createRegistry(catalog([{ key: "fake/m", providerId: "fake", upstreamId: "m", aliases: ["speedy"] }]));
+    let asked = 0;
+    registry.register(
+      fakeAdapter(async () => {
+        asked++;
+        return { ok: true };
+      }),
+    );
+    expect((await validateProviderCredential(registry, { kind: "env", name: "K" }, ctxFor("fake"))).ok).toBe(true);
+    expect(asked).toBe(1);
+  });
+
+  test("`none` is answered here: there is nothing to check, and no live request is made", async () => {
+    const registry = createRegistry(catalog([{ key: "fake/m", providerId: "fake", upstreamId: "m" }]));
+    let asked = 0;
+    registry.register(
+      fakeAdapter(async () => {
+        asked++;
+        return { ok: true };
+      }),
+    );
+    expect(await validateProviderCredential(registry, { kind: "none" }, ctxFor("fake"))).toEqual({ ok: false, code: "missing", message: 'no credential reference is configured for provider "fake"' });
+    expect(asked).toBe(0);
+  });
+
+  test("a provider with no catalog rows is ANSWERED, never thrown", async () => {
+    const registry = createRegistry(catalog([{ key: "fake/m", providerId: "fake", upstreamId: "m" }]));
+    registry.register(fakeAdapter(async () => ({ ok: true })));
+    const status = await validateProviderCredential(registry, { kind: "env", name: "K" }, ctxFor("nobody"));
+    expect(status).toEqual({ ok: false, code: "unsupported", message: 'provider "nobody" has no models in this build\'s catalog, so no adapter can be reached to check env(K)' });
+  });
+
+  test("a provider whose adapter is not registered is answered, not thrown", async () => {
+    const registry = createRegistry(catalog([{ key: "fake/m", providerId: "fake", upstreamId: "m" }]));
+    const status = await validateProviderCredential(registry, { kind: "env", name: "K" }, ctxFor("fake"));
+    expect(status.ok).toBe(false);
+    expect((status as { code: string }).code).toBe("unsupported");
+    expect((status as { message: string }).message).toContain("no-adapter");
+  });
+
+  test("an adapter that THROWS reports UNVERIFIED, never `invalid` -- a bug is not evidence the key is bad", async () => {
+    const registry = createRegistry(catalog([{ key: "fake/m", providerId: "fake", upstreamId: "m" }]));
+    registry.register(
+      fakeAdapter(async () => {
+        throw new TypeError(`cannot read properties of undefined; Authorization: Bearer ${SECRET}`);
+      }),
+    );
+    const status = await validateProviderCredential(registry, { kind: "inline", value: SECRET }, ctxFor("fake"));
+    expect(status.ok).toBe(false);
+    expect((status as { code: string }).code).toBe("unsupported");
+    const message = (status as { message: string }).message;
+    expect(message).toContain("UNVERIFIED");
+    expect(message).toContain("TypeError");
+    // The ref is rendered redacted -- `inline` is the one arm carrying live material.
+    expect(message).toContain("inline(***)");
+    expect(message).not.toContain(SECRET);
+  });
+
+  test("a typed credential failure maps onto the status vocabulary", async () => {
+    const registry = createRegistry(catalog([{ key: "fake/m", providerId: "fake", upstreamId: "m" }]));
+    const cases: Array<{ code: "malformed" | "io" | "unsupported"; expect: string }> = [
+      { code: "malformed", expect: "invalid" },
+      { code: "io", expect: "network" },
+      { code: "unsupported", expect: "unsupported" },
+    ];
+    for (const c of cases) {
+      const registry2 = createRegistry(catalog([{ key: "fake/m", providerId: "fake", upstreamId: "m" }]));
+      registry2.register(
+        fakeAdapter(async () => {
+          throw new CredentialResolutionError(c.code, `boom with ${SECRET}`);
+        }),
+      );
+      const status = await validateProviderCredential(registry2, { kind: "env", name: "K" }, ctxFor("fake"));
+      expect((status as { code: string }).code).toBe(c.expect);
+      expect((status as { message: string }).message).not.toContain(SECRET);
+    }
+    void registry;
+  });
+
+  test("never throws, whatever the adapter does", async () => {
+    for (const thrown of [new Error("x"), "a string", null, undefined, { weird: true }]) {
+      const registry = createRegistry(catalog([{ key: "fake/m", providerId: "fake", upstreamId: "m" }]));
+      registry.register(
+        fakeAdapter(async () => {
+          throw thrown;
+        }),
+      );
+      const status = await validateProviderCredential(registry, { kind: "env", name: "K" }, ctxFor("fake"));
+      expect(status.ok).toBe(false);
+    }
+  });
+});
