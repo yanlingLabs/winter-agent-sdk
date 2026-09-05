@@ -1792,6 +1792,34 @@ function registerEquivalenceScenarios(legA: LegName, legB: LegName): void {
   // wrong answer, which is exactly the failure mode the P4 fix wave's own note about `capabilities`
   // records.
 
+  test("P5 assembler round: Lane C's assembled prompt is on the LIVE request, identically on both legs", async () => {
+    // GROUND TRUTH IS THE LIVE REQUEST (the phase's Global Constraints, and `context/seam.ts`'s own
+    // header): an assembler that returns the right string and an engine that drops it look identical
+    // from the assembler's own tests. `assembler.test.ts` proves the single-process half; what only a
+    // cross-leg run can prove is that a REAL spawned/compiled `winter` composes the same prompt --
+    // the wiring is registered from one shared function precisely so it cannot differ, and this is
+    // the assertion that would catch it if it did.
+    //
+    // Read through `echoProvider`, which echoes the live request's LAST USER MESSAGE -- so the
+    // user-context half (R5-9's "always injected as user-context") is directly observable on the
+    // wire. The `system` half is not, by design: it never appears in a host-facing frame.
+    const a = await traceViaQuery(legA, { prompt: "assembled" });
+    const b = await traceViaQuery(legB, { prompt: "assembled" });
+    expect(compareTraces(a.trace, b.trace)).toEqual([]);
+
+    const text = ((a.trace.find((e) => e.kind === "assistant")!.payload as { message: { content: Array<{ text: string }> } }).message.content[0]!).text;
+    // The auto-memory block is default-on (P5-G's companion: `autoMemoryEnabled` unset means
+    // enabled), so a default session's live request carries exactly one user-context block ahead of
+    // the prompt -- and the prompt is still last.
+    expect(text).toContain("<system-reminder>");
+    expect(text).toContain("Auto-memory (injected by the runtime, not typed by the user):");
+    expect(text.endsWith("\n\nassembled")).toBe(true);
+    // AND IT IS NOT PERSISTED OR REPEATED: the block is re-attached per request, never pushed into
+    // the engine's own history, so it appears exactly once even though the assembler ran once per
+    // envelope.
+    expect(text.split("<system-reminder>").length - 1).toBe(1);
+  }, 30_000);
+
   test("P5 compaction round (auto): a threshold crossing produces ONE compact_boundary on both legs", async () => {
     // FIVE envelopes, not three. `retainedPairs` defaults to 4 and is NOT a `RuntimeConfig` field,
     // so a scenario cannot lower it: with fewer turn starts than `pairs`, Lane K's controller
