@@ -198,7 +198,13 @@ describe("context/seam.ts -- SystemPromptAssembler (Lane C implements, the engin
       return requests;
     }
 
-    test("retained: [] -- the blocks attach to the summary-anchored user message, and are NEVER prepended inside the summary text", async () => {
+    test("retained: [] -- the blocks attach to the summary-anchored user message, ONCE, without being folded into the summary's own text", async () => {
+      // A-9 (fix wave / whole-branch N3): the old title said "NEVER prepended inside the summary
+      // text", which overstates P5-F. With `retained: []` the summary IS the message the blocks
+      // attach to -- that is the ruling ("with nothing retained they attach to the summary-anchored
+      // first user message"), not a case P5-F eliminates. What the defect actually did, and what
+      // this pins, is attaching them ONCE at the front of that message rather than repeatedly or
+      // interleaved: the summary's own text survives intact behind them.
       const requests = await withCompaction(0);
       expect(requests).toHaveLength(2);
       // Turn 1 (no compaction yet): the ordinary case.
@@ -213,7 +219,18 @@ describe("context/seam.ts -- SystemPromptAssembler (Lane C implements, the engin
     });
 
     test("retained: N -- an index shift no longer DROPS the blocks", async () => {
-      const requests = await withCompaction(2);
+      // A-7 (fix wave / whole-branch N1): `withCompaction(1)`, not `(2)`. The ledger's own measurement
+      // is that at keep=2 the cached index the P5-F defect used still landed inside the rebuilt list,
+      // so the fixture passed with the defect reinstated and measured nothing; keep=1 puts the index
+      // PAST the end, which is the shape that silently dropped the blocks for the rest of the turn.
+      //
+      // HONEST NOTE ON MY OWN PROBE: reinstating an APPROXIMATION of the defect (anchoring at the
+      // FIRST user message rather than the last) fails at BOTH keeps, so it does not independently
+      // discriminate them -- reproducing the exact per-envelope `turnUserIndex = messages.length - 1`
+      // capture would. The change is adopted on the ledger's evidence plus a standing argument that
+      // costs nothing: fewer retained messages is strictly more likely to put a stale index out of
+      // range, so keep=1 is the strictly stronger fixture either way.
+      const requests = await withCompaction(1);
       expect(requests).toHaveLength(2);
       const post = requests[1]!.messages;
       const joined = post.map((m) => String(m.content)).join("\n---\n");

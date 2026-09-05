@@ -153,7 +153,26 @@ export function buildHookEntriesFromSettings(perSource: readonly SettingsHookSou
         }
         const matcher = typeof group["matcher"] === "string" ? group["matcher"] : undefined;
         groupHooks.forEach((handler, hookIndex) => {
-          if (!isPlainObject(handler) || typeof handler["command"] !== "string" || handler["command"].length === 0) {
+          if (!isPlainObject(handler)) {
+            rejected.push({ ...where, event, reason: `hook ${groupIndex}:${hookIndex} is not an object` });
+            return;
+          }
+          // Phase 5 fix wave, A-3: `handler.type` is VALIDATED. It was read nowhere -- so a block
+          // declaring `{ type: "sdk", command: "..." }`, or any other type a newer engine might
+          // define, was silently loaded AS A COMMAND HOOK and executed. That is the dangerous
+          // direction of "accepted, preserved, inert": a settings file asking for something this
+          // engine does not implement got something else instead, with a shell behind it.
+          //
+          // REPORTED AND SKIPPED, never thrown, matching every other rejection here: one unknown
+          // handler must not cost a user the rest of their hooks. An ABSENT `type` is accepted --
+          // `{type:"command"}` is the only shape the pin documents for a settings block, so omitting
+          // it is an abbreviation of the one legal value rather than a request for something else.
+          const declaredType = handler["type"];
+          if (declaredType !== undefined && declaredType !== "command") {
+            rejected.push({ ...where, event, reason: `hook ${groupIndex}:${hookIndex} declares type ${JSON.stringify(declaredType)}; only "command" is supported in a settings hook block` });
+            return;
+          }
+          if (typeof handler["command"] !== "string" || handler["command"].length === 0) {
             rejected.push({ ...where, event, reason: `hook ${groupIndex}:${hookIndex} is not a { type: "command", command } handler` });
             return;
           }

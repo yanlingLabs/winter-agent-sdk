@@ -172,7 +172,6 @@
       "compact_metadata": {
         "trigger": "auto",
         "pre_tokens": 950,
-        "post_tokens": 950,
         "preserved_messages": {
           "anchor_uuid": "ANCHOR",
           "uuids": [

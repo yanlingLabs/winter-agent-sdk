@@ -166,3 +166,40 @@ describe("rider 19: plugin hooks are sourced `plugin`, rank last, and survive an
     expect(registry.matching("PreToolUse", "Bash").length).toBe(1);
   });
 });
+
+// ================================================================================================
+// Phase 5 fix wave, A-2 + A-3 — two silent settings-file acceptances.
+// ================================================================================================
+describe("A-3: a settings hook block's `handler.type` is validated", () => {
+  test("an UNKNOWN type is reported and SKIPPED -- it is no longer loaded as a command hook and run", () => {
+    // The dangerous direction of "accepted, preserved, inert": `type` was read nowhere, so a block
+    // asking for something this engine does not implement got a SHELL COMMAND instead.
+    const built = buildHookEntriesFromSettings([
+      { source: "user", path: "/synthetic/settings.json", settings: { hooks: { PreToolUse: [{ hooks: [{ type: "webhook", command: "curl https://evil.example" }] }] } } },
+    ]);
+    expect(built.entries.length).toBe(0);
+    expect(built.rejected.length).toBe(1);
+    expect(built.rejected[0]!.reason).toContain('"webhook"');
+  });
+
+  test('an explicit `type: "command"` still loads', () => {
+    const built = buildHookEntriesFromSettings([
+      { source: "user", settings: { hooks: { PreToolUse: [{ hooks: [{ type: "command", command: "echo hi" }] }] } } },
+    ]);
+    expect(built.entries.length).toBe(1);
+    expect(built.entries[0]!.command).toBe("echo hi");
+  });
+
+  test("an ABSENT `type` still loads -- omitting the one legal value is an abbreviation, not a request for something else", () => {
+    const built = buildHookEntriesFromSettings([{ source: "user", settings: { hooks: { PreToolUse: [{ hooks: [{ command: "echo hi" }] }] } } }]);
+    expect(built.entries.length).toBe(1);
+  });
+
+  test("one bad handler does not cost the user the rest of the block", () => {
+    const built = buildHookEntriesFromSettings([
+      { source: "user", settings: { hooks: { PreToolUse: [{ hooks: [{ type: "webhook", command: "a" }, { type: "command", command: "b" }] }] } } },
+    ]);
+    expect(built.entries.map((e) => e.command)).toEqual(["b"]);
+    expect(built.rejected.length).toBe(1);
+  });
+});

@@ -172,7 +172,18 @@ export interface ResolvedSettings {
 export interface ResolveSettingsOptions {
   cwd?: string;
   settingSources?: SettingSource[];
-  /** Programmatic policy tier. Pinned doc `2018-2040`: filtered restrictive-only. */
+  /**
+   * Programmatic policy tier. The pinned doc (`2018-2040`) says the pinned runtime filters this tier
+   * RESTRICTIVE-ONLY.
+   *
+   * WINTER DOES NOT APPLY THAT FILTER (Phase 5 fix wave, A-4 -- said plainly here, where the old
+   * one-liner quoted the pin's behaviour in a way a reader could take for Winter's). A managed tier
+   * is merged like any other, at the top of the precedence order, so a managed PERMISSIVE rule
+   * widens where the pin would drop it. That is a DISCLOSED DIVERGENCE, not an oversight: the pinned
+   * filter's exact rule is not stated anywhere in scope, no capture exercised it, and inventing one
+   * would be Winter guessing at a security-relevant transformation. The direction of the divergence
+   * is the permissive one, which is why it is disclosed here rather than buried in a report.
+   */
   managedSettings?: Settings;
   /** Remote policy payload -- pinned doc `2838-2839`: explicitly UNfiltered where `managedSettings` is filtered. */
   serverManagedSettings?: Settings;

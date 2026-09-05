@@ -149,7 +149,7 @@ describe("compaction -- resume across a compaction (R5-4 / WS-11 §7)", () => {
   // message (never `keep: 0`), which is what makes `preserved_messages` non-empty and therefore
   // present at all.
   // ================================================================================================
-  test("the emitted compact_boundary frame carries preserved_messages and post_tokens", async () => {
+  test("the emitted compact_boundary frame carries preserved_messages, and OMITS post_tokens (A-8)", async () => {
     const home = mkdtempSync(join(tmpdir(), "winter-lane-k-resume-"));
     try {
       const cwd = join(home, "work");
@@ -188,9 +188,13 @@ describe("compaction -- resume across a compaction (R5-4 / WS-11 §7)", () => {
       const persisted = raw.find((e) => e.type === "compact_boundary") as unknown as { compact_metadata: { preserved_messages?: { anchor_uuid: string; uuids: string[] } } };
       expect(boundary.compact_metadata.preserved_messages).toEqual(persisted.compact_metadata.preserved_messages!);
       expect(boundary.compact_metadata.preserved_messages!.uuids).toHaveLength(live.retained.length);
-      // `post_tokens` is the accountant's reading AFTER the swap, so it is a real number rather than
-      // the dead field it is today.
-      expect(typeof boundary.compact_metadata.post_tokens).toBe("number");
+      // A-8 (fix wave / whole-branch N2): `post_tokens` is now OMITTED. It used to carry
+      // `contextTokens()`, which after the rebuild is still the PRE-compaction reading (the
+      // accountant records the last GENERATION's usage, and no generation has run since the swap),
+      // so the field asserted `pre == post` -- "compaction freed nothing" -- on every successful
+      // compaction. Absence is the honest form of unknown, and the field is optional on the pin
+      // precisely so it can be. A real count needs WS-13's token counter over the rebuilt list.
+      expect("post_tokens" in boundary.compact_metadata).toBe(false);
     } finally {
       rmSync(home, { recursive: true, force: true });
     }

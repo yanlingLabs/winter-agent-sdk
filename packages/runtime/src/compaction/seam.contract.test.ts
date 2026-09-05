@@ -275,7 +275,7 @@ describe("compaction/seam.ts -- CompactionController (Lane K implements, the eng
   // Fix round 1 (M3). `recordCompactBoundary` returned `void`, so the emitted frame could never carry
   // `preserved_messages` -- a host reading the STREAM could not relink a preserved segment even
   // though the durable entry recorded it correctly -- and `post_tokens` was declared and never set.
-  test("M3: with keep > 0 the emitted frame carries preserved_messages and post_tokens, matching the durable entry", async () => {
+  test("M3: with keep > 0 the emitted frame carries preserved_messages, matching the durable entry -- and OMITS post_tokens (A-8)", async () => {
     const home = mkdtempSync(join(tmpdir(), "winter-compact-m3-"));
     try {
       const cwd = join(home, "work");
@@ -303,7 +303,13 @@ describe("compaction/seam.ts -- CompactionController (Lane K implements, the eng
       };
       expect(boundary.compact_metadata.preserved_messages).toBeDefined();
       expect(boundary.compact_metadata.preserved_messages!.uuids).toHaveLength(1);
-      expect(typeof boundary.compact_metadata.post_tokens).toBe("number");
+      // A-8 (fix wave / whole-branch N2): `post_tokens` is now OMITTED. It used to carry
+      // `contextTokens()`, which after the rebuild is still the PRE-compaction reading (the
+      // accountant records the last GENERATION's usage, and no generation has run since the swap),
+      // so the field asserted `pre == post` -- "compaction freed nothing" -- on every successful
+      // compaction. Absence is the honest form of unknown, and the field is optional on the pin
+      // precisely so it can be. A real count needs WS-13's token counter over the rebuilt list.
+      expect("post_tokens" in boundary.compact_metadata).toBe(false);
 
       // The frame and the DURABLE entry name the same uuids and the same boundary -- the two views
       // must agree, or a host that relinks from the stream and one that relinks from the transcript

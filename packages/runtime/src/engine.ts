@@ -3015,10 +3015,15 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
     // correctly. OMITTED when nothing was preserved: absence is semantic on the pin ("compaction
     // summarized everything"), so an empty `uuids: []` would assert something different.
     //
-    // `post_tokens` is the accountant's reading AFTER the rebuild. It is the same value as
-    // `pre_tokens` until the next generation reports usage -- the accountant is a last-turn reading,
-    // not a live count of `messages` -- which is honest rather than a fabricated post-compaction
-    // estimate the engine has no way to compute.
+    // `post_tokens` IS OMITTED (Phase 5 fix wave, A-8 / whole-branch N2). It used to carry
+    // `contextAccountant.contextTokens()`, which after the rebuild is still the PRE-compaction
+    // reading -- the accountant records the last GENERATION's usage, not a live count of `messages`,
+    // and no generation has run since the swap. So the field asserted `pre == post`: "compaction
+    // freed nothing", on every successful compaction.
+    //
+    // ABSENCE IS THE HONEST FORM OF UNKNOWN, and the field is optional on the pin precisely so it
+    // can be. A real post-compaction count needs a token counter over the rebuilt message list,
+    // which is WS-13's provider layer -- carried, not faked.
     output.write({
       type: "data",
       message: {
@@ -3027,7 +3032,6 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
         compact_metadata: {
           trigger,
           pre_tokens: result.preTokens,
-          post_tokens: contextAccountant.contextTokens(),
           duration_ms: Date.now() - startedAt,
           ...(boundaryWrite !== undefined && boundaryWrite.preservedUuids.length > 0
             ? { preserved_messages: { anchor_uuid: boundaryWrite.anchorUuid, uuids: boundaryWrite.preservedUuids } }
