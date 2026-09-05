@@ -287,7 +287,17 @@ export function buildUpstreamLayer(input: BuildUpstreamLayerInput): UpstreamLaye
   const models: WinterModelDescriptor[] = [];
 
   const allowedByUpstreamId = new Map(allowlist.providers.map((p) => [p.upstreamId, p]));
-  const hardBlocked = new Map(allowlist.blocked.filter((b) => b.upstreamId !== "*").map((b) => [b.upstreamId, b.reason]));
+  // A `"*"` sentinel is REFUSED, not filtered. One sat here restating WS-13 §5/§6's categorical
+  // exclusions and was quietly dropped — documentation wearing the shape of a rule, which is the
+  // worst of both: a reader believes a wildcard block exists and nothing enforces one. Those
+  // exclusions live in `categoryDispositions`, which fails the run in both directions.
+  const wildcard = allowlist.blocked.find((b) => b.upstreamId === "*");
+  if (wildcard !== undefined) {
+    throw new ExtractionRefusal(
+      `allowlist.blocked contains a "*" wildcard. This list names INDIVIDUAL upstream ids and nothing here implements a wildcard, so the entry would be silently ignored. The categorical exclusions it is reaching for are enforced by \`categoryDispositions\`, which fails the run both ways; move the text to \`notes\`. Reason given: ${JSON.stringify(wildcard.reason)}`,
+    );
+  }
+  const hardBlocked = new Map(allowlist.blocked.map((b) => [b.upstreamId, b.reason]));
 
   const reject = (upstreamId: string, scope: LedgerRejection["scope"], exclusionClass: ExclusionClass, path: string, sourcePath: string, reason: string): void => {
     rejections.push({ upstreamId, scope, exclusionClass, path, sourcePath, reason });
@@ -464,7 +474,7 @@ export function buildUpstreamLayer(input: BuildUpstreamLayerInput): UpstreamLaye
     const transport = str(entry, "reasoningTransport");
     const seen = new Set<string>();
 
-    for (const raw of rawModels) {
+    for (const [modelIndex, raw] of rawModels.entries()) {
       if (!isRecord(raw)) {
         reject(allowed.upstreamId, "model", "unsupported-shape", `${allowed.upstreamId}.models[?]`, registryPath, "a model entry that is not an object literal");
         continue;
@@ -551,7 +561,7 @@ export function buildUpstreamLayer(input: BuildUpstreamLayerInput): UpstreamLaye
       // evaluates — so an empty list can mean "upstream says none" OR "we could not read it", and
       // the two must not look alike. Every unreadable one gets a ledger row.
       const unsupportedParameters = strArray(raw, "unsupportedParams") ?? [];
-      if (raw["unsupportedParams"] === undefined && rawHasUnreadableUnsupportedParams(input.moduleRejections, registryPath, id)) {
+      if (raw["unsupportedParams"] === undefined && rawHasUnreadableUnsupportedParams(input.moduleRejections, registryPath, modelIndex)) {
         reject(allowed.upstreamId, "model", "unresolved-reference", `${allowed.upstreamId}.models[${id}].unsupportedParams`, registryPath, "upstream states unsupported parameters for this model, but as a value the literal extractor refuses (a call expression, or an identifier resolving to one). The row ships with an EMPTY `unsupportedParameters`, which fails OPEN: Winter will not pre-reject a parameter the provider does reject, and the provider's own error is the backstop. Correct it in the overlay with real evidence if the model matters.");
       }
       // A corrected id keeps the upstream spelling as an ALIAS, so both resolve to the corrected wire id.
@@ -634,14 +644,24 @@ export function buildUpstreamLayer(input: BuildUpstreamLayerInput): UpstreamLaye
 }
 
 /**
- * Did the extractor REFUSE this model's `unsupportedParams`, as opposed to upstream not stating any?
+ * Did the extractor REFUSE **this** model's `unsupportedParams`, as opposed to upstream not stating any?
  *
- * The two produce the same empty array, and only one of them is a gap. The field rejections the
- * extractor already emitted are the evidence, matched by source path and the model's position in the
- * rejection path (`…models[17].unsupportedParams`) or by the model id where the walker recorded it.
+ * The two produce the same empty array and only one is a gap, so the answer has to be per-MODEL —
+ * and the first version of this was not. It matched `path.includes("models[")`, which is true for
+ * every model in a file where ANY model had a refused field: three genuinely refused rows in
+ * `openai/index.ts` produced nineteen ledger entries, sixteen of them asserting a refusal that never
+ * happened. That is worse than a missing entry. A ledger whose job is "every place the catalog and
+ * its source differ, with the reason" is read as evidence, so a false row is a false claim — the
+ * same defect class as the `outputModalities` stamp this round's I3 fixed, reintroduced by the fix
+ * for its sibling.
+ *
+ * The walker records ARRAY-INDEX paths (`openaiProvider.models[17].unsupportedParams`) — it has no
+ * notion of a model id — so the index is the only thing the two sides genuinely share. Matching it
+ * exactly is what makes this answer about one model rather than one file.
  */
-function rawHasUnreadableUnsupportedParams(rejections: readonly Rejection[], sourcePath: string, modelId: string): boolean {
-  return rejections.some((r) => r.sourcePath === sourcePath && r.path.endsWith(".unsupportedParams") && (r.path.includes(`[${modelId}]`) || r.path.includes("models[")));
+function rawHasUnreadableUnsupportedParams(rejections: readonly Rejection[], sourcePath: string, modelIndex: number): boolean {
+  const suffix = `models[${modelIndex}].unsupportedParams`;
+  return rejections.some((r) => r.sourcePath === sourcePath && r.path.endsWith(suffix));
 }
 
 function safeUrl(value: string): URL | undefined {

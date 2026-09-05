@@ -27,7 +27,8 @@
   ],
 
   "providers": [
-    { "upstreamId": "openai", "winterId": "openai", "expectedCategory": "apikey", "risk": { "class": "approved", "reasons": [] } },
+    { "upstreamId": "openai", "winterId": "openai", "expectedCategory": "apikey", "adapterIdOverride": "winter.openai-responses", "risk": { "class": "approved", "reasons": [] },
+      "$comment": "`adapterIdOverride` because upstream's `format: \"openai\"` names its own DEFAULT execution path (Chat Completions), not the surface Winter drives. Six of upstream's own openai rows carry `targetFormat: \"openai-responses\"` — the *-pro and GPT-5.6 families are responses-ONLY, and upstream says so per model while its provider-level `format` does not — so deriving the adapter from `format` produced responses-only rows under a Chat Completions adapter. The overlay row has said `winter.openai-responses` since the seed, which is exactly what hid it: the merged catalog was consistent while the layer `--offline` validates STANDALONE was not. Found by extending that gate to the standalone layer (review r2 minor 5), which is the same shadow class as the Vertex adapter misroute." },
     { "upstreamId": "anthropic", "winterId": "anthropic", "expectedCategory": "apikey", "risk": { "class": "approved", "reasons": [] } },
     { "upstreamId": "gemini", "winterId": "google", "expectedCategory": "apikey", "risk": { "class": "approved", "reasons": [] },
       "$comment": "The upstream id is `gemini`, not `google` — allowlistVersion 1 named `google` on both sides, which matched no upstream row at v3.8.50 and would have silently produced no google extraction at all. `winterId` stays `google` because WS-13 §12 and every seeded row use it." },

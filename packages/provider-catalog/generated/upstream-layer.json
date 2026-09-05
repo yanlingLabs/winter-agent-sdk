@@ -137,7 +137,7 @@
       },
       "modelDiscovery": "none",
       "liveCatalogAuthority": "unknown",
-      "adapterId": "winter.openai-chat-completions",
+      "adapterId": "winter.openai-responses",
       "family": "openai",
       "upstream": {
         "project": "OmniRoute",
@@ -6989,131 +6989,11 @@
     },
     {
       "upstreamId": "openai",
-      "scope": "model",
-      "exclusionClass": "unresolved-reference",
-      "path": "openai.models[gpt-4.1-mini].unsupportedParams",
+      "scope": "field",
+      "exclusionClass": "reviewed-normalization",
+      "path": "openai.executor",
       "sourcePath": "open-sse/config/providers/registry/openai/index.ts",
-      "reason": "upstream states unsupported parameters for this model, but as a value the literal extractor refuses (a call expression, or an identifier resolving to one). The row ships with an EMPTY `unsupportedParameters`, which fails OPEN: Winter will not pre-reject a parameter the provider does reject, and the provider's own error is the backstop. Correct it in the overlay with real evidence if the model matters."
-    },
-    {
-      "upstreamId": "openai",
-      "scope": "model",
-      "exclusionClass": "unresolved-reference",
-      "path": "openai.models[gpt-4.1-nano].unsupportedParams",
-      "sourcePath": "open-sse/config/providers/registry/openai/index.ts",
-      "reason": "upstream states unsupported parameters for this model, but as a value the literal extractor refuses (a call expression, or an identifier resolving to one). The row ships with an EMPTY `unsupportedParameters`, which fails OPEN: Winter will not pre-reject a parameter the provider does reject, and the provider's own error is the backstop. Correct it in the overlay with real evidence if the model matters."
-    },
-    {
-      "upstreamId": "openai",
-      "scope": "model",
-      "exclusionClass": "unresolved-reference",
-      "path": "openai.models[gpt-4.1].unsupportedParams",
-      "sourcePath": "open-sse/config/providers/registry/openai/index.ts",
-      "reason": "upstream states unsupported parameters for this model, but as a value the literal extractor refuses (a call expression, or an identifier resolving to one). The row ships with an EMPTY `unsupportedParameters`, which fails OPEN: Winter will not pre-reject a parameter the provider does reject, and the provider's own error is the backstop. Correct it in the overlay with real evidence if the model matters."
-    },
-    {
-      "upstreamId": "openai",
-      "scope": "model",
-      "exclusionClass": "unresolved-reference",
-      "path": "openai.models[gpt-4o-2024-11-20].unsupportedParams",
-      "sourcePath": "open-sse/config/providers/registry/openai/index.ts",
-      "reason": "upstream states unsupported parameters for this model, but as a value the literal extractor refuses (a call expression, or an identifier resolving to one). The row ships with an EMPTY `unsupportedParameters`, which fails OPEN: Winter will not pre-reject a parameter the provider does reject, and the provider's own error is the backstop. Correct it in the overlay with real evidence if the model matters."
-    },
-    {
-      "upstreamId": "openai",
-      "scope": "model",
-      "exclusionClass": "unresolved-reference",
-      "path": "openai.models[gpt-4o-mini].unsupportedParams",
-      "sourcePath": "open-sse/config/providers/registry/openai/index.ts",
-      "reason": "upstream states unsupported parameters for this model, but as a value the literal extractor refuses (a call expression, or an identifier resolving to one). The row ships with an EMPTY `unsupportedParameters`, which fails OPEN: Winter will not pre-reject a parameter the provider does reject, and the provider's own error is the backstop. Correct it in the overlay with real evidence if the model matters."
-    },
-    {
-      "upstreamId": "openai",
-      "scope": "model",
-      "exclusionClass": "unresolved-reference",
-      "path": "openai.models[gpt-4o].unsupportedParams",
-      "sourcePath": "open-sse/config/providers/registry/openai/index.ts",
-      "reason": "upstream states unsupported parameters for this model, but as a value the literal extractor refuses (a call expression, or an identifier resolving to one). The row ships with an EMPTY `unsupportedParameters`, which fails OPEN: Winter will not pre-reject a parameter the provider does reject, and the provider's own error is the backstop. Correct it in the overlay with real evidence if the model matters."
-    },
-    {
-      "upstreamId": "openai",
-      "scope": "model",
-      "exclusionClass": "unresolved-reference",
-      "path": "openai.models[gpt-5.4-mini].unsupportedParams",
-      "sourcePath": "open-sse/config/providers/registry/openai/index.ts",
-      "reason": "upstream states unsupported parameters for this model, but as a value the literal extractor refuses (a call expression, or an identifier resolving to one). The row ships with an EMPTY `unsupportedParameters`, which fails OPEN: Winter will not pre-reject a parameter the provider does reject, and the provider's own error is the backstop. Correct it in the overlay with real evidence if the model matters."
-    },
-    {
-      "upstreamId": "openai",
-      "scope": "model",
-      "exclusionClass": "unresolved-reference",
-      "path": "openai.models[gpt-5.4-nano].unsupportedParams",
-      "sourcePath": "open-sse/config/providers/registry/openai/index.ts",
-      "reason": "upstream states unsupported parameters for this model, but as a value the literal extractor refuses (a call expression, or an identifier resolving to one). The row ships with an EMPTY `unsupportedParameters`, which fails OPEN: Winter will not pre-reject a parameter the provider does reject, and the provider's own error is the backstop. Correct it in the overlay with real evidence if the model matters."
-    },
-    {
-      "upstreamId": "openai",
-      "scope": "model",
-      "exclusionClass": "unresolved-reference",
-      "path": "openai.models[gpt-5.4-pro].unsupportedParams",
-      "sourcePath": "open-sse/config/providers/registry/openai/index.ts",
-      "reason": "upstream states unsupported parameters for this model, but as a value the literal extractor refuses (a call expression, or an identifier resolving to one). The row ships with an EMPTY `unsupportedParameters`, which fails OPEN: Winter will not pre-reject a parameter the provider does reject, and the provider's own error is the backstop. Correct it in the overlay with real evidence if the model matters."
-    },
-    {
-      "upstreamId": "openai",
-      "scope": "model",
-      "exclusionClass": "unresolved-reference",
-      "path": "openai.models[gpt-5.4].unsupportedParams",
-      "sourcePath": "open-sse/config/providers/registry/openai/index.ts",
-      "reason": "upstream states unsupported parameters for this model, but as a value the literal extractor refuses (a call expression, or an identifier resolving to one). The row ships with an EMPTY `unsupportedParameters`, which fails OPEN: Winter will not pre-reject a parameter the provider does reject, and the provider's own error is the backstop. Correct it in the overlay with real evidence if the model matters."
-    },
-    {
-      "upstreamId": "openai",
-      "scope": "model",
-      "exclusionClass": "unresolved-reference",
-      "path": "openai.models[gpt-5.5-pro].unsupportedParams",
-      "sourcePath": "open-sse/config/providers/registry/openai/index.ts",
-      "reason": "upstream states unsupported parameters for this model, but as a value the literal extractor refuses (a call expression, or an identifier resolving to one). The row ships with an EMPTY `unsupportedParameters`, which fails OPEN: Winter will not pre-reject a parameter the provider does reject, and the provider's own error is the backstop. Correct it in the overlay with real evidence if the model matters."
-    },
-    {
-      "upstreamId": "openai",
-      "scope": "model",
-      "exclusionClass": "unresolved-reference",
-      "path": "openai.models[gpt-5.5].unsupportedParams",
-      "sourcePath": "open-sse/config/providers/registry/openai/index.ts",
-      "reason": "upstream states unsupported parameters for this model, but as a value the literal extractor refuses (a call expression, or an identifier resolving to one). The row ships with an EMPTY `unsupportedParameters`, which fails OPEN: Winter will not pre-reject a parameter the provider does reject, and the provider's own error is the backstop. Correct it in the overlay with real evidence if the model matters."
-    },
-    {
-      "upstreamId": "openai",
-      "scope": "model",
-      "exclusionClass": "unresolved-reference",
-      "path": "openai.models[gpt-5.6-luna].unsupportedParams",
-      "sourcePath": "open-sse/config/providers/registry/openai/index.ts",
-      "reason": "upstream states unsupported parameters for this model, but as a value the literal extractor refuses (a call expression, or an identifier resolving to one). The row ships with an EMPTY `unsupportedParameters`, which fails OPEN: Winter will not pre-reject a parameter the provider does reject, and the provider's own error is the backstop. Correct it in the overlay with real evidence if the model matters."
-    },
-    {
-      "upstreamId": "openai",
-      "scope": "model",
-      "exclusionClass": "unresolved-reference",
-      "path": "openai.models[gpt-5.6-sol].unsupportedParams",
-      "sourcePath": "open-sse/config/providers/registry/openai/index.ts",
-      "reason": "upstream states unsupported parameters for this model, but as a value the literal extractor refuses (a call expression, or an identifier resolving to one). The row ships with an EMPTY `unsupportedParameters`, which fails OPEN: Winter will not pre-reject a parameter the provider does reject, and the provider's own error is the backstop. Correct it in the overlay with real evidence if the model matters."
-    },
-    {
-      "upstreamId": "openai",
-      "scope": "model",
-      "exclusionClass": "unresolved-reference",
-      "path": "openai.models[gpt-5.6-terra].unsupportedParams",
-      "sourcePath": "open-sse/config/providers/registry/openai/index.ts",
-      "reason": "upstream states unsupported parameters for this model, but as a value the literal extractor refuses (a call expression, or an identifier resolving to one). The row ships with an EMPTY `unsupportedParameters`, which fails OPEN: Winter will not pre-reject a parameter the provider does reject, and the provider's own error is the backstop. Correct it in the overlay with real evidence if the model matters."
-    },
-    {
-      "upstreamId": "openai",
-      "scope": "model",
-      "exclusionClass": "unresolved-reference",
-      "path": "openai.models[gpt-5.6].unsupportedParams",
-      "sourcePath": "open-sse/config/providers/registry/openai/index.ts",
-      "reason": "upstream states unsupported parameters for this model, but as a value the literal extractor refuses (a call expression, or an identifier resolving to one). The row ships with an EMPTY `unsupportedParameters`, which fails OPEN: Winter will not pre-reject a parameter the provider does reject, and the provider's own error is the backstop. Correct it in the overlay with real evidence if the model matters."
+      "reason": "executor \"default\" speaks the openai-chat-completions dialect but is served by a DIFFERENT adapter: Winter records \"winter.openai-responses\" rather than the protocol's default \"winter.openai-chat-completions\". A protocol is not an adapter, and a registry resolves BY ID."
     },
     {
       "upstreamId": "openai",

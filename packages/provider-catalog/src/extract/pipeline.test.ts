@@ -336,6 +336,60 @@ describe("unknown vocabularies FAIL extraction (WS-13 §13)", () => {
     }
   });
 
+  test("an unreadable `unsupportedParams` is recorded for THAT model only — two models, one refusal, one row", () => {
+    // The over-approximation this replaces matched `path.includes("models[")`, which is true for
+    // every model in a file where ANY model had a refused field: three real refusals in
+    // `openai/index.ts` produced NINETEEN ledger rows, sixteen asserting a refusal that never
+    // happened. A ledger is read as evidence, so a false row is a false claim.
+    const sources = [
+      { path: "open-sse/config/providers/shared.ts", text: "export const FROZEN = Object.freeze([\"temperature\"]);" },
+      {
+        path: "open-sse/config/providers/registry/acme/index.ts",
+        text: [
+          'import { FROZEN } from "../../shared.ts";',
+          "export const acmeProvider = {",
+          '  id: "acme", format: "openai", executor: "default", authType: "apikey",',
+          "  models: [",
+          '    { id: "readable", name: "Readable", unsupportedParams: ["top_p"] },',
+          '    { id: "refused", name: "Refused", unsupportedParams: FROZEN },',
+          '    { id: "silent", name: "Silent" },',
+          "  ],",
+          "};",
+        ].join("\n"),
+      },
+      { path: "open-sse/config/providers/index.ts", text: 'import { acmeProvider } from "./registry/acme/index.ts";\nexport const REGISTRY = { acme: acmeProvider };' },
+      ...Object.entries(CATEGORY_FILES).map(([path, text]) => ({ path, text })),
+    ];
+    const { modules } = extractAll(sources);
+    const moduleRejections: Rejection[] = [];
+    for (const module of modules.values()) moduleRejections.push(...module.rejections);
+    const registryLiteral = modules.get("open-sse/config/providers/index.ts")!.values.get("REGISTRY") as Record<string, LiteralValue>;
+    const layer = buildUpstreamLayer({
+      ...buildInput(allowlistWith([ACME_ROW])),
+      registry: new Map(Object.entries(registryLiteral)),
+      moduleRejections,
+    });
+
+    const recorded = layer.rejections.filter((r) => r.scope === "model" && r.path.endsWith(".unsupportedParams"));
+    expect(recorded.map((r) => r.path)).toEqual(["acme.models[refused].unsupportedParams"]);
+    expect(recorded[0]!.exclusionClass).toBe("unresolved-reference");
+    expect(recorded[0]!.reason).toContain("fails OPEN");
+    // The row that STATED a value keeps it; the row that stated nothing is silent in the ledger,
+    // because "upstream says none" and "we could not read it" are exactly what must not look alike.
+    const models = new Map(layer.models.map((m) => [m.key, m]));
+    expect(models.get("acme-winter/readable")!.unsupportedParameters).toEqual(["top_p"]);
+    expect(models.get("acme-winter/refused")!.unsupportedParameters).toEqual([]);
+    expect(models.get("acme-winter/silent")!.unsupportedParameters).toEqual([]);
+  });
+
+  test("a `\"*\"` wildcard in `blocked` is REFUSED, never filtered away", () => {
+    // It was filtered: a reader believed a wildcard block existed and nothing enforced one.
+    const allowlist = allowlistWith([ACME_ROW]);
+    allowlist.blocked = [{ upstreamId: "*", reason: "everything hostile" }];
+    expect(() => buildUpstreamLayer(buildInput(allowlist))).toThrow(/wildcard/);
+    expect(() => buildUpstreamLayer(buildInput(allowlist))).toThrow(/categoryDispositions/);
+  });
+
   test("an identity-critical field the walker could not resolve refuses rather than guessing", () => {
     expect(() =>
       buildUpstreamLayer(buildInput(allowlistWith([ACME_ROW]), { registry: new Map([["acme", { id: "acme", format: "openai", authType: "apikey", models: [] } as LiteralValue]]) })),
@@ -444,10 +498,11 @@ describe("the denominator ledger", () => {
 });
 
 describe("the provenance table is data, not prose", () => {
-  test("every FIELD_PROVENANCE row appears in PROVENANCE.md with the same class", async () => {
-    // The anti-drift property. A hand-written provenance table is exactly the document that goes
-    // stale the first time the mapper changes and nobody notices, and a stale provenance claim is
-    // worse than none.
+  test("every FIELD_PROVENANCE row appears in PROVENANCE.md on the SAME TABLE ROW, with the same class", async () => {
+    // The previous version checked the field name and the class spelling ANYWHERE in the document,
+    // so a twin could class a field one way while the table classed it another and both strings were
+    // still "present". Three rows had drifted exactly that way. Matching per ROW is what makes this
+    // a pin rather than a spell-check.
     const doc = await Bun.file(new URL("../../PROVENANCE.md", import.meta.url)).text();
     const spelling: Record<string, string> = {
       "copied-verbatim": "copied verbatim",
@@ -456,10 +511,18 @@ describe("the provenance table is data, not prose", () => {
       "live-probe-proven": "live-probe proven",
       "local-override": "local override",
     };
-    for (const row of FIELD_PROVENANCE) {
-      const primary = row.field.split(" / ")[0]!;
-      expect(doc).toContain(`\`${primary}\``);
-      expect(doc.toLowerCase()).toContain(spelling[row.provenance]!);
+    const rows = [...doc.matchAll(/^\| (.+?) \| (.+?) \| (.+?) \|$/gm)].map((m) => ({ field: m[1]!.trim(), provenance: m[2]!.trim().toLowerCase() }));
+    expect(rows.length).toBeGreaterThan(15);
+    for (const entry of FIELD_PROVENANCE) {
+      // EVERY half, not just the first. The drift that shipped was a twin classing
+      // `model.inputModalities / outputModalities` together while the doc had split them onto rows
+      // with DIFFERENT classes — invisible to a check that only looked up the primary half.
+      for (const name of entry.field.split(" / ")) {
+        // Full dotted names on both sides, so a half can only match the row that names it.
+        const row = rows.find((r) => r.field.includes(`\`${name}\``));
+        expect([entry.field, name, row !== undefined]).toEqual([entry.field, name, true]);
+        expect([entry.field, name, row!.provenance.includes(spelling[entry.provenance]!)]).toEqual([entry.field, name, true]);
+      }
     }
   });
 

@@ -71,12 +71,12 @@ twin and a test asserts the two agree, so this document cannot drift away from t
 | `provider.upstream.{commit,sourcePaths}` | mechanically normalized | the pinned peeled commit and the paths the row was read from |
 | `model.key` / `model.providerId` | mechanically normalized | `<winterId>/<upstream model id>` (WS-13 §8.3) |
 | `model.upstreamId` | copied verbatim, **except** a reviewed correction | verbatim unless `allowlist.json`'s `modelOverrides` names it (today: OpenRouter's `auto` → `openrouter/auto`). Every correction is a `reviewed-normalization` ledger row, and the upstream spelling survives as an alias |
-| `model.displayName` / `aliases` | copied verbatim | a duplicate id is dropped **and recorded**, never silently de-duplicated |
+| `model.displayName` / `model.aliases` | copied verbatim | a duplicate id is dropped **and recorded**, never silently de-duplicated |
 | `model.endpoints` | mechanically normalized | the provider's protocol, or the model's own `targetFormat` when it selects Responses within the same family |
-| `model.contextWindow` / `maxInputTokens` / `maxOutputTokens` | copied verbatim | `contextLength` (falling back to the provider's `defaultContextLength`), `maxInputTokens`, `maxOutputTokens`; non-positive or non-integer values dropped |
+| `model.contextWindow` / `model.maxInputTokens` / `model.maxOutputTokens` | copied verbatim | `contextLength` (falling back to the provider's `defaultContextLength`), `maxInputTokens`, `maxOutputTokens`; non-positive or non-integer values dropped |
 | `model.inputModalities` | mechanically normalized | `text` plus `image`/`audio`/`video` from `supportsVision`/`supportsAudio`/`supportsVideo` |
-| `model.outputModalities` | **Winter default** | upstream declares NO output modality for any model, so `["text"]` is Winter's inference — see "the output-modality stamp" below |
-| `model.toolCalling` / `nativeTools` | mechanically normalized | upstream `toolCalling` → `native`/`none`; **absent → `none` at `confidence: "unknown"`** |
+| `model.outputModalities` | local override (a **Winter default**) | upstream declares NO output modality for any model, so `["text"]` is Winter's inference — see "the output-modality stamp" below |
+| `model.toolCalling` / `model.nativeTools` | mechanically normalized | upstream `toolCalling` → `native`/`none`; **absent → `none` at `confidence: "unknown"`** |
 | `model.reasoning.{supported,efforts,continuation}` | mechanically normalized | `supportsReasoning` / `supportedThinkingEfforts` / the provider's `reasoningTransport`; an unstated transport becomes `none` |
 | `model.unsupportedParameters` | copied verbatim | when it is an accepted literal; `Object.freeze([...])` is a call expression and is rejected |
 | `model.status` | local override | `candidate` by default; `experimental` where the allowlist's reviewed `initialModelStatus` says so (R6-16's native cloud, 4 of 53 extracted rows), overridable per row. Never `supported` — upstream presence promotes nothing |
@@ -109,7 +109,10 @@ because a wrong `native` admits an unproven model to the agent modes; an empty
 400 is the backstop. But an empty list can mean "upstream states none" OR "upstream states some as an
 `Object.freeze([...])` we refuse to evaluate", and the two must not look alike — so every model in
 the second case gets its own `unresolved-reference` ledger row naming the model and the consequence.
-`openai/o3`, `o3-mini` and `o4-mini` are the ones at this pin.
+`openai/o3`, `o3-mini` and `o4-mini` are the ones at this pin — **three** rows, matched by the model's
+ARRAY INDEX. The first version of that correlation matched by file, so a single refused field in
+`openai/index.ts` produced a ledger row for all nineteen of its models: sixteen false claims, in a
+ledger that is read as evidence.
 
 **`Object.freeze([...])` is rejected like any other call.** "Accept a call when its callee looks
 inert" is a rule that decays the first time upstream renames a helper, and the extractor's one
@@ -176,7 +179,7 @@ unfalsifiable against its own source.
 
 ## What was excluded, and why
 
-`generated/rejections.json` carries all **705** rows. The counts below are generated from the ledger
+`generated/rejections.json` carries all **690** rows. The counts below are generated from the ledger
 and pinned by `catalog-integrity.test.ts` → *"PROVENANCE.md's exclusion table matches the ledger,
 row for row"*, because a hand-typed count is the line that goes stale first and nobody notices.
 
@@ -184,7 +187,7 @@ row for row"*, because a hand-typed count is the line that goes stale first and 
 | --- | ---: | --- |
 | `not-allowlisted` | 225 | an api-key provider upstream lists that Winter has not curated (WS-13 §1: presence is never inclusion) |
 | `executable-value` | 116 | functions, arrow functions, `Object.freeze(...)`, `new`, and other calls |
-| `unresolved-reference` | 98 | an identifier whose declaration is outside the allowlist or was itself rejected — including every model whose `unsupportedParams` could not be read (see below) |
+| `unresolved-reference` | 82 | an identifier whose declaration is outside the allowlist or was itself rejected — including the **three** models whose `unsupportedParams` could not be read (see below) |
 | `dynamic-expression` | 51 | template literals with substitutions, property access, computed keys |
 | `category-web-cookie` | 35 | browser-session transports, excluded categorically |
 | `identity-header` | 30 | vendor client-identity headers — never imported |
@@ -196,7 +199,7 @@ row for row"*, because a hand-typed count is the line that goes stale first and 
 | `category-no-auth` | 13 | reject by default (WS-13 §1) |
 | `category-audio` | 12 | not worker-model providers |
 | `unrepresentable-protocol` | 11 | Vertex's `targetFormat: "claude"` rows — see below |
-| **`reviewed-normalization`** | 7 | **NOT an exclusion.** A row that DID ship, carrying a reviewed, recorded deviation from the pinned tree: the OpenRouter wire id, the Bedrock executor's protocol, the Vertex executor's adapter, the four Vertex partner statuses |
+| **`reviewed-normalization`** | 8 | **NOT an exclusion.** A row that DID ship, carrying a reviewed, recorded deviation from the pinned tree: the OpenRouter wire id, the Bedrock executor's protocol, the OpenAI and Vertex adapter overrides, the four Vertex partner statuses |
 | `url-builder` | 4 | executable URL builders (WS-13 §13's security floor names this exactly) |
 | `category-cloud-agent` | 3 | remote agent products |
 | `category-upstream-proxy` | 2 | no proxy-of-proxy layer |
@@ -231,6 +234,14 @@ that id**, so both were live misroutes rather than cosmetic drift:
   to register the local adapter *under the chat adapter's id*, which **shadowed** the real Chat
   Completions adapter for `openai`, `openrouter` and `deepseek`. Lane A can drop the `id:` override
   from its wiring line.
+
+- **`openai` derived `winter.openai-chat-completions`** in the upstream layer, from upstream's
+  provider-level `format: "openai"` — which names OmniRoute's own default execution path, not the
+  surface Winter drives. Six upstream openai rows carry `targetFormat: "openai-responses"` (the
+  `*-pro` and GPT-5.6 families are responses-ONLY), so the layer held responses-only models under a
+  Chat Completions adapter. The overlay row has said `winter.openai-responses` since the seed, and
+  that is precisely what hid it — the merged catalog was consistent while the layer was not. Found
+  by running the cross-layer gate over the STANDALONE layer, the same shadow class as Vertex.
 
 `azure-openai` and `vertex` model rows are `experimental` per R6-16 (native cloud enters as
 experimental, and both adapters are live). `bedrock` rows stay `candidate`: Lane N has not landed an

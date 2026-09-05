@@ -411,15 +411,22 @@ function runOffline(write = false): number {
   // deepseek entry is `format: "openai-responses"`, so its model rows land `endpoints: ["responses"]`
   // beneath an overlay provider that has to say so too, or a responses-only row reaches a Chat
   // Completions adapter.
-  const merged = readJson<{ providers: WinterProviderDescriptor[]; models: WinterModelDescriptor[] }>(OUT_CATALOG);
-  const contradictions = findEndpointContradictions(merged);
-  if (contradictions.length > 0) {
-    console.error(`provider-source-sync: the MERGED catalog contradicts itself ACROSS LAYERS (${contradictions.length}) — the row-level merge's blind spot:`);
-    for (const line of contradictions) console.error(`  - ${line}`);
-    return 1;
+  // BOTH layers, for the reason review round 1's I1 named: an overlay row shadows its upstream twin,
+  // so a defect corrected in the overlay leaves the layer's own copy wrong and unread until the day
+  // the shadow comes off. That is exactly how the Vertex adapter misroute survived a round.
+  for (const [label, document] of [
+    ["the UPSTREAM LAYER, standalone (shadowed rows are still checked)", { providers: layer.providers ?? [], models: layer.models ?? [] }],
+    ["the MERGED catalog", readJson<{ providers: WinterProviderDescriptor[]; models: WinterModelDescriptor[] }>(OUT_CATALOG)],
+  ] as const) {
+    const contradictions = findEndpointContradictions(document);
+    if (contradictions.length > 0) {
+      console.error(`provider-source-sync: ${label} contradicts itself ACROSS LAYERS (${contradictions.length}) — the row-level merge's blind spot:`);
+      for (const line of contradictions) console.error(`  - ${line}`);
+      return 1;
+    }
   }
 
-  console.log(`provider-source-sync${write ? "" : " --offline"}: OK — the committed upstream layer validates standalone (${standalone.providers.length} providers, ${standalone.models.length} models), and the merged catalog is cross-layer consistent`);
+  console.log(`provider-source-sync${write ? "" : " --offline"}: OK — the committed upstream layer validates standalone (${standalone.providers.length} providers, ${standalone.models.length} models), and BOTH layers are cross-layer consistent`);
   return 0;
 }
 

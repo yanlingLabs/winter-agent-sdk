@@ -6,6 +6,7 @@ import rejectionsLedger from "../../generated/rejections.json" with { type: "jso
 import denominator from "../../generated/denominator.json" with { type: "json" };
 import outputPin from "../../UPSTREAM.json" with { type: "json" };
 import type { ExclusionClass } from "./literal-extractor.ts";
+import { ADAPTER_PROTOCOL } from "./merge.ts";
 
 /**
  * The COMMITTED catalog, after Lane X replaced T2's hand-authored seed.
@@ -276,18 +277,48 @@ describe("review round 1 — the three Importants, pinned where they broke", () 
   test("I2: no row is RESPONSES-ONLY under an adapter that speaks Chat Completions", () => {
     // The gate that shipped keyed on `provider.protocols`, which NOTHING reads — so widening the
     // declaration silenced it while two DeepSeek rows still routed onto the Chat adapter.
+    // Reads the REAL `ADAPTER_PROTOCOL` rather than a hand-copied set: a private copy of a relation
+    // is a second place for it to be wrong, and this test's whole job is to notice when it is.
     const byId = new Map(catalog.providers.map((p) => [p.id, p]));
-    const responsesShaped = new Set(["winter.openai-responses", "winter.azure-openai", "winter.codex-oauth"]);
     for (const model of catalog.models) {
       const provider = byId.get(model.providerId)!;
+      const protocol = ADAPTER_PROTOCOL[provider.adapterId];
+      expect([provider.id, protocol]).toEqual([provider.id, protocol]);
+      expect(protocol).toBeDefined();
       const responsesOnly = model.endpoints.includes("responses") && !model.endpoints.includes("chat");
       if (!responsesOnly) continue;
-      expect([model.key, responsesShaped.has(provider.adapterId)]).toEqual([model.key, true]);
+      expect([model.key, protocol === "openai-responses" || protocol === "azure-openai"]).toEqual([model.key, true]);
     }
     // The two rows that were wrong now ship on the surface their capability is documented for.
     for (const key of ["deepseek/deepseek-v4-pro", "deepseek/deepseek-v4-flash"]) {
       expect([key, catalog.models.find((m) => m.key === key)?.endpoints]).toEqual([key, ["chat"]]);
     }
+  });
+
+  test("the UPSTREAM LAYER is cross-layer consistent ON ITS OWN — not only after its overlay shadows it", () => {
+    // The shadow class, twice over. `openai`'s layer row derived the Chat adapter from upstream's
+    // provider-level `format` while six of its own models are responses-ONLY; the overlay had said
+    // `winter.openai-responses` since the seed, so the MERGED catalog was consistent and the layer
+    // was not. Same shape as the Vertex adapter misroute, found the same way.
+    for (const model of upstreamLayer.models) {
+      const provider = upstreamLayer.providers.find((p) => p.id === model.providerId)!;
+      const protocol = ADAPTER_PROTOCOL[provider.adapterId];
+      expect([provider.id, protocol !== undefined]).toEqual([provider.id, true]);
+      if (!model.endpoints.includes("responses") || model.endpoints.includes("chat")) continue;
+      expect([model.key, protocol === "openai-responses" || protocol === "azure-openai"]).toEqual([model.key, true]);
+    }
+    expect(upstreamLayer.providers.find((p) => p.id === "openai")!.adapterId).toBe("winter.openai-responses");
+  });
+
+  test("the `unsupportedParams` ledger names ONLY the models whose field was actually refused", () => {
+    // 19 rows were emitted for openai where 3 models had a refused field — 16 false claims.
+    const rows = (rejectionsLedger.rejections as Array<{ scope: string; path: string }>)
+      .filter((r) => r.scope === "model" && r.path.endsWith(".unsupportedParams"));
+    expect(rows.map((r) => r.path).sort()).toEqual([
+      "openai.models[o3-mini].unsupportedParams",
+      "openai.models[o3].unsupportedParams",
+      "openai.models[o4-mini].unsupportedParams",
+    ]);
   });
 
   test("I3: no TTS/media row is selectable, and the output-modality stamp no longer claims upstream said it", () => {
@@ -320,9 +351,19 @@ describe("review round 1 — the three Importants, pinned where they broke", () 
     // summaries requested from session start.
     for (const model of catalog.models) {
       if (model.reasoning?.readableState?.value !== "summary") continue;
-      expect([model.key, model.reasoning.summaryRequest?.value.field]).toEqual([model.key, model.reasoning.summaryRequest?.value.field]);
-      expect(model.reasoning.summaryRequest).toBeDefined();
-      expect(model.reasoning.summaryRequest!.source).toBe("official-doc");
+      expect([model.key, model.reasoning.summaryRequest !== undefined]).toEqual([model.key, true]);
+      const request = model.reasoning.summaryRequest!;
+      expect(request.source).toBe("official-doc");
+      // The FIELD is the point: a `summaryRequest` whose field names nothing on the model's own wire
+      // is a capability nobody can use, so it is asserted against the family the row actually speaks.
+      const expected: Record<string, string> = {
+        "anthropic-messages": "thinking.display",
+        "openai-responses": "reasoning.summary",
+        "google-generate-content": "thinkingConfig.includeThoughts",
+      };
+      const protocol = ADAPTER_PROTOCOL[catalog.providers.find((p) => p.id === model.providerId)!.adapterId]!;
+      expect([model.key, request.value.field]).toEqual([model.key, expected[protocol] ?? request.value.field]);
+      expect(request.value.values.length).toBeGreaterThan(0);
     }
   });
 
