@@ -97,6 +97,13 @@ export function mapChatMessages(messages: readonly ProviderMessageLike[], replay
     const blocks = asBlocks(message.content);
 
     if (message.role === "tool") {
+      // A `tool` message has no room for prose — its content IS the result, keyed to a call id — so
+      // an annotation on one rides as a leading USER message, exactly as the Responses mapper
+      // flushes it ahead of the `function_call_output`. Before this it was silently dropped on the
+      // chat surface only, which is the worst shape of the same bug minor 11 fixed: present on one
+      // surface, absent on another, with nothing saying so.
+      const toolDecoration = decorationText(message);
+      if (toolDecoration !== undefined) out.push({ role: "user", content: toolDecoration });
       for (const block of blocks) {
         if (block.type === "tool_result") out.push({ role: "tool", tool_call_id: block.tool_use_id, content: toolResultText(block.content) });
       }

@@ -343,6 +343,68 @@ describe("live wire details the corpus does not ask about", () => {
     }
   });
 
+  test("codex: a WINDOWED 429 then a HEADERLESS one both read `rejected` — the second never inherits the spent clock", async () => {
+    // Round 2's Important, on the wire. No shared scenario mixes the two forms, so this one is
+    // scripted here: `Retry-After: 1` (a window the retry then waits out), then a 429 with no
+    // header at all, then success. Before the fix the SECOND event was `{ status: "allowed" }`.
+    const fake = await startCodexFake({
+      scenarios: {
+        [SCENARIO.happy]: (_recorded, attempt) =>
+          attempt === 1
+            ? errorResponse(429, { error: { message: "slow down", code: "rate_limit_exceeded" } }, { "retry-after": "1" })
+            : attempt === 2
+              ? errorResponse(429, { error: { message: "slow down", code: "rate_limit_exceeded" } })
+              : responsesStream({ text: ["recovered"], usage: { input: 1, output: 1 } }),
+      },
+    });
+    try {
+      // A REAL quota clock, deliberately: the finding's precondition is that the first window has
+      // ELAPSED by the time the second refusal lands, and in production `beforeAttempt`'s
+      // `waitIfLimited` guarantees exactly that. With the quota sleep mocked to 1 ms the window is
+      // still live, the second refusal correctly KEEPS it, and the bug is unreachable — a fixture
+      // that mocked it would have passed against the broken code.
+      const events = await drain(codexAdapterFor(fake.url, new QuotaManager()).streamTurn({ model: SCENARIO.happy, messages: [] }, codexContext()));
+      const limits = events.filter((e): e is Extract<ProviderEvent, { type: "rate_limit" }> => e.type === "rate_limit");
+      expect(limits.length).toBeGreaterThanOrEqual(2);
+      expect(limits[0]!.info.status).toBe("rejected");
+      expect(typeof limits[0]!.info.resetsAt).toBe("number");
+      expect(limits[1]!.info.status).toBe("rejected");
+      expect("resetsAt" in limits[1]!.info).toBe(false);
+      // The turn still completes, and the account is reported serving again at the end.
+      expect(events.some((e) => e.type === "done")).toBe(true);
+      expect(limits.at(-1)!.info).toEqual({ status: "allowed" });
+    } finally {
+      await fake.close();
+    }
+  }, 20_000);
+
+  test("a tool-role DECORATION reaches the wire on BOTH surfaces (round 2, minor 2)", async () => {
+    // It was dropped on chat only — the tool branch returned before the renderer — while Responses
+    // flushed it. Present on one surface and absent on the other, with nothing saying so.
+    const marker = "TOOL-ROLE-DECORATION";
+    const history = [
+      { role: "assistant" as const, content: [{ type: "tool_use" as const, id: "call_1", name: "Read", input: {} }] },
+      { role: "tool" as const, content: [{ type: "tool_result" as const, tool_use_id: "call_1", content: "ok" }], decoration: { text: marker, door: "tag" as const } },
+    ];
+    await withResponsesFake(async (fake) => {
+      const adapter = createResponsesAdapter({ generatedBaseUrl: fake.url, retry: FAST_RETRY, descriptors: () => undefined });
+      await drain(adapter.streamTurn({ model: SCENARIO.happy, messages: history }, testContext({ stallTimeoutMs: STALL_MS })));
+      expect(fake.requests.at(-1)!.body).toContain(marker);
+    });
+    await withChatFake(async (fake) => {
+      const adapter = createChatCompletionsAdapter({ generatedBaseUrl: fake.url, retry: FAST_RETRY, descriptors: () => undefined });
+      await drain(adapter.streamTurn({ model: SCENARIO.happy, messages: history }, testContext({ stallTimeoutMs: STALL_MS })));
+      const messages = (JSON.parse(fake.requests.at(-1)!.body) as { messages: Array<Record<string, unknown>> }).messages;
+      // Carried as a leading USER message ahead of the tool result, exactly as Responses flushes it —
+      // a `tool` message's content IS the result, keyed to a call id, with no room for prose.
+      const decorationIndex = messages.findIndex((m) => typeof m.content === "string" && m.content.includes(marker));
+      const resultIndex = messages.findIndex((m) => m.role === "tool");
+      expect(decorationIndex).toBeGreaterThanOrEqual(0);
+      expect(messages[decorationIndex]!.role).toBe("user");
+      expect(decorationIndex).toBeLessThan(resultIndex);
+    });
+  });
+
   test("codex: the recovery `allowed` event fires after an UNMOCKED window wait (I2)", async () => {
     // The quota clock is REAL here — only the retry backoff is mocked. That is the configuration
     // the previous fixture never had, and under it `state()` reads `ok` by the time the turn
@@ -408,8 +470,13 @@ describe("live wire details the corpus does not ask about", () => {
       const adapter = createChatCompletionsAdapter({ generatedBaseUrl: fake.url, retry: FAST_RETRY, descriptors: () => undefined });
       await drain(adapter.streamTurn({ model: SCENARIO.happy, messages: [{ role: "user", content: "q", decoration: { text: marker, door: "thinking-channel" } }] }, testContext({ stallTimeoutMs: STALL_MS })));
       expect(fake.requests.at(-1)!.body).toContain(marker);
-      // Carried PLAINLY, never dressed as the model's own reasoning channel (R6-8).
-      expect(JSON.parse(fake.requests.at(-1)!.body)).not.toHaveProperty("reasoning_content");
+      // Carried PLAINLY, never dressed as the model's own reasoning channel (R6-8). Asserted over
+      // every MESSAGE: `reasoning_content` lives on `messages[i]`, never at the top level, so the
+      // previous top-level check could not have failed and proved nothing.
+      const messages = (JSON.parse(fake.requests.at(-1)!.body) as { messages: Array<Record<string, unknown>> }).messages;
+      expect(messages.length).toBeGreaterThan(0);
+      expect(messages.every((m) => !("reasoning_content" in m))).toBe(true);
+      expect(messages.some((m) => typeof m.content === "string" && m.content.includes(marker))).toBe(true);
     });
   });
 

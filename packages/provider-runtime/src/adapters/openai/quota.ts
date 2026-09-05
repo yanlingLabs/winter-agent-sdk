@@ -117,6 +117,20 @@ export class QuotaManager {
    */
   noteRateLimit(retryAfterMs: number | undefined): void {
     const before = JSON.stringify(this.state());
+    // A SPENT window is cleared before the new refusal is recorded, and this is the whole of round
+    // 2's finding. Without it, a HEADERLESS 429 arriving after an earlier window had already
+    // elapsed set `limited = true` on top of a stale `limitedUntil` in the past — so `state()` read
+    // `ok` (a known window that has passed), the before/after guard suppressed the emit, and
+    // `onRateLimited` pushed `{ status: "allowed" }` ON A RATE LIMIT.
+    //
+    // Not reachable only in theory: `beforeAttempt` waits the window out, so by attempt 2
+    // `now() >= limitedUntil` is GUARANTEED — a windowed 429 followed by a headerless one is the
+    // ordinary shape of a backend tightening up.
+    //
+    // Cleared HERE rather than in `state()`: `state()` reading `ok` once a known window has elapsed
+    // is correct and is what makes the recovery event reachable (finding I2). This is about a new
+    // refusal not inheriting the last one's expired clock.
+    if (this.limitedUntil !== 0 && this.limitedUntil <= this.now()) this.limitedUntil = 0;
     this.limited = true;
     if (retryAfterMs !== undefined && retryAfterMs > 0) {
       this.limitedUntil = Math.max(this.limitedUntil, this.now() + retryAfterMs);

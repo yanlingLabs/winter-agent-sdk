@@ -193,7 +193,26 @@ describe("the quota manager: R6-B's sole producer of `rate_limit`", () => {
     expect(quota.state()).toEqual({ kind: "limited", resumeAt: 60_000 });
   });
 
-  test("a headerless refusal after a KNOWN window keeps the window it already had", () => {
+  test("a HEADERLESS refusal after an ELAPSED window is `rejected` with NO resetsAt — it does not inherit the spent clock", () => {
+    // Round 2's Important. `beforeAttempt` waits the window out, so by attempt 2 `now() >=
+    // limitedUntil` is GUARANTEED — and setting `limited = true` on top of a stale past
+    // `limitedUntil` made `state()` read `ok` (a known window that has passed), which the emit
+    // guard then suppressed and `onRateLimited` pushed as `allowed` ON A RATE LIMIT.
+    let now = 0;
+    const quota = new QuotaManager({ now: () => now });
+    quota.noteRateLimit(1_000);
+    expect(quotaEvent(quota.state()).info).toEqual({ status: "rejected", resetsAt: 1 });
+    now = 5_000;
+    quota.noteRateLimit(undefined);
+    const second = quotaEvent(quota.state());
+    expect(second.info.status).toBe("rejected");
+    expect("resetsAt" in second.info).toBe(false);
+    // And it still does not lapse on its own, because nothing said when it resumes.
+    now = 10_000_000;
+    expect(quota.state()).toEqual({ kind: "limited" });
+  });
+
+  test("a headerless refusal after a LIVE window keeps the window it already had", () => {
     let now = 0;
     const quota = new QuotaManager({ now: () => now });
     quota.noteRateLimit(30_000);
