@@ -679,7 +679,16 @@ export interface SessionPersistence {
    * named as this task's deliverable and `SessionPersistence` is the only channel the engine has to
    * the store. `authRef` is the credential ref's KIND, never its material (R6-10).
    */
-  setProviderIdentity?(identity: { providerId: string; modelKey: string; adapterId: string; adapterVersion: string; catalogVersion: string; authRefKind: string; classifierPin?: string }): void;
+  setProviderIdentity?(identity: { providerId: string; modelKey: string; adapterId?: string; adapterVersion?: string; catalogVersion?: string; authRefKind?: string; classifierPin?: string }): void;
+  /**
+   * Review round 1 (I1): did this session ever RECORD a provider identity?
+   *
+   * `undefined` means "no identity block" -- a pre-P6 transcript, or one written before selection was
+   * wired. That is the ONLY thing distinguishing R6-7's two silent-looking resumes: a session with no
+   * records and no identity has nothing to degrade from, while one with an identity and no records
+   * had its sidecar DELETED and every message is degraded.
+   */
+  loadProviderIdentity?(): Promise<{ providerId: string; modelKey: string } | undefined>;
   /** R6-C: records a model swap in the dialect record's `providerHistory`, alongside the Winter-only `system/model_switch` frame. */
   recordProviderSwitch?(entry: { from: string; to: string; reason: "fallback" | "set_model" | "interrupt" }): void;
   flush?(): void | Promise<void>;
@@ -984,7 +993,21 @@ export interface EngineOptions {
    * an ENGINE OPTION rather than something the engine resolves itself, for the same reason the
    * provider is (the engine must stay driveable by a plain double).
    */
-  providerIdentity?: { providerId: string; modelKey: string; family: string; continuationDomain?: string };
+  providerIdentity?: {
+    providerId: string;
+    modelKey: string;
+    family: string;
+    continuationDomain?: string;
+    // WIDENED in review round 1 (I1). The `MessageOrigin`-shaped version could not carry the catalog
+    // and credential half of R6-9's identity, so `setProviderIdentity` -- declared, implemented and
+    // unit-tested -- had NO production caller and no session ever wrote an identity block. Optional,
+    // so every existing caller is unaffected and a caller that knows only the origin still writes the
+    // block that the resume side reads.
+    adapterId?: string;
+    adapterVersion?: string;
+    catalogVersion?: string;
+    authRefKind?: string;
+  };
 }
 
 /**
@@ -1594,6 +1617,21 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // session and every test double, and is why the sidecar writes nothing for them rather than
   // fabricating a provider name.
   let currentProviderIdentity: { providerId: string; modelKey: string; family: string; continuationDomain?: string } | undefined = providerIdentity;
+  // Review round 1 (I1): THE PRODUCTION CALL. Without it `setProviderIdentity` was a fully
+  // implemented, unit-tested seam that nothing invoked -- so no session wrote R6-9's identity fields
+  // to its dialect record, and the resume side had no way to tell a DELETED sidecar from one that
+  // never existed. Made once, at startup, because the identity is the session's and the writer
+  // restamps it on every append of its own accord.
+  if (providerIdentity !== undefined) {
+    store?.setProviderIdentity?.({
+      providerId: providerIdentity.providerId,
+      modelKey: providerIdentity.modelKey,
+      ...(providerIdentity.adapterId !== undefined ? { adapterId: providerIdentity.adapterId } : {}),
+      ...(providerIdentity.adapterVersion !== undefined ? { adapterVersion: providerIdentity.adapterVersion } : {}),
+      ...(providerIdentity.catalogVersion !== undefined ? { catalogVersion: providerIdentity.catalogVersion } : {}),
+      ...(providerIdentity.authRefKind !== undefined ? { authRefKind: providerIdentity.authRefKind } : {}),
+    });
+  }
   // R6-I: a `set_model` arriving mid-turn is PARKED here and applied at the quiescent boundary. The
   // value is the request's own three-way payload, carried verbatim so the reset spelling is resolved
   // in exactly one place.
@@ -3268,18 +3306,36 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
       }
       const anchors = new Set(messages.flatMap((m) => (m.role === "assistant" && m.uuid !== undefined ? [m.uuid] : [])));
       if (anchors.size === 0) return;
-      // NO RECORDS AT ALL IS NOT A DEGRADATION, and this early return is the difference between a
-      // useful warning and permanent noise. A session that never had provider state -- every session
-      // written before this phase, and every session run before selection is wired -- has nothing to
-      // degrade FROM: its resume is byte-for-byte the resume it always had. Warning on those would
-      // fire on essentially every resumed session in the product and train a reader to ignore the
-      // frame, which is exactly what would make it useless on the day it means something.
+      // ZERO RECORDS IS TWO DIFFERENT SITUATIONS, and the dialect record's identity block is what
+      // separates them (review round 1, I1).
       //
-      // THE COST, stated rather than hidden: a session whose sidecar existed and was then DELETED
-      // reads as "never had one" and resumes quietly. An unreadable sidecar still warns
-      // (`sidecar_unreadable` above), so this gap is specifically deletion, and closing it would need
-      // a record of expectation the transcript does not carry.
-      if (records.length === 0) return;
+      // A session that NEVER had provider state -- every session written before this phase, and every
+      // session run before selection is wired -- has nothing to degrade FROM: its resume is
+      // byte-for-byte the resume it always had. Warning on those would fire on essentially every
+      // resumed session in the product and train a reader to ignore the frame, which is what would
+      // make it useless on the day it means something.
+      //
+      // A session whose sidecar was DELETED is the opposite: it HAD provider state, every message is
+      // now degraded to summary-level, and R6-7 is explicit that a degradation carries the loss
+      // warning. The identity block is the "record of expectation" that tells the two apart -- it is
+      // written by `setProviderIdentity` above whenever a session resolves a provider, and its
+      // absence means the concept did not exist for that session.
+      if (records.length === 0) {
+        const hadIdentity = store.loadProviderIdentity !== undefined ? await store.loadProviderIdentity() : undefined;
+        if (hadIdentity === undefined) return;
+        output.write({
+          type: "data",
+          message: {
+            type: "system",
+            subtype: "continuity_warning",
+            warning: "provider_state_deleted",
+            detail: `this session recorded a provider identity but its provider-state sidecar is gone; ${anchors.size} resumed assistant message${anchors.size === 1 ? "" : "s"} ${anchors.size === 1 ? "was" : "were"} degraded to summary-level.`,
+            uuid: randomUUID(),
+            session_id: config.sessionId,
+          },
+        });
+        return;
+      }
       const chain = buildContinuationChain(records, anchors);
       let degraded = 0;
       for (const message of messages) {
