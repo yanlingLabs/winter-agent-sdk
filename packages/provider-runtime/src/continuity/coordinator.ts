@@ -159,9 +159,19 @@ export function createSwitchCoordinator(): SwitchCoordinator {
       // AN INTERRUPT IS AN EARLY BOUNDARY, and it is also an abort: the turn did not produce its
       // final summary or state, so the transfer is reclassified with §8.4's seventh trigger even
       // though the deferred switch itself asked for nothing of the kind.
-      const midTurnAbort = trigger === "interrupt" && applying.requestedDuring === "turn";
-      const classification = midTurnAbort ? classify(applying.from, applying.to, applying.facts, true) : applying.classification;
+      // THE HANDOFF IS BUILT FIRST, and that order is the whole finding of review C1. The handoff is
+      // where §9.6's trimming actually HAPPENS -- it bounds every quoted value, so a real exposed
+      // trace is elided by default -- and classifying before building it returned
+      // `lossless-portable` with zero warnings beside a handoff whose reasoning had been cut to 400
+      // characters. That is the verbatim §9.6 violation ("never silently truncate reasoning while
+      // still classifying the handoff as lossless"), committed at the one point that composes the
+      // two. Only `reasoningTruncated` folds in: a clipped tool-result excerpt is a display bound,
+      // not reasoning the target will not receive.
       const handoff = handoffFor(applying, ctx);
+      const reasoningTruncated = handoff?.reasoningTruncated === true;
+      const midTurnAbort = trigger === "interrupt" && applying.requestedDuring === "turn";
+      const facts = reasoningTruncated ? { ...applying.facts, truncated: true } : applying.facts;
+      const classification = midTurnAbort || reasoningTruncated ? classify(applying.from, applying.to, facts, midTurnAbort) : applying.classification;
       return {
         from: applying.from,
         to: applying.to,
@@ -180,7 +190,14 @@ export function createSwitchCoordinator(): SwitchCoordinator {
       // only the runtime that issued it can stop its own request and its own tool loop, and a
       // coordinator that tried would leave the real request running behind an abandoned await.
       ctx.owner.cancel(`switching to ${applying.to.modelKey} immediately`);
-      const classification = classify(applying.from, applying.to, { ...applying.facts, completedToolResults: retained }, true);
+      // Built BEFORE the classification, for C1's reason (see `apply`).
+      const handoff = handoffFor(applying, ctx);
+      const classification = classify(
+        applying.from,
+        applying.to,
+        { ...applying.facts, completedToolResults: retained, ...(handoff?.reasoningTruncated === true ? { truncated: true } : {}) },
+        true,
+      );
       const discard: DiscardReport = {
         incompleteToolLoop: true,
         discardedInFlightReasoning: true,
@@ -190,7 +207,6 @@ export function createSwitchCoordinator(): SwitchCoordinator {
           `The ${applying.from.modelKey} turn was cancelled before it finished: its in-flight reasoning and its incomplete native tool continuation are discarded, and no tool result or final response was manufactured to close them. ` +
           `${retained} completed tool result${retained === 1 ? "" : "s"} cross as facts; side effects already performed are not undone.`,
       };
-      const handoff = handoffFor(applying, ctx);
       return {
         from: applying.from,
         to: applying.to,

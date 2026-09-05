@@ -144,6 +144,67 @@ describe("§8.2: the default is finish this turn, then switch", () => {
   });
 });
 
+describe("C1: the handoff is built BEFORE the classification, and its reasoning loss folds in", () => {
+  const deepseek: ContinuityEndpoint = { providerId: "deepseek", modelKey: "deepseek/r-reason", family: "openai", continuationDomain: "deepseek/r-reason", readableState: "full-exposed" };
+  const deepseekHistory = (summary: string): { messages: ProviderMessageLike[]; chain: ContinuationChainLike } => ({
+    messages: [
+      { role: "user", content: "go" },
+      { role: "assistant", content: [{ type: "text", text: "done" }], uuid: "m1", origin: { providerId: "deepseek", modelKey: "deepseek/r-reason", family: "openai" } },
+    ],
+    chain: chainOf({ m1: { summary } }),
+  });
+
+  test("a handoff that TRIMMED the source's reasoning flips the applied classification to warned-lossy", () => {
+    // Review C1's own reproduction: `lossless-portable` with zero warnings was returned beside a
+    // handoff whose reasoning had been cut to 400 characters -- §9.6 violated at the one point that
+    // composes the two, and unreachable by any T10 wiring because the handoff is built in here.
+    const coordinator = createSwitchCoordinator();
+    const requested = coordinator.request({ from: deepseek, to: OPENAI, turnActive: false, facts: { exposedComplete: true } });
+    expect(requested.classification.lossClass).toBe("lossless-portable");
+
+    const applied = coordinator.apply("idle", deepseekHistory("R".repeat(10_000)))!;
+    expect(applied.handoff!.reasoningTruncated).toBe(true);
+    expect(applied.classification.lossClass).toBe("warned-lossy");
+    expect(applied.classification.warnings.some((w) => w.includes("trimmed to fit"))).toBe(true);
+  });
+
+  test("a handoff that trimmed NOTHING leaves the lossless classification standing", () => {
+    const coordinator = createSwitchCoordinator();
+    coordinator.request({ from: deepseek, to: OPENAI, turnActive: false, facts: { exposedComplete: true } });
+    const applied = coordinator.apply("idle", deepseekHistory("a short complete trace"))!;
+    expect(applied.handoff!.reasoningTruncated).toBe(false);
+    expect(applied.classification.lossClass).toBe("lossless-portable");
+    expect(applied.classification.warnings).toEqual([]);
+  });
+
+  test("a trimmed TOOL-DETAIL excerpt alone does NOT flip the class", () => {
+    const coordinator = createSwitchCoordinator();
+    coordinator.request({ from: deepseek, to: OPENAI, turnActive: false, facts: { exposedComplete: true } });
+    const messages: ProviderMessageLike[] = [
+      { role: "user", content: "go" },
+      {
+        role: "assistant",
+        content: [{ type: "tool_use", id: "t1", name: "Read", input: { file_path: "/repo/big.ts" } }],
+        uuid: "m1",
+        origin: { providerId: "deepseek", modelKey: "deepseek/r-reason", family: "openai" },
+      },
+      { role: "tool", content: [{ type: "tool_result", tool_use_id: "t1", content: "X".repeat(5_000) }] },
+    ];
+    const applied = coordinator.apply("idle", { messages, chain: chainOf({ m1: { summary: "short" } }) })!;
+    expect(applied.handoff!.truncated).toBe(true);
+    expect(applied.handoff!.reasoningTruncated).toBe(false);
+    expect(applied.classification.lossClass).toBe("lossless-portable");
+  });
+
+  test("the immediate path folds it in too", () => {
+    const coordinator = createSwitchCoordinator();
+    coordinator.request({ from: deepseek, to: OPENAI, mode: "immediate", turnActive: true, facts: { exposedComplete: true } });
+    const applied = coordinator.applyImmediately({ owner: { cancel: () => {} }, ...deepseekHistory("R".repeat(10_000)) })!;
+    expect(applied.classification.warnings.some((w) => w.includes("trimmed to fit"))).toBe(true);
+    expect(applied.handoff!.reasoningTruncated).toBe(true);
+  });
+});
+
 describe("§8.3: the immediate switch cancels rather than splices", () => {
   test("cancel through the OWNER, mark the loop incomplete, fabricate nothing, keep the completed facts", () => {
     const { engine, coordinator } = midToolLoop();

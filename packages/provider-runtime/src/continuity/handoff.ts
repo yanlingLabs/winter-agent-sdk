@@ -47,8 +47,11 @@ export interface PortableHandoffSections {
   source: { providerId: string; modelKey: string };
   /** The current user objective: the most recent user message's own visible text. Winter does not infer an objective -- it quotes the one the user stated. */
   objective?: string;
-  /** The source's readable reasoning, labelled by KIND so a summary is never mistaken for a complete trace (§9.5). */
-  reasoning?: { kind: MaterialKind; text: string };
+  /**
+   * The source's readable reasoning, labelled by KIND so a summary is never mistaken for a complete
+   * trace (§9.5) -- and by `truncated`, so a 400-character remnant is never labelled "complete".
+   */
+  reasoning?: { kind: MaterialKind; text: string; truncated: boolean };
   /** The source's visible assistant text, oldest first: the decisions and the rationale it actually stated. */
   visibleRationale: string[];
   toolFacts: HandoffToolFact[];
@@ -64,7 +67,16 @@ export interface PortableHandoff {
   sections: PortableHandoffSections;
   /** The rendered block, already delimited and labelled -- drop it into `ProviderMessage.decoration` (door `"tag"`). */
   text: string;
+  /** ANY quoted value was bounded -- including a tool-result excerpt, which is not reasoning loss. */
   truncated: boolean;
+  /**
+   * The REASONING specifically was trimmed. Tracked apart from `truncated` because they mean
+   * different things to §9.6: a clipped tool excerpt is a display bound, while a clipped reasoning
+   * trace is state the target will not receive -- and the second one, and only the second one, must
+   * flip a would-be-lossless transfer to warned-lossy. The switch coordinator folds THIS flag into
+   * its facts, never `truncated`.
+   */
+  reasoningTruncated: boolean;
 }
 
 export interface PortableHandoffOptions {
@@ -101,9 +113,19 @@ export function buildPortableHandoff(
   const maxValueChars = options.maxValueChars ?? 400;
   const excluded = [...INSTRUCTION_FILE_BASENAMES.map((b) => b.toLowerCase()), ...(options.excludedPathFragments ?? []).map((p) => p.toLowerCase())];
   let truncated = false;
+  let reasoningTruncated = false;
   const bound = (text: string): string => {
     const trimmed = trimToBudget(text, maxValueChars);
     if (trimmed.truncated) truncated = true;
+    return trimmed.text;
+  };
+  // The reasoning value gets its OWN bound so its loss is separable from a clipped tool excerpt.
+  const boundReasoning = (text: string): string => {
+    const trimmed = trimToBudget(text, maxValueChars);
+    if (trimmed.truncated) {
+      truncated = true;
+      reasoningTruncated = true;
+    }
     return trimmed.text;
   };
 
@@ -128,7 +150,7 @@ export function buildPortableHandoff(
   const sections: PortableHandoffSections = {
     source: { providerId: from.providerId, modelKey: from.modelKey },
     ...(objective !== undefined ? { objective: bound(visibleText(objective)) } : {}),
-    ...(reasoningAllowed ? { reasoning: { kind: reasoningKind, text: bound(reasoningText) } } : {}),
+    ...(reasoningAllowed ? { reasoning: reasoningSection(reasoningKind, boundReasoning(reasoningText), () => reasoningTruncated) } : {}),
     visibleRationale: visible,
     toolFacts,
     artifacts,
@@ -137,7 +159,12 @@ export function buildPortableHandoff(
     ...(options.brief !== undefined ? { brief: bound(options.brief) } : {}),
   };
 
-  return { sections, text: renderHandoff(sections), truncated };
+  return { sections, text: renderHandoff(sections), truncated, reasoningTruncated };
+}
+
+/** Reads the trim flag AFTER `boundReasoning` has run, so the section carries its own honest label. */
+function reasoningSection(kind: MaterialKind, text: string, wasTruncated: () => boolean): { kind: MaterialKind; text: string; truncated: boolean } {
+  return { kind, text, truncated: wasTruncated() };
 }
 
 /** The handoff as a `ProviderMessage.decoration`. The TAG door always: a handoff is text, and it must be readable by a family whose reasoning channel validates its input. */
@@ -160,7 +187,15 @@ function renderHandoff(sections: PortableHandoffSections): string {
   ];
   if (sections.objective !== undefined) lines.push(`[current objective, as the user stated it] ${safe(sections.objective)}`);
   if (sections.reasoning !== undefined) {
-    lines.push(`[prior model's ${sections.reasoning.kind === "exposed" ? "complete readable reasoning" : "reasoning summary"}] ${safe(sections.reasoning.text)}`);
+    // THE WORD "complete" IS A CLAIM, and it is dropped the moment the value was trimmed: a
+    // 400-character remnant labelled "complete readable reasoning" tells the target the opposite of
+    // what happened. The section-level notice says it again in the reader's own words, because the
+    // elision marker inside the text is easy to skim past.
+    const label = sections.reasoning.kind === "exposed" ? (sections.reasoning.truncated ? "partial readable reasoning" : "complete readable reasoning") : "reasoning summary";
+    lines.push(`[prior model's ${label}] ${safe(sections.reasoning.text)}`);
+    if (sections.reasoning.truncated) {
+      lines.push("[notice] the prior model's reasoning above was TRIMMED to fit this context; part of it is not carried, and this handoff is therefore lossy.");
+    }
   }
   if (sections.brief !== undefined) lines.push(`[prior model's own continuation brief] ${safe(sections.brief)}`);
   for (const text of sections.visibleRationale) lines.push(`[prior model said] ${safe(text)}`);

@@ -50,7 +50,7 @@ describe("§9.3: what the handoff carries", () => {
   test("source identity, the user's own objective, the summary, the rationale, the tool facts, the artifacts and the final response", () => {
     expect(handoff.sections.source).toEqual({ providerId: "anthropic", modelKey: "anthropic/claude-a" });
     expect(handoff.sections.objective).toBe("migrate the parser to the new tokenizer and keep the tests green");
-    expect(handoff.sections.reasoning).toEqual({ kind: "summary", text: "weighed a rewrite against an adapter and chose the adapter" });
+    expect(handoff.sections.reasoning).toEqual({ kind: "summary", text: "weighed a rewrite against an adapter and chose the adapter", truncated: false });
     expect(handoff.sections.visibleRationale).toContain("Decided to keep the old entry point and adapt inside it.");
     expect(handoff.sections.toolFacts).toEqual([
       { name: "Read", ok: true, detail: "export function tokenize() {}" },
@@ -93,7 +93,7 @@ describe("§9.3: what the handoff carries", () => {
   test("an exposed-reasoning source is labelled as such, and policy can withhold it", () => {
     const messages = conversation().map((m) => (m.role === "assistant" ? { ...m, origin: { providerId: "deepseek", modelKey: "deepseek/r-reason", family: "openai" } } : m));
     const chain = chainOf({ m1: { summary: "the complete readable trace" } });
-    expect(buildPortableHandoff(messages, chain, DEEPSEEK).sections.reasoning).toEqual({ kind: "exposed", text: "the complete readable trace" });
+    expect(buildPortableHandoff(messages, chain, DEEPSEEK).sections.reasoning).toEqual({ kind: "exposed", text: "the complete readable trace", truncated: false });
     expect(buildPortableHandoff(messages, chain, DEEPSEEK, { allowExposedForwarding: false }).sections.reasoning).toBeUndefined();
   });
 });
@@ -192,6 +192,53 @@ describe("the injection floor (§9.3): a handoff stays DATA", () => {
     const handoff = buildPortableHandoff(messages, chainOf({}), CLAUDE);
     expect(handoff.text).not.toContain(`<${RECOVERED_REASONING_TAG}`);
     expect(handoff.text).toContain(`&lt;${RECOVERED_REASONING_TAG}`);
+  });
+
+  test("C1: a trimmed REASONING value is labelled PARTIAL, carries a notice, and reports `reasoningTruncated`", () => {
+    // Review C1: the default 400-char bound elides any real exposed trace, and the block used to
+    // label the remnant "complete readable reasoning" -- telling the target the opposite of what
+    // happened.
+    const messages: ProviderMessageLike[] = [
+      { role: "user", content: "go" },
+      { role: "assistant", content: [{ type: "text", text: "done" }], uuid: "m1", origin: { providerId: "deepseek", modelKey: "deepseek/r-reason", family: "openai" } },
+    ];
+    const handoff = buildPortableHandoff(messages, chainOf({ m1: { summary: "R".repeat(10_000) } }), DEEPSEEK);
+    expect(handoff.reasoningTruncated).toBe(true);
+    expect(handoff.truncated).toBe(true);
+    expect(handoff.sections.reasoning).toMatchObject({ kind: "exposed", truncated: true });
+    expect(handoff.text).toContain("[prior model's partial readable reasoning]");
+    expect(handoff.text).not.toContain("complete readable reasoning");
+    expect(handoff.text).toContain("was TRIMMED to fit this context");
+  });
+
+  test("C1: an UNTRIMMED exposed trace keeps the word `complete`, and reports no reasoning loss", () => {
+    const messages: ProviderMessageLike[] = [
+      { role: "user", content: "go" },
+      { role: "assistant", content: [{ type: "text", text: "done" }], uuid: "m1", origin: { providerId: "deepseek", modelKey: "deepseek/r-reason", family: "openai" } },
+    ];
+    const handoff = buildPortableHandoff(messages, chainOf({ m1: { summary: "a short complete trace" } }), DEEPSEEK);
+    expect(handoff.reasoningTruncated).toBe(false);
+    expect(handoff.text).toContain("[prior model's complete readable reasoning]");
+    expect(handoff.text).not.toContain("was TRIMMED");
+  });
+
+  test("C1: a trimmed TOOL-DETAIL excerpt is `truncated` but NOT `reasoningTruncated`", () => {
+    // The two flags mean different things to §9.6: a clipped tool excerpt is a display bound, a
+    // clipped reasoning trace is state the target will not receive.
+    const messages: ProviderMessageLike[] = [
+      { role: "user", content: "go" },
+      {
+        role: "assistant",
+        content: [{ type: "tool_use", id: "t1", name: "Read", input: { file_path: "/repo/big.ts" } }],
+        uuid: "m1",
+        origin: { providerId: "anthropic", modelKey: "anthropic/claude-a", family: "anthropic" },
+      },
+      { role: "tool", content: [{ type: "tool_result", tool_use_id: "t1", content: "X".repeat(5_000) }] },
+    ];
+    const handoff = buildPortableHandoff(messages, chainOf({ m1: { summary: "a short summary" } }), CLAUDE);
+    expect(handoff.truncated).toBe(true);
+    expect(handoff.reasoningTruncated).toBe(false);
+    expect(handoff.sections.reasoning?.truncated).toBe(false);
   });
 
   test("every quoted value is bounded, and the bound is reported", () => {
