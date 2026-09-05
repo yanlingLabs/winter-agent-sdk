@@ -972,34 +972,43 @@ is handled differently (no such block was streamed — its shape stays underived
 ### Capture (G) — `max_retries` is 10, `retry-after` is honoured, `rate_limit_event` never fires, and the overload fallback is FRAME-INVISIBLE
 
 **Design.** Three runs, three loopback policies, each deadline-bounded at 180 s via
-`Options.abortController`: (i) 529 `overloaded_error` on the first requests then 200; (ii) 429
+`Options.abortController`: (i) 529 `overloaded_error` on the first **two POSTs** then 200; (ii) 429
 `rate_limit_error` with `retry-after: 2` plus `anthropic-ratelimit-requests-limit/-remaining/-reset`
-and `anthropic-ratelimit-unified-status/-reset`, then 200; (iii) **persistent** 529 with
-`fallbackModel: "haiku"`. Every request's `model` field and arrival time is logged, because item (b)
-predicted the request `model` might be the only observable of a fallback. (The loopback's failure
-counter also covers the runtime's `HEAD /api/hello` preflight, so runs (i)/(ii) delivered exactly one
-failing `POST` each — which is what produced their single retry.)
+and `anthropic-ratelimit-unified-status/-reset` on the first **two POSTs**, then 200; (iii)
+**persistent** 529 with `fallbackModel: "haiku"`. Every request's `model` field and arrival time is
+logged, because item (b) predicted the request `model` might be the only observable of a fallback.
+
+*(Numbers below are from the re-run after review r1 Minor 5: the loopback's failure counter used to
+increment on the runtime's `HEAD /api/hello` preflight too, so runs (i)/(ii) previously delivered one
+failing POST each and produced a single retry. Gating the counter on `POST` gives the multi-attempt
+progression the scenario was written to capture, and — usefully — run (iii) then terminated on its own
+rather than on the deadline.)*
 
 **`api_retry` — full frame, verbatim shape** (run (i)):
 
 ```json
 { "type": "system", "subtype": "api_retry", "attempt": 1, "max_retries": 10,
-  "retry_delay_ms": 577, "error_status": 529, "error": "overloaded",
+  "retry_delay_ms": 514, "error_status": 529, "error": "overloaded",
   "session_id": "<uuid>", "uuid": "<uuid>" }
 ```
 
 Nine keys, exactly the pinned nine (`sdk.d.ts:3085-3095`), no extras. **`max_retries` is 10** in every
 frame of all three runs — the pinned default, which the declaration itself never states.
 
-**Run (i) 529 → 200.** One `api_retry` (`attempt: 1`, `retry_delay_ms: 577`, `error_status: 529`,
-`error: "overloaded"`), then success. `529` maps to the `'overloaded'` member of
-`SDKAssistantMessageError`. Measured inter-request gap 586 ms against the announced 577 ms — the frame
-announces the delay *before* it is taken, and it is accurate.
+**Run (i) 529 → 200.** Two `api_retry` frames, `attempt: 1` then `attempt: 2`, with `retry_delay_ms`
+**514 → 1227** and `error_status: 529` / `error: "overloaded"` on both; then success
+(`terminal_reason: "completed"`). `529` maps to the `'overloaded'` member of
+`SDKAssistantMessageError`. Measured inter-request gaps were 523 ms and 1234 ms against the announced
+514 ms and 1227 ms — **the frame announces each delay *before* it is taken, and both announcements
+were accurate to within ~10 ms.**
 
-**Run (ii) 429 + `retry-after: 2`.** One `api_retry` with **`retry_delay_ms: 2000`** — exactly the
-`retry-after: 2` header, not the computed backoff (run (i)'s first delay was 577 ms, run (iii)'s
-622 ms; both jittered, neither round). Measured gap 2008 ms. **`retry-after` is honoured verbatim and
-overrides the backoff schedule.** `429` maps to `error: "rate_limit"`, `error_status: 429`.
+**Run (ii) 429 + `retry-after: 2`.** Two `api_retry` frames with **`retry_delay_ms: 2000` on BOTH** —
+exactly the `retry-after: 2` header, and *flat*, where run (i)'s own two delays over the same two
+attempts grew 514 → 1227. Measured gaps 2010 ms and 2012 ms. So `retry-after` is not merely honoured
+on the first attempt: **it replaces the backoff schedule on every attempt it is present on**, and the
+runtime does not compound it with its own exponential growth. `429` maps to `error: "rate_limit"`,
+`error_status: 429`. (Strictly stronger than the pre-Minor-5 run, which had one retry per policy and
+so could not distinguish "honoured once" from "replaces the schedule".)
 
 **Run (ii)'s decisive negative: `rate_limit_event` frames = 0.** The loopback returned the full
 `anthropic-ratelimit-*` header set including a `rejected` unified status, and **not one
@@ -1012,15 +1021,15 @@ Winter's own catalog/credential layer should route provider 429s to `api_retry` 
 
 **Run (iii) persistent 529 + `fallbackModel: "haiku"` — three findings, one of them decisive.**
 
-Request log (model per `POST`, ms from run start):
+Request log (model per `POST`, ms from run start; 14 POSTs plus the `HEAD` preflight):
 
-| # | model | t+ms |
+| POST # | model | t+ms |
 | --- | --- | --- |
-| 2 | `claude-sonnet-5` | 510 |
-| 3 | `claude-sonnet-5` | 1138 |
-| 4 | `claude-sonnet-5` | 2167 |
-| 5 | **`claude-haiku-4-5-20251001`** | 2243 |
-| 6-15 | `claude-haiku-4-5-20251001` | 2804 … 180648 |
+| 1 | `claude-sonnet-5` | 538 |
+| 2 | `claude-sonnet-5` | 1129 |
+| 3 | `claude-sonnet-5` | 2352 |
+| 4 | **`claude-haiku-4-5-20251001`** | 2432 |
+| 5-14 | `claude-haiku-4-5-20251001` | 2989 … 179526 |
 
 1. **The fallback happens, and the ONLY observable is the request's `model` field.**
    `"refusal/fallback frames": []` — **zero** `model_refusal_fallback`, zero
@@ -1034,20 +1043,22 @@ Request log (model per `POST`, ms from run start):
    — while every frame reports `max_retries: 10`. So `max_retries` is the **per-model** retry budget
    and a *separate, undeclared* threshold (3 attempts) governs the model swap. The `attempt` counter
    then **restarts at 1** on the fallback model and runs the full 1…10.
-3. **Backoff shape**, measured on the fallback model's ten attempts: `retry_delay_ms` = 557, 1162,
-   2189, 4026, 9290, 16675, 36061, 39010, 32216, 37133 — roughly exponential with jitter to about
-   40 s, then flat. Winter's own retry policy has a pinned curve to match or diverge from
-   deliberately.
+3. **Backoff shape**, measured on the fallback model's ten attempts: `retry_delay_ms` climbs roughly
+   exponentially with jitter from ~550 ms and then **plateaus in the 33-39 s band for the last four
+   attempts** (33607, 35254, 33555, 38889 on attempts 7-10) — a ceiling, not unbounded growth.
+   Winter's own retry policy has a pinned curve to match or diverge from deliberately.
 
-**Terminal shape (attribution stated, not assumed).** Run (iii) ended with a `result` frame of
-**`subtype: "success"` carrying `is_error: true`, `api_error_status: 529`,
-`terminal_reason: "api_error"`** — i.e. an API failure rides the *success* subtype, exactly the
-possibility item (e) flagged (there is no provider-specific `SDKResultError` subtype). The run was
-also deadline-terminated at 180 s and `query()` threw a plain `Error` whose message is the runtime
-string `Operation aborted`, verbatim, and the fallback
-model had by then reached `attempt: 10` of `max_retries: 10`, so exhaustion and abort coincide: the
-frame's *shape* is the finding here; its precise trigger is disentangled by capture (I)'s
-unknown-model run, which fails without any deadline in play.
+**Terminal shape — now cleanly attributable.** Run (iii) reached `attempt: 10` of `max_retries: 10`
+on the fallback model and **terminated on its own** (`deadlineHit: false`). The earlier, pre-Minor-5
+run of this scenario had instead been cut off by the 180 s deadline, leaving exhaustion and abort
+indistinguishable; **that caveat is discharged** — this run has no deadline and no abort in it. On
+exhaustion the runtime emitted a `result` frame of **`subtype: "success"` carrying `is_error: true`,
+`api_error_status: 529`, `terminal_reason: "api_error"`** — an API failure riding the *success*
+subtype, exactly the possibility item (e) flagged (there is no provider-specific `SDKResultError`
+subtype) — and `query()` then **threw a plain built-in `Error`** whose message opens
+`Claude Code returned an error result: API Error: 529 …` (runtime error string; its tail echoes this
+harness's own canned message and the loopback's host:port). Identical in shape to capture (I)'s two
+failure branches, reached from a third, independent trigger.
 
 **`error_status` was never `null`** in any run — the connection-error case the JSDoc describes
 (`sdk.d.ts:3083`) is not reachable through a responding loopback, and is recorded as **not captured**.
@@ -1058,7 +1069,12 @@ unknown-model run, which fails without any deadline in play.
 
 **Design.** One set of mkdtemp dirs (`CLAUDE_CONFIG_DIR`, `HOME`, `cwd`) **reused across every run** —
 a fresh cwd for the second run would change the derived project key and make an untouched sidecar
-prove nothing. Sequence: run 1 creates the transcript under a fixed `sessionId`; the sidecar is
+prove nothing. **Every hash is taken at the sidecar's exact path, never by searching for its name**
+(review r1 Minor 1: a name search would have hashed a file the runtime had *moved* and still reported
+"unchanged" — the precise failure this assertion exists to catch). A file absent from that path is a
+FAILED assertion; where it actually went is reported separately as a diagnostic that cannot rescue
+the assertion. Likewise a transcript that has been renamed now reports as a failed assertion instead
+of throwing past the verdict block (Minor 4). Sequence: run 1 creates the transcript under a fixed `sessionId`; the sidecar is
 written **beside** it; sha256 recorded; six `resume` append turns; sha256 re-checked (attribution
 split); a `/compact` run; sha256 checked again. The marker is a high-entropy token derived by sha256;
 every request body the loopback receives is substring-checked for it and **never printed** (bodies
@@ -1082,7 +1098,13 @@ directory name matches `SessionKey.projectKey`'s documented default (`sdk.d.ts:5
 | 1a. unchanged after the resume+append half alone | **true** (attribution split, so a later change could not be blamed on the wrong half) |
 | 2. the marker appears in **no** request body the loopback received | **true** — 24 requests checked, zero hits |
 | 3. the transcript still parses as JSONL | **true** — 8 → 50 → 56 lines, every line parsed |
+| bonus: sidecar located | `"(at its own path, as expected)"` — the diagnostic search found it nowhere else |
 | bonus: file NAMES in the project dir | nothing renamed, moved, or removed; the only name added across the whole probe is the sidecar this probe itself wrote |
+
+*(Re-run after the review r1 harness fixes, with the hashes taken by path rather than by name. Every
+figure above is from that re-run and is identical to the pre-fix run — which is the expected result
+when nothing was moving the file in the first place, and is now established by a method that could
+have detected it if something had been.)*
 
 `run 2 resumed the same session` is `true` (run 2's `system/init.session_id` equals run 1's), so the
 resume genuinely reloaded the transcript the sidecar sits beside rather than starting a new session.
