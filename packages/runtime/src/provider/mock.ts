@@ -125,7 +125,39 @@ export const stubExecutor: ToolExecutor = {
 // AskUserQuestion/advisor). See transport-equivalence.test.ts's own "lane equivalence" scenarios
 // (the only consumers) and the "laneb" case below for why Write alone needs a real (non-scripted)
 // provider.
-export type TestProviderName = "boom" | "tooluse" | "hang" | "reflect" | "rpcprobe" | "modeswitch" | "bgtask" | "lanea" | "laneb" | "lanec" | "laned" | "lanee" | "mcpsdk" | "subagent" | "childmsg" | "subagentperm" | "toolsearch";
+/**
+ * Phase 5 Task 8: the fixture skill the `p5skill` provider invokes. Exported so the scenario that
+ * WRITES the `SKILL.md` and the provider that CALLS it cannot disagree about the name.
+ */
+export const P5_FIXTURE_SKILL_NAME = "p5probe";
+
+/**
+ * Phase 5 Task 8: the workflow script the `p5workflow` provider launches.
+ *
+ * Deliberately a script a merely-STARTED worker cannot satisfy by accident (Lane W's own recipe):
+ * it makes one real `agent()` call, one `phase()` and one `log()`, and returns a value DERIVED from
+ * the agent's answer. With the child answering "42" the run must reach `completed` with
+ * `{"answer":"42","doubled":"4242"}` on every leg.
+ */
+export const P5_WORKFLOW_SCRIPT = [
+  'export const meta = { name: "p5equiv", description: "the T8 cross-leg workflow proof" };',
+  'phase("Verify");',
+  'log("asking one agent");',
+  'const answer = await agent("what is the answer");',
+  "return { answer, doubled: answer + answer };",
+].join("\n");
+
+export type TestProviderName =
+  | "boom" | "tooluse" | "hang" | "reflect" | "rpcprobe" | "modeswitch" | "bgtask"
+  | "lanea" | "laneb" | "lanec" | "laned" | "lanee" | "mcpsdk" | "subagent" | "childmsg" | "subagentperm" | "toolsearch"
+  // --- Phase 5 Task 8: the P5 equivalence-scenario fixtures ------------------------------------
+  //
+  // Each is here rather than in a test file for the reason every sibling above is: a spawned or
+  // COMPILED `winter` shares no module state with the test process and can only select a provider
+  // BY NAME (`WINTER_TEST_PROVIDER`), so an in-process closure cannot serve the child/compiled legs
+  // at all. One definition per scenario, consumed by both `transport-equivalence.test.ts` and
+  // `scripts/differential.ts`, so the two can never drift.
+  | "p5compact" | "p5structured" | "p5structuredfail" | "p5skill" | "p5checkpoint" | "p5workflow";
 
 const TEST_PROVIDER_NAMES: ReadonlySet<string> = new Set([
   "boom",
@@ -153,6 +185,15 @@ const TEST_PROVIDER_NAMES: ReadonlySet<string> = new Set([
   // Phase 4 fix wave, follow-up (9) / whole-branch M9: the ToolSearch cross-transport fixture --
   // see the "toolsearch" case below.
   "toolsearch",
+  // Phase 5 Task 8: the six P5 equivalence fixtures. Added to this runtime Set as well as to the
+  // TYPE -- a name added to the type alone compiles and then fails at RUNTIME on the child/compiled
+  // legs only ("unrecognized WINTER_TEST_PROVIDER"), which is exactly how the P4 omission surfaced.
+  "p5compact",
+  "p5structured",
+  "p5structuredfail",
+  "p5skill",
+  "p5checkpoint",
+  "p5workflow",
 ]);
 
 export function isTestProviderName(v: string): v is TestProviderName {
@@ -221,6 +262,128 @@ function rawTestProviderByName(name: TestProviderName): Provider {
     // queue is empty), so it cannot serve a second round -- this is a plain extension of the same
     // fixed-script idiom (identical to why "rpcprobe" exists), needed because the CHILD/compiled
     // transport-equivalence legs can only select a provider by name, never an in-process closure.
+    // --- Phase 5 Task 8 fixtures ----------------------------------------------------------------
+
+    // COMPACTION (R5-4). Reports enough usage on every CONVERSATIONAL turn to sit over
+    // 0.92 x contextWindowTokens from the first generation onward, and answers the SUMMARIZER
+    // separately -- Lane K's own named trap: the summarizer runs on the SESSION's provider, so a
+    // fixture that let it consume a scripted conversational reply would shift every later assertion
+    // by one. Branching on `input.system` is the discriminator, and it is safe now that a real
+    // assembler is wired: the assembled minimal prompt contains no such phrase.
+    //
+    // A COUNTING reply ("reply N"), not a fixed one, so an assertion can tell WHICH turn produced a
+    // frame; `scriptedProvider` cannot serve this at all, because the number of rounds a compaction
+    // scenario runs is not fixed in advance.
+    case "p5compact": {
+      let n = 0;
+      return instrumentMockProvider({
+        async generate(input): Promise<ProviderTurn> {
+          if (input.system?.includes("compacting a conversation") === true) return { kind: "text", text: "THE COMPACTED SUMMARY" };
+          n++;
+          // THE USAGE RAMP IS THE WHOLE FIXTURE, and it is not decoration. `retainedPairs` defaults
+          // to 4 and is NOT a `RuntimeConfig` field, so no scenario can lower it -- and Lane K's
+          // controller deliberately REFUSES when there are at least two turn starts but fewer than
+          // `pairs` ("the caller asked to keep N pairs and has fewer than N"). A flat over-threshold
+          // reading therefore produces three `compact_result: "failed"` statuses before the window is
+          // finally big enough, which is correct behaviour and terrible evidence: the trace then
+          // contains both outcomes and an assertion cannot tell which one it is looking at.
+          //
+          // Reporting a small reading until the FOURTH generation makes turn 5's own pre-call check
+          // -- which reads turn 4's recorded usage -- the first and only crossing, by which time the
+          // window holds five turn starts and folds cleanly. One boundary, zero failures.
+          return { kind: "text", text: `reply ${n}`, usage: { inputTokens: n >= 4 ? 950 : 100, outputTokens: 0 } };
+        },
+      });
+    }
+
+    // STRUCTURED OUTPUT, success arm (R5-10, item (d)/(f)). One `StructuredOutput` call carrying a
+    // VALID payload; the engine validates it and ends the turn with `structured_output` on the
+    // result. The tool_use id is fixed so a golden can pin it.
+    case "p5structured":
+      return scriptedProvider([{ kind: "tool_use", calls: [{ id: "p5-structured-1", name: "StructuredOutput", input: { answer: 42 } }] }]);
+
+    // STRUCTURED OUTPUT, exhaustion arm. Answers with an INVALID payload forever -- not a fixed
+    // script, because the attempt budget is configurable (`MAX_STRUCTURED_OUTPUT_RETRIES`) and a
+    // fixed-length script would silently decide the budget instead of observing it.
+    case "p5structuredfail": {
+      let attempt = 0;
+      return instrumentMockProvider({
+        async generate(): Promise<ProviderTurn> {
+          attempt++;
+          return { kind: "tool_use", calls: [{ id: `p5-structured-fail-${attempt}`, name: "StructuredOutput", input: { answer: "forty-two" } }] };
+        },
+      });
+    }
+
+    // SKILL INVOCATION (WS-11 §2.3). One `Skill` call for the fixture skill the scenario installs,
+    // then a closing text turn. The RESULT of a Skill call IS the skill body, so a scenario asserts
+    // on the tool_result content -- which is what proves the executor resolved and loaded it rather
+    // than answering a typed refusal.
+    case "p5skill":
+      return scriptedProvider([
+        { kind: "tool_use", calls: [{ id: "p5-skill-1", name: "Skill", input: { skill: P5_FIXTURE_SKILL_NAME, args: "src" } }] },
+        { kind: "text", text: "skill done" },
+      ]);
+
+    // CHECKPOINT/REWIND (R5-11). The tool executor must REALLY WRITE -- a stub that returns text
+    // without touching disk makes the whole scenario vacuous (Lane K's own words). One `Write` to
+    // the path the prompt names, plus one `Bash` round that creates a SECOND file, so the scenario
+    // can prove the honest scope boundary: the Bash-created file is untouched by a rewind and absent
+    // from `filesChanged`. Same last-line convention `laneb` uses -- the live request's user message
+    // carries this session's user-context blocks ahead of the prompt.
+    case "p5checkpoint": {
+      let step = 0;
+      return instrumentMockProvider({
+        async generate({ messages }): Promise<ProviderTurn> {
+          const lastUser = [...messages].reverse().find((m) => m.role === "user");
+          const raw = typeof lastUser?.content === "string" ? lastUser.content : "";
+          const filePath = raw.slice(raw.lastIndexOf("\n") + 1);
+          if (step === 0) {
+            step++;
+            // THE READ IS REQUIRED, not decoration: `tools/impl/read-ladder.ts` refuses a Write to a
+            // file this session has not read ("has not been read in this session -- read it first"),
+            // so a fixture that skipped it would produce a tool ERROR, no mutation, and therefore no
+            // checkpoint at all -- a scenario that passes its cross-leg comparison while proving
+            // nothing. Found by running it.
+            return { kind: "tool_use", calls: [{ id: "p5-ckpt-read", name: "Read", input: { file_path: filePath } }] };
+          }
+          if (step === 1) {
+            step++;
+            return { kind: "tool_use", calls: [{ id: "p5-ckpt-write", name: "Write", input: { file_path: filePath, content: "AFTER\n" } }] };
+          }
+          if (step === 2) {
+            step++;
+            return { kind: "tool_use", calls: [{ id: "p5-ckpt-bash", name: "Bash", input: { command: `printf 'bash-made\\n' > ${filePath}.bash` } }] };
+          }
+          return { kind: "text", text: "checkpoint done" };
+        },
+      });
+    }
+
+    // WORKFLOW (WS-11 §1). ONE provider serving BOTH ends of the run: the PARENT emits the
+    // `Workflow` tool_use, and every generation inside the workflow's own child agents answers
+    // "42" -- the same both-ends shape the "subagent" fixture uses, and necessary for the identical
+    // reason (a child engine runs in this process on the in-memory leg and in the SPAWNED one
+    // elsewhere, so both ends must come from one named provider).
+    //
+    // The child is told apart by `insideSubagent`-shaped evidence rather than a counter: a workflow
+    // may run its agents in parallel, so call ORDER is not a reliable discriminator. The parent's
+    // first call is the only one whose history is exactly one user message, which is what the
+    // `step` guard below keys on -- and the guard is checked FIRST, so a child call can never
+    // consume the parent's scripted turn.
+    case "p5workflow": {
+      let launched = false;
+      return instrumentMockProvider({
+        async generate(): Promise<ProviderTurn> {
+          if (!launched) {
+            launched = true;
+            return { kind: "tool_use", calls: [{ id: "p5-workflow-1", name: "Workflow", input: { script: P5_WORKFLOW_SCRIPT } }] };
+          }
+          return { kind: "text", text: "42" };
+        },
+      });
+    }
+
     case "modeswitch":
       return scriptedProvider([
         { kind: "tool_use", calls: [{ id: "c1", name: "mystery_tool", input: {} }] },

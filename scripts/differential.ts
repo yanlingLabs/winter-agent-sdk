@@ -1,10 +1,10 @@
 import { randomUUID } from "node:crypto";
-import { mkdtempSync, readFileSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { query, encodeFrame, splitFrames, type RuntimeConfig, type WinterFrame } from "@yanlinglabs/winter-agent-sdk";
+import { query, encodeFrame, splitFrames, ResultError, type RuntimeConfig, type WinterFrame } from "@yanlinglabs/winter-agent-sdk";
 import { inMemoryProcess } from "winter-agent-runtime/testing";
-import { testProviderByName, scriptedProvider, registerTool, MCP_SDK_TEST_SERVER_NAME, MCP_SDK_TEST_TOOL_NAME } from "winter-agent-runtime";
+import { testProviderByName, scriptedProvider, registerTool, MCP_SDK_TEST_SERVER_NAME, MCP_SDK_TEST_TOOL_NAME, P5_FIXTURE_SKILL_NAME } from "winter-agent-runtime";
 import { normalizeTrace, compareTraces, type ConformanceTraceEntry } from "winter-conformance/trace";
 
 // A pinned, synthetic cwd (never process.cwd()) so every recorded trace — and the committed golden
@@ -41,6 +41,21 @@ const FIXTURE_MODEL = "sonnet";
 // memory guidance TEXT itself is deliberately left in the goldens: it is stable authored prose, and
 // pinning it is how a silent change to what every session tells the model becomes visible.
 const FIXTURE_WINTER_HOME = "/winter-home";
+
+/**
+ * A compaction boundary names the preserved segment BY UUID -- minted per run inside the store, so
+ * two runs of the same scenario never agree on them. `trace.ts`'s shared VOLATILE set strips the
+ * bare `uuid` and deliberately not `uuids`/`anchor_uuid` (the `resume` golden's own chain assertion
+ * depends on that). Replaced by POSITION here, which keeps what a golden should pin -- the NUMBER of
+ * preserved messages and the fact that they are anchored -- without a value that changes per run.
+ */
+function scrubPreservedUuids(entries: ConformanceTraceEntry[]): ConformanceTraceEntry[] {
+  return entries.map((e) => {
+    const meta = (e.payload as { compact_metadata?: { preserved_messages?: { anchor_uuid: string; uuids: string[] } } } | undefined)?.compact_metadata;
+    if (meta?.preserved_messages === undefined) return e;
+    return { ...e, payload: { ...(e.payload as object), compact_metadata: { ...meta, preserved_messages: { anchor_uuid: "ANCHOR", uuids: meta.preserved_messages.uuids.map((_, i) => `PRESERVED_${i}`) } } } };
+  });
+}
 
 function scrubWinterHome(entries: ConformanceTraceEntry[], winterHome: string): ConformanceTraceEntry[] {
   return JSON.parse(JSON.stringify(entries).split(winterHome).join(FIXTURE_WINTER_HOME)) as ConformanceTraceEntry[];
@@ -939,6 +954,171 @@ export async function traceWinterSendMessageToChildRound(): Promise<ConformanceT
   }
 }
 
+
+// --- Phase 5 Task 8: the P5-family differential scenarios ----------------------------------------
+//
+// Each is the hermetic, in-memory-only, byte-frozen half of a shape `transport-equivalence.test.ts`
+// proves across real transports -- the same division of labour every scenario above follows.
+//
+// TWO OF THE SIX P5 EQUIVALENCE ROUNDS DELIBERATELY HAVE NO GOLDEN HERE, and the reasons are
+// properties of the features rather than of this harness:
+//
+//   * WORKFLOW. Its run id is random (`wf_<hex>`), its persisted script path and transcript
+//     directory embed both that id and the session uuid, and `WorkflowRuntime.launch` refuses
+//     outright on a host without `sandbox-exec` -- so the round is darwin-only and its wire output
+//     is unpinnable without scrubbing away most of what a golden would be pinning. Its
+//     compiled-binary proof is `verify:workflow`, a CI step; its cross-leg proof is the equivalence
+//     scenario.
+//   * CHECKPOINT-REWIND. It needs a real temp work tree, a second run, and a raw `rewind_files`
+//     control request; every path in the resulting trace is machine-specific. Proven cross-leg
+//     instead, where the comparison is two runs against each other rather than against a file.
+//
+// The four below are fully deterministic once the winterHome scrub above is applied.
+
+export async function traceWinterCompactionAutoRound(): Promise<ConformanceTraceEntry[]> {
+  const winterHome = mkdtempSync(join(tmpdir(), "winter-differential-compactauto-"));
+  try {
+    const entries: ConformanceTraceEntry[] = [];
+    // FIVE envelopes: `retainedPairs` defaults to 4 and is not a RuntimeConfig field, so a shorter
+    // conversation is REFUSED by the controller rather than compacted (see provider/mock.ts's
+    // "p5compact" case for the full note, and for why its usage ramps rather than sitting flat).
+    const fiveTurns = (async function* () {
+      for (const t of ["one", "two", "three", "four", "five"]) yield t;
+    })();
+    for await (const msg of query({
+      prompt: fiveTurns,
+      options: {
+        model: FIXTURE_MODEL,
+        cwd: FIXTURE_CWD,
+        contextWindowTokens: 1000,
+        spawnClaudeCodeProcess: (opts) =>
+          inMemoryProcess(opts.args, testProviderByName("p5compact"), undefined, { ...opts.env, WINTER_HOME: winterHome }),
+      },
+    })) {
+      entries.push({ sequence: entries.length, direction: "runtime-to-host", kind: kindOf(msg), payload: msg });
+    }
+    return normalizeTrace(scrubPreservedUuids(scrubWinterHome(entries, winterHome)));
+  } finally {
+    rmSync(winterHome, { recursive: true, force: true });
+  }
+}
+
+export async function traceWinterCompactionManualRound(): Promise<ConformanceTraceEntry[]> {
+  const winterHome = mkdtempSync(join(tmpdir(), "winter-differential-compactmanual-"));
+  try {
+    const entries: ConformanceTraceEntry[] = [];
+    // NO `contextWindowTokens` override, deliberately: the manual path must not be entangled with the
+    // auto trigger, or a boundary in this golden could have come from either and the file would stop
+    // discriminating between them.
+    const withCommand = (async function* () {
+      for (const t of ["one", "two", "three", "four", "five", "/compact keep the API decisions"]) yield t;
+    })();
+    for await (const msg of query({
+      prompt: withCommand,
+      options: {
+        model: FIXTURE_MODEL,
+        cwd: FIXTURE_CWD,
+        spawnClaudeCodeProcess: (opts) =>
+          inMemoryProcess(opts.args, testProviderByName("p5compact"), undefined, { ...opts.env, WINTER_HOME: winterHome }),
+      },
+    })) {
+      entries.push({ sequence: entries.length, direction: "runtime-to-host", kind: kindOf(msg), payload: msg });
+    }
+    return normalizeTrace(scrubPreservedUuids(scrubWinterHome(entries, winterHome)));
+  } finally {
+    rmSync(winterHome, { recursive: true, force: true });
+  }
+}
+
+const P5_STRUCTURED_SCHEMA = { type: "object", properties: { answer: { type: "number" } }, required: ["answer"], additionalProperties: false };
+
+export async function traceWinterStructuredOutputRound(): Promise<ConformanceTraceEntry[]> {
+  const winterHome = mkdtempSync(join(tmpdir(), "winter-differential-structured-"));
+  try {
+    const entries: ConformanceTraceEntry[] = [];
+    for await (const msg of query({
+      prompt: "answer",
+      options: {
+        model: FIXTURE_MODEL,
+        cwd: FIXTURE_CWD,
+        outputFormat: { type: "json_schema", schema: P5_STRUCTURED_SCHEMA },
+        allowedTools: ["StructuredOutput"],
+        spawnClaudeCodeProcess: (opts) =>
+          inMemoryProcess(opts.args, testProviderByName("p5structured"), undefined, { ...opts.env, WINTER_HOME: winterHome }),
+      },
+    })) {
+      entries.push({ sequence: entries.length, direction: "runtime-to-host", kind: kindOf(msg), payload: msg });
+    }
+    return normalizeTrace(scrubWinterHome(entries, winterHome));
+  } finally {
+    rmSync(winterHome, { recursive: true, force: true });
+  }
+}
+
+export async function traceWinterStructuredExhaustionRound(): Promise<ConformanceTraceEntry[]> {
+  const winterHome = mkdtempSync(join(tmpdir(), "winter-differential-structuredfail-"));
+  try {
+    const entries: ConformanceTraceEntry[] = [];
+    // THE ERROR RESULT IS THE POINT, AND `query()` THROWS ON IT. `iterate` yields the terminal
+    // `result` frame and then raises `ResultError` for any error subtype (query.ts's own
+    // error-result-then-throw contract, report §9) -- so the frame this golden exists to pin is
+    // already recorded by the time the throw lands. Caught rather than propagated, and the CLASS is
+    // asserted, so a scenario that started failing for a different reason cannot pass silently.
+    try {
+      for await (const msg of query({
+        prompt: "answer",
+        options: {
+          model: FIXTURE_MODEL,
+          cwd: FIXTURE_CWD,
+          outputFormat: { type: "json_schema", schema: P5_STRUCTURED_SCHEMA },
+          allowedTools: ["StructuredOutput"],
+          spawnClaudeCodeProcess: (opts) =>
+            // Three attempts rather than the default five -- the shorter budget is itself the proof
+            // that `MAX_STRUCTURED_OUTPUT_RETRIES` is honoured, and it is what makes the retry COUNT
+            // visible in the committed file rather than merely the terminal shape.
+            inMemoryProcess(opts.args, testProviderByName("p5structuredfail"), undefined, { ...opts.env, WINTER_HOME: winterHome, MAX_STRUCTURED_OUTPUT_RETRIES: "3" }),
+        },
+      })) {
+        entries.push({ sequence: entries.length, direction: "runtime-to-host", kind: kindOf(msg), payload: msg });
+      }
+      throw new Error("structured-exhaustion-round: expected query() to raise ResultError on the error result");
+    } catch (err) {
+      if (!(err instanceof ResultError)) throw err;
+    }
+    return normalizeTrace(scrubWinterHome(entries, winterHome));
+  } finally {
+    rmSync(winterHome, { recursive: true, force: true });
+  }
+}
+
+export async function traceWinterSkillInvocationRound(): Promise<ConformanceTraceEntry[]> {
+  const winterHome = mkdtempSync(join(tmpdir(), "winter-differential-skill-"));
+  try {
+    // The USER tier of this scenario's own home. A project-tier skill would need FIXTURE_CWD to hold
+    // a `.winter/` tree, and FIXTURE_CWD is a synthetic path that deliberately does not exist.
+    const skillDir = join(winterHome, "skills", P5_FIXTURE_SKILL_NAME);
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(join(skillDir, "SKILL.md"), `---\nname: ${P5_FIXTURE_SKILL_NAME}\ndescription: the T8 cross-leg skill probe\n---\nP5 SKILL BODY MARKER\n`);
+    const entries: ConformanceTraceEntry[] = [];
+    for await (const msg of query({
+      prompt: "use the skill",
+      options: {
+        model: FIXTURE_MODEL,
+        cwd: FIXTURE_CWD,
+        allowedTools: ["Skill"],
+        settingSources: ["user"],
+        spawnClaudeCodeProcess: (opts) =>
+          inMemoryProcess(opts.args, testProviderByName("p5skill"), undefined, { ...opts.env, WINTER_HOME: winterHome }),
+      },
+    })) {
+      entries.push({ sequence: entries.length, direction: "runtime-to-host", kind: kindOf(msg), payload: msg });
+    }
+    return normalizeTrace(scrubWinterHome(entries, winterHome));
+  } finally {
+    rmSync(winterHome, { recursive: true, force: true });
+  }
+}
+
 // --- registry-driven check: every scenario against its committed golden --------------------------
 
 interface Scenario {
@@ -981,6 +1161,14 @@ const SCENARIOS: Scenario[] = [
   { name: "subagent-spawn-round", trace: traceWinterSubagentSpawnRound, goldenFile: "subagent-spawn-round.trace.json" },
   { name: "subagent-permission-round", trace: traceWinterSubagentPermissionRound, goldenFile: "subagent-permission-round.trace.json" },
   { name: "sendmessage-child-round", trace: traceWinterSendMessageToChildRound, goldenFile: "sendmessage-child-round.trace.json" },
+  // Phase 5 Task 8: five new goldens, one per deterministic P5 family -- see each trace function's
+  // own header for its scope, and the block header above for why the workflow and checkpoint rounds
+  // are proved cross-leg instead of frozen here.
+  { name: "compaction-auto-round", trace: traceWinterCompactionAutoRound, goldenFile: "compaction-auto-round.trace.json" },
+  { name: "compaction-manual-round", trace: traceWinterCompactionManualRound, goldenFile: "compaction-manual-round.trace.json" },
+  { name: "structured-output-round", trace: traceWinterStructuredOutputRound, goldenFile: "structured-output-round.trace.json" },
+  { name: "structured-exhaustion-round", trace: traceWinterStructuredExhaustionRound, goldenFile: "structured-exhaustion-round.trace.json" },
+  { name: "skill-invocation-round", trace: traceWinterSkillInvocationRound, goldenFile: "skill-invocation-round.trace.json" },
 ];
 
 // Sign-off 3 directive (whole-branch review): `--update` turns this script from a comparator into

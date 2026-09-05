@@ -53,6 +53,12 @@ export {
   MCP_SDK_TEST_SERVER_NAME,
   // Phase 4 Task 8 (riders 6/25): the subagent/messaging equivalence fixtures' own shared literal.
   SUBAGENT_CHILD_PROBE_TEXT,
+  // Phase 5 Task 8: the two shared literals the P5 equivalence fixtures and their scenarios both
+  // need -- the fixture skill's name and the workflow script -- exported for the same reason every
+  // sibling above is: a hand-copied literal in a test file is a producer/consumer pair that can
+  // drift silently.
+  P5_FIXTURE_SKILL_NAME,
+  P5_WORKFLOW_SCRIPT,
   MCP_SDK_TEST_TOOL_NAME,
 } from "./provider/mock.ts";
 export type { TestProviderName } from "./provider/mock.ts";

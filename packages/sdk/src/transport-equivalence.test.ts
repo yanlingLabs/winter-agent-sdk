@@ -32,7 +32,7 @@
 //    covered separately (in-memory only) by query.test.ts.
 import { describe, test, expect, afterAll } from "bun:test";
 import { fileURLToPath } from "node:url";
-import { mkdtempSync, rmSync, readFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, readFileSync, writeFileSync, existsSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -63,6 +63,8 @@ import {
   MCP_SDK_TEST_TOOL_NAME,
   // Phase 4 Task 8 (riders 6/25): the subagent/messaging equivalence fixtures' own shared literal.
   SUBAGENT_CHILD_PROBE_TEXT,
+  // Phase 5 Task 8: the fixture skill's name, shared with provider/mock.ts's own `p5skill` case.
+  P5_FIXTURE_SKILL_NAME,
 } from "winter-agent-runtime";
 import { normalizeTrace, compareTraces, type ConformanceTraceEntry } from "winter-conformance/trace";
 
@@ -145,7 +147,17 @@ registerBgTaskTestTool();
 // Phase 4 Task 8: "subagent"/"childmsg" join for the identical reason -- their target tools (Agent,
 // SendMessage) are REAL WS-06 names with real executors reached through the impl barrel, so the
 // in-memory leg must dispatch through the real registry, not stubExecutor's blind echo.
-const REGISTRY_BACKED_TEST_PROVIDERS: ReadonlySet<TestProviderName> = new Set(["bgtask", "lanea", "laneb", "lanec", "laned", "lanee", "mcpsdk", "subagent", "childmsg", "subagentperm", "toolsearch"]);
+// Phase 5 Task 8: the six P5 fixtures join for the identical reason -- each targets a REAL tool
+// name with a real executor reached through the impl barrel (`StructuredOutput` is host-generated
+// from the session's own seam, `Skill`/`Workflow`/`Write`/`Bash` are registry entries), so the
+// in-memory leg must dispatch through the real registry rather than stubExecutor's blind echo.
+// `p5compact` is here too even though it makes no tool call at all: leaving it out would hand the
+// in-memory leg a different executor than the child leg, which is a divergence this file exists to
+// forbid regardless of whether any current assertion could see it.
+const REGISTRY_BACKED_TEST_PROVIDERS: ReadonlySet<TestProviderName> = new Set([
+  "bgtask", "lanea", "laneb", "lanec", "laned", "lanee", "mcpsdk", "subagent", "childmsg", "subagentperm", "toolsearch",
+  "p5compact", "p5structured", "p5structuredfail", "p5skill", "p5checkpoint", "p5workflow",
+]);
 
 // --- Phase 5 Task 8: the echoed prompt, after the assembler is wired ------------------------------
 //
@@ -175,6 +187,44 @@ function expectEchoedPrompt(content: unknown, prompt: string): void {
   // Either no user-context block at all (a session that disabled auto-memory) or the prompt after
   // the blocks -- never the prompt merely appearing somewhere in the middle.
   expect(text === `echo: ${prompt}` || text.endsWith(`\n\n${prompt}`)).toBe(true);
+}
+
+// Phase 5 Task 8: a scenario-LOCAL volatile scrub, never a widening of `trace.ts`'s shared VOLATILE
+// set. Two reasons it must stay local: that set is what the committed differential goldens are
+// normalized by, so widening it would silently stop pinning the `resume` golden's own meaningful
+// uuid chain; and the keys below are volatile only in THESE scenarios (a compaction's preserved-uuid
+// list, a workflow's run/task ids and paths), not in general.
+//
+// Applied to the JSON TEXT of the whole trace, because the values that need scrubbing live BOTH in
+// structured fields and inside a JSON-encoded tool_result STRING -- where a key-walking scrub cannot
+// reach them at all (the P4 `scrubJsonToolResults` helper exists for exactly that reason). Escaped
+// and unescaped quote forms are both matched, which is what makes one pass cover both placements.
+function scrubVolatileText(entries: ConformanceTraceEntry[], patterns: RegExp[]): ConformanceTraceEntry[] {
+  let text = JSON.stringify(entries);
+  for (const re of patterns) text = text.replace(re, (m) => m.replace(/:(\\?")[^"\\]*\1/, ":$1SCRUBBED$1"));
+  return JSON.parse(text) as ConformanceTraceEntry[];
+}
+
+/** `"<key>":"<value>"`, in both the plain and the backslash-escaped (inside-a-JSON-string) forms. */
+/**
+ * A compaction boundary's `preserved_messages` names the kept segment BY UUID -- minted inside the
+ * store, per run, so two independent runs of the same scenario never agree on them. Replaced by
+ * their POSITION, which keeps the assertion meaningful (both legs must preserve the same NUMBER of
+ * messages, anchored the same way) without pinning a random value.
+ */
+function scrubPreservedUuids(entries: ConformanceTraceEntry[]): ConformanceTraceEntry[] {
+  return entries.map((e) => {
+    const meta = (e.payload as { compact_metadata?: { preserved_messages?: { anchor_uuid: string; uuids: string[] } } } | undefined)?.compact_metadata;
+    if (meta?.preserved_messages === undefined) return e;
+    return {
+      ...e,
+      payload: { ...(e.payload as object), compact_metadata: { ...meta, preserved_messages: { anchor_uuid: "ANCHOR", uuids: meta.preserved_messages.uuids.map((_, i) => `PRESERVED_${i}`) } } },
+    };
+  });
+}
+
+function volatileKey(key: string): RegExp {
+  return new RegExp(`\\\\?"${key}\\\\?":\\\\?"[^"\\\\]*\\\\?"`, "g");
 }
 
 function sleep(ms: number): Promise<void> {
@@ -368,6 +418,17 @@ interface QueryScenarioOptions {
   forwardSubagentText?: boolean;
   // Phase 4 fix wave: extra environment for the runtime process on every leg -- see spawnHook.
   env?: Record<string, string | undefined>;
+  // --- Phase 5 Task 8: the P5 configuration axes -------------------------------------------------
+  //
+  // Each is a real `Options` field the P5 wiring reads, and each is the ONLY way to drive its
+  // scenario across a real process boundary: a spawned/compiled leg receives its whole configuration
+  // as `--config-json`, so anything not on `RuntimeConfig` is unreachable there.
+  contextWindowTokens?: number;
+  compactionThreshold?: number;
+  outputFormat?: Options["outputFormat"];
+  enableFileCheckpointing?: boolean;
+  skills?: Options["skills"];
+  settingSources?: Options["settingSources"];
 }
 
 interface ScenarioResult {
@@ -401,6 +462,12 @@ async function traceViaQuery(leg: LegName, scenario: QueryScenarioOptions): Prom
         ...(scenario.capabilities !== undefined ? { capabilities: scenario.capabilities } : {}),
         ...(scenario.toolSearchEnabled !== undefined ? { toolSearchEnabled: scenario.toolSearchEnabled } : {}),
         ...(scenario.forwardSubagentText !== undefined ? { forwardSubagentText: scenario.forwardSubagentText } : {}),
+        ...(scenario.contextWindowTokens !== undefined ? { contextWindowTokens: scenario.contextWindowTokens } : {}),
+        ...(scenario.compactionThreshold !== undefined ? { compactionThreshold: scenario.compactionThreshold } : {}),
+        ...(scenario.outputFormat !== undefined ? { outputFormat: scenario.outputFormat } : {}),
+        ...(scenario.enableFileCheckpointing !== undefined ? { enableFileCheckpointing: scenario.enableFileCheckpointing } : {}),
+        ...(scenario.skills !== undefined ? { skills: scenario.skills } : {}),
+        ...(scenario.settingSources !== undefined ? { settingSources: scenario.settingSources } : {}),
       },
     });
     for await (const msg of gen) {
@@ -443,14 +510,20 @@ function createDriver(proc: SpawnedRuntimeProcess) {
   };
 }
 
-function buildRawProc(leg: LegName, testProviderName: TestProviderName | undefined, sessionId: string): SpawnedRuntimeProcess {
+function buildRawProc(leg: LegName, testProviderName: TestProviderName | undefined, sessionId: string, extraConfig?: Partial<RuntimeConfig>): SpawnedRuntimeProcess {
   const capture: { proc?: SpawnedRuntimeProcess } = {};
   const hook = spawnHook(leg, testProviderName, capture);
-  const config: RuntimeConfig = { sessionId, cwd: FIXTURE_CWD, model: FIXTURE_MODEL };
+  // Phase 5 Task 8: `extraConfig` exists because a spawned/compiled leg receives its WHOLE
+  // configuration as `--config-json` -- there is no other channel, so a raw-driven scenario that
+  // needs a non-default option (checkpointing, a context window) has to put it here.
+  const config: RuntimeConfig = { sessionId, cwd: FIXTURE_CWD, model: FIXTURE_MODEL, ...extraConfig };
   return hook({
     command: "winter", // placeholder — ignored by both legs' hooks above (matches query.ts's own "winter" placeholder when a custom spawn hook is set)
     args: ["--run", "--config-json", JSON.stringify(config)],
-    cwd: FIXTURE_CWD,
+    // The SPAWN cwd follows the CONFIG cwd: a real child is spawned with `node:child_process`, which
+    // fails outright if the directory does not exist, and a scenario that relocates the session's own
+    // cwd (the checkpoint round, which writes real files into a temp tree) must relocate both.
+    cwd: config.cwd,
     env: process.env as Record<string, string>,
   });
 }
@@ -1702,6 +1775,299 @@ function registerEquivalenceScenarios(legA: LegName, legB: LegName): void {
     expect(b.thrown).toBeInstanceOf(AbortError);
     expect(a.trace.map((e) => e.kind)).toEqual(["system/init", "exit"]);
   });
+
+
+  // ==============================================================================================
+  // Phase 5 Task 8: the P5 equivalence scenarios.
+  // ==============================================================================================
+  //
+  // Every P5 lane shipped behind a seam that is INERT until `production-wiring.ts` registers it, and
+  // that wiring is called from BOTH entrypoints precisely so the three legs cannot diverge. These
+  // scenarios are what proves it -- each drives a whole P5 family end to end and compares the two
+  // legs' normalized wire traces byte-for-byte.
+  //
+  // WHAT `compareTraces` DOES AND DOES NOT PROVE, stated once for all six: it compares the legs
+  // against EACH OTHER, never against the spec. So each scenario also carries at least one
+  // SUBSTANTIVE assertion about the shape itself -- otherwise two legs could agree perfectly on a
+  // wrong answer, which is exactly the failure mode the P4 fix wave's own note about `capabilities`
+  // records.
+
+  test("P5 compaction round (auto): a threshold crossing produces ONE compact_boundary on both legs", async () => {
+    // FIVE envelopes, not three. `retainedPairs` defaults to 4 and is NOT a `RuntimeConfig` field,
+    // so a scenario cannot lower it: with fewer turn starts than `pairs`, Lane K's controller
+    // deliberately refuses ("the caller asked to keep N pairs and has fewer than N") and the run
+    // reports `compact_result: "failed"` instead of compacting. Five envelopes give turn 5's check a
+    // window it can actually fold.
+    const prompts = ["one", "two", "three", "four", "five"];
+    const streamed = (): AsyncIterable<string> => (async function* () { for (const p of prompts) yield p; })();
+    const scenario = { testProviderName: "p5compact" as const, contextWindowTokens: 1000 };
+    const a = await traceViaQuery(legA, { prompt: streamed(), ...scenario });
+    const b = await traceViaQuery(legB, { prompt: streamed(), ...scenario });
+    // `preserved_messages.{anchor_uuid,uuids}` are per-run random uuids minted inside the store --
+    // meaningful (a host relinks the kept segment by them) but not comparable ACROSS two independent
+    // runs. `trace.ts`'s shared VOLATILE set strips `uuid`, deliberately not `uuids`/`anchor_uuid`.
+    expect(compareTraces(scrubPreservedUuids(a.trace), scrubPreservedUuids(b.trace))).toEqual([]);
+    expect(a.thrown).toBeUndefined();
+
+    const boundaries = a.trace.filter((e) => e.kind === "system/compact_boundary");
+    expect(boundaries.length).toBe(1);
+    const meta = (boundaries[0]!.payload as { compact_metadata: { trigger: string; pre_tokens: number } }).compact_metadata;
+    expect(meta.trigger).toBe("auto");
+    expect(meta.pre_tokens).toBe(950);
+    // No FAILED status anywhere: a refusal and a compaction are both "one status message" on the
+    // wire, so counting boundaries alone would not tell them apart.
+    const failures = a.trace.filter((e) => e.kind === "system/status" && (e.payload as { compact_result?: string }).compact_result === "failed");
+    expect(failures.length).toBe(0);
+  }, 30_000);
+
+  test("P5 compaction round (manual /compact): its own terminal result, on both legs", async () => {
+    const prompts = ["one", "two", "three", "four", "five", "/compact keep the API decisions"];
+    const streamed = (): AsyncIterable<string> => (async function* () { for (const p of prompts) yield p; })();
+    // NO `contextWindowTokens` override: the manual path must not be entangled with the auto
+    // trigger, or a boundary could come from either and the assertion would not discriminate.
+    const scenario = { testProviderName: "p5compact" as const };
+    const a = await traceViaQuery(legA, { prompt: streamed(), ...scenario });
+    const b = await traceViaQuery(legB, { prompt: streamed(), ...scenario });
+    expect(compareTraces(scrubPreservedUuids(a.trace), scrubPreservedUuids(b.trace))).toEqual([]);
+    expect(a.thrown).toBeUndefined();
+
+    // `/compact` produces a terminal result of its own (WS-04 §4.1: every envelope gets exactly one),
+    // and it is the LAST one -- the model never sees the command.
+    const results = a.trace.filter((e) => e.kind === "result");
+    expect(results.length).toBe(prompts.length);
+    const last = results.at(-1)!.payload as { result: string };
+    expect(last.result.startsWith("Compacted the conversation.")).toBe(true);
+    const boundaries = a.trace.filter((e) => e.kind === "system/compact_boundary");
+    expect(boundaries.length).toBe(1);
+    expect((boundaries[0]!.payload as { compact_metadata: { trigger: string } }).compact_metadata.trigger).toBe("manual");
+  }, 30_000);
+
+  test("P5 structured-output round (success): the validated object ends the turn, on both legs", async () => {
+    const schema = { type: "object", properties: { answer: { type: "number" } }, required: ["answer"], additionalProperties: false };
+    const scenario = { prompt: "answer", testProviderName: "p5structured" as const, outputFormat: { type: "json_schema" as const, schema }, allowedTools: ["StructuredOutput"] };
+    const a = await traceViaQuery(legA, scenario);
+    const b = await traceViaQuery(legB, scenario);
+    expect(compareTraces(a.trace, b.trace)).toEqual([]);
+    expect(a.thrown).toBeUndefined();
+
+    const result = a.trace.find((e) => e.kind === "result")!.payload as { subtype: string; structured_output?: unknown; terminal_reason?: string };
+    expect(result.subtype).toBe("success");
+    expect(result.structured_output).toEqual({ answer: 42 });
+    expect(result.terminal_reason).toBeUndefined();
+    // The host-generated descriptor is only advertised when `outputFormat` is set (WS-11 §8, and
+    // capture (4): it is NOT in the default 24) -- which is what makes the round reachable at all.
+    expect((a.trace[0]!.payload as { tools: string[] }).tools).toContain("StructuredOutput");
+  }, 30_000);
+
+  test("P5 structured-output round (exhaustion): both pinned spellings, on both legs", async () => {
+    const schema = { type: "object", properties: { answer: { type: "number" } }, required: ["answer"], additionalProperties: false };
+    const scenario = {
+      prompt: "answer",
+      testProviderName: "p5structuredfail" as const,
+      outputFormat: { type: "json_schema" as const, schema },
+      allowedTools: ["StructuredOutput"],
+      // Three, not the default five -- the budget is what the scenario is about, and a shorter one
+      // proves the override is honoured as well as keeping the round quick.
+      env: { MAX_STRUCTURED_OUTPUT_RETRIES: "3" },
+    };
+    const a = await traceViaQuery(legA, scenario);
+    const b = await traceViaQuery(legB, scenario);
+    expect(compareTraces(a.trace, b.trace)).toEqual([]);
+
+    const result = a.trace.find((e) => e.kind === "result")!.payload as { subtype: string; terminal_reason?: string; result: string; structured_output?: unknown };
+    // Item (d)'s TWO SPELLINGS, on two different fields of the same message -- no type-checker
+    // catches either, which is why both are asserted literally.
+    expect(result.subtype).toBe("error_max_structured_output_retries");
+    expect(result.terminal_reason).toBe("structured_output_retry_exhausted");
+    expect("structured_output" in result).toBe(false);
+    expect(result.result).toBe("Failed to provide valid structured output after 3 attempts");
+  }, 30_000);
+
+  test("P5 skill-invocation round: the tool RESULT is the skill body, on both legs", async () => {
+    // The fixture skill lives in the USER tier of the SHARED test home, which every leg's spawnHook
+    // already points at -- a project-tier skill would need FIXTURE_CWD to hold a `.winter/` tree,
+    // and this suite's cwd is the real repository.
+    const skillDir = join(TEST_WINTER_HOME, "skills", P5_FIXTURE_SKILL_NAME);
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(join(skillDir, "SKILL.md"), `---\nname: ${P5_FIXTURE_SKILL_NAME}\ndescription: the T8 cross-leg skill probe\n---\nP5 SKILL BODY MARKER\n`);
+    try {
+      const scenario = { prompt: "use the skill", testProviderName: "p5skill" as const, allowedTools: ["Skill"], settingSources: ["user" as const] };
+      const a = await traceViaQuery(legA, scenario);
+      const b = await traceViaQuery(legB, scenario);
+      expect(compareTraces(a.trace, b.trace)).toEqual([]);
+      expect(a.thrown).toBeUndefined();
+
+      // `init.skills` names it -- the index found it on both legs.
+      expect((a.trace[0]!.payload as { skills: string[] }).skills).toContain(P5_FIXTURE_SKILL_NAME);
+      // The RESULT IS THE BODY (WS-11 §2.3: inserted into the conversation, no pointer, no second
+      // round-trip). A typed refusal would also be a tool_result, so asserting the marker is what
+      // distinguishes "resolved and loaded" from "answered politely".
+      const toolResult = a.trace.find((e) => e.kind === "user")!.payload as { message: { content: Array<{ tool_use_id: string; content: string }> } };
+      const block = toolResult.message.content.find((bl) => bl.tool_use_id === "p5-skill-1")!;
+      expect(block.content).toContain("P5 SKILL BODY MARKER");
+    } finally {
+      rmSync(join(TEST_WINTER_HOME, "skills"), { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  test("P5 workflow round: a real sandboxed worker subprocess runs the script, on both legs", async () => {
+    // DARWIN-GATED, and this is a property of the feature rather than of the test: the workflow
+    // runtime refuses to launch outright when `sandbox-exec` is unavailable (`WorkflowRuntime.launch`,
+    // fail-closed by design), so on linux there is nothing to compare. The COMPILED leg's own proof
+    // is `verify:workflow`, which drives the binary's `__workflow-worker` argv dispatch directly and
+    // is a CI step.
+    if (process.platform !== "darwin") return;
+    const scenario = { prompt: "run the workflow", testProviderName: "p5workflow" as const, allowedTools: ["Workflow", "Agent"] };
+    const a = await traceViaQuery(legA, scenario);
+    const b = await traceViaQuery(legB, scenario);
+
+    // `runId`, `taskId` and the two paths embed a random run id and the session uuid -- normalized
+    // by value, exactly as the bash-background golden normalizes its own task id, before comparing.
+    const scrub = (t: ConformanceTraceEntry[]): ConformanceTraceEntry[] => {
+      // The run id first (it is a SUBSTRING of the two paths and of the task's own output file), then
+      // the remaining per-run identifiers by key. Both quote forms, because every one of these also
+      // appears inside the JSON-encoded tool_result string.
+      const withoutRunIds = JSON.parse(JSON.stringify(t).replace(/wf_[0-9a-f]+/g, "wf_RUNID")) as ConformanceTraceEntry[];
+      return scrubVolatileText(withoutRunIds, [volatileKey("taskId"), volatileKey("task_id"), volatileKey("transcriptDir"), volatileKey("scriptPath"), volatileKey("output_file"), volatileKey("tool_use_id")]);
+    };
+    expect(compareTraces(scrub(a.trace), scrub(b.trace))).toEqual([]);
+    expect(a.thrown).toBeUndefined();
+
+    // The pinned `task_started` literals (capture (3)), and the `WorkflowOutput` field set.
+    const started = a.trace.find((e) => e.kind === "system/task_started")!.payload as { task_type: string; workflow_name: string };
+    expect(started.task_type).toBe("local_workflow");
+    expect(started.workflow_name).toBe("p5equiv");
+    const toolResult = a.trace.find((e) => e.kind === "user")!.payload as { message: { content: Array<{ tool_use_id: string; content: string }> } };
+    const output = JSON.parse(toolResult.message.content.find((bl) => bl.tool_use_id === "p5-workflow-1")!.content) as Record<string, unknown>;
+    expect(output.status).toBe("async_launched");
+    expect(output.taskType).toBe("local_workflow");
+    expect(output.workflowName).toBe("p5equiv");
+    expect(typeof output.runId).toBe("string");
+  }, 60_000);
+
+
+  test("P5 checkpoint-rewind round: a real Write is undone, a Bash-created file is not, on both legs", async () => {
+    // RAW-DRIVEN, not through query(): `rewind_files` is a protocol-level control_request the
+    // wrapper has no API for (the same reason `traceInterrupt` is raw), and the request has to be
+    // sent to a SECOND run over the same home and session id -- a rewind of the run that is still
+    // writing would be a different scenario.
+    async function runLeg(leg: LegName): Promise<{ trace: ConformanceTraceEntry[]; restored: string; bashSurvived: boolean; bashContent: string; result: Record<string, unknown>; workDir: string; workDirReal: string }> {
+      const workDir = mkdtempSync(join(tmpdir(), "winter-p5-ckpt-"));
+      // Captured while the directory still EXISTS -- the comparison below runs after the `finally`
+      // has removed it, and `realpathSync` on a deleted path throws ENOENT.
+      const workDirReal = realpathSync(workDir);
+      const target = join(workDir, "tracked.txt");
+      writeFileSync(target, "BEFORE\n");
+      const sessionId = `p5-ckpt-${leg}-${randomUUID()}`;
+      const entries: ConformanceTraceEntry[] = [];
+      try {
+        // --- run 1: the mutating turn -------------------------------------------------------------
+        const first = buildRawProc(leg, "p5checkpoint", sessionId, { cwd: workDir, enableFileCheckpointing: true, allowedTools: ["Read", "Write", "Bash"], sandbox: { enabled: false } });
+        const d1 = createDriver(first);
+        let userMessageUuid = "";
+        try {
+          await d1.nextFrame(); // init
+          await d1.nextFrame(); // system/init
+          d1.send({ type: "user", text: target });
+          for (;;) {
+            const frame = await d1.nextFrame();
+            if (!frame) break;
+            pushFrame(entries, frame);
+            const msg = frame.type === "data" ? (frame as { message: { type: string; user_message_uuid?: string } }).message : undefined;
+            if (msg?.type === "result") {
+              // The ONLY channel the id travels on (T3's concern 2), and conditional on
+              // `enableFileCheckpointing` -- which is why the option is on the config above.
+              userMessageUuid = msg.user_message_uuid ?? "";
+              break;
+            }
+          }
+          d1.send({ type: "control_request", requestId: "end-1", subtype: "end_input", payload: undefined });
+        } finally {
+          first.kill();
+          await first.exited;
+        }
+        expect(userMessageUuid, `${leg}: the terminal result must disclose user_message_uuid`).not.toBe("");
+        expect(readFileSync(target, "utf8")).toBe("AFTER\n"); // the Write really happened
+        const bashFile = `${target}.bash`;
+        expect(existsSync(bashFile)).toBe(true); // and so did the Bash round
+
+        // --- run 2: the rewind --------------------------------------------------------------------
+        const second = buildRawProc(leg, "p5checkpoint", sessionId, { cwd: workDir, enableFileCheckpointing: true, resume: sessionId });
+        const d2 = createDriver(second);
+        let result: Record<string, unknown> = {};
+        try {
+          await d2.nextFrame();
+          await d2.nextFrame();
+          d2.send({ type: "control_request", requestId: "rewind-1", subtype: "rewind_files", payload: { user_message_id: userMessageUuid } });
+          for (;;) {
+            const frame = await d2.nextFrame();
+            if (!frame) break;
+            if (frame.type === "control_response" && (frame as { requestId: string }).requestId === "rewind-1") {
+              result = (frame as { payload?: Record<string, unknown> }).payload ?? {};
+              pushFrame(entries, frame);
+              break;
+            }
+          }
+          d2.send({ type: "control_request", requestId: "end-2", subtype: "end_input", payload: undefined });
+        } finally {
+          second.kill();
+          await second.exited;
+        }
+        // READ BEFORE THE `finally` REMOVES THE TREE. An `existsSync` at the call site would be
+        // testing this fixture's own cleanup, not the rewind -- it read `false` for exactly that
+        // reason on the first run.
+        return { trace: normalizeTrace(entries), restored: readFileSync(target, "utf8"), bashSurvived: existsSync(bashFile), bashContent: existsSync(bashFile) ? readFileSync(bashFile, "utf8") : "", result, workDir, workDirReal };
+      } finally {
+        rmSync(workDir, { recursive: true, force: true });
+      }
+    }
+
+    const a = await runLeg(legA);
+    const b = await runLeg(legB);
+    // THE TWO LEGS USE DIFFERENT TEMP WORK DIRECTORIES BY CONSTRUCTION -- each run writes real files,
+    // and sharing one directory would make leg B's own Write land on the file leg A had already
+    // rewound. That difference reaches the wire in three places at once: `file_path` on the tool
+    // call, the restored path inside `filesChanged`, and -- because the session's cwd is the memory
+    // KEY -- the auto-memory user-context block that `echoProvider`'s successor echoes back.
+    //
+    // Scrubbed BY EXACT VALUE, the same design `traceWinterBashBackgroundRound`'s own task-id scrub
+    // uses and for the same reason: a key-shaped regex cannot reach a path embedded in an escaped
+    // JSON string, and a path-shaped one would eat meaningful literals. `realpathSync` too, because
+    // every macOS mkdtemp path is a `/var` -> `/private/var` symlink and the two spellings both
+    // appear (the tool call carries what it was handed; the runtime reports what it resolved).
+    const scrubWorkDir = (t: ConformanceTraceEntry[], spellings: string[]): ConformanceTraceEntry[] => {
+      let text = JSON.stringify(t);
+      // FOUR SPELLINGS, not two. The cwd reaches the wire as a PATH (the tool call, `filesChanged`)
+      // and, because it is the auto-memory KEY, as the pinned project-directory SANITISATION of
+      // itself -- separators and dots replaced by `-`. A scrub that only handled the path form left
+      // the memory block's own directory line diverging, which is what `payload@7` was.
+      //
+      // LONGEST FIRST: `/private/var/...` and `/var/...` overlap, and replacing the short one first
+      // would leave a `/private` orphan behind. Sorting removes the ordering question entirely.
+      const all = [...new Set(spellings.flatMap((sp) => [sp, sp.replace(/[/.]/g, "-")]))];
+      for (const spelling of all.sort((x, y) => y.length - x.length)) text = text.split(spelling).join("/WORKDIR");
+      // `user_message_uuid` is the rewind DISCOVERY channel (T3's concern 2) -- a real per-run uuid,
+      // and deliberately NOT in `trace.ts`'s shared VOLATILE set, which strips only the bare `uuid`.
+      text = text.replace(/"user_message_uuid":"[^"]*"/g, '"user_message_uuid":"UMU"');
+      return JSON.parse(text) as ConformanceTraceEntry[];
+    };
+    expect(compareTraces(scrubWorkDir(a.trace, [a.workDir, a.workDirReal]), scrubWorkDir(b.trace, [b.workDir, b.workDirReal]))).toEqual([]);
+
+    for (const [leg, r] of [[legA, a] as const, [legB, b] as const]) {
+      // THE TRACKED FILE IS RESTORED...
+      expect(r.restored, `${leg}: the tracked file must be restored`).toBe("BEFORE\n");
+      // ...AND THE BASH-CREATED FILE IS NOT TOUCHED. This is the honest scope boundary WS-11 §9
+      // pins (Write/Edit/NotebookEdit only), and asserting only the first half would leave a rewind
+      // that silently swept the whole directory looking correct.
+      expect(r.bashSurvived, `${leg}: a Bash-created file is outside the checkpoint scope`).toBe(true);
+      expect(r.bashContent, `${leg}`).toBe("bash-made\n");
+      const payload = (r.result as { response?: { canRewind?: boolean; filesChanged?: string[]; skippedLinks?: number } }).response ?? (r.result as { canRewind?: boolean; filesChanged?: string[]; skippedLinks?: number });
+      expect(payload.canRewind, `${leg}`).toBe(true);
+      expect(payload.filesChanged?.length, `${leg}`).toBe(1);
+      expect(payload.filesChanged?.[0]?.endsWith("tracked.txt"), `${leg}`).toBe(true);
+      expect(payload.skippedLinks, `${leg}`).toBe(0);
+    }
+  }, 60_000);
 
   // Task 9 (WS-05 §7): run a session to completion, then resume the SAME sessionId in a NEW
   // process/instance over the SAME leg — the provider sees the prior messages (proven via the
