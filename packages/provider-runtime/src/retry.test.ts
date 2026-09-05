@@ -53,9 +53,12 @@ describe("createRetryPolicy — the pinned constants (capture (G))", () => {
     // jittered backoff (577ms/622ms in the neighbouring runs) — the header overrides the schedule.
     expect(policy.delayMs(1, 2000)).toBe(2000);
     expect(policy.delayMs(5, 60_000)).toBe(60_000);
-    // Above the ceiling a provider is effectively asking us to hang; fall back to the schedule.
-    expect(policy.delayMs(1, 60_001)).toBe(1000);
-    expect(policy.delayMs(1, 3_600_000)).toBe(1000);
+    // Above the ceiling the value is CLAMPED to it, never discarded. Falling back to the jittered
+    // schedule would answer "come back in an hour" with a retry in under a second — hammering a
+    // provider that had just asked, explicitly, to be left alone.
+    expect(policy.delayMs(1, 60_001)).toBe(60_000);
+    expect(policy.delayMs(1, 3_600_000)).toBe(60_000);
+    expect(policy.delayMs(8, 3_600_000)).toBe(60_000);
   });
 });
 

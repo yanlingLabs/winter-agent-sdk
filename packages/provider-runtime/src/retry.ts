@@ -7,9 +7,10 @@
 //   - backoff base 1s, x2, FULL jitter, capped at 30s (ruled; capture (G)'s own measured curve runs
 //     557 / 1162 / 2189 / 4026 / 9290 / 16675 / 36061 / … — roughly exponential with jitter to about
 //     40s then flat, which this cap deliberately diverges from downward).
-//   - `Retry-After` honoured VERBATIM up to 60s — capture (G) run (ii): `retry-after: 2` produced
-//     `retry_delay_ms: 2000` exactly, against 577ms/622ms jittered delays in the neighbouring runs.
-//     Above the ceiling a provider is effectively asking the client to hang, so the schedule wins.
+//   - `Retry-After` honoured VERBATIM up to 60s, and CLAMPED to 60s above it — capture (G) run (ii):
+//     `retry-after: 2` produced `retry_delay_ms: 2000` exactly, against 577ms/622ms jittered delays
+//     in the neighbouring runs. A cap is a clamp: an hour-long Retry-After still means "unavailable
+//     now", so the ceiling is the answer, never the sub-second jittered schedule.
 //   - retryable = 408/409/429/5xx/network/timeout, decided in `errors.ts` so exactly one place owns it.
 //
 // THE FIRST-BYTE RULE is the load-bearing one (WS-13 §13: "no unsafe automatic replay of effectful
@@ -61,7 +62,12 @@ export function createRetryPolicy(opts: RetryPolicyOptions = {}): RetryPolicy {
       committed = true;
     },
     delayMs(attempt: number, retryAfterMs?: number): number {
-      if (retryAfterMs !== undefined && retryAfterMs > 0 && retryAfterMs <= RETRY_AFTER_HONOUR_CEILING_MS) return retryAfterMs;
+      // CLAMPED, not discarded. R6-C says `Retry-After` is honoured "capped at 60 s", and a cap is a
+      // clamp: a provider asking for an hour is still telling us it is unavailable NOW, so the right
+      // response is to wait the ceiling, not to ignore the header and come back in under a second on
+      // the jittered schedule (which is what discarding it produced — hammering a provider that had
+      // just asked, explicitly, to be left alone).
+      if (retryAfterMs !== undefined && retryAfterMs > 0) return Math.min(retryAfterMs, RETRY_AFTER_HONOUR_CEILING_MS);
       const ceiling = Math.min(RETRY_BACKOFF_CAP_MS, RETRY_BACKOFF_BASE_MS * 2 ** Math.max(0, attempt - 1));
       // FULL jitter (the whole interval is in play, not a narrow band around the ceiling): the point
       // is to break up a thundering herd of clients that all failed on the same upstream blip.
