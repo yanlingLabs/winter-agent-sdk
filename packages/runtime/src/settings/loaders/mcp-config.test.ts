@@ -89,7 +89,9 @@ describe("settingsMcpServerSources: `Settings.mcpServers` per tier", () => {
     { source: "local" as const, settings: { mcpServers: { fromLocal: { command: "l" } } } },
   ];
 
-  test("a PROJECT-tier block is tagged `project`, so it inherits the stdio trust gate", () => {
+  // rd-1: "project-origin", not "stdio" -- RULING P5-K gates every transport, and the tag is what
+  // carries a block into that gate regardless of what the block configures.
+  test("a PROJECT-tier block is tagged `project`, so it inherits the project-origin trust gate", () => {
     const result = settingsMcpServerSources(tiers);
     const project = result.sources.find((s) => Object.keys(s.servers)[0] === "fromProject");
     expect(project!.origin).toBe("project");

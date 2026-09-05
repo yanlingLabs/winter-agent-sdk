@@ -635,7 +635,13 @@ export interface EngineOptions {
    * MCP server sources beyond the host's own `config.mcpServers`: the settings tiers,
    * `.winter/mcp.json`, and plugin manifests. Appended AFTER the explicit source, so an explicitly
    * configured server still wins; `resolveMcpServerSources` owns precedence, duplicate names, the
-   * reserved `winter` name and the stdio trust gate, exactly as before.
+   * reserved `winter` name and the project-origin trust gate, exactly as before.
+   *
+   * "PROJECT-ORIGIN", NOT "STDIO" (rd-1, residual round 2). P4's gate was stdio-literal because
+   * process execution was the visible danger; RULING P5-K widened it to every transport, and
+   * `lifecycle.ts`'s own header has said so since. This sentence kept the old name -- a stale
+   * summary of a rule that had moved, which is exactly how a reader concludes an http server from a
+   * clone connects freely.
    */
   extraMcpServerSources?: readonly McpServerSource[];
   /**
