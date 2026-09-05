@@ -1,5 +1,5 @@
 {
-  "$comment": "HAND-AUTHORED overlay layer — the Winter-reviewed provider rows. WS-13 §7: overlay evidence is never silently overwritten by upstream extraction or live discovery, so this file is the durable half of the catalog and `generated/catalog.json` is the merge product. Lane X adds the upstream layer beside it; it does not edit this file. Every `upstream.commit` here is the EMPTY string because no extraction produced these rows — that emptiness is the honest marker, and the validator admits it deliberately.",
+  "$comment": "HAND-AUTHORED overlay layer — the Winter-reviewed provider rows. WS-13 §7: overlay evidence is never silently overwritten by upstream extraction or live discovery, so this file is the durable half of the catalog and `generated/catalog.json` is the merge product. A re-sync NEVER writes this file (scripts/provider-source-sync.ts has no code path that opens it for writing, and a test asserts a re-run leaves it byte-identical). The eight OmniRoute-derived rows now carry the REAL pinned commit and the repository-relative paths their upstream counterparts were read from — WS-13 §13's \"per-row source paths + commit\". `azure-openai` names only a product-catalog path: at v3.8.50 it has NO backend RegistryEntry, so upstream contributes its identity and nothing executable (see generated/rejections.json, class `no-registry-entry`), and its endpoints and auth are Winter-authored here. `codex-oauth` and the twelve local ids keep `project: \"winter\"` with an EMPTY commit, which is the honest marker for a row no extraction produced. Endpoints stay Winter-authored base URLs rather than upstream's full chat paths (upstream's `baseUrl` for openai is `.../v1/chat/completions`); the extracted verbatim values live in generated/upstream-layer.json, and PROVENANCE.md records the divergence as a local override.",
   "providers": [
     {
       "id": "openai",
@@ -11,7 +11,7 @@
       "liveCatalogAuthority": "authoritative",
       "adapterId": "winter.openai-responses",
       "family": "openai",
-      "upstream": { "project": "OmniRoute", "commit": "", "sourcePaths": [] },
+      "upstream": { "project": "OmniRoute", "commit": "5458026c216f77a3da68ea49152dc33470cfe2cb", "sourcePaths": ["open-sse/config/providers/registry/openai/index.ts", "src/shared/constants/providers/apikey/index.ts"] },
       "risk": { "class": "approved", "reasons": [] },
       "scope": "llm"
     },
@@ -25,7 +25,7 @@
       "liveCatalogAuthority": "unknown",
       "adapterId": "winter.anthropic-messages",
       "family": "anthropic",
-      "upstream": { "project": "OmniRoute", "commit": "", "sourcePaths": [] },
+      "upstream": { "project": "OmniRoute", "commit": "5458026c216f77a3da68ea49152dc33470cfe2cb", "sourcePaths": ["open-sse/config/providers/registry/anthropic/index.ts", "src/shared/constants/providers/apikey/index.ts"] },
       "risk": { "class": "approved", "reasons": [] },
       "scope": "llm"
     },
@@ -39,7 +39,7 @@
       "liveCatalogAuthority": "authoritative",
       "adapterId": "winter.google-generate-content",
       "family": "google",
-      "upstream": { "project": "OmniRoute", "commit": "", "sourcePaths": [] },
+      "upstream": { "project": "OmniRoute", "commit": "5458026c216f77a3da68ea49152dc33470cfe2cb", "sourcePaths": ["open-sse/config/providers/registry/gemini/index.ts", "src/shared/constants/providers/apikey/index.ts"] },
       "risk": { "class": "approved", "reasons": [] },
       "scope": "llm"
     },
@@ -53,7 +53,7 @@
       "liveCatalogAuthority": "partial",
       "adapterId": "winter.openai-chat-completions",
       "family": "openai",
-      "upstream": { "project": "OmniRoute", "commit": "", "sourcePaths": [] },
+      "upstream": { "project": "OmniRoute", "commit": "5458026c216f77a3da68ea49152dc33470cfe2cb", "sourcePaths": ["open-sse/config/providers/registry/openrouter/index.ts", "src/shared/constants/providers/apikey/index.ts"] },
       "risk": {
         "class": "review-required",
         "reasons": ["gateway: capability parity is model-by-model (WS-13 §14.4), and per-request provider/data-policy controls must be preserved before any row here is promoted past `candidate`"]
@@ -71,7 +71,7 @@
       "liveCatalogAuthority": "partial",
       "adapterId": "winter.openai-chat-completions",
       "family": "openai",
-      "upstream": { "project": "OmniRoute", "commit": "", "sourcePaths": [] },
+      "upstream": { "project": "OmniRoute", "commit": "5458026c216f77a3da68ea49152dc33470cfe2cb", "sourcePaths": ["open-sse/config/providers/registry/deepseek/index.ts", "src/shared/constants/providers/apikey/index.ts"] },
       "risk": {
         "class": "review-required",
         "reasons": ["reasoning continuity is tool-loop fragile: WS-13 §8.2 records a hard 400 when reasoning state is missing mid-tool-loop, so the tool-loop corpus must pass before promotion"]
@@ -105,7 +105,7 @@
       "liveCatalogAuthority": "unknown",
       "adapterId": "winter.azure-openai",
       "family": "openai",
-      "upstream": { "project": "OmniRoute", "commit": "", "sourcePaths": [] },
+      "upstream": { "project": "OmniRoute", "commit": "5458026c216f77a3da68ea49152dc33470cfe2cb", "sourcePaths": ["src/shared/constants/providers/apikey/index.ts"] },
       "risk": {
         "class": "review-required",
         "reasons": ["native cloud (R6-16): deployment-path/api-version identity and Entra-vs-key auth each need their own request-serialization proof before promotion"]
@@ -122,7 +122,7 @@
       "liveCatalogAuthority": "partial",
       "adapterId": "winter.bedrock-converse",
       "family": "bedrock",
-      "upstream": { "project": "OmniRoute", "commit": "", "sourcePaths": [] },
+      "upstream": { "project": "OmniRoute", "commit": "5458026c216f77a3da68ea49152dc33470cfe2cb", "sourcePaths": ["open-sse/config/providers/registry/bedrock/index.ts", "src/shared/constants/providers/apikey/index.ts"] },
       "risk": {
         "class": "review-required",
         "reasons": ["native cloud (R6-16): hand-rolled SigV4 and AWS event-stream decoding need their own signing/streaming proof; credentials are env + shared-credentials-file only this phase (no IMDS/STS)"]
@@ -139,7 +139,7 @@
       "liveCatalogAuthority": "partial",
       "adapterId": "winter.google-generate-content",
       "family": "google",
-      "upstream": { "project": "OmniRoute", "commit": "", "sourcePaths": [] },
+      "upstream": { "project": "OmniRoute", "commit": "5458026c216f77a3da68ea49152dc33470cfe2cb", "sourcePaths": ["open-sse/config/providers/registry/vertex/index.ts", "src/shared/constants/providers/apikey/index.ts"] },
       "risk": {
         "class": "review-required",
         "reasons": ["native cloud (R6-16): project/location endpoints and ADC (service-account RS256 JWT exchange or an explicit access-token ref) need their own auth proof"]

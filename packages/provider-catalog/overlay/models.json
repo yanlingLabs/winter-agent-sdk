@@ -1,5 +1,5 @@
 {
-  "$comment": "HAND-AUTHORED overlay model rows — one resolvable row per cohort provider (two where a lane needs both a plain and a reasoning model), so every adapter lane has something to resolve against its loopback fake on day one. EVERY row is `status: \"candidate\"`: promotion to `supported` requires the behavioural corpus (WS-13 §13), which no row has run. `pricing` is OMITTED on every row and that is deliberate — R6-H makes the descriptor's pricing evidence the ONLY price source, and a seed that invented list prices would launder a guess into a `costBasis: \"list\"` claim. Unpriced rows report costUsd 0 / costBasis \"unknown\", and `maxBudgetUsd` is disclosed inert for them until Lane X lands real `official-doc` pricing. Likewise NO row carries `classifierEligible: true` — R6-14 sets that only after the safety corpus passes live, so the seed's answer is Manual fallback, the fail-safe direction.",
+  "$comment": "HAND-AUTHORED overlay model rows — the reviewed half of the catalog, which upstream extraction and live discovery may never overwrite (WS-13 §7). One resolvable row per cohort provider (two or three where a lane needs a plain, a reasoning and a flagship model), so every adapter lane has something to resolve against its loopback fake. EVERY row is `status: \"candidate\"`: promotion to `supported` requires the behavioural corpus (WS-13 §13), which no row has run. NO row carries `classifierEligible` — R6-14 sets that only after the safety corpus passes live, so the answer here is Manual fallback, the fail-safe direction. `pricing` is present ONLY where a vendor's own pricing page states a list price for that exact model, with the page URL as `sourceRef` and the observation instant: R6-H makes this the only price source and `costBasis: \"list\"` a claim about published prices, so an unpriced row carries no `pricing` key at all rather than an invented number. Gateway, Azure-deployment, Bedrock and Vertex rows are deliberately unpriced — their prices are the reseller's, not the vendor list, and no page was read for them.",
   "models": [
     {
       "key": "openai/gpt-4.1",
@@ -8,13 +8,14 @@
       "displayName": "GPT-4.1",
       "aliases": [],
       "endpoints": ["chat", "responses"],
-      "contextWindow": { "value": 1047576, "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
+      "contextWindow": { "value": 1047576, "source": "upstream-static", "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-4.1 at v3.8.50 (5458026c) — `contextLength: 1047576`", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" },
       "inputModalities": { "value": ["text", "image"], "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
       "outputModalities": { "value": ["text"], "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
       "toolCalling": { "value": "native", "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
       "nativeTools": { "value": true, "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
       "parallelTools": { "value": true, "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
       "structuredOutput": { "value": true, "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
+      "pricing": { "value": { "inputPerMTokUsd": 2.0, "outputPerMTokUsd": 8.0, "cacheReadPerMTokUsd": 0.5 }, "source": "official-doc", "sourceRef": "https://developers.openai.com/api/docs/pricing — GPT-4.1 standard tier: input $2.00, cached input $0.50, output $8.00 per 1M tokens. No cache-WRITE rate is published (OpenAI does not charge for cache writes), so the key is omitted and the estimator falls back to the input rate for any write tokens an adapter reports.", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" },
       "unsupportedParameters": [],
       "status": "candidate"
     },
@@ -25,21 +26,55 @@
       "displayName": "o4-mini",
       "aliases": [],
       "endpoints": ["responses"],
-      "contextWindow": { "value": 200000, "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
+      "contextWindow": { "value": 200000, "source": "upstream-static", "sourceRef": "open-sse/config/providers/registry/openai/index.ts#o4-mini at v3.8.50 (5458026c) — `contextLength: 200000`", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" },
       "inputModalities": { "value": ["text", "image"], "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
       "outputModalities": { "value": ["text"], "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
       "toolCalling": { "value": "native", "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
       "nativeTools": { "value": true, "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
       "structuredOutput": { "value": true, "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
       "reasoning": {
-        "supported": { "value": true, "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
+        "supported": { "value": true, "source": "official-doc", "sourceRef": "Provider-reasoning-continuity report §5.1 — the Responses request carries `reasoning: { effort, summary }` and `include: [\"reasoning.encrypted_content\"]`", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" },
         "efforts": ["low", "medium", "high"],
         "defaultEffort": "medium",
         "continuation": "opaque-provider-state",
-        "readableState": { "value": "summary", "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
-        "continuationDomain": { "value": ["openai/o4-mini"], "source": "upstream-static", "confidence": "unknown", "observedAt": "2026-09-05T00:00:00Z" }
+        "readableState": { "value": "summary", "source": "official-doc", "sourceRef": "continuity report §5.1 — `reasoning.summary` asks for readable summary content; the raw chain is never exposed", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" },
+        "summaryRequest": { "value": { "field": "reasoning.summary", "values": ["auto", "concise", "detailed"] }, "source": "official-doc", "sourceRef": "continuity report §5.1 — \"Current summary values are `auto`, `concise`, and `detailed`\"; the deprecated `generate_summary` alias is deliberately NOT listed", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" },
+        "replayScope": { "value": "current-turn", "source": "official-doc", "sourceRef": "continuity report §5.3 — under `store: false` the COMPLETED output items of the current turn are replayed in their original order", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" },
+        "completionEvent": { "value": "response.completed", "source": "official-doc", "sourceRef": "WS-13 §8.2 (amended) — \"OpenAI completed reasoning items (never the `output_item.added` partial) replayed in order under `store:false` + `include: [\"reasoning.encrypted_content\"]`\"", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" },
+        "continuationDomain": { "value": ["openai/o4-mini"], "source": "official-doc", "sourceRef": "continuity report §2.5/§7 — the opaque reasoning item stays with OpenAI, and no documentation places two OpenAI models in one domain. Winter records the MODEL ALONE rather than the provider: WS-13 §8.2 makes continuation domain a first-class fact that is never inferred, and a wider domain would license a cross-model fallback nothing has proven.", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" }
       },
+      "pricing": { "value": { "inputPerMTokUsd": 1.1, "outputPerMTokUsd": 4.4, "cacheReadPerMTokUsd": 0.275 }, "source": "official-doc", "sourceRef": "https://developers.openai.com/api/docs/pricing — o4-mini standard tier: input $1.10, cached input $0.275, output $4.40 per 1M tokens", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" },
       "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "anthropic/claude-opus-5",
+      "providerId": "anthropic",
+      "upstreamId": "claude-opus-5",
+      "displayName": "Claude Opus 5",
+      "aliases": ["opus"],
+      "$comment": "ADDED by Lane X, beyond T2's seed. `opus` is one of the four PINNED aliases `packages/runtime/src/provider/selection.ts` routes to the `anthropic` provider (`PINNED_ANTHROPIC_ALIASES`), and with no row carrying it the alias resolved to a typed `unknown-model` refusal — a hole the seed's `sonnet`/`haiku` rows hid. The capability facts are upstream's at the pin; the prices are the vendor's own page.",
+      "endpoints": ["chat"],
+      "contextWindow": { "value": 1000000, "source": "upstream-static", "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-opus-5 at v3.8.50 (5458026c) — `contextLength: 1000000`", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" },
+      "maxOutputTokens": { "value": 128000, "source": "upstream-static", "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-opus-5 — `maxOutputTokens: 128000`", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" },
+      "inputModalities": { "value": ["text", "image"], "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
+      "outputModalities": { "value": ["text"], "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
+      "toolCalling": { "value": "native", "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
+      "nativeTools": { "value": true, "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
+      "parallelTools": { "value": true, "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
+      "promptCaching": { "value": true, "source": "official-doc", "sourceRef": "https://claude.com/pricing — the row publishes distinct prompt-cache write and read rates, which a model without prompt caching would not have", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" },
+      "reasoning": {
+        "supported": { "value": true, "source": "upstream-static", "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-opus-5 — `supportsXHighEffort: true`, and the row rejects non-default sampling because reasoning rides `output_config.effort`", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" },
+        "efforts": ["low", "medium", "high", "xhigh", "max"],
+        "continuation": "opaque-provider-state",
+        "readableState": { "value": "summary", "source": "live-probe", "sourceRef": "packages/conformance/compat/anthropic/0.3.250/derived-shapes-p6.md capture (F) — the runtime normalises an unsigned thinking block to signature: \"\" and replays it", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" },
+        "summaryRequest": { "value": { "field": "thinking.display", "values": ["summarized", "omitted"] }, "source": "official-doc", "sourceRef": "derived-shapes-p6.md item (c) — ThinkingAdaptive/ThinkingEnabled `display`", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" },
+        "replayScope": { "value": "all-turns", "source": "live-probe", "sourceRef": "continuity report §3 (wire probe of the pinned Claude Agent SDK, 0.3.250→0.3.258) — every uncompacted historical thinking/redacted block is replayed on every later request", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" },
+        "completionEvent": { "value": "content_block_stop", "source": "official-doc", "sourceRef": "R6-D's pinned stream vocabulary — a thinking block's `signature` arrives across `signature_delta` events, so the COMPLETE replayable block exists only at `content_block_stop`; an earlier partial copy would replay an unsigned block", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" },
+        "continuationDomain": { "value": ["anthropic/claude-opus-5"], "source": "official-doc", "sourceRef": "continuity report §4.4 — \"when changing Claude models, prior `thinking` and `redacted_thinking` blocks should be stripped because they are tied to the model that produced them. Therefore 'same provider' is not automatically 'same continuation domain.'\" The domain is therefore this model alone, never the Anthropic provider.", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" }
+      },
+      "pricing": { "value": { "inputPerMTokUsd": 5.0, "outputPerMTokUsd": 25.0, "cacheReadPerMTokUsd": 0.5, "cacheWritePerMTokUsd": 6.25 }, "source": "official-doc", "sourceRef": "https://claude.com/pricing — Opus 5: input $5, output $25, prompt cache read $0.50, prompt cache write $6.25 per 1M tokens", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" },
+      "unsupportedParameters": ["temperature", "top_p", "top_k"],
       "status": "candidate"
     },
     {
@@ -49,21 +84,25 @@
       "displayName": "Claude Sonnet 5",
       "aliases": ["sonnet"],
       "endpoints": ["chat"],
+      "contextWindow": { "value": 1048576, "source": "upstream-static", "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-sonnet-5 at v3.8.50 (5458026c) — `contextLength: 1048576`", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" },
       "inputModalities": { "value": ["text", "image"], "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
       "outputModalities": { "value": ["text"], "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
       "toolCalling": { "value": "native", "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
       "nativeTools": { "value": true, "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
       "parallelTools": { "value": true, "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
-      "promptCaching": { "value": true, "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
+      "promptCaching": { "value": true, "source": "official-doc", "sourceRef": "https://claude.com/pricing — Sonnet 5 publishes distinct prompt-cache write and read rates", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" },
       "reasoning": {
         "supported": { "value": true, "source": "live-probe", "sourceRef": "packages/conformance/compat/anthropic/0.3.250/derived-shapes-p6.md — capture (J), the `sonnet` row's supportsEffort/supportsAdaptiveThinking", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" },
         "efforts": ["low", "medium", "high", "xhigh", "max"],
         "continuation": "opaque-provider-state",
         "readableState": { "value": "summary", "source": "live-probe", "sourceRef": "derived-shapes-p6.md capture (F) — the runtime normalises an unsigned thinking block to signature: \"\" and replays it", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" },
         "summaryRequest": { "value": { "field": "thinking.display", "values": ["summarized", "omitted"] }, "source": "official-doc", "sourceRef": "derived-shapes-p6.md item (c) — ThinkingAdaptive/ThinkingEnabled `display`", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" },
-        "continuationDomain": { "value": ["anthropic/claude-sonnet-5"], "source": "upstream-static", "confidence": "unknown", "observedAt": "2026-09-05T00:00:00Z" }
+        "replayScope": { "value": "all-turns", "source": "live-probe", "sourceRef": "continuity report §3 (wire probe of the pinned Claude Agent SDK, 0.3.250→0.3.258) — every uncompacted historical thinking/redacted block is replayed on every later request", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" },
+        "completionEvent": { "value": "content_block_stop", "source": "official-doc", "sourceRef": "R6-D's pinned stream vocabulary — a thinking block's `signature` arrives across `signature_delta` events, so the COMPLETE replayable block exists only at `content_block_stop`", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" },
+        "continuationDomain": { "value": ["anthropic/claude-sonnet-5"], "source": "official-doc", "sourceRef": "continuity report §4.4 — Anthropic documents model switching as a boundary at which prior `thinking`/`redacted_thinking` blocks are stripped, because they are tied to the producing model; \"same provider\" is therefore not \"same continuation domain\", and this domain is the model alone", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" }
       },
-      "unsupportedParameters": [],
+      "pricing": { "value": { "inputPerMTokUsd": 2.0, "outputPerMTokUsd": 10.0, "cacheReadPerMTokUsd": 0.2, "cacheWritePerMTokUsd": 2.5 }, "source": "official-doc", "sourceRef": "https://claude.com/pricing — Sonnet 5: input $2, output $10, prompt cache read $0.20, prompt cache write $2.50 per 1M tokens", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" },
+      "unsupportedParameters": ["temperature", "top_p", "top_k"],
       "status": "candidate"
     },
     {
@@ -72,11 +111,14 @@
       "upstreamId": "claude-haiku-4-5-20251001",
       "displayName": "Claude Haiku 4.5",
       "aliases": ["haiku"],
+      "$comment": "Deliberately carries NO `reasoning` block, mirroring derived-shapes-p6.md capture (J): the pinned runtime's haiku row leaves its capability booleans ABSENT rather than false, and absent means unknown. The catalog records unknown by omission for the same reason. Upstream's own anthropic entry lists this model as `claude-haiku-4.5` (a DOTTED id); Winter keeps the dated `claude-haiku-4-5-20251001` spelling the pinned runtime uses, so the two rows coexist — the upstream one under its own key, this one shadowing nothing.",
       "endpoints": ["chat"],
       "inputModalities": { "value": ["text", "image"], "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
       "outputModalities": { "value": ["text"], "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
       "toolCalling": { "value": "native", "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
       "nativeTools": { "value": true, "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
+      "promptCaching": { "value": true, "source": "official-doc", "sourceRef": "https://claude.com/pricing — Haiku 4.5 publishes distinct prompt-cache write and read rates", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" },
+      "pricing": { "value": { "inputPerMTokUsd": 1.0, "outputPerMTokUsd": 5.0, "cacheReadPerMTokUsd": 0.1, "cacheWritePerMTokUsd": 1.25 }, "source": "official-doc", "sourceRef": "https://claude.com/pricing — Haiku 4.5: input $1, output $5, prompt cache read $0.10, prompt cache write $1.25 per 1M tokens", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" },
       "unsupportedParameters": [],
       "status": "candidate"
     },
@@ -87,19 +129,22 @@
       "displayName": "Gemini 2.5 Pro",
       "aliases": [],
       "endpoints": ["chat"],
-      "contextWindow": { "value": 1048576, "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
+      "contextWindow": { "value": 1048576, "source": "upstream-static", "sourceRef": "open-sse/config/providers/registry/gemini/index.ts at v3.8.50 (5458026c) — the provider's `defaultContextLength: 1048576`", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" },
       "inputModalities": { "value": ["text", "image", "audio", "video"], "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
       "outputModalities": { "value": ["text"], "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
-      "toolCalling": { "value": "native", "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
-      "nativeTools": { "value": true, "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
+      "toolCalling": { "value": "native", "source": "upstream-static", "sourceRef": "open-sse/config/providers/registry/gemini/index.ts#gemini-2.5-pro — `toolCalling: true`", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" },
+      "nativeTools": { "value": true, "source": "upstream-static", "sourceRef": "open-sse/config/providers/registry/gemini/index.ts#gemini-2.5-pro — `toolCalling: true`", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" },
       "structuredOutput": { "value": true, "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
       "reasoning": {
-        "supported": { "value": true, "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
+        "supported": { "value": true, "source": "official-doc", "sourceRef": "continuity report §6.1 — Generate Content requests thought summaries with `thinkingConfig.includeThoughts`", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" },
         "efforts": [],
+        "$comment": "`efforts` is EMPTY on purpose, not unfilled: Gemini's generateContent surface has no effort vocabulary at all — thinking is budgeted (`thinkingConfig`), not tiered. WS-13 §8.2 forbids treating vocabularies as interchangeable, so borrowing OpenAI's low/medium/high here would invent a control the endpoint does not accept, and the adapter would reject the selection before sending.",
         "continuation": "opaque-provider-state",
-        "readableState": { "value": "summary", "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
-        "continuationDomain": { "value": ["google/gemini-2.5-pro"], "source": "upstream-static", "confidence": "unknown", "observedAt": "2026-09-05T00:00:00Z" }
+        "readableState": { "value": "summary", "source": "official-doc", "sourceRef": "continuity report §6.1 — summary parts are identified by `part.thought === true`; the underlying chain is not exposed", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" },
+        "summaryRequest": { "value": { "field": "thinkingConfig.includeThoughts", "values": ["true"] }, "source": "official-doc", "sourceRef": "continuity report §6.1 — `config.thinkingConfig.includeThoughts: true` on generateContent. The field is a BOOLEAN, recorded here as its single enabling spelling because the schema's `values` is a string list; the Interactions API's `generation_config.thinking_summaries` is a different surface and is not claimed for this endpoint.", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" },
+        "continuationDomain": { "value": ["google/gemini-2.5-pro"], "source": "official-doc", "sourceRef": "continuity report §6.1 — \"A Gemini summary can be forwarded to another family. The `thoughtSignature` cannot.\" Signatures are bound to their exact part and model, so the domain is this model alone.", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" }
       },
+      "pricing": { "value": { "inputPerMTokUsd": 1.25, "outputPerMTokUsd": 10.0, "cacheReadPerMTokUsd": 0.125 }, "source": "official-doc", "sourceRef": "https://ai.google.dev/gemini-api/docs/pricing — Gemini 2.5 Pro paid tier, prompts <= 200k tokens: input $1.25, output $10.00, context-cache read $0.125 per 1M tokens. TIERED UPSTREAM: prompts > 200k are billed $2.50 / $15.00 / $0.25. `ModelPricing` has one rate per direction, so the STANDARD (<=200k) tier is recorded and cost is UNDER-reported for prompts above it — a disclosed schema gap (PROVENANCE.md), not a claim that the higher tier does not exist.", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" },
       "unsupportedParameters": [],
       "status": "candidate"
     },
@@ -109,6 +154,7 @@
       "upstreamId": "openai/gpt-4.1",
       "displayName": "GPT-4.1 (via OpenRouter)",
       "aliases": [],
+      "$comment": "UNPRICED on purpose. A gateway's price is the gateway's, not the vendor's: OpenRouter routes to shifting upstream providers with their own margins and data policies, so copying OpenAI's list price here would attribute a number to the wrong billing boundary — the exact confusion WS-13 §8.3 keeps `openai/gpt-x` and `gateway/gpt-x` apart to avoid. `estimateCostUsd` reports 0/\"unknown\" for it, which is the honest answer. OpenRouter's OWN-namespace `auto` row is not here: the pinned upstream entry lists it (`{ id: \"auto\" }`) and it reaches the catalog through the upstream layer as `openrouter/auto`.",
       "endpoints": ["chat"],
       "inputModalities": { "value": ["text", "image"], "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
       "outputModalities": { "value": ["text"], "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
@@ -129,12 +175,14 @@
       "toolCalling": { "value": "native", "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
       "nativeTools": { "value": true, "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
       "reasoning": {
-        "supported": { "value": true, "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
+        "supported": { "value": true, "source": "official-doc", "sourceRef": "continuity report §6.3 — thinking mode via `reasoning_effort` plus `extra_body.thinking: { type: \"enabled\" }`", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" },
         "efforts": [],
         "continuation": "plaintext",
-        "readableState": { "value": "full-exposed", "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
-        "toolLoopRequirement": { "value": "hard-error", "source": "official-doc", "sourceRef": "WS-13 §8.2 — \"DeepSeek w/ tools: 400\" when reasoning state is missing mid-tool-loop", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" }
+        "readableState": { "value": "full-exposed", "source": "official-doc", "sourceRef": "continuity report §6.3 — DeepSeek exposes readable reasoning through `reasoning_content`; the assistant message carries ordinary `content`, optional tool calls, and `reasoning_content`", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" },
+        "replayScope": { "value": "current-tool-loop", "source": "official-doc", "sourceRef": "continuity report §6.3 — with `tools` present, ALL preceding `reasoning_content` must be passed back; with `tools` absent it is not needed and is ignored if supplied", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" },
+        "toolLoopRequirement": { "value": "hard-error", "source": "official-doc", "sourceRef": "continuity report §6.3 — \"when `tools` is present, all preceding `reasoning_content` must be passed back on subsequent requests; dropping it can cause a 400 response\" (WS-13 §8.2 records the same fact)", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" }
       },
+      "$comment": "The continuation is PLAINTEXT and the state is fully exposed, so this row has no `continuationDomain`: there is no opaque object bound to a model to define one, and the readable `reasoning_content` is the class the continuity report §6.3 says CAN cross families as labelled text. Deliberately unpriced — the addendum scopes overlay pricing to the OpenAI/Anthropic/Gemini cohort and no DeepSeek pricing page was read.",
       "unsupportedParameters": [],
       "status": "candidate"
     },
@@ -144,6 +192,7 @@
       "upstreamId": "gpt-5.6-sol",
       "displayName": "GPT-5.6 Sol (Codex)",
       "aliases": [],
+      "$comment": "Winter-owned (D11): no upstream extraction produced this row, and it is deliberately UNPRICED — a subscription backend has no per-token list price, so `costBasis` stays \"unknown\" and `maxBudgetUsd` is inert for it by design rather than by omission.",
       "endpoints": ["responses"],
       "contextWindow": { "value": 272000, "source": "upstream-static", "sourceRef": "Norma packages/core/src/providers/codex-config.ts — CODEX_MODELS, a dated static set with its own drift guard", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" },
       "inputModalities": { "value": ["text", "image"], "source": "upstream-static", "sourceRef": "Norma codex-config.ts CODEX_MODELS supportsVision: true", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" },
@@ -155,9 +204,9 @@
         "efforts": ["low", "medium", "high"],
         "defaultEffort": "medium",
         "continuation": "opaque-provider-state",
-        "readableState": { "value": "summary", "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
+        "readableState": { "value": "summary", "source": "official-doc", "sourceRef": "continuity report §5.1 — the Responses surface returns a readable summary, never the raw chain", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" },
         "completionEvent": { "value": "response.completed", "source": "upstream-static", "sourceRef": "Norma packages/core/src/providers/responses-sse.ts — encrypted_content is preserved VERBATIM off the completion event", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" },
-        "continuationDomain": { "value": ["codex-oauth/gpt-5.6-sol"], "source": "upstream-static", "confidence": "unknown", "observedAt": "2026-09-05T00:00:00Z" }
+        "continuationDomain": { "value": ["codex-oauth/gpt-5.6-sol"], "source": "official-doc", "sourceRef": "continuity report §2.5 — two endpoints can both use `/v1/responses` while issuing unrelated encrypted payloads, so the Codex backend shares NO domain with `openai/*` despite the shared HTTP shape. WS-13 §8.2: \"OpenAI-compatible\" is never the capability test.", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" }
       },
       "unsupportedParameters": [],
       "status": "candidate"
@@ -168,6 +217,7 @@
       "upstreamId": "gpt-4.1",
       "displayName": "GPT-4.1 (Azure deployment)",
       "aliases": [],
+      "$comment": "UNPRICED: Azure bills its own regional/deployment rates, which are not the OpenAI list price this catalog read. Upstream has no backend registry entry for `azure-openai` at the pin (rejection class `no-registry-entry`), so every fact here is Winter-authored.",
       "endpoints": ["chat", "responses"],
       "inputModalities": { "value": ["text", "image"], "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
       "outputModalities": { "value": ["text"], "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
@@ -182,6 +232,7 @@
       "upstreamId": "anthropic.claude-3-5-sonnet-20241022-v2:0",
       "displayName": "Claude 3.5 Sonnet v2 (Bedrock)",
       "aliases": [],
+      "$comment": "UNPRICED: Bedrock bills AWS's own per-region rates, not the Anthropic list price. The pinned upstream bedrock entry lists a different, newer model set, which reaches the catalog through the upstream layer under its own keys; this row is kept because Lane N's fixtures resolve against it.",
       "endpoints": ["chat"],
       "inputModalities": { "value": ["text", "image"], "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
       "outputModalities": { "value": ["text"], "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
@@ -196,6 +247,7 @@
       "upstreamId": "gemini-2.5-pro",
       "displayName": "Gemini 2.5 Pro (Vertex)",
       "aliases": [],
+      "$comment": "UNPRICED: Vertex bills Google Cloud's own project/region rates, which are not the Gemini API list price read for `google/gemini-2.5-pro`. Its `continuationDomain` is its OWN key and deliberately does NOT include `google/gemini-2.5-pro`: WS-13 §8.2 makes the exact endpoint+model the capability unit, and nothing has proven a Vertex-issued `thoughtSignature` replays against the Gemini API endpoint or the reverse.",
       "endpoints": ["chat"],
       "inputModalities": { "value": ["text", "image", "audio", "video"], "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
       "outputModalities": { "value": ["text"], "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
@@ -205,7 +257,8 @@
         "supported": { "value": true, "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
         "efforts": [],
         "continuation": "opaque-provider-state",
-        "continuationDomain": { "value": ["vertex/gemini-2.5-pro"], "source": "upstream-static", "confidence": "unknown", "observedAt": "2026-09-05T00:00:00Z" }
+        "readableState": { "value": "summary", "source": "official-doc", "sourceRef": "continuity report §6.1 — Vertex serves the same generateContent surface, whose summaries are `part.thought === true` parts", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" },
+        "continuationDomain": { "value": ["vertex/gemini-2.5-pro"], "source": "official-doc", "sourceRef": "continuity report §2.5 — a shared HTTP shape is never evidence of a shared domain; the Vertex endpoint is a different provider boundary from the Gemini API even for the same model name", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" }
       },
       "unsupportedParameters": [],
       "status": "candidate"
@@ -216,6 +269,7 @@
       "upstreamId": "llama3.1:8b",
       "displayName": "Llama 3.1 8B (Ollama)",
       "aliases": [],
+      "$comment": "UNPRICED by nature — a local model has no per-token price. Kept as the one seeded LOCAL row so the local path has something resolvable for a fixture; the other eleven local providers intentionally have none, which is what a `liveCatalogAuthority: \"unknown\"` provider with an `allowUnlisted` connection is for. Continuity report §6.4 is why no reasoning block is asserted: a deployed serving stack's reasoning behaviour must be OBSERVED per endpoint, never inferred from the weights or the model family.",
       "endpoints": ["chat"],
       "inputModalities": { "value": ["text"], "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
       "outputModalities": { "value": ["text"], "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
