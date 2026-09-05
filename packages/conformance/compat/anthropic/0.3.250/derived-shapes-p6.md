@@ -54,8 +54,12 @@ checked programmatically against the *second* extraction. Both cycles independen
 checksum. The verification result is recorded at the end of this Method section.
 
 Files examined: `sdk.d.ts` (8447 lines) and `sdk-tools.d.ts` (4125 lines), matching P4/P5's counts.
-`bridge.d.ts`, `browser-sdk.d.ts`, `extractFromBunfs.d.ts` and `agentSdkTypes.d.ts` were swept for every
-P6 symbol searched for and had **zero** independent hits.
+`bridge.d.ts` (361), `browser-sdk.d.ts` (107), `extractFromBunfs.d.ts` (1) and `agentSdkTypes.d.ts` (1)
+were swept in the second cycle for all 31 P6 symbol names this task searched for — every frame type,
+`ThinkingConfig`/`EffortLevel`/`maxThinkingTokens`, `ModelInfo`/`supportedModels`/`set_model`/
+`AccountInfo`/`ApiKeySource`, `NonNullableUsage`/`ModelUsage`/`costBasis`/`total_cost_usd`/
+`SDKContextUsage`, `redacted_thinking`, `fallbackModel`, and `SessionStore`/`SessionKey`/`subpath` —
+and returned **zero** hits in all four.
 
 **Prompt-text prohibition (WS-11 §6.2, phase Global Constraints).** No grep in either cycle ran over
 `sdk.mjs`, `bridge.mjs`, `browser-sdk.js` or any bundle — only the six `.d.ts` files and
@@ -837,167 +841,10 @@ letters would have overwritten committed P4 evidence, so this task's six scenari
 | --- | --- | --- | --- |
 | (1) | **F** | `includePartialMessages` — `stream_event` ordering over text + thinking + tool_use | **captured** — and it answers R6-8 |
 | (2) | **G** | 529→200, 429 + `retry-after`/`anthropic-ratelimit-*`, persistent 529 + `fallbackModel` | **captured** — decisive on OQ-P6-4 and OQ-P6-5 |
-| (3) | **H** | **WS-17 probe (a)** — neighbour-file survival across resume | _pending_ |
+| (3) | **H** | **WS-17 probe (a)** — neighbour-file survival across resume | **captured — CLEAN PASS** (compaction half: not capturable) |
 | (4) | **I** | no API key; unknown model — the failure shape | **captured** |
 | (5) | **J** | `supportedModels()` / `setModel()` | **captured** — the catalog is in-binary |
 | (6) | **K** | `total_cost_usd` / `modelUsage` / `costBasis` for a fake model id | **captured** — `costBasis: "unknown"`, cost still non-zero |
-
-### Capture (H) — WS-17 probe (a): the sidecar survives byte-untouched. **R6-7 CONFIRMED.**
-
-**This is the capture the controller rules on before Lane C is briefed.** It passes.
-
-**Design.** One set of mkdtemp dirs (`CLAUDE_CONFIG_DIR`, `HOME`, `cwd`) **reused across every run** —
-a fresh cwd for the second run would change the derived project key and make an untouched sidecar
-prove nothing. Sequence: run 1 creates the transcript under a fixed `sessionId`; the sidecar is
-written **beside** it; sha256 recorded; six `resume` append turns; sha256 re-checked (attribution
-split); a `/compact` run; sha256 checked again. The marker is a high-entropy token derived by sha256;
-every request body the loopback receives is substring-checked for it and **never printed** (bodies
-carry the system prompt).
-
-**Where the runtime actually put things** (the path shape, templated):
-
-```
-<CLAUDE_CONFIG_DIR>/projects/<sanitized-cwd>/<sessionId>.jsonl                    ← the transcript
-<CLAUDE_CONFIG_DIR>/projects/<sanitized-cwd>/<sessionId>.provider-state.jsonl     ← the sidecar
-```
-
-The `projects/<sanitized-cwd>/` layout was discovered by globbing, not assumed, and the sanitized-cwd
-directory name matches `SessionKey.projectKey`'s documented default (`sdk.d.ts:5197-5200`).
-
-**Verdicts — all three assertions pass:**
-
-| Assertion | Result |
-| --- | --- |
-| 1. sidecar sha256 unchanged end-to-end | **true** — `5d2bf482…ffa7a0` before, after the appends, and after `/compact`; 921 bytes throughout |
-| 1a. unchanged after the resume+append half alone | **true** (attribution split, so a later change could not be blamed on the wrong half) |
-| 2. the marker appears in **no** request body the loopback received | **true** — 24 requests checked, zero hits |
-| 3. the transcript still parses as JSONL | **true** — 8 → 50 → 56 lines, every line parsed |
-| bonus: file NAMES in the project dir | nothing renamed, moved, or removed; the only name added across the whole probe is the sidecar this probe itself wrote |
-
-`run 2 resumed the same session` is `true` (run 2's `system/init.session_id` equals run 1's), so the
-resume genuinely reloaded the transcript the sidecar sits beside rather than starting a new session.
-
-**What this settles.** **R6-7's "beside the transcript" filesystem layout is safe under the pinned
-runtime.** A `<sessionId>.provider-state.jsonl` neighbour is not read, not rewritten, not renamed, not
-swept, and not sent to the model across session creation, resume, six appending turns, and a
-compaction attempt. WS-05's recorded in-transcript alternative does **not** need to be re-opened, and
-Lane C can be briefed on R6-7 as written.
-
-**Two limits, stated rather than implied:**
-
-1. **The compaction half is NOT CAPTURABLE in this shape** — recorded as the brief permits.
-   `query({ prompt: "/compact" })` with `resume` was driven three times (short turns, then six turns,
-   then six turns with ~250 KB of synthetic filler in context) and answered identically every time:
-
-   ```
-   system/status  status: "compacting"
-   system/status  status: null, compact_result: "failed", compact_error: "Not enough messages to compact."
-   system/init
-   assistant
-   result         subtype: "success", is_error: false, num_turns: 0, result: "Not enough messages to compact."
-   ```
-
-   The refusal is **not** about size — the third attempt had a 300 KB request body's worth of history.
-   The evidence points at ordering: the `system/init` frame arrives **after** the compaction status
-   frames, `num_turns` is `0`, and **the loopback received no `POST /v1/messages` at all during that
-   run** (one `HEAD /api/hello` and nothing else). The local slash command runs before the resumed
-   conversation is materialised into the loop, so there is nothing in memory for it to compact. This
-   is the same class of structural limit P2 recorded for streaming-input captures, and the same one
-   T10 hit for `SessionEnd`. **No compaction was therefore performed on the transcript the sidecar sits
-   beside**; the probe covers session creation, resume, six appends, and an attempted compaction.
-   Carried as **OQ-P6-11**: whether a *completed* compaction rewrites or replaces the transcript file
-   (which would matter for a neighbour that must stay paired with it) needs a streaming-input harness.
-2. **This probe covers the FILESYSTEM store only.** R6-7a's external-`SessionStore` variant is a
-   different mechanism and is answered from the declaration in item (h), not here — including the three
-   constraints (`SessionStoreEntry` needs a `type`, `anchorUuid` must not double as the entry `uuid`,
-   and `listSubkeys` is optional so resume must `load()` the key directly) recorded as OQ-P6-7.
-
-**Free finding for item (b).** `SDKStatusMessage` was observed carrying `status: "compacting"` and
-then `status: null` **with** `compact_result: "failed"` and `compact_error` on the same frame —
-confirming from the runtime that the three-state `SDKStatus` (`sdk.d.ts:4836`) really does use `null`
-as a transition-to-idle value, and that the frame is the compaction-outcome carrier item (b) derived.
-
-### Capture (G) — `max_retries` is 10, `retry-after` is honoured, `rate_limit_event` never fires, and the overload fallback is FRAME-INVISIBLE
-
-**Design.** Three runs, three loopback policies, each deadline-bounded at 180 s via
-`Options.abortController`: (i) 529 `overloaded_error` on the first requests then 200; (ii) 429
-`rate_limit_error` with `retry-after: 2` plus `anthropic-ratelimit-requests-limit/-remaining/-reset`
-and `anthropic-ratelimit-unified-status/-reset`, then 200; (iii) **persistent** 529 with
-`fallbackModel: "haiku"`. Every request's `model` field and arrival time is logged, because item (b)
-predicted the request `model` might be the only observable of a fallback. (The loopback's failure
-counter also covers the runtime's `HEAD /api/hello` preflight, so runs (i)/(ii) delivered exactly one
-failing `POST` each — which is what produced their single retry.)
-
-**`api_retry` — full frame, verbatim shape** (run (i)):
-
-```json
-{ "type": "system", "subtype": "api_retry", "attempt": 1, "max_retries": 10,
-  "retry_delay_ms": 577, "error_status": 529, "error": "overloaded",
-  "session_id": "<uuid>", "uuid": "<uuid>" }
-```
-
-Nine keys, exactly the pinned nine (`sdk.d.ts:3085-3095`), no extras. **`max_retries` is 10** in every
-frame of all three runs — the pinned default, which the declaration itself never states.
-
-**Run (i) 529 → 200.** One `api_retry` (`attempt: 1`, `retry_delay_ms: 577`, `error_status: 529`,
-`error: "overloaded"`), then success. `529` maps to the `'overloaded'` member of
-`SDKAssistantMessageError`. Measured inter-request gap 586 ms against the announced 577 ms — the frame
-announces the delay *before* it is taken, and it is accurate.
-
-**Run (ii) 429 + `retry-after: 2`.** One `api_retry` with **`retry_delay_ms: 2000`** — exactly the
-`retry-after: 2` header, not the computed backoff (run (i)'s first delay was 577 ms, run (iii)'s
-622 ms; both jittered, neither round). Measured gap 2008 ms. **`retry-after` is honoured verbatim and
-overrides the backoff schedule.** `429` maps to `error: "rate_limit"`, `error_status: 429`.
-
-**Run (ii)'s decisive negative: `rate_limit_event` frames = 0.** The loopback returned the full
-`anthropic-ratelimit-*` header set including a `rejected` unified status, and **not one
-`rate_limit_event` reached the consumer**. This settles **OQ-P6-4**: under API-key auth the pinned
-runtime never emits `rate_limit_event`, exactly as its JSDoc's claude.ai-subscription scoping implies.
-The HTTP-429 path is `api_retry` with `error_status: 429` and `error: "rate_limit"`, full stop. A
-Winter adapter that raises `rate_limit_event` on a provider 429 is *repurposing* the frame, and
-Winter's own catalog/credential layer should route provider 429s to `api_retry` for parity, keeping
-`rate_limit_event` for genuinely subscription-shaped providers or disclosing the widening.
-
-**Run (iii) persistent 529 + `fallbackModel: "haiku"` — three findings, one of them decisive.**
-
-Request log (model per `POST`, ms from run start):
-
-| # | model | t+ms |
-| --- | --- | --- |
-| 2 | `claude-sonnet-5` | 510 |
-| 3 | `claude-sonnet-5` | 1138 |
-| 4 | `claude-sonnet-5` | 2167 |
-| 5 | **`claude-haiku-4-5-20251001`** | 2243 |
-| 6-15 | `claude-haiku-4-5-20251001` | 2804 … 180648 |
-
-1. **The fallback happens, and the ONLY observable is the request's `model` field.**
-   `"refusal/fallback frames": []` — **zero** `model_refusal_fallback`, zero
-   `model_refusal_no_fallback`, zero frames of any kind announcing the swap. This settles **OQ-P6-5**:
-   the pin documents an overload fallback (`Options.fallbackModel`, `sdk.d.ts:1535-1539`) and emits
-   **no frame for it**. A host watching only the SDK message stream cannot tell that the session
-   silently changed models. Winter can close this as a disclosed extension, but it must **not** spell
-   it `model_refusal_fallback` — that name is pinned to `trigger: 'refusal'`.
-2. **The primary is abandoned after 3 attempts, not after `max_retries`.** Two `api_retry` frames fire
-   on `claude-sonnet-5` (`attempt: 1`, then `attempt: 2`); the third failure switches to the fallback
-   — while every frame reports `max_retries: 10`. So `max_retries` is the **per-model** retry budget
-   and a *separate, undeclared* threshold (3 attempts) governs the model swap. The `attempt` counter
-   then **restarts at 1** on the fallback model and runs the full 1…10.
-3. **Backoff shape**, measured on the fallback model's ten attempts: `retry_delay_ms` = 557, 1162,
-   2189, 4026, 9290, 16675, 36061, 39010, 32216, 37133 — roughly exponential with jitter to about
-   40 s, then flat. Winter's own retry policy has a pinned curve to match or diverge from
-   deliberately.
-
-**Terminal shape (attribution stated, not assumed).** Run (iii) ended with a `result` frame of
-**`subtype: "success"` carrying `is_error: true`, `api_error_status: 529`,
-`terminal_reason: "api_error"`** — i.e. an API failure rides the *success* subtype, exactly the
-possibility item (e) flagged (there is no provider-specific `SDKResultError` subtype). The run was
-also deadline-terminated at 180 s and `query()` threw `Error: "Operation aborted"`, and the fallback
-model had by then reached `attempt: 10` of `max_retries: 10`, so exhaustion and abort coincide: the
-frame's *shape* is the finding here; its precise trigger is disentangled by capture (I)'s
-unknown-model run, which fails without any deadline in play.
-
-**`error_status` was never `null`** in any run — the connection-error case the JSDoc describes
-(`sdk.d.ts:3083`) is not reachable through a responding loopback, and is recorded as **not captured**.
 
 ### Capture (F) — the six-name union is exactly right, `ping` is filtered, and an unsigned thinking block is normalised to `signature: ""`
 
@@ -1093,6 +940,163 @@ belongs in the sidecar and on the Winter-only `reasoning_summary` frame.
 endpoint rejects an empty signature (the loopback accepts everything), and whether `redacted_thinking`
 is handled differently (no such block was streamed — its shape stays underived, item (f)).
 
+### Capture (G) — `max_retries` is 10, `retry-after` is honoured, `rate_limit_event` never fires, and the overload fallback is FRAME-INVISIBLE
+
+**Design.** Three runs, three loopback policies, each deadline-bounded at 180 s via
+`Options.abortController`: (i) 529 `overloaded_error` on the first requests then 200; (ii) 429
+`rate_limit_error` with `retry-after: 2` plus `anthropic-ratelimit-requests-limit/-remaining/-reset`
+and `anthropic-ratelimit-unified-status/-reset`, then 200; (iii) **persistent** 529 with
+`fallbackModel: "haiku"`. Every request's `model` field and arrival time is logged, because item (b)
+predicted the request `model` might be the only observable of a fallback. (The loopback's failure
+counter also covers the runtime's `HEAD /api/hello` preflight, so runs (i)/(ii) delivered exactly one
+failing `POST` each — which is what produced their single retry.)
+
+**`api_retry` — full frame, verbatim shape** (run (i)):
+
+```json
+{ "type": "system", "subtype": "api_retry", "attempt": 1, "max_retries": 10,
+  "retry_delay_ms": 577, "error_status": 529, "error": "overloaded",
+  "session_id": "<uuid>", "uuid": "<uuid>" }
+```
+
+Nine keys, exactly the pinned nine (`sdk.d.ts:3085-3095`), no extras. **`max_retries` is 10** in every
+frame of all three runs — the pinned default, which the declaration itself never states.
+
+**Run (i) 529 → 200.** One `api_retry` (`attempt: 1`, `retry_delay_ms: 577`, `error_status: 529`,
+`error: "overloaded"`), then success. `529` maps to the `'overloaded'` member of
+`SDKAssistantMessageError`. Measured inter-request gap 586 ms against the announced 577 ms — the frame
+announces the delay *before* it is taken, and it is accurate.
+
+**Run (ii) 429 + `retry-after: 2`.** One `api_retry` with **`retry_delay_ms: 2000`** — exactly the
+`retry-after: 2` header, not the computed backoff (run (i)'s first delay was 577 ms, run (iii)'s
+622 ms; both jittered, neither round). Measured gap 2008 ms. **`retry-after` is honoured verbatim and
+overrides the backoff schedule.** `429` maps to `error: "rate_limit"`, `error_status: 429`.
+
+**Run (ii)'s decisive negative: `rate_limit_event` frames = 0.** The loopback returned the full
+`anthropic-ratelimit-*` header set including a `rejected` unified status, and **not one
+`rate_limit_event` reached the consumer**. This settles **OQ-P6-4**: under API-key auth the pinned
+runtime never emits `rate_limit_event`, exactly as its JSDoc's claude.ai-subscription scoping implies.
+The HTTP-429 path is `api_retry` with `error_status: 429` and `error: "rate_limit"`, full stop. A
+Winter adapter that raises `rate_limit_event` on a provider 429 is *repurposing* the frame, and
+Winter's own catalog/credential layer should route provider 429s to `api_retry` for parity, keeping
+`rate_limit_event` for genuinely subscription-shaped providers or disclosing the widening.
+
+**Run (iii) persistent 529 + `fallbackModel: "haiku"` — three findings, one of them decisive.**
+
+Request log (model per `POST`, ms from run start):
+
+| # | model | t+ms |
+| --- | --- | --- |
+| 2 | `claude-sonnet-5` | 510 |
+| 3 | `claude-sonnet-5` | 1138 |
+| 4 | `claude-sonnet-5` | 2167 |
+| 5 | **`claude-haiku-4-5-20251001`** | 2243 |
+| 6-15 | `claude-haiku-4-5-20251001` | 2804 … 180648 |
+
+1. **The fallback happens, and the ONLY observable is the request's `model` field.**
+   `"refusal/fallback frames": []` — **zero** `model_refusal_fallback`, zero
+   `model_refusal_no_fallback`, zero frames of any kind announcing the swap. This settles **OQ-P6-5**:
+   the pin documents an overload fallback (`Options.fallbackModel`, `sdk.d.ts:1535-1539`) and emits
+   **no frame for it**. A host watching only the SDK message stream cannot tell that the session
+   silently changed models. Winter can close this as a disclosed extension, but it must **not** spell
+   it `model_refusal_fallback` — that name is pinned to `trigger: 'refusal'`.
+2. **The primary is abandoned after 3 attempts, not after `max_retries`.** Two `api_retry` frames fire
+   on `claude-sonnet-5` (`attempt: 1`, then `attempt: 2`); the third failure switches to the fallback
+   — while every frame reports `max_retries: 10`. So `max_retries` is the **per-model** retry budget
+   and a *separate, undeclared* threshold (3 attempts) governs the model swap. The `attempt` counter
+   then **restarts at 1** on the fallback model and runs the full 1…10.
+3. **Backoff shape**, measured on the fallback model's ten attempts: `retry_delay_ms` = 557, 1162,
+   2189, 4026, 9290, 16675, 36061, 39010, 32216, 37133 — roughly exponential with jitter to about
+   40 s, then flat. Winter's own retry policy has a pinned curve to match or diverge from
+   deliberately.
+
+**Terminal shape (attribution stated, not assumed).** Run (iii) ended with a `result` frame of
+**`subtype: "success"` carrying `is_error: true`, `api_error_status: 529`,
+`terminal_reason: "api_error"`** — i.e. an API failure rides the *success* subtype, exactly the
+possibility item (e) flagged (there is no provider-specific `SDKResultError` subtype). The run was
+also deadline-terminated at 180 s and `query()` threw `Error: "Operation aborted"`, and the fallback
+model had by then reached `attempt: 10` of `max_retries: 10`, so exhaustion and abort coincide: the
+frame's *shape* is the finding here; its precise trigger is disentangled by capture (I)'s
+unknown-model run, which fails without any deadline in play.
+
+**`error_status` was never `null`** in any run — the connection-error case the JSDoc describes
+(`sdk.d.ts:3083`) is not reachable through a responding loopback, and is recorded as **not captured**.
+
+### Capture (H) — WS-17 probe (a): the sidecar survives byte-untouched. **R6-7 CONFIRMED.**
+
+**This is the capture the controller rules on before Lane C is briefed.** It passes.
+
+**Design.** One set of mkdtemp dirs (`CLAUDE_CONFIG_DIR`, `HOME`, `cwd`) **reused across every run** —
+a fresh cwd for the second run would change the derived project key and make an untouched sidecar
+prove nothing. Sequence: run 1 creates the transcript under a fixed `sessionId`; the sidecar is
+written **beside** it; sha256 recorded; six `resume` append turns; sha256 re-checked (attribution
+split); a `/compact` run; sha256 checked again. The marker is a high-entropy token derived by sha256;
+every request body the loopback receives is substring-checked for it and **never printed** (bodies
+carry the system prompt).
+
+**Where the runtime actually put things** (the path shape, templated):
+
+```
+<CLAUDE_CONFIG_DIR>/projects/<sanitized-cwd>/<sessionId>.jsonl                    ← the transcript
+<CLAUDE_CONFIG_DIR>/projects/<sanitized-cwd>/<sessionId>.provider-state.jsonl     ← the sidecar
+```
+
+The `projects/<sanitized-cwd>/` layout was discovered by globbing, not assumed, and the sanitized-cwd
+directory name matches `SessionKey.projectKey`'s documented default (`sdk.d.ts:5197-5200`).
+
+**Verdicts — all three assertions pass:**
+
+| Assertion | Result |
+| --- | --- |
+| 1. sidecar sha256 unchanged end-to-end | **true** — `5d2bf482…ffa7a0` before, after the appends, and after `/compact`; 921 bytes throughout |
+| 1a. unchanged after the resume+append half alone | **true** (attribution split, so a later change could not be blamed on the wrong half) |
+| 2. the marker appears in **no** request body the loopback received | **true** — 24 requests checked, zero hits |
+| 3. the transcript still parses as JSONL | **true** — 8 → 50 → 56 lines, every line parsed |
+| bonus: file NAMES in the project dir | nothing renamed, moved, or removed; the only name added across the whole probe is the sidecar this probe itself wrote |
+
+`run 2 resumed the same session` is `true` (run 2's `system/init.session_id` equals run 1's), so the
+resume genuinely reloaded the transcript the sidecar sits beside rather than starting a new session.
+
+**What this settles.** **R6-7's "beside the transcript" filesystem layout is safe under the pinned
+runtime.** A `<sessionId>.provider-state.jsonl` neighbour is not read, not rewritten, not renamed, not
+swept, and not sent to the model across session creation, resume, six appending turns, and a
+compaction attempt. WS-05's recorded in-transcript alternative does **not** need to be re-opened, and
+Lane C can be briefed on R6-7 as written.
+
+**Two limits, stated rather than implied:**
+
+1. **The compaction half is NOT CAPTURABLE in this shape** — recorded as the brief permits.
+   `query({ prompt: "/compact" })` with `resume` was driven three times (short turns, then six turns,
+   then six turns with ~250 KB of synthetic filler in context) and answered identically every time:
+
+   ```
+   system/status  status: "compacting"
+   system/status  status: null, compact_result: "failed", compact_error: "Not enough messages to compact."
+   system/init
+   assistant
+   result         subtype: "success", is_error: false, num_turns: 0, result: "Not enough messages to compact."
+   ```
+
+   The refusal is **not** about size — the third attempt had a 300 KB request body's worth of history.
+   The evidence points at ordering: the `system/init` frame arrives **after** the compaction status
+   frames, `num_turns` is `0`, and **the loopback received no `POST /v1/messages` at all during that
+   run** (one `HEAD /api/hello` and nothing else). The local slash command runs before the resumed
+   conversation is materialised into the loop, so there is nothing in memory for it to compact. This
+   is the same class of structural limit P2 recorded for streaming-input captures, and the same one
+   T10 hit for `SessionEnd`. **No compaction was therefore performed on the transcript the sidecar sits
+   beside**; the probe covers session creation, resume, six appends, and an attempted compaction.
+   Carried as **OQ-P6-11**: whether a *completed* compaction rewrites or replaces the transcript file
+   (which would matter for a neighbour that must stay paired with it) needs a streaming-input harness.
+2. **This probe covers the FILESYSTEM store only.** R6-7a's external-`SessionStore` variant is a
+   different mechanism and is answered from the declaration in item (h), not here — including the three
+   constraints (`SessionStoreEntry` needs a `type`, `anchorUuid` must not double as the entry `uuid`,
+   and `listSubkeys` is optional so resume must `load()` the key directly) recorded as OQ-P6-7.
+
+**Free finding for item (b).** `SDKStatusMessage` was observed carrying `status: "compacting"` and
+then `status: null` **with** `compact_result: "failed"` and `compact_error` on the same frame —
+confirming from the runtime that the three-state `SDKStatus` (`sdk.d.ts:4836`) really does use `null`
+as a transition-to-idle value, and that the frame is the compaction-outcome carrier item (b) derived.
+
 ### Capture (I) — an API failure rides `subtype: "success"` with `is_error: true`, AND `query()` throws
 
 **Design.** Two runs. (i) The child env is **exactly** `["ANTHROPIC_BASE_URL", "CLAUDE_CONFIG_DIR",
@@ -1187,6 +1191,12 @@ Four structural facts for the catalog lane:
   rows shows the omission is per-capability, not per-row.
 - **`description` carries pricing text**, so a Winter catalog row's `description` is a display string
   with commercial content in it, not a neutral capability blurb.
+
+**The control channel itself is not observable from a loopback, stated so the negative below is read
+correctly.** `SDKControlListModelsRequest`/`SDKControlSetModelRequest` travel the CLI's **stdio**
+control channel, not HTTP, so this scenario cannot show the `list_models` / `set_model` subtype on any
+wire it can see; the wire-level subtype and payload in item (d) stay declaration-derived, and this
+capture reports the *public method* behaviour plus what did and did not reach the HTTP endpoint.
 
 **No `/v1/models` request ever reached the loopback.** Zero. Combined with the fact that the returned
 rows name real, current model ids, **the catalog is served from a table inside the CLI binary** — it is
@@ -1289,19 +1299,26 @@ the finding; the values are not.
    context-window field. WS-13's three-state tool honesty is a Winter extension to disclose.
 4. **OQ-P6-4 — `rate_limit_event` is a subscription-quota frame, not an HTTP-429 frame.** Both its
    JSDocs scope it to claude.ai subscription users and its whole vocabulary is quota/overage/credits
-   shaped (`sdk.d.ts:4638-4669`). Emitting it on a provider 429 is repurposing. Does Winter (a) keep it
-   for subscription-shaped providers only and route 429s to `api_retry`, matching the pin, or (b)
-   generalise it and disclose? Capture (G) supplies the pinned behaviour; the ruling is the controller's.
+   shaped (`sdk.d.ts:4638-4669`), and **capture (G) confirmed it: a 429 carrying the full
+   `anthropic-ratelimit-*` header set produced ZERO `rate_limit_event` frames** and one `api_retry`
+   with `error_status: 429`. Emitting it on a provider 429 is repurposing. Does Winter (a) keep it for
+   subscription-shaped providers only and route 429s to `api_retry`, matching the pin, or (b)
+   generalise it and disclose? The evidence is in; the ruling is the controller's.
 5. **OQ-P6-5 — the pin documents an overload fallback it emits no frame for.** `Options.fallbackModel`
    (`1535-1539`) triggers on "overloaded or unavailable"; the only fallback frames are the refusal pair,
-   whose `trigger` is the literal `'refusal'` (`4479`). If capture (G) finds no frame, Winter's own
-   overload-fallback frame is a disclosed extension with no parity risk — but it must not be spelled
-   `model_refusal_fallback`.
+   whose `trigger` is the literal `'refusal'` (`4479`). **Capture (G) confirmed the gap: with persistent
+   529 the runtime really did swap `claude-sonnet-5` → `claude-haiku-4-5-20251001` and emitted no frame
+   of any kind** — the request's own `model` field was the only observable. Winter's own
+   overload-fallback frame is therefore a disclosed extension with no parity risk, but it must not be
+   spelled `model_refusal_fallback`.
 6. **OQ-P6-6 — R6-8's premise cannot be confirmed from the pin.** Whether an assistant `thinking` block
    requires `signature` is not derivable from the pinned artifact (item (f)). The
-   `resumed_from_incomplete_thinking` flag (`3118`) is strong circumstantial support and capture (F) is
-   the direct evidence; R6-8's justification text should cite those rather than "Anthropic's
-   `ThinkingBlock` does".
+   `resumed_from_incomplete_thinking` flag (`3118`) is strong circumstantial support, and **capture (F)
+   supplied the direct evidence: a thinking block streamed with no signature is normalised to
+   `signature: ""` and replayed on the wire that way**, so the runtime treats the field as
+   structurally mandatory. R6-8's *conclusion* stands; its justification text should cite those two
+   rather than "Anthropic's `ThinkingBlock` does". This OQ is a **wording amendment**, not a design
+   question.
 7. **OQ-P6-7 — `SessionStoreEntry` requires a `type` discriminant.** R6-7's record shape
    (`{sessionId, anchorUuid, provider, model, family, itemIndex, kind, payload}`) has no `type` field,
    so as written it does not satisfy the store-backed variant R6-7a mandates (item (h), consequence 1),
