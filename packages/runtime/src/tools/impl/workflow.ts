@@ -12,12 +12,12 @@
 // `projectKey` -- come from `workflows/host-registry.ts`, the registration seam this lane had to add
 // because `tools/registry.ts` and `engine.ts` are both frozen (R5-12). See that module's header.
 import { randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { replaceExecutor, type ToolExecutionContext, type ToolExecutor, type ToolResultPayload } from "../registry.ts";
 import "../descriptors/workflow.ts"; // self-sufficiency: the "Workflow" stub must be registered before replaceExecutor runs
 import { startTracking, setTaskStatus, getTask, listRunningTasks, toBackgroundTasksChangedEntry } from "./background-task-runtime.ts";
-import { wireTaskType } from "../background-tasks.ts";
+import { createBackgroundTask, wireTaskType } from "../background-tasks.ts";
 import { getWorkflowSession, type WorkflowSessionRuntime } from "../../workflows/host-registry.ts";
 import { WorkflowRuntime, WorkflowRuntimeError, type WorkflowRuntimeDeps, type WorkflowLaunchResult } from "../../workflows/runtime.ts";
 import { parseWorkflowMeta } from "../../workflows/meta.ts";
@@ -53,7 +53,12 @@ function runtimeFor(sessionId: string, session: WorkflowSessionRuntime): Workflo
 function buildRunHost(ctx: ToolExecutionContext, session: WorkflowSessionRuntime, runtime: WorkflowRuntime): WorkflowRunHost {
   return {
     createTask(kind, meta): WorkflowTaskHandle {
-      const taskId = randomUUID();
+      // `createBackgroundTask` OWNS the `<session-temp>/tasks/<taskId>.output` path shape and calls
+      // `ensureTasksDir` on the way (tools/background-tasks.ts) -- hand-rolling `randomUUID()` +
+      // `join(...)` here, as this file used to, produced a path in a directory that may not exist and
+      // that nothing ever wrote to. Every other background-task producer calls it (bash.ts:421,
+      // agent.ts); so does this one now.
+      const { taskId, outputPath } = createBackgroundTask("workflow");
       // A VALIDATION FAILURE has no `meta.name` -- the meta block is exactly what did not parse. The
       // failure path passes an empty name, and `workflow_name` is then OMITTED rather than filled
       // with a plausible-looking literal: the field is optional on the frame, and inventing a value
@@ -70,7 +75,7 @@ function buildRunHost(ctx: ToolExecutionContext, session: WorkflowSessionRuntime
       startTracking({
         taskId,
         kind: "workflow",
-        outputPath: join(ctx.tempDir, "tasks", `${taskId}.output`),
+        outputPath,
         description,
         stop: () => {
           runtime.stop(meta.runId);
@@ -118,8 +123,15 @@ function buildRunHost(ctx: ToolExecutionContext, session: WorkflowSessionRuntime
         complete(result: unknown) {
           if (settled) return;
           settled = true;
+          // WS-11 §1.4: "Only the script's `return` value re-enters the conversation." The
+          // notification's `summary` is a 500-char PREVIEW and `WorkflowOutput` carries no result
+          // field (correctly -- the pin has none), so THIS FILE is the only durable channel the
+          // value has. Capture (3) records the pinned runtime emitting an `output_file` on
+          // `task_notification` for exactly this reason; without the write, `TaskOutput` errors and a
+          // `Read` on the advertised path is ENOENT.
+          writeTaskOutput(outputPath, renderResultText(result));
           if (getTask(taskId) !== undefined) setTaskStatus(taskId, "completed");
-          emitNotification(ctx, taskId, "completed", renderSummary(result));
+          emitNotification(ctx, taskId, outputPath, "completed", renderSummary(result));
           emitBackgroundTasksChanged(ctx);
         },
         fail(error: string) {
@@ -130,8 +142,11 @@ function buildRunHost(ctx: ToolExecutionContext, session: WorkflowSessionRuntime
           // pressed stop that their workflow crashed. The pinned `task_notification.status` union
           // carries "stopped" natively; the runtime is asked which of the two this was.
           const status = runtime.wasStopped(meta.runId) ? "stopped" : "failed";
+          // The failure detail gets the same durable channel as a result: it is the run's diagnostic,
+          // and truncating it into a 500-char preview is how a debuggable error becomes an opaque one.
+          writeTaskOutput(outputPath, error);
           if (getTask(taskId) !== undefined) setTaskStatus(taskId, status);
-          emitNotification(ctx, taskId, status, error);
+          emitNotification(ctx, taskId, outputPath, status, error);
           emitBackgroundTasksChanged(ctx);
         },
       };
@@ -158,22 +173,37 @@ function emitBackgroundTasksChanged(ctx: ToolExecutionContext): void {
   });
 }
 
-function emitNotification(ctx: ToolExecutionContext, taskId: string, status: "completed" | "failed" | "stopped", summary: string): void {
+/** Best-effort by construction: a run whose result cannot be written must still report its terminal state. */
+function writeTaskOutput(outputPath: string, text: string): void {
+  try {
+    writeFileSync(outputPath, text, { mode: 0o600 });
+  } catch {
+    /* the directory was ensured by createBackgroundTask; a failure here must never swallow the notification below */
+  }
+}
+
+function emitNotification(ctx: ToolExecutionContext, taskId: string, outputPath: string, status: "completed" | "failed" | "stopped", summary: string): void {
   ctx.emitFrame({
     type: "system",
     subtype: "task_notification",
     task_id: taskId,
     status,
-    output_file: join(ctx.tempDir, "tasks", `${taskId}.output`),
+    output_file: outputPath,
     summary,
     uuid: randomUUID(),
     session_id: ctx.sessionId,
   });
 }
 
+/** The result as text -- the SAME rendering the runtime uses for `WorkflowRunView.result`. */
+function renderResultText(result: unknown): string {
+  return typeof result === "string" ? result : JSON.stringify(result ?? null);
+}
+
+/** A model-facing PREVIEW for `task_notification.summary`. The full value lives in the output file. */
 function renderSummary(result: unknown): string {
-  const text = typeof result === "string" ? result : JSON.stringify(result ?? null);
-  return text.length > 500 ? `${text.slice(0, 500)}...` : text;
+  const text = renderResultText(result);
+  return text.length > 500 ? `${text.slice(0, 500)}... [truncated -- the full result is in the task's output file]` : text;
 }
 
 // --- Input handling --------------------------------------------------------------------------------

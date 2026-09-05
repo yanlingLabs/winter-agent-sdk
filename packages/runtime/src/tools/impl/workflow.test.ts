@@ -5,14 +5,15 @@
 // Every rule below has its own RED fixture, because the rules are independent and a single
 // "validates input" test would pass with three of the four implemented.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import "./workflow.ts";
 import { resetWorkflowToolForTest } from "./workflow.ts";
 import { getRegisteredTool, type ToolExecutionContext, type ToolResultPayload } from "../registry.ts";
 import { createSessionReadState } from "../read-state.ts";
-import { stopTask, resetBackgroundTaskRuntimeForTest } from "./background-task-runtime.ts";
+import { stopTask, getTask, resetBackgroundTaskRuntimeForTest } from "./background-task-runtime.ts";
+import { configureBackgroundTaskRoot, resetBackgroundTaskRootForTest } from "../background-tasks.ts";
 import { registerWorkflowSession, resetWorkflowSessionForTest } from "../../workflows/host-registry.ts";
 import { inProcessWorkerSpawner } from "../../workflows/worker-harness.ts";
 import { fakeStructuredOutputSeam } from "../../structured/seam.ts";
@@ -72,6 +73,10 @@ beforeEach(() => {
   sessionTempDir = mkdtempSync(join(tmpdir(), "winter-wf-tool-temp-"));
   cwd = mkdtempSync(join(tmpdir(), "winter-wf-tool-cwd-"));
   resetBackgroundTaskRuntimeForTest();
+  // The SAME wiring engine.ts does once per run -- `createBackgroundTask` owns the
+  // `<root>/tasks/<taskId>.output` path shape AND ensures the directory, which is exactly why the
+  // lane must call it rather than hand-rolling the join (F5).
+  configureBackgroundTaskRoot(() => ({ root: sessionTempDir, scratchpad: join(sessionTempDir, "scratchpad"), tasks: join(sessionTempDir, "tasks") }));
   resetWorkflowToolForTest({ spawnWorker: inProcessWorkerSpawner() });
   registerWorkflowSession({
     winterHome,
@@ -85,6 +90,7 @@ afterEach(() => {
   resetWorkflowSessionForTest();
   resetWorkflowToolForTest();
   resetBackgroundTaskRuntimeForTest();
+  resetBackgroundTaskRootForTest();
 });
 
 describe("input schema -- the seven fields and their three doc-asserted rules (item (g))", () => {
@@ -233,6 +239,47 @@ describe("the background-task frames the TOOL owes (capture (3), and bash.ts/age
     const notification = frames.find((f) => f["subtype"] === "task_notification");
     expect(notification).toBeDefined();
     expect(notification!["status"]).toBe("stopped");
+  });
+});
+
+describe("F5 -- the run's return value must actually REACH the conversation (WS-11 §1.4)", () => {
+  // `task_notification.summary` is a 500-char PREVIEW, and `WorkflowOutput` carries no result field
+  // (correctly -- the pin has none). So the only durable channel for the return value is the
+  // `output_file` the notification names. Capture (3) records the pinned runtime emitting one.
+  const LONG = "x".repeat(2000);
+
+  test("a return value over 500 chars is written IN FULL to the output_file the notification names", async () => {
+    const frames: Array<Record<string, unknown>> = [];
+    const out = await output({ script: META + `return ${JSON.stringify(LONG)};` }, makeCtx({ emitFrame: (f) => frames.push(f as unknown as Record<string, unknown>) }));
+    await new Promise((res) => setTimeout(res, 80));
+    const notification = frames.find((f) => f["subtype"] === "task_notification") as { output_file: string; summary: string } | undefined;
+    expect(notification).toBeDefined();
+    // The advertised path EXISTS and holds the whole value -- not the 500-char preview.
+    expect(existsSync(notification!.output_file)).toBe(true);
+    expect(readFileSync(notification!.output_file, "utf8")).toBe(LONG);
+    expect(notification!.summary.length).toBeLessThan(LONG.length); // a PREVIEW, not the value
+    expect(notification!.summary).toContain("truncated");
+    expect(out.taskId).toBeTruthy();
+  });
+
+  test("the output file is the one `createBackgroundTask` owns, so TaskOutput can read it", async () => {
+    const frames: Array<Record<string, unknown>> = [];
+    await output({ script: META + `return "short result";` }, makeCtx({ emitFrame: (f) => frames.push(f as unknown as Record<string, unknown>) }));
+    await new Promise((res) => setTimeout(res, 80));
+    const notification = frames.find((f) => f["subtype"] === "task_notification") as { task_id: string; output_file: string };
+    // TaskOutput resolves the path from the shared registry, so the two must agree.
+    expect(getTask(notification.task_id)?.outputPath).toBe(notification.output_file);
+    expect(notification.output_file).toBe(join(sessionTempDir, "tasks", `${notification.task_id}.output`));
+    expect(readFileSync(notification.output_file, "utf8")).toBe("short result");
+  });
+
+  test("a FAILED run writes its error to the same file -- the diagnostic is never lost either", async () => {
+    const frames: Array<Record<string, unknown>> = [];
+    await output({ script: META + `throw new Error("the failure detail");` }, makeCtx({ emitFrame: (f) => frames.push(f as unknown as Record<string, unknown>) }));
+    await new Promise((res) => setTimeout(res, 80));
+    const notification = frames.find((f) => f["subtype"] === "task_notification") as { output_file: string; status: string };
+    expect(notification.status).toBe("failed");
+    expect(readFileSync(notification.output_file, "utf8")).toContain("the failure detail");
   });
 });
 
