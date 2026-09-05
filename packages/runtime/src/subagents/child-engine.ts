@@ -100,7 +100,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import type { RuntimeConfig, WinterFrame, SessionStore, ControlResponseFrame, RuntimeHooksConfig, SandboxSettingsConfig, PermissionMode } from "@yanlinglabs/winter-agent-sdk";
 import { compatibilityKeys } from "@yanlinglabs/winter-agent-sdk";
-import { runEngine, createContextAccountant, type ContextAccountant, type Provider, type ProviderMessage } from "../engine.ts";
+import { runEngine, createContextAccountant, type ContextAccountant, type EngineSettingsRuleSeed, type Provider, type ProviderMessage } from "../engine.ts";
 import { createInMemoryChannel } from "../protocol/channel.ts";
 import { getRegisteredTool, listRegisteredTools } from "../tools/registry.ts";
 import { buildChildTranscriptWriter, childTranscriptSubpath, TranscriptWriter } from "../store/dialect.ts";
@@ -218,6 +218,19 @@ export interface ChildEngineFactoryDeps {
   // engine already gates the block on `Skill` actually being advertised to that agent, so a child
   // whose tool set excludes `Skill` still gets nothing (see EngineOptions.skillListing).
   skillListing?: SkillListing;
+  /**
+   * Phase 5 residual round (NEW-4): THE SETTINGS SEED, tags intact.
+   *
+   * C1 gave the parent its settings-file rules and I1 gave it the resolved-root floors; neither
+   * reached a child, so the MANAGED tier -- the strongest one, and the only one a forced-bypass
+   * child still honours -- stopped at the session boundary. A model reached it by delegating.
+   *
+   * NOT the `getParentRules` mirror, deliberately: a mirrored entry arrives re-tagged `sdk`, and
+   * stage 2 under forced bypass honours `managed` denies alone, so the mirror is inert in precisely
+   * the hostile case. Passing the seed keeps every source tag, which is also what keeps the child's
+   * P5-A/P5-D per-tier gates identical to its parent's.
+   */
+  settingsRules?: EngineSettingsRuleSeed;
   // The session's structured-output seam. A child needs it whenever `SpawnChildRequest.outputFormat`
   // is set -- which Lane W's `agent({schema})` does on every schema'd call -- because `outputFormat`
   // with NO seam is a hard `error_during_execution` on the child's first round (T3's concern 3), and
@@ -645,6 +658,13 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
         // Phase 5 fix wave (B-low): the assembler above PLACES the skill listing; without this it
         // had nothing to place, so every child ran with an empty one.
         ...(deps.skillListing !== undefined ? { skillListing: deps.skillListing } : {}),
+        // NEW-4, the two threads that close C1 and I1 for the child leg. `winterHome` already
+        // existed on the factory and was read ONLY for transcript paths (`childTranscriptSubpath`);
+        // the engine needs it to derive `buildBaselineDenyRules(resolvedWinterHome)`, which is what
+        // puts the `//<root>/{run,projects,backups}` floors in front of a child running under forced
+        // bypass.
+        ...(deps.settingsRules !== undefined ? { settingsRules: deps.settingsRules } : {}),
+        ...(deps.winterHome !== undefined ? { winterHome: deps.winterHome } : {}),
         // Only meaningful when this child carries an `outputFormat` -- but supplied unconditionally,
         // because the alternative is a child that fails its FIRST round the moment a caller sets one.
         ...(deps.structuredOutput !== undefined ? { structuredOutput: deps.structuredOutput } : {}),

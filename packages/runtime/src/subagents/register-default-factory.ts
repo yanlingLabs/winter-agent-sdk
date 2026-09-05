@@ -34,6 +34,8 @@ import type { SkillSessionRuntime } from "../skills/runtime.ts";
 import type { StructuredOutputSeam } from "../structured/seam.ts";
 import type { SourcedHookEntry } from "../hooks/registry.ts";
 import type { CompactionController } from "../compaction/seam.ts";
+import type { EngineSettingsRuleSeed } from "../engine.ts";
+import type { SkillListing } from "../context/seam.ts";
 
 export interface DefaultChildEngineFactoryOptions {
   provider: Provider;
@@ -65,6 +67,21 @@ export interface DefaultChildEngineFactoryOptions {
   extraHookEntries?: readonly SourcedHookEntry[];
   /** Phase 5 fix wave, I4: a compaction controller for children -- see ChildEngineFactoryDeps. */
   compactionController?: CompactionController;
+  /**
+   * Phase 5 residual round: the model-facing skill LISTING.
+   *
+   * IT WAS DECLARED ON `ProductionWiring.childFactoryOptions` AND NEVER FORWARDED. Both entrypoints
+   * spread that object into this function, and a spread of an undeclared property is not an excess-
+   * property error -- so the value arrived on `opts`, type-checked, and was dropped one line before
+   * `deps`. The fix that "threaded a child's skill menu" was inert in production for exactly as long
+   * as nothing asserted it end to end. Same shape as NEW-4 below, found while fixing it.
+   */
+  skillListing?: SkillListing;
+  /**
+   * Phase 5 residual round, NEW-4: the settings seed, tags intact -- see `ChildEngineFactoryDeps`
+   * for why the `getParentRules` mirror is the wrong vehicle for it.
+   */
+  settingsRules?: EngineSettingsRuleSeed;
 }
 
 // WHOLE-BRANCH M3(d) -- THE ONE-LIVE-SESSION-PER-PROCESS ASSUMPTION, stated plainly because this
@@ -89,9 +106,18 @@ export function registerDefaultChildEngineFactory(opts: DefaultChildEngineFactor
       ...(opts.store !== undefined ? { store: opts.store } : {}),
       ...(opts.winterHome !== undefined ? { winterHome: opts.winterHome } : {}),
       // WS-07 §6.4: a managed veto on bypass must bind on every descendant, not just this session.
-      ...(config.permissions?.disableBypassPermissionsMode !== undefined
-        ? { disableBypassPermissionsMode: config.permissions.disableBypassPermissionsMode }
-        : {}),
+      //
+      // NEW-4 (residual round): `|| settingsRules?.disableBypassPermissionsMode`. The veto is
+      // restrictive, so `true` from ANY tier wins and no trust question arises -- exactly the rule
+      // `engine.ts` already applies for the parent (`config.permissions?... === true ||
+      // settingsRules?... === true`). Reading `config.permissions` alone here was the third instance
+      // of NEW-4's class: a managed-tier veto governed the session and was silent for every child,
+      // which is the one direction a veto must never fail in.
+      ...(config.permissions?.disableBypassPermissionsMode === true || opts.settingsRules?.disableBypassPermissionsMode === true
+        ? { disableBypassPermissionsMode: true }
+        : config.permissions?.disableBypassPermissionsMode !== undefined
+          ? { disableBypassPermissionsMode: config.permissions.disableBypassPermissionsMode }
+          : {}),
       // WS-10 §4: applies uniformly at every nesting level -- the ORIGINAL top-level value is not
       // reachable through the per-run seam once a grandchild spawns its own child.
       forwardSubagentText: config.forwardSubagentText === true,
@@ -117,6 +143,9 @@ export function registerDefaultChildEngineFactory(opts: DefaultChildEngineFactor
       ...(opts.structuredOutput !== undefined ? { structuredOutput: opts.structuredOutput } : {}),
       ...(opts.extraHookEntries !== undefined ? { extraHookEntries: opts.extraHookEntries } : {}),
       ...(opts.compactionController !== undefined ? { compactionController: opts.compactionController } : {}),
+      // Residual round: the two that were declared upstream and never arrived (see this interface).
+      ...(opts.skillListing !== undefined ? { skillListing: opts.skillListing } : {}),
+      ...(opts.settingsRules !== undefined ? { settingsRules: opts.settingsRules } : {}),
     }),
   );
 }

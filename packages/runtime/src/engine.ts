@@ -673,12 +673,21 @@ export interface EngineOptions {
    * BEFORE the `sdk` entries -- which is the pinned precedence: managed floor, then files
    * (`perSource`'s own highest-first order), then the host's own `Options`.
    */
-  settingsRules?: {
-    entries: readonly SourcedRuleEntry[];
-    directories: ReadonlyArray<{ path: string; source: RuleSource }>;
-    defaultMode?: string;
-    disableBypassPermissionsMode?: boolean;
-  };
+  settingsRules?: EngineSettingsRuleSeed;
+}
+
+/**
+ * The settings seed as the ENGINE consumes it -- named and exported by the residual round (NEW-4)
+ * because a CHILD engine needs the identical value and the chain that carries it
+ * (`production-wiring.ts` -> `register-default-factory.ts` -> `child-engine.ts`) would otherwise
+ * have re-declared this shape three more times. `production-wiring.ts`'s `SettingsRuleSeed` is the
+ * producer's view (mutable arrays plus its own `warnings`); this is the consumer's.
+ */
+export interface EngineSettingsRuleSeed {
+  entries: readonly SourcedRuleEntry[];
+  directories: ReadonlyArray<{ path: string; source: RuleSource }>;
+  defaultMode?: string;
+  disableBypassPermissionsMode?: boolean;
 }
 
 type RaceOutcome<T> = { kind: "ok"; value: T } | { kind: "interrupted" };
@@ -1755,9 +1764,22 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
             getParentRules: (): ParentRuleMirror => {
               const mirror: ParentRuleMirror = { allow: [], ask: [], deny: [] };
               for (const entry of policyStateStore.getState().rules.entries) {
-                // The engine's own hardcoded floor: every `runEngine` (a child's included) seeds
-                // BASELINE_DENY_RULES itself, so mirroring them would only re-tag a `managed` rule
-                // as `sdk` in the child -- a strictly weaker authority for zero added coverage.
+                // KEPT, and the reason is no longer the one originally written here (residual round,
+                // NEW-4). The old note said `managed` meant only the hardcoded `BASELINE_DENY_RULES`,
+                // which every `runEngine` seeds for itself. The fix wave falsified that: C1 seeds
+                // managed-TIER settings rules as `managed` and I1 emits the resolved-root floor twins
+                // as `managed`, so for a while this skip was silently dropping real policy on the way
+                // into every child.
+                //
+                // WIDENING THE MIRROR WOULD NOT HAVE FIXED IT, and this is the part worth keeping:
+                // a mirrored rule arrives in the child re-tagged `sdk`, and a forced-bypass child --
+                // which is every descendant of a bypass parent -- honours ONLY `managed` denies at
+                // stage 2. A managed deny mirrored as `sdk` would be inert in exactly the case that
+                // matters most. The child therefore seeds the SAME `SettingsRuleSeed` its parent did,
+                // tags intact (`child-engine.ts` passes `deps.settingsRules` straight through), which
+                // also keeps the P5-A/P5-D per-tier gates identical on both sides. With that in place
+                // this skip is correct again: mirroring would now be a strictly weaker DUPLICATE of
+                // something the child already has.
                 if (entry.source === "managed") continue;
                 // WS-07 §3.2 as amended by RULING P5-D, and the ONE way this accessor could WIDEN
                 // rather than bind: a `project`-sourced ALLOW entry is INERT in an untrusted workspace

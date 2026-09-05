@@ -6,7 +6,7 @@
 // policy/fork/workspace/definitions .test.ts).
 import { describe, test, expect, afterEach, spyOn } from "bun:test";
 import { randomUUID } from "node:crypto";
-import { mkdtempSync, rmSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, existsSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { WinterFrame, RuntimeConfig, ProtocolSdkMessage as SdkMessage } from "@yanlinglabs/winter-agent-sdk";
@@ -26,6 +26,10 @@ import { loadAgentDefinitions } from "./definitions.ts";
 import { TranscriptWriter } from "../store/dialect.ts";
 import { withHttpFixture, defaultFixtureSpec } from "../mcp/test-fixtures.ts";
 import { getToolSearchSessionRuntime } from "../toolsearch/search.ts";
+// Phase 5 residual round (NEW-4): the REAL production wiring and the REAL default child factory --
+// see the NEW-4 describe block for why a hand-built seed would measure the wrong thing.
+import { buildProductionWiring } from "../production-wiring.ts";
+import { registerDefaultChildEngineFactory } from "./register-default-factory.ts";
 
 async function drain(source: AsyncIterable<WinterFrame>): Promise<WinterFrame[]> {
   const out: WinterFrame[] = [];
@@ -2391,6 +2395,314 @@ describe("child-engine.ts: P5-J -- a child's spend rolls up into the owning sess
       expect(parentAccountant.contextTokens()).toBe(11);
     } finally {
       rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+// ==================================================================================================
+// Phase 5 residual round, NEW-4 (whole-branch re-review, BLOCKING).
+//
+// C1 and I1 were rated on the PARENT engine. Inside a real child they did not bind at all: the
+// managed tier -- the strongest one, the tier every "managed beats everything" rule in the evaluator
+// exists for -- was dropped on the way down, and so were the resolved-root floors. The model reaches
+// both simply by delegating to a subagent.
+//
+// TWO INDEPENDENT MECHANISMS, which is why threading one thing was never going to be enough:
+//   (a) `engine.ts`'s `getParentRules` mirror SKIPS every `source === "managed"` entry. That skip was
+//       written when `managed` meant only the hard-coded `BASELINE_DENY_RULES`, where mirroring
+//       would have re-tagged a managed rule as `sdk` for zero coverage. The fix wave falsified the
+//       premise: C1 now seeds managed-TIER settings rules as `managed`, and I1 emits the
+//       resolved-root twins as `managed`.
+//   (b) the child's `runEngine` received neither `settingsRules` nor `winterHome`. `deps.winterHome`
+//       existed on the factory and was used only for transcript paths.
+//
+// THE FIX IS THE SEED, NOT A WIDER MIRROR. Re-tagging a managed deny as `sdk` in the child would not
+// bind under a forced-bypass child at all -- stage 2 honours only `managed` denies there -- so the
+// mirror is exactly the wrong vehicle. The child seeds the same `SettingsRuleSeed` its parent did,
+// tags intact, and the `managed` skip in `getParentRules` becomes correct again.
+//
+// EVERY TEST CARRIES ITS PARENT-DIRECT CONTROL IN THE SAME BODY. A child-only assertion cannot
+// distinguish "the child is governed" from "the rule was never in force anywhere".
+// ==================================================================================================
+describe("child-engine.ts: NEW-4 -- managed-tier settings rules and the resolved-root floors bind INSIDE a child", () => {
+  const CHILD_TOOL = "t_new4_probe";
+
+  /** A child that makes exactly one call to `name`, then answers with text. */
+  function childCalling(name: string, input: Record<string, unknown> = {}): Provider {
+    return {
+      async generate({ messages }) {
+        if (messages.some((m) => m.role === "tool")) return { kind: "text", text: "child done" };
+        return { kind: "tool_use", calls: [{ id: "child-1", name, input }] };
+      },
+    };
+  }
+
+  /**
+   * Drives a REAL parent `runEngine` over a REAL `buildProductionWiring`, spawning a REAL child
+   * through `registerDefaultChildEngineFactory` -- the same call `main.ts` and `testing.ts` make.
+   *
+   * Going through the wiring rather than hand-building a `SettingsRuleSeed` is the point: NEW-4 is a
+   * THREADING defect, so a fixture that constructs the seed itself would prove the evaluator works
+   * while skipping the entire span where the value went missing.
+   */
+  async function runWithWiring(opts: {
+    cwd: string;
+    home: string;
+    managedSettings?: Record<string, unknown>;
+    userSettings?: Record<string, unknown>;
+    childProvider: Provider;
+    allow: string[];
+    permissionMode?: string;
+    parentCallsToolDirectly?: { name: string; input: Record<string, unknown> };
+  }): Promise<{ prompts: number; frames: WinterFrame[] }> {
+    // Registered at most ONCE per test: `registerTool` throws on a duplicate canonical name, and the
+    // control/measurement pairs below call this helper twice in one body.
+    if (!cleanupToolNames.includes(SPAWN_PROBE)) {
+      registerSpawnProbe();
+      cleanupToolNames.push(SPAWN_PROBE);
+    }
+    if (opts.userSettings !== undefined) writeFileSync(join(opts.home, "settings.json"), JSON.stringify(opts.userSettings));
+
+    const config = {
+      sessionId: `new4-${randomUUID()}`,
+      cwd: opts.cwd,
+      model: "sonnet",
+      permissions: { allow: [SPAWN_PROBE, ...opts.allow] },
+      ...(opts.permissionMode !== undefined ? { permissionMode: opts.permissionMode } : {}),
+      ...(opts.permissionMode === "bypassPermissions" ? { allowDangerouslySkipPermissions: true } : {}),
+      ...(opts.managedSettings !== undefined ? { managedSettings: opts.managedSettings } : {}),
+    } as unknown as RuntimeConfig;
+
+    const wiring = await buildProductionWiring({ config, env: {}, winterHome: opts.home });
+    registerDefaultChildEngineFactory({
+      provider: opts.childProvider,
+      config,
+      env: {},
+      winterHome: opts.home,
+      ...wiring.childFactoryOptions,
+    });
+
+    const { host, runtime } = createInMemoryChannel();
+    const req: SpawnChildRequest = { parentToolUseId: "call-1", prompt: "do a thing", runInBackground: false };
+    // The parent's OWN direct call, when asked for, runs FIRST -- so the control and the measurement
+    // are the same run against the same rule set, never two runs that might differ for other reasons.
+    const parentScript = opts.parentCallsToolDirectly !== undefined
+      ? [
+          { kind: "tool_use" as const, calls: [{ id: "call-0", name: opts.parentCallsToolDirectly.name, input: opts.parentCallsToolDirectly.input }] },
+          { kind: "tool_use" as const, calls: [{ id: "call-1", name: SPAWN_PROBE, input: req }] },
+          { kind: "text" as const, text: "parent done" },
+        ]
+      : [
+          { kind: "tool_use" as const, calls: [{ id: "call-1", name: SPAWN_PROBE, input: req }] },
+          { kind: "text" as const, text: "parent done" },
+        ];
+
+    let prompts = 0;
+    const done = runEngine({
+      config,
+      ...wiring.engineOptions,
+      input: runtime.input,
+      output: runtime.output,
+      provider: scriptedProvider(parentScript),
+    });
+    host.output.write({ type: "user", text: "go" });
+    host.output.write({ type: "control_request", requestId: "e", subtype: "end_input", payload: undefined });
+    const frames: WinterFrame[] = [];
+    for await (const f of host.input) {
+      // Any permission prompt is DENIED, so a rule that only downgrades deny->ask still fails the
+      // "did it run" assertion rather than hanging the test. Subtype `"permission"` and the
+      // `{ok, payload}` envelope, per `settings-permissions-wiring.test.ts`'s own driver -- a
+      // mis-shaped response is never rejected, it is simply never matched, and the run hangs.
+      if (f.type === "control_request" && (f as { subtype?: string }).subtype === "permission") {
+        prompts++;
+        host.output.write({ type: "control_response", requestId: (f as { requestId: string }).requestId, ok: true, payload: { behavior: "deny", message: "test denies every prompt" } } as unknown as WinterFrame);
+        continue;
+      }
+      frames.push(f);
+    }
+    await done;
+    wiring.dispose();
+    return { prompts, frames };
+  }
+
+  /**
+   * A child that writes `file`, then answers with text. `Write` rather than a synthetic tool because
+   * a SCOPED rule (`Tool(pattern)`) needs a tool with real rule-input semantics -- a registered test
+   * double supplies none, so `t_probe(blocked)` matches nothing and the fixture measures the
+   * matcher's silence instead of the seed's absence. Found by running it: the first draft's child
+   * called the double eight times under a rule that could never apply.
+   */
+  function childWriting(file: string): Provider {
+    return {
+      async generate({ messages }) {
+        if (messages.some((m) => m.role === "tool")) return { kind: "text", text: "child done" };
+        return { kind: "tool_use", calls: [{ id: "child-1", name: "Write", input: { file_path: file, content: "CHILD\n" } }] };
+      },
+    };
+  }
+
+  test("a MANAGED-tier SCOPED deny binds inside the child, exactly as it binds for the parent", async () => {
+    const home = mkdtempSync(join(tmpdir(), "winter-new4-home-"));
+    const cwdOn = mkdtempSync(join(tmpdir(), "winter-new4-on-"));
+    const cwdOff = mkdtempSync(join(tmpdir(), "winter-new4-off-"));
+    try {
+      // THE POSITIVE CONTROL FIRST, and it is not optional: with no managed rule at all, both writes
+      // must land. Without it, "the file is absent" cannot tell a bound rule from a child that never
+      // reached the tool -- which is exactly how a fixture passes while measuring nothing.
+      await runWithWiring({
+        cwd: cwdOff,
+        home,
+        childProvider: childWriting(join(cwdOff, "child.txt")),
+        allow: ["Write"],
+        parentCallsToolDirectly: { name: "Write", input: { file_path: join(cwdOff, "parent.txt"), content: "PARENT\n" } },
+      });
+      expect(existsSync(join(cwdOff, "parent.txt")), "control: the parent must be able to write").toBe(true);
+      expect(existsSync(join(cwdOff, "child.txt")), "control: the child must be able to write").toBe(true);
+
+      // THE MEASUREMENT: one managed-tier rule covering both paths.
+      const out = await runWithWiring({
+        cwd: cwdOn,
+        home,
+        managedSettings: { permissions: { deny: [`Write(//${cwdOn}/**)`] } },
+        childProvider: childWriting(join(cwdOn, "child.txt")),
+        allow: ["Write"],
+        parentCallsToolDirectly: { name: "Write", input: { file_path: join(cwdOn, "parent.txt"), content: "PARENT\n" } },
+      });
+      expect(existsSync(join(cwdOn, "parent.txt")), "the parent leg was already fixed by C1").toBe(false);
+      // Before NEW-4 this was `true`: the managed tier stopped at the session boundary and the child
+      // wrote a file its own parent was forbidden to write.
+      expect(existsSync(join(cwdOn, "child.txt")), "a managed-tier deny must govern every child too").toBe(false);
+      expect(out.prompts, "a deny is not a prompt at either level").toBe(0);
+    } finally {
+      for (const d of [home, cwdOn, cwdOff]) rmSync(d, { recursive: true, force: true });
+    }
+  });
+
+  test("a MANAGED-tier BARE deny binds inside the child too (the unscoped form)", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "winter-new4-bare-cwd-"));
+    const home = mkdtempSync(join(tmpdir(), "winter-new4-bare-home-"));
+    const probe = registerRecordingTool(CHILD_TOOL);
+    cleanupToolNames.push(CHILD_TOOL);
+    try {
+      const out = await runWithWiring({
+        cwd,
+        home,
+        managedSettings: { permissions: { deny: [CHILD_TOOL] } },
+        childProvider: childCalling(CHILD_TOOL),
+        allow: [CHILD_TOOL],
+        parentCallsToolDirectly: { name: CHILD_TOOL, input: {} },
+      });
+      expect(probe.ran).toEqual([]);
+      expect(out.prompts).toBe(0);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test("a MANAGED-tier ASK reaches the child as an ask, not as silence", async () => {
+    const home = mkdtempSync(join(tmpdir(), "winter-new4-ask-home-"));
+    const cwd = mkdtempSync(join(tmpdir(), "winter-new4-ask-cwd-"));
+    try {
+      const out = await runWithWiring({
+        cwd,
+        home,
+        managedSettings: { permissions: { ask: [`Write(//${cwd}/**)`] } },
+        childProvider: childWriting(join(cwd, "child.txt")),
+        allow: ["Write"],
+        parentCallsToolDirectly: { name: "Write", input: { file_path: join(cwd, "parent.txt"), content: "PARENT\n" } },
+      });
+      // TWO prompts, one per level. Before NEW-4 it was ONE: the parent was asked and the child ran
+      // outright, so a managed `ask` was not merely weakened for children -- it was absent.
+      expect(out.prompts, "the managed ask must be consulted for the child's call as well").toBe(2);
+      // Every prompt in this harness is denied, so an ask that is honoured leaves nothing written.
+      expect(existsSync(join(cwd, "parent.txt"))).toBe(false);
+      expect(existsSync(join(cwd, "child.txt"))).toBe(false);
+    } finally {
+      for (const d of [home, cwd]) rmSync(d, { recursive: true, force: true });
+    }
+  });
+
+  // The same class as NEW-4, found while fixing it, and it invalidated a fix this wave already
+  // claimed: `skillListing` was declared on `ProductionWiring.childFactoryOptions` and never named on
+  // `DefaultChildEngineFactoryOptions`. Both entrypoints spread that object into the factory, and a
+  // spread of an undeclared property is NOT an excess-property error -- so the value type-checked,
+  // arrived on `opts`, and was dropped one line before `deps`. Nothing asserted it end to end.
+  test("the skill LISTING actually reaches a child's system prompt (it was declared upstream and dropped)", async () => {
+    const home = mkdtempSync(join(tmpdir(), "winter-new4-skill-home-"));
+    const cwd = mkdtempSync(join(tmpdir(), "winter-new4-skill-cwd-"));
+    try {
+      const skillDir = join(home, "skills", "audit-things");
+      mkdirSync(skillDir, { recursive: true });
+      writeFileSync(join(skillDir, "SKILL.md"), "---\nname: audit-things\ndescription: A DISTINCTIVE SKILL DESCRIPTION for the listing.\n---\n\nbody", "utf8");
+      // THE CHILD'S OWN `system`, captured off the child's own provider object. A first draft joined
+      // `recordedProviderSystems()` -- which records the PARENT's system too, so it passed with the
+      // forwarding deleted and proved nothing. The child provider is a distinct object from the
+      // parent's, which is the only clean way to attribute a system prompt here.
+      const childSystems: string[] = [];
+      const recordingChild: Provider = {
+        async generate(req) {
+          childSystems.push(typeof req.system === "string" ? req.system : JSON.stringify(req.system ?? ""));
+          if (req.messages.some((m) => m.role === "tool")) return { kind: "text", text: "child done" };
+          return { kind: "tool_use", calls: [{ id: "child-1", name: "Write", input: { file_path: join(cwd, "child.txt"), content: "CHILD\n" } }] };
+        },
+      };
+      await runWithWiring({
+        cwd,
+        home,
+        // `Skill` must be advertised or the engine withholds the listing by design (its own gate).
+        childProvider: recordingChild,
+        allow: ["Write", "Skill"],
+      });
+      expect(childSystems.length, "the child must actually have run").toBeGreaterThan(0);
+      expect(childSystems.join("\n"), "a child must be shown the same skill menu its parent is").toContain("A DISTINCTIVE SKILL DESCRIPTION");
+    } finally {
+      for (const d of [home, cwd]) rmSync(d, { recursive: true, force: true });
+    }
+  });
+
+  test("the RESOLVED-ROOT floors bind inside a forced-bypass child -- it cannot tamper with <root>/projects", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "winter-new4-floor-cwd-"));
+    const home = mkdtempSync(join(tmpdir(), "winter-new4-floor-home-"));
+    try {
+      // A REAL transcript-shaped path under the resolved root, which is what the floor protects and
+      // what a child rewriting its own session history would target.
+      const victimDir = join(home, "projects", "some-key");
+      mkdirSync(victimDir, { recursive: true });
+      const victim = join(victimDir, "some-session.jsonl");
+      writeFileSync(victim, "ORIGINAL\n");
+
+      // READ THEN WRITE: `read-ladder.ts` refuses a Write to a file this session has not read, so a
+      // Write-only child would be stopped by the ladder and the fixture would measure that instead
+      // of the floor.
+      const tamperingChild: Provider = {
+        async generate({ messages }) {
+          const toolTurns = messages.filter((m) => m.role === "tool").length;
+          if (toolTurns === 0) return { kind: "tool_use", calls: [{ id: "c-read", name: "Read", input: { file_path: victim } }] };
+          if (toolTurns === 1) return { kind: "tool_use", calls: [{ id: "c-write", name: "Write", input: { file_path: victim, content: "CHILD-TAMPERED\n" } }] };
+          return { kind: "text", text: "child done" };
+        },
+      };
+
+      await runWithWiring({
+        cwd,
+        home,
+        // Forced bypass is the hostile case: WS-07 §11 forces every descendant of a bypass parent
+        // into bypass, and under bypass the pipeline short-circuits everything EXCEPT the managed
+        // floor. If the floor is not seeded in the child, nothing else is left to stop the write.
+        permissionMode: "bypassPermissions",
+        childProvider: tamperingChild,
+        allow: ["Read", "Write"],
+      });
+
+      // THE ASSERTION IS THE FILE'S CONTENT, not a denial count: a denial can be recorded for some
+      // other reason while the write still lands, and the content is what the user actually loses.
+      expect(readFileSync(victim, "utf8"), "a child must not be able to rewrite a transcript under the resolved winter root").toBe("ORIGINAL\n");
+      // And the neighbouring floor is untouched by this scenario -- no backups directory is created.
+      expect(existsSync(join(home, "backups")), "this probe must not manufacture the other floor's directory").toBe(false);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+      rmSync(home, { recursive: true, force: true });
     }
   });
 });

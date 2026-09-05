@@ -304,6 +304,11 @@ export interface ProductionWiring {
     systemPromptAssembler: SystemPromptAssembler;
     skillRuntime: { index: SkillIndex; skillOverrides?: SkillOverrides };
     skillListing: SkillListing;
+    /**
+     * NEW-4 (residual round): the SAME seed `engineOptions` carries, so a child's evaluator is
+     * seeded from the same tiers its parent's was. See `ChildEngineFactoryDeps.settingsRules`.
+     */
+    settingsRules: SettingsRuleSeed;
     structuredOutput: StructuredOutputSeam;
     /** I4: a user-tier `PreToolUse` deny must govern a child's tool calls too. */
     extraHookEntries: readonly SourcedHookEntry[];
@@ -633,8 +638,13 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
       skillRuntime: { index: skillIndex, ...(skillOverrides !== undefined ? { skillOverrides } : {}) },
       // B-low: the LISTING that goes with that index. Threaded as the same object the parent gets --
       // it is the session's skill surface, and a child resolving against the same index while being
-      // shown a different (empty) menu was the inconsistency.
+      // shown a different (empty) menu was the inconsistency. (Declaring it here was only half the
+      // job -- `register-default-factory.ts` had to name it too, or the spread dropped it silently;
+      // see that file's own note.)
       skillListing,
+      // NEW-4: the settings seed. Everything else in this object is a mirror of what the parent got;
+      // this was the one whose absence was a security boundary rather than a context difference.
+      settingsRules,
       // THE SAME INSTANCE the parent runs with -- Lane K's NEEDS_CONTEXT 6: one seam per session so
       // the compiled-validator cache and the dialect selection are shared. A child needs it because
       // `SpawnChildRequest.outputFormat` reaches its own generation config (Lane W's
