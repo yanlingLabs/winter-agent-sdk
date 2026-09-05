@@ -188,6 +188,14 @@ export interface Options {
   // branch, project-context files load ONLY when `'project'` is selected — so context discovery is
   // source-gated there, which R5-9's unconditional `WINTER.md` injection does not mirror.
   settingSources?: SettingSource[];
+  /**
+   * Phase 5 fix wave, C1: the MANAGED policy tiers, threaded to the runtime's own settings
+   * resolution. `managedSettings` is filtered restrictive-only there; `serverManagedSettings` is
+   * deliberately not (`sdk.d.ts:2838-2839`). Before this existed the pinned `managed` rule source had
+   * no producer in a live session at all.
+   */
+  managedSettings?: Record<string, unknown>;
+  serverManagedSettings?: Record<string, unknown>;
 
   // Finding 6 (P2 fix-wave, IMPORTANT): pinned upstream Options member (derived-shapes item (g),
   // sdk.d.ts:1841) — omitting it is a drop-in Options-parity break under strict object-literal

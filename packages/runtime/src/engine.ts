@@ -622,6 +622,25 @@ export interface EngineOptions {
    * pinned default 24 (capture (g)), so the default path is unaffected.
    */
   skillListing?: SkillListing;
+  /**
+   * Phase 5 fix wave, C1: the settings-file `permissions` block, per tier.
+   *
+   * Before this the engine seeded its rule set from `config.{allowedTools,disallowedTools,permissions}`
+   * ALONE, so the only `project`/`local`/`user`-sourced entry a live session could hold came from a
+   * `canUseTool` answer carrying `addRules`. A `deny` in `~/.winter/settings.json` was silently not a
+   * deny; the whole P5-A/P5-D trust matrix guarded a path a settings file never entered.
+   *
+   * PLAIN DATA, resolved once by `production-wiring.ts` (both entrypoints), so a spawned or compiled
+   * child gets the identical seed. Folded into `initialRules` AFTER the managed baseline denies and
+   * BEFORE the `sdk` entries -- which is the pinned precedence: managed floor, then files
+   * (`perSource`'s own highest-first order), then the host's own `Options`.
+   */
+  settingsRules?: {
+    entries: readonly SourcedRuleEntry[];
+    directories: ReadonlyArray<{ path: string; source: RuleSource }>;
+    defaultMode?: string;
+    disableBypassPermissionsMode?: boolean;
+  };
 }
 
 type RaceOutcome<T> = { kind: "ok"; value: T } | { kind: "interrupted" };
@@ -776,6 +795,7 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
     initPlugins,
     initOutputStyle,
     skillListing,
+    settingsRules,
   } = opts;
 
   // Task 6 (WS-07 §2/§6.4, Ruling 8): permission startup validation — deliberately the very FIRST
@@ -786,7 +806,11 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // resolution failure already does (e.g. store/resume.ts's ResumeTargetError, via
   // testing.ts's/main.ts's own pre-runEngine try/catch) — never a parse failure, never a silently
   // wrong default.
-  const initialMode = assertKnownPermissionMode(config.permissionMode);
+  // C1: an explicit `config.permissionMode` still WINS -- a settings file supplies a DEFAULT, not an
+  // override, and a host that asked for a mode must get it. The file's value has already been through
+  // the pinned `filterEscalatingDefaultMode` in the wiring, so a repo-committed `bypassPermissions`
+  // can never arrive here at all.
+  const initialMode = assertKnownPermissionMode(config.permissionMode ?? settingsRules?.defaultMode);
   // Task 8 (P3 close-out, "Baseline read denial" MUST; WS-12 §2 / D6): the sole baseline read
   // denial -- `~/.winter/run` -- enforced at the TOOL-FENCE layer (the standing evaluator's own
   // Read-deny machinery, WS-07 §3.1), independent of whether a call ever reaches the OS sandbox at
@@ -851,18 +875,30 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
     ...emptyRuleSet(),
     entries: [
       ...BASELINE_DENY_RULES,
+      // C1: the settings FILES, in `perSource`'s own highest-precedence-first order. Between the
+      // managed baseline above and the host's own `Options` below -- the pinned layering. Each entry
+      // carries the TIER that asserted it, which is the whole input to the P5-A gate downstream
+      // (`findMatchingRuleEntry` skips a project-sourced `allow` without `trustedWorkspace`); the
+      // filter is implemented once, there, and never re-derived here.
+      ...(settingsRules?.entries ?? []),
       ...buildSdkSourcedEntries({
         ...(config.allowedTools !== undefined ? { allowedTools: config.allowedTools } : {}),
         ...(config.disallowedTools !== undefined ? { disallowedTools: config.disallowedTools } : {}),
         ...(config.permissions !== undefined ? { permissions: config.permissions } : {}),
       }),
     ],
+    // `permissions.additionalDirectories` from the files, tagged the same way -- `effectiveDirectories`
+    // applies the identical project-tier gate to a directory GRANT that `resolveRules` applies to an
+    // allow rule.
+    directories: [...(settingsRules?.directories ?? [])],
   };
   const policyStateStore = new PolicyStateStore(
     { mode: initialMode, rules: initialRules },
     {
       allowDangerouslySkipPermissions: config.allowDangerouslySkipPermissions === true,
-      disableBypassPermissionsMode: config.permissions?.disableBypassPermissionsMode === true,
+      // C1: WS-07 §6.4's veto binds from ANY tier, not only from `Options`. Restrictive, so no trust
+      // question arises and `true` anywhere wins.
+      disableBypassPermissionsMode: config.permissions?.disableBypassPermissionsMode === true || settingsRules?.disableBypassPermissionsMode === true,
     },
   );
   // Task 6: the resolved, fixed-at-startup home directory used for `~`-anchored file rules

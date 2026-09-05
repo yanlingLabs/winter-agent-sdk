@@ -295,6 +295,18 @@ export interface RuntimeConfig {
   // options.ts's own field comment for the full rationale (a rule ORIGIN is not a settings FILE
   // tier). Omitted = all three tiers; `[]` = filesystem settings disabled.
   settingSources?: SettingSource[];
+  // --- Phase 5 fix wave, C1: the MANAGED policy tiers ---------------------------------------------
+  //
+  // `ResolveSettingsOptions` (the pinned shape) has carried both since T2, but nothing on the wire
+  // could supply them -- so the pinned `managed` source had NO PRODUCER in a live session on any
+  // leg, and a managed deny (the one tier `allowManagedPermissionRulesOnly` and every
+  // "managed beats everything" rule in the evaluator are written for) was unreachable.
+  //
+  // `managedSettings` is filtered restrictive-only by the pinned resolution; `serverManagedSettings`
+  // is explicitly NOT (`sdk.d.ts:2838-2839`). Both ride here as plain JSON, which is what makes them
+  // reach a spawned or compiled child at all -- `--config-json` is the only channel.
+  managedSettings?: Record<string, unknown>;
+  serverManagedSettings?: Record<string, unknown>;
   // Task 6 (WS-07 §6.4, Ruling 8): the wire's own permissionMode field ABOVE stays an open string —
   // only this new field is added here. Selecting/switching into "bypassPermissions" requires this to
   // be `true`; the runtime engine gates both the initial config value and every later

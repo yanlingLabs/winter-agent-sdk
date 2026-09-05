@@ -23,7 +23,9 @@
 // invisibly.
 import type { InitPluginInfo, RuntimeConfig, Settings, SettingSource } from "@yanlinglabs/winter-agent-sdk";
 import { OVERLAY_NEVER_KEYS, resolveWinterHome } from "@yanlinglabs/winter-agent-sdk";
-import { resolveSettingsDetailed } from "./settings/resolve.ts";
+import { resolveSettingsDetailed, filterEscalatingDefaultMode } from "./settings/resolve.ts";
+import { sourceRule, rawToRuleValue, type SourcedRuleEntry } from "./permissions/ruleset.ts";
+import type { RuleSource } from "@yanlinglabs/winter-agent-sdk";
 import type { DetailedResolvedSettings } from "./settings/resolve.ts";
 import { defaultTrustSource } from "./settings/trust.ts";
 import { loadPlugins } from "./plugins/loader.ts";
@@ -118,6 +120,112 @@ export function assertEffectiveSettings(settings: Settings | undefined, resolved
   }
 }
 
+/**
+ * Phase 5 fix wave, C1: everything the engine needs from a settings file's `permissions` block.
+ *
+ * A SEED, not a policy: the engine folds `entries`/`directories` into its own initial rule set after
+ * the managed baseline and before the `sdk` entries, and the per-entry trust filter downstream is
+ * what makes a project-tier `allow` inert without host-declared trust.
+ */
+export interface SettingsRuleSeed {
+  /** Tagged with the tier that asserted them, which is what the P5-A gate reads. */
+  entries: SourcedRuleEntry[];
+  /** `permissions.additionalDirectories`, tagged the same way (`effectiveDirectories` gates project-tier grants). */
+  directories: Array<{ path: string; source: RuleSource }>;
+  /**
+   * The surviving `permissions.defaultMode`, AFTER the pinned `filterEscalatingDefaultMode` -- so a
+   * repo-committed `bypassPermissions` never reaches the engine. A DEFAULT: an explicit
+   * `config.permissionMode` still wins, because a file cannot override what the host asked for.
+   */
+  defaultMode?: string;
+  /** WS-07 §6.4's veto, from ANY tier. `engine.ts` read `config.permissions` only. */
+  disableBypassPermissionsMode?: boolean;
+  /** Non-fatal problems, surfaced through `ProductionWiring.warnings`. */
+  warnings: string[];
+}
+
+/** `RuleSource` values a settings TIER can legitimately carry. `flag`/`cliArg`/`session`/`sdk` are not file tiers. */
+const RULE_SOURCE_BY_SETTING_SOURCE: Partial<Record<string, RuleSource>> = {
+  managed: "managed",
+  user: "user",
+  project: "project",
+  local: "local",
+};
+
+function stringArray(v: unknown): string[] {
+  return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
+}
+
+function isPlainSettings(v: unknown): v is Settings {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+/**
+ * One `SourcedRuleEntry` per (tier, behavior, rule string), in the pinned precedence order.
+ *
+ * ORDER IS `perSource`'s OWN (highest-precedence first), and it matters: `resolveRules` and
+ * `findMatchingRuleEntry` both return the FIRST match within a behavior, so a managed deny must be
+ * reached before a user one. `perSource` is already ordered that way.
+ *
+ * A MALFORMED RULE IS REPORTED, NEVER THROWN. `sourceRule` validates at add time and raises
+ * `PermissionRuleValidationError`; that is the right behaviour for an `Options` field the host
+ * controls (fail loud at startup) and the wrong one for a FILE a repository may have written --
+ * a single bad string in a checked-in `.winter/settings.json` must not make the session unstartable.
+ * The bad entry is dropped and named in `warnings`; every other rule in the same file still binds.
+ */
+export function buildSettingsRuleSeed(resolved: DetailedResolvedSettings): SettingsRuleSeed {
+  const entries: SourcedRuleEntry[] = [];
+  const directories: Array<{ path: string; source: RuleSource }> = [];
+  const warnings: string[] = [];
+
+  for (const tier of resolved.perSource) {
+    const source = RULE_SOURCE_BY_SETTING_SOURCE[tier.source];
+    if (source === undefined) continue; // `flag` (inline/sdk) is seeded by the engine's own sdk entries
+    const permissions = (tier.values as Record<string, unknown> | undefined)?.["permissions"];
+    if (typeof permissions !== "object" || permissions === null || Array.isArray(permissions)) continue;
+    const block = permissions as Record<string, unknown>;
+    for (const [key, behavior] of [
+      ["deny", "deny"],
+      ["ask", "ask"],
+      ["allow", "allow"],
+    ] as const) {
+      for (const raw of stringArray(block[key])) {
+        try {
+          entries.push(sourceRule(rawToRuleValue(raw), behavior, source));
+        } catch (err) {
+          warnings.push(`settings (${tier.source}${tier.path !== undefined ? ` at ${tier.path}` : ""}): dropping malformed ${key} rule ${JSON.stringify(raw)} -- ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+    }
+    for (const path of stringArray(block["additionalDirectories"])) directories.push({ path, source });
+  }
+
+  // The pinned escalating-mode filter, on the whole resolution -- it answers "which TIER set this",
+  // which no per-entry view can. Zero non-test callers before this.
+  const filtered = filterEscalatingDefaultMode(resolved) as Record<string, unknown>;
+  const filteredPermissions = filtered["permissions"];
+  const defaultMode =
+    typeof filteredPermissions === "object" && filteredPermissions !== null && typeof (filteredPermissions as Record<string, unknown>)["defaultMode"] === "string"
+      ? ((filteredPermissions as Record<string, unknown>)["defaultMode"] as string)
+      : undefined;
+
+  // The veto is restrictive, so it applies from EVERY tier with no trust question -- `true` anywhere
+  // wins. Read off the tiers rather than off `effective` so a `false` in a higher tier cannot
+  // un-veto a lower tier's `true`.
+  const disableBypassPermissionsMode = resolved.perSource.some((tier) => {
+    const permissions = (tier.values as Record<string, unknown> | undefined)?.["permissions"];
+    return typeof permissions === "object" && permissions !== null && (permissions as Record<string, unknown>)["disableBypassPermissionsMode"] === true;
+  });
+
+  return {
+    entries,
+    directories,
+    ...(defaultMode !== undefined ? { defaultMode } : {}),
+    ...(disableBypassPermissionsMode ? { disableBypassPermissionsMode } : {}),
+    warnings,
+  };
+}
+
 export interface ProductionWiringOptions {
   /** The session's EFFECTIVE config (post-`resolveEngineSession`), never the raw pre-resolution one. */
   config: RuntimeConfig;
@@ -152,6 +260,7 @@ export interface ProductionWiring {
   /** Spread into `runEngine({...})`. Every field is one of `EngineOptions`' own P5 seams or init inputs. */
   engineOptions: {
     winterHome: string;
+    settingsRules: SettingsRuleSeed;
     systemPromptAssembler: SystemPromptAssembler;
     commandResolver: FilesystemCommandResolver;
     compactionController: CompactionController;
@@ -205,6 +314,12 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
     winterHome,
     env,
     ...(settingSources !== undefined ? { settingSources } : {}),
+    // C1: the MANAGED tiers. Both were declared on the pinned `ResolveSettingsOptions` since T2 and
+    // had no producer -- so `managed`, the one source `allowManagedPermissionRulesOnly` and every
+    // "managed beats everything" rule in the evaluator are written for, was unreachable in a live
+    // session. Narrowed from the wire's `Record<string, unknown>` (it arrives as JSON).
+    ...(isPlainSettings(config.managedSettings) ? { managedSettings: config.managedSettings as Settings } : {}),
+    ...(isPlainSettings(config.serverManagedSettings) ? { serverManagedSettings: config.serverManagedSettings as Settings } : {}),
   });
   const effective = resolved.effective;
   assertEffectiveSettings(effective, resolved);
@@ -390,9 +505,35 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
     ...(config.contextWindowTokens !== undefined ? { contextWindowTokens: config.contextWindowTokens } : {}),
   });
 
+  // (16) C1 -- THE SETTINGS-FILE PERMISSION RULES, PER TIER.
+  //
+  // The single largest gap Phase 5 shipped: `resolveSettingsDetailed` ran here and its `permissions`
+  // block had NO CONSUMER, so a `deny` a user wrote into `~/.winter/settings.json` was silently not a
+  // deny, and the entire P5-A/P5-D trust matrix guarded a path only a `canUseTool` answer could
+  // reach.
+  //
+  // BUILT PER TIER FROM `perSource`, NEVER FROM THE FLAT `effective`, and that is the load-bearing
+  // choice rather than a stylistic one: the rule ARRAYS union across tiers (`resolve.ts`'s
+  // `PERMISSION_RULE_ARRAY_KEYS`), so `effective.permissions.allow` is a merged list with no
+  // attribution -- and attribution is exactly what the evaluator's P5-A gate needs (a PROJECT-tier
+  // `allow` must not widen; the identical string from `local` must). T2's own seam contract (iii)/(iv)
+  // pins that attribution lives on `sources`/`perSource`.
+  //
+  // NO `applyWorkspaceTrust` CALL HERE, deliberately. That helper collapses the tiers into one
+  // filtered `Settings`, which would throw away the very attribution the entries carry -- and the
+  // filter it applies is already implemented per-entry, downstream, where it belongs
+  // (`ruleset.ts`'s `resolveRules` and `evaluator.ts`'s `findMatchingRuleEntry` both skip an
+  // `allow` whose `source === "project"` unless `trustedWorkspace`; `effectiveDirectories` does the
+  // same for directory grants). Seeding tagged entries gets P5-A for free and keeps ONE
+  // implementation of it. `filterEscalatingDefaultMode` IS called -- it is a whole-resolution
+  // question (which tier set the mode), not a per-entry one.
+  const settingsRules = buildSettingsRuleSeed(resolved);
+  for (const warning of settingsRules.warnings) warnings.push(warning);
+
   return {
     engineOptions: {
       winterHome,
+      settingsRules,
       systemPromptAssembler,
       commandResolver,
       compactionController,

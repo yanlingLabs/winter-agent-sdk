@@ -135,7 +135,12 @@ function ruleValueToRaw(v: PermissionRuleValue): string {
 // (Options.allowedTools etc.) are raw strings, not PermissionRuleValue objects.
 const RAW_RULE_SHAPE = /^([^\s(]+)\((.*)\)$/s;
 
-function rawToRuleValue(raw: string): PermissionRuleValue {
+/**
+ * Phase 5 fix wave, C1: EXPORTED so `production-wiring.ts` builds settings-file entries through the
+ * SAME raw-string parse `buildSdkSourcedEntries` uses. A second copy of "how a rule string becomes a
+ * PermissionRuleValue" is exactly the producer/consumer drift this module exists to prevent.
+ */
+export function rawToRuleValue(raw: string): PermissionRuleValue {
   const trimmed = raw.trim();
   const m = RAW_RULE_SHAPE.exec(trimmed);
   if (!m) return { toolName: trimmed };

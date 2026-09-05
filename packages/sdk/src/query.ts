@@ -417,6 +417,10 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
     ...(options.disallowedTools !== undefined ? { disallowedTools: options.disallowedTools } : {}),
     ...(options.permissions !== undefined ? { permissions: options.permissions } : {}),
     ...(options.settingSources !== undefined ? { settingSources: options.settingSources } : {}),
+    // Phase 5 fix wave, C1: the managed tiers ride the wire so a spawned/compiled child resolves the
+    // same policy the in-memory leg does.
+    ...(options.managedSettings !== undefined ? { managedSettings: options.managedSettings } : {}),
+    ...(options.serverManagedSettings !== undefined ? { serverManagedSettings: options.serverManagedSettings } : {}),
     // Finding 6 (P2 fix-wave): pure passthrough, same conditional-spread convention as every field
     // above -- query.ts never interprets either field, it only serializes them (options.ts's own
     // comment on each field for what does/doesn't consume it runtime-side).
