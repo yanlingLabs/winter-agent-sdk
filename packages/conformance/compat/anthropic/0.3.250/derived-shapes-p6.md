@@ -70,9 +70,26 @@ capture harness logs request *method + path*, tool *names*, and structural count
 **Naming discipline**: identical to P2–P5's — the pinned identifier and field NAMES quoted below *are*
 Winter's own naming (WS-03's compatibility posture, WS-07 §4). Every sentence of description, every
 table, and this document's structure are original. Vendor prose is restated in this document's own
-words throughout; the only vendor strings reproduced verbatim are runtime **error** strings, labelled
-as such wherever the string itself is the finding (capture (I)'s two thrown messages, which item (4)
-scopes explicitly, and capture (H)'s and (G)'s single-clause refusal/abort strings).
+words throughout.
+
+**Verbatim-overlap measurement, because "restated" is a claim and not a proof.** A 12-word n-gram
+overlap of this document against `sdk.d.ts` + `sdk-tools.d.ts` (case-, punctuation- and
+whitespace-normalised) reports **9 runs of ≥12 words, and every one of them is inside a fenced code
+block** — declared type signatures, field lists and literal unions, i.e. exactly the identifier and
+field names the naming discipline above *requires* be reproduced exactly. **No run of ≥12 words
+survives anywhere in this document's prose.** An earlier draft had ten prose runs of 12-21 words in
+items (a), (d), (e), (f) and (g) — JSDoc sentences that were labelled "restated" but were closer to
+lightly-edited transcription; those eight sites were rewritten into this document's own factual
+wording (facts and field names, never the artifact's sentences) and the measurement above was re-run
+to confirm it.
+
+Prose reproduced verbatim is limited to, and marked at, four places: capture (I)'s two thrown-error
+messages (item (4) of the brief scopes "thrown error class+message" explicitly), capture (H)'s
+single-clause `compact_error`/`result` string, capture (G)'s abort message, and **two short evidential
+clauses** kept in quotation marks because the exact wording is what a ruling turns on —
+`SessionKey.subpath`'s "opaque to the adapter — just use it as a storage key suffix" (`5205`, the
+licence R6-7a rests on) and `Options.fallbackModel`'s "overloaded or unavailable" (`1535`, the trigger
+OQ-P6-5 rests on). Both are cited at the point of use.
 
 **Claim provenance**: as P4/P5 — each item distinguishes a *type-level fact* (a field exists, its type,
 its optionality — evident from the declaration's code) from a *doc-asserted behavior* (a claim resting
@@ -151,7 +168,8 @@ JSDocs are complementary and must be read together:
 - with partial messages on, it "normally" rides the **first non-`ping` `stream_event`** instead
   (`4555`, `3112`) — which is why `ping` is a real member of the `event` union despite the six-name
   list;
-- a turn that produces no stream events still stamps its first `assistant` message (`3112`).
+- a turn with no stream events at all falls back to stamping the `assistant` frame (`3112`), so the
+  stamp is never simply lost when streaming is on.
 
 Absent on: every later frame of the turn, subagent frames (`parent_tool_use_id` set — stated at `3112`
 for the assistant frame; the `stream_event` JSDoc at `4555` does *not* repeat the subagent carve-out),
@@ -479,10 +497,10 @@ A bare array — no envelope, no default marker, no "current model" field. The c
 the initialize response (below). **No `Query` method returns the currently selected model.**
 
 The wire twin is `SDKControlListModelsRequest` (`sdk.d.ts:3855-3857`, JSDoc `3852-3854`), subtype
-`'list_models'`, **payload-free**. Its JSDoc, restated, is the capability rationale: in a remote
-thin-client session the worker's provider, settings cascade and enforcement policy decide which models
-the session can run, so the client must ask rather than compute its own list — the pin's own argument
-for a server-side catalog, which is the shape WS-13's discovery layer takes.
+`'list_models'`, **payload-free**. Its JSDoc gives the rationale, restated here in this document's own terms: model availability is
+decided worker-side, from three inputs it names — the provider in use, the settings cascade, and
+enforcement policy — so a thin client cannot compute the list locally and has to request it. That is
+the pin arguing for a server-side catalog, which is the shape WS-13's discovery layer takes.
 
 ### `set_model` — `sdk.d.ts:4181-4188` (JSDoc `4178-4180`)
 
@@ -604,16 +622,18 @@ riding the *usage* record rather than `ModelInfo` is the pin's own placement of 
 as catalog data — worth noting for the extractor lane: the pinned runtime learns them per request, not
 from a catalog.
 
-**`costBasis` (`1322`, JSDoc `1319-1321`)** — doc-asserted, restated: it records which price table the
-**most recent** request for this model was priced at — Claude Code's built-in list prices (`'list'`),
-the organization's managed-settings rates or multiplier (`'managed'`), or neither (`'unknown'`, meaning
-no pricing row and no built-in price matched the model id, so `costUSD` is a guess at the default
-model's rate). Three further behaviours the same comment pins, each load-bearing for Winter's cost
-honesty:
+**`costBasis` (`1322`, JSDoc `1319-1321`)** — doc-asserted, restated in this document's own terms:
+the field names the pricing source behind this model's latest priced request. `'list'` = the runtime's
+own built-in price table. `'managed'` = the organization's configured rates or multiplier from managed
+settings. `'unknown'` = neither applied, because no configured row matched *and* no built-in entry
+matched the model id — and in that case the JSDoc is explicit that the `costUSD` figure is a guess
+computed at the default model's rate. Three further behaviours the same comment pins, each
+load-bearing for Winter's cost honesty:
 
 1. it is **overwritten per request**, like `canonicalModel` — so differencing cumulative `costUSD` per
    turn yields that turn's basis;
-2. it is **absent until this process has priced a request** for the model (e.g. right after a resume);
+2. it does not appear until the current process has priced at least one request for that model — a
+   freshly resumed session being the example the comment gives;
 3. absence is doc-instructed to be **treated as `'list'`** — a default that quietly converts "we don't
    know" into "list price" on a resumed session.
 
@@ -632,12 +652,13 @@ raw/canonical split `ModelInfo.value`/`resolvedModel` draws, third occurrence of
 
 ### `result.total_cost_usd` — `sdk.d.ts:4682` (error arm) / `4736` (success arm), JSDoc `4679-4681` / `4733-4735`
 
-Required `number` on both result arms. Doc-asserted lifecycle, restated: it is a cumulative estimate in
-USD for this `query()` call, covering the same query-pipeline calls as `modelUsage`; in
-streaming-input sessions each result carries the running total so far, so a consumer reads the latest
-result rather than summing across results; crash/startup-error results may carry zeroed values; resumed
-sessions start fresh; a mid-session `/clear` resets the running total; and it is an estimate, not a
-billing statement. `modelUsage` (`4690`/`4744`, JSDoc `4687-4689`/`4741-4743`) is doc-asserted to be
+Required `number` on both result arms. Doc-asserted lifecycle, restated in this document's own terms:
+the value accumulates over the whole `query()` call and spans the same set of model calls `modelUsage`
+covers. Under streaming input every result frame repeats the total accrued so far, so a consumer must
+read the newest result and must **not** add results together. Three zero/reset conditions are named: a
+crash or startup-error result can arrive with the figures zeroed, a resumed session restarts the
+counter from nothing, and a mid-session `/clear` resets it. The comment closes by disclaiming the
+number as an estimate rather than a bill. `modelUsage` (`4690`/`4744`, JSDoc `4687-4689`/`4741-4743`) is doc-asserted to be
 the *correct* field for token/cost accounting — it spans main loop, Task subagents, sidechains and
 internal calls such as compaction and Workflow agents, while excluding out-of-pipeline helper calls
 (the permission classifier, token-count probes). The sibling `usage: NonNullableUsage` is doc-marked
@@ -698,11 +719,12 @@ R6-8's conclusion by a different route:
 1. **`thinking` is named as a real assistant content-block type** (`3103`) — so it is in-dialect, and a
    Winter `reasoning_summary` frame is not competing with an undeclared concept.
 2. **Signatures are cumulative and replay-critical.** `SDKAssistantMessage.resumed_from_incomplete_thinking?: true`
-   (`sdk.d.ts:3118`, JSDoc `3115-3117`) exists for exactly one situation, restated: the turn continued
-   the preceding truncated assistant turn *inside its trailing signed thinking block* (max-output-tokens
-   recovery), its thinking signatures are **cumulative over that preceding thinking-only turn**, and a
-   history replayed through the bridge must carry the flag back so the normalizer keeps the run's prefix
-   on the wire. A declaration does not add a wrapper-level flag whose sole purpose is preserving a
+   (`sdk.d.ts:3118`, JSDoc `3115-3117`) exists for exactly one situation, restated in this document's
+   own terms: a turn cut off by the output-token ceiling part-way through a signed thinking block, with
+   the next turn resuming inside that same block. The JSDoc's operative claim is that the thinking
+   signatures then accumulate across the pair rather than standing alone per turn, and that a host
+   replaying such a history back through the bridge must re-send the flag or the normalizer drops the
+   run's prefix from the wire. A declaration does not add a wrapper-level flag whose sole purpose is preserving a
    signature chain across replay unless the signature is load-bearing on the wire. That is strong
    circumstantial support for R6-8 — **circumstantial, and labelled as such** — and it is a second,
    independent reason a foreign (unsigned) summary must not be written into
@@ -712,11 +734,14 @@ Capture (F) supplies the direct behavioural evidence: what the runtime does with
 block **with** a signature versus **without** one, and whether the block is replayed verbatim into the
 next request. See its verdict below; that verdict, not this section, is R6-8's factual base.
 
-**`image` / `tool_result.content`**: likewise undeclared. `sdk-tools.d.ts` prose confirms the runtime
-*produces* image blocks in a model-facing `tool_result` — `Read`'s output type notes (`sdk-tools.d.ts:334`, `:338`)
-describe extracted page images delivered solely as image blocks in the model-facing `tool_result`
-content and not retained on the tool_use_result. So **`tool_result.content` admits blocks, not only a
-string**, established from the pin's own prose about its own tool, not from the external declaration.
+**`image` / `tool_result.content`**: likewise undeclared. `sdk-tools.d.ts` nonetheless shows the
+runtime *producing* image blocks inside a model-facing `tool_result`. Two field comments on `Read`'s
+output type (`sdk-tools.d.ts:334`, `:338`), restated in this document's own terms, say that a PDF page
+range is rendered to page images which reach the model as image blocks on the tool result and by no
+other route, and that those bytes are deliberately not retained on the persisted `tool_use_result` —
+the field is described as transient in-process only and absent from the emitted result. So
+**`tool_result.content` admits blocks, not only a string**, established from the pin's own commentary
+on its own tool rather than from the external declaration.
 The `source` variants of an image block are not pinned anywhere.
 
 ---
@@ -736,10 +761,12 @@ resolution rule, no validation claim** — the pin never says what happens to an
 is what capture (I) probes.
 
 **`fallbackModel`'s comment carries the phase's most consequential trigger text** (doc-asserted,
-`1535-1539`, restated): it names fallback model(s) used **if the primary model is overloaded or
-unavailable**; it **accepts a comma-separated list to try each in order**; and **the primary model is
-re-tried at the start of each user turn, so a temporary outage does not permanently demote the
-session.**
+`1535-1539`). Restated in this document's own terms, it fixes three things: the condition that engages
+the fallback, worded there as the primary being **"overloaded or unavailable"** (the one clause quoted
+verbatim in this item, because that wording is the evidence OQ-P6-5 turns on); the field's multi-value
+form, a single comma-separated string whose entries are tried in sequence; and a re-promotion rule —
+the primary is attempted again at each new user turn, so an outage demotes the session only while it
+lasts.
 
 Three findings from that:
 
