@@ -40,7 +40,7 @@ export type { MessageOrigin, ProviderNativeState };
 // R6-7: the sidecar record types the persistence seam carries. `store/provider-state.ts` imports
 // NOTHING from this file (its own types come from provider-runtime), so this is not the circular
 // direction `store/dialect.ts` has to avoid.
-import { PROVIDER_STATE_FILE_SUFFIX, type ProviderStateRecord, type ProviderStateRecordInput } from "./store/provider-state.ts";
+import { PROVIDER_STATE_FILE_SUFFIX, buildContinuationChain, type ProviderStateRecord, type ProviderStateRecordInput } from "./store/provider-state.ts";
 import type { FrameSource, FrameSink } from "./protocol/channel.ts";
 import { Queue } from "./protocol/channel.ts";
 import { createRpcBridge } from "./rpc/bridge.ts";
@@ -1774,8 +1774,8 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
    * (every pre-P6 double, and any run before selection is wired in T10) writes no records at all and
    * behaves byte-identically to before this task.
    */
-  const recordAssistant = async (content: ContentBlock[], provenance?: { nativeState?: ProviderNativeState; summary?: string }): Promise<void> => {
-    if (!store) return;
+  const recordAssistant = async (content: ContentBlock[], provenance?: { nativeState?: ProviderNativeState; summary?: string }): Promise<string | undefined> => {
+    if (!store) return undefined;
     const uuid = randomUUID();
     const identity = currentProviderIdentity;
     if (identity !== undefined && store.recordProviderState !== undefined) {
@@ -1806,6 +1806,11 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
     } catch {
       /* auxiliary — see comment above */
     }
+    // RETURNED so the IN-MEMORY message can carry the same anchor the sidecar record names. Without
+    // it a live session's history and the same session's RESUMED history would disagree on every
+    // assistant message's `uuid` -- and the continuous-vs-resumed fidelity that resume.test.ts pins
+    // is exactly the property the continuation chain depends on.
+    return uuid;
   };
   const flushStore = async (): Promise<void> => {
     if (!store?.flush) return;
@@ -3210,6 +3215,69 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
 
   const messages: ProviderMessage[] = initialMessages ? [...initialMessages] : [];
 
+  // --- Phase 6 Task 3 (R6-7): re-attach the CONTINUATION CHAIN to a resumed history ---------------
+  //
+  // A resumed history comes back from `rebuildProviderMessages` as content plus, on every assistant
+  // message, the entry's own uuid -- and nothing else. The provider-state records that say WHICH
+  // provider produced each of those messages, and what opaque continuation state it left behind,
+  // live in the sidecar. This is where the two halves are put back together.
+  //
+  // AN ASSISTANT MESSAGE WITH NO `origin` RECORD DEGRADES TO SUMMARY-LEVEL and the session says so.
+  // That is R6-7's own rule, and the reason it cannot be silent is that the degradation is
+  // observable to the model: it will not get its exact native replay, so a user who sees a worse
+  // continuation than they expected deserves to know why. `system/continuity_warning` is that
+  // channel -- see its declaration in frames.ts for why it is a frame rather than a renderer input.
+  // AWAITED, not fire-and-forget: the very first generation of the run reads these annotations, so a
+  // detached attach would race the turn it exists to inform -- and lose, silently, on a fast host.
+  if (store?.loadProviderState !== undefined && messages.length > 0) {
+    await (async () => {
+      let records: ProviderStateRecord[];
+      try {
+        records = await store.loadProviderState!();
+      } catch {
+        // An unreadable sidecar is a DEGRADED resume, not a failed one: the conversation is intact,
+        // only its native continuation is not.
+        output.write({
+          type: "data",
+          message: { type: "system", subtype: "continuity_warning", warning: "sidecar_unreadable", detail: "the provider-state sidecar could not be read; this session resumes without native continuation state.", uuid: randomUUID(), session_id: config.sessionId },
+        });
+        return;
+      }
+      const anchors = new Set(messages.flatMap((m) => (m.role === "assistant" && m.uuid !== undefined ? [m.uuid] : [])));
+      if (anchors.size === 0) return;
+      const chain = buildContinuationChain(records, anchors);
+      let degraded = 0;
+      for (const message of messages) {
+        if (message.role !== "assistant" || message.uuid === undefined) continue;
+        const link = chain.get(message.uuid);
+        if (link?.origin === undefined) {
+          degraded++;
+          continue;
+        }
+        message.origin = link.origin;
+        // The opaque half is re-attached only when it exists. The RENDERER decides whether it may be
+        // replayed (the identity renderer drops it across a domain boundary) -- re-attaching it here
+        // is not a decision to send it.
+        if (link.nativeState !== undefined) message.nativeState = link.nativeState;
+      }
+      if (degraded > 0) {
+        output.write({
+          type: "data",
+          message: {
+            type: "system",
+            subtype: "continuity_warning",
+            warning: "provider_state_missing",
+            // COUNTS AND IDENTITY ONLY. This string is a frame and a log line, and the records it is
+            // about hold opaque provider state (Global Constraints).
+            detail: `${degraded} resumed assistant message${degraded === 1 ? "" : "s"} ${degraded === 1 ? "has" : "have"} no provider-state origin record; ${degraded === 1 ? "it was" : "they were"} degraded to summary-level.`,
+            uuid: randomUUID(),
+            session_id: config.sessionId,
+          },
+        });
+      }
+    })();
+  }
+
   // M6 (fix wave, P3 close-out): wire the advisor's REAL transcript source, now that `messages`
   // (this run's own turn history) exists in this closure -- see this file's own import comment for
   // why this cross-module call is deliberate, not an oversight. `resolveReviewer` STAYS the P6 seam
@@ -4048,8 +4116,12 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
         // shape `rebuildProviderMessages` collapses a single-text-block entry back to, and changing
         // it would make a resumed session's history differ from a continuous one's (resume.test.ts's
         // own continuous-vs-split fidelity test).
-        messages.push({ role: "assistant", content: thinkingBlocks.length === 0 ? turn.text : assistantBlocks, ...providerAnnotations(turn) });
-        await recordAssistant(assistantBlocks, turnProvenance(turn));
+        // RECORDED FIRST so the in-memory message can carry the same anchor uuid the sidecar record
+        // names. A live session's history and the same session's RESUMED history must agree on every
+        // assistant message's `uuid` -- that agreement is what the continuation chain is keyed on,
+        // and resume.test.ts's continuous-vs-split fidelity test pins it.
+        const textAnchor = await recordAssistant(assistantBlocks, turnProvenance(turn));
+        messages.push({ role: "assistant", content: thinkingBlocks.length === 0 ? turn.text : assistantBlocks, ...(textAnchor !== undefined ? { uuid: textAnchor } : {}), ...providerAnnotations(turn) });
         finalResult = { type: "result", subtype: "success", is_error: false, result: turn.text };
         break roundLoop;
       }
@@ -4103,8 +4175,8 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
       // Sign-off 5 (whole-branch review): this write intentionally precedes its record-await — the
       // terminal result is the sole durability barrier; P6 (partial streaming) must revisit this.
       output.write({ type: "data", message: { type: "assistant", message: { content: toolUseBlocks } } });
-      messages.push({ role: "assistant", content: toolUseBlocks, ...providerAnnotations(turn) });
-      await recordAssistant(toolUseBlocks, turnProvenance(turn));
+      const callAnchor = await recordAssistant(toolUseBlocks, turnProvenance(turn));
+      messages.push({ role: "assistant", content: toolUseBlocks, ...(callAnchor !== undefined ? { uuid: callAnchor } : {}), ...providerAnnotations(turn) });
 
       const resultBlocks: ContentBlock[] = [];
       // Set (alongside `finalResult`) exactly when a call in THIS round throws — kept as its own

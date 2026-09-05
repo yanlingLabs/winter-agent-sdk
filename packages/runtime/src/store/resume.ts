@@ -363,6 +363,16 @@ export function rebuildProviderMessages(entries: DialectEntry[]): ProviderMessag
     // Phase 5 Task 3: a `compact_summary` entry carries `{role:"user", content: <summary string>}` and
     // rebuilds as the first user message of the compacted conversation -- its own type rather than
     // `"user"` so a transcript reader can still tell a summary from something the human typed.
+    // Phase 6 Task 3 (R6-7): the ENTRY's own uuid rides the rebuilt ASSISTANT message.
+    //
+    // Without it a resumed session has no anchor at all: `buildContinuationChain` is keyed on
+    // `anchorUuid`, which IS this uuid, so a rebuilt history that dropped it could never be
+    // re-associated with its provider-state records however complete the sidecar was.
+    //
+    // ASSISTANT ONLY, and the restriction is R6-7's own: "one `origin` record per assistant entry".
+    // A user entry has no provider state and therefore no anchor, and stamping one would break the
+    // continuous-vs-resumed fidelity this function's own tests pin -- the live engine pushes a user
+    // message before any uuid exists for it.
     if (e.type === "user" || e.type === "compact_summary") {
       if (Array.isArray(content) && (content.length === 0 || content.every((b) => isRecord(b) && b.type === "tool_result"))) {
         messages.push({ role: "tool", content: content as ContentBlock[] });
@@ -377,9 +387,9 @@ export function rebuildProviderMessages(entries: DialectEntry[]): ProviderMessag
       }
     } else if (e.type === "assistant") {
       if (Array.isArray(content) && content.length === 1 && isRecord(content[0]) && content[0]!.type === "text" && typeof content[0]!.text === "string") {
-        messages.push({ role: "assistant", content: content[0]!.text as string });
+        messages.push({ role: "assistant", content: content[0]!.text as string, uuid: e.uuid });
       } else if (Array.isArray(content)) {
-        messages.push({ role: "assistant", content: content as ContentBlock[] });
+        messages.push({ role: "assistant", content: content as ContentBlock[], uuid: e.uuid });
       }
     }
     // Unknown entry types are skipped for provider context — never fed to a real provider.

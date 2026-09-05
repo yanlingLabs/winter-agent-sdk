@@ -269,3 +269,78 @@ describe("the dialect record's provider identity (R6-9 / WS-16 §4)", () => {
       }
     }));
 });
+
+describe("R6-7 resume: the chain is re-attached, and a gap is REPORTED", () => {
+  // Driven through a real `runEngine` over a real filesystem store: what is under test is that the
+  // two halves written by two different mechanisms (the transcript and its neighbour sidecar) find
+  // each other again on a resume, which no unit test of either half can show.
+  test("a resumed assistant message regains its origin and native state, and a MISSING record warns", async () =>
+    withTempHome(async (home) => {
+      const cwd = mkdtempSync(join(tmpdir(), "winter-p6-resume-"));
+      try {
+        const { createInMemoryChannel } = await import("../protocol/channel.ts");
+        const { runEngine } = await import("../engine.ts");
+        const sessionId = "sess-resume";
+
+        // Run 1: two assistant turns, but only the FIRST gets provider-state records -- the second is
+        // the crash pair "entry without record", which is what the warning exists for.
+        const first = await resolveEngineSession({ config: { sessionId, cwd, model: "m", permissionMode: "default" } as never, resolveWinterHome: () => home, env: {} });
+        const store = first.store!;
+        const anchorA = "aaaaaaaa-1111-4111-8111-111111111111";
+        const anchorB = "bbbbbbbb-2222-4222-8222-222222222222";
+        const base = { sessionId, provider: "openai", model: "openai/o-test", family: "openai", continuationDomain: "openai:responses" };
+        await store.recordUserEntry("hello");
+        await store.recordProviderState!({ ...base, anchorUuid: anchorA, itemIndex: 0, kind: "origin", payload: {} });
+        await store.recordProviderState!({ ...base, anchorUuid: anchorA, itemIndex: 1, kind: "native-state", payload: { items: ["OPAQUE-ITEM"] } });
+        await store.recordAssistantEntry([{ type: "text", text: "one" }], { uuid: anchorA });
+        await store.recordUserEntry("again");
+        await store.recordAssistantEntry([{ type: "text", text: "two" }], { uuid: anchorB });
+        await store.flush?.();
+
+        // Run 2: resume, and capture what the engine's own history looks like by the first generation.
+        const { host, runtime } = createInMemoryChannel();
+        let seen: Array<{ role: string; uuid?: string; origin?: unknown; nativeState?: unknown }> = [];
+        const provider = {
+          async generate(input: { messages: Array<{ role: string; uuid?: string; origin?: unknown; nativeState?: unknown }> }) {
+            seen = input.messages;
+            return { kind: "text" as const, text: "done" };
+          },
+        };
+        const resumed = await resolveEngineSession({ config: { sessionId: "fresh", cwd, model: "m", permissionMode: "default", resume: sessionId } as never, resolveWinterHome: () => home, env: {} });
+        const done = runEngine({
+          config: resumed.config,
+          input: runtime.input,
+          output: runtime.output,
+          provider,
+          tools: { async execute() { return { output: "" }; } },
+          store: resumed.store!,
+          initialMessages: resumed.initialMessages,
+        } as never);
+        const frames: unknown[] = [];
+        host.output.write({ type: "user", text: "go" });
+        host.output.write({ type: "control_request", requestId: "end", subtype: "end_input", payload: undefined });
+        for await (const f of host.input) frames.push(f);
+        await done;
+
+        const withRecord = seen.find((m) => m.uuid === anchorA);
+        expect(withRecord?.origin).toEqual({ providerId: "openai", modelKey: "openai/o-test", family: "openai", continuationDomain: "openai:responses" });
+        expect(withRecord?.nativeState).toEqual({ family: "openai", continuationDomain: "openai:responses", items: ["OPAQUE-ITEM"] });
+
+        const withoutRecord = seen.find((m) => m.uuid === anchorB);
+        expect(withoutRecord).toBeDefined();
+        expect(withoutRecord?.origin).toBeUndefined();
+
+        // The gap is REPORTED, not silent -- and the report carries counts, never opaque state.
+        const warning = frames
+          .filter((f) => (f as { type?: string }).type === "data")
+          .map((f) => (f as { message: Record<string, unknown> }).message)
+          .find((m) => m.type === "system" && m.subtype === "continuity_warning") as Record<string, unknown> | undefined;
+        expect(warning).toBeDefined();
+        expect(warning!.warning).toBe("provider_state_missing");
+        expect(String(warning!.detail)).toContain("1 resumed assistant message");
+        expect(JSON.stringify(warning)).not.toContain("OPAQUE-ITEM");
+      } finally {
+        rmSync(cwd, { recursive: true, force: true });
+      }
+    }));
+});
