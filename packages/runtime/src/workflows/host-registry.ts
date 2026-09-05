@@ -18,6 +18,7 @@
 // ENGINE WIRING IS **NEEDS_CONTEXT** for T8: nothing in this branch calls `registerWorkflowSession`,
 // because the one file that could (engine.ts) is frozen. Until it does, the Workflow tool is
 // registered and inert. The report names this as the lane's single production-wiring gap.
+import type { RuntimeAgentDefinition } from "@yanlinglabs/winter-agent-sdk";
 import type { ContextAccountant } from "../engine.ts";
 import type { StructuredOutputSeam } from "../structured/seam.ts";
 
@@ -38,6 +39,20 @@ export interface WorkflowSessionRuntime {
    * a host/session-level setting, which is why it arrives here rather than through the tool call.
    */
   budgetTotal?: number | null;
+  /**
+   * Resolves `agent({ agentType })` against the SAME registry the Agent tool uses (WS-11 §1.6:
+   * "a custom subagent type resolved from the same registry as the Agent tool"). Injected rather
+   * than called directly so this module keeps no dependency on `subagents/definitions.ts`, and so a
+   * host that has already loaded its definitions does not make the runtime re-read the filesystem
+   * once per `agent()` call.
+   *
+   * Absent = no custom types resolve; `agent({agentType})` then spawns a child whose definition
+   * records the unresolved name (runtime.ts's `resolveChildDefinition`), never a silent generic one.
+   */
+  resolveAgentType?(
+    agentType: string,
+    ctx: { cwd: string; trustedWorkspace: boolean },
+  ): RuntimeAgentDefinition | undefined;
 }
 
 let active: WorkflowSessionRuntime | undefined;

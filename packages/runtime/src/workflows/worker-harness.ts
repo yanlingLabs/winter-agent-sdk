@@ -16,6 +16,7 @@ import { encodeNdjson, splitNdjson, type BridgeRequest, type BridgeResponse, typ
 import { WORKFLOW_WORKER_ARGV_FLAG, WORKFLOW_WORKER_BRIDGE_FLAG } from "./sandbox.ts";
 import type { JournalEntry } from "./journal.ts";
 import type { BudgetSnapshot } from "./budget.ts";
+import type { WorkerSpawner } from "./runtime.ts";
 
 export interface InProcessWorkerOptions {
   source?: string;
@@ -121,5 +122,51 @@ export async function runWorkerInProcess(opts: InProcessWorkerOptions): Promise<
     terminal: requests.find((r) => r.op === "done" || r.op === "error"),
     stdoutLines,
     stderr: stderrText,
+  };
+}
+
+// --- The in-process SPAWNER (runtime.test.ts's engine) ---------------------------------------------
+//
+// Hands `WorkflowRuntime` a `WorkerProcess` backed by the REAL `workflowWorkerMain` running over a
+// PassThrough pair in this process. Every byte still goes through the real NDJSON framing and the
+// real correlation logic -- only the `sandbox-exec` fork is elided, which is what
+// `runtime.darwin.test.ts` and `scripts/verify-workflow.ts` exist to cover instead.
+//
+// A `bun test` run of the whole lifecycle therefore costs milliseconds rather than a 60MB compile,
+// and a failure points at the runtime or the worker rather than at process plumbing.
+export function inProcessWorkerSpawner(): WorkerSpawner {
+  return () => {
+    const stdin = new PassThrough(); // parent -> worker
+    const stdout = new PassThrough(); // worker -> parent
+    const stderr = new PassThrough();
+    stderr.resume(); // drained, never asserted on here (worker.test.ts owns the stderr contract)
+
+    const exitHandlers: Array<(code: number | null) => void> = [];
+    let exited = false;
+    const finish = (code: number | null) => {
+      if (exited) return;
+      exited = true;
+      for (const handler of exitHandlers) handler(code);
+    };
+
+    void workflowWorkerMain(["winter", WORKFLOW_WORKER_ARGV_FLAG, WORKFLOW_WORKER_BRIDGE_FLAG], { stdin, stdout, stderr })
+      .then((code) => finish(code))
+      .catch(() => finish(1));
+
+    return {
+      stdin,
+      stdout,
+      onExit: (cb) => exitHandlers.push(cb),
+      onError: () => {
+        /* an in-process worker has no spawn failure to report */
+      },
+      kill: () => {
+        // The nearest honest analogue of a SIGKILL: the pipes go away and the worker is treated as
+        // having died without a terminal frame -- exactly the crash-fallback shape (WS-11 §1.8).
+        stdin.end();
+        stdout.end();
+        finish(null);
+      },
+    };
   };
 }
