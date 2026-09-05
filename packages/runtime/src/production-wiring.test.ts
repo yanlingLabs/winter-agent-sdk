@@ -218,6 +218,43 @@ describe("T8 production wiring: the guards it carries", () => {
     expect(() => assertEffectiveSettings(userRaw, resolved)).not.toThrow();
   });
 
+  // m7 (whole-branch review): the fixture that did not exist, and whose absence WAS the minor.
+  // Every fixture above hands the guard a hand-built object; the production call site hands it
+  // `resolved.effective`, and against the old predicate that comparison was `x === x`. These two
+  // pass the PRODUCTION shape both ways round.
+  test("m7: handed `resolved.effective`, the guard passes when the filter ran and THROWS when it did not", () => {
+    const projectRaw = { autoMemoryDirectory: "/repo/chosen", outputStyle: "repo-style" };
+    const base = {
+      provenance: {},
+      sources: [],
+      perSource: [{ source: "project" as const, settings: projectRaw, values: projectRaw, loaded: true }],
+    };
+    // (a) the real shape: `withoutOverlayNeverKeys` dropped both keys, so `effective` is clean.
+    const filtered = { ...base, effective: {} } as unknown as DetailedResolvedSettings;
+    expect(() => assertEffectiveSettings(filtered.effective, filtered)).not.toThrow();
+
+    // (b) a REGRESSION in resolveSettings' own filter -- the project's values reach `effective`.
+    // The old predicate compared `effective` to `effective` and could not see this at all.
+    const unfiltered = { ...base, effective: projectRaw } as unknown as DetailedResolvedSettings;
+    expect(() => assertEffectiveSettings(unfiltered.effective, unfiltered)).toThrow(/RAW settings view/);
+  });
+
+  test("m7: another tier choosing the SAME value is not a regression", () => {
+    // The one legitimate way `effective` may carry the project's value. A guard without this
+    // exemption would fail a session whose user settings happen to agree with the repository.
+    const shared = { outputStyle: "explanatory" };
+    const resolved = {
+      effective: shared,
+      provenance: {},
+      sources: [],
+      perSource: [
+        { source: "user" as const, settings: shared, values: shared, loaded: true },
+        { source: "project" as const, settings: shared, values: shared, loaded: true },
+      ],
+    } as unknown as DetailedResolvedSettings;
+    expect(() => assertEffectiveSettings(resolved.effective, resolved)).not.toThrow();
+  });
+
   test("rider 24: a USER-tier `autoMemoryDirectory` is NOT a raw view -- the guard fires on the project tier alone", () => {
     const userRaw = { autoMemoryDirectory: "/home/chosen" };
     const resolved = {
@@ -254,6 +291,23 @@ describe("wiring warnings are prose an operator can act on", () => {
     } finally {
       wiring.dispose();
     }
+  });
+
+  test("item 3: a wiring warning reaches the IN-MEMORY leg's stderr, as it does a spawned child's", async () => {
+    mkdirSync(join(cwd, ".winter"), { recursive: true });
+    writeFileSync(join(cwd, ".winter", "mcp.json"), "{ this is not json");
+    const config = { sessionId: "s-stderr", cwd, model: "m", persistSession: false } as unknown as RuntimeConfig;
+    const proc = inMemoryProcess(["--config-json", JSON.stringify(config)], undefined, undefined, { WINTER_HOME: home });
+    // The handle has always DECLARED `stderr?: AsyncIterable<string>` (SpawnedRuntimeProcess); this
+    // leg simply never populated it, which is what made every wiring warning invisible here.
+    expect(proc.stderr).toBeDefined();
+    proc.stdin.end();
+    const chunks: string[] = [];
+    for await (const chunk of proc.stderr!) chunks.push(chunk);
+    await proc.exited;
+    const text = chunks.join("");
+    expect(text).toContain("winter: mcp config from project");
+    expect(text).toContain("not valid JSON");
   });
 
   test("item 3: `SkillIndex.errors()` is consumed if present (structural, pending Lane Y's method)", async () => {

@@ -2169,6 +2169,11 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
     // and the current function returns `void`. The behaviour degrades correctly meanwhile -- the
     // field is ignored, the disposer reads `undefined`, and the teardown below falls back to the
     // unkeyed clear, which is exactly today's shipped behaviour.
+    //
+    // VERIFIED against Lane Y's finished branch (`p5/fix-y`) rather than assumed: there
+    // `registerWorkflowSession(runtime: WorkflowSessionRuntime): () => void` and `sessionId?: string`
+    // is OPTIONAL precisely so this file compiles unchanged across the merge. So both casts become
+    // redundant on merge -- neither becomes wrong -- and deleting them is a pure simplification.
     disposeWorkflowSession = registerWorkflowSession({
       sessionId: config.sessionId,
       winterHome: workflowWinterHome,
@@ -4000,14 +4005,21 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // Phase 5 Task 8 + B-low + I5: withdraw this run's workflow session.
   //
   // THE `finally` HALF OF THE B-LOW IS **NOT** LANDED, and this says so rather than implying it is.
-  // Every withdrawal above sits on the straight-line path out of `runEngine`; wrapping the function's
-  // ~3000-line body in a `try/finally` is a restructure out of proportion to a Low, and the leak it
-  // would guard against is currently unreachable by design -- `runEngine` never throws (it is the
-  // documented contract both entrypoints rely on: see testing.ts's own "NOT redundant with
-  // runEngine's own always-resolves design" comment). The exposure the B-low names is real ONLY once
-  // I5's key lands AND that contract is broken: first-wins would then let a leaked entry under
-  // session X refuse a later run legitimately reusing that id in the same process, which is what a
-  // `--resume` does. Carried, with the trigger stated.
+  // Wrapping this function's ~1800 remaining lines in a `try/finally` is a restructure out of
+  // proportion to a Low, and would conflict with every concurrent edit in the file.
+  //
+  // WHAT WAS CHECKED, because "it never throws" and "this line is always reached" are two different
+  // claims and only the second one matters here: between the `registerWorkflowSession` call and this
+  // withdrawal there is exactly ONE top-level `return` in `runEngine`, the `return 0` five lines
+  // below -- so there is no early-return path that skips the withdrawal. The only way past it is a
+  // THROW, which is the contract both entrypoints already rely on (see testing.ts's own "NOT
+  // redundant with runEngine's own always-resolves design" note) but which nothing structurally
+  // enforces.
+  //
+  // So the residual exposure is: a future throw from anywhere in those 1800 lines, ONCE I5's key has
+  // landed. First-wins would then let the leaked entry under session X refuse a later run that
+  // legitimately reuses that id in the same process -- which is what a `--resume` does. Carried,
+  // with both triggers named.
   //
   // The DISPOSER first (identity-checked, so a child engine's teardown cannot delete its parent's
   // entry); the unkeyed clear only as the pre-I5 fallback -- see the registration site's own note.

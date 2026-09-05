@@ -130,6 +130,14 @@ export function inMemoryProcess(
 
   const stdin = new Queue<string>();
   const stdout = new Queue<string>();
+  // Lane Y addendum item 3: the leg's own STDERR PIPE, which `SpawnedRuntimeProcess` has always
+  // declared (`stderr?: AsyncIterable<string>`) and this leg has always left undefined. A real
+  // spawned `winter` writes main.ts's wiring warnings to its stderr pipe and the HOST decides where
+  // they go; writing them to the ambient `process.stderr` here would not be that mirror -- it would
+  // be this leg inventing a destination a child never chooses for itself, and would put lines on a
+  // test runner's console that no consumer asked for. Unbounded and non-blocking (see Queue), so a
+  // caller that ignores `stderr` entirely costs nothing.
+  const stderr = new Queue<string>();
 
   const input: FrameSource = (async function* () {
     let carry = "";
@@ -190,14 +198,13 @@ export function inMemoryProcess(
       // `process.env` fallback (that function's own header), so a differential/equivalence run can
       // not read a developer's real skills, commands, plugins or settings.
       const wiring = await buildProductionWiring({ config: effectiveConfig, env: env ?? {}, winterHome: resolveInMemoryWinterHome(config, env), ...(store !== undefined ? { persistence: store } : {}) });
-      // Lane Y addendum, item 3 (the B-low half): the SAME operator channel main.ts uses, on the
-      // same prefix. This leg dropped every wiring warning on the floor, so a malformed
-      // `.winter/mcp.json`, a plugin that would not load or a broken skill was invisible to exactly
-      // the leg the differential and equivalence suites run on -- the one place a Winter developer
-      // is most likely to hit it first. `process.stderr` (not the frame `output`) because stdout is
-      // the frame stream exclusively (WS-04 §2/§6), and because on this leg the host process IS the
-      // runtime's process: writing there is the literal cross-leg mirror, not an approximation.
-      for (const warning of wiring.warnings) process.stderr.write(`winter: ${warning}\n`);
+      // Lane Y addendum, item 3 (the B-low half): the SAME warnings main.ts emits, on the same
+      // prefix, down this leg's own stderr pipe. It dropped every one of them on the floor before,
+      // so a malformed `.winter/mcp.json`, a plugin that would not load or a broken skill was
+      // invisible on exactly the leg the differential and equivalence suites run -- the place a
+      // Winter developer meets it first. NOT the frame sink: stdout is the frame stream exclusively
+      // (WS-04 §2/§6).
+      for (const warning of wiring.warnings) stderr.write(`winter: ${warning}\n`);
       registerDefaultChildEngineFactory({
         provider,
         config: effectiveConfig,
@@ -242,6 +249,7 @@ export function inMemoryProcess(
       });
       if (!settled) {
         settled = true;
+        stderr.end();
         settleExited({ code, signal: null });
       }
       } finally {
@@ -254,6 +262,7 @@ export function inMemoryProcess(
       if (!settled) {
         settled = true;
         stdout.end();
+        stderr.end();
         settleExited({ code: 1, signal: null });
       }
     }
@@ -269,6 +278,7 @@ export function inMemoryProcess(
       },
     },
     stdout,
+    stderr,
     kill(signal?: string) {
       if (settled) return;
       settled = true;
@@ -276,6 +286,7 @@ export function inMemoryProcess(
       // Queue) — then resolve exited, so a consumer racing stdout against exited sees the
       // buffered data before/alongside the exit, never after it silently vanished.
       stdout.end();
+      stderr.end(); // same ordering rule as stdout: buffered warnings still drain from an ended Queue
       stdin.end(); // let the backgrounded engine terminate rather than leak
       settleExited({ code: null, signal: signal ?? "SIGTERM" });
     },

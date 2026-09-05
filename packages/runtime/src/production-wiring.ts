@@ -103,19 +103,40 @@ function asStrictPluginOnly(v: unknown): StrictPluginOnlyCustomization | undefin
  * Asserted rather than merely documented: nothing about the two shapes differs structurally, so a
  * future edit swapping one for the other would type-check and pass every test. This throws at
  * session construction, which is loud and early, rather than degrading a live session.
+ *
+ * WHOLE-BRANCH MINOR m7 -- WHY THIS COMPARES AGAINST `perSource`, NOT AGAINST `resolved.effective`.
+ * It used to do the latter, and the production call site passes `resolved.effective`: `f(x, y)`
+ * comparing `x` to `y.effective` where `x === y.effective` is an identity check, so the guard could
+ * not fire in production no matter what went wrong. Its two fixtures tested the function; nothing
+ * tested the wiring.
+ *
+ * Against the PROJECT TIER'S RAW VALUES the same call becomes a real question: "does the view I am
+ * about to hand the assembler still carry the value the repository asked for?" `resolved.effective`
+ * answers no (the filter ran) and answers YES the moment `withoutOverlayNeverKeys` regresses or a
+ * caller substitutes a per-source view -- which is the property rider 24 wanted asserted all along.
+ *
+ * The one legitimate way a view may carry the project's value is if another tier independently set
+ * the SAME value, so that is the single exemption. Comparing values rather than presence is still
+ * load-bearing for the opposite case: when project and a higher tier both set the key with
+ * DIFFERENT values, a raw project view has the same presence as `effective` and would sail through
+ * any `key in settings` test.
  */
 export function assertEffectiveSettings(settings: Settings | undefined, resolved: DetailedResolvedSettings): void {
   if (settings === undefined) return;
   const view = settings as Record<string, unknown>;
-  const effective = resolved.effective as Record<string, unknown>;
+  const project = resolved.perSource.find((entry) => entry.source === "project");
+  if (project === undefined) return; // no project tier -- there is nothing OVERLAY_NEVER_KEYS could have dropped
+  const projectValues = project.values as Record<string, unknown>;
   for (const key of OVERLAY_NEVER_KEYS) {
-    // COMPARED BY VALUE, not by presence. A presence check is defeated by the case that matters most:
-    // when the project tier AND a higher tier both set the key, a raw project view has the SAME
-    // presence as `effective` and a different VALUE -- so the project's value would sail through a
-    // presence test while being exactly what OVERLAY_NEVER_KEYS exists to drop.
-    if (view[key] === effective[key]) continue;
+    const projectValue = projectValues[key];
+    if (projectValue === undefined) continue; // the repository never asked for this key
+    if (view[key] !== projectValue) continue; // the view does not carry the repository's value -- the filter ran
+    const sameValueElsewhere = resolved.perSource.some(
+      (entry) => entry.source !== "project" && (entry.values as Record<string, unknown>)[key] === projectValue,
+    );
+    if (sameValueElsewhere) continue; // a tier that IS allowed to set it chose the same value
     throw new Error(
-      `winter: production wiring was handed a RAW settings view -- "${key}" differs from resolveSettings().effective, which is the only view OVERLAY_NEVER_KEYS has been applied to. Hand the assembler \`effective\`, never a per-source value.`,
+      `winter: production wiring was handed a RAW settings view -- "${key}" still holds the PROJECT tier's value, and \`${key}\` is an OVERLAY_NEVER_KEY that only resolveSettings().effective has filtered. Hand the assembler \`effective\`, never a per-source value.`,
     );
   }
 }
@@ -380,7 +401,16 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
   // set, so this reads it structurally rather than nominally -- it compiles today (yielding nothing)
   // and starts carrying entries the moment Lane Y's method lands. At merge, drop the cast and call
   // `skillIndex.errors()` directly.
-  for (const err of (skillIndex as { errors?: () => readonly string[] }).errors?.() ?? []) warnings.push(`skill: ${err}`);
+  //
+  // THE ELEMENT SHAPE IS READ FROM LANE Y'S ACTUAL BRANCH (`p5/fix-y`), not assumed:
+  // `errors(): SkillScanError[]` where `SkillScanError` is `{directory, path, source, reason}`.
+  // A first draft here interpolated the element as a string -- which type-checks against a
+  // structural `readonly string[]`, compiles, passes, and prints `skill: [object Object]` to every
+  // operator the moment the real method lands. A structural cast only guards the shape it names.
+  type SkillScanErrorLike = { directory: string; path: string; source: string; reason: string };
+  for (const err of (skillIndex as { errors?: () => readonly SkillScanErrorLike[] }).errors?.() ?? []) {
+    warnings.push(`skill "${err.directory}" (${err.source}) was not loaded: ${err.reason} -- ${err.path}`);
+  }
 
   // (5) THE SKILL SESSION RUNTIME. Keyed exactly as the executor reads it (`agentId ?? sessionId`),
   // so a child engine constructed with its own `agentId` never resolves against the parent's set.
