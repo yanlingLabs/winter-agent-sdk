@@ -27,6 +27,7 @@ import { randomUUID } from "node:crypto";
 import { closeSync, constants as fsConstants, fsyncSync, mkdirSync, openSync, readFileSync, statSync, writeSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import type { MessageOrigin, ProviderNativeState } from "@yanlinglabs/winter-provider-runtime";
+import { PROVIDER_STATE_FILE_SUFFIX } from "@yanlinglabs/winter-agent-sdk";
 
 /** The `SessionStoreEntry.type` discriminant every record carries. One string, one place. */
 export const PROVIDER_STATE_ENTRY_TYPE = "winter_provider_state" as const;
@@ -41,8 +42,16 @@ export const PROVIDER_STATE_ENTRY_TYPE = "winter_provider_state" as const;
  */
 export const PROVIDER_STATE_SUBPATH = "provider-state" as const;
 
-/** The filename suffix of the neighbour file. Exported because the P4-M read deny names the same shape and the two must not drift. */
-export const PROVIDER_STATE_FILE_SUFFIX = ".provider-state.jsonl" as const;
+/**
+ * The filename suffix of the neighbour file, RE-EXPORTED from the sdk store.
+ *
+ * ONE DECLARATION (re-review round 2). The sdk's `delete()` must name this file to remove it and
+ * cannot import the runtime (WS-02 §3), so the string is declared there and imported here -- the same
+ * direction every other shared store constant takes. This package still owns the record SEMANTICS;
+ * only the literal moved. The P4-M read deny and the sidecar path builder both read it from here, so
+ * they cannot drift from what the deletion transaction actually removes.
+ */
+export { PROVIDER_STATE_FILE_SUFFIX };
 
 export type ProviderStateKind = "origin" | "native-state" | "summary" | "handoff";
 
