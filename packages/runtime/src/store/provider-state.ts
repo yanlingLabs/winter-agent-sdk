@@ -286,6 +286,16 @@ export function coerceProviderStateRecord(value: unknown): ProviderStateRecord |
  *
  * Returns the number of records copied -- `0` for a source with no sidecar, which is not an error:
  * a pre-P6 source has nothing to carry, and the fork is then in exactly the state the source was.
+ *
+ * **THERE IS A SECOND FORK DOOR THIS DOES NOT COVER, and it is disclosed rather than silently
+ * half-fixed** (P6 T3 re-review round 2). `resolveEngineSession`'s `resume + forkSession` path calls
+ * this; the PUBLIC `forkSession(sessionId, opts)` in `packages/sdk/src/sessions.ts` calls
+ * `forkSessionByKey` bare, so a host forking through the session API still lands without the chain
+ * or the identity block -- and therefore resumes on the pre-P6 SILENT path, exactly the state this
+ * function exists to prevent. It is not fixed here because the sdk cannot import this codec (WS-02
+ * §3's dependency inversion), so closing it means a store-level GENERIC sidecar copy in
+ * `fork-session.ts` -- a change to a shared primitive that four lanes are currently building on.
+ * Recorded as a fix-wave item in task-3-report.md.
  */
 export function copyProviderStateForFork(sourcePath: string, destPath: string, destSessionId: string): number {
   const records = readProviderState(sourcePath);

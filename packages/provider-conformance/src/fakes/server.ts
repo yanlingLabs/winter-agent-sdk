@@ -166,14 +166,20 @@ export interface SseResponseOptions {
 export function sseResponse(frames: SseFrame[], opts: SseResponseOptions = {}): Response {
   const encoder = new TextEncoder();
   let written = 0;
-  let cancelled = false;
   const body = new ReadableStream<Uint8Array>({
     async pull(controller) {
-      // The SAME class of defect `stalledResponse` carries below: a `delayMs` await can resolve after
-      // the consumer has already cancelled, and enqueueing into a torn-down controller throws from a
-      // context no test owns. Checked on entry and again after the delay, because the cancel can land
-      // on either side of it.
-      if (cancelled) return;
+      // NO cancel-guard here, deliberately, and the reasoning is recorded because the obvious
+      // symmetry with `stalledResponse` below is WRONG. A guard was added in P6 T3's round 2 by
+      // analogy and removed in the re-review after being measured: a `pull` that rejects (or enqueues
+      // into a torn-down controller) ERRORS THE STREAM rather than escaping, and for a stream the
+      // consumer has already cancelled nothing observes that error -- so the guard changed no
+      // outcome, and no test could distinguish its presence from its absence. The `try/catch` that
+      // came with it was worse than inert: it would have swallowed a genuine enqueue failure on a
+      // LIVE stream.
+      //
+      // `stalledResponse`'s guard is different in kind and is real: its throw comes from a bare
+      // `setTimeout` callback, which has no stream to error into and escapes as an uncaught exception
+      // attributed to whichever test happens to be running.
       if (written >= frames.length) {
         controller.close();
         return;
@@ -187,16 +193,8 @@ export function sseResponse(frames: SseFrame[], opts: SseResponseOptions = {}): 
       const frame = frames[written]!;
       written++;
       if (frame.delayMs !== undefined && frame.delayMs > 0) await new Promise((r) => setTimeout(r, frame.delayMs));
-      if (cancelled) return;
       const prefix = frame.event !== undefined ? `event: ${frame.event}\n` : "";
-      try {
-        controller.enqueue(encoder.encode(`${prefix}data: ${frame.data}\n\n`));
-      } catch {
-        /* the consumer tore the stream down mid-delay -- expected, not an error */
-      }
-    },
-    cancel() {
-      cancelled = true;
+      controller.enqueue(encoder.encode(`${prefix}data: ${frame.data}\n\n`));
     },
   });
   return new Response(body, {

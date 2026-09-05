@@ -305,16 +305,12 @@ describe("round 2: a torn-down stream must not throw from a timer nobody owns", 
     });
   });
 
-  test("sseResponse: cancelling MID-DELAY does not throw when the delayed frame comes due", async () => {
-    // The same class one helper over: a `delayMs` await can resolve after the consumer has gone.
-    await expectNoUnhandled(async () => {
-      const res = sseResponse([{ data: "a" }, { data: "b", delayMs: 150 }]);
-      const reader = res.body!.getReader();
-      await reader.read();
-      await reader.cancel();
-      await new Promise((r) => setTimeout(r, 250));
-    });
-  });
+  // NO `sseResponse` TEST HERE, deliberately. Round 2 added one by analogy with `stalledResponse`;
+  // the re-review measured it VACUOUS and it is deleted with the guard it was written for. A `pull`
+  // that rejects errors the stream instead of escaping, and for an already-cancelled stream nothing
+  // observes that -- so the test passed identically with the guard present and absent, which is the
+  // definition of a test that proves nothing. `stalledResponse`'s guard IS real (a bare `setTimeout`
+  // has no stream to error into) and its tests below distinguish correctly.
 
   test("a stalled route through a real fake still tears down inside close()'s deadline", async () => {
     // The end-to-end shape a lane's stall scenario actually uses.
