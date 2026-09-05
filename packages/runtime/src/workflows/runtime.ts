@@ -331,8 +331,32 @@ export class WorkflowRuntime {
    * launches a subprocess, so a typo'd runId failing loudly is worth more than a quiet nothing.
    * `sessionId` is taken from the CALLER, never from the input, so a run cannot be resumed into a
    * session that did not own it.
+   *
+   * RULING I6 (fix wave) -- `opts.replacement` / `opts.args`: a resume that supplies a NEW source
+   * (the model edited the persisted script between the stop and the resume, which is exactly what
+   * WS-11 §1.3's loop tells it to do) runs the NEW source against the OLD journal. The positional
+   * replay then diverges at the first changed call and everything from there runs live, which is
+   * §1.5's own contract. This used to rebuild the launch from `this.launches` unconditionally, so a
+   * `{scriptPath: <edited>, resumeFromRunId}` call silently re-ran the PRIOR source and a changed
+   * `args` was dropped -- the edit loop's own door was the one input the door ignored. With neither
+   * supplied, the original launch input is replayed verbatim (the ruling's other half).
    */
-  resume(runId: string, sessionId: string, host: WorkflowRunHost, opts: { parentToolUseId?: string } = {}): WorkflowLaunchResult {
+  resume(
+    runId: string,
+    sessionId: string,
+    host: WorkflowRunHost,
+    opts: {
+      parentToolUseId?: string;
+      /**
+       * The edited script AND its re-parsed meta, together: `meta.name` is what the new run's task,
+       * persisted filename and `WorkflowOutput.workflowName` are built from, so carrying the source
+       * without re-parsing the meta would label the edited run with the old script's name.
+       */
+      replacement?: { source: string; meta: WorkflowLaunchInput["meta"] };
+      /** Supplied = the new args; OMITTED = the original launch's args, unchanged. */
+      args?: unknown;
+    } = {},
+  ): WorkflowLaunchResult {
     const prior = this.registry.get(runId);
     if (prior === undefined) throw new WorkflowRuntimeError("unknown-run", `unknown workflow run "${runId}"`);
     if (prior.sessionId !== sessionId) {
@@ -354,6 +378,11 @@ export class WorkflowRuntime {
     return this.launch(
       {
         ...rest,
+        // I6: the NEW source/meta and the NEW args win over the recorded launch; absent, the
+        // recorded ones stand. `"args" in opts` rather than `!== undefined`, so an explicit
+        // `args: undefined` (a script whose author cleared them) is honoured as a change.
+        ...(opts.replacement !== undefined ? { source: opts.replacement.source, meta: opts.replacement.meta } : {}),
+        ...("args" in opts ? { args: opts.args } : {}),
         ...(opts.parentToolUseId !== undefined ? { parentToolUseId: opts.parentToolUseId } : {}),
         ...(journal.length > 0 ? { resumeJournal: journal } : {}),
       },

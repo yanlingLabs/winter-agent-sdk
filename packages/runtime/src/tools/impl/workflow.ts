@@ -20,7 +20,7 @@ import { startTracking, setTaskStatus, getTask, listRunningTasks, toBackgroundTa
 import { createBackgroundTask, wireTaskType } from "../background-tasks.ts";
 import { getWorkflowSession, type WorkflowSessionRuntime } from "../../workflows/host-registry.ts";
 import { WorkflowRuntime, WorkflowRuntimeError, type WorkflowRuntimeDeps, type WorkflowLaunchResult } from "../../workflows/runtime.ts";
-import { parseWorkflowMeta } from "../../workflows/meta.ts";
+import { parseWorkflowMeta, type WorkflowMeta } from "../../workflows/meta.ts";
 import { resolveWorkflowByName } from "../../workflows/store.ts";
 import type { WorkflowInput, WorkflowOutput } from "../../workflows/types.ts";
 import type { WorkflowProgress, WorkflowRunHost, WorkflowTaskHandle } from "../../workflows/seam.ts";
@@ -222,9 +222,33 @@ function toolResult(out: WorkflowOutput): ToolResultPayload {
 }
 
 /**
+ * The SYNTAX-CHECK failure shape. Item (g) is explicit that a script failing it still RETURNS a
+ * `WorkflowOutput` carrying `error` (`4086`) rather than throwing -- and `taskId` is a REQUIRED field
+ * of that shape, so a task is created for the failure and immediately failed. A `WorkflowOutput` with
+ * an empty taskId would not be the pinned shape; one with no task behind it would be a lie.
+ *
+ * Shared by the launch path and (RULING I6) the edited-script resume path, which owes the identical
+ * answer for the identical failure.
+ */
+function metaFailureResult(host: WorkflowRunHost, error: string): ToolResultPayload {
+  const task = host.createTask("workflow", { runId: "", name: "" });
+  task.fail(error);
+  return toolResult({ status: "async_launched", taskId: task.taskId, taskType: "local_workflow", error });
+}
+
+/**
  * Resolves the script source. `scriptPath` > `script` > `name` -- the pinned precedence
  * (`sdk-tools.d.ts:2782`), applied by ORDER OF CHECKS here so it cannot drift into a merge.
  */
+/** Whether this call names a script of its own -- the three source fields, in any combination. */
+function hasExplicitSource(input: WorkflowInput): boolean {
+  return (
+    (typeof input.scriptPath === "string" && input.scriptPath !== "") ||
+    (typeof input.script === "string" && input.script !== "") ||
+    (typeof input.name === "string" && input.name !== "")
+  );
+}
+
 function resolveSource(input: WorkflowInput, ctx: ToolExecutionContext): { ok: true; source: string } | { ok: false; error: string } {
   if (typeof input.scriptPath === "string" && input.scriptPath !== "") {
     const path = isAbsolute(input.scriptPath) ? input.scriptPath : join(ctx.cwd, input.scriptPath);
@@ -263,8 +287,30 @@ const executor: ToolExecutor = {
       if (ctx.toolUseId === undefined) {
         return toolError("Workflow cannot run without the model's own tool_use id -- every agent this run spawns correlates on it (WS-10 §4)");
       }
+      // RULING I6 (fix wave): a source given ON THE RESUMING CALL is the one that runs. WS-11 §1.3's
+      // documented loop is "read the persisted script, edit it, run it again", and this branch used
+      // to return before `resolveSource` was ever reached -- so the edited script was silently
+      // discarded and the prior source re-ran. The journal still seeds the run: the positional key
+      // matches through the unchanged prefix and diverges at the first changed call, which is
+      // §1.5's contract reached through §1.3's door.
+      let replacement: { source: string; meta: WorkflowMeta } | undefined;
+      if (hasExplicitSource(input)) {
+        const edited = resolveSource(input, ctx);
+        if (!edited.ok) return toolError(edited.error);
+        const editedMeta = parseWorkflowMeta(edited.source);
+        if (!editedMeta.ok) return metaFailureResult(host, editedMeta.error);
+        replacement = { source: edited.source, meta: editedMeta.meta };
+      }
       try {
-        return toolResult(launchToOutput(runtime.resume(input.resumeFromRunId, ctx.sessionId, host, { parentToolUseId: ctx.toolUseId })));
+        return toolResult(
+          launchToOutput(
+            runtime.resume(input.resumeFromRunId, ctx.sessionId, host, {
+              parentToolUseId: ctx.toolUseId,
+              ...(replacement !== undefined ? { replacement } : {}),
+              ...(input.args !== undefined ? { args: input.args } : {}),
+            }),
+          ),
+        );
       } catch (err) {
         if (err instanceof WorkflowRuntimeError) return toolError(err.message);
         throw err;
@@ -284,16 +330,9 @@ const executor: ToolExecutor = {
     const resolved = resolveSource(input, ctx);
     if (!resolved.ok) return toolError(resolved.error);
 
-    // The SYNTAX CHECK. Item (g) is explicit that a script failing it still RETURNS a WorkflowOutput
-    // carrying `error` (`4086`) rather than throwing -- and `taskId` is a REQUIRED field of that
-    // shape, so a task is created for the failure and immediately failed. A `WorkflowOutput` with an
-    // empty taskId would not be the pinned shape; one with no task behind it would be a lie.
+    // The SYNTAX CHECK -- `metaFailureResult`'s own header for the shape and why it is a task.
     const meta = parseWorkflowMeta(resolved.source);
-    if (!meta.ok) {
-      const task = host.createTask("workflow", { runId: "", name: "" });
-      task.fail(meta.error);
-      return toolResult({ status: "async_launched", taskId: task.taskId, taskType: "local_workflow", error: meta.error });
-    }
+    if (!meta.ok) return metaFailureResult(host, meta.error);
 
     try {
       return toolResult(

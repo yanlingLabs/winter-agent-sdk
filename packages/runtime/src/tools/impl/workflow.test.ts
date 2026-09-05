@@ -304,6 +304,64 @@ describe("resumeFromRunId (WS-11 §1.5)", () => {
     expect(result.isError).toBe(true);
     expect(result.output.toLowerCase()).toContain("unknown"); // reached RESUME, not the input-schema refusal
   });
+
+  test("RULING I6: `{scriptPath: <edited>, resumeFromRunId}` runs the EDITED file, not the prior run's source", async () => {
+    // WS-11 §1.3's own loop: the tool reports `scriptPath`, the model edits that file, and resumes.
+    // This branch used to return before `resolveSource` was reached, so the edit was discarded
+    // silently -- the one input the edit loop's own door ignored.
+    const ctx = makeCtx({
+      session: {
+        ...makeCtx().session,
+        spawnChild: async () =>
+          ({
+            record: {} as never,
+            status: () => "running" as const,
+            steer: async () => ({ status: "delivered" as const, messageId: "m" }),
+            resume: async () => ({ status: "resumed_and_delivered" as const, messageId: "m" }),
+            result: () => new Promise<never>(() => {}), // never settles: the run is genuinely in flight
+            stop: async () => {},
+          }) as unknown as ChildHandle,
+      },
+    });
+    const first = await output({ script: META + `await agent("hang"); return "ORIGINAL";` }, ctx);
+    await new Promise((res) => setTimeout(res, 60));
+    expect(stopTask(first.taskId)).toBe(true);
+    await new Promise((res) => setTimeout(res, 60));
+
+    const editedPath = join(cwd, "edited.js");
+    writeFileSync(editedPath, META + `return "EDITED";`);
+    const resumed = await output({ resumeFromRunId: first.runId, scriptPath: editedPath }, ctx);
+
+    expect(resumed.error).toBeUndefined();
+    expect(readFileSync(resumed.scriptPath!, "utf8")).toContain(`return "EDITED"`);
+    expect(readFileSync(resumed.scriptPath!, "utf8")).not.toContain("ORIGINAL");
+  });
+
+  test("an edited script that does NOT parse answers the same validation shape a fresh launch would", async () => {
+    const ctx = makeCtx({
+      session: {
+        ...makeCtx().session,
+        spawnChild: async () =>
+          ({
+            record: {} as never,
+            status: () => "running" as const,
+            steer: async () => ({ status: "delivered" as const, messageId: "m" }),
+            resume: async () => ({ status: "resumed_and_delivered" as const, messageId: "m" }),
+            result: () => new Promise<never>(() => {}),
+            stop: async () => {},
+          }) as unknown as ChildHandle,
+      },
+    });
+    const first = await output({ script: META + `await agent("hang"); return 1;` }, ctx);
+    await new Promise((res) => setTimeout(res, 60));
+    stopTask(first.taskId);
+    await new Promise((res) => setTimeout(res, 60));
+
+    const out = await output({ resumeFromRunId: first.runId, script: `return "no meta block";` }, ctx);
+    expect(out.error).toBeDefined();
+    expect(out.taskId).not.toBe("");
+    expect(getTask(out.taskId)?.status).toBe("failed");
+  });
 });
 
 describe("F11 -- `parentToolUseId` is the MODEL's tool_use id or nothing at all", () => {
