@@ -191,15 +191,16 @@ describe("the compiled-vs-dev spawn split (WS-11 §1.7)", () => {
 
   test("fix wave I1 (the resolved-home class): a WINTER_HOME whose basename is not `.winter` gets its OWN run deny", () => {
     const command = { file: "/x/winter", args: [] };
-    const resolved = buildWorkerSpawn({ command, home: "/home/synthetic", winterHome: "/tmp/custom-root" });
+    const profileOf = (spawn: { args: string[] }): string => spawn.args[1] ?? "";
+    const resolved = profileOf(buildWorkerSpawn({ command, home: "/home/synthetic", winterHome: "/tmp/custom-root" }));
     // Both anchors: the literal `<home>/.winter/run` AND the resolved `<winterHome>/run`.
-    expect(resolved.args[1]).toContain(".winter/run");
-    expect(resolved.args[1]).toContain("custom-root/run");
+    expect(resolved).toContain(".winter/run");
+    expect(resolved).toContain("custom-root/run");
     // Without the resolved root the second deny is absent -- the RED half of this fixture.
-    const literalOnly = buildWorkerSpawn({ command, home: "/home/synthetic" });
-    expect(literalOnly.args[1]).not.toContain("custom-root/run");
+    const literalOnly = profileOf(buildWorkerSpawn({ command, home: "/home/synthetic" }));
+    expect(literalOnly).not.toContain("custom-root/run");
     // A resolved root that IS `<home>/.winter` adds nothing beyond the literal deny (one deny, not two).
-    const same = buildWorkerSpawn({ command, home: "/home/synthetic", winterHome: "/home/synthetic/.winter" });
-    expect(same.args[1].split(".winter/run").length - 1).toBe(literalOnly.args[1].split(".winter/run").length - 1);
+    const same = profileOf(buildWorkerSpawn({ command, home: "/home/synthetic", winterHome: "/home/synthetic/.winter" }));
+    expect(same.split(".winter/run").length - 1).toBe(literalOnly.split(".winter/run").length - 1);
   });
 });
