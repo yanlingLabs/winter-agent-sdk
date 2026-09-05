@@ -399,18 +399,7 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
   // that was never discovered. `validateSkillsOption` above covers only names the HOST asked for;
   // this covers the ones the filesystem offered and the index refused.
   //
-  // MERGE SCAFFOLDING: `errors()` is Lane Y's addition in `skills/store.ts`, which is not in my file
-  // set, so this reads it structurally rather than nominally -- it compiles today (yielding nothing)
-  // and starts carrying entries the moment Lane Y's method lands. At merge, drop the cast and call
-  // `skillIndex.errors()` directly.
-  //
-  // THE ELEMENT SHAPE IS READ FROM LANE Y'S ACTUAL BRANCH (`p5/fix-y`), not assumed:
-  // `errors(): SkillScanError[]` where `SkillScanError` is `{directory, path, source, reason}`.
-  // A first draft here interpolated the element as a string -- which type-checks against a
-  // structural `readonly string[]`, compiles, passes, and prints `skill: [object Object]` to every
-  // operator the moment the real method lands. A structural cast only guards the shape it names.
-  type SkillScanErrorLike = { directory: string; path: string; source: string; reason: string };
-  for (const err of (skillIndex as { errors?: () => readonly SkillScanErrorLike[] }).errors?.() ?? []) {
+  for (const err of skillIndex.errors()) {
     warnings.push(`skill "${err.directory}" (${err.source}) was not loaded: ${err.reason} -- ${err.path}`);
   }
 

@@ -67,11 +67,17 @@ export interface BuildWorkerSpawnOptions {
    * the difference between the two profiles.
    */
   home?: string;
+  /**
+   * The RESOLVED Winter home (fix wave I1, the resolved-home class): when it is not `<home>/.winter`,
+   * the profile ALSO denies `<winterHome>/run` -- a `WINTER_HOME` pointing at a differently-named root
+   * is otherwise unprotected. Both anchors are emitted; overlapping denies cost nothing.
+   */
+  winterHome?: string;
 }
 
 /** The actual `(file, args)` to spawn: sandbox-exec wrapping the worker command under the tight profile. */
 export function buildWorkerSpawn(opts: BuildWorkerSpawnOptions): WorkerCommand {
-  const profile = buildWorkflowWorkerSeatbeltProfile(opts.command.file, { home: opts.home });
+  const profile = buildWorkflowWorkerSeatbeltProfile(opts.command.file, { home: opts.home, ...(opts.winterHome !== undefined ? { winterHome: opts.winterHome } : {}) });
   return { file: SANDBOX_EXEC_PATH, args: ["-p", profile, opts.command.file, ...opts.command.args] };
 }
 

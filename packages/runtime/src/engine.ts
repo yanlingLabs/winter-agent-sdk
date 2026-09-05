@@ -2180,16 +2180,6 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
     //     delete its still-running parent's entry. First-wins protects the registration; only the
     //     identity-checked disposer protects the withdrawal.
     //
-    // THE TWO CASTS ARE MERGE SCAFFOLDING and must go when Lane Y's `host-registry.ts` lands on this
-    // branch: `sessionId` is an excess property against this branch's current `WorkflowSessionRuntime`
-    // and the current function returns `void`. The behaviour degrades correctly meanwhile -- the
-    // field is ignored, the disposer reads `undefined`, and the teardown below falls back to the
-    // unkeyed clear, which is exactly today's shipped behaviour.
-    //
-    // VERIFIED against Lane Y's finished branch (`p5/fix-y`) rather than assumed: there
-    // `registerWorkflowSession(runtime: WorkflowSessionRuntime): () => void` and `sessionId?: string`
-    // is OPTIONAL precisely so this file compiles unchanged across the merge. So both casts become
-    // redundant on merge -- neither becomes wrong -- and deleting them is a pure simplification.
     disposeWorkflowSession = registerWorkflowSession({
       sessionId: config.sessionId,
       winterHome: workflowWinterHome,
@@ -2211,7 +2201,7 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
           ...(config.agents !== undefined ? { programmatic: config.agents as Record<string, PluginAgentDefinition> } : {}),
           ...(getPluginAgents(config.sessionId) !== undefined ? { pluginAgents: getPluginAgents(config.sessionId) as Record<string, PluginAgentDefinition> } : {}),
         }).get(agentType),
-    } as Parameters<typeof registerWorkflowSession>[0]) as unknown as (() => void) | undefined;
+    });
   }
 
   const loadedToolSet: LoadedToolSet = createLoadedToolSet();
