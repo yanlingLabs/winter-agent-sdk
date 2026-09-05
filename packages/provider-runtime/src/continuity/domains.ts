@@ -17,7 +17,7 @@
 // it would fail on the LIVE path while resumed sessions kept working. So: one derivation, in the
 // registry, read through `resolve()`; this file only ever COMPARES stamped ids.
 
-import type { WinterModelDescriptor } from "@yanlinglabs/winter-provider-catalog";
+import type { EvidenceConfidence, ReasoningCapabilities, WinterModelDescriptor } from "@yanlinglabs/winter-provider-catalog";
 import { WinterProviderResolutionError, type ProviderRegistry } from "../registry.ts";
 import type { MessageOrigin } from "../types.ts";
 
@@ -34,6 +34,16 @@ export interface ContinuityEndpoint {
   family: string;
   /** The STAMPED continuation-domain id. Absent means "this model's native state is not documented to be replayable anywhere" -- never "any domain". */
   continuationDomain?: string;
+  /**
+   * The model's reasoning TRANSPORT, straight from its descriptor. `"none"` is the fact that matters
+   * here: a model with no reasoning at all has no hidden state to lose, so a switch away from it must
+   * not warn about reasoning (review I1 -- `readableState: "none"` alone conflates "no readable
+   * summary" with "no reasoning", and a chat model warned about losing state it never had).
+   *
+   * ABSENT MEANS UNKNOWN, and unknown warns: the fallback endpoint (no catalog row) cannot prove the
+   * source was reasoning-free, and silence about a reasoning model is the expensive mistake.
+   */
+  continuation?: ReasoningCapabilities["continuation"];
   readableState: ReadableState;
   /** Whether this model documents a way to ASK for a readable summary (§9.1's proactive-summary policy). */
   summaryRequest?: { field: string; values: string[] };
@@ -62,6 +72,9 @@ export function sameDomain(a: DomainFacts | undefined, b: DomainFacts | undefine
   if (left === undefined || right === undefined) return false;
   return left === right;
 }
+
+/** The evidence confidences that CERTIFY a shared continuation domain (§8.4's own word). Anything weaker is a guess, and a guess must not buy a suppressed warning. */
+export const CERTIFIED_DOMAIN_CONFIDENCES: ReadonlySet<EvidenceConfidence> = new Set<EvidenceConfidence>(["verified", "declared"]);
 
 /** Whether two sides belong to the same wire family. NEVER a substitute for `sameDomain` -- two Claude models are one family and (absent evidence) two domains. */
 export function sameFamily(a: { family: string } | undefined, b: { family: string } | undefined): boolean {
@@ -123,6 +136,13 @@ function endpointFromRegistry(registry: ProviderRegistry, origin: MessageOrigin)
   if (resolved instanceof WinterProviderResolutionError) return endpointFromOrigin(origin);
   const descriptor = resolved.descriptor;
   const summaryRequest = summaryRequestOf(descriptor);
+  // Review I2: an id derived from `inferred`/`unknown`-confidence evidence is a GUESS that a domain
+  // is shared, and §8.4 suppresses the warning only for a CERTIFIED one. The gate is applied on the
+  // SOURCE side, in the safe direction: an uncertified claim yields no domain id at all, so the
+  // native state is stripped and the switch warns. (The asymmetry against the bridge's
+  // `target.continuationDomain`, which the registry computes ungated, is deliberate and disclosed --
+  // it can only ever cause MORE stripping, never less.)
+  const domain = certifiedDomain(resolved.continuationDomain, descriptor);
   return {
     providerId: resolved.providerId,
     modelKey: resolved.modelKey,
@@ -130,14 +150,25 @@ function endpointFromRegistry(registry: ProviderRegistry, origin: MessageOrigin)
     // The registry's OWN id wins over the stamped one when both exist -- a catalog refresh that
     // certifies a new domain should take effect for messages already in the history, which is the
     // §9.7 "returning to an earlier provider" case seen from the other side.
-    ...(resolved.continuationDomain !== undefined
-      ? { continuationDomain: resolved.continuationDomain }
-      : origin.continuationDomain !== undefined
+    ...(domain !== undefined
+      ? { continuationDomain: domain }
+      : resolved.continuationDomain === undefined && origin.continuationDomain !== undefined
         ? { continuationDomain: origin.continuationDomain }
         : {}),
+    // A descriptor with no `reasoning` block at all is a POSITIVE fact -- this model does not reason
+    // -- and is recorded as `"none"`. Only a resolution with no descriptor leaves it unknown.
+    ...(descriptor !== undefined ? { continuation: descriptor.reasoning?.continuation ?? "none" } : {}),
     readableState: readableStateOf(descriptor),
     ...(summaryRequest !== undefined ? { summaryRequest } : {}),
   };
+}
+
+/** Drops a domain id whose own evidence is not certified. An id derived with no `continuationDomain` evidence at all is the model's own key -- a single-member self-domain, which claims nothing about sharing and is kept. */
+function certifiedDomain(domain: string | undefined, descriptor: WinterModelDescriptor | undefined): string | undefined {
+  if (domain === undefined) return undefined;
+  const evidence = descriptor?.reasoning?.continuationDomain;
+  if (evidence === undefined) return domain;
+  return CERTIFIED_DOMAIN_CONFIDENCES.has(evidence.confidence) ? domain : undefined;
 }
 
 /** The registry-free fallback: everything the stamp itself carries, and `readableState: "none"` because absence of evidence is not evidence of a summary. */

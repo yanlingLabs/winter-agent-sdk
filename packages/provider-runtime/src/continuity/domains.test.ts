@@ -77,7 +77,86 @@ describe("sameDomain: evidence only, never HTTP shape", () => {
   });
 });
 
+describe("I2: only CERTIFIED evidence buys a shared domain", () => {
+  const world = (confidence: "verified" | "declared" | "inferred" | "unknown") => {
+    const domain = ["openai/o-a", "openai/o-b"];
+    const catalog = fixtureCatalog(
+      [fixtureProvider({ id: "openai" })],
+      [
+        fixtureModel({ key: "openai/o-a", providerId: "openai", reasoning: fixtureReasoning({ readableState: "summary", domain, confidence }) }),
+        fixtureModel({ key: "openai/o-b", providerId: "openai", reasoning: fixtureReasoning({ readableState: "summary", domain, confidence }) }),
+      ],
+    );
+    const registry = createRegistry(catalog);
+    registry.register(scriptedAdapter({ id: "openai-adapter" }));
+    return createEndpointResolver(registry);
+  };
+
+  test("`verified` and `declared` evidence keeps the shared id", () => {
+    for (const confidence of ["verified", "declared"] as const) {
+      const resolveFacts = world(confidence);
+      const a = resolveFacts({ providerId: "openai", modelKey: "openai/o-a", family: "openai" });
+      const b = resolveFacts({ providerId: "openai", modelKey: "openai/o-b", family: "openai" });
+      expect(a.continuationDomain).toBe("openai/o-a");
+      expect(sameDomain(a, b)).toBe(true);
+    }
+  });
+
+  test("`inferred` and `unknown` evidence yields NO domain id -- a guess must not buy a suppressed warning", () => {
+    for (const confidence of ["inferred", "unknown"] as const) {
+      const resolveFacts = world(confidence);
+      const a = resolveFacts({ providerId: "openai", modelKey: "openai/o-a", family: "openai" });
+      const b = resolveFacts({ providerId: "openai", modelKey: "openai/o-b", family: "openai" });
+      expect(a.continuationDomain).toBeUndefined();
+      expect(sameDomain(a, b)).toBe(false);
+    }
+  });
+
+  test("a row with NO domain evidence keeps its key-derived self-domain: it claims nothing about sharing", () => {
+    const catalog = fixtureCatalog(
+      [fixtureProvider({ id: "anthropic", family: "anthropic" })],
+      [fixtureModel({ key: "anthropic/c", providerId: "anthropic", reasoning: fixtureReasoning({ readableState: "summary" }) })],
+    );
+    const registry = createRegistry(catalog);
+    registry.register(scriptedAdapter({ id: "anthropic-adapter", family: "anthropic" }));
+    const facts = createEndpointResolver(registry)({ providerId: "anthropic", modelKey: "anthropic/c", family: "anthropic" });
+    expect(facts.continuationDomain).toBe("anthropic/c");
+    expect(sameDomain(facts, facts)).toBe(true);
+  });
+
+  test("DISCLOSED RESIDUAL: the gate is source-side only, so a weakly-evidenced model loses its OWN replay", () => {
+    // The bridge computes `target.continuationDomain` from the ungated registry, so for a row with
+    // uncertified SHARING evidence the source (gated, no id) and the target (ungated, the shared id)
+    // disagree even when they are the same model -- and the renderer strips that model's own native
+    // state. The direction is safe (more stripping, never less) and the warning is correct via the
+    // same-profile rule, but continuity degrades. Pinned here so the behaviour is visible rather than
+    // surprising; the fix belongs upstream (Lane X: never emit domain evidence below `declared`;
+    // T10: apply the same gate when computing the target's id).
+    const resolveFacts = world("inferred");
+    const source = resolveFacts({ providerId: "openai", modelKey: "openai/o-a", family: "openai" });
+    const ungatedTarget = { continuationDomain: "openai/o-a" };
+    expect(sameDomain(source, ungatedTarget)).toBe(false);
+  });
+});
+
 describe("reasoning evidence", () => {
+  test("I1: `continuation` is carried from the descriptor, and a row with no reasoning block reads as `none`", () => {
+    const catalog = fixtureCatalog(
+      [fixtureProvider({ id: "openai" })],
+      [
+        fixtureModel({ key: "openai/gpt-chat", providerId: "openai" }),
+        fixtureModel({ key: "openai/o", providerId: "openai", reasoning: fixtureReasoning({ readableState: "summary", domain: ["openai/o"] }) }),
+      ],
+    );
+    const registry = createRegistry(catalog);
+    registry.register(scriptedAdapter({ id: "openai-adapter" }));
+    const resolveFacts = createEndpointResolver(registry);
+    expect(resolveFacts({ providerId: "openai", modelKey: "openai/gpt-chat", family: "openai" }).continuation).toBe("none");
+    expect(resolveFacts({ providerId: "openai", modelKey: "openai/o", family: "openai" }).continuation).toBe("opaque-provider-state");
+    // No catalog row at all leaves it UNKNOWN rather than asserting "none".
+    expect(resolveFacts({ providerId: "gone", modelKey: "gone/m", family: "openai" }).continuation).toBeUndefined();
+  });
+
   test("`readableState` comes from evidence, and its absence reads as `none`", () => {
     expect(readableStateOf(undefined)).toBe("none");
     expect(readableStateOf(fixtureModel({ key: "p/m", providerId: "p" }))).toBe("none");

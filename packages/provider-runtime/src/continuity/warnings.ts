@@ -68,6 +68,16 @@ export interface SwitchClassification {
 export function classifySwitch(from: ContinuityEndpoint, to: ContinuityEndpoint, facts: SwitchFacts = {}): SwitchClassification {
   const warnings: string[] = [];
   const domainShared = sameDomain(from, to);
+  // Review I1: THE SAME EXACT PROFILE IS NEVER A SWITCH. A model always accepts its own state, so
+  // `set_model` to the model already running -- or a `fallbackModel` that resolves back to it -- must
+  // never warn about a transfer that is not happening. This is checked by IDENTITY rather than by
+  // domain because a model with `continuation: "none"` has no domain id at all, and comparing its
+  // absent id to its own absent id said "different domains" and warned twice about losing reasoning
+  // state it never had.
+  const sameProfile = from.providerId === to.providerId && from.modelKey === to.modelKey;
+  // A source with no reasoning transport has NO HIDDEN STATE TO LOSE. Unknown (no catalog row) is
+  // treated as "may reason", because silence about a reasoning model is the expensive mistake.
+  const sourceReasons = from.continuation !== "none";
   const sourceHidden = from.readableState !== "full-exposed";
   // AFFIRMATIVE EVIDENCE, not the absence of a denial. §8.4's second suppressing condition is a
   // positive claim -- "the source exposes COMPLETE readable reasoning and Winter WILL pass it
@@ -82,14 +92,14 @@ export function classifySwitch(from: ContinuityEndpoint, to: ContinuityEndpoint,
 
   // §8.4's two suppressing proofs, evaluated FIRST so the warning list below is only ever built for a
   // transfer that has actually earned one.
-  const nativeCarries = domainShared;
+  const nativeCarries = domainShared || sameProfile;
   const exposedCarries = exposedComplete && forwardable && !truncated;
 
   const portable = portableList(from, facts, { nativeCarries, exposedCarries });
 
   // Triggers 1 and 2 -- hidden reasoning whose opaque state is invalid for the target, and only a
   // summary being available -- are ONE sentence to a reader; splitting them says the same thing twice.
-  if (!nativeCarries && sourceHidden) {
+  if (!nativeCarries && sourceHidden && sourceReasons) {
     warnings.push(
       `Switching from ${identify(from)} to ${identify(to)} starts a new reasoning context: ${from.providerId}'s reasoning state is bound to ${from.providerId} and cannot be used by ${to.providerId}. ` +
         `Winter carries over ${joinList(portable)}.`,
@@ -129,7 +139,7 @@ export function classifySwitch(from: ContinuityEndpoint, to: ContinuityEndpoint,
   // Trigger 6, and it is a SEPARATE line rather than a variant of the first because the reader's
   // question is different: they did not change vendors, and the reason this is still lossy is that
   // this pair of models has no tested continuation rule between them.
-  if (!domainShared && from.providerId === to.providerId) {
+  if (!nativeCarries && from.providerId === to.providerId) {
     warnings.push(
       `${from.providerId} has not certified that ${from.modelKey}'s reasoning state is valid for ${to.modelKey}; Winter will not replay it across the two, so this switch is treated as lossy even though the provider is unchanged.`,
     );
@@ -143,7 +153,11 @@ export function classifySwitch(from: ContinuityEndpoint, to: ContinuityEndpoint,
     );
   }
 
-  const lossClass: LossClass = warnings.length > 0 ? "warned-lossy" : nativeCarries ? "lossless-native" : "lossless-portable";
+  // A source with NO reasoning transport transfers nothing, so the switch is trivially lossless --
+  // and it is `lossless-native` rather than `lossless-portable`, because the latter asserts that
+  // complete exposed reasoning crossed unmodified, which for a chat model is a claim about something
+  // that never existed.
+  const lossClass: LossClass = warnings.length > 0 ? "warned-lossy" : nativeCarries || !sourceReasons ? "lossless-native" : "lossless-portable";
   return { lossClass, warnings, portable };
 }
 
@@ -158,6 +172,12 @@ function portableList(from: ContinuityEndpoint, facts: SwitchFacts, carries: { n
   const portable = ["the visible conversation"];
   const completed = facts.completedToolResults ?? 0;
   if (completed > 0) portable.push(`${completed} completed tool result${completed === 1 ? "" : "s"} and their facts`);
+  // A model with no reasoning transport has no reasoning state to name as portable -- claiming its
+  // "own reasoning state, replayed exactly" would invent a capability it does not have.
+  if (from.continuation === "none") {
+    portable.push("the objective, the decisions already made and their visible rationale, and any unresolved questions");
+    return portable;
+  }
   if (carries.nativeCarries) {
     portable.push(`${from.modelKey}'s own reasoning state, replayed exactly`);
   } else if (carries.exposedCarries) {

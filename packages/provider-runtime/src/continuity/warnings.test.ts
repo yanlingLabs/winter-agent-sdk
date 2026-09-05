@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { ContinuityEndpoint } from "./domains.ts";
+import { sameDomain } from "./domains.ts";
 import { classifySwitch } from "./warnings.ts";
 
 const endpoint = (init: Partial<ContinuityEndpoint> & { providerId: string; modelKey: string }): ContinuityEndpoint => ({
@@ -77,6 +78,46 @@ describe("the eight named cases of report §12.3", () => {
     expect(verdict.warnings.some((w) => w.includes("even though the provider is unchanged"))).toBe(true);
     // ... and the Anthropic form of the same case.
     expect(classifySwitch(CLAUDE, CLAUDE_B, { summaryAvailable: true }).lossClass).toBe("warned-lossy");
+  });
+});
+
+describe("I1: a switch that is not a switch, and a source with nothing to lose", () => {
+  const CHAT: ContinuityEndpoint = { providerId: "openai", modelKey: "openai/gpt-chat", family: "openai", readableState: "none", continuation: "none" };
+
+  test("THE SAME EXACT PROFILE NEVER WARNS -- even for a model with no continuation domain at all", () => {
+    // Review I1's reproduction: `sameDomain(X, X)` is false for a `continuation: "none"` row (the
+    // registry derives no id for one), so identity had to be checked by identity. Two false warnings
+    // came out of this: "openai's reasoning state ... cannot be used by openai", and "openai has not
+    // certified that openai/gpt-chat['s state] is valid for openai/gpt-chat".
+    const verdict = classifySwitch(CHAT, CHAT, {});
+    expect(verdict.warnings).toEqual([]);
+    expect(verdict.lossClass).toBe("lossless-native");
+    expect(sameDomain(CHAT, CHAT)).toBe(false); // ... and the domain test still says nothing, correctly
+  });
+
+  test("a NON-REASONING source raises no hidden-reasoning warning when it switches away", () => {
+    const verdict = classifySwitch(CHAT, CLAUDE, { completedToolResults: 1 });
+    expect(verdict.warnings).toEqual([]);
+    expect(verdict.lossClass).toBe("lossless-native");
+    // ... and it never claims a reasoning state it does not have.
+    expect(verdict.portable.some((p) => p.includes("reasoning"))).toBe(false);
+    expect(verdict.portable).toContain("1 completed tool result and their facts");
+  });
+
+  test("UNKNOWN reasoning still warns: absence of a catalog row is not proof the source was reasoning-free", () => {
+    const unknown: ContinuityEndpoint = { providerId: "mystery", modelKey: "mystery/m", family: "openai", readableState: "none" };
+    expect(unknown.continuation).toBeUndefined();
+    expect(classifySwitch(unknown, CLAUDE, {}).lossClass).toBe("warned-lossy");
+  });
+
+  test("a reasoning model switching to ITSELF still reports its own state as replayed exactly", () => {
+    const verdict = classifySwitch(CLAUDE, CLAUDE, { summaryAvailable: true });
+    expect(verdict.warnings).toEqual([]);
+    expect(verdict.portable).toContain("anthropic/claude-a's own reasoning state, replayed exactly");
+  });
+
+  test("a mid-turn abort still warns for the same exact profile -- the loss is the turn, not the transport", () => {
+    expect(classifySwitch(CHAT, CHAT, { midTurnAbort: true }).lossClass).toBe("warned-lossy");
   });
 });
 
