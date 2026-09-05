@@ -119,6 +119,48 @@ export function chatModelOf(recorded: RecordedRequest): string | undefined {
   }
 }
 
+/**
+ * The wire invariant OpenAI and Azure both enforce: a `tool` message must respond to the assistant
+ * `tool_calls` message immediately before it, with only other `tool` messages in between.
+ *
+ * MODELLED HERE ON PURPOSE. A fake that accepts anything cannot fail a pin, and round 3 is exactly
+ * that story: a decoration was rendered as a `user` message between an assistant's `tool_calls` and
+ * its `tool` reply, every fixture stayed green, and the shape would have failed every real turn.
+ * The DeepSeek and Azure fakes already model their providers' refusals; this closes the gap.
+ */
+export function toolAdjacencyRefusal(body: string): Response | undefined {
+  let parsed: { messages?: unknown };
+  try {
+    parsed = JSON.parse(body) as { messages?: unknown };
+  } catch {
+    return undefined;
+  }
+  const messages = Array.isArray(parsed.messages) ? parsed.messages : [];
+  for (let i = 0; i < messages.length; i++) {
+    const message = messages[i];
+    if (message === null || typeof message !== "object" || (message as { role?: unknown }).role !== "tool") continue;
+    const previous = i > 0 ? messages[i - 1] : undefined;
+    const previousRole = previous !== null && typeof previous === "object" ? (previous as { role?: unknown }).role : undefined;
+    const previousCalls = previous !== null && typeof previous === "object" ? (previous as { tool_calls?: unknown }).tool_calls : undefined;
+    const respondsToACall = previousRole === "assistant" && Array.isArray(previousCalls) && previousCalls.length > 0;
+    const followsAnotherResult = previousRole === "tool";
+    if (respondsToACall || followsAnotherResult) continue;
+    return jsonResponse(
+      {
+        error: {
+          // The provider's own phrasing, misspelling included.
+          message: `Invalid parameter: messages with role 'tool' must be a response to a preceeding message with 'tool_calls'.`,
+          type: "invalid_request_error",
+          param: `messages[${i}].role`,
+          code: null,
+        },
+      },
+      400,
+    );
+  }
+  return undefined;
+}
+
 export interface OpenAiChatFakeOptions {
   scenarios: Record<string, ScenarioResponder | Response[]>;
   routes?: FakeRoute[];
@@ -127,7 +169,8 @@ export interface OpenAiChatFakeOptions {
 
 /** Serves `/chat/completions` in every path spelling the family's surfaces use (bare, `/v1`, and Azure's deployment path). */
 export async function startOpenAiChatFake(opts: OpenAiChatFakeOptions): Promise<FakeServer> {
-  const handler = scenarioTable({ modelOf: chatModelOf, scenarios: opts.scenarios, ...(opts.unknownModel !== undefined ? { unknownModel: opts.unknownModel } : {}) });
+  const dispatch = scenarioTable({ modelOf: chatModelOf, scenarios: opts.scenarios, ...(opts.unknownModel !== undefined ? { unknownModel: opts.unknownModel } : {}) });
+  const handler = (req: Request, recorded: RecordedRequest): Response | Promise<Response> => toolAdjacencyRefusal(recorded.body) ?? dispatch(req, recorded);
   return startFake({
     routes: [
       { path: "/chat/completions", method: "POST", handler },

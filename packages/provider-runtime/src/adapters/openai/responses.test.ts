@@ -114,6 +114,34 @@ describe("mapResponsesInput", () => {
     expect(assistant[0]).toEqual({ type: "message", role: "assistant", content: [{ type: "output_text", text: "[winter:context] note" }, { type: "output_text", text: "answer" }] });
   });
 
+  test("a decoration on a TOOL message prefixes the output — never an item between a call and its reply (round 3)", () => {
+    const out = mapResponsesInput([
+      { role: "assistant", content: [{ type: "tool_use", id: "call_1", name: "Read", input: {} }] },
+      { role: "tool", content: [{ type: "tool_result", tool_use_id: "call_1", content: "the file body" }], decoration: { text: "note", door: "tag" } },
+    ]);
+    expect(out).toEqual([
+      { type: "function_call", call_id: "call_1", name: "Read", arguments: "{}" },
+      { type: "function_call_output", call_id: "call_1", output: "[winter:context] note\nthe file body" },
+    ]);
+  });
+
+  test("a message with SEVERAL tool results is annotated once, on the first", () => {
+    const out = mapResponsesInput([
+      {
+        role: "tool",
+        content: [
+          { type: "tool_result", tool_use_id: "call_1", content: "first" },
+          { type: "tool_result", tool_use_id: "call_2", content: "second" },
+        ],
+        decoration: { text: "note", door: "tag" },
+      },
+    ]);
+    expect(out).toEqual([
+      { type: "function_call_output", call_id: "call_1", output: "[winter:context] note\nfirst" },
+      { type: "function_call_output", call_id: "call_2", output: "second" },
+    ]);
+  });
+
   test("Anthropic-family blocks have no Responses representation and are NOT dressed up as one", () => {
     // R6-8: a thinking block carries a signature only Anthropic can validate. Inventing an
     // equivalent here would be the impersonation the ruling exists to forbid.

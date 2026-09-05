@@ -72,6 +72,34 @@ describe("decorations (minor 11)", () => {
     ]);
   });
 
+  test("a decoration on a TOOL message prefixes the result's content — adjacency is a wire invariant (round 3)", () => {
+    // Rendering it as a leading `user` message (round 2's prescription) produces
+    // assistant(tool_calls) -> user -> tool, which OpenAI and Azure both reject outright.
+    expect(
+      mapChatMessages(
+        [
+          { role: "assistant", content: [{ type: "tool_use", id: "call_1", name: "Read", input: {} }] },
+          { role: "tool", content: [{ type: "tool_result", tool_use_id: "call_1", content: "the file body" }], decoration: { text: "note", door: "tag" } },
+        ],
+        false,
+      ),
+    ).toEqual([
+      { role: "assistant", content: "", tool_calls: [{ id: "call_1", type: "function", function: { name: "Read", arguments: "{}" } }] },
+      { role: "tool", tool_call_id: "call_1", content: "[winter:context] note\nthe file body" },
+    ]);
+  });
+
+  test("a USER message carrying only tool results takes the same prefix rule (round 3)", () => {
+    // A host-supplied history can put results on a `user` message; this branch dropped the
+    // decoration entirely, and could not lead them for the same adjacency reason.
+    expect(
+      mapChatMessages(
+        [{ role: "user", content: [{ type: "tool_result", tool_use_id: "call_1", content: "the file body" }], decoration: { text: "note", door: "tag" } }],
+        false,
+      ),
+    ).toEqual([{ role: "tool", tool_call_id: "call_1", content: "[winter:context] note\nthe file body" }]);
+  });
+
   test("an annotation on a message carrying an IMAGE rides as its own text part", () => {
     const out = mapChatMessages(
       [{ role: "user", content: [{ type: "image", source: { type: "base64", media_type: "image/png", data: "QUJD" } }], decoration: { text: "note", door: "tag" } }],

@@ -47,6 +47,7 @@ import {
   resolveEndpoint,
   resolveReasoning,
   decorationText,
+  prefixToolResult,
   toolResultText,
   validateViaModels,
   type OpenAiAdapterOptions,
@@ -86,9 +87,15 @@ export function mapResponsesInput(messages: readonly ProviderMessageLike[]): unk
     const partType = wireRole === "assistant" ? "output_text" : "input_text";
     const blocks = asBlocks(message.content);
     const contentParts: unknown[] = [];
-    // A Winter annotation LEADS its message, so the model reads it before the content it annotates.
+    // A Winter annotation LEADS its message, so the model reads it before the content it annotates —
+    // EXCEPT on a message carrying tool results, where it prefixes the first result's own output
+    // instead. A `message` item between a `function_call` and its `function_call_output` breaks the
+    // pairing the surface requires (round 3), and an annotation that fails the turn is worse than
+    // one that is dropped.
     const decoration = decorationText(message);
-    if (decoration !== undefined) contentParts.push({ type: partType, text: decoration });
+    const carriesToolResults = blocks.some((block) => block.type === "tool_result");
+    if (decoration !== undefined && !carriesToolResults) contentParts.push({ type: partType, text: decoration });
+    let resultPrefix = carriesToolResults ? decoration : undefined;
     for (const block of blocks) {
       switch (block.type) {
         case "text":
@@ -112,7 +119,9 @@ export function mapResponsesInput(messages: readonly ProviderMessageLike[]): unk
             out.push({ type: "message", role: wireRole, content: [...contentParts] });
             contentParts.length = 0;
           }
-          out.push({ type: "function_call_output", call_id: block.tool_use_id, output: toolResultText(block.content) });
+          out.push({ type: "function_call_output", call_id: block.tool_use_id, output: prefixToolResult(resultPrefix, toolResultText(block.content)) });
+          // The FIRST result carries it; a message with several results annotates the set once.
+          resultPrefix = undefined;
           break;
         default:
           // `thinking` / `redacted_thinking` / `tool_reference` are Anthropic-family or Winter-side

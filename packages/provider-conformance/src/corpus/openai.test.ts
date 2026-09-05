@@ -378,30 +378,80 @@ describe("live wire details the corpus does not ask about", () => {
     }
   }, 20_000);
 
-  test("a tool-role DECORATION reaches the wire on BOTH surfaces (round 2, minor 2)", async () => {
-    // It was dropped on chat only — the tool branch returned before the renderer — while Responses
-    // flushed it. Present on one surface and absent on the other, with nothing saying so.
+  test("a tool-role DECORATION rides INSIDE the tool result, and the turn stays valid (round 3)", async () => {
+    // Round 2 had it rendered as a leading `user` message, which breaks tool-message adjacency on
+    // OpenAI and Azure alike — worse than the drop it replaced, because the whole turn fails rather
+    // than the note being lost. It now PREFIXES the result's own text, so nothing is inserted
+    // between a call and its reply. Both fakes now REFUSE the broken shape, so this can fail.
     const marker = "TOOL-ROLE-DECORATION";
     const history = [
+      { role: "user" as const, content: "read it" },
       { role: "assistant" as const, content: [{ type: "tool_use" as const, id: "call_1", name: "Read", input: {} }] },
-      { role: "tool" as const, content: [{ type: "tool_result" as const, tool_use_id: "call_1", content: "ok" }], decoration: { text: marker, door: "tag" as const } },
+      { role: "tool" as const, content: [{ type: "tool_result" as const, tool_use_id: "call_1", content: "the file body" }], decoration: { text: marker, door: "tag" as const } },
     ];
+
     await withResponsesFake(async (fake) => {
       const adapter = createResponsesAdapter({ generatedBaseUrl: fake.url, retry: FAST_RETRY, descriptors: () => undefined });
-      await drain(adapter.streamTurn({ model: SCENARIO.happy, messages: history }, testContext({ stallTimeoutMs: STALL_MS })));
-      expect(fake.requests.at(-1)!.body).toContain(marker);
+      const events = await drain(adapter.streamTurn({ model: SCENARIO.happy, messages: history }, testContext({ stallTimeoutMs: STALL_MS })));
+      // The fake enforces `function_call_output` pairing, so a completed turn IS the validity proof.
+      expect(events.some((e) => e.type === "done")).toBe(true);
+      const input = (JSON.parse(fake.requests.at(-1)!.body) as { input: Array<Record<string, unknown>> }).input;
+      const output = input.find((item) => item.type === "function_call_output");
+      expect(output?.output).toBe(`${"[winter:context] "}${marker}\nthe file body`);
+      // Nothing was inserted: the output follows its call directly.
+      expect(input[input.indexOf(output!) - 1]!.type).toBe("function_call");
     });
+
     await withChatFake(async (fake) => {
       const adapter = createChatCompletionsAdapter({ generatedBaseUrl: fake.url, retry: FAST_RETRY, descriptors: () => undefined });
-      await drain(adapter.streamTurn({ model: SCENARIO.happy, messages: history }, testContext({ stallTimeoutMs: STALL_MS })));
+      const events = await drain(adapter.streamTurn({ model: SCENARIO.happy, messages: history }, testContext({ stallTimeoutMs: STALL_MS })));
+      expect(events.some((e) => e.type === "done")).toBe(true);
       const messages = (JSON.parse(fake.requests.at(-1)!.body) as { messages: Array<Record<string, unknown>> }).messages;
-      // Carried as a leading USER message ahead of the tool result, exactly as Responses flushes it —
-      // a `tool` message's content IS the result, keyed to a call id, with no room for prose.
-      const decorationIndex = messages.findIndex((m) => typeof m.content === "string" && m.content.includes(marker));
-      const resultIndex = messages.findIndex((m) => m.role === "tool");
-      expect(decorationIndex).toBeGreaterThanOrEqual(0);
-      expect(messages[decorationIndex]!.role).toBe("user");
-      expect(decorationIndex).toBeLessThan(resultIndex);
+      const toolIndex = messages.findIndex((m) => m.role === "tool");
+      expect(messages[toolIndex]!.content).toBe(`${"[winter:context] "}${marker}\nthe file body`);
+      // ADJACENCY: the tool message answers the assistant `tool_calls` message immediately before it.
+      expect(messages[toolIndex - 1]!.role).toBe("assistant");
+      expect(Array.isArray(messages[toolIndex - 1]!.tool_calls)).toBe(true);
+      // And no message carries the marker on its own.
+      expect(messages.filter((m) => typeof m.content === "string" && m.content.includes(marker))).toHaveLength(1);
+    });
+  });
+
+  test("the fakes REFUSE a message inserted between a tool call and its result — so the pin above can fail", async () => {
+    // A guard on the guards. Round 2's shape passed every fixture precisely because neither fake
+    // modelled the invariant; if these ever return 200, the pin above becomes decorative.
+    await withChatFake(async (fake) => {
+      const response = await fetch(`${fake.url}/v1/chat/completions`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: SCENARIO.happy,
+          messages: [
+            { role: "assistant", content: "", tool_calls: [{ id: "call_1", type: "function", function: { name: "Read", arguments: "{}" } }] },
+            { role: "user", content: "[winter:context] a note" },
+            { role: "tool", tool_call_id: "call_1", content: "ok" },
+          ],
+        }),
+      });
+      expect(response.status).toBe(400);
+      expect(await response.text()).toContain("must be a response to a preceeding message with 'tool_calls'");
+    });
+
+    await withResponsesFake(async (fake) => {
+      const response = await fetch(`${fake.url}/v1/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: SCENARIO.happy,
+          input: [
+            { type: "function_call", call_id: "call_1", name: "Read", arguments: "{}" },
+            { type: "message", role: "user", content: [{ type: "input_text", text: "[winter:context] a note" }] },
+            { type: "function_call_output", call_id: "call_1", output: "ok" },
+          ],
+        }),
+      });
+      expect(response.status).toBe(400);
+      expect(await response.text()).toContain("must follow the 'function_call' it answers");
     });
   });
 

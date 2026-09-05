@@ -444,11 +444,29 @@ export function toolResultText(content: string | ContentBlockLike[]): string {
  * Without this, Lane C's decorations were built, persisted and then silently dropped at the wire:
  * a cross-family handoff note that never reaches the model is worse than none, because the switch
  * coordinator has already reported the context as carried.
+ *
+ * WHERE it goes depends on what the message carries. On an ordinary message it LEADS the content.
+ * On a message carrying TOOL RESULTS it PREFIXES the first result's own text (see
+ * `prefixToolResult`) — never a message of its own, because a message between an assistant's
+ * `tool_calls` and its `tool` reply is rejected outright ("messages with role 'tool' must be a
+ * response to a preceeding message with 'tool_calls'"). Round 3's finding: an annotation that
+ * breaks the turn is worse than one that is dropped.
  */
 export function decorationText(message: ProviderMessageLike): string | undefined {
   const decoration = message.decoration;
   if (decoration === undefined || decoration.text.length === 0) return undefined;
   return `[winter:context] ${decoration.text}`;
+}
+
+/**
+ * A decoration prefixed onto a tool result's own text.
+ *
+ * Adjacency between a tool call and its result is a WIRE INVARIANT on every surface in this family,
+ * so the annotation rides INSIDE the result it annotates rather than beside it. Same tagged plain
+ * text, same position relative to what it describes, and no extra item on the wire at all.
+ */
+export function prefixToolResult(decoration: string | undefined, output: string): string {
+  return decoration === undefined ? output : output.length > 0 ? `${decoration}\n${output}` : decoration;
 }
 
 /** An `image` block -> the data URL every OpenAI surface accepts. */

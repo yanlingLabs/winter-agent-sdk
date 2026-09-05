@@ -9,7 +9,7 @@
 // Everything here produces FINITE streams. Task 2's finding stands: an infinitely-pulling loopback
 // fake hangs the runner rather than failing the test.
 
-import { jsonResponse, scenarioTable, sseResponse, startFake, type FakeRoute, type FakeServer, type RecordedRequest, type ScenarioResponder, type SseFrame } from "./server.ts";
+import { errorResponse, jsonResponse, scenarioTable, sseResponse, startFake, type FakeRoute, type FakeServer, type RecordedRequest, type ScenarioResponder, type SseFrame } from "./server.ts";
 
 /** A Responses turn, described by what it CONTAINS rather than by its frames. */
 export interface ResponsesScript {
@@ -169,6 +169,38 @@ export function recordedBody(recorded: RecordedRequest): Record<string, unknown>
   return JSON.parse(recorded.body) as Record<string, unknown>;
 }
 
+/**
+ * The Responses twin of the chat surface's tool-message adjacency: a `function_call_output` must
+ * follow the `function_call` it answers, with only other outputs in between.
+ *
+ * Same reason as `toolAdjacencyRefusal` — a fake that accepts anything cannot fail a pin, and round
+ * 3's decoration bug inserted exactly such an item.
+ */
+export function callPairingRefusal(body: string): Response | undefined {
+  let parsed: { input?: unknown };
+  try {
+    parsed = JSON.parse(body) as { input?: unknown };
+  } catch {
+    return undefined;
+  }
+  const input = Array.isArray(parsed.input) ? parsed.input : [];
+  const typeAt = (index: number): unknown => {
+    const item = input[index];
+    return item !== null && typeof item === "object" ? (item as { type?: unknown }).type : undefined;
+  };
+  for (let i = 0; i < input.length; i++) {
+    if (typeAt(i) !== "function_call_output") continue;
+    let previous = i - 1;
+    while (previous >= 0 && typeAt(previous) === "function_call_output") previous--;
+    if (previous >= 0 && typeAt(previous) === "function_call") continue;
+    return errorResponse(
+      400,
+      openAiErrorBody(`Item ${i} of type 'function_call_output' must follow the 'function_call' it answers.`, "invalid_value"),
+    );
+  }
+  return undefined;
+}
+
 export interface OpenAiResponsesFakeOptions {
   /** modelId -> scripted answer. A `Response[]` is consumed by attempt, with the last entry repeating. */
   scenarios: Record<string, ScenarioResponder | Response[]>;
@@ -182,7 +214,8 @@ export interface OpenAiResponsesFakeOptions {
  * the `/v1` segment, and a fixture should not have to care which).
  */
 export async function startOpenAiResponsesFake(opts: OpenAiResponsesFakeOptions): Promise<FakeServer> {
-  const handler = scenarioTable({ modelOf: responsesModelOf, scenarios: opts.scenarios, ...(opts.unknownModel !== undefined ? { unknownModel: opts.unknownModel } : {}) });
+  const dispatch = scenarioTable({ modelOf: responsesModelOf, scenarios: opts.scenarios, ...(opts.unknownModel !== undefined ? { unknownModel: opts.unknownModel } : {}) });
+  const handler = (req: Request, recorded: RecordedRequest): Response | Promise<Response> => callPairingRefusal(recorded.body) ?? dispatch(req, recorded);
   return startFake({
     routes: [
       { path: "/responses", method: "POST", handler },

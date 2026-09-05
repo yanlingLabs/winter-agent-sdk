@@ -28,6 +28,7 @@ import {
   capabilitiesFrom,
   capabilityRefusal,
   decorationText,
+  prefixToolResult,
   errorEvent,
   fetchOpenAiModels,
   imageDataUrl,
@@ -97,15 +98,16 @@ export function mapChatMessages(messages: readonly ProviderMessageLike[], replay
     const blocks = asBlocks(message.content);
 
     if (message.role === "tool") {
-      // A `tool` message has no room for prose — its content IS the result, keyed to a call id — so
-      // an annotation on one rides as a leading USER message, exactly as the Responses mapper
-      // flushes it ahead of the `function_call_output`. Before this it was silently dropped on the
-      // chat surface only, which is the worst shape of the same bug minor 11 fixed: present on one
-      // surface, absent on another, with nothing saying so.
-      const toolDecoration = decorationText(message);
-      if (toolDecoration !== undefined) out.push({ role: "user", content: toolDecoration });
+      // An annotation on a tool message PREFIXES the result's own content (round 3). It cannot be a
+      // message of its own: a `user` message between an assistant's `tool_calls` and its `tool`
+      // reply is rejected outright ("messages with role 'tool' must be a response to a preceeding
+      // message with 'tool_calls'"), which would fail the whole turn rather than merely lose the
+      // note. Prefixing keeps it adjacent to exactly what it annotates and adds nothing to the wire.
+      let toolPrefix = decorationText(message);
       for (const block of blocks) {
-        if (block.type === "tool_result") out.push({ role: "tool", tool_call_id: block.tool_use_id, content: toolResultText(block.content) });
+        if (block.type !== "tool_result") continue;
+        out.push({ role: "tool", tool_call_id: block.tool_use_id, content: prefixToolResult(toolPrefix, toolResultText(block.content)) });
+        toolPrefix = undefined;
       }
       continue;
     }
@@ -139,11 +141,19 @@ export function mapChatMessages(messages: readonly ProviderMessageLike[], replay
     // A user message may also carry tool results (a host-supplied history in the wire's own shape).
     const results = blocks.filter((b) => b.type === "tool_result");
     if (results.length > 0) {
+      // The SAME prefix rule (round 3): a host-supplied history can put tool results on a `user`
+      // message, and this branch dropped the decoration entirely. It cannot lead them either, for
+      // the adjacency reason above.
+      let resultPrefix = decorationText(message);
       for (const block of results) {
-        if (block.type === "tool_result") out.push({ role: "tool", tool_call_id: block.tool_use_id, content: toolResultText(block.content) });
+        if (block.type !== "tool_result") continue;
+        out.push({ role: "tool", tool_call_id: block.tool_use_id, content: prefixToolResult(resultPrefix, toolResultText(block.content)) });
+        resultPrefix = undefined;
       }
       const rest = blocks.filter((b) => b.type !== "tool_result");
-      if (rest.length > 0) out.push({ role: "user", content: userContentParts(rest, decorationText(message)).content });
+      // Trailing non-result content follows the tool messages, so nothing is inserted between a call
+      // and its reply. The annotation already rode the first result.
+      if (rest.length > 0) out.push({ role: "user", content: userContentParts(rest).content });
       continue;
     }
     out.push({ role: "user", content: userContentParts(blocks, decorationText(message)).content });
