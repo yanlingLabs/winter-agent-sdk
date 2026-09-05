@@ -17,7 +17,7 @@ import { spawn as spawnProcess } from "node:child_process";
 // through the compiled binary, so that leg would have been unproven as well as fragile.
 import { mkdirSync, readFileSync } from "node:fs";
 import { RunJournal, promptKey, type JournalEntry } from "./journal.ts";
-import { RunTranscript, renderTranscriptValue } from "./transcript.ts";
+import { RunTranscript, capTranscriptField, renderTranscriptValue } from "./transcript.ts";
 import { WorkflowRegistry } from "./registry.ts";
 import { makeSemaphore, resolveConcurrencyCap, type Semaphore } from "./semaphore.ts";
 import { createBudget, type WorkflowBudget } from "./budget.ts";
@@ -540,7 +540,16 @@ export class WorkflowRuntime {
     const group = message.opts?.phase;
     this.syncCounts(run, group);
     try {
-      const outcome = await this.spawnAndAwaitChild(run, message.prompt, message.opts);
+      const spawned = await this.spawnAndAwaitChild(run, message.prompt, message.opts);
+      if (!spawned.ok) {
+        // m5: the HOST could not start an agent -- the same unswallowable class as the caps above,
+        // and handled the same way: the run fails parent-side with the host's own message, and the
+        // script sees `ok:false` (which `script-api.ts` throws) rather than a null it can filter out.
+        run.transcript.append({ kind: "agent", prompt: capTranscriptField(message.prompt), outcome: "refused", ...(group !== undefined ? { phase: group } : {}) });
+        this.teardown(run.runId, () => this.finish(run.runId, "failed", spawned.error));
+        return { callId: message.callId, ok: false, error: spawned.error, budget: run.budget.snapshot() };
+      }
+      const outcome = spawned.value;
       // WS-11 §1.5: only SUCCESSFUL results are journaled -- a failed call has nothing worth caching,
       // and a later resume should retry it live rather than replay the failure.
       if (outcome !== null) run.journal.append(promptKey(message.prompt, message.opts), outcome);
@@ -566,26 +575,34 @@ export class WorkflowRuntime {
   /**
    * Spawns one child and resolves what `agent()` should see.
    *
-   * NULL, not a throw, for every terminal child outcome (WS-11 §1.6: "Resolves `null` when the user
-   * skips the agent or it dies on a terminal error"). A `spawnAgent` that THROWS is folded into the
-   * same null: from a script's point of view an agent that could not be started and one that died are
-   * the same event, and an unhandled rejection escaping into the daemon is not an option.
+   * NULL, not a throw, for every terminal child OUTCOME (WS-11 §1.6: "Resolves `null` when the user
+   * skips the agent or it dies on a terminal error") -- a failed child, a stopped child, a child
+   * whose text does not validate.
+   *
+   * A `spawnAgent` that THROWS is NOT one of those (whole-branch m5). It means the HOST could not
+   * start an agent at all -- `tools/impl/workflow.ts` throws exactly that when the session has no
+   * child-spawn capability -- and `script-api.ts`'s own contract lists "no spawn capability at all"
+   * beside the agent cap and the budget ceiling as the refusals a script must not be able to
+   * swallow. This used to fold it into the same `null`, so a workflow in a session with no spawn
+   * capability "completed" with `.filter(Boolean)`-swallowed empties and the real cause appeared
+   * nowhere. It now comes back as a refusal, which `serviceAgent` turns into the same
+   * teardown-then-`ok:false` the caps use. Nothing escapes as an unhandled rejection either way.
    */
-  private async spawnAndAwaitChild(run: LiveRun, prompt: string, opts: AgentOpts | undefined): Promise<unknown> {
+  private async spawnAndAwaitChild(run: LiveRun, prompt: string, opts: AgentOpts | undefined): Promise<{ ok: true; value: unknown } | { ok: false; error: string }> {
     let child: ChildHandle;
     try {
       child = await run.host.spawnAgent(this.buildSpawnRequest(run, prompt, opts));
-    } catch {
-      return null;
+    } catch (err) {
+      return { ok: false, error: `workflow agent could not be started: ${err instanceof Error ? err.message : String(err)}` };
     }
     run.children.add(child);
     try {
       const result = await child.result();
-      if (result.status !== "completed") return null;
-      if (opts?.schema === undefined) return result.content;
-      return this.validateStructured(opts.schema as JsonSchema, result.content);
+      if (result.status !== "completed") return { ok: true, value: null };
+      if (opts?.schema === undefined) return { ok: true, value: result.content };
+      return { ok: true, value: this.validateStructured(opts.schema as JsonSchema, result.content) };
     } catch {
-      return null;
+      return { ok: true, value: null };
     } finally {
       run.children.delete(child);
     }

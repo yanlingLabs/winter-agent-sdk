@@ -229,6 +229,11 @@ function toolResult(out: WorkflowOutput): ToolResultPayload {
  *
  * Shared by the launch path and (RULING I6) the edited-script resume path, which owes the identical
  * answer for the identical failure.
+ *
+ * THE TASK IS REAL, and so is its output (whole-branch n4): `task.fail(error)` runs the host's own
+ * `fail` implementation above, which `writeTaskOutput`s the message to the task's output file before
+ * notifying. So `TaskOutput(taskId)` on this id returns the parse error, and the `output_file` the
+ * notification names exists -- the failure is as inspectable as a successful run's result.
  */
 function metaFailureResult(host: WorkflowRunHost, error: string): ToolResultPayload {
   const task = host.createTask("workflow", { runId: "", name: "" });

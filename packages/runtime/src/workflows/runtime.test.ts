@@ -270,16 +270,35 @@ describe("the bridge service loop", () => {
     expect((await r.runtime.await(launched.runId)).result).toBe("null");
   });
 
-  test("a spawnAgent that THROWS is a null result too, never an unhandled rejection in the daemon", async () => {
+  test("m5: a spawnAgent that THROWS FAILS the run with the host's message -- never a swallowable null, never an unhandled rejection", async () => {
+    // The whole-branch m5 finding: `script-api.ts`'s own contract says the three UNSWALLOWABLE
+    // refusals are the agent cap, the budget ceiling and "no spawn capability at all" -- and
+    // `tools/impl/workflow.ts` throws exactly that when `ctx.session.spawnChild` is absent. Folding
+    // it into `null` made a workflow in a session with no child-spawn capability "complete" with
+    // `.filter(Boolean)`-swallowed empties. A child that FAILS or STOPS still resolves null (the two
+    // tests above): those are agent OUTCOMES, this is the host refusing to start one at all.
     const r = rig({
       spawnAgent: async () => {
-        throw new Error("no spawn capability");
+        throw new Error("no child-spawn capability is configured for this session");
       },
     });
     const launched = launch(r, META + `return await agent("x");`);
     const view = await r.runtime.await(launched.runId);
-    expect(view.status).toBe("completed");
-    expect(view.result).toBe("null");
+    expect(view.status).toBe("failed");
+    expect(view.error).toContain("no child-spawn capability");
+    expect(view.result).toBeUndefined();
+  });
+
+  test("m5: a script that TRIES to swallow the refusal still cannot -- the run is already failing", async () => {
+    const r = rig({
+      spawnAgent: async () => {
+        throw new Error("no child-spawn capability is configured for this session");
+      },
+    });
+    const launched = launch(r, META + `const out = []; try { out.push(await agent("x")); } catch { out.push("swallowed"); } return out.filter(Boolean);`);
+    const view = await r.runtime.await(launched.runId);
+    expect(view.status).toBe("failed");
+    expect(view.result).toBeUndefined();
   });
 
   test("phase() updates the run's phase and log() flows through progress", async () => {

@@ -114,6 +114,20 @@ const GuardedDate = new Proxy(Date, {
 // meta.ts parses it statically, parent-side, before the worker ever starts; this capture exists so a
 // script can still read its own meta and so the worker can report what it actually ran.
 
+// DISCLOSED FALSE POSITIVE (whole-branch n2), stated here beside the dynamic-import one below
+// because it has the same shape and the same honest answer: the `export ` strip is a LINE-ANCHORED
+// REGEX, not a parser, so it also rewrites a line that begins with `export ` inside a template
+// literal, a block comment or a string. A script containing
+//
+//     const doc = `
+//     export const x = 1;
+//     `;
+//
+// gets that line's `export ` removed from its own data. The alternative is a real JS parser in the
+// worker's hot path for a case no workflow has any reason to hit; a script that must carry such a
+// line can indent it (the anchor allows leading whitespace, so `  export ` is stripped too --
+// prefix it with any non-space character instead) or build it from pieces. Documented rather than
+// silently tolerated, which is what the sibling `import` note already does.
 function transformSource(source: string): string {
   return source
     .replace(/\bexport\s+(?:const|let|var)\s+meta\s*=/, "__META__.value =")

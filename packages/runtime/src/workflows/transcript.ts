@@ -47,7 +47,9 @@ function renderCapped(value: unknown): string {
 
 export type WorkflowTranscriptEntry =
   | { kind: "launch"; runId: string; name: string; scriptPath: string; args?: string; resumedFrom?: string; replayed?: number }
-  | { kind: "agent"; prompt: string; outcome: "value" | "null"; value?: string; phase?: string; label?: string }
+  // `refused` is m5's own outcome: the HOST could not start an agent (no spawn capability), which is
+  // not an agent outcome at all -- it fails the run rather than resolving the call.
+  | { kind: "agent"; prompt: string; outcome: "value" | "null" | "refused"; value?: string; phase?: string; label?: string }
   | { kind: "phase"; title: string; declared: boolean }
   | { kind: "finish"; status: "completed" | "failed" | "stopped"; detail?: string };
 
