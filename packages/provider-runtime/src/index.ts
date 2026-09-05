@@ -47,3 +47,7 @@ export { DEFAULT_MAX_REDIRECTS, ProviderBodyLimitError, ProviderRequestError, bo
 export type { BoundedFetchInit } from "./http.ts";
 export { parseSse } from "./sse.ts";
 export type { SseEvent, SseOptions } from "./sse.ts";
+export { WinterProviderResolutionError, createRegistry, estimateCostUsd } from "./registry.ts";
+export type { ModelInfo, ProviderRegistry, RegistryListing, ResolutionErrorCode, ResolveRequest, ResolvedModel, UsageForCost } from "./registry.ts";
+export { createDiscoveryCache, discoverModels } from "./discovery.ts";
+export type { DiscoveryCache } from "./discovery.ts";
