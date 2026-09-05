@@ -93,6 +93,18 @@ describe("structured/validator.ts -- validate (ajv, R5-7)", () => {
     expect(seam.validate(draft7, { n: 3.5 }).ok).toBe(false);
   });
 
+  test("a THIRD dialect is refused loudly, never silently validated under draft-07", () => {
+    // R5-7 is "2020-12 + draft-07" and exactly two constructors exist. ajv validates a schema
+    // against its own `$schema` meta-schema at compile time, and neither instance holds 2019-09 or
+    // draft-06 -- so those throw rather than falling back. That is the RIGHT direction: a silent
+    // fallback would validate a 2019-09 schema under draft-07 rules, which is the same
+    // accepts-what-the-caller-rejects failure the two-entry-point rule exists to prevent.
+    const seam = createStructuredOutputSeam();
+    for (const dialect of ["https://json-schema.org/draft/2019-09/schema", "http://json-schema.org/draft-06/schema#"]) {
+      expect(() => seam.validate({ $schema: dialect, type: "object", properties: { x: { type: "number" } } } as unknown as JsonSchema, { x: 1 })).toThrow(/could not be compiled/);
+    }
+  });
+
   test("an UNCOMPILABLE schema is a configuration error, not a model error -- it throws", () => {
     // A model can never fix a broken schema by trying again, so returning `ok:false` would burn the
     // whole attempt budget and terminate as if the MODEL had failed.

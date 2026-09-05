@@ -227,6 +227,29 @@ describe("checkpoint/rewind.ts -- rewind", () => {
     expect(readFileSync(file, "utf8")).toBe("one\n");
   });
 
+  test("a dryRun does not promise a change a real rewind would refuse -- a MISSING backup blob", async () => {
+    // A real rewind refuses a snapshot whose blob cannot be read (`skippedLinks`), so a preview that
+    // reported the file as about-to-be-deleted would be describing a plan that can never run. This
+    // is NOT the "previews do not reflect refusals" case item (e) sanctions: that is about the
+    // USER's tree changing under a valid plan, this is a corrupt store with nothing to restore FROM.
+    const file = join(work, "a.ts");
+    writeFileSync(file, "original\n");
+    const sink = sinkFor();
+    await sink.beforeMutation({ path: file, tool: "Write", userMessageUuid: "u-1", sessionUuid: "sess-1" });
+    writeFileSync(file, "changed\nand grew\n");
+    rmSync(join(backupsDir(), blobs()[0]!)); // the blob is gone
+
+    const preview = await sink.rewind("u-1", { dryRun: true });
+    expect(preview.canRewind).toBe(true);
+    expect(preview.filesChanged).toEqual([]);
+    expect(preview.deletions).toBe(0);
+
+    const real = await sink.rewind("u-1");
+    expect(real.skippedLinks).toBe(1);
+    expect(real.filesChanged).toEqual([]);
+    expect(readFileSync(file, "utf8")).toBe("changed\nand grew\n");
+  });
+
   test("a dryRun on a session with no checkpoints at all creates no backups directory", async () => {
     const result = await createFileCheckpointSink({ home, cwd: work, sessionUuid: "untouched" }).rewind("u-1", { dryRun: true });
     expect(result.canRewind).toBe(false);

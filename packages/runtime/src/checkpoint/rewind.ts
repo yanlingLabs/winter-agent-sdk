@@ -140,6 +140,13 @@ export function rewindToCheckpoint(opts: RewindOptions): RewindFilesResult {
 
     const current = readCurrent(record.path);
     const restored = backupPath === undefined ? undefined : readCurrent(backupPath);
+
+    // A snapshot whose BLOB IS GONE has nothing to restore from, and a real rewind refuses it above.
+    // A preview must not then report the file as about to be deleted -- that is a plan that can
+    // never run, which is a different thing from the refusals item (e) says a preview may miss (the
+    // USER's tree changing under an otherwise valid plan). Only reachable on a corrupted store.
+    if (opts.dryRun && record.absent !== true && restored === undefined) continue;
+
     const unchanged = current === undefined ? restored === undefined : restored !== undefined && current.equals(restored);
     if (unchanged) continue;
 

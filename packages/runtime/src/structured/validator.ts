@@ -7,9 +7,13 @@
 // values the caller's schema rejects. Nothing throws and nothing logs; the host just gets a
 // `structured_output` that does not match what it asked for.
 //
-// The dialect is chosen from `$schema` alone. Exactly two are supported, matching R5-7's own
-// "2020-12 + draft-07"; anything else (including 2019-09) falls to draft-07 rather than silently
-// pulling in a third dialect no capture covers.
+// The dialect is chosen from `$schema` alone, and exactly two are supported -- R5-7's own
+// "2020-12 + draft-07". A THIRD dialect (2019-09, draft-06, anything else) is REFUSED at compile
+// time rather than quietly falling back: ajv validates a schema against its own declared `$schema`
+// meta-schema, and neither instance holds those, so `compile` throws and this file reports a
+// StructuredSchemaError. That is the loud direction and the right one -- a fallback to draft-07
+// would validate a 2019-09 schema under draft-07 rules, which is the very
+// accepts-what-the-caller-rejects failure the two-entry-point rule exists to prevent.
 import Ajv, { type ErrorObject, type ValidateFunction } from "ajv";
 import Ajv2020 from "ajv/dist/2020.js";
 import type { JsonSchema } from "./seam.ts";

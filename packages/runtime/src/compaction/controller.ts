@@ -73,24 +73,39 @@ export function createCompactionController(opts: CompactionControllerOptions = {
       // was decided, and it lands verbatim on the pinned `compact_metadata.pre_tokens`.
       const preTokens = input.accountant.contextTokens();
 
-      const plan = selectRetention(input.messages, { pairs });
+      // THE CARRIED SUMMARY IS TAKEN OFF THE FRONT **BEFORE** RETENTION, never after. The engine
+      // swaps its history for `[summary, ...retained]` and that summary is a `user` message, so it
+      // reads as a TURN START like any other. Retaining over the whole list would therefore
+      //   (a) silently spend one of the N pairs the caller asked to keep on a summary, and
+      //   (b) on the next check of a still-running turn leave `summarized === [summary]` alone --
+      //       which, carried forward verbatim, hands the model an EMPTY message list. A real
+      //       provider rejects that, so the turn would report a failed compaction on every round
+      //       while the window never shrank; and a tolerant one would append a summary of nothing.
+      // Taking it off first also keeps the round-start degradation reachable after a compaction: a
+      // long agentic turn plus a summary looks like two turns and would never take that path.
+      const head = input.messages[0];
+      const carried = lastSummary !== null && head !== undefined && head.role === "user" && head.content === lastSummary ? lastSummary : null;
+      const body: ProviderMessage[] = carried === null ? [...input.messages] : input.messages.slice(1);
+
+      const plan = selectRetention(body, { pairs });
+      // Reported as a FAILED compaction (the engine's own arm writes the pinned
+      // `compact_result: "failed"` status pair) rather than returned as a no-op: the engine takes
+      // `retained` literally and swaps its history for `[summary, ...retained]`, so a controller
+      // that handed back the whole input would make the history longer on every round, forever.
+      const refuse = (why: string): never => {
+        throw new NothingToCompactError(`there is nothing to compact: ${why}`);
+      };
       if (!plan.foldable) {
-        // Reported as a FAILED compaction (the engine's own arm writes the pinned
-        // `compact_result: "failed"` status pair) rather than returned as a no-op: the engine takes
-        // `retained` literally and swaps its history for `[summary, ...retained]`, so a controller
-        // that handed back the whole input would make the history longer on every round, forever.
-        throw new NothingToCompactError(
-          `there is nothing to compact: the whole conversation (${input.messages.length} message(s)) already fits inside the ${pairs}-pair retention window`,
-        );
+        refuse(`the whole conversation (${body.length} message(s)) already fits inside the ${pairs}-pair retention window`);
       }
 
-      // Carry the prior summary forward verbatim; the model only ever sees the material that has
-      // accumulated since it.
-      const first = plan.summarized[0];
-      const carried = lastSummary !== null && first !== undefined && first.role === "user" && first.content === lastSummary ? lastSummary : null;
-      const toSummarize: ProviderMessage[] = carried === null ? plan.summarized : plan.summarized.slice(1);
+      // Belt and braces for the same failure at a different layer: a window can be foldable BY COUNT
+      // and still leave the summarizer nothing legible (blank text, or blocks whose types the
+      // redaction deliberately does not know). An empty request is never worth making.
+      const redacted = redactForSummary(plan.summarized, previewOpts);
+      if (redacted.length === 0) refuse("the messages it would replace carry no summarizable content");
 
-      const fresh = await summarize(input.provider, redactForSummary(toSummarize, previewOpts), buildSummaryInstruction(input.customInstructions, instruction));
+      const fresh = await summarize(input.provider, redacted, buildSummaryInstruction(input.customInstructions, instruction));
       const summary = carried === null ? fresh : `${carried}\n\n${fresh}`;
       lastSummary = summary;
 

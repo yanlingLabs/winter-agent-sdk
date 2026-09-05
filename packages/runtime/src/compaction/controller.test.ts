@@ -276,4 +276,66 @@ describe("compaction/controller.ts -- compact()", () => {
     // The prior summary was NOT part of what the second pass asked the model to summarize.
     expect(JSON.stringify(requests[1]!.messages)).not.toContain(first.summary);
   });
+
+  test("a carried summary is NOT one of the retained pairs -- a second compaction mid-turn never sends an EMPTY request", async () => {
+    // The engine swaps its history for `[summary, ...retained]`, and that summary is a `user`
+    // message -- so it reads as a TURN START like any other. Left in the retention input it would
+    // (a) silently occupy one of the N pairs the caller asked to keep, and (b) on the very next
+    // check of a long turn become the ONLY thing left to summarize: `summarized === [summary]`,
+    // carried forward verbatim, leaving the model an empty message list. A real provider rejects an
+    // empty request, so the turn would then report `compact_result: "failed"` on every round while
+    // the window never shrinks -- exactly the heavy-agentic case compaction exists for.
+    const { provider, requests } = recordingProvider("FIRST PASS", "SECOND PASS");
+    const controller = createCompactionController({ retainedPairs: 4 });
+    const accountant = createContextAccountant({ limit: 1000 });
+    const first = await controller.compact({ messages: longConversation(), trigger: "auto", customInstructions: null, accountant, provider });
+
+    // The engine's own swap, then a tool round -- NO new user prompt, because the turn is still running.
+    const midTurn: ProviderMessage[] = [{ role: "user", content: first.summary }, ...first.retained, toolUse("c9", "Bash"), toolResult("c9", "output")];
+    await expect(controller.compact({ messages: midTurn, trigger: "auto", customInstructions: null, accountant, provider })).rejects.toThrow(/nothing to compact/i);
+    // Not one further token: the refusal happens before the provider is reached.
+    expect(requests).toHaveLength(1);
+  });
+
+  test("after a compaction the ROUND-start degradation is still reachable -- the summary does not defeat it", async () => {
+    const { provider, requests } = recordingProvider("FIRST PASS", "SECOND PASS");
+    const controller = createCompactionController({ retainedPairs: 1 });
+    const accountant = createContextAccountant({ limit: 1000 });
+    const first = await controller.compact({ messages: longConversation(), trigger: "auto", customInstructions: null, accountant, provider });
+    expect(first.retained).toEqual([user("turn six")]);
+
+    // One long agentic turn continuing past the boundary. Counting the summary as a turn start would
+    // make this look like TWO turns and take the turn-start path, which cannot cut inside a round.
+    const midTurn: ProviderMessage[] = [
+      { role: "user", content: first.summary },
+      ...first.retained,
+      toolUse("c9", "Bash"),
+      toolResult("c9", "a"),
+      toolUse("c10", "Bash"),
+      toolResult("c10", "b"),
+    ];
+    const second = await controller.compact({ messages: midTurn, trigger: "auto", customInstructions: null, accountant, provider });
+    expect(second.retained[0]!.role).toBe("assistant");
+    expect(second.retained).toHaveLength(2);
+    // The model was asked to summarize something real, and never the carried summary.
+    expect(requests[1]!.messages.length).toBeGreaterThan(0);
+    expect(JSON.stringify(requests[1]!.messages)).not.toContain(first.summary);
+    expect(second.summary).toContain(first.summary);
+  });
+
+  test("a foldable window that REDACTS to nothing is a failed compaction, not an empty provider call", async () => {
+    // Belt and braces for the same failure: messages can be foldable by count and still leave the
+    // summarizer nothing legible (blank text, or blocks whose types the redaction does not know).
+    const { provider, requests } = recordingProvider();
+    await expect(
+      createCompactionController({ retainedPairs: 1 }).compact({
+        messages: [user(""), user("the only real prompt")],
+        trigger: "auto",
+        customInstructions: null,
+        accountant: createContextAccountant({ limit: 1000 }),
+        provider,
+      }),
+    ).rejects.toThrow(/nothing to compact/i);
+    expect(requests).toHaveLength(0);
+  });
 });
