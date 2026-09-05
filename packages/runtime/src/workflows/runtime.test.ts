@@ -374,6 +374,51 @@ return 1;`,
     await r.runtime.await(launched.runId);
     expect(r.runtime.get(launched.runId)?.phase).toBe("Global");
   });
+
+  // ================================================================================================
+  // T8 rider 27: the group is STRUCTURAL now, not only prose.
+  // ================================================================================================
+  //
+  // Lane W's NEEDS_CONTEXT 7. Every assertion above reads `summary` -- the progress TEXT -- because
+  // that was the only channel. Text is a bad one: a declared phase whose `meta.phases` entry carries
+  // no `detail` renders as a bare title, exactly like an ad-hoc `phase()` call, so a host rendering a
+  // progress tree could not reconstruct the grouping WS-11 §1.2 specifies. `phase`/`declaredPhase`
+  // on `WorkflowProgress` close that at the seam; the WIRE half stays open (the pinned
+  // `task_progress` frame has no phase field -- see the field's own header).
+  test("rider 27: a DECLARED phase and an ad-hoc one are distinguishable on the seam, not just in the text", async () => {
+    const r = rig();
+    // Two phases: one declared in `meta.phases` WITHOUT a detail (so its text is a bare title,
+    // indistinguishable from the ad-hoc one), and one never declared at all.
+    const meta = `export const meta = { name: "wf", description: "d", phases: [{ title: "Declared" }] };\n`;
+    const launched = launch(r, meta + `phase("Declared"); phase("AdHoc"); return 1;`);
+    await r.runtime.await(launched.runId);
+    const progress = r.log.filter((e) => e.event === "progress").map((e) => e.detail as WorkflowProgress);
+
+    const declared = progress.find((pr) => pr.phase === "Declared");
+    const adHoc = progress.find((pr) => pr.phase === "AdHoc");
+    expect(declared, "a declared phase reports its group structurally").toBeDefined();
+    expect(adHoc, "an unmatched phase() gets its OWN group, not the previous one").toBeDefined();
+    expect(declared!.declaredPhase).toBe(true);
+    expect(adHoc!.declaredPhase).toBe(false);
+    // AND THE TEXT CANNOT TELL THEM APART -- which is the whole reason the fields exist. If this
+    // assertion ever fails, the structural fields have stopped being the only reliable signal and
+    // this test's own premise needs revisiting.
+    expect(declared!.summary).toBe("Declared");
+    expect(adHoc!.summary).toBe("AdHoc");
+  });
+
+  test("rider 27: a COUNT change carries the current group too, so a progress tree never loses an agent", async () => {
+    const r = rig({ spawnAgent: async () => fakeChild({ content: "ok" }) });
+    const launched = launch(r, META + `phase("Global"); await agent("a"); return 1;`);
+    await r.runtime.await(launched.runId);
+    const progress = r.log.filter((e) => e.event === "progress").map((e) => e.detail as WorkflowProgress);
+    // At least one report whose counts moved carries the group -- `declaredPhase` deliberately
+    // absent there, because whether the group was declared is a fact about the `phase()` call that
+    // established it, not about an agent starting under it.
+    const counted = progress.filter((pr) => pr.phase === "Global" && pr.running + pr.completed > 0);
+    expect(counted.length).toBeGreaterThan(0);
+    expect(counted[0]!.declaredPhase).toBeUndefined();
+  });
 });
 
 describe("meta.name is threaded, never recovered from the SANITIZED filename", () => {

@@ -1,5 +1,6 @@
-import { test, expect, spyOn } from "bun:test";
+import { test, expect, spyOn, describe } from "bun:test";
 import { query, type QueryInternal } from "./query.ts";
+import type { Options } from "./options.ts";
 import { ResultError, WinterRpcError } from "./errors.ts";
 import { inMemoryProcess } from "winter-agent-runtime/testing";
 import { echoProvider, testProviderByName } from "winter-agent-runtime";
@@ -1531,4 +1532,69 @@ test("P5 T2: the pinned session defaults are exported as constants rather than b
   expect(DEFAULT_PLANS_DIRECTORY).toBe(".winter/plans");
   expect(DEFAULT_OUTPUT_STYLE).toBe("default");
   expect(SYSTEM_PROMPT_DYNAMIC_BOUNDARY).toBe("__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__");
+});
+
+// ================================================================================================
+// T8 rider 6 / RULING P5-E: the two construction-time rejections, compared VERBATIM against the
+// pinned artifact with the brand rename applied.
+// ================================================================================================
+//
+// Capture (2) (`compat/anthropic/0.3.250/derived-shapes-p5.md`) recorded both messages, both classes,
+// and the VALIDATION ORDER, from a real run against the pinned 0.3.250 runtime. P5-E's rule is that
+// pinned error strings keep their wording except brand names, which follow WS-01 §2.5's rename --
+// so a parity fixture compares WITH the rename applied, and this is that fixture.
+//
+// THE STRINGS BELOW ARE THE CAPTURED ONES, transformed by exactly one substitution
+// (`CLAUDE_CONFIG_DIR` -> `WINTER_HOME`). Nothing else about either message may move: the reason
+// clause ("backup blobs are not mirrored, so rewindFiles() fails after a store-backed resume") is
+// what makes WS-11 §9's "stays correctly unavailable" the right long-term framing rather than a
+// vague deferral, and a host that greps for it would not find a paraphrase.
+//
+// Hermetic: no artifact is fetched here. These are transcriptions of an already-recorded capture,
+// which is the same footing every other conformance fixture in this repository stands on.
+describe("rider 6 / P5-E: the pinned rejection messages, with the brand rename applied", () => {
+  const PINNED_CHECKPOINTING_MESSAGE =
+    "enableFileCheckpointing is not yet supported with sessionStore (backup blobs are not mirrored, so rewindFiles() fails after a store-backed resume).";
+  // The ONE renamed token, and the only difference from the captured text.
+  const PINNED_PERSIST_SESSION_MESSAGE =
+    "sessionStore cannot be used with persistSession: false -- the storage adapter requires local writes to mirror from. Use WINTER_HOME=/tmp for ephemeral local writes with external mirroring.";
+
+  const fakeStore = { load: async () => null, append: async () => {}, list: async () => [] } as unknown as NonNullable<Options["sessionStore"]>;
+
+  function constructionError(options: Partial<Options>): Error {
+    try {
+      // `query()` throws SYNCHRONOUSLY from the call itself (capture (2): request count 0, zero
+      // messages yielded) -- so the throw is caught here, not on the first `for await`.
+      query({ prompt: "x", options: { ...options, spawnClaudeCodeProcess: () => { throw new Error("unreachable -- the constructor must throw first"); } } as Options });
+    } catch (err) {
+      return err as Error;
+    }
+    throw new Error("expected query() to throw at construction");
+  }
+
+  test("enableFileCheckpointing + sessionStore: a PLAIN Error, verbatim", () => {
+    const err = constructionError({ enableFileCheckpointing: true, sessionStore: fakeStore });
+    // A plain built-in `Error`, NOT a named subclass -- capture (2) is explicit that a typed class
+    // would be STRICTER than the pin, which is a divergence to disclose rather than parity.
+    expect(err.constructor).toBe(Error);
+    expect(err.name).toBe("Error");
+    expect(err.message).toBe(PINNED_CHECKPOINTING_MESSAGE);
+  });
+
+  test("sessionStore + persistSession:false: the other message, verbatim, with WINTER_HOME for CLAUDE_CONFIG_DIR", () => {
+    const err = constructionError({ sessionStore: fakeStore, persistSession: false });
+    expect(err.constructor).toBe(Error);
+    expect(err.message).toBe(PINNED_PERSIST_SESSION_MESSAGE);
+    // The rename, asserted as a property rather than only as a literal: no branded name survives.
+    expect(err.message).not.toContain("CLAUDE_CONFIG_DIR");
+  });
+
+  test("VALIDATION ORDER is observable, and matches: persistSession is checked FIRST and wins", () => {
+    // Capture (2)'s third refinement, and the one a re-implementation gets wrong silently: with all
+    // three conflicting, the pin reports the `persistSession` message. A Winter that checked in the
+    // other order would produce a different message for the same call, and every single-conflict
+    // test above would still pass.
+    const err = constructionError({ enableFileCheckpointing: true, sessionStore: fakeStore, persistSession: false });
+    expect(err.message).toBe(PINNED_PERSIST_SESSION_MESSAGE);
+  });
 });

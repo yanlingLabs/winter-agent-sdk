@@ -30,6 +30,27 @@ export interface WorkflowProgress {
   summary?: string;
   /** Lands on `task_progress.last_tool_name`. */
   lastToolName?: string;
+  /**
+   * Phase 5 Task 8 (rider 27): the PHASE GROUP this report belongs to, structurally.
+   *
+   * Lane W's NEEDS_CONTEXT 7: WS-11 §1.2's "an unmatched `phase()` gets its own group" was honoured
+   * in the runtime's own state and reflected in the progress TEXT (`"Title: detail"` for a declared
+   * phase versus a bare `"Title"` for an ad-hoc one), but a host rendering a progress tree could not
+   * reconstruct the grouping -- it had to parse prose, and a declared phase whose entry carries no
+   * `detail` renders identically to an ad-hoc one, so the prose is not even a reliable signal.
+   *
+   * `declaredPhase` distinguishes the two cases the text cannot.
+   *
+   * WHAT THIS DOES NOT DO, stated at the field because a reader will look for it: neither value
+   * reaches the WIRE. The pinned `task_progress` message (WS-06 §3.5) carries
+   * `summary`/`last_tool_name`/`usage` and no phase field, and putting a Winter-invented key on a
+   * pinned frame is precisely the divergence class this phase refuses. So the grouping is legible to
+   * a host that consumes the SEAM, and on the wire it remains prose. Closing that half needs either
+   * a captured pinned field or a deliberate disclosed extension -- neither of which T8 may invent.
+   */
+  phase?: string;
+  /** True when `phase` matched a declared `meta.phases` entry rather than being an ad-hoc `phase()` call. */
+  declaredPhase?: boolean;
   usage?: { total_tokens: number; tool_uses: number; duration_ms: number };
 }
 

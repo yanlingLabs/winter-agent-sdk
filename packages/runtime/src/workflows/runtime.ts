@@ -414,12 +414,15 @@ export class WorkflowRuntime {
         // description); an unmatched call gets its OWN group rather than being dropped or folded into
         // the previous one.
         //
-        // DISCLOSED (report NEEDS_CONTEXT): the frozen `WorkflowProgress` has no group/declared
-        // field, so "its own group" is recorded here and reflected in the progress text, but a host
-        // cannot tell a declared group from an ad-hoc one on the wire.
+        // CLOSED AT THE SEAM by Phase 5 Task 8 (rider 27): `WorkflowProgress` carries `phase` and
+        // `declaredPhase` now, so a host consuming the seam can tell a declared group from an ad-hoc
+        // one structurally rather than by parsing the progress text -- which never distinguished
+        // them reliably anyway (a declared phase with no `detail` renders exactly like an ad-hoc
+        // one). The WIRE half stays open: the pinned `task_progress` frame has no phase field. See
+        // `WorkflowProgress.phase`'s own header.
         const group = matchPhaseGroup(run.declaredPhases, message.title);
         this.registry.setPhase(run.runId, group.title);
-        this.emitProgress(run, group.declared && group.detail !== undefined ? `${group.title}: ${group.detail}` : group.title);
+        this.emitProgress(run, group.declared && group.detail !== undefined ? `${group.title}: ${group.detail}` : group.title, { phase: group.title, declaredPhase: group.declared });
         break;
       }
       case "log":
@@ -623,7 +626,11 @@ export class WorkflowRuntime {
     if (!this.live.has(run.runId)) return; // never touch counts for an already-torn-down run
     this.registry.setCounts(run.runId, { running: run.running, completed: run.completed, total: run.total });
     const group = phase ?? this.registry.get(run.runId)?.phase;
-    this.emitProgress(run, group);
+    // Rider 27: the group travels STRUCTURALLY as well as in the text. `declaredPhase` is
+    // deliberately omitted here rather than guessed -- this path reports a COUNT change (an agent
+    // started or finished) under whatever group is current, and whether that group was declared is
+    // a fact about the `phase()` call that established it, recorded at that call site above.
+    this.emitProgress(run, group, group !== undefined ? { phase: group } : undefined);
   }
 
   /**
@@ -634,12 +641,14 @@ export class WorkflowRuntime {
    * agent count, `duration_ms` from the parent's wall clock (the worker has no clock -- `Date.now` is
    * withheld inside it by design).
    */
-  private emitProgress(run: LiveRun, summary?: string): void {
+  private emitProgress(run: LiveRun, summary?: string, group?: { phase?: string; declaredPhase?: boolean }): void {
     run.task.emit({
       running: run.running,
       completed: run.completed,
       total: run.total,
       ...(summary !== undefined ? { summary } : {}),
+      ...(group?.phase !== undefined ? { phase: group.phase } : {}),
+      ...(group?.declaredPhase !== undefined ? { declaredPhase: group.declaredPhase } : {}),
       usage: {
         total_tokens: this.deps.session.accountant.contextTokens(),
         tool_uses: run.toolUses,
