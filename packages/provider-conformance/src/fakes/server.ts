@@ -166,8 +166,14 @@ export interface SseResponseOptions {
 export function sseResponse(frames: SseFrame[], opts: SseResponseOptions = {}): Response {
   const encoder = new TextEncoder();
   let written = 0;
+  let cancelled = false;
   const body = new ReadableStream<Uint8Array>({
     async pull(controller) {
+      // The SAME class of defect `stalledResponse` carries below: a `delayMs` await can resolve after
+      // the consumer has already cancelled, and enqueueing into a torn-down controller throws from a
+      // context no test owns. Checked on entry and again after the delay, because the cancel can land
+      // on either side of it.
+      if (cancelled) return;
       if (written >= frames.length) {
         controller.close();
         return;
@@ -181,8 +187,16 @@ export function sseResponse(frames: SseFrame[], opts: SseResponseOptions = {}): 
       const frame = frames[written]!;
       written++;
       if (frame.delayMs !== undefined && frame.delayMs > 0) await new Promise((r) => setTimeout(r, frame.delayMs));
+      if (cancelled) return;
       const prefix = frame.event !== undefined ? `event: ${frame.event}\n` : "";
-      controller.enqueue(encoder.encode(`${prefix}data: ${frame.data}\n\n`));
+      try {
+        controller.enqueue(encoder.encode(`${prefix}data: ${frame.data}\n\n`));
+      } catch {
+        /* the consumer tore the stream down mid-delay -- expected, not an error */
+      }
+    },
+    cancel() {
+      cancelled = true;
     },
   });
   return new Response(body, {
@@ -220,12 +234,39 @@ export function redirectResponse(location: string, status: 301 | 302 | 307 | 308
  * Bounded by `holdMs` so it cannot outlive the test that started it, whatever the client does. The
  * stall watchdog under test fires long before this does; the bound exists so a BROKEN watchdog fails
  * the test on a timeout it can explain rather than hanging the runner.
+ *
+ * THE TIMER IS CANCELLED WHEN THE CONSUMER TEARS THE STREAM DOWN, and the reason is worth stating
+ * because getting it wrong was a cross-lane defect rather than a local one. A stall scenario ONLY
+ * ever ends by the consumer cancelling -- the watchdog fires long before `holdMs` by construction --
+ * so the "consumer cancelled first" path is the NORMAL path here, not an edge case. An unconditional
+ * `setTimeout(() => controller.close())` then fired against an already-closed controller and threw
+ * `TypeError: Invalid state: Controller is already closed` from a bare timer callback, which Bun
+ * attributes to WHICHEVER TEST HAPPENS TO BE RUNNING when it lands. It took down this package's own
+ * `corpus/runner.test.ts` and unrelated adapter cases in two separate lanes, purely by timing.
+ *
+ * Belt AND braces, deliberately: `cancel()` clears the timer, and the flag guards the close anyway --
+ * a stream can also be errored or closed by a path that never calls `cancel()`, and this helper is
+ * frozen spine that six lanes build on.
  */
 export function stalledResponse(holdMs = 10_000): Response {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let done = false;
   const body = new ReadableStream<Uint8Array>({
     start(controller) {
       controller.enqueue(new TextEncoder().encode(": open\n\n"));
-      setTimeout(() => controller.close(), holdMs);
+      timer = setTimeout(() => {
+        if (done) return;
+        done = true;
+        try {
+          controller.close();
+        } catch {
+          /* the consumer got there first -- nothing to close, and nothing to report */
+        }
+      }, holdMs);
+    },
+    cancel() {
+      done = true;
+      if (timer !== undefined) clearTimeout(timer);
     },
   });
   return new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
