@@ -22,9 +22,15 @@ export const BUILTIN_SLASH_COMMANDS: readonly SlashCommandInfo[] = [
 ] as const;
 
 /**
- * The full listing: built-ins, then command files (project > user > plugin), then skills. Names are
- * deduplicated across all three, first occurrence winning -- which is exactly the order `resolve()`
- * consults them in, so the listing can never advertise a name that a different producer answers.
+ * The full listing: built-ins, then whatever the resolver enumerates (skills, then command files
+ * project > user > plugin), first occurrence winning.
+ *
+ * THE INVARIANT, AND WHAT NOW ENFORCES IT: every name listed here resolves, and to the producer this
+ * listing names. That used to be a claim resting on two loops happening to agree, and they did not --
+ * `list()` walked command files first while `resolve()` walked skills first, so a shadowed name was
+ * listed with the LOSING producer's description and source, and an `off` skill put a name into
+ * `system/init.slash_commands` that `resolve()` answered `none` to. It now rests on
+ * `FilesystemCommandResolver.enumerate()` being the single ordered map both methods read.
  */
 export function buildSlashCommandListing(resolver?: FilesystemCommandResolver, cwd?: string): SlashCommandInfo[] {
   const out: SlashCommandInfo[] = [];

@@ -83,7 +83,13 @@ export interface SkillIndexOptions {
    * `disableBundledSkills` gate) without inventing content. Disclosed in the report.
    */
   builtinSkills?: readonly DiscoveredSkill[] | undefined;
-  /** `Settings.disableBundledSkills` (`sdk.d.ts:5657`). Removes the builtin tier and nothing else. */
+  /**
+   * `Settings.disableBundledSkills` (`sdk.d.ts:5657`). Removes the builtin tier and nothing else.
+   *
+   * Like every other settings-derived option on this interface, it arrives from `Settings`' INDEX
+   * SIGNATURE as `unknown` and must be narrowed by the caller -- see
+   * `settings/loaders/strict-plugin-only.ts`'s header for the full list and why.
+   */
   disableBundledSkills?: boolean | undefined;
   /**
    * `Settings.strictPluginOnlyCustomization` (`sdk.d.ts:5988`). When it covers `"skills"`, ONLY

@@ -235,6 +235,45 @@ describe("SkillIndex: tiers, precedence and source gating (WS-11 §2.1, P5 amend
   });
 });
 
+// --- Fix round 1, Minor 2: the two index jails, each previously invisible to the suite ----------
+describe("SkillIndex: the name jails (security-shaped, fixtured so a revert is loud)", () => {
+  test("a FRONTMATTER-declared `name:` that escapes the slug jail keeps the skill out of the index", () => {
+    // The directory name is legal; the DECLARED name is not. `parseSkillFile` prefers the declared
+    // one, so without the jail on the RESOLVED name the index advertises a name
+    // `isLegalSkillIdentity` then refuses -- the advertise-then-refuse split the executor's own jail
+    // exists to prevent. `option.test.ts` sweeps plugin-qualified names only; this is the other route.
+    const repo = mkTemp("winter-jail-fm-repo-");
+    const winterHome = mkTemp("winter-jail-fm-home-");
+    for (const [dir, declared] of [
+      ["escape", "../../escape"],
+      ["upper", "UPPER"],
+      ["spaced", "has space"],
+      ["nested", "a/b"],
+      ["dotted", ".hidden"],
+    ]) {
+      writeSkill(join(repo, ".winter", "skills"), dir!, { name: declared!, description: "d" }, "BODY");
+    }
+    writeSkill(join(repo, ".winter", "skills"), "fine", { name: "fine", description: "d" }, "BODY");
+    expect(SkillIndex.build({ cwd: repo, winterHome }).names()).toEqual(["fine"]);
+  });
+
+  test("a PLUGIN name that could traverse never becomes a qualified skill name", () => {
+    const repo = mkTemp("winter-jail-plug-repo-");
+    const winterHome = mkTemp("winter-jail-plug-home-");
+    const index = SkillIndex.build({
+      cwd: repo,
+      winterHome,
+      plugins: [
+        { plugin: "../evil", skills: [{ name: "ship", description: "d", path: "/p/SKILL.md" }] },
+        { plugin: "a/b", skills: [{ name: "ship", description: "d", path: "/p/SKILL.md" }] },
+        { plugin: "UP", skills: [{ name: "ship", description: "d", path: "/p/SKILL.md" }] },
+        { plugin: "ok-plugin", skills: [{ name: "ship", description: "d", path: "/p/SKILL.md" }] },
+      ],
+    });
+    expect(index.names()).toEqual(["ok-plugin:ship"]);
+  });
+});
+
 describe("SkillIndex: `.winter:<skill>` qualification (WS-11 §4)", () => {
   test("a project skill answers to BOTH its bare name and `.winter:<name>`, and lists under the bare one", () => {
     const repo = mkTemp("winter-qual-repo-");

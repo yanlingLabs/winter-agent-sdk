@@ -74,6 +74,20 @@ describe("matchesSkillRule: argument prefixes (WS-07 §3)", () => {
     expect(matchesSkillRule(".winter:review:x", both)).toBe(true);
     expect(matchesSkillRule(".winter:review:y", both)).toBe(false);
   });
+
+  test("the sort DISCRIMINATES: a shorter identity that PREFIXES the rule content must not claim it first", () => {
+    // Fix round 1, Nit 6. The case above cannot fail without the sort (the short identity is not a
+    // prefix of the content, so the loop skips it). This one can: unsorted, `a` matches
+    // `content.startsWith("a:")` and RETURNS from inside that branch, comparing argument pattern `b`
+    // against args `""` -- false -- before `a:b` is ever tried. No identity set `SkillIndex` produces
+    // reaches this today, so the sort is defensive; this fixture is what keeps it from being deleted
+    // as dead code.
+    expect(matchesSkillRule("a:b", { identities: ["a", "a:b"] })).toBe(true);
+    expect(matchesSkillRule("a:b", { identities: ["a", "a:b"], args: "anything" })).toBe(true);
+    // ...and the shorter identity still owns a content that is genuinely name+argument for it.
+    expect(matchesSkillRule("a:b", { identities: ["a"], args: "b" })).toBe(true);
+    expect(matchesSkillRule("a:b", { identities: ["a"], args: "zzz" })).toBe(false);
+  });
 });
 
 describe("skillRulesAllow", () => {

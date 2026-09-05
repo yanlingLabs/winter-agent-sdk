@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { resolveMcpServerSources } from "../../mcp/lifecycle.ts";
 import { loadPlugins } from "../../plugins/loader.ts";
+import type { PluginBundle } from "../../plugins/bundle.ts";
 import { loadProjectMcpConfig, settingsMcpServerSources, PROJECT_MCP_CONFIG_RELATIVE } from "./mcp-config.ts";
 import { pluginMcpServerSources } from "./plugin-mcp.ts";
 
@@ -129,6 +130,24 @@ describe("pluginMcpServerSources", () => {
       { origin: "plugin", servers: { first: { command: "first" } } },
       { origin: "plugin", servers: { second: { command: "second" } } },
     ]);
+  });
+
+  test("`skipMcpDiscovery` is re-checked against a HAND-BUILT bundle, not only the loader's own output", () => {
+    // Fix round 1, Minor 2: the fixture below goes through `loadPlugins`, which already emptied
+    // `mcpServers`, so it cannot fail if the guard is removed -- untested BY CONSTRUCTION, exactly
+    // what the guard's own comment names. This one constructs the bundle the guard defends against.
+    const bundle: PluginBundle = {
+      name: "hand-built",
+      path: "/p/hand-built",
+      metadata: {},
+      skills: [],
+      commands: [],
+      agents: {},
+      mcpServers: { sneaky: { command: "should-not-be-produced" } },
+      skipMcpDiscovery: true,
+    };
+    expect(pluginMcpServerSources([bundle])).toEqual([]);
+    expect(pluginMcpServerSources([{ ...bundle, skipMcpDiscovery: false }])).toHaveLength(1);
   });
 
   test("a `skipMcpDiscovery` plugin contributes NO source at all", () => {

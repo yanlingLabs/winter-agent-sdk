@@ -11,6 +11,20 @@
 // exactly the kind of half-landed security-shaped feature this phase's reviews look for. Named here
 // so the remaining wiring is a known, small item rather than a silent absence.
 
+// THE P5 SETTINGS KEYS THIS LANE CONSUMES ARE NOT DECLARED ON WINTER'S `Settings` (fix round 1,
+// disclosure). `packages/sdk/src/settings/types.ts` declares the keys P5 RESOLVES plus an index
+// signature, and these six land on that index signature as `unknown`:
+//
+//   skillOverrides, disableBundledSkills, strictPluginOnlyCustomization,
+//   skillListingMaxDescChars, skillListingBudgetFraction, mcpServers
+//
+// So every one of them is PRESERVED and reaches a consumer, but arrives untyped: T8 must read and
+// NARROW each itself before handing it to `SkillIndex.build` / `buildSkillListing` /
+// `settingsMcpServerSources`, all of which take a typed parameter. This lane cannot declare them --
+// `settings/**` is spine (R5-12) -- and none of them widens capability, so none needs
+// overlay-never treatment. A T8/spine note, recorded here because this is the one file in this lane
+// whose whole subject is a settings key.
+
 /** The pinned area names. An unrecognised string in the array is ignored, never treated as `true`. */
 export type StrictPluginOnlyArea = "skills" | "agents" | "hooks" | "mcp";
 

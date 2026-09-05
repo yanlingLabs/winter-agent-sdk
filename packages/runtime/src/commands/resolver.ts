@@ -22,6 +22,18 @@
 // (it is in the listing and invocable through the Skill tool), so `/review` and `Skill("review")`
 // delivering different text would be a genuine split brain. A command file has no second entry
 // point, so it has nothing to disagree with.
+//
+// DISCLOSED ASYMMETRY BETWEEN THE SKILL'S OWN TWO DOORS (fix round 1, Minor 3): `$ARGUMENTS` IS
+// substituted here, on the `/name args` door, and is NOT substituted by the `Skill` tool
+// (tools/impl/skill.ts), which hands the body over verbatim and reports `args` on the
+// `invoked_skills` attachment instead. So one skill body can produce two texts. This is DELIBERATE
+// for now, not an oversight: R5-14 pins substitution for `/name args` and nothing else, and item (i)
+// found there is no `Skill` tool schema in the pinned declaration at all, so what `args` MEANS on the
+// tool door is uncaptured -- substituting there would be Winter inventing a semantic the pin has not
+// been observed to have, on the door a MODEL drives. The `/name` door is a human typing arguments
+// into a template; the tool door is a model that already has the arguments in its own context.
+// CAPTURE-PENDING: if a differential capture shows the pinned Skill tool substituting, this becomes a
+// one-line change in tools/impl/skill.ts and the two doors converge.
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
 import type { SettingSource } from "@yanlinglabs/winter-agent-sdk";
@@ -171,17 +183,29 @@ export function substituteArguments(body: string, args: string): string {
   return body.split("$ARGUMENTS").join(args);
 }
 
+/**
+ * One entry of the resolver's single ordered enumeration -- the shared source of truth `list()` and
+ * `resolve()` are both views of (fix round 1, Medium 1).
+ *
+ * `kind: "blocked"` is a name a skill CLAIMS but nobody may answer: an `off` skill. It is neither
+ * listed nor resolvable, and it stops a same-named command file from claiming the name behind it.
+ */
+type EnumeratedCommand =
+  | { kind: "skill"; name: string; description: string }
+  | { kind: "file"; name: string; file: CommandFile }
+  | { kind: "blocked"; name: string };
+
 export class FilesystemCommandResolver implements CommandResolver {
   private readonly opts: FilesystemCommandResolverOptions;
   /**
-   * Command FILES are discovered per `cwd`, memoized. `resolve()` receives a cwd (the spine's own
-   * signature) and a session's cwd genuinely moves -- EnterWorktree relocates the session root -- so
-   * a set fixed at construction would go stale. SKILLS deliberately do NOT follow the cwd: they come
-   * from the index built once at startup, which is the same set the model sees in its listing and
-   * through the Skill tool. `/review` and `Skill("review")` resolving to different files would be
+   * The enumeration, memoized per `cwd`. `resolve()` receives a cwd (the spine's own signature) and a
+   * session's cwd genuinely moves -- EnterWorktree relocates the session root -- so a set fixed at
+   * construction would go stale for COMMAND FILES. SKILLS deliberately do NOT follow the cwd: they
+   * come from the index built once at startup, which is the same set the model sees in its listing
+   * and through the Skill tool. `/review` and `Skill("review")` resolving to different files would be
    * the split brain the overlap rule exists to prevent.
    */
-  private readonly byCwd = new Map<string, Map<string, CommandFile>>();
+  private readonly byCwd = new Map<string, Map<string, EnumeratedCommand>>();
 
   private constructor(opts: FilesystemCommandResolverOptions) {
     this.opts = opts;
@@ -191,9 +215,7 @@ export class FilesystemCommandResolver implements CommandResolver {
     return new FilesystemCommandResolver(opts);
   }
 
-  private commandFiles(cwd: string): Map<string, CommandFile> {
-    const cached = this.byCwd.get(cwd);
-    if (cached) return cached;
+  private scanCommandFiles(cwd: string): CommandFile[] {
     const found: CommandFile[] = [];
     if (sourcesAllow(this.opts.settingSources, "project")) {
       // Same parent-walk as the skills project tier, so `/name` and a skill of the same name are
@@ -216,26 +238,56 @@ export class FilesystemCommandResolver implements CommandResolver {
         });
       }
     }
-    const map = new Map<string, CommandFile>();
-    for (const file of found) if (!map.has(file.name)) map.set(file.name, file); // nearest/highest tier wins
+    return found;
+  }
+
+  /**
+   * THE single ordered enumeration. Insertion order IS precedence: skills first (the overlap rule),
+   * then command files (project nearest-first > user > plugin), first occurrence of a name winning.
+   *
+   * WHY ONE FUNCTION AND NOT TWO LOOPS. `list()` and `resolve()` used to walk opposite orders. For a
+   * name held by both a skill and a command file, `resolve()` returned the skill's body while the
+   * listing reported the command FILE's description, argument hint and source -- and an `off` skill
+   * put a name into `system/init.slash_commands` that `resolve()` answered `none` to, advertising a
+   * command nothing could run. Two orders over one namespace cannot be kept in agreement by care;
+   * they have to be one enumeration.
+   */
+  private enumerate(cwd: string): Map<string, EnumeratedCommand> {
+    const cached = this.byCwd.get(cwd);
+    if (cached) return cached;
+    const map = new Map<string, EnumeratedCommand>();
+    for (const skill of this.opts.skills?.list() ?? []) {
+      if (map.has(skill.name)) continue;
+      // `off` CLAIMS the name without answering it: `off` means off, and letting a same-named command
+      // file answer instead would silently substitute a different producer's text for a skill the
+      // user deliberately disabled. `user-invocable-only` is the opposite -- it removes a skill from
+      // the MODEL's door and this is exactly the door it keeps (listing.ts).
+      map.set(skill.name, isUserInvocable(this.opts.skillOverrides, skill) ? { kind: "skill", name: skill.name, description: skill.description } : { kind: "blocked", name: skill.name });
+    }
+    for (const file of this.scanCommandFiles(cwd)) {
+      if (map.has(file.name)) continue;
+      map.set(file.name, { kind: "file", name: file.name, file });
+    }
     this.byCwd.set(cwd, map);
     return map;
   }
 
-  /** Every `/name` this resolver answers to, skills last. Feeds `system/init.slash_commands`. */
+  /** Every `/name` this resolver answers to, in enumeration order. Feeds `system/init.slash_commands`. */
   list(cwd?: string): SlashCommandInfo[] {
     const out: SlashCommandInfo[] = [];
-    const seen = new Set<string>();
-    for (const file of this.commandFiles(cwd ?? this.opts.cwd).values()) {
-      if (seen.has(file.name)) continue;
-      seen.add(file.name);
-      out.push({ name: file.name, ...(file.description !== undefined ? { description: file.description } : {}), ...(file.argumentHint !== undefined ? { argumentHint: file.argumentHint } : {}), source: file.source });
-    }
-    for (const skill of this.opts.skills?.list() ?? []) {
-      if (!isUserInvocable(this.opts.skillOverrides, skill)) continue;
-      if (seen.has(skill.name)) continue;
-      seen.add(skill.name);
-      out.push({ name: skill.name, description: skill.description, source: "skill" });
+    for (const entry of this.enumerate(cwd ?? this.opts.cwd).values()) {
+      if (entry.kind === "blocked") continue;
+      if (entry.kind === "skill") {
+        out.push({ name: entry.name, description: entry.description, source: "skill" });
+        continue;
+      }
+      const { file } = entry;
+      out.push({
+        name: file.name,
+        ...(file.description !== undefined ? { description: file.description } : {}),
+        ...(file.argumentHint !== undefined ? { argumentHint: file.argumentHint } : {}),
+        source: file.source,
+      });
     }
     return out;
   }
@@ -245,23 +297,22 @@ export class FilesystemCommandResolver implements CommandResolver {
     const { name, args } = splitCommand(prompt);
     if (name.length === 0) return { kind: "none" };
 
-    // Skills first: the overlap rule. `off` removes a skill from every door; `user-invocable-only`
-    // removes it from the MODEL's door and this one is exactly the door it keeps (listing.ts).
-    const skill = this.opts.skills?.get(name);
-    if (skill && isUserInvocable(this.opts.skillOverrides, skill)) {
+    const entry = this.enumerate(cwd).get(name);
+    if (entry === undefined || entry.kind === "blocked") return { kind: "none" };
+
+    if (entry.kind === "skill") {
       const loaded = this.opts.skills?.load(name);
-      if (loaded) return { kind: "expand", text: substituteArguments(loaded.body, args), source: loaded.path };
-    }
-    if (skill && !isUserInvocable(this.opts.skillOverrides, skill)) {
-      // A disabled skill does NOT fall through to a command file of the same name: `off` means off,
-      // and silently answering with different text would be worse than not answering.
-      return { kind: "none" };
+      // A skill whose file VANISHED since indexing answers `none` -- it does NOT hand the name to a
+      // command file behind it (fix round 1, Minor 4). The enumeration decides who owns a name, and
+      // ownership must not change because a file disappeared mid-session: that is exactly the
+      // listing/resolve divergence this round closed, displaced in time. `none` means "no command
+      // answered", the same thing an unknown `/name` means, and the prompt is used verbatim.
+      if (!loaded) return { kind: "none" };
+      return { kind: "expand", text: substituteArguments(loaded.body, args), source: loaded.path };
     }
 
-    const file = this.commandFiles(cwd).get(name);
-    if (!file) return { kind: "none" };
-    const raw = readCommandBody(file.path);
+    const raw = readCommandBody(entry.file.path);
     if (raw === undefined) return { kind: "none" }; // deleted since discovery -- never a throw
-    return { kind: "expand", text: substituteArguments(parseCommandFile(raw).body, args), source: file.path };
+    return { kind: "expand", text: substituteArguments(parseCommandFile(raw).body, args), source: entry.file.path };
   }
 }

@@ -181,19 +181,95 @@ describe("FilesystemCommandResolver: skills also create `/name` (WS-11 §2.4)", 
   });
 });
 
+// --- Fix round 1, Medium 1 --------------------------------------------------------------------
+//
+// `list()` and `resolve()` must be two views of ONE ordered enumeration. Before the fix they walked
+// opposite orders, so the listing reported the LOSING producer's metadata for a shadowed name and
+// could advertise a name nothing answered.
+describe("the listing and resolve() are two views of ONE enumeration (fix round 1, Medium 1)", () => {
+  function overlapped() {
+    const repo = mkTemp("winter-enum-repo-");
+    const winterHome = mkTemp("winter-enum-home-");
+    writeSkill(repo, "review", "SKILL DESCRIPTION", "SKILL BODY");
+    writeCommand(repo, "review", "---\ndescription: COMMAND DESCRIPTION\nargument-hint: <cmdhint>\n---\n\nCOMMAND BODY");
+    return { repo, winterHome };
+  }
+
+  test("for a SHADOWED name the listing reports the producer that actually answers -- not the loser", async () => {
+    const { repo, winterHome } = overlapped();
+    const resolver = FilesystemCommandResolver.build({ cwd: repo, winterHome, skills: SkillIndex.build({ cwd: repo, winterHome }) });
+    expect(await resolver.resolve("/review", repo)).toMatchObject({ text: "SKILL BODY" });
+    const listed = buildSlashCommandListing(resolver).find((c) => c.name === "review");
+    expect(listed).toEqual({ name: "review", description: "SKILL DESCRIPTION", source: "skill" });
+    expect(listed).not.toHaveProperty("argumentHint"); // the COMMAND file's hint must not leak onto the skill's entry
+  });
+
+  test('an "off" skill removes the name from the LISTING as well as from resolve()', async () => {
+    const { repo, winterHome } = overlapped();
+    const resolver = FilesystemCommandResolver.build({
+      cwd: repo,
+      winterHome,
+      skills: SkillIndex.build({ cwd: repo, winterHome }),
+      skillOverrides: { review: "off" },
+    });
+    expect(await resolver.resolve("/review", repo)).toEqual({ kind: "none" });
+    expect(slashCommandNames(resolver)).not.toContain("review");
+    expect(resolver.list()).toEqual([]);
+  });
+
+  test("every listed name resolves, and every resolvable name is listed -- the invariant, swept", async () => {
+    const repo = mkTemp("winter-sweep-repo-");
+    const winterHome = mkTemp("winter-sweep-home-");
+    writeSkill(repo, "shadowed", "d", "S1");
+    writeCommand(repo, "shadowed", "C1");
+    writeSkill(repo, "hidden", "d", "S2");
+    writeCommand(repo, "hidden", "C2");
+    writeSkill(repo, "skillonly", "d", "S3");
+    writeCommand(repo, "cmdonly", "C4");
+    const resolver = FilesystemCommandResolver.build({
+      cwd: repo,
+      winterHome,
+      skills: SkillIndex.build({ cwd: repo, winterHome }),
+      skillOverrides: { hidden: "off" },
+    });
+    const listed = resolver.list().map((c) => c.name).sort();
+    expect(listed).toEqual(["cmdonly", "shadowed", "skillonly"]);
+    for (const name of listed) expect((await resolver.resolve(`/${name}`, repo)).kind).toBe("expand");
+    expect(await resolver.resolve("/hidden", repo)).toEqual({ kind: "none" });
+  });
+
+  test("a `user-invocable-only` skill IS listed by this resolver -- that is the door it keeps", () => {
+    const repo = mkTemp("winter-uio-repo-");
+    const winterHome = mkTemp("winter-uio-home-");
+    writeSkill(repo, "manual", "d", "B");
+    const resolver = FilesystemCommandResolver.build({ cwd: repo, winterHome, skills: SkillIndex.build({ cwd: repo, winterHome }), skillOverrides: { manual: "user-invocable-only" } });
+    expect(resolver.list().map((c) => c.name)).toEqual(["manual"]);
+  });
+
+  test("a skill that VANISHED after indexing resolves to `none` -- it never hands the name to a command file", async () => {
+    const { repo, winterHome } = overlapped();
+    const resolver = FilesystemCommandResolver.build({ cwd: repo, winterHome, skills: SkillIndex.build({ cwd: repo, winterHome }) });
+    rmSync(join(repo, ".winter", "skills", "review"), { recursive: true, force: true });
+    // DELIBERATE (fix round 1, Minor 4): the enumeration decides who owns a name, and ownership must
+    // not change because a file disappeared mid-session -- that is the listing/resolve divergence
+    // this round fixed, displaced in time.
+    expect(await resolver.resolve("/review", repo)).toEqual({ kind: "none" });
+  });
+});
+
 describe("the slash-command listing (`system/init.slash_commands`)", () => {
   test("the engine's built-ins are listed and `/compact` is the only one R5-14 ships", () => {
     expect(BUILTIN_SLASH_COMMANDS.map((c) => c.name)).toEqual(["compact"]);
   });
 
-  test("built-ins come first, then commands, then skills -- names only, deduplicated", () => {
+  test("built-ins come first, then SKILLS, then command files -- names only, deduplicated", () => {
     const repo = mkTemp("winter-listing-");
     const winterHome = mkTemp("winter-listing-home-");
     writeCommand(repo, "review", "c");
     writeSkill(repo, "review", "d", "s");
     writeSkill(repo, "audit", "d", "s");
     const resolver = FilesystemCommandResolver.build({ cwd: repo, winterHome, skills: SkillIndex.build({ cwd: repo, winterHome }) });
-    expect(slashCommandNames(resolver)).toEqual(["compact", "review", "audit"]);
+    expect(slashCommandNames(resolver)).toEqual(["compact", "audit", "review"]);
     expect(buildSlashCommandListing(resolver).find((c) => c.name === "audit")).toEqual({ name: "audit", description: "d", source: "skill" });
   });
 

@@ -97,6 +97,26 @@ describe("skillExecutor: the happy path", () => {
     ]);
   });
 
+  test("the tool door does NOT substitute `$ARGUMENTS` -- deliberate and capture-pending (fix round 1, Minor 3)", async () => {
+    // The `/name args` door DOES substitute (commands/resolver.ts, R5-14). This door hands the body
+    // over verbatim and reports `args` on the attachment instead, because item (i) found NO `Skill`
+    // tool schema in the pinned declaration at all -- what `args` means here is uncaptured, and
+    // substituting would be Winter inventing a semantic on the door a MODEL drives. Pinned so the
+    // asymmetry is a decision, and so a later capture that overturns it fails loudly here.
+    const repo = mkTemp("winter-argsdoor-repo-");
+    const winterHome = mkTemp("winter-argsdoor-home-");
+    const dir = join(repo, ".winter", "skills", "tmpl");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "SKILL.md"), "---\nname: tmpl\ndescription: d\n---\n\nReview [$ARGUMENTS] now.", "utf8");
+    const sessionId = `sess-${Math.random().toString(36).slice(2)}`;
+    sessions.push(sessionId);
+    const seen: InvokedSkillsAttachment[] = [];
+    registerSkillSessionRuntime(sessionId, { index: SkillIndex.build({ cwd: repo, winterHome }), onInvoked: (a) => seen.push(a) });
+    const result = await skillExecutor.execute({ skill: "tmpl", args: "src/main.ts" }, ctx(sessionId));
+    expect(result.output).toBe("Review [$ARGUMENTS] now.");
+    expect(seen[0]!.skills[0]!.args).toBe("src/main.ts");
+  });
+
   test("no `args` means the attachment omits the field entirely", async () => {
     const { sessionId, attachments } = fixture();
     await skillExecutor.execute({ skill: "review" }, ctx(sessionId));

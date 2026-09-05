@@ -40,7 +40,18 @@ export const DEFAULT_SKILL_DESCRIPTION_BYTES = 4_096;
 /** Norma parity, byte-for-byte. */
 export const SKILL_TRUNCATION_MARKER = "\n[…truncated]";
 
-/** `null` when the name is a legal slug; an error string otherwise. Checked BEFORE any fs op. */
+/**
+ * `null` when the name is a legal slug; an error string otherwise.
+ *
+ * WHEN IT RUNS, precisely (fix round 1, corrected -- this used to say "before any fs op", which is
+ * true of only one of the two callers): on the EXECUTOR path (`isLegalSkillIdentity`) it runs before
+ * anything touches the filesystem, because the name comes from the model. On the INDEX path
+ * (`SkillIndex.build`) the SKILL.md has already been read by then -- the jail is applied to the
+ * RESOLVED name, which may come from the file's own `name:` frontmatter and so cannot be known
+ * earlier. That is safe because the PATH the index reads is always built from `readdirSync` output,
+ * never from a declared name; the jail's job there is to keep an escaping declared name out of the
+ * index, not to protect the read.
+ */
 export function skillNameError(name: string): string | null {
   return SKILL_NAME_PATTERN.test(name) ? null : `invalid skill name "${name}"`;
 }
