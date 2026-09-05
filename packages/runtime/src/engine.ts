@@ -493,9 +493,21 @@ export class ProviderTurnError extends Error {
   }
 }
 
-/** True for a provider failure that must land on R6-F's result shape. STRUCTURAL, not `instanceof`: the error may have been constructed in another package's copy of this module. */
+/**
+ * True for a provider failure that must land on R6-F's result shape.
+ *
+ * STRUCTURAL for `ProviderTurnError` (the error may have been constructed in another package's copy
+ * of this module), and by NAME for `WinterProviderResolutionError` -- which is Task 2's frozen class
+ * and carries no marker of its own. R6-9 is explicit that "no model + no provider" is surfaced in
+ * R6-F's captured failure shape, so a resolution refusal thrown from `generate()` must not fall
+ * through to `error_during_execution` the way an ordinary bug does. It has no HTTP status, so
+ * `api_error_status` is `null` -- exactly capture (I)'s run (i), where the runtime failed closed
+ * without making a request at all.
+ */
 export function isProviderTurnError(err: unknown): err is ProviderTurnError {
-  return typeof err === "object" && err !== null && (err as { winterProviderFailure?: unknown }).winterProviderFailure === true;
+  if (typeof err !== "object" || err === null) return false;
+  if ((err as { winterProviderFailure?: unknown }).winterProviderFailure === true) return true;
+  return (err as { name?: unknown }).name === "WinterProviderResolutionError";
 }
 
 /**
@@ -963,6 +975,16 @@ export interface EngineOptions {
    * asked to tune. Absent -> `DEFAULT_MAX_PROVIDER_MESSAGE_BYTES`.
    */
   maxProviderMessageBytes?: number;
+  /**
+   * Phase 6 Task 3 (R6-9): the session's RESOLVED provider identity.
+   *
+   * The one input that makes the write-ahead sidecar path live: with no identity there is nothing to
+   * name in an `origin` record, so `recordAssistant` writes none and the session behaves exactly as
+   * it did before this phase. `provider/selection.ts` produces this and T10's wiring passes it in --
+   * an ENGINE OPTION rather than something the engine resolves itself, for the same reason the
+   * provider is (the engine must stay driveable by a plain double).
+   */
+  providerIdentity?: { providerId: string; modelKey: string; family: string; continuationDomain?: string };
 }
 
 /**
@@ -1213,6 +1235,7 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
     skillListing,
     settingsRules,
     maxProviderMessageBytes,
+    providerIdentity,
   } = opts;
 
   // Task 6 (WS-07 §2/§6.4, Ruling 8): permission startup validation — deliberately the very FIRST
@@ -1570,7 +1593,7 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // The RESOLVED identity, once selection has run. `undefined` until then -- which is every pre-P6
   // session and every test double, and is why the sidecar writes nothing for them rather than
   // fabricating a provider name.
-  let currentProviderIdentity: { providerId: string; modelKey: string; family: string; continuationDomain?: string } | undefined;
+  let currentProviderIdentity: { providerId: string; modelKey: string; family: string; continuationDomain?: string } | undefined = providerIdentity;
   // R6-I: a `set_model` arriving mid-turn is PARKED here and applied at the quiescent boundary. The
   // value is the request's own three-way payload, carried verbatim so the reset spelling is resolved
   // in exactly one place.
@@ -3782,6 +3805,15 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
         // `Options.includePartialMessages`, absent/falsy by default). Everything else on this sink is
         // ungated -- none of those frames carries a gating option on the pin either.
         if (config.includePartialMessages !== true) return;
+        // `user_message_uuid` IS ABSENT HERE, and the absence is pin-correct rather than an omission.
+        // Item (a)'s three-way rule stamps it on the turn's first `assistant` message in
+        // complete-message mode and on the first non-`ping` `stream_event` instead when partial
+        // messages are on -- but BOTH arms are conditioned on the turn having a CLIENT-supplied
+        // uuid, and capture (F) observed it on zero frames for exactly that reason ("a single-shot
+        // `query({prompt: string})` has no client-supplied uuid to stamp"). Winter has no
+        // client-supplied-uuid concept at all yet: `turnUserMessageUuid` is Winter's OWN minted
+        // checkpoint id (R5-11), and stamping that here would misrepresent an internal id as the
+        // client's. Recorded as a carry rather than approximated.
         const ttft = firstEventSent ? {} : { ttft_ms: Date.now() - startedAt };
         firstEventSent = true;
         write({
@@ -4098,6 +4130,35 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
         // ACTS on the accountant yet: R5-4's threshold read and the compaction it triggers are Task
         // 3's and Lane K's, which is why the accountant is also an EngineOptions injection point.
         if (turn.usage !== undefined) contextAccountant.record(turn.usage);
+        // --- Phase 6 Task 3 (R6-C): the pinned REFUSAL frames -----------------------------------
+        //
+        // Emitted on `stopReason: "refusal"` and NOWHERE else. The distinction the pin draws and
+        // capture (G) confirmed is the whole point: a model REFUSAL is frame-visible, an OVERLOAD
+        // fallback is not (the pinned runtime swaps models with no frame at all), so `fallbackModel`
+        // never triggers these -- Winter's own `system/model_switch` covers that case instead.
+        //
+        // ONLY the no-fallback arm is emitted here. `model_refusal_fallback` requires the retry to
+        // have actually happened on a fallback model (its `fallback_model`/`direction`/
+        // `retracted_message_uuids` describe a swap that occurred), and engaging a fallback is the
+        // switch coordinator's -- T10/Lane C's -- half of R6-C. Emitting the pair's other arm from
+        // here would announce a retry that never took place.
+        if ("stopReason" in turn && turn.stopReason === "refusal" && (config.fallbackModel === undefined || config.fallbackModel.trim().length === 0)) {
+          output.write({
+            type: "data",
+            message: {
+              type: "system",
+              subtype: "model_refusal_no_fallback",
+              trigger: "refusal",
+              original_model: currentModel ?? "",
+              // Winter has no provider request id on this seam -- `null` is the pinned spelling for
+              // its absence, never an invented value.
+              request_id: null,
+              content: turn.kind === "text" ? turn.text : (turn.text ?? ""),
+              uuid: randomUUID(),
+              session_id: config.sessionId,
+            },
+          });
+        }
       } catch (err) {
         const text = err instanceof Error ? err.message : String(err);
         // Phase 6 Task 3 (R6-F, capture (I)): a PROVIDER failure lands on `subtype: "success"` with

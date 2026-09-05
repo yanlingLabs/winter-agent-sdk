@@ -20,7 +20,13 @@ export class ProcessError extends WinterSDKError {
 }
 export class ResultError extends ProcessError {
   constructor(public result: Extract<SdkMessage, { type: "result" }>) {
-    super(`result error: ${result.subtype}`);
+    // Phase 6 Task 3 (R6-F, capture (I)): a PROVIDER failure lands on `subtype: "success"` with
+    // `is_error: true` and `terminal_reason: "api_error"` -- so the default message would read
+    // `result error: success`, which is worse than uninformative: it names the one field that does
+    // NOT describe the failure. Capture (I) recorded the pinned runtime carrying the real reason in
+    // its thrown message (`… returned an error result: <detail>`), and this is Winter's own spelling
+    // of the same thing. Every other subtype is byte-identical to before.
+    super(result.terminal_reason === "api_error" ? `provider request failed: ${result.result ?? "unknown provider error"}` : `result error: ${result.subtype}`);
     this.name = "ResultError";
   }
 }

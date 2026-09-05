@@ -1669,3 +1669,69 @@ test("Phase 6 Task 2: unset provider-layer options are OMITTED entirely — an u
     expect(key in config).toBe(false);
   }
 });
+
+// --- Phase 6 Task 3 (R6-F): a PROVIDER failure yields its result AND throws -------------------------
+//
+// Capture (I): both hermetic runs yielded the `result` and THEN threw. A host that only iterates and
+// never wraps the loop in `try` sees an uncaught throw on every provider failure -- which is the
+// pinned behaviour, and is why this is asserted rather than assumed from the `is_error` path alone.
+function resultOnlyProcess(result: Record<string, unknown>): SpawnedRuntimeProcess {
+  return {
+    stdin: { write() {}, end() {} },
+    stdout: (async function* () {
+      yield encodeFrame({ type: "init", protocolVersion: PROTOCOL_VERSION, sessionId: "s", cwd: "/x", model: "sonnet", permissionMode: "default", tools: [] });
+      yield encodeFrame({ type: "data", message: result as never });
+    })(),
+    kill() {},
+    exited: Promise.resolve({ code: 0, signal: null }),
+    pid: null,
+  };
+}
+
+test("R6-F: a result with terminal_reason 'api_error' is YIELDED and then thrown, with the reason in the message", async () => {
+  const yielded: string[] = [];
+  let threw: Error | undefined;
+  try {
+    for await (const m of query({
+      prompt: "go",
+      options: {
+        spawnClaudeCodeProcess: () =>
+          resultOnlyProcess({
+            type: "result",
+            subtype: "success",
+            is_error: true,
+            result: "provider request failed (server): upstream exploded",
+            terminal_reason: "api_error",
+            api_error_status: 529,
+            permission_denials: [],
+          }),
+      },
+    })) {
+      yielded.push(m.type);
+    }
+  } catch (err) {
+    threw = err as Error;
+  }
+  // The result reached the consumer BEFORE the throw -- a host that inspects results still sees it.
+  expect(yielded).toEqual(["result"]);
+  expect(threw).toBeDefined();
+  // `result error: success` would name the one field that does NOT describe the failure.
+  expect(threw!.message).toContain("provider request failed");
+  expect(threw!.message).toContain("upstream exploded");
+  expect((threw as ResultError).result.api_error_status).toBe(529);
+});
+
+test("R6-F: an ordinary error result keeps its pre-P6 message, byte-identical", async () => {
+  let threw: Error | undefined;
+  try {
+    for await (const _ of query({
+      prompt: "go",
+      options: { spawnClaudeCodeProcess: () => resultOnlyProcess({ type: "result", subtype: "error_during_execution", is_error: true, result: "a plain bug", permission_denials: [] }) },
+    })) {
+      void _;
+    }
+  } catch (err) {
+    threw = err as Error;
+  }
+  expect(threw!.message).toBe("result error: error_during_execution");
+});

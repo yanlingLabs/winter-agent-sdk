@@ -501,3 +501,159 @@ describe("R6-17: what a CHILD inherits", () => {
     }
   });
 });
+
+describe("R6-7: the write-ahead path, with a resolved provider identity", () => {
+  // WITHOUT `providerIdentity` this whole path is inert -- which is correct for every pre-P6 session,
+  // and is exactly why it needs its own fixture: nothing else in the suite ever executes it.
+  const IDENTITY = { providerId: "openai", modelKey: "openai/o-test", family: "openai", continuationDomain: "openai:responses" };
+
+  test("the sidecar records are written BEFORE the entry, in itemIndex order, with the same anchor", async () => {
+    const calls: Array<{ op: string; kind?: string | undefined; itemIndex?: number | undefined; anchorUuid?: string | undefined; uuid?: string | undefined }> = [];
+    const store = {
+      recordUserEntry: () => {},
+      recordAssistantEntry: (_content: unknown, opts?: { uuid?: string }) => {
+        calls.push({ op: "entry", uuid: opts?.uuid });
+      },
+      recordProviderState: (record: { kind: string; itemIndex: number; anchorUuid: string }) => {
+        calls.push({ op: "record", kind: record.kind, itemIndex: record.itemIndex, anchorUuid: record.anchorUuid });
+      },
+    };
+    const provider: Provider = {
+      async generate() {
+        return {
+          kind: "text",
+          text: "answer",
+          thinking: { summary: "foreign reasoning" },
+          nativeState: { family: "openai", continuationDomain: "openai:responses", items: ["OPAQUE-ITEM"] },
+        };
+      },
+    };
+    const { host, runtime } = createInMemoryChannel();
+    const done = runEngine({ config: baseConfig({ persistSession: true }), input: runtime.input, output: runtime.output, provider, tools: stubExecutor, store, providerIdentity: IDENTITY } as never);
+    host.output.write({ type: "user", text: "go" });
+    host.output.write({ type: "control_request", requestId: "end", subtype: "end_input", payload: undefined });
+    await drain(host.input);
+    await done;
+
+    // ORDER IS THE GUARANTEE: three records, then the entry.
+    const assistantOps = calls.filter((c) => c.op === "record" || (c.op === "entry" && c.uuid !== undefined));
+    expect(assistantOps.map((c) => `${c.op}:${c.kind ?? ""}`)).toEqual(["record:origin", "record:native-state", "record:summary", "entry:"]);
+    expect(assistantOps.slice(0, 3).map((c) => c.itemIndex)).toEqual([0, 1, 2]);
+    // The anchor the records name IS the uuid the entry was written under.
+    const anchor = assistantOps[0]!.anchorUuid;
+    expect(anchor).toBeDefined();
+    for (const record of assistantOps.slice(0, 3)) expect(record.anchorUuid).toBe(anchor!);
+    expect(assistantOps[3]!.uuid).toBe(anchor!);
+  });
+
+  test("with NO identity the path is inert -- no records at all, byte-identical to a pre-P6 session", async () => {
+    const calls: string[] = [];
+    const store = {
+      recordUserEntry: () => {},
+      recordAssistantEntry: () => calls.push("entry"),
+      recordProviderState: () => calls.push("record"),
+    };
+    const { host, runtime } = createInMemoryChannel();
+    const done = runEngine({ config: baseConfig({ persistSession: true }), input: runtime.input, output: runtime.output, provider: recordingProvider([{ kind: "text", text: "x" }]).provider, tools: stubExecutor, store } as never);
+    host.output.write({ type: "user", text: "go" });
+    host.output.write({ type: "control_request", requestId: "end", subtype: "end_input", payload: undefined });
+    await drain(host.input);
+    await done;
+    expect(calls).not.toContain("record");
+    expect(calls).toContain("entry");
+  });
+
+  test("the resolved identity also rides the in-memory message as `origin`, and the OPAQUE state never reaches a frame", async () => {
+    const { provider, requests } = recordingProvider([
+      { kind: "text", text: "one", nativeState: { family: "openai", continuationDomain: "openai:responses", items: ["OPAQUE-ITEM"] } },
+      { kind: "text", text: "two" },
+    ]);
+    const { host, runtime } = createInMemoryChannel();
+    const done = runEngine({ config: baseConfig(), input: runtime.input, output: runtime.output, provider, tools: stubExecutor, providerIdentity: IDENTITY } as never);
+    const frames: WinterFrame[] = [];
+    const reader = (async () => {
+      for await (const f of host.input) frames.push(f);
+    })();
+    host.output.write({ type: "user", text: "first" });
+    await new Promise((r) => setTimeout(r, 40));
+    host.output.write({ type: "user", text: "second" });
+    host.output.write({ type: "control_request", requestId: "end", subtype: "end_input", payload: undefined });
+    await reader;
+    await done;
+
+    const secondRequest = requests[1]!;
+    const priorAssistant = secondRequest.messages.find((m) => m.role === "assistant");
+    expect(priorAssistant?.origin).toEqual(IDENTITY);
+    expect(priorAssistant?.nativeState?.items).toEqual(["OPAQUE-ITEM"]);
+    // …and it is nowhere in anything the HOST saw.
+    expect(JSON.stringify(frames)).not.toContain("OPAQUE-ITEM");
+  });
+});
+
+describe("R6-C: the pinned refusal frame", () => {
+  test("`stopReason: 'refusal'` with no fallback configured emits model_refusal_no_fallback", async () => {
+    const provider: Provider = { async generate() { return { kind: "text", text: "I can't help with that.", stopReason: "refusal" }; } };
+    const messages = await runTurn({ provider });
+    const refusal = messages.find((m) => m.type === "system" && (m as { subtype?: string }).subtype === "model_refusal_no_fallback") as Record<string, unknown> | undefined;
+    expect(refusal).toBeDefined();
+    expect(refusal!.trigger).toBe("refusal");
+    expect(refusal!.original_model).toBe("sonnet");
+    expect(refusal!.request_id).toBeNull();
+    expect(refusal!.content).toBe("I can't help with that.");
+    // The pair's OTHER arm describes a retry that actually happened on a fallback model; engaging one
+    // is the switch coordinator's half of R6-C, so this path never announces it.
+    expect(messages.some((m) => (m as { subtype?: string }).subtype === "model_refusal_fallback")).toBe(false);
+  });
+
+  test("an ordinary stop reason emits NO refusal frame", async () => {
+    const provider: Provider = { async generate() { return { kind: "text", text: "done", stopReason: "end_turn" }; } };
+    const messages = await runTurn({ provider });
+    expect(messages.some((m) => String((m as { subtype?: string }).subtype ?? "").startsWith("model_refusal"))).toBe(false);
+  });
+
+  test("with a fallback CONFIGURED the frame is withheld -- the swap has not happened yet", async () => {
+    const provider: Provider = { async generate() { return { kind: "text", text: "no", stopReason: "refusal" }; } };
+    const messages = await runTurn({ provider, config: { fallbackModel: "other" } });
+    expect(messages.some((m) => String((m as { subtype?: string }).subtype ?? "").startsWith("model_refusal"))).toBe(false);
+  });
+});
+
+describe("R6-G: `user_message_uuid` is ABSENT on stream_event, and that is pin-correct", () => {
+  test("no stream_event carries it -- Winter has no client-supplied uuid to stamp", async () => {
+    // Item (a)'s three-way rule conditions BOTH arms on the turn having a CLIENT-supplied uuid, and
+    // capture (F) observed the field on zero frames for exactly that reason. `turnUserMessageUuid` is
+    // Winter's OWN minted checkpoint id (R5-11); stamping it here would misrepresent an internal id
+    // as the client's. Asserted so a later task that adds a real client-uuid concept has a fixture
+    // telling it this is the place to revisit.
+    const provider: Provider = {
+      async generate(input) {
+        input.sink?.onStreamEvent({ type: "message_start" });
+        input.sink?.onStreamEvent({ type: "message_stop" });
+        return { kind: "text", text: "x" };
+      },
+    };
+    const messages = await runTurn({ provider, config: { includePartialMessages: true } });
+    const events = messages.filter((m) => m.type === "stream_event") as Array<Record<string, unknown>>;
+    expect(events.length).toBeGreaterThan(0);
+    for (const e of events) expect("user_message_uuid" in e).toBe(false);
+  });
+});
+
+describe("R6-F: a resolution refusal lands on the result shape too", () => {
+  test("a WinterProviderResolutionError thrown from generate() is an api_error, not error_during_execution", async () => {
+    // R6-9: "no model + no provider -> a typed WinterProviderResolutionError surfaced in the captured
+    // failure shape". It has no HTTP status, so `api_error_status` is null -- exactly capture (I)'s
+    // run (i), which failed closed without making a request at all.
+    const { WinterProviderResolutionError } = await import("@yanlinglabs/winter-provider-runtime");
+    const provider: Provider = {
+      async generate() {
+        throw new WinterProviderResolutionError("no-provider-for-bare-model", "a bare model id needs a provider");
+      },
+    };
+    const result = (await runTurn({ provider })).find((m) => m.type === "result") as Record<string, unknown>;
+    expect(result.subtype).toBe("success");
+    expect(result.is_error).toBe(true);
+    expect(result.terminal_reason).toBe("api_error");
+    expect(result.api_error_status).toBeNull();
+  });
+});
