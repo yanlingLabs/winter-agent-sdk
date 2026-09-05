@@ -369,6 +369,19 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
   if (!validation.ok) warnings.push(validation.message);
   for (const warning of validation.warnings) warnings.push(warning);
 
+  // Lane Y addendum, item 3: the INDEX's own load errors, on the same channel as everything else
+  // that half-loaded. `SkillIndex.build` drops a skill whose frontmatter will not parse, whose name
+  // fails the jail, or whose directory is unreadable -- correct, and until now completely mute: the
+  // model simply never saw the skill, and the author had no way to tell a broken skill from one
+  // that was never discovered. `validateSkillsOption` above covers only names the HOST asked for;
+  // this covers the ones the filesystem offered and the index refused.
+  //
+  // MERGE SCAFFOLDING: `errors()` is Lane Y's addition in `skills/store.ts`, which is not in my file
+  // set, so this reads it structurally rather than nominally -- it compiles today (yielding nothing)
+  // and starts carrying entries the moment Lane Y's method lands. At merge, drop the cast and call
+  // `skillIndex.errors()` directly.
+  for (const err of (skillIndex as { errors?: () => readonly string[] }).errors?.() ?? []) warnings.push(`skill: ${err}`);
+
   // (5) THE SKILL SESSION RUNTIME. Keyed exactly as the executor reads it (`agentId ?? sessionId`),
   // so a child engine constructed with its own `agentId` never resolves against the parent's set.
   const skillRuntimeKey = config.agentId ?? config.sessionId;
@@ -427,7 +440,12 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
   const settingsMcp = settingsMcpServerSources(resolved.perSource);
   const projectMcp = loadProjectMcpConfig({ cwd: config.cwd, ...(settingSources !== undefined ? { settingSources } : {}) });
   for (const rejection of [...settingsMcp.rejected, ...projectMcp.rejected]) {
-    warnings.push(`mcp config was rejected: ${JSON.stringify(rejection)}`);
+    // n3 (whole-branch review): a SENTENCE, not `JSON.stringify` of an internal record. This line
+    // is the only thing an operator ever sees about a server that did not start, and it reached
+    // them as `{"origin":"project","path":"...","reason":"..."}` -- every field they needed, in the
+    // one shape that reads as a crash rather than as guidance. The three other `warnings.push`
+    // sites in this file were already prose; this one was the outlier.
+    warnings.push(`mcp config from ${rejection.origin}${rejection.path !== undefined ? ` (${rejection.path})` : ""} was rejected: ${rejection.reason}`);
   }
   const extraMcpServerSources: McpServerSource[] = [...settingsMcp.sources, ...projectMcp.sources, ...pluginMcpServerSources(plugins.bundles)];
 

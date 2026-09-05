@@ -190,6 +190,14 @@ export function inMemoryProcess(
       // `process.env` fallback (that function's own header), so a differential/equivalence run can
       // not read a developer's real skills, commands, plugins or settings.
       const wiring = await buildProductionWiring({ config: effectiveConfig, env: env ?? {}, winterHome: resolveInMemoryWinterHome(config, env), ...(store !== undefined ? { persistence: store } : {}) });
+      // Lane Y addendum, item 3 (the B-low half): the SAME operator channel main.ts uses, on the
+      // same prefix. This leg dropped every wiring warning on the floor, so a malformed
+      // `.winter/mcp.json`, a plugin that would not load or a broken skill was invisible to exactly
+      // the leg the differential and equivalence suites run on -- the one place a Winter developer
+      // is most likely to hit it first. `process.stderr` (not the frame `output`) because stdout is
+      // the frame stream exclusively (WS-04 §2/§6), and because on this leg the host process IS the
+      // runtime's process: writing there is the literal cross-leg mirror, not an approximation.
+      for (const warning of wiring.warnings) process.stderr.write(`winter: ${warning}\n`);
       registerDefaultChildEngineFactory({
         provider,
         config: effectiveConfig,

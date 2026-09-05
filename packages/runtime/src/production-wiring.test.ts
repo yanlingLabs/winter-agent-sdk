@@ -229,3 +229,47 @@ describe("T8 production wiring: the guards it carries", () => {
     expect(() => assertEffectiveSettings(userRaw, resolved)).not.toThrow();
   });
 });
+
+// ---------------------------------------------------------------------------------------------
+// Phase 5 fix wave, Lane Y addendum item 3 + nit n3: what an operator is actually TOLD.
+// ---------------------------------------------------------------------------------------------
+describe("wiring warnings are prose an operator can act on", () => {
+  test("n3: a rejected mcp config names its origin, its path and its reason -- not a JSON blob", async () => {
+    mkdirSync(join(cwd, ".winter"), { recursive: true });
+    writeFileSync(join(cwd, ".winter", "mcp.json"), "{ this is not json");
+    const wiring = await buildProductionWiring({
+      config: { sessionId: "s-mcp-warn", cwd, model: "m" } as unknown as RuntimeConfig,
+      env: {},
+      winterHome: home,
+    });
+    try {
+      const warning = wiring.warnings.find((w) => w.includes("mcp config"));
+      expect(warning).toBeDefined();
+      expect(warning).toContain("from project");
+      expect(warning).toContain(join(cwd, ".winter", "mcp.json"));
+      expect(warning).toContain("not valid JSON");
+      // The nit itself: no serialised record. A `{"origin":...}` string passes every assertion
+      // above by accident, so the shape is pinned directly.
+      expect(warning).not.toContain('{"');
+    } finally {
+      wiring.dispose();
+    }
+  });
+
+  test("item 3: `SkillIndex.errors()` is consumed if present (structural, pending Lane Y's method)", async () => {
+    // Guards the CONSUMER, which is the half that lives in my files. It reads `errors()` off the
+    // index structurally, so this asserts the contract it will honour rather than the values Lane Y
+    // has not landed yet: a wiring built over an index WITHOUT the method must not throw, and must
+    // not invent warnings. When `errors()` lands, the `skill: ` prefix below is what carries it.
+    const wiring = await buildProductionWiring({
+      config: { sessionId: "s-skill-warn", cwd, model: "m" } as unknown as RuntimeConfig,
+      env: {},
+      winterHome: home,
+    });
+    try {
+      expect(wiring.warnings.filter((w) => w.startsWith("skill: "))).toEqual([]);
+    } finally {
+      wiring.dispose();
+    }
+  });
+});
