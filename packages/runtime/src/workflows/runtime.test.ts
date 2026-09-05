@@ -115,6 +115,7 @@ function launch(r: Rig, source: string, extra: { args?: unknown; sessionId?: str
       sessionId: extra.sessionId ?? "sess-1",
       cwd: "/synthetic",
       trustedWorkspace: true,
+      parentToolUseId: "tooluse-launch",
       source,
       meta: parsed.meta,
       ...(extra.args !== undefined ? { args: extra.args } : {}),
@@ -180,7 +181,7 @@ describe("lifecycle -- running -> completed | failed | stopped (WS-11 §1.8)", (
   test("CRASH FALLBACK: a worker that exits with no terminal message fails the run rather than hanging the caller", async () => {
     const r = rig();
     const launched = r.runtime.launch(
-      { sessionId: "sess-1", cwd: "/synthetic", trustedWorkspace: true, source: META + `return 1;`, meta: { name: "wf", description: "d" } },
+      { sessionId: "sess-1", cwd: "/synthetic", trustedWorkspace: true, parentToolUseId: "tooluse-launch", source: META + `return 1;`, meta: { name: "wf", description: "d" } },
       r.host,
     );
     // Kill the worker before it can answer -- the exact shape of an OOM or an external kill.
@@ -313,7 +314,7 @@ phase("Research"); phase("Cleanup"); return 1;`;
     const r = rig();
     const parsed = parseWorkflowMeta(source);
     if (!parsed.ok) throw new Error(parsed.error);
-    const launched = r.runtime.launch({ sessionId: "sess-1", cwd: "/synthetic", trustedWorkspace: true, source, meta: parsed.meta }, r.host);
+    const launched = r.runtime.launch({ sessionId: "sess-1", cwd: "/synthetic", trustedWorkspace: true, parentToolUseId: "tooluse-launch", source, meta: parsed.meta }, r.host);
     const view = await r.runtime.await(launched.runId);
     expect(view.status).toBe("completed");
     const summaries = r.log.filter((e) => e.event === "progress").map((e) => (e.detail as WorkflowProgress).summary);
@@ -327,7 +328,7 @@ phase("research"); return 1;`;
     const r = rig();
     const parsed = parseWorkflowMeta(source);
     if (!parsed.ok) throw new Error(parsed.error);
-    const launched = r.runtime.launch({ sessionId: "sess-1", cwd: "/synthetic", trustedWorkspace: true, source, meta: parsed.meta }, r.host);
+    const launched = r.runtime.launch({ sessionId: "sess-1", cwd: "/synthetic", trustedWorkspace: true, parentToolUseId: "tooluse-launch", source, meta: parsed.meta }, r.host);
     await r.runtime.await(launched.runId);
     const summaries = r.log.filter((e) => e.event === "progress").map((e) => (e.detail as WorkflowProgress).summary);
     expect(summaries).toContain("research");
@@ -381,7 +382,7 @@ describe("meta.name is threaded, never recovered from the SANITIZED filename", (
     const r = rig();
     const parsed = parseWorkflowMeta(source);
     if (!parsed.ok) throw new Error(parsed.error);
-    const launched = r.runtime.launch({ sessionId: "sess-1", cwd: "/synthetic", trustedWorkspace: true, source, meta: parsed.meta }, r.host);
+    const launched = r.runtime.launch({ sessionId: "sess-1", cwd: "/synthetic", trustedWorkspace: true, parentToolUseId: "tooluse-launch", source, meta: parsed.meta }, r.host);
     // The FILE is sanitized (it has to be -- the name becomes a path segment) ...
     expect(launched.scriptPath).toContain(`My-Workflow-${launched.runId}.js`);
     // ... while the NAME the pin asserts (`WorkflowOutput.workflowName` = meta.name) is verbatim.
@@ -593,6 +594,40 @@ describe("resumeFromRunId -- preconditions and the cached prefix (WS-11 §1.5)",
     // "one" came from the journal; only "two" was dispatched live.
     expect(r.spawned.slice(before).map((s) => s.prompt)).toEqual(["two"]);
     expect(r.spawned.slice(before).map((s) => s.parentToolUseId)).toEqual(["tooluse-resume"]);
+  });
+
+  test("F8: a resume-of-a-resume still replays -- the cached prefix is carried into the new run's journal", async () => {
+    // THREE agents, and one prompt hangs per hop, so each hop reaches `stopped` with exactly one more
+    // call journaled than the last. Before F8 the second hop's journal held only its own LIVE call --
+    // the replayed prefix short-circuits inside the worker and never reaches the bridge -- so the
+    // third hop replayed nothing at all (a 0% hit, against §1.5's "same script + same args -> 100%").
+    const hangFor = new Set<string>(["two"]);
+    const r = rig({
+      spawnAgent: async (req) => (hangFor.has(req.prompt) ? fakeChild({ neverSettle: true }) : fakeChild({ content: `child:${req.prompt}` })),
+    });
+    const source = META + `const a = await agent("one"); const b = await agent("two"); const c = await agent("three"); return [a, b, c];`;
+
+    const hop1 = launch(r, source);
+    await new Promise((res) => setTimeout(res, 50));
+    r.runtime.stop(hop1.runId);
+    await r.runtime.await(hop1.runId);
+
+    // Hop 2: "one" replays from hop 1's journal, "two" now runs live, "three" hangs.
+    hangFor.delete("two");
+    hangFor.add("three");
+    const hop2 = r.runtime.resume(hop1.runId, "sess-1", r.host, { parentToolUseId: "tooluse-r2" });
+    await new Promise((res) => setTimeout(res, 60));
+    r.runtime.stop(hop2.runId);
+    await r.runtime.await(hop2.runId);
+
+    // Hop 3: "one" AND "two" must both replay -- "one" only can if hop 2 carried it forward.
+    hangFor.clear();
+    const before = r.spawned.length;
+    const hop3 = r.runtime.resume(hop2.runId, "sess-1", r.host, { parentToolUseId: "tooluse-r3" });
+    const view = await r.runtime.await(hop3.runId);
+    expect(view.status).toBe("completed");
+    expect(view.result).toBe(JSON.stringify(["child:one", "child:two", "child:three"]));
+    expect(r.spawned.slice(before).map((s) => s.prompt)).toEqual(["three"]); // only the tail ran live
   });
 
   test("a FAILED agent call is never journaled -- it re-runs LIVE on resume rather than replaying its null (WS-11 §1.5)", async () => {

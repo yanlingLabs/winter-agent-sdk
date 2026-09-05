@@ -27,6 +27,18 @@ export type BridgeRequest =
   | { op: "agent"; callId: number; prompt: string; opts?: AgentOpts }
   | { op: "workflow"; callId: number; ref: WorkflowRef; args?: unknown }
   | { op: "log"; message: string }
+  // F8. One-way, emitted EXACTLY ONCE, the first time a resumed run diverges from its journal (or at
+  // the end of a fully-cached run). `cachedPrefix` is how many leading `agent()` calls replayed from
+  // cache -- a number only the WORKER knows, because `diverged` latches privately inside the script
+  // API and a cached call never reaches the bridge at all.
+  //
+  // Why the parent needs it: a resume allocates a fresh runId, so run B's journal starts empty and
+  // only its LIVE calls get appended. Without this op a resume-of-a-resume replays nothing (a 0%
+  // hit, flatly contradicting §1.5's "same script + same args -> 100% cache hit"). The parent cannot
+  // simply pre-seed run B's journal with run A's entries either: on a MID-journal divergence at k
+  // that would leave stale entries sitting in the positions run B's live results must occupy. Knowing
+  // k is what makes the copy exact.
+  | { op: "resumed"; cachedPrefix: number }
   | { op: "phase"; title: string }
   | { op: "done"; result: unknown }
   | { op: "error"; message: string };

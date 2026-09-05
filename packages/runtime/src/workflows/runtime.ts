@@ -125,7 +125,15 @@ export interface WorkflowLaunchInput {
   source: string;
   meta: Pick<WorkflowMeta, "name" | "description"> & Partial<WorkflowMeta>;
   args?: unknown;
-  parentToolUseId?: string;
+  /**
+   * The MODEL's own `tool_use` id for the Workflow call (F11). REQUIRED, and deliberately so: WS-10
+   * §4 correlates a child's forwarded frames on `SpawnChildRequest.parentToolUseId`, and the previous
+   * `?? run.task.taskId` fallback quietly substituted a task id -- a different id space entirely, and
+   * exactly the class of fabricated-value-on-a-pinned-field that this lane already removed once from
+   * `task_started.workflow_name`. The tool executor refuses the call outright when `ctx.toolUseId` is
+   * absent rather than inventing one here.
+   */
+  parentToolUseId: string;
   /** Only `resume` supplies these; a fresh launch never does. */
   runId?: string;
   resumeJournal?: JournalEntry[];
@@ -152,6 +160,8 @@ interface LiveRun {
   runId: string;
   sessionId: string;
   host: WorkflowRunHost;
+  /** The model's own tool_use id for the launching call -- every child of this run correlates on it. */
+  parentToolUseId: string;
   cwd: string;
   trustedWorkspace: boolean;
   worker: WorkerProcess;
@@ -167,6 +177,8 @@ interface LiveRun {
   budget: WorkflowBudget;
   journal: RunJournal;
   abort: AbortController;
+  /** F8: the resume journal this run was SEEDED with, so a `resumed` op can copy its replayed prefix into this run's own journal. */
+  seedJournal: readonly JournalEntry[];
   /** The DECLARED phases (WS-11 §1.2). A `phase()` call matching one exactly resolves to it; an unmatched call gets its own group. */
   declaredPhases: readonly WorkflowMetaPhase[] | undefined;
   /** WS-11 §1.8's abort chaining: stop must cancel IN-FLIGHT bridged agents, not merely the worker process. */
@@ -232,6 +244,7 @@ export class WorkflowRuntime {
       runId,
       sessionId: input.sessionId,
       host,
+      parentToolUseId: input.parentToolUseId,
       cwd: input.cwd,
       trustedWorkspace: input.trustedWorkspace,
       worker,
@@ -248,6 +261,7 @@ export class WorkflowRuntime {
         ...(this.deps.session.budgetTotal !== undefined ? { total: this.deps.session.budgetTotal } : {}),
       }),
       journal: new RunJournal(this.runsDir, runId),
+      seedJournal: input.resumeJournal ?? [],
       abort,
       ...(input.meta.phases !== undefined ? { declaredPhases: input.meta.phases } : { declaredPhases: undefined }),
       children: new Set(),
@@ -411,6 +425,19 @@ export class WorkflowRuntime {
       case "log":
         this.emitProgress(run, message.message);
         break;
+      case "resumed": {
+        // F8: the worker replayed `cachedPrefix` calls from the seed journal and never told the
+        // bridge about them (a cached call short-circuits in-worker by design). Copy exactly that
+        // prefix into THIS run's journal, before any live append, so a resume-of-a-resume replays
+        // them too. Bounded by the seed's own length -- a worker claiming more than it was given is
+        // ignored rather than trusted.
+        const count = Math.max(0, Math.min(Math.floor(message.cachedPrefix), run.seedJournal.length));
+        for (let i = 0; i < count; i++) {
+          const entry = run.seedJournal[i]!;
+          run.journal.append(entry.promptKey, entry.value);
+        }
+        break;
+      }
       case "agent": {
         const response = await this.serviceAgent(run, message);
         this.reply(run, response);
@@ -530,7 +557,7 @@ export class WorkflowRuntime {
   private buildSpawnRequest(run: LiveRun, prompt: string, opts: AgentOpts | undefined): SpawnChildRequest {
     const definition = this.resolveChildDefinition(run, opts);
     return {
-      parentToolUseId: this.launches.get(run.runId)?.parentToolUseId ?? run.task.taskId,
+      parentToolUseId: run.parentToolUseId,
       prompt,
       runInBackground: false,
       ...(opts?.model !== undefined ? { model: opts.model } : {}),

@@ -192,6 +192,7 @@ export async function workflowWorkerMain(
       resolveWorkflow,
       phase: (title) => post({ op: "phase", title }),
       log: (message) => post({ op: "log", message }),
+      reportCachedPrefix: (count) => post({ op: "resumed", cachedPrefix: count }),
       ...(init.resumeJournal !== undefined ? { resumeJournal: init.resumeJournal } : {}),
     });
     post({ op: "done", result });

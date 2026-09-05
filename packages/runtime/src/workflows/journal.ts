@@ -38,7 +38,9 @@ export class RunJournal {
 
   constructor(dir: string, runId: string) {
     const runDir = join(dir, runId);
-    mkdirSync(runDir, { recursive: true });
+    // 0700 like every other directory this lane creates (WS-05 §9). The journal records each agent's
+    // ACTUAL return value -- the richest content the lane writes -- so it must not inherit the umask.
+    mkdirSync(runDir, { recursive: true, mode: 0o700 });
     this.path = join(runDir, "journal.jsonl");
   }
 

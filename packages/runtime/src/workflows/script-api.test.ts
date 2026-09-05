@@ -224,6 +224,49 @@ describe("ambient shadowing (WS-11 §1.6) -- no host-runtime reach-through", () 
   });
 });
 
+describe("F7 -- what the in-worker shadowing DOES and DOES NOT contain (measured, per route)", () => {
+  // The review measured these; each line below is one of them, kept as an executable record. The
+  // closable ones are closed and asserted; the ones that cannot be closed from inside the sandboxed
+  // process are `test.skip`ped, and THE SKIP IS THE DISCLOSURE -- a reader sees the route, its name
+  // says it is open, and the reason lives beside it. WS-11 §1.7's own position is that the SEATBELT
+  // is the enforcement boundary and scope shadowing is defence in depth; these tests make the exact
+  // line between the two legible instead of leaving it to a claim in a report.
+
+  test("CLOSED: `performance` is shadowed -- performance.now() defeated the determinism guard", async () => {
+    expect(await runOk(`return typeof performance;`)).toBe("undefined");
+  });
+
+  test("CLOSED: `crypto` is shadowed -- crypto.randomUUID() defeated the determinism guard", async () => {
+    expect(await runOk(`return typeof crypto;`)).toBe("undefined");
+  });
+
+  test("CLOSED: an instance's OWN `constructor` is the guarded Date, so `new Date(0).constructor.now()` throws", async () => {
+    expect(await runThrows(`return new Date(0).constructor.now();`)).toContain("Date.now");
+  });
+
+  test("CLOSED: the same route cannot construct an argless Date either", async () => {
+    expect(await runThrows(`return new (new Date(0).constructor)();`)).toContain("Date");
+  });
+
+  // --- OPEN, deliberately and disclosed ---------------------------------------------------------
+
+  test.skip("OPEN (not closable in-process): `(function(){}).constructor` reaches the real Function, and a CONCATENATED `import` token evades the source-text guard -- the seatbelt is what contains this", async () => {
+    const body = `const i = "imp" + "ort"; const f = (function(){}).constructor("return " + i + "(\"node:fs\")"); return typeof (await f()).writeFileSync;`;
+    expect(await runOk(body)).toBe("undefined"); // it is "function" today
+  });
+
+  test.skip("OPEN (not closable in-process): `(function(){}).constructor(\"return globalThis\")()` reaches the real global object", async () => {
+    expect(await runOk(`return typeof (function(){}).constructor("return globalThis")();`)).toBe("undefined"); // "object" today
+  });
+
+  test.skip("OPEN (would require mutating the shared Date.prototype): `Object.getPrototypeOf(new Date(0)).constructor` is the real Date", async () => {
+    // Closing this means replacing `Date.prototype.constructor` process-wide. The worker entry is
+    // runnable IN-PROCESS by R5-15's design, and commit 9fe9ab6 is this lane's own record of what a
+    // global mutation from that entry costs -- so it must not.
+    expect(await runThrows(`return Object.getPrototypeOf(new Date(0)).constructor.now();`)).toContain("Date.now");
+  });
+});
+
 describe("caps (WS-11 §1.6/§1.8)", () => {
   test("concurrent agent() calls are bounded and the excess QUEUES -- it runs as slots free, never refused", async () => {
     let live = 0;

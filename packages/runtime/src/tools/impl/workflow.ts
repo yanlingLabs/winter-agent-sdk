@@ -256,12 +256,25 @@ const executor: ToolExecutor = {
     // RESUME first: `resumeFromRunId` supplies its own source from the prior run, so it satisfies the
     // at-least-one rule on its own and must not be refused by the input check below.
     if (typeof input.resumeFromRunId === "string" && input.resumeFromRunId !== "") {
+      if (ctx.toolUseId === undefined) {
+        return toolError("Workflow cannot run without the model's own tool_use id -- every agent this run spawns correlates on it (WS-10 §4)");
+      }
       try {
-        return toolResult(launchToOutput(runtime.resume(input.resumeFromRunId, ctx.sessionId, host, ctx.toolUseId !== undefined ? { parentToolUseId: ctx.toolUseId } : {})));
+        return toolResult(launchToOutput(runtime.resume(input.resumeFromRunId, ctx.sessionId, host, { parentToolUseId: ctx.toolUseId })));
       } catch (err) {
         if (err instanceof WorkflowRuntimeError) return toolError(err.message);
         throw err;
       }
+    }
+
+    // F11: `SpawnChildRequest.parentToolUseId` is REQUIRED and WS-10 §4 correlates a child's
+    // forwarded frames on it. The runtime used to fall back to the run's task id -- a different id
+    // space, and the same fabricated-value-on-a-pinned-field class this lane already removed from
+    // `task_started.workflow_name`. The real engine always supplies `ctx.toolUseId`; a context that
+    // cannot is refused here rather than silently correlating every child to something a host cannot
+    // match.
+    if (ctx.toolUseId === undefined) {
+      return toolError("Workflow cannot run without the model's own tool_use id -- every agent this run spawns correlates on it (WS-10 §4)");
     }
 
     const resolved = resolveSource(input, ctx);
@@ -289,7 +302,7 @@ const executor: ToolExecutor = {
               source: resolved.source,
               meta: meta.meta,
               ...(input.args !== undefined ? { args: input.args } : {}),
-              ...(ctx.toolUseId !== undefined ? { parentToolUseId: ctx.toolUseId } : {}),
+              parentToolUseId: ctx.toolUseId,
             },
             host,
           ),

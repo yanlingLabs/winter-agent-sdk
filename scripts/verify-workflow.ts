@@ -108,6 +108,7 @@ export async function verifyWorkflow(binPath: string): Promise<VerifyWorkflowRes
       sessionId: "verify-session",
       cwd: sessionTempDir,
       trustedWorkspace: false,
+      parentToolUseId: "tooluse-e2e",
       source: SCRIPT,
       meta: { name: "verify", description: "the compiled-binary proof workflow" },
     },

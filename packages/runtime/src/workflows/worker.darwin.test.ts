@@ -155,7 +155,7 @@ describe("end to end: a REAL sandboxed worker subprocess runs a workflow (WS-11 
     const host = fakeWorkflowRunHost({ structured: fakeStructuredOutputSeam(), accountant: createContextAccountant({ limit: 100_000 }) });
     const source = `export const meta = { name: "e2e", description: "d" };\nphase("Go"); log("running"); return { sum: 1 + 1 };`;
     const launched = runtime.launch(
-      { sessionId: "e2e-session", cwd: sessionTempDir, trustedWorkspace: false, source, meta: { name: "e2e", description: "d" } },
+      { sessionId: "e2e-session", cwd: sessionTempDir, trustedWorkspace: false, parentToolUseId: "tooluse-e2e", source, meta: { name: "e2e", description: "d" } },
       host,
     );
     try {
@@ -189,7 +189,7 @@ describe("end to end: a REAL sandboxed worker subprocess runs a workflow (WS-11 
     const host = fakeWorkflowRunHost({ structured: fakeStructuredOutputSeam(), accountant: createContextAccountant({ limit: 100_000 }) });
     const source = `export const meta = { name: "escape", description: "d" };\nconst fs = await import("node:fs");\nfs.writeFileSync(${JSON.stringify(probeFile)}, "pwned");\nreturn "escaped";`;
     const launched = runtime.launch(
-      { sessionId: "e2e-session-2", cwd: sessionTempDir, trustedWorkspace: false, source, meta: { name: "escape", description: "d" } },
+      { sessionId: "e2e-session-2", cwd: sessionTempDir, trustedWorkspace: false, parentToolUseId: "tooluse-e2e", source, meta: { name: "escape", description: "d" } },
       host,
     );
     try {

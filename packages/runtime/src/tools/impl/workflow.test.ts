@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import "./workflow.ts";
 import { resetWorkflowToolForTest } from "./workflow.ts";
 import { getRegisteredTool, type ToolExecutionContext, type ToolResultPayload } from "../registry.ts";
@@ -305,11 +306,70 @@ describe("resumeFromRunId (WS-11 §1.5)", () => {
   });
 });
 
-describe("the session seam", () => {
-  test("with NO session registered the tool answers a typed error rather than crashing", async () => {
+describe("F11 -- `parentToolUseId` is the MODEL's tool_use id or nothing at all", () => {
+  test("a context with no toolUseId is refused LOUDLY rather than correlating children to a fabricated id", async () => {
+    const ctx = makeCtx();
+    delete (ctx as { toolUseId?: string }).toolUseId;
+    const result = await run({ script: SCRIPT }, ctx);
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain("tool_use");
+  });
+
+  test("the real id reaches SpawnChildRequest.parentToolUseId, so WS-10 §4 correlation is rooted in the model's own block", async () => {
+    const seen: string[] = [];
+    const ctx = makeCtx({
+      toolUseId: "tooluse-real",
+      session: {
+        ...makeCtx().session,
+        spawnChild: async (req) => {
+          seen.push(req.parentToolUseId);
+          return {
+            record: {} as never,
+            status: () => "completed" as const,
+            steer: async () => ({ status: "delivered" as const, messageId: "m" }),
+            resume: async () => ({ status: "resumed_and_delivered" as const, messageId: "m" }),
+            result: async () => ({ status: "completed" as const, content: "ok" }),
+            stop: async () => {},
+          } as unknown as ChildHandle;
+        },
+      },
+    });
+    await output({ script: META + `await agent("a"); return 1;` }, ctx);
+    await new Promise((res) => setTimeout(res, 80));
+    expect(seen).toEqual(["tooluse-real"]);
+  });
+});
+
+describe("F10 -- the THREE ways this lane is inert until T8 wires it, each pinned separately", () => {
+  // The report's concern 1 is that a merge landing two of the three looks like a working feature.
+  // Each leg fails differently and silently, so each gets its own assertion rather than one test
+  // standing in for all three.
+
+  test("leg 1: the tools/impl barrel does NOT install the Workflow executor -- T8 owes `import \"./workflow.ts\"`", () => {
+    // A FRESH process, because this file imports ./workflow.ts directly (line 11) and therefore
+    // always has the executor installed -- the very reason the gap is invisible to the suite. The
+    // probe imports only the barrel, exactly as a live session does.
+    const probe = [
+      `await import(${JSON.stringify(fileURLToPath(new URL("./index.ts", import.meta.url)))});`,
+      `const { getRegisteredTool } = await import(${JSON.stringify(fileURLToPath(new URL("../registry.ts", import.meta.url)))});`,
+      `process.stdout.write(String(getRegisteredTool("Workflow")?.executor !== undefined));`,
+    ].join("\n");
+    const result = Bun.spawnSync(["bun", "-e", probe], { stdout: "pipe", stderr: "pipe" });
+    expect(result.exitCode).toBe(0);
+    // FALSE today. When T8 adds the barrel import this flips to "true" and this expectation is what
+    // tells them the gap is closed -- the test is the ledger entry, not a permanent invariant.
+    expect(new TextDecoder().decode(result.stdout)).toBe("false");
+  }, 20_000);
+
+  test("leg 2: with NO session registered the tool answers a typed error rather than crashing", async () => {
     resetWorkflowSessionForTest();
     const result = await run({ script: SCRIPT });
     expect(result.isError).toBe(true);
     expect(result.output).toContain("workflow runtime");
+  });
+
+  test("leg 3: the descriptor is gated on the `winter.workflows` capability -- something must grant it or the tool is never advertised", () => {
+    const descriptor = getRegisteredTool("Workflow")?.descriptor;
+    expect(descriptor?.capabilityRequirements).toContain("winter.workflows");
   });
 });

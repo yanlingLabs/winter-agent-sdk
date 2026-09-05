@@ -134,6 +134,15 @@ export async function runWorkerInProcess(opts: InProcessWorkerOptions): Promise<
 //
 // A `bun test` run of the whole lifecycle therefore costs milliseconds rather than a 60MB compile,
 // and a failure points at the runtime or the worker rather than at process plumbing.
+//
+// **TEST-ONLY. NEVER A PRODUCTION SPAWNER.** (F7.) This leg has NO CONTAINMENT AT ALL: the script
+// body runs in the host process, and the in-worker scope shadowing is defence in depth, not a fence
+// -- `(function(){}).constructor` reaches the real `Function` from inside a workflow body (measured;
+// see script-api.test.ts's own per-route fixtures). A script escaping here reaches the daemon's full
+// authority. Production is fail-closed today -- `WorkflowRuntime.launch` refuses when `sandbox-exec`
+// is unavailable and no spawner was injected, and the default is `realWorkerSpawner()` -- so this is
+// a documentation obligation rather than a live hole. Anyone wiring the three-leg equivalence
+// scenario must keep it that way.
 export function inProcessWorkerSpawner(): WorkerSpawner {
   return () => {
     const stdin = new PassThrough(); // parent -> worker

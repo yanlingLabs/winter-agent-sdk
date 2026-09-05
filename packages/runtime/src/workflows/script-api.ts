@@ -45,6 +45,8 @@ export interface ScriptApiDeps {
   resolveWorkflow(ref: WorkflowRef, args: unknown): Promise<WorkflowResolveResult>;
   phase(title: string): void;
   log(message: string): void;
+  /** F8: called ONCE, with how many leading `agent()` calls replayed from the resume journal. */
+  reportCachedPrefix?(count: number): void;
   /** WS-11 §1.5: the prior run's ordered `agent()` results. Absent/empty for a fresh run. */
   resumeJournal?: JournalEntry[];
 }
@@ -86,7 +88,21 @@ const GuardedDate = new Proxy(Date, {
     if (argsList.length === 0) {
       throw new Error("argless new Date() is withheld for determinism (WS-11 §1.6) -- pass a timestamp via args");
     }
-    return Reflect.construct(target, argsList, newTarget);
+    const instance = Reflect.construct(target, argsList, newTarget) as Date;
+    // F7: without this, `new Date(0).constructor` resolves through `Date.prototype.constructor` to
+    // the REAL Date, and `.now()` / an argless `new` both walk straight past the guards above
+    // (measured). An OWN property shadows the prototype's, closing that route per instance.
+    //
+    // `Object.getPrototypeOf(x).constructor` is NOT closed and cannot be from here: it would mean
+    // replacing `Date.prototype.constructor` process-wide, and this worker entry is runnable
+    // IN-PROCESS by R5-15's design -- commit 9fe9ab6 is this lane's own record of what a global
+    // mutation from it costs. Disclosed as a skipped test in script-api.test.ts.
+    try {
+      Object.defineProperty(instance, "constructor", { value: GuardedDate, writable: true, configurable: true, enumerable: false });
+    } catch {
+      /* a frozen/exotic instance -- the guards on the proxy itself still stand */
+    }
+    return instance;
   },
 });
 
@@ -113,13 +129,20 @@ function transformSource(source: string): string {
 // is a source-level refusal: `import` can only be reached through this literal token (it is syntax,
 // never a value, so it cannot be called through a computed name).
 //
-// HONEST SCOPE, stated rather than implied. This closes the easy door, not every door: `eval` cannot
-// be shadowed in strict mode either, and `(function(){}).constructor` reaches the real `Function`
-// regardless of the shadowed binding. Full in-process containment of untrusted JS is not achievable
-// and this design never claimed it -- WS-11 §1.7's answer is that the body runs in a SEATBELTED
-// SUBPROCESS (no writes, no network, no fork, exec of the self binary only, `~/.winter/run`
-// read-denied). Scope shadowing is defense in depth; the seatbelt is the enforcement boundary. Norma's
-// own port carried the identical framing ("belt-and-suspenders under the seatbelt").
+// HONEST SCOPE, and this paragraph is a CORRECTION of an earlier claim in this lane's own report,
+// which said "`import` is syntax, never a value, so there is no computed-name route around it." That
+// is FALSE, and measured to be false: `(function(){}).constructor` reaches the real `Function`
+// regardless of the shadowed binding, and a token assembled at runtime (`"imp" + "ort"`) is invisible
+// to a scanner that reads source text. So this guard raises the cost of the obvious route and closes
+// nothing absolutely.
+//
+// That is not a defect in the design, only in the claim. WS-11 §1.7's answer has always been that the
+// body runs in a SEATBELTED SUBPROCESS (no writes, no network, no fork, exec of the self binary only,
+// `~/.winter/run` read-denied) and that scope shadowing is defence in depth -- Norma's own port
+// carried the identical framing ("belt-and-suspenders under the seatbelt"). What follows from it is a
+// DOCUMENTATION obligation, discharged in three places: script-api.test.ts pins every measured route,
+// closed ones as assertions and open ones as named `test.skip`s; worker-harness.ts's in-process
+// spawner is marked test-only; and the lane report says so.
 //
 // A false positive (the token inside a string or comment) refuses a script that would have been
 // harmless. That direction is the right one to err in, and the remedy is one line of authoring.
@@ -186,7 +209,12 @@ export async function runWorkflowScript(deps: ScriptApiDeps): Promise<ScriptRunR
     // so it costs nothing against the cap and takes no semaphore slot.
     const cached = journal[index];
     if (!state.diverged && cached !== undefined && cached.promptKey === key) return cached.value;
-    state.diverged = true;
+    if (!state.diverged) {
+      // The FIRST divergence: `index` is exactly the cached-prefix length. Reported once, one-way --
+      // the parent needs it to carry the replayed prefix into this run's own journal (F8).
+      state.diverged = true;
+      deps.reportCachedPrefix?.(index);
+    }
 
     // WS-11 §1.8: exceeding the total cap FAILS the run with a message recording how many completed
     // before the stop -- never a silent truncation. Checked BEFORE acquiring a slot so a run pinned
@@ -326,6 +354,11 @@ export async function runWorkflowScript(deps: ScriptApiDeps): Promise<ScriptRunR
       // host-runtime ambient access"). Naming them as parameters is what shadows them.
       Bun: undefined,
       process: undefined,
+      // F7 (measured): `performance.now()` and `crypto.randomUUID()` both defeated the determinism
+      // guards above -- they are a clock and an entropy source by any other name, and a resumed
+      // prefix that used either is not byte-stable. Shadowed for the same reason Date.now is.
+      performance: undefined,
+      crypto: undefined,
       require: undefined,
       module: undefined,
       exports: undefined,
@@ -347,7 +380,11 @@ export async function runWorkflowScript(deps: ScriptApiDeps): Promise<ScriptRunR
     return { meta: metaCell.value, result };
   }
 
-  return runBody(deps.source, deps.args, 0);
+  const outcome = await runBody(deps.source, deps.args, 0);
+  // A run that never diverged replayed its journal END TO END -- the 100%-cache-hit case, which has
+  // no first-divergence moment to report from.
+  if (!state.diverged && journal.length > 0) deps.reportCachedPrefix?.(state.callIndex);
+  return outcome;
 }
 
 function stringifyLogPart(part: unknown): string {

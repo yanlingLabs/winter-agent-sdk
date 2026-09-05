@@ -76,6 +76,27 @@ describe("workflowWorkerMain -- the driven body (R5-15)", () => {
   });
 });
 
+describe("F6 -- the worker entry MUTATES NOTHING on globalThis (regression pin for 9fe9ab6)", () => {
+  // R5-15 makes this entry runnable IN-PROCESS on purpose, so Norma's carried-over
+  // `globalThis.fetch = undefined` belt-and-suspenders poisoned whatever process called it: the full
+  // suite went red across the MCP and Monitor files with "fetchImpl is not a function". That sentinel
+  // was indirect -- it depended on file ordering and on those suites continuing to use `fetch`. This
+  // asserts the property itself.
+  test("running a workflow in-process leaves fetch/XMLHttpRequest/WebSocket exactly as they were", async () => {
+    const before = (["fetch", "XMLHttpRequest", "WebSocket", "Bun", "crypto", "performance"] as const).map((k) => [k, typeof (globalThis as Record<string, unknown>)[k]] as const);
+    const out = await runWorkerInProcess({ source: META + `log("work"); return 1;` });
+    expect(out.terminal).toEqual({ op: "done", result: 1 });
+    for (const [key, was] of before) {
+      expect(`${key}=${typeof (globalThis as Record<string, unknown>)[key]}`).toBe(`${key}=${was}`);
+    }
+  });
+
+  test("the shadowing the SCRIPT sees is unaffected by that -- containment is per-scope, not global", async () => {
+    const out = await runWorkerInProcess({ source: META + `return [typeof Bun, typeof fetch, typeof process];` });
+    expect(out.terminal).toEqual({ op: "done", result: ["undefined", "undefined", "undefined"] });
+  });
+});
+
 describe("workflowWorkerMain -- argv discipline (R5-15)", () => {
   test("WITHOUT the bridge flag it returns the not-implemented code and writes a stderr diagnostic (the frozen contract test's own argv)", async () => {
     const out = await runWorkerInProcess({ argv: ["winter", WORKFLOW_WORKER_ARGV_FLAG, "--run-id", "wf_1"], skipInit: true });
