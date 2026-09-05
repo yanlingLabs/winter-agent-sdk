@@ -825,14 +825,106 @@ letters would have overwritten committed P4 evidence, so this task's six scenari
 
 | Brief capture | Scenario | Subject | Verdict |
 | --- | --- | --- | --- |
-| (1) | **F** | `includePartialMessages` — `stream_event` ordering over text + thinking + tool_use | _pending_ |
+| (1) | **F** | `includePartialMessages` — `stream_event` ordering over text + thinking + tool_use | **captured** — and it answers R6-8 |
 | (2) | **G** | 529→200, 429 + `retry-after`/`anthropic-ratelimit-*`, persistent 529 + `fallbackModel` | _pending_ |
 | (3) | **H** | **WS-17 probe (a)** — neighbour-file survival across resume | _pending_ |
 | (4) | **I** | no API key; unknown model — the failure shape | _pending_ |
 | (5) | **J** | `supportedModels()` / `setModel()` | _pending_ |
 | (6) | **K** | `total_cost_usd` / `modelUsage` / `costBasis` for a fake model id | _pending_ |
 
-_Results are filled in below, one section per scenario, as each is run._
+### Capture (F) — the six-name union is exactly right, `ping` is filtered, and an unsigned thinking block is normalised to `signature: ""`
+
+**Design.** Two runs against the same loopback policy, differing in one variable. Both drive a real
+SSE turn: `message_start` → a `thinking` block (`thinking_delta`, then in run (i) a `signature_delta`)
+→ a `text` block (two `text_delta`s) → a `tool_use` block for the built-in `Read` on a fresh mkdtemp
+file (two `input_json_delta`s) → `message_delta` (`stop_reason: "tool_use"`) → `message_stop`; the
+request carrying the `tool_result` gets a plain text `end_turn` stream. A `ping` event is injected
+after the thinking block's `content_block_start`. Run (i) sends the thinking block **with** a
+signature; run (ii) sends it with **no `signature` key and no `signature_delta`** — the discriminator
+for R6-8. Options: `includePartialMessages: true`, `thinking: {type:'enabled', budgetTokens:1024}`,
+`permissionMode: 'bypassPermissions'`, `settingSources: []`.
+
+**The loopback saw exactly four requests per run** — `HEAD /api/hello`, then three
+`POST /v1/messages` — and nothing else.
+
+**Result — the `event` union.** 21 `stream_event` frames in run (i), 20 in run (ii) (one fewer: the
+absent `signature_delta`). The distinct `event.type` values observed, in first-seen order, are
+**exactly the pinned JSDoc's six names and no others**:
+
+```
+message_start → content_block_start → content_block_delta → content_block_stop → message_delta → message_stop
+```
+
+**`ping` never reaches the consumer** (`"did a ping reach the consumer?": false` in both runs). The
+pinned six-name list at `sdk.d.ts:4547` is therefore *exhaustive for what a host observes*, even
+though `ping` demonstrably exists on the wire — the runtime filters it before the frame is emitted.
+That reconciles the apparent contradiction item (a) flagged between the six-name list and
+`user_message_uuid`'s "first **non-ping** stream event" wording: the wording describes the runtime's
+internal stamping choice, not a frame a host can see.
+
+**Result — the delta variants.** Four `content_block_delta` `delta.type` values were forwarded
+verbatim: `thinking_delta`, `signature_delta`, `text_delta`, `input_json_delta`. Three
+`content_block.type` values on `content_block_start`: `thinking`, `text`, `tool_use`. None of these
+eight names is declared anywhere in the pin — this capture is their only authority in this document.
+
+**Result — the frame's own key set.** The union of top-level keys across every observed
+`stream_event` is exactly `["event", "parent_tool_use_id", "session_id", "ttft_ms", "type", "uuid"]`.
+`user_message_uuid` appeared on **zero** frames, matching its JSDoc's "turns without a client uuid"
+carve-out — a single-shot `query({prompt: string})` has no client-supplied uuid to stamp, so
+**capture (1)'s `user_message_uuid` sub-question is answerable only from streaming-input mode**, which
+this shape cannot reach (the same structural limit T10 and P2 recorded). `ttft_ms` appeared on exactly
+**2** frames — one per *forwarded* turn, on that turn's `message_start`.
+
+**Result — the auxiliary call, and why the arithmetic matters.** Three POSTs, but only two turns'
+worth of stream events reach the consumer (15 + 6 = 21 in run (i); 14 + 6 = 20 in run (ii)). The
+**first** POST is an auxiliary call, distinguishable by its envelope: `thinking: {"type":"disabled"}`,
+**0 tools**, and no `context_management` key, against the two real turns' `thinking:
+{"type":"adaptive"}`, **24 tools**, and `context_management` present. **Its stream events are not
+forwarded to the host at all.** A Winter frame emitter that streams every provider call would emit
+frames the pinned runtime suppresses.
+
+**Result — one assistant message per completed content block, confirmed.** 4 completed `assistant`
+frames per run: three for turn 1 (thinking, text, tool_use — one per block) and one for turn 2. This
+is a direct runtime confirmation of `SDKAssistantMessage`'s JSDoc (`sdk.d.ts:3098`) and of
+`SDKPartialAssistantMessage`'s "the complete assistant message still follows" claim (`4542`).
+
+**Result — item (c)'s wire spelling, and a divergence between option and wire.** The option was set to
+`{type:'enabled', budgetTokens: 1024}`. **The wire carried `"thinking": {"type": "adaptive"}`** on both
+real turns. So the runtime did not forward the requested arm: it resolved `enabled` to `adaptive` for
+this model (`claude-sonnet-5`, itself the resolution of the `"sonnet"` alias, visible in the request's
+`model` field). A Winter adapter that forwards `ThinkingConfig` verbatim diverges from the pinned
+runtime, which **re-resolves the arm against the model's capability** — exactly the silent-downgrade
+behaviour item (c) derived from `ModelInfo.supportsAdaptiveThinking` and the effort JSDocs, now
+observed on the thinking axis too. Recorded as OQ-P6-9.
+
+Request envelope top-level keys, both real turns:
+`context_management, max_tokens, messages, metadata, model, output_config, stream, system, thinking, tools`
+(`max_tokens: 64000`, `stream: true`, 24 tools).
+
+**Result — R6-8, answered directly.**
+
+| Run | canned block | replayed into request 3 | `signature` key present on the replay | value |
+| --- | --- | --- | --- | --- |
+| (i) signed | `thinking` + `signature_delta` | **yes, verbatim** | yes | the canned signature, byte-identical |
+| (ii) unsigned | `thinking`, **no signature at all** | **yes** | **yes — the runtime added it** | `""` (empty string) |
+
+The completed `assistant` frame in run (ii) carries `"signature": ""` on its thinking block. **The
+pinned runtime never emits or replays a thinking block without a `signature` key — when the stream
+carries none it materialises the empty string.** That is the behavioural form of "required": the
+field is structurally mandatory in the runtime's own normalizer, and whatever it holds is replayed
+byte-for-byte into the next request's `messages`.
+
+**What this settles for R6-8.** A foreign summary written into `assistant.message.content` as a
+`thinking` block would go on the wire as a block with an **empty or fabricated signature**, which is
+precisely the impersonation R6-8 exists to forbid — and the pinned runtime gives no mechanism to omit
+the field instead. R6-8's conclusion stands; its *justification* should cite this capture plus
+`resumed_from_incomplete_thinking` (item (f)), not the undeclared `ThinkingBlock`. Anthropic-family
+thinking blocks ride in-dialect with their real signatures, exactly as R6-8 says; everything foreign
+belongs in the sidecar and on the Winter-only `reasoning_summary` frame.
+
+**Two things this capture cannot show**, stated rather than implied: whether a *real* Anthropic
+endpoint rejects an empty signature (the loopback accepts everything), and whether `redacted_thinking`
+is handled differently (no such block was streamed — its shape stays underived, item (f)).
 
 ---
 
@@ -875,6 +967,19 @@ _Results are filled in below, one section per scenario, as each is run._
 8. **OQ-P6-8 — `costBasis` absence is doc-instructed to mean `'list'`.** The pin turns "unknown" into
    "list price" on any resumed session (`1320-1323`). Winter's cost honesty layer should decide
    deliberately whether to reproduce that default or to keep absence distinguishable, and disclose it.
+
+9. **OQ-P6-9 — the runtime re-resolves `ThinkingConfig` against the model; it does not forward it.**
+   Capture (F) set `thinking: {type:'enabled', budgetTokens:1024}` and the wire carried
+   `{"type":"adaptive"}`. Does Winter's provider seam forward the caller's arm verbatim (simpler, and
+   the caller can be told what happened) or re-resolve it per model as the pin does (parity, but a
+   silent rewrite the caller cannot see)? Whichever is chosen must be disclosed — this is the thinking
+   axis of the same silent-downgrade behaviour OQ-P6-2 records for effort.
+10. **OQ-P6-10 — auxiliary provider calls are invisible on the pinned frame stream.** Capture (F)
+   observed a third `POST /v1/messages` per run (thinking disabled, zero tools, no
+   `context_management`) whose stream events are **not** forwarded to the host. Winter must decide
+   whether its own auxiliary calls (classifier, compaction, title) are likewise frame-invisible —
+   matching the pin — or observable, and whether `modelUsage` still books them (the pin says it does
+   for pipeline calls and does not for the classifier, item (e)).
 
 ## Notes recorded but not treated as Open Questions
 
