@@ -27,7 +27,18 @@ export interface GitRunResult {
 // non-zero exit -- every caller inspects `.ok` and turns a failure into a legible tool error using
 // `.stderr`, matching this file's own "never let git's own stderr text get lost" discipline.
 export async function runGit(args: string[], cwd: string): Promise<GitRunResult> {
-  const proc = Bun.spawn(["git", ...args], { cwd, stdout: "pipe", stderr: "pipe" });
+  // "Never throws" has to cover the spawn itself, not only a non-zero exit: Bun.spawn throws
+  // SYNCHRONOUSLY (ENOENT) when `git` is not on PATH, and this function is reached from
+  // fire-and-forget sites (child-engine.ts's workspace cleanup) where an escaped throw becomes an
+  // unhandled rejection attributed to whatever test or turn happens to be running -- exactly what
+  // the linux CI runner showed, intermittently, from a fixture whose PATH did not carry git.
+  let proc: ReturnType<typeof Bun.spawn>;
+  try {
+    proc = Bun.spawn(["git", ...args], { cwd, stdout: "pipe", stderr: "pipe" });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { ok: false, stdout: "", stderr: `git could not be started: ${message}` };
+  }
   const [stdout, stderr, exitCode] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
   return { ok: exitCode === 0, stdout: stdout.trim(), stderr: stderr.trim() };
 }
