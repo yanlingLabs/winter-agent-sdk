@@ -29,7 +29,7 @@ import {
   type SessionStoreEntry,
 } from "@yanlinglabs/winter-agent-sdk";
 import type { ContentBlock, ProviderMessage, SessionPersistence } from "../engine.ts";
-import type { CompactBoundaryRecord } from "../compaction/seam.ts";
+import type { CompactBoundaryRecord, CompactBoundaryWriteResult } from "../compaction/seam.ts";
 import { resolveProjectDirName } from "../paths/project-dir-name.ts";
 import { findContinueTarget, findResumeTarget, truncateAt, toDialectEntries, rebuildProviderMessages, ResumeTargetError } from "./resume.ts";
 // Task 8 (WS-07 §3.3 / phase ruling 2): the permission journal — ruleset.ts's own header names this
@@ -345,7 +345,7 @@ export class TranscriptWriter implements SessionPersistence {
   // chain has tracked, the boundary names every one it has. That under-names rather than
   // over-names -- a resumed session then sees LESS context than the live one did, never context the
   // live session had already dropped.
-  async recordCompactBoundary(record: CompactBoundaryRecord): Promise<void> {
+  async recordCompactBoundary(record: CompactBoundaryRecord): Promise<CompactBoundaryWriteResult> {
     const summary = compactSummaryEntry({
       summary: record.summary,
       chain: { parentUuid: this.parentUuid },
@@ -375,6 +375,10 @@ export class TranscriptWriter implements SessionPersistence {
     // first one already discarded.
     this.conversationalUuids.length = 0;
     this.conversationalUuids.push(summary.uuid, ...preserved);
+
+    // Fix round 1 (M3): handed back so the engine can put `preserved_messages` on the emitted frame.
+    // These uuids are minted here and exist nowhere else.
+    return { boundaryUuid: boundary.uuid, anchorUuid: summary.uuid, preservedUuids: preserved };
   }
 
   // WS-05 §5.3 / WS-10 §3.4/§7: the `.meta.json` sidecar, via the store's own `agent_metadata`

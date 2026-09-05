@@ -36,7 +36,7 @@ import { parseMcpEnvConfig } from "./mcp/env.ts";
 // nothing from this module, and a value import in either direction would make the pair a runtime
 // cycle the compiled binary resolves differently from the dev leg.
 import type { AssembledPrompt, SystemPromptAssembler, SystemPromptInput } from "./context/seam.ts";
-import type { CompactBoundaryRecord, CompactionController, CompactionResult } from "./compaction/seam.ts";
+import type { CompactBoundaryRecord, CompactBoundaryWriteResult, CompactionController, CompactionResult } from "./compaction/seam.ts";
 import { STRUCTURED_OUTPUT_TOOL_NAME, resolveMaxStructuredOutputAttempts, type StructuredOutputSeam } from "./structured/seam.ts";
 import { isCheckpointedTool, type CheckpointedTool, type FileCheckpointSink } from "./checkpoint/seam.ts";
 import { resolveBuiltinCommand, looksLikeCommand, type CommandResolver } from "./commands/seam.ts";
@@ -372,7 +372,11 @@ export interface SessionPersistence {
   // must name the preserved entries BY UUID (the pinned `preserved_messages` relink), and uuids are
   // minted inside the store layer -- the engine has no way to name them. See dialect.ts's own
   // implementation for how the writer identifies them from its own append log.
-  recordCompactBoundary?(record: CompactBoundaryRecord): void | Promise<void>;
+  //
+  // RETURNS the minted uuids (fix round 1, M3): the emitted frame's `preserved_messages` can only be
+  // built from them, and they exist nowhere else -- the engine cannot mint them. A store predating
+  // this returns nothing, and the frame then simply omits the field.
+  recordCompactBoundary?(record: CompactBoundaryRecord): CompactBoundaryWriteResult | void | Promise<CompactBoundaryWriteResult | void>;
 }
 
 export interface EngineOptions {
@@ -2553,6 +2557,11 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
     // persistence and the reset leaves the durable transcript and the in-memory loaded set
     // disagreeing in the SAFE direction (the set is rebuilt from the transcript on resume; a reset
     // that outlived an unpersisted summary would not be).
+    // The in-memory swap happens BEFORE the frame is emitted (but after persistence) so
+    // `post_tokens` can be measured on the history the model will actually carry forward. It used to
+    // sit at the very end of this function, which left `post_tokens` structurally unreachable -- the
+    // field was declared on the frame and never populated by anything.
+    let boundaryWrite: CompactBoundaryWriteResult | undefined;
     if (store?.recordCompactBoundary !== undefined) {
       const boundaryRecord: CompactBoundaryRecord = {
         trigger,
@@ -2562,19 +2571,41 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
         retainedCount: result.retained.length,
       };
       try {
-        await store.recordCompactBoundary(boundaryRecord);
+        boundaryWrite = (await store.recordCompactBoundary(boundaryRecord)) ?? undefined;
       } catch {
         /* auxiliary, exactly like recordUser/recordAssistant -- a store failure is never turn-fatal */
       }
     }
 
+    messages.length = 0;
+    messages.push({ role: "user", content: result.summary }, ...result.retained);
+    lastCompactionTokens = contextAccountant.contextTokens();
+
+    // Fix round 1 (M3): `preserved_messages` on the FRAME, built from the uuids the store just
+    // minted -- previously unreachable, because `recordCompactBoundary` returned `void`, so a host
+    // reading the stream could never relink a preserved segment while the durable entry carried it
+    // correctly. OMITTED when nothing was preserved: absence is semantic on the pin ("compaction
+    // summarized everything"), so an empty `uuids: []` would assert something different.
+    //
+    // `post_tokens` is the accountant's reading AFTER the rebuild. It is the same value as
+    // `pre_tokens` until the next generation reports usage -- the accountant is a last-turn reading,
+    // not a live count of `messages` -- which is honest rather than a fabricated post-compaction
+    // estimate the engine has no way to compute.
     output.write({
       type: "data",
       message: {
         type: "system",
         subtype: "compact_boundary",
-        compact_metadata: { trigger, pre_tokens: result.preTokens, duration_ms: Date.now() - startedAt },
-        uuid: randomUUID(),
+        compact_metadata: {
+          trigger,
+          pre_tokens: result.preTokens,
+          post_tokens: contextAccountant.contextTokens(),
+          duration_ms: Date.now() - startedAt,
+          ...(boundaryWrite !== undefined && boundaryWrite.preservedUuids.length > 0
+            ? { preserved_messages: { anchor_uuid: boundaryWrite.anchorUuid, uuids: boundaryWrite.preservedUuids } }
+            : {}),
+        },
+        uuid: boundaryWrite?.boundaryUuid ?? randomUUID(),
         session_id: config.sessionId,
       },
     });
@@ -2587,10 +2618,6 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
     // model can no longer see evidence of having loaded must not stay silently callable.
     onCompaction(loadedToolSet, result.evidencedToolNames);
 
-    // The in-memory swap is LAST, so every step above still saw the pre-compaction history.
-    messages.length = 0;
-    messages.push({ role: "user", content: result.summary }, ...result.retained);
-    lastCompactionTokens = contextAccountant.contextTokens();
     return { ok: true, summary: result.summary, retainedCount: result.retained.length };
   };
 

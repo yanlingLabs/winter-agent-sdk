@@ -272,6 +272,73 @@ describe("compaction/seam.ts -- CompactionController (Lane K implements, the eng
     expect((results[1] as { result?: string }).result).toContain("Compacted");
   });
 
+  // Fix round 1 (M3). `recordCompactBoundary` returned `void`, so the emitted frame could never carry
+  // `preserved_messages` -- a host reading the STREAM could not relink a preserved segment even
+  // though the durable entry recorded it correctly -- and `post_tokens` was declared and never set.
+  test("M3: with keep > 0 the emitted frame carries preserved_messages and post_tokens, matching the durable entry", async () => {
+    const home = mkdtempSync(join(tmpdir(), "winter-compact-m3-"));
+    try {
+      const cwd = join(home, "work");
+      const sessionId = "sess-m3";
+      const resolved = await resolveEngineSession({ config: { sessionId, cwd, model: "sonnet", winterHome: home }, resolveWinterHome: () => home, env: {} });
+      const { host, runtime } = createInMemoryChannel();
+      const done = runEngine({
+        config: { sessionId, cwd, model: "sonnet", winterHome: home },
+        input: runtime.input,
+        output: runtime.output,
+        provider: usageProvider([{ kind: "text", text: "done", usage: { inputTokens: 7, outputTokens: 3 } }]),
+        tools: stubExecutor,
+        store: resolved.store,
+        compactionController: fakeCompactionController({ keep: 1, summary: "S" }),
+      });
+      host.output.write({ type: "user", text: "hello" });
+      host.output.write({ type: "user", text: "/compact" });
+      host.output.write({ type: "control_request", requestId: "r", subtype: "end_input", payload: undefined });
+      const frames = await drain(host.input);
+      await done;
+
+      const boundary = dataMessages(frames).find((m) => (m as { subtype?: string }).subtype === "compact_boundary") as {
+        uuid: string;
+        compact_metadata: { pre_tokens: number; post_tokens?: number; preserved_messages?: { anchor_uuid: string; uuids: string[] } };
+      };
+      expect(boundary.compact_metadata.preserved_messages).toBeDefined();
+      expect(boundary.compact_metadata.preserved_messages!.uuids).toHaveLength(1);
+      expect(typeof boundary.compact_metadata.post_tokens).toBe("number");
+
+      // The frame and the DURABLE entry name the same uuids and the same boundary -- the two views
+      // must agree, or a host that relinks from the stream and one that relinks from the transcript
+      // reconstruct different conversations.
+      const store = new WinterCompatibilitySessionStore({ winterHome: home });
+      const raw = (await store.load({ projectKey: compatibilityKeys(cwd).transcriptProjectKey, sessionId })) ?? [];
+      const durable = raw.find((e) => e.type === "compact_boundary") as unknown as {
+        uuid: string;
+        compact_metadata: { preserved_messages?: { anchor_uuid: string; uuids: string[] } };
+      };
+      expect(durable.uuid).toBe(boundary.uuid);
+      expect(durable.compact_metadata.preserved_messages).toEqual(boundary.compact_metadata.preserved_messages!);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test("M3: with NOTHING retained the frame OMITS preserved_messages -- absence stays semantic", async () => {
+    const { host, runtime } = createInMemoryChannel();
+    const done = runEngine({
+      config: baseConfig(),
+      input: runtime.input,
+      output: runtime.output,
+      provider: usageProvider([{ kind: "text", text: "done", usage: { inputTokens: 1, outputTokens: 1 } }]),
+      tools: stubExecutor,
+      compactionController: fakeCompactionController({ shouldCompact: true, keep: 0 }),
+    });
+    host.output.write({ type: "user", text: "go" });
+    host.output.write({ type: "control_request", requestId: "r", subtype: "end_input", payload: undefined });
+    const frames = await drain(host.input);
+    await done;
+    const boundary = dataMessages(frames).find((m) => (m as { subtype?: string }).subtype === "compact_boundary") as { compact_metadata: Record<string, unknown> };
+    expect("preserved_messages" in boundary.compact_metadata).toBe(false);
+  });
+
   test("registry.onCompaction is fired with the evidenced names (WS-09 §8.5)", async () => {
     // Proven through the SessionPersistence seam's ordering rather than by reaching into the
     // process-wide registry: the loaded set is per-session state with no public read-back, so what is

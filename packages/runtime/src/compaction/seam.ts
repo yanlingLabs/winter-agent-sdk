@@ -88,6 +88,22 @@ export interface CompactBoundaryRecord {
 }
 
 /**
+ * What the store hands BACK (fix round 1, M3). The uuids are minted inside the store layer, so this
+ * is the only way the emitted `compact_boundary` frame can carry `preserved_messages` at all -- the
+ * first version returned `void`, which made that field permanently unreachable on the wire while the
+ * DURABLE entry carried it correctly. A host reading the stream could never relink a preserved
+ * segment; only a host re-reading the transcript could.
+ *
+ * `preservedUuids` is empty when nothing was kept, and the frame then OMITS `preserved_messages`
+ * entirely -- absence stays semantic ("compaction summarized everything"), exactly as the pin has it.
+ */
+export interface CompactBoundaryWriteResult {
+  boundaryUuid: string;
+  anchorUuid: string;
+  preservedUuids: string[];
+}
+
+/**
  * The spine's test double. Summarizes by concatenating a marker with the message count and keeps the
  * last `keep` messages -- deterministic, authored-prose-free, and enough for an engine test to prove
  * the whole sequence ran in order.
