@@ -459,6 +459,10 @@ export function createAnthropicMessagesAdapter(opts: AnthropicAdapterOptions = {
    * the code that says "no request was made and none would have helped".
    */
   async function prepare(req: TurnRequest, ctx: ProviderContext): Promise<{ endpoint: Endpoint; body: Record<string, unknown>; headers: Record<string, string> }> {
+    // CHECKED HERE, not left to `boundedFetch`: preparing a request can itself reach the network
+    // (the Vertex transport exchanges a signed assertion for an access token), and an already-aborted
+    // caller must not cause a credential exchange for a turn that will never be sent.
+    if (req.signal?.aborted === true) throw new ProviderRequestError({ code: "aborted", message: "provider request aborted by the caller", retryable: false });
     const descriptor = findDescriptor(catalogOf(), ctx.connection.providerId, req.model);
     const endpoint = resolveEndpoint(ctx, ANTHROPIC_DEFAULT_BASE_URL);
     const body = buildRequestBody(req, descriptor, opts);

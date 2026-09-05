@@ -105,10 +105,14 @@ export interface GoogleTransport {
   /** Resolves the base URL and its endpoint policy, or throws a typed capability refusal. */
   endpoint(ctx: ProviderContext): { base: string; policy: EndpointPolicy };
   headers(ctx: ProviderContext, policy: EndpointPolicy, json: boolean): Promise<Record<string, string>>;
-  streamPath(model: string): string;
-  countTokensPath(model: string): string;
+  // EVERY path builder takes the CONTEXT as well as the model, and that is not decoration: Vertex's
+  // path carries the connection's project and location, and a transport that captured the connection
+  // in a closure instead would race between two concurrent turns on different connections -- sending
+  // one session's generation to another session's project.
+  streamPath(ctx: ProviderContext, model: string): string;
+  countTokensPath(ctx: ProviderContext, model: string): string;
   /** ABSENT when this transport has no bounded model-list endpoint in this phase's scope (Vertex). */
-  listPath?: (pageToken: string | undefined, pageSize: number) => string;
+  listPath?: (ctx: ProviderContext, pageToken: string | undefined, pageSize: number) => string;
   /** Credential kinds this transport can authenticate with, for `validateCredential`'s honest `unsupported`. */
   readonly credentialKinds: readonly string[];
 }
@@ -419,16 +423,24 @@ export function createGoogleFamilyAdapter(transport: GoogleTransport, opts: Goog
   const timeoutMs = opts.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
   const maxBodyBytes = opts.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES;
 
-  async function prepare(req: TurnRequest, ctx: ProviderContext): Promise<{ base: string; policy: EndpointPolicy; body: Record<string, unknown>; headers: Record<string, string> }> {
+  // The URL is composed in `prepare`, not at the fetch site: a connection whose project or location
+  // is missing or malformed must fail BEFORE the request as a typed `capability` refusal, not from
+  // inside the retry callback where it would be normalised as a transport failure.
+  async function prepare(req: TurnRequest, ctx: ProviderContext): Promise<{ url: string; policy: EndpointPolicy; body: Record<string, unknown>; headers: Record<string, string> }> {
+    // CHECKED HERE, not left to `boundedFetch`: preparing a request can itself reach the network
+    // (the Vertex transport exchanges a signed assertion for an access token), and an already-aborted
+    // caller must not cause a credential exchange for a turn that will never be sent.
+    if (req.signal?.aborted === true) throw new ProviderRequestError({ code: "aborted", message: "provider request aborted by the caller", retryable: false });
     const descriptor = findDescriptor(catalogOf(), ctx.connection.providerId, req.model);
     const { base, policy } = transport.endpoint(ctx);
+    const url = `${base}${transport.streamPath(ctx, req.model)}`;
     const body = buildRequestBody(req, descriptor, opts, ctx);
     const headers = await transport.headers(ctx, policy, true);
-    return { base, policy, body, headers };
+    return { url, policy, body, headers };
   }
 
   async function* streamTurn(req: TurnRequest, ctx: ProviderContext): AsyncGenerator<ProviderEvent> {
-    let prepared: { base: string; policy: EndpointPolicy; body: Record<string, unknown>; headers: Record<string, string> };
+    let prepared: { url: string; policy: EndpointPolicy; body: Record<string, unknown>; headers: Record<string, string> };
     try {
       prepared = await prepare(req, ctx);
     } catch (err) {
@@ -442,7 +454,7 @@ export function createGoogleFamilyAdapter(transport: GoogleTransport, opts: Goog
     try {
       response = await withRetry(
         async () => {
-          const res = await boundedFetch(`${prepared.base}${transport.streamPath(req.model)}`, {
+          const res = await boundedFetch(prepared.url, {
             method: "POST",
             headers: prepared.headers,
             body: JSON.stringify(prepared.body),
@@ -591,7 +603,7 @@ export function createGoogleFamilyAdapter(transport: GoogleTransport, opts: Goog
       delete body["generationConfig"];
       delete body["toolConfig"];
       const headers = await transport.headers(ctx, policy, true);
-      const res = await boundedFetch(`${base}${transport.countTokensPath(req.model)}`, {
+      const res = await boundedFetch(`${base}${transport.countTokensPath(ctx, req.model)}`, {
         method: "POST",
         headers,
         body: JSON.stringify(body),
@@ -632,7 +644,7 @@ export function createGoogleFamilyAdapter(transport: GoogleTransport, opts: Goog
       const { base, policy } = transport.endpoint(ctx);
       const headers = await transport.headers({ ...ctx, authRef: ref }, policy, false);
       try {
-        const res = await boundedFetch(`${base}${transport.listPath(undefined, 1)}`, { method: "GET", headers, timeoutMs, maxBodyBytes: 1024 * 1024, policy });
+        const res = await boundedFetch(`${base}${transport.listPath(ctx, undefined, 1)}`, { method: "GET", headers, timeoutMs, maxBodyBytes: 1024 * 1024, policy });
         const text = await res.text();
         if (res.ok) return { ok: true };
         const normalized = normalizeHttpError(res.status, res.headers, text);
@@ -657,7 +669,7 @@ export function createGoogleFamilyAdapter(transport: GoogleTransport, opts: Goog
       let partial = false;
 
       for (let page = 0; page < MAX_DISCOVERY_PAGES; page++) {
-        const res = await boundedFetch(`${base}${transport.listPath(pageToken, Math.min(1000, Math.max(1, ctx.limits.maxItems)))}`, {
+        const res = await boundedFetch(`${base}${transport.listPath(ctx, pageToken, Math.min(1000, Math.max(1, ctx.limits.maxItems)))}`, {
           method: "GET",
           headers,
           timeoutMs: Math.min(timeoutMs, ctx.limits.timeoutMs),
@@ -756,9 +768,9 @@ export function geminiTransport(): GoogleTransport {
     // `?alt=sse` is what selects server-sent events over this family's default chunked-JSON-array
     // framing. A REQUEST url may carry a query string (a STORED endpoint may not) -- Task 2's own
     // review finding C1 exists because that distinction was once missing.
-    streamPath: (model) => `/${GOOGLE_API_VERSION_PATH}/models/${encodeURIComponent(model)}:streamGenerateContent?alt=sse`,
-    countTokensPath: (model) => `/${GOOGLE_API_VERSION_PATH}/models/${encodeURIComponent(model)}:countTokens`,
-    listPath: (pageToken, pageSize) => {
+    streamPath: (_ctx, model) => `/${GOOGLE_API_VERSION_PATH}/models/${encodeURIComponent(model)}:streamGenerateContent?alt=sse`,
+    countTokensPath: (_ctx, model) => `/${GOOGLE_API_VERSION_PATH}/models/${encodeURIComponent(model)}:countTokens`,
+    listPath: (_ctx, pageToken, pageSize) => {
       const search = new URLSearchParams({ pageSize: String(pageSize) });
       if (pageToken !== undefined) search.set("pageToken", pageToken);
       return `/${GOOGLE_API_VERSION_PATH}/models?${search.toString()}`;

@@ -17,7 +17,7 @@ import type { ProviderAdapter, ProviderContext, ProviderEvent, TurnRequest } fro
 import { createGoogleGenerateContentAdapter } from "../../../provider-runtime/src/adapters/google/index.ts";
 import { foldProviderStream, type FoldedProviderTurn } from "../../../runtime/src/provider/bridge.ts";
 import { assertGeminiRequest, geminiBody, geminiContents, geminiError, geminiFakeRoutes, geminiSseFrames, geminiStreamResponse, partKind, type GeminiPart } from "../fakes/gemini.ts";
-import { jsonResponse, requestsTo, sseResponse, stalledResponse, type FakeRoute, type FakeServer } from "../fakes/server.ts";
+import { jsonResponse, sseResponse, stalledResponse, type FakeRoute, type FakeServer, type RecordedRequest } from "../fakes/server.ts";
 import type { CorpusCaseId, CorpusCaseImpl } from "./runner.ts";
 
 const evidence = <T>(value: T): { value: T; source: "upstream-static"; confidence: "inferred"; observedAt: string } => ({
@@ -184,48 +184,60 @@ const REPLAY_CHUNKS = [
   { finishReason: "STOP" as const, usageMetadata: { promptTokenCount: 9, candidatesTokenCount: 4, thoughtsTokenCount: 2 } },
 ];
 
+/**
+ * The scripted answers, keyed by model id.
+ *
+ * EXPORTED so the Vertex corpus serves the SAME scripts through its own routes: the two transports
+ * share a dialect and a normalizer, so scripting them differently would test the scripts rather than
+ * the adapters.
+ */
+export function googleScenarioStream(): NonNullable<Parameters<typeof geminiFakeRoutes>[0]["stream"]> {
+  return {
+    [GOOGLE_MODELS.main]: () => geminiStreamResponse([{ parts: [{ text: "hi" }], modelVersion: "gemini-2.5-pro-001" }, { finishReason: "STOP", usageMetadata: { promptTokenCount: 3, candidatesTokenCount: 1 } }]),
+    [GOOGLE_MODELS.full]: () =>
+      geminiStreamResponse([
+        { parts: [{ text: "reasoning summary", thought: true }] },
+        { parts: [{ text: "hello " }] },
+        { parts: [{ text: "world" }] },
+        { parts: [{ functionCall: { name: "Read", args: { path: "/tmp/x" } }, thoughtSignature: GOOGLE_SIGNATURE }] },
+        { finishReason: "STOP", usageMetadata: { promptTokenCount: 11, candidatesTokenCount: 7 } },
+      ]),
+    [GOOGLE_MODELS.multiTool]: () =>
+      geminiStreamResponse([
+        { parts: [{ functionCall: { name: "Read", args: { path: "/a" } } }, { functionCall: { name: "Write", args: { path: "/b" } } }] },
+        { finishReason: "STOP" },
+      ]),
+    // Ends WITHOUT a finishReason: the signature was seen but the turn never completed.
+    [GOOGLE_MODELS.dropBeforeFinish]: () => geminiStreamResponse([{ parts: [{ text: "partial", thoughtSignature: GOOGLE_SIGNATURE }] }, { finishReason: "STOP" }], { dropAfter: 1 }),
+    [GOOGLE_MODELS.retry503]: [geminiError(503, "UNAVAILABLE"), geminiStreamResponse([{ parts: [{ text: "recovered" }] }, { finishReason: "STOP" }])],
+    [GOOGLE_MODELS.retryAfter]: [geminiError(429, "RESOURCE_EXHAUSTED", "slow down", { "retry-after": "2" }), geminiStreamResponse([{ parts: [{ text: "after" }] }, { finishReason: "STOP" }])],
+    [GOOGLE_MODELS.auth]: () => geminiError(401, "UNAUTHENTICATED", "API key not valid"),
+    [GOOGLE_MODELS.rateLimit]: () => geminiError(429, "RESOURCE_EXHAUSTED", "quota exceeded", { "retry-after": "1", "x-ratelimit-remaining": "0" }),
+    [GOOGLE_MODELS.stall]: () => stalledResponse(4_000),
+    [GOOGLE_MODELS.malformed]: () => sseResponse([{ data: "{not json" }]),
+    [GOOGLE_MODELS.providerCode]: () => geminiError(400, "INVALID_ARGUMENT", "y".repeat(600)),
+    [GOOGLE_MODELS.usage]: () =>
+      geminiStreamResponse([
+        { parts: [{ text: "counted" }] },
+        { finishReason: "STOP", usageMetadata: { promptTokenCount: 101, candidatesTokenCount: 30, thoughtsTokenCount: 7, cachedContentTokenCount: 12 } },
+      ]),
+    [GOOGLE_MODELS.replay]: (_rec, attempt) => (attempt === 1 ? geminiStreamResponse(REPLAY_CHUNKS) : geminiStreamResponse([{ parts: [{ text: "done" }] }, { finishReason: "STOP" }])),
+    [GOOGLE_MODELS.refusal]: () => geminiStreamResponse([{ parts: [{ text: "" }], finishReason: "SAFETY" }]),
+    [GOOGLE_MODELS.slow]: () => {
+      const frames = geminiSseFrames([{ parts: [{ text: "first" }] }, { parts: [{ text: "second" }] }, { finishReason: "STOP" }]);
+      return sseResponse(frames.map((frame, index) => (index >= 1 ? { ...frame, delayMs: 1_000 } : frame)));
+    },
+    [GOOGLE_MODELS.noTools]: () => geminiStreamResponse([{ parts: [{ text: "never reached" }], finishReason: "STOP" }]),
+    [GOOGLE_MODELS.noVision]: () => geminiStreamResponse([{ parts: [{ text: "never reached" }], finishReason: "STOP" }]),
+    [GOOGLE_MODELS.capped]: () => geminiStreamResponse([{ parts: [{ text: "capped ok" }], finishReason: "STOP" }]),
+    [GOOGLE_MODELS.noEfforts]: () => geminiStreamResponse([{ parts: [{ text: "never reached" }], finishReason: "STOP" }]),
+  };
+}
+
+/** The Gemini API's own routes: the shared scripts plus this transport's `/v1beta/models` list endpoint. */
 export function googleCorpusRoutes(): FakeRoute[] {
   return geminiFakeRoutes({
-    stream: {
-      [GOOGLE_MODELS.main]: () => geminiStreamResponse([{ parts: [{ text: "hi" }], modelVersion: "gemini-2.5-pro-001" }, { finishReason: "STOP", usageMetadata: { promptTokenCount: 3, candidatesTokenCount: 1 } }]),
-      [GOOGLE_MODELS.full]: () =>
-        geminiStreamResponse([
-          { parts: [{ text: "reasoning summary", thought: true }] },
-          { parts: [{ text: "hello " }] },
-          { parts: [{ text: "world" }] },
-          { parts: [{ functionCall: { name: "Read", args: { path: "/tmp/x" } }, thoughtSignature: GOOGLE_SIGNATURE }] },
-          { finishReason: "STOP", usageMetadata: { promptTokenCount: 11, candidatesTokenCount: 7 } },
-        ]),
-      [GOOGLE_MODELS.multiTool]: () =>
-        geminiStreamResponse([
-          { parts: [{ functionCall: { name: "Read", args: { path: "/a" } } }, { functionCall: { name: "Write", args: { path: "/b" } } }] },
-          { finishReason: "STOP" },
-        ]),
-      // Ends WITHOUT a finishReason: the signature was seen but the turn never completed.
-      [GOOGLE_MODELS.dropBeforeFinish]: () => geminiStreamResponse([{ parts: [{ text: "partial", thoughtSignature: GOOGLE_SIGNATURE }] }, { finishReason: "STOP" }], { dropAfter: 1 }),
-      [GOOGLE_MODELS.retry503]: [geminiError(503, "UNAVAILABLE"), geminiStreamResponse([{ parts: [{ text: "recovered" }] }, { finishReason: "STOP" }])],
-      [GOOGLE_MODELS.retryAfter]: [geminiError(429, "RESOURCE_EXHAUSTED", "slow down", { "retry-after": "2" }), geminiStreamResponse([{ parts: [{ text: "after" }] }, { finishReason: "STOP" }])],
-      [GOOGLE_MODELS.auth]: () => geminiError(401, "UNAUTHENTICATED", "API key not valid"),
-      [GOOGLE_MODELS.rateLimit]: () => geminiError(429, "RESOURCE_EXHAUSTED", "quota exceeded", { "retry-after": "1", "x-ratelimit-remaining": "0" }),
-      [GOOGLE_MODELS.stall]: () => stalledResponse(4_000),
-      [GOOGLE_MODELS.malformed]: () => sseResponse([{ data: "{not json" }]),
-      [GOOGLE_MODELS.providerCode]: () => geminiError(400, "INVALID_ARGUMENT", "y".repeat(600)),
-      [GOOGLE_MODELS.usage]: () =>
-        geminiStreamResponse([
-          { parts: [{ text: "counted" }] },
-          { finishReason: "STOP", usageMetadata: { promptTokenCount: 101, candidatesTokenCount: 30, thoughtsTokenCount: 7, cachedContentTokenCount: 12 } },
-        ]),
-      [GOOGLE_MODELS.replay]: (_rec, attempt) => (attempt === 1 ? geminiStreamResponse(REPLAY_CHUNKS) : geminiStreamResponse([{ parts: [{ text: "done" }] }, { finishReason: "STOP" }])),
-      [GOOGLE_MODELS.refusal]: () => geminiStreamResponse([{ parts: [{ text: "" }], finishReason: "SAFETY" }]),
-      [GOOGLE_MODELS.slow]: () => {
-        const frames = geminiSseFrames([{ parts: [{ text: "first" }] }, { parts: [{ text: "second" }] }, { finishReason: "STOP" }]);
-        return sseResponse(frames.map((frame, index) => (index >= 1 ? { ...frame, delayMs: 1_000 } : frame)));
-      },
-      [GOOGLE_MODELS.noTools]: () => geminiStreamResponse([{ parts: [{ text: "never reached" }], finishReason: "STOP" }]),
-      [GOOGLE_MODELS.noVision]: () => geminiStreamResponse([{ parts: [{ text: "never reached" }], finishReason: "STOP" }]),
-      [GOOGLE_MODELS.capped]: () => geminiStreamResponse([{ parts: [{ text: "capped ok" }], finishReason: "STOP" }]),
-      [GOOGLE_MODELS.noEfforts]: () => geminiStreamResponse([{ parts: [{ text: "never reached" }], finishReason: "STOP" }]),
-    },
+    stream: googleScenarioStream(),
     models: (recorded) => {
       const token = new URL(`http://x${recorded.path}${recorded.search}`).searchParams.get("pageToken");
       if (token === null) {
@@ -243,14 +255,40 @@ export function googleCorpusRoutes(): FakeRoute[] {
 
 // --- the cases -------------------------------------------------------------------------------------------
 
-export function googleCorpusCases(): Partial<Record<CorpusCaseId, CorpusCaseImpl>> {
-  const adapter = testGoogleAdapter();
-  const ctxFor = (fake: FakeServer): ProviderContext => googleContext(fake.url);
-  const generateRequests = (fake: FakeServer) => fake.requests.filter((r) => r.path.includes(":streamGenerateContent"));
+/**
+ * What the two Google TRANSPORTS differ in, as far as the corpus can see.
+ *
+ * The corpus is shared because the QUESTIONS are: Vertex speaks the same dialect through the same
+ * normalizer, so asking it a different set would leave the differences untested and duplicate the
+ * similarities. What genuinely differs -- the URL shape, the credential, and whether a bounded list
+ * endpoint exists at all -- is exactly this config.
+ */
+export interface GoogleFamilyCorpusConfig {
+  adapter: ProviderAdapter;
+  context: (fake: FakeServer) => ProviderContext;
+  contextWith: (fake: FakeServer, over: Partial<ProviderContext>) => ProviderContext;
+  catalog: WinterCatalog;
+  providerId: string;
+  models: typeof GOOGLE_MODELS;
+  /** Recognises this transport's own generation requests among everything the fake saw. */
+  isGenerateRequest: (recorded: RecordedRequest) => boolean;
+  /** Asserts this transport's own request shape -- headers, path and query -- for the serialization case. */
+  assertSerialization: (recorded: RecordedRequest, model: string) => void;
+  /** The path a generation for `model` lands on. The identity-across-resume assertion reads it. */
+  generatePath: (model: string) => string;
+  /** `live` where the transport has a bounded `/models` endpoint; `unsupported` where this phase scopes it out (Vertex). */
+  discovery: "live" | "unsupported";
+}
+
+export function googleFamilyCorpusCases(config: GoogleFamilyCorpusConfig): Partial<Record<CorpusCaseId, CorpusCaseImpl>> {
+  const adapter = config.adapter;
+  const MODELS = config.models;
+  const ctxFor = config.context;
+  const generateRequests = (fake: FakeServer) => fake.requests.filter(config.isGenerateRequest);
   const lastRequest = (fake: FakeServer) => {
     const requests = generateRequests(fake);
     const last = requests[requests.length - 1];
-    assert(last !== undefined, "the fake received no :streamGenerateContent request at all");
+    assert(last !== undefined, "the fake received no generation request at all");
     return last;
   };
 
@@ -269,20 +307,21 @@ export function googleCorpusCases(): Partial<Record<CorpusCaseId, CorpusCaseImpl
         ctxFor(fake),
       );
       assert(generateRequests(fake).length === before + 1, "exactly one request should have been sent");
-      assertGeminiRequest(lastRequest(fake), {
-        // The model id and the METHOD are both in the path; `?alt=sse` is what selects SSE framing.
-        model: id,
-        search: "?alt=sse",
-        systemInstruction: "winter-system",
-        roles: ["user"],
-        partKinds: ["text"],
-        functionNames: ["Read"],
-        toolConfig: { functionCallingConfig: { mode: "ANY", allowedFunctionNames: ["Read"] } },
-      });
+      const recorded = lastRequest(fake);
+      // The model id and the METHOD are both in the PATH for this family, and `?alt=sse` is what
+      // selects SSE framing -- so the transport supplies that half of the assertion.
+      config.assertSerialization(recorded, id);
+      const body = geminiBody(recorded);
+      const system = body["systemInstruction"] as { parts?: Array<{ text?: unknown }> } | undefined;
+      eq(system?.parts?.map((p) => p.text).join(""), "winter-system", "the system instruction");
+      eq(geminiContents(recorded).map((c) => c.role), ["user"], "the wire roles");
+      eq(geminiContents(recorded).flatMap((c) => (c.parts ?? []).map(partKind)), ["text"], "the part ordering");
+      eq((body["tools"] as Array<{ functionDeclarations?: Array<{ name?: unknown }> }>)[0]?.functionDeclarations?.map((d) => d.name), ["Read"], "the declared functions");
+      eq(body["toolConfig"], { functionCallingConfig: { mode: "ANY", allowedFunctionNames: ["Read"] } }, "the tool config");
     },
 
     "streaming-order": async ({ fake }) => {
-      const events = await collectEvents(adapter, { model: GOOGLE_MODELS.full, messages: [user("go")] }, ctxFor(fake));
+      const events = await collectEvents(adapter, { model: MODELS.full, messages: [user("go")] }, ctxFor(fake));
       eq(
         events.map((e) => e.type),
         [
@@ -304,7 +343,7 @@ export function googleCorpusCases(): Partial<Record<CorpusCaseId, CorpusCaseImpl
     },
 
     "tool-call-single": async ({ fake }) => {
-      const turn = await foldTurn(adapter, { model: GOOGLE_MODELS.full, messages: [user("go")] }, ctxFor(fake));
+      const turn = await foldTurn(adapter, { model: MODELS.full, messages: [user("go")] }, ctxFor(fake));
       assert(turn.kind === "tool_use", `expected a tool_use turn, saw ${turn.kind}`);
       eq(turn.calls, [{ id: "google-call-0", name: "Read", input: { path: "/tmp/x" } }], "the single parsed call");
       eq(turn.text, "hello world", "the leading text a real model returns alongside its call");
@@ -314,7 +353,7 @@ export function googleCorpusCases(): Partial<Record<CorpusCaseId, CorpusCaseImpl
     },
 
     "tool-call-multiple": async ({ fake }) => {
-      const turn = await foldTurn(adapter, { model: GOOGLE_MODELS.multiTool, messages: [user("go")] }, ctxFor(fake));
+      const turn = await foldTurn(adapter, { model: MODELS.multiTool, messages: [user("go")] }, ctxFor(fake));
       assert(turn.kind === "tool_use", "expected a tool_use turn");
       eq(turn.calls, [{ id: "google-call-0", name: "Read", input: { path: "/a" } }, { id: "google-call-1", name: "Write", input: { path: "/b" } }], "both calls, each with its own minted id");
     },
@@ -331,7 +370,7 @@ export function googleCorpusCases(): Partial<Record<CorpusCaseId, CorpusCaseImpl
       await foldTurn(
         adapter,
         {
-          model: GOOGLE_MODELS.main,
+          model: MODELS.main,
           messages: [
             user("read it"),
             { role: "assistant", content: [{ type: "tool_use", id: "google-call-0", name: "Read", input: { path: "/tmp/x" } }] },
@@ -348,18 +387,20 @@ export function googleCorpusCases(): Partial<Record<CorpusCaseId, CorpusCaseImpl
     },
 
     "cancel-pre-header": async ({ fake }) => {
-      const before = fake.requests.length;
+      // GENERATION requests, not every request the fake saw: a transport may legitimately have
+      // contacted a token endpoint first, and what this case asks about is the generation.
+      const before = generateRequests(fake).length;
       const controller = new AbortController();
       controller.abort();
-      const err = await foldFailure(adapter, { model: GOOGLE_MODELS.main, messages: [user("go")], signal: controller.signal }, ctxFor(fake));
+      const err = await foldFailure(adapter, { model: MODELS.main, messages: [user("go")], signal: controller.signal }, ctxFor(fake));
       assert(/aborted/.test(err.message), `expected an aborted failure, saw ${err.message}`);
-      assert(fake.requests.length === before, "an abort BEFORE the first byte must not reach the provider at all");
+      assert(generateRequests(fake).length === before, "an abort BEFORE the first byte must not reach the provider at all");
     },
 
     "cancel-mid-stream": async ({ fake }) => {
       const controller = new AbortController();
       const seen: ProviderEvent[] = [];
-      for await (const event of adapter.streamTurn({ model: GOOGLE_MODELS.slow, messages: [user("go")], signal: controller.signal }, ctxFor(fake))) {
+      for await (const event of adapter.streamTurn({ model: MODELS.slow, messages: [user("go")], signal: controller.signal }, ctxFor(fake))) {
         seen.push(event);
         if (event.type === "text_delta") controller.abort();
       }
@@ -370,14 +411,14 @@ export function googleCorpusCases(): Partial<Record<CorpusCaseId, CorpusCaseImpl
     },
 
     "usage-accounting": async ({ fake }) => {
-      const turn = await foldTurn(adapter, { model: GOOGLE_MODELS.usage, messages: [user("go")] }, ctxFor(fake));
+      const turn = await foldTurn(adapter, { model: MODELS.usage, messages: [user("go")] }, ctxFor(fake));
       // Reasoning is billed separately from the visible answer, so both are summed into the seam's
       // single `outputTokens`: 30 candidate + 7 thought.
       eq(turn.usage, { inputTokens: 101, outputTokens: 37, cacheReadTokens: 12 }, "the usage counters, with reasoning tokens included in the output count");
     },
 
     "error-auth": async ({ fake }) => {
-      const err = await foldFailure(adapter, { model: GOOGLE_MODELS.auth, messages: [user("go")] }, ctxFor(fake));
+      const err = await foldFailure(adapter, { model: MODELS.auth, messages: [user("go")] }, ctxFor(fake));
       assert(err.status === 401, `expected status 401, saw ${String(err.status)}`);
       // This family's `error.code` is the NUMERIC http status, with the machine-readable value in
       // `error.status` -- which is why the shared parser tries three keys rather than one.
@@ -386,7 +427,7 @@ export function googleCorpusCases(): Partial<Record<CorpusCaseId, CorpusCaseImpl
     },
 
     "error-rate-limit": async ({ fake }) => {
-      const events = await collectEvents(adapter, { model: GOOGLE_MODELS.rateLimit, messages: [user("go")] }, ctxFor(fake));
+      const events = await collectEvents(adapter, { model: MODELS.rateLimit, messages: [user("go")] }, ctxFor(fake));
       assert(!events.some((e) => e.type === "rate_limit"), "a 429 must never produce a subscription-quota rate_limit event (R6-B)");
       const retries = events.filter((e): e is Extract<ProviderEvent, { type: "retry" }> => e.type === "retry");
       assert(retries.length > 0, "a 429 must be announced as a retry");
@@ -395,71 +436,71 @@ export function googleCorpusCases(): Partial<Record<CorpusCaseId, CorpusCaseImpl
     },
 
     "error-timeout": async ({ fake }) => {
-      const err = await foldFailure(adapter, { model: GOOGLE_MODELS.stall, messages: [user("go")] }, googleContext(fake.url, { stallTimeoutMs: 150 }));
+      const err = await foldFailure(adapter, { model: MODELS.stall, messages: [user("go")] }, config.contextWith(fake, { stallTimeoutMs: 150 }));
       assert(/\(stall\)/.test(err.message), `expected a typed stall, saw ${err.message}`);
     },
 
     "error-network": async ({ fake }) => {
-      const err = await foldFailure(adapter, { model: GOOGLE_MODELS.dropBeforeFinish, messages: [user("go")] }, ctxFor(fake));
+      const err = await foldFailure(adapter, { model: MODELS.dropBeforeFinish, messages: [user("go")] }, ctxFor(fake));
       assert(/\(network\)/.test(err.message), `expected a network failure, saw ${err.message}`);
       assert(!("status" in err), "a connection error carries NO status key at all");
     },
 
     "error-malformed": async ({ fake }) => {
-      const err = await foldFailure(adapter, { model: GOOGLE_MODELS.malformed, messages: [user("go")] }, ctxFor(fake));
+      const err = await foldFailure(adapter, { model: MODELS.malformed, messages: [user("go")] }, ctxFor(fake));
       assert(/\(bad_request\)/.test(err.message), `expected a bad_request, saw ${err.message}`);
     },
 
     "error-provider-codes": async ({ fake }) => {
-      const err = await foldFailure(adapter, { model: GOOGLE_MODELS.providerCode, messages: [user("go")] }, ctxFor(fake));
+      const err = await foldFailure(adapter, { model: MODELS.providerCode, messages: [user("go")] }, ctxFor(fake));
       assert(err.providerCode === "INVALID_ARGUMENT", `expected the verbatim provider code, saw ${String(err.providerCode)}`);
       assert(err.message.length < 600, "the message reaching a frame must be bounded");
     },
 
     "retry-after-no-replay": async ({ fake }) => {
-      const events = await collectEvents(adapter, { model: GOOGLE_MODELS.retryAfter, messages: [user("go")] }, ctxFor(fake));
+      const events = await collectEvents(adapter, { model: MODELS.retryAfter, messages: [user("go")] }, ctxFor(fake));
       const retry = events.find((e): e is Extract<ProviderEvent, { type: "retry" }> => e.type === "retry");
       assert(retry !== undefined, "the 429 should have produced one retry");
       eq(retry.retryDelayMs, 2000, "`Retry-After: 2` REPLACES the jittered schedule");
       assert(events.some((e) => e.type === "done"), "the retry should have succeeded on the second attempt");
 
       const before = generateRequests(fake).length;
-      await foldFailure(adapter, { model: GOOGLE_MODELS.dropBeforeFinish, messages: [user("go")] }, ctxFor(fake));
+      await foldFailure(adapter, { model: MODELS.dropBeforeFinish, messages: [user("go")] }, ctxFor(fake));
       eq(generateRequests(fake).length - before, 1, "a mid-stream failure must never be replayed");
     },
 
     "effort-mapping": async ({ fake }) => {
-      await foldTurn(adapter, { model: GOOGLE_MODELS.main, messages: [user("go")], effort: "high" }, ctxFor(fake));
+      await foldTurn(adapter, { model: MODELS.main, messages: [user("go")], effort: "high" }, ctxFor(fake));
       eq((geminiBody(lastRequest(fake))["generationConfig"] as Record<string, unknown>)["thinkingConfig"], { thinkingBudget: 8192 }, "a VERIFIED effort maps onto this family's own thinkingBudget");
 
       const before = generateRequests(fake).length;
-      const err = await foldFailure(adapter, { model: GOOGLE_MODELS.noEfforts, messages: [user("go")], effort: "high" }, ctxFor(fake));
+      const err = await foldFailure(adapter, { model: MODELS.noEfforts, messages: [user("go")], effort: "high" }, ctxFor(fake));
       assert(/no effort vocabulary/.test(err.message), `expected a vocabulary refusal, saw ${err.message}`);
       eq(generateRequests(fake).length, before, "an unverified effort must never reach the wire");
     },
 
     "opaque-continuation": async ({ fake }) => {
       // (a) The signature is captured, keyed to the EXACT part it arrived on.
-      const turn = await foldTurn(adapter, { model: GOOGLE_MODELS.replay, messages: [user("go")] }, ctxFor(fake));
+      const turn = await foldTurn(adapter, { model: MODELS.replay, messages: [user("go")] }, ctxFor(fake));
       assert(turn.kind === "tool_use", "expected the first turn to end in a tool call");
       eq(turn.nativeState?.items, [{ partIndex: 2, callId: "google-call-0", signature: GOOGLE_SIGNATURE }], "the captured continuation item");
 
       // (b) A stream that never reaches its completing chunk captures NOTHING -- even though the
       //     signature was already on the wire.
-      const partial = await collectEvents(adapter, { model: GOOGLE_MODELS.dropBeforeFinish, messages: [user("go")] }, ctxFor(fake));
+      const partial = await collectEvents(adapter, { model: MODELS.dropBeforeFinish, messages: [user("go")] }, ctxFor(fake));
       assert(!partial.some((e) => e.type === "native_state"), "continuation state whose completing chunk never arrived must never be captured");
 
       // (c) Replayed onto the EXACT part, inside its own domain.
       await foldTurn(
         adapter,
         {
-          model: GOOGLE_MODELS.replay,
+          model: MODELS.replay,
           messages: [
             user("go"),
             {
               role: "assistant",
               content: [{ type: "text", text: turn.text ?? "" }, { type: "tool_use", id: "google-call-0", name: "Read", input: { path: "/r" } }],
-              nativeState: { family: "google", continuationDomain: `google/${GOOGLE_MODELS.replay}`, items: turn.nativeState?.items ?? [] },
+              nativeState: { family: "google", continuationDomain: `google/${MODELS.replay}`, items: turn.nativeState?.items ?? [] },
             },
             { role: "tool", content: [{ type: "tool_result", tool_use_id: "google-call-0", content: "ok" }] },
           ],
@@ -476,41 +517,51 @@ export function googleCorpusCases(): Partial<Record<CorpusCaseId, CorpusCaseImpl
 
     "limit-rejection": async ({ fake }) => {
       const before = generateRequests(fake).length;
-      const err = await foldFailure(adapter, { model: GOOGLE_MODELS.capped, messages: [user("go")], thinking: { type: "enabled", budgetTokens: 4096 } }, ctxFor(fake));
+      const err = await foldFailure(adapter, { model: MODELS.capped, messages: [user("go")], thinking: { type: "enabled", budgetTokens: 4096 } }, ctxFor(fake));
       assert(/does not fit inside maxOutputTokens/.test(err.message), `expected a limit refusal, saw ${err.message}`);
       eq(generateRequests(fake).length, before, "an over-limit request must never reach the wire");
     },
 
     "vision-where-advertised": async ({ fake }) => {
       const image = { type: "image" as const, source: { type: "base64" as const, media_type: "image/png", data: "aGVsbG8=" } };
-      await foldTurn(adapter, { model: GOOGLE_MODELS.main, messages: [{ role: "user", content: [image] }] }, ctxFor(fake));
+      await foldTurn(adapter, { model: MODELS.main, messages: [{ role: "user", content: [image] }] }, ctxFor(fake));
       eq(geminiContents(lastRequest(fake))[0]?.parts, [{ inlineData: { mimeType: "image/png", data: "aGVsbG8=" } }], "the image part in the family's own shape");
 
       const before = generateRequests(fake).length;
-      const err = await foldFailure(adapter, { model: GOOGLE_MODELS.noVision, messages: [{ role: "user", content: [image] }] }, ctxFor(fake));
+      const err = await foldFailure(adapter, { model: MODELS.noVision, messages: [{ role: "user", content: [image] }] }, ctxFor(fake));
       assert(/does not advertise image input/.test(err.message), `expected a vision refusal, saw ${err.message}`);
       eq(generateRequests(fake).length, before, "an unadvertised modality must never reach the wire");
     },
 
     "discovery-edge-cases": async ({ fake }) => {
-      const result = await discoverModels(adapter, { ...googleContext(fake.url), limits: { maxBytes: 256 * 1024, maxItems: 50, timeoutMs: 3_000 } });
+      if (config.discovery === "unsupported") {
+        // NOT a pass by omission: this transport has no bounded model-list endpoint in this phase's
+        // scope, and what the case checks is that the absence is reported as PARTIAL rather than as
+        // an empty catalog a picker would render as fact.
+        const result = await discoverModels(adapter, { ...ctxFor(fake), limits: { maxBytes: 64 * 1024, maxItems: 10, timeoutMs: 2_000 } });
+        eq(result.models, [], "a transport with no list endpoint returns no models");
+        assert(result.partial, "absence must be reported as PARTIAL, never as removal");
+        assert(result.warnings.some((w) => /not authoritative|no bounded model-list/i.test(w)), "the reason must be stated, not implied");
+        return;
+      }
+      const result = await discoverModels(adapter, { ...ctxFor(fake), limits: { maxBytes: 256 * 1024, maxItems: 50, timeoutMs: 3_000 } });
       // The `models/` RESOURCE-NAME prefix is stripped so an id matches the catalog's `upstreamId`.
       eq(result.models.map((m) => m.id), ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash"], "the paginated, deduped, prefix-stripped model list");
       assert(result.warnings.some((w) => /duplicate/.test(w)), "a duplicate id is reported rather than silently kept twice");
       assert(result.warnings.some((w) => /no usable id/.test(w)), "a malformed row is dropped and counted");
       eq(result.models[0]?.contextWindow, 1048576, "`inputTokenLimit` becomes the context window");
 
-      const bounded = await discoverModels(adapter, { ...googleContext(fake.url), limits: { maxBytes: 256 * 1024, maxItems: 2, timeoutMs: 3_000 } });
+      const bounded = await discoverModels(adapter, { ...ctxFor(fake), limits: { maxBytes: 256 * 1024, maxItems: 2, timeoutMs: 3_000 } });
       assert(bounded.models.length <= 2, "the item bound is enforced");
       assert(bounded.partial, "a truncated catalog is reported as PARTIAL, never as removal");
     },
 
     "identity-across-resume": async ({ fake }) => {
-      const catalog = testGoogleCatalog();
+      const catalog = config.catalog;
       const identity = () => {
         const registry = createRegistry(catalog);
         registry.register(adapter);
-        const resolved = registry.resolve({ model: GOOGLE_MODELS.main, provider: { providerId: "google" } });
+        const resolved = registry.resolve({ model: MODELS.main, provider: { providerId: config.providerId } });
         assert(!(resolved instanceof Error), "the model should resolve");
         return {
           providerId: resolved.providerId,
@@ -531,7 +582,7 @@ export function googleCorpusCases(): Partial<Record<CorpusCaseId, CorpusCaseImpl
       // The model id lives in the PATH for this family, so that is where the identity is checked.
       eq(
         generateRequests(fake).slice(requestsBefore).map((r) => r.path),
-        [`/v1beta/models/${GOOGLE_MODELS.main}:streamGenerateContent`, `/v1beta/models/${GOOGLE_MODELS.main}:streamGenerateContent`],
+        [config.generatePath(MODELS.main), config.generatePath(MODELS.main)],
         "the same wire model id on both turns",
       );
     },
@@ -540,7 +591,7 @@ export function googleCorpusCases(): Partial<Record<CorpusCaseId, CorpusCaseImpl
       const before = generateRequests(fake).length;
       const err = await foldFailure(
         adapter,
-        { model: GOOGLE_MODELS.noTools, messages: [user("go")], tools: [{ name: "Read", description: "read", inputSchema: { type: "object" } }] },
+        { model: MODELS.noTools, messages: [user("go")], tools: [{ name: "Read", description: "read", inputSchema: { type: "object" } }] },
         ctxFor(fake),
       );
       assert(/cannot be sent natively/.test(err.message), `expected a capability-negotiation failure, saw ${err.message}`);
@@ -550,10 +601,26 @@ export function googleCorpusCases(): Partial<Record<CorpusCaseId, CorpusCaseImpl
       // dropped response -- to the model those two are indistinguishable.
       const orphan = await foldFailure(
         adapter,
-        { model: GOOGLE_MODELS.main, messages: [{ role: "tool", content: [{ type: "tool_result", tool_use_id: "never-called", content: "x" }] }] },
+        { model: MODELS.main, messages: [{ role: "tool", content: [{ type: "tool_result", tool_use_id: "never-called", content: "x" }] }] },
         ctxFor(fake),
       );
       assert(/has no matching tool_use/.test(orphan.message), `expected an orphan-result refusal, saw ${orphan.message}`);
     },
   };
+}
+
+/** The Gemini API's own corpus configuration. */
+export function googleCorpusCases(): Partial<Record<CorpusCaseId, CorpusCaseImpl>> {
+  return googleFamilyCorpusCases({
+    adapter: testGoogleAdapter(),
+    context: (fake) => googleContext(fake.url),
+    contextWith: (fake, over) => googleContext(fake.url, over),
+    catalog: testGoogleCatalog(),
+    providerId: "google",
+    models: GOOGLE_MODELS,
+    isGenerateRequest: (recorded) => recorded.path.includes(":streamGenerateContent"),
+    assertSerialization: (recorded, model) => assertGeminiRequest(recorded, { model, search: "?alt=sse" }),
+    generatePath: (model) => `/v1beta/models/${model}:streamGenerateContent`,
+    discovery: "live",
+  });
 }
