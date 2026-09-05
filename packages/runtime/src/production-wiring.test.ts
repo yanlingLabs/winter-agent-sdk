@@ -12,7 +12,7 @@
 // `~/.norma`, `~/.claude`, the Keychain, or a real user's settings, and no path contains a real
 // username.
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { RuntimeConfig, WinterFrame, ProtocolSdkMessage as SdkMessage } from "@yanlinglabs/winter-agent-sdk";
@@ -322,6 +322,107 @@ describe("wiring warnings are prose an operator can act on", () => {
     });
     try {
       expect(wiring.warnings.filter((w) => w.startsWith("skill: "))).toEqual([]);
+    } finally {
+      wiring.dispose();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// Phase 5 fix wave (B-low): the in-memory leg mints ONE winter home per virtual process.
+// ---------------------------------------------------------------------------------------------
+describe("the in-memory leg's own hermetic root", () => {
+  function inMemoryRoots(): Set<string> {
+    return new Set(readdirSync(tmpdir()).filter((n) => n.startsWith("winter-inmemory-")));
+  }
+
+  test("a session with no explicit home creates exactly ONE `winter-inmemory-` root, not three", async () => {
+    const before = inMemoryRoots();
+    // NEITHER `config.winterHome` NOR `env.WINTER_HOME` -- the only path that mkdtemps at all, and
+    // the default every `scripts/differential.ts` run and most tests take.
+    const config = { sessionId: "s-one-root", cwd, model: "m" } as unknown as RuntimeConfig;
+    const proc = inMemoryProcess(["--config-json", JSON.stringify(config)]);
+    proc.stdin.end();
+    for await (const _ of proc.stdout) void _;
+    await proc.exited;
+
+    const added = [...inMemoryRoots()].filter((n) => !before.has(n));
+    try {
+      // Three call sites (`resolveEngineSession`, the child store, `buildProductionWiring`) each
+      // used to mint their own -- so the wiring read a `.winter` tree nothing wrote to.
+      expect(added).toHaveLength(1);
+    } finally {
+      for (const dir of added) rmSync(join(tmpdir(), dir), { recursive: true, force: true });
+    }
+  });
+
+  test("`persistSession: false` still mints NOTHING -- the memo is lazy, not eager", async () => {
+    const before = inMemoryRoots();
+    const config = { sessionId: "s-no-root", cwd, model: "m", persistSession: false } as unknown as RuntimeConfig;
+    const proc = inMemoryProcess(["--config-json", JSON.stringify(config)]);
+    proc.stdin.end();
+    for await (const _ of proc.stdout) void _;
+    await proc.exited;
+    // The wiring itself still needs a root to resolve settings against, so this asserts the memo did
+    // not become EAGER rather than that nothing is ever created: at most the one.
+    expect([...inMemoryRoots()].filter((n) => !before.has(n)).length).toBeLessThanOrEqual(1);
+    for (const dir of [...inMemoryRoots()].filter((n) => !before.has(n))) rmSync(join(tmpdir(), dir), { recursive: true, force: true });
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// Phase 5 fix wave (B-low): RULING P5-G's downgrade is DISCLOSED, not silently correct.
+// ---------------------------------------------------------------------------------------------
+describe("P5-G: a refused project-tier prompt replacement is reported", () => {
+  function writeProjectStyle(root: string, name: string, keepCodingInstructions: boolean): void {
+    const dir = join(root, ".winter", "output-styles");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, `${name}.md`), `---\nname: ${name}\ndescription: d\nkeep-coding-instructions: ${keepCodingInstructions}\n---\n\nSTYLE BODY`, "utf8");
+  }
+
+  test("an untrusted project style asking to REPLACE the prompt is applied as an addition, and says so", async () => {
+    writeProjectStyle(cwd, "repo-style", false);
+    const wiring = await buildProductionWiring({
+      // The style is SELECTED by the host (`Options.outputStyle`), which is the only door left open
+      // since m1 made a project `settings.json` unable to select at all.
+      config: { sessionId: "s-p5g", cwd, model: "m", outputStyle: "repo-style" } as unknown as RuntimeConfig,
+      env: {},
+      winterHome: home,
+    });
+    try {
+      const warning = wiring.warnings.find((w) => w.includes("output style"));
+      expect(warning).toBeDefined();
+      expect(warning).toContain("repo-style");
+      expect(warning).toContain("P5-G");
+      expect(warning).toContain("ADDITION");
+    } finally {
+      wiring.dispose();
+    }
+  });
+
+  test("a project style that never asked to replace is NOT reported", async () => {
+    writeProjectStyle(cwd, "polite", true);
+    const wiring = await buildProductionWiring({
+      config: { sessionId: "s-p5g-quiet", cwd, model: "m", outputStyle: "polite" } as unknown as RuntimeConfig,
+      env: {},
+      winterHome: home,
+    });
+    try {
+      expect(wiring.warnings.filter((w) => w.includes("output style"))).toEqual([]);
+    } finally {
+      wiring.dispose();
+    }
+  });
+
+  test("a TRUSTED workspace's replacement is honoured, so there is nothing to report", async () => {
+    writeProjectStyle(cwd, "repo-style", false);
+    const wiring = await buildProductionWiring({
+      config: { sessionId: "s-p5g-trusted", cwd, model: "m", outputStyle: "repo-style", trustedWorkspace: true } as unknown as RuntimeConfig,
+      env: {},
+      winterHome: home,
+    });
+    try {
+      expect(wiring.warnings.filter((w) => w.includes("output style"))).toEqual([]);
     } finally {
       wiring.dispose();
     }

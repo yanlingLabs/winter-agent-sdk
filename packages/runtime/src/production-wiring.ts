@@ -28,6 +28,7 @@ import { sourceRule, rawToRuleValue, type SourcedRuleEntry } from "./permissions
 import type { RuleSource } from "@yanlinglabs/winter-agent-sdk";
 import type { DetailedResolvedSettings } from "./settings/resolve.ts";
 import { defaultTrustSource } from "./settings/trust.ts";
+import { resolveOutputStyle } from "./context/output-styles.ts";
 import { loadPlugins } from "./plugins/loader.ts";
 import { pluginAgentDefinitions, pluginCommandContributions, pluginInitInfo, pluginSkillContributions } from "./plugins/bundle.ts";
 import { SkillIndex } from "./skills/store.ts";
@@ -302,6 +303,7 @@ export interface ProductionWiring {
   childFactoryOptions: {
     systemPromptAssembler: SystemPromptAssembler;
     skillRuntime: { index: SkillIndex; skillOverrides?: SkillOverrides };
+    skillListing: SkillListing;
     structuredOutput: StructuredOutputSeam;
     /** I4: a user-tier `PreToolUse` deny must govern a child's tool calls too. */
     extraHookEntries: readonly SourcedHookEntry[];
@@ -535,6 +537,30 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
   // as the name the host asked for.
   const initOutputStyle = config.outputStyle ?? (typeof effective.outputStyle === "string" ? effective.outputStyle : undefined) ?? DEFAULT_OUTPUT_STYLE;
 
+  // Phase 5 fix wave (B-low): RULING P5-G's downgrade, SURFACED.
+  //
+  // Rider 22 moved `replacementDowngraded` onto the assembled result so the ruling's "observable"
+  // clause held somewhere a caller could see it. Nothing in production reads it: the engine consumes
+  // `assemble()` for its `system` and its context blocks and touches no other field, so a project
+  // style that asked to replace the prompt and was refused still told nobody. The refusal is
+  // CORRECT -- and silently correct is how a repository author concludes their style file is broken
+  // and starts trying to work around a security boundary they were never told about.
+  //
+  // Resolved here rather than plumbed back out of the assembler: this is a pure filesystem read of
+  // the same name through the same chain, and it keeps the disclosure in the one place every other
+  // wiring warning already lives. The assembler remains the authority for the PROMPT.
+  const styleForWarning = resolveOutputStyle(initOutputStyle, {
+    cwd: config.cwd,
+    home: winterHome,
+    trustedWorkspace,
+    ...(settingSources !== undefined ? { settingSources } : {}),
+  });
+  if (styleForWarning?.replacementDowngraded === true) {
+    warnings.push(
+      `output style "${initOutputStyle}" is a PROJECT-tier style asking to replace the base system prompt (\`keep-coding-instructions: false\`); this workspace is not host-trusted, so it has been applied as an ADDITION instead (RULING P5-G)`,
+    );
+  }
+
   // (15) THE MODEL-FACING SKILL LISTING (R5-17). Built POST-truncation here, by Lane S's own
   // producer, so Lane C's assembler places it and re-derives neither cap. Restricted to the
   // session's EFFECTIVE set for the same reason `initSkills` is: a listing advertising a skill the
@@ -602,6 +628,10 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
     childFactoryOptions: {
       systemPromptAssembler,
       skillRuntime: { index: skillIndex, ...(skillOverrides !== undefined ? { skillOverrides } : {}) },
+      // B-low: the LISTING that goes with that index. Threaded as the same object the parent gets --
+      // it is the session's skill surface, and a child resolving against the same index while being
+      // shown a different (empty) menu was the inconsistency.
+      skillListing,
       // THE SAME INSTANCE the parent runs with -- Lane K's NEEDS_CONTEXT 6: one seam per session so
       // the compiled-validator cache and the dialect selection are shared. A child needs it because
       // `SpawnChildRequest.outputFormat` reaches its own generation config (Lane W's

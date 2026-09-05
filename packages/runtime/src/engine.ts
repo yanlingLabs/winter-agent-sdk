@@ -1563,11 +1563,27 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
       // is the honest base a definition's own prompt is expected to be layered onto, never a guess.
       systemPrompt: "",
       // Phase 5 Task 8 (rider 12, WS-11 §6.5): the parent's own configured output style, so a
-      // dispatch-child renders under the same one. `config.outputStyle` and NOT the settings tier:
-      // the engine holds no resolved settings (production-wiring.ts already folded the settings
-      // value into the session's effective config path when a host set one), and inventing a second
-      // resolution here would be a second producer of the same answer.
-      ...(config.outputStyle !== undefined ? { outputStyle: config.outputStyle } : {}),
+      // dispatch-child renders under the same one.
+      //
+      // CORRECTED IN THE FIX WAVE (B-low). This used to read `config.outputStyle` alone and justify
+      // it with "production-wiring.ts already folded the settings value into the session's effective
+      // config path" -- a mechanism that does not exist. The wiring resolves
+      // `config.outputStyle ?? effective.outputStyle ?? DEFAULT` into `initOutputStyle` and hands it
+      // to the engine as an ENGINE OPTION; it never writes back into `config`. So `config.outputStyle`
+      // stayed `undefined` whenever the style came from a settings file, and a dispatch-child
+      // silently rendered under the default while its parent used the user's chosen style. The
+      // comment asserted the gap was closed, which is worse than the gap: it told the next reader
+      // not to look.
+      //
+      // `initOutputStyle` IS that resolution, so reading it here is not a second producer -- it is
+      // the first one, finally consulted. Still omitted when it resolves to the default, so a
+      // session that configured nothing keeps handing children an absent field rather than a newly
+      // fabricated `"default"`.
+      ...(initOutputStyle !== undefined && initOutputStyle !== DEFAULT_OUTPUT_STYLE
+        ? { outputStyle: initOutputStyle }
+        : config.outputStyle !== undefined
+          ? { outputStyle: config.outputStyle }
+          : {}),
       // WS-10 §3.5: "a fork inherits EVERYTHING... conversation." Copied BY VALUE (a fresh array of
       // the same message objects) so a child can never mutate the parent's own live turn history.
       ...(req.fork === true ? { messages: [...messages] } : {}),

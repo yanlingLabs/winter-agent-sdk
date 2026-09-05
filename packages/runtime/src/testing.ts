@@ -128,6 +128,22 @@ export function inMemoryProcess(
 ): SpawnedRuntimeProcess {
   const config = parseConfigFromArgv(argv);
 
+  // Phase 5 fix wave (B-low): ONE root per virtual process, minted at most once.
+  //
+  // `resolveInMemoryWinterHome` mkdtemps a FRESH directory whenever neither `config.winterHome` nor
+  // `env.WINTER_HOME` is set -- and it was called three times per session: once for
+  // `resolveEngineSession`, once for the child store, once for `buildProductionWiring`. So in the
+  // default case (which is most tests, and every `scripts/differential.ts` run) a session's own
+  // transcript, its children's transcripts and the settings/skills/plugins its wiring discovered all
+  // lived under three DIFFERENT roots. Wasteful is the smaller half; the real cost is that the
+  // wiring read a `.winter` tree that was not the one anything wrote to, so no in-memory test could
+  // ever observe a settings file affecting a transcript, and a child could not be found under its
+  // parent's root.
+  //
+  // LAZY on purpose: `persistSession: false` must still mint nothing at all.
+  let memoizedWinterHome: string | undefined;
+  const winterHomeOnce = (): string => (memoizedWinterHome ??= resolveInMemoryWinterHome(config, env));
+
   const stdin = new Queue<string>();
   const stdout = new Queue<string>();
   // Lane Y addendum item 3: the leg's own STDERR PIPE, which `SpawnedRuntimeProcess` has always
@@ -180,7 +196,7 @@ export function inMemoryProcess(
     try {
       const { config: effectiveConfig, store, initialMessages, approvalStore, autoStateStore } = await resolveEngineSession({
         config,
-        resolveWinterHome: () => resolveInMemoryWinterHome(config, env),
+        resolveWinterHome: winterHomeOnce,
         env: env ?? {},
       });
       // Phase 4 Task 8 (rider 18): the IDENTICAL registration main.ts performs, so the in-memory leg
@@ -189,7 +205,7 @@ export function inMemoryProcess(
       // `resolveInMemoryWinterHome` is the in-memory leg's own hermetic root (it must NEVER reach the
       // real process.env fallback -- that function's own header), so a child's transcripts land under
       // the same temp root the parent's do.
-      const childWinterHome = config.persistSession === false ? undefined : resolveInMemoryWinterHome(config, env);
+      const childWinterHome = config.persistSession === false ? undefined : winterHomeOnce();
       // ONE store object, shared by the child-engine factory and the roster restore below (see
       // main.ts's own identical comment for why `resolveEngineSession`'s `store` cannot serve).
       const childStore = childWinterHome !== undefined ? new WinterCompatibilitySessionStore({ winterHome: childWinterHome }) : undefined;
@@ -197,7 +213,7 @@ export function inMemoryProcess(
       // own hermetic `resolveInMemoryWinterHome` root -- which must NEVER reach the real
       // `process.env` fallback (that function's own header), so a differential/equivalence run can
       // not read a developer's real skills, commands, plugins or settings.
-      const wiring = await buildProductionWiring({ config: effectiveConfig, env: env ?? {}, winterHome: resolveInMemoryWinterHome(config, env), ...(store !== undefined ? { persistence: store } : {}) });
+      const wiring = await buildProductionWiring({ config: effectiveConfig, env: env ?? {}, winterHome: winterHomeOnce(), ...(store !== undefined ? { persistence: store } : {}) });
       // Lane Y addendum, item 3 (the B-low half): the SAME warnings main.ts emits, on the same
       // prefix, down this leg's own stderr pipe. It dropped every one of them on the floor before,
       // so a malformed `.winter/mcp.json`, a plugin that would not load or a broken skill was

@@ -127,6 +127,7 @@ import { resolveChildResumeMode, ChildResumeModeIncomparableError } from "../per
 // see ChildEngineFactoryDeps for why each one is a real gap rather than a nicety.
 import type { SystemPromptAssembler } from "../context/seam.ts";
 import { registerSkillSessionRuntime, clearSkillSessionRuntime, type SkillSessionRuntime } from "../skills/runtime.ts";
+import type { SkillListing } from "../context/seam.ts";
 import type { StructuredOutputSeam } from "../structured/seam.ts";
 import type { SourcedHookEntry } from "../hooks/registry.ts";
 import type { CompactionController } from "../compaction/seam.ts";
@@ -210,6 +211,13 @@ export interface ChildEngineFactoryDeps {
   // runtime" refusal for every `Skill` call. Registered per GENERATION below and withdrawn at
   // settle, mirroring how the MCP/ToolSearch session registries are already handled.
   skillRuntime?: { index: SkillSessionRuntime["index"]; skillOverrides?: SkillSessionRuntime["skillOverrides"] };
+  // Phase 5 fix wave (B-low): the model-facing LISTING, alongside the index above. The two are a
+  // pair and only one of them was threaded: a child could invoke `Skill(name)` but was never told
+  // which names exist, so its listing was the empty set while its parent's was full. That is not a
+  // smaller surface, it is a surface the model cannot discover -- it can only guess a name. The
+  // engine already gates the block on `Skill` actually being advertised to that agent, so a child
+  // whose tool set excludes `Skill` still gets nothing (see EngineOptions.skillListing).
+  skillListing?: SkillListing;
   // The session's structured-output seam. A child needs it whenever `SpawnChildRequest.outputFormat`
   // is set -- which Lane W's `agent({schema})` does on every schema'd call -- because `outputFormat`
   // with NO seam is a hard `error_during_execution` on the child's first round (T3's concern 3), and
@@ -634,6 +642,9 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
         // minimal prompt, no dynamic sections, no WINTER.md and no memory block, which is a strictly
         // worse prompt than the parent's for no stated reason.
         ...(deps.systemPromptAssembler !== undefined ? { systemPromptAssembler: deps.systemPromptAssembler } : {}),
+        // Phase 5 fix wave (B-low): the assembler above PLACES the skill listing; without this it
+        // had nothing to place, so every child ran with an empty one.
+        ...(deps.skillListing !== undefined ? { skillListing: deps.skillListing } : {}),
         // Only meaningful when this child carries an `outputFormat` -- but supplied unconditionally,
         // because the alternative is a child that fails its FIRST round the moment a caller sets one.
         ...(deps.structuredOutput !== undefined ? { structuredOutput: deps.structuredOutput } : {}),
