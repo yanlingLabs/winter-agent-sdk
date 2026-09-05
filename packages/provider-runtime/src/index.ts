@@ -25,3 +25,21 @@ export { createFileCredentialStore } from "./credentials/file.ts";
 export type { FileCredentialStoreOptions } from "./credentials/file.ts";
 export { CREDENTIAL_HEADER_NAMES, createEndpointPolicy, evaluateEndpoint, stripCredentialHeaders } from "./endpoint-policy.ts";
 export type { EndpointEvaluation, EndpointEvaluationOptions, EndpointPolicy } from "./endpoint-policy.ts";
+export {
+  ProviderStallError,
+  isProviderError,
+  normalizeHttpError,
+  normalizeThrown,
+  parseProviderErrorCode,
+  parseRetryAfterMs,
+  toSdkAssistantMessageError,
+} from "./errors.ts";
+export {
+  DEFAULT_MAX_RETRIES,
+  RETRY_AFTER_HONOUR_CEILING_MS,
+  RETRY_BACKOFF_BASE_MS,
+  RETRY_BACKOFF_CAP_MS,
+  createRetryPolicy,
+  withRetry,
+} from "./retry.ts";
+export type { RetryPolicy, RetryPolicyOptions } from "./retry.ts";
