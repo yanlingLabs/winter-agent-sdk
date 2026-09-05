@@ -37,7 +37,13 @@ export interface DecorationInput {
   text: string;
   source: DecorationSource;
   door: DecorationDoor;
-  /** §9.6's context budget for this one decoration. Absent means unbounded (the caller has already decided it fits). */
+  /**
+   * §9.6's context budget for this one decoration, counted on the FINISHED text -- wrapper included.
+   *
+   * Counting only the body would let a caller's budget be quietly overspent by the delimiter and the
+   * origin labels, which is most of a short decoration; a budget that does not bound what actually
+   * reaches the target is not a budget. Absent means unbounded.
+   */
   maxChars?: number;
 }
 
@@ -70,25 +76,33 @@ export function doorFor(target: { readableState: "none" | "summary" | "full-expo
  * text and the wrapper's own closing tag remains the only one.
  */
 export function buildDecoration(input: DecorationInput): Decoration {
-  const { text, truncated } = trimToBudget(input.text, input.maxChars);
-  const body = neutralizeDelimiters(text);
-  if (input.door === "tag") {
-    const provider = escapeAttribute(input.source.providerId);
-    const model = escapeAttribute(input.source.modelKey);
-    return {
-      text: `<${RECOVERED_REASONING_TAG} provider="${provider}" model="${model}">${body}</${RECOVERED_REASONING_TAG}>`,
-      door: "tag",
-      truncated,
-    };
+  const budget = input.maxChars === undefined ? undefined : Math.max(0, input.maxChars - decorationOverhead(input.source, input.door));
+  const { text, truncated } = trimToBudget(input.text, budget);
+  return { text: wrap(neutralizeDelimiters(text), input.source, input.door), door: input.door, truncated };
+}
+
+/**
+ * How many characters a decoration spends on its wrapper alone, for THIS source and door.
+ *
+ * Exported because the renderer has to decide whether a remaining budget can hold a decoration at all
+ * BEFORE building one: a wrapper with an empty body is not a decoration, it is noise with a delimiter
+ * around it, and the honest response to "no room" is to drop the material and say so.
+ */
+export function decorationOverhead(source: DecorationSource, door: DecorationDoor): number {
+  return wrap("", source, door).length;
+}
+
+/** The minimum body a decoration must be able to carry to be worth sending at all. */
+export const MIN_DECORATION_BODY_CHARS = 32;
+
+function wrap(body: string, source: DecorationSource, door: DecorationDoor): string {
+  if (door === "tag") {
+    return `<${RECOVERED_REASONING_TAG} provider="${escapeAttribute(source.providerId)}" model="${escapeAttribute(source.modelKey)}">${body}</${RECOVERED_REASONING_TAG}>`;
   }
   // The thinking-channel door NAMES THE ORIGIN INSIDE THE TEXT (WS-13 §8.2's own wording). Without
   // it, the target's reasoning channel would carry another model's reasoning with nothing marking it
   // as another model's -- indistinguishable from its own, which is the merge §9.5 forbids.
-  return {
-    text: `[prior-model reasoning, carried as data — provider: ${escapeInline(input.source.providerId)}, model: ${escapeInline(input.source.modelKey)}]\n${body}`,
-    door: "thinking-channel",
-    truncated,
-  };
+  return `[prior-model reasoning, carried as data — provider: ${escapeInline(source.providerId)}, model: ${escapeInline(source.modelKey)}]\n${body}`;
 }
 
 /**
@@ -105,17 +119,19 @@ export function buildDecoration(input: DecorationInput): Decoration {
  */
 export function trimToBudget(text: string, maxChars: number | undefined): { text: string; truncated: boolean } {
   if (maxChars === undefined || text.length <= maxChars) return { text, truncated: false };
-  const marker = "\n[…prior-model reasoning trimmed to fit the target context…]\n";
-  if (maxChars <= marker.length) {
-    // No room for both halves and the marker: keep the TAIL, which is where decisions and pending
-    // work are, and say so.
-    return { text: `${marker}${text.slice(Math.max(0, text.length - Math.max(0, maxChars - marker.length)))}`, truncated: true };
-  }
+  if (maxChars <= 0) return { text: "", truncated: true };
+  // The marker itself costs characters, so a budget too small to hold it gets the bare ellipsis
+  // instead. Either way the RESULT never exceeds the budget -- a "budget" the marker could overspend
+  // would hand the caller a decoration bigger than the room it measured.
+  const marker = maxChars >= TRIM_MARKER.length + 8 ? TRIM_MARKER : "…";
+  if (maxChars <= marker.length) return { text: text.slice(text.length - maxChars), truncated: true };
   const budget = maxChars - marker.length;
   const head = Math.ceil(budget / 2);
   const tail = budget - head;
   return { text: `${text.slice(0, head)}${marker}${tail > 0 ? text.slice(text.length - tail) : ""}`, truncated: true };
 }
+
+const TRIM_MARKER = "\n[…prior-model reasoning trimmed to fit the target context…]\n";
 
 /** Escapes an XML-ish attribute value. `&` first, or the escapes escape each other. */
 export function escapeAttribute(value: string): string {

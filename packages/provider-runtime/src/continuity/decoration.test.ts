@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { RECOVERED_REASONING_TAG, buildDecoration, doorFor, neutralizeDelimiters, trimToBudget } from "./decoration.ts";
+import { MIN_DECORATION_BODY_CHARS, RECOVERED_REASONING_TAG, buildDecoration, decorationOverhead, doorFor, neutralizeDelimiters, trimToBudget } from "./decoration.ts";
 
 const source = { providerId: "openai", modelKey: "openai/o-reason" };
 
@@ -87,15 +87,36 @@ describe("§9.6 trimming", () => {
     expect(trimmed.text.length).toBeLessThanOrEqual(200);
   });
 
-  test("a budget too small for both halves keeps the TAIL, where decisions and pending work are", () => {
+  test("a budget too small for the elision marker still respects the budget, and keeps the tail", () => {
     const trimmed = trimToBudget(`${"x".repeat(200)}TAIL-DECISION`, 20);
     expect(trimmed.truncated).toBe(true);
-    expect(trimmed.text).toContain("trimmed");
+    expect(trimmed.text.length).toBeLessThanOrEqual(20);
+    expect(trimmed.text.endsWith("-DECISION")).toBe(true);
+    // Below even that, nothing is emitted rather than something over budget.
+    expect(trimToBudget("x".repeat(50), 1)).toEqual({ text: "x", truncated: true });
+    expect(trimToBudget("x".repeat(50), 0)).toEqual({ text: "", truncated: true });
   });
 
   test("truncation propagates onto the decoration -- the flag the warning matrix reads", () => {
-    const decoration = buildDecoration({ text: "y".repeat(400), source, door: "tag", maxChars: 100 });
+    const decoration = buildDecoration({ text: "y".repeat(400), source, door: "tag", maxChars: 200 });
     expect(decoration.truncated).toBe(true);
-    expect(buildDecoration({ text: "y", source, door: "tag", maxChars: 100 }).truncated).toBe(false);
+    expect(buildDecoration({ text: "y", source, door: "tag", maxChars: 200 }).truncated).toBe(false);
+  });
+
+  test("the budget bounds the FINISHED text, wrapper included -- a budget that does not is not a budget", () => {
+    const overhead = decorationOverhead(source, "tag");
+    expect(overhead).toBe(buildDecoration({ text: "", source, door: "tag" }).text.length);
+    for (const maxChars of [overhead + 40, overhead + 200, 1_000]) {
+      const decoration = buildDecoration({ text: "z".repeat(4_000), source, door: "tag", maxChars });
+      expect(decoration.text.length).toBeLessThanOrEqual(maxChars);
+      expect(decoration.truncated).toBe(true);
+    }
+    // A budget the material fits inside is not a truncation.
+    const roomy = buildDecoration({ text: "z".repeat(40), source, door: "tag", maxChars: overhead + 40 });
+    expect(roomy.truncated).toBe(false);
+    // Below the overhead there is no room for a body at all; the renderer drops such material rather
+    // than sending a delimiter around nothing (MIN_DECORATION_BODY_CHARS is that floor).
+    expect(MIN_DECORATION_BODY_CHARS).toBeGreaterThan(0);
+    expect(buildDecoration({ text: "z".repeat(50), source, door: "tag", maxChars: overhead }).truncated).toBe(true);
   });
 });
