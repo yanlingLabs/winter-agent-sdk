@@ -345,7 +345,9 @@ describe("stop reasons and the registry", () => {
   });
 
   test("capabilities() and the registry agree on the continuation domain", async () => {
-    const adapter = createBedrockConverseAdapter();
+    // `descriptors` is REQUIRED, so "this adapter has no catalog" is said explicitly. This fixture
+    // reads capabilities off a descriptor it passes directly, so the lookup is genuinely unused.
+    const adapter = createBedrockConverseAdapter({ descriptors: () => undefined });
     expect(adapter.capabilities(CORPUS_DESCRIPTOR)).toEqual({ toolCalling: "native", continuationDomain: CORPUS_DESCRIPTOR.key, readableState: "summary" });
     const noReasoning = { ...CORPUS_DESCRIPTOR };
     delete (noReasoning as { reasoning?: unknown }).reasoning;
@@ -423,6 +425,79 @@ describe("no credential material ever reaches a log, a frame or an error", () =>
       // session's own material by exact match before the body is ever normalized.
       expect(message).not.toContain(FAKE_SECRET_ACCESS_KEY);
       expect(message).toContain("***");
+    } finally {
+      await fake.close();
+    }
+  });
+});
+
+describe("a connection profile cannot inject protocol headers into the signature", () => {
+  test("`authorization`, `host` and any `x-amz-*` from the profile are DROPPED; an ordinary custom header rides and is signed", async () => {
+    // Review r1/M8. The profile's headers were spread straight into the set handed to the SIGNER,
+    // which signs whatever it is given and names it in `SignedHeaders`. A profile naming
+    // `x-amz-date` would have been signed and then immediately overwritten by the real one --
+    // signing a value that is not on the request, which is a 403 naming nothing useful.
+    const fake = await startBedrockFake({ scenarios: bedrockScenarios() });
+    try {
+      const harness = createBedrockHarness(fake);
+      const ctx = {
+        ...harness.ctx,
+        connection: {
+          ...harness.ctx.connection,
+          headers: {
+            "X-Amz-Date": "19700101T000000Z",
+            authorization: "AWS4-HMAC-SHA256 Credential=ATTACKER/x, SignedHeaders=host, Signature=00",
+            host: "evil.example.com",
+            "x-tenant-id": "tenant-42",
+          },
+        },
+      };
+      const folded = await foldProviderStream(harness.adapter.streamTurn({ model: BEDROCK_CORPUS_MODEL, messages: [{ role: "user", content: "hi" }] }, ctx));
+      expect(folded.kind).toBe("text");
+
+      const signed = fake.signatures[0]!;
+      expect(signed.verified).toBe(true);
+      // Dropped from the SIGNED set...
+      expect(signed.signedHeaders).not.toContain("authorization");
+      // ...and `x-amz-date` is present exactly once, as the SIGNER's own value, not the profile's.
+      expect(signed.signedHeaders.filter((h) => h === "x-amz-date")).toHaveLength(1);
+      expect(fake.requests[0]!.headers["x-amz-date"]).not.toBe("19700101T000000Z");
+      // The attacker-shaped Authorization never reached the wire (the fake's log redacts the value,
+      // so the credential id is what proves whose header arrived).
+      expect(fake.signatures[0]!.accessKeyId).toBe(FAKE_ACCESS_KEY_ID);
+      // An ORDINARY custom header still rides, and is signed -- the filter is narrow, not a blanket.
+      expect(fake.requests[0]!.headers["x-tenant-id"]).toBe("tenant-42");
+      expect(signed.signedHeaders).toContain("x-tenant-id");
+    } finally {
+      await fake.close();
+    }
+  });
+});
+
+describe("unsupportedParameters is refused BEFORE the request", () => {
+  test("a row listing `tools` refuses a tool-bearing turn with zero requests reaching the fake", async () => {
+    // Review r1/I4. The live half of the unit fixtures: a refusal is only real if nothing was sent.
+    const fake = await startBedrockFake({ scenarios: bedrockScenarios() });
+    try {
+      const harness = createBedrockHarness(fake, { descriptor: { ...CORPUS_DESCRIPTOR, unsupportedParameters: ["tools"] } });
+      let refused = false;
+      try {
+        for await (const _e of harness.adapter.streamTurn(
+          { model: BEDROCK_CORPUS_MODEL, messages: [{ role: "user", content: "hi" }], tools: [{ name: "Read", description: "d", inputSchema: {} }] },
+          harness.ctx,
+        ))
+          void _e;
+      } catch (err) {
+        refused = err instanceof Error && err.message.includes('lists "tools" in its unsupportedParameters');
+      }
+      expect(refused).toBe(true);
+      expect(fake.requests).toHaveLength(0);
+
+      // The SAME adapter sends a turn that declares no tools -- so the refusal is about the
+      // parameter, not about the row being unusable.
+      const folded = await foldProviderStream(harness.adapter.streamTurn({ model: BEDROCK_CORPUS_MODEL, messages: [{ role: "user", content: "hi" }] }, harness.ctx));
+      expect(folded.kind).toBe("text");
+      expect(fake.requests).toHaveLength(1);
     } finally {
       await fake.close();
     }

@@ -4,11 +4,12 @@
 // exports no adapters, so a consumer reaches this family through this file. T10's wiring imports
 // from here.
 //
-// WIRING OBLIGATION, restated where a wirer will see it. `createBedrockConverseAdapter()` with no
-// options is a WEAKER adapter, not a broken one: with no `descriptors` lookup it cannot refuse an
-// unsupported effort, an unrepresentable thinking config, an over-limit request or a tools-on-a-
-// non-tool-model turn before sending, because the frozen `ProviderAdapter` seam hands a descriptor
-// to `mapEffort`/`capabilities` but never to `streamTurn`. Nothing fails to compile without it.
+// WIRING, restated where a wirer will see it. `descriptors` is a REQUIRED option, deliberately: the
+// frozen `ProviderAdapter` seam hands a descriptor to `mapEffort`/`capabilities` but never to
+// `streamTurn`, so without a lookup the tools-on-a-non-tool-calling-model and output-token-limit
+// refusals simply do not happen — silently, with nothing failing to compile. Making it required
+// turns that from an omission anyone can make into a decision someone has to write down; a caller
+// with no catalog passes `descriptors: () => undefined` and has SAID so.
 //
 //   createBedrockConverseAdapter({
 //     descriptors: (id) => catalog.models.find((m) => m.providerId === "bedrock" && m.upstreamId === id),

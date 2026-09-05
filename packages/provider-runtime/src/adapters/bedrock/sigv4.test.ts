@@ -138,6 +138,28 @@ describe("the signing pieces", () => {
     expect(awsUriEncode("é", true)).toBe("%C3%A9");
   });
 
+  test("an inference-profile ARN model id keeps its separators and double-encodes everything else", () => {
+    // Review r1/M7. An ARN carries BOTH `:` and `/`, and the `%2F -> /` restore after the second
+    // encoding pass is the one line a future edit would break silently: drop it and every path
+    // separator becomes `%2F`, which signs a URI that is not the request's. The `/` INSIDE the ARN
+    // was encoded to `%2F` by the URL-building pass, so it must survive as `%252F` while the real
+    // separators stay bare — the two cases are indistinguishable unless a fixture carries both.
+    const arn = "arn:aws:bedrock:us-east-1:111122223333:inference-profile/us.anthropic.claude-3-5-sonnet-20241022-v2:0";
+    const path = `/model/${encodeURIComponent(arn)}/converse`;
+    expect(path).toContain("%2F");
+    const canonical = canonicalUri(path);
+    // Real separators: three of them, bare.
+    expect(canonical.split("/")).toHaveLength(4);
+    expect(canonical.startsWith("/model/")).toBe(true);
+    expect(canonical.endsWith("/converse")).toBe(true);
+    // The ARN's own `/` and `:` are both encoded twice.
+    expect(canonical).toContain("%252F");
+    expect(canonical).toContain("%253A");
+    expect(canonical).toBe(
+      "/model/arn%253Aaws%253Abedrock%253Aus-east-1%253A111122223333%253Ainference-profile%252Fus.anthropic.claude-3-5-sonnet-20241022-v2%253A0/converse",
+    );
+  });
+
   test("canonicalUri normalizes . and .. segments and never returns an empty path", () => {
     expect(canonicalUri("")).toBe("/");
     expect(canonicalUri("/")).toBe("/");

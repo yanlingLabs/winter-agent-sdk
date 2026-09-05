@@ -200,8 +200,16 @@ describe("buildConverseBody", () => {
     expect(body.additionalModelRequestFields).toEqual({ thinking: { type: "enabled", budget_tokens: 2048 } });
   });
 
-  test("thinking WITHOUT a budget re-resolves to adaptive rather than inventing a number (R6-E)", () => {
-    expect(buildConverseBody(turn({ thinking: { type: "enabled" } }), reasoningDescriptor, undefined).additionalModelRequestFields).toEqual({ thinking: { type: "adaptive" } });
+  test("thinking `{type:\"enabled\"}` WITHOUT a budget is REFUSED, not silently re-resolved to adaptive", () => {
+    // Review r1/I2. R6-E permits re-resolving `enabled` -> `adaptive` only for models whose EVIDENCE
+    // says adaptive-only, and no catalog field carries that evidence -- so the re-resolution this
+    // adapter used to perform substituted a config the caller never asked for. Lane B refuses the
+    // identical Anthropic-dialect object for the identical model family; the wording is shared, so a
+    // caller moving a session between the two reads one sentence.
+    expect(() => buildConverseBody(turn({ thinking: { type: "enabled" } }), reasoningDescriptor, undefined)).toThrow(/carries no budgetTokens/);
+    expect(() => buildConverseBody(turn({ thinking: { type: "enabled" } }), reasoningDescriptor, undefined)).toThrow(/ask for `\{ type: "adaptive" \}`/);
+    // An EXPLICIT adaptive request is honoured -- the refusal is about the silent substitution, not
+    // about adaptive thinking.
     expect(buildConverseBody(turn({ thinking: { type: "adaptive" } }), reasoningDescriptor, undefined).additionalModelRequestFields).toEqual({ thinking: { type: "adaptive" } });
   });
 
@@ -212,6 +220,33 @@ describe("buildConverseBody", () => {
 
   test("thinking: disabled sends no thinking field at all", () => {
     expect(buildConverseBody(turn({ thinking: { type: "disabled" } }), reasoningDescriptor, undefined).additionalModelRequestFields).toBeUndefined();
+  });
+
+  test("a parameter the ROW lists as unsupported is REFUSED before anything is serialized", () => {
+    // Review r1/I4: `descriptor.unsupportedParameters` had ZERO readers in this directory, while
+    // Lanes A and B both refuse on it. The catalog records these per model precisely so an adapter
+    // can refuse rather than send-and-fail-upstream (WS-13 §8.2).
+    const noThinking = descriptor({ ...reasoningDescriptor, unsupportedParameters: ["thinking"] });
+    expect(() => buildConverseBody(turn({ thinking: { type: "adaptive" } }), noThinking, undefined)).toThrow(/lists "thinking" in its unsupportedParameters/);
+    expect(() => buildConverseBody(turn({}), noThinking, "high")).not.toThrow();
+    // An EFFORT is refused by the same row, because effort reaches the wire through the same
+    // `additionalModelRequestFields.thinking` neighbourhood.
+    expect(() => buildConverseBody(turn({ effort: "high" }), noThinking, undefined)).toThrow(/lists "thinking" in its unsupportedParameters/);
+
+    const noTools = descriptor({ unsupportedParameters: ["tools"] });
+    expect(() => buildConverseBody(turn({ tools: [{ name: "Read", description: "d", inputSchema: {} }] }), noTools, undefined)).toThrow(/lists "tools" in its unsupportedParameters/);
+    // ... and says nothing when the turn declares none.
+    expect(() => buildConverseBody(turn({}), noTools, undefined)).not.toThrow();
+
+    const noMaxTokens = descriptor({ unsupportedParameters: ["maxTokens"] });
+    expect(() => buildConverseBody(turn({ maxOutputTokens: 10 }), noMaxTokens, undefined)).toThrow(/lists "maxTokens" in its unsupportedParameters/);
+
+    const noSystem = descriptor({ unsupportedParameters: ["system"] });
+    expect(() => buildConverseBody(turn({ system: "be brief" }), noSystem, undefined)).toThrow(/lists "system" in its unsupportedParameters/);
+
+    // A name this adapter can never put on the wire is NOT a refusal about nothing.
+    const irrelevant = descriptor({ unsupportedParameters: ["logprobs", "frequency_penalty"] });
+    expect(() => buildConverseBody(turn({ tools: [{ name: "Read", description: "d", inputSchema: {} }], maxOutputTokens: 10, system: "s" }), irrelevant, undefined)).not.toThrow();
   });
 
   test("a mapped effort rides beside thinking in additionalModelRequestFields", () => {
@@ -251,6 +286,26 @@ describe("mapBedrockEffort", () => {
   test("a model verifying only a tier ABOVE the requested position still snaps, upward, rather than refusing", () => {
     const only = descriptor({ reasoning: { supported: { value: true, source: "official-doc", confidence: "verified" }, efforts: ["max"], continuation: "none" } });
     expect(mapBedrockEffort(1, only)).toEqual({ ok: true, value: "max" });
+  });
+
+  test("a GAPPED vocabulary snaps to the NEAREST tier, not downward — the case the single-tier fixture could not see", () => {
+    // Review r1/I3. The old rule searched DOWN from the requested position and only looked upward
+    // when nothing lower existed, which on `["low","max"]` answered `low` for effort 4 where Lane A
+    // answers `max`. Every fixture that existed used a model verifying ONE tier, where every rule
+    // agrees — so the divergence was invisible and the report's "byte-identical to Lane A" was false.
+    const gapped = (efforts: string[]) => descriptor({ reasoning: { supported: { value: true, source: "official-doc", confidence: "verified" }, efforts, continuation: "none" } });
+    const lowMax = gapped(["low", "max"]);
+    // ladder positions: low=0, max=4. 4 -> wanted index 3, which is nearer max (1) than low (3).
+    expect(mapBedrockEffort(4, lowMax)).toEqual({ ok: true, value: "max" });
+    expect(mapBedrockEffort(5, lowMax)).toEqual({ ok: true, value: "max" });
+    expect(mapBedrockEffort(1, lowMax)).toEqual({ ok: true, value: "low" });
+    expect(mapBedrockEffort(2, lowMax)).toEqual({ ok: true, value: "low" });
+    // A TIE resolves to the LOWER tier (wanted index 2 is 2 from each): Lane A's documented rule,
+    // because spending more reasoning than the caller can be shown to have asked for is the costlier
+    // direction to guess in.
+    expect(mapBedrockEffort(3, lowMax)).toEqual({ ok: true, value: "low" });
+    // `["medium","max"]`: wanted 3 is nearer max (1) than medium (2).
+    expect(mapBedrockEffort(4, gapped(["medium", "max"]))).toEqual({ ok: true, value: "max" });
   });
 });
 

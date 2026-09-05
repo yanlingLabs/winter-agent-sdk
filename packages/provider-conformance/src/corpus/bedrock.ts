@@ -82,9 +82,18 @@ export interface BedrockHarness {
   events(req: Partial<TurnRequest>, model?: string): Promise<ProviderEvent[]>;
 }
 
-export interface HarnessOptions extends BedrockAdapterOptions {
+export interface HarnessOptions extends Omit<BedrockAdapterOptions, "descriptors"> {
   /** Reach the fake as a USER endpoint (the default) or as the adapter's own GENERATED one — the two sides of R6-L. */
   asGeneratedEndpoint?: boolean;
+  /**
+   * The row every model id resolves to, or an EXPLICIT `undefined` for "this harness has no catalog".
+   *
+   * `BedrockAdapterOptions.descriptors` is required, so a caller cannot omit the question — but a
+   * fixture almost always wants one row for every id, and spelling a lookup out each time buries the
+   * one line that matters. Pass `descriptor: undefined` deliberately and the harness supplies
+   * `() => undefined`, which is the ruling's "unlisted is an explicit choice" said in the harness's
+   * own vocabulary.
+   */
   descriptor?: WinterModelDescriptor | undefined;
   stallTimeoutMs?: number;
   log?: ProviderContext["log"];
@@ -94,7 +103,9 @@ export function createBedrockHarness(fake: FakeServer, opts: HarnessOptions = {}
   const { asGeneratedEndpoint, descriptor: fixed, stallTimeoutMs, log, ...adapterOptions } = opts;
   const descriptor = fixed === undefined && !("descriptor" in opts) ? CORPUS_DESCRIPTOR : fixed;
   const adapter = createBedrockConverseAdapter({
-    ...(descriptor !== undefined ? { descriptors: () => descriptor } : {}),
+    // ALWAYS supplied, never conditionally: `descriptors` is required, and an explicit
+    // `() => undefined` is how a caller says "no catalog" out loud.
+    descriptors: () => descriptor,
     ...(asGeneratedEndpoint === true ? { vendorBaseUrl: fake.url } : {}),
     ...adapterOptions,
     // AFTER the spread, deliberately. A deterministic no-op sleep is what keeps the corpus from

@@ -85,17 +85,42 @@ const BEDROCK_IMAGE_FORMATS: ReadonlyMap<string, string> = new Map([
 /** R6-E / Lane A parity: a numeric effort is a POSITION on the pinned five-tier ladder, then snapped to what the model verifies. */
 const PINNED_EFFORT_LADDER = ["low", "medium", "high", "xhigh", "max"] as const;
 
+/**
+ * A numeric effort -> the NEAREST tier the model verifies. Lane A's `snapNumericEffort`, reproduced
+ * so a numeric child effort means the same thing whichever family serves it.
+ *
+ * The tie rule is deliberate and is Lane A's: `available` is in ladder order and a candidate must be
+ * STRICTLY closer to displace the one already held, so an equidistant pair resolves to the LOWER
+ * tier — spending more reasoning than the caller can be shown to have asked for is the costlier
+ * direction to guess in.
+ */
+function snapNumericEffort(value: number, verified: readonly string[]): string | undefined {
+  const available = PINNED_EFFORT_LADDER.map((tier, index) => ({ tier, index })).filter((t) => verified.includes(t.tier));
+  if (available.length === 0) return undefined;
+  const wanted = Math.min(PINNED_EFFORT_LADDER.length, Math.max(1, Math.round(value))) - 1;
+  let best = available[0]!;
+  for (const candidate of available) {
+    if (Math.abs(candidate.index - wanted) < Math.abs(best.index - wanted)) best = candidate;
+  }
+  return best.tier;
+}
+
+/** Resolves a provider-local model id to its catalog row, or `undefined` for an id the catalog does not list. */
+export type DescriptorLookup = (modelId: string) => WinterModelDescriptor | undefined;
+
 export interface BedrockAdapterOptions {
   /**
-   * The descriptor for a provider-local model id.
+   * The descriptor for a provider-local model id. **REQUIRED** (controller ruling, matching Lane A).
    *
-   * A WIRING OBLIGATION, and nothing fails to compile without it: the frozen `ProviderAdapter` hands
-   * a descriptor to `mapEffort` and `capabilities` but NOT to `streamTurn`, while WS-13 §8.2 requires
-   * effort, thinking and limit refusals to happen BEFORE a request is sent. An adapter built without
-   * this is a WEAKER adapter, not a broken one — it cannot refuse, so those selections reach Bedrock
-   * instead. Both branches are pinned by fixtures.
+   * It is not optional precisely BECAUSE nothing fails to compile without it: the frozen
+   * `ProviderAdapter` hands a descriptor to `mapEffort` and `capabilities` but NOT to `streamTurn`,
+   * while WS-13 §8.2 requires the effort, thinking, tool and limit refusals to happen BEFORE a
+   * request is sent. An adapter built without a lookup is a WEAKER adapter, not a broken one — the
+   * tools-on-a-non-tool-calling-model and output-token-limit refusals simply vanish, silently — so
+   * the type makes the decision explicit instead. A caller with no catalog passes
+   * `descriptors: () => undefined` and has SAID so.
    */
-  descriptors?: (modelId: string) => WinterModelDescriptor | undefined;
+  descriptors: DescriptorLookup;
   /**
    * Whether a model's answer is streamed. Default: always.
    *
@@ -147,6 +172,23 @@ function controlBase(ctx: ProviderContext, region: string, vendorBaseUrl?: strin
   if (baseUrl !== undefined && baseUrl.length > 0) return { url: baseUrl.replace(/\/+$/, ""), generated: false };
   if (vendorBaseUrl !== undefined && vendorBaseUrl.length > 0) return { url: vendorBaseUrl.replace(/\/+$/, ""), generated: true };
   return { url: `https://bedrock.${region}.amazonaws.com`, generated: true };
+}
+
+/**
+ * Header names a CONNECTION PROFILE may never contribute, because they belong to SigV4 or to the
+ * transport: the signer owns every `x-amz-*` it emits plus `authorization`, and `host` is computed
+ * from the URL and is a forbidden header for `fetch` anyway. A profile supplying one would have it
+ * folded into the signed set and then overwritten, signing a value that never rides.
+ */
+function filterConnectionHeaders(headers: Record<string, string> | undefined): Record<string, string> {
+  if (headers === undefined) return {};
+  const out: Record<string, string> = {};
+  for (const [name, value] of Object.entries(headers)) {
+    const lower = name.toLowerCase();
+    if (lower === "authorization" || lower === "host" || lower === "content-length" || lower.startsWith("x-amz-")) continue;
+    out[lower] = value;
+  }
+  return out;
 }
 
 function policyFor(base: { url: string; generated: boolean }, ctx: ProviderContext): EndpointPolicy {
@@ -385,9 +427,16 @@ function thinkingFields(thinking: TurnRequest["thinking"], descriptor: WinterMod
       `a thinking configuration was requested for "${model}", whose catalog descriptor ${descriptor === undefined ? "is not available to this adapter" : "records no reasoning support"}; Winter rejects an unsupported thinking selection before sending it rather than silently dropping it (WS-13 §8.2)`,
     );
   }
-  if (thinking.type === "enabled" && thinking.budgetTokens !== undefined) return { type: "enabled", budget_tokens: thinking.budgetTokens };
-  // R6-E: an adapter MAY re-resolve `enabled` -> `adaptive`. Here it MUST: Converse's `enabled` arm
-  // requires a budget, and inventing one would send a number the caller never chose.
+  if (thinking.type === "enabled" && thinking.budgetTokens === undefined) {
+    // REFUSED, not re-resolved. R6-E permits re-resolving `enabled` -> `adaptive` only for models
+    // whose EVIDENCE says adaptive-only, and no catalog field carries that evidence — so the
+    // re-resolution this file used to perform was a silent substitution of a config the caller did
+    // not ask for. Lane B refuses the identical Anthropic-dialect object for the identical model
+    // family, and two adapters answering the same question differently is worse than either answer.
+    // The wording is Lane B's, so a caller who moves a session between the two reads one sentence.
+    throw refuse('thinking `{ type: "enabled" }` carries no budgetTokens, which this endpoint requires. Pass `budgetTokens`, or ask for `{ type: "adaptive" }` if the model should decide.');
+  }
+  if (thinking.type === "enabled") return { type: "enabled", budget_tokens: thinking.budgetTokens };
   return { type: "adaptive" };
 }
 
@@ -414,6 +463,22 @@ export function buildConverseBody(req: TurnRequest, descriptor: WinterModelDescr
   const maxOutput = descriptor?.maxOutputTokens?.value;
   if (req.maxOutputTokens !== undefined && maxOutput !== undefined && req.maxOutputTokens > maxOutput) {
     throw refuse(`this turn asks for ${req.maxOutputTokens} output tokens and "${req.model}" declares a maximum of ${maxOutput}`);
+  }
+
+  // Parameters the ROW says this model rejects. Checked here, before anything is serialized, with
+  // Lane A's and Lane B's own shape: the catalog records these per model precisely so an adapter can
+  // refuse rather than send-and-fail-upstream (WS-13 §8.2), and until now this adapter never read
+  // the field at all. Only names this adapter can actually PUT ON THE WIRE are matched — listing one
+  // it never sends would be a refusal about nothing.
+  for (const parameter of descriptor?.unsupportedParameters ?? []) {
+    const key = parameter.toLowerCase();
+    const listed = (what: string): ProviderRequestError => refuse(`model "${descriptor?.key ?? req.model}" lists "${parameter}" in its unsupportedParameters, so ${what} cannot be honoured`);
+    if ((key === "thinking" || key === "reasoning") && (req.thinking !== undefined && req.thinking.type !== "disabled")) throw listed("a thinking configuration");
+    if ((key === "thinking" || key === "reasoning" || key === "effort") && req.effort !== undefined) throw listed("an effort selection");
+    if ((key === "tools" || key === "toolconfig") && tools.length > 0) throw listed("a tool configuration");
+    if (key === "toolchoice" && req.toolChoice !== undefined) throw listed("a tool choice");
+    if ((key === "maxtokens" || key === "max_tokens" || key === "inferenceconfig") && req.maxOutputTokens !== undefined) throw listed("an output-token limit");
+    if (key === "system" && req.system !== undefined && req.system.length > 0) throw listed("a system prompt");
   }
 
   const thinking = thinkingFields(req.thinking, descriptor, req.model);
@@ -686,16 +751,18 @@ export function mapBedrockEffort(effort: TurnRequest["effort"], model: WinterMod
     if (verified.includes(effort)) return { ok: true, value: effort };
     return { ok: false, reason: `"${model.key}" verifies efforts [${verified.join(", ")}] and does not accept "${effort}"` };
   }
-  // R6-E gap-filling, identical to Lane A's rule so a numeric child effort means the same thing
-  // whichever family serves it: a POSITION on the pinned five-tier ladder (1 = low … 5 = max),
-  // clamped, then snapped DOWN to the nearest tier this model actually verifies.
-  const position = Math.min(PINNED_EFFORT_LADDER.length, Math.max(1, Math.round(effort)));
-  for (let i = position - 1; i >= 0; i--) {
-    const tier = PINNED_EFFORT_LADDER[i]!;
-    if (verified.includes(tier)) return { ok: true, value: tier };
+  // R6-E gap-filling. The integer is a POSITION on the pinned five-tier ladder (1 = low … 5 = max),
+  // clamped, then snapped to the NEAREST tier this model verifies — which is what R6-E says and what
+  // Lane A implements. The earlier rule here snapped DOWN and only searched upward when nothing
+  // lower existed, which is a genuinely different function: on `["low", "max"]` with effort 4 it
+  // answered `low` where Lane A answers `max`, so the same numeric child effort meant opposite
+  // things depending on which family served it. The old fixture could not see it (its model verified
+  // a single tier, where every rule agrees).
+  const snapped = snapNumericEffort(effort, verified);
+  if (snapped === undefined) {
+    return { ok: false, reason: `"${model.key}" verifies efforts [${verified.join(", ")}], none of which is on the pinned five-tier ladder, so a numeric effort cannot be snapped onto it` };
   }
-  for (const tier of PINNED_EFFORT_LADDER) if (verified.includes(tier)) return { ok: true, value: tier };
-  return { ok: false, reason: `"${model.key}" verifies efforts [${verified.join(", ")}], none of which is on the pinned five-tier ladder, so a numeric effort cannot be snapped onto it` };
+  return { ok: true, value: snapped };
 }
 
 export interface BedrockAdapter extends ProviderAdapter {
@@ -703,7 +770,7 @@ export interface BedrockAdapter extends ProviderAdapter {
   listFoundationModels(ctx: DiscoveryContext): Promise<Array<{ modelId: string; modelName?: string; inputModalities?: string[]; responseStreamingSupported?: boolean }>>;
 }
 
-export function createBedrockConverseAdapter(options: BedrockAdapterOptions = {}): BedrockAdapter {
+export function createBedrockConverseAdapter(options: BedrockAdapterOptions): BedrockAdapter {
   const maxBodyBytes = options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES;
   const timeoutMs = options.timeoutMs ?? DEFAULT_HEADER_TIMEOUT_MS;
   const now = options.now ?? (() => new Date());
@@ -731,9 +798,15 @@ export function createBedrockConverseAdapter(options: BedrockAdapterOptions = {}
     const headers: Record<string, string> = {
       accept: "application/json",
       ...(contentType !== undefined ? { "content-type": contentType } : {}),
-      // The host's own extra headers ride BEFORE the privileged set and the signed set, so neither
-      // can be overwritten by a connection profile.
-      ...(ctx.connection.headers ?? {}),
+      // The host's own extra headers, FILTERED. They are spread after `accept`/`content-type` (which
+      // a host may legitimately override) and before the privileged set and the signed set (which it
+      // may not) -- but ordering alone was not enough: a profile naming `authorization`, `host` or
+      // any `x-amz-*` would have been fed to the SIGNER, which signs whatever it is given and names
+      // it in `SignedHeaders`. A host-supplied `x-amz-date` would then be signed and immediately
+      // overwritten by the real one, producing a signature over a value that is not on the request.
+      // Those names are the protocol's, not a profile's, so they are dropped here rather than
+      // silently mangled downstream.
+      ...filterConnectionHeaders(ctx.connection.headers),
       ...privileged,
     };
     const signed = await signRequest({ method, url, headers, body, credentials, region, service: BEDROCK_SERVICE, date: now() });
@@ -745,19 +818,22 @@ export function createBedrockConverseAdapter(options: BedrockAdapterOptions = {}
     };
   }
 
-  // Carried out of `callControlPlane` so its caller can scrub an error body of the same material.
-  // A closure variable rather than a return field because `boundedFetch`'s answer is a `Response`
-  // and widening that would touch every call site for one diagnostic.
-  let controlPlaneSecrets: string[] = [];
-
-  async function callControlPlane(ctx: DiscoveryContext, path: string): Promise<Response> {
+  /**
+   * One control-plane call, and the material to scrub its error body with.
+   *
+   * RETURNED, not stashed in a closure. It was a `let` shared by every call on this adapter, which is
+   * wrong the moment two discoveries run concurrently on different `authRef`s: the second overwrites
+   * the first's material, and the first then scrubs an error body against a credential that was never
+   * in it — leaking the one that was. Concurrency here is not hypothetical (`validateCredential`
+   * builds its own context and a host may hold several accounts).
+   */
+  async function callControlPlane(ctx: DiscoveryContext, path: string): Promise<{ response: Response; secrets: string[] }> {
     const region = requireRegion(ctx);
     const base = controlBase(ctx, region, options.vendorBaseUrl);
     const policy = policyFor(base, ctx);
     const url = `${base.url}${path}`;
     const { headers, secrets } = await signedRequest(ctx, policy, "GET", url, new Uint8Array(0), region);
-    controlPlaneSecrets = secrets;
-    return await boundedFetch(url, {
+    const response = await boundedFetch(url, {
       method: "GET",
       headers,
       timeoutMs: Math.min(timeoutMs, ctx.limits.timeoutMs),
@@ -765,12 +841,13 @@ export function createBedrockConverseAdapter(options: BedrockAdapterOptions = {}
       policy,
       ...(ctx.signal !== undefined ? { signal: ctx.signal } : {}),
     });
+    return { response, secrets };
   }
 
   async function foundationModels(ctx: DiscoveryContext): Promise<Array<{ modelId: string; modelName?: string; inputModalities?: string[]; responseStreamingSupported?: boolean }>> {
-    const response = await callControlPlane(ctx, "/foundation-models");
+    const { response, secrets } = await callControlPlane(ctx, "/foundation-models");
     const text = await response.text();
-    if (!response.ok) throw new ProviderRequestError(normalizeBedrockError(response.status, response.headers, text, controlPlaneSecrets));
+    if (!response.ok) throw new ProviderRequestError(normalizeBedrockError(response.status, response.headers, text, secrets));
     let parsed: unknown;
     try {
       parsed = JSON.parse(text) as unknown;
@@ -874,7 +951,7 @@ interface TurnDeps {
 
 async function* streamBedrockTurn(req: TurnRequest, ctx: ProviderContext, deps: TurnDeps): AsyncGenerator<ProviderEvent> {
   const region = requireRegion(ctx);
-  const descriptor = deps.options.descriptors?.(req.model);
+  const descriptor = deps.options.descriptors(req.model);
 
   // EVERY CAPABILITY REFUSAL HAPPENS HERE, before a socket exists. A fixture proves each one by
   // asserting the fake's request count did not change — the only form of the claim an adapter

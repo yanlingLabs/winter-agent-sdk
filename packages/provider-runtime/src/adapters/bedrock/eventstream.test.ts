@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { crc32 } from "./crc32.ts";
-import { EventStreamDecodeError, createEventStreamDecoder, jsonPayload, messageType, stringHeader } from "./eventstream.ts";
+import { EventStreamDecodeError, createEventStreamDecoder, jsonPayload, messageType, stringHeader, type EventStreamHeaderValue } from "./eventstream.ts";
 import { concatFrames, converseStreamEvent, converseStreamException, encodeEventStreamMessage } from "./testing.ts";
 
 /**
@@ -172,6 +172,72 @@ describe("createEventStreamDecoder", () => {
     // `undefined` and not a throw: the adapter needs to tell "no payload" (legitimate) from
     // "unparseable payload" (a provider failure) and they must not collapse.
     expect(jsonPayload(broken!)).toBeUndefined();
+  });
+
+  test("every AWS header value type decodes to its own JavaScript value", () => {
+    // Review r1/M10: types 2-6, 8 and 9 were implemented and untested. They are not decoration —
+    // header parsing is POSITIONAL, so a type whose LENGTH this decoder gets wrong desynchronises
+    // every header after it and, through the block length, every frame after that. Each row below is
+    // one type byte, its encoded value bytes, and what it must decode to.
+    const cases: Array<{ name: string; type: number; value: number[]; expected: EventStreamHeaderValue }> = [
+      { name: "t0", type: 0, value: [], expected: true },
+      { name: "t1", type: 1, value: [], expected: false },
+      { name: "t2", type: 2, value: [0xff], expected: -1 },                                  // byte, SIGNED
+      { name: "t3", type: 3, value: [0xff, 0xfe], expected: -2 },                            // short, signed
+      { name: "t4", type: 4, value: [0x00, 0x00, 0x01, 0x00], expected: 256 },               // integer
+      { name: "t5", type: 5, value: [0, 0, 0, 0, 0, 0, 0x01, 0x00], expected: 256n },        // long, a bigint
+      { name: "t6", type: 6, value: [0x00, 0x02, 0xde, 0xad], expected: new Uint8Array([0xde, 0xad]) }, // byte array
+      { name: "t8", type: 8, value: [0, 0, 0, 0, 0, 0, 0x01, 0x00], expected: 256n },        // timestamp
+      { name: "t9", type: 9, value: [...Array(16).keys()], expected: new Uint8Array([...Array(16).keys()]) }, // uuid
+    ];
+
+    // ONE frame carrying ALL of them, in order: that is what proves each type's length is right,
+    // because a single wrong length corrupts every header after it rather than only its own.
+    const headerBytes: number[] = [];
+    for (const c of cases) {
+      const name = new TextEncoder().encode(c.name);
+      headerBytes.push(name.length, ...name, c.type, ...c.value);
+    }
+    const payload = new TextEncoder().encode("{}");
+    const total = 16 + headerBytes.length + payload.length;
+    const frame = new Uint8Array(total);
+    const view = new DataView(frame.buffer);
+    view.setUint32(0, total);
+    view.setUint32(4, headerBytes.length);
+    view.setUint32(8, crc32(frame.subarray(0, 8)));
+    frame.set(headerBytes, 12);
+    frame.set(payload, 12 + headerBytes.length);
+    view.setUint32(total - 4, crc32(frame.subarray(0, total - 4)));
+
+    const [message] = createEventStreamDecoder().push(frame);
+    expect(message).toBeDefined();
+    for (const c of cases) expect(message!.headers[c.name]).toEqual(c.expected);
+    // The block was consumed EXACTLY: a wrong length would leave a trailing name or swallow one.
+    expect(Object.keys(message!.headers).sort()).toEqual(cases.map((c) => c.name).sort());
+    expect(jsonPayload(message!)).toEqual({});
+  });
+
+  test("an UNKNOWN header value type is fatal rather than silently desynchronising the block", () => {
+    // The other half of the positional argument: an unknown type has no length, so there is no safe
+    // offset to continue from. Guessing would corrupt every header after it.
+    const name = new TextEncoder().encode("weird");
+    const headerBytes = [name.length, ...name, 0x7f];
+    const total = 16 + headerBytes.length;
+    const frame = new Uint8Array(total);
+    const view = new DataView(frame.buffer);
+    view.setUint32(0, total);
+    view.setUint32(4, headerBytes.length);
+    view.setUint32(8, crc32(frame.subarray(0, 8)));
+    frame.set(headerBytes, 12);
+    view.setUint32(total - 4, crc32(frame.subarray(0, total - 4)));
+    let thrown: unknown;
+    try {
+      createEventStreamDecoder().push(frame);
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(EventStreamDecodeError);
+    expect((thrown as EventStreamDecodeError).code).toBe("header");
   });
 
   test("a non-string header value never masquerades as a string", () => {
