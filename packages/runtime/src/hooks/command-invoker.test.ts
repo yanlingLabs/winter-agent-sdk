@@ -5,8 +5,9 @@ import { test, expect, describe, afterEach } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync, chmodSync, existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { HookInvocationRequest, HookInvoker } from "./runner.ts";
-import type { SourcedHookEntry } from "./registry.ts";
+import type { HookInvocationRequest, HookInvoker, RunHooksContext } from "./runner.ts";
+import { runHooks } from "./runner.ts";
+import { buildHookRegistry, type SourcedHookEntry } from "./registry.ts";
 import { CommandHookError, createCommandHookInvoker } from "./command-invoker.ts";
 
 const dirs: string[] = [];
@@ -169,6 +170,55 @@ describe("command-invoker: exit-code and output semantics (WS-08 §8)", () => {
     const dir = fixtureDir();
     const invoker = createCommandHookInvoker([entry({ command: "echo '{}'" })], { next: recordingNext().invoker, cwd: dir, shellPath: join(dir, "no-such-shell") });
     await expect(invoker.invoke(REQUEST, freshSignal())).rejects.toThrow();
+  });
+});
+
+// Fix round 1 (low): the invoker THROUGH `runHooks`, not only as a bare object. Everything above
+// calls `invoke()` directly, which cannot show what a failing command hook does to a turn -- and §8
+// row 1 is precisely that it must contribute nothing and let evaluation continue, never deny a tool.
+describe("command-invoker: composed with runHooks (WS-08 §8's failure rows, end to end)", () => {
+  function ctx(invoker: HookInvoker, entries: SourcedHookEntry[]): RunHooksContext {
+    return {
+      registry: buildHookRegistry(entries, { trustedWorkspace: true }),
+      invoker,
+      audit: { record: () => {} },
+      sessionId: "s-1",
+      policyVersion: 1,
+    };
+  }
+
+  test("a command hook's JSON output becomes a real hook DECISION through runHooks", async () => {
+    const dir = fixtureDir();
+    // The PreToolUse output shape, as a hook script would print it (runner.ts's own
+    // `hookSpecificOutput` envelope) -- proof that a command hook reaches the SAME interpreter an
+    // SDK-callback hook does, not merely that its bytes came back.
+    const entries = [entry({ command: `echo '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"blocked by policy"}}'` })];
+    const composite = await runHooks("PreToolUse", { toolName: "Bash", toolUseID: "tu-1", input: { command: "ls" } }, ctx(createCommandHookInvoker(entries, { next: recordingNext().invoker, cwd: dir }), entries));
+    expect(composite.decision).toBe("deny");
+    expect(composite.message).toBe("blocked by policy");
+  });
+
+  test("§8 row 1: a FAILING command hook contributes no decision -- it is an error of that hook, never a denial", async () => {
+    const dir = fixtureDir();
+    const audit: Array<{ outcome: string }> = [];
+    const entries = [entry({ command: "echo 'exploded' >&2; exit 3" })];
+    const composite = await runHooks(
+      "PreToolUse",
+      { toolName: "Bash", toolUseID: "tu-1", input: { command: "ls" } },
+      { ...ctx(createCommandHookInvoker(entries, { next: recordingNext().invoker, cwd: dir }), entries), audit: { record: (r) => { audit.push({ outcome: r.outcome }); } } },
+    );
+    // The critical property: a hook that crashed must NOT read as a deny. A runner that folded a
+    // thrown invoker into a decision would turn every broken hook script into a tool block.
+    expect(composite.decision).toBeUndefined();
+    expect(audit.map((a) => a.outcome)).toEqual(["error"]);
+  });
+
+  test("a command hook and a callback hook compose in one runHooks pass, in registry order", async () => {
+    const dir = fixtureDir();
+    const next: HookInvoker = { invoke: async () => ({ hookSpecificOutput: { hookEventName: "PreToolUse", additionalContext: "from-callback" } }) };
+    const entries = [entry({ id: "cmd", command: `echo '{"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"from-command"}}'` }), entry({ id: "cb" })];
+    const composite = await runHooks("PreToolUse", { toolName: "Bash", toolUseID: "tu-1", input: { command: "ls" } }, ctx(createCommandHookInvoker(entries, { next, cwd: dir }), entries));
+    expect((composite.extraContext ?? []).map((c) => c.context)).toEqual(["from-command", "from-callback"]);
   });
 });
 

@@ -102,6 +102,55 @@ describe("checkpoint/seam.ts -- FileCheckpointSink (Lane K implements)", () => {
     expect("user_message_uuid" in result).toBe(false);
   });
 
+  // Fix round 1 (low): the two ORDERING properties the interception's placement exists for. Neither
+  // is observable from the "it fired" test above, and both are silent when wrong -- a backup written
+  // for a denied call is wasted work that also records a file state the user never asked to change,
+  // and a backup of the pre-transform path backs up a file the approved call no longer touches.
+  test("beforeMutation does NOT fire for a call the permission layer DENIES", async () => {
+    const mutations: CheckpointMutation[] = [];
+    const { host, runtime } = createInMemoryChannel();
+    const done = runEngine({
+      // `dontAsk` so a rule-denied call terminates instead of parking on a canUseTool prompt this
+      // test never answers -- the same shape engine.test.ts's own deny fixtures use.
+      config: baseConfig({ enableFileCheckpointing: true, permissionMode: "dontAsk", permissions: { deny: ["Write(/w/**)"] } }),
+      input: runtime.input,
+      output: runtime.output,
+      provider: oneToolRound("Write", { file_path: "/w/a.ts", content: "x" }),
+      tools: stubExecutor,
+      fileCheckpointSink: fakeFileCheckpointSink({ mutations }),
+    });
+    host.output.write({ type: "user", text: "go" });
+    host.output.write({ type: "control_request", requestId: "r", subtype: "end_input", payload: undefined });
+    const frames = await drain(host.input);
+    await done;
+    // The call really was denied (not merely unreachable), and nothing was backed up for it.
+    const result = dataMessages(frames).find((m) => m.type === "result") as { permission_denials: unknown[] };
+    expect(result.permission_denials).toHaveLength(1);
+    expect(mutations).toHaveLength(0);
+  });
+
+  test("beforeMutation sees the POST-ALIAS tool identity: an aliased Write still checkpoints, under its canonical name", async () => {
+    const mutations: CheckpointMutation[] = [];
+    const { host, runtime } = createInMemoryChannel();
+    const done = runEngine({
+      config: baseConfig({ enableFileCheckpointing: true, allowedTools: ["Write"], toolAliases: { WriteFile: "Write" } }),
+      input: runtime.input,
+      output: runtime.output,
+      provider: oneToolRound("WriteFile", { file_path: "/w/a.ts", content: "x" }),
+      tools: stubExecutor,
+      fileCheckpointSink: fakeFileCheckpointSink({ mutations }),
+    });
+    host.output.write({ type: "user", text: "go" });
+    host.output.write({ type: "control_request", requestId: "r", subtype: "end_input", payload: undefined });
+    await drain(host.input);
+    await done;
+    // Keyed on the canonical identity (WS-09 §10's rule for hooks and permissions), so an aliased
+    // Write is still checkpointed -- and the sink is told the CANONICAL name, not the alias, so a
+    // backup store never sees two names for one tool.
+    expect(mutations).toHaveLength(1);
+    expect(mutations[0]!.tool).toBe("Write");
+  });
+
   test("a Bash write is NOT intercepted -- the scope boundary, not an oversight", async () => {
     const mutations: CheckpointMutation[] = [];
     const { host, runtime } = createInMemoryChannel();

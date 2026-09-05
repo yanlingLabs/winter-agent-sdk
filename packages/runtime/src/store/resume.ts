@@ -337,7 +337,6 @@ export function rebuildProviderMessages(entries: DialectEntry[]): ProviderMessag
           const meta = isRecord(boundary.compact_metadata) ? boundary.compact_metadata : undefined;
           const preserved = meta !== undefined && isRecord(meta.preserved_messages) ? meta.preserved_messages : undefined;
           const anchorUuid = preserved !== undefined && typeof preserved.anchor_uuid === "string" ? preserved.anchor_uuid : undefined;
-          const keptUuids = new Set<string>(preserved !== undefined && Array.isArray(preserved.uuids) ? (preserved.uuids as unknown[]).filter((u): u is string => typeof u === "string") : []);
           // ORDER IS THE PINNED RELINK ORDER, not file order: `uuids[0]` links to `anchor_uuid`, so
           // the anchor (the summary) comes FIRST and the preserved messages follow in `uuids` order.
           // File order would put the summary LAST -- it is appended after the entries it preserves --
@@ -351,7 +350,6 @@ export function rebuildProviderMessages(entries: DialectEntry[]): ProviderMessag
           const byUuidBefore = new Map(before.map((e) => [e.uuid, e] as const));
           const anchor = anchorUuid !== undefined ? byUuidBefore.get(anchorUuid) : before.filter((e) => e.type === "compact_summary").at(-1);
           const preservedInOrder = preserved !== undefined && Array.isArray(preserved.uuids) ? (preserved.uuids as unknown[]).flatMap((u) => (typeof u === "string" ? [byUuidBefore.get(u)] : [])).filter((e): e is DialectEntry => e !== undefined) : [];
-          void keptUuids;
           const head = [...(anchor !== undefined ? [anchor] : []), ...preservedInOrder];
           return [...head, ...lineage.slice(lastBoundaryIndex + 1)];
         })();

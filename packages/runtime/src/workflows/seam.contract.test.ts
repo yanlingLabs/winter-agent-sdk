@@ -147,8 +147,8 @@ describe("R5-5 -- the worker seatbelt profile carries the ~/.winter/run deny", (
     expect(denyIndex).toBeGreaterThan(allowIndex);
   });
 
-  test("without `home` the profile is still valid and byte-identical to the pre-P5 one -- the parameter is optional by design", () => {
-    const profile = buildWorkflowWorkerSeatbeltProfile("/usr/local/bin/winter");
+  test("with `home: undefined` the profile is still valid -- a caller may opt out EXPLICITLY, but never by omission (the argument is required)", () => {
+    const profile = buildWorkflowWorkerSeatbeltProfile("/usr/local/bin/winter", { home: undefined });
     expect(profile).toContain("(deny file-write*)");
     expect(profile).toContain("(deny network*)");
     expect(profile).not.toContain(".winter/run");

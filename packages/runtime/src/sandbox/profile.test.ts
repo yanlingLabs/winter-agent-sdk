@@ -266,7 +266,7 @@ describe("resolveNetworkPosture", () => {
 // with no real workflow-worker caller in this phase yet (WS-11 is later work).
 describe("buildWorkflowWorkerSeatbeltProfile", () => {
   test("denies all writes and network, allows read, denies fork", () => {
-    const p = buildWorkflowWorkerSeatbeltProfile("/usr/local/bin/winter-core");
+    const p = buildWorkflowWorkerSeatbeltProfile("/usr/local/bin/winter-core", { home: undefined });
     expect(p).toContain("(deny file-write*)");
     expect(p).toContain("(deny network*)");
     expect(p).toContain("(deny process-fork)");
@@ -277,12 +277,12 @@ describe("buildWorkflowWorkerSeatbeltProfile", () => {
   test("allows process-exec ONLY for the canonicalized self binary, never a blanket allow", () => {
     const self = realTmp();
     const selfBin = join(self, "winter-core");
-    const p = buildWorkflowWorkerSeatbeltProfile(selfBin);
+    const p = buildWorkflowWorkerSeatbeltProfile(selfBin, { home: undefined });
     expect(p).toContain(`(allow process-exec (literal "${selfBin}"))`);
     expect(p).not.toContain("(allow process-exec)\n"); // never the unrestricted form
   });
 
   test("a nonexistent self path falls through gracefully (canon's graceful fallback) rather than throwing", () => {
-    expect(() => buildWorkflowWorkerSeatbeltProfile("/does/not/exist/winter-core")).not.toThrow();
+    expect(() => buildWorkflowWorkerSeatbeltProfile("/does/not/exist/winter-core", { home: undefined })).not.toThrow();
   });
 });

@@ -50,7 +50,7 @@ export interface WorkflowRunHost {
    * Registers this run as a background task. `kind` is the single literal `"workflow"` -- Winter's
    * INTERNAL `BackgroundTaskKind` spelling. It is NOT what goes on the wire: capture (3) and item (g)
    * both pin `task_started.task_type` / `WorkflowOutput.taskType` as `"local_workflow"`, and
-   * `tools/background-tasks.ts`'s own `workflowTaskWireType` is the one mapping between them. A lane
+   * `tools/background-tasks.ts`'s own `wireTaskType(kind)` is the one mapping between them. A lane
    * that hand-writes either spelling at an emission site is the drift this split exists to prevent.
    */
   createTask(kind: "workflow", meta: { runId: string; name: string }): WorkflowTaskHandle;

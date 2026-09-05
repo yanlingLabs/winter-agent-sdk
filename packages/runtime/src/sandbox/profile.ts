@@ -320,12 +320,13 @@ ${denySettingsLocalFileRegex}
  * carries (buildSeatbeltProfile's own `home` field), making this profile a strict superset of that
  * one's denials on every axis.
  *
- * `home` is OPTIONAL rather than required, deliberately: this module is platform- and
- * context-free by design (it resolves no paths of its own), and every pre-P5 caller -- profile.test.ts
- * and the darwin deny suite -- constructs the profile with no session to take a home from. Omitting
- * it still yields a correct, if less defended, profile, exactly as buildSeatbeltProfile documents for
- * its own `home`. LANE W'S SPAWNER MUST PASS IT: a real worker launched without `home` reproduces the
- * pre-P5 gap silently.
+ * `opts` is REQUIRED and `opts.home` is `string | undefined` -- NOT an optional property (fix round
+ * 1): "Lane W's spawner must remember to pass it" is exactly the obligation that gets forgotten, and
+ * an optional parameter makes forgetting compile. Making the argument mandatory while allowing an
+ * explicit `undefined` turns the silent gap into a compile error at every call site, and leaves the
+ * genuinely home-less callers (profile.test.ts, the string-shape half of the darwin suite) able to
+ * state that they mean it. A profile built with `{ home: undefined }` is still correct, just less
+ * defended -- exactly as buildSeatbeltProfile documents for its own `home`.
  *
  * THE #1 RISK (verified empirically by the Norma original): a blanket `(deny process-exec*)` makes
  * sandbox-exec's own execvp() of the target fail ("Operation not permitted"), because the
@@ -335,11 +336,11 @@ ${denySettingsLocalFileRegex}
  * /bin/sh etc. Note the operation is `process-fork` (no star) -- `process-fork*` is an unbound
  * variable that fails to load.
  */
-export function buildWorkflowWorkerSeatbeltProfile(selfExecPath: string, opts?: { home?: string }): string {
+export function buildWorkflowWorkerSeatbeltProfile(selfExecPath: string, opts: { home: string | undefined }): string {
   const self = canon(selfExecPath);
   // Placed with the other denies (below), after `(allow file-read*)`, so SBPL's last-match-wins makes
   // it actually bind -- emitted before the blanket read-allow it would be dead text.
-  const denyRunDirRule = opts?.home !== undefined ? `\n(deny file-read* (subpath "${sbplString(canon(join(opts.home, ".winter", "run")))}"))` : "";
+  const denyRunDirRule = opts.home !== undefined ? `\n(deny file-read* (subpath "${sbplString(canon(join(opts.home, ".winter", "run")))}"))` : "";
   const machRules = [
     "com.apple.system.notification_center",
     "com.apple.system.logger",
