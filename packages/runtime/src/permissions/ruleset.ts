@@ -38,7 +38,7 @@ import { exceedsDoubleStarCap, exceedsStarsPerSegmentCap } from "./paths.ts";
 // permissions/evaluator.ts (type-only); neither of those, nor any transitive import of this file,
 // imports permissions/ruleset.ts, so ruleset.ts -> tools/registry.ts introduces no cycle.
 import { getRegisteredTool } from "../tools/registry.ts";
-import {
+import { readFileSync,
   openSync,
   writeSync,
   fsyncSync,
@@ -761,4 +761,67 @@ export function appendHookAuditJournal(location: { winterHome: string; projectKe
   ensureJournalDirChain(location);
   const envelope: HookAuditJournalEnvelope = { kind: "hookAudit", at: new Date().toISOString(), entry };
   appendJsonLine(journalPath(location), envelope);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Phase 5 fix wave, B-H1(d) — the hook-audit journal READER
+// ---------------------------------------------------------------------------------------------
+//
+// WS-08 §9's audit stream has been WRITE-ONLY since P2: every hook invocation is journalled and
+// nothing can read one back, so "which hooks ran in this session, with what decision" was
+// answerable only by opening the file by hand and knowing its envelope format. This is the
+// read-only half.
+//
+// A LIBRARY FUNCTION, NOT A CLI (the review's own scoping). Winter's CLI surface is WS-15's, and a
+// command would be a product decision this wave has no mandate for.
+//
+// TOLERANT BY CONSTRUCTION, mirroring `readCheckpointIndex` and the durable approval store: an
+// absent file is an EMPTY history rather than an error (a session that fired no hook has no journal,
+// and asking about it must not throw), and a torn final line -- a process killed mid-append -- is
+// skipped so every whole record before it still reads. The journal is a SHARED file: permission
+// updates and hook audits are distinguishable sibling line kinds, so the filter below is what makes
+// this a hook reader rather than a journal dumper.
+
+/** One hook invocation, as the journal recorded it. `at` is the envelope's own ISO timestamp. */
+export interface HookAuditEntry extends HookAuditJournalRecord {
+  at: string;
+}
+
+/**
+ * Every hook invocation this session journalled, oldest first.
+ *
+ * `filter` narrows without a second pass over the file -- `event` and `outcome` are the two axes an
+ * operator actually asks about ("did my PreToolUse hooks run", "what failed").
+ */
+export function readHookAuditJournal(
+  location: { winterHome: string; projectKey: string; sessionId: string },
+  filter?: { event?: string; outcome?: string },
+): HookAuditEntry[] {
+  const path = journalPath(location);
+  let raw: string;
+  try {
+    raw = readFileSync(path, "utf8");
+  } catch {
+    return []; // no journal is an empty history, never an error
+  }
+  const out: HookAuditEntry[] = [];
+  for (const line of raw.split("\n")) {
+    if (line.trim().length === 0) continue;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(line);
+    } catch {
+      continue; // a torn final line must not make every earlier record unreadable
+    }
+    if (typeof parsed !== "object" || parsed === null) continue;
+    const envelope = parsed as Partial<HookAuditJournalEnvelope>;
+    // The one thing that makes this a HOOK reader: the journal also carries permission-update
+    // envelopes, which have no `kind` at all.
+    if (envelope.kind !== "hookAudit" || typeof envelope.entry !== "object" || envelope.entry === null) continue;
+    const entry = envelope.entry;
+    if (filter?.event !== undefined && entry.hookEvent !== filter.event) continue;
+    if (filter?.outcome !== undefined && entry.outcome !== filter.outcome) continue;
+    out.push({ ...entry, at: typeof envelope.at === "string" ? envelope.at : "" });
+  }
+  return out;
 }

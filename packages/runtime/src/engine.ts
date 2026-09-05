@@ -964,7 +964,16 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // Task 8: one stateless instance for the whole run — createBridgePromptStage's own closure only
   // ever reads `bridge` (constant for the run), so there is nothing to gain from rebuilding it on
   // every evaluate() call the way makeEvalCtx's own per-call PolicyState snapshot must be.
-  const realPromptStage = createBridgePromptStage(bridge);
+  const bridgePromptStage = createBridgePromptStage(bridge);
+  // B-H1(c) point 1: a permission prompt is being shown to a human. Emitted BEFORE the request is
+  // sent, not after it resolves -- the observer's whole use for this event is "something is waiting
+  // on you", which is worthless once the wait is over.
+  const realPromptStage: typeof bridgePromptStage = {
+    async prompt(call, evalCtx, meta) {
+      emitNotification("permission_prompt", `Permission requested for ${call.toolName}.`, "Permission required");
+      return bridgePromptStage.prompt(call, evalCtx, meta);
+    },
+  };
 
   // Task 10 (WS-08 §1/§2/§10): the hooks engine's three shared, run-lifetime pieces — a registry
   // built ONCE from config.hooks (source:"sdk" groups only have a real producer at P2; filesystem
@@ -1325,6 +1334,30 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
     });
   }
 
+  // --- Phase 5 fix wave, B-H1(c): R5-13's Notification emission ----------------------------------
+  //
+  // `Notification` was in `HOOK_EVENTS` and in the pinned `NotificationHookInput` and fired NOWHERE:
+  // the P2 conformance matrix's own WS08-EVT-NOTIFICATION row records it as the one event with no
+  // firing fixture, "a genuine ruling-vs-implementation discrepancy". This is the emission.
+  //
+  // THREE WINTER-DEFINED POINTS, and they are Winter's because they have to be: OQ-P5-8 records that
+  // `notification_type` is an OPEN `string` with no declared values (`sdk.d.ts:1333`), and no
+  // emission point fires in the canned single-shot run T1 captured -- so capture could observe
+  // neither the vocabulary nor the trigger set. The three below are the ones an observer can
+  // actually act on, and each is named in R5-13's own text: a permission prompt is on screen, the
+  // session has gone idle waiting for input, a background task finished.
+  //
+  // OBSERVATIONAL ONLY. `Notification` has no hook-specific output type that could decide anything,
+  // and `runHooks` is fire-and-forget here -- a slow or throwing notification hook must never delay
+  // the prompt it is announcing.
+  const emitNotification = (notificationType: string, message: string, title?: string): void => {
+    void fireObservationalHook("Notification", {
+      payload: { message, notification_type: notificationType, ...(title !== undefined ? { title } : {}) },
+    }).catch(() => {
+      /* observational -- a notification hook's failure is never the session's problem */
+    });
+  };
+
   // Store failures are auxiliary, never turn-fatal (WS-03 §11 — a mirror failure becomes a
   // `mirror_error` event, not a retroactive turn failure). P1 has no such event to emit yet, so
   // this just swallows; a future WS-03 §11/WS-16 mirror-layer task is expected to route the catch
@@ -1540,6 +1573,16 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
       // "delivers these frames onto the wire in order").
       emitFrame: (frame: BackgroundTaskMessage): void => {
         output.write({ type: "data", message: frame });
+        // B-H1(c) point 3: a background task finished. HERE rather than in each tool, because
+        // `task_notification` has THREE producers today (bash, agent, workflow) and a per-tool
+        // emission is three places to forget the fourth. `status` carries the pinned
+        // completed/failed/stopped union straight into `notification_type`, which is an open string
+        // on the pin (OQ-P5-8) -- so the vocabulary is Winter's, and it is at least the runtime's own
+        // word for what happened rather than a second invented one.
+        if (frame.subtype === "task_notification") {
+          const status = typeof frame.status === "string" ? frame.status : "completed";
+          emitNotification(`task_${status}`, `Background task ${frame.task_id} ${status}.`, "Task finished");
+        }
       },
       // Phase 4 Task 3 (MUST 6, WS-09 §8.2/§8.3): the real fill for ToolExecutionContext.
       // emitToolReference -- see that field's own comment for why this bundles BOTH marking
@@ -2618,6 +2661,11 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   await fireObservationalHook("SessionStart", {
     payload: { source: config.forkSession === true ? "fork" : config.resume !== undefined || config.continue === true ? "resume" : "startup" },
   });
+  // B-H1(c) point 2: the session is IDLE, waiting for a user envelope (WS-04 §4.1's `idle` state).
+  // Emitted here and again after every terminal result below, which is exactly the set of moments
+  // the state machine re-enters `idle` -- an observer polling for "is it my turn" has no other
+  // signal, because `result` also fires for a turn that immediately continues a streaming input.
+  emitNotification("idle", "Waiting for input.");
 
   const messages: ProviderMessage[] = initialMessages ? [...initialMessages] : [];
 
@@ -3801,6 +3849,9 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
       // checkpointing being enabled, so every pre-P5 golden trace stays byte-identical. Disclosed as
       // a Winter-defined discovery channel.
       output.write({ type: "data", message: { ...finalResult, permission_denials: turnPermissionDenials, ...(enableFileCheckpointing ? { user_message_uuid: turnUserMessageUuid } : {}) } });
+      // B-H1(c) point 2 (the second half): the turn is over and the state machine is back in `idle`.
+      // Emitted AFTER the result so an observer that acts on it sees the result first.
+      emitNotification("idle", "Waiting for input.");
     } else {
       // Provisional shape pending official capture (standing controller ruling) — no `result` text.
       output.write({ type: "data", message: { type: "result", subtype: "success", is_error: false, interrupted: true, permission_denials: turnPermissionDenials } });
