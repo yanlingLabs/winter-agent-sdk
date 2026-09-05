@@ -578,3 +578,50 @@ describe("Bash executor (real sandboxed spawn)", () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------------------------
+// Phase 6 Task 3 (R6-6, P4 carry): `ctx.signal` kills the in-flight process GROUP.
+//
+// `runCommand` already had every piece of this -- `detached: true` makes the child its own group
+// leader and an abort triggers the negative-pid SIGKILL that reaps sandbox-exec, bash and every
+// forked grandchild. What was missing was the CHANNEL: nothing upstream had an `AbortSignal` to give
+// it, so an interrupted turn abandoned the await while the command ran to completion. These two
+// fixtures prove the channel end to end -- the option is threaded, and a real spawned process is
+// actually dead afterwards.
+// ---------------------------------------------------------------------------------------------
+describe("R6-6: ctx.signal reaches the spawn", () => {
+  test("buildRunCommandOptions threads ctx.signal, and omits the key when there is none", () => {
+    const controller = new AbortController();
+    expect(buildRunCommandOptions({ command: "true" }, fakeCtx({ signal: controller.signal })).signal).toBe(controller.signal);
+    expect("signal" in buildRunCommandOptions({ command: "true" }, fakeCtx())).toBe(false);
+  });
+
+  t("an abort mid-command kills the process group: the marker file the sleep would have written never appears", async () => {
+    const dir = proj();
+    const marker = join(dir, "survived");
+    const controller = new AbortController();
+    // A grandchild in a SUBSHELL, so a signal delivered only to the direct child would leave it
+    // running and the marker would appear anyway -- the negative-pid group kill is what this asserts.
+    //
+    // THE TIMING IS EXPLICIT, and it has to be (review round 1, M2). The sleep is 1 s, the abort lands
+    // at ~200 ms, and the marker is checked at ~1.4 s -- COMFORTABLY PAST the moment a surviving
+    // grandchild would have written it. The earlier version slept 5 s and checked at ~1.1 s, so it
+    // discriminated only because a surviving subshell holds the stdio pipes open and delays the
+    // await: a real signal, but an indirect one that would stop being a signal the moment the
+    // implementation stopped waiting on those pipes. This version asserts the thing itself.
+    const SLEEP_S = 1;
+    const promise = bash()({ command: `( sleep ${SLEEP_S}; echo alive > ${JSON.stringify(marker)} ) & wait`, timeout: 30000 }, fakeCtx({ cwd: dir, signal: controller.signal }));
+    try {
+      await new Promise((r) => setTimeout(r, 200));
+      controller.abort();
+      const result = await promise;
+      expect(String(result.output)).toContain("aborted");
+    } finally {
+      // Belt and braces: whatever happened above, nothing of this test's own is left running.
+      controller.abort();
+    }
+    // 1.4 s from the spawn: 400 ms past the point the grandchild's own `sleep` would have finished.
+    await new Promise((r) => setTimeout(r, 1200));
+    expect(existsSync(marker)).toBe(false);
+  }, 15000);
+});

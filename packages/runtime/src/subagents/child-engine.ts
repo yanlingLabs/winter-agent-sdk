@@ -652,6 +652,16 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
       void runEngine({
         config,
         ...(childAccountant !== undefined ? { contextAccountant: childAccountant } : {}),
+        // Phase 6 Task 3 (R6-17): the PARENT's resolved provider identity, threaded onto the child's
+        // own engine.
+        //
+        // Without this line the seam is a field declared upstream that nothing downstream reads --
+        // the exact P5 factory-seam trap the plan names verbatim ("a field declared upstream proves
+        // nothing across the seam"). The consequence is concrete: a child would write NO
+        // provider-state records even when its parent has an identity, so its own sidecar would be
+        // empty and its resume would degrade every message. Conditionally spread, so a child of a
+        // parent with no resolved identity is byte-identical to a pre-P6 child.
+        ...(inherit.provider !== undefined ? { providerIdentity: inherit.provider } : {}),
         input: channel.runtime.input,
         output: channel.runtime.output,
         provider: deps.provider,

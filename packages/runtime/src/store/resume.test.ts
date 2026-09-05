@@ -257,11 +257,14 @@ describe("rebuildProviderMessages — Ruling P1-Q (leaf-anchored ancestry, fix-r
 
   test("a plain resume after an earlier resume-at branch rebuilds ONLY the active branch — the abandoned sibling is excluded", () => {
     const rebuilt = rebuildProviderMessages(branchedFixture());
+    // Phase 6 Task 3 (R6-7): an ASSISTANT message now carries its own entry uuid -- the `anchorUuid`
+    // the provider-state chain is keyed on. A user message does not (R6-7: one `origin` record per
+    // ASSISTANT entry), so those assertions are unchanged.
     expect(rebuilt).toEqual([
       { role: "user", content: "A" },
-      { role: "assistant", content: "B" }, // collapsed back from the on-disk [{type:"text",...}] shape
+      { role: "assistant", content: "B", uuid: "B" }, // collapsed back from the on-disk [{type:"text",...}] shape
       { role: "user", content: "D-active" },
-      { role: "assistant", content: "E-active" },
+      { role: "assistant", content: "E-active", uuid: "E" },
     ]);
     // the abandoned sibling's content never appears anywhere in the rebuilt context
     expect(JSON.stringify(rebuilt)).not.toContain("C-abandoned");
@@ -274,7 +277,7 @@ describe("rebuildProviderMessages — Ruling P1-Q (leaf-anchored ancestry, fix-r
     ];
     expect(rebuildProviderMessages(entries)).toEqual([
       { role: "user", content: "hi" },
-      { role: "assistant", content: "hello" },
+      { role: "assistant", content: "hello", uuid: "a1" },
     ]);
   });
 
@@ -505,7 +508,14 @@ describe("resume wiring end-to-end (temp WINTER_HOME, in-memory leg)", () => {
       await runOneEnvelopeCustom({ sessionId: randomUUID(), cwd, model: "sonnet", resume: sessionId }, home, {}, splitProvider, stubExecutor, "again");
 
       expect(splitCalls.length).toBe(1);
-      expect(splitCalls[0]).toEqual(continuousCalls[1]);
+      // Phase 6 Task 3 (R6-7): an assistant message now carries its own entry uuid. The uuid is a
+      // per-ENTRY identity minted when the entry is recorded, so two independent runs necessarily
+      // mint different ones -- comparing them would assert that two sessions are the same session.
+      // What the fidelity property actually claims is that the CONTENT a resumed run replays is the
+      // content a continuous run would have replayed, so the anchors are compared for PRESENCE and
+      // the rest for equality.
+      expect(withoutAnchors(splitCalls[0]!)).toEqual(withoutAnchors(continuousCalls[1]!));
+      expect(anchorPresence(splitCalls[0]!)).toEqual(anchorPresence(continuousCalls[1]!));
     } finally {
       rmSync(home, { recursive: true, force: true });
     }
@@ -609,7 +619,14 @@ describe("resume wiring end-to-end (temp WINTER_HOME, in-memory leg)", () => {
       await runOneEnvelopeCustom({ sessionId: randomUUID(), cwd, model: "sonnet", resume: sessionId }, home, {}, splitProvider, stubExecutor, "again");
 
       expect(splitCalls.length).toBe(1);
-      expect(splitCalls[0]).toEqual(continuousCalls[1]);
+      // Phase 6 Task 3 (R6-7): an assistant message now carries its own entry uuid. The uuid is a
+      // per-ENTRY identity minted when the entry is recorded, so two independent runs necessarily
+      // mint different ones -- comparing them would assert that two sessions are the same session.
+      // What the fidelity property actually claims is that the CONTENT a resumed run replays is the
+      // content a continuous run would have replayed, so the anchors are compared for PRESENCE and
+      // the rest for equality.
+      expect(withoutAnchors(splitCalls[0]!)).toEqual(withoutAnchors(continuousCalls[1]!));
+      expect(anchorPresence(splitCalls[0]!)).toEqual(anchorPresence(continuousCalls[1]!));
     } finally {
       rmSync(home, { recursive: true, force: true });
     }
@@ -1050,4 +1067,14 @@ function runOneEnvelopeCustom(
     await proc.exited;
     return { proc, frames };
   })();
+}
+
+/** Strips the per-entry anchor uuid so two independent runs' histories can be compared for CONTENT. */
+function withoutAnchors(messages: readonly ProviderMessage[]): ProviderMessage[] {
+  return messages.map(({ uuid: _uuid, ...rest }) => rest);
+}
+
+/** Which messages carry an anchor at all -- the half of the fidelity claim that survives across runs. */
+function anchorPresence(messages: readonly ProviderMessage[]): boolean[] {
+  return messages.map((m) => m.uuid !== undefined);
 }

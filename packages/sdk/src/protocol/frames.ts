@@ -298,6 +298,300 @@ export interface SDKCompactBoundaryMessage {
   session_id: string;
 }
 
+// --- Phase 6 Task 3 (R6-D): the wire content-block and stream-event vocabularies -------------------
+//
+// WINTER-DECLARED, deliberately, and this is the phase's own headline finding acted on rather than
+// worked around. The pinned artifact declares NO wire content-block or stream-event shape at all:
+// every one is a type import from a floating `@anthropic-ai/sdk >= 0.93.0` peer (derived-shapes-p6.md's
+// headline finding). Re-exporting a floating peer's types would inherit its drift into a package whose
+// whole value is being dependency-free and fence-resident, so these shapes are declared here from
+// capture (F)'s observed behaviour and the pin's own prose about its own tools.
+//
+// WHAT IS CAPTURED AND WHAT IS WINTER'S OWN, stated separately so a reader never mistakes one for the
+// other:
+//   - CAPTURED (capture (F)): the six `event.type` names, the four `delta.type` names, the three
+//     `content_block.type` names seen on `content_block_start`, and that `ping` NEVER reaches a
+//     consumer (the runtime filters it) -- which is why `ping` is not a member below.
+//   - CAPTURED (item (f), from the pin's own prose about its own Read tool): `tool_result.content`
+//     admits BLOCKS, not only a string.
+//   - WINTER'S OWN: the payload FIELD names on each member. Capture (F) recorded the type names and
+//     the frame's own key set, not each delta's payload keys. Winter is the producer of these frames,
+//     so the fields below are what Winter's own emitter sets; every member also carries an index
+//     signature, so a richer real payload round-trips through the codec untouched.
+export type WireContentBlock =
+  | { type: "text"; text: string; [k: string]: unknown }
+  /** `signature` is a plain string that MAY be `""`: capture (F) shows the pinned runtime normalising a signatureless thinking block to exactly that and REPLAYING it. Optional would let a producer omit it and break the signature chain silently. */
+  | { type: "thinking"; thinking: string; signature: string; [k: string]: unknown }
+  /** `data` is OPAQUE provider state. It rides in-dialect (the dialect defines it) and NOWHERE else -- never a log, never an error message, never the advisor transcript (Global Constraints). */
+  | { type: "redacted_thinking"; data: string; [k: string]: unknown }
+  | { type: "tool_use"; id: string; name: string; input: unknown; [k: string]: unknown }
+  | { type: "tool_result"; tool_use_id: string; content: string | WireContentBlock[]; [k: string]: unknown }
+  | { type: "image"; source: { type: "base64"; media_type: string; data: string }; [k: string]: unknown };
+
+export type WireStreamEventDelta =
+  | { type: "text_delta"; text: string; [k: string]: unknown }
+  /** `estimated_tokens` is the one delta payload field the pin names at all -- second-hand, in `SDKThinkingTokensMessage`'s own JSDoc (`sdk.d.ts:5015`) -- so it is optional here beside the text Winter's emitter sets. */
+  | { type: "thinking_delta"; thinking: string; estimated_tokens?: number; [k: string]: unknown }
+  | { type: "signature_delta"; signature: string; [k: string]: unknown }
+  | { type: "input_json_delta"; partial_json: string; [k: string]: unknown };
+
+export type WireStreamEvent =
+  | { type: "message_start"; message?: { id?: string; model?: string; role?: "assistant"; content?: WireContentBlock[]; [k: string]: unknown }; [k: string]: unknown }
+  | { type: "content_block_start"; index: number; content_block: WireContentBlock; [k: string]: unknown }
+  | { type: "content_block_delta"; index: number; delta: WireStreamEventDelta; [k: string]: unknown }
+  | { type: "content_block_stop"; index: number; [k: string]: unknown }
+  | { type: "message_delta"; delta: { stop_reason?: string | null; stop_sequence?: string | null; [k: string]: unknown }; usage?: { output_tokens?: number; [k: string]: unknown }; [k: string]: unknown }
+  | { type: "message_stop"; [k: string]: unknown };
+
+/**
+ * Phase 6 Task 3 (derived-shapes-p6.md item (a), `sdk.d.ts:4544-4558`): the live-token-streaming frame.
+ *
+ * SIX FIELDS PLUS THE DISCRIMINANT, and two of them are easy to miss: `ttft_ms?` (`4553`) and
+ * `user_message_uuid?` (`4557`). `parent_tool_use_id` is `string | null` and NOT optional -- a
+ * main-thread frame emits the key explicitly with `null`, matching `SDKAssistantMessage`'s own
+ * convention.
+ *
+ * GATED on `includePartialMessages` (`1712-1716`), and ADDITIVE: the pin's own JSDoc (`4542`) says
+ * the complete `assistant` message still follows as its own message, which is what lets a host ignore
+ * `stream_event` entirely and still see every completed block. R6-G: auxiliary provider calls
+ * (compaction summariser, classifier, advisor, countTokens) emit NONE of these -- capture (F) observed
+ * the pinned runtime suppressing exactly that call's stream events -- and `ttft_ms` rides the FIRST
+ * `stream_event` of each forwarded generation.
+ */
+export interface SDKPartialAssistantMessage {
+  type: "stream_event";
+  event: WireStreamEvent;
+  parent_tool_use_id: string | null;
+  uuid: string;
+  session_id: string;
+  ttft_ms?: number;
+  user_message_uuid?: string;
+}
+
+/**
+ * The pinned provider-error taxonomy, `sdk.d.ts:3159` -- the closed 11-member union carried on
+ * `api_retry.error`, `SDKAssistantMessage.error?` and `StopFailureHookInput.error`.
+ *
+ * These eleven buckets are all a Winter adapter has to map into for parity; anything finer is a
+ * Winter extension to disclose (provider-runtime's `ProviderError.providerCode` is exactly that).
+ * DECLARED HERE as well as in provider-runtime's `types.ts` on purpose: this package is
+ * dependency-free and fence-resident and cannot import the Bun-only one, and the frame that carries
+ * the union must declare what it carries.
+ */
+export type SDKAssistantMessageError =
+  | "authentication_failed"
+  | "oauth_org_not_allowed"
+  | "account_on_hold"
+  | "billing_error"
+  | "rate_limit"
+  | "overloaded"
+  | "invalid_request"
+  | "model_not_found"
+  | "server_error"
+  | "unknown"
+  | "max_output_tokens";
+
+/**
+ * `sdk.d.ts:3085-3095` (JSDoc `3083`). Nine keys, ALL REQUIRED -- none optional.
+ *
+ * `error_status: number | null`: the null case is a connection error (e.g. a timeout) that had no
+ * HTTP response, which is why provider-runtime's `ProviderError.status` is ABSENT rather than `null`
+ * for that case and this frame's producer maps absence to `null` at the boundary.
+ *
+ * R6-6/R6-C: one frame per retry attempt, announced BEFORE the delay is taken; `max_retries` is 10
+ * (capture (G) pinned it on every frame of all three runs).
+ */
+export interface SDKAPIRetryMessage {
+  type: "system";
+  subtype: "api_retry";
+  attempt: number;
+  max_retries: number;
+  retry_delay_ms: number;
+  error_status: number | null;
+  error: SDKAssistantMessageError;
+  uuid: string;
+  session_id: string;
+}
+
+/**
+ * `sdk.d.ts:4651-4669`. Every field except `status` is optional, and the vocabulary is
+ * consumer-SUBSCRIPTION-shaped throughout -- which is the whole point of R6-B.
+ */
+export interface SDKRateLimitInfo {
+  status: "allowed" | "allowed_warning" | "rejected";
+  rateLimitType?: "five_hour" | "seven_day" | "seven_day_opus" | "seven_day_sonnet" | "seven_day_overage_included" | "overage";
+  resetsAt?: number;
+  utilization?: number;
+  [k: string]: unknown;
+}
+
+/**
+ * `sdk.d.ts:4638-4646`. A TOP-LEVEL `type`, not a `system` subtype -- unlike `api_retry`/`status`/
+ * `thinking_tokens`/the refusal pair. `auth_status` and `tool_progress` share this convention.
+ *
+ * **R6-B: an HTTP 429 is NOT this frame.** Capture (G) proved the pinned runtime emits ZERO
+ * `rate_limit_event` frames for a 429 carrying a full `anthropic-ratelimit-*` header set with a
+ * `rejected` unified status; the pinned 429 path is `api_retry` with `error_status: 429` and
+ * `error: "rate_limit"`. Winter emits this ONLY for subscription-shaped quota states (the codex-oauth
+ * quota manager's limited/`resumeAt`), and header-derived limits never become frames at all.
+ */
+export interface SDKRateLimitEvent {
+  type: "rate_limit_event";
+  rate_limit_info: SDKRateLimitInfo;
+  uuid: string;
+  session_id: string;
+}
+
+/**
+ * `sdk.d.ts:3161-3168`. Top-level `type`, four payload fields, and NO JSDoc at all on the pin.
+ *
+ * R6-F: this is a LOGIN-FLOW PROGRESS channel (codex-oauth login/refresh), never the
+ * credential-failure frame -- a bad key is a provider error that lands on the result shape.
+ * `isAuthenticating: boolean` + `output: string[]` is a running transcript of an interactive auth
+ * attempt, which is what that shape reads as.
+ */
+export interface SDKAuthStatusMessage {
+  type: "auth_status";
+  isAuthenticating: boolean;
+  output: string[];
+  error?: string;
+  uuid: string;
+  session_id: string;
+}
+
+/**
+ * `sdk.d.ts:5017-5024` (JSDoc `5015`). NOT gated on `includePartialMessages`: a host that never opts
+ * into `stream_event` still gets thinking progress. `estimated_tokens` is the running total for the
+ * CURRENT thinking block and `estimated_tokens_delta` this frame's increment; both are approximate
+ * progress for a spinner, explicitly not the billed `output_tokens`.
+ */
+export interface SDKThinkingTokensMessage {
+  type: "system";
+  subtype: "thinking_tokens";
+  estimated_tokens: number;
+  estimated_tokens_delta: number;
+  uuid: string;
+  session_id: string;
+}
+
+/**
+ * `sdk.d.ts:4476-4508` (JSDoc `4474`). `trigger` is the literal `'refusal'` and NOTHING ELSE, and
+ * the JSDoc scopes emission to "the primary model ends the stream with `stop_reason` 'refusal' and
+ * the turn is retried once on a fallback model".
+ *
+ * **A MODEL-REFUSAL FALLBACK IS NOT AN OVERLOAD FALLBACK** (R6-C). Capture (G) confirmed the overload
+ * swap is FRAME-INVISIBLE on the pin; Winter emits its own `system/model_switch` for that and this
+ * pinned pair only on `stopReason: "refusal"`.
+ *
+ * `direction`'s `'revert'`/`'sticky'` are doc-marked as retained for consumer compat and no longer
+ * emitted. `api_refusal_explanation` is doc-marked unstable human prose, display-only, NEVER to be
+ * parsed -- a rule Winter carries verbatim.
+ */
+export interface SDKModelRefusalFallbackMessage {
+  type: "system";
+  subtype: "model_refusal_fallback";
+  trigger: "refusal";
+  direction: "retry" | "revert" | "sticky";
+  scope?: "session" | "local";
+  original_model: string;
+  fallback_model: string;
+  request_id: string | null;
+  api_refusal_category?: string | null;
+  api_refusal_explanation?: string | null;
+  retracted_message_uuids?: string[];
+  refused_user_message_uuid?: string | null;
+  content: string;
+  uuid: string;
+  session_id: string;
+}
+
+/** `sdk.d.ts:4513-4523` (JSDoc `4511`): the refusal produced NO retry. Nine fields -- no `direction`/`scope`/`fallback_model`, because there is no fallback to name. */
+export interface SDKModelRefusalNoFallbackMessage {
+  type: "system";
+  subtype: "model_refusal_no_fallback";
+  trigger: "refusal";
+  original_model: string;
+  request_id: string | null;
+  api_refusal_category?: string | null;
+  api_refusal_explanation?: string | null;
+  retracted_message_uuids?: string[];
+  refused_user_message_uuid?: string | null;
+  content: string;
+  uuid: string;
+  session_id: string;
+}
+
+// --- Winter-only continuity frames (R6-8 / R6-C / R6-7), disclosed as Winter extensions ------------
+//
+// None of these three exists on the pin. They are the observable half of rulings whose whole point is
+// that the pinned surface has NOWHERE to put the information: a foreign reasoning summary must not be
+// written into `assistant.message.content` (R6-8), an overload/manual model swap is frame-invisible on
+// the pin (R6-C, capture (G)), and a degraded resume has no pinned channel at all (R6-7).
+
+/**
+ * R6-8: a foreign model's reasoning SUMMARY, surfaced live WITHOUT entering the transcript.
+ *
+ * Capture (F) settled why this frame has to exist: the pinned runtime never emits or replays a
+ * thinking block without a `signature` key -- when the stream carries none it materialises `""` -- so
+ * a foreign summary written into `assistant.message.content` as a `thinking` block would go on the
+ * wire carrying an empty or fabricated signature. That is precisely the impersonation R6-8 forbids,
+ * and the pin offers no mechanism to omit the field instead. The summary therefore lives in the
+ * provider-state sidecar and rides this frame; Anthropic-family thinking/redacted blocks ride
+ * in-dialect with their REAL signatures, exactly as before.
+ */
+export interface SDKReasoningSummaryMessage {
+  type: "system";
+  subtype: "reasoning_summary";
+  text: string;
+  provider: string;
+  model: string;
+  uuid: string;
+  session_id: string;
+}
+
+/**
+ * R6-C: the model this session is generating with CHANGED, and the pin has no frame that says so.
+ *
+ * `reason` distinguishes the three producers: `"fallback"` (the primary was abandoned per
+ * `fallbackModel`), `"set_model"` (a host asked, applied at the quiescent boundary), and
+ * `"interrupt"` (a pending switch applied immediately because the turn was interrupted). The swap is
+ * additionally recorded in the dialect record's `providerHistory`, so a transcript reader can
+ * reconstruct which model produced which entry after the fact.
+ */
+export interface SDKModelSwitchMessage {
+  type: "system";
+  subtype: "model_switch";
+  reason: "fallback" | "set_model" | "interrupt";
+  from_model: string;
+  to_model: string;
+  provider: string;
+  uuid: string;
+  session_id: string;
+}
+
+/**
+ * R6-7: a resume found the provider-state chain incomplete, so some message was degraded.
+ *
+ * THE SIMPLEST OF THE TWO CHANNELS THE PLAN OFFERED, and the choice is recorded here rather than left
+ * implicit: the alternative was a warning list threaded onto the history renderer's input, but the
+ * renderer is Lane C's and the ledger pins `ContinuationChain` as the bare `Map` `buildContinuationChain`
+ * returns -- a warning list would have had to ride a second, parallel return value through a frozen
+ * signature. A frame reaches the host directly, needs no seam, and is where a user-visible degradation
+ * belongs.
+ *
+ * `detail` is Winter-authored prose about COUNTS and IDENTITY only. It never names or contains opaque
+ * provider state (Global Constraints).
+ */
+export interface SDKContinuityWarningMessage {
+  type: "system";
+  subtype: "continuity_warning";
+  warning: "provider_state_missing" | "provider_state_deleted" | "cross_domain_replay_dropped" | "sidecar_unreadable";
+  detail: string;
+  anchor_uuid?: string;
+  uuid: string;
+  session_id: string;
+}
+
 export type SdkMessage =
   // Phase 5 Task 2 (derived-shapes-p5.md item (b), `sdk.d.ts:4853-4913`): the LOADED-SURFACE fields.
   // `output_style` and `skills` are REQUIRED on the pin -- Task 1's own finding is that a Winter
@@ -331,6 +625,18 @@ export type SdkMessage =
   | SDKStatusMessage
   | SDKCompactBoundaryMessage
   | BackgroundTaskMessage
+  // Phase 6 Task 3: the provider-facing family. Listed BEFORE the open catch-all at the end of this
+  // union so each stays independently discriminable on `type`/`subtype`.
+  | SDKPartialAssistantMessage
+  | SDKAPIRetryMessage
+  | SDKRateLimitEvent
+  | SDKAuthStatusMessage
+  | SDKThinkingTokensMessage
+  | SDKModelRefusalFallbackMessage
+  | SDKModelRefusalNoFallbackMessage
+  | SDKReasoningSummaryMessage
+  | SDKModelSwitchMessage
+  | SDKContinuityWarningMessage
   // Phase 4 Task 3 (WS-10 §4; derived-shapes-p4.md item (d)): `parent_tool_use_id` is the
   // message-stream child-progress correlator ("present on 6 variants of the... SDKMessage union" --
   // T1's own item (d) finding). Added here on the two variants THIS engine actually produces that
@@ -358,13 +664,22 @@ export type SdkMessage =
   // has no `structured_output` at all rather than a null one. Winter's result variant is a single
   // shape (it carries `is_error` rather than splitting success/error into two types), so that
   // constraint is a PRODUCER obligation the engine keeps, stated here at the declaration.
+  //
+  // Phase 6 Task 3 (R6-F, capture (I)): a PROVIDER failure that ends a turn does NOT get its own
+  // result subtype. Capture (I) observed the pinned runtime landing an API failure on
+  // `subtype: "success"` with `is_error: true`, `terminal_reason: "api_error"` and
+  // `api_error_status: <status | null>` -- and `query()` ADDITIONALLY throwing a plain `Error` after
+  // yielding that result. `SDKResultError`'s own four-member subtype union (`sdk.d.ts:4673`) contains
+  // nothing provider-specific, which is why the success arm carries `is_error`/`api_error_status`
+  // (`4728-4729`) at all. `api_error_status` is null-able for a connection error with no HTTP response.
   | {
       type: "result";
       subtype: "success" | "error_max_turns" | "error_during_execution" | "error_max_budget_usd" | "error_max_structured_output_retries" | string;
       is_error?: boolean;
       result?: string;
       structured_output?: unknown;
-      terminal_reason?: "structured_output_retry_exhausted" | string;
+      terminal_reason?: "structured_output_retry_exhausted" | "api_error" | string;
+      api_error_status?: number | null;
       permission_denials: SDKPermissionDenial[];
       [k: string]: unknown;
     }

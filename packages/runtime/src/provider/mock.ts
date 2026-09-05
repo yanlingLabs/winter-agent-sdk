@@ -241,7 +241,18 @@ function rawTestProviderByName(name: TestProviderName): Provider {
     case "reflect":
       return {
         async generate({ messages }) {
-          return { kind: "text", text: JSON.stringify(messages) };
+          // Phase 6 Task 3 (R6-3): reflects `{role, content}` ONLY, which is exactly what it
+          // reflected before `ProviderMessage` grew its continuation annotations.
+          //
+          // The question this double exists to answer is "did this run's provider actually see the
+          // prior turns" -- a question about CONTENT. `uuid` is a per-entry identity minted when the
+          // entry is recorded, so two independent runs of the same scenario necessarily produce
+          // different ones, and reflecting it would make an equivalence trace differ for a reason
+          // that has nothing to do with the transport under test. `origin`/`nativeState` are the same
+          // shape of per-run fact; `nativeState` is additionally OPAQUE provider state, and this
+          // double's output becomes an `assistant` frame, a transcript entry and a golden -- three
+          // places Global Constraints say it must never reach.
+          return { kind: "text", text: JSON.stringify(messages.map((m) => ({ role: m.role, content: m.content }))) };
         },
       };
     // Task 2 (WS-04 §3.1): a single scripted turn returning the "rpc_probe" ProviderTurn kind —
@@ -614,6 +625,11 @@ function rawTestProviderByName(name: TestProviderName): Provider {
                 if (!Array.isArray(m.content)) continue;
                 for (const b of m.content) {
                   if (b.type !== "tool_result" || b.tool_use_id !== "agent-call-1") continue;
+                  // Phase 6 Task 3 (R6-3): `tool_result.content` widened to `string | ContentBlock[]`.
+                  // The Agent tool's own result is always a JSON string, so a blocks-valued result is
+                  // not this call's shape and is skipped rather than flattened -- flattening would
+                  // hand `JSON.parse` a rendering of the blocks and produce a confusing parse failure.
+                  if (typeof b.content !== "string") continue;
                   try {
                     const parsed = JSON.parse(b.content) as { agentId?: string };
                     if (typeof parsed.agentId === "string") return parsed.agentId;

@@ -22,3 +22,23 @@
 
 /** The package's own identity, so a scenario report can name what produced it. */
 export const PROVIDER_CONFORMANCE_PACKAGE = "winter-provider-conformance";
+
+// --- Phase 6 Task 3: the spine's two frozen files, re-exported ------------------------------------
+//
+// A lane imports from this barrel rather than reaching into `fakes/`/`corpus/` by path, so the
+// package's own public surface is what R6-12 freezes and a lane's added file is what it adds.
+export {
+  errorResponse,
+  jsonResponse,
+  noRequestContains,
+  redirectResponse,
+  requestsTo,
+  scenarioTable,
+  sseResponse,
+  stalledResponse,
+  startFake,
+  withFake,
+} from "./fakes/server.ts";
+export type { FakeRoute, FakeServer, RecordedRequest, ScenarioResponder, ScenarioTableOptions, SseFrame, SseResponseOptions, StartFakeOptions } from "./fakes/server.ts";
+export { CORPUS_CASES, formatCorpusReport, runAdapterCorpus } from "./corpus/runner.ts";
+export type { CorpusCaseContext, CorpusCaseId, CorpusCaseImpl, CorpusCaseOutcome, CorpusCaseResult, CorpusCaseSpec, CorpusReport, RunAdapterCorpusOptions } from "./corpus/runner.ts";

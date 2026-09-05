@@ -240,6 +240,19 @@ export interface ToolExecutionContext {
   // registry ever builds carries a real, resolved value, never `undefined`, so a real executor
   // (bash.ts, monitor.ts) never needs its own fallback-to-default branch.
   sandboxSettings: SandboxSettings;
+  /**
+   * Phase 6 Task 3 (R6-6, P4 carry): the engine's per-turn abort signal.
+   *
+   * ABORTED when the turn is interrupted. Bash and Monitor honour it -- their process-group kill
+   * already existed, and this is the channel that reaches it: before this field the interrupt was a
+   * raced Promise the engine stopped waiting on while the child kept running to completion.
+   * An executor that ignores the field behaves exactly as before.
+   *
+   * OPTIONAL, matching `insideSubagent`/`emitToolReference` and for the identical reason: ~25
+   * `impl/*.test.ts` files build a `ToolExecutionContext` by hand with no shared builder, and a
+   * required field would force a throwaway stub into every one of them.
+   */
+  signal?: AbortSignal;
   // Task 8 (P3 close-out, "Settings threading" MUST; WS-12 §5.3): the session's configured outputs
   // directory (RuntimeConfig.outputsDir), when one was configured -- a Winter product extension, not
   // a CC-pinned field. Optional (most sessions configure none): absent means "no $OUTDIR export, no
@@ -1213,7 +1226,8 @@ export interface EngineToolResult {
   output: string;
 }
 export interface EngineFacingToolExecutor {
-  execute(call: EngineToolCall): Promise<EngineToolResult>;
+  /** Phase 6 Task 3 (R6-6): `opts.signal` is the engine's per-turn abort. It reaches a real executor as `ToolExecutionContext.signal`. */
+  execute(call: EngineToolCall, opts?: { signal?: AbortSignal }): Promise<EngineToolResult>;
 }
 
 function unknownToolResult(name: string): ToolResultPayload {
@@ -1311,7 +1325,7 @@ function unavailableResult(name: string): ToolResultPayload {
 
 export function buildRegistryToolExecutor(deps: RegistryToolExecutorDeps): EngineFacingToolExecutor {
   return {
-    async execute(call: EngineToolCall): Promise<EngineToolResult> {
+    async execute(call: EngineToolCall, opts?: { signal?: AbortSignal }): Promise<EngineToolResult> {
       const registered = getRegisteredTool(call.name);
       if (!registered) return foldResult(unknownToolResult(call.name));
       if (registered.descriptor.disposition === "correctly-absent") return foldResult(correctlyAbsentResult(call.name));
@@ -1335,6 +1349,9 @@ export function buildRegistryToolExecutor(deps: RegistryToolExecutorDeps): Engin
         emitFrame: deps.emitFrame,
         ...(deps.emitToolReference !== undefined ? { emitToolReference: deps.emitToolReference } : {}),
         permissions: { probeReadAccess: deps.probeReadAccess },
+        // Phase 6 Task 3 (R6-6): conditionally spread, so a call made with no signal produces a ctx
+        // byte-identical to before this field existed (exactOptionalPropertyTypes).
+        ...(opts?.signal !== undefined ? { signal: opts.signal } : {}),
         get tempDir() {
           return deps.getTempDir();
         },

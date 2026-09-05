@@ -57,12 +57,29 @@ function renderBlock(block: ContentBlock, toolInputPreviewChars: number): string
       return clipped.length > 0 ? `[called ${block.name} with ${clipped}]` : `[called ${block.name}]`;
     }
     case "tool_result":
-      return block.content;
+      // Phase 6 Task 3 (R6-3): `tool_result.content` widened to `string | ContentBlock[]`. A
+      // blocks-valued result recurses through the SAME positive rebuild, so an image block inside a
+      // tool result is dropped by exactly the rule that drops a top-level one -- rather than being
+      // stringified into the summariser's input by an `String(...)` that no longer applies.
+      return typeof block.content === "string"
+        ? block.content
+        : block.content
+            .map((inner) => renderBlock(inner, toolInputPreviewChars))
+            .filter((t): t is string => typeof t === "string" && t.length > 0)
+            .join("\n");
     case "tool_reference":
       return `[tools now callable: ${block.tool_names.join(", ")}]`;
     default:
       // Any block shape this file does not know -- an opaque reasoning item, a provider-specific
       // envelope, anything a later phase introduces -- is DROPPED rather than guessed at.
+      //
+      // Phase 6 Task 3 (R6-3): `thinking`, `redacted_thinking` and `image` now reach this arm, and
+      // dropping them is the CORRECT behaviour, not an oversight: a summary is model-readable text
+      // persisted as such, and a thinking block's `signature` / a redacted block's `data` are opaque
+      // provider state whose only sink is the sidecar (Global Constraints). This file's own header
+      // predicted exactly this moment -- "the first provider phase that adds an opaque field must NOT
+      // have to remember to come back here" -- and the positive rebuild is why it did not have to.
+      // seam-contracts-p6.test.ts asserts the negative rather than trusting this comment.
       return undefined;
   }
 }
