@@ -110,8 +110,24 @@ no real username appears anywhere in this file, and every captured path is rende
 sha256 (`207b771f…b40d95`) and its `sdk.d.ts` hashed **byte-identical** to the first extraction's
 (`3bc8f1b5…b4b1d4d`, 8447 lines), so the two cycles are reading the same bytes rather than two
 plausible copies. Against that second extraction, **245 distinct `file:line → expected-substring`
-citations were checked programmatically: 245 anchored to the line they claim, 0 mismatches.** The
-checker ran on the derivation's line citations, not on prose. Three real errors it caught during the
+citations were checked programmatically: 0 mismatches.** The checker ran on the derivation's line
+citations, not on prose; after review round 1's corrections the table stands at **248 citations, 0
+mismatches** against a third, independently re-fetched extraction of the same verified tarball.
+
+**A second checker, added in review round 1, because the first one cannot catch a wrong ATTRIBUTION.**
+A `file:line → expected-substring` check proves a cited line says what is claimed; it cannot prove the
+surrounding sentence credits the right symbol. Round 1 found exactly that failure — this document had
+named a `Query.setSettings` method the artifact does not contain (the real name is
+`applyFlagSettings`, `sdk.d.ts:2519`) on correctly-cited lines. Every identifier-shaped name this
+document asserts is now swept back against all six `.d.ts` files plus `package.json`: **269 names
+checked, and the only 20 absent are ones this document itself declares absent or names as
+non-artifact** — the runtime-captured wire names it states are undeclared (`text_delta`,
+`signature_delta`, `input_json_delta`, `context_management`, `end_turn`, `overloaded_error`,
+`rate_limit_error`), the result subtypes it reports as *not existing* (`error_auth`,
+`error_model_not_found`, `error_overloaded`), `redacted_thinking` (whose zero-occurrence count is
+itself a finding), the external `ThinkingBlock` R6-8 assumed, Winter's own `anchorUuid`, and
+harness/Node/env names (`ANTHROPIC_BASE_URL`, `MAX_MCP_OUTPUT_TOKENS`, `mkdtemp`, `homedir`,
+`cacheDir`, `checksums`, `fetchAndVerifyUpstream`). Three real errors it caught during the
 pass (`SDKResultSuccess`/`SDKResultError`'s `total_cost_usd` JSDoc off by one at both sites, and
 `SessionStore.load`'s JSDoc start) were corrected before this file was finalised, alongside ten caught
 by the same check against the first extraction (`ModelInfo`'s three field lines, `costBasis`,
@@ -370,7 +386,8 @@ type ThinkingDisabled = { type: 'disabled' };                                   
 Type-level facts worth flagging, because two of them contradict the option's own example text:
 
 - **`ThinkingEnabled.budgetTokens` is OPTIONAL** (`8230`, `budgetTokens?: number`) even though the
-  option's JSDoc renders the arm as `{ type: 'enabled', budgetTokens: number }` (`1728`). The
+  option's JSDoc renders the arm as `{ type: 'enabled', budgetTokens: number }` (`1729`; `1728` is
+  the preceding line, which marks `adaptive` as the default). The
   declaration is the compile-time authority; the JSDoc example is illustrative. `{type:'enabled'}`
   with no budget is a well-typed value with undefined semantics in the pin.
 - **`display` exists on two of the three arms** (`adaptive` and `enabled`) and is absent from
@@ -701,8 +718,8 @@ reproduced absence across all six `.d.ts` files:
 - `signature` as a *content-block field* — **zero occurrences**. The four hits of the string are:
   `SDKAssistantMessage.resumed_from_incomplete_thinking`'s JSDoc (`sdk.d.ts:3116`) and three unrelated
   AWS SigV4 sandbox-proxy settings (`7454`, `7458`, `7462`).
-- `tool_result` appears **only in prose** — 14 JSDoc mentions across `sdk.d.ts`/`sdk-tools.d.ts`, never
-  as a declared block type.
+- `tool_result` appears **only in prose** — **21** occurrences across the two files (13 in `sdk.d.ts`,
+  8 in `sdk-tools.d.ts`), every one of them inside a JSDoc comment, never as a declared block type.
 
 Every block shape is delegated to `BetaMessage` / `MessageParam` (`sdk.d.ts:1`, `:8`), from the
 floating peer `@anthropic-ai/sdk >=0.93.0`. The pin's own prose says so twice, in words this document
@@ -1162,12 +1179,24 @@ as a transition-to-idle value, and that the frame is the compaction-outcome carr
 "HOME"]` — no `ANTHROPIC_API_KEY`, no key of any kind. (ii) `model: "definitely-not-a-model"` against a
 loopback answering `404 {"type":"error","error":{"type":"not_found_error",…}}`.
 
-**Hermeticity result, and the Keychain caveat discharged.** Run (i) reached `system/init` with
-**`apiKeySource: "none"`** and then failed closed: the loopback received **one `HEAD /api/hello` and
-zero `POST /v1/messages`**. The runtime did **not** find an ambient credential — the caveat stated in
-this scenario's design (that `HOME`/`CLAUDE_CONFIG_DIR` do not redirect the macOS Keychain) did not
-materialise, and no real user credential was consulted, used or observed. Recorded as a discharged
-risk, not an untested assumption.
+**Hermeticity result, and the Keychain caveat discharged.** The caveat this scenario's design states
+is that `HOME` and `CLAUDE_CONFIG_DIR` do not redirect the macOS Keychain, so a keyless run *could*
+have found the real user's OAuth credential. **Two observations discharge it, and neither is
+`apiKeySource`:**
+
+1. **The loopback received one `HEAD /api/hello` and ZERO `POST /v1/messages`.** No model request was
+   ever attempted, so no credential was ever used.
+2. **The run failed on the unauthenticated branch**, and said so: `query()` threw with a
+   not-logged-in message directing the user to `/login` (quoted in full in the table below). A run
+   holding a working ambient credential does not take that branch.
+
+`system/init` did also report **`apiKeySource: "none"`**, but that value is *not* the proof and is
+listed here only for completeness: item (d) established that `'none'` explicitly **includes** a
+claude.ai OAuth login, so on its own it is consistent with both "no credential" and "an OAuth
+credential from the Keychain". The zero-POST count and the branch taken are what separate them.
+
+Conclusion: no real user credential was consulted, used or observed. Recorded as a discharged risk,
+not an untested assumption.
 
 | | run (i) no key | run (ii) unknown model |
 | --- | --- | --- |
@@ -1429,7 +1458,7 @@ No spec text is contradicted by any of these; recorded because they surfaced dur
 - `ApiKeySource`'s `'none'` explicitly includes OAuth, bearer-token and third-party-cloud auth
   (`124-126`); it does not mean "unauthenticated".
 - `ThinkingEnabled.budgetTokens` is optional in the declaration (`8230`) though the option's own JSDoc
-  example renders it required (`1728`).
+  example renders it required (`1729`).
 - `Settings.availableModels` uses the empty array to mean "only the default model" (`5578-5580`), not
   "no models".
 - `contextWindow`/`maxOutputTokens` are pinned on `ModelUsage` (per request), not on `ModelInfo` (per
