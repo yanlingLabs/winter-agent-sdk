@@ -46,6 +46,14 @@ export interface WinterMdBlock {
 
 // Memoised `resolved cwd -> worktree toplevel (or null)`. Same reasoning as memory-key.ts's cache:
 // `assemble()` runs once per envelope and a session's checkout does not move underneath it.
+//
+// DISCLOSED STALENESS (whole-branch n1), because the seam's own case is "one process, many
+// sessions": the entry is never invalidated, so a long-lived host in which the SAME directory is
+// deleted and re-cloned with a different `.git` layout (a worktree becoming a plain checkout, say)
+// keeps the first answer for the life of the process. Accepted rather than fixed: the alternatives
+// are a watcher (which WS-11 forbids inside the SDK) or a per-envelope `git` spawn, and the failure
+// needs a path to be re-cloned differently UNDER a running host. A host that does that can restart,
+// and a test that needs it calls the clear hook below.
 const rootCache = new Map<string, string | null>();
 
 /** TEST-ONLY: throwaway repositories at reused paths need this cleared. Production never calls it. */

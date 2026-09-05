@@ -38,6 +38,12 @@ export const RESERVED_MEMORY_KEYS: readonly string[] = ["_global", "_assistant"]
 // over a session's life is pure waste. Keyed by the RESOLVED cwd so `.` and an absolute spelling of
 // the same directory share an entry. Unbounded is fine: a process sees a small, roughly fixed set
 // of distinct cwds (Norma's memory-dir module reached the same conclusion for the same reason).
+//
+// DISCLOSED STALENESS (whole-branch n1), the same disclosure winter-md.ts's `rootCache` carries: no
+// entry is ever invalidated, so a long-lived host in which one path is deleted and re-cloned with a
+// different git layout keeps the first key for the life of the process. Accepted for the same
+// reasons -- no watchers inside the SDK, and a per-envelope git spawn is the cost this cache exists
+// to avoid.
 const keyCache = new Map<string, string>();
 
 /**
