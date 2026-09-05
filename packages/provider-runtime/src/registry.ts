@@ -215,9 +215,12 @@ export function createRegistry(catalog: WinterCatalog): ProviderRegistry {
      * "openrouter" } }` resolved to the OPENAI provider — a different vendor, different credential,
      * different bill, silently. WS-13 §9 forbids substitution in this layer outright.
      *
-     * A qualified prefix that names a provider OTHER than the configured one is now a typed
+     * A qualified prefix that names a provider OTHER than the configured one is a typed
      * `provider-mismatch`, never a resolution: the caller has said two contradictory things, and
      * picking one of them is exactly the silent behaviour the constraint prohibits.
+     *
+     * Order: session namespace -> `allowUnlisted` pass-through -> qualified split. The middle step
+     * sits where it does for the GATEWAY case — see its own comment below.
      */
     resolve(request: ResolveRequest): ResolvedModel | WinterProviderResolutionError {
       const allowUnlisted = request.provider?.allowUnlisted === true;
@@ -238,8 +241,28 @@ export function createRegistry(catalog: WinterCatalog): ProviderRegistry {
         const own = namesByProvider.get(sessionProviderId)?.get(request.model);
         if (own !== undefined) return build(sessionProvider, own, own.upstreamId);
 
-        // 2. A qualified key for the session's OWN provider still works (`anthropic/claude-sonnet-5`
-        //    with providerId "anthropic"), and a prefix naming ANOTHER provider is the mismatch.
+        // 2. The `allowUnlisted` pass-through, under the SESSION provider — BEFORE the qualified
+        //    split, deliberately.
+        //
+        //    A GATEWAY is the whole reason for this order. OpenRouter's real model ids ARE other
+        //    vendors' qualified ids (`anthropic/claude-opus-5`, `mistralai/mixtral-8x22b`), and the
+        //    overwhelming majority will never be seeded into the compiled catalog. A session that
+        //    configured `{ providerId: "openrouter", allowUnlisted: true }` has ALREADY said which
+        //    provider it means, so passing the id through is honouring that statement, not
+        //    reinterpreting it — and reading the vendor prefix as a provider qualifier here would
+        //    make the gateway unusable for everything except its handful of seeded rows.
+        //
+        //    The door is still narrow: it needs an explicit `allowUnlisted` AND a provider whose
+        //    live catalog is not authoritative. An authoritative provider (OpenAI) falls straight
+        //    through to the mismatch below, because for it an absent id is a fact rather than a gap.
+        if (allowUnlisted && sessionProvider.liveCatalogAuthority !== "authoritative") {
+          return build(sessionProvider, undefined, request.model);
+        }
+
+        // 3. A qualified key for the session's OWN provider still works (`anthropic/claude-sonnet-5`
+        //    with providerId "anthropic"), and a prefix naming ANOTHER provider is the mismatch:
+        //    the caller has said two contradictory things and picking one is the silent
+        //    substitution WS-13 §9 forbids.
         if (prefix !== undefined && rest !== undefined) {
           if (prefix === sessionProviderId) return resolveWithin(sessionProvider, rest, allowUnlisted);
           if (providersById.has(prefix)) {
@@ -250,12 +273,6 @@ export function createRegistry(catalog: WinterCatalog): ProviderRegistry {
           }
         }
 
-        // 3. allowUnlisted pass-through, under the SESSION provider. Reached only when the id named
-        //    nothing in that provider and no other provider claimed the prefix, so it can no longer
-        //    swallow a cross-provider id.
-        if (allowUnlisted && sessionProvider.liveCatalogAuthority !== "authoritative") {
-          return build(sessionProvider, undefined, request.model);
-        }
         return resolveWithin(sessionProvider, request.model, false);
       }
 

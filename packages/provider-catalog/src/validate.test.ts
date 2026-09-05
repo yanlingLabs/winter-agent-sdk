@@ -310,6 +310,15 @@ describe("the COMMITTED catalog", () => {
     expect(byId.get("codex-oauth")!.upstream.project).toBe("winter");
   });
 
+  test("the GATEWAY's live catalog is `partial`, not `authoritative` (R6-K's pass-through depends on it)", () => {
+    // A gateway routes hundreds of models that change constantly, and which of them a given key can
+    // actually reach depends on upstream routing and data-policy settings the list does not express.
+    // Marking it authoritative made an absent id a definitive fact, which closed the `allowUnlisted`
+    // door on exactly the provider whose real ids are other vendors' qualified ids.
+    const openrouter = loadCatalog().providers.find((p) => p.id === "openrouter");
+    expect(openrouter?.liveCatalogAuthority).toBe("partial");
+  });
+
   test("every seed model row is `candidate`, unpriced, and not classifier-eligible", () => {
     for (const m of loadCatalog().models) {
       expect(m.status).toBe("candidate");

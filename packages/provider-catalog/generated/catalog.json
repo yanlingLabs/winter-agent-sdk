@@ -462,7 +462,7 @@
         "api": "https://openrouter.ai/api/v1"
       },
       "modelDiscovery": "openai-models",
-      "liveCatalogAuthority": "authoritative",
+      "liveCatalogAuthority": "partial",
       "adapterId": "winter.openai-chat-completions",
       "family": "openai",
       "upstream": {

@@ -50,7 +50,7 @@
       "authKinds": ["api-key"],
       "defaultEndpoints": { "api": "https://openrouter.ai/api/v1" },
       "modelDiscovery": "openai-models",
-      "liveCatalogAuthority": "authoritative",
+      "liveCatalogAuthority": "partial",
       "adapterId": "winter.openai-chat-completions",
       "family": "openai",
       "upstream": { "project": "OmniRoute", "commit": "", "sourcePaths": [] },
@@ -58,6 +58,7 @@
         "class": "review-required",
         "reasons": ["gateway: capability parity is model-by-model (WS-13 §14.4), and per-request provider/data-policy controls must be preserved before any row here is promoted past `candidate`"]
       },
+      "$comment": "liveCatalogAuthority is \"partial\", not \"authoritative\": a gateway routes hundreds of models that change constantly, and which of them a given key can actually reach depends on upstream routing and data-policy settings the list does not express. R6-F's own wording anticipates this (\"local/gateway providers with a non-authoritative live catalog\"). Marking it authoritative made an absent id a definitive fact, which closed the `allowUnlisted` door on exactly the provider whose real ids are other vendors' qualified ids.",
       "scope": "llm"
     },
     {

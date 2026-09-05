@@ -139,11 +139,33 @@ describe("createRegistry — session-provider-first resolution (RULING R6-K)", (
     expect(ok(fullRegistry().resolve({ model: "openrouter/openai/gpt-4.1", provider: { providerId: "openrouter" } })).modelKey).toBe("openrouter/openai/gpt-4.1");
   });
 
-  test("allowUnlisted can no longer swallow a CROSS-provider id — the mismatch wins", () => {
-    // allowUnlisted means "trust my ids for THIS provider", not "reinterpret another vendor's
-    // qualified id as mine". The mismatch check runs first for exactly that reason.
-    const err = failure(fullRegistry().resolve({ model: "openai/gpt-4.1", provider: { providerId: "ollama-local", allowUnlisted: true } }));
+  test("GATEWAY: allowUnlisted passes an UNSEEDED vendor-qualified id through to the session provider", () => {
+    // The case the ordering exists for. OpenRouter's real model ids ARE other vendors' qualified
+    // ids, and the overwhelming majority will never be seeded into the compiled catalog. A session
+    // that configured `{ providerId: "openrouter", allowUnlisted: true }` has ALREADY said which
+    // provider it means, so passing the id through honours that statement rather than reinterpreting
+    // it — reading the vendor prefix as a provider qualifier here would make the gateway unusable
+    // for everything except its handful of seeded rows.
+    const resolved = ok(fullRegistry().resolve({ model: "anthropic/claude-opus-5", provider: { providerId: "openrouter", allowUnlisted: true } }));
+    expect(resolved.providerId).toBe("openrouter");
+    expect(resolved.providerModelId).toBe("anthropic/claude-opus-5");
+    expect(resolved.descriptor).toBeUndefined();
+    // Same shape for a second vendor prefix, so nothing here is special-casing "anthropic".
+    expect(ok(fullRegistry().resolve({ model: "mistralai/mixtral-8x22b", provider: { providerId: "openrouter", allowUnlisted: true } })).providerModelId).toBe("mistralai/mixtral-8x22b");
+  });
+
+  test("the SAME id WITHOUT allowUnlisted is a provider-mismatch — the pass-through door is what opens it", () => {
+    // Namespace miss, no pass-through door, and the qualified split then names another provider.
+    const err = failure(fullRegistry().resolve({ model: "anthropic/claude-opus-5", provider: { providerId: "openrouter" } }));
     expect(err.code).toBe("provider-mismatch");
+    expect(err.message).toContain("openrouter");
+  });
+
+  test("an AUTHORITATIVE session provider gets no pass-through, with or without allowUnlisted", () => {
+    // For OpenAI an absent id is a FACT rather than a gap (`liveCatalogAuthority: "authoritative"`),
+    // so the id falls straight through to the mismatch instead of being adopted.
+    expect(failure(fullRegistry().resolve({ model: "anthropic/claude-opus-5", provider: { providerId: "openai" } })).code).toBe("provider-mismatch");
+    expect(failure(fullRegistry().resolve({ model: "anthropic/claude-opus-5", provider: { providerId: "openai", allowUnlisted: true } })).code).toBe("provider-mismatch");
   });
 
   test("an unlisted slash-bearing id whose prefix names NO provider still passes through under allowUnlisted", () => {
