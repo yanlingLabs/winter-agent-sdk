@@ -746,3 +746,50 @@ describe("R6-3 sweep consumer 6: the CHILD FORK MIRROR, through a live fork", ()
     }
   });
 });
+
+describe("R6-3 / M3: only LOADED deferred tools are advertised to the provider", () => {
+  test("a deferred tool that this session has not loaded is ABSENT from the request's `tools`", async () => {
+    // WS-09 §8.2's "load != permission" runs both ways. Advertising a schema for a deferred tool the
+    // session has not loaded invites the model to call a name the engine's own load-first check will
+    // refuse BEFORE permission evaluation even starts -- a wasted round trip and a confusing refusal,
+    // every time. The eager control in the same fixture is what proves the filter is a FILTER and not
+    // an empty list.
+    const { registerTool, unregisterToolForTest } = await import("../tools/registry.ts");
+    const EAGER = "p6_eager_probe";
+    const DEFERRED = "p6_deferred_probe";
+    // The deferred probe is NOT `source: "builtin"`: `resolveDeferral`'s own unconditional override
+    // makes a builtin eager whatever its `deferred` flag says (WS-09 §8: core built-ins are never
+    // deferred through the public surface), so a builtin probe would be advertised and the fixture
+    // would fail for a reason that has nothing to do with the filter under test.
+    const descriptor = (name: string, deferred: boolean) => ({
+      canonicalName: name,
+      advertisedName: name,
+      source: (deferred ? "mcp" : "builtin") as "builtin" | "mcp",
+      inputSchema: { type: "object", properties: { q: { type: "string" } } },
+      description: `fixture: ${name}`,
+      exposure: "eager" as const,
+      permissionClass: "read" as const,
+      availability: {},
+      capabilityRequirements: [],
+      disposition: "implement-now" as const,
+      ...(deferred ? { deferred: true } : {}),
+    });
+    registerTool({ descriptor: descriptor(EAGER, false), executor: { async execute() { return { output: "" }; } } });
+    registerTool({ descriptor: descriptor(DEFERRED, true), executor: { async execute() { return { output: "" }; } } });
+    try {
+      const { provider, requests } = recordingProvider([{ kind: "text", text: "done" }]);
+      // Tool Search ACTIVE (`toolSearchEnabled`, the host-facing wire boolean that overrides the
+      // ambient env var), so the deferral partition is real: without activation every declared
+      // deferred tool is advertised eagerly and the fixture would prove nothing.
+      await runTurn({ provider, config: { toolSearchEnabled: true } });
+      const names = (requests[0]!.tools ?? []).map((t) => t.name);
+      expect(names).toContain(EAGER);
+      expect(names).not.toContain(DEFERRED);
+      // …and the schema that DID ride is the descriptor's real one, not a placeholder.
+      expect((requests[0]!.tools ?? []).find((t) => t.name === EAGER)?.inputSchema).toEqual({ type: "object", properties: { q: { type: "string" } } });
+    } finally {
+      unregisterToolForTest(EAGER);
+      unregisterToolForTest(DEFERRED);
+    }
+  });
+});

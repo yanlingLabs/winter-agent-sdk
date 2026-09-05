@@ -136,7 +136,7 @@ describe("the keychain store's own behaviour", () => {
 });
 
 describe("the REPO-WIDE Bun.secrets tripwire", () => {
-  test("no `.ts` under packages/ reaches the secrets API except keychain-store.ts itself", () => {
+  test("no `.ts` in the REPOSITORY reaches the secrets API except keychain-store.ts itself", () => {
     // Global Constraints call for a repo-wide grep pinning that no test ever calls it. Task 2's
     // tripwire covered `credentials/**` only and flagged this file as the place the repo-wide one
     // belongs, because this is where the POSITIVE case exists.
@@ -151,13 +151,16 @@ describe("the REPO-WIDE Bun.secrets tripwire", () => {
     // own `credentials.test.ts` -- because a grep tripwire has to name what it greps for. Both
     // occurrences are inside string literals; a REAL call site never is. Exempting the two files by
     // name would also blind the sweep to a genuine call added to either of them later.
-    const packagesRoot = join(import.meta.dir, "..", "..", "..");
+    // THE REPO ROOT, not `packages/` (review round 1, M5). `scripts/` holds the release and gate
+    // scripts, and a repo-root `.ts` is equally capable of reaching the login keychain -- a sweep
+    // that stops at `packages/` is a sweep with two whole directories of blind spot.
+    const packagesRoot = join(import.meta.dir, "..", "..", "..", "..");
     const allowed = join(import.meta.dir, "keychain-store.ts");
     const offenders: string[] = [];
 
     const walk = (dir: string): void => {
       for (const entry of readdirSync(dir)) {
-        if (entry === "node_modules" || entry === ".git" || entry === "dist") continue;
+        if (entry === "node_modules" || entry === ".git" || entry === "dist" || entry === "third_party") continue;
         const full = join(dir, entry);
         if (statSync(full).isDirectory()) {
           walk(full);
