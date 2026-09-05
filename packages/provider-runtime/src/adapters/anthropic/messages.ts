@@ -47,7 +47,7 @@ import { normalizeHttpError, normalizeThrown } from "../../errors.ts";
 import { createRetryPolicy, withRetry, type RetryPolicyOptions } from "../../retry.ts";
 import { applyPrivilegedHeaders, createEndpointPolicy, type EndpointPolicy } from "../../endpoint-policy.ts";
 import { hostHeaders } from "../privileged-headers.ts";
-import { containsImage } from "../content-blocks.ts";
+import { containsImage, renderDecoration } from "../content-blocks.ts";
 import { parseSse } from "../../sse.ts";
 import type {
   ContentBlockLike,
@@ -185,7 +185,12 @@ export function toWireMessages(messages: ProviderMessageLike[]): Array<{ role: "
   const out: Array<{ role: "user" | "assistant"; content: Record<string, unknown>[] }> = [];
   for (const message of messages) {
     const role: "user" | "assistant" = message.role === "assistant" ? "assistant" : "user";
-    const blocks = normalizeContent(message.content);
+    // A Winter-authored annotation rides LEADING and PLAINLY (R6-3 / R6-8). Lane C produces these;
+    // without this rendering they are inert, which is a whole feature silently doing nothing.
+    const blocks = [
+      ...(message.decoration !== undefined ? [{ type: "text", text: renderDecoration(message.decoration) }] : []),
+      ...normalizeContent(message.content),
+    ];
     if (blocks.length === 0) continue;
     const last = out[out.length - 1];
     if (last !== undefined && last.role === role) last.content.push(...blocks);

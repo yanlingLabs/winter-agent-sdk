@@ -46,7 +46,7 @@ import { normalizeHttpError, normalizeThrown } from "../../errors.ts";
 import { createRetryPolicy, withRetry, type RetryPolicyOptions } from "../../retry.ts";
 import { applyPrivilegedHeaders, createEndpointPolicy, type EndpointPolicy } from "../../endpoint-policy.ts";
 import { hostHeaders } from "../privileged-headers.ts";
-import { collectImages, containsImage } from "../content-blocks.ts";
+import { collectImages, containsImage, renderDecoration } from "../content-blocks.ts";
 import { parseSse } from "../../sse.ts";
 import type {
   ContentBlockLike,
@@ -250,6 +250,10 @@ export function toContents(messages: ProviderMessageLike[]): SerializeResult {
     const textItems = items.filter((i) => i.kind === "text");
     let textOrdinal = 0;
 
+    // A Winter-authored annotation rides LEADING and PLAINLY (R6-3 / R6-8) -- and BEFORE the text
+    // ordinal is consumed, so a decoration never takes a `thoughtSignature` meant for the model's
+    // own text part.
+    if (message.decoration !== undefined) parts.push({ text: renderDecoration(message.decoration) });
     const blocks: ContentBlockLike[] = typeof message.content === "string" ? (message.content.length > 0 ? [{ type: "text", text: message.content }] : []) : message.content;
     for (const block of blocks) {
       switch (block.type) {

@@ -358,6 +358,62 @@ describe("Anthropic Messages: countTokens is not a generation (Minor 4)", () => 
   });
 });
 
+describe("Anthropic Messages: a Lane C decoration is RENDERED, not inert (Minor 9)", () => {
+  test("both doors ride as LEADING PLAIN TEXT — never as a thinking block with a fabricated signature", async () => {
+    // The tripwire the review asks for: Lane C produces decorations, and without this rendering they
+    // are a whole feature silently doing nothing. `thinking-channel` DEGRADES to the same plain text
+    // here, because this family's thinking channel is signed and capture (F) shows the runtime
+    // materialising a signature for a signatureless block — a Winter-authored note placed there would
+    // ride a fabricated one, which is the impersonation R6-8 exists to forbid.
+    const adapter = testAnthropicAdapter();
+    await withFake({ routes: anthropicCorpusRoutes() }, async (fake) => {
+      for (const door of ["tag", "thinking-channel"] as const) {
+        await foldTurn(
+          adapter,
+          { model: ANTHROPIC_MODELS.main, messages: [{ role: "assistant", content: [{ type: "text", text: "the answer" }], decoration: { text: `note-${door}`, door } }] },
+          testContext(fake.url),
+        );
+      }
+      expect(messageBlocks(fake.requests[0]!, 0)).toEqual([{ type: "text", text: "<winter-note>note-tag</winter-note>" }, { type: "text", text: "the answer" }]);
+      expect(messageBlocks(fake.requests[1]!, 0)).toEqual([{ type: "text", text: "<winter-note>note-thinking-channel</winter-note>" }, { type: "text", text: "the answer" }]);
+      for (const recorded of fake.requests) {
+        expect(recorded.body).not.toContain('"type":"thinking"');
+        expect(recorded.body).not.toContain('"signature"');
+      }
+    });
+  });
+});
+
+describe("Anthropic Messages: a failing assertion never prints opaque state (Minor 8)", () => {
+  test("a signature, a redacted payload and a thoughtSignature are redacted out of the failure message", async () => {
+    const adapter = testAnthropicAdapter();
+    await withFake({ routes: anthropicCorpusRoutes() }, async (fake) => {
+      await foldTurn(
+        adapter,
+        {
+          model: ANTHROPIC_MODELS.main,
+          messages: [{ role: "assistant", content: [{ type: "thinking", thinking: "why", signature: "SIG-MUST-NOT-PRINT" }, { type: "redacted_thinking", data: "DATA-MUST-NOT-PRINT" }] }],
+        },
+        testContext(fake.url),
+      );
+      // The body genuinely carries both -- that is the replay rule working.
+      expect(fake.requests[0]!.body).toContain("SIG-MUST-NOT-PRINT");
+      // ...and a FAILING assertion's message does not, because a failure message is the likeliest
+      // thing in a test run to be pasted somewhere.
+      let message = "";
+      try {
+        assertAnthropicRequest(fake.requests[0]!, { model: "deliberately-wrong" });
+      } catch (err) {
+        message = (err as Error).message;
+      }
+      expect(message).toContain("deliberately-wrong");
+      expect(message).not.toContain("SIG-MUST-NOT-PRINT");
+      expect(message).not.toContain("DATA-MUST-NOT-PRINT");
+      expect(message).toContain("redacted: opaque provider state");
+    });
+  });
+});
+
 describe("Anthropic Messages: catalog agreement", () => {
   test("the adapter's id and default endpoint match the COMPILED catalog's own row", () => {
     // `ProviderContext` never hands an adapter its provider descriptor, so the default endpoint is

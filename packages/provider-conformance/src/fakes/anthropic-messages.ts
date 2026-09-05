@@ -18,6 +18,7 @@
 // base's own recorder redacts `x-api-key` before it is stored -- so the assertion below checks for
 // the REDACTED form, which is also the proof that the redaction happened.
 import { errorResponse, sseResponse, type FakeRoute, type RecordedRequest, type SseFrame, type SseResponseOptions } from "./server.ts";
+import { redactOpaqueFields } from "./redact-opaque.ts";
 
 /** One scripted content block. `chunks` are the deltas the wire emits, so a fixture controls fragmentation directly. */
 export type AnthropicScriptBlock =
@@ -161,9 +162,12 @@ export interface AnthropicRequestExpectation {
 }
 
 function fail(message: string, recorded: RecordedRequest): never {
-  // The recorded request is already REDACTED by the base, so embedding it in a failure message
-  // cannot leak a key -- which is exactly why the assertion prints it.
-  throw new Error(`${message}\n  live request: ${recorded.method} ${recorded.path}${recorded.search}\n  headers: ${JSON.stringify(recorded.headers)}\n  body: ${recorded.body}`);
+  // The HEADERS are already redacted by the base, so a key cannot leak here. The BODY is not, and
+  // deliberately so (a body is what a serialization assertion is about) -- but this lane's replay
+  // fixtures put a real signature / `redacted_thinking.data` / `thoughtSignature` into it on purpose,
+  // and a failure message is the likeliest thing in a test run to be pasted somewhere. Opaque field
+  // VALUES are replaced before the message is built; everything a reader needs to diagnose survives.
+  throw new Error(`${message}\n  live request: ${recorded.method} ${recorded.path}${recorded.search}\n  headers: ${JSON.stringify(recorded.headers)}\n  body: ${redactOpaqueFields(recorded.body)}`);
 }
 
 /**

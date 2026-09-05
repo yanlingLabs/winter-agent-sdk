@@ -367,6 +367,52 @@ describe("Google GenerateContent: the pure mapping", () => {
   });
 });
 
+describe("Google GenerateContent: a Lane C decoration is RENDERED, not inert (Minor 9)", () => {
+  test("both doors ride as a LEADING PLAIN TEXT part — never as a `thought` part the model did not produce", async () => {
+    const adapter = testGoogleAdapter();
+    await withFake({ routes: googleCorpusRoutes() }, async (fake) => {
+      for (const door of ["tag", "thinking-channel"] as const) {
+        await foldTurn(
+          adapter,
+          { model: GOOGLE_MODELS.main, messages: [{ role: "assistant", content: [{ type: "text", text: "the answer" }], decoration: { text: `note-${door}`, door } }] },
+          googleContext(fake.url),
+        );
+      }
+      expect(geminiContents(fake.requests[0]!)[0]?.parts).toEqual([{ text: "<winter-note>note-tag</winter-note>" }, { text: "the answer" }]);
+      expect(geminiContents(fake.requests[1]!)[0]?.parts).toEqual([{ text: "<winter-note>note-thinking-channel</winter-note>" }, { text: "the answer" }]);
+      // A decoration is Winter's, not the model's: it must never be marked as reasoning the model did.
+      for (const recorded of fake.requests) expect(recorded.body).not.toContain('"thought"');
+    });
+  });
+
+  test("a decoration does not consume the text ordinal a `thoughtSignature` is keyed to", async () => {
+    // The decoration is prepended BEFORE the model's own text part, so a naive "first text part"
+    // lookup would stamp the signature onto Winter's note instead of the model's answer.
+    const adapter = testGoogleAdapter();
+    await withFake({ routes: googleCorpusRoutes() }, async (fake) => {
+      await foldTurn(
+        adapter,
+        {
+          model: GOOGLE_MODELS.main,
+          messages: [
+            {
+              role: "assistant",
+              content: [{ type: "text", text: "the answer" }],
+              decoration: { text: "a note", door: "tag" },
+              nativeState: { family: "google", continuationDomain: "google/gemini-2.5-pro", items: [{ partIndex: 0, kind: "text", signature: GOOGLE_SIGNATURE }] },
+            },
+          ],
+        },
+        googleContext(fake.url),
+      );
+      expect(geminiContents(fake.requests[0]!)[0]?.parts).toEqual([
+        { text: "<winter-note>a note</winter-note>" },
+        { text: "the answer", thoughtSignature: GOOGLE_SIGNATURE },
+      ]);
+    });
+  });
+});
+
 describe("Google GenerateContent: countTokens and catalog agreement", () => {
   test("`countTokens` is a REAL count from `:countTokens`, with the generation parameters stripped", async () => {
     const adapter = testGoogleAdapter();

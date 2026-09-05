@@ -40,3 +40,28 @@ export function collectImages(content: string | ContentBlockLike[], depth = 0): 
 export function containsImage(content: string | ContentBlockLike[]): boolean {
   return collectImages(content).length > 0;
 }
+
+// --- Winter-authored decorations (R6-3 `ProviderMessageLike.decoration`) ---------------------------
+
+/**
+ * The tag a decoration rides in.
+ *
+ * WINTER-AUTHORED, and deliberately not a vendor convention: the phase forbids vendor prompt text
+ * anywhere, and this name is Winter's own. The WORDING inside is Lane C's — `decoration.text` — so
+ * this layer decides only how the note is delimited, never what it says.
+ */
+const DECORATION_TAG = "winter-note";
+
+/**
+ * A decoration as PLAIN TEXT, for both doors.
+ *
+ * `door: "thinking-channel"` DEGRADES to the tag door for these two families, and that degradation
+ * is the rule rather than a shortcut. Anthropic's thinking channel is signed and Gemini's is a
+ * `thought` part the model produced — putting Winter-authored text into either would be exactly the
+ * impersonation R6-8 exists to forbid (capture (F): the runtime materialises a signature for a
+ * signatureless thinking block, so a foreign note placed there would ride a fabricated one). Carried
+ * plainly is what R6-8 prescribes instead, and it is visible to the model either way.
+ */
+export function renderDecoration(decoration: { text: string; door: "tag" | "thinking-channel" }): string {
+  return `<${DECORATION_TAG}>${decoration.text}</${DECORATION_TAG}>`;
+}

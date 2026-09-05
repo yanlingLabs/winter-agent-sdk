@@ -13,6 +13,7 @@
 // (`noRequestContains` / "it never reached a log or an error") is only meaningful if the value is
 // distinctive.
 import { errorResponse, sseResponse, type FakeRoute, type RecordedRequest, type SseFrame, type SseResponseOptions } from "./server.ts";
+import { redactOpaqueFields } from "./redact-opaque.ts";
 
 /** One `parts` entry, in the family's own spelling. */
 export type GeminiPart =
@@ -96,7 +97,12 @@ export interface GeminiRequestExpectation {
 }
 
 function fail(message: string, recorded: RecordedRequest): never {
-  throw new Error(`${message}\n  live request: ${recorded.method} ${recorded.path}${recorded.search}\n  headers: ${JSON.stringify(recorded.headers)}\n  body: ${recorded.body}`);
+  // The HEADERS are already redacted by the base, so a key cannot leak here. The BODY is not, and
+  // deliberately so (a body is what a serialization assertion is about) -- but this lane's replay
+  // fixtures put a real signature / `redacted_thinking.data` / `thoughtSignature` into it on purpose,
+  // and a failure message is the likeliest thing in a test run to be pasted somewhere. Opaque field
+  // VALUES are replaced before the message is built; everything a reader needs to diagnose survives.
+  throw new Error(`${message}\n  live request: ${recorded.method} ${recorded.path}${recorded.search}\n  headers: ${JSON.stringify(recorded.headers)}\n  body: ${redactOpaqueFields(recorded.body)}`);
 }
 
 /** The discriminating key of one part, for an ordering assertion that does not depend on the payload. */
