@@ -662,6 +662,26 @@ export class WinterCompatibilitySessionStore implements SessionStore {
   // `patch`'s own conditional keys naturally implement "only touch the field being set" (an
   // omitted field spreads nothing, leaving `...previous`'s value for it untouched) — callers pass
   // exactly one of `name`/`tags` per call today, but this merges any combination correctly.
+  /**
+   * ONE session's folded summary, read by its own path.
+   *
+   * Phase 6 Task 3 (review round 2, M2). `listSessionSummaries` reads and parses EVERY
+   * `*.summary.json` in the project directory, which is O(#sessions) -- fine for enumerating a picker,
+   * wrong for the one question a RESUME asks about ITSELF ("did this session record a provider
+   * identity?"), which a busy project would pay for on every resume.
+   *
+   * Deliberately NOT part of the exported `SessionStore` type -- same posture as `listProjectKeys`/
+   * `mergeSessionMetadata`/`claimWriterLease` above: WS-03 §10 pins that surface as exactly its six
+   * members, and a caller reaches this through a LOCAL intersection type instead. `null` for a session
+   * with no summary yet, which is indistinguishable from one that never existed and is the honest
+   * answer to both.
+   */
+  async readSessionSummary(key: { projectKey: string; sessionId: string }): Promise<SessionSummaryEntry | null> {
+    assertSafeSingleSegment(key.projectKey, "projectKey");
+    assertSafeSingleSegment(key.sessionId, "sessionId");
+    return readJsonIfExists<SessionSummaryEntry>(`${sessionStem(this.winterHome, key.projectKey, key.sessionId)}.summary.json`);
+  }
+
   async mergeSessionMetadata(key: { projectKey: string; sessionId: string }, patch: { name?: string; tags?: string[] }): Promise<void> {
     const stem = sessionStem(this.winterHome, key.projectKey, key.sessionId);
     const lockPath = `${stem}.lock`;

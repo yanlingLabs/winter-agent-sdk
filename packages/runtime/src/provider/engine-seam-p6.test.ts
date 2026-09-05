@@ -431,7 +431,7 @@ describe("R6-I: the set_model hook points", () => {
 });
 
 describe("R6-17: what a CHILD inherits", () => {
-  test("a fork's message copy preserves the parent's provider annotations, and inheritance carries the effective effort/thinking", async () => {
+  test("a NON-fork spawn inherits the effective effort/thinking and NO history", async () => {
     // The end-to-end "the child RAN off its own provider" fixture is T10's (the P5 factory-seam
     // lesson: a field declared upstream proves nothing across the seam). This is the SEAM half --
     // the inheritance object the engine actually builds.
