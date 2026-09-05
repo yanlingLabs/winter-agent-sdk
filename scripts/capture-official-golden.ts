@@ -1097,9 +1097,10 @@ async function runStreamEventCapture(officialSdk: OfficialSdk, withSignature: bo
 // --- Scenario G (capture 2): api_retry / rate_limit_event / fallback ----------------------------
 //
 // Three runs against three loopback policies:
-//   (i)  529 overloaded_error on the first N requests, then 200 — captures api_retry's attempt
+//   (i)  529 overloaded_error on the first N POSTs, then 200 — captures api_retry's attempt
 //        numbering, max_retries, retry_delay_ms progression and the mapped `error` taxonomy member;
-//   (ii) 429 with `retry-after: 2` and the anthropic-ratelimit-* headers, then 200 — captures
+//   (ii) 429 with `retry-after: 2` and the anthropic-ratelimit-* headers on the first N POSTs, then
+//        200 — captures
 //        whether retry_delay_ms honours retry-after, and whether ANY rate_limit_event appears (the
 //        pinned type's own JSDoc scopes it to claude.ai subscription users, so its ABSENCE under an
 //        API key is the finding, and a real one for OQ-P6-4);
@@ -1112,10 +1113,15 @@ type RetryPolicy = "overloaded-then-ok" | "ratelimit-then-ok" | "persistent-over
 async function runRetryCapture(officialSdk: OfficialSdk, policy: RetryPolicy): Promise<void> {
   const cleanups: Array<() => void> = [];
   let server: ReturnType<typeof Bun.serve> | undefined;
-  const failuresBeforeSuccess = 2;
+  // POSTs only. Review r1 Minor 5: this counter previously incremented on every request, and the
+  // runtime's `HEAD /api/hello` preflight is request #1 -- so runs (i)/(ii) delivered exactly ONE
+  // failing POST each and produced one retry, not the multi-attempt progression this scenario's
+  // header promises. Gating on the method makes the promise true for all three runs.
+  const failingPostsBeforeSuccess = 2;
   try {
     const dirs = makeScenarioDirs(`g-${policy}`, cleanups);
     let requestCount = 0;
+    let postCount = 0;
     const requestLog: Array<{ n: number; model: unknown; atMs: number }> = [];
     const t0 = Date.now();
     server = Bun.serve({
@@ -1133,13 +1139,15 @@ async function runRetryCapture(officialSdk: OfficialSdk, policy: RetryPolicy): P
         const model = (body as { model?: unknown }).model;
         requestLog.push({ n, model, atMs: Date.now() - t0 });
         const url = new URL(req.url);
-        console.error(`[loopback G/${policy}] #${n} ${req.method} ${url.pathname} model=${JSON.stringify(model)} t+${Date.now() - t0}ms`);
+        const isPost = req.method === "POST";
+        if (isPost) postCount++;
+        console.error(`[loopback G/${policy}] #${n} (POST #${isPost ? postCount : "-"}) ${req.method} ${url.pathname} model=${JSON.stringify(model)} t+${Date.now() - t0}ms`);
         if (policy === "overloaded-then-ok") {
-          if (n <= failuresBeforeSuccess) return jsonResponse({ type: "error", error: { type: "overloaded_error", message: "capture: synthetic overload" } }, 529);
+          if (isPost && postCount <= failingPostsBeforeSuccess) return jsonResponse({ type: "error", error: { type: "overloaded_error", message: "capture: synthetic overload" } }, 529);
           return jsonResponse(CANNED_TEXT_RESPONSE);
         }
         if (policy === "ratelimit-then-ok") {
-          if (n <= failuresBeforeSuccess) {
+          if (isPost && postCount <= failingPostsBeforeSuccess) {
             return jsonResponse({ type: "error", error: { type: "rate_limit_error", message: "capture: synthetic rate limit" } }, 429, {
               "retry-after": "2",
               "anthropic-ratelimit-requests-limit": "1000",
@@ -1187,8 +1195,20 @@ async function runRetryCapture(officialSdk: OfficialSdk, policy: RetryPolicy): P
     console.log(JSON.stringify(retries, null, 2));
     console.log(`\n--- Scenario G (${policy}): every rate_limit_event frame ---`);
     console.log(JSON.stringify(rateLimits.length > 0 ? rateLimits : "(none observed)", null, 2));
-    console.log(`\n--- Scenario G (${policy}): every refusal/fallback frame ---`);
-    console.log(JSON.stringify(refusals.length > 0 ? refusals : "(none observed)", null, 2));
+    // Review r1 Minor 7: SDKModelRefusal{Fallback,NoFallback}Message carry `content` and
+    // `api_refusal_explanation`, both vendor-authored prose (the latter is doc-marked unstable human
+    // prose, display-only). Stringifying the frame whole was a latent prose-to-stdout path even
+    // though no refusal frame has ever been observed here; both fields are now reported as lengths.
+    const prosefreeRefusals = refusals.map((r) => {
+      const out: Record<string, unknown> = { ...r };
+      for (const k of ["content", "api_refusal_explanation"]) {
+        const v = out[k];
+        if (typeof v === "string") out[k] = `<${v.length} chars, withheld: vendor prose>`;
+      }
+      return out;
+    });
+    console.log(`\n--- Scenario G (${policy}): every refusal/fallback frame (prose fields as lengths) ---`);
+    console.log(JSON.stringify(prosefreeRefusals.length > 0 ? prosefreeRefusals : "(none observed)", null, 2));
     console.log(`\n--- Scenario G (${policy}): the model on each outgoing request, with arrival times ---`);
     console.log(JSON.stringify(requestLog, null, 2));
     console.log(`\n--- Scenario G (${policy}) verdicts ---`);
@@ -1262,6 +1282,26 @@ function sha256OfFile(path: string): string {
   return createHash("sha256").update(readFileSync(path)).digest("hex");
 }
 
+/** sha256 of a file AT AN EXACT PATH. A file that is missing (deleted, moved or renamed) yields a
+ *  sentinel rather than throwing, so the caller reports a FAILED assertion instead of crashing past
+ *  its own verdict block. Never falls back to searching by name — see runNeighborFileProbe. */
+function sha256AtPath(path: string): string {
+  try {
+    return sha256OfFile(path);
+  } catch {
+    return "(ABSENT AT ITS OWN PATH — ASSERTION FAILED)";
+  }
+}
+
+/** Non-empty JSONL line count at an exact path; -1 when the file cannot be read there. */
+function countLinesAtPath(path: string): number {
+  try {
+    return readFileSync(path, "utf8").split("\n").filter((l) => l.trim().length > 0).length;
+  } catch {
+    return -1;
+  }
+}
+
 async function runNeighborFileProbe(officialSdk: OfficialSdk): Promise<void> {
   const cleanups: Array<() => void> = [];
   let server: ReturnType<typeof Bun.serve> | undefined;
@@ -1274,10 +1314,13 @@ async function runNeighborFileProbe(officialSdk: OfficialSdk): Promise<void> {
     let requestCount = 0;
     let markerSeenInAnyRequestBody = false;
     const requestPaths: string[] = [];
-    // The append turns answer with a LARGE canned reply so the resumed conversation actually has
-    // something to compact: the first pass of this probe drove /compact against six short turns and
-    // the runtime answered "Not enough messages to compact", which would have left the compaction
-    // half of the probe unexercised. Synthetic filler authored here, never upstream content.
+    // The append turns answer with a LARGE canned reply, an attempt to give the resumed conversation
+    // enough content to compact. IT DID NOT WORK, and the comment says so rather than describing the
+    // intent as the outcome (review r1 Minor 3): all three /compact attempts -- six short turns, six
+    // long turns, and this ~250KB-of-context variant -- were refused identically with
+    // compact_error "Not enough messages to compact", num_turns 0, and no POST reaching the loopback
+    // at all. The refusal is an ordering property, not a size threshold, so the filler is retained
+    // only because it rules the size hypothesis out. Synthetic filler authored here, never upstream.
     let bulkyReplies = false;
     const BULK_TEXT = "winter capture filler sentence for the compaction threshold. ".repeat(700);
     server = Bun.serve({
@@ -1344,16 +1387,17 @@ async function runNeighborFileProbe(officialSdk: OfficialSdk): Promise<void> {
       { type: "provider-state", kind: "summary", sessionId: observedSessionId, anchorUuid: "00000000-0000-4000-8000-000000000001", itemIndex: 2, marker, payload: { text: "capture-only summary" } },
     ];
     writeFileSync(sidecarPath, sidecarLines.map((l) => JSON.stringify(l)).join("\n") + "\n");
-    const sidecarSha256Before = sha256OfFile(sidecarPath);
+    const sidecarSha256Before = sha256AtPath(sidecarPath);
     const sidecarBytesBefore = readFileSync(sidecarPath).length;
-    const transcriptLinesBefore = readFileSync(transcriptPath, "utf8").split("\n").filter((l) => l.trim().length > 0).length;
+    const transcriptLinesBefore = countLinesAtPath(transcriptPath);
     console.error(`[capture H] sidecar written beside the transcript: ${sidecarBytesBefore} bytes, sha256=${sidecarSha256Before}`);
 
     // ---- run 2: resume + more turns -------------------------------------------------------------
-    // Several append turns rather than one: the first pass of this probe drove `/compact` and the
-    // runtime refused it with "Not enough messages to compact", which would have left the probe
-    // covering resume + append + an ATTEMPTED compaction only. Enough turns to clear that threshold
-    // makes the compaction real, which is what the brief actually asks the probe to survive.
+    // Several append turns rather than one: the first pass drove `/compact` after a single turn and
+    // the runtime refused it. More turns were an attempt to clear that threshold; they did NOT
+    // (see the loopback comment above). What this probe therefore covers is session creation,
+    // resume, six appending turns, and an ATTEMPTED compaction -- never a completed one. The turns
+    // are kept because each one is another append the sidecar has to survive.
     const entries2: ConformanceTraceEntry[] = [];
     let r2: { thrown: unknown; deadlineHit: boolean } = { thrown: undefined, deadlineHit: false };
     const appendTurns = 6;
@@ -1377,9 +1421,12 @@ async function runNeighborFileProbe(officialSdk: OfficialSdk): Promise<void> {
     const init2 = entries2.map((e) => e.payload as OfficialMessage).find((p) => p.type === "system" && p.subtype === "init");
     // Attribution: hash the sidecar again BEFORE the /compact run, so a change can be pinned to the
     // resume/append half or the compaction half rather than to "somewhere in the whole probe".
-    const afterResumeMatches = findFileRecursive(dirs.claudeConfigDir, (name) => name === `${observedSessionId}.provider-state.jsonl`);
-    const sidecarSha256AfterResume = afterResumeMatches.length > 0 ? sha256OfFile(afterResumeMatches[0]!) : "(FILE GONE)";
-    const transcriptLinesAfterResume = readFileSync(transcriptPath, "utf8").split("\n").filter((l) => l.trim().length > 0).length;
+    // Review r1 Minor 1: hashed by PATH, never by a recursive name search. Searching by name would
+    // have hashed a MOVED file and still reported "unchanged", which is exactly the failure mode this
+    // assertion exists to catch. A file that is not at `sidecarPath` any more is a FAILED assertion,
+    // reported as such -- `sha256AtPath` returns a sentinel instead of throwing.
+    const sidecarSha256AfterResume = sha256AtPath(sidecarPath);
+    const transcriptLinesAfterResume = countLinesAtPath(transcriptPath);
     console.error(`[capture H] after ${appendTurns} append turns: transcript ${transcriptLinesBefore} -> ${transcriptLinesAfterResume} lines; sidecar sha256=${sidecarSha256AfterResume}`);
 
     // ---- run 3: the /compact attempt (recorded as a limitation if it cannot be driven) ----------
@@ -1399,9 +1446,14 @@ async function runNeighborFileProbe(officialSdk: OfficialSdk): Promise<void> {
     if (r3.thrown) console.error(`[capture H] run 3 (/compact) threw: ${r3.thrown instanceof Error ? (r3.thrown.stack ?? r3.thrown.message) : String(r3.thrown)}`);
 
     // ---- assertions -----------------------------------------------------------------------------
-    const sidecarStillThere = findFileRecursive(dirs.claudeConfigDir, (name) => name === `${observedSessionId}.provider-state.jsonl`);
-    const sidecarSha256After = sidecarStillThere.length > 0 ? sha256OfFile(sidecarStillThere[0]!) : "(FILE GONE)";
+    const sidecarSha256After = sha256AtPath(sidecarPath);
+    // Where the sidecar ended up if it is no longer at its own path -- reported alongside the FAILED
+    // assertion so a move is diagnosable, never used to rescue the assertion itself.
+    const sidecarFoundElsewhere = findFileRecursive(dirs.claudeConfigDir, (name) => name === `${observedSessionId}.provider-state.jsonl`)
+      .map((f) => f.replace(dirs.claudeConfigDir, "<CLAUDE_CONFIG_DIR>"));
     const namesAfter = readdirSync(projectDir).sort();
+    // Review r1 Minor 4: a renamed transcript used to throw here, past the verdict block, so the
+    // probe would have crashed instead of reporting. Absence/unreadability is now a FAILED assertion.
     let transcriptParses = true;
     let transcriptLinesAfter = 0;
     try {
@@ -1412,6 +1464,7 @@ async function runNeighborFileProbe(officialSdk: OfficialSdk): Promise<void> {
       }
     } catch {
       transcriptParses = false;
+      transcriptLinesAfter = -1; // -1 = unreadable at its own path, distinct from an empty file
     }
 
     console.log(`\n--- Scenario H: WS-17 probe (a) verdicts (R6-7 / R6-7a) ---`);
@@ -1431,7 +1484,17 @@ async function runNeighborFileProbe(officialSdk: OfficialSdk): Promise<void> {
           sidecarSha256After,
           transcriptLinesAfterResume,
           sidecarBytesBefore,
-          sidecarBytesAfter: sidecarStillThere.length > 0 ? readFileSync(sidecarStillThere[0]!).length : null,
+          sidecarBytesAfter: (() => {
+            try {
+              return readFileSync(sidecarPath).length;
+            } catch {
+              return null;
+            }
+          })(),
+          "sidecar found elsewhere under <CLAUDE_CONFIG_DIR> (diagnostic only — never rescues the assertion)":
+            sidecarFoundElsewhere.length === 1 && sidecarFoundElsewhere[0]?.endsWith(`${observedSessionId}.provider-state.jsonl`) && sidecarSha256After.startsWith("(") === false
+              ? "(at its own path, as expected)"
+              : sidecarFoundElsewhere,
           "ASSERTION 2 — marker absent from EVERY request body": !markerSeenInAnyRequestBody,
           "ASSERTION 3 — transcript still parses as JSONL": transcriptParses,
           transcriptLinesBefore,
