@@ -16,6 +16,7 @@
 // its own events would be testing its own opinion of what the engine does with them.
 
 import { adapterAsProvider, foldProviderStream } from "../../../runtime/src/provider/bridge.ts";
+import { createRegistry } from "../../../provider-runtime/src/registry.ts";
 import { createBedrockConverseAdapter, type BedrockAdapterOptions } from "../../../provider-runtime/src/adapters/bedrock/converse.ts";
 import { createMemoryCredentialStore } from "../../../provider-runtime/src/credentials/memory.ts";
 import { discoverModels } from "../../../provider-runtime/src/discovery.ts";
@@ -662,21 +663,46 @@ export function bedrockCorpusCases(harness: BedrockHarness): Partial<Record<Corp
     },
 
     "identity-across-resume": async ({ fake }) => {
-      // A resume re-resolves from the same persisted configuration; the identity it produces must be
-      // byte-identical, and the session must still run off the SAME adapter.
-      const first = resolvedCorpusModel(harness);
-      const second = resolvedCorpusModel(harness);
+      // A RESUME re-resolves from the same persisted configuration, so this resolves TWICE THROUGH
+      // THE REGISTRY rather than comparing two copies of one literal — a comparison of two literals
+      // cannot fail, and would have made this case decorative.
+      const registry = createRegistry(corpusCatalog());
+      registry.register(adapter);
+      const request = { model: BEDROCK_CORPUS_MODEL, provider: { providerId: "bedrock" } };
+      const first = registry.resolve(request);
+      // A SECOND registry over a SECOND catalog object: a resume rebuilds both from the persisted
+      // config, so sharing either would hide a resolution that only works while state is warm.
+      const resumedRegistry = createRegistry(corpusCatalog());
+      resumedRegistry.register(adapter);
+      const second = resumedRegistry.resolve(request);
+      if (first instanceof Error) throw new Error(`the session model did not resolve: ${first.message}`);
+      if (second instanceof Error) throw new Error(`the session model did not resolve after a resume: ${second.message}`);
+
       const identityOf = (r: ResolvedModel): string =>
-        JSON.stringify({ providerId: r.providerId, modelKey: r.modelKey, adapterId: r.adapterId, adapterVersion: r.adapter.version, catalogVersion: r.catalogVersion, continuationDomain: r.continuationDomain });
+        JSON.stringify({
+          providerId: r.providerId,
+          modelKey: r.modelKey,
+          providerModelId: r.providerModelId,
+          adapterId: r.adapterId,
+          adapterVersion: r.adapter.version,
+          catalogVersion: r.catalogVersion,
+          continuationDomain: r.continuationDomain,
+        });
       assert(identityOf(first) === identityOf(second), `the resolved identity changed across a resume: ${identityOf(first)} vs ${identityOf(second)}`);
+      // Every field R6-9 puts in `winter_provider` is PRESENT, not merely equal — two identical
+      // `undefined`s would satisfy the comparison above and carry no identity at all.
+      assert(first.adapterId === "winter.bedrock-converse", `the resolved adapter id was ${first.adapterId}`);
+      assert(first.adapter.version === "1", `the resolved adapter version was ${first.adapter.version}`);
+      assert(first.modelKey === CORPUS_DESCRIPTOR.key, `the resolved model key was ${first.modelKey}`);
       assert(first.continuationDomain === CORPUS_DESCRIPTOR.key, "the continuation domain was lost from the resolved identity");
 
-      // NEGATIVE ON THE REAL PATH: the identity is only meaningful if a turn built from it actually
+      // NEGATIVE ON THE REAL PATH: an identity is only meaningful if a turn built from it actually
       // reaches the provider it names.
       const before = fake.requests.length;
       const turnResult = await adapterAsProvider(second, ctx).generate({ model: BEDROCK_CORPUS_MODEL, messages: [{ role: "user", content: "after resume" }] });
       assert(fake.requests.length === before + 1, "the resumed identity did not drive a real request");
       assert(turnResult.kind === "text", "the resumed turn did not complete");
+      assert(fake.requests[fake.requests.length - 1]!.path.includes(encodeURIComponent(BEDROCK_CORPUS_MODEL)), "the resumed turn addressed a different model");
     },
 
     "no-silent-tool-dropping": async ({ fake }) => {
