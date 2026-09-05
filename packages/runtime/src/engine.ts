@@ -3245,6 +3245,18 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
       }
       const anchors = new Set(messages.flatMap((m) => (m.role === "assistant" && m.uuid !== undefined ? [m.uuid] : [])));
       if (anchors.size === 0) return;
+      // NO RECORDS AT ALL IS NOT A DEGRADATION, and this early return is the difference between a
+      // useful warning and permanent noise. A session that never had provider state -- every session
+      // written before this phase, and every session run before selection is wired -- has nothing to
+      // degrade FROM: its resume is byte-for-byte the resume it always had. Warning on those would
+      // fire on essentially every resumed session in the product and train a reader to ignore the
+      // frame, which is exactly what would make it useless on the day it means something.
+      //
+      // THE COST, stated rather than hidden: a session whose sidecar existed and was then DELETED
+      // reads as "never had one" and resumes quietly. An unreadable sidecar still warns
+      // (`sidecar_unreadable` above), so this gap is specifically deletion, and closing it would need
+      // a record of expectation the transcript does not carry.
+      if (records.length === 0) return;
       const chain = buildContinuationChain(records, anchors);
       let degraded = 0;
       for (const message of messages) {
