@@ -243,7 +243,10 @@ export class WorkflowRuntime {
       toolUses: 0,
       startedAt: Date.now(),
       sem: makeSemaphore(this.concurrency),
-      budget: createBudget({ accountant: this.deps.session.accountant, ...(this.deps.session.budgetTotal !== undefined ? { total: this.deps.session.budgetTotal } : {}) }),
+      budget: createBudget({
+        ...(this.deps.session.spentTokens !== undefined ? { spentTokens: this.deps.session.spentTokens } : {}),
+        ...(this.deps.session.budgetTotal !== undefined ? { total: this.deps.session.budgetTotal } : {}),
+      }),
       journal: new RunJournal(this.runsDir, runId),
       abort,
       ...(input.meta.phases !== undefined ? { declaredPhases: input.meta.phases } : { declaredPhases: undefined }),
@@ -455,7 +458,9 @@ export class WorkflowRuntime {
     run.running++;
     run.total++;
     run.toolUses++;
-    this.syncCounts(run);
+    // The agent's OWN group, never the ambient one -- see syncCounts.
+    const group = message.opts?.phase;
+    this.syncCounts(run, group);
     try {
       const outcome = await this.spawnAndAwaitChild(run, message.prompt, message.opts);
       // WS-11 §1.5: only SUCCESSFUL results are journaled -- a failed call has nothing worth caching,
@@ -466,7 +471,7 @@ export class WorkflowRuntime {
       run.running--;
       run.completed++;
       run.sem.release(); // released FIRST -- never blocked behind a possibly-throwing emit
-      this.syncCounts(run);
+      this.syncCounts(run, group);
     }
   }
 
@@ -580,10 +585,18 @@ export class WorkflowRuntime {
 
   // --- Progress and lifecycle ---------------------------------------------------------------------
 
-  private syncCounts(run: LiveRun): void {
+  /**
+   * `phase` is the group this progress report belongs to (F2): an agent's own `opts.phase` when it
+   * supplied one, otherwise the run's current global phase. Passing it explicitly is the whole point
+   * -- WS-11 §1.6 gives `opts.phase` the job of "avoiding races on the global `phase()` state inside
+   * `pipeline`/`parallel` stages", and reading the ambient phase here would reintroduce exactly that
+   * race for two agents running concurrently under different phases.
+   */
+  private syncCounts(run: LiveRun, phase?: string): void {
     if (!this.live.has(run.runId)) return; // never touch counts for an already-torn-down run
     this.registry.setCounts(run.runId, { running: run.running, completed: run.completed, total: run.total });
-    this.emitProgress(run);
+    const group = phase ?? this.registry.get(run.runId)?.phase;
+    this.emitProgress(run, group);
   }
 
   /**

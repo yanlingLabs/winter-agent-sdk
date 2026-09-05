@@ -31,8 +31,20 @@ export interface WorkflowSessionRuntime {
   sessionTempDir: string;
   /** Borrowed from Lane K through the seam (R5-12's named W->K coupling) -- never a second validator. */
   structured: StructuredOutputSeam;
-  /** The session's live accounting -- what `budget.spent()` reads. */
+  /** The session's live context accounting. Passed straight to `WorkflowRunHost.accountant`. */
   accountant: ContextAccountant;
+  /**
+   * The session's CUMULATIVE token spend, for `budget.spent()` -- RULING P5-J (spine, fix wave).
+   *
+   * Deliberately NOT `accountant.contextTokens()`, which is the last provider call's context SIZE:
+   * an overwrite rather than an accumulation, non-monotonic, and blind to a workflow's own agents
+   * (each child builds its own accountant). Absent = `spent()` reports 0 and a ceiling never trips,
+   * which is honest; substituting the wrong quantity would look plausible and bound nothing.
+   *
+   * P5-J is expected to add the counter to `ContextAccountant` and route child usage into the
+   * parent's; when it lands, T8 wires that accessor here.
+   */
+  spentTokens?: () => number;
   /**
    * The workflow budget ceiling, if the host set one. `null`/absent is the DEFAULT and means no
    * ceiling (WS-11 §1.6 as amended by the task brief). No `WorkflowInput` field carries this -- it is

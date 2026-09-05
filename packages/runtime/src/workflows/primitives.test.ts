@@ -11,7 +11,6 @@ import { join } from "node:path";
 import { makeSemaphore, resolveConcurrencyCap, DEFAULT_MAX_CONCURRENCY } from "./semaphore.ts";
 import { promptKey, RunJournal } from "./journal.ts";
 import { createBudget } from "./budget.ts";
-import { createContextAccountant } from "../engine.ts";
 
 function scratch(): string {
   return mkdtempSync(join(tmpdir(), "winter-wf-primitives-"));
@@ -99,35 +98,48 @@ describe("journal -- the resume cache (WS-11 §1.5)", () => {
 
 describe("budget -- the REAL shared hard ceiling (WS-11 §1.6)", () => {
   test("the DEFAULT total is null: no ceiling, and `agent()` is never refused for budget", () => {
-    const budget = createBudget({ accountant: createContextAccountant({ limit: 1000 }) });
+    const budget = createBudget({ spentTokens: () => 0 });
     expect(budget.total).toBe(null);
     expect(budget.exceeded()).toBe(false);
     expect(budget.remaining()).toBe(Infinity);
   });
 
-  test("`spent()` reads the HOST's accountant live -- the pool is shared with the main loop, not a private counter", () => {
-    const accountant = createContextAccountant({ limit: 1000 });
-    const budget = createBudget({ accountant, total: 500 });
+  // F4 / RULING P5-J. `spent()` reads a CUMULATIVE `spentTokens()` accessor, never
+  // `ContextAccountant.contextTokens()`. The latter is the last provider call's context SIZE -- an
+  // overwrite, not an accumulation (engine.ts's `last = inputTokens + outputTokens`) -- so it is
+  // non-monotonic (a smaller call, or a compaction, LOWERS it, un-reaching a ceiling that was
+  // reached) and it is blind to the workflow's own agents, since every child builds its own
+  // accountant. A budget built on it bounds the main loop's last-call context size, not a pool.
+  test("`spent()` reads the session's CUMULATIVE spend, and it accumulates monotonically", () => {
+    let spent = 0;
+    const budget = createBudget({ spentTokens: () => spent, total: 500 });
     expect(budget.spent()).toBe(0);
-    accountant.record({ inputTokens: 120, outputTokens: 30 });
+    spent += 150;
     expect(budget.spent()).toBe(150);
     expect(budget.remaining()).toBe(350);
+    spent += 40;
+    expect(budget.spent()).toBe(190); // never goes backwards the way contextTokens() would
+  });
+
+  test("with NO cumulative accessor, `spent()` is 0 -- never contextTokens(), which is a different quantity", () => {
+    const budget = createBudget({ total: 500 });
+    expect(budget.spent()).toBe(0);
+    expect(budget.exceeded()).toBe(false);
+    expect(budget.remaining()).toBe(500);
   });
 
   test("a set `total` is a HARD ceiling: once reached, the budget reports exceeded", () => {
-    const accountant = createContextAccountant({ limit: 10_000 });
-    const budget = createBudget({ accountant, total: 100 });
-    accountant.record({ inputTokens: 60, outputTokens: 39 });
+    let spent = 0;
+    const budget = createBudget({ spentTokens: () => spent, total: 100 });
+    spent = 99;
     expect(budget.exceeded()).toBe(false);
-    accountant.record({ inputTokens: 60, outputTokens: 40 });
+    spent = 100;
     expect(budget.exceeded()).toBe(true); // >= the ceiling, not merely >
     expect(budget.remaining()).toBe(0); // never negative -- a script's `remaining()` is a quantity
   });
 
   test("the wire snapshot carries what the WORKER needs to mirror the ceiling in-script", () => {
-    const accountant = createContextAccountant({ limit: 10_000 });
-    const budget = createBudget({ accountant, total: 100 });
-    accountant.record({ inputTokens: 10, outputTokens: 5 });
+    const budget = createBudget({ spentTokens: () => 15, total: 100 });
     expect(budget.snapshot()).toEqual({ total: 100, spent: 15 });
   });
 });

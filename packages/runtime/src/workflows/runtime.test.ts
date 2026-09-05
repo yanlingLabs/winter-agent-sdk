@@ -73,6 +73,8 @@ function rig(opts: {
   budgetTotal?: number | null;
   accountant?: ReturnType<typeof createContextAccountant>;
   resolveNested?: WorkflowRuntimeDeps["resolveNestedWorkflow"];
+  resolveAgentType?: NonNullable<WorkflowRuntimeDeps["session"]["resolveAgentType"]>;
+  spentTokens?: () => number;
 } = {}): Rig {
   const winterHome = mkdtempSync(join(tmpdir(), "winter-wf-rt-home-"));
   const sessionTempDir = mkdtempSync(join(tmpdir(), "winter-wf-rt-temp-"));
@@ -95,6 +97,8 @@ function rig(opts: {
       structured: fakeStructuredOutputSeam(),
       accountant: opts.accountant ?? createContextAccountant({ limit: 100_000 }),
       ...(opts.budgetTotal !== undefined ? { budgetTotal: opts.budgetTotal } : {}),
+      ...(opts.resolveAgentType !== undefined ? { resolveAgentType: opts.resolveAgentType } : {}),
+      ...(opts.spentTokens !== undefined ? { spentTokens: opts.spentTokens } : {}),
     },
     spawnWorker: inProcessWorkerSpawner(),
     ...(opts.caps !== undefined ? { caps: opts.caps } : {}),
@@ -331,6 +335,46 @@ phase("research"); return 1;`;
   });
 });
 
+describe("F2 -- `agent(prompt, { phase })` is EXPLICIT progress-group assignment (WS-11 §1.6)", () => {
+  // The option's whole stated purpose is "avoids races on the global `phase()` state inside
+  // `pipeline`/`parallel` stages". So the test sets a global phase FIRST and then runs two agents
+  // concurrently under different explicit phases: if the option were inert (or if it merely read the
+  // ambient phase), both would report the global one.
+  test("two agents in parallel under different explicit phases each report THEIR phase, not the global one", async () => {
+    const r = rig({
+      spawnAgent: async () => {
+        await new Promise((res) => setTimeout(res, 10));
+        return fakeChild({ content: "ok" });
+      },
+    });
+    const launched = launch(
+      r,
+      META + `phase("Global");
+await parallel([() => agent("a", { phase: "Alpha" }), () => agent("b", { phase: "Beta" })]);
+return 1;`,
+    );
+    await r.runtime.await(launched.runId);
+    const summaries = r.log.filter((e) => e.event === "progress").map((e) => (e.detail as WorkflowProgress).summary ?? "");
+    expect(summaries.some((s) => s.includes("Alpha"))).toBe(true);
+    expect(summaries.some((s) => s.includes("Beta"))).toBe(true);
+  });
+
+  test("an agent with NO explicit phase falls back to the run's current global phase", async () => {
+    const r = rig();
+    const launched = launch(r, META + `phase("Global"); await agent("a"); return 1;`);
+    await r.runtime.await(launched.runId);
+    const summaries = r.log.filter((e) => e.event === "progress").map((e) => (e.detail as WorkflowProgress).summary ?? "");
+    expect(summaries.some((s) => s.includes("Global"))).toBe(true);
+  });
+
+  test("an explicit phase does NOT move the run's own global phase -- it is per-agent, not a `phase()` call", async () => {
+    const r = rig();
+    const launched = launch(r, META + `phase("Global"); await agent("a", { phase: "Sidebar" }); return 1;`);
+    await r.runtime.await(launched.runId);
+    expect(r.runtime.get(launched.runId)?.phase).toBe("Global");
+  });
+});
+
 describe("meta.name is threaded, never recovered from the SANITIZED filename", () => {
   test("a name outside the slug alphabet keeps its verbatim `meta.name` on the launch result", async () => {
     const source = `export const meta = { name: "My Workflow!", description: "d" };\nreturn 1;`;
@@ -343,6 +387,88 @@ describe("meta.name is threaded, never recovered from the SANITIZED filename", (
     // ... while the NAME the pin asserts (`WorkflowOutput.workflowName` = meta.name) is verbatim.
     expect(launched.name).toBe("My Workflow!");
     await r.runtime.await(launched.runId);
+  });
+});
+
+describe("F3 -- `agent({ schema })` returns the VALIDATED object, or null; never unvalidated data", () => {
+  const SCHEMA = { type: "object", properties: { verdict: { type: "string" } }, required: ["verdict"] };
+
+  test("a child whose text is valid JSON AND passes the schema yields the validated object", async () => {
+    const r = rig({ spawnAgent: async () => fakeChild({ content: JSON.stringify({ verdict: "ship it" }) }) });
+    const launched = launch(r, META + `return await agent("review", { schema: ${JSON.stringify(SCHEMA)} });`);
+    const view = await r.runtime.await(launched.runId);
+    expect(view.status).toBe("completed");
+    expect(view.result).toBe(JSON.stringify({ verdict: "ship it" }));
+  });
+
+  test("valid JSON that FAILS the schema yields null -- unvalidated data is never presented as validated", async () => {
+    const r = rig({ spawnAgent: async () => fakeChild({ content: JSON.stringify({ wrong: 1 }) }) });
+    const launched = launch(r, META + `return await agent("review", { schema: ${JSON.stringify(SCHEMA)} });`);
+    expect((await r.runtime.await(launched.runId)).result).toBe("null");
+  });
+
+  test("non-JSON child text yields null -- the `died on a terminal error` arm, not a raw string", async () => {
+    const r = rig({ spawnAgent: async () => fakeChild({ content: "I think you should ship it." }) });
+    const launched = launch(r, META + `return await agent("review", { schema: ${JSON.stringify(SCHEMA)} });`);
+    expect((await r.runtime.await(launched.runId)).result).toBe("null");
+  });
+
+  test("the schema rides SpawnChildRequest.outputFormat -- the same StructuredOutput path the session uses", async () => {
+    const r = rig({ spawnAgent: async () => fakeChild({ content: JSON.stringify({ verdict: "ok" }) }) });
+    const launched = launch(r, META + `return await agent("review", { schema: ${JSON.stringify(SCHEMA)} });`);
+    await r.runtime.await(launched.runId);
+    expect(r.spawned[0]?.outputFormat).toEqual({ type: "json_schema", schema: SCHEMA });
+  });
+
+  // PENDING RULING P5-I (spine, fix wave). The parent currently RE-PARSES the child's final text,
+  // because `ChildResult` carries only `content: string` and `child-engine.ts`'s `observe` reads
+  // `message.result` -- which the engine's structured SUCCESS variant does not set. A child genuinely
+  // forced onto StructuredOutput therefore usually has NO parseable final text, so the three cases
+  // above are the fallback's behaviour, not the intended one. This pins the shape P5-I should deliver.
+  test.skip("PENDING P5-I: a real child reports its validated object on ChildResult.structuredOutput, and agent() returns it without re-parsing text", async () => {
+    const r = rig({
+      spawnAgent: async () =>
+        fakeChild({ content: "", structuredOutput: { verdict: "ship it" } } as unknown as { content: string }),
+    });
+    const launched = launch(r, META + `return await agent("review", { schema: ${JSON.stringify(SCHEMA)} });`);
+    expect((await r.runtime.await(launched.runId)).result).toBe(JSON.stringify({ verdict: "ship it" }));
+  });
+});
+
+describe("F3 -- `agent({ agentType })` resolves through the SAME registry the Agent tool uses", () => {
+  test("a resolved custom type becomes the child's definition, verbatim", async () => {
+    const definition = { description: "a code reviewer", prompt: "You review code.", tools: ["Read"] };
+    const r = rig({ resolveAgentType: () => definition });
+    const launched = launch(r, META + `return await agent("look", { agentType: "reviewer" });`);
+    await r.runtime.await(launched.runId);
+    expect(r.spawned[0]?.definition).toEqual(definition);
+  });
+
+  test("`effort` composes ON TOP of a resolved type rather than replacing it", async () => {
+    const r = rig({ resolveAgentType: () => ({ description: "d", prompt: "p" }) });
+    const launched = launch(r, META + `return await agent("look", { agentType: "reviewer", effort: "high" });`);
+    await r.runtime.await(launched.runId);
+    expect(r.spawned[0]?.definition).toEqual({ description: "d", prompt: "p", effort: "high" });
+  });
+
+  test("an UNRESOLVED type records what was asked for -- never a silent generic child", async () => {
+    const r = rig({ resolveAgentType: () => undefined });
+    const launched = launch(r, META + `return await agent("look", { agentType: "ghost" });`);
+    await r.runtime.await(launched.runId);
+    expect(r.spawned[0]?.definition?.description).toContain("ghost");
+  });
+
+  test("the resolver is called with the run's cwd and trust verdict", async () => {
+    const seen: Array<{ type: string; cwd: string; trusted: boolean }> = [];
+    const r = rig({
+      resolveAgentType: (type, ctx) => {
+        seen.push({ type, cwd: ctx.cwd, trusted: ctx.trustedWorkspace });
+        return undefined;
+      },
+    });
+    const launched = launch(r, META + `return await agent("look", { agentType: "reviewer" });`);
+    await r.runtime.await(launched.runId);
+    expect(seen).toEqual([{ type: "reviewer", cwd: "/synthetic", trusted: true }]);
   });
 });
 
@@ -377,9 +503,8 @@ describe("caps, enforced PARENT-side (WS-11 §1.6/§1.8)", () => {
   });
 
   test("the budget ceiling REFUSES a further agent() call, parent-side, even if the worker's mirror were stale", async () => {
-    const accountant = createContextAccountant({ limit: 100_000 });
-    accountant.record({ inputTokens: 90, outputTokens: 20 }); // already past a ceiling of 100
-    const r = rig({ budgetTotal: 100, accountant });
+    // F4: driven through the session's CUMULATIVE `spentTokens()` (P5-J), not the context accountant.
+    const r = rig({ budgetTotal: 100, spentTokens: () => 110 });
     const launched = launch(r, META + `return await agent("x");`);
     const view = await r.runtime.await(launched.runId);
     expect(view.status).toBe("failed");
