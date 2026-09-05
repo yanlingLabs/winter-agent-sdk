@@ -23,7 +23,7 @@ export { createEnvCredentialStore } from "./credentials/env.ts";
 export type { EnvCredentialStoreOptions } from "./credentials/env.ts";
 export { createFileCredentialStore } from "./credentials/file.ts";
 export type { FileCredentialStoreOptions } from "./credentials/file.ts";
-export { CREDENTIAL_HEADER_NAMES, createEndpointPolicy, evaluateEndpoint, stripCredentialHeaders } from "./endpoint-policy.ts";
+export { CREDENTIAL_HEADER_NAMES, applyPrivilegedHeaders, createEndpointPolicy, evaluateEndpoint, stripCredentialHeaders } from "./endpoint-policy.ts";
 export type { EndpointEvaluation, EndpointEvaluationOptions, EndpointPolicy } from "./endpoint-policy.ts";
 export {
   ProviderStallError,

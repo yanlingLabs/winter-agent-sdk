@@ -188,6 +188,41 @@ describe("file store", () => {
     expect((err as Error).message).not.toContain(TEST_SECRET);
   });
 
+  test("an oversized credentials file is refused by a STAT, before it is pulled into memory", async () => {
+    // Checking the length after reading means a multi-gigabyte file named by a `{ kind: "file" }`
+    // ref is fully buffered first and rejected second. The stat is what makes the cap bound what is
+    // PULLED IN. Proven by observing that the reader is never called.
+    const path = join(home, "huge.key");
+    let readCalls = 0;
+    const store = createFileCredentialStore({
+      env: {},
+      home,
+      readFile: async () => {
+        readCalls += 1;
+        return "x";
+      },
+      stat: async () => ({ size: 8 * 1024 * 1024 }),
+    });
+    const err = await store.get({ kind: "file", path, format: "raw" }).then(() => undefined, (e: unknown) => e);
+    expect(err).toBeInstanceOf(CredentialResolutionError);
+    expect((err as CredentialResolutionError).code).toBe("malformed");
+    expect(readCalls).toBe(0);
+  });
+
+  test("a stat reporting ENOENT is `null`, exactly like a missing read", async () => {
+    const store = createFileCredentialStore({
+      env: {},
+      home,
+      readFile: async () => "unused",
+      stat: async () => {
+        const err = new Error("no such file") as Error & { code?: string };
+        err.code = "ENOENT";
+        throw err;
+      },
+    });
+    expect(await store.get({ kind: "file", path: join(home, "absent"), format: "raw" })).toBeNull();
+  });
+
   test("aws-default-chain: env FIRST", async () => {
     const store = createFileCredentialStore({
       env: { AWS_ACCESS_KEY_ID: "test-key-env-id", AWS_SECRET_ACCESS_KEY: "test-key-env-secret", AWS_SESSION_TOKEN: "test-key-env-token" },

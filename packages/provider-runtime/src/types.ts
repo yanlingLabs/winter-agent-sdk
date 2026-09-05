@@ -172,8 +172,13 @@ export type ProviderEvent =
    * code, and HEADER-DERIVED limits never become events at all.
    */
   | { type: "rate_limit"; kind: "subscription-quota"; info: Record<string, unknown> }
-  /** R6-C: mirrors the pinned `api_retry` payload minus its frame envelope (`uuid`/`session_id`, which the runtime stamps). */
-  | { type: "retry"; attempt: number; maxRetries: number; retryDelayMs: number; errorStatus?: number; error: string }
+  /**
+   * R6-C: mirrors the pinned `api_retry` payload minus its frame envelope (`uuid`/`session_id`,
+   * which the runtime stamps). `error` is the CLOSED 11-member union, not a free string — the pin
+   * types it that way (`sdk.d.ts:3092`) and `withRetry`'s producer already returns exactly that, so
+   * a bare `string` here only made a consumer's exhaustive switch impossible to write.
+   */
+  | { type: "retry"; attempt: number; maxRetries: number; retryDelayMs: number; errorStatus?: number; error: SdkAssistantMessageError }
   /** A LOGIN-FLOW progress channel (codex-oauth login/refresh only), never the credential-failure frame — a bad key is a `ProviderError` with `code: "auth"`. */
   | { type: "auth_status"; isAuthenticating: boolean; output?: string[]; error?: string }
   | { type: "done"; stopReason: "end_turn" | "tool_use" | "max_tokens" | "aborted" | "refusal" }

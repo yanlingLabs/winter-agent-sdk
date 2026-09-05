@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { loadCatalog, scanForSecrets, validateCatalog } from "./index.ts";
+import { CATALOG_VOCABULARIES, loadCatalog, scanForSecrets, validateCatalog } from "./index.ts";
+import catalogSchema from "../schema/catalog.schema.json" with { type: "json" };
 import type { WinterCatalog, WinterModelDescriptor, WinterProviderDescriptor } from "./types.ts";
 
 // A minimal, VALID catalog every negative case mutates one field of. Building the negatives by
@@ -309,11 +310,73 @@ describe("the COMMITTED catalog", () => {
     expect(byId.get("codex-oauth")!.upstream.project).toBe("winter");
   });
 
+  test("the GATEWAY's live catalog is `partial`, not `authoritative` (R6-K's pass-through depends on it)", () => {
+    // A gateway routes hundreds of models that change constantly, and which of them a given key can
+    // actually reach depends on upstream routing and data-policy settings the list does not express.
+    // Marking it authoritative made an absent id a definitive fact, which closed the `allowUnlisted`
+    // door on exactly the provider whose real ids are other vendors' qualified ids.
+    const openrouter = loadCatalog().providers.find((p) => p.id === "openrouter");
+    expect(openrouter?.liveCatalogAuthority).toBe("partial");
+  });
+
   test("every seed model row is `candidate`, unpriced, and not classifier-eligible", () => {
     for (const m of loadCatalog().models) {
       expect(m.status).toBe("candidate");
       expect(m.pricing).toBeUndefined();
       expect(m.classifierEligible).toBeUndefined();
     }
+  });
+});
+
+// --- Minor 9: the JSON Schema is never EXECUTED anywhere in this repo (no ajv inside the fence),
+// so without this test its `enum` arrays are prose that can drift away from the validator silently.
+// A value one gate accepts and the other rejects produces a row that passes locally and fails in
+// Lane X's generator or the Swift decoder — found by whoever is furthest from the change.
+describe("JSON Schema / validator enum parity (Minor 9)", () => {
+  const schema = catalogSchema as unknown as Record<string, unknown>;
+
+  /** Walks the schema to the `enum` array at a dotted path, failing loudly if the path is wrong. */
+  function enumAt(path: string): string[] {
+    let node: unknown = schema;
+    for (const segment of path.split(".")) {
+      if (node === null || typeof node !== "object") throw new Error(`schema path ${path} broke at "${segment}"`);
+      node = (node as Record<string, unknown>)[segment];
+    }
+    if (node === null || typeof node !== "object") throw new Error(`schema path ${path} is not an object`);
+    const values = (node as { enum?: unknown }).enum;
+    if (!Array.isArray(values)) throw new Error(`schema path ${path} has no \`enum\` array`);
+    return values as string[];
+  }
+
+  const cases: Array<[keyof typeof CATALOG_VOCABULARIES, string]> = [
+    ["protocols", "$defs.WinterProviderDescriptor.properties.protocols.items"],
+    ["authKinds", "$defs.WinterProviderDescriptor.properties.authKinds.items"],
+    ["evidenceSources", "$defs.EvidenceSource"],
+    ["evidenceConfidences", "$defs.EvidenceConfidence"],
+    ["toolCalling", "$defs.evidenceToolCalling.properties.value"],
+    ["modelStatuses", "$defs.WinterModelDescriptor.properties.status"],
+    ["modelEndpoints", "$defs.WinterModelDescriptor.properties.endpoints.items"],
+    ["modelDiscovery", "$defs.WinterProviderDescriptor.properties.modelDiscovery"],
+    ["catalogAuthority", "$defs.WinterProviderDescriptor.properties.liveCatalogAuthority"],
+    ["riskClasses", "$defs.WinterProviderDescriptor.properties.risk.properties.class"],
+    ["providerScopes", "$defs.WinterProviderDescriptor.properties.scope"],
+    ["upstreamProjects", "$defs.WinterProviderDescriptor.properties.upstream.properties.project"],
+    ["continuations", "$defs.WinterModelDescriptor.properties.reasoning.properties.continuation"],
+    ["readableStates", "$defs.evidenceReadableState.properties.value"],
+    ["replayScopes", "$defs.evidenceReplayScope.properties.value"],
+    ["toolLoopRequirements", "$defs.evidenceToolLoopRequirement.properties.value"],
+  ];
+
+  test("every vocabulary the validator enforces is the SAME SET the schema declares", () => {
+    for (const [name, path] of cases) {
+      const fromValidator = [...CATALOG_VOCABULARIES[name]].sort();
+      const fromSchema = [...enumAt(path)].sort();
+      expect({ [name]: fromSchema }).toEqual({ [name]: fromValidator });
+    }
+  });
+
+  test("every vocabulary is covered — a new one cannot be added without a parity case", () => {
+    const covered: string[] = cases.map(([name]) => name).sort();
+    expect(covered).toEqual(Object.keys(CATALOG_VOCABULARIES).sort());
   });
 });

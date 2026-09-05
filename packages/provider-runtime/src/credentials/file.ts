@@ -13,7 +13,7 @@
 // `env`, `home` and `readFile` are all INJECTED: nothing here reads `process.env`, `os.homedir()` or
 // the real filesystem implicitly, so a test can point the whole store at a mkdtemp directory.
 
-import { readFile as nodeReadFile } from "node:fs/promises";
+import { readFile as nodeReadFile, stat as nodeStat } from "node:fs/promises";
 import { join } from "node:path";
 import type { CredentialMaterial, CredentialRef, CredentialStore } from "../types.ts";
 import { CredentialResolutionError, isNoCredential, readOnlyWriteRefusal, redactRef, unsupported } from "./types.ts";
@@ -29,12 +29,37 @@ export interface FileCredentialStoreOptions {
   home: string;
   /** Reads a file as UTF-8, or rejects. Injectable for tests that want to simulate an IO failure without creating one. */
   readFile?: (path: string) => Promise<string>;
+  /**
+   * Returns a file's size in bytes, or rejects. Defaults to `node:fs/promises` `stat`.
+   *
+   * Its job is to make the size cap bound what is PULLED INTO MEMORY rather than only what is kept:
+   * checking the length after reading means a multi-gigabyte file addressed by a `{ kind: "file" }`
+   * ref is fully buffered first and rejected second. A custom `readFile` with no matching `stat`
+   * skips the pre-check — the post-read cap still applies — because a test double's "file" has no
+   * size to ask about.
+   */
+  stat?: (path: string) => Promise<{ size: number }>;
 }
 
 /** Reads a file, mapping "not found" to `null` and any other IO failure to a typed error whose message carries NO file content. */
-async function readOptional(path: string, read: (p: string) => Promise<string>): Promise<string | null> {
+async function readOptional(path: string, read: (p: string) => Promise<string>, stat: ((p: string) => Promise<{ size: number }>) | undefined): Promise<string | null> {
   try {
+    if (stat !== undefined) {
+      let size: number | undefined;
+      try {
+        size = (await stat(path)).size;
+      } catch (err) {
+        const code = (err as { code?: unknown }).code;
+        if (code === "ENOENT" || code === "ENOTDIR") return null;
+        throw new CredentialResolutionError("io", `${NAME}: cannot stat ${path} (${typeof code === "string" ? code : "stat failed"})`);
+      }
+      if (size > MAX_CREDENTIAL_FILE_BYTES) {
+        throw new CredentialResolutionError("malformed", `${NAME}: ${path} is larger than ${MAX_CREDENTIAL_FILE_BYTES} bytes — refusing to read it as a credentials file`);
+      }
+    }
     const text = await read(path);
+    // Kept as a backstop for the injected-reader path, and for a file that grew between the stat
+    // and the read.
     if (text.length > MAX_CREDENTIAL_FILE_BYTES) {
       throw new CredentialResolutionError("malformed", `${NAME}: ${path} is larger than ${MAX_CREDENTIAL_FILE_BYTES} bytes — refusing to parse it as a credentials file`);
     }
@@ -90,9 +115,12 @@ function awsFromSection(section: Map<string, string> | undefined): CredentialMat
 
 export function createFileCredentialStore(opts: FileCredentialStoreOptions): CredentialStore {
   const read = opts.readFile ?? ((path: string) => nodeReadFile(path, "utf8"));
+  // Only paired with the DEFAULT reader unless a caller supplies its own: statting the real
+  // filesystem for a path a test double invented would be both wrong and slow.
+  const stat = opts.stat ?? (opts.readFile === undefined ? (path: string) => nodeStat(path) : undefined);
 
   async function fromSharedCredentials(path: string, profile: string): Promise<CredentialMaterial | null> {
-    const text = await readOptional(path, read);
+    const text = await readOptional(path, read, stat);
     if (text === null) return null;
     // A named profile that is not present is `null`, NOT a silent fall back to [default]: quietly
     // signing with the wrong account is a worse outcome than reporting that nothing was found.
@@ -100,7 +128,7 @@ export function createFileCredentialStore(opts: FileCredentialStoreOptions): Cre
   }
 
   async function fromServiceAccountJson(ref: Extract<CredentialRef, { kind: "file" }>): Promise<CredentialMaterial | null> {
-    const text = await readOptional(ref.path, read);
+    const text = await readOptional(ref.path, read, stat);
     if (text === null) return null;
     let parsed: unknown;
     try {
@@ -128,7 +156,7 @@ export function createFileCredentialStore(opts: FileCredentialStoreOptions): Cre
       if (ref.kind === "file") {
         switch (ref.format) {
           case "raw": {
-            const text = await readOptional(ref.path, read);
+            const text = await readOptional(ref.path, read, stat);
             if (text === null) return null;
             const value = text.trim();
             return value.length === 0 ? null : { kind: "api-key", key: value };

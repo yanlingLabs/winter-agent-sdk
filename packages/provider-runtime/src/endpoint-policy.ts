@@ -62,6 +62,31 @@ export function stripCredentialHeaders(headers: Headers): Headers {
   return out;
 }
 
+/**
+ * RULING R6-L — the enforcement point for R6-11's "privileged headers only for generated endpoints".
+ *
+ * Identity when the policy's endpoint is GENERATED (a reviewed, immutable descriptor endpoint);
+ * `{}` otherwise. Adapters build their privileged header set and route it through here, so the rule
+ * is a call site rather than prose — before this existed, `EndpointPolicy.generated` was plumbed and
+ * read by nothing at all.
+ *
+ * WHICH headers belong here is documented on `EndpointPolicy` below and is the adapter's judgement,
+ * not this function's: it cannot see a header's meaning, only the endpoint's provenance. The rule of
+ * thumb is "would this value still be true, and still be the operator's business to disclose, at a
+ * URL the reviewed catalog never named?" — an organisation or project identifier fails that test; a
+ * `content-type` passes it.
+ *
+ * Auth is deliberately NOT governed here. It has its own, stricter rule (`stripCredentialHeaders` on
+ * an origin change), and a user endpoint legitimately needs a credential to be reachable at all —
+ * routing auth through this helper would break every custom endpoint rather than protect anything.
+ */
+export function applyPrivilegedHeaders(policy: EndpointPolicy, headers: Record<string, string>): Record<string, string> {
+  // A COPY either way: an adapter that reuses its header object across requests must not have it
+  // emptied underneath it, and a caller must not be able to mutate the policy's answer after the
+  // fact.
+  return policy.generated ? { ...headers } : {};
+}
+
 /** `URL.hostname` keeps the brackets on an IPv6 literal (verified in P3's own monitor work); both `isIP` and the classifier need them gone. */
 function stripBrackets(hostname: string): string {
   return hostname.startsWith("[") && hostname.endsWith("]") ? hostname.slice(1, -1) : hostname;
@@ -70,39 +95,48 @@ function stripBrackets(hostname: string): string {
 /**
  * Classifies a URL's host WITHOUT resolving anything.
  *
- * Three outcomes: a literal address gets its real class; `localhost` (and its `.localhost` subdomain
- * form) is loopback by RFC 6761, which is the one name whose meaning is reserved rather than
- * resolved; every other name is `undefined` — unknown, and therefore never local.
+ * Three outcomes: a literal address gets its real class; the LITERAL `localhost` is loopback by
+ * RFC 6761, the one name whose meaning is reserved rather than resolved; every other name is
+ * `undefined` — unknown, and therefore never local.
+ *
+ * `*.localhost` was previously treated as loopback too, and that was wrong for this function's
+ * purpose. RFC 6761 asks resolvers to map the subdomain form to loopback, but this module resolves
+ * NOTHING by design (see the file header) — so treating `evil.localhost` as loopback is a claim
+ * about what some resolver will do, on a name a public DNS zone can perfectly well answer for. That
+ * is precisely the resolve-then-trust shape the synchronous contract exists to avoid.
  */
 function classifyHost(hostname: string): AddressClass | undefined {
   const bare = stripBrackets(hostname);
   const family = isIP(bare);
   if (family !== 0) return classifyAddress(bare, family);
-  const lower = bare.toLowerCase();
-  if (lower === "localhost" || lower.endsWith(".localhost")) return "loopback";
-  return undefined;
+  return bare.toLowerCase() === "localhost" ? "loopback" : undefined;
 }
 
-export function evaluateEndpoint(baseUrl: string, opts: EndpointEvaluationOptions): EndpointEvaluation {
+/**
+ * The checks that apply to ANY url — a stored base URL, a live request URL, or a redirect target:
+ * scheme, userinfo, address class, and the local/plain-http rules.
+ *
+ * Split out from `evaluateEndpoint` because the query/fragment refusal must NOT apply to a live
+ * request URL. That refusal is about what may be STORED in a connection profile; a real request
+ * legitimately carries query parameters, and two of the cohort's providers cannot be called without
+ * them — Gemini's `?alt=sse` selects streaming, Azure OpenAI's `?api-version=…` is mandatory on
+ * every call. Applying the stored-endpoint rule to request URLs made both providers fail on their
+ * first request, with the fake receiving nothing at all (review finding C1).
+ */
+function evaluateUrlShape(rawUrl: string, opts: EndpointEvaluationOptions): EndpointEvaluation {
   let url: URL;
   try {
-    url = new URL(baseUrl);
+    url = new URL(rawUrl);
   } catch {
-    return { ok: false, reason: `endpoint "${baseUrl}" is not a parseable absolute URL` };
+    return { ok: false, reason: `endpoint "${rawUrl}" is not a parseable absolute URL` };
   }
   if (url.protocol !== "https:" && url.protocol !== "http:") {
-    return { ok: false, reason: `endpoint "${baseUrl}" has an unsupported scheme "${url.protocol}" — only http and https are endpoints` };
+    return { ok: false, reason: `endpoint "${rawUrl}" has an unsupported scheme "${url.protocol}" — only http and https are endpoints` };
   }
   if (url.username.length > 0 || url.password.length > 0) {
     // The value is deliberately NOT echoed back: it is a credential, and a refusal message is one of
     // the most reliably-logged strings in any system.
     return { ok: false, reason: `endpoint "${url.origin}${url.pathname}" carries userinfo — a credential must never ride a URL` };
-  }
-  if (url.search.length > 0) {
-    return { ok: false, reason: `endpoint "${url.origin}${url.pathname}" carries a query string — request parameters belong in the adapter's own request, never in a stored endpoint` };
-  }
-  if (url.hash.length > 0) {
-    return { ok: false, reason: `endpoint "${url.origin}${url.pathname}" carries a fragment, which is meaningless to a request` };
   }
 
   const cls = classifyHost(url.hostname);
@@ -137,8 +171,51 @@ export function evaluateEndpoint(baseUrl: string, opts: EndpointEvaluationOption
 }
 
 /**
+ * Evaluates a STORED endpoint — a descriptor's `defaultEndpoints` entry or a
+ * `ConnectionProfile.baseUrl`.
+ *
+ * Everything `evaluateUrlShape` checks, PLUS a refusal of any query string or fragment. That extra
+ * pair is specific to stored endpoints: a persisted `?key=…` reaches every log line, error message
+ * and telemetry record verbatim, and a fragment is meaningless to a request. Live request URLs and
+ * redirect targets go through `EndpointPolicy.evaluateRedirect` instead, which deliberately does
+ * NOT apply it — see `evaluateUrlShape`'s own header.
+ */
+export function evaluateEndpoint(baseUrl: string, opts: EndpointEvaluationOptions): EndpointEvaluation {
+  const shape = evaluateUrlShape(baseUrl, opts);
+  if (!shape.ok) return shape;
+  // Re-parsed rather than threaded out of the helper: this keeps `evaluateUrlShape`'s return type
+  // the plain public `EndpointEvaluation` (one shape, no internal variant), and the URL has already
+  // been proven parseable above.
+  const url = new URL(baseUrl);
+  if (url.search.length > 0) {
+    return { ok: false, reason: `endpoint "${url.origin}${url.pathname}" carries a query string — request parameters belong in the adapter's own request, never in a stored endpoint` };
+  }
+  if (url.hash.length > 0) {
+    return { ok: false, reason: `endpoint "${url.origin}${url.pathname}" carries a fragment, which is meaningless to a request` };
+  }
+  return shape;
+}
+
+/**
  * The policy object `boundedFetch` carries: the accepted origin plus the rule a redirect target must
  * pass before the request follows it.
+ *
+ * PRIVILEGED HEADERS (R6-11, ruling R6-L). `generated` is not decoration — it is the input to
+ * `applyPrivilegedHeaders` below, which is how "privileged headers only for generated endpoints"
+ * stops being prose. The split, stated once so adapters classify consistently:
+ *
+ *   PRIVILEGED — headers a GENERATED descriptor implies and a user endpoint must never inherit:
+ *     organisation / project / account identifiers (`OpenAI-Organization`, `OpenAI-Project`,
+ *     `x-goog-user-project`, an AWS account or role identifier), the codex adapter's `originator`,
+ *     and any header whose value only means something at the reviewed endpoint it was minted for.
+ *     Sending these to a user-supplied base URL discloses the operator's account topology to a host
+ *     the reviewed catalog never named.
+ *
+ *   PROTOCOL — headers EVERY endpoint needs to be spoken to at all, and which carry no
+ *     cross-endpoint meaning: `content-type`, `accept`, `anthropic-version`, `anthropic-beta`,
+ *     `x-goog-api-key`, `authorization` / `x-api-key` / `api-key`. These are NOT routed through
+ *     `applyPrivilegedHeaders`; auth in particular is governed by the separate and stricter
+ *     origin-change rule (`stripCredentialHeaders`), not by this one.
  */
 export interface EndpointPolicy {
   readonly origin: string;
@@ -190,10 +267,13 @@ export function createEndpointPolicy(
         // credentials aside, is still a request the host never authorised. So the declaration is
         // re-applied ONLY when the target is the very origin it was made about, which is what keeps
         // an ordinary same-origin `/v1` -> `/v1/` hop on a local server working.
-        const strict = evaluateEndpoint(target, { generated: false });
+        // `evaluateUrlShape`, NOT `evaluateEndpoint`: a live request URL or a redirect target may
+        // legitimately carry a query string (Gemini's `?alt=sse`, Azure's `?api-version=…`), and the
+        // query/fragment refusal is a rule about what may be STORED (review finding C1).
+        const strict = evaluateUrlShape(target, { generated: false });
         if (strict.ok) return { ok: true, origin: strict.origin, sameOrigin: strict.origin === origin };
         if (local) {
-          const lenient = evaluateEndpoint(target, { generated: false, local: true });
+          const lenient = evaluateUrlShape(target, { generated: false, local: true });
           // SAME HOST, any port. A local reverse proxy handing off between ports on the same machine
           // is an ordinary local-installation shape, and the host already declared it trusts a local
           // installation HERE. What the host did not declare is trust in any OTHER machine, so a hop
