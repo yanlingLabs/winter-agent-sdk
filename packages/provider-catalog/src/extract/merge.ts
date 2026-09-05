@@ -655,8 +655,15 @@ function safeUrl(value: string): URL | undefined {
 
 /** Total, stable rejection ordering: a ledger diff between two upstream bumps must show CHANGES, not churn. */
 export function compareRejections(a: LedgerRejection, b: LedgerRejection): number {
-  const keyA = `${a.upstreamId} ${a.exclusionClass} ${a.sourcePath} ${a.path} ${a.reason}`;
-  const keyB = `${b.upstreamId} ${b.exclusionClass} ${b.sourcePath} ${b.path} ${b.reason}`;
+  // NUL is the separator on purpose — every field here can contain a space, and a separator that
+  // occurs in the data makes a composite key ambiguous. Written as an ESCAPE rather than as a
+  // literal control character, which is what it was: eight raw NUL bytes on these two lines made the
+  // whole file `data` to `file(1)`, so `grep` reported NO matches anywhere in it and anyone greping
+  // for a symbol here — a reviewer reading the change, most of all — silently found nothing. Same
+  // bytes in the key, same ordering, plain-text source.
+  const SEP = "\u0000";
+  const keyA = [a.upstreamId, a.exclusionClass, a.sourcePath, a.path, a.reason].join(SEP);
+  const keyB = [b.upstreamId, b.exclusionClass, b.sourcePath, b.path, b.reason].join(SEP);
   return keyA < keyB ? -1 : keyA > keyB ? 1 : 0;
 }
 

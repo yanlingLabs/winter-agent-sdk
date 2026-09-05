@@ -470,3 +470,31 @@ describe("the provenance table is data, not prose", () => {
     }
   });
 });
+
+describe("the lane's own source files stay TEXT", () => {
+  test("no control byte makes a lane source file binary to grep, diff or a review package", async () => {
+    // A regression test for a defect that hid itself. `merge.ts` carried eight raw NUL bytes in
+    // `compareRejections` from its first commit — a deliberate composite-key separator, typed as a
+    // literal instead of an escape. The key worked; the FILE became `data` to `file(1)`, so `grep`
+    // reported no matches anywhere in it. Every search a reviewer ran against the mapper came back
+    // empty and looked like an answer. Nothing about the extraction output could have revealed it,
+    // which is why the check is on the SOURCE.
+    const dir = new URL("./", import.meta.url);
+    const { readdirSync } = await import("node:fs");
+    const { fileURLToPath } = await import("node:url");
+    const root = fileURLToPath(dir);
+    const files = readdirSync(root).filter((name) => name.endsWith(".ts"));
+    expect(files.length).toBeGreaterThan(4);
+    for (const name of files) {
+      const bytes = new Uint8Array(await Bun.file(`${root}${name}`).arrayBuffer());
+      const offenders: string[] = [];
+      for (let i = 0; i < bytes.length; i++) {
+        const byte = bytes[i]!;
+        // Tab, LF and CR are the only control bytes source may carry. Everything below 0x20 else —
+        // NUL above all — turns the file binary for the tools a reviewer actually uses.
+        if (byte < 0x20 && byte !== 0x09 && byte !== 0x0a && byte !== 0x0d) offenders.push(`${name}: 0x${byte.toString(16)} at byte ${i}`);
+      }
+      expect([name, offenders]).toEqual([name, []]);
+    }
+  });
+});
