@@ -92,6 +92,17 @@ export type SessionSummaryEntry = {
 // intended producer; exported so it never hand-copies the string.
 export const DIALECT_RECORD_ENTRY_TYPE = "winter_dialect_record";
 
+/**
+ * The provider-state sidecar's filename suffix (P6 R6-7): `<sessionId>.provider-state.jsonl`.
+ *
+ * DECLARED HERE, imported by the runtime -- one declaration, and this is the package that can own it:
+ * the sdk cannot import the runtime (WS-02 §3's dependency inversion), and `delete()` below must
+ * name the file to remove it. The runtime owns the RECORD SEMANTICS (`store/provider-state.ts`: the
+ * envelope, the write-ahead ordering, the chain); this package owns the sidecar's LIFECYCLE at the
+ * path level, because that is where the deletion transaction lives.
+ */
+export const PROVIDER_STATE_FILE_SUFFIX = ".provider-state.jsonl";
+
 // WS-03 §10 pins this as EXACTLY these six members — Task 9 fix-round 1 (MAJOR finding) reverted an
 // earlier `listProjectKeys?()` addition here after review: exports.json's lack of field-level detail
 // for SessionStore is not license to widen the pinned surface, only silence about it. The
@@ -605,6 +616,12 @@ export class WinterCompatibilitySessionStore implements SessionStore {
     if (key.subpath === undefined) {
       // The explicit product deletion transaction (WS-05 §6): the ONLY place a cascade happens —
       // removes the flat main jsonl, every sidecar, AND the whole nested subagent tree (if any).
+      //
+      // "EVERY SIDECAR" INCLUDES THE PROVIDER-STATE ONE, and it did not until P6 T3's re-review found
+      // it missing. That file is the single sink for opaque provider state — `encrypted_content`,
+      // thinking signatures, `thoughtSignature` — the state the whole provider architecture exists to
+      // keep out of model-readable storage. Surviving an explicit product deletion is the one outcome
+      // it must never have, and the comment above already promised it did not.
       // rmSync's recursive removal is inherently symlink-safe (WS-05 §13): it unlinks a symlink it
       // encounters rather than following it, so a planted symlink inside the tree can never cause
       // deletion of anything outside the owned session directory.
@@ -613,12 +630,18 @@ export class WinterCompatibilitySessionStore implements SessionStore {
       rmIfExists(`${stem}.lock`);
       rmIfExists(`${stem}.summary.json`);
       rmIfExists(`${stem}.meta.json`);
-      rmSync(stem, { recursive: true, force: true }); // the <sessionId>/ subagent directory, if present
+      rmIfExists(`${stem}${PROVIDER_STATE_FILE_SUFFIX}`);
+      // The <sessionId>/ subagent directory, if present — which carries each child's OWN sidecar
+      // (`subagents/agent-<id>.provider-state.jsonl`), so the recursive removal covers those.
+      rmSync(stem, { recursive: true, force: true });
     } else {
-      // Targeted deletion of just one subkey resource — no cascade beyond it.
+      // Targeted deletion of just one subkey resource — no cascade beyond it. The subkey's own
+      // provider-state sidecar is part of THAT resource, not of anything beyond it, so it goes too:
+      // leaving it would strand opaque state whose transcript no longer exists.
       rmIfExists(`${stem}.jsonl`);
       rmIfExists(`${stem}.jsonl.tail-quarantine`);
       rmIfExists(`${stem}.meta.json`);
+      rmIfExists(`${stem}${PROVIDER_STATE_FILE_SUFFIX}`);
     }
   }
 
