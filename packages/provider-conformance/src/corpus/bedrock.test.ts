@@ -55,8 +55,12 @@ describe("the WS-13 §13 corpus for bedrock-converse@1", () => {
       // the model cannot answer either, and the runner records that as a skip.
       gated["effort-mapping"] = async () => ({ skipped: "the seeded catalog row records no reasoning.efforts, so this model has no verified effort vocabulary to map onto" });
       gated["opaque-continuation"] = async () => ({ skipped: "the seeded catalog row records no reasoning.continuation, so this model declares no opaque continuation state" });
-      // `limit-rejection` is REQUIRED, so it is answered rather than skipped — through the refusal
-      // that still applies with no descriptor limit: a tool_reference the wire cannot express.
+      // `limit-rejection` is REQUIRED, so it cannot be skipped — but the seeded row declares NO
+      // `maxOutputTokens`, so on this target there is no declared limit to reject against. It is
+      // answered by the pre-request refusal that DOES still apply with no limit evidence (an image
+      // format Bedrock cannot represent), and that is a DIFFERENT question: it proves the
+      // refuse-before-sending machinery, not a limit rejection. Stated plainly rather than dressed
+      // up, and disclosed in the report — the real answer is Lane X putting the limit in the row.
       gated["limit-rejection"] = async ({ fake: f }) => {
         const before = f.requests.length;
         let refused = false;

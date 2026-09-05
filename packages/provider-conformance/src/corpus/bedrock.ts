@@ -95,11 +95,13 @@ export function createBedrockHarness(fake: FakeServer, opts: HarnessOptions = {}
   const descriptor = fixed === undefined && !("descriptor" in opts) ? CORPUS_DESCRIPTOR : fixed;
   const adapter = createBedrockConverseAdapter({
     ...(descriptor !== undefined ? { descriptors: () => descriptor } : {}),
-    // A deterministic no-op sleep: the corpus asserts the delay a retry REPORTED, never that a test
-    // waited for it.
-    retry: { sleep: async () => {}, ...(adapterOptions.retry ?? {}) },
     ...(asGeneratedEndpoint === true ? { vendorBaseUrl: fake.url } : {}),
     ...adapterOptions,
+    // AFTER the spread, deliberately. A deterministic no-op sleep is what keeps the corpus from
+    // actually waiting out a 2-second `Retry-After`; spreading `adapterOptions` over it let any
+    // caller passing `retry` silently reinstate the real one, turning a fast assertion about a
+    // REPORTED delay into a slow test that waits for it.
+    retry: { sleep: async () => {}, ...(adapterOptions.retry ?? {}) },
   });
 
   const credentials = createMemoryCredentialStore([
