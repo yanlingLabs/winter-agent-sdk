@@ -181,7 +181,27 @@ export async function boundedFetch(url: string, init: BoundedFetchInit): Promise
     if (!verdict.ok) throw policyRefusal(verdict.reason);
     // Drain the 3xx body so the connection can be reused rather than left half-read.
     void response.body?.cancel().catch(() => {});
-    if (!verdict.sameOrigin) headers = stripCredentialHeaders(headers);
+    if (!verdict.sameOrigin) {
+      // A CROSS-ORIGIN redirect of a request that HAS A BODY is refused outright, not merely
+      // stripped of its credentials.
+      //
+      // Dropping the Authorization header protects the KEY. It does nothing for the PAYLOAD, and a
+      // provider turn body is not innocuous: it replays `nativeState.items` (OpenAI
+      // `encrypted_content`, Gemini `thoughtSignature`), thinking blocks with their real signatures,
+      // the system prompt, and the whole conversation. Global Constraints are categorical that
+      // opaque provider state reaches the sidecar and nothing else — re-POSTing it to a host the
+      // provider named in a Location header is precisely the disclosure that rule exists to prevent.
+      //
+      // Nor is there a legitimate case to preserve: no provider in the cohort answers a turn request
+      // with a cross-origin redirect. A GET (discovery, a token endpoint) still follows, with its
+      // credentials stripped.
+      if (requestInit.body !== undefined && requestInit.body !== null) {
+        throw policyRefusal(
+          `provider redirected a request WITH A BODY from ${policy.origin} to ${verdict.origin}; refusing to re-send the request payload (which may carry conversation content and opaque provider state) to another origin`,
+        );
+      }
+      headers = stripCredentialHeaders(headers);
+    }
     currentUrl = target;
   }
 }

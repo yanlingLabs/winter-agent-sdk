@@ -251,6 +251,16 @@ describe("estimateCostUsd (R6-H)", () => {
     expect(result.costBasis).toBe("list");
   });
 
+  test("an INFERRED price is 0 / \"unknown\" — `costBasis: \"list\"` is a claim about published prices", () => {
+    // R6-9: "`official-doc` evidence -> costBasis: \"list\"". Returning "list" for a price extracted
+    // from upstream or inferred would launder a guess into the one assurance this function exists to
+    // withhold — the same reasoning that keeps invented prices out of the seed catalog.
+    const inferred = priced({
+      pricing: { value: { inputPerMTokUsd: 3, outputPerMTokUsd: 15 }, source: "upstream-static", confidence: "inferred" },
+    });
+    expect(estimateCostUsd({ inputTokens: 1_000_000, outputTokens: 1_000_000 }, inferred)).toEqual({ costUsd: 0, costBasis: "unknown" });
+  });
+
   test("every seed model is currently unpriced — the disclosed seed gap, pinned as a test", () => {
     for (const model of catalog.models) {
       expect(estimateCostUsd({ inputTokens: 1_000_000, outputTokens: 1_000_000 }, model)).toEqual({ costUsd: 0, costBasis: "unknown" });

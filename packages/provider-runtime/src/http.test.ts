@@ -130,7 +130,10 @@ describe("boundedFetch — redirects (R6-11: manual, revalidated, no credential 
     // host the user never named.
     const second = fake(() => new Response("second", { status: 200 }));
     const first = fake(() => new Response(null, { status: 302, headers: { location: `${second.origin}/v1/next` } }));
+    // A GET (discovery, a token endpoint): no payload to leak, so the hop follows with its
+    // credentials stripped. The body case is refused outright by the test below.
     const res = await boundedFetch(`${first.origin}/v1/start`, {
+      method: "GET",
       headers: { authorization: `Bearer ${TEST_KEY}`, "x-api-key": TEST_KEY, cookie: `s=${TEST_KEY}`, "content-type": "application/json" },
       timeoutMs: 5000,
       maxBodyBytes: 1024,
@@ -143,6 +146,43 @@ describe("boundedFetch — redirects (R6-11: manual, revalidated, no credential 
     expect(second.log[0]!.headerNames).not.toContain("cookie");
     // A non-credential header survives; stripping it would break the request for no benefit.
     expect(second.log[0]!.headerNames).toContain("content-type");
+  });
+
+  test("REFUSES a cross-origin redirect of a request that has a BODY — the payload is not just a key", async () => {
+    // Stripping Authorization protects the KEY; it does nothing for the PAYLOAD. A turn body replays
+    // opaque provider state (encrypted_content, thoughtSignature), signed thinking blocks, the system
+    // prompt and the whole conversation — and Global Constraints are categorical that opaque state
+    // reaches the sidecar and nothing else. The second fake's EMPTY log is the assertion that matters.
+    const second = fake(() => new Response("second", { status: 200 }));
+    const first = fake(() => new Response(null, { status: 307, headers: { location: `${second.origin}/v1/next` } }));
+    await expect(
+      boundedFetch(`${first.origin}/v1/messages`, {
+        method: "POST",
+        body: JSON.stringify({ messages: [{ role: "user", content: "secret conversation" }] }),
+        headers: { authorization: `Bearer ${TEST_KEY}`, "content-type": "application/json" },
+        timeoutMs: 5000,
+        maxBodyBytes: 1024,
+        policy: policyFor(first.origin),
+      }),
+    ).rejects.toMatchObject({ code: "capability" });
+    expect(second.log).toHaveLength(0);
+  });
+
+  test("a SAME-origin redirect of a request with a body still follows — the payload never left the origin", async () => {
+    const f = fake((_req, url) =>
+      url.pathname === "/v1/messages"
+        ? new Response(null, { status: 307, headers: { location: "/v1/messages/retry" } })
+        : new Response("arrived", { status: 200 }),
+    );
+    const res = await boundedFetch(`${f.origin}/v1/messages`, {
+      method: "POST",
+      body: "{}",
+      timeoutMs: 5000,
+      maxBodyBytes: 1024,
+      policy: policyFor(f.origin),
+    });
+    expect(await res.text()).toBe("arrived");
+    expect(f.log.map((e) => e.path)).toEqual(["/v1/messages", "/v1/messages/retry"]);
   });
 
   test("refuses a redirect the policy rejects, and never issues the second request", async () => {

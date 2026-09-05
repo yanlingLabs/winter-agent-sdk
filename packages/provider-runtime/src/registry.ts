@@ -105,8 +105,15 @@ export interface UsageForCost {
  * zero would silently under-report, and the basis stays `"list"` because a real list price was used.
  */
 export function estimateCostUsd(usage: UsageForCost, descriptor: WinterModelDescriptor | undefined): { costUsd: number; costBasis: "list" | "unknown" } {
-  const pricing = descriptor?.pricing?.value;
-  if (pricing === undefined) return { costUsd: 0, costBasis: "unknown" };
+  const evidence = descriptor?.pricing;
+  // R6-9 words the rule as "`official-doc` evidence → `costBasis: \"list\"`", and it is taken
+  // literally: `"list"` is a claim that these are the vendor's PUBLISHED prices. A row priced from
+  // an upstream extraction or an inference is a guess, and returning `"list"` for it would launder
+  // that guess into exactly the assurance this function exists to withhold — the same reasoning
+  // that keeps invented prices out of the seed catalog. An inferred price therefore reports
+  // 0 / "unknown", identically to no price at all.
+  if (evidence === undefined || evidence.source !== "official-doc") return { costUsd: 0, costBasis: "unknown" };
+  const pricing = evidence.value;
   const perMillion = (tokens: number, rate: number): number => (tokens / 1_000_000) * rate;
   const cacheRead = usage.cacheReadTokens ?? 0;
   const cacheWrite = usage.cacheWriteTokens ?? 0;
