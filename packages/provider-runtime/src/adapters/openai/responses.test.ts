@@ -133,7 +133,7 @@ describe("buildResponsesBody", () => {
 
   test("tool_choice's three arms map to the wire's three spellings", () => {
     const model = descriptor();
-    const arms: Array<[TurnRequest["toolChoice"], unknown]> = [
+    const arms: Array<[NonNullable<TurnRequest["toolChoice"]>, unknown]> = [
       [{ type: "auto" }, "auto"],
       [{ type: "any" }, "required"],
       [{ type: "tool", name: "Read" }, { type: "function", name: "Read" }],
