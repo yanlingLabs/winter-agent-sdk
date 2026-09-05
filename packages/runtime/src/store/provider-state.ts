@@ -27,6 +27,7 @@ import { randomUUID } from "node:crypto";
 import { closeSync, constants as fsConstants, fsyncSync, mkdirSync, openSync, readFileSync, statSync, writeSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import type { MessageOrigin, ProviderNativeState } from "@yanlinglabs/winter-provider-runtime";
+import { PROVIDER_STATE_FILE_SUFFIX } from "@yanlinglabs/winter-agent-sdk";
 
 /** The `SessionStoreEntry.type` discriminant every record carries. One string, one place. */
 export const PROVIDER_STATE_ENTRY_TYPE = "winter_provider_state" as const;
@@ -41,8 +42,16 @@ export const PROVIDER_STATE_ENTRY_TYPE = "winter_provider_state" as const;
  */
 export const PROVIDER_STATE_SUBPATH = "provider-state" as const;
 
-/** The filename suffix of the neighbour file. Exported because the P4-M read deny names the same shape and the two must not drift. */
-export const PROVIDER_STATE_FILE_SUFFIX = ".provider-state.jsonl" as const;
+/**
+ * The filename suffix of the neighbour file, RE-EXPORTED from the sdk store.
+ *
+ * ONE DECLARATION (re-review round 2). The sdk's `delete()` must name this file to remove it and
+ * cannot import the runtime (WS-02 §3), so the string is declared there and imported here -- the same
+ * direction every other shared store constant takes. This package still owns the record SEMANTICS;
+ * only the literal moved. The P4-M read deny and the sidecar path builder both read it from here, so
+ * they cannot drift from what the deletion transaction actually removes.
+ */
+export { PROVIDER_STATE_FILE_SUFFIX };
 
 export type ProviderStateKind = "origin" | "native-state" | "summary" | "handoff";
 
@@ -277,6 +286,16 @@ export function coerceProviderStateRecord(value: unknown): ProviderStateRecord |
  *
  * Returns the number of records copied -- `0` for a source with no sidecar, which is not an error:
  * a pre-P6 source has nothing to carry, and the fork is then in exactly the state the source was.
+ *
+ * **THERE IS A SECOND FORK DOOR THIS DOES NOT COVER, and it is disclosed rather than silently
+ * half-fixed** (P6 T3 re-review round 2). `resolveEngineSession`'s `resume + forkSession` path calls
+ * this; the PUBLIC `forkSession(sessionId, opts)` in `packages/sdk/src/sessions.ts` calls
+ * `forkSessionByKey` bare, so a host forking through the session API still lands without the chain
+ * or the identity block -- and therefore resumes on the pre-P6 SILENT path, exactly the state this
+ * function exists to prevent. It is not fixed here because the sdk cannot import this codec (WS-02
+ * §3's dependency inversion), so closing it means a store-level GENERIC sidecar copy in
+ * `fork-session.ts` -- a change to a shared primitive that four lanes are currently building on.
+ * Recorded as a fix-wave item in task-3-report.md.
  */
 export function copyProviderStateForFork(sourcePath: string, destPath: string, destSessionId: string): number {
   const records = readProviderState(sourcePath);
