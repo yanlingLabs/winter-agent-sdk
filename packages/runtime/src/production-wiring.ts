@@ -282,6 +282,10 @@ export interface ProductionWiring {
     systemPromptAssembler: SystemPromptAssembler;
     skillRuntime: { index: SkillIndex; skillOverrides?: SkillOverrides };
     structuredOutput: StructuredOutputSeam;
+    /** I4: a user-tier `PreToolUse` deny must govern a child's tool calls too. */
+    extraHookEntries: readonly SourcedHookEntry[];
+    /** I4: children auto-compact. Its OWN controller -- the carried-summary memo is per-controller. */
+    compactionController: CompactionController;
   };
   /**
    * Non-fatal problems worth telling a host about: a malformed `.winter/mcp.json`, a plugin that
@@ -556,6 +560,14 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
       // `agent({schema})` rides exactly that), and `outputFormat` with NO seam is a hard
       // `error_during_execution` on the first round (T3's concern 3).
       structuredOutput,
+      extraHookEntries,
+      // A SECOND controller, deliberately, not the parent's object: `createCompactionController`
+      // memoises the prior summary per instance so it is carried forward verbatim rather than
+      // re-summarized, and a child folding its own history into the parent's memo would carry a
+      // child's summary into the parent's next compaction.
+      compactionController: createCompactionController({
+        ...(config.compactionThreshold !== undefined ? { compactionThreshold: config.compactionThreshold } : {}),
+      }),
     },
     warnings,
     dispose(): void {

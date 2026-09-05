@@ -128,6 +128,8 @@ import { resolveChildResumeMode, ChildResumeModeIncomparableError } from "../per
 import type { SystemPromptAssembler } from "../context/seam.ts";
 import { registerSkillSessionRuntime, clearSkillSessionRuntime, type SkillSessionRuntime } from "../skills/runtime.ts";
 import type { StructuredOutputSeam } from "../structured/seam.ts";
+import type { SourcedHookEntry } from "../hooks/registry.ts";
+import type { CompactionController } from "../compaction/seam.ts";
 
 export interface ChildEngineFactoryDeps {
   provider: Provider;
@@ -214,6 +216,22 @@ export interface ChildEngineFactoryDeps {
   // a `Workflow` run would then fail on its first schema'd agent call rather than validating.
   // THE PARENT'S OWN INSTANCE (Lane K's NEEDS_CONTEXT 6): one compiled-validator cache per session.
   structuredOutput?: StructuredOutputSeam;
+  // --- Phase 5 fix wave, I4 ----------------------------------------------------------------------
+  //
+  // T8 threaded THREE of the parent's session seams to children (assembler, skills, structured) and
+  // left these two behind.
+  //
+  // `extraHookEntries` is the security half. `engine.ts` builds `allHookEntries = [...config.hooks
+  // entries, ...extraHookEntries]` for the PARENT only, and a child mirrors `hooks: deps.parentHooks`
+  // -- the `Options.hooks` CALLBACKS alone. So a `PreToolUse` command hook a user wrote into
+  // `~/.winter/settings.json` to deny `rm -rf` ran for the parent's Bash calls and was SILENT for
+  // every subagent's: WS-07 §11 ("the same rules apply over child actions") and WS-08 §2, in a new
+  // dimension of the P4 C1 class (a child auto-approving what its parent gates).
+  //
+  // `compactionController` is the correctness half: with none, `maybeAutoCompact` returns immediately
+  // and a long-running child never compacts. Inert against a mock provider, live at P6.
+  extraHookEntries?: readonly SourcedHookEntry[];
+  compactionController?: CompactionController;
 }
 
 export function createChildEngineFactory(deps: ChildEngineFactoryDeps): ChildEngineFactory {
@@ -574,6 +592,13 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
         // Only meaningful when this child carries an `outputFormat` -- but supplied unconditionally,
         // because the alternative is a child that fails its FIRST round the moment a caller sets one.
         ...(deps.structuredOutput !== undefined ? { structuredOutput: deps.structuredOutput } : {}),
+        // I4: the settings-file and plugin hook entries the PARENT runs with. A user-tier
+        // `PreToolUse` deny must govern a child's tool calls too.
+        ...(deps.extraHookEntries !== undefined ? { extraHookEntries: deps.extraHookEntries } : {}),
+        // I4: children auto-compact. Same controller instance -- it is stateless per call except for
+        // the carried-summary memo, which is per-CONTROLLER and therefore per-parent; a child's own
+        // compaction would poison that memo, so a child gets its own via the factory below.
+        ...(deps.compactionController !== undefined ? { compactionController: deps.compactionController } : {}),
         env,
       }).catch(() => {
         settle("failed", "child engine process exited unexpectedly");

@@ -32,6 +32,8 @@ import { createChildEngineFactory } from "./child-engine.ts";
 import type { SystemPromptAssembler } from "../context/seam.ts";
 import type { SkillSessionRuntime } from "../skills/runtime.ts";
 import type { StructuredOutputSeam } from "../structured/seam.ts";
+import type { SourcedHookEntry } from "../hooks/registry.ts";
+import type { CompactionController } from "../compaction/seam.ts";
 
 export interface DefaultChildEngineFactoryOptions {
   provider: Provider;
@@ -59,6 +61,10 @@ export interface DefaultChildEngineFactoryOptions {
   // The session's own structured-output seam -- see ChildEngineFactoryDeps for why a child without
   // one fails its first round the moment `agent({schema})` sets an `outputFormat`.
   structuredOutput?: StructuredOutputSeam;
+  /** Phase 5 fix wave, I4: the settings-file + plugin hook entries -- see ChildEngineFactoryDeps. */
+  extraHookEntries?: readonly SourcedHookEntry[];
+  /** Phase 5 fix wave, I4: a compaction controller for children -- see ChildEngineFactoryDeps. */
+  compactionController?: CompactionController;
 }
 
 // WHOLE-BRANCH M3(d) -- THE ONE-LIVE-SESSION-PER-PROCESS ASSUMPTION, stated plainly because this
@@ -109,6 +115,8 @@ export function registerDefaultChildEngineFactory(opts: DefaultChildEngineFactor
       ...(opts.systemPromptAssembler !== undefined ? { systemPromptAssembler: opts.systemPromptAssembler } : {}),
       ...(opts.skillRuntime !== undefined ? { skillRuntime: opts.skillRuntime } : {}),
       ...(opts.structuredOutput !== undefined ? { structuredOutput: opts.structuredOutput } : {}),
+      ...(opts.extraHookEntries !== undefined ? { extraHookEntries: opts.extraHookEntries } : {}),
+      ...(opts.compactionController !== undefined ? { compactionController: opts.compactionController } : {}),
     }),
   );
 }

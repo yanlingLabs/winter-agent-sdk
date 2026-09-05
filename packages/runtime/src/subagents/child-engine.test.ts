@@ -19,6 +19,7 @@ import { registerChildEngineFactory, resetChildEngineFactoryForTest, type SpawnC
 // Phase 5 Task 8: the two child threads with no fixture of their own until now.
 import { createStructuredOutputSeam } from "../structured/ajv-seam.ts";
 import { SkillIndex } from "../skills/store.ts";
+import type { CompactionController } from "../compaction/seam.ts";
 import { createChildEngineFactory, type ChildEngineFactoryDeps } from "./child-engine.ts";
 import { resetSpawnLimitsForTest } from "./limits.ts";
 import { loadAgentDefinitions } from "./definitions.ts";
@@ -2142,6 +2143,129 @@ describe("child-engine.ts: T8 -- the structured seam and the skill index reach a
       expect(seen[0]).toContain("CHILD SKILL BODY MARKER");
     } finally {
       rmSync(skillHome, { recursive: true, force: true });
+    }
+  });
+});
+
+// ================================================================================================
+// Phase 5 fix wave, I4 — children get the settings-file hook entries and a compaction controller.
+// ================================================================================================
+//
+// T8 threaded THREE of the parent's session seams to children and left these two behind. The hook
+// half is the security one, and the scenario is concrete: a user writes a `PreToolUse` command hook
+// into `~/.winter/settings.json` that denies `rm -rf`. It ran for the parent's Bash calls and was
+// SILENT for every subagent's -- WS-07 §11 and WS-08 §2, in a new dimension of the P4 C1 class.
+describe("child-engine.ts: I4 -- a settings-file hook governs a CHILD, and a child can compact", () => {
+  // DRIVEN BY ITS OWN HARNESS, not `driveParent`. That helper's `baseConfig()` runs under
+  // `bypassPermissions` from a FIXED, possibly-absent cwd -- and under bypass the permission
+  // pipeline short-circuits before the hook stage, so a bypass child never consults `PreToolUse` at
+  // all and the fixture would measure nothing. Found by running it: the marker never appeared while
+  // the identical wiring, driven in `default` mode from a real temp cwd, fired every time.
+  async function driveWithChild(
+    deps: Partial<ChildEngineFactoryDeps> & { provider: Provider },
+    cwd: string,
+    childCalls: string[],
+    extra: Partial<RuntimeConfig> = {},
+  ): Promise<number> {
+    registerSpawnProbe();
+    cleanupToolNames.push(SPAWN_PROBE);
+    registerChildEngineFactory(createChildEngineFactory(deps as ChildEngineFactoryDeps));
+    const { host, runtime } = createInMemoryChannel();
+    const req: SpawnChildRequest = { parentToolUseId: "call-1", prompt: "do a thing", runInBackground: false };
+    const done = runEngine({
+      config: {
+        sessionId: `i4-${Math.random().toString(36).slice(2, 8)}`,
+        cwd,
+        model: "sonnet",
+        // `permissions.allow`, NOT `allowedTools`: only the former is mirrored onto a child
+        // (`parentPermissionRules`, the P4 C1 fix), so without it the child's own call reaches a
+        // prompt nothing here answers and the child stalls instead of running its tool.
+        permissions: { allow: [SPAWN_PROBE, ...childCalls] },
+        ...extra,
+      },
+      input: runtime.input,
+      output: runtime.output,
+      provider: scriptedProvider([{ kind: "tool_use", calls: [{ id: "call-1", name: SPAWN_PROBE, input: req }] }, { kind: "text", text: "parent done" }]),
+    });
+    host.output.write({ type: "user", text: "go" });
+    host.output.write({ type: "control_request", requestId: "e", subtype: "end_input", payload: undefined });
+    await drain(host.input);
+    return done;
+  }
+
+  /** A child that makes exactly one tool call, then answers with text. */
+  function childCalling(name: string): Provider {
+    return {
+      async generate({ messages }) {
+        if (messages.some((m) => m.role === "tool")) return { kind: "text", text: "child done" };
+        return { kind: "tool_use", calls: [{ id: "child-1", name, input: {} }] };
+      },
+    };
+  }
+
+  test("a PreToolUse command hook supplied to the factory FIRES inside a child", async () => {
+    // A REAL `{type:"command"}` entry -- what a settings-file hook block actually produces, and the
+    // only shape observable without a host: a callback-shaped entry routes to
+    // `createBridgeHookInvoker`, which sends a control_request nothing here answers. The MARKER FILE
+    // is the observable, because a hook that ran and a hook that was never consulted produce the
+    // same frames.
+    const dir = mkdtempSync(join(tmpdir(), "winter-i4-hook-"));
+    try {
+      const marker = join(dir, "fired.txt");
+      const code = await driveWithChild(
+        {
+          provider: childCalling("ReadNotifications"),
+          extraHookEntries: [{ id: "PreToolUse:user:0:0", event: "PreToolUse", source: "user", command: `printf child > ${marker}` }] as unknown as NonNullable<ChildEngineFactoryDeps["extraHookEntries"]>,
+        },
+        dir,
+        ["ReadNotifications"],
+      );
+      expect(code).toBe(0);
+      expect(existsSync(marker), "the parent's settings-file hook entries must reach the child's own registry").toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("a child WITHOUT the thread never fires it -- the discriminating half", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "winter-i4-nohook-"));
+    try {
+      const marker = join(dir, "fired.txt");
+      const code = await driveWithChild({ provider: childCalling("ReadNotifications") }, dir, ["ReadNotifications"]);
+      expect(code).toBe(0);
+      expect(existsSync(marker), "a factory built the pre-I4 way leaves the child ungoverned").toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("a child CROSSING the context threshold compacts -- the controller reaches it", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "winter-i4-compact-"));
+    try {
+      const compactions: number[] = [];
+      const controller: CompactionController = {
+        shouldCompact: (accountant) => accountant.contextTokens() >= 900,
+        async compact(input) {
+          compactions.push(input.messages.length);
+          return { summary: "child summary", retained: input.messages.slice(-1), preTokens: input.accountant.contextTokens(), evidencedToolNames: [] };
+        },
+      };
+      // The CHILD's provider reports enough usage to cross AND answers the summarizer separately --
+      // Lane K's own named trap: the summarizer runs on the same provider object.
+      let turn = 0;
+      const childProvider: Provider = {
+        async generate(input) {
+          if (input.system?.includes("compacting a conversation") === true) return { kind: "text", text: "SUMMARY" };
+          turn++;
+          if (turn === 1) return { kind: "tool_use", calls: [{ id: "child-1", name: "ReadNotifications", input: {} }], usage: { inputTokens: 950, outputTokens: 0 } };
+          return { kind: "text", text: "child done", usage: { inputTokens: 950, outputTokens: 0 } };
+        },
+      };
+      const code = await driveWithChild({ provider: childProvider, compactionController: controller }, dir, ["ReadNotifications"], { contextWindowTokens: 1000 });
+      expect(code).toBe(0);
+      expect(compactions.length, "with no controller `maybeAutoCompact` returns immediately and a child never compacts").toBeGreaterThan(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 });
