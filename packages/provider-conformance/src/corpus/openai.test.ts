@@ -9,19 +9,22 @@ import { describe, expect, test } from "bun:test";
 import { createResponsesAdapter } from "../../../provider-runtime/src/adapters/openai/responses.ts";
 import { createChatCompletionsAdapter } from "../../../provider-runtime/src/adapters/openai/chat-completions.ts";
 import { createCodexOauthAdapter } from "../../../provider-runtime/src/adapters/openai/codex-oauth.ts";
+import { QuotaManager } from "../../../provider-runtime/src/adapters/openai/quota.ts";
 import { createLocalOpenAIAdapter } from "../../../provider-runtime/src/adapters/openai/local.ts";
 import { FAST_RETRY, descriptor, testContext, testDiscoveryContext, type DescriptorOverrides } from "../../../provider-runtime/src/adapters/openai/testing.ts";
 import { discoverModels } from "@yanlinglabs/winter-provider-runtime";
 import type { CredentialRef, ProviderAdapter, ProviderEvent, TurnRequest } from "@yanlinglabs/winter-provider-runtime";
 import { createMemoryCredentialStore } from "../../../provider-runtime/src/credentials/memory.ts";
 import { formatCorpusReport, runAdapterCorpus } from "./runner.ts";
-import { SCENARIO, openAiCorpusCases, type CorpusHarness, type HarnessOverrides } from "./openai.ts";
+import { FOREIGN_MARKER, OPAQUE_MARKER, SCENARIO, openAiCorpusCases, type CorpusHarness, type HarnessOverrides } from "./openai.ts";
 import { chatCorpusScenarios, responsesCorpusScenarios } from "./openai-scenarios.ts";
 import { startOpenAiResponsesFake } from "../fakes/openai-responses.ts";
 import { startOpenAiChatFake } from "../fakes/openai-chat.ts";
 import { startCodexFake, FAKE_ACCESS_TOKEN, FAKE_ACCOUNT_ID, FAKE_REFRESH_TOKEN } from "../fakes/codex-oauth.ts";
 import { openAiModelsRoutes } from "../fakes/openai-models.ts";
+import { noRequestContains } from "../fakes/server.ts";
 import type { FakeServer } from "../fakes/server.ts";
+import { adapterAsProvider } from "../../../runtime/src/provider/bridge.ts";
 
 /** A short stall budget: the stall case must fail fast, and every other scenario's frames are well inside it. */
 const STALL_MS = 200;
@@ -32,6 +35,17 @@ function descriptorsFor(base: DescriptorOverrides, overrides?: DescriptorOverrid
 }
 
 const CODEX_REF: Extract<CredentialRef, { kind: "keychain" }> = { kind: "keychain", account: `codex-oauth:${FAKE_ACCOUNT_ID}` };
+
+/**
+ * A quota manager whose WINDOW WAIT is mocked, exactly as `FAST_RETRY` mocks the retry backoff.
+ *
+ * Not redundant with it: in production the retry backoff and the quota window are the same wait
+ * (the backoff consumes the window), but a fixture that mocks only the retry sleep still spends the
+ * real `Retry-After` here — twice per 429 scenario. The STATE is real; only the clock is not.
+ */
+function fastQuota(): QuotaManager {
+  return new QuotaManager({ sleep: () => new Promise<void>((r) => setTimeout(r, 1)) });
+}
 
 // --- harnesses ----------------------------------------------------------------------------------------
 
@@ -65,6 +79,7 @@ function codexHarness(): CorpusHarness {
       generatedBaseUrl: url,
       tokenUrl: `${url}/oauth/token`,
       retry: FAST_RETRY,
+      quota: fastQuota(),
       ...(overrides?.noDescriptors === true ? {} : { descriptors: descriptorsFor(base, overrides?.descriptor) }),
     });
   return {
@@ -232,7 +247,7 @@ describe("live wire details the corpus does not ask about", () => {
     const fake = await startCodexFake({ scenarios: responsesCorpusScenarios(), requireRefreshFor: [SCENARIO.happy] });
     try {
       const credentials = createMemoryCredentialStore([[CODEX_REF, { kind: "oauth", accessToken: FAKE_ACCESS_TOKEN, refreshToken: FAKE_REFRESH_TOKEN, accountId: FAKE_ACCOUNT_ID, expiresAt: Date.now() + 3_600_000 }]]);
-      const adapter = createCodexOauthAdapter({ generatedBaseUrl: fake.url, tokenUrl: `${fake.url}/oauth/token`, retry: FAST_RETRY });
+      const adapter = createCodexOauthAdapter({ generatedBaseUrl: fake.url, tokenUrl: `${fake.url}/oauth/token`, retry: FAST_RETRY, quota: fastQuota() });
       const ctx = { ...testContext({ providerId: "codex-oauth", stallTimeoutMs: STALL_MS }), credentials, authRef: CODEX_REF };
       const events = await drain(adapter.streamTurn({ model: SCENARIO.happy, messages: [] }, ctx));
 
@@ -262,11 +277,19 @@ describe("live wire details the corpus does not ask about", () => {
     const fake = await startCodexFake({ scenarios: responsesCorpusScenarios() });
     try {
       const credentials = createMemoryCredentialStore([[CODEX_REF, { kind: "oauth", accessToken: FAKE_ACCESS_TOKEN, refreshToken: FAKE_REFRESH_TOKEN, accountId: FAKE_ACCOUNT_ID, expiresAt: Date.now() + 3_600_000 }]]);
-      const adapter = createCodexOauthAdapter({ generatedBaseUrl: fake.url, tokenUrl: `${fake.url}/oauth/token`, retry: FAST_RETRY });
+      const adapter = createCodexOauthAdapter({ generatedBaseUrl: fake.url, tokenUrl: `${fake.url}/oauth/token`, retry: FAST_RETRY, quota: fastQuota() });
       const events = await drain(adapter.streamTurn({ model: SCENARIO.rateLimit, messages: [] }, { ...testContext({ providerId: "codex-oauth", stallTimeoutMs: STALL_MS }), credentials, authRef: CODEX_REF }));
-      const rateLimit = events.find((e) => e.type === "rate_limit");
-      expect(rateLimit).toBeDefined();
-      expect(rateLimit?.type === "rate_limit" ? rateLimit.kind : "").toBe("subscription-quota");
+      const limits = events.filter((e): e is Extract<ProviderEvent, { type: "rate_limit" }> => e.type === "rate_limit");
+      expect(limits.length).toBeGreaterThanOrEqual(1);
+      expect(limits[0]!.kind).toBe("subscription-quota");
+      // THE STATUS, not merely the kind. Asserting `kind` alone passed while the event said
+      // `status: "allowed"` ON A RATE LIMIT — the adapter recorded a zero-length window, so the
+      // manager read `ok` on the very next line and the recovery event never fired either.
+      expect(limits[0]!.info.status).toBe("rejected");
+      expect(typeof limits[0]!.info.resetsAt).toBe("number");
+      // And the account is reported SERVING again once the retried turn completes.
+      expect(limits.at(-1)!.info).toEqual({ status: "allowed" });
+      expect(events.indexOf(limits.at(-1)!)).toBeGreaterThan(events.findIndex((e) => e.type === "done") - 1);
       // The pinned 429 path is UNCHANGED and still present: the subscription event is an addition,
       // never a replacement.
       expect(events.some((e) => e.type === "retry" && e.errorStatus === 429 && e.error === "rate_limit")).toBe(true);
@@ -362,14 +385,49 @@ describe("live wire details the corpus does not ask about", () => {
     });
   });
 
-  test("opaque state never reaches a stream frame, and a cross-domain replay never reaches the wire", async () => {
+  test("opaque state never reaches a stream frame", async () => {
     await withResponsesFake(async (fake) => {
       const adapter = createResponsesAdapter({ generatedBaseUrl: fake.url, retry: FAST_RETRY, descriptors: descriptorsFor({ efforts: ["low", "medium", "high"], continuation: "opaque-provider-state" }) });
       const events = await drain(adapter.streamTurn({ model: SCENARIO.reasoning, messages: [], effort: "high" }, testContext({ stallTimeoutMs: STALL_MS })));
       // The marker exists only inside `native_state`, whose sole sink is the sidecar.
       const nonState = events.filter((e) => e.type !== "native_state");
-      expect(JSON.stringify(nonState)).not.toContain("OPAQUE-CONTINUATION-MARKER");
+      expect(JSON.stringify(nonState)).not.toContain(OPAQUE_MARKER);
       expect(events.some((e) => e.type === "native_state")).toBe(true);
+    });
+  });
+
+  test("a CROSS-DOMAIN replay never reaches the wire — through the real renderer, end to end", async () => {
+    // The Global Constraint's own negative, proved on the LIVE REQUEST rather than on a renderer
+    // unit test: opaque items are meaningful only to the provider that minted them, so state from
+    // another continuation domain must be dropped before the body is built. `adapterAsProvider`
+    // is the real production path (identity renderer included), and `noRequestContains` is the
+    // same shape capture (H) used to prove the sidecar was never sent to a model.
+    await withResponsesFake(async (fake) => {
+      const adapter = createResponsesAdapter({ generatedBaseUrl: fake.url, retry: FAST_RETRY, descriptors: descriptorsFor({ efforts: ["low", "medium", "high"], continuation: "opaque-provider-state" }) });
+      const resolved = {
+        providerId: "openai",
+        modelKey: `corpus/${SCENARIO.happy}`,
+        providerModelId: SCENARIO.happy,
+        adapterId: adapter.id,
+        adapter,
+        descriptor: descriptorsFor({ efforts: ["low", "medium", "high"], continuation: "opaque-provider-state" })(SCENARIO.happy),
+        provider: { id: "openai", displayName: "OpenAI", adapterId: adapter.id } as never,
+        continuationDomain: "corpus-domain",
+        catalogVersion: "0.0.0-seed",
+      };
+      const provider = adapterAsProvider(resolved, testContext({ stallTimeoutMs: STALL_MS }));
+      await provider.generate({
+        messages: [
+          { role: "user", content: "go" },
+          // SAME domain: replayed.
+          { role: "assistant", content: "mine", nativeState: { family: "openai", continuationDomain: "corpus-domain", items: [{ type: "reasoning", encrypted_content: OPAQUE_MARKER }] } },
+          // ANOTHER domain: must be dropped, items and all.
+          { role: "assistant", content: "theirs", nativeState: { family: "google", continuationDomain: "some-other-domain", items: [{ type: "reasoning", encrypted_content: FOREIGN_MARKER }] } },
+        ],
+      });
+      expect(noRequestContains(fake, FOREIGN_MARKER)).toBe(true);
+      // The in-domain half DID ride, so the negative is not passing because nothing replayed at all.
+      expect(fake.requests.at(-1)?.body.includes(OPAQUE_MARKER)).toBe(true);
     });
   });
 });

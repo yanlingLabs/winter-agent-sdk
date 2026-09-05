@@ -24,6 +24,13 @@ export interface QuotaManagerOptions {
   maxConcurrent?: number;
   /** Injected so a fixture never waits out a real limit window. */
   now?: () => number;
+  /**
+   * How `waitIfLimited` waits. Injectable for the same reason `RetryPolicyOptions.sleep` is, and it
+   * is NOT redundant with it: in production the retry backoff and the quota window are the same
+   * wait (the backoff consumes the window), but a fixture that mocks only the retry sleep still
+   * spends the real window here — twice per 429 scenario.
+   */
+  sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
 }
 
 /**
@@ -38,6 +45,7 @@ export interface QuotaManagerOptions {
 export class QuotaManager {
   private readonly maxConcurrent: number;
   private readonly now: () => number;
+  private readonly sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
   private active = 0;
   private waiters: Array<() => void> = [];
   private limitedUntil = 0;
@@ -47,6 +55,7 @@ export class QuotaManager {
   constructor(opts: QuotaManagerOptions = {}) {
     this.maxConcurrent = opts.maxConcurrent ?? 4;
     this.now = opts.now ?? Date.now;
+    this.sleep = opts.sleep ?? defaultQuotaSleep;
   }
 
   state(): QuotaState {
@@ -112,16 +121,21 @@ export class QuotaManager {
   async waitIfLimited(signal?: AbortSignal): Promise<void> {
     const wait = this.limitedUntil - this.now();
     if (wait <= 0 || signal?.aborted === true) return;
-    await new Promise<void>((resolve) => {
-      const done = (): void => {
-        clearTimeout(timer);
-        signal?.removeEventListener("abort", done);
-        resolve();
-      };
-      const timer = setTimeout(done, wait);
-      signal?.addEventListener("abort", done, { once: true });
-    });
+    await this.sleep(wait, signal);
   }
+}
+
+/** The default wait: a timer that an abort cuts short rather than outlasts. */
+function defaultQuotaSleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise<void>((resolve) => {
+    const done = (): void => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", done);
+      resolve();
+    };
+    const timer = setTimeout(done, ms);
+    signal?.addEventListener("abort", done, { once: true });
+  });
 }
 
 /**

@@ -672,7 +672,16 @@ export function rowToModel(row: unknown): ModelCatalogResult["models"][number] {
  * `unsupported` means the adapter cannot CHECK this ref kind — never that the credential is bad. A
  * `none` ref against a non-local endpoint is `missing`, which is the actionable answer.
  */
-export async function validateViaModels(ref: CredentialRef, ctx: ProviderContext, endpoint: ResolvedEndpoint, headers: Record<string, string>, options: OpenAiAdapterOptions, hasCredential: boolean): Promise<CredentialStatus> {
+export async function validateViaModels(
+  ref: CredentialRef,
+  ctx: ProviderContext,
+  endpoint: ResolvedEndpoint,
+  headers: Record<string, string>,
+  options: OpenAiAdapterOptions,
+  hasCredential: boolean,
+  /** Query parameters the probe must carry. Azure rejects EVERY call without `api-version`, so omitting it made a valid key report as unreachable. */
+  extraQuery: Record<string, string> = {},
+): Promise<CredentialStatus> {
   if (ref.kind === "aws-default-chain" || ref.kind === "file") {
     return { ok: false, code: "unsupported", message: `the OpenAI family cannot validate a credential reference of kind "${ref.kind}"` };
   }
@@ -680,7 +689,9 @@ export async function validateViaModels(ref: CredentialRef, ctx: ProviderContext
     return { ok: false, code: "missing", message: `no credential is configured for provider "${ctx.connection.providerId}"` };
   }
   try {
-    const response = await boundedFetch(`${endpoint.baseUrl}/models`, {
+    const probeUrl = new URL(`${endpoint.baseUrl}/models`);
+    for (const [name, value] of Object.entries(extraQuery)) probeUrl.searchParams.set(name, value);
+    const response = await boundedFetch(probeUrl.toString(), {
       method: "GET",
       headers,
       policy: endpoint.policy,

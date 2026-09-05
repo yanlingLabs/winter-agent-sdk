@@ -103,6 +103,36 @@ describe("azure specifics on the live wire", () => {
     });
   });
 
+  test("validateCredential SUCCEEDS for a valid key — its probe carries `api-version` too", async () => {
+    // It could not, before: `validateViaModels` built `/openai/models` with no query, Azure (and
+    // this fake) answered 400, and the 400 normalized to `network` — so a perfectly valid key
+    // reported as unreachable. No target's `validateCredential` was exercised anywhere, which is
+    // exactly why nothing caught it.
+    await withAzureFake(async (fake) => {
+      const adapter = createAzureOpenAIAdapter({ retry: FAST_RETRY });
+      const ctx = testContext({ providerId: "azure-openai", baseUrl: fake.url, local: true, deployment: AZURE_DEPLOYMENT, apiVersion: AZURE_CLASSIC_API_VERSION });
+      const status = await adapter.validateCredential(ctx.authRef, ctx);
+      expect(status).toEqual({ ok: true });
+      const probe = fake.requests.at(-1)!;
+      expect(probe.path).toBe("/openai/models");
+      expect(apiVersionOf(probe)).toBe(AZURE_CLASSIC_API_VERSION);
+    });
+  });
+
+  test("validateCredential reports a REJECTED key as invalid rather than unreachable", async () => {
+    const { startFake, jsonResponse } = await import("../fakes/server.ts");
+    const fake = await startFake({ routes: [{ path: "/openai/models", method: "GET", handler: () => jsonResponse({ error: { code: "401", message: "Access denied due to invalid subscription key." } }, 401) }] });
+    try {
+      const adapter = createAzureOpenAIAdapter({ retry: FAST_RETRY });
+      const ctx = testContext({ providerId: "azure-openai", baseUrl: fake.url, local: true, deployment: AZURE_DEPLOYMENT, apiVersion: AZURE_CLASSIC_API_VERSION });
+      const status = await adapter.validateCredential(ctx.authRef, ctx);
+      expect(status.ok).toBe(false);
+      expect(status.ok === false ? status.code : "").toBe("invalid");
+    } finally {
+      await fake.close();
+    }
+  });
+
   test("the fake itself refuses a request with no api-version — so a dropped parameter cannot pass quietly", async () => {
     // A guard on the GUARD: if this ever returns 200, every `api-version` assertion above becomes
     // vacuous, because nothing would fail when the parameter went missing.

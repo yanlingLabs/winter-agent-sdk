@@ -92,7 +92,9 @@ export function createAzureOpenAIAdapter(options: AzureAdapterOptions = {}): Pro
       const endpoint = resolveEndpoint(ctx, withAuthStyle);
       const auth = await resolveAuth(ctx, withAuthStyle.authStyle ?? "azure-api-key");
       const headers = buildHeaders({ policy: endpoint.policy, protocol: { accept: "application/json", ...auth.headers }, userSupplied: ctx.connection.headers });
-      return validateViaModels(ref, ctx, { ...endpoint, baseUrl: azureModelsBase(endpoint.baseUrl, routing) }, headers, withAuthStyle, auth.material !== null);
+      // `api-version` rides the PROBE too. Without it Azure answers 400 on every call, which
+      // normalized to `network` and reported a perfectly valid key as unreachable.
+      return validateViaModels(ref, ctx, { ...endpoint, baseUrl: azureModelsBase(endpoint.baseUrl, routing) }, headers, withAuthStyle, auth.material !== null, { "api-version": routing.apiVersion });
     },
 
     async listModels(ctx: DiscoveryContext): Promise<ModelCatalogResult> {

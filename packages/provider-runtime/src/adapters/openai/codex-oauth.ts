@@ -217,10 +217,18 @@ async function* codexTurn(req: TurnRequest, ctx: ProviderContext, options: Codex
           return undefined;
         }
       },
-      onRateLimited: (_retry, q) => {
+      onRateLimited: (retry, q) => {
         // R6-B: the retry itself is the pinned 429 path. What this ADDS is the subscription state,
         // which is the only thing `rate_limit` is allowed to describe.
-        quota.noteRateLimit(undefined);
+        //
+        // `retry.retryDelayMs` IS the window: `RetryPolicy.delayMs` returns the `Retry-After` the
+        // backend sent (clamped at 60 s) when it sent one, and the jittered backoff otherwise.
+        // Passing `undefined` here instead recorded a ZERO-length window — `limitedUntil = now`, so
+        // `state()` read `ok` on the very next line and the event went out saying `status:
+        // "allowed"` ON A RATE LIMIT, with the recovery event never firing either because
+        // `wasLimited` was never true. A test asserting only `kind === "subscription-quota"` passes
+        // either way, which is why the assertions below it now read `info.status`.
+        quota.noteRateLimit(retry.retryDelayMs);
         q.push(quotaEvent(quota.state()));
       },
       onSuccess: () => {

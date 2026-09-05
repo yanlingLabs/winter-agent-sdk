@@ -139,12 +139,6 @@ export function turnRequests(fake: FakeServer): RecordedRequest[] {
   return fake.requests.filter((r) => r.method === "POST");
 }
 
-function lastTurn(fake: FakeServer): RecordedRequest {
-  const requests = turnRequests(fake);
-  const last = requests.at(-1);
-  return last ?? fail("the fake received no turn request at all");
-}
-
 async function collect(stream: AsyncIterable<ProviderEvent>): Promise<ProviderEvent[]> {
   const out: ProviderEvent[] = [];
   for await (const event of stream) out.push(event);

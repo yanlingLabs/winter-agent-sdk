@@ -459,9 +459,18 @@ export async function* streamResponsesTurn(plan: ResponsesTurnPlan, signal: Abor
     })) {
       policy.commit();
       for (const event of mapper.map(sse.data)) yield event;
+      // Anything an observer queued while the stream was running (a quota state change) gets out
+      // HERE: `pumpEvents` only pumps while `openStream` is in flight, so a push after that point
+      // has no other door.
+      for (const event of queue.drain()) yield event;
     }
     for (const event of mapper.finish()) yield event;
     plan.onSuccess?.();
+    // The recovery observation is pushed BY `onSuccess`, i.e. after the pump has already returned.
+    // Without this drain it was queued and never yielded — the "your account is serving again"
+    // event simply never reached a host, and a test asserting only the FIRST rate_limit event
+    // passed anyway.
+    for (const event of queue.drain()) yield event;
   } catch (err) {
     yield errorEvent(err);
   }
