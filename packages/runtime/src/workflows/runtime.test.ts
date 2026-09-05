@@ -591,6 +591,10 @@ describe("abort chaining (WS-11 §1.8): stop cancels IN-FLIGHT bridged agents, n
   test("a stop() stops every live child the run spawned", async () => {
     const stopped: string[] = [];
     const r = rig({
+      // The cap is EXPLICIT because the default is CPU-derived (resolveConcurrencyCap): on a 2-vCPU
+      // CI runner it resolves to 1, the never-settling first child then holds the only slot, and the
+      // second child is never spawned at all -- which is what made this test fail on every linux run.
+      caps: { concurrency: 2 },
       spawnAgent: async (req) =>
         fakeChild({ neverSettle: true, onStop: () => stopped.push(req.prompt) }),
     });
