@@ -116,9 +116,11 @@ mismatches** against a third, independently re-fetched extraction of the same ve
 
 **A second checker, added in review round 1, because the first one cannot catch a wrong ATTRIBUTION.**
 A `file:line → expected-substring` check proves a cited line says what is claimed; it cannot prove the
-surrounding sentence credits the right symbol. Round 1 found exactly that failure — this document had
-named a `Query.setSettings` method the artifact does not contain (the real name is
-`applyFlagSettings`, `sdk.d.ts:2519`) on correctly-cited lines. Every identifier-shaped name this
+surrounding sentence credits the right symbol. Round 1 found exactly that failure — item (c) of this
+document named, on correctly-cited lines, a `Query` settings method the pinned artifact does not
+contain. (The literal misspelling is deliberately not reproduced here, so that a naive "this file must
+not contain X" sweep cannot trip on the sentence explaining the fix; the real name is
+`applyFlagSettings`, `sdk.d.ts:2519`.) Every identifier-shaped name this
 document asserts is now swept back against all six `.d.ts` files plus `package.json`: **269 names
 checked, and the only 20 absent are ones this document itself declares absent or names as
 non-artifact** — the runtime-captured wire names it states are undeclared (`text_delta`,
