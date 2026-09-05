@@ -77,8 +77,13 @@ export function doorFor(target: { readableState: "none" | "summary" | "full-expo
  */
 export function buildDecoration(input: DecorationInput): Decoration {
   const budget = input.maxChars === undefined ? undefined : Math.max(0, input.maxChars - decorationOverhead(input.source, input.door));
-  const { text, truncated } = trimToBudget(input.text, budget);
-  return { text: wrap(neutralizeDelimiters(text), input.source, input.door), door: input.door, truncated };
+  // NEUTRALISE FIRST, THEN TRIM. Escaping a forged delimiter GROWS the body by three characters per
+  // occurrence, so trimming first and escaping after let a hostile body overshoot the budget it had
+  // just been trimmed to fit (measured: 531 characters returned for `maxChars: 501`) -- and the whole
+  // point of bounding the finished text is that the number is true for every input, including the
+  // adversarial one.
+  const { text, truncated } = trimToBudget(neutralizeDelimiters(input.text), budget);
+  return { text: wrap(text, input.source, input.door), door: input.door, truncated };
 }
 
 /**
@@ -152,5 +157,8 @@ export function escapeInline(value: string): string {
  * declared lossy.
  */
 export function neutralizeDelimiters(text: string): string {
-  return text.replace(new RegExp(`<(/?)${RECOVERED_REASONING_TAG}`, "g"), "&lt;$1" + RECOVERED_REASONING_TAG);
+  // CASE-INSENSITIVE: HTML-ish tag names are matched case-insensitively by the readers that matter,
+  // so `</RECOVERED_REASONING_SUMMARY>` closes the block just as well as the lowercase spelling --
+  // and a case-sensitive guard is one shift key away from being no guard at all.
+  return text.replace(new RegExp(`<(/?)${RECOVERED_REASONING_TAG}`, "gi"), "&lt;$1" + RECOVERED_REASONING_TAG);
 }

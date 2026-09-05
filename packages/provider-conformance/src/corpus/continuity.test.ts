@@ -42,6 +42,12 @@ describe("the continuity corpus (report §12.3 + §12.4)", () => {
     }
   });
 
+  test("MINOR 4: the corpus is reachable through the package's OWN barrel, not only by path", async () => {
+    const barrel = await import("../index.ts");
+    expect(barrel.CONTINUITY_CASES).toBe(CONTINUITY_CASES);
+    expect((await barrel.runContinuityCorpus()).ok).toBe(true);
+  });
+
   test("a MISSING case is reported as missing, not silently skipped", async () => {
     const report = await runContinuityCorpus({});
     expect(report.ok).toBe(false);

@@ -210,7 +210,9 @@ function renderHandoff(sections: PortableHandoffSections): string {
 
 /** Neutralises BOTH delimiters inside a quoted value: this block's, and a reasoning decoration's. */
 function safe(value: string): string {
-  return neutralizeDelimiters(value).replace(new RegExp(`<(/?)${PRIOR_MODEL_HANDOFF_TAG}`, "g"), `&lt;$1${PRIOR_MODEL_HANDOFF_TAG}`);
+  // Case-insensitive for the same reason `neutralizeDelimiters` is: an upper-case spelling closes the
+  // block just as well.
+  return neutralizeDelimiters(value).replace(new RegExp(`<(/?)${PRIOR_MODEL_HANDOFF_TAG}`, "gi"), `&lt;$1${PRIOR_MODEL_HANDOFF_TAG}`);
 }
 
 /**

@@ -84,6 +84,13 @@ export interface RenderReport {
   budgetDropped: number;
   /** ANY truncation or budget drop. The switch coordinator reads this to flip a would-be-lossless transfer to warned-lossy. */
   truncated: boolean;
+  /**
+   * Decorations placed on the THINKING-CHANNEL door, which only the target family's own adapter can
+   * address. Surfaced so a caller can see that this render depends on adapter-side placement --
+   * `applyDecorationToContent` deliberately cannot do it, and a count of zero means every decoration
+   * this render produced is placeable as ordinary text.
+   */
+  thinkingChannelDecorations: number;
 }
 
 export interface HistoryRendererOptions {
@@ -128,6 +135,7 @@ export function createHistoryRenderer(registry: ProviderRegistry, options: Histo
       withoutMaterial: 0,
       budgetDropped: 0,
       truncated: false,
+      thinkingChannelDecorations: 0,
     };
 
     // PASS 1: decide each message's fate on its own facts, and note which ones want a decoration.
@@ -140,7 +148,16 @@ export function createHistoryRenderer(registry: ProviderRegistry, options: Histo
       // annotations) is in this class. ABSENCE IS NOT A DOMAIN MISMATCH -- treating it as one would
       // strip content from histories that never had a provider identity to mismatch with.
       const origin = message.origin ?? (message.uuid !== undefined ? chain.get(message.uuid)?.origin : undefined);
-      if (origin === undefined) return message;
+      if (origin === undefined) {
+        // SYMMETRY with the same-domain path: an ASSISTANT message carrying a decoration but no
+        // origin has a foreign model's material on it and no provenance to justify it, so the stale
+        // annotation comes off. User and tool messages are left entirely alone -- a decoration there
+        // is the switch coordinator's HANDOFF note, deliberately attached to the user message that
+        // opens the target's first turn, and stripping it would silently discard the handoff.
+        if (message.role !== "assistant" || message.decoration === undefined) return message;
+        const { decoration: _staleOrphan, ...kept } = message;
+        return kept as unknown as M;
+      }
 
       const source = resolveEndpoint(origin);
       if (sameDomain(source, target)) {
@@ -198,6 +215,7 @@ export function createHistoryRenderer(registry: ProviderRegistry, options: Histo
       });
       if (remaining !== undefined) remaining = Math.max(0, remaining - decoration.text.length);
       if (decoration.truncated) report.truncated = true;
+      if (decoration.door === "thinking-channel") report.thinkingChannelDecorations++;
       report.decorations.push({
         ...(plan.anchorUuid !== undefined ? { anchorUuid: plan.anchorUuid } : {}),
         source,
@@ -271,6 +289,11 @@ function budgetFor(perDecoration: number | undefined, remaining: number | undefi
   return Math.min(perDecoration, remaining);
 }
 
+/** What `applyDecorationToContent` did. `applied: false` always says WHY, and always returns the untouched content. */
+export type DecorationPlacement =
+  | { applied: true; content: string | ContentBlockLike[] }
+  | { applied: false; reason: "no-decoration" | "thinking-channel-door"; content: string | ContentBlockLike[] };
+
 /**
  * Places a TAG-door decoration into a message's own content, as ordinary text.
  *
@@ -281,9 +304,15 @@ function budgetFor(perDecoration: number | undefined, remaining: number | undefi
  * which only that adapter can address, so this helper deliberately refuses that case rather than
  * quietly turning it into text.
  */
-export function applyDecorationToContent(message: ProviderMessageLike): string | ContentBlockLike[] {
+export function applyDecorationToContent(message: ProviderMessageLike): DecorationPlacement {
   const decoration = message.decoration;
-  if (decoration === undefined || decoration.door !== "tag") return message.content;
-  if (typeof message.content === "string") return `${message.content}\n\n${decoration.text}`;
-  return [...message.content, { type: "text", text: decoration.text }];
+  if (decoration === undefined) return { applied: false, reason: "no-decoration", content: message.content };
+  if (decoration.door !== "tag") {
+    // DISCRIMINATED, not a silent pass-through. An adapter that called this on a thinking-channel
+    // decoration and got its own content back would have dropped the decoration and had no way to
+    // know -- the exact silence this whole lane exists to avoid.
+    return { applied: false, reason: "thinking-channel-door", content: message.content };
+  }
+  if (typeof message.content === "string") return { applied: true, content: `${message.content}\n\n${decoration.text}` };
+  return { applied: true, content: [...message.content, { type: "text", text: decoration.text }] };
 }

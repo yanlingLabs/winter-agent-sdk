@@ -277,17 +277,55 @@ describe("§9.6 budgets", () => {
 describe("applyDecorationToContent: the adapter's half of the tag door", () => {
   test("a tag decoration becomes an ordinary text block on the message it belongs to", () => {
     const message: ProviderMessageLike = { role: "assistant", content: [{ type: "text", text: "answer" }], decoration: { text: "<tagged/>", door: "tag" } };
-    expect(applyDecorationToContent(message)).toEqual([{ type: "text", text: "answer" }, { type: "text", text: "<tagged/>" }]);
-    expect(applyDecorationToContent({ role: "assistant", content: "answer", decoration: { text: "<tagged/>", door: "tag" } })).toBe("answer\n\n<tagged/>");
+    expect(applyDecorationToContent(message)).toEqual({ applied: true, content: [{ type: "text", text: "answer" }, { type: "text", text: "<tagged/>" }] });
+    expect(applyDecorationToContent({ role: "assistant", content: "answer", decoration: { text: "<tagged/>", door: "tag" } })).toEqual({ applied: true, content: "answer\n\n<tagged/>" });
   });
 
-  test("a thinking-channel decoration is REFUSED here -- only the family's own adapter can address that channel", () => {
+  test("MINOR 3: a thinking-channel decoration is refused with a REASON, never dropped silently", () => {
+    // An adapter that got its own content back with no signal would have dropped the decoration and
+    // had no way to know.
     const message: ProviderMessageLike = { role: "assistant", content: "answer", decoration: { text: "prior-model reasoning", door: "thinking-channel" } };
-    expect(applyDecorationToContent(message)).toBe("answer");
+    const placement = applyDecorationToContent(message);
+    expect(placement).toEqual({ applied: false, reason: "thinking-channel-door", content: "answer" });
   });
 
-  test("no decoration -> the content is returned unchanged", () => {
+  test("no decoration -> `applied: false` with its own reason, and the content unchanged", () => {
     const content: ContentBlockLike[] = [{ type: "text", text: "answer" }];
-    expect(applyDecorationToContent({ role: "assistant", content })).toBe(content);
+    const placement = applyDecorationToContent({ role: "assistant", content });
+    expect(placement.applied).toBe(false);
+    expect(placement).toMatchObject({ reason: "no-decoration" });
+    expect(placement.content).toBe(content);
+  });
+
+  test("MINOR 3: the render report COUNTS the decorations that need adapter-side placement", () => {
+    const renderer = createHistoryRenderer(buildRegistry());
+    const toTag = renderer.renderWithReport([openaiMessage("m1")], chainOf({ m1: { summary: "s" } }), CLAUDE_A);
+    expect(toTag.report.thinkingChannelDecorations).toBe(0);
+    const toChannel = renderer.renderWithReport([openaiMessage("m1")], chainOf({ m1: { summary: "s" } }), DEEPSEEK);
+    expect(toChannel.report.thinkingChannelDecorations).toBe(1);
+  });
+});
+
+describe("MINOR 6: stale-decoration symmetry on the no-origin path", () => {
+  test("an ASSISTANT message with a decoration but no origin has the stale annotation stripped", () => {
+    const renderer = createHistoryRenderer(buildRegistry());
+    const orphan: ProviderMessageLike = { role: "assistant", content: "rebuilt by compaction", decoration: { text: "STALE foreign material", door: "tag" } };
+    const { messages } = renderer.renderWithReport([orphan], chainOf({}), OPENAI);
+    expect(messages[0]!.decoration).toBeUndefined();
+    expect(JSON.stringify(messages[0])).not.toContain("STALE");
+  });
+
+  test("a USER message's decoration is LEFT ALONE -- it is the switch coordinator's handoff note", () => {
+    const renderer = createHistoryRenderer(buildRegistry());
+    const carrier: ProviderMessageLike = { role: "user", content: "carry on", decoration: { text: "<prior_model_handoff …>", door: "tag" } };
+    const { messages } = renderer.renderWithReport([carrier], chainOf({}), OPENAI);
+    expect(messages[0]).toBe(carrier);
+    expect(messages[0]!.decoration?.text).toContain("prior_model_handoff");
+  });
+
+  test("an assistant message with no origin AND no decoration is still passed through by identity", () => {
+    const renderer = createHistoryRenderer(buildRegistry());
+    const plain: ProviderMessageLike = { role: "assistant", content: "pre-P6" };
+    expect(renderer.render([plain], chainOf({}), OPENAI)[0]).toBe(plain);
   });
 });
