@@ -1,9 +1,16 @@
 // Phase 6 Task 8 (Lane D): what the OPT-IN live gate actually asks a real provider.
 //
-// This is the one place in the repository that talks to a vendor endpoint, and it only ever runs
-// from `scripts/verify-provider-live.ts` behind `WINTER_LIVE_PROVIDER_TESTS=1`. Nothing here is
-// reachable from `bun test`: no `.test.ts` imports it, CI never sets the variable, and the script
-// exits 0 with "skipped: not opted in" without it.
+// This is the one place in the repository that talks to a vendor endpoint. It runs from
+// `scripts/verify-provider-live.ts` behind `WINTER_LIVE_PROVIDER_TESTS=1` plus a per-provider
+// `WINTER_LIVE_<PROVIDER>_API_KEY`; without both, the script prints "skipped: not opted in" and
+// exits 0, and CI sets neither.
+//
+// It IS also reached under `bun test`, and the honest statement of why that is safe is worth more
+// than the older "no test imports it": `scripts/verify-provider-live.test.ts`'s I1 fixture spawns
+// the script against a loopback fake with a scripted adapter injected through
+// `WINTER_LIVE_ADAPTERS_MODULE`, precisely so the printing rule below can be proved rather than
+// asserted. A fixture that drove these cases WITHOUT pinning both the endpoint and the adapter would
+// reach a real provider — see `live/index.ts`'s header for that rule in full.
 //
 // THE OUTPUT DISCIPLINE IS THE WHOLE DESIGN. Global Constraints: "Debug telemetry records
 // provider/model identifiers and byte counts, never content." So every case reports what it MEASURED

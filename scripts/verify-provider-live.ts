@@ -16,9 +16,17 @@
 //   - the output is provider/model identifiers, byte counts, token counts and durations. Never a
 //     byte of what a provider returned (Global Constraints).
 //
-// NEVER IN CI. The CI workflow does not set the opt-in variable, no `.test.ts` imports the live
-// runner, and `scripts/verify-provider-live.test.ts` proves the not-opted-in path by SPAWNING this
-// script with every `WINTER_LIVE_*` variable stripped from the environment.
+// NEVER REACHES A VENDOR FROM CI. The workflow sets neither the opt-in variable nor any provider
+// key (`grep -rn WINTER_LIVE .github/` finds nothing), and `verify-provider-live.test.ts` proves the
+// skip path by SPAWNING this script with every `WINTER_LIVE_*` variable stripped from the inherited
+// environment — stripping rather than merely not-adding, because `bun test` inherits the developer's
+// shell.
+//
+// That same test DOES drive a full run, on purpose: its I1 fixture spawns this script against a
+// loopback fake with a scripted adapter injected through `WINTER_LIVE_ADAPTERS_MODULE`, which is how
+// the "identifiers and byte counts only" rule above is proved rather than asserted. The property that
+// keeps it hermetic is that the fixture pins BOTH the endpoint and the adapter; a future fixture that
+// omitted either would go live.
 //
 // Usage:
 //   WINTER_LIVE_PROVIDER_TESTS=1 WINTER_LIVE_OPENAI_API_KEY=sk-... bun run scripts/verify-provider-live.ts

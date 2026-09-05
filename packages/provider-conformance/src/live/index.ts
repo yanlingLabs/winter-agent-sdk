@@ -5,9 +5,20 @@
 // it inapplicable, and every case runs even after one fails so a single opt-in run against a real key
 // produces the whole picture rather than a bisect.
 //
-// NEVER IN CI, and structurally so: nothing here is imported by any `.test.ts`, and the only caller
-// is `scripts/verify-provider-live.ts`, which refuses to do anything without
-// `WINTER_LIVE_PROVIDER_TESTS=1`.
+// NEVER REACHES A VENDOR FROM CI — and the guarantee is a GATE, not an absence of callers. This
+// runner IS executed under `bun test`, by `scripts/verify-provider-live.test.ts`'s I1 fixture, which
+// spawns the script against a loopback fake (`startFake`, `127.0.0.1:0`) with a scripted adapter
+// supplied through `WINTER_LIVE_ADAPTERS_MODULE`. What keeps that hermetic is the two things a real
+// run needs and that fixture never provides: a real endpoint, and an adapter reached through the
+// merged-adapter path. Everything else refuses by default — the script does nothing without
+// `WINTER_LIVE_PROVIDER_TESTS=1` AND a per-provider `WINTER_LIVE_<PROVIDER>_API_KEY`, CI sets
+// neither (`grep -rn WINTER_LIVE .github/` finds nothing), and that test's own spawn helper STRIPS
+// every `WINTER_LIVE_*` variable from the inherited environment before adding back only what the
+// case needs.
+//
+// So the rule for the next author is not "do not import this from a test". It is: a fixture that
+// drives this runner must pin BOTH the endpoint (a loopback fake) and the adapter (the module
+// override). A fixture that omits either one goes live on the machine that runs it.
 import type { ProviderAdapter, ProviderContext } from "@yanlinglabs/winter-provider-runtime";
 import type { WinterModelDescriptor } from "@yanlinglabs/winter-provider-catalog";
 import { describeThrown } from "../corpus/classifier-safety.ts";
