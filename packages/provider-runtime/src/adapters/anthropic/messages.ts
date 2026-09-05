@@ -302,7 +302,14 @@ function buildThinking(req: TurnRequest, descriptor: WinterModelDescriptor | und
 }
 
 /** The pre-request capability gate. Returns the request body, or a typed refusal that never reaches the network. */
-function buildRequestBody(req: TurnRequest, descriptor: WinterModelDescriptor | undefined, opts: AnthropicAdapterOptions): Record<string, unknown> {
+/**
+ * `purpose` exists for ONE reason (Minor 4): a token COUNT has no output allowance, so running the
+ * "does the thinking budget fit inside `max_tokens`?" check for it refuses a count against a
+ * generation limit the count was never going to be subject to. The count path used to build the full
+ * body and then delete `max_tokens`/`stream` — which meant the check ran on a field that was about to
+ * be thrown away.
+ */
+function buildRequestBody(req: TurnRequest, descriptor: WinterModelDescriptor | undefined, opts: AnthropicAdapterOptions, purpose: "generate" | "count" = "generate"): Record<string, unknown> {
   // Tools: WS-13 §8.1's three states. `emulated` is disabled for agent modes and `none` fails
   // negotiation -- neither is a reason to drop the tools and continue as plain chat.
   if (req.tools !== undefined && req.tools.length > 0 && descriptor !== undefined) {
@@ -355,6 +362,17 @@ function buildRequestBody(req: TurnRequest, descriptor: WinterModelDescriptor | 
     throw capabilityRefusal(`requested max output ${req.maxOutputTokens} exceeds model "${descriptor.key}"'s declared maximum of ${descriptor.maxOutputTokens.value}`);
   }
   const maxTokens = declaredMax ?? (budget !== undefined ? budget + fallbackMax : fallbackMax);
+  if (purpose === "count") {
+    // A count carries the PROMPT and nothing else: no `stream`, no `max_tokens`, and therefore no
+    // ceiling for a thinking budget to overrun.
+    return {
+      model: req.model,
+      messages: toWireMessages(req.messages),
+      ...(req.system !== undefined ? { system: req.system } : {}),
+      ...(req.tools !== undefined && req.tools.length > 0 ? { tools: req.tools.map((t) => ({ name: t.name, description: t.description, input_schema: t.inputSchema })) } : {}),
+      ...(thinking.value !== undefined ? { thinking: thinking.value } : {}),
+    };
+  }
   if (budget !== undefined && budget >= maxTokens) {
     // A real endpoint constraint, and the honest place to enforce it: a thinking budget that does
     // not fit inside the output allowance is rejected upstream, so catching it here turns a remote
@@ -754,10 +772,7 @@ export function createAnthropicMessagesAdapter(opts: AnthropicAdapterOptions = {
     async countTokens(req: TurnRequest, ctx: ProviderContext): Promise<number> {
       const descriptor = findDescriptor(catalogOf(), ctx.connection.providerId, req.model);
       const endpoint = resolveEndpoint(ctx, ANTHROPIC_DEFAULT_BASE_URL);
-      const body = buildRequestBody(req, descriptor, opts);
-      // `stream` and `max_tokens` are generation parameters; the count endpoint takes the PROMPT.
-      delete body["stream"];
-      delete body["max_tokens"];
+      const body = buildRequestBody(req, descriptor, opts, "count");
       const headers = await buildHeaders(ctx, endpoint.policy, opts, true);
       const res = await boundedFetch(`${endpoint.base}/v1/messages/count_tokens`, {
         method: "POST",

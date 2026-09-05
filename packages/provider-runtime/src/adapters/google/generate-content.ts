@@ -398,7 +398,8 @@ function buildThinkingConfig(req: TurnRequest, descriptor: WinterModelDescriptor
   return { ok: true, value: config };
 }
 
-function buildRequestBody(req: TurnRequest, descriptor: WinterModelDescriptor | undefined, opts: GoogleAdapterOptions, ctx: ProviderContext): Record<string, unknown> {
+/** `purpose` exists for the same reason as the Anthropic adapter's (Minor 4): a COUNT has no output allowance, so it is not subject to a generation ceiling. */
+function buildRequestBody(req: TurnRequest, descriptor: WinterModelDescriptor | undefined, opts: GoogleAdapterOptions, ctx: ProviderContext, purpose: "generate" | "count" = "generate"): Record<string, unknown> {
   if (req.tools !== undefined && req.tools.length > 0 && descriptor !== undefined && descriptor.toolCalling.value !== "native") {
     throw capabilityRefusal(
       `model "${descriptor.key}" declares tool calling "${descriptor.toolCalling.value}", so the ${req.tools.length} advertised tool(s) cannot be sent natively; Winter fails capability negotiation rather than silently dropping them (WS-13 §8.1)`,
@@ -432,7 +433,7 @@ function buildRequestBody(req: TurnRequest, descriptor: WinterModelDescriptor | 
     throw capabilityRefusal(`requested max output ${req.maxOutputTokens} exceeds model "${descriptor.key}"'s declared maximum of ${descriptor.maxOutputTokens.value}`);
   }
   const budget = thinkingConfig.value?.thinkingBudget;
-  if (declaredMax !== undefined && budget !== undefined && budget >= declaredMax) {
+  if (purpose === "generate" && declaredMax !== undefined && budget !== undefined && budget >= declaredMax) {
     throw capabilityRefusal(`thinking budget ${budget} does not fit inside maxOutputTokens ${declaredMax}; the budget must be strictly smaller`);
   }
 
@@ -445,7 +446,8 @@ function buildRequestBody(req: TurnRequest, descriptor: WinterModelDescriptor | 
     ctx.log({ kind: "provider.request.foreign-reasoning-dropped", providerId: ctx.connection.providerId, model: req.model });
   }
 
-  const generationConfig: Record<string, unknown> = {
+  // A count takes the PROMPT: no generation config, no tool config, and so no ceiling to overrun.
+  const generationConfig: Record<string, unknown> = purpose === "count" ? {} : {
     ...(declaredMax !== undefined ? { maxOutputTokens: declaredMax } : opts.defaultMaxOutputTokens !== undefined ? { maxOutputTokens: opts.defaultMaxOutputTokens } : {}),
     ...(thinkingConfig.value !== undefined ? { thinkingConfig: thinkingConfig.value } : {}),
   };
@@ -456,7 +458,7 @@ function buildRequestBody(req: TurnRequest, descriptor: WinterModelDescriptor | 
     ...(req.tools !== undefined && req.tools.length > 0
       ? { tools: [{ functionDeclarations: req.tools.map((t) => ({ name: t.name, description: t.description, parameters: t.inputSchema })) }] }
       : {}),
-    ...(req.toolChoice !== undefined ? { toolConfig: { functionCallingConfig: toFunctionCallingConfig(req.toolChoice) } } : {}),
+    ...(req.toolChoice !== undefined && purpose === "generate" ? { toolConfig: { functionCallingConfig: toFunctionCallingConfig(req.toolChoice) } } : {}),
     ...(Object.keys(generationConfig).length > 0 ? { generationConfig } : {}),
   };
 }
@@ -695,10 +697,7 @@ export function createGoogleFamilyAdapter(transport: GoogleTransport, opts: Goog
     async countTokens(req: TurnRequest, ctx: ProviderContext): Promise<number> {
       const descriptor = findDescriptor(catalogOf(), ctx.connection.providerId, req.model);
       const { base, policy } = transport.endpoint(ctx);
-      const body = buildRequestBody(req, descriptor, opts, ctx);
-      // The count endpoint takes the PROMPT, not the generation parameters.
-      delete body["generationConfig"];
-      delete body["toolConfig"];
+      const body = buildRequestBody(req, descriptor, opts, ctx, "count");
       const headers = await transport.headers(ctx, policy, true);
       const res = await boundedFetch(`${base}${transport.countTokensPath(ctx, req.model)}`, {
         method: "POST",

@@ -22,5 +22,5 @@ export { VERTEX_ADAPTER_ID, VERTEX_API_VERSION_PATH, createVertexGeminiAdapter, 
 export type { VertexAdapterOptions } from "./vertex.ts";
 export { GCP_CLOUD_PLATFORM_SCOPE, createAccessTokenSource, createServiceAccountTokenSource, createStaticAccessTokenSource } from "./adc.ts";
 export type { AccessTokenSource, AccessTokenSourceOptions } from "./adc.ts";
-export { JwtKeyError, base64UrlDecodeBytes, base64UrlDecodeText, base64UrlEncode, base64UrlEncodeText, importRs256PrivateKey, pkcs8DerFromPem, signRs256Jwt, verifyRs256Jwt } from "./jwt-rs256.ts";
+export { JwtKeyError, RS256, base64UrlEncode, base64UrlEncodeText, importRs256PrivateKey, pkcs8DerFromPem, signRs256Jwt } from "./jwt-rs256.ts";
 export type { ServiceAccountJwtClaims } from "./jwt-rs256.ts";

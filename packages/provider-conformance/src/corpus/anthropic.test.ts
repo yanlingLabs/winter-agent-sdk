@@ -337,6 +337,27 @@ describe("Anthropic Messages: countTokens and discovery", () => {
   });
 });
 
+describe("Anthropic Messages: countTokens is not a generation (Minor 4)", () => {
+  test("a thinking budget that would not fit a generation's `max_tokens` still COUNTS", async () => {
+    const adapter = testAnthropicAdapter();
+    await withFake({ routes: anthropicCorpusRoutes() }, async (fake) => {
+      // The same request is a limit REFUSAL as a generation (a fixture above pins that) and a
+      // perfectly ordinary count here, because a count has no output allowance for a budget to
+      // overrun. Building the body and then deleting `max_tokens` ran the check on a field that was
+      // about to be thrown away.
+      const count = await adapter.countTokens!(
+        { model: ANTHROPIC_MODELS.capped, messages: [{ role: "user", content: "a" }], thinking: { type: "enabled", budgetTokens: 4096 } },
+        testContext(fake.url),
+      );
+      expect(count).toBe(100);
+      const body = anthropicBody(requestsTo(fake, "/v1/messages/count_tokens")[0]!);
+      expect(body["max_tokens"]).toBeUndefined();
+      expect(body["stream"]).toBeUndefined();
+      expect(body["thinking"]).toEqual({ type: "enabled", budget_tokens: 4096 });
+    });
+  });
+});
+
 describe("Anthropic Messages: catalog agreement", () => {
   test("the adapter's id and default endpoint match the COMPILED catalog's own row", () => {
     // `ProviderContext` never hands an adapter its provider descriptor, so the default endpoint is

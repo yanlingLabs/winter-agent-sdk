@@ -20,7 +20,7 @@
 // client email (a non-secret locator, exactly as `redactMaterial` treats it) and nothing more.
 import { boundedFetch, ProviderRequestError } from "../../http.ts";
 import { normalizeHttpError } from "../../errors.ts";
-import { createEndpointPolicy } from "../../endpoint-policy.ts";
+import { createEndpointPolicy, type EndpointPolicy } from "../../endpoint-policy.ts";
 import type { CredentialMaterial } from "../../types.ts";
 import { importRs256PrivateKey, signRs256Jwt } from "./jwt-rs256.ts";
 
@@ -81,10 +81,30 @@ export function createServiceAccountTokenSource(
   const now = opts.now ?? Date.now;
   let keyPromise: Promise<CryptoKey> | undefined;
   let cached: { token: string; expiresAtMs: number } | undefined;
+  /**
+   * SINGLE-FLIGHT. Without it, a burst of turns starting together each miss the cache and each
+   * perform their own exchange — N signatures, N round trips, and N tokens of which N-1 are
+   * immediately discarded. The promise is cleared on settle so a later miss (or a failure) starts a
+   * fresh one rather than caching a rejection forever.
+   */
+  let inFlight: Promise<string> | undefined;
   let exchanges = 0;
 
   const policy = (() => {
-    const built = createEndpointPolicy(new URL(material.tokenUri).origin, { generated: false, ...(opts.local === true ? { local: true } : {}) });
+    // `new URL()` THROWS on an unparseable value, and a `token_uri` comes out of a credentials file
+    // — host configuration, not a network condition. Left to propagate it reached `normalizeThrown`
+    // as a bare TypeError and was typed `network`/RETRYABLE, so a misconfigured file was retried ten
+    // times with backoff before failing, and failed with a message about the network. It is a
+    // `capability` refusal: no amount of waiting parses a malformed URL.
+    let origin: string;
+    try {
+      origin = new URL(material.tokenUri).origin;
+    } catch {
+      // The value is NOT echoed: it comes out of the same document as the private key, and a refusal
+      // message is one of the most reliably-logged strings in any system.
+      return `the service-account file for ${material.clientEmail} carries a token_uri that is not a parseable absolute URL`;
+    }
+    const built = createEndpointPolicy(origin, { generated: false, ...(opts.local === true ? { local: true } : {}) });
     if (!built.ok) {
       // A refusal is raised at USE time, not construction time, so a badly-configured credential
       // fails the turn that needs it rather than the whole session start.
@@ -98,52 +118,62 @@ export function createServiceAccountTokenSource(
       const current = cached;
       if (current !== undefined && current.expiresAtMs - EXPIRY_SKEW_MS > now()) return current.token;
       if (typeof policy === "string") throw new ProviderRequestError({ code: "capability", message: `the service-account token endpoint is unusable: ${policy}`, retryable: false });
-
-      keyPromise ??= importRs256PrivateKey(material.privateKeyPem);
-      const key = await keyPromise;
-      const issuedAt = Math.floor(now() / 1000);
-      const assertion = await signRs256Jwt(
-        { iss: material.clientEmail, scope: GCP_CLOUD_PLATFORM_SCOPE, aud: material.tokenUri, iat: issuedAt, exp: issuedAt + ASSERTION_LIFETIME_SECONDS },
-        key,
-      );
-
-      exchanges++;
-      const res = await boundedFetch(material.tokenUri, {
-        method: "POST",
-        headers: { "content-type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({ grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer", assertion }).toString(),
-        timeoutMs: TOKEN_REQUEST_TIMEOUT_MS,
-        maxBodyBytes: TOKEN_RESPONSE_MAX_BYTES,
-        policy,
-        ...(signal !== undefined ? { signal } : {}),
+      // Join an exchange already under way rather than starting a second one.
+      if (inFlight !== undefined) return await inFlight;
+      const run = exchange(policy, signal).finally(() => {
+        inFlight = undefined;
       });
-      const text = await res.text();
-      if (!res.ok) {
-        // `normalizeHttpError` already scrubs a credential-shaped body wholesale, and the message it
-        // builds names the status and a bounded snippet -- never the assertion that was sent.
-        const normalized = normalizeHttpError(res.status, res.headers, text);
-        throw new ProviderRequestError({ ...normalized, message: `the service-account token exchange for ${material.clientEmail} failed: ${normalized.message}` });
-      }
-      let parsed: { access_token?: unknown; expires_in?: unknown };
-      try {
-        parsed = JSON.parse(text) as { access_token?: unknown; expires_in?: unknown };
-      } catch {
-        throw new ProviderRequestError({ code: "bad_request", message: `the service-account token exchange for ${material.clientEmail} returned a body that is not JSON`, retryable: false });
-      }
-      if (typeof parsed.access_token !== "string" || parsed.access_token.length === 0) {
-        throw new ProviderRequestError({ code: "auth", message: `the service-account token exchange for ${material.clientEmail} returned no access token`, retryable: false });
-      }
-      // A missing or absurd `expires_in` is treated as ALREADY EXPIRED rather than defaulted to an
-      // hour: caching a token whose lifetime nobody stated is how a fleet starts sending expired
-      // credentials in unison.
-      const expiresInSeconds = typeof parsed.expires_in === "number" && Number.isFinite(parsed.expires_in) && parsed.expires_in > 0 ? parsed.expires_in : 0;
-      cached = { token: parsed.access_token, expiresAtMs: now() + expiresInSeconds * 1000 };
-      return parsed.access_token;
+      inFlight = run;
+      return await run;
     },
     exchanges(): number {
       return exchanges;
     },
   };
+
+  /** The exchange itself. Takes the NARROWED policy: the refusal guard lives at the call site, and a second check here would be a second place to get it wrong. */
+  async function exchange(endpointPolicy: EndpointPolicy, signal?: AbortSignal): Promise<string> {
+    keyPromise ??= importRs256PrivateKey(material.privateKeyPem);
+    const key = await keyPromise;
+    const issuedAt = Math.floor(now() / 1000);
+    const assertion = await signRs256Jwt(
+      { iss: material.clientEmail, scope: GCP_CLOUD_PLATFORM_SCOPE, aud: material.tokenUri, iat: issuedAt, exp: issuedAt + ASSERTION_LIFETIME_SECONDS },
+      key,
+    );
+
+    exchanges++;
+    const res = await boundedFetch(material.tokenUri, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer", assertion }).toString(),
+      timeoutMs: TOKEN_REQUEST_TIMEOUT_MS,
+      maxBodyBytes: TOKEN_RESPONSE_MAX_BYTES,
+      policy: endpointPolicy,
+      ...(signal !== undefined ? { signal } : {}),
+    });
+    const text = await res.text();
+    if (!res.ok) {
+      // `normalizeHttpError` already scrubs a credential-shaped body wholesale, and the message it
+      // builds names the status and a bounded snippet -- never the assertion that was sent.
+      const normalized = normalizeHttpError(res.status, res.headers, text);
+      throw new ProviderRequestError({ ...normalized, message: `the service-account token exchange for ${material.clientEmail} failed: ${normalized.message}` });
+    }
+    let parsed: { access_token?: unknown; expires_in?: unknown };
+    try {
+      parsed = JSON.parse(text) as { access_token?: unknown; expires_in?: unknown };
+    } catch {
+      throw new ProviderRequestError({ code: "bad_request", message: `the service-account token exchange for ${material.clientEmail} returned a body that is not JSON`, retryable: false });
+    }
+    if (typeof parsed.access_token !== "string" || parsed.access_token.length === 0) {
+      throw new ProviderRequestError({ code: "auth", message: `the service-account token exchange for ${material.clientEmail} returned no access token`, retryable: false });
+    }
+    // A missing or absurd `expires_in` is treated as ALREADY EXPIRED rather than defaulted to an
+    // hour: caching a token whose lifetime nobody stated is how a fleet starts sending expired
+    // credentials in unison.
+    const expiresInSeconds = typeof parsed.expires_in === "number" && Number.isFinite(parsed.expires_in) && parsed.expires_in > 0 ? parsed.expires_in : 0;
+    cached = { token: parsed.access_token, expiresAtMs: now() + expiresInSeconds * 1000 };
+    return parsed.access_token;
+  }
 }
 
 /**

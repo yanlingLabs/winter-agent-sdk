@@ -15,7 +15,8 @@
 // `CryptoKey` that only this fake holds.
 import { errorResponse, jsonResponse, type FakeRoute, type RecordedRequest } from "./server.ts";
 import { geminiError, geminiModelOf, type GeminiFakeOptions } from "./gemini.ts";
-import { base64UrlEncode, verifyRs256Jwt } from "../../../provider-runtime/src/adapters/google/index.ts";
+import { base64UrlEncode } from "../../../provider-runtime/src/adapters/google/index.ts";
+import { verifyRs256Jwt } from "./jwt-verify.ts";
 
 /** A keypair for one test run. NEVER committed: this generates a fresh one every call. */
 export async function generateTestKeyPair(): Promise<{ privateKeyPem: string; publicKey: CryptoKey }> {

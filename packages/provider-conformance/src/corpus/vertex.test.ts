@@ -9,6 +9,7 @@ import { describe, expect, test } from "bun:test";
 import { noRequestContains, requestsTo, withFake } from "../fakes/server.ts";
 import { geminiBody, geminiContents } from "../fakes/gemini.ts";
 import { VERTEX_TEST_ACCESS_TOKEN, assertVertexRequest, generateTestKeyPair } from "../fakes/vertex.ts";
+import { verifyRs256Jwt } from "../fakes/jwt-verify.ts";
 import {
   GCP_CLOUD_PLATFORM_SCOPE,
   VERTEX_ADAPTER_ID,
@@ -17,7 +18,6 @@ import {
   importRs256PrivateKey,
   pkcs8DerFromPem,
   signRs256Jwt,
-  verifyRs256Jwt,
   vertexEndpointUrl,
   vertexModelPath,
 } from "../../../provider-runtime/src/adapters/google/index.ts";
@@ -176,6 +176,86 @@ describe("Vertex Gemini: the ADC service-account flow", () => {
       const first = events[0];
       expect(first?.type === "error" && first.error.message).toContain('kind "api-key"');
       expect(JSON.stringify(events)).not.toContain("test-key-not-gcp");
+    });
+  });
+});
+
+describe("Vertex Gemini: the token source's own edges", () => {
+  test("an UNPARSEABLE `token_uri` is a `capability` refusal, not a retryable network failure (Minor 2)", async () => {
+    // `new URL()` throws on it, and a `token_uri` comes out of a credentials FILE — host
+    // configuration, not a network condition. Left to propagate it was typed `network`/retryable, so
+    // a misconfigured file was retried with backoff and then blamed on the network.
+    const { privateKeyPem } = await generateTestKeyPair();
+    const source = createServiceAccountTokenSource({ kind: "gcp-service-account", clientEmail: "a@b.iam.gserviceaccount.com", privateKeyPem, tokenUri: "not a url at all" });
+    await expect(source.token()).rejects.toThrow(/not a parseable absolute URL/);
+    try {
+      await source.token();
+    } catch (err) {
+      expect(err).toMatchObject({ code: "capability", retryable: false });
+      // The value shares a document with the private key, so it is never echoed.
+      expect((err as Error).message).not.toContain("not a url at all");
+    }
+    expect(source.exchanges()).toBe(0);
+  });
+
+  test("CONCURRENT `token()` calls perform ONE exchange, not one each (Minor 3)", async () => {
+    const harness = await createVertexHarness();
+    await withFake({ routes: harness.routes }, async (fake) => {
+      harness.bind(fake.url);
+      const source = createServiceAccountTokenSource(
+        { kind: "gcp-service-account", clientEmail: VERTEX_SERVICE_ACCOUNT_EMAIL, privateKeyPem: harness.privateKeyPem, tokenUri: harness.tokenUri },
+        { local: true },
+      );
+      // A burst of turns starting together all miss the cache. Without single-flight that is N
+      // signatures, N round trips, and N tokens of which N-1 are discarded on arrival.
+      const tokens = await Promise.all([source.token(), source.token(), source.token(), source.token()]);
+      expect(new Set(tokens).size).toBe(1);
+      expect(source.exchanges()).toBe(1);
+      expect(requestsTo(fake, "/token")).toHaveLength(1);
+      expect(harness.verified).toHaveLength(1);
+
+      // ...and the in-flight promise is cleared on settle, so a later MISS starts a fresh exchange
+      // rather than serving a stale memo forever.
+      const later = createServiceAccountTokenSource(
+        { kind: "gcp-service-account", clientEmail: VERTEX_SERVICE_ACCOUNT_EMAIL, privateKeyPem: harness.privateKeyPem, tokenUri: harness.tokenUri },
+        { local: true },
+      );
+      await later.token();
+      expect(requestsTo(fake, "/token")).toHaveLength(2);
+    });
+  });
+
+  test("a FAILED exchange is not memoised as a rejection forever (Minor 3)", async () => {
+    const harness = await createVertexHarness({ rejectExchange: true });
+    await withFake({ routes: harness.routes }, async (fake) => {
+      harness.bind(fake.url);
+      const source = createServiceAccountTokenSource(
+        { kind: "gcp-service-account", clientEmail: VERTEX_SERVICE_ACCOUNT_EMAIL, privateKeyPem: harness.privateKeyPem, tokenUri: harness.tokenUri },
+        { local: true },
+      );
+      await expect(source.token()).rejects.toThrow();
+      await expect(source.token()).rejects.toThrow();
+      // Two attempts, not one attempt and a cached rejection: a credential that starts working must
+      // be able to start working.
+      expect(requestsTo(fake, "/token")).toHaveLength(2);
+    });
+  });
+
+  test("`countTokens` does not run the GENERATION ceiling check (Minor 4)", async () => {
+    // A count carries the prompt and no output allowance, so a thinking budget has no ceiling to
+    // overrun. Building the full body and then deleting `max_tokens` meant the check ran on a field
+    // that was about to be thrown away — and refused a perfectly countable prompt.
+    const harness = await createVertexHarness();
+    const adapter = testVertexAdapter();
+    await withFake({ routes: harness.routes }, async (fake) => {
+      harness.bind(fake.url);
+      const count = await adapter.countTokens!(
+        { model: GOOGLE_MODELS.capped, messages: [{ role: "user", content: "a" }], thinking: { type: "enabled", budgetTokens: 4096 } },
+        vertexContext(harness, fake.url),
+      );
+      expect(count).toBe(100);
+      const recorded = requestsTo(fake, vertexModelPath(VERTEX_PROJECT, VERTEX_LOCATION, GOOGLE_MODELS.capped, "countTokens"))[0]!;
+      expect(geminiBody(recorded)["generationConfig"]).toBeUndefined();
     });
   });
 });
