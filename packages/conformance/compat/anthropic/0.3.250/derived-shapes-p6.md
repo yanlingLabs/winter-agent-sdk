@@ -70,9 +70,40 @@ capture harness logs request *method + path*, tool *names*, and structural count
 **Naming discipline**: identical to P2–P5's — the pinned identifier and field NAMES quoted below *are*
 Winter's own naming (WS-03's compatibility posture, WS-07 §4). Every sentence of description, every
 table, and this document's structure are original. Vendor prose is restated in this document's own
-words throughout; the only vendor strings reproduced verbatim are runtime **error** strings, labelled
-as such wherever the string itself is the finding (capture (I)'s two thrown messages, which item (4)
-scopes explicitly, and capture (H)'s and (G)'s single-clause refusal/abort strings).
+words throughout.
+
+**Verbatim-overlap measurement, because "restated" is a claim and not a proof.** A 12-word n-gram
+overlap of this document against `sdk.d.ts` + `sdk-tools.d.ts` — lower-cased and stripped of **all**
+punctuation, so that swapping an em dash for a comma cannot disguise a reproduction — is run by
+`scripts/check-derived-shapes.ts` and currently reports:
+
+| ≥12-word runs | count | status |
+| --- | --- | --- |
+| inside a fenced code block | **11** | expected — declared signatures, field lists and literal unions are exactly what the naming discipline requires be reproduced exactly |
+| inside an explicit `"…"` quotation, cited at the point of use | **3** | all three are the same clause — `SessionKey.subpath`'s "opaque to the adapter — just use it as a storage key suffix" (`5205`) — quoted twice in this Method and once at its point of use in item (h) |
+| **in prose** | **0** | the number this file must hold at |
+| **total** | **14** | |
+
+That is a measurement, not an assertion, and it is reproducible: run the checker.
+
+**Two review rounds were needed to get it to zero, and the reason is worth recording.** Round 1's
+scan kept punctuation, so ten JSDoc sentences that had been reproduced with an em dash swapped for a
+comma read as original to it; eight were rewritten and the scan then reported "9 runs, all fenced".
+Round 2 re-measured with punctuation stripped and found the true figure — five surviving prose
+reproductions plus four name-enumerations the earlier scan had mis-scored. All are now resolved:
+the five sentences (in items (a), (b)×2, (d) and (e)) were rewritten into this document's own factual
+wording — the fact, its field names and its citation, never the artifact's sentence — and the four
+name-enumerations (the `event` union's six names, `SDKAssistantMessageError`'s eleven,
+`SDKRateLimitInfo`'s quota vocabulary, `SDKResultError`'s four subtypes) were moved into fenced blocks,
+which is the classification they always deserved: they are declared names, not prose.
+
+Prose reproduced verbatim is limited to, and marked at, four places: capture (I)'s two thrown-error
+messages (item (4) of the brief scopes "thrown error class+message" explicitly), capture (H)'s
+single-clause `compact_error`/`result` string, capture (G)'s abort message, and **two short evidential
+clauses** kept in quotation marks because the exact wording is what a ruling turns on —
+`SessionKey.subpath`'s "opaque to the adapter — just use it as a storage key suffix" (`5205`, the
+licence R6-7a rests on) and `Options.fallbackModel`'s "overloaded or unavailable" (`1535`, the trigger
+OQ-P6-5 rests on). Both are cited at the point of use.
 
 **Claim provenance**: as P4/P5 — each item distinguishes a *type-level fact* (a field exists, its type,
 its optionality — evident from the declaration's code) from a *doc-asserted behavior* (a claim resting
@@ -93,8 +124,36 @@ no real username appears anywhere in this file, and every captured path is rende
 sha256 (`207b771f…b40d95`) and its `sdk.d.ts` hashed **byte-identical** to the first extraction's
 (`3bc8f1b5…b4b1d4d`, 8447 lines), so the two cycles are reading the same bytes rather than two
 plausible copies. Against that second extraction, **245 distinct `file:line → expected-substring`
-citations were checked programmatically: 245 anchored to the line they claim, 0 mismatches.** The
-checker ran on the derivation's line citations, not on prose. Three real errors it caught during the
+citations were checked programmatically: 0 mismatches.** The checker ran on the derivation's line
+citations, not on prose; after review round 1's corrections the table stands at **248 citations, 0
+mismatches** against a third, independently re-fetched extraction of the same verified tarball.
+
+**Two further checkers, added across review rounds 1 and 2, because a `file:line → substring` check
+cannot catch a wrong ATTRIBUTION.** All three now live in one committed, network-gated script,
+`scripts/check-derived-shapes.ts` (run it with `RUN_DERIVED_SHAPES_CHECK=1 … --file <this file>`; it
+re-fetches the pinned tarball through the repository's own checksum-verified path, reads the
+declaration from a throwaway extraction and deletes it, and is in no CI job). It checks citation
+attribution, identifier existence, and the n-gram overlap above, and exits non-zero on any of the
+three. Its own header records what each check can and cannot promise — in particular that citation
+attribution is matched at the granularity of a *declaration unit*, so it catches a citation pointing
+at an unrelated part of the file but cannot distinguish "cited the JSDoc, named the type below it"
+(correct, and this document's dominant style) from "cited the wrong line of a long comment"; those are
+counted and reported for a human rather than failed.
+A `file:line → expected-substring` check proves a cited line says what is claimed; it cannot prove the
+surrounding sentence credits the right symbol. Round 1 found exactly that failure — item (c) of this
+document named, on correctly-cited lines, a `Query` settings method the pinned artifact does not
+contain. (The literal misspelling is deliberately not reproduced here, so that a naive "this file must
+not contain X" sweep cannot trip on the sentence explaining the fix; the real name is
+`applyFlagSettings`, `sdk.d.ts:2519`.) Every identifier-shaped name this
+document asserts — dotted `Class.method` forms decomposed — is now swept back against all six
+`.d.ts` files plus `package.json` by the same checker: **255 names checked, and the only absences are
+the 23 this document itself declares absent or names as non-artifact** — the runtime-captured wire names it states are undeclared (`text_delta`,
+`signature_delta`, `input_json_delta`, `context_management`, `end_turn`, `overloaded_error`,
+`rate_limit_error`), the result subtypes it reports as *not existing* (`error_auth`,
+`error_model_not_found`, `error_overloaded`), `redacted_thinking` (whose zero-occurrence count is
+itself a finding), the external `ThinkingBlock` R6-8 assumed, Winter's own `anchorUuid`, and
+harness/Node/env names (`ANTHROPIC_BASE_URL`, `MAX_MCP_OUTPUT_TOKENS`, `mkdtemp`, `homedir`,
+`cacheDir`, `checksums`, `fetchAndVerifyUpstream`). Three real errors it caught during the
 pass (`SDKResultSuccess`/`SDKResultError`'s `total_cost_usd` JSDoc off by one at both sites, and
 `SessionStore.load`'s JSDoc start) were corrected before this file was finalised, alongside ten caught
 by the same check against the first extraction (`ModelInfo`'s three field lines, `costBasis`,
@@ -125,9 +184,14 @@ type SDKPartialAssistantMessage = {
 `uuid`, `session_id`"; the pin has two more the brief did not name: `ttft_ms?` (4553, no JSDoc of its own)
 and `user_message_uuid?` (4557).
 
-**The `event` union (doc-asserted, `sdk.d.ts:4547`).** The JSDoc directly above the field names exactly
-six Anthropic Messages API streaming event types: `message_start`, `content_block_start`,
-`content_block_delta`, `content_block_stop`, `message_delta`, `message_stop`. **No delta *variant* is
+**The `event` union (doc-asserted, `sdk.d.ts:4547`).** The JSDoc directly above the field enumerates
+six Anthropic Messages API streaming event type names, and nothing else about them:
+
+```
+message_start  content_block_start  content_block_delta  content_block_stop  message_delta  message_stop
+```
+
+**No delta *variant* is
 named** (`text_delta`, `thinking_delta`, `signature_delta`, `input_json_delta` appear nowhere in the
 pin's `event`-related text), and **no payload field of any member is declared**. Two members the
 Messages API streams in practice are absent from that list — `ping` and `error` — yet `ping` is named
@@ -151,16 +215,19 @@ JSDocs are complementary and must be read together:
 - with partial messages on, it "normally" rides the **first non-`ping` `stream_event`** instead
   (`4555`, `3112`) — which is why `ping` is a real member of the `event` union despite the six-name
   list;
-- a turn that produces no stream events still stamps its first `assistant` message (`3112`).
+- a turn with no stream events at all falls back to stamping the `assistant` frame (`3112`), so the
+  stamp is never simply lost when streaming is on.
 
 Absent on: every later frame of the turn, subagent frames (`parent_tool_use_id` set — stated at `3112`
 for the assistant frame; the `stream_event` JSDoc at `4555` does *not* repeat the subagent carve-out),
-synthetic/scheduled (meta) turns, turns without a client uuid, and older producers. It is a
-**wrapper-level sibling, never inside `message.content`**, so it is not replayed to the model (`3112`).
+synthetic/scheduled (meta) turns, turns without a client uuid, and older producers. Its placement is
+also pinned (`3112`): the field is a **sibling of `message`, not a member of `message.content`**, and
+the stated consequence of that placement is that the model never sees it on a replay.
 
 **`parent_tool_use_id` is non-optional and nullable** (`string | null`, not `?:`) — a `stream_event`
 frame always carries the field; `null` means the main thread. Same convention as `SDKAssistantMessage`
-(`sdk.d.ts:3106`) and `SDKToolProgressMessage` (`sdk.d.ts:5030`), so a Winter frame emitter must emit
+(`sdk.d.ts:3106`) and `SDKToolProgressMessage`'s own `parent_tool_use_id` (`sdk.d.ts:5030`), so a
+Winter frame emitter must emit
 the key explicitly rather than omitting it for main-thread work.
 
 **For the phase**: `stream_event` is the single pinned name for live token streaming (R6-5). Winter's
@@ -198,9 +265,16 @@ worth pinning:
   error (e.g. a timeout) that had no HTTP response. Winter's own retry frame must be able to represent
   "retryable failure with no status", not just an HTTP code.
 - `error` is **not a free string** — it is the closed 11-member `SDKAssistantMessageError` union
-  (`sdk.d.ts:3159`): `'authentication_failed' | 'oauth_org_not_allowed' | 'account_on_hold' |
-  'billing_error' | 'rate_limit' | 'overloaded' | 'invalid_request' | 'model_not_found' | 'server_error'
-  | 'unknown' | 'max_output_tokens'`. That union is the pin's **provider-error taxonomy**, and it is the
+  (`sdk.d.ts:3159`), whose members are:
+
+  ```ts
+  type SDKAssistantMessageError =
+    | 'authentication_failed' | 'oauth_org_not_allowed' | 'account_on_hold' | 'billing_error'
+    | 'rate_limit' | 'overloaded' | 'invalid_request' | 'model_not_found' | 'server_error'
+    | 'unknown' | 'max_output_tokens';
+  ```
+
+  That union is the pin's **provider-error taxonomy**, and it is the
   same type carried on `SDKAssistantMessage.error?` (`sdk.d.ts:3107`) and
   `StopFailureHookInput.error` (P2 item (b)). A Winter adapter that classifies a provider failure has
   exactly these eleven buckets to map into for parity; anything finer is a Winter extension to disclose.
@@ -232,15 +306,21 @@ Two structural facts that matter for Winter's own frame taxonomy:
   `api_retry`/`status`/`thinking_tokens`/the refusal pair, which are all `type: 'system'` with a
   `subtype`. `auth_status` (`3162`) and `tool_progress` (`5027`) share this top-level-type convention.
   Winter's frame union must reproduce the split or diverge deliberately.
-- **Scope is narrow and doc-asserted twice** (`4641`, `4649`): rate-limit information *for claude.ai
-  subscription users*. Every field of `SDKRateLimitInfo` except `status` is optional (`4652-4668`), and
-  the vocabulary is consumer-subscription-shaped throughout — `rateLimitType`'s six members
-  (`five_hour`, `seven_day`, `seven_day_opus`, `seven_day_sonnet`, `seven_day_overage_included`,
-  `overage`), an overage sub-family (`overageStatus`, `overageResetsAt`, `overageDisabledReason`'s
-  13 members, `isUsingOverage`, `overageInUse`, `surpassedThreshold`), and a credits sub-family
-  (`errorCode?: 'credits_required'`, `canUserPurchaseCredits?`, `hasChargeableSavedPaymentMethod?`).
-  `status` itself is `'allowed' | 'allowed_warning' | 'rejected'`; `resetsAt?` and `utilization?` are the
-  only generic fields.
+- **Scope is narrow, and the declaration says so at both of its two definition sites** (`4641`,
+  `4649`): the payload is described there as rate-limit information for claude.ai subscription
+  accounts, not as a generic quota signal. Every field of `SDKRateLimitInfo` except `status` is
+  optional (`4652-4668`), and the field vocabulary is subscription-shaped end to end — a quota-window
+  enum, an overage sub-family and a credits sub-family:
+
+  ```ts
+  status:                 'allowed' | 'allowed_warning' | 'rejected';           // the only required field
+  rateLimitType?:         'five_hour' | 'seven_day' | 'seven_day_opus'
+                        | 'seven_day_sonnet' | 'seven_day_overage_included' | 'overage';
+  overageStatus?; overageResetsAt?; overageDisabledReason?;                      // 13 members on the last
+  isUsingOverage?; overageInUse?; surpassedThreshold?;
+  errorCode?: 'credits_required'; canUserPurchaseCredits?; hasChargeableSavedPaymentMethod?;
+  resetsAt?; utilization?;                                                       // the only generic pair
+  ```
 
 **Consequence for WS-13, stated plainly**: `rate_limit_event` in the pin is **not** a generic HTTP-429
 signal. It is a subscription-quota level signal. An API-key-authenticated session (which is what every
@@ -267,11 +347,13 @@ all; the answer changes whether Winter's `auth_status` is a parity frame or a Wi
 type SDKThinkingTokensMessage = { type: 'system'; subtype: 'thinking_tokens'; estimated_tokens: number; estimated_tokens_delta: number; uuid: UUID; session_id: string };
 ```
 
-Doc-asserted semantics (`5015`), restated: the value is digested from a `thinking_delta`'s
-`estimated_tokens` during the *redacted-thinking* phase, where the API otherwise streams only pings;
-`estimated_tokens` is the running total for the **current thinking block** and `estimated_tokens_delta`
-is this frame's increment; it is approximate progress for a spinner, explicitly **not** the billed
-`output_tokens`. **No gating option found** — notably it is *not* tied to `includePartialMessages`,
+Doc-asserted semantics (`5015`), restated in this document's own terms. The source of the numbers is a
+field on the thinking delta rather than anything the frame computes, and the reason the frame exists is
+that the redacted phase gives a host no other signal — the JSDoc notes that only pings flow during it.
+Of the two counters, `estimated_tokens` is cumulative **within the current thinking block** (not the
+turn, and not the session) while `estimated_tokens_delta` carries just this frame's increment. The
+comment is emphatic that both are approximations meant for a progress indicator and are **not** the
+billed `output_tokens`. **No gating option found** — notably it is *not* tied to `includePartialMessages`,
 which matters: a host that never opts into `stream_event` still gets thinking progress. This JSDoc is
 also the pin's only mention of a `thinking_delta` field name (`estimated_tokens`), and it is
 second-hand — a delta payload field named in prose about a different type. It is not a declaration of
@@ -296,8 +378,9 @@ type SDKModelRefusalFallbackMessage = {
 ```
 
 **The single most consequential fact in item (b) for the phase**: `trigger` is the literal `'refusal'`
-and nothing else, and the JSDoc (`4474`) scopes emission to "the primary model ends the stream with
-`stop_reason` 'refusal' and the turn is retried once on a fallback model". **A model-refusal fallback
+and nothing else, and the JSDoc (`4474`) scopes emission narrowly, in terms this document restates —
+two conditions must both hold, a primary-model response that ended on `stop_reason` `'refusal'`, and a
+single retry of that turn against the fallback model.  Neither condition mentions availability. **A model-refusal fallback
 is not an overload fallback.** `Options.fallbackModel`'s own text (item (g)) says the fallback exists
 for a model that is "overloaded or unavailable" — but no frame in the pinned `SDKMessage` union
 announces *that* swap. Capture (G) tests exactly this gap: with persistent 529 and `fallbackModel` set,
@@ -352,7 +435,8 @@ type ThinkingDisabled = { type: 'disabled' };                                   
 Type-level facts worth flagging, because two of them contradict the option's own example text:
 
 - **`ThinkingEnabled.budgetTokens` is OPTIONAL** (`8230`, `budgetTokens?: number`) even though the
-  option's JSDoc renders the arm as `{ type: 'enabled', budgetTokens: number }` (`1728`). The
+  option's JSDoc renders the arm as `{ type: 'enabled', budgetTokens: number }` (`1729`; the
+  preceding line `1728` is the one that marks `{ type: 'adaptive' }` as the default). The
   declaration is the compile-time authority; the JSDoc example is illustrative. `{type:'enabled'}`
   with no budget is a well-typed value with undefined semantics in the pin.
 - **`display` exists on two of the three arms** (`adaptive` and `enabled`) and is absent from
@@ -362,7 +446,8 @@ Type-level facts worth flagging, because two of them contradict the option's own
   request (`sdk.d.ts:4175`, `thinking_display?: ('summarized'|'omitted') | null`) — where `null` is
   additionally a member, i.e. the *clearing* form exists only on the imperative surfaces, not in
   `ThinkingConfig`.
-- Doc-asserted arm semantics (`8206`, `8227`, `8219`, and the option's own list at `1726-1730`):
+- Doc-asserted arm semantics, each cited at its own JSDoc — `ThinkingAdaptive` (`8206`),
+  `ThinkingEnabled` (`8227`), `ThinkingDisabled` (`8219`) — plus the option's own list at `1726-1730`:
   `adaptive` = the model decides when and how much to think, named as the default for models that
   support it, and version-scoped in the prose to Opus 4.6+; `enabled` = a fixed budget, prose-scoped to
   older models; `disabled` = no extended thinking. Precedence is stated twice (`1732`, `8215`):
@@ -388,7 +473,7 @@ narrower variant — never as `EffortLevel` itself:
 | `BaseHookInput.effort` (per-turn, hooks) | 187-190 | `{ level: string }` — a bare string, not the union (P2 item (b) already pinned the object; the `level` semantics are pinned here) |
 | `SDKSystemMessage.effort` (init) | 4899 (JSDoc 4897) | `('low'\|'medium'\|'high'\|'xhigh'\|'max') \| null` — no number |
 | `Settings.effortLevel` / `Settings.<model>.effortLevel` | 7579, 7588 | `'low'\|'medium'\|'high'\|'xhigh'` — **`'max'` excluded**, deliberately |
-| `Query.setSettings`'s `effortLevel` key | 2520 (JSDoc 2514-2517) | `EffortLevel \| null` — re-widened to include `'max'` |
+| `Query.applyFlagSettings`'s `effortLevel` key | 2519-2521, the mapped key at 2520 (JSDoc 2512-2517) | `EffortLevel \| null` — re-widened to include `'max'` |
 
 **Declaration comment on the numeric form's semantics — there is none.** `AgentDefinition.effort`'s
 JSDoc (`84-86`) says only, restated: a reasoning effort level for the agent, either a named level or an
@@ -400,9 +485,10 @@ Recorded as OQ-P6-2.
 
 Two adjacent doc-asserted rules that constrain a Winter effort mapper:
 
-- `'max'` is **session-scoped and deliberately not persistable**: `Settings.effortLevel` excludes it,
-  and `setSettings`'s JSDoc (`2514-2517`) says so explicitly, restated: `effortLevel` additionally
-  accepts `'max'`, which is session-scoped, and `Settings.effortLevel` excludes it for that reason.
+- `'max'` is **session-scoped and deliberately not persistable**: `Settings.effortLevel`'s own type
+  omits it, and `Query.applyFlagSettings`'s `@param` doc (`2514-2517`) states the reason directly —
+  the value applies for the remainder of the session on models that support it and is never written
+  to a settings file, which is why the persisted type excludes it.
 - Effort is **silently downgraded per model**. `BaseHookInput.effort.level`'s JSDoc (`189`) describes
   the value as the active level *after any silent downgrade for the selected model*, and
   `SDKSystemMessage.effort`'s (`4897`) as the level the session will send next *after env overrides,
@@ -478,10 +564,10 @@ A bare array — no envelope, no default marker, no "current model" field. The c
 the initialize response (below). **No `Query` method returns the currently selected model.**
 
 The wire twin is `SDKControlListModelsRequest` (`sdk.d.ts:3855-3857`, JSDoc `3852-3854`), subtype
-`'list_models'`, **payload-free**. Its JSDoc, restated, is the capability rationale: in a remote
-thin-client session the worker's provider, settings cascade and enforcement policy decide which models
-the session can run, so the client must ask rather than compute its own list — the pin's own argument
-for a server-side catalog, which is the shape WS-13's discovery layer takes.
+`'list_models'`, **payload-free**. Its JSDoc gives the rationale, restated here in this document's own terms: model availability is
+decided worker-side, from three inputs it names — the provider in use, the settings cascade, and
+enforcement policy — so a thin client cannot compute the list locally and has to request it. That is
+the pin arguing for a server-side catalog, which is the shape WS-13's discovery layer takes.
 
 ### `set_model` — `sdk.d.ts:4181-4188` (JSDoc `4178-4180`)
 
@@ -538,9 +624,10 @@ type ApiKeySource = 'ANTHROPIC_API_KEY' | 'apiKeyHelper' | '/login managed key' 
 
 Nine members, of which the JSDoc marks the last **five** as legacy that current CLIs never emit,
 retained only for backward compatibility — so the *live* value set is four:
-`'ANTHROPIC_API_KEY'`, `'apiKeyHelper'`, `'/login managed key'`, `'none'`. `'none'` is doc-asserted to
-mean *no API key in use*, explicitly including a claude.ai OAuth login, a bearer token, or a third-party
-cloud provider — i.e. **`'none'` does not mean unauthenticated**. Any Winter code that treats
+`'ANTHROPIC_API_KEY'`, `'apiKeyHelper'`, `'/login managed key'`, `'none'`. The JSDoc glosses `'none'`
+as the absence of an *API key* specifically, and then lists three authenticated situations that still
+report it: a claude.ai OAuth session, bearer-token auth, and a third-party cloud provider. So
+**`'none'` does not mean unauthenticated** — it means "not via an API key". Any Winter code that treats
 `apiKeySource === 'none'` as "no credential" is wrong on exactly the OAuth and Bedrock/Vertex paths P6
 adds. One member contains a space and a slash (`'/login managed key'`), which will bite any consumer
 that treats these as identifiers.
@@ -603,16 +690,18 @@ riding the *usage* record rather than `ModelInfo` is the pin's own placement of 
 as catalog data — worth noting for the extractor lane: the pinned runtime learns them per request, not
 from a catalog.
 
-**`costBasis` (`1322`, JSDoc `1319-1321`)** — doc-asserted, restated: it records which price table the
-**most recent** request for this model was priced at — Claude Code's built-in list prices (`'list'`),
-the organization's managed-settings rates or multiplier (`'managed'`), or neither (`'unknown'`, meaning
-no pricing row and no built-in price matched the model id, so `costUSD` is a guess at the default
-model's rate). Three further behaviours the same comment pins, each load-bearing for Winter's cost
-honesty:
+**`costBasis` (`1322`, JSDoc `1319-1321`)** — doc-asserted, restated in this document's own terms:
+the field names the pricing source behind this model's latest priced request. `'list'` = the runtime's
+own built-in price table. `'managed'` = the organization's configured rates or multiplier from managed
+settings. `'unknown'` = neither applied, because no configured row matched *and* no built-in entry
+matched the model id — and in that case the JSDoc is explicit that the `costUSD` figure is a guess
+computed at the default model's rate. Three further behaviours the same comment pins, each
+load-bearing for Winter's cost honesty:
 
 1. it is **overwritten per request**, like `canonicalModel` — so differencing cumulative `costUSD` per
    turn yields that turn's basis;
-2. it is **absent until this process has priced a request** for the model (e.g. right after a resume);
+2. it does not appear until the current process has priced at least one request for that model — a
+   freshly resumed session being the example the comment gives;
 3. absence is doc-instructed to be **treated as `'list'`** — a default that quietly converts "we don't
    know" into "list price" on a resumed session.
 
@@ -631,21 +720,28 @@ raw/canonical split `ModelInfo.value`/`resolvedModel` draws, third occurrence of
 
 ### `result.total_cost_usd` — `sdk.d.ts:4682` (error arm) / `4736` (success arm), JSDoc `4679-4681` / `4733-4735`
 
-Required `number` on both result arms. Doc-asserted lifecycle, restated: it is a cumulative estimate in
-USD for this `query()` call, covering the same query-pipeline calls as `modelUsage`; in
-streaming-input sessions each result carries the running total so far, so a consumer reads the latest
-result rather than summing across results; crash/startup-error results may carry zeroed values; resumed
-sessions start fresh; a mid-session `/clear` resets the running total; and it is an estimate, not a
-billing statement. `modelUsage` (`4690`/`4744`, JSDoc `4687-4689`/`4741-4743`) is doc-asserted to be
-the *correct* field for token/cost accounting — it spans main loop, Task subagents, sidechains and
-internal calls such as compaction and Workflow agents, while excluding out-of-pipeline helper calls
-(the permission classifier, token-count probes). The sibling `usage: NonNullableUsage` is doc-marked
+Required `number` on both result arms. Doc-asserted lifecycle, restated in this document's own terms:
+the value accumulates over the whole `query()` call and spans the same set of model calls `modelUsage`
+covers. Under streaming input every result frame repeats the total accrued so far, so a consumer must
+read the newest result and must **not** add results together. Three zero/reset conditions are named: a
+crash or startup-error result can arrive with the figures zeroed, a resumed session restarts the
+counter from nothing, and a mid-session `/clear` resets it. The comment closes by disclaiming the
+number as an estimate rather than a bill. `modelUsage` (`4690`/`4744`, JSDoc `4687-4689`/`4741-4743`) is doc-asserted to be
+the *correct* field for token/cost accounting. Its stated scope is the whole query pipeline: the main
+loop plus every call made beneath it — subagents launched by the Agent/Task tool, sidechains, and the
+runtime's own internal model calls, of which the comment names compaction and Workflow agents as
+examples. Its stated exclusions are calls made *outside* that pipeline, and the two it names are the
+permission classifier and token-count probes. The sibling `usage: NonNullableUsage` is doc-marked
 **MAIN AGENT LOOP ONLY** (`4684`/`4738`) and explicitly deprioritised in favour of `modelUsage`.
 
 `SDKResultError` (`4671-4708`) carries the identical `total_cost_usd`/`usage`/`modelUsage` trio, so a
-failed turn still reports cost. Its `subtype` union (`4673`) is
-`'error_during_execution' | 'error_max_turns' | 'error_max_budget_usd' | 'error_max_structured_output_retries'`
-— **four members, none provider-specific**; there is no `error_auth`, `error_model_not_found` or
+failed turn still reports cost. Its `subtype` union (`4673`) has four members:
+
+```ts
+subtype: 'error_during_execution' | 'error_max_turns' | 'error_max_budget_usd' | 'error_max_structured_output_retries';
+```
+
+**None of the four is provider-specific**; there is no `error_auth`, `error_model_not_found` or
 `error_overloaded` result subtype. That constrains capture (I): a credential or unknown-model failure
 must surface as one of these four (most plausibly `error_during_execution`), as a thrown exception, or
 as `is_error: true` on the `success` subtype — the pin leaves all three open, and
@@ -660,8 +756,9 @@ Required: `model`, `total_tokens`, `raw_max_tokens`, `percentage`, `categories`,
 `{name: string; tokens: number; kind: 'used'|'free'|'buffer'|'deferred'}`, with its JSDoc instructing
 consumers to classify on `kind` and never on the display `name`. Two doc-asserted subtleties for a
 Winter context reporter: `total_tokens` is **unclamped** and may exceed `raw_max_tokens` (`3249`);
-and `over_limit.kind` describes *how the window was resolved*, not whether the API will accept the next
-request (`3261`). The type carries an explicit **additive-evolution promise** (`3241`): new optional
+and `over_limit.kind` answers a narrower question than a reader expects (`3261`): it reports which
+window the measurement was taken against, and the JSDoc warns explicitly that this is *not* a
+prediction about whether the next request will be accepted. The type carries an explicit **additive-evolution promise** (`3241`): new optional
 fields only, a breaking reshape would ship as a sibling field. It rides
 `SDKAssistantMessage.context_usage?` (`3144`, JSDoc `3141-3143`) as a wrapper-level sibling on the
 synthetic assistant message that delivers the `/context` markdown, never inside `message.content`.
@@ -677,16 +774,19 @@ reproduced absence across all six `.d.ts` files:
 - `redacted_thinking` — **zero occurrences**, in any file, in any casing.
 - a `type: 'thinking'` block literal — **zero occurrences**.
 - `signature` as a *content-block field* — **zero occurrences**. The four hits of the string are:
-  `SDKAssistantMessage.resumed_from_incomplete_thinking`'s JSDoc (`sdk.d.ts:3116`) and three unrelated
+  `SDKAssistantMessage.resumed_from_incomplete_thinking`'s JSDoc (`sdk.d.ts:3116`), and three
+  unrelated comments that use the word `signature` about request signing — the
   AWS SigV4 sandbox-proxy settings (`7454`, `7458`, `7462`).
-- `tool_result` appears **only in prose** — 14 JSDoc mentions across `sdk.d.ts`/`sdk-tools.d.ts`, never
-  as a declared block type.
+- `tool_result` appears **only in prose** — **21** occurrences across the two files (13 in `sdk.d.ts`,
+  8 in `sdk-tools.d.ts`), every one of them inside a JSDoc comment, never as a declared block type.
 
 Every block shape is delegated to `BetaMessage` / `MessageParam` (`sdk.d.ts:1`, `:8`), from the
 floating peer `@anthropic-ai/sdk >=0.93.0`. The pin's own prose says so twice, in words this document
-restates: `SDKAssistantMessage.message`'s JSDoc (`3103`) describes the value as shaped like an
-Anthropic Messages API assistant `Message` — id, model, content blocks (text, thinking, tool_use, …),
-stop_reason and usage — and refers the reader to the Messages API reference for the block types; and
+restates: `SDKAssistantMessage.message`'s JSDoc (`3103`) characterises the value only by analogy — it
+says the object has the shape of an assistant-role Messages API message, lists the top-level keys it
+carries (an id, a model, a content array, a stop reason and a usage record), names three of the block
+types by way of example, and then sends the reader to Anthropic's public API reference for what those
+blocks actually contain; and
 `SDKUserMessage.message`'s (`5062`, repeated at `5113`) does the same for a user `MessageParam` whose
 content is a string or an array of blocks (text, image, document, tool_result, …).
 
@@ -697,11 +797,12 @@ R6-8's conclusion by a different route:
 1. **`thinking` is named as a real assistant content-block type** (`3103`) — so it is in-dialect, and a
    Winter `reasoning_summary` frame is not competing with an undeclared concept.
 2. **Signatures are cumulative and replay-critical.** `SDKAssistantMessage.resumed_from_incomplete_thinking?: true`
-   (`sdk.d.ts:3118`, JSDoc `3115-3117`) exists for exactly one situation, restated: the turn continued
-   the preceding truncated assistant turn *inside its trailing signed thinking block* (max-output-tokens
-   recovery), its thinking signatures are **cumulative over that preceding thinking-only turn**, and a
-   history replayed through the bridge must carry the flag back so the normalizer keeps the run's prefix
-   on the wire. A declaration does not add a wrapper-level flag whose sole purpose is preserving a
+   (`sdk.d.ts:3118`, JSDoc `3115-3117`) exists for exactly one situation, restated in this document's
+   own terms: a turn cut off by the output-token ceiling part-way through a signed thinking block, with
+   the next turn resuming inside that same block. The JSDoc's operative claim is that the thinking
+   signatures then accumulate across the pair rather than standing alone per turn, and that a host
+   replaying such a history back through the bridge must re-send the flag or the normalizer drops the
+   run's prefix from the wire. A declaration does not add a wrapper-level flag whose sole purpose is preserving a
    signature chain across replay unless the signature is load-bearing on the wire. That is strong
    circumstantial support for R6-8 — **circumstantial, and labelled as such** — and it is a second,
    independent reason a foreign (unsigned) summary must not be written into
@@ -711,11 +812,14 @@ Capture (F) supplies the direct behavioural evidence: what the runtime does with
 block **with** a signature versus **without** one, and whether the block is replayed verbatim into the
 next request. See its verdict below; that verdict, not this section, is R6-8's factual base.
 
-**`image` / `tool_result.content`**: likewise undeclared. `sdk-tools.d.ts` prose confirms the runtime
-*produces* image blocks in a model-facing `tool_result` — `Read`'s output type notes (`sdk-tools.d.ts:334`, `:338`)
-describe extracted page images delivered solely as image blocks in the model-facing `tool_result`
-content and not retained on the tool_use_result. So **`tool_result.content` admits blocks, not only a
-string**, established from the pin's own prose about its own tool, not from the external declaration.
+**`image` / `tool_result.content`**: likewise undeclared. `sdk-tools.d.ts` nonetheless shows the
+runtime *producing* image blocks inside a model-facing `tool_result`. Two field comments on `Read`'s
+output type (`sdk-tools.d.ts:334`, `:338`), restated in this document's own terms, say that a PDF page
+range is rendered to page images which reach the model as image blocks on the tool result and by no
+other route, and that those bytes are deliberately not retained on the persisted `tool_use_result` —
+the field is described as transient in-process only and absent from the emitted result. So
+**`tool_result.content` admits blocks, not only a string**, established from the pin's own commentary
+on its own tool rather than from the external declaration.
 The `source` variants of an image block are not pinned anywhere.
 
 ---
@@ -735,10 +839,12 @@ resolution rule, no validation claim** — the pin never says what happens to an
 is what capture (I) probes.
 
 **`fallbackModel`'s comment carries the phase's most consequential trigger text** (doc-asserted,
-`1535-1539`, restated): it names fallback model(s) used **if the primary model is overloaded or
-unavailable**; it **accepts a comma-separated list to try each in order**; and **the primary model is
-re-tried at the start of each user turn, so a temporary outage does not permanently demote the
-session.**
+`1535-1539`). Restated in this document's own terms, it fixes three things: the condition that engages
+the fallback, worded there as the primary being **"overloaded or unavailable"** (the one clause quoted
+verbatim in this item, because that wording is the evidence OQ-P6-5 turns on); the field's multi-value
+form, a single comma-separated string whose entries are tried in sequence; and a re-promotion rule —
+the primary is attempted again at each new user turn, so an outage demotes the session only while it
+lasts.
 
 Three findings from that:
 
@@ -871,7 +977,8 @@ message_start → content_block_start → content_block_delta → content_block_
 ```
 
 **`ping` never reaches the consumer** (`"did a ping reach the consumer?": false` in both runs). The
-pinned six-name list at `sdk.d.ts:4547` is therefore *exhaustive for what a host observes*, even
+pinned six-name list — the one beginning `message_start` at `sdk.d.ts:4547` — is therefore
+*exhaustive for what a host observes*, even
 though `ping` demonstrably exists on the wire — the runtime filters it before the frame is emitted.
 That reconciles the apparent contradiction item (a) flagged between the six-name list and
 `user_message_uuid`'s "first **non-ping** stream event" wording: the wording describes the runtime's
@@ -944,34 +1051,43 @@ is handled differently (no such block was streamed — its shape stays underived
 ### Capture (G) — `max_retries` is 10, `retry-after` is honoured, `rate_limit_event` never fires, and the overload fallback is FRAME-INVISIBLE
 
 **Design.** Three runs, three loopback policies, each deadline-bounded at 180 s via
-`Options.abortController`: (i) 529 `overloaded_error` on the first requests then 200; (ii) 429
+`Options.abortController`: (i) 529 `overloaded_error` on the first **two POSTs** then 200; (ii) 429
 `rate_limit_error` with `retry-after: 2` plus `anthropic-ratelimit-requests-limit/-remaining/-reset`
-and `anthropic-ratelimit-unified-status/-reset`, then 200; (iii) **persistent** 529 with
-`fallbackModel: "haiku"`. Every request's `model` field and arrival time is logged, because item (b)
-predicted the request `model` might be the only observable of a fallback. (The loopback's failure
-counter also covers the runtime's `HEAD /api/hello` preflight, so runs (i)/(ii) delivered exactly one
-failing `POST` each — which is what produced their single retry.)
+and `anthropic-ratelimit-unified-status/-reset` on the first **two POSTs**, then 200; (iii)
+**persistent** 529 with `fallbackModel: "haiku"`. Every request's `model` field and arrival time is
+logged, because item (b) predicted the request `model` might be the only observable of a fallback.
+
+*(Numbers below are from the re-run after review r1 Minor 5: the loopback's failure counter used to
+increment on the runtime's `HEAD /api/hello` preflight too, so runs (i)/(ii) previously delivered one
+failing POST each and produced a single retry. Gating the counter on `POST` gives the multi-attempt
+progression the scenario was written to capture, and — usefully — run (iii) then terminated on its own
+rather than on the deadline.)*
 
 **`api_retry` — full frame, verbatim shape** (run (i)):
 
 ```json
 { "type": "system", "subtype": "api_retry", "attempt": 1, "max_retries": 10,
-  "retry_delay_ms": 577, "error_status": 529, "error": "overloaded",
+  "retry_delay_ms": 514, "error_status": 529, "error": "overloaded",
   "session_id": "<uuid>", "uuid": "<uuid>" }
 ```
 
 Nine keys, exactly the pinned nine (`sdk.d.ts:3085-3095`), no extras. **`max_retries` is 10** in every
 frame of all three runs — the pinned default, which the declaration itself never states.
 
-**Run (i) 529 → 200.** One `api_retry` (`attempt: 1`, `retry_delay_ms: 577`, `error_status: 529`,
-`error: "overloaded"`), then success. `529` maps to the `'overloaded'` member of
-`SDKAssistantMessageError`. Measured inter-request gap 586 ms against the announced 577 ms — the frame
-announces the delay *before* it is taken, and it is accurate.
+**Run (i) 529 → 200.** Two `api_retry` frames, `attempt: 1` then `attempt: 2`, with `retry_delay_ms`
+**514 → 1227** and `error_status: 529` / `error: "overloaded"` on both; then success
+(`terminal_reason: "completed"`). `529` maps to the `'overloaded'` member of
+`SDKAssistantMessageError`. Measured inter-request gaps were 523 ms and 1234 ms against the announced
+514 ms and 1227 ms — **the frame announces each delay *before* it is taken, and both announcements
+were accurate to within ~10 ms.**
 
-**Run (ii) 429 + `retry-after: 2`.** One `api_retry` with **`retry_delay_ms: 2000`** — exactly the
-`retry-after: 2` header, not the computed backoff (run (i)'s first delay was 577 ms, run (iii)'s
-622 ms; both jittered, neither round). Measured gap 2008 ms. **`retry-after` is honoured verbatim and
-overrides the backoff schedule.** `429` maps to `error: "rate_limit"`, `error_status: 429`.
+**Run (ii) 429 + `retry-after: 2`.** Two `api_retry` frames with **`retry_delay_ms: 2000` on BOTH** —
+exactly the `retry-after: 2` header, and *flat*, where run (i)'s own two delays over the same two
+attempts grew 514 → 1227. Measured gaps 2010 ms and 2012 ms. So `retry-after` is not merely honoured
+on the first attempt: **it replaces the backoff schedule on every attempt it is present on**, and the
+runtime does not compound it with its own exponential growth. `429` maps to `error: "rate_limit"`,
+`error_status: 429`. (Strictly stronger than the pre-Minor-5 run, which had one retry per policy and
+so could not distinguish "honoured once" from "replaces the schedule".)
 
 **Run (ii)'s decisive negative: `rate_limit_event` frames = 0.** The loopback returned the full
 `anthropic-ratelimit-*` header set including a `rejected` unified status, and **not one
@@ -984,15 +1100,15 @@ Winter's own catalog/credential layer should route provider 429s to `api_retry` 
 
 **Run (iii) persistent 529 + `fallbackModel: "haiku"` — three findings, one of them decisive.**
 
-Request log (model per `POST`, ms from run start):
+Request log (model per `POST`, ms from run start; 14 POSTs plus the `HEAD` preflight):
 
-| # | model | t+ms |
+| POST # | model | t+ms |
 | --- | --- | --- |
-| 2 | `claude-sonnet-5` | 510 |
-| 3 | `claude-sonnet-5` | 1138 |
-| 4 | `claude-sonnet-5` | 2167 |
-| 5 | **`claude-haiku-4-5-20251001`** | 2243 |
-| 6-15 | `claude-haiku-4-5-20251001` | 2804 … 180648 |
+| 1 | `claude-sonnet-5` | 538 |
+| 2 | `claude-sonnet-5` | 1129 |
+| 3 | `claude-sonnet-5` | 2352 |
+| 4 | **`claude-haiku-4-5-20251001`** | 2432 |
+| 5-14 | `claude-haiku-4-5-20251001` | 2989 … 179526 |
 
 1. **The fallback happens, and the ONLY observable is the request's `model` field.**
    `"refusal/fallback frames": []` — **zero** `model_refusal_fallback`, zero
@@ -1006,20 +1122,22 @@ Request log (model per `POST`, ms from run start):
    — while every frame reports `max_retries: 10`. So `max_retries` is the **per-model** retry budget
    and a *separate, undeclared* threshold (3 attempts) governs the model swap. The `attempt` counter
    then **restarts at 1** on the fallback model and runs the full 1…10.
-3. **Backoff shape**, measured on the fallback model's ten attempts: `retry_delay_ms` = 557, 1162,
-   2189, 4026, 9290, 16675, 36061, 39010, 32216, 37133 — roughly exponential with jitter to about
-   40 s, then flat. Winter's own retry policy has a pinned curve to match or diverge from
-   deliberately.
+3. **Backoff shape**, measured on the fallback model's ten attempts: `retry_delay_ms` climbs roughly
+   exponentially with jitter from ~550 ms and then **plateaus in the 33-39 s band for the last four
+   attempts** (33607, 35254, 33555, 38889 on attempts 7-10) — a ceiling, not unbounded growth.
+   Winter's own retry policy has a pinned curve to match or diverge from deliberately.
 
-**Terminal shape (attribution stated, not assumed).** Run (iii) ended with a `result` frame of
-**`subtype: "success"` carrying `is_error: true`, `api_error_status: 529`,
-`terminal_reason: "api_error"`** — i.e. an API failure rides the *success* subtype, exactly the
-possibility item (e) flagged (there is no provider-specific `SDKResultError` subtype). The run was
-also deadline-terminated at 180 s and `query()` threw a plain `Error` whose message is the runtime
-string `Operation aborted`, verbatim, and the fallback
-model had by then reached `attempt: 10` of `max_retries: 10`, so exhaustion and abort coincide: the
-frame's *shape* is the finding here; its precise trigger is disentangled by capture (I)'s
-unknown-model run, which fails without any deadline in play.
+**Terminal shape — now cleanly attributable.** Run (iii) reached `attempt: 10` of `max_retries: 10`
+on the fallback model and **terminated on its own** (`deadlineHit: false`). The earlier, pre-Minor-5
+run of this scenario had instead been cut off by the 180 s deadline, leaving exhaustion and abort
+indistinguishable; **that caveat is discharged** — this run has no deadline and no abort in it. On
+exhaustion the runtime emitted a `result` frame of **`subtype: "success"` carrying `is_error: true`,
+`api_error_status: 529`, `terminal_reason: "api_error"`** — an API failure riding the *success*
+subtype, exactly the possibility item (e) flagged (there is no provider-specific `SDKResultError`
+subtype) — and `query()` then **threw a plain built-in `Error`** whose message opens
+`Claude Code returned an error result: API Error: 529 …` (runtime error string; its tail echoes this
+harness's own canned message and the loopback's host:port). Identical in shape to capture (I)'s two
+failure branches, reached from a third, independent trigger.
 
 **`error_status` was never `null`** in any run — the connection-error case the JSDoc describes
 (`sdk.d.ts:3083`) is not reachable through a responding loopback, and is recorded as **not captured**.
@@ -1030,7 +1148,12 @@ unknown-model run, which fails without any deadline in play.
 
 **Design.** One set of mkdtemp dirs (`CLAUDE_CONFIG_DIR`, `HOME`, `cwd`) **reused across every run** —
 a fresh cwd for the second run would change the derived project key and make an untouched sidecar
-prove nothing. Sequence: run 1 creates the transcript under a fixed `sessionId`; the sidecar is
+prove nothing. **Every hash is taken at the sidecar's exact path, never by searching for its name**
+(review r1 Minor 1: a name search would have hashed a file the runtime had *moved* and still reported
+"unchanged" — the precise failure this assertion exists to catch). A file absent from that path is a
+FAILED assertion; where it actually went is reported separately as a diagnostic that cannot rescue
+the assertion. Likewise a transcript that has been renamed now reports as a failed assertion instead
+of throwing past the verdict block (Minor 4). Sequence: run 1 creates the transcript under a fixed `sessionId`; the sidecar is
 written **beside** it; sha256 recorded; six `resume` append turns; sha256 re-checked (attribution
 split); a `/compact` run; sha256 checked again. The marker is a high-entropy token derived by sha256;
 every request body the loopback receives is substring-checked for it and **never printed** (bodies
@@ -1054,7 +1177,13 @@ directory name matches `SessionKey.projectKey`'s documented default (`sdk.d.ts:5
 | 1a. unchanged after the resume+append half alone | **true** (attribution split, so a later change could not be blamed on the wrong half) |
 | 2. the marker appears in **no** request body the loopback received | **true** — 24 requests checked, zero hits |
 | 3. the transcript still parses as JSONL | **true** — 8 → 50 → 56 lines, every line parsed |
+| bonus: sidecar located | `"(at its own path, as expected)"` — the diagnostic search found it nowhere else |
 | bonus: file NAMES in the project dir | nothing renamed, moved, or removed; the only name added across the whole probe is the sidecar this probe itself wrote |
+
+*(Re-run after the review r1 harness fixes, with the hashes taken by path rather than by name. Every
+figure above is from that re-run and is identical to the pre-fix run — which is the expected result
+when nothing was moving the file in the first place, and is now established by a method that could
+have detected it if something had been.)*
 
 `run 2 resumed the same session` is `true` (run 2's `system/init.session_id` equals run 1's), so the
 resume genuinely reloaded the transcript the sidecar sits beside rather than starting a new session.
@@ -1112,12 +1241,24 @@ as a transition-to-idle value, and that the frame is the compaction-outcome carr
 "HOME"]` — no `ANTHROPIC_API_KEY`, no key of any kind. (ii) `model: "definitely-not-a-model"` against a
 loopback answering `404 {"type":"error","error":{"type":"not_found_error",…}}`.
 
-**Hermeticity result, and the Keychain caveat discharged.** Run (i) reached `system/init` with
-**`apiKeySource: "none"`** and then failed closed: the loopback received **one `HEAD /api/hello` and
-zero `POST /v1/messages`**. The runtime did **not** find an ambient credential — the caveat stated in
-this scenario's design (that `HOME`/`CLAUDE_CONFIG_DIR` do not redirect the macOS Keychain) did not
-materialise, and no real user credential was consulted, used or observed. Recorded as a discharged
-risk, not an untested assumption.
+**Hermeticity result, and the Keychain caveat discharged.** The caveat this scenario's design states
+is that `HOME` and `CLAUDE_CONFIG_DIR` do not redirect the macOS Keychain, so a keyless run *could*
+have found the real user's OAuth credential. **Two observations discharge it, and neither is
+`apiKeySource`:**
+
+1. **The loopback received one `HEAD /api/hello` and ZERO `POST /v1/messages`.** No model request was
+   ever attempted, so no credential was ever used.
+2. **The run failed on the unauthenticated branch**, and said so: `query()` threw with a
+   not-logged-in message directing the user to `/login` (quoted in full in the table below). A run
+   holding a working ambient credential does not take that branch.
+
+`system/init` did also report **`apiKeySource: "none"`**, but that value is *not* the proof and is
+listed here only for completeness: item (d) established that `'none'` explicitly **includes** a
+claude.ai OAuth login, so on its own it is consistent with both "no credential" and "an OAuth
+credential from the Keychain". The zero-POST count and the branch taken are what separate them.
+
+Conclusion: no real user credential was consulted, used or observed. Recorded as a discharged risk,
+not an untested assumption.
 
 | | run (i) no key | run (ii) unknown model |
 | --- | --- | --- |
@@ -1191,8 +1332,9 @@ Four structural facts for the catalog lane:
 - **Every row is an ALIAS row.** `value` is always the alias (`default`, `opus[1m]`, `sonnet`, …) and
   `resolvedModel` always the canonical wire id. Item (d)'s reading of `resolvedModel` is confirmed by
   the data: a host matches a persisted explicit id against the alias row covering it.
-- **`value: "default"` is a real, selectable row**, not a sentinel — which is the same literal
-  `set_model` treats as a reset (item (d), `sdk.d.ts:4184`) and that `Settings.fallbackModel` expands
+- **`value: "default"` is a real, selectable row**, not a sentinel — and `'default'` is the same
+  literal `set_model` documents as a reset (item (d), `sdk.d.ts:4184`) and that `Settings.fallbackModel`
+  expands
   (item (g), `5574-5576`). Three surfaces, one magic string.
 - **Optional capability booleans are genuinely omitted, not `false`.** The `haiku` row carries only
   `value`/`resolvedModel`/`displayName`/`description`. A Winter consumer must treat absent as unknown,
@@ -1379,7 +1521,7 @@ No spec text is contradicted by any of these; recorded because they surfaced dur
 - `ApiKeySource`'s `'none'` explicitly includes OAuth, bearer-token and third-party-cloud auth
   (`124-126`); it does not mean "unauthenticated".
 - `ThinkingEnabled.budgetTokens` is optional in the declaration (`8230`) though the option's own JSDoc
-  example renders it required (`1728`).
+  example renders it required (`1729`).
 - `Settings.availableModels` uses the empty array to mean "only the default model" (`5578-5580`), not
   "no models".
 - `contextWindow`/`maxOutputTokens` are pinned on `ModelUsage` (per request), not on `ModelInfo` (per

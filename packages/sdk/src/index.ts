@@ -138,6 +138,10 @@ export {
   WinterStoreError,
   WinterStoreLeaseError,
   DIALECT_RECORD_ENTRY_TYPE,
+  // P6 R6-7: the provider-state sidecar's filename suffix. Declared with the store because the
+  // store's own `delete()` must name the file to remove it; the runtime re-exports it so the read
+  // deny, the path builder and the deletion transaction cannot drift.
+  PROVIDER_STATE_FILE_SUFFIX,
 } from "./store/session-store.ts";
 export type { SessionKey, SessionStoreEntry, SessionSummaryEntry, SessionStore } from "./store/session-store.ts";
 
