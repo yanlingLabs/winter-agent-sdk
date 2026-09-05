@@ -154,6 +154,13 @@ describe("toSdkAssistantMessageError — the pinned 11-member taxonomy (item (b)
     expect(toSdkAssistantMessageError(normalizeHttpError(400, h(), ""))).toBe("invalid_request");
   });
 
+  test("402 Payment Required is `billing_error`, not `invalid_request` (Minor 13)", () => {
+    // Telling a user their REQUEST was invalid when their card expired sends them to debug entirely
+    // the wrong thing.
+    expect(toSdkAssistantMessageError(normalizeHttpError(402, h(), ""))).toBe("billing_error");
+    expect(normalizeHttpError(402, h(), "").retryable).toBe(false);
+  });
+
   test("transport failures collapse to `unknown` — the pinned union has no transport member", () => {
     for (const code of ["network", "timeout", "stall", "aborted", "capability"] as const) {
       expect(toSdkAssistantMessageError({ code, message: "x", retryable: false })).toBe("unknown");

@@ -62,6 +62,17 @@ describe("evaluateEndpoint — the local/private split (R6-11, WS-13 §13)", () 
     expect(reasonOf(evaluateEndpoint("http://localhost:1234/v1", { generated: false }))).toContain("not declared local");
   });
 
+  test("only the LITERAL `localhost` is loopback — `*.localhost` is an ordinary DNS name (Minor 14)", () => {
+    // RFC 6761 asks RESOLVERS to map the subdomain form to loopback, and this module resolves
+    // nothing by design — so treating `evil.localhost` as loopback was a claim about what some
+    // resolver will do, on a name a public DNS zone can perfectly well answer for.
+    expect(evaluateEndpoint("http://localhost:1234/v1", { generated: false, local: true })).toEqual({ ok: true, origin: "http://localhost:1234", local: true });
+    expect(reasonOf(evaluateEndpoint("http://evil.localhost/v1", { generated: false, local: true }))).toContain("plain http");
+    expect(reasonOf(evaluateEndpoint("http://evil.localhost/v1", { generated: true }))).toContain("plain http");
+    // Over https it is simply an ordinary remote endpoint — accepted, and NOT marked local.
+    expect(evaluateEndpoint("https://evil.localhost/v1", { generated: false, local: true })).toEqual({ ok: true, origin: "https://evil.localhost", local: false });
+  });
+
   test("a DNS NAME can never be marked local, even when the caller declares it", () => {
     // The whole point: a name resolves at connect time, so "this name is local" is a claim this
     // function cannot check and a rebinding resolver could falsify. `local: true` only ever
