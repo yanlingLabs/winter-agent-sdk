@@ -90,9 +90,12 @@ describe("createRegistry — resolution", () => {
     expect(failure(registry.resolve({ model: "anthropic/claude-sonnet-5" })).code).toBe("no-adapter");
   });
 
-  test("`candidate` rows RESOLVE — every seed row is one, and refusing them would leave nothing resolvable", () => {
+  test("`candidate` AND `experimental` rows RESOLVE — `blocked` is the only status the registry refuses", () => {
+    // R6-16 puts the native-cloud families in at `experimental`, so the pin is "every non-blocked
+    // row resolves" rather than "every row is candidate". `supported` stays unreachable: it requires
+    // the behavioural corpus (WS-13 §13).
     for (const model of catalog.models) {
-      expect(model.status).toBe("candidate");
+      expect([model.key, model.status]).toEqual([model.key, model.status === "experimental" ? "experimental" : "candidate"]);
       expect(ok(fullRegistry().resolve({ model: model.key })).modelKey).toBe(model.key);
     }
   });
