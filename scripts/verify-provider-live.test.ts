@@ -60,7 +60,7 @@ describe("planLiveRun refuses by default", () => {
 
   test("an ambient conventional key is NEVER read (R6-10: no implicit scan)", () => {
     // The one variable a real developer is most likely to have exported.
-    const plan = planLiveRun(strippedEnv({ [OPT_IN_VAR]: "1", OPENAI_API_KEY: "sk-not-mine", ANTHROPIC_API_KEY: "sk-not-mine" }), CATALOG);
+    const plan = planLiveRun(strippedEnv({ [OPT_IN_VAR]: "1", OPENAI_API_KEY: "test-key-ambient-not-mine", ANTHROPIC_API_KEY: "test-key-ambient-not-mine" }), CATALOG);
     expect(plan.optedIn).toBe(false);
   });
 });
@@ -149,7 +149,7 @@ describe("the script itself, spawned", () => {
   }, 30_000);
 
   test("opted in with an ambient conventional key present, it still skips", async () => {
-    const result = await run({ [OPT_IN_VAR]: "1", OPENAI_API_KEY: "sk-ambient-must-not-be-used", ANTHROPIC_API_KEY: "sk-ambient-must-not-be-used" });
+    const result = await run({ [OPT_IN_VAR]: "1", OPENAI_API_KEY: "test-key-ambient-must-not-be-used", ANTHROPIC_API_KEY: "test-key-ambient-must-not-be-used" });
     expect(result.code).toBe(0);
     expect(result.stdout.trim()).toBe(SKIPPED_LINE);
   }, 30_000);

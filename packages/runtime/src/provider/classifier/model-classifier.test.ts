@@ -130,7 +130,7 @@ describe("every failure collapses to no_verdict with its own reason code (WS-07 
     {
       name: "a generation that throws",
       turn: (): Promise<ProviderTurn> => {
-        throw new Error("connection reset while POSTing /v1/messages with key sk-live-abc");
+        throw new Error("connection reset while POSTing /v1/messages with key test-key-redaction-probe");
       },
       reasonCode: "provider_error",
     },
@@ -193,10 +193,10 @@ describe("every failure collapses to no_verdict with its own reason code (WS-07 
 
   test("no provider failure text reaches the returned result", async () => {
     const provider = scriptedProvider((): Promise<ProviderTurn> => {
-      throw new Error("connection reset; Authorization: Bearer sk-live-secret");
+      throw new Error("connection reset; Authorization: Bearer test-key-redaction-probe");
     });
     const result = await createModelClassifier({ provider, model: "p/m" }).classify(ENVELOPE, CONTEXT);
-    expect(JSON.stringify(result)).not.toContain("sk-live-secret");
+    expect(JSON.stringify(result)).not.toContain("test-key-redaction-probe");
     expect(JSON.stringify(result)).not.toContain("Authorization");
   });
 

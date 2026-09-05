@@ -13,6 +13,7 @@ import { test, expect, describe } from "bun:test";
 import { createMemoryCredentialStore, createRegistry, CredentialResolutionError, type CredentialMaterial, type CredentialRef, type CredentialStatus, type CredentialStore, type ProviderAdapter, type ProviderContext } from "@yanlinglabs/winter-provider-runtime";
 import type { WinterCatalog, WinterModelDescriptor, WinterProviderDescriptor } from "@yanlinglabs/winter-provider-catalog";
 import { deleteProviderCredential, providerCredentialRef, storeProviderCredential, validateProviderCredential } from "./credential-api.ts";
+import { createKeychainCredentialStore, DEFAULT_KEYCHAIN_SERVICE, type SecretsBackend } from "./keychain-store.ts";
 
 const SECRET = "test-key-do-not-use-4d9f2a";
 
@@ -368,5 +369,79 @@ describe("validateProviderCredential", () => {
       const status = await validateProviderCredential(registry, { kind: "env", name: "K" }, ctxFor("fake"));
       expect(status.ok).toBe(false);
     }
+  });
+});
+
+describe("over the REAL Keychain store shape, with an injected secrets double", () => {
+  // The dispatch names this fixture specifically, and it asserts something the memory store cannot:
+  // that the doors line up with the store a production session actually builds
+  // (`createKeychainCredentialStore`) -- its JSON encoding, its service defaulting, and its typed
+  // failures. The real secrets API is NEVER exercised (see keychain-store.ts's header and the
+  // repo-wide grep tripwire in its test): the backend is a double, and the "keychain" here is a Map.
+  function fakeSecrets(): SecretsBackend & { records: Map<string, string> } {
+    const records = new Map<string, string>();
+    return {
+      records,
+      async get({ service, name }) {
+        return records.get(`${service} ${name}`) ?? null;
+      },
+      async set({ service, name, value }) {
+        records.set(`${service} ${name}`, value);
+      },
+      async delete({ service, name }) {
+        return records.delete(`${service} ${name}`);
+      },
+    };
+  }
+
+  test("a stored credential lands under the DEFAULT service at the R6-10 account name, and reads back", async () => {
+    const secrets = fakeSecrets();
+    const store = createKeychainCredentialStore(DEFAULT_KEYCHAIN_SERVICE, { secrets });
+    const ref = await storeProviderCredential(store, { providerId: "anthropic", accountId: "work", material: apiKey() });
+    expect([...secrets.records.keys()]).toEqual([`${DEFAULT_KEYCHAIN_SERVICE} anthropic:work`]);
+    expect(await store.get(ref)).toEqual(apiKey());
+    await deleteProviderCredential(store, { providerId: "anthropic", accountId: "work" });
+    expect(secrets.records.size).toBe(0);
+  });
+
+  test("an explicit service on the ref wins over the store's default", async () => {
+    const secrets = fakeSecrets();
+    const store = createKeychainCredentialStore(DEFAULT_KEYCHAIN_SERVICE, { secrets });
+    await storeProviderCredential(store, { providerId: "anthropic", accountId: "work", material: apiKey(), service: "com.winter.core.dev" });
+    expect([...secrets.records.keys()]).toEqual(["com.winter.core.dev anthropic:work"]);
+  });
+
+  test("two accounts on one provider are two records -- the whole reason R6-10 keys by provider AND account", async () => {
+    const secrets = fakeSecrets();
+    const store = createKeychainCredentialStore(DEFAULT_KEYCHAIN_SERVICE, { secrets });
+    await storeProviderCredential(store, { providerId: "anthropic", accountId: "work", material: apiKey("test-key-work") });
+    await storeProviderCredential(store, { providerId: "anthropic", accountId: "personal", material: apiKey("test-key-personal") });
+    expect(secrets.records.size).toBe(2);
+    expect(await store.get({ kind: "keychain", account: "anthropic:work" })).toEqual(apiKey("test-key-work"));
+    expect(await store.get({ kind: "keychain", account: "anthropic:personal" })).toEqual(apiKey("test-key-personal"));
+  });
+
+  test("a backend that throws with the secret in its message does not leak it through the door", async () => {
+    const store = createKeychainCredentialStore(DEFAULT_KEYCHAIN_SERVICE, {
+      secrets: {
+        async get() {
+          return null;
+        },
+        async set({ value }) {
+          throw new Error(`SecKeychainItemCreate failed for value ${value}`);
+        },
+        async delete() {
+          return true;
+        },
+      },
+    });
+    let message = "";
+    try {
+      await storeProviderCredential(store, { providerId: "anthropic", accountId: "work", material: apiKey() });
+    } catch (err) {
+      message = (err as Error).message;
+    }
+    expect(message).not.toContain(SECRET);
+    expect(message).toContain("keychain(default:anthropic:work)");
   });
 });
