@@ -512,6 +512,20 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
           env,
           // Rider 25: the rewind fence. The session's own writable roots, so a file genuinely edited
           // in a granted directory still restores while a tampered index cannot reach outside them.
+          //
+          // WHOLE-BRANCH MINOR m4, DISCLOSED (fix wave). The fence is FROZEN AT CONSTRUCTION:
+          // `[config.cwd, ...additionalDirectories]`, taken once, here, before the session runs. The
+          // engine's own live bounds -- `extraBoundedRoots` (a directory the user grants mid-session
+          // through the approval flow) and `currentCwd` (which `EnterWorktree` relocates) -- never
+          // reach the sink. So a Write inside a worktree the session moved into checkpoints
+          // perfectly and is then REFUSED at rewind, counted as a `skippedLinks`: the user is told
+          // their edit could not be restored, with no indication that the reason is a fence set
+          // before the directory existed.
+          //
+          // NOT FIXED HERE because it cannot be: the fix is a sink that reads its roots through a
+          // getter instead of an array, and `checkpoint/sink.ts` belongs to the other lane of this
+          // wave. Recorded at the construction site rather than in a report so the next person to
+          // widen a session's bounds sees the coupling at the point they would otherwise miss it.
           ...(config.additionalDirectories !== undefined ? { additionalDirectories: config.additionalDirectories } : {}),
           // Riders 9/16: the durable, transcript-visible MIRROR of each checkpoint record. The
           // sidecar next to the blobs stays this sink's own read authority.

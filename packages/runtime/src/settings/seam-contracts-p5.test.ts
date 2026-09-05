@@ -511,8 +511,13 @@ describe("(vii) ajv is a real runtime dependency, in both dialects Lane K/Lane W
 //
 // DELIBERATELY NOT EXPORTED (P4's own KNOWN-2 trap, which engine.test.ts's header records): importing
 // a symbol from a test file RUNS that file's whole suite as a side effect. A lane that grabbed
-// `withTempTree` from this seam-authority file would silently re-run all 35 contracts inside its own
+// `withTempTree` from this seam-authority file would silently re-run all 37 contracts inside its own
 // suite. Copy these three lines instead.
+//
+// (A-5: this said "35" and the file held 37 -- it was written when the file did hold 35 and was
+// never revisited. A number in a comment is a claim with no verifier, so treat this one as
+// illustrative of the trap rather than as a count you may rely on; `grep -c "^  test("` is the
+// authority.)
 function withTempTree<T>(fn: (dirs: { cwd: string; home: string }) => T): T {
   const cwd = mkdtempSync(join(tmpdir(), "winter-p5-seam-cwd-"));
   const home = mkdtempSync(join(tmpdir(), "winter-p5-seam-home-"));

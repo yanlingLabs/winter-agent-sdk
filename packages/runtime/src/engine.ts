@@ -3225,6 +3225,22 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
       continue;
     }
 
+    // WHOLE-BRANCH MINOR m3, DISCLOSED (fix wave). Both the provider history and the durable
+    // transcript get the EXPANDED body, never `/review src` as the user typed it. A `/name` turn is
+    // therefore recorded as a multi-kilobyte prompt with no trace of the command that produced it,
+    // and a resumed session or a transcript reader sees prose the user never wrote.
+    //
+    // NOT CHANGED, and the reason is that both candidate fixes cost more than the defect. Recording
+    // the ORIGINAL text would make the transcript disagree with what the provider actually saw --
+    // the failure mode a replay is supposed to rule out. Recording BOTH (the original as the user
+    // entry, the expansion as a sibling) is a new entry type in the dialect and therefore a
+    // compatibility question against the pinned shape, which no capture answers: the pin is silent
+    // on how it records an expanded command. Inventing a shape here would be Winter guessing at
+    // parity in the one place parity is checkable byte-for-byte later.
+    //
+    // The cost is real but bounded, and it is a READABILITY cost, not a correctness one: nothing
+    // downstream needs the original text, and the expansion is exactly what the model was given.
+    // Carried for a capture.
     const userText = resolvedPromptText;
     messages.push({ role: "user", content: userText });
     await recordUser(userText);

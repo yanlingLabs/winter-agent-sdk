@@ -471,6 +471,24 @@ export const HOST_GENERATABLE_TOOL_NAMES: ReadonlySet<string> = new Set(["Struct
 // SHADOW-AND-RESTORE, not create-and-delete: the one generatable name ALREADY has a WS-06 stub
 // (descriptors/structured-output.ts), so a registration necessarily shadows it and the disposer must
 // put it back. `undefined` means "there was nothing here" and deletes -- never `set(name, undefined)`.
+//
+// WHOLE-BRANCH MINOR m6, CARRIED WITH ITS TRIGGER (fix wave). This registry is PROCESS-GLOBAL and
+// keyed by NAME ALONE, which is the one P5 registry not keyed by session or agent id (I5 keyed the
+// workflow host; skills/toolsearch/mcp/plugin-agents were already keyed). The consequence, concretely:
+// a workflow child carrying its own `schema` registers `StructuredOutput`, shadowing its
+// still-running parent's entry; at the child's teardown `registry.get(name) === childEntry` holds,
+// so the child restores the PRISTINE WS-06 stub and deletes the pristine map entry -- and the
+// parent's own later disposer then finds someone else's entry and correctly does nothing. The parent
+// finishes its run with the stub in place of its per-session descriptor.
+//
+// INERT AT P5, WHICH IS WHY IT IS CARRIED AND NOT FIXED: `ProviderRequest` carries no tool schemas
+// at all, and the engine validates structured output against its own `outputFormatSchema` rather
+// than against whatever this registry holds. Nothing reads the descriptor that gets clobbered.
+//
+// THE TRIGGER IS SPECIFIC: it goes live the moment `inputSchema` joins the provider request, which
+// is P6's scope. Key the descriptor by session (or read the schema from engine-local state) BEFORE
+// that lands. Written here rather than only in a report because the P6 change that makes this live
+// will be made in the request builder, not in this file, and its author has no reason to read this.
 export function registerHostGeneratedTool(t: RegisteredTool): () => void {
   const name = t.descriptor.canonicalName;
   if (!HOST_GENERATABLE_TOOL_NAMES.has(name)) {
