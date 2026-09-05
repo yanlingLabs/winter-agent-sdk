@@ -614,6 +614,11 @@ function rawTestProviderByName(name: TestProviderName): Provider {
                 if (!Array.isArray(m.content)) continue;
                 for (const b of m.content) {
                   if (b.type !== "tool_result" || b.tool_use_id !== "agent-call-1") continue;
+                  // Phase 6 Task 3 (R6-3): `tool_result.content` widened to `string | ContentBlock[]`.
+                  // The Agent tool's own result is always a JSON string, so a blocks-valued result is
+                  // not this call's shape and is skipped rather than flattened -- flattening would
+                  // hand `JSON.parse` a rendering of the blocks and produce a confusing parse failure.
+                  if (typeof b.content !== "string") continue;
                   try {
                     const parsed = JSON.parse(b.content) as { agentId?: string };
                     if (typeof parsed.agentId === "string") return parsed.agentId;

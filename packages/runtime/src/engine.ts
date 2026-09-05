@@ -23,7 +23,24 @@ import {
   DEFAULT_CONTEXT_WINDOW_TOKENS,
   DEFAULT_OUTPUT_STYLE,
   type InitPluginInfo,
+  // Phase 6 Task 3 (R6-D): the wire vocabularies are declared ONCE, in the sdk. `ProviderRawStreamEvent`
+  // below is an alias of `WireStreamEvent`, and `RetryInfo.error` is the pinned 11-member taxonomy --
+  // a second structural copy in this file is exactly the drift R6-D exists to avoid.
+  type SDKAssistantMessageError,
+  type WireStreamEvent,
 } from "@yanlinglabs/winter-agent-sdk";
+// Phase 6 Task 3 (R6-3): `MessageOrigin`/`ProviderNativeState` are CANONICAL in provider-runtime's
+// `types.ts` -- this file imports and re-exports them rather than declaring twins. The dependency runs
+// runtime -> provider-runtime only (R6-4: provider-runtime never imports the runtime), so the seam
+// types can live down there while `ProviderTurn`/`ProviderMessage`/`ContentBlock` stay up here.
+// `TurnRequest` is imported for its `toolChoice`/`effort`/`thinking` member types, so the engine's
+// request and an adapter's request cannot drift apart on the three fields they share.
+import type { MessageOrigin, ProviderNativeState, TurnRequest } from "@yanlinglabs/winter-provider-runtime";
+export type { MessageOrigin, ProviderNativeState };
+// R6-7: the sidecar record types the persistence seam carries. `store/provider-state.ts` imports
+// NOTHING from this file (its own types come from provider-runtime), so this is not the circular
+// direction `store/dialect.ts` has to avoid.
+import type { ProviderStateRecord, ProviderStateRecordInput } from "./store/provider-state.ts";
 import type { FrameSource, FrameSink } from "./protocol/channel.ts";
 import { Queue } from "./protocol/channel.ts";
 import { createRpcBridge } from "./rpc/bridge.ts";
@@ -217,7 +234,34 @@ export type ContentBlock =
   // same block (a single call reaches at most one of load-first-before-evaluation,
   // denied-before-execution, deferred-before-execution, interrupted-during-execution, or
   // errored-during-execution).
-  | { type: "tool_result"; tool_use_id: string; content: string; interrupted?: boolean; error?: boolean; denied?: boolean; deferred?: boolean; loadFirst?: boolean };
+  //
+  // Phase 6 Task 3 (R6-3): `content` WIDENS to `string | ContentBlock[]`. Established from the pin's
+  // own prose about its own tool, not from an external declaration -- `Read`'s output notes
+  // (`sdk-tools.d.ts:334`, `:338`) describe extracted page images delivered SOLELY as image blocks in
+  // the model-facing `tool_result` content. This is the ONE compile-forced edit in the R6-3 sweep:
+  // every `return block.content` fallthrough in this repo stops type-checking, which is exactly why
+  // the three variants below need FIXTURES instead of trusting the build.
+  | { type: "tool_result"; tool_use_id: string; content: string | ContentBlock[]; interrupted?: boolean; error?: boolean; denied?: boolean; deferred?: boolean; loadFirst?: boolean }
+  // --- Phase 6 Task 3 (R6-3, derived-shapes-p6.md item (f)): the variants a real provider produces --
+  //
+  // NOT declared by the pinned artifact: `redacted_thinking`, a `type: 'thinking'` literal and
+  // `signature`-as-a-block-field have ZERO occurrences across all six `.d.ts` files, because every
+  // block shape is delegated to a floating `@anthropic-ai/sdk` peer. These shapes are Winter's own,
+  // mirrored from capture (F)'s observed runtime behaviour and structurally identical to
+  // provider-runtime's `ContentBlockLike` (seam-contracts-p6.test.ts asserts assignability BOTH ways).
+  //
+  // `signature` is a REQUIRED plain string that MAY be `""`: capture (F) shows the pinned runtime
+  // materialising exactly that when a stream carries none, and replaying it byte-for-byte into the
+  // next request. Typing it optional would let a producer omit it and break the signature chain
+  // silently -- and R6-8 exists because a FOREIGN summary written here would ride a fabricated one.
+  //
+  // OPAQUE FIELD DISCIPLINE (Global Constraints): `signature` and `redacted_thinking.data` ride
+  // IN-DIALECT (the dialect itself defines them) and NOWHERE else -- never the advisor transcript,
+  // never the compaction summariser's input, never a log line, never an error message. The seam
+  // contract test asserts each of those negatives rather than trusting the comment.
+  | { type: "thinking"; thinking: string; signature: string }
+  | { type: "redacted_thinking"; data: string }
+  | { type: "image"; source: { type: "base64"; media_type: string; data: string } };
 
 // The engine's own turn-history record fed back to Provider.generate() on every call. Distinct
 // from the WIRE shape (assistant/user data frames, below): the wire has no "tool" role (tool
@@ -226,6 +270,30 @@ export type ContentBlock =
 export interface ProviderMessage {
   role: "user" | "assistant" | "tool";
   content: string | ContentBlock[];
+  // --- Phase 6 Task 3 (R6-3): the per-message continuation annotations -----------------------------
+  //
+  // All four OPTIONAL and ADDITIVE: every pre-existing `{role, content}` literal in this repo (and
+  // every test double, and every rebuilt resume history) keeps satisfying this interface unchanged.
+  //
+  // `uuid` is the assistant entry's own dialect uuid, PRE-ALLOCATED by the engine and passed through
+  // `recordAssistantEntry(content, { uuid })` so the sidecar record can be appended BEFORE its entry
+  // (R6-7's write-ahead). It is what `anchorUuid` on a `ProviderStateRecord` points at.
+  uuid?: string;
+  /** Which provider/model produced this message. The input to R6-9's continuation-domain check on resume, fallback and handoff. */
+  origin?: MessageOrigin;
+  /**
+   * OPAQUE, adapter-owned continuation state. Its ONLY sink is the provider-state sidecar (R6-7).
+   * Never logged, never model-readable, never in a frame or an error message -- `items` is
+   * `unknown[]` precisely so nothing is tempted to inspect it.
+   */
+  nativeState?: ProviderNativeState;
+  /**
+   * A Winter-authored annotation shown to the model -- a handoff note, or a foreign model's reasoning
+   * summary carried across a family boundary. Carried PLAINLY, never dressed as signed thinking
+   * (R6-8): `door` says which channel Lane C's renderer places it on, and neither door produces a
+   * `thinking` block with a fabricated signature.
+   */
+  decoration?: { text: string; door: "tag" | "thinking-channel" };
 }
 
 // M6 (fix wave, P3 close-out): the advisor's own TranscriptSource wants plain {role, text} entries
@@ -250,7 +318,28 @@ export function providerMessageContentToText(content: string | ContentBlock[]): 
       // here only if a future caller ever DOES push one into `messages`; a short, human-legible
       // summary rather than a `.content` access that (unlike tool_result) this variant has none of.
       if (block.type === "tool_reference") return `[tools now callable: ${block.tool_names.join(", ")}]`;
-      return block.content;
+      // --- Phase 6 Task 3 (R6-3's by-meaning sweep) -----------------------------------------------
+      //
+      // Before this task the function ended in a bare `return block.content`, and THAT is the defect
+      // this sweep exists to catch: on a `thinking`/`redacted_thinking`/`image` block the field does
+      // not exist, so the map produced `undefined` and `join` rendered the literal string
+      // "undefined" straight into a review channel -- silently, with nothing failing to compile.
+      //
+      // Each new variant now renders a SUMMARY that names the shape and carries NO opaque field.
+      // `thinking.thinking` is model-authored prose and is not on the opaque list (only `signature`,
+      // `redacted_thinking.data` and `nativeState.items` are), so it is summarised by LENGTH rather
+      // than reproduced: this function feeds the advisor's review channel, whose own
+      // `stripOpaqueMarkers` drops any line containing "signature" -- reproducing reasoning text here
+      // would leak whatever the model happened to think about into a second channel for no benefit
+      // the reviewer asked for. The blocking constraint is the opaque fields; the length summary is
+      // the conservative choice on top of it, and the seam contract test asserts the negatives.
+      if (block.type === "thinking") return `[thinking: ${block.thinking.length} chars]`;
+      if (block.type === "redacted_thinking") return "[redacted thinking]";
+      if (block.type === "image") return `[image: ${block.source.media_type}]`;
+      // `tool_result.content` widened to `string | ContentBlock[]` (R6-3). A blocks-valued result
+      // recurses through this same function rather than stringifying the array -- `String([{...}])`
+      // is "[object Object]", which is worse than useless in a review channel.
+      return typeof block.content === "string" ? block.content : providerMessageContentToText(block.content);
     })
     .join("\n");
 }
@@ -279,7 +368,94 @@ export interface ProviderRequest {
    * host supplied no system prompt", never as an error.
    */
   system?: string;
+  // --- Phase 6 Task 3 (R6-3): everything a REAL adapter needs, all optional, all additive ----------
+  /**
+   * The session's ADVERTISED tool set with real JSON Schemas -- what an adapter puts in the request's
+   * own `tools` array. Only tools this session actually advertises reach here, and a DEFERRED tool
+   * appears only once it has been LOADED (WS-09 §8.2's "load != permission"): advertising a schema
+   * for a tool the engine would refuse to dispatch invites the model to call it.
+   */
+  tools?: ProviderToolSpec[];
+  toolChoice?: TurnRequest["toolChoice"];
+  /** The resolved model for THIS generation. Present once selection is wired; absent means "the provider's own configured default", which is what every pre-P6 double sees. */
+  model?: string;
+  effort?: TurnRequest["effort"];
+  thinking?: TurnRequest["thinking"];
+  /**
+   * R6-6: TRUE cancellation. Aborted when this turn is interrupted, so an adapter can cancel
+   * pre-header and mid-stream instead of running to completion behind an abandoned await. The same
+   * signal reaches `ToolExecutor` through `ToolExecutionContext.signal`, so an interrupt stops the
+   * generation AND kills the in-flight Bash process group.
+   */
+  signal?: AbortSignal;
+  /**
+   * R6-5: where live observations go. A provider that streams calls these as the stream arrives; the
+   * engine turns them into frames under the gating each frame carries (`stream_event` only under
+   * `includePartialMessages`, `rate_limit_event` only for subscription-shaped quota per R6-B).
+   *
+   * ABSENT for an AUXILIARY generation (R6-G): the compaction summariser, the classifier, the advisor
+   * and `countTokens` never emit `stream_event`s -- capture (F) observed the pinned runtime
+   * suppressing exactly that call's stream events, and a Winter emitter that streamed every provider
+   * call would emit frames the pin does not.
+   */
+  sink?: ProviderStreamSink;
 }
+
+/** One advertised tool as an adapter serialises it. `inputSchema` is the tool's real JSON Schema, never a placeholder. */
+export interface ProviderToolSpec {
+  name: string;
+  description: string;
+  inputSchema: Record<string, unknown>;
+}
+
+/**
+ * R6-5: the pinned Anthropic-shaped raw stream-event vocabulary every adapter normalises into.
+ *
+ * ALIASED, never re-declared. The declaration home is `packages/sdk/src/protocol/frames.ts`
+ * (`WireStreamEvent`), because the sdk is where a wire shape a host decodes belongs and because a
+ * second structural copy here is exactly the drift R6-D exists to avoid.
+ */
+export type ProviderRawStreamEvent = WireStreamEvent;
+
+/**
+ * The live observations a streaming provider reports. Every method is fire-and-forget: a sink
+ * implementation that throws must never break a generation, so the engine's own implementation
+ * catches and drops.
+ */
+export interface ProviderStreamSink {
+  onStreamEvent(event: ProviderRawStreamEvent): void;
+  onRetry(info: RetryInfo): void;
+  /**
+   * R6-B: SUBSCRIPTION-QUOTA states ONLY, and the payload's own `kind` says so. An HTTP 429 is NOT
+   * this callback -- capture (G) proved the pinned runtime emits zero `rate_limit_event` frames for a
+   * 429 carrying a full `anthropic-ratelimit-*` header set; the pinned 429 path is `api_retry`.
+   */
+  onRateLimit(info: { kind: "subscription-quota"; info: Record<string, unknown> }): void;
+  /** R6-F: a LOGIN-FLOW progress channel (codex-oauth login/refresh only), never the credential-failure channel. */
+  onAuthStatus(info: { isAuthenticating: boolean; output?: string[]; error?: string }): void;
+  /** R6-8: a FOREIGN model's readable reasoning summary. It rides the sidecar and the Winter-only `system/reasoning_summary` frame -- never `assistant.message.content`. */
+  onReasoningSummary(text: string): void;
+}
+
+/** The `api_retry` payload minus its frame envelope (`uuid`/`session_id`, which the engine stamps). Mirrors provider-runtime's own `retry` event. */
+export interface RetryInfo {
+  attempt: number;
+  maxRetries: number;
+  retryDelayMs: number;
+  /** ABSENT, never `null`, for a connection error with no HTTP response -- the engine maps absence to the frame's pinned `error_status: null`. */
+  errorStatus?: number;
+  error: SDKAssistantMessageError;
+}
+
+/** R6-8: what a turn reports about its own reasoning. `blocks` are IN-DIALECT Anthropic-family blocks, complete and in order, carrying their REAL signatures; `summary`/`exposed` are foreign and never enter `assistant.message.content`. */
+export interface ProviderThinkingOutput {
+  summary?: string;
+  exposed?: string;
+  blocks?: ContentBlock[];
+}
+
+/** Why the provider stopped. Mirrors provider-runtime's `done` event so the bridge folds one into the other without a mapping table. */
+export type ProviderStopReason = "end_turn" | "tool_use" | "max_tokens" | "aborted" | "refusal";
 
 /**
  * Per-generation token accounting (R5-3). `inputTokens`/`outputTokens` are required because a
@@ -293,9 +469,16 @@ export interface ProviderUsage {
   cacheWriteTokens?: number;
 }
 
+// Phase 6 Task 3 (R6-3): both production kinds gain `usage`/`stopReason`/`thinking`/`nativeState`,
+// and `tool_use` gains `text?`.
+//
+// `text?` on `tool_use` is not a convenience -- a real model returns TEXT AND CALLS in one turn, and
+// before this field the text had nowhere to go and was silently discarded, losing a whole assistant
+// utterance from the transcript with nothing failing anywhere. It persists as a LEADING text block
+// ahead of the tool_use blocks, which is the order the model produced it in.
 export type ProviderTurn =
-  | { kind: "text"; text: string; usage?: ProviderUsage }
-  | { kind: "tool_use"; calls: Array<{ id: string; name: string; input: unknown }>; usage?: ProviderUsage }
+  | { kind: "text"; text: string; usage?: ProviderUsage; stopReason?: ProviderStopReason; thinking?: ProviderThinkingOutput; nativeState?: ProviderNativeState }
+  | { kind: "tool_use"; calls: Array<{ id: string; name: string; input: unknown }>; text?: string; usage?: ProviderUsage; stopReason?: ProviderStopReason; thinking?: ProviderThinkingOutput; nativeState?: ProviderNativeState }
   // Task 2 (WS-04 §3.1): a P1-only test-affordance turn kind (WINTER_TEST_PROVIDER=rpcprobe,
   // provider/mock.ts) that proves the runtime-originated control-RPC bridge round trip end-to-end
   // on every transport leg (the transport-equivalence suite's rpcprobe scenario). The ENGINE
@@ -396,7 +579,26 @@ export interface ToolExecutor {
 // recordAssistantEntry as content blocks. Entirely optional — the engine runs fine without a store.
 export interface SessionPersistence {
   recordUserEntry(content: string | ContentBlock[]): void | Promise<void>;
-  recordAssistantEntry(content: ContentBlock[]): void | Promise<void>;
+  /**
+   * Phase 6 Task 3 (R6-7): `opts.uuid` PRE-ALLOCATES the entry's own dialect uuid.
+   *
+   * The engine mints the uuid, appends the sidecar `origin` record naming it as `anchorUuid`, and
+   * only THEN calls this -- write-ahead, so a crash can leave a record without an entry (ignorable,
+   * garbage-collectable) but never an entry without a record it needed. Omitted by every pre-P6
+   * caller, in which case the writer mints its own exactly as before.
+   */
+  recordAssistantEntry(content: ContentBlock[], opts?: { uuid?: string }): void | Promise<void>;
+  /**
+   * R6-7: one provider-state record. MUST be called BEFORE `recordAssistantEntry` for the same
+   * `anchorUuid` -- that ordering is the whole guarantee, and provider-state.ts's crash-pair fixture
+   * asserts the file order rather than trusting this comment.
+   *
+   * Optional, matching every other method here: a store that predates this field (or a bare test
+   * double) simply never gets asked, and the session keeps an in-memory chain only.
+   */
+  recordProviderState?(record: ProviderStateRecordInput): void | Promise<void>;
+  /** R6-7: the chain, oldest-first, for a resumed session. `undefined`/absent means "no durable chain", which degrades every resumed assistant message to summary-level with a `continuity_warning`. */
+  loadProviderState?(): Promise<ProviderStateRecord[]>;
   flush?(): void | Promise<void>;
   // Task 8 (WS-07 §3.3 / phase ruling 2): "a PermissionUpdate with a file destination applies
   // session-effective immediately AND appends to <sessionId>.permission-journal.jsonl for P5
