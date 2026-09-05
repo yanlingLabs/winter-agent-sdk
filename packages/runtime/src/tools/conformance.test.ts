@@ -695,7 +695,10 @@ const WS12_11: ConformanceRow[] = [
     bullet: "the workflow-worker profile still denies fork/network/writes while booting the worker (exec-of-self allowed)",
     status: "covered",
     citations: [
-      { file: "../sandbox/deny.darwin.test.ts", testName: "the profile parses and loads: self-exec succeeds (proves no unbound-variable parse failure)" },
+      { file: "../sandbox/deny.darwin.test.ts", testName: "the profile parses and loads WITH the ~/.winter/run deny: self-exec succeeds (proves no unbound-variable or malformed-subpath parse failure)" },
+      // Fix round 1: the R5-5 read-deny is now proven to BIND under real sandbox-exec, not merely to
+      // parse -- which narrows the gap the note below describes on the READ axis.
+      { file: "../sandbox/deny.darwin.test.ts", testName: "the ~/.winter/run deny BINDS under real sandbox-exec: EPERM inside, success on a sibling, ENOENT-class for a missing path" },
       { file: "../sandbox/deny.darwin.test.ts", testName: "exec of anything OTHER than the self binary is denied -- /bin/sh cannot run, so its write never happens" },
     ],
     note:
