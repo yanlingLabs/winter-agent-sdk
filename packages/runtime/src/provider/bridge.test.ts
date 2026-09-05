@@ -459,3 +459,51 @@ function fakeCtx(): ProviderContext {
     log: () => {},
   };
 }
+
+describe("live native replay: the turn's native state must be STAMPED with the resolved identity", () => {
+  test("a same-domain replay survives the identity renderer on the NEXT generation", async () => {
+    // THE BUG THIS EXISTS TO CATCH, stated plainly: the fold cannot know the family or the
+    // continuation domain -- it sees only an adapter's `items` -- so it emits `{family: "",
+    // continuationDomain: "", items}`. If `adapterAsProvider` returns that unstamped, the engine
+    // copies it onto the in-memory message verbatim and the identity renderer compares `""` against
+    // the real domain on the very next generation and DROPS it. Live native replay would be dead for
+    // every session while resumed ones worked (the chain rebuilds family/domain from the record) --
+    // the common case broken, the rarer one fine.
+    //
+    // The existing "native state from the COMPLETION event" test checks `items` only, and the
+    // renderer tests hand-build messages that already carry the right domain, so neither sees it.
+    const seen: TurnRequest[] = [];
+    let call = 0;
+    const adapter = scriptedAdapter((req) => {
+      seen.push(req);
+      call++;
+      return call === 1
+        ? scripted([{ type: "native_state", items: ["OPAQUE-1"] }, { type: "text_delta", text: "one" }, { type: "done", stopReason: "end_turn" }])
+        : scripted([{ type: "text_delta", text: "two" }, { type: "done", stopReason: "end_turn" }]);
+    });
+    const resolved = resolvedFor(adapter);
+    const provider = adapterAsProvider(resolved, fakeCtx(), { adapter });
+
+    const first = await provider.generate({ messages: [{ role: "user", content: "go" }] });
+    // STAMPED with the adapter's family and the RESOLVED continuation domain, not the fold's blanks.
+    expect(first.nativeState).toEqual({ family: "openai", continuationDomain: "openai:responses", items: ["OPAQUE-1"] });
+
+    // Fed back exactly as the engine's `providerAnnotations` does, then generated against again.
+    await provider.generate({
+      messages: [
+        { role: "user", content: "go" },
+        { role: "assistant", content: "one", ...(first.nativeState !== undefined ? { nativeState: first.nativeState } : {}) },
+        { role: "user", content: "again" },
+      ],
+    });
+    const replayed = seen[1]!.messages.find((m) => m.role === "assistant");
+    expect(replayed?.nativeState?.items).toEqual(["OPAQUE-1"]);
+    expect(replayed?.nativeState?.continuationDomain).toBe("openai:responses");
+  });
+
+  test("a turn with NO native state is returned untouched -- stamping never fabricates one", async () => {
+    const adapter = scriptedAdapter(() => scripted([{ type: "text_delta", text: "x" }, { type: "done", stopReason: "end_turn" }]));
+    const turn = await adapterAsProvider(resolvedFor(adapter), fakeCtx(), { adapter }).generate({ messages: [] });
+    expect(turn.nativeState).toBeUndefined();
+  });
+});

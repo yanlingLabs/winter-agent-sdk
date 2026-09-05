@@ -401,3 +401,18 @@ describe("R6-6 contract: cancellation reaches BOTH sides", () => {
     expect(typeof result.output).toBe("string");
   });
 });
+
+describe("R6-17 contract: the parent's identity reaches the CHILD's engine, not merely its inheritance", () => {
+  test("`child-engine.ts` threads `inherit.provider` onto the child's own runEngine call", async () => {
+    // The P5 factory-seam lesson, applied to its own successor: a field declared upstream proves
+    // NOTHING across the seam. `ChildInheritance.provider` existing does not make a child write
+    // provider-state records -- the child engine has to read it and pass it on, and until it does the
+    // child's sidecar is empty and its resume degrades every message.
+    //
+    // Asserted on the SOURCE because the end-to-end proof ("the child RAN off its own provider") is
+    // T10's, and a structural check here is what keeps the thread from being quietly deleted in the
+    // meantime. It is deliberately specific: a rename on either side fails it.
+    const source = await Bun.file(join(import.meta.dir, "..", "subagents", "child-engine.ts")).text();
+    expect(source).toContain("inherit.provider !== undefined ? { providerIdentity: inherit.provider }");
+  });
+});

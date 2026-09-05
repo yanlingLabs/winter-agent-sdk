@@ -98,12 +98,24 @@ export interface AdapterProviderOptions {
 }
 
 /**
+ * A `Provider` that is known to produce only the two PRODUCTION turn kinds.
+ *
+ * Narrower than `Provider` on purpose: no adapter stream can express `rpc_probe`, so a caller reading
+ * `turn.nativeState`/`turn.thinking` off one of these needs no cast -- and a cast is exactly what
+ * would also silence a real mistake.
+ */
+export interface AdapterProvider extends Provider {
+  generate(input: ProviderRequest): Promise<FoldedProviderTurn>;
+}
+
+/**
  * Wraps a resolved adapter as the engine's `Provider`.
  *
  * The whole conversion in one place: render the history, build a `TurnRequest`, consume
- * `streamTurn`, fold, and normalize any failure into a `ProviderTurnError`.
+ * `streamTurn`, fold, STAMP the resolved identity onto any native state, and normalize any failure
+ * into a `ProviderTurnError`.
  */
-export function adapterAsProvider(resolved: ResolvedModel, ctx: ProviderContext, opts: AdapterProviderOptions = {}): Provider {
+export function adapterAsProvider(resolved: ResolvedModel, ctx: ProviderContext, opts: AdapterProviderOptions = {}): AdapterProvider {
   const adapter = opts.adapter ?? resolved.adapter;
   const renderer = opts.renderer ?? createIdentityHistoryRenderer();
   const capabilities = resolved.descriptor !== undefined ? adapter.capabilities(resolved.descriptor) : undefined;
@@ -141,7 +153,19 @@ export function adapterAsProvider(resolved: ResolvedModel, ctx: ProviderContext,
         // typed shape as an in-stream failure, so a caller has one thing to catch.
         throw toProviderTurnError(err);
       }
-      return foldProviderStream(stream, input.sink);
+      // STAMPED, and the stamp is load-bearing rather than cosmetic. The fold sees only an adapter's
+      // `items` -- it cannot know the family or the continuation domain -- so it emits blanks for
+      // both. Returning that unstamped would have the engine copy `{family: "", continuationDomain:
+      // ""}` onto the in-memory message, and the identity renderer would compare `""` against the
+      // real domain on the very NEXT generation and drop the state. Live native replay would be dead
+      // while resumed sessions kept working (the chain rebuilds family/domain from the record) --
+      // the common case broken, the rarer one fine, and nothing failing anywhere.
+      return stampNativeState(await foldProviderStream(stream, input.sink), {
+        providerId: resolved.providerId,
+        modelKey: resolved.modelKey,
+        family: adapter.family,
+        ...(resolved.continuationDomain !== undefined ? { continuationDomain: resolved.continuationDomain } : {}),
+      });
     },
   };
 }
@@ -443,7 +467,13 @@ export function toProviderTurnError(err: unknown): ProviderTurnError {
   return new ProviderTurnError(`provider request failed: ${message}`, status !== undefined ? { status } : {});
 }
 
-/** Stamps an adapter's family/domain onto the folded turn's native state. Called by the caller that KNOWS the resolved identity; the fold itself has no access to it. */
+/**
+ * Stamps the RESOLVED identity's family and continuation domain onto a folded turn's native state.
+ *
+ * The fold has no access to either -- it consumes an adapter's event stream, not its resolution -- so
+ * this is the one place the two meet. A turn with no native state is returned untouched: stamping
+ * never fabricates state that an adapter did not produce.
+ */
 export function stampNativeState(turn: FoldedProviderTurn, origin: MessageOrigin): FoldedProviderTurn {
   if (turn.nativeState === undefined) return turn;
   return {

@@ -17,7 +17,12 @@
 // rather than merely documented.
 import type { CredentialMaterial, CredentialStore } from "@yanlinglabs/winter-provider-runtime";
 import { CredentialResolutionError, redactRef } from "@yanlinglabs/winter-provider-runtime";
-import type { CredentialRef } from "@yanlinglabs/winter-agent-sdk";
+// `DEFAULT_KEYCHAIN_SERVICE` is DECLARED in the sdk's `options.ts` and imported here rather than
+// re-declared: this codebase polices one-declaration-per-value everywhere else, and a second copy of
+// a service NAME is the kind of drift that silently splits a user's credentials across two keychain
+// services. Re-exported so a caller reads it from the module it is working in.
+import { DEFAULT_KEYCHAIN_SERVICE, type CredentialRef } from "@yanlinglabs/winter-agent-sdk";
+export { DEFAULT_KEYCHAIN_SERVICE };
 
 /**
  * The shape this store needs from a secrets backend.
@@ -32,9 +37,6 @@ export interface SecretsBackend {
   set(options: { service: string; name: string; value: string }): Promise<void>;
   delete(options: { service: string; name: string }): Promise<boolean | void>;
 }
-
-/** The default service name (R6-10 / WS-01 §3). A host overrides it per session through `Options.keychainService`; the dev profile uses `com.winter.core.dev`. */
-export const DEFAULT_KEYCHAIN_SERVICE = "com.winter.core";
 
 /**
  * The real backend, resolved LAZILY.
