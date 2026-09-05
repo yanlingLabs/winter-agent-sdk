@@ -521,7 +521,9 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
         // status this generation reached (a stopped/failed child's own worktree is reclaimed exactly
         // like a completed one's, IF genuinely unchanged; real, undiscarded work is left in place
         // either way -- see workspace.ts's own cleanupWorkspace for the exact safety checks).
-        void cleanupWorkspace(workspace);
+        // Fire-and-forget by design, but never an UNHANDLED rejection: a cleanup that cannot run is
+        // a no-op result, not a crash landing on an unrelated test or turn.
+        void cleanupWorkspace(workspace).catch(() => undefined);
         // A "completed"/"failed" settlement is reached via observe()'s OWN "result" data frame --
         // i.e. the nested engine finished a turn and is now sitting idle, waiting for its OWN next
         // "user" input frame, which nothing will ever send it. Without this call, that engine
