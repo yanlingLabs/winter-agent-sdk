@@ -2149,8 +2149,28 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // accumulation, and blind to a workflow's own child agents. `budget.spent()` therefore reports an
   // honest 0 rather than a plausible wrong number, exactly as Lane W's own disclosure states.
   const workflowWinterHome = structuredOutput !== undefined ? (wiredWinterHome ?? config.winterHome) : undefined;
+  // I5: held so teardown withdraws THIS registration and not whichever one is current.
+  let disposeWorkflowSession: (() => void) | undefined;
   if (workflowWinterHome !== undefined && structuredOutput !== undefined) {
-    registerWorkflowSession({
+    // I5 (Lane Y, fix wave): the registry is SESSION-KEYED now, and the registration returns an
+    // IDENTITY-CHECKED disposer. Both matter, for different reasons:
+    //
+    //   * `sessionId` -- without it every session lands in one legacy slot, so in a daemon serving
+    //     two live sessions B's workflows run against A's `projectKey`/accountant/seam and A's
+    //     teardown disables B.
+    //   * the DISPOSER, never `clearWorkflowSession(config.sessionId)`. A child engine reaches this
+    //     site with its PARENT's `config.sessionId` (it is handed the parent's structured seam,
+    //     which is exactly what this site gates on), so a by-key clear at a child's teardown would
+    //     delete its still-running parent's entry. First-wins protects the registration; only the
+    //     identity-checked disposer protects the withdrawal.
+    //
+    // THE TWO CASTS ARE MERGE SCAFFOLDING and must go when Lane Y's `host-registry.ts` lands on this
+    // branch: `sessionId` is an excess property against this branch's current `WorkflowSessionRuntime`
+    // and the current function returns `void`. The behaviour degrades correctly meanwhile -- the
+    // field is ignored, the disposer reads `undefined`, and the teardown below falls back to the
+    // unkeyed clear, which is exactly today's shipped behaviour.
+    disposeWorkflowSession = registerWorkflowSession({
+      sessionId: config.sessionId,
       winterHome: workflowWinterHome,
       projectKey: resolveProjectDirName(compatibilityKeys(config.cwd).transcriptProjectKey, engineEnv ?? process.env),
       sessionTempDir: resolveSessionTempPaths().root,
@@ -2170,7 +2190,7 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
           ...(config.agents !== undefined ? { programmatic: config.agents as Record<string, PluginAgentDefinition> } : {}),
           ...(getPluginAgents(config.sessionId) !== undefined ? { pluginAgents: getPluginAgents(config.sessionId) as Record<string, PluginAgentDefinition> } : {}),
         }).get(agentType),
-    });
+    } as Parameters<typeof registerWorkflowSession>[0]) as unknown as (() => void) | undefined;
   }
 
   const loadedToolSet: LoadedToolSet = createLoadedToolSet();
@@ -3977,11 +3997,22 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // singleton-hygiene argument as the MCP/ToolSearch withdrawals above, and the disposer is
   // identity-checked so a concurrent in-memory run's own registration is never removed by this one.
   disposeStructuredOutputTool?.();
-  // Phase 5 Task 8: withdraw this run's workflow session, same singleton-hygiene argument as every
-  // withdrawal above. `workflows/host-registry.ts` holds ONE active runtime per process (Lane W's
-  // own documented shape), so a run that left its registration standing would let a later session's
-  // Workflow call persist its script under the FINISHED session's project/uuid directory.
-  if (workflowWinterHome !== undefined) clearWorkflowSession();
+  // Phase 5 Task 8 + B-low + I5: withdraw this run's workflow session.
+  //
+  // THE `finally` HALF OF THE B-LOW IS **NOT** LANDED, and this says so rather than implying it is.
+  // Every withdrawal above sits on the straight-line path out of `runEngine`; wrapping the function's
+  // ~3000-line body in a `try/finally` is a restructure out of proportion to a Low, and the leak it
+  // would guard against is currently unreachable by design -- `runEngine` never throws (it is the
+  // documented contract both entrypoints rely on: see testing.ts's own "NOT redundant with
+  // runEngine's own always-resolves design" comment). The exposure the B-low names is real ONLY once
+  // I5's key lands AND that contract is broken: first-wins would then let a leaked entry under
+  // session X refuse a later run legitimately reusing that id in the same process, which is what a
+  // `--resume` does. Carried, with the trigger stated.
+  //
+  // The DISPOSER first (identity-checked, so a child engine's teardown cannot delete its parent's
+  // entry); the unkeyed clear only as the pre-I5 fallback -- see the registration site's own note.
+  if (disposeWorkflowSession !== undefined) disposeWorkflowSession();
+  else if (workflowWinterHome !== undefined) clearWorkflowSession();
   output.end();
   return 0;
 }
