@@ -92,16 +92,23 @@ export async function workflowWorkerMain(
     return WORKFLOW_WORKER_NOT_IMPLEMENTED_EXIT_CODE;
   }
 
-  // Defense in depth, under the seatbelt (carried from Norma's port). Do NOT null `process` here --
-  // the entry itself needs stdio; the SCRIPT cannot see it either way, because script-api.ts shadows
-  // it in the script's own scope.
-  for (const name of ["fetch", "XMLHttpRequest", "WebSocket"]) {
-    try {
-      (globalThis as Record<string, unknown>)[name] = undefined;
-    } catch {
-      /* non-configurable on some hosts -- the seatbelt's `(deny network*)` is the real fence */
-    }
-  }
+  // NOTHING ON `globalThis` IS MUTATED HERE, and that is a deliberate departure from Norma's port.
+  //
+  // Norma's entry nulled `globalThis.fetch`/`XMLHttpRequest`/`WebSocket` as belt-and-suspenders under
+  // the seatbelt, which was safe there because that entry ONLY ever ran as a dedicated subprocess.
+  // R5-15 deliberately made this function runnable IN-PROCESS (that is why `io` is injected, and it is
+  // what `worker-harness.ts` and the whole of `runtime.test.ts` depend on) -- and a global mutation
+  // from an in-process call poisons the host process for everything else in it.
+  //
+  // MEASURED, not theorised: with the mutation in place, `bun test` went from green to 22 failures
+  // across the MCP transport and Monitor suites -- "fetchImpl is not a function" -- because one
+  // in-process worker had removed `fetch` for every test file sharing that runner process. A real
+  // daemon embedding the runtime would be poisoned in exactly the same way.
+  //
+  // What actually contains the script is unchanged and is two layers deep: `script-api.ts` shadows
+  // `fetch`/`Bun`/`process`/`require`/`globalThis` inside the script's own scope (so
+  // `typeof Bun === "undefined"` holds in the body, WS-11 §1.6), and the seatbelt's `(deny network*)`
+  // is the enforcement boundary (WS-12 §5.2). Neither of those depended on the mutation.
 
   const lines = new LineQueue(io.stdin);
   const writes: Array<Promise<void>> = [];
