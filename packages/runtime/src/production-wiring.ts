@@ -157,6 +157,14 @@ export interface ProductionWiring {
     skillListing: SkillListing;
   };
   /**
+   * Mirrors handed to `registerDefaultChildEngineFactory`, so a CHILD engine gets the same context
+   * surface its parent does -- see that function's own fields for the two gaps this closes.
+   */
+  childFactoryOptions: {
+    systemPromptAssembler: SystemPromptAssembler;
+    skillRuntime: { index: SkillIndex; skillOverrides?: SkillOverrides };
+  };
+  /**
    * Non-fatal problems worth telling a host about: a malformed `.winter/mcp.json`, a plugin that
    * would not load, a `skills` option naming something unknown. NEVER thrown -- Lane S's
    * `validateSkillsOption` returns a result precisely so the decision is the caller's, and a broken
@@ -366,6 +374,10 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
       initPlugins,
       initOutputStyle,
       skillListing,
+    },
+    childFactoryOptions: {
+      systemPromptAssembler,
+      skillRuntime: { index: skillIndex, ...(skillOverrides !== undefined ? { skillOverrides } : {}) },
     },
     warnings,
     dispose(): void {

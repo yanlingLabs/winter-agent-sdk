@@ -210,7 +210,17 @@ export function createSystemPromptAssembler(deps: SystemPromptAssemblerDeps = {}
       for (const block of discoverWinterMd({ cwd: input.cwd, home, ...(settingSources !== undefined ? { settingSources } : {}) })) userContextBlocks.push(block.text);
       if (memoryDir !== undefined) userContextBlocks.push(renderMemoryBlock(memoryDir));
 
-      return { system, userContextBlocks, ...(region.presetVersion !== undefined ? { presetVersion: region.presetVersion } : {}) };
+      // Phase 5 Task 8 (rider 22, RULING P5-G): the downgrade is OBSERVABLE ON THE ASSEMBLED RESULT,
+      // not only on `resolveOutputStyle`'s return value -- which no host calls and no frame carries,
+      // so the ruling's "observable" clause held nowhere a caller could see it. Present only when a
+      // project-tier style genuinely asked to replace and was refused; absent (never `false`)
+      // otherwise, so nothing about a session with no project style moves.
+      return {
+        system,
+        userContextBlocks,
+        ...(region.presetVersion !== undefined ? { presetVersion: region.presetVersion } : {}),
+        ...(style?.replacementDowngraded === true ? { replacementDowngraded: true } : {}),
+      };
     },
   };
 }

@@ -815,6 +815,59 @@ describe("child-engine.ts: C1 CRITICAL (P4-J, RETIRED by R5-3): AgentDefinition.
       rmSync(home, { recursive: true, force: true });
     }
   });
+
+  // ==============================================================================================
+  // T8 rider 13: the SAME guarantee, against a child that HAS an assembler.
+  // ==============================================================================================
+  //
+  // The two tests above use `toContain` on `recordedProviderSystems()` -- an ARRAY membership check,
+  // i.e. EXACT ELEMENT EQUALITY -- which holds only because the factories they register carry no
+  // assembler, so the engine's R5-16 fallback forwards `agentSystemPrompt` verbatim as the whole
+  // system prompt. They are kept: that fallback is real, and it is what any host driving
+  // `runEngine` directly still gets.
+  //
+  // What they CANNOT see is the production path, which since T8 registers an assembler for children
+  // too (`register-default-factory.ts`, from the one shared wiring). Any assembler COMPOSES the
+  // persona with other text, so exact element equality is structurally false there -- and would have
+  // stayed green while production silently changed, because these fixtures build their own factory.
+  // Lane C's report predicted exactly this ("the pinned child-persona test will break the moment the
+  // assembler is registered for children"); this is the companion that actually holds the line.
+  test("rider 13: WITH an assembler registered for children, the persona is COMPOSED into `system`, never replaced or dropped", async () => {
+    resetRecordedProviderSystems();
+    registerSpawnProbe();
+    cleanupToolNames.push(SPAWN_PROBE);
+    const PERSONA = "You are a meticulous code reviewer persona.";
+    const req: SpawnChildRequest = {
+      parentToolUseId: "call-1",
+      prompt: "the actual task text",
+      runInBackground: false,
+      definition: { description: "reviewer", prompt: PERSONA },
+    };
+    const { code } = await driveParent(
+      {
+        provider: echoProvider,
+        // A DETERMINISTIC assembler, not Lane C's real one: what is under test is the CHANNEL (does
+        // the persona survive composition), and a real assembler would drag a memory directory and a
+        // machine-specific path into the assertion for no gain.
+        systemPromptAssembler: {
+          assemble: (input) => ({ system: `[[PREFIX]]\n${input.agentPrompt ?? ""}\n[[SUFFIX]]`, userContextBlocks: [] }),
+        },
+      },
+      baseConfig(),
+      [{ kind: "tool_use", calls: [{ id: "call-1", name: SPAWN_PROBE, input: req }] }, { kind: "text", text: "parent done" }],
+    );
+    expect(code).toBe(0);
+
+    const systems = recordedProviderSystems().filter((s): s is string => typeof s === "string");
+    // NOT `toContain(PERSONA)`: the persona is no longer an element of its own. It is a SUBSTRING of
+    // exactly one composed prompt, and the composition is present around it -- which is what proves
+    // the assembler ran rather than being bypassed.
+    const composed = systems.filter((s) => s.includes(PERSONA));
+    expect(composed.length).toBeGreaterThan(0);
+    expect(composed[0]).toContain("[[PREFIX]]");
+    expect(composed[0]).toContain("[[SUFFIX]]");
+    expect(systems).not.toContain(PERSONA); // the verbatim-forward fallback did NOT run
+  });
 });
 
 describe("child-engine.ts: fix round 1 (controller review) -- I1: permission rules / hooks mirrored onto the child", () => {
@@ -1924,4 +1977,63 @@ describe("child-engine.ts: the watchdog pause is paired with a SUCCESSFUL forwar
     expect(outcome).toBe("failed");
     expect(probe.ran, "the child's call was never approved, so it must never have executed").toEqual([]);
   }, 10_000);
+});
+
+// ================================================================================================
+// T8 rider 12 / WS-11 §6.5: "dispatch-children inherit the parent's style."
+// ================================================================================================
+//
+// Lane C's report: the assembler already applies whatever arrives on `config.outputStyle`, so the
+// MECHANISM was ready -- `ChildInheritance` simply had no field for it and `buildChildInheritance`
+// set nothing, so a child silently ran under the default style however its parent was configured.
+// Asserted on the CHILD's own config, through a probe assembler, because that is the only place the
+// two ends of the channel meet.
+describe("child-engine.ts: rider 12 -- a dispatch-child inherits its parent's output style", () => {
+  test("the parent's `outputStyle` reaches the CHILD's own RuntimeConfig", async () => {
+    registerSpawnProbe();
+    cleanupToolNames.push(SPAWN_PROBE);
+    const seenChildStyles: (string | undefined)[] = [];
+    const req: SpawnChildRequest = { parentToolUseId: "call-1", prompt: "task", runInBackground: false };
+    const { code } = await driveParent(
+      {
+        provider: echoProvider,
+        systemPromptAssembler: {
+          assemble: (input) => {
+            // `insideSubagent` is the child's own marker -- the parent's assemble() call reaches
+            // here too, and recording both would make the assertion ambiguous.
+            if (input.config.insideSubagent === true) seenChildStyles.push(input.config.outputStyle);
+            return { system: "probe", userContextBlocks: [] };
+          },
+        },
+      },
+      { ...baseConfig(), outputStyle: "explanatory" },
+      [{ kind: "tool_use", calls: [{ id: "call-1", name: SPAWN_PROBE, input: req }] }, { kind: "text", text: "parent done" }],
+    );
+    expect(code).toBe(0);
+    expect(seenChildStyles.length).toBeGreaterThan(0);
+    expect(seenChildStyles.every((s) => s === "explanatory")).toBe(true);
+  });
+
+  test("a parent with NO style configured passes none -- absence, never a fabricated \"default\"", async () => {
+    registerSpawnProbe();
+    cleanupToolNames.push(SPAWN_PROBE);
+    const seenChildStyles: (string | undefined)[] = [];
+    const req: SpawnChildRequest = { parentToolUseId: "call-1", prompt: "task", runInBackground: false };
+    const { code } = await driveParent(
+      {
+        provider: echoProvider,
+        systemPromptAssembler: {
+          assemble: (input) => {
+            if (input.config.insideSubagent === true) seenChildStyles.push(input.config.outputStyle);
+            return { system: "probe", userContextBlocks: [] };
+          },
+        },
+      },
+      baseConfig(),
+      [{ kind: "tool_use", calls: [{ id: "call-1", name: SPAWN_PROBE, input: req }] }, { kind: "text", text: "parent done" }],
+    );
+    expect(code).toBe(0);
+    expect(seenChildStyles.length).toBeGreaterThan(0);
+    expect(seenChildStyles.every((s) => s === undefined)).toBe(true);
+  });
 });

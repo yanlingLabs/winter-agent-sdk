@@ -29,6 +29,8 @@ import type { Provider } from "../engine.ts";
 import type { RuntimeConfig, SessionStore } from "@yanlinglabs/winter-agent-sdk";
 import { registerChildEngineFactory } from "./child-handle.ts";
 import { createChildEngineFactory } from "./child-engine.ts";
+import type { SystemPromptAssembler } from "../context/seam.ts";
+import type { SkillSessionRuntime } from "../skills/runtime.ts";
 
 export interface DefaultChildEngineFactoryOptions {
   provider: Provider;
@@ -42,6 +44,17 @@ export interface DefaultChildEngineFactoryOptions {
   store?: SessionStore;
   winterHome?: string;
   env: Record<string, string | undefined>;
+  // --- Phase 5 Task 8 --------------------------------------------------------------------------
+  //
+  // The session's own assembler and skill index, so a CHILD gets the same context surface its
+  // parent does. Both are mirrors like every other field here, and both close a real gap Lane C's
+  // report named: without the assembler a child's system prompt is `agentSystemPrompt` VERBATIM
+  // (engine.ts's R5-16 fallback), losing the minimal prompt, the dynamic sections, WINTER.md and the
+  // memory block; without the skill index every `Skill` call inside a child answers "no skills
+  // runtime" (`skills/runtime.ts` is keyed `agentId ?? sessionId`, so a child never inherits its
+  // parent's registration -- deliberately, since it must not inherit its parent's `skills` filter).
+  systemPromptAssembler?: SystemPromptAssembler;
+  skillRuntime?: { index: SkillSessionRuntime["index"]; skillOverrides?: SkillSessionRuntime["skillOverrides"] };
 }
 
 // WHOLE-BRANCH M3(d) -- THE ONE-LIVE-SESSION-PER-PROCESS ASSUMPTION, stated plainly because this
@@ -88,6 +101,9 @@ export function registerDefaultChildEngineFactory(opts: DefaultChildEngineFactor
       ...(config.hooks !== undefined ? { parentHooks: config.hooks } : {}),
       ...(config.includeHookEvents !== undefined ? { parentIncludeHookEvents: config.includeHookEvents } : {}),
       ...(config.sandbox !== undefined ? { parentSandbox: config.sandbox } : {}),
+      // Phase 5 Task 8: see this interface's own fields for why each is a real gap.
+      ...(opts.systemPromptAssembler !== undefined ? { systemPromptAssembler: opts.systemPromptAssembler } : {}),
+      ...(opts.skillRuntime !== undefined ? { skillRuntime: opts.skillRuntime } : {}),
     }),
   );
 }

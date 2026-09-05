@@ -94,6 +94,22 @@ export interface ChildInheritance {
   effort: string;
   thinking: unknown;
   systemPrompt: string;
+  /**
+   * Phase 5 Task 8 (rider 12, WS-11 §6.5 "dispatch-children inherit the parent's style"): the
+   * parent's resolved output-style NAME.
+   *
+   * Lane C's report named this exactly: the assembler already applies whatever arrives on
+   * `input.outputStyle`/`config.outputStyle`, so the MECHANISM was ready and only the CHANNEL was
+   * missing -- `ChildInheritance` carried policy/tools/model/effort/thinking/systemPrompt/messages/
+   * sessionRoot and nothing about style, and `buildChildInheritance` set none of it on the child's
+   * `RuntimeConfig`. A child therefore silently ran under the default style however the parent was
+   * configured.
+   *
+   * Absent when the parent configured none, which is the same thing as "the default" -- never a
+   * fabricated `"default"` string, so a child of a parent with no style is byte-identical to a
+   * pre-P5 child.
+   */
+  outputStyle?: string;
   messages?: ProviderMessage[]; // fork only
   sessionRoot: string;
 }

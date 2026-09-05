@@ -162,23 +162,7 @@ try {
   // `resolveEngineSession`'s own `store` is a narrower write-side `SessionPersistence`, which can
   // neither list a session's child subkeys nor read a sidecar back.
   const childStore = childWinterHome !== undefined ? new WinterCompatibilitySessionStore({ winterHome: childWinterHome }) : undefined;
-  registerDefaultChildEngineFactory({
-    provider,
-    config: effectiveConfig,
-    env: process.env,
-    ...(childStore !== undefined && childWinterHome !== undefined ? { store: childStore, winterHome: childWinterHome } : {}),
-  });
-  // Phase 4 fix wave (I3): WS-10 §7's "the roster rebuilds from durable storage" MUST -- on a
-  // RESUME (never a fork, which is a NEW session whose children belong to the source), the prior
-  // session's children are restored from their durable sidecars and contributed to the messaging
-  // runtime BEFORE the first turn, so `ListAgents`/`SendMessage` can see a child that outlived a
-  // restart. Withdrawn once this session's own run ends. See subagents/restore.ts for what a
-  // restored handle can and cannot do (identity yes, live resume no -- an explicit carry).
-  const restoredChildren =
-    childStore !== undefined && config.forkSession !== true && (config.resume !== undefined || config.continue === true)
-      ? await restoreChildRoster(childStore, { projectKey: compatibilityKeys(effectiveConfig.cwd).transcriptProjectKey, sessionId: effectiveConfig.sessionId })
-      : undefined;
-  // Phase 5 Task 8. Built BEFORE runEngine, because two of its outputs must reach the engine's own
+  // Phase 5 Task 8. Built BEFORE both `registerDefaultChildEngineFactory` and runEngine, because two of its outputs must reach the engine's own
   // startup: the rule set (`withAutoSkillPermissions`, WS-11 §2.2's automatic `Skill(...)` entries,
   // which `runEngine` seeds once and never re-reads) and the init frame's four P5 fields.
   //
@@ -190,6 +174,24 @@ try {
   // `.winter/mcp.json`, a plugin that would not load, or a `skills` entry naming something unknown
   // must be visible to an operator without taking the session down.
   for (const warning of wiring.warnings) process.stderr.write(`winter: ${warning}\n`);
+  registerDefaultChildEngineFactory({
+    provider,
+    config: effectiveConfig,
+    env: process.env,
+    ...(childStore !== undefined && childWinterHome !== undefined ? { store: childStore, winterHome: childWinterHome } : {}),
+    // Phase 5 Task 8: a CHILD gets the same assembler and skill index its parent has.
+    ...wiring.childFactoryOptions,
+  });
+  // Phase 4 fix wave (I3): WS-10 §7's "the roster rebuilds from durable storage" MUST -- on a
+  // RESUME (never a fork, which is a NEW session whose children belong to the source), the prior
+  // session's children are restored from their durable sidecars and contributed to the messaging
+  // runtime BEFORE the first turn, so `ListAgents`/`SendMessage` can see a child that outlived a
+  // restart. Withdrawn once this session's own run ends. See subagents/restore.ts for what a
+  // restored handle can and cannot do (identity yes, live resume no -- an explicit carry).
+  const restoredChildren =
+    childStore !== undefined && config.forkSession !== true && (config.resume !== undefined || config.continue === true)
+      ? await restoreChildRoster(childStore, { projectKey: compatibilityKeys(effectiveConfig.cwd).transcriptProjectKey, sessionId: effectiveConfig.sessionId })
+      : undefined;
   const code = await runEngine({
     config: withAutoSkillPermissions(effectiveConfig),
     ...wiring.engineOptions,

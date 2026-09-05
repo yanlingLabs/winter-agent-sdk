@@ -123,6 +123,10 @@ import { resolveForkInitialMessages } from "./fork.ts";
 import { createWorkspace, cleanupWorkspace } from "./workspace.ts";
 import { validateAgentDefinition } from "./definitions.ts";
 import { resolveChildResumeMode, ChildResumeModeIncomparableError } from "../permissions/auto/inheritance.ts";
+// Phase 5 Task 8: the parent's assembler and skill index reach a child through the factory deps --
+// see ChildEngineFactoryDeps for why each one is a real gap rather than a nicety.
+import type { SystemPromptAssembler } from "../context/seam.ts";
+import { registerSkillSessionRuntime, clearSkillSessionRuntime, type SkillSessionRuntime } from "../skills/runtime.ts";
 
 export interface ChildEngineFactoryDeps {
   provider: Provider;
@@ -187,6 +191,22 @@ export interface ChildEngineFactoryDeps {
   // the recorded mode verbatim -- exactly today's pre-fix-round behavior, a strict widening of
   // capability, never a behavior change for any existing caller.
   getParentPolicy?: () => { mode: PermissionMode; version: number; hash: string };
+  // --- Phase 5 Task 8 --------------------------------------------------------------------------
+  //
+  // Lane C's report: "the pinned child-persona test will break the moment the assembler is
+  // registered for children", and item 6 of its "What T8 must wire". Without this a child runs with
+  // NO assembler while its parent has one -- so `agentSystemPrompt` becomes the child's WHOLE system
+  // prompt (the engine's R5-16 fallback) and it loses the minimal prompt, the dynamic sections,
+  // WINTER.md and the memory block its parent has. Supplied by
+  // `subagents/register-default-factory.ts` from the ONE production wiring, so all three transport
+  // legs behave alike.
+  systemPromptAssembler?: SystemPromptAssembler;
+  // The session's own skill index, so a child can actually invoke a skill. `skills/runtime.ts` is
+  // keyed `agentId ?? sessionId` -- deliberately, so a child never resolves against its PARENT's
+  // `skills` option -- which means a child with no registration of its own gets a typed "no skills
+  // runtime" refusal for every `Skill` call. Registered per GENERATION below and withdrawn at
+  // settle, mirroring how the MCP/ToolSearch session registries are already handled.
+  skillRuntime?: { index: SkillSessionRuntime["index"]; skillOverrides?: SkillSessionRuntime["skillOverrides"] };
 }
 
 export function createChildEngineFactory(deps: ChildEngineFactoryDeps): ChildEngineFactory {
@@ -423,6 +443,10 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
         // would be written into a torn-down channel, and the roster would grow one dead entry per
         // completed child for the process's whole lifetime.
         unregisterResponseHandler?.();
+        // Phase 5 Task 8: drop this child's skill runtime -- same singleton hygiene as the response
+        // handler above. `resume()` re-registers it for the next generation, so a resumed child is
+        // not left without one.
+        if (deps.skillRuntime !== undefined) clearSkillSessionRuntime(agentId);
         forwardedHostRequestIds.clear();
         watchdog.cancel();
         releaseSpawn(agentId);
@@ -502,6 +526,17 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
         }
       })();
 
+      // Phase 5 Task 8: the child's own skill runtime, keyed by ITS agentId (which is what the Skill
+      // executor reads). The INDEX is the parent's -- discovery is a session-level fact -- while the
+      // `skills` option deliberately is NOT inherited: `SkillSessionRuntime.skills` absent means
+      // "every indexed skill", and a child restricted by its definition's own `tools` list is
+      // already prevented from calling `Skill` at all.
+      if (deps.skillRuntime !== undefined) {
+        registerSkillSessionRuntime(agentId, {
+          index: deps.skillRuntime.index,
+          ...(deps.skillRuntime.skillOverrides !== undefined ? { skillOverrides: deps.skillRuntime.skillOverrides } : {}),
+        });
+      }
       void runEngine({
         config,
         input: channel.runtime.input,
@@ -524,6 +559,11 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
         // disclosed, not silent.
         ...(!hasChildScopedMcpServers && parentMcp?.stateSource !== undefined ? { mcpServerStateSource: parentMcp.stateSource } : {}),
         ...(!hasChildScopedMcpServers && parentMcp?.controlSeam !== undefined ? { mcpControlSeam: parentMcp.controlSeam } : {}),
+        // Phase 5 Task 8: the SAME assembler the parent runs with. Without it a child's system
+        // prompt is `agentSystemPrompt` verbatim (the engine's R5-16 fallback) -- a persona with no
+        // minimal prompt, no dynamic sections, no WINTER.md and no memory block, which is a strictly
+        // worse prompt than the parent's for no stated reason.
+        ...(deps.systemPromptAssembler !== undefined ? { systemPromptAssembler: deps.systemPromptAssembler } : {}),
         env,
       }).catch(() => {
         settle("failed", "child engine process exited unexpectedly");
@@ -606,6 +646,9 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
       // inherit it: structured output is a per-request contract, and a subagent asked for prose
       // should not be forced to return the parent's schema.
       ...(req.outputFormat !== undefined ? { outputFormat: req.outputFormat } : {}),
+      // Phase 5 Task 8 (rider 12, WS-11 §6.5): the parent's resolved output style, carried on
+      // `ChildInheritance`. The assembler applies it; this is only the channel.
+      ...(inherit.outputStyle !== undefined ? { outputStyle: inherit.outputStyle } : {}),
       // I4: child-scoped servers only -- the parent's own declared servers are reached through the
       // inherited state source below, never re-declared (and therefore never re-connected) here.
       ...(hasChildScopedMcpServers ? { mcpServers: childScopedMcpServers } : {}),

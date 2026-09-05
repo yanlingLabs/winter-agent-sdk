@@ -1373,6 +1373,12 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
       // no session-level system-prompt concept is surfaced on RuntimeConfig at P1-P4 either -- ""
       // is the honest base a definition's own prompt is expected to be layered onto, never a guess.
       systemPrompt: "",
+      // Phase 5 Task 8 (rider 12, WS-11 §6.5): the parent's own configured output style, so a
+      // dispatch-child renders under the same one. `config.outputStyle` and NOT the settings tier:
+      // the engine holds no resolved settings (production-wiring.ts already folded the settings
+      // value into the session's effective config path when a host set one), and inventing a second
+      // resolution here would be a second producer of the same answer.
+      ...(config.outputStyle !== undefined ? { outputStyle: config.outputStyle } : {}),
       // WS-10 §3.5: "a fork inherits EVERYTHING... conversation." Copied BY VALUE (a fresh array of
       // the same message objects) so a child can never mutate the parent's own live turn history.
       ...(req.fork === true ? { messages: [...messages] } : {}),

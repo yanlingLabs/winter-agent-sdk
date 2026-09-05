@@ -185,11 +185,19 @@ export function inMemoryProcess(
       // ONE store object, shared by the child-engine factory and the roster restore below (see
       // main.ts's own identical comment for why `resolveEngineSession`'s `store` cannot serve).
       const childStore = childWinterHome !== undefined ? new WinterCompatibilitySessionStore({ winterHome: childWinterHome }) : undefined;
+      // Phase 5 Task 8: the same wiring main.ts builds, from the same function, against this leg's
+      // own hermetic `resolveInMemoryWinterHome` root -- which must NEVER reach the real
+      // `process.env` fallback (that function's own header), so a differential/equivalence run can
+      // not read a developer's real skills, commands, plugins or settings.
+      const wiring = await buildProductionWiring({ config: effectiveConfig, env: env ?? {}, winterHome: resolveInMemoryWinterHome(config, env) });
       registerDefaultChildEngineFactory({
         provider,
         config: effectiveConfig,
         env: env ?? {},
         ...(childStore !== undefined && childWinterHome !== undefined ? { store: childStore, winterHome: childWinterHome } : {}),
+        // Phase 5 Task 8: the IDENTICAL mirrors main.ts passes -- a child on the in-memory leg and a
+        // child on a spawned/compiled one must have the same context surface.
+        ...wiring.childFactoryOptions,
       });
       // Phase 4 fix wave (I3): WS-10 §7's roster rebuild -- the identical wiring main.ts performs,
       // so the in-memory leg and a real spawned/compiled `winter` behave the same way for a resumed
@@ -200,11 +208,6 @@ export function inMemoryProcess(
         childStore !== undefined && config.forkSession !== true && (config.resume !== undefined || config.continue === true)
           ? await restoreChildRoster(childStore, { projectKey: compatibilityKeys(effectiveConfig.cwd).transcriptProjectKey, sessionId: effectiveConfig.sessionId })
           : undefined;
-      // Phase 5 Task 8: the same wiring main.ts builds, from the same function, against this leg's
-      // own hermetic `resolveInMemoryWinterHome` root -- which must NEVER reach the real
-      // `process.env` fallback (that function's own header), so a differential/equivalence run can
-      // not read a developer's real skills, commands, plugins or settings.
-      const wiring = await buildProductionWiring({ config: effectiveConfig, env: env ?? {}, winterHome: resolveInMemoryWinterHome(config, env) });
       try {
       const code = await runEngine({
         config: withAutoSkillPermissions(effectiveConfig),

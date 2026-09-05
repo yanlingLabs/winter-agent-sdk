@@ -95,13 +95,38 @@ export interface SystemPromptInput {
  * re-persisted on every later turn). They are re-attached every turn, which is what "always injected
  * as user-context, never system text" (R5-9) means operationally for WINTER.md and the memory index.
  *
- * `presetVersion` is the version stamp of whichever authored preset produced `system` (Lane C's
- * `WINTER_CODE_PRESET_VERSION`), for conformance/diagnostics. Absent when no preset was involved.
+ * `presetVersion` is the version stamp of whichever authored prompt produced `system`, for
+ * conformance/diagnostics.
+ *
+ * RIDER 14 (seam-doc correction). This used to read "Absent when no preset was involved", and Lane C
+ * ships something stricter than that wording allows: the MINIMAL arm is stamped too
+ * (`winter_minimal@1`), even though R5-9 calls it an "authored minimal prompt" rather than a preset.
+ * RATIFIED, and the reason is the field's own stated purpose -- leaving the DEFAULT arm unstamped
+ * would make the most common session in existence the one you cannot identify from the assembled
+ * result. P5-G's companion clause says the same ("the minimal default prompt is versioned too,
+ * `winter_minimal@<n>`").
+ *
+ * The rule the field actually follows, stated so a future reader does not have to infer it from two
+ * implementations: **absent exactly when WINTER AUTHORED NOTHING**. The caller-supplied `string` and
+ * `string[]` arms are correctly unstamped; `undefined` and the preset arm are stamped.
  */
 export interface AssembledPrompt {
   system: string;
   userContextBlocks: string[];
   presetVersion?: string;
+  /**
+   * Phase 5 Task 8 (rider 22, RULING P5-G): TRUE when a PROJECT-tier output style asked to replace
+   * Winter's authored prompt (`keep-coding-instructions: false`) and the assembler downgraded it to
+   * an append because the host has not declared workspace trust.
+   *
+   * P5-G says the downgrade "is observable". Before this field it was observable only on
+   * `resolveOutputStyle`'s own return value -- a function no host calls and no wire frame carries --
+   * so the ruling held inside `context/output-styles.ts` and nowhere a caller could see it. A
+   * checked-in style silently doing less than it says is exactly the kind of thing an operator needs
+   * told; ABSENT (never `false`) when nothing was downgraded, so a session with no project style is
+   * byte-identical to one from before this field existed.
+   */
+  replacementDowngraded?: boolean;
 }
 
 export interface SystemPromptAssembler {
