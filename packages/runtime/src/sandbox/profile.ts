@@ -247,6 +247,21 @@ export function buildSeatbeltProfile(input: SeatbeltProfileInput): string {
   // change which paths end up denied; this ordering is for readability/convention, not correctness.
   const denyRunDirRule = input.home ? `(deny file-read* (subpath "${sbplString(canon(join(input.home, ".winter", "run")))}"))` : "";
 
+  // T8 rider 25 (SECURITY): the checkpoint BACKUP STORE, write-side. `<home>/.winter/backups/`
+  // holds the pre-image bytes a `rewind_files` writes back over the user's own files, plus the
+  // `index.jsonl` that says which files those bytes go to. The managed permission floor
+  // (engine.ts's buildBaselineDenyRules) binds a Write/Edit/NotebookEdit TOOL call -- but a
+  // bash-invoked `echo x >> ~/.winter/backups/<s>/index.jsonl` never passes through a write tool's
+  // fence at all, so the seatbelt is the only enforcement point left. Exactly the reasoning WS-12
+  // §5.2's control-plane carve-out already records for `.winter/permissions.local.json`, applied to
+  // a store whose whole purpose is to be replayed over the user's files later.
+  //
+  // A `(subpath ...)` deny, like the run-dir read deny above and unlike the control-plane
+  // filename literals: the WHOLE tree is off-limits, not one filename within it. Only load-bearing
+  // when `home` is itself inside a writable root (cwd == home, or a writableRoots entry above it) --
+  // otherwise `(deny default)` already covers it, and an unconditional deny costs nothing.
+  const denyBackupsDirRule = input.home ? `(deny file-write* (subpath "${sbplString(canon(join(input.home, ".winter", "backups")))}"))` : "";
+
   // WS-12 §5.2 (verbatim carry): macOS `mktemp(1)` (and anything else calling
   // confstr(_CS_DARWIN_USER_TEMP_DIR)) writes to the PER-USER temp dir and ignores $TMPDIR
   // entirely -- without this rule bare `mktemp` dies "Operation not permitted," which is enough to
@@ -295,6 +310,7 @@ ${denyWriteRules}
 (allow file-write-data (path "/dev/null") (path "/dev/stdout") (path "/dev/stderr") (path "/dev/dtracehelper"))
 ${allowDarwinTempFiles}
 ${network}
+${denyBackupsDirRule}
 ${denyRulesFileRules}
 ${denyRulesFileRegex}
 ${denySettingsFileRegex}

@@ -237,6 +237,32 @@ describe("buildSeatbeltProfile: baseline <home>/.winter/run read denial (WS-12 ย
   });
 });
 
+// T8 rider 25 (SECURITY): the checkpoint backup store's shell-side half. The managed permission
+// floor (engine.ts's buildBaselineDenyRules) binds a Write/Edit/NotebookEdit TOOL call; a
+// bash-invoked `echo x >> ~/.winter/backups/<s>/index.jsonl` never passes through a write tool's
+// fence at all, so the seatbelt is the only enforcement point left -- exactly the reasoning WS-12
+// ยง5.2's control-plane carve-out already records for `.winter/permissions.local.json`.
+describe("buildSeatbeltProfile: baseline <home>/.winter/backups WRITE denial (T8 rider 25)", () => {
+  test("home renders a subpath write-deny for <home>/.winter/backups, layered AFTER the write-allow block", () => {
+    const home = realTmp();
+    const p = buildSeatbeltProfile({ cwd: home, allowNetwork: false, home });
+    const allowIdx = p.indexOf("(allow file-write*\n");
+    const denyIdx = p.indexOf(`(deny file-write* (subpath "${join(home, ".winter", "backups")}"))`);
+    expect(allowIdx).toBeGreaterThanOrEqual(0);
+    expect(denyIdx).toBeGreaterThan(allowIdx);
+  });
+
+  test("home is canonicalized the same graceful way as every other path this module handles", () => {
+    const p = buildSeatbeltProfile({ cwd: realTmp(), allowNetwork: false, home: "/does/not/exist/home" });
+    expect(p).toContain('(deny file-write* (subpath "/does/not/exist/home/.winter/backups"))');
+  });
+
+  test("home omitted emits no baseline backups denial (same omitted-is-still-correct posture)", () => {
+    const p = buildSeatbeltProfile({ cwd: realTmp(), allowNetwork: false });
+    expect(p).not.toContain(".winter/backups");
+  });
+});
+
 describe("resolveNetworkPosture", () => {
   test("undefined network config resolves to deny (false)", () => {
     expect(resolveNetworkPosture(undefined)).toBe(false);

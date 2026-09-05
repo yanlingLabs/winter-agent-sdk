@@ -15,8 +15,42 @@
 // to rewind to" from a transport fault.
 import type { RewindFilesResult } from "@yanlinglabs/winter-agent-sdk";
 import { lstatSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { join, relative, sep } from "node:path";
+import { join, relative, resolve, sep } from "node:path";
 import { blobName, parentRealPathOf, readCheckpointIndex, sessionBackupsDir, type CheckpointRecord } from "./file-history.ts";
+
+/**
+ * T8 rider 25 (SECURITY): is `absPath` inside one of the session's own writable roots?
+ *
+ * `index.jsonl` is an ordinary file naming absolute paths, and this function used to act on every
+ * one it found. Two independent layers already keep a MODEL away from that file (engine.ts's managed
+ * `~/.winter/backups` write denies, and sandbox/profile.ts's seatbelt write-deny for a shell-invoked
+ * write) -- this is the third: even GIVEN a hostile index, a rewind may only write or delete inside
+ * the roots the session itself could write, so a forged record naming `~/.ssh/authorized_keys` is
+ * refused rather than serviced.
+ *
+ * Roots are `cwd` plus whatever `additionalDirectories` the session ran with -- the same notion
+ * `permissions/evaluator.ts`'s `boundedRoots` uses. A root that does not resolve is compared as
+ * written; a rewind must not become unusable because one configured directory has since been
+ * deleted.
+ */
+function isInsideSessionRoots(absPath: string, roots: readonly string[]): boolean {
+  const target = resolve(absPath);
+  for (const raw of roots) {
+    const root = resolve(raw);
+    if (target === root) return true;
+    if (target.startsWith(root.endsWith(sep) ? root : root + sep)) return true;
+    // The recorded path and the configured root may disagree only by a symlinked ancestor
+    // (`/var` -> `/private/var` on every macOS temp path). Compare real paths too, when both sides
+    // resolve -- a check that fails on a real machine's own tmpdir is not a check.
+    try {
+      const realRoot = realpathSync(root);
+      if (target === realRoot || target.startsWith(realRoot.endsWith(sep) ? realRoot : realRoot + sep)) return true;
+    } catch {
+      /* the root is gone -- the written-form comparison above is the answer */
+    }
+  }
+  return false;
+}
 
 /**
  * Line counts, Winter-defined and DISCLOSED: the pin declares `insertions`/`deletions` as numbers and
@@ -156,6 +190,14 @@ export interface RewindOptions {
   sessionUuid: string;
   userMessageUuid: string;
   dryRun: boolean;
+  /**
+   * T8 rider 25: the session's own writable roots (its `cwd` plus any `additionalDirectories`). A
+   * record naming a path outside every one of them is REFUSED -- see `isInsideSessionRoots`.
+   *
+   * REQUIRED, not optional-defaulting-to-unfenced: an omitted fence is exactly the state this rider
+   * closes, and a caller that genuinely wants no fence has to say so by passing `["/"]`.
+   */
+  roots: readonly string[];
 }
 
 export function rewindToCheckpoint(opts: RewindOptions): RewindFilesResult {
@@ -196,6 +238,16 @@ export function rewindToCheckpoint(opts: RewindOptions): RewindFilesResult {
     // LEAF-STATE refusals stay real-rewind-only, exactly as item (e) describes.
     //
     // `skippedLinks` is populated on real rewinds either way, and stays ABSENT on a preview.
+    // T8 rider 25: the ROOT fence, checked first and on BOTH paths for the same reason the
+    // path-identity class is -- a record outside the session's roots does not describe a file this
+    // session ever touched, so listing it in a preview would promise a host a change to a stranger's
+    // file. Counted in `skippedLinks` on a real rewind (the field the pin gives to "records this
+    // rewind declined to service"); still absent on a preview, per item (e).
+    if (!isInsideSessionRoots(record.path, opts.roots)) {
+      if (!opts.dryRun) skippedLinks++;
+      continue;
+    }
+
     const identityRefusal = pathIdentityRefusal(record);
     if (identityRefusal !== undefined) {
       if (!opts.dryRun) skippedLinks++;

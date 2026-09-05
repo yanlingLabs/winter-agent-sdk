@@ -246,6 +246,28 @@ describe("sandbox deny suite (real sandbox-exec, WS-12 §5.2 carried corpus)", (
     });
   });
 
+  // T8 rider 25 (SECURITY): the checkpoint backup store must be unwritable from a sandboxed shell.
+  // The positive control is what makes this mean something -- the SAME home is a writable root here
+  // (cwd IS home), so a sibling under `.winter` writes fine and only `backups/` is fenced off.
+  describe("baseline <home>/.winter/backups write denial (T8 rider 25)", () => {
+    t("a sandboxed write under <home>/.winter/backups is denied while a sibling under the same .winter writes fine", async () => {
+      const home = proj();
+      const backups = join(home, ".winter", "backups", "sess-1");
+      mkdirSync(backups, { recursive: true });
+      const indexFile = join(backups, "index.jsonl");
+      const siblingFile = join(home, ".winter", "sibling.txt");
+
+      // cwd IS home, so `.winter/**` is inside a writable root -- without the deny this write lands.
+      const denied = await run(`echo tampered >> ${indexFile}`, home, undefined, home);
+      expect(denied.exitCode).not.toBe(0);
+      expect(existsSync(indexFile)).toBe(false);
+
+      const allowed = await run(`echo ok > ${siblingFile}`, home, undefined, home);
+      expect(allowed.exitCode).toBe(0);
+      expect(existsSync(siblingFile)).toBe(true);
+    });
+  });
+
   // WS-12 §5.2: these vectors were already contained pre-tightening (the mach-lookup allowlist is
   // defense-in-depth on top of the deny-by-default write rules); this pins containment of the WRITE
   // rules, not the mach-lookup allowlist specifically -- carried verbatim from Norma's own

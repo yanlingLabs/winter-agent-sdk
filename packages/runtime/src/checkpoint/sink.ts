@@ -45,6 +45,14 @@ export interface FileCheckpointSinkOptions {
    * the ABSOLUTE path, so resolving late would file two spellings of one file as two histories.
    */
   cwd?: string;
+  /**
+   * T8 rider 25 (SECURITY): extra roots the session was configured to write outside `cwd`
+   * (`RuntimeConfig.additionalDirectories`). `rewind` refuses a record naming a path outside `cwd`
+   * and these, so a tampered `index.jsonl` cannot become an arbitrary write or delete -- but a file
+   * the session GENUINELY edited in a granted directory must still restore, which is what this
+   * field carries. Omitted => `cwd` is the whole fence.
+   */
+  additionalDirectories?: readonly string[];
   env?: Record<string, string | undefined>;
 }
 
@@ -52,6 +60,9 @@ export function createFileCheckpointSink(opts: FileCheckpointSinkOptions): FileC
   const home = opts.home ?? resolveWinterHome(opts.env);
   const cwd = opts.cwd ?? process.cwd();
   const ownSession = opts.sessionUuid;
+  // T8 rider 25: the rewind fence. Computed once here, from the same construction options the
+  // session's own writes were resolved against, so the two can never disagree.
+  const roots: readonly string[] = [cwd, ...(opts.additionalDirectories ?? [])];
 
   // The snapshot version per (session, path), and which (envelope, path) pairs already hold one.
   // Both are seeded LAZILY from the on-disk index the first time a session is written to, so a sink
@@ -137,7 +148,7 @@ export function createFileCheckpointSink(opts: FileCheckpointSinkOptions): FileC
     },
 
     async rewind(userMessageUuid: string, o?: { dryRun?: boolean }): Promise<RewindFilesResult> {
-      return rewindToCheckpoint({ home, sessionUuid: ownSession, userMessageUuid, dryRun: o?.dryRun === true });
+      return rewindToCheckpoint({ home, sessionUuid: ownSession, userMessageUuid, dryRun: o?.dryRun === true, roots });
     },
   };
 }

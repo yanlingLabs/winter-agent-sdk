@@ -8,7 +8,7 @@
 //
 // NO TEST HERE TOUCHES A REAL HOME. Every case builds a `mkdtemp` root and passes it as `home`.
 import { test, expect, describe, beforeEach, afterEach } from "bun:test";
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync, linkSync } from "node:fs";
+import { appendFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync, linkSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -461,5 +461,115 @@ describe("checkpoint -- the SCOPE boundary: Bash and subagent changes (WS-11 §9
     expect((await parent.rewind("child-u-1")).canRewind).toBe(false);
     expect((await parent.rewind("u-1")).canRewind).toBe(true);
     expect(readFileSync(file, "utf8")).toBe("parent state\n");
+  });
+});
+
+// ================================================================================================
+// T8 rider 25 (SECURITY): a tampered `index.jsonl` must not become an arbitrary write or delete.
+// ================================================================================================
+//
+// The store's index is an ordinary file naming absolute paths, and `rewindToCheckpoint` acted on
+// every path it found. The permission floor (engine.ts's managed `~/.winter/backups` denies) and the
+// seatbelt write-deny (sandbox/profile.ts) both close the ways a MODEL reaches that file -- this is
+// the third, independent layer: even given a hostile index, a rewind may only touch paths inside the
+// session's OWN writable roots (its cwd plus any `additionalDirectories` the session ran with).
+//
+// Written against the sink's own public surface, because that is where the roots come from: the sink
+// is constructed with the session's `cwd`, exactly as T8's production wiring constructs it.
+describe("rider 25: the rewind is fenced to the session's own writable roots", () => {
+  function tamperIndex(sessionUuid: string, record: Record<string, unknown>): void {
+    const dir = join(home, CHECKPOINT_BACKUPS_DIRNAME, sessionUuid);
+    mkdirSync(dir, { recursive: true });
+    appendFileSync(join(dir, "index.jsonl"), `${JSON.stringify(record)}\n`);
+  }
+
+  test("a hostile record naming a path OUTSIDE the session's roots cannot DELETE it", async () => {
+    const outside = mkdtempSync(join(tmpdir(), "winter-rider25-victim-"));
+    const victim = join(outside, "authorized_keys");
+    writeFileSync(victim, "ssh-ed25519 REAL\n");
+    try {
+      const sink = sinkFor();
+      // A real, legitimate checkpoint first, so the envelope exists and the rewind proceeds.
+      writeFileSync(join(work, "a.ts"), "v0\n");
+      await sink.beforeMutation({ path: join(work, "a.ts"), tool: "Write", userMessageUuid: "u-1", sessionUuid: "sess-1" });
+      writeFileSync(join(work, "a.ts"), "v1\n");
+      // Then the forged one, on the same envelope: an `absent` snapshot deletes on rewind.
+      tamperIndex("sess-1", {
+        kind: "snapshot",
+        userMessageUuid: "u-1",
+        path: victim,
+        pathHash: checkpointPathHash(victim),
+        tool: "Write",
+        at: new Date().toISOString(),
+        version: 1,
+        absent: true,
+        anchorPath: outside,
+        anchorRealPath: realpathSync(outside),
+      });
+
+      const result = await sink.rewind("u-1");
+      expect(result.canRewind).toBe(true);
+      expect(existsSync(victim)).toBe(true);
+      expect(readFileSync(victim, "utf8")).toBe("ssh-ed25519 REAL\n");
+      expect(result.filesChanged).not.toContain(victim);
+      // The legitimate half still restores -- the fence refuses one record, never the whole rewind.
+      expect(readFileSync(join(work, "a.ts"), "utf8")).toBe("v0\n");
+      expect(result.skippedLinks).toBe(1);
+    } finally {
+      rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
+  test("a hostile record naming a path outside the roots cannot OVERWRITE it, and a dryRun does not list it either", async () => {
+    const outside = mkdtempSync(join(tmpdir(), "winter-rider25-victim2-"));
+    const victim = join(outside, "id_rsa");
+    writeFileSync(victim, "REAL KEY\n");
+    try {
+      const sink = sinkFor();
+      writeFileSync(join(work, "a.ts"), "v0\n");
+      await sink.beforeMutation({ path: join(work, "a.ts"), tool: "Write", userMessageUuid: "u-1", sessionUuid: "sess-1" });
+      writeFileSync(join(work, "a.ts"), "v1\n");
+      // A forged snapshot WITH a blob the attacker also wrote: the bytes that would land on `victim`.
+      const hash = checkpointPathHash(victim);
+      writeFileSync(join(home, CHECKPOINT_BACKUPS_DIRNAME, "sess-1", `${hash}@v1`), "ATTACKER KEY\n");
+      tamperIndex("sess-1", {
+        kind: "snapshot",
+        userMessageUuid: "u-1",
+        path: victim,
+        pathHash: hash,
+        tool: "Write",
+        at: new Date().toISOString(),
+        version: 1,
+        anchorPath: outside,
+        anchorRealPath: realpathSync(outside),
+      });
+
+      const preview = await sink.rewind("u-1", { dryRun: true });
+      expect(preview.filesChanged).not.toContain(victim);
+
+      const result = await sink.rewind("u-1");
+      expect(readFileSync(victim, "utf8")).toBe("REAL KEY\n");
+      expect(result.filesChanged).not.toContain(victim);
+    } finally {
+      rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
+  test("an additionalDirectories root the session genuinely ran with IS restorable -- the fence is the session's roots, not cwd alone", async () => {
+    const extra = mkdtempSync(join(tmpdir(), "winter-rider25-extra-"));
+    try {
+      const sink = createFileCheckpointSink({ home, cwd: work, sessionUuid: "sess-1", additionalDirectories: [extra] });
+      const file = join(extra, "out.txt");
+      writeFileSync(file, "v0\n");
+      await sink.beforeMutation({ path: file, tool: "Write", userMessageUuid: "u-1", sessionUuid: "sess-1" });
+      writeFileSync(file, "v1\n");
+
+      const result = await sink.rewind("u-1");
+      expect(result.filesChanged).toContain(file);
+      expect(readFileSync(file, "utf8")).toBe("v0\n");
+      expect(result.skippedLinks).toBe(0);
+    } finally {
+      rmSync(extra, { recursive: true, force: true });
+    }
   });
 });

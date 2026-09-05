@@ -624,6 +624,33 @@ export function buildBaselineDenyRules(): SourcedRuleEntry[] {
     sourceRule({ toolName: "Edit", ruleContent: "~/.winter/projects/**" }, "deny", "managed"),
     sourceRule({ toolName: "NotebookEdit", ruleContent: "~/.winter/projects" }, "deny", "managed"),
     sourceRule({ toolName: "NotebookEdit", ruleContent: "~/.winter/projects/**" }, "deny", "managed"),
+
+    // --- Phase 5 Task 8 rider 25 (SECURITY): the checkpoint BACKUP STORE is write-denied too ------
+    //
+    // `~/.winter/backups/<session>/` holds the pre-image bytes a `rewind_files` writes back over the
+    // user's own files, plus the `index.jsonl` that says WHICH files those bytes go to. Both halves
+    // are attacker-useful: writing the index names an arbitrary path for the next rewind to write or
+    // DELETE; writing a blob chooses the bytes that land on a path the session legitimately tracked.
+    //
+    // The M13 reasoning applies verbatim -- `permissions/protected.ts` protects `.winter/**` writes,
+    // but `resolveProtectedWrite` returns `allow` under `bypassPermissions` (WS-07 §6.7's matrix) and
+    // WS-07 §11 FORCES bypass on every descendant of a bypass parent -- plus one this block does not
+    // have: `protected.ts` matches the literal directory NAME `.winter`, so a `WINTER_HOME` pointing
+    // at a differently-named root was never covered there at all. A `managed` deny binds where the
+    // protected-write check does not, because stage 2's deny lookup runs before stage 4's bypass
+    // auto-allow, and `findFileDenyBlockingEdit` extends it to Bash-shaped writes.
+    //
+    // WRITE-SIDE ONLY, for M13's own stated reason: reads on `~/.winter` are otherwise unrestricted
+    // (the sole baseline read denial is `~/.winter/run`), and a backup blob is a copy of a file the
+    // model could already read in place -- denying reads would buy nothing and regress nothing.
+    // `checkpoint/rewind.ts` carries the complementary half: a record naming a path outside the
+    // session's own writable roots is refused even if the index says otherwise.
+    sourceRule({ toolName: "Write", ruleContent: "~/.winter/backups" }, "deny", "managed"),
+    sourceRule({ toolName: "Write", ruleContent: "~/.winter/backups/**" }, "deny", "managed"),
+    sourceRule({ toolName: "Edit", ruleContent: "~/.winter/backups" }, "deny", "managed"),
+    sourceRule({ toolName: "Edit", ruleContent: "~/.winter/backups/**" }, "deny", "managed"),
+    sourceRule({ toolName: "NotebookEdit", ruleContent: "~/.winter/backups" }, "deny", "managed"),
+    sourceRule({ toolName: "NotebookEdit", ruleContent: "~/.winter/backups/**" }, "deny", "managed"),
   ];
 }
 
