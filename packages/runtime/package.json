@@ -14,6 +14,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@yanlinglabs/winter-agent-sdk": "workspace:*",
+    "@yanlinglabs/winter-provider-catalog": "workspace:*",
     "@yanlinglabs/winter-provider-runtime": "workspace:*",
     "ajv": "^8.20.0"
   }

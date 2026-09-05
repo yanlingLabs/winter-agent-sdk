@@ -95,6 +95,27 @@ export type {
   // `.subtype === "compact_boundary"` -- named on the barrel because a host that renders a transcript
   // needs the metadata shape to relink a preserved segment, not merely to skip the frame.
   SDKCompactBoundaryMessage,
+  // Phase 6 Task 3 (R6-5/R6-D, derived-shapes-p6.md items (a)/(b)): the provider-facing frame family
+  // plus the Winter-DECLARED wire vocabularies it carries. Named on the barrel because a host that
+  // renders live tokens must be able to discriminate `stream_event` and reach inside `event`, and
+  // because the runtime's own provider seam imports these rather than re-declaring them (one
+  // declaration home for a wire shape, R6-D).
+  WireContentBlock,
+  WireStreamEvent,
+  WireStreamEventDelta,
+  SDKPartialAssistantMessage,
+  SDKAssistantMessageError,
+  SDKAPIRetryMessage,
+  SDKRateLimitEvent,
+  SDKRateLimitInfo,
+  SDKAuthStatusMessage,
+  SDKThinkingTokensMessage,
+  SDKModelRefusalFallbackMessage,
+  SDKModelRefusalNoFallbackMessage,
+  // Winter-only, disclosed as extensions (R6-8 / R6-C / R6-7).
+  SDKReasoningSummaryMessage,
+  SDKModelSwitchMessage,
+  SDKContinuityWarningMessage,
 } from "./protocol/frames.ts";
 
 // Paths (Task 6, moved here Task 10 -- WS-05 §6): WINTER_HOME resolution, the exact CC-compatible

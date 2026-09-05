@@ -65,6 +65,9 @@ importers:
       '@yanlinglabs/winter-agent-sdk':
         specifier: workspace:*
         version: link:../sdk
+      '@yanlinglabs/winter-provider-catalog':
+        specifier: workspace:*
+        version: link:../provider-catalog
       '@yanlinglabs/winter-provider-runtime':
         specifier: workspace:*
         version: link:../provider-runtime
