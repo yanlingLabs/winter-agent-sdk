@@ -225,8 +225,19 @@ export interface ResolveSettingsDetailedOptions extends ResolveSettingsOptions {
  *
  * `disableAutoMode` is deliberately ABSENT: it is restrictive (`'disable'` is its only value), so a
  * repo-committed file setting it can only ever tighten, which every tier is allowed to do.
+ *
+ * `outputStyle` JOINED IN THE PHASE 5 FIX WAVE (whole-branch m1). RULING P5-G gates a project-tier
+ * style FILE to append-only -- a checked-in `.winter/output-styles/*.md` may add to the prompt but
+ * never replace it. It says nothing about SELECTION, and selection is the other half of the same
+ * power: a project `settings.json` naming one of the USER's own styles -- one the user wrote with
+ * `keep-coding-instructions: false` -- would replace the authored prompt on the strength of a
+ * repository's choice. The style file is the user's; the decision to apply it was not. Same
+ * self-grant shape P5-A closes, arriving through selection rather than through content.
+ *
+ * A host that genuinely wants a per-repository style still has one: `Options.outputStyle`, which is
+ * the host's own configuration and outranks every file tier.
  */
-export const OVERLAY_NEVER_KEYS: readonly string[] = ["autoMemoryDirectory", "autoMode"] as const;
+export const OVERLAY_NEVER_KEYS: readonly string[] = ["autoMemoryDirectory", "autoMode", "outputStyle"] as const;
 
 /**
  * The permission modes `filterEscalatingDefaultMode` treats as escalating (pinned doc `686-694`).

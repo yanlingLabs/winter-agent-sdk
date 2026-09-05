@@ -113,14 +113,17 @@ describe("SettingSource + per-tier loading", () => {
 
 describe("precedence + provenance", () => {
   test("managed > flag > local > project > user for scalars", async () => {
-    writeUser({ outputStyle: "user" });
-    writeProject({ outputStyle: "project" });
-    writeLocal({ outputStyle: "local" });
-    expect((await resolve({ settingSources: ["user"] })).effective["outputStyle"]).toBe("user");
-    expect((await resolve({ settingSources: ["user", "project"] })).effective["outputStyle"]).toBe("project");
-    expect((await resolve({ settingSources: ["user", "project", "local"] })).effective["outputStyle"]).toBe("local");
-    expect((await resolve({ inline: { outputStyle: "flag" } })).effective["outputStyle"]).toBe("flag");
-    expect((await resolve({ inline: { outputStyle: "flag" }, managedSettings: { outputStyle: "managed" } })).effective["outputStyle"]).toBe("managed");
+    // `apiKeyHelper`, not `outputStyle`: since m1 the latter is an OVERLAY_NEVER_KEY, so it cannot
+    // show the project rung of the ladder at all. Precedence is a property of the ladder, not of
+    // any one key -- measure it with a key every tier may set.
+    writeUser({ apiKeyHelper: "user" });
+    writeProject({ apiKeyHelper: "project" });
+    writeLocal({ apiKeyHelper: "local" });
+    expect((await resolve({ settingSources: ["user"] })).effective["apiKeyHelper"]).toBe("user");
+    expect((await resolve({ settingSources: ["user", "project"] })).effective["apiKeyHelper"]).toBe("project");
+    expect((await resolve({ settingSources: ["user", "project", "local"] })).effective["apiKeyHelper"]).toBe("local");
+    expect((await resolve({ inline: { apiKeyHelper: "flag" } })).effective["apiKeyHelper"]).toBe("flag");
+    expect((await resolve({ inline: { apiKeyHelper: "flag" }, managedSettings: { apiKeyHelper: "managed" } })).effective["apiKeyHelper"]).toBe("managed");
   });
 
   test("provenance is per TOP-LEVEL key and names the winning tier + its path", async () => {
@@ -198,17 +201,42 @@ describe("precedence + provenance", () => {
 });
 
 describe("OVERLAY_NEVER_KEYS (T1 (a) / OQ-P5-2)", () => {
-  test("the list is the auto-memory directory plus Winter's own autoMode", () => {
-    expect([...OVERLAY_NEVER_KEYS].sort()).toEqual(["autoMemoryDirectory", "autoMode"]);
+  test("the list is the auto-memory directory, Winter's own autoMode, and outputStyle", () => {
+    expect([...OVERLAY_NEVER_KEYS].sort()).toEqual(["autoMemoryDirectory", "autoMode", "outputStyle"]);
   });
 
   test("a never-key set in PROJECT settings never reaches `effective`", async () => {
-    writeProject({ autoMemoryDirectory: "/evil", autoMode: "on", outputStyle: "project" });
+    writeProject({ autoMemoryDirectory: "/evil", autoMode: "on", outputStyle: "project", apiKeyHelper: "helper" });
     const r = await resolve({ settingSources: ["project"] });
     expect(r.effective["autoMemoryDirectory"]).toBeUndefined();
     expect(r.effective["autoMode"]).toBeUndefined();
     expect(r.provenance["autoMemoryDirectory"]).toBeUndefined();
-    expect(r.effective["outputStyle"]).toBe("project"); // the rest of the tier is untouched
+    // m1: a project file may not SELECT the prompt either -- see OVERLAY_NEVER_KEYS's own note.
+    expect(r.effective["outputStyle"]).toBeUndefined();
+    expect(r.provenance["outputStyle"]).toBeUndefined();
+    expect(r.effective["apiKeyHelper"]).toBe("helper"); // the rest of the tier is untouched
+  });
+
+  // m1 (whole-branch review, Phase 5 fix wave). RED before `describeOverlayNeverKeys` existed: the
+  // drop was TOTALLY SILENT, so a repository that set `outputStyle` saw its style simply not apply
+  // with nothing anywhere saying why -- indistinguishable from a typo in the style's own name.
+  test("a project-tier never-key is reported on that source's `error`, not dropped in silence", async () => {
+    writeProject({ outputStyle: "project-style", autoMemoryDirectory: "/evil" });
+    const r = await resolve({ settingSources: ["project"] });
+    const entry = r.perSource.find((e) => e.source === "project");
+    expect(entry?.error).toContain("outputStyle");
+    expect(entry?.error).toContain("autoMemoryDirectory");
+    expect(entry?.error).toContain("project");
+    expect(r.effective["outputStyle"]).toBeUndefined();
+  });
+
+  // The other half of the same ruling: this closes SELECTION from an untrusted tier, and nothing
+  // else. A user choosing their own style is the case the feature exists for.
+  test("a USER-tier outputStyle still selects, and is not reported", async () => {
+    writeUser({ outputStyle: "mine" });
+    const r = await resolve({ settingSources: ["user", "project"] });
+    expect(r.effective["outputStyle"]).toBe("mine");
+    expect(r.perSource.find((e) => e.source === "user")?.error).toBeUndefined();
   });
 
   test("the same keys ARE taken from local and user (project-only restriction)", async () => {

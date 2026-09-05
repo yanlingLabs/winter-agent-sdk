@@ -116,6 +116,21 @@ function describeMalformedPermissionArrays(values: Settings): string | undefined
   return problems.length > 0 ? problems.join("; ") : undefined;
 }
 
+/**
+ * m1 (Phase 5 fix wave): the project tier's never-keys, named, so the drop is never silent.
+ *
+ * `withoutOverlayNeverKeys` deletes without a word. For `autoMemoryDirectory` that was defensible --
+ * a repository setting it is almost certainly hostile, and hostile input is not owed an explanation.
+ * `outputStyle` broke that reasoning: it is a key an ordinary, well-meaning repository has every
+ * reason to set, and whose silent removal is indistinguishable from a typo in the style's own name.
+ * The user is owed the difference.
+ */
+function describeOverlayNeverKeys(values: Settings): string | undefined {
+  const present = OVERLAY_NEVER_KEYS.filter((key) => (values as Record<string, unknown>)[key] !== undefined);
+  if (present.length === 0) return undefined;
+  return `${present.map((k) => `"${k}"`).join(", ")} ${present.length === 1 ? "is" : "are"} ignored from the project tier (a repository may not set ${present.length === 1 ? "it" : "them"}); move ${present.length === 1 ? "it" : "them"} to your user settings`;
+}
+
 function withoutOverlayNeverKeys(values: Settings): Settings {
   const out: Record<string, unknown> = { ...values };
   for (const key of OVERLAY_NEVER_KEYS) delete out[key];
@@ -228,7 +243,9 @@ export async function resolveSettingsDetailed(opts: ResolveSettingsDetailedOptio
     // it did nothing.
     const plansCheck = source === "project" && file.values["plansDirectory"] !== undefined ? validateProjectPlansDirectory(file.values["plansDirectory"]) : { ok: true as const };
     const plansError = plansCheck.ok ? undefined : plansCheck.reason;
-    const mergedError = [file.error, valueError, plansError].filter((e): e is string => e !== undefined).join("; ");
+    // m1: same channel, same reason -- a project-tier key that was dropped rather than applied.
+    const neverKeyError = source === "project" ? describeOverlayNeverKeys(file.values) : undefined;
+    const mergedError = [file.error, valueError, plansError, neverKeyError].filter((e): e is string => e !== undefined).join("; ");
     lowestFirst.push({
       source,
       path,

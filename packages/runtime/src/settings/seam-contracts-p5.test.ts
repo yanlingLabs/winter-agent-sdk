@@ -326,7 +326,7 @@ describe("(v) pluginAgents is a FOURTH definition source, at the BOTTOM of the p
 describe("(iii)+(iv) resolve -> trust verdict -> effective settings", () => {
   test("the full lane path: resolveSettingsDetailed -> defaultTrustSource -> applyWorkspaceTrust", async () => {
     await withTempTreeAsync(async ({ cwd, home }) => {
-      writeJson(join(cwd, ".winter", "settings.json"), { permissions: { allow: ["Write"], deny: ["Bash"] }, outputStyle: "project-style" });
+      writeJson(join(cwd, ".winter", "settings.json"), { permissions: { allow: ["Write"], deny: ["Bash"] }, apiKeyHelper: "project-helper" });
       const resolved = await resolveSettingsDetailed({ cwd, winterHome: home });
 
       const untrusted = defaultTrustSource({}).verdict(cwd);
@@ -334,7 +334,10 @@ describe("(iii)+(iv) resolve -> trust verdict -> effective settings", () => {
       const effective = applyWorkspaceTrust(resolved, { trustedWorkspace: untrusted.trusted });
       expect((effective["permissions"] as { allow?: string[]; deny?: string[] }).allow).toBeUndefined();
       expect((effective["permissions"] as { deny?: string[] }).deny).toEqual(["Bash"]);
-      expect(effective["outputStyle"]).toBe("project-style"); // NON-permission keys are untouched by trust
+      expect(effective["apiKeyHelper"]).toBe("project-helper"); // NON-permission keys are untouched by trust
+      // (`outputStyle` would have been the wrong probe here since m1 made it an OVERLAY_NEVER_KEY:
+      // it never reaches `effective` from the project tier, so it could not distinguish "trust
+      // stripped it" from "the overlay filter did" -- the fixture would pass while measuring nothing.)
 
       const trusted = defaultTrustSource({ trustedWorkspace: true }).verdict(cwd);
       expect(applyWorkspaceTrust(resolved, { trustedWorkspace: trusted.trusted })["permissions"]).toMatchObject({ allow: ["Write"] });
