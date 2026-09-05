@@ -21,6 +21,8 @@ import { chatCorpusScenarios, responsesCorpusScenarios } from "./openai-scenario
 import { startOpenAiResponsesFake } from "../fakes/openai-responses.ts";
 import { startOpenAiChatFake } from "../fakes/openai-chat.ts";
 import { startCodexFake, FAKE_ACCESS_TOKEN, FAKE_ACCOUNT_ID, FAKE_REFRESH_TOKEN } from "../fakes/codex-oauth.ts";
+import { errorResponse } from "../fakes/server.ts";
+import { responsesStream } from "../fakes/openai-responses.ts";
 import { openAiModelsRoutes } from "../fakes/openai-models.ts";
 import { noRequestContains } from "../fakes/server.ts";
 import type { FakeServer } from "../fakes/server.ts";
@@ -47,6 +49,17 @@ function fastQuota(): QuotaManager {
   return new QuotaManager({ sleep: () => new Promise<void>((r) => setTimeout(r, 1)) });
 }
 
+/** A codex context holding a valid, unexpired oauth credential. Fresh per call so a refresh in one test cannot leak into another. */
+function codexContext(): ReturnType<typeof testContext> {
+  const credentials = createMemoryCredentialStore([[CODEX_REF, { kind: "oauth", accessToken: FAKE_ACCESS_TOKEN, refreshToken: FAKE_REFRESH_TOKEN, accountId: FAKE_ACCOUNT_ID, expiresAt: Date.now() + 3_600_000 }]]);
+  return { ...testContext({ providerId: "codex-oauth", stallTimeoutMs: STALL_MS }), credentials, authRef: CODEX_REF };
+}
+
+/** The codex adapter pointed at a fake, with an explicit (possibly real-clock) quota manager. */
+function codexAdapterFor(url: string, quota: QuotaManager): ProviderAdapter {
+  return createCodexOauthAdapter({ generatedBaseUrl: url, tokenUrl: `${url}/oauth/token`, retry: FAST_RETRY, quota, descriptors: () => undefined });
+}
+
 // --- harnesses ----------------------------------------------------------------------------------------
 
 function responsesHarness(): CorpusHarness {
@@ -55,7 +68,7 @@ function responsesHarness(): CorpusHarness {
     createResponsesAdapter({
       generatedBaseUrl: url,
       retry: FAST_RETRY,
-      ...(overrides?.noDescriptors === true ? {} : { descriptors: descriptorsFor(base, overrides?.descriptor) }),
+      descriptors: overrides?.unlisted === true ? () => undefined : descriptorsFor(base, overrides?.descriptor),
     });
   return {
     name: "openai-responses@1",
@@ -80,7 +93,7 @@ function codexHarness(): CorpusHarness {
       tokenUrl: `${url}/oauth/token`,
       retry: FAST_RETRY,
       quota: fastQuota(),
-      ...(overrides?.noDescriptors === true ? {} : { descriptors: descriptorsFor(base, overrides?.descriptor) }),
+      descriptors: overrides?.unlisted === true ? () => undefined : descriptorsFor(base, overrides?.descriptor),
     });
   return {
     name: "codex-oauth@1",
@@ -109,7 +122,7 @@ function chatHarness(): CorpusHarness {
     createChatCompletionsAdapter({
       generatedBaseUrl: url,
       retry: FAST_RETRY,
-      ...(overrides?.noDescriptors === true ? {} : { descriptors: descriptorsFor(base, overrides?.descriptor) }),
+      descriptors: overrides?.unlisted === true ? () => undefined : descriptorsFor(base, overrides?.descriptor),
     });
   return {
     name: "openai-chat-completions@1 (deepseek profile)",
@@ -128,7 +141,7 @@ function localHarness(): CorpusHarness {
   // capability-gated reasoning cases as a FACT about the model rather than by omission.
   const base: DescriptorOverrides = { noReasoning: true, inputModalities: ["text"] };
   const adapterFor = (overrides?: HarnessOverrides): ProviderAdapter =>
-    createLocalOpenAIAdapter({ retry: FAST_RETRY, ...(overrides?.noDescriptors === true ? {} : { descriptors: descriptorsFor(base, overrides?.descriptor) }) });
+    createLocalOpenAIAdapter({ retry: FAST_RETRY, descriptors: overrides?.unlisted === true ? () => undefined : descriptorsFor(base, overrides?.descriptor) });
   return {
     name: "local-openai@1",
     surface: "chat",
@@ -215,14 +228,14 @@ describe("WS-13 §13 corpus — the OpenAI family", () => {
 describe("live wire details the corpus does not ask about", () => {
   test("R6-L: `OpenAI-Organization` rides a GENERATED endpoint and is dropped for a user one", async () => {
     await withResponsesFake(async (fake) => {
-      const generated = createResponsesAdapter({ generatedBaseUrl: fake.url, organization: "org-test-corpus", project: "proj-test", retry: FAST_RETRY });
+      const generated = createResponsesAdapter({ generatedBaseUrl: fake.url, organization: "org-test-corpus", project: "proj-test", retry: FAST_RETRY, descriptors: () => undefined });
       await drain(generated.streamTurn({ model: SCENARIO.happy, messages: [] }, testContext({ stallTimeoutMs: STALL_MS })));
       expect(fake.requests.at(-1)?.headers["openai-organization"]).toBe("org-test-corpus");
       expect(fake.requests.at(-1)?.headers["openai-project"]).toBe("proj-test");
 
       // The SAME adapter options, but the endpoint now comes from the connection profile: the
       // organisation identifier must not reach a host the reviewed catalog never named.
-      const viaProfile = createResponsesAdapter({ organization: "org-test-corpus", project: "proj-test", retry: FAST_RETRY });
+      const viaProfile = createResponsesAdapter({ organization: "org-test-corpus", project: "proj-test", retry: FAST_RETRY, descriptors: () => undefined });
       await drain(viaProfile.streamTurn({ model: SCENARIO.happy, messages: [] }, testContext({ baseUrl: fake.url, local: true, stallTimeoutMs: STALL_MS })));
       expect(fake.requests.at(-1)?.headers["openai-organization"]).toBeUndefined();
       expect(fake.requests.at(-1)?.headers["openai-project"]).toBeUndefined();
@@ -233,7 +246,7 @@ describe("live wire details the corpus does not ask about", () => {
     // The ordering `pumpEvents` exists for, asserted against the fake's own request log rather than
     // against the adapter's intent: a post-hoc flush would put the event after BOTH requests.
     await withResponsesFake(async (fake) => {
-      const adapter = createResponsesAdapter({ generatedBaseUrl: fake.url, retry: FAST_RETRY });
+      const adapter = createResponsesAdapter({ generatedBaseUrl: fake.url, retry: FAST_RETRY, descriptors: () => undefined });
       let requestsWhenRetrySeen = -1;
       for await (const event of adapter.streamTurn({ model: SCENARIO.rateLimit, messages: [] }, testContext({ stallTimeoutMs: STALL_MS }))) {
         if (event.type === "retry" && requestsWhenRetrySeen < 0) requestsWhenRetrySeen = fake.requests.length;
@@ -247,7 +260,7 @@ describe("live wire details the corpus does not ask about", () => {
     const fake = await startCodexFake({ scenarios: responsesCorpusScenarios(), requireRefreshFor: [SCENARIO.happy] });
     try {
       const credentials = createMemoryCredentialStore([[CODEX_REF, { kind: "oauth", accessToken: FAKE_ACCESS_TOKEN, refreshToken: FAKE_REFRESH_TOKEN, accountId: FAKE_ACCOUNT_ID, expiresAt: Date.now() + 3_600_000 }]]);
-      const adapter = createCodexOauthAdapter({ generatedBaseUrl: fake.url, tokenUrl: `${fake.url}/oauth/token`, retry: FAST_RETRY, quota: fastQuota() });
+      const adapter = codexAdapterFor(fake.url, fastQuota());
       const ctx = { ...testContext({ providerId: "codex-oauth", stallTimeoutMs: STALL_MS }), credentials, authRef: CODEX_REF };
       const events = await drain(adapter.streamTurn({ model: SCENARIO.happy, messages: [] }, ctx));
 
@@ -277,7 +290,7 @@ describe("live wire details the corpus does not ask about", () => {
     const fake = await startCodexFake({ scenarios: responsesCorpusScenarios() });
     try {
       const credentials = createMemoryCredentialStore([[CODEX_REF, { kind: "oauth", accessToken: FAKE_ACCESS_TOKEN, refreshToken: FAKE_REFRESH_TOKEN, accountId: FAKE_ACCOUNT_ID, expiresAt: Date.now() + 3_600_000 }]]);
-      const adapter = createCodexOauthAdapter({ generatedBaseUrl: fake.url, tokenUrl: `${fake.url}/oauth/token`, retry: FAST_RETRY, quota: fastQuota() });
+      const adapter = codexAdapterFor(fake.url, fastQuota());
       const events = await drain(adapter.streamTurn({ model: SCENARIO.rateLimit, messages: [] }, { ...testContext({ providerId: "codex-oauth", stallTimeoutMs: STALL_MS }), credentials, authRef: CODEX_REF }));
       const limits = events.filter((e): e is Extract<ProviderEvent, { type: "rate_limit" }> => e.type === "rate_limit");
       expect(limits.length).toBeGreaterThanOrEqual(1);
@@ -298,12 +311,95 @@ describe("live wire details the corpus does not ask about", () => {
     }
   });
 
+  test("codex: a HEADERLESS 429 is `rejected` with NO resetsAt — the window is unknown, not invented (I1)", async () => {
+    const fake = await startCodexFake({ scenarios: responsesCorpusScenarios() });
+    try {
+      const events = await drain(codexAdapterFor(fake.url, fastQuota()).streamTurn({ model: SCENARIO.rateLimitNoHeader, messages: [] }, codexContext()));
+      const limits = events.filter((e): e is Extract<ProviderEvent, { type: "rate_limit" }> => e.type === "rate_limit");
+      expect(limits[0]!.info.status).toBe("rejected");
+      // The previous code put `retry.retryDelayMs` here, which for a headerless 429 is Winter's OWN
+      // full-jitter backoff — a locally invented number riding the pinned `resetsAt` as a claim
+      // about when the subscription resumes. And `random()` rounding to 0 reproduced `allowed`.
+      expect("resetsAt" in limits[0]!.info).toBe(false);
+      expect(events.some((e) => e.type === "done")).toBe(true);
+    } finally {
+      await fake.close();
+    }
+  });
+
+  test("codex: a 429 WITH `Retry-After` takes its resetsAt from the header the backend sent (I1)", async () => {
+    const fake = await startCodexFake({ scenarios: responsesCorpusScenarios() });
+    try {
+      const before = Math.round(Date.now() / 1000);
+      const events = await drain(codexAdapterFor(fake.url, fastQuota()).streamTurn({ model: SCENARIO.rateLimitShortWindow, messages: [] }, codexContext()));
+      const limits = events.filter((e): e is Extract<ProviderEvent, { type: "rate_limit" }> => e.type === "rate_limit");
+      expect(limits[0]!.info.status).toBe("rejected");
+      // `Retry-After: 1` -> a window one second out, in epoch SECONDS.
+      const resetsAt = limits[0]!.info.resetsAt as number;
+      expect(resetsAt).toBeGreaterThanOrEqual(before);
+      expect(resetsAt).toBeLessThanOrEqual(before + 3);
+    } finally {
+      await fake.close();
+    }
+  });
+
+  test("codex: the recovery `allowed` event fires after an UNMOCKED window wait (I2)", async () => {
+    // The quota clock is REAL here — only the retry backoff is mocked. That is the configuration
+    // the previous fixture never had, and under it `state()` reads `ok` by the time the turn
+    // completes (the wait consumed the window), so reading `state()` made this event unreachable
+    // in production while a 1 ms-mocked fixture passed.
+    const fake = await startCodexFake({ scenarios: responsesCorpusScenarios() });
+    try {
+      const started = Date.now();
+      const events = await drain(codexAdapterFor(fake.url, new QuotaManager()).streamTurn({ model: SCENARIO.rateLimitShortWindow, messages: [] }, codexContext()));
+      const limits = events.filter((e): e is Extract<ProviderEvent, { type: "rate_limit" }> => e.type === "rate_limit");
+      // A real second actually elapsed, so the window was waited rather than skipped.
+      expect(Date.now() - started).toBeGreaterThanOrEqual(500);
+      expect(limits).toHaveLength(2);
+      expect(limits[0]!.info.status).toBe("rejected");
+      expect(limits.at(-1)!.info).toEqual({ status: "allowed" });
+      expect(events.indexOf(limits.at(-1)!)).toBeGreaterThan(events.findIndex((e) => e.type === "done"));
+    } finally {
+      await fake.close();
+    }
+  }, 20_000);
+
+  test("codex: a refreshed bearer SURVIVES into the retried attempt (minor 8)", async () => {
+    // `openStream` re-read `plan.headers` per attempt, so a set recovered by `recover` was thrown
+    // away on the next one: the stale credential went out again, drew a second 401, and forced a
+    // redundant refresh on every retry.
+    // 401 -> refresh -> 429 -> retry -> 200, scripted on ONE model so the sequence is explicit
+    // rather than an artifact of two counters interleaving.
+    const fake = await startCodexFake({
+      scenarios: {
+        [SCENARIO.happy]: (_recorded, attempt) =>
+          attempt === 1
+            ? errorResponse(401, { error: { message: "expired", code: "invalid_api_key" } })
+            : attempt === 2
+              ? errorResponse(429, { error: { message: "slow down", code: "rate_limit_exceeded" } })
+              : responsesStream({ text: ["recovered"], usage: { input: 1, output: 1 } }),
+      },
+    });
+    try {
+      await drain(codexAdapterFor(fake.url, fastQuota()).streamTurn({ model: SCENARIO.happy, messages: [] }, codexContext()));
+      // 401 -> refresh -> 429 -> retry -> 200. Every bearer after the refresh is the REFRESHED one;
+      // before the fix the retried attempt reverted to the original.
+      expect(fake.bearers.length).toBeGreaterThanOrEqual(3);
+      expect(fake.bearers[0]).toBe(FAKE_ACCESS_TOKEN);
+      expect(fake.bearers.slice(1).every((b) => b === "test-token-codex-access-refreshed")).toBe(true);
+      // And exactly ONE token exchange happened, not one per attempt.
+      expect(fake.requests.filter((r) => r.path === "/oauth/token")).toHaveLength(1);
+    } finally {
+      await fake.close();
+    }
+  }, 20_000);
+
   test("local: discovery falls back to Ollama's /api/tags when /v1/models is absent", async () => {
     const { startFake } = await import("../fakes/server.ts");
     const { modelsNotFoundRoutes, ollamaTagsRoute } = await import("../fakes/openai-models.ts");
     const fake = await startFake({ routes: [...modelsNotFoundRoutes(), ollamaTagsRoute([{ name: "llama3.1:8b" }, { name: "qwen3:4b" }])] });
     try {
-      const adapter = createLocalOpenAIAdapter({ retry: FAST_RETRY });
+      const adapter = createLocalOpenAIAdapter({ retry: FAST_RETRY, descriptors: () => undefined });
       const result = await discoverModels(adapter, testDiscoveryContext({ providerId: "ollama-local", baseUrl: `${fake.url}/v1`, local: true, apiKey: null }));
       expect(result.models.map((m) => m.id)).toEqual(["llama3.1:8b", "qwen3:4b"]);
       expect(result.warnings.some((w) => w.includes("/api/tags"))).toBe(true);
@@ -321,7 +417,7 @@ describe("live wire details the corpus does not ask about", () => {
     const { startFake } = await import("../fakes/server.ts");
     const first = await startFake({ routes: openAiModelsRoutes({ pages: [{ rows: [{ id: "alpha" }, { id: "beta" }] }] }) });
     try {
-      const adapter = createResponsesAdapter({ generatedBaseUrl: first.url, retry: FAST_RETRY });
+      const adapter = createResponsesAdapter({ generatedBaseUrl: first.url, retry: FAST_RETRY, descriptors: () => undefined });
       const before = await discoverModels(adapter, testDiscoveryContext({ stallTimeoutMs: STALL_MS }));
       expect(before.models.map((m) => m.id)).toEqual(["alpha", "beta"]);
       expect(before.partial).toBe(false);
@@ -332,7 +428,7 @@ describe("live wire details the corpus does not ask about", () => {
     // The same provider, now serving only `alpha`: a COMPLETE page, so beta is genuinely gone.
     const after = await startFake({ routes: openAiModelsRoutes({ pages: [{ rows: [{ id: "alpha" }] }] }) });
     try {
-      const adapter = createResponsesAdapter({ generatedBaseUrl: after.url, retry: FAST_RETRY });
+      const adapter = createResponsesAdapter({ generatedBaseUrl: after.url, retry: FAST_RETRY, descriptors: () => undefined });
       const removed = await discoverModels(adapter, testDiscoveryContext({ stallTimeoutMs: STALL_MS }));
       expect(removed.models.map((m) => m.id)).toEqual(["alpha"]);
       expect(removed.partial).toBe(false);
@@ -344,7 +440,7 @@ describe("live wire details the corpus does not ask about", () => {
     // says so — `partial: true` plus a warning, never a silent removal.
     const bounded = await startFake({ routes: openAiModelsRoutes({ pages: [{ rows: [{ id: "alpha" }, { id: "beta" }] }] }) });
     try {
-      const adapter = createResponsesAdapter({ generatedBaseUrl: bounded.url, retry: FAST_RETRY });
+      const adapter = createResponsesAdapter({ generatedBaseUrl: bounded.url, retry: FAST_RETRY, descriptors: () => undefined });
       const truncated = await discoverModels(adapter, testDiscoveryContext({ stallTimeoutMs: STALL_MS, maxItems: 1 }));
       expect(truncated.models.map((m) => m.id)).toEqual(["alpha"]);
       expect(truncated.partial).toBe(true);
@@ -358,7 +454,7 @@ describe("live wire details the corpus does not ask about", () => {
     // R6-K's `allowUnlisted` shape: OpenRouter ids like `anthropic/claude-opus-5` never reach the
     // compiled catalog, so the adapter has no vocabulary to snap a number against.
     await withChatFake(async (fake) => {
-      const adapter = createChatCompletionsAdapter({ generatedBaseUrl: fake.url, retry: FAST_RETRY });
+      const adapter = createChatCompletionsAdapter({ generatedBaseUrl: fake.url, retry: FAST_RETRY, descriptors: () => undefined });
       const ctx = testContext({ providerId: "openrouter", stallTimeoutMs: STALL_MS });
       await drain(adapter.streamTurn({ model: SCENARIO.happy, messages: [], effort: "high" }, ctx));
       expect(JSON.parse(fake.requests.at(-1)!.body).reasoning_effort).toBe("high");
@@ -372,7 +468,7 @@ describe("live wire details the corpus does not ask about", () => {
 
   test("the connection profile's attribution headers ride only when the host set them", async () => {
     await withChatFake(async (fake) => {
-      const adapter = createChatCompletionsAdapter({ generatedBaseUrl: fake.url, retry: FAST_RETRY });
+      const adapter = createChatCompletionsAdapter({ generatedBaseUrl: fake.url, retry: FAST_RETRY, descriptors: () => undefined });
       await drain(adapter.streamTurn({ model: SCENARIO.happy, messages: [] }, testContext({ providerId: "openrouter", stallTimeoutMs: STALL_MS })));
       expect(fake.requests.at(-1)?.headers["http-referer"]).toBeUndefined();
       expect(fake.requests.at(-1)?.headers["x-title"]).toBeUndefined();

@@ -66,6 +66,10 @@ export const SCENARIO = {
   unrepresentable: "corpus-unrepresentable",
   /** The second leg of a REASONING tool loop. On the chat surface this scenario ANSWERS 400 when the replay is missing (§6.3's hard error). */
   continuationReplay: "corpus-continuation-replay",
+  /** 429 with NO `Retry-After` at all, then 200 — the window-unknown limit (finding I1). */
+  rateLimitNoHeader: "corpus-rate-limit-no-header",
+  /** 429 with `Retry-After: 1`, then 200 — a window short enough to wait out for real (finding I2). */
+  rateLimitShortWindow: "corpus-rate-limit-short",
 } as const;
 
 /** The marker a replay fixture looks for on the wire. Distinctive so `noRequestContains` means something. */
@@ -76,8 +80,16 @@ export const FOREIGN_MARKER = "FOREIGN-DOMAIN-MARKER";
 // --- the harness a target supplies ---------------------------------------------------------------------
 
 export interface HarnessOverrides {
-  /** Drop the descriptor lookup — the `allowUnlisted` gateway shape, where no capability evidence exists. */
-  noDescriptors?: boolean;
+  /**
+   * Resolve every model to NO descriptor — the `allowUnlisted` gateway shape, where a model has no
+   * catalog evidence at all.
+   *
+   * Spelled as a positive statement rather than as an absent option (ruling on finding I3): the
+   * adapters now REQUIRE a lookup, so "this model has no evidence" is something a caller says out
+   * loud, and forgetting to say anything is a compile error instead of a silent loss of every
+   * §8.2 refusal.
+   */
+  unlisted?: boolean;
   /** Vary the descriptor this turn resolves. */
   descriptor?: DescriptorOverrides;
 }
@@ -130,7 +142,9 @@ export function bodyOf(recorded: RecordedRequest): Record<string, unknown> {
   try {
     return JSON.parse(recorded.body) as Record<string, unknown>;
   } catch {
-    return fail(`the fake recorded a request whose body is not JSON: ${recorded.body.slice(0, 200)}`);
+    // The body is NOT echoed (minor 10): on a continuation case it carries opaque provider state,
+    // and a thrown assertion message is one of the most reliably-printed strings in a test run.
+    return fail(`the fake recorded a ${recorded.method} ${recorded.path} request whose body (${recorded.body.length} bytes) is not JSON`);
   }
 }
 
@@ -392,9 +406,9 @@ export function openAiCorpusCases(harness: CorpusHarness): Partial<Record<Corpus
       // defines it and Winter has nothing to contradict it), a NUMERIC one is refused, because
       // snapping a number needs a vocabulary that does not exist.
       const gatewayBefore = fake.requests.length;
-      await collect(harness.stream(fake, req(SCENARIO.happy, { effort: "high" }), { noDescriptors: true }));
+      await collect(harness.stream(fake, req(SCENARIO.happy, { effort: "high" }), { unlisted: true }));
       assert(fake.requests.length === gatewayBefore + 1, "a named effort on an unlisted model was refused rather than passed through");
-      const numeric = await collect(harness.stream(fake, req(SCENARIO.happy, { effort: 4 }), { noDescriptors: true }));
+      const numeric = await collect(harness.stream(fake, req(SCENARIO.happy, { effort: 4 }), { unlisted: true }));
       assert(errorOf(numeric).code === "capability", `a numeric effort on an unlisted model became ${errorOf(numeric).code}`);
       assert(fake.requests.length === gatewayBefore + 1, "a numeric effort with no vocabulary to snap against was SENT anyway");
     },

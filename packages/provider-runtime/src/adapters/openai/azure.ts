@@ -76,7 +76,7 @@ export function azureTurnUrl(baseUrl: string, routing: AzureRouting): string {
   return url.toString();
 }
 
-export function createAzureOpenAIAdapter(options: AzureAdapterOptions = {}): ProviderAdapter {
+export function createAzureOpenAIAdapter(options: AzureAdapterOptions): ProviderAdapter {
   // Azure's own header, unless the host configured an Entra bearer — which `resolveAuth` detects
   // from the MATERIAL's kind rather than from this setting, so both work under one style.
   const withAuthStyle: AzureAdapterOptions = { ...options, authStyle: options.authStyle ?? "azure-api-key" };

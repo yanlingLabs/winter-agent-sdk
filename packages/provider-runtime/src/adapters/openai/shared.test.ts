@@ -27,6 +27,8 @@ import { descriptor, testContext } from "./testing.ts";
 import type { ProviderEvent, TurnRequest } from "../../types.ts";
 
 const GENERATED = "https://api.openai.com/v1";
+/** The explicit "this model has no catalog evidence" lookup (ruling on finding I3) — these fixtures exercise addressing, not capability. */
+const NO_DESCRIPTORS = (): undefined => undefined;
 
 function policyFor(generated: boolean): ReturnType<typeof createEndpointPolicy> extends infer _ ? NonNullable<Extract<ReturnType<typeof createEndpointPolicy>, { ok: true }>["policy"]> : never {
   const built = createEndpointPolicy(generated ? GENERATED : "https://proxy.example.test", { generated });
@@ -169,25 +171,25 @@ describe("R6-L: privileged headers reach a GENERATED endpoint and no other", () 
 
 describe("endpoint selection", () => {
   test("no baseUrl means the ADAPTER's own generated endpoint, and it is treated as generated", () => {
-    const endpoint = resolveEndpoint(testContext(), { generatedBaseUrl: GENERATED });
+    const endpoint = resolveEndpoint(testContext(), { generatedBaseUrl: GENERATED, descriptors: NO_DESCRIPTORS });
     expect(endpoint.generated).toBe(true);
     expect(endpoint.baseUrl).toBe(GENERATED);
   });
 
   test("a profile baseUrl is a USER endpoint, whatever it points at", () => {
-    const endpoint = resolveEndpoint(testContext({ baseUrl: "https://proxy.example.test/v1" }), { generatedBaseUrl: GENERATED });
+    const endpoint = resolveEndpoint(testContext({ baseUrl: "https://proxy.example.test/v1" }), { generatedBaseUrl: GENERATED, descriptors: NO_DESCRIPTORS });
     expect(endpoint.generated).toBe(false);
     expect(endpoint.policy.generated).toBe(false);
   });
 
   test("a plain-http loopback needs the host's own `local: true` declaration", () => {
-    expect(() => resolveEndpoint(testContext({ baseUrl: "http://127.0.0.1:11434/v1" }), {})).toThrow(/not declared local/);
-    const declared = resolveEndpoint(testContext({ baseUrl: "http://127.0.0.1:11434/v1", local: true }), {});
+    expect(() => resolveEndpoint(testContext({ baseUrl: "http://127.0.0.1:11434/v1" }), { descriptors: NO_DESCRIPTORS })).toThrow(/not declared local/);
+    const declared = resolveEndpoint(testContext({ baseUrl: "http://127.0.0.1:11434/v1", local: true }), { descriptors: NO_DESCRIPTORS });
     expect(declared.policy.local).toBe(true);
   });
 
   test("an adapter with no generated default and no baseUrl refuses rather than guessing", () => {
-    expect(() => resolveEndpoint(testContext(), {})).toThrow(/has no endpoint/);
+    expect(() => resolveEndpoint(testContext(), { descriptors: NO_DESCRIPTORS })).toThrow(/has no endpoint/);
   });
 });
 

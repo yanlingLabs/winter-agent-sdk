@@ -106,13 +106,43 @@ describe("the quota manager: R6-B's sole producer of `rate_limit`", () => {
     expect(quota.state()).toEqual({ kind: "ok" });
   });
 
-  test("a 429 with no Retry-After records the limit without inventing a resume time", () => {
+  test("a 429 with NO Retry-After is limited with NO resetsAt — never a resume time nobody stated", () => {
+    // Finding I1. This previously read `ok` (a zero-length window), which is why the event could go
+    // out saying `allowed` ON a rate limit; and it was asserted against a hand-built
+    // `{kind:"limited", resumeAt:0}` the manager could never actually produce.
     const quota = new QuotaManager({ now: () => 5_000 });
     quota.noteRateLimit(undefined);
-    // `now + 0` is not in the future, so the state reads OK again immediately — the honest answer
-    // when the backend named no window.
+    expect(quota.state()).toEqual({ kind: "limited" });
+    const event = quotaEvent(quota.state());
+    expect(event.info).toEqual({ status: "rejected" });
+    expect("resetsAt" in event.info).toBe(false);
+  });
+
+  test("a window-unknown limit does NOT lapse on its own, and `waitIfLimited` has nothing to wait for", async () => {
+    let now = 0;
+    const quota = new QuotaManager({ now: () => now });
+    quota.noteRateLimit(undefined);
+    now = 10_000_000;
+    // Nothing said it resumed, so nothing pretends it did.
+    expect(quota.state()).toEqual({ kind: "limited" });
+    const started = Date.now();
+    await quota.waitIfLimited();
+    expect(Date.now() - started).toBeLessThan(200);
+  });
+
+  test("`hasPendingLimit` survives the window elapsing, which is what makes the recovery event reachable", () => {
+    // Finding I2: `state()` reads `ok` once a KNOWN window has passed — and by the time a retried
+    // turn completes, the backoff has slept exactly that window. Reading `state()` there silently
+    // turned "was this turn rate-limited?" into "no".
+    let now = 0;
+    const quota = new QuotaManager({ now: () => now });
+    quota.noteRateLimit(2_000);
+    expect(quota.hasPendingLimit()).toBe(true);
+    now = 5_000;
     expect(quota.state()).toEqual({ kind: "ok" });
-    expect(quotaEvent({ kind: "limited", resumeAt: 0 }).info).toEqual({ status: "rejected" });
+    expect(quota.hasPendingLimit()).toBe(true);
+    quota.noteRecovered();
+    expect(quota.hasPendingLimit()).toBe(false);
   });
 
   test("recovery notifies only when the state actually changed", () => {
@@ -132,6 +162,14 @@ describe("the quota manager: R6-B's sole producer of `rate_limit`", () => {
     quota.noteRateLimit(60_000);
     quota.noteRateLimit(1_000);
     expect(quota.state()).toEqual({ kind: "limited", resumeAt: 60_000 });
+  });
+
+  test("a headerless refusal after a KNOWN window keeps the window it already had", () => {
+    let now = 0;
+    const quota = new QuotaManager({ now: () => now });
+    quota.noteRateLimit(30_000);
+    quota.noteRateLimit(undefined);
+    expect(quota.state()).toEqual({ kind: "limited", resumeAt: 30_000 });
   });
 
   test("the concurrency cap admits exactly `maxConcurrent`, and a release admits the next waiter", async () => {

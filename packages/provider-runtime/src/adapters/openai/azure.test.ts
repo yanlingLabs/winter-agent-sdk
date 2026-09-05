@@ -6,23 +6,25 @@ import { createLocalOpenAIAdapter } from "./local.ts";
 import { testContext } from "./testing.ts";
 
 const BASE = "https://my-resource.openai.azure.test";
+/** These fixtures exercise ADDRESSING, so the descriptor lookup is the explicit unlisted one (ruling on finding I3). */
+const NO_OPTIONS = { descriptors: (): undefined => undefined };
 
 describe("azure routing: refused rather than defaulted", () => {
   test("a missing `api-version` is a typed refusal — Winter will not guess which surface you meant", () => {
-    expect(() => azureRouting(testContext({ baseUrl: BASE, deployment: "gpt41" }), {})).toThrow(/apiVersion/);
+    expect(() => azureRouting(testContext({ baseUrl: BASE, deployment: "gpt41" }), NO_OPTIONS)).toThrow(/apiVersion/);
   });
 
   test("a missing `deployment` is a refusal on the CLASSIC surface, where the deployment IS the address", () => {
-    expect(() => azureRouting(testContext({ baseUrl: BASE, apiVersion: "2026-05-01" }), {})).toThrow(/deployment/);
+    expect(() => azureRouting(testContext({ baseUrl: BASE, apiVersion: "2026-05-01" }), NO_OPTIONS)).toThrow(/deployment/);
   });
 
   test("the preview surface needs no deployment at all", () => {
-    const routing = azureRouting(testContext({ baseUrl: BASE, apiVersion: AZURE_PREVIEW_API_VERSION }), {});
+    const routing = azureRouting(testContext({ baseUrl: BASE, apiVersion: AZURE_PREVIEW_API_VERSION }), NO_OPTIONS);
     expect(routing).toEqual({ apiVersion: "preview", preview: true });
   });
 
   test("a construction-time default fills in only what the profile left out", () => {
-    const routing = azureRouting(testContext({ baseUrl: BASE, deployment: "gpt41" }), { defaultApiVersion: "2026-05-01" });
+    const routing = azureRouting(testContext({ baseUrl: BASE, deployment: "gpt41" }), { ...NO_OPTIONS, defaultApiVersion: "2026-05-01" });
     expect(routing).toEqual({ apiVersion: "2026-05-01", preview: false, deployment: "gpt41" });
   });
 });
@@ -46,7 +48,7 @@ describe("azure URLs", () => {
 
 describe("adapter identities", () => {
   test("azure declares its own protocol and version", () => {
-    const adapter = createAzureOpenAIAdapter();
+    const adapter = createAzureOpenAIAdapter({ descriptors: () => undefined });
     expect({ id: adapter.id, version: adapter.version, family: adapter.family, protocol: adapter.protocol }).toEqual({
       id: "winter.azure-openai",
       version: "1",
@@ -56,10 +58,10 @@ describe("adapter identities", () => {
   });
 
   test("the local adapter's id is overridable, because a registry resolves an adapter BY the catalog's adapterId", () => {
-    expect(createLocalOpenAIAdapter().id).toBe("winter.local-openai");
-    expect(createLocalOpenAIAdapter({ id: "winter.openai-chat-completions" }).id).toBe("winter.openai-chat-completions");
-    expect(createLocalOpenAIAdapter().family).toBe("local-openai");
-    expect(createLocalOpenAIAdapter({ surface: "responses" }).protocol).toBe("openai-responses");
+    expect(createLocalOpenAIAdapter({ descriptors: () => undefined }).id).toBe("winter.local-openai");
+    expect(createLocalOpenAIAdapter({ id: "winter.openai-chat-completions", descriptors: () => undefined }).id).toBe("winter.openai-chat-completions");
+    expect(createLocalOpenAIAdapter({ descriptors: () => undefined }).family).toBe("local-openai");
+    expect(createLocalOpenAIAdapter({ surface: "responses", descriptors: () => undefined }).protocol).toBe("openai-responses");
   });
 
   test("a profile carries the three facts a host has to name in one place", () => {

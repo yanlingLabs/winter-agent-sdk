@@ -424,7 +424,7 @@ export async function* chatTurn(
 
 // --- the adapter -------------------------------------------------------------------------------------------------
 
-export function createChatCompletionsAdapter(options: ChatTurnOptions = {}): ProviderAdapter {
+export function createChatCompletionsAdapter(options: ChatTurnOptions): ProviderAdapter {
   return {
     id: "winter.openai-chat-completions",
     version: "1",

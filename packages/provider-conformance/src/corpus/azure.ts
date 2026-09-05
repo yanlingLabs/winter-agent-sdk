@@ -44,7 +44,7 @@ function assertAzureRequest(preview: boolean): (recorded: RecordedRequest) => vo
 export function azureClassicHarness(): CorpusHarness {
   const base: DescriptorOverrides = { efforts: ["low", "medium", "high"], readableState: "summary", continuation: "opaque-provider-state" };
   const adapterFor = (overrides?: HarnessOverrides): ProviderAdapter =>
-    createAzureOpenAIAdapter({ retry: FAST_RETRY, ...(overrides?.noDescriptors === true ? {} : { descriptors: descriptorsFor(base, overrides?.descriptor) }) });
+    createAzureOpenAIAdapter({ retry: FAST_RETRY, descriptors: overrides?.unlisted === true ? () => undefined : descriptorsFor(base, overrides?.descriptor) });
   const ctxFor = (url: string): ReturnType<typeof testContext> =>
     testContext({ providerId: "azure-openai", baseUrl: url, local: true, deployment: AZURE_DEPLOYMENT, apiVersion: AZURE_CLASSIC_API_VERSION, stallTimeoutMs: STALL_MS });
   return {
@@ -80,7 +80,7 @@ export function azureClassicHarness(): CorpusHarness {
 export function azurePreviewHarness(): CorpusHarness {
   const base: DescriptorOverrides = { efforts: ["low", "medium", "high"], readableState: "summary", summaryValues: ["detailed"], continuation: "opaque-provider-state" };
   const adapterFor = (overrides?: HarnessOverrides): ProviderAdapter =>
-    createAzureOpenAIAdapter({ retry: FAST_RETRY, ...(overrides?.noDescriptors === true ? {} : { descriptors: descriptorsFor(base, overrides?.descriptor) }) });
+    createAzureOpenAIAdapter({ retry: FAST_RETRY, descriptors: overrides?.unlisted === true ? () => undefined : descriptorsFor(base, overrides?.descriptor) });
   const ctxFor = (url: string): ReturnType<typeof testContext> => testContext({ providerId: "azure-openai", baseUrl: url, local: true, apiVersion: AZURE_PREVIEW_API_VERSION, stallTimeoutMs: STALL_MS });
   return {
     name: "azure-openai@1 (/openai/v1 preview)",

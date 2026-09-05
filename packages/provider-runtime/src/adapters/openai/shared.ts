@@ -70,7 +70,22 @@ export interface OpenAiAdapterOptions {
    * into a privileged one.
    */
   generatedBaseUrl?: string;
-  descriptors?: DescriptorLookup;
+  /**
+   * REQUIRED — omitting it is a compile error, and that is the fail-closed mechanism (ruling on
+   * finding I3).
+   *
+   * Nothing in this file's logic changes when a lookup is absent; what changes is that EVERY WS-13
+   * §8.2 refusal quietly stops happening: an unmapped effort passes through, an over-limit request
+   * is sent, a thinking config on a model with no reasoning evidence is honoured, and — worst,
+   * because it is silent and remote — a DeepSeek profile stops capturing `reasoning_content` and
+   * 400s on the second leg of every tool loop. None of that fails to compile, and none of it fails
+   * a test that did not think to look. Requiring the field is the only guard that cannot be
+   * forgotten.
+   *
+   * The gateway/unlisted shape is an EXPLICIT `() => undefined`: a caller saying "this model has no
+   * catalog evidence" out loud, rather than a caller who forgot.
+   */
+  descriptors: DescriptorLookup;
   /** Injected in tests so a retry fixture never sleeps a real backoff. */
   retry?: RetryPolicyOptions;
   /** R6-L PRIVILEGED: an organisation identifier only means something at the reviewed endpoint it was minted for. */
@@ -499,6 +514,17 @@ export interface StreamingRequestPlan {
   beforeAttempt?: (attempt: number) => Promise<void>;
   /** Given a non-2xx response, decides whether the adapter can recover in-band (codex's one-shot token refresh). Returning a new header set retries immediately, outside the retry budget. */
   recover?: (status: number, attempt: number) => Promise<Record<string, string> | undefined>;
+  /**
+   * Observes the REFUSED response before its body is read, so an adapter can take a fact off the
+   * headers that the normalized error does not carry onward.
+   *
+   * The one caller is codex's quota manager, and the reason it needs this door rather than the
+   * `retry` event is finding I1: `retry.retryDelayMs` is `Retry-After` only when the backend sent
+   * one, and is Winter's own jittered backoff otherwise — so reading the window off the event
+   * fabricated a subscription reset time out of local jitter. This hands over the header itself,
+   * present or absent.
+   */
+  onRefused?: (response: Response) => void;
 }
 
 /**
@@ -513,10 +539,13 @@ export interface StreamingRequestPlan {
 export async function openStream(plan: StreamingRequestPlan, policy: RetryPolicy, onEvent: (event: ProviderEvent) => void): Promise<Response> {
   const maxBodyBytes = plan.options.maxBodyBytes ?? DEFAULT_STREAM_BODY_BYTES;
   const timeoutMs = plan.options.headerTimeoutMs ?? DEFAULT_HEADER_TIMEOUT_MS;
+  // HOISTED OUT OF THE ATTEMPT (minor 8): a header set recovered by `recover` (codex's refreshed
+  // bearer) has to survive into the NEXT attempt. Re-reading `plan.headers` per attempt sent the
+  // stale credential again, drawing a second 401 and a redundant refresh on every retry.
+  let headers = plan.headers;
   return withRetry(
     async (attempt) => {
       await plan.beforeAttempt?.(attempt);
-      let headers = plan.headers;
       let response = await boundedFetch(plan.url, {
         method: "POST",
         headers,
@@ -544,7 +573,11 @@ export async function openStream(plan: StreamingRequestPlan, policy: RetryPolicy
           });
         }
       }
-      if (!response.ok) throw await httpErrorFrom(response);
+      if (!response.ok) {
+        // BEFORE the body is read: `httpErrorFrom` consumes the response.
+        plan.onRefused?.(response);
+        throw await httpErrorFrom(response);
+      }
       return response;
     },
     policy,

@@ -11,10 +11,12 @@
 //     registry.register(createLocalOpenAIAdapter({ descriptors, id: "winter.openai-chat-completions" }));
 //
 // `descriptors` is the catalog lookup every adapter needs to refuse an unmappable effort, an
-// unrepresentable thinking config or an over-limit request BEFORE it sends anything (WS-13 §8.2).
-// It is optional at the type level because a gateway model has no descriptor at all — see
-// `shared.ts`'s decision 2 — so a host that forgets it gets a WEAKER adapter, not a broken one.
-// That is a real wiring obligation and it is stated in the lane report.
+// unrepresentable thinking config or an over-limit request BEFORE it sends anything (WS-13 §8.2),
+// and to know that a model exposes replayable `reasoning_content`. It is REQUIRED: omitting it is a
+// compile error, because every one of those behaviours disappears silently without it and nothing
+// else would catch that. A gateway/unlisted model — one with no catalog evidence at all — is
+// expressed as an explicit `descriptors: () => undefined`, which is a caller saying so out loud
+// rather than a caller who forgot.
 
 export { createResponsesAdapter, buildResponsesBody, mapResponsesInput, mapResponsesTools, responsesTurn, streamResponsesTurn, privilegedHeaders, ResponsesStreamMapper, OPENAI_API_BASE_URL } from "./responses.ts";
 export type { ResponsesTurnPlan } from "./responses.ts";

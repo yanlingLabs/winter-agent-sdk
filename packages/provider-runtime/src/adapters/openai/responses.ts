@@ -395,6 +395,8 @@ export interface ResponsesTurnPlan {
   body: string;
   beforeAttempt?: (attempt: number) => Promise<void>;
   recover?: (status: number, attempt: number) => Promise<Record<string, string> | undefined>;
+  /** Observes the refused response before its body is read — the codex quota manager's only honest source for a limit window (finding I1). */
+  onRefused?: (response: Response) => void;
   /** Observed after a successful turn — the codex quota manager's "we are no longer limited" hook. */
   onSuccess?: () => void;
   /** Observed on a rate-limited failure, BEFORE the retry sleeps. The one producer of `rate_limit` events (R6-B). */
@@ -429,6 +431,7 @@ export async function* streamResponsesTurn(plan: ResponsesTurnPlan, signal: Abor
           ...(signal !== undefined ? { signal } : {}),
           ...(plan.beforeAttempt !== undefined ? { beforeAttempt: plan.beforeAttempt } : {}),
           ...(plan.recover !== undefined ? { recover: plan.recover } : {}),
+          ...(plan.onRefused !== undefined ? { onRefused: plan.onRefused } : {}),
         },
         policy,
         (event) => {
@@ -478,7 +481,7 @@ export async function* streamResponsesTurn(plan: ResponsesTurnPlan, signal: Abor
 
 // --- the adapter -------------------------------------------------------------------------------------------
 
-export function createResponsesAdapter(options: OpenAiAdapterOptions = {}): ProviderAdapter {
+export function createResponsesAdapter(options: OpenAiAdapterOptions): ProviderAdapter {
   return {
     id: "winter.openai-responses",
     version: "1",

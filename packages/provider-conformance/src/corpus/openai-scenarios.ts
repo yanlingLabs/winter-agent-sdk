@@ -5,8 +5,8 @@
 // scenario's wire actually looks like. Both surfaces answer the SAME scenario ids, which is what
 // lets one set of cases run against five adapters.
 
-import { errorResponse, type ScenarioResponder } from "../fakes/server.ts";
-import { htmlErrorResponse, openAiErrorBody, responsesStream, silentStream } from "../fakes/openai-responses.ts";
+import { errorResponse, stalledResponse, type ScenarioResponder } from "../fakes/server.ts";
+import { htmlErrorResponse, openAiErrorBody, responsesStream } from "../fakes/openai-responses.ts";
 import { chatStream, deepSeekMissingReasoningError } from "../fakes/openai-chat.ts";
 import { OPAQUE_MARKER, SCENARIO } from "./openai.ts";
 
@@ -18,6 +18,16 @@ function retryAfterDate(): string {
 /** The 429 both surfaces answer with. `Retry-After` in its DATE form — the harder of RFC 7231's two spellings. */
 function rateLimited(): Response {
   return errorResponse(429, openAiErrorBody("Rate limit reached for this model.", "rate_limit_exceeded"), { "retry-after": retryAfterDate() });
+}
+
+/** A 429 with NO `Retry-After` at all. The window is genuinely unknown, and the adapter must say so rather than invent one. */
+function rateLimitedHeaderless(): Response {
+  return errorResponse(429, openAiErrorBody("Rate limit reached for this model.", "rate_limit_exceeded"));
+}
+
+/** A 429 naming a ONE-SECOND window in delta-seconds — short enough for a fixture to wait out for real. */
+function rateLimitedShort(): Response {
+  return errorResponse(429, openAiErrorBody("Rate limit reached for this model.", "rate_limit_exceeded"), { "retry-after": "1" });
 }
 
 /** A 400 whose structured `code` sits after an unbounded human message — the shape that defeats a truncate-then-parse reader. */
@@ -54,12 +64,14 @@ export function responsesCorpusScenarios(): Record<string, ScenarioResponder> {
     [SCENARIO.continuationReplay]: () => responsesStream({ text: ["continued"], usage: { input: 40, output: 1 } }),
     [SCENARIO.vision]: () => responsesStream({ text: ["a picture"], usage: { input: 50, output: 2 } }),
     [SCENARIO.slow]: () => responsesStream({ text: ["one", "two", "three", "four"], frameDelayMs: 25, usage: { input: 1, output: 4 } }),
-    [SCENARIO.stall]: () => silentStream(1500),
+    [SCENARIO.stall]: () => stalledResponse(1500),
     [SCENARIO.drop]: () => responsesStream({ text: ["half an ", "answer"], usage: { input: 1, output: 1 } }, { dropAfter: 2 }),
     [SCENARIO.auth]: AUTH_ERROR,
     // ODD attempts fail: the corpus runs this scenario twice (error-rate-limit, then
     // retry-after-no-replay), and each run must see one 429 followed by a success.
     [SCENARIO.rateLimit]: (_recorded, attempt) => (attempt % 2 === 1 ? rateLimited() : responsesStream({ text: ["after the limit"], usage: { input: 2, output: 3 } })),
+    [SCENARIO.rateLimitNoHeader]: (_recorded, attempt) => (attempt % 2 === 1 ? rateLimitedHeaderless() : responsesStream({ text: ["after the limit"], usage: { input: 2, output: 3 } })),
+    [SCENARIO.rateLimitShortWindow]: (_recorded, attempt) => (attempt % 2 === 1 ? rateLimitedShort() : responsesStream({ text: ["after the limit"], usage: { input: 2, output: 3 } })),
     [SCENARIO.malformed]: () => htmlErrorResponse(400),
     [SCENARIO.providerCode]: providerCodeError,
     [SCENARIO.unrepresentable]: () => responsesStream({ unrepresentableCall: "computer_call", text: ["ignored"] }),
@@ -89,10 +101,12 @@ export function chatCorpusScenarios(): Record<string, ScenarioResponder> {
       recorded.body.includes("reasoning_content") ? chatStream({ text: ["continued"], finishReason: "stop", usage: { prompt: 40, completion: 1 } }) : deepSeekMissingReasoningError(),
     [SCENARIO.vision]: () => chatStream({ text: ["a picture"], finishReason: "stop", usage: { prompt: 50, completion: 2 } }),
     [SCENARIO.slow]: () => chatStream({ text: ["one", "two", "three", "four"], finishReason: "stop", frameDelayMs: 25, usage: { prompt: 1, completion: 4 } }),
-    [SCENARIO.stall]: () => silentStream(1500),
+    [SCENARIO.stall]: () => stalledResponse(1500),
     [SCENARIO.drop]: () => chatStream({ text: ["half an ", "answer"], finishReason: "stop", usage: { prompt: 1, completion: 1 } }, { dropAfter: 2 }),
     [SCENARIO.auth]: AUTH_ERROR,
     [SCENARIO.rateLimit]: (_recorded, attempt) => (attempt % 2 === 1 ? rateLimited() : chatStream({ text: ["after the limit"], finishReason: "stop", usage: { prompt: 2, completion: 3 } })),
+    [SCENARIO.rateLimitNoHeader]: (_recorded, attempt) => (attempt % 2 === 1 ? rateLimitedHeaderless() : chatStream({ text: ["after the limit"], finishReason: "stop", usage: { prompt: 2, completion: 3 } })),
+    [SCENARIO.rateLimitShortWindow]: (_recorded, attempt) => (attempt % 2 === 1 ? rateLimitedShort() : chatStream({ text: ["after the limit"], finishReason: "stop", usage: { prompt: 2, completion: 3 } })),
     [SCENARIO.malformed]: () => htmlErrorResponse(400),
     [SCENARIO.providerCode]: providerCodeError,
     // The chat surface's unrepresentable call is a fragment that opens a NEW slot with no identity.

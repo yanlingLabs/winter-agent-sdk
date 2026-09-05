@@ -55,7 +55,7 @@ export interface LocalAdapterOptions extends ChatTurnOptions {
 /** Statuses that mean "this endpoint is not here", as distinct from "this endpoint refused you". */
 const ENDPOINT_ABSENT_STATUSES = new Set([404, 405, 501]);
 
-export function createLocalOpenAIAdapter(options: LocalAdapterOptions = {}): ProviderAdapter {
+export function createLocalOpenAIAdapter(options: LocalAdapterOptions): ProviderAdapter {
   const surface = options.surface ?? "chat";
   return {
     id: options.id ?? "winter.local-openai",

@@ -50,7 +50,7 @@ describe("WS-13 §13 corpus — Azure OpenAI (R6-A: a profile variant, asked the
 describe("azure specifics on the live wire", () => {
   test("every request carries `api-version`, and the classic surface addresses the deployment", async () => {
     await withAzureFake(async (fake) => {
-      const adapter = createAzureOpenAIAdapter({ retry: FAST_RETRY });
+      const adapter = createAzureOpenAIAdapter({ retry: FAST_RETRY, descriptors: () => undefined });
       await drain(
         adapter.streamTurn({ model: SCENARIO.happy, messages: [] }, testContext({ providerId: "azure-openai", baseUrl: fake.url, local: true, deployment: AZURE_DEPLOYMENT, apiVersion: AZURE_CLASSIC_API_VERSION })),
       );
@@ -65,7 +65,7 @@ describe("azure specifics on the live wire", () => {
 
   test("`apiVersion: \"preview\"` selects the /openai/v1 Responses surface", async () => {
     await withAzureFake(async (fake) => {
-      const adapter = createAzureOpenAIAdapter({ retry: FAST_RETRY });
+      const adapter = createAzureOpenAIAdapter({ retry: FAST_RETRY, descriptors: () => undefined });
       await drain(adapter.streamTurn({ model: SCENARIO.happy, messages: [] }, testContext({ providerId: "azure-openai", baseUrl: fake.url, local: true, apiVersion: "preview" })));
       const recorded = fake.requests.at(-1)!;
       expect(recorded.path).toBe("/openai/v1/responses");
@@ -80,7 +80,7 @@ describe("azure specifics on the live wire", () => {
     await withAzureFake(async (fake) => {
       const ref: Extract<CredentialRef, { kind: "keychain" }> = { kind: "keychain", account: "azure-openai:entra" };
       const credentials = createMemoryCredentialStore([[ref, { kind: "bearer", token: FAKE_ENTRA_TOKEN }]]);
-      const adapter = createAzureOpenAIAdapter({ retry: FAST_RETRY });
+      const adapter = createAzureOpenAIAdapter({ retry: FAST_RETRY, descriptors: () => undefined });
       const ctx = { ...testContext({ providerId: "azure-openai", baseUrl: fake.url, local: true, deployment: AZURE_DEPLOYMENT, apiVersion: AZURE_CLASSIC_API_VERSION }), credentials, authRef: ref };
       await drain(adapter.streamTurn({ model: SCENARIO.happy, messages: [] }, ctx));
       const recorded = fake.requests.at(-1)!;
@@ -91,7 +91,7 @@ describe("azure specifics on the live wire", () => {
 
   test("a missing api-version or deployment is refused with NOTHING on the wire", async () => {
     await withAzureFake(async (fake) => {
-      const adapter = createAzureOpenAIAdapter({ retry: FAST_RETRY });
+      const adapter = createAzureOpenAIAdapter({ retry: FAST_RETRY, descriptors: () => undefined });
       const before = fake.requests.length;
       const noVersion = await drain(adapter.streamTurn({ model: SCENARIO.happy, messages: [] }, testContext({ providerId: "azure-openai", baseUrl: fake.url, local: true, deployment: AZURE_DEPLOYMENT })));
       const noDeployment = await drain(adapter.streamTurn({ model: SCENARIO.happy, messages: [] }, testContext({ providerId: "azure-openai", baseUrl: fake.url, local: true, apiVersion: AZURE_CLASSIC_API_VERSION })));
@@ -109,7 +109,7 @@ describe("azure specifics on the live wire", () => {
     // reported as unreachable. No target's `validateCredential` was exercised anywhere, which is
     // exactly why nothing caught it.
     await withAzureFake(async (fake) => {
-      const adapter = createAzureOpenAIAdapter({ retry: FAST_RETRY });
+      const adapter = createAzureOpenAIAdapter({ retry: FAST_RETRY, descriptors: () => undefined });
       const ctx = testContext({ providerId: "azure-openai", baseUrl: fake.url, local: true, deployment: AZURE_DEPLOYMENT, apiVersion: AZURE_CLASSIC_API_VERSION });
       const status = await adapter.validateCredential(ctx.authRef, ctx);
       expect(status).toEqual({ ok: true });
@@ -123,7 +123,7 @@ describe("azure specifics on the live wire", () => {
     const { startFake, jsonResponse } = await import("../fakes/server.ts");
     const fake = await startFake({ routes: [{ path: "/openai/models", method: "GET", handler: () => jsonResponse({ error: { code: "401", message: "Access denied due to invalid subscription key." } }, 401) }] });
     try {
-      const adapter = createAzureOpenAIAdapter({ retry: FAST_RETRY });
+      const adapter = createAzureOpenAIAdapter({ retry: FAST_RETRY, descriptors: () => undefined });
       const ctx = testContext({ providerId: "azure-openai", baseUrl: fake.url, local: true, deployment: AZURE_DEPLOYMENT, apiVersion: AZURE_CLASSIC_API_VERSION });
       const status = await adapter.validateCredential(ctx.authRef, ctx);
       expect(status.ok).toBe(false);

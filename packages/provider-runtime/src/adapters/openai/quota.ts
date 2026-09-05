@@ -18,7 +18,17 @@
 
 import type { ProviderEvent } from "../../types.ts";
 
-export type QuotaState = { kind: "ok" } | { kind: "limited"; resumeAt: number };
+/**
+ * `resumeAt` is OPTIONAL, and that is the whole of finding I1's fix.
+ *
+ * A 429 without a `Retry-After` header is a limit whose WINDOW IS UNKNOWN — the account is refused,
+ * and nothing has said when it resumes. Modelling that as `resumeAt: <some number>` forced the
+ * caller to invent one (the previous code handed it Winter's own jittered backoff, which then rode
+ * the pinned `SDKRateLimitInfo.resetsAt` as a claim about the subscription), and modelling it as
+ * `resumeAt: 0` made it indistinguishable from "not limited". So `limited` is tracked as its own
+ * flag, independent of any window, and a window-unknown limit omits `resetsAt` entirely.
+ */
+export type QuotaState = { kind: "ok" } | { kind: "limited"; resumeAt?: number };
 
 export interface QuotaManagerOptions {
   maxConcurrent?: number;
@@ -48,6 +58,9 @@ export class QuotaManager {
   private readonly sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
   private active = 0;
   private waiters: Array<() => void> = [];
+  /** Set by a refusal, cleared only by `noteRecovered()`. Survives the window elapsing — see `hasPendingLimit`. */
+  private limited = false;
+  /** `0` means "limited, window unknown". Never a synthesised value. */
   private limitedUntil = 0;
   private listeners: Array<(state: QuotaState) => void> = [];
   private totals = { inputTokens: 0, outputTokens: 0 };
@@ -58,8 +71,29 @@ export class QuotaManager {
     this.sleep = opts.sleep ?? defaultQuotaSleep;
   }
 
+  /**
+   * The state a `rate_limit` event is rendered from.
+   *
+   * A KNOWN window that has elapsed reads `ok` — the account is presumed serving again, which is
+   * what the backend told us. A window-UNKNOWN limit stays `limited` until something says otherwise,
+   * because nothing has: guessing that it lapsed would be the same invention `resumeAt` refuses.
+   */
   state(): QuotaState {
+    if (!this.limited) return { kind: "ok" };
+    if (this.limitedUntil === 0) return { kind: "limited" };
     return this.now() < this.limitedUntil ? { kind: "limited", resumeAt: this.limitedUntil } : { kind: "ok" };
+  }
+
+  /**
+   * True from a refusal until `noteRecovered()`, WHATEVER the clock says.
+   *
+   * `state()` cannot answer this (finding I2): by the time a retried turn completes, the retry
+   * backoff has slept the whole window, so `state()` reads `ok` and "was this turn rate-limited?"
+   * silently becomes "no" — which made the recovery event unreachable under a real clock while a
+   * fixture with a 1 ms mocked sleep passed.
+   */
+  hasPendingLimit(): boolean {
+    return this.limited;
   }
 
   onStateChange(callback: (state: QuotaState) => void): () => void {
@@ -77,19 +111,23 @@ export class QuotaManager {
   /**
    * Records that the backend refused for quota reasons.
    *
-   * `retryAfterMs` may be absent — a 429 without the header is common — in which case the window is
-   * recorded as "limited now" with no claimed resume time rather than an invented one.
+   * `retryAfterMs` MUST come from the refused response's own `Retry-After` header, never from a
+   * computed backoff (finding I1). Absent means the window is unknown, which is recorded as exactly
+   * that: limited, with no resume time.
    */
   noteRateLimit(retryAfterMs: number | undefined): void {
-    const until = this.now() + (retryAfterMs ?? 0);
-    if (until <= this.limitedUntil) return;
-    this.limitedUntil = until;
-    this.emit();
+    const before = JSON.stringify(this.state());
+    this.limited = true;
+    if (retryAfterMs !== undefined && retryAfterMs > 0) {
+      this.limitedUntil = Math.max(this.limitedUntil, this.now() + retryAfterMs);
+    }
+    if (JSON.stringify(this.state()) !== before) this.emit();
   }
 
   /** The account is serving again. Silent when it never stopped — a listener must not see a state change that did not happen. */
   noteRecovered(): void {
-    if (this.limitedUntil === 0) return;
+    if (!this.limited && this.limitedUntil === 0) return;
+    this.limited = false;
     this.limitedUntil = 0;
     this.emit();
   }
@@ -151,9 +189,10 @@ export function quotaEvent(state: QuotaState): Extract<ProviderEvent, { type: "r
     kind: "subscription-quota",
     info: {
       status: "rejected",
-      // Epoch SECONDS: the pinned `SDKRateLimitInfo.resetsAt` convention. Omitted entirely when the
-      // backend named no window, because "resets at now" is a claim, not an absence.
-      ...(state.resumeAt > 0 ? { resetsAt: Math.round(state.resumeAt / 1000) } : {}),
+      // Epoch SECONDS: the pinned `SDKRateLimitInfo.resetsAt` convention. OMITTED when the backend
+      // named no window — a number here is a claim about when a subscription resumes, and Winter has
+      // exactly one honest source for it (the `Retry-After` the backend itself sent).
+      ...(state.resumeAt !== undefined ? { resetsAt: Math.round(state.resumeAt / 1000) } : {}),
     },
   };
 }

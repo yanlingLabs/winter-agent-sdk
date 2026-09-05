@@ -26,6 +26,7 @@
 
 import type { WinterModelDescriptor } from "@yanlinglabs/winter-provider-catalog";
 import type { CredentialMaterial, CredentialRef, CredentialStatus, CredentialStore, DiscoveryContext, ModelCatalogResult, ProviderAdapter, ProviderContext, ProviderEvent, TurnRequest } from "../../types.ts";
+import { parseRetryAfterMs } from "../../errors.ts";
 import { CODEX, CODEX_MODELS, codexCredentialAccount } from "./codex-config.ts";
 import { refreshTokens, runLoginFlow, type OAuthTokens } from "./pkce.ts";
 import { QuotaManager, quotaEvent } from "./quota.ts";
@@ -116,7 +117,7 @@ function materialFor(tokens: OAuthTokens): Extract<CredentialMaterial, { kind: "
   };
 }
 
-export function createCodexOauthAdapter(options: CodexAdapterOptions = {}): ProviderAdapter {
+export function createCodexOauthAdapter(options: CodexAdapterOptions): ProviderAdapter {
   const quota = options.quota ?? new QuotaManager();
 
   return {
@@ -167,14 +168,20 @@ async function* codexTurn(req: TurnRequest, ctx: ProviderContext, options: Codex
   const queue = new EventQueue();
   let plan: ResponsesTurnPlan;
   let tokens: Extract<CredentialMaterial, { kind: "oauth" }>;
+  /** The window the LAST refusal named, or `undefined` when it named none. */
+  let retryAfterMs: number | undefined;
   try {
     const descriptor = options.descriptors?.(req.model);
     assertRepresentableTools(req.tools);
     const reasoning = resolveReasoning(req, descriptor);
+    // The SAME set `responsesTurn` declares (minor 7): this adapter sends the identical body, so a
+    // model that lists `include` or `tools` as unsupported must be refused here too.
     assertWithinLimits(req, descriptor, [
-      ...(reasoning.effort !== undefined ? ["reasoning", "reasoning.effort"] : []),
+      ...(reasoning.enabled && reasoning.effort !== undefined ? ["reasoning", "reasoning.effort"] : []),
       ...(reasoning.summary !== undefined ? ["reasoning.summary"] : []),
+      ...(reasoning.wantsEncryptedContent ? ["include"] : []),
       ...(req.maxOutputTokens !== undefined ? ["max_output_tokens"] : []),
+      ...((req.tools?.length ?? 0) > 0 ? ["tools"] : []),
     ]);
     const endpoint = resolveEndpoint(ctx, options, CODEX.backendUrl);
     const auth = await resolveAuth(ctx, "bearer");
@@ -217,22 +224,26 @@ async function* codexTurn(req: TurnRequest, ctx: ProviderContext, options: Codex
           return undefined;
         }
       },
-      onRateLimited: (retry, q) => {
+      // The window comes off the REFUSED RESPONSE'S OWN HEADER (finding I1), never off
+      // `retry.retryDelayMs` — that value is `Retry-After` only when the backend sent one, and
+      // Winter's full-jitter backoff otherwise, which would put local jitter on the pinned
+      // `SDKRateLimitInfo.resetsAt` as a claim about when the subscription resumes. Absent header ->
+      // `undefined` -> "limited, window unknown", with `resetsAt` omitted.
+      onRefused: (response) => {
+        if (response.status !== 429) return;
+        retryAfterMs = parseRetryAfterMs(response.headers.get("retry-after"));
+      },
+      onRateLimited: (_retry, q) => {
         // R6-B: the retry itself is the pinned 429 path. What this ADDS is the subscription state,
         // which is the only thing `rate_limit` is allowed to describe.
-        //
-        // `retry.retryDelayMs` IS the window: `RetryPolicy.delayMs` returns the `Retry-After` the
-        // backend sent (clamped at 60 s) when it sent one, and the jittered backoff otherwise.
-        // Passing `undefined` here instead recorded a ZERO-length window — `limitedUntil = now`, so
-        // `state()` read `ok` on the very next line and the event went out saying `status:
-        // "allowed"` ON A RATE LIMIT, with the recovery event never firing either because
-        // `wasLimited` was never true. A test asserting only `kind === "subscription-quota"` passes
-        // either way, which is why the assertions below it now read `info.status`.
-        quota.noteRateLimit(retry.retryDelayMs);
+        quota.noteRateLimit(retryAfterMs);
         q.push(quotaEvent(quota.state()));
       },
       onSuccess: () => {
-        const wasLimited = quota.state().kind === "limited";
+        // `hasPendingLimit()`, NOT `state()` (finding I2): by the time a retried turn completes the
+        // backoff has slept the whole window, so `state()` reads `ok` and the recovery event became
+        // unreachable under a real clock — visible only because both sleeps were mocked to 1 ms.
+        const wasLimited = quota.hasPendingLimit();
         quota.noteRecovered();
         if (wasLimited) queue.push(quotaEvent({ kind: "ok" }));
       },
