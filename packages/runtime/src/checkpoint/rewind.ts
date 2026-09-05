@@ -14,8 +14,8 @@
 // returns a typed result, so a rejected promise would leave a host unable to tell "there is nothing
 // to rewind to" from a transport fault.
 import type { RewindFilesResult } from "@yanlinglabs/winter-agent-sdk";
-import { lstatSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { lstatSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { join, relative, sep } from "node:path";
 import { blobName, parentRealPathOf, readCheckpointIndex, sessionBackupsDir, type CheckpointRecord } from "./file-history.ts";
 
 /**
@@ -62,18 +62,76 @@ function readCurrent(path: string): Buffer | undefined {
 }
 
 /**
- * Item (e)'s link-safety rule, verbatim in behaviour: a tracked path that now resolves to a symlink,
- * a hard link or a non-regular file, or whose parent directory no longer resolves where it did at
- * checkpoint time, or whose backup cannot be safely read, is REFUSED rather than restored.
+ * PATH-IDENTITY refusals: the recorded path no longer names the file the checkpoint was about, so a
+ * restore would write into -- or DELETE -- somebody else's tree.
  *
- * Returns the reason for the refusal, or undefined when the restore may proceed. Evaluated on REAL
- * rewinds only -- see `rewindToCheckpoint`.
+ * Three independent guards, all cheap, none removable:
+ *
+ *  1. the nearest ancestor that existed at checkpoint time must still resolve to the same real
+ *     directory (`anchorPath`/`anchorRealPath`);
+ *  2. no component between that ancestor and the target may have become a symlink since;
+ *  3. the legacy immediate-parent check, kept because removing a guard is never the safe direction
+ *     and because it still protects records written by an earlier build.
+ *
+ * Guards 1 and 2 exist because guard 3 alone was INERT ON EXACTLY THE RECORDS THE DELETE ARM ACTS
+ * ON: `parentRealPath` is absent precisely when the parent did not exist at checkpoint time, which
+ * is the `absent: true` case, which is the case `rmSync` services. Replacing the not-yet-created
+ * directory with a symlink then let a rewind delete a never-checkpointed file, silently.
+ *
+ * These are evaluated on a `dryRun` TOO -- see `rewindToCheckpoint` for why that is not the
+ * "previews do not reflect refusals" clause.
  */
-function refusalReason(record: CheckpointRecord, backupPath: string | undefined): string | undefined {
-  // The parent is checked FIRST: if the directory moved, nothing about the leaf is meaningful.
+function pathIdentityRefusal(record: CheckpointRecord): string | undefined {
+  if (record.anchorPath !== undefined && record.anchorRealPath !== undefined) {
+    let nowReal: string | undefined;
+    try {
+      nowReal = realpathSync(record.anchorPath);
+    } catch {
+      nowReal = undefined;
+    }
+    if (nowReal !== record.anchorRealPath) return "its nearest checkpointed ancestor directory no longer resolves where it did";
+    const linked = firstLinkedComponent(record.anchorPath, record.path);
+    if (linked !== undefined) return `the path component ${linked} is now a symbolic link`;
+  }
   if (record.parentRealPath !== undefined && parentRealPathOf(record.path) !== record.parentRealPath) {
     return "its parent directory no longer resolves where it did at checkpoint time";
   }
+  return undefined;
+}
+
+/**
+ * The first directory between `anchorPath` (exclusive) and `target` (exclusive) that is now a
+ * symlink, or is present but not a directory. The LEAF is deliberately not examined here -- its own
+ * state is `leafStateRefusal`'s business and carries a more specific message. A component that does
+ * not exist is fine: nothing can be followed through it, and the write/delete arms handle absence.
+ */
+function firstLinkedComponent(anchorPath: string, target: string): string | undefined {
+  const rest = relative(anchorPath, target).split(sep).filter((s) => s.length > 0);
+  // `anchorPath` is an ancestor of `target` by construction; anything else is a record this build
+  // did not write, and refusing to reason about it is the safe answer.
+  if (rest.some((s) => s === "..")) return "..";
+  let walked = anchorPath;
+  for (const segment of rest.slice(0, -1)) {
+    walked = join(walked, segment);
+    try {
+      const stat = lstatSync(walked);
+      if (stat.isSymbolicLink()) return segment;
+      if (!stat.isDirectory()) return segment;
+    } catch {
+      /* not there yet -- nothing to follow */
+    }
+  }
+  return undefined;
+}
+
+/**
+ * LEAF-STATE refusals, item (e)'s own list: the tracked path still names the intended file, but that
+ * file is now a symlink, a hard link or a non-regular file, or its backup cannot be safely read.
+ *
+ * Evaluated on REAL rewinds only. This is the class item (e)'s "a preview's counts do not reflect
+ * refusals" describes -- the plan targets the right path and the USER's tree moved under it.
+ */
+function leafStateRefusal(record: CheckpointRecord, backupPath: string | undefined): string | undefined {
   try {
     const stat = lstatSync(record.path);
     // lstat, never stat: `stat` would follow the very link this check exists to catch.
@@ -126,12 +184,25 @@ export function rewindToCheckpoint(opts: RewindOptions): RewindFilesResult {
   for (const record of plan.values()) {
     const backupPath = record.absent === true ? undefined : join(dir, blobName(record.pathHash, record.version));
 
-    // `dryRun` PREVIEWS: it never touches the filesystem and never evaluates refusals, so -- per
-    // item (e) -- its counts deliberately do not reflect them. A preview that silently subtracted
-    // refused files would under-report the change a real rewind is about to make in every case
-    // where the refusal has not happened yet.
+    // TWO CLASSES OF REFUSAL, and only one of them is what item (e)'s dryRun clause is about.
+    //
+    // PATH-IDENTITY refusals are evaluated on BOTH paths. Item (e) says a preview's counts "do not
+    // reflect refusals" -- that clause is about the USER's tree moving under a plan that still
+    // targets the intended file, which is the leaf-state class below. A path-identity refusal means
+    // the plan does not target the intended file at all, so listing it would put a WRONG PATH in
+    // `filesChanged` and promise a host a deletion that will never happen. A preview must not
+    // advertise a destructive change to a file the rewind was never about.
+    //
+    // LEAF-STATE refusals stay real-rewind-only, exactly as item (e) describes.
+    //
+    // `skippedLinks` is populated on real rewinds either way, and stays ABSENT on a preview.
+    const identityRefusal = pathIdentityRefusal(record);
+    if (identityRefusal !== undefined) {
+      if (!opts.dryRun) skippedLinks++;
+      continue;
+    }
     if (!opts.dryRun) {
-      const refused = refusalReason(record, backupPath);
+      const refused = leafStateRefusal(record, backupPath);
       if (refused !== undefined) {
         skippedLinks++;
         continue;

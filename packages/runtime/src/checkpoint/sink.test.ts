@@ -311,6 +311,92 @@ describe("checkpoint/rewind.ts -- link safety (item (e)'s behavioural rule)", ()
     expect(readFileSync(join(decoy, "a.ts"), "utf8")).toBe("a different a.ts\n");
   });
 
+  test("a checkpoint whose PARENT DID NOT EXIST cannot delete a stranger's file through a swapped ancestor", async () => {
+    // THE M1 HOLE. A `Write` to a path whose parent the tool is about to create records
+    // `absent: true` -- and `absent: true` is exactly the record the rewind services with `rmSync`.
+    // The old parent guard was applied only when a parent real path had been recorded, which is
+    // precisely what a non-existent parent cannot produce, so the DELETE arm ran with no path-
+    // identity check at all. Swapping the directory for a link then deleted a file this session had
+    // never touched.
+    const newdir = join(work, "newdir");
+    const target = join(newdir, "x.ts");
+    const outside = join(home, "outside");
+    mkdirSync(outside);
+    const victim = join(outside, "x.ts");
+    writeFileSync(victim, "a file this session never touched\n");
+
+    const sink = sinkFor();
+    await sink.beforeMutation({ path: target, tool: "Write", userMessageUuid: "u-1", sessionUuid: "sess-1" });
+    mkdirSync(newdir);
+    writeFileSync(target, "created by the model\n");
+
+    // Later, something outside the tracked set (Bash, or another program) swaps the directory.
+    rmSync(target);
+    rmSync(newdir, { recursive: true, force: true });
+    symlinkSync(outside, newdir);
+
+    // The PREVIEW must not promise the deletion either: a path-identity refusal means the plan is
+    // not about the intended file at all, so listing it would be a wrong path in `filesChanged`
+    // rather than a count that merely does not reflect a refusal.
+    const preview = await sink.rewind("u-1", { dryRun: true });
+    expect(preview.canRewind).toBe(true);
+    expect(preview.filesChanged).toEqual([]);
+    expect("skippedLinks" in preview).toBe(false);
+
+    const result = await sink.rewind("u-1");
+    expect(result.canRewind).toBe(true);
+    expect(result.skippedLinks).toBe(1);
+    expect(result.filesChanged).toEqual([]);
+    expect(existsSync(victim)).toBe(true);
+    expect(readFileSync(victim, "utf8")).toBe("a file this session never touched\n");
+  });
+
+  test("an absent-parent checkpoint whose ANCHOR directory itself moved is refused", async () => {
+    // The other half of the same guard: the nearest ancestor that DID exist at checkpoint time is
+    // itself no longer the same directory.
+    const newdir = join(work, "newdir");
+    const target = join(newdir, "x.ts");
+    const sink = sinkFor();
+    await sink.beforeMutation({ path: target, tool: "Write", userMessageUuid: "u-1", sessionUuid: "sess-1" });
+    mkdirSync(newdir);
+    writeFileSync(target, "created by the model\n");
+
+    // `work` -- the anchor -- is swapped for a link to a tree that happens to have the same shape.
+    const decoy = join(home, "decoy");
+    mkdirSync(join(decoy, "newdir"), { recursive: true });
+    const victim = join(decoy, "newdir", "x.ts");
+    writeFileSync(victim, "someone else's x.ts\n");
+    rmSync(work, { recursive: true, force: true });
+    symlinkSync(decoy, work);
+
+    const result = await sink.rewind("u-1");
+    expect(result.skippedLinks).toBe(1);
+    expect(existsSync(victim)).toBe(true);
+    expect(readFileSync(victim, "utf8")).toBe("someone else's x.ts\n");
+  });
+
+  test("an INTERMEDIATE component that became a symlink is refused, not only the immediate parent", async () => {
+    const a = join(work, "a");
+    const b = join(a, "b");
+    mkdirSync(b, { recursive: true });
+    const file = join(b, "f.ts");
+    writeFileSync(file, "original\n");
+    const sink = sinkFor();
+    await sink.beforeMutation({ path: file, tool: "Write", userMessageUuid: "u-1", sessionUuid: "sess-1" });
+    writeFileSync(file, "changed\n");
+
+    const decoy = join(home, "decoy");
+    mkdirSync(join(decoy, "b"), { recursive: true });
+    const victim = join(decoy, "b", "f.ts");
+    writeFileSync(victim, "someone else's f.ts\n");
+    rmSync(a, { recursive: true, force: true });
+    symlinkSync(decoy, a); // two levels above the file, not its immediate parent
+
+    const result = await sink.rewind("u-1");
+    expect(result.skippedLinks).toBe(1);
+    expect(readFileSync(victim, "utf8")).toBe("someone else's f.ts\n");
+  });
+
   test("a refusal never stops the rewind of the OTHER files", async () => {
     const linked = join(work, "linked.ts");
     const plain = join(work, "plain.ts");

@@ -60,8 +60,29 @@ export interface CheckpointRecord {
    * `realpath(dirname(path))` at checkpoint time. Item (e)'s rule: a path whose parent no longer
    * resolves where it did is REFUSED rather than restored -- otherwise a rewind follows a directory
    * that has since become a link and writes the pre-image into somebody else's tree.
+   *
+   * KEPT ALONGSIDE the anchor pair below rather than replaced by it. It costs one string, it is
+   * checked independently, and removing a guard is never the safe direction -- it also keeps records
+   * written by an earlier build fully protected.
+   *
+   * **It is absent exactly when the parent did not exist at checkpoint time**, which is precisely the
+   * `absent: true` case whose rewind arm DELETES the file. That is why it cannot be the only
+   * path-identity guard: see `anchorPath`.
    */
   parentRealPath?: string;
+  /**
+   * The nearest ancestor directory that EXISTED at checkpoint time, as written (not realpath'd), plus
+   * its real path at that moment. Recorded for EVERY record, including one whose own parent did not
+   * exist yet -- a `Write` to a path the tool is about to `mkdir -p`.
+   *
+   * This is the fix for a demonstrated hole: with `parentRealPath` absent on exactly those records,
+   * the delete arm ran with NO path-identity check at all, so replacing the not-yet-existing
+   * directory with a symlink let a rewind `rmSync` a file the session had never touched. At rewind
+   * the anchor must still resolve to `anchorRealPath` AND no component between it and the target may
+   * have become a symlink.
+   */
+  anchorPath?: string;
+  anchorRealPath?: string;
 }
 
 export function checkpointPathHash(absolutePath: string): string {
@@ -82,6 +103,28 @@ export function parentRealPathOf(absolutePath: string): string | undefined {
     return realpathSync(dirname(absolutePath));
   } catch {
     return undefined;
+  }
+}
+
+/**
+ * The nearest ancestor DIRECTORY of `absolutePath` that exists right now, with its real path.
+ * Walks upward until something resolves, so it answers even for a path several not-yet-created
+ * directories deep -- which is the whole point: a checkpoint taken before `mkdir -p` still gets a
+ * real anchor to verify against later.
+ *
+ * Returns undefined only if nothing up to the filesystem root resolves, which in practice means the
+ * volume itself is gone; the rewind then refuses rather than guessing.
+ */
+export function nearestExistingAncestor(absolutePath: string): { anchorPath: string; anchorRealPath: string } | undefined {
+  let dir = dirname(absolutePath);
+  for (;;) {
+    try {
+      return { anchorPath: dir, anchorRealPath: realpathSync(dir) };
+    } catch {
+      const parent = dirname(dir);
+      if (parent === dir) return undefined;
+      dir = parent;
+    }
   }
 }
 
