@@ -16,7 +16,7 @@
 // broken one. A session either pins ONE fully-identified provider and model, or it refuses to start
 // and says exactly why -- which R6-F then surfaces on the pinned result shape.
 import type { WinterCatalog } from "@yanlinglabs/winter-provider-catalog";
-import type { CredentialStore, ProviderRegistry, ResolvedModel } from "@yanlinglabs/winter-provider-runtime";
+import type { ConnectionProfile, CredentialStore, ProviderContext, ProviderRegistry, ResolvedModel } from "@yanlinglabs/winter-provider-runtime";
 import { WinterProviderResolutionError, createRegistry } from "@yanlinglabs/winter-provider-runtime";
 import { DEFAULT_PROVIDER_STALL_TIMEOUT_MS, type CredentialRef, type RuntimeConfig } from "@yanlinglabs/winter-agent-sdk";
 import type { Provider } from "../engine.ts";
@@ -296,6 +296,47 @@ export function resolveStallTimeoutMs(config: RuntimeConfig): number {
   // precedent (engine.ts's `createContextAccountant`): a `0` here would mean "abort immediately",
   // which is never what a host configuring a watchdog intends.
   return typeof configured === "number" && Number.isFinite(configured) && configured > 0 ? configured : DEFAULT_PROVIDER_STALL_TIMEOUT_MS;
+}
+
+/**
+ * Assembles the `ProviderContext` an adapter runs under.
+ *
+ * THE PRODUCTION CALLER OF `resolveStallTimeoutMs`, and the reason this function exists rather than
+ * leaving five separate decisions to whoever wires a session (review round 1, M1). The stall timeout
+ * is the one that shows why: `sse.ts` reads `ctx.stallTimeoutMs` on every chunk, so a caller that
+ * assembled a context without it would silently disable R6-6's watchdog on every stream — a disclosed
+ * option that quietly did nothing.
+ *
+ * `log` defaults to a NO-OP rather than to a console writer: `ProviderContext.log`'s own contract is
+ * provider/model identifiers and byte COUNTS only, and a default that wrote anywhere would be a
+ * default that a careless adapter could turn into a content leak.
+ */
+export function createProviderContext(
+  config: RuntimeConfig,
+  deps: { providerId: string; credentials: CredentialStore; log?: ProviderContext["log"] },
+): ProviderContext {
+  const connectionConfig = config.provider?.connection;
+  const connection: ConnectionProfile = {
+    providerId: deps.providerId,
+    ...(connectionConfig?.baseUrl !== undefined ? { baseUrl: connectionConfig.baseUrl } : {}),
+    ...(connectionConfig?.headers !== undefined ? { headers: connectionConfig.headers } : {}),
+    ...(connectionConfig?.region !== undefined ? { region: connectionConfig.region } : {}),
+    ...(connectionConfig?.project !== undefined ? { project: connectionConfig.project } : {}),
+    ...(connectionConfig?.location !== undefined ? { location: connectionConfig.location } : {}),
+    ...(connectionConfig?.deployment !== undefined ? { deployment: connectionConfig.deployment } : {}),
+    ...(connectionConfig?.apiVersion !== undefined ? { apiVersion: connectionConfig.apiVersion } : {}),
+    ...(connectionConfig?.local !== undefined ? { local: connectionConfig.local } : {}),
+  };
+  return {
+    connection,
+    credentials: deps.credentials,
+    // `none` is the honest default: a host that named no ref has not authenticated this provider, and
+    // an adapter that needs material gets a typed refusal rather than an ambient key it never asked
+    // for (R6-10: ambient env keys are NEVER scanned implicitly).
+    authRef: config.provider?.authRef ?? { kind: "none" },
+    stallTimeoutMs: resolveStallTimeoutMs(config),
+    log: deps.log ?? (() => {}),
+  };
 }
 
 /** Convenience for a caller that has a catalog rather than a registry. One construction site, so a registry is never built twice for one session. */

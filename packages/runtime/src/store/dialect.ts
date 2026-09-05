@@ -136,10 +136,20 @@ export function createStoreProviderStateSink(store: SessionStore, key: { project
 export interface DialectProviderIdentity {
   providerId: string;
   modelKey: string;
-  adapterId: string;
-  adapterVersion: string;
-  catalogVersion: string;
-  authRefKind: string;
+  /**
+   * WIDENED in review round 1 (I1): the four catalog/credential fields are OPTIONAL.
+   *
+   * The engine must be able to write an identity block from whatever it has -- and what it has is
+   * whatever its caller resolved. Requiring all four forced the alternative of fabricating
+   * `"unknown"` strings, which would put a claim in durable session state that nothing verified.
+   * `providerId`/`modelKey` stay required because they are what makes the block an IDENTITY at all,
+   * and they are what the resume side reads to tell "this session had provider state" from "this
+   * session predates the concept".
+   */
+  adapterId?: string;
+  adapterVersion?: string;
+  catalogVersion?: string;
+  authRefKind?: string;
   /** R6-14: the classifier identity PINNED by the session's first successful classification. */
   classifierPin?: string;
 }
@@ -566,6 +576,34 @@ export class TranscriptWriter implements SessionPersistence {
   }
 
   /**
+   * Review round 1 (I1): did THIS session ever record a provider identity?
+   *
+   * The one question that separates R6-7's two indistinguishable-looking resumes. A session with no
+   * records could be pre-P6 (nothing to degrade from, resume silently) or one whose sidecar was
+   * DELETED (every message degraded, and the user deserves to be told). The identity block is the
+   * marker that tells them apart, and it lives in the summary sidecar because that is where the
+   * store folds every dialect record.
+   *
+   * Read through `listSessionSummaries` -- the store's own surface -- rather than by re-deriving the
+   * summary path here: this writer already holds the key the store resolves paths from, and a second
+   * path derivation is the drift `providerStateSidecarPath` exists to avoid.
+   */
+  async loadProviderIdentity(): Promise<{ providerId: string; modelKey: string } | undefined> {
+    const list = this.store.listSessionSummaries;
+    if (list === undefined) return undefined;
+    let summaries: Awaited<ReturnType<NonNullable<SessionStore["listSessionSummaries"]>>>;
+    try {
+      summaries = await list.call(this.store, this.key.projectKey);
+    } catch {
+      return undefined; // an unreadable summary is "unknown", never a fabricated verdict
+    }
+    const row = summaries.find((entry) => entry.sessionId === this.key.sessionId);
+    const providerId = row?.providerId;
+    const modelKey = row?.modelKey;
+    return typeof providerId === "string" && typeof modelKey === "string" ? { providerId, modelKey } : undefined;
+  }
+
+  /**
    * R6-9: the resolved provider identity every subsequent dialect record carries.
    *
    * SET, not appended: the identity is the session's CURRENT one, and `appendWithDialectRecord`'s
@@ -719,10 +757,12 @@ export class TranscriptWriter implements SessionPersistence {
         ? {
             providerId: this.providerIdentity.providerId,
             modelKey: this.providerIdentity.modelKey,
-            adapterId: this.providerIdentity.adapterId,
-            adapterVersion: this.providerIdentity.adapterVersion,
-            catalogVersion: this.providerIdentity.catalogVersion,
-            authRef: this.providerIdentity.authRefKind,
+            // Each optional field is spread only when known: an absent adapter version is written as
+            // ABSENT, never as a placeholder a later reader would take for a fact.
+            ...(this.providerIdentity.adapterId !== undefined ? { adapterId: this.providerIdentity.adapterId } : {}),
+            ...(this.providerIdentity.adapterVersion !== undefined ? { adapterVersion: this.providerIdentity.adapterVersion } : {}),
+            ...(this.providerIdentity.catalogVersion !== undefined ? { catalogVersion: this.providerIdentity.catalogVersion } : {}),
+            ...(this.providerIdentity.authRefKind !== undefined ? { authRef: this.providerIdentity.authRefKind } : {}),
             ...(this.providerIdentity.classifierPin !== undefined ? { classifierPin: this.providerIdentity.classifierPin } : {}),
           }
         : {}),
@@ -799,6 +839,7 @@ function withPermissionJournal(writer: TranscriptWriter, location: { winterHome:
     recordAssistantEntry: (content, opts) => writer.recordAssistantEntry(content, opts),
     recordProviderState: (record) => writer.recordProviderState(record),
     loadProviderState: () => writer.loadProviderState(),
+    loadProviderIdentity: () => writer.loadProviderIdentity(),
     setProviderIdentity: (identity) => writer.setProviderIdentity(identity),
     recordProviderSwitch: (entry) => writer.recordProviderSwitch(entry),
     // Phase 5 Task 3 (R5-4): forwarded, like every other write method -- this wrapper adds the

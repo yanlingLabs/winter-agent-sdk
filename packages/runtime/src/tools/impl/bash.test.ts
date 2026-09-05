@@ -600,11 +600,19 @@ describe("R6-6: ctx.signal reaches the spawn", () => {
     const dir = proj();
     const marker = join(dir, "survived");
     const controller = new AbortController();
-    // A grandchild in a subshell, so a signal delivered only to the direct child would leave it
+    // A grandchild in a SUBSHELL, so a signal delivered only to the direct child would leave it
     // running and the marker would appear anyway -- the negative-pid group kill is what this asserts.
-    const promise = bash()({ command: `( sleep 5; echo alive > ${JSON.stringify(marker)} ) & wait`, timeout: 30000 }, fakeCtx({ cwd: dir, signal: controller.signal }));
+    //
+    // THE TIMING IS EXPLICIT, and it has to be (review round 1, M2). The sleep is 1 s, the abort lands
+    // at ~200 ms, and the marker is checked at ~1.4 s -- COMFORTABLY PAST the moment a surviving
+    // grandchild would have written it. The earlier version slept 5 s and checked at ~1.1 s, so it
+    // discriminated only because a surviving subshell holds the stdio pipes open and delays the
+    // await: a real signal, but an indirect one that would stop being a signal the moment the
+    // implementation stopped waiting on those pipes. This version asserts the thing itself.
+    const SLEEP_S = 1;
+    const promise = bash()({ command: `( sleep ${SLEEP_S}; echo alive > ${JSON.stringify(marker)} ) & wait`, timeout: 30000 }, fakeCtx({ cwd: dir, signal: controller.signal }));
     try {
-      await new Promise((r) => setTimeout(r, 300));
+      await new Promise((r) => setTimeout(r, 200));
       controller.abort();
       const result = await promise;
       expect(String(result.output)).toContain("aborted");
@@ -612,8 +620,8 @@ describe("R6-6: ctx.signal reaches the spawn", () => {
       // Belt and braces: whatever happened above, nothing of this test's own is left running.
       controller.abort();
     }
-    // Well past the sleep the marker would have been written after.
-    await new Promise((r) => setTimeout(r, 800));
+    // 1.4 s from the spawn: 400 ms past the point the grandchild's own `sleep` would have finished.
+    await new Promise((r) => setTimeout(r, 1200));
     expect(existsSync(marker)).toBe(false);
   }, 15000);
 });
