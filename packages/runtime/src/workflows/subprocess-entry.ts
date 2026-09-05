@@ -23,6 +23,17 @@
 // `import.meta.dir`-relative resource loads, no `require.resolve` at runtime.
 
 /**
+ * The argv marker that selects the worker role. ONE constant, so the dispatch, Lane W's spawner and
+ * `verify:workflow` cannot disagree by a character.
+ *
+ * It lives HERE and not in `main.ts` deliberately (fix round 1, M5): `main.ts` is a top-level SCRIPT
+ * -- importing it to read a constant would parse argv, resolve a session and start an engine as a
+ * side effect of the import. A spawner needs the marker, and this module is the one place it can be
+ * imported from safely: everything below is a declaration, so importing this file does nothing.
+ */
+export const WORKFLOW_WORKER_ARGV_FLAG = "__workflow-worker";
+
+/**
  * Exit code returned by the stub. Distinct from a plain `1` so a `verify:workflow` run against a
  * spine-only build reports "the dispatch works, the worker is not implemented" rather than an
  * indistinguishable generic failure.

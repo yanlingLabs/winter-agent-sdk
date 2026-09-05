@@ -6,6 +6,7 @@
 import { test, expect, describe } from "bun:test";
 import { PassThrough } from "node:stream";
 import { resolve, join as joinPath } from "node:path";
+import { fileURLToPath } from "node:url";
 import { createContextAccountant } from "../engine.ts";
 import { fakeStructuredOutputSeam } from "../structured/seam.ts";
 import { createFakeChildHandle } from "../subagents/test-fakes.ts";
@@ -15,8 +16,14 @@ import { wireTaskType } from "../tools/background-tasks.ts";
 import { evaluate, REAL_SPECIAL_CHECKS, NO_OPINION_HOOK_STAGE, NO_OPINION_PROMPT_STAGE, NO_OPINION_AUTO_ENGINE, type EvaluationContext } from "../permissions/evaluator.ts";
 import { emptyRuleSet } from "../permissions/ruleset.ts";
 import { buildBaselineDenyRules } from "../engine.ts";
-import { WORKFLOW_WORKER_NOT_IMPLEMENTED_EXIT_CODE, workflowWorkerMain } from "./subprocess-entry.ts";
+import { WORKFLOW_WORKER_ARGV_FLAG, WORKFLOW_WORKER_NOT_IMPLEMENTED_EXIT_CODE, workflowWorkerMain } from "./subprocess-entry.ts";
 import { fakeWorkflowRunHost, type WorkflowProgress, type WorkflowRunHost } from "./seam.ts";
+
+const SUBPROCESS_ENTRY_URL = new URL("./subprocess-entry.ts", import.meta.url).href;
+// `fileURLToPath`, never `.pathname`: a repo path containing a space arrives percent-encoded from
+// `.pathname` and `bun <that>` fails with a generic exit 1 -- which is indistinguishable from the
+// missing-`--run` throw this test exists to rule out.
+const MAIN_TS_PATH = fileURLToPath(new URL("../main.ts", import.meta.url));
 
 const HOME = "/home/synthetic";
 const CWD = "/synthetic/workspace";
@@ -92,6 +99,40 @@ describe("RULING R5-15 -- the worker entry export", () => {
     expect(WORKFLOW_WORKER_NOT_IMPLEMENTED_EXIT_CODE).not.toBe(0);
     expect(WORKFLOW_WORKER_NOT_IMPLEMENTED_EXIT_CODE).not.toBe(1);
   });
+
+  // Fix round 1 (M5): the argv marker lives HERE, not in main.ts. A spawner needs it, and importing
+  // main.ts to read a constant would parse argv, resolve a session and start an engine as an import
+  // side effect -- main.ts is a top-level script, not a module with an entry function.
+  test("WORKFLOW_WORKER_ARGV_FLAG is exported from subprocess-entry.ts, and importing this module has NO side effects", async () => {
+    expect(WORKFLOW_WORKER_ARGV_FLAG).toBe("__workflow-worker");
+
+    // Imported in a FRESH subprocess so the assertion is about a clean module load, not about this
+    // suite's already-warm module graph. `bun -e` resolves the specifier from the repo, runs the
+    // import, and prints what the load did -- an engine start or an argv parse would show up as a
+    // non-zero exit, stray stdout, or a set exitCode.
+    const probe = [
+      `const before = process.exitCode;`,
+      `const m = await import(${JSON.stringify(SUBPROCESS_ENTRY_URL)});`,
+      `if (process.exitCode !== before) { console.error("exitCode moved"); process.exit(9); }`,
+      `if (typeof m.workflowWorkerMain !== "function") { console.error("missing export"); process.exit(9); }`,
+      `process.stdout.write("flag=" + m.WORKFLOW_WORKER_ARGV_FLAG);`,
+    ].join("\n");
+    const result = Bun.spawnSync(["bun", "-e", probe], { stdout: "pipe", stderr: "pipe" });
+    expect(new TextDecoder().decode(result.stderr)).toBe("");
+    expect(result.exitCode).toBe(0);
+    expect(new TextDecoder().decode(result.stdout)).toBe("flag=__workflow-worker");
+  }, 20_000);
+
+  // Fix round 1 (low): the dispatch itself, through the REAL entrypoint. Today it exits 78 (the stub);
+  // once Lane W lands a worker this test is what proves the argv route still reaches it.
+  test("main.ts dispatches `__workflow-worker` to the entry BEFORE it parses --run/--config-json", () => {
+    const result = Bun.spawnSync(["bun", MAIN_TS_PATH, WORKFLOW_WORKER_ARGV_FLAG, "--run-id", "wf_1"], { stdout: "pipe", stderr: "pipe" });
+    // 78 = the stub's typed not-implemented code. Crucially NOT 1, which is what the missing
+    // `--run`/`--config-json` throw would have produced had the dispatch been checked after parsing.
+    expect(result.exitCode).toBe(WORKFLOW_WORKER_NOT_IMPLEMENTED_EXIT_CODE);
+    expect(new TextDecoder().decode(result.stderr)).toContain("__workflow-worker");
+    expect(new TextDecoder().decode(result.stdout)).toBe(""); // stdout is the NDJSON bridge; nothing else may write to it
+  }, 20_000);
 });
 
 describe("R5-5 -- the worker seatbelt profile carries the ~/.winter/run deny", () => {

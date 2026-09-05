@@ -28,10 +28,11 @@ import { restoreChildRoster } from "./subagents/restore.ts";
 // Phase 5 Task 3 (RULING R5-15): the pinned worker entry. Lane W replaces the BODY of
 // workflowWorkerMain; this dispatch and the export's name/signature are frozen by that ruling and by
 // workflows/seam.contract.test.ts.
-import { workflowWorkerMain } from "./workflows/subprocess-entry.ts";
-
-/** The argv marker that selects the worker role. One constant, so the dispatch and Lane W's spawner cannot disagree by a character. */
-export const WORKFLOW_WORKER_ARGV_FLAG = "__workflow-worker";
+// Fix round 1 (M5): `WORKFLOW_WORKER_ARGV_FLAG` is IMPORTED, not declared here. This file is a
+// top-level script -- a spawner importing it to read the constant would parse argv, resolve a session
+// and start an engine as an import side effect. subprocess-entry.ts is declaration-only and is the
+// safe home for it.
+import { workflowWorkerMain, WORKFLOW_WORKER_ARGV_FLAG } from "./workflows/subprocess-entry.ts";
 
 // Same argv contract as winter-agent-runtime/testing's inMemoryProcess (Task 2): find the flag by
 // NAME, never by position. Position-based parsing would silently break between the two ways this
