@@ -193,6 +193,20 @@ export interface SeatbeltProfileInput {
    * responsible for threading its own `ctx.home` through.
    */
   home?: string;
+  /**
+   * Phase 5 fix wave, I1: the RESOLVED `~/.winter` root (`WINTER_HOME` when set), when it differs
+   * from `<home>/.winter`.
+   *
+   * `home` above is the OS home and this module appends the literal `.winter` to it -- correct only
+   * when the resolved root is literally named `.winter`. Under a `WINTER_HOME` pointing anywhere
+   * else, the run read-deny and the backups write-deny both landed on a directory that does not
+   * exist while the real one stayed open.
+   *
+   * ADDED, NEVER SWAPPED: both anchors are emitted, because the carried WS-12 §5.2 deny corpus and
+   * every default-home session still assume the literal default, and two denies of overlapping scope
+   * cost nothing.
+   */
+  winterHome?: string;
 }
 
 /**
@@ -245,7 +259,13 @@ export function buildSeatbeltProfile(input: SeatbeltProfileInput): string {
   // a user's own denyRead entries can never accidentally reorder around it) -- though for two
   // DENY rules of possibly-overlapping scope, unlike an allow/deny pair, relative order does not
   // change which paths end up denied; this ordering is for readability/convention, not correctness.
-  const denyRunDirRule = input.home ? `(deny file-read* (subpath "${sbplString(canon(join(input.home, ".winter", "run")))}"))` : "";
+  const denyRunDirRule = [
+    input.home ? `(deny file-read* (subpath "${sbplString(canon(join(input.home, ".winter", "run")))}"))` : "",
+    // I1: the resolved root's own run directory, when it is not `<home>/.winter`.
+    input.winterHome && canon(input.winterHome) !== canon(join(input.home ?? "", ".winter")) ? `(deny file-read* (subpath "${sbplString(canon(join(input.winterHome, "run")))}"))` : "",
+  ]
+    .filter((r) => r.length > 0)
+    .join("\n");
 
   // T8 rider 25 (SECURITY): the checkpoint BACKUP STORE, write-side. `<home>/.winter/backups/`
   // holds the pre-image bytes a `rewind_files` writes back over the user's own files, plus the
@@ -260,7 +280,14 @@ export function buildSeatbeltProfile(input: SeatbeltProfileInput): string {
   // filename literals: the WHOLE tree is off-limits, not one filename within it. Only load-bearing
   // when `home` is itself inside a writable root (cwd == home, or a writableRoots entry above it) --
   // otherwise `(deny default)` already covers it, and an unconditional deny costs nothing.
-  const denyBackupsDirRule = input.home ? `(deny file-write* (subpath "${sbplString(canon(join(input.home, ".winter", "backups")))}"))` : "";
+  const denyBackupsDirRule = [
+    input.home ? `(deny file-write* (subpath "${sbplString(canon(join(input.home, ".winter", "backups")))}"))` : "",
+    // I1: same reasoning as the run deny above -- the store the sink actually writes to is the
+    // RESOLVED root's `backups/`, which is what `checkpoint/sink.ts` has always used.
+    input.winterHome && canon(input.winterHome) !== canon(join(input.home ?? "", ".winter")) ? `(deny file-write* (subpath "${sbplString(canon(join(input.winterHome, "backups")))}"))` : "",
+  ]
+    .filter((r) => r.length > 0)
+    .join("\n");
 
   // WS-12 §5.2 (verbatim carry): macOS `mktemp(1)` (and anything else calling
   // confstr(_CS_DARWIN_USER_TEMP_DIR)) writes to the PER-USER temp dir and ignores $TMPDIR
@@ -352,11 +379,21 @@ ${denySettingsLocalFileRegex}
  * /bin/sh etc. Note the operation is `process-fork` (no star) -- `process-fork*` is an unbound
  * variable that fails to load.
  */
-export function buildWorkflowWorkerSeatbeltProfile(selfExecPath: string, opts: { home: string | undefined }): string {
+export function buildWorkflowWorkerSeatbeltProfile(selfExecPath: string, opts: { home: string | undefined; winterHome?: string }): string {
   const self = canon(selfExecPath);
   // Placed with the other denies (below), after `(allow file-read*)`, so SBPL's last-match-wins makes
   // it actually bind -- emitted before the blanket read-allow it would be dead text.
-  const denyRunDirRule = opts.home !== undefined ? `\n(deny file-read* (subpath "${sbplString(canon(join(opts.home, ".winter", "run")))}"))` : "";
+  // Phase 5 fix wave, I1: BOTH anchors. `opts.home` is the OS home and this appends the literal
+  // `.winter`; `opts.winterHome` is the RESOLVED root, which is where a real session's run directory
+  // actually is when `WINTER_HOME` points anywhere else. Emitted together for the reason
+  // `SeatbeltProfileInput.winterHome` states: two denies of overlapping scope cost nothing, and
+  // swapping would unprotect every default-home session.
+  const denyRunDirRule = [
+    opts.home !== undefined ? `\n(deny file-read* (subpath "${sbplString(canon(join(opts.home, ".winter", "run")))}"))` : "",
+    opts.winterHome !== undefined && canon(opts.winterHome) !== canon(join(opts.home ?? "", ".winter"))
+      ? `\n(deny file-read* (subpath "${sbplString(canon(join(opts.winterHome, "run")))}"))`
+      : "",
+  ].join("");
   const machRules = [
     "com.apple.system.notification_center",
     "com.apple.system.logger",

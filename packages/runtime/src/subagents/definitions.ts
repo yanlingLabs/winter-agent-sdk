@@ -167,7 +167,18 @@ export interface LoadAgentDefinitionsOptions {
   // the seam exists.
   programmatic?: Record<string, RuntimeAgentDefinition>;
   cwd: string;
+  /**
+   * The OS HOME directory. `<home>/.winter/agents` is the user tier when `winterHome` below is
+   * absent -- which is the pre-fix behaviour, kept for every caller that does not thread a resolved
+   * root.
+   */
   home: string;
+  /**
+   * Phase 5 fix wave, KNOWN-6: the RESOLVED `~/.winter` root (`WINTER_HOME` when set). When given it
+   * IS the user tier's address (`<winterHome>/agents`), matching where the skills index, the command
+   * resolver and `resolveSettings` all look. Never both: this is an address, not a second directory.
+   */
+  winterHome?: string;
   // RULING R4-7: `.winter/agents/*.md` loads ONLY when true. `~/.winter/agents/` always loads
   // regardless (WS-10 §2's own "~/.winter/agents/" carries no trust qualifier, unlike the
   // project-local path).
@@ -198,7 +209,16 @@ export function loadAgentDefinitions(opts: LoadAgentDefinitionsOptions): Map<str
     const { plugin, ...definition } = def;
     out.set(name, { ...definition, _source: "plugin", _plugin: plugin });
   }
-  const user = loadAgentDirectory(join(opts.home, ".winter", "agents"));
+  // Phase 5 fix wave, KNOWN-6 / I1: the user tier is addressed by the RESOLVED winter root when the
+  // caller supplies one, and only falls back to `<home>/.winter/agents` when it does not.
+  //
+  // THE BUG THIS CLOSES, in Lane S's own words: a session run with `WINTER_HOME=/somewhere/else`
+  // loaded its skills and commands from that root (Lane S addressed them by the resolved root) and
+  // its user AGENT definitions from `~/.winter/agents` -- two halves of one user configuration in
+  // two places, silently. `SkillIndexOptions.winterHome`'s header records exactly this hazard: the
+  // two conventions in this codebase are not interchangeable, and a field named `home` gets handed
+  // whichever one its caller happened to be reading.
+  const user = loadAgentDirectory(opts.winterHome !== undefined ? join(opts.winterHome, "agents") : join(opts.home, ".winter", "agents"));
   for (const [name, def] of Object.entries(user)) out.set(name, { ...def, _source: "user" });
   if (opts.trustedWorkspace) {
     const project = loadAgentDirectory(join(opts.cwd, ".winter", "agents"));

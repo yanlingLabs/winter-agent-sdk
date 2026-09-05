@@ -1,5 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { homedir, release as osRelease } from "node:os";
+// Phase 5 fix wave, I1: `buildBaselineDenyRules` compares the resolved winter root against the
+// literal default, so it needs path resolution.
+import { join, resolve } from "node:path";
 import {
   PROTOCOL_VERSION,
   type RuntimeConfig,
@@ -678,8 +681,43 @@ function raceInterrupt<T>(p: Promise<T>, interrupted: Promise<void>): Promise<Ra
 // `source: "managed"` is what makes these bind under `bypassPermissions` too: stage 2's deny lookup
 // runs before stage 4's bypass auto-allow, and `allowManagedPermissionRulesOnly` narrows the pool to
 // exactly this source rather than dropping it.
-export function buildBaselineDenyRules(): SourcedRuleEntry[] {
+export function buildBaselineDenyRules(resolvedWinterHome?: string): SourcedRuleEntry[] {
+  // --- Phase 5 fix wave, I1: the floors follow the RESOLVED winter home --------------------------
+  //
+  // Every entry below is written `~/.winter/...`, and `~` resolves through `permissionHome =
+  // homedir()` (permissions/paths.ts). The checkpoint SINK resolves its root with
+  // `resolveWinterHome(env)` and `workflows/store.ts` persists under `<winterHome>/projects/...` --
+  // so under a `WINTER_HOME` whose basename is not `.winter`, the fences and the things they exist to
+  // fence pointed at DIFFERENT directories, and the M13 transcript floor and the rider-25 backups
+  // floor were both silently absent in a documented, common configuration.
+  //
+  // ADDED, NEVER SWAPPED. The `~/.winter/...` entries stay exactly as they were: the user tier, the
+  // carried seatbelt corpus and every default-home session still assume the literal default, and a
+  // swap would unprotect all of them to protect one. A resolved root that IS the default emits no
+  // duplicate (the two anchors coincide and the dedupe below drops the second).
+  const absolute: SourcedRuleEntry[] = [];
+  if (resolvedWinterHome !== undefined && resolve(resolvedWinterHome) !== resolve(join(homedir(), ".winter"))) {
+    // `//`-ANCHORED, not a bare absolute path. WS-07 §3.1's own grammar (permissions/paths.ts's
+    // `resolveAnchor`) reads a SINGLE leading `/` as "relative to the rule's own settings-file
+    // directory", which is `undefined` for an engine-seeded rule and therefore makes the whole rule
+    // INERT -- silently. `//` is the filesystem-root anchor. Found by the fixture: the rule list was
+    // right and nothing was denied.
+    const root = `/${resolve(resolvedWinterHome)}`;
+    for (const dir of ["run"]) {
+      for (const tool of ["Read", "Glob", "Grep"]) {
+        absolute.push(sourceRule({ toolName: tool, ruleContent: `${root}/${dir}` }, "deny", "managed"));
+        absolute.push(sourceRule({ toolName: tool, ruleContent: `${root}/${dir}/**` }, "deny", "managed"));
+      }
+    }
+    for (const dir of ["projects", "backups"]) {
+      for (const tool of ["Write", "Edit", "NotebookEdit"]) {
+        absolute.push(sourceRule({ toolName: tool, ruleContent: `${root}/${dir}` }, "deny", "managed"));
+        absolute.push(sourceRule({ toolName: tool, ruleContent: `${root}/${dir}/**` }, "deny", "managed"));
+      }
+    }
+  }
   return [
+    ...absolute,
     // The daemon's own runtime directory -- sockets, pidfiles, credentials-adjacent state.
     sourceRule({ toolName: "Read", ruleContent: "~/.winter/run" }, "deny", "managed"),
     sourceRule({ toolName: "Read", ruleContent: "~/.winter/run/**" }, "deny", "managed"),
@@ -865,7 +903,11 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // header's own overclaimed "stops a direct Read/recognized-Bash-read" sentence covered up (the
   // OTHER gap -- "recognized-Bash-read" was never actually true -- is corrected in place above,
   // where that sentence lives).
-  const BASELINE_DENY_RULES = buildBaselineDenyRules();
+  // I1: the same resolved root every other fence in this run uses. `wiredWinterHome` is what
+  // `production-wiring.ts` computed (`config.winterHome ?? resolveWinterHome(env)`); the fallback
+  // keeps a host that drives `runEngine` directly on exactly its pre-fix behaviour.
+  const resolvedWinterHome = wiredWinterHome ?? config.winterHome;
+  const BASELINE_DENY_RULES = buildBaselineDenyRules(resolvedWinterHome);
   // Task 5 (WS-07 §3.3 / phase ruling 1) seeding: Options.{allowedTools,disallowedTools,permissions}
   // become source:"sdk" rule entries via T5's own builder — this is the wiring T5's own header
   // called "not wired into the engine by this task (that is a later task's job)". Runs the SAME
@@ -1189,6 +1231,9 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
       // invocation it is about always agree on the identity set. Absent for a session with no skill
       // runtime registered; the evaluator then matches on the literal name.
       skillIdentities: (skillName: string) => getSkillSessionRuntime(config.agentId ?? config.sessionId)?.index.identities(skillName) ?? [skillName],
+      // I1: the resolved root, so the P5-B carve-out and its stage-2 deny skip name the SAME
+      // directory `workflows/store.ts` persists to.
+      ...(resolvedWinterHome !== undefined ? { winterHome: resolvedWinterHome } : {}),
       hookStage: realHookStage,
       promptStage: realPromptStage,
       autoEngine: realAutoEngine,
@@ -1449,6 +1494,10 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
     const deps: RegistryToolExecutorDeps = {
       sessionId: config.sessionId,
       home: permissionHome,
+      // I1: the RESOLVED winter root, so `tools/impl/agent.ts` finds the user agent tier where the
+      // skills index and the command resolver already look, and any tool naming Winter's own storage
+      // uses one address.
+      ...(resolvedWinterHome !== undefined ? { winterHome: resolvedWinterHome } : {}),
       getCwd: () => currentCwd,
       probeReadAccess: (filePath: string) => probeReadAccess(filePath, makeEvalCtx()),
       // Task 2 (P3, WS-06 §3.5) completes this seam's engine plumbing. registry.ts's own

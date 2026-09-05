@@ -148,6 +148,8 @@ function buildMonitorRunCommandOptions(ctx: ToolExecutionContext): {
   denyWritePaths?: string[];
   denyReadPaths?: string[];
   home: string;
+  /** Phase 5 fix wave, I1: the resolved `~/.winter` root, distinct from the OS home above. */
+  winterHome?: string;
 } {
   return {
     cwd: ctx.cwd,
@@ -156,6 +158,7 @@ function buildMonitorRunCommandOptions(ctx: ToolExecutionContext): {
     writableRoots: computeMonitorWritableRoots(ctx),
     ...computeMonitorDenyPaths(ctx),
     home: ctx.home,
+    ...(ctx.winterHome !== undefined ? { winterHome: ctx.winterHome } : {}),
   };
 }
 

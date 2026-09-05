@@ -200,6 +200,17 @@ export interface ToolResultPayload {
 export interface ToolExecutionContext {
   cwd: string;
   home: string;
+  /**
+   * Phase 5 fix wave, I1: the RESOLVED `~/.winter` root for this session (`WINTER_HOME` when set),
+   * DISTINCT from `home` above, which is the OS home directory.
+   *
+   * The two are not interchangeable and confusing them is a shipped-bug class in this codebase --
+   * see `SkillIndexOptions.winterHome`'s own header. A tool that needs to name Winter's own storage
+   * (the agents user tier, a seatbelt deny, the checkpoint store) reads THIS; a tool that needs the
+   * user's home for a `~`-anchored path reads `home`. Absent for a hand-built context, in which case
+   * every consumer falls back to `<home>/.winter/...` -- the pre-fix behaviour.
+   */
+  winterHome?: string;
   sessionId: string;
   readState: SessionReadState;
   // Phase 3 Task 2 (WS-06 §3.5): narrowed from Task 1's placeholder `unknown` now that the real,
@@ -1214,6 +1225,8 @@ function foldResult(result: ToolResultPayload): EngineToolResult {
 export interface RegistryToolExecutorDeps {
   sessionId: string;
   home: string;
+  /** Phase 5 fix wave, I1: the resolved `~/.winter` root -- see `ToolExecutionContext.winterHome`. */
+  winterHome?: string;
   // A getter, not a snapshot: the session posture-mutation seam (`session.setCwd`) mutates the
   // SAME live value this reads, so a tool call made after a worktree switch sees the new cwd.
   getCwd: () => string;
@@ -1297,6 +1310,8 @@ export function buildRegistryToolExecutor(deps: RegistryToolExecutorDeps): Engin
       const ctx: ToolExecutionContext = {
         cwd: deps.getCwd(),
         home: deps.home,
+        // I1: forwarded so a tool naming Winter's own storage uses the RESOLVED root, not the OS home.
+        ...(deps.winterHome !== undefined ? { winterHome: deps.winterHome } : {}),
         sessionId: deps.sessionId,
         readState: deps.readState,
         emitFrame: deps.emitFrame,

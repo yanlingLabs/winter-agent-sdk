@@ -297,6 +297,10 @@ export const agentExecutor: ToolExecutor = {
       const definitions = loadAgentDefinitions({
         cwd: ctx.cwd,
         home: ctx.home,
+        // Phase 5 fix wave, KNOWN-6: the RESOLVED winter root, so a session run under a custom
+        // `WINTER_HOME` finds its user agent definitions in the SAME root its skills and commands
+        // came from. `ctx.winterHome` is threaded by `buildDefaultToolExecutor`.
+        ...(ctx.winterHome !== undefined ? { winterHome: ctx.winterHome } : {}),
         trustedWorkspace,
         ...(ctx.agents !== undefined ? { programmatic: ctx.agents as Record<string, RuntimeAgentDefinition> } : {}),
         ...(pluginAgents !== undefined ? { pluginAgents } : {}),

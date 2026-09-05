@@ -305,6 +305,15 @@ export interface EvaluationContext {
    * just blind to the `.winter:<name>` alias a project skill also answers to.
    */
   skillIdentities?: (skillName: string) => readonly string[];
+  /**
+   * Phase 5 fix wave, I1: the RESOLVED `~/.winter` root, DISTINCT from `home` (the OS home) above.
+   *
+   * Two consumers, both of which were silently wrong under a `WINTER_HOME` whose basename is not
+   * `.winter`: the P5-B workflow-script carve-out (which must name the directory
+   * `workflows/store.ts` actually persists to) and `isProtectedWrite`'s own carve-out check.
+   * Absent = the pre-fix behaviour, `<home>/.winter/...` only.
+   */
+  winterHome?: string;
   hookStage: HookStage;
   promptStage: PromptStage;
   autoEngine: AutoEngine;
@@ -667,22 +676,31 @@ const WRITE_BLOCKING_DENY_TOOLS: ReadonlySet<string> = new Set(["Read", "Write",
 // user-authored `Write(~/.winter/projects/**)` deny is NOT skipped -- an explicit human denial still
 // wins), and EVERY candidate write path of the call must be inside the carve-out (so a compound Bash
 // command touching one script and one transcript is still denied outright).
-function isProjectsBaselineDeny(entry: SourcedRuleEntry): boolean {
+function isProjectsBaselineDeny(entry: SourcedRuleEntry, ctx: EvaluationContext): boolean {
   if (entry.behavior !== "deny" || entry.source !== "managed") return false;
   const content = entry.ruleValue.ruleContent;
-  return typeof content === "string" && (content === "~/.winter/projects" || content.startsWith("~/.winter/projects/"));
+  if (typeof content !== "string") return false;
+  if (content === "~/.winter/projects" || content.startsWith("~/.winter/projects/")) return true;
+  // Phase 5 fix wave, I1: the RESOLVED-root twin of the same baseline deny. `buildBaselineDenyRules`
+  // now emits `//<winterHome>/projects/**` alongside the `~/.winter/...` form, and the P5-B carve-out
+  // has to skip BOTH or the new floor closes the one subtree WS-11 §1.3 requires to stay
+  // model-writable -- the documented edit-then-rerun loop, broken as collateral damage.
+  // `//`-anchored (paths.ts's filesystem-root form), which is why the literal below carries it.
+  if (ctx.winterHome === undefined) return false;
+  const rootPrefix = `/${resolve(ctx.winterHome)}/projects`;
+  return content === rootPrefix || content.startsWith(`${rootPrefix}/`);
 }
 
 function callIsEntirelyWorkflowScriptWrite(call: PermissionCall, ctx: EvaluationContext): boolean {
   const paths = extractCandidateWritePaths(call, ctx);
   if (paths.length === 0) return false;
-  return paths.every((p) => isWorkflowScriptCarveOut(resolve(ctx.cwd, p), ctx.home));
+  return paths.every((p) => isWorkflowScriptCarveOut(resolve(ctx.cwd, p), ctx.home, ctx.winterHome));
 }
 
 /** The `skip` predicate the stage-2 deny lookup passes, or `undefined` when this call earns no carve-out at all. */
 export function workflowScriptCarveOutSkip(call: PermissionCall, ctx: EvaluationContext): ((entry: SourcedRuleEntry) => boolean) | undefined {
   if (!callIsEntirelyWorkflowScriptWrite(call, ctx)) return undefined;
-  return isProjectsBaselineDeny;
+  return (entry) => isProjectsBaselineDeny(entry, ctx);
 }
 
 function findFileDenyBlockingEdit(call: PermissionCall, ctx: EvaluationContext): SourcedRuleEntry | undefined {

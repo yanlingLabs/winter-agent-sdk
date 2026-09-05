@@ -55,6 +55,22 @@ async function runWithFsSettings(command: string, cwd: string, opts: { writableR
   });
 }
 
+/**
+ * Phase 5 fix wave, I1: a run whose SEATBELT is built from a resolved winter root that is not
+ * `<home>/.winter`. `home` stays the OS-home anchor (both denies are emitted, never swapped).
+ */
+async function runWithWinterHome(command: string, cwd: string, winterHome: string) {
+  return runCommand({
+    command,
+    cwd,
+    env: { ...process.env, TMPDIR: cwd },
+    timeoutMs: 8000,
+    settings: {},
+    home: proj(), // an OS-home stand-in with no `.winter` in it -- only `winterHome` can be doing the work
+    winterHome,
+  });
+}
+
 // `test.skipIf`, per this task's own brief (not `const t = darwin ? test : test.skip`, which reads
 // identically at each call site but is the wrong SHAPE per the brief's literal wording) -- both
 // forms make a non-darwin CI run enumerate every test as visibly skipped rather than hiding a whole
@@ -243,6 +259,38 @@ describe("sandbox deny suite (real sandbox-exec, WS-12 §5.2 carried corpus)", (
 
       const allowed = await run(`cat ${siblingFile}`, cwd, undefined, home);
       expect(allowed.exitCode).toBe(0);
+    });
+  });
+
+  // Phase 5 fix wave, I1: the SAME two denies, anchored at a RESOLVED winter root whose basename is
+  // NOT `.winter`. Every rider-25/R5-5 case in this file builds a `.winter`-shaped synthetic home and
+  // therefore structurally cannot see the class -- which is exactly how the OS-home anchoring
+  // survived two SECURITY-rated reviews.
+  describe("baseline denies follow the RESOLVED winter home (I1)", () => {
+    t("under a WINTER_HOME not named `.winter`, its own run/ is unreadable and backups/ unwritable, while a sibling still works", async () => {
+      const cwd = proj();
+      // The resolved root, deliberately NOT named `.winter`, and NOT under `home`.
+      const winterHome = proj();
+      mkdirSync(join(winterHome, "run"), { recursive: true });
+      mkdirSync(join(winterHome, "backups", "sess-1"), { recursive: true });
+      const secret = join(winterHome, "run", "core.sock-info.txt");
+      writeFileSync(secret, "socket-secret");
+      const indexFile = join(winterHome, "backups", "sess-1", "index.jsonl");
+      const sibling = join(winterHome, "sibling.txt");
+
+      // cwd is the RESOLVED ROOT here, so its whole tree is inside a writable root -- without the
+      // denies both operations land, which is what makes the positive control meaningful.
+      const deniedRead = await runWithWinterHome(`cat ${secret}`, winterHome, winterHome);
+      expect(deniedRead.exitCode).not.toBe(0);
+
+      const deniedWrite = await runWithWinterHome(`echo tampered >> ${indexFile}`, winterHome, winterHome);
+      expect(deniedWrite.exitCode).not.toBe(0);
+      expect(existsSync(indexFile)).toBe(false);
+
+      const allowed = await runWithWinterHome(`echo ok > ${sibling}`, winterHome, winterHome);
+      expect(allowed.exitCode).toBe(0);
+      expect(existsSync(sibling)).toBe(true);
+      void cwd;
     });
   });
 

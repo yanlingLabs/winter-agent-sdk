@@ -167,6 +167,8 @@ function buildRunCommandOptions(
   denyWritePaths?: string[];
   denyReadPaths?: string[];
   home: string;
+  /** Phase 5 fix wave, I1: the resolved `~/.winter` root, distinct from the OS home above. */
+  winterHome?: string;
   dangerouslyDisableSandbox?: boolean;
 } {
   return {
@@ -176,6 +178,7 @@ function buildRunCommandOptions(
     writableRoots: computeWritableRoots(ctx),
     ...computeDenyPaths(ctx),
     home: ctx.home,
+    ...(ctx.winterHome !== undefined ? { winterHome: ctx.winterHome } : {}),
     ...(input.dangerouslyDisableSandbox !== undefined ? { dangerouslyDisableSandbox: input.dangerouslyDisableSandbox } : {}),
   };
 }

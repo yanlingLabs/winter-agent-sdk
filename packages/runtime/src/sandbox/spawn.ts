@@ -183,6 +183,8 @@ export interface RunCommandOptions {
    * optional profile input here.
    */
   home?: string;
+  /** Phase 5 fix wave, I1: the resolved `~/.winter` root -- see `SeatbeltProfileInput.winterHome`. */
+  winterHome?: string;
 }
 
 export interface RunCommandResult {
@@ -233,6 +235,9 @@ export async function runCommand(opts: RunCommandOptions): Promise<RunCommandRes
       allowNetwork,
       ...(darwinUserTempDir !== null ? { darwinUserTempDir } : {}),
       ...(opts.home !== undefined ? { home: opts.home } : {}),
+      // Phase 5 fix wave, I1: the RESOLVED winter root, so the run/backups denies land where a
+      // session's own storage actually is under a custom `WINTER_HOME`.
+      ...(opts.winterHome !== undefined ? { winterHome: opts.winterHome } : {}),
     });
     spawnFile = REAL_SANDBOX_EXEC_PATH;
     spawnArgs = ["-p", profile, "/bin/bash", "-c", opts.command];

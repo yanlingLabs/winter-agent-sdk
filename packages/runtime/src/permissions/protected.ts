@@ -97,19 +97,36 @@ const WORKFLOW_SCRIPTS_SEGMENTS = ["workflows", "scripts"] as const;
  * module resolves no environment of its own, matching `isProtectedWrite`'s existing `ctx.home`
  * contract.
  */
-export function isWorkflowScriptCarveOut(absPath: string, home: string): boolean {
+export function isWorkflowScriptCarveOut(absPath: string, home: string, resolvedWinterHome?: string): boolean {
+  // Phase 5 fix wave, I1: the carve-out must name the directory a script is ACTUALLY persisted to.
+  // `workflows/store.ts` writes under `<winterHome>/projects/...`; this function compared against
+  // `<osHome>/.winter/projects/...`. Under a `WINTER_HOME` pointing elsewhere the two disagreed, and
+  // the edit-then-rerun loop WS-11 §1.3 documents worked only because nothing denied the real
+  // location either -- which the companion floor in `buildBaselineDenyRules` now does, so the
+  // carve-out has to follow or the loop breaks as collateral damage.
+  if (resolvedWinterHome !== undefined && matchesCarveOut(pathSegments(absPath), [...pathSegments(resolve(resolvedWinterHome)), WINTER_PROJECTS_SEGMENT])) return true;
   const homeSegments = pathSegments(resolve(home));
   const segments = pathSegments(absPath);
   // Must start with <home>/.winter/projects/<key>/<uuid>/workflows/scripts/ and have at least one
   // more segment after it (the script file itself) -- the DIRECTORY is not itself writable, only its
   // contents, so a `Write` targeting the directory path is still denied.
-  const prefix = [...homeSegments, ".winter", WINTER_PROJECTS_SEGMENT];
+  return matchesCarveOut(segments, [...homeSegments, ".winter", WINTER_PROJECTS_SEGMENT]);
+}
+
+/**
+ * `<prefix>/<project-key>/<session-uuid>/workflows/scripts/<file>` -- the shape, factored so the two
+ * anchors (the OS-home one and the resolved-root one) cannot drift apart.
+ *
+ * SIX FIXED POSITIONS WITH EXACTLY TWO WILDCARDS BETWEEN THEM, unchanged: a `projects/**` style
+ * match would let a session write into another session's area by nesting, and a prefix match on
+ * `workflows/scripts` alone would open one anywhere under `projects/`.
+ */
+function matchesCarveOut(segments: readonly string[], prefix: readonly string[]): boolean {
+  // The DIRECTORY itself is not writable -- only its contents -- so at least one segment must follow.
   if (segments.length < prefix.length + 2 + WORKFLOW_SCRIPTS_SEGMENTS.length + 1) return false;
   for (let i = 0; i < prefix.length; i++) {
     if (segments[i] !== prefix[i]) return false;
   }
-  // segments[prefix.length] = <project-key>, segments[prefix.length + 1] = <session-uuid>: two
-  // wildcards, never more -- a deeper nesting is a different session's area, or an invented one.
   const scriptsStart = prefix.length + 2;
   for (let i = 0; i < WORKFLOW_SCRIPTS_SEGMENTS.length; i++) {
     if (segments[scriptsStart + i] !== WORKFLOW_SCRIPTS_SEGMENTS[i]) return false;
@@ -146,13 +163,13 @@ function basenameOf(absPath: string): string {
 // write-shaped -- an Edit/Write's own file_path, or a path recognizeEditOperation extracted from a
 // Bash call). A plain Read of a protected path is correctly UNAFFECTED by this primitive because
 // the seam never calls it for a Read at all, not because of anything checked in here.
-export function isProtectedWrite(path: string, ctx: { cwd: string; home: string }): boolean {
+export function isProtectedWrite(path: string, ctx: { cwd: string; home: string; winterHome?: string }): boolean {
   const absPath = resolve(ctx.cwd, path);
   // RULING P5-B: checked FIRST, because the carve-out lives INSIDE `.winter`, which
   // `isInsideProtectedDirectory` would otherwise reject unconditionally. Same shape as the
   // pre-existing `.winter/worktrees` exception one function down, and for the same reason: a subtree
   // the agent is meant to work in cannot also be protected from it.
-  if (isWorkflowScriptCarveOut(absPath, ctx.home)) return false;
+  if (isWorkflowScriptCarveOut(absPath, ctx.home, ctx.winterHome)) return false;
   return isInsideProtectedDirectory(absPath) || PROTECTED_FILE_BASENAMES.has(basenameOf(absPath));
 }
 
