@@ -464,7 +464,7 @@ const WS11_10: ConformanceRow[] = [
     spec: "WS-11 §10",
     bullet: "compaction: PreCompact / post-compaction hook firing",
     status: "covered",
-    citations: [{ file: "./compaction/seam.contract.test.ts", testName: `PreCompact` }],
+    citations: [{ file: "./compaction/seam.contract.test.ts", testName: `PreCompact runs BEFORE compact() and PostCompact AFTER it` }],
     note:
       "The engine's own sequence (PreCompact -> compact() -> persist -> frame -> PostCompact -> onCompaction -> swap) is the spine's, proved against the spine's fake in the seam contract file. `GATING_HOOK_EVENTS` already contained `PreCompact`, so the 60s gating timeout applies with no change; no veto is invented (WS-08 OQ4: `PreCompact` has no hook-specific output type on the pin, so there is no shape a veto could be expressed in).",
   },
@@ -486,7 +486,7 @@ const WS11_10: ConformanceRow[] = [
     citations: [
       { file: "./compaction/resume-across-compaction.test.ts", testName: `a LIVE compaction's retention and the RESUMED session's rebuilt history are the same conversation` },
       { file: "./compaction/resume-across-compaction.test.ts", testName: `the summary the model wrote is what resume replays -- not a paraphrase and not the raw messages` },
-      { file: "./compaction/resume-across-compaction.test.ts", testName: `the emitted compact_boundary frame carries preserved_messages and post_tokens` },
+      { file: "./compaction/resume-across-compaction.test.ts", testName: `the emitted compact_boundary frame carries preserved_messages, and OMITS post_tokens (A-8)` },
     ],
   },
   {
