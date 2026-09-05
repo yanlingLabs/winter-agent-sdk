@@ -40,7 +40,13 @@ export type { MessageOrigin, ProviderNativeState };
 // R6-7: the sidecar record types the persistence seam carries. `store/provider-state.ts` imports
 // NOTHING from this file (its own types come from provider-runtime), so this is not the circular
 // direction `store/dialect.ts` has to avoid.
-import { PROVIDER_STATE_FILE_SUFFIX, buildContinuationChain, type ProviderStateRecord, type ProviderStateRecordInput } from "./store/provider-state.ts";
+import { PROVIDER_STATE_FILE_SUFFIX, type ProviderStateRecord, type ProviderStateRecordInput } from "./store/provider-state.ts";
+// Review round 1 (M8): the two pure clusters this file used to inline. Both are plain functions of
+// their inputs -- `provider/stream-frames.ts` imports only the `ProviderStreamSink` TYPE from here, and
+// `store/continuation-attach.ts` imports nothing from here at all (its message shape is structural,
+// which is what keeps the `store/` -> `engine.ts` direction closed).
+import { createStreamFrameSink } from "./provider/stream-frames.ts";
+import { attachContinuationChain } from "./store/continuation-attach.ts";
 import type { FrameSource, FrameSink } from "./protocol/channel.ts";
 import { Queue } from "./protocol/channel.ts";
 import { createRpcBridge } from "./rpc/bridge.ts";
@@ -3276,97 +3282,20 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
 
   const messages: ProviderMessage[] = initialMessages ? [...initialMessages] : [];
 
-  // --- Phase 6 Task 3 (R6-7): re-attach the CONTINUATION CHAIN to a resumed history ---------------
+  // Phase 6 Task 3 (R6-7): re-attach the CONTINUATION CHAIN to a resumed history.
   //
-  // A resumed history comes back from `rebuildProviderMessages` as content plus, on every assistant
-  // message, the entry's own uuid -- and nothing else. The provider-state records that say WHICH
-  // provider produced each of those messages, and what opaque continuation state it left behind,
-  // live in the sidecar. This is where the two halves are put back together.
-  //
-  // AN ASSISTANT MESSAGE WITH NO `origin` RECORD DEGRADES TO SUMMARY-LEVEL and the session says so.
-  // That is R6-7's own rule, and the reason it cannot be silent is that the degradation is
-  // observable to the model: it will not get its exact native replay, so a user who sees a worse
-  // continuation than they expected deserves to know why. `system/continuity_warning` is that
-  // channel -- see its declaration in frames.ts for why it is a frame rather than a renderer input.
   // AWAITED, not fire-and-forget: the very first generation of the run reads these annotations, so a
   // detached attach would race the turn it exists to inform -- and lose, silently, on a fast host.
-  if (store?.loadProviderState !== undefined && messages.length > 0) {
-    await (async () => {
-      let records: ProviderStateRecord[];
-      try {
-        records = await store.loadProviderState!();
-      } catch {
-        // An unreadable sidecar is a DEGRADED resume, not a failed one: the conversation is intact,
-        // only its native continuation is not.
-        output.write({
-          type: "data",
-          message: { type: "system", subtype: "continuity_warning", warning: "sidecar_unreadable", detail: "the provider-state sidecar could not be read; this session resumes without native continuation state.", uuid: randomUUID(), session_id: config.sessionId },
-        });
-        return;
-      }
-      const anchors = new Set(messages.flatMap((m) => (m.role === "assistant" && m.uuid !== undefined ? [m.uuid] : [])));
-      if (anchors.size === 0) return;
-      // ZERO RECORDS IS TWO DIFFERENT SITUATIONS, and the dialect record's identity block is what
-      // separates them (review round 1, I1).
-      //
-      // A session that NEVER had provider state -- every session written before this phase, and every
-      // session run before selection is wired -- has nothing to degrade FROM: its resume is
-      // byte-for-byte the resume it always had. Warning on those would fire on essentially every
-      // resumed session in the product and train a reader to ignore the frame, which is what would
-      // make it useless on the day it means something.
-      //
-      // A session whose sidecar was DELETED is the opposite: it HAD provider state, every message is
-      // now degraded to summary-level, and R6-7 is explicit that a degradation carries the loss
-      // warning. The identity block is the "record of expectation" that tells the two apart -- it is
-      // written by `setProviderIdentity` above whenever a session resolves a provider, and its
-      // absence means the concept did not exist for that session.
-      if (records.length === 0) {
-        const hadIdentity = store.loadProviderIdentity !== undefined ? await store.loadProviderIdentity() : undefined;
-        if (hadIdentity === undefined) return;
-        output.write({
-          type: "data",
-          message: {
-            type: "system",
-            subtype: "continuity_warning",
-            warning: "provider_state_deleted",
-            detail: `this session recorded a provider identity but its provider-state sidecar is gone; ${anchors.size} resumed assistant message${anchors.size === 1 ? "" : "s"} ${anchors.size === 1 ? "was" : "were"} degraded to summary-level.`,
-            uuid: randomUUID(),
-            session_id: config.sessionId,
-          },
-        });
-        return;
-      }
-      const chain = buildContinuationChain(records, anchors);
-      let degraded = 0;
-      for (const message of messages) {
-        if (message.role !== "assistant" || message.uuid === undefined) continue;
-        const link = chain.get(message.uuid);
-        if (link?.origin === undefined) {
-          degraded++;
-          continue;
-        }
-        message.origin = link.origin;
-        // The opaque half is re-attached only when it exists. The RENDERER decides whether it may be
-        // replayed (the identity renderer drops it across a domain boundary) -- re-attaching it here
-        // is not a decision to send it.
-        if (link.nativeState !== undefined) message.nativeState = link.nativeState;
-      }
-      if (degraded > 0) {
-        output.write({
-          type: "data",
-          message: {
-            type: "system",
-            subtype: "continuity_warning",
-            warning: "provider_state_missing",
-            // COUNTS AND IDENTITY ONLY. This string is a frame and a log line, and the records it is
-            // about hold opaque provider state (Global Constraints).
-            detail: `${degraded} resumed assistant message${degraded === 1 ? "" : "s"} ${degraded === 1 ? "has" : "have"} no provider-state origin record; ${degraded === 1 ? "it was" : "they were"} degraded to summary-level.`,
-            uuid: randomUUID(),
-            session_id: config.sessionId,
-          },
-        });
-      }
-    })();
+  // The logic itself lives in `store/continuation-attach.ts` (review round 1, M8): it is a pure
+  // function of a message array and a persistence seam, and belongs beside the codec it consumes.
+  if (store !== undefined) {
+    await attachContinuationChain({
+      messages,
+      store,
+      sessionId: config.sessionId,
+      warn: (message) => output.write({ type: "data", message }),
+      newUuid: randomUUID,
+    });
   }
 
   // M6 (fix wave, P3 close-out): wire the advisor's REAL transcript source, now that `messages`
@@ -3844,109 +3773,18 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
    * frames carried it, one per forwarded turn, on that turn's `message_start`), so the flag is
    * per-sink and a new sink is built per generation.
    */
-  const buildStreamSink = (): ProviderStreamSink => {
-    const startedAt = Date.now();
-    let firstEventSent = false;
-    const write = (message: SdkMessage): void => {
-      try {
-        output.write({ type: "data", message });
-      } catch {
-        // A sink must never break a generation: it is an observation channel, and a failed write of
-        // an observation is not a failed turn.
-      }
-    };
-    return {
-      onStreamEvent(event) {
-        // GATED: `stream_event` exists only under `includePartialMessages` (the pin's own
-        // `Options.includePartialMessages`, absent/falsy by default). Everything else on this sink is
-        // ungated -- none of those frames carries a gating option on the pin either.
-        if (config.includePartialMessages !== true) return;
-        // `user_message_uuid` IS ABSENT HERE, and the absence is pin-correct rather than an omission.
-        // Item (a)'s three-way rule stamps it on the turn's first `assistant` message in
-        // complete-message mode and on the first non-`ping` `stream_event` instead when partial
-        // messages are on -- but BOTH arms are conditioned on the turn having a CLIENT-supplied
-        // uuid, and capture (F) observed it on zero frames for exactly that reason ("a single-shot
-        // `query({prompt: string})` has no client-supplied uuid to stamp"). Winter has no
-        // client-supplied-uuid concept at all yet: `turnUserMessageUuid` is Winter's OWN minted
-        // checkpoint id (R5-11), and stamping that here would misrepresent an internal id as the
-        // client's. Recorded as a carry rather than approximated.
-        const ttft = firstEventSent ? {} : { ttft_ms: Date.now() - startedAt };
-        firstEventSent = true;
-        write({
-          type: "stream_event",
-          event,
-          // ALWAYS `null` here, and present rather than omitted: the pin types this `string | null`,
-          // not optional. A CHILD engine emits `null` too -- the correlation is stamped at the
-          // PARENT's forwarding boundary (`transformChildFrame`), which is the one place that knows
-          // the spawning tool_use id, exactly as it already works for the `assistant`/`user` frames.
-          parent_tool_use_id: null,
-          uuid: randomUUID(),
-          session_id: config.sessionId,
-          ...ttft,
-        });
-      },
-      onRetry(info) {
-        write({
-          type: "system",
-          subtype: "api_retry",
-          attempt: info.attempt,
-          max_retries: info.maxRetries,
-          retry_delay_ms: info.retryDelayMs,
-          // ABSENT on the seam becomes NULL on the frame: the pin's `error_status: number | null`
-          // describes exactly the connection-error case that has no HTTP response.
-          error_status: info.errorStatus ?? null,
-          error: info.error,
-          uuid: randomUUID(),
-          session_id: config.sessionId,
-        });
-      },
-      onRateLimit(info) {
-        // R6-B: this arrives ONLY for subscription-shaped quota (the payload's own `kind` says so at
-        // the type level). An HTTP 429 reaches `onRetry` above with `error: "rate_limit"`, which is
-        // the pinned 429 path capture (G) measured.
-        write({ type: "rate_limit_event", rate_limit_info: { status: "allowed", ...info.info } as never, uuid: randomUUID(), session_id: config.sessionId });
-      },
-      onAuthStatus(info) {
-        write({
-          type: "auth_status",
-          isAuthenticating: info.isAuthenticating,
-          output: info.output ?? [],
-          ...(info.error !== undefined ? { error: info.error } : {}),
-          uuid: randomUUID(),
-          session_id: config.sessionId,
-        });
-      },
-      onReasoningSummary(text) {
-        // R6-8: a foreign summary NEVER enters `assistant.message.content`. It rides this Winter-only
-        // frame live and the sidecar durably -- the durable half is written by `recordAssistant`'s
-        // `summary` record, from the turn's own `thinking.summary`.
-        write({
-          type: "system",
-          subtype: "reasoning_summary",
-          text,
-          provider: currentProviderIdentity?.providerId ?? "",
-          model: currentProviderIdentity?.modelKey ?? currentModel,
-          uuid: randomUUID(),
-          session_id: config.sessionId,
-        });
-      },
-    };
-  };
+  const buildStreamSink = (): ProviderStreamSink =>
+    createStreamFrameSink({
+      sessionId: config.sessionId,
+      includePartialMessages: config.includePartialMessages === true,
+      write: (message) => output.write({ type: "data", message }),
+      // GETTERS, not captured values: a `set_model` between generations changes what
+      // `reasoning_summary` should name, and a sink built once per generation would otherwise report
+      // the model the session started on.
+      identity: () => currentProviderIdentity,
+      model: () => currentModel ?? "",
+    });
 
-  /**
-   * R6-C / R6-I: apply a pending `set_model`.
-   *
-   * THE QUIESCENT BOUNDARY IS THE DEFAULT, and immediacy is the exception. A model swapped
-   * mid-generation would split one logical turn across two models, which is exactly the cross-model
-   * history the continuity package exists to avoid -- so a `set_model` arriving mid-turn is PARKED
-   * and applied before the next envelope's first generation. An INTERRUPT ends the turn, so the
-   * boundary has arrived early and the parked switch applies immediately.
-   *
-   * The RESOLUTION itself is Lane C/T10's (this is the hook point, not the coordinator): the pending
-   * value is carried verbatim, the three-way reset spelling is honoured here because getting it wrong
-   * silently treats the literal string `'default'` as a model id, and the swap is announced on the
-   * Winter-only frame plus the dialect record's `providerHistory`.
-   */
   /**
    * R6-3: the continuation annotations an assistant message carries in the IN-MEMORY history.
    *
