@@ -696,8 +696,14 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
         // compaction would poison that memo, so a child gets its own via the factory below.
         ...(ownCompactionController !== undefined ? { compactionController: ownCompactionController } : {}),
         env,
-      }).catch(() => {
-        settle("failed", "child engine process exited unexpectedly");
+      }).catch((err: unknown) => {
+        // R-1: CARRY THE REASON. This used to discard `err` and settle with a fixed sentence, so a
+        // child that died for a stated, actionable reason -- a managed policy refusing its
+        // permission mode, say -- reached the parent's model as "exited unexpectedly", which is both
+        // untrue and unactionable. The generic text is now the FALLBACK for a rejection with no
+        // message, never a replacement for one that has it.
+        const reason = err instanceof Error && err.message.length > 0 ? err.message : String(err ?? "");
+        settle("failed", reason.length > 0 ? `child engine exited: ${reason}` : "child engine process exited unexpectedly");
       });
 
       channel.host.output.write({ type: "user", text: liveText });

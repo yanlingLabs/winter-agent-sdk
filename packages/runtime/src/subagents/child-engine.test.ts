@@ -2892,3 +2892,115 @@ describe("child-engine.ts: R-2 -- a child of a `persistSession: false` session s
     }
   });
 });
+
+
+// ==================================================================================================
+// Phase 5 residual round 2, R-1: a managed-tier bypass veto DEGRADES a child, it does not crash it.
+// ==================================================================================================
+describe("child-engine.ts: R-1 -- the managed bypass veto binds in a child by degrading, not by crashing", () => {
+  /** A definition asking for bypass, written where `loadAgentDefinitions` looks for the user tier. */
+  function writeBypassDefinition(home: string, name: string): void {
+    const dir = join(home, "agents");
+    mkdirSync(dir, { recursive: true });
+    // `permissionMode`, camelCase -- `definitions.ts:128` reads that attribute name. A hyphenated
+    // key parses fine and is simply ignored, which is how the first draft ended up with an unvetoed
+    // child that still prompted: the definition never asked for bypass at all.
+    writeFileSync(join(dir, `${name}.md`), `---\nname: ${name}\ndescription: asks for bypass\npermissionMode: bypassPermissions\n---\n\nYou are a bypass-seeking agent.`, "utf8");
+  }
+
+  async function drive(opts: { home: string; cwd: string; managedVeto: boolean; optionsVeto: boolean }): Promise<{ agentResult: string; prompts: number }> {
+    writeBypassDefinition(opts.home, "bypasser");
+    const config = {
+      sessionId: `r1-${randomUUID()}`,
+      cwd: opts.cwd,
+      model: "sonnet",
+      persistSession: false,
+      allowDangerouslySkipPermissions: true,
+      // `Agent` ONLY. `permissions.allow` is mirrored onto the child, so listing the child's own tool
+      // here would auto-approve it in EVERY mode and the prompt count -- the one signal that
+      // separates "ran under bypass" from "ran under the parent's mode" -- would be 0 either way.
+      // Found by running it: all three arms reported 0 prompts and the fixture measured nothing.
+      permissions: { allow: ["Agent"], ...(opts.optionsVeto ? { disableBypassPermissionsMode: true } : {}) },
+      ...(opts.managedVeto ? { managedSettings: { permissions: { disableBypassPermissionsMode: true } } } : {}),
+    };
+    const provider: Provider = {
+      async generate({ messages }) {
+        const insideChild = messages.some((m) => m.role === "user" && JSON.stringify(m.content).includes("child-go"));
+        if (!insideChild) {
+          if (messages.some((m) => m.role === "tool")) return { kind: "text", text: "parent done" };
+          return { kind: "tool_use", calls: [{ id: "call-1", name: "Agent", input: { description: "d", prompt: "child-go", subagent_type: "bypasser" } }] };
+        }
+        if (messages.some((m) => m.role === "tool")) return { kind: "text", text: "child done" };
+        return { kind: "tool_use", calls: [{ id: "c-1", name: "ReadNotifications", input: {} }] };
+      },
+    };
+    const proc = inMemoryProcess(["--config-json", JSON.stringify(config)], provider, undefined, { WINTER_HOME: opts.home });
+    proc.stdin.write(encodeFrame({ type: "user", text: "go" } as WinterFrame));
+    proc.stdin.write(encodeFrame({ type: "control_request", requestId: "e", subtype: "end_input", payload: undefined } as WinterFrame));
+    let carry = "";
+    let agentResult = "";
+    let prompts = 0;
+    for await (const chunk of proc.stdout) {
+      const split = splitFrames(chunk, carry);
+      carry = split.carry;
+      for (const f of split.frames as WinterFrame[]) {
+        if (f.type === "control_request" && (f as { subtype?: string }).subtype === "permission") {
+          prompts++;
+          proc.stdin.write(encodeFrame({ type: "control_response", requestId: (f as { requestId: string }).requestId, ok: true, payload: { behavior: "allow" } } as unknown as WinterFrame));
+          continue;
+        }
+        if (f.type !== "data") continue;
+        const msg = (f as { message: SdkMessage }).message as { type?: string; message?: { content?: Array<{ tool_use_id?: string; content?: string }> } };
+        if (msg.type !== "user") continue;
+        for (const block of msg.message?.content ?? []) {
+          if (block.tool_use_id === "call-1" && typeof block.content === "string") agentResult = block.content;
+        }
+      }
+    }
+    await proc.exited;
+    return { agentResult, prompts };
+  }
+
+  test("under a MANAGED veto the child degrades to the parent's mode and RUNS -- it does not crash", async () => {
+    const home = mkdtempSync(join(tmpdir(), "winter-r1-home-"));
+    const cwd = mkdtempSync(join(tmpdir(), "winter-r1-cwd-"));
+    try {
+      const out = await drive({ home, cwd, managedVeto: true, optionsVeto: false });
+      // The assertion is that the child SUCCEEDED, not merely that a prompt happened: "1 prompt"
+      // alone is also consistent with a child that got bypass and then hit a floor.
+      expect(out.agentResult, "a vetoed child must not die -- it must run in the parent's mode").not.toContain("exited");
+      expect(out.agentResult).toContain("child done");
+      expect(out.prompts, "degraded to the parent's mode, so its tool call is gated").toBe(1);
+    } finally {
+      for (const d of [home, cwd]) rmSync(d, { recursive: true, force: true });
+    }
+  });
+
+  test("the OPTIONS-level veto behaves identically -- the two tiers must not differ", async () => {
+    // The control that gives the first test its meaning: this arm already degraded correctly before
+    // R-1, so a divergence between the two is exactly what the finding was.
+    const home = mkdtempSync(join(tmpdir(), "winter-r1-opt-home-"));
+    const cwd = mkdtempSync(join(tmpdir(), "winter-r1-opt-cwd-"));
+    try {
+      const out = await drive({ home, cwd, managedVeto: false, optionsVeto: true });
+      expect(out.agentResult).toContain("child done");
+      expect(out.prompts).toBe(1);
+    } finally {
+      for (const d of [home, cwd]) rmSync(d, { recursive: true, force: true });
+    }
+  });
+
+  test("with NO veto the same definition still gets its bypass -- the discriminating half", async () => {
+    const home = mkdtempSync(join(tmpdir(), "winter-r1-none-home-"));
+    const cwd = mkdtempSync(join(tmpdir(), "winter-r1-none-cwd-"));
+    try {
+      const out = await drive({ home, cwd, managedVeto: false, optionsVeto: false });
+      expect(out.agentResult).toContain("child done");
+      // Bypass short-circuits the prompt: without this arm the two tests above would pass against a
+      // build that simply never grants bypass to anyone.
+      expect(out.prompts, "an unvetoed bypass child is not prompted").toBe(0);
+    } finally {
+      for (const d of [home, cwd]) rmSync(d, { recursive: true, force: true });
+    }
+  });
+});

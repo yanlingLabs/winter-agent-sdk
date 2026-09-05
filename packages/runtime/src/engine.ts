@@ -1539,7 +1539,22 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
     const policyResult = computeChildPolicy(
       parentState,
       { ...(validMode !== undefined ? { permissionMode: validMode } : {}) },
-      { disableBypassPermissionsMode: config.permissions?.disableBypassPermissionsMode === true },
+      {
+        // R-1 (residual round 2): the veto binds from ANY TIER here too. Reading `config.permissions`
+        // alone made the managed-tier veto fail-closed by CRASHING rather than by degrading: a child
+        // whose definition asks for `permissionMode: "bypassPermissions"` was GRANTED bypass at
+        // inheritance, and then its own `PolicyStateStore` -- which since NEW-4 carries the seed's
+        // veto -- threw `bypassPermissions is disabled by managed configuration`. The safety
+        // direction was right and the experience was not: every spawn of such a definition failed
+        // opaquely under a managed policy, while the identical Options-level veto degraded the same
+        // child to the parent's mode and ran.
+        //
+        // THE FIFTH HAND-MIRRORED COPY of this predicate, and they move together or a tier's veto
+        // binds in some places and not others: `engine.ts:987` (the parent's own PolicyStateStore),
+        // `register-default-factory.ts` (the child's), `production-wiring.ts`'s seed builder (which
+        // computes it from the tiers), and this one.
+        disableBypassPermissionsMode: config.permissions?.disableBypassPermissionsMode === true || settingsRules?.disableBypassPermissionsMode === true,
+      },
     );
     return {
       policy: policyResult,
