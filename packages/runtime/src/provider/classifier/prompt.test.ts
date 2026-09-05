@@ -152,6 +152,16 @@ describe("the accumulated context is bounded (P2 carry)", () => {
     expect(built.text).toContain("1 entries were omitted");
   });
 
+  test("a too-large NEWER entry STOPS the walk -- it never lets an OLDER entry in past it", () => {
+    // The inversion this guards (review round 1, minor 3): skipping the oversized newer entry and
+    // carrying on would show the reviewer the stale entry while withholding the one nearest the
+    // action it is judging -- the exact opposite of "newest kept, oldest dropped".
+    const built = buildClassifierPrompt(envelope(), context({ classifierContext: [entry("older-and-small", 50), entry("newer-and-huge", 5000)] }), { maxContextChars: 600 });
+    expect(built.contextIncluded).toBe(0);
+    expect(built.contextDropped).toBe(2);
+    expect(built.text).not.toContain("older-and-small");
+  });
+
   test("an unserializable entry is dropped and counted rather than crashing the review", () => {
     const cyclic: { self?: unknown } = {};
     cyclic.self = cyclic;
@@ -182,6 +192,31 @@ describe("the optional context fields are rendered when present", () => {
       expect(built.text).toContain(`BEGIN-WINTER-DATA ${label} ${built.fence}`);
     }
     expect(built.text).toContain("do not push until I review");
+  });
+
+  test("dropped older user messages are COUNTED in the introducing sentence, never dropped silently", () => {
+    // Silently losing older user messages is the unsafe direction: a conversational boundary
+    // ("don't push until I review", WS-07 10.4) that fell off the front would leave the reviewer
+    // confidently judging an action the user had already fenced off (review round 1, minor 5).
+    const many = Array.from({ length: 26 }, (_, i) => `message ${i}`);
+    const built = buildClassifierPrompt(envelope(), context({ recentUserMessages: many }));
+    expect(built.text).toContain("6 older messages were not included");
+    expect(built.text).toContain("message 25");
+    expect(built.text).not.toContain("message 5\"");
+  });
+
+  test("no omission sentence appears when nothing was omitted", () => {
+    const built = buildClassifierPrompt(envelope(), context({ recentUserMessages: ["only one"] }));
+    expect(built.text).not.toContain("were not included");
+    expect(built.text).toContain("only one");
+  });
+
+  test("remotes beyond the cap are counted IN the payload, not appended as a fake remote", () => {
+    const remotes = Array.from({ length: 40 }, (_, i) => `remote-${i}`);
+    const built = buildClassifierPrompt(envelope(), context({ repository: { remotes } }));
+    expect(built.text).toContain('"omitted": 8');
+    expect(built.text).toContain("remote-31");
+    expect(built.text).not.toContain("remote-32");
   });
 
   test("absent optional fields produce no empty blocks", () => {

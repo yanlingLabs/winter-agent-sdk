@@ -10,9 +10,10 @@
 // `WINTER_LIVE_PROVIDER_TESTS=1`.
 import type { ProviderAdapter, ProviderContext } from "@yanlinglabs/winter-provider-runtime";
 import type { WinterModelDescriptor } from "@yanlinglabs/winter-provider-catalog";
-import { LIVE_CASES, LIVE_CASE_IMPLS, type LiveCaseContext, type LiveCaseId, type LiveCaseSpec } from "./cases.ts";
+import { describeThrown } from "../corpus/classifier-safety.ts";
+import { LIVE_CASES, LIVE_CASE_IMPLS, LiveCaseAssertionError, type LiveCaseContext, type LiveCaseId, type LiveCaseSpec } from "./cases.ts";
 
-export { LIVE_CASES };
+export { LIVE_CASES, LiveCaseAssertionError };
 export type { LiveCaseContext, LiveCaseId, LiveCaseSpec };
 
 export interface LiveCaseOutcome {
@@ -63,9 +64,17 @@ export async function runLiveCases(opts: RunLiveCasesOptions): Promise<LiveRepor
       const result = await LIVE_CASE_IMPLS[spec.id](caseCtx);
       outcome = { id: spec.id, status: result.status, detail: result.detail, ms: Date.now() - started };
     } catch (err) {
-      // The MESSAGE of a case's own thrown assertion is Winter-authored (see `cases.ts`); an error
-      // that escaped from an adapter is not, so it is rendered by NAME and code rather than by text.
-      const detail = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+      // THE TYPE IS THE PERMISSION TO PRINT (review round 1, I1). A `LiveCaseAssertionError` was
+      // constructed in `cases.ts` out of measurements, so its message is Winter-authored and safe.
+      // Anything else escaped from an ADAPTER, and an adapter failure is a `ProviderRequestError`
+      // whose message embeds a snippet of the provider's own response body — scrubbed of credentials
+      // but still content. Those render as identity only: class name, normalized code, HTTP status,
+      // the provider's structured code.
+      //
+      // The earlier version rendered `${err.name}: ${err.message}` for BOTH, which put that snippet
+      // on an operator's terminal on every adapter throw — and the case impls do not catch, so every
+      // adapter throw arrives here.
+      const detail = err instanceof LiveCaseAssertionError ? err.message : describeThrown(err);
       outcome = { id: spec.id, status: "failed", detail, ms: Date.now() - started };
     }
     outcomes.push(outcome);

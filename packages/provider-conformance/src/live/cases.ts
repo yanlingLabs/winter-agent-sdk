@@ -17,6 +17,27 @@
 import type { DiscoveryContext, ProviderAdapter, ProviderContext, ProviderEvent, TurnRequest } from "@yanlinglabs/winter-provider-runtime";
 import type { WinterModelDescriptor } from "@yanlinglabs/winter-provider-catalog";
 
+/**
+ * A case's OWN assertion failure — the one error whose `.message` the runner prints (review round 1,
+ * I1).
+ *
+ * The distinction is not stylistic. Every message constructed with this class is Winter-authored
+ * text in this file, built from measurements: a stop reason, a byte count, a normalized error code.
+ * Every OTHER error reaching the runner came from an adapter, and an adapter failure is a
+ * `ProviderRequestError` whose message embeds a 200-character snippet of the provider's response
+ * body (`provider-runtime/src/errors.ts`). That snippet is scrubbed of credential-shaped strings, but
+ * it is still response CONTENT, and the constraint on this gate's output is verbatim: identifiers and
+ * byte counts only.
+ *
+ * So the type IS the permission to print. A message that is safe to render is one this file wrote.
+ */
+export class LiveCaseAssertionError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "LiveCaseAssertionError";
+  }
+}
+
 export type LiveCaseId = "discovery" | "text-turn" | "tool-round" | "thinking-summary" | "count-tokens";
 
 export interface LiveCaseSpec {
@@ -156,9 +177,9 @@ export const LIVE_CASE_IMPLS: Record<LiveCaseId, (ctx: LiveCaseContext) => Promi
 
   async "text-turn"(ctx: LiveCaseContext): Promise<LiveCaseResult> {
     const measured = await drain(ctx.adapter.streamTurn(turnRequest(ctx), ctx.ctx));
-    if (measured.errorCode !== undefined) throw new Error(`the stream ended in a normalized "${measured.errorCode}" error`);
-    if (measured.stopReason === undefined) throw new Error("the stream never reported a stop reason");
-    if (measured.textBytes === 0) throw new Error("the turn produced no text at all");
+    if (measured.errorCode !== undefined) throw new LiveCaseAssertionError(`the stream ended in a normalized "${measured.errorCode}" error`);
+    if (measured.stopReason === undefined) throw new LiveCaseAssertionError("the stream never reported a stop reason");
+    if (measured.textBytes === 0) throw new LiveCaseAssertionError("the turn produced no text at all");
     return {
       status: "ok",
       detail: `stopReason=${measured.stopReason}, textBytes=${measured.textBytes}, usage=${measured.usage === undefined ? "(not reported)" : `${measured.usage.inputTokens} in / ${measured.usage.outputTokens} out`}`,
@@ -171,11 +192,14 @@ export const LIVE_CASE_IMPLS: Record<LiveCaseId, (ctx: LiveCaseContext) => Promi
     if (capability.toolCalling !== "native") return { status: "skipped", detail: `the descriptor's tool calling is "${capability.toolCalling}", and Winter disables emulated tool calling for agent modes (WS-13 §8.1)` };
     const request = turnRequest(ctx, { messages: [{ role: "user", content: TOOL_PROBE }], tools: [PROBE_TOOL], toolChoice: { type: "tool", name: PROBE_TOOL.name } });
     const measured = await drain(ctx.adapter.streamTurn(request, ctx.ctx));
-    if (measured.errorCode !== undefined) throw new Error(`the stream ended in a normalized "${measured.errorCode}" error`);
-    if (measured.toolCalls.length === 0) throw new Error(`the model returned no tool call at all (stopReason=${measured.stopReason ?? "none"}) -- a forced tool choice was not honoured`);
+    if (measured.errorCode !== undefined) throw new LiveCaseAssertionError(`the stream ended in a normalized "${measured.errorCode}" error`);
+    if (measured.toolCalls.length === 0) throw new LiveCaseAssertionError(`the model returned no tool call at all (stopReason=${measured.stopReason ?? "none"}) -- a forced tool choice was not honoured`);
     const call = measured.toolCalls[0]!;
-    if (call.name !== PROBE_TOOL.name) throw new Error(`the model called "${call.name}" rather than the single advertised tool`);
-    if (!call.parseable) throw new Error("the tool call's arguments did not reassemble into parseable JSON");
+    // The called name is MODEL-AUTHORED, so it is reported by LENGTH rather than reproduced (review
+    // round 1, I1): this string reaches an operator's terminal, and the constraint is identifiers and
+    // byte counts only. Which tool was advertised is not in question -- exactly one was.
+    if (call.name !== PROBE_TOOL.name) throw new LiveCaseAssertionError(`the model called some other tool, whose name is ${call.name.length} characters, rather than the single advertised one`);
+    if (!call.parseable) throw new LiveCaseAssertionError("the tool call's arguments did not reassemble into parseable JSON");
     return { status: "ok", detail: `calls=${measured.toolCalls.length}, argumentBytes=${call.argumentBytes}, parseable=true, stopReason=${measured.stopReason ?? "none"}` };
   },
 
@@ -186,7 +210,7 @@ export const LIVE_CASE_IMPLS: Record<LiveCaseId, (ctx: LiveCaseContext) => Promi
     if (reasoning.summaryRequest === undefined) return { status: "skipped", detail: "the descriptor records no summary-request mechanism for this model" };
     const request = turnRequest(ctx, { messages: [{ role: "user", content: SUMMARY_PROBE }], thinking: { type: "enabled" }, requestSummary: true });
     const measured = await drain(ctx.adapter.streamTurn(request, ctx.ctx));
-    if (measured.errorCode !== undefined) throw new Error(`the stream ended in a normalized "${measured.errorCode}" error`);
+    if (measured.errorCode !== undefined) throw new LiveCaseAssertionError(`the stream ended in a normalized "${measured.errorCode}" error`);
     if (measured.summaryBytes === 0 && measured.exposedBytes === 0) {
       // Reported as a SKIP rather than a failure: the descriptor says the mechanism exists, and a
       // model electing not to summarise a trivial sum is a legitimate answer. A real absence shows up
@@ -203,7 +227,7 @@ export const LIVE_CASE_IMPLS: Record<LiveCaseId, (ctx: LiveCaseContext) => Promi
     const countTokens = ctx.adapter.countTokens;
     if (countTokens === undefined) return { status: "skipped", detail: "this adapter offers no countTokens (R6-15: post_tokens is then omitted, never estimated)" };
     const count = await countTokens.call(ctx.adapter, turnRequest(ctx), ctx.ctx);
-    if (!Number.isFinite(count) || count <= 0) throw new Error(`countTokens returned ${String(count)} for a non-empty request`);
+    if (!Number.isFinite(count) || count <= 0) throw new LiveCaseAssertionError(`countTokens returned ${String(count)} for a non-empty request`);
     return { status: "ok", detail: `tokens=${count}` };
   },
 };

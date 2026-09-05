@@ -84,6 +84,24 @@ export const CLASSIFIER_NO_VERDICT_REASONS = [
 
 export type ClassifierNoVerdictReason = (typeof CLASSIFIER_NO_VERDICT_REASONS)[number];
 
+/**
+ * The namespace every MODEL-AUTHORED `reasonCode` is stamped with on its way out of the parse.
+ *
+ * Review round 1, I2. The vocabulary above is closed, and the whole point of it being closed is that
+ * a reader of the audit journal can tell WHY a review failed — the engine writes `reasonCode`
+ * straight onto `AutoAuditRecord` (`permissions/auto/engine.ts`), which is a frozen file this lane
+ * cannot change. But `reasonCode` is also a field the MODEL fills in, constrained only by
+ * `{ type: "string", maxLength: 64 }`. A model answering `{ verdict: "no_verdict", reasonCode:
+ * "timeout" }` would therefore be byte-identical, in the audit, to a genuine transport timeout —
+ * a reviewer able to forge the transcript of its own supervision.
+ *
+ * Namespacing on the way out closes that at the one seam both paths cross: Winter's own codes stay
+ * bare (they are what `noVerdict()` produces), and anything the model said is unambiguously the
+ * model's. A fixture asserts the closed vocabulary contains no `model:` entry, so the two spaces
+ * cannot collide by accident later either.
+ */
+export const MODEL_REASON_CODE_PREFIX = "model:";
+
 /** The fail-closed answer, built in ONE place so every arm of the collapse produces the identical shape. */
 export function noVerdict(reasonCode: ClassifierNoVerdictReason): ClassifierRawResult {
   return { verdict: "no_verdict", reasonCode };
@@ -109,7 +127,11 @@ export function classifierVerdictToolSpec(): ProviderToolSpec {
       "`deny` when it is not, and `no_verdict` when the data given is insufficient to decide. " +
       "`category` names the rule class involved, `severity` how serious a wrong allow would be, " +
       "`reasonCode` a short stable token, and `auditReason` one sentence for the private audit log.",
-    inputSchema: { ...CLASSIFIER_VERDICT_SCHEMA },
+    // `structuredClone`, not a spread (review round 1, minor 4). A spread copies the TOP level and
+    // shares `properties` by reference, so an adapter that decorated `properties.verdict` would be
+    // editing the module constant every later review is built from — a shared-mutable-state bug that
+    // would surface as one session's schema change silently applying to every subsequent one.
+    inputSchema: structuredClone(CLASSIFIER_VERDICT_SCHEMA),
   };
 }
 
@@ -130,6 +152,11 @@ const validateVerdict: ValidateFunction = new Ajv({ strict: false }).compile(CLA
  * sent (the schema's `additionalProperties: false` makes that unreachable today, but a future schema
  * relaxation would silently widen what reaches the audit record), and `exactOptionalPropertyTypes`
  * means an absent field must be an absent KEY rather than an `undefined` value.
+ *
+ * `reasonCode` is NAMESPACED here, and this is the one seam where it can be: see
+ * `MODEL_REASON_CODE_PREFIX`. Everything else the model wrote (`category`, `severity`,
+ * `auditReason`) is already unambiguously the model's — only `reasonCode` shares a field with
+ * Winter's own closed vocabulary.
  */
 export function parseClassifierVerdict(input: unknown): { ok: true; result: ClassifierRawResult } | { ok: false; reasonCode: ClassifierNoVerdictReason } {
   if (!validateVerdict(input)) return { ok: false, reasonCode: "schema_invalid" };
@@ -140,7 +167,7 @@ export function parseClassifierVerdict(input: unknown): { ok: true; result: Clas
       verdict: value.verdict,
       ...(value.category !== undefined ? { category: value.category } : {}),
       ...(value.severity !== undefined ? { severity: value.severity } : {}),
-      ...(value.reasonCode !== undefined ? { reasonCode: value.reasonCode } : {}),
+      ...(value.reasonCode !== undefined ? { reasonCode: `${MODEL_REASON_CODE_PREFIX}${value.reasonCode}` } : {}),
       ...(value.auditReason !== undefined ? { auditReason: value.auditReason } : {}),
     },
   };

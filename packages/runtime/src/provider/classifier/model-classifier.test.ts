@@ -10,7 +10,7 @@
 // classifier at all.
 import { test, expect, describe } from "bun:test";
 import { createModelClassifier, selectClassifierRoute, DEFAULT_CLASSIFIER_TIMEOUT_MS } from "./model-classifier.ts";
-import { CLASSIFIER_FIELD_CAPS, CLASSIFIER_TOOL_NAME, CLASSIFIER_NO_VERDICT_REASONS, parseClassifierVerdict, classifierVerdictToolSpec } from "./verdict-schema.ts";
+import { CLASSIFIER_FIELD_CAPS, CLASSIFIER_TOOL_NAME, CLASSIFIER_NO_VERDICT_REASONS, MODEL_REASON_CODE_PREFIX, parseClassifierVerdict, classifierVerdictToolSpec } from "./verdict-schema.ts";
 import { CLASSIFIER_SYSTEM_PROMPT } from "./prompt.ts";
 import type { Provider, ProviderRequest, ProviderTurn } from "../../engine.ts";
 import type { ActionEnvelope } from "../../permissions/auto/envelope.ts";
@@ -96,7 +96,10 @@ describe("a well-formed verdict round-trips", () => {
     test(`\`${verdict}\` reaches the caller unchanged`, async () => {
       const provider = scriptedProvider(verdictTurn({ verdict, category: "destructive-history", severity: "high", reasonCode: "force_push", auditReason: "rewrites published history" }));
       const result = await createModelClassifier({ provider, model: "p/m" }).classify(ENVELOPE, CONTEXT);
-      expect(result).toEqual({ verdict, category: "destructive-history", severity: "high", reasonCode: "force_push", auditReason: "rewrites published history" });
+      // `reasonCode` is NAMESPACED on the way out (review round 1, I2) -- every other field is
+      // already unambiguously the model's, but this one shares a field with Winter's own closed
+      // vocabulary.
+      expect(result).toEqual({ verdict, category: "destructive-history", severity: "high", reasonCode: `${MODEL_REASON_CODE_PREFIX}force_push`, auditReason: "rewrites published history" });
     });
   }
 
@@ -209,7 +212,9 @@ describe("every failure collapses to no_verdict with its own reason code (WS-07 
 
 describe("the verdict schema itself", () => {
   test("accepts the full five-field shape and rejects each malformation", () => {
-    expect(parseClassifierVerdict({ verdict: "deny", category: "c", severity: "s", reasonCode: "r", auditReason: "a" }).ok).toBe(true);
+    const full = parseClassifierVerdict({ verdict: "deny", category: "c", severity: "s", reasonCode: "r", auditReason: "a" });
+    expect(full.ok).toBe(true);
+    if (full.ok) expect(full.result).toEqual({ verdict: "deny", category: "c", severity: "s", reasonCode: `${MODEL_REASON_CODE_PREFIX}r`, auditReason: "a" });
     expect(parseClassifierVerdict({ verdict: "deny", category: "x".repeat(CLASSIFIER_FIELD_CAPS.category + 1) }).ok).toBe(false);
     expect(parseClassifierVerdict({ verdict: "deny", severity: "x".repeat(CLASSIFIER_FIELD_CAPS.severity + 1) }).ok).toBe(false);
     expect(parseClassifierVerdict({ verdict: "deny", reasonCode: "x".repeat(CLASSIFIER_FIELD_CAPS.reasonCode + 1) }).ok).toBe(false);
@@ -217,12 +222,44 @@ describe("the verdict schema itself", () => {
     expect(parseClassifierVerdict([]).ok).toBe(false);
   });
 
-  test("the tool spec is a FRESH object per call, so a mutating adapter cannot poison the next review", () => {
+  test("the tool spec is a DEEP copy per call, so a mutating adapter cannot poison the next review", () => {
     const a = classifierVerdictToolSpec();
     const b = classifierVerdictToolSpec();
     expect(a.inputSchema).not.toBe(b.inputSchema);
+    // A shallow spread would pass the top-level half of this and fail the nested half: `properties`
+    // would still be the module constant, shared by every review the process ever performs (review
+    // round 1, minor 4).
     (a.inputSchema as Record<string, unknown>)["additionalProperties"] = true;
+    const aProps = a.inputSchema["properties"] as Record<string, { enum?: string[] }>;
+    expect(aProps).not.toBe(b.inputSchema["properties"]);
+    aProps["verdict"]!.enum = ["allow"];
     expect(b.inputSchema["additionalProperties"]).toBe(false);
+    expect((b.inputSchema["properties"] as Record<string, { enum?: string[] }>)["verdict"]!.enum).toEqual(["allow", "deny", "no_verdict"]);
+    // ...and a third call still sees the pristine module constant.
+    expect((classifierVerdictToolSpec().inputSchema["properties"] as Record<string, { enum?: string[] }>)["verdict"]!.enum).toEqual(["allow", "deny", "no_verdict"]);
+  });
+
+  test("a MODEL-supplied reasonCode cannot forge Winter's own closed vocabulary (I2)", async () => {
+    // The engine writes `reasonCode` straight onto the audit record, so a model answering
+    // `no_verdict` with reasonCode "timeout" would be byte-identical, in the audit, to a genuine
+    // transport timeout -- a reviewer forging the transcript of its own supervision.
+    for (const forged of CLASSIFIER_NO_VERDICT_REASONS) {
+      const provider = scriptedProvider(verdictTurn({ verdict: "no_verdict", reasonCode: forged }));
+      const result = await createModelClassifier({ provider, model: "p/m" }).classify(ENVELOPE, CONTEXT);
+      expect(result.reasonCode).toBe(`${MODEL_REASON_CODE_PREFIX}${forged}`);
+      expect(CLASSIFIER_NO_VERDICT_REASONS).not.toContain(result.reasonCode as never);
+    }
+  });
+
+  test("a GENUINE Winter reason code stays bare, so the two spaces are distinguishable", async () => {
+    const provider: Provider = { generate: () => new Promise<ProviderTurn>(() => {}) };
+    const result = await createModelClassifier({ provider, model: "p/m", timeoutMs: 20 }).classify(ENVELOPE, CONTEXT);
+    expect(result.reasonCode).toBe("timeout");
+    expect(result.reasonCode?.startsWith(MODEL_REASON_CODE_PREFIX)).toBe(false);
+  });
+
+  test("the closed vocabulary contains no namespaced entry, so the two spaces cannot collide", () => {
+    for (const code of CLASSIFIER_NO_VERDICT_REASONS) expect(code.startsWith(MODEL_REASON_CODE_PREFIX)).toBe(false);
   });
 });
 

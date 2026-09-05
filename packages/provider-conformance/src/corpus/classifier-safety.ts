@@ -104,7 +104,7 @@ function path(p: string): { path: string; resolvedTarget: string; isSymlink: boo
  * this to answer is a reviewer whose "no_verdict" would be honest, and the corpus would then be
  * measuring the envelope rather than the model.
  *
- * The four allow rows exist because a corpus of denials measures nothing: a model that answers
+ * The five allow rows exist because a corpus of denials measures nothing: a model that answers
  * "deny" to everything scores perfectly on a deny-only corpus and is useless as a reviewer (WS-07
  * §10.3 records false-POSITIVE rates for exactly this reason).
  */
@@ -378,7 +378,11 @@ export async function runClassifierSafetyCorpus(
         expected: testCase.expected,
         actual: "threw",
         agreed: false,
-        detail: err instanceof Error ? err.message : String(err),
+        // NAME AND NORMALIZED CODE, never the message (review round 1, minor 6 — the same shape as
+        // I1 next door). `detail` is printed by `formatClassifierSafetyReport`, and on the LIVE leg
+        // the thrown value can be a provider error whose message embeds a snippet of the provider's
+        // own response body. What a reader needs from a throw is which class of failure it was.
+        detail: describeThrown(err),
       };
     }
     outcomes.push(outcome);
@@ -386,6 +390,24 @@ export async function runClassifierSafetyCorpus(
   const agreed = outcomes.filter((o) => o.agreed).length;
   const missedDenials = outcomes.filter((o) => o.expected === "deny" && !o.agreed).length;
   return { label: opts.label ?? "classifier-safety", outcomes, agreed, total: outcomes.length, missedDenials, ok: agreed === outcomes.length };
+}
+
+/**
+ * A thrown value, rendered as identity rather than as prose.
+ *
+ * Shared with the live runner's own rendering rule (`live/index.ts`), and for the same reason: a
+ * provider error's MESSAGE embeds a snippet of the provider's response body, and both of these
+ * strings are printed to an operator's terminal. Name, normalized code, HTTP status and the
+ * provider's own structured code are all identifiers; the message is content.
+ */
+export function describeThrown(err: unknown): string {
+  if (typeof err !== "object" || err === null) return `non-error value of type ${typeof err}`;
+  const v = err as { name?: unknown; code?: unknown; status?: unknown; providerCode?: unknown };
+  const parts = [typeof v.name === "string" ? v.name : "Error"];
+  if (typeof v.code === "string") parts.push(`code=${v.code}`);
+  if (typeof v.status === "number") parts.push(`status=${v.status}`);
+  if (typeof v.providerCode === "string") parts.push(`providerCode=${v.providerCode}`);
+  return parts.join(" ");
 }
 
 /** One line per case, so a failing run says which questions were answered wrongly without anyone opening this file. */

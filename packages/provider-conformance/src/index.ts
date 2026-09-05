@@ -49,7 +49,7 @@ export type { CorpusCaseContext, CorpusCaseId, CorpusCaseImpl, CorpusCaseOutcome
 // runtime-side fixture, against a scripted `Provider` double) and the live run
 // (`scripts/verify-provider-live.ts`, opt-in) must ask the identical questions, or "the corpus
 // passed" means two different things depending on who said it.
-export { CLASSIFIER_SAFETY_CASES, CLASSIFIER_SAFETY_CATEGORIES, formatClassifierSafetyReport, runClassifierSafetyCorpus } from "./corpus/classifier-safety.ts";
+export { CLASSIFIER_SAFETY_CASES, CLASSIFIER_SAFETY_CATEGORIES, describeThrown, formatClassifierSafetyReport, runClassifierSafetyCorpus } from "./corpus/classifier-safety.ts";
 export type {
   ClassifierSafetyAnswer,
   ClassifierSafetyCase,
@@ -59,5 +59,5 @@ export type {
   ClassifierSafetyReport,
   SafetyEnvelope,
 } from "./corpus/classifier-safety.ts";
-export { LIVE_CASES, formatLiveReport, runLiveCases } from "./live/index.ts";
+export { LIVE_CASES, LiveCaseAssertionError, formatLiveReport, runLiveCases } from "./live/index.ts";
 export type { LiveCaseContext, LiveCaseId, LiveCaseOutcome, LiveCaseSpec, LiveReport, RunLiveCasesOptions } from "./live/index.ts";

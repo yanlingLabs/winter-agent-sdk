@@ -10,9 +10,13 @@
 // and a developer who exported `WINTER_LIVE_OPENAI_API_KEY` an hour ago would otherwise have this
 // very test spend their money.
 import { test, expect, describe } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadCatalog } from "@yanlinglabs/winter-provider-catalog";
-import { collectAdapters, liveEnvPrefix, OPT_IN_VAR, planLiveRun, SKIPPED_LINE } from "./verify-provider-live.ts";
+import { normalizeHttpError } from "@yanlinglabs/winter-provider-runtime";
+import { errorResponse, startFake } from "winter-provider-conformance";
+import { ADAPTERS_MODULE_VAR, collectAdapters, liveEnvPrefix, OPT_IN_VAR, planLiveRun, SKIPPED_LINE } from "./verify-provider-live.ts";
 
 const CATALOG = loadCatalog();
 
@@ -119,21 +123,23 @@ describe("collectAdapters duck-types whatever a lane's barrel exports", () => {
   });
 });
 
-describe("the script itself, spawned", () => {
-  async function run(extra: Record<string, string>): Promise<{ code: number; stdout: string; stderr: string }> {
-    const proc = Bun.spawn([process.execPath, "run", join(import.meta.dir, "verify-provider-live.ts")], {
-      cwd: join(import.meta.dir, ".."),
-      env: strippedEnv(extra),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    try {
-      const [stdout, stderr, code] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
-      return { code, stdout, stderr };
-    } finally {
-      proc.kill();
-    }
+/** Spawns the real script with a stripped environment plus `extra`, and collects everything it wrote. */
+async function run(extra: Record<string, string>): Promise<{ code: number; stdout: string; stderr: string }> {
+  const proc = Bun.spawn([process.execPath, "run", join(import.meta.dir, "verify-provider-live.ts")], {
+    cwd: join(import.meta.dir, ".."),
+    env: strippedEnv(extra),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  try {
+    const [stdout, stderr, code] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
+    return { code, stdout, stderr };
+  } finally {
+    proc.kill();
   }
+}
+
+describe("the script itself, spawned", () => {
 
   test("with no opt-in it prints ONE line and exits 0", async () => {
     const result = await run({});
@@ -153,4 +159,104 @@ describe("the script itself, spawned", () => {
     expect(result.code).toBe(0);
     expect(result.stdout.trim()).toBe(SKIPPED_LINE);
   }, 30_000);
+});
+
+// ---------------------------------------------------------------------------------------------
+// Review round 1, I1: a provider's response body must never reach the operator's terminal.
+//
+// The hazard is not hypothetical and not this file's invention: `normalizeHttpError`
+// (provider-runtime/src/errors.ts) puts a 200-character snippet of the provider's error BODY into
+// `ProviderError.message`, and `ProviderRequestError` carries that message as a real `Error`. The
+// first assertion below pins that premise against the real normalizer rather than assuming it; the
+// spawned run then proves the gate never prints it.
+// ---------------------------------------------------------------------------------------------
+describe("a provider's response body never reaches stdout or stderr", () => {
+  const MARKER = "MARKER-provider-body-must-not-be-printed-9f3a";
+
+  test("PREMISE: the real normalizer does put the response body into the error message", () => {
+    const err = normalizeHttpError(500, new Headers(), JSON.stringify({ error: { message: MARKER, code: "internal_error" } }));
+    // If this ever stops being true the fixture below would pass vacuously, so it is asserted rather
+    // than assumed.
+    expect(err.message).toContain(MARKER);
+    expect(err.providerCode).toBe("internal_error");
+  });
+
+  test("a live run whose adapter fails prints identity only -- never the body", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "winter-live-render-"));
+    const fake = await startFake({
+      routes: [
+        {
+          path: "/*",
+          handler: () => errorResponse(500, { error: { message: MARKER, code: "internal_error" } }),
+        },
+      ],
+    });
+    try {
+      // A self-contained adapter module: it imports NOTHING, because a file in the OS temp directory
+      // cannot resolve this workspace's packages. It reproduces the exact observable shape of a
+      // `ProviderRequestError` built by `normalizeHttpError` -- the shape the assertion above pins --
+      // and it reaches the fake with a real fetch, so the marker in the thrown message really did
+      // come off the wire.
+      writeFileSync(
+        join(dir, "adapters.ts"),
+        `class ProviderRequestError extends Error {
+  code; status; providerCode; retryable;
+  constructor(fields) {
+    super(fields.message);
+    this.name = "ProviderRequestError";
+    this.code = fields.code;
+    this.status = fields.status;
+    this.providerCode = fields.providerCode;
+    this.retryable = fields.retryable;
+  }
+}
+async function failFromWire(ctx) {
+  const res = await fetch(ctx.connection.baseUrl);
+  const body = await res.text();
+  throw new ProviderRequestError({ code: "server", message: "HTTP " + res.status + " \\u2014 " + body.slice(0, 200), status: res.status, providerCode: "internal_error", retryable: true });
+}
+export const adapters = [
+  {
+    id: "winter.openai-responses",
+    version: "0.0.0-fixture",
+    family: "openai",
+    protocol: "openai-responses",
+    async validateCredential() { return { ok: true }; },
+    async listModels(ctx) { return failFromWire(ctx); },
+    streamTurn(_req, ctx) { return (async function* () { yield* []; await failFromWire(ctx); })(); },
+    async countTokens(_req, ctx) { return failFromWire(ctx); },
+    mapEffort() { return { ok: true, value: undefined }; },
+    capabilities() { return { toolCalling: "native", readableState: "none" }; },
+  },
+];
+`,
+        "utf8",
+      );
+
+      const result = await run({
+        [OPT_IN_VAR]: "1",
+        WINTER_LIVE_OPENAI_API_KEY: "test-key-live-render",
+        WINTER_LIVE_OPENAI_BASE_URL: fake.url,
+        [ADAPTERS_MODULE_VAR]: join(dir, "adapters.ts"),
+      });
+
+      const everything = `${result.stdout}\n${result.stderr}`;
+      // The whole point.
+      expect(everything).not.toContain(MARKER);
+      // ...and it is not passing because nothing ran: the adapter WAS reached, the cases DID fail,
+      // and what got printed was identity.
+      expect(fake.requests.length).toBeGreaterThan(0);
+      expect(everything).toContain("winter.openai-responses@0.0.0-fixture");
+      expect(everything).toContain("ProviderRequestError");
+      expect(everything).toContain("code=server");
+      expect(everything).toContain("status=500");
+      expect(everything).toContain("providerCode=internal_error");
+      expect(result.code).toBe(1);
+      // The classifier leg's own throws collapse to a reason code, never a message.
+      expect(everything).toContain("provider_error");
+    } finally {
+      await fake.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 120_000);
 });

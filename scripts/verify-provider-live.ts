@@ -130,14 +130,34 @@ export function collectAdapters(mod: Record<string, unknown>): ProviderAdapter[]
   return [...found.values()];
 }
 
-async function loadAdapters(): Promise<{ adapters: ProviderAdapter[]; note: string }> {
-  if (!existsSync(ADAPTERS_INDEX)) {
-    return { adapters: [], note: `no adapters merged yet: ${ADAPTERS_INDEX} does not exist, so every provider will report "no adapter registered"` };
+/**
+ * A DEV/TEST override for where adapters come from (`WINTER_LIVE_ADAPTERS_MODULE`).
+ *
+ * Two honest uses, and no third: this gate's own hermetic fixture needs a scripted adapter pointed at
+ * a loopback fake in order to prove what this script does and does not print, and a developer
+ * iterating on an adapter before its lane merges needs to be able to drive it. Both are already
+ * inside the trust boundary — nothing reaches this line without the operator having set
+ * `WINTER_LIVE_PROVIDER_TESTS=1` and named one of their own API keys. It is deliberately NOT a
+ * general plugin mechanism: no shipped code path reads it.
+ */
+export const ADAPTERS_MODULE_VAR = "WINTER_LIVE_ADAPTERS_MODULE";
+
+async function loadAdapters(env: Record<string, string | undefined>): Promise<{ adapters: ProviderAdapter[]; note: string }> {
+  const override = env[ADAPTERS_MODULE_VAR];
+  const source = override !== undefined && override.trim().length > 0 ? override.trim() : ADAPTERS_INDEX;
+  if (!existsSync(source)) {
+    return {
+      adapters: [],
+      note:
+        source === ADAPTERS_INDEX
+          ? `no adapters merged yet: ${ADAPTERS_INDEX} does not exist, so every provider will report "no adapter registered"`
+          : `${ADAPTERS_MODULE_VAR} points at ${source}, which does not exist`,
+    };
   }
-  const specifier = ADAPTERS_INDEX;
+  const specifier = source;
   const mod = (await import(specifier)) as Record<string, unknown>;
   const adapters = collectAdapters(mod);
-  return { adapters, note: `${adapters.length} adapter(s) registered from ${ADAPTERS_INDEX}: ${adapters.map((a) => `${a.id}@${a.version}`).join(", ") || "(none found — the barrel exported no ProviderAdapter-shaped value)"}` };
+  return { adapters, note: `${adapters.length} adapter(s) registered from ${source}: ${adapters.map((a) => `${a.id}@${a.version}`).join(", ") || "(none found — the module exported no ProviderAdapter-shaped value)"}` };
 }
 
 /** One benign envelope the live classifier leg reuses per corpus case. The CASE supplies the real one; this only fills the shared context. */
@@ -231,7 +251,7 @@ export async function main(): Promise<void> {
   let ok = true;
   try {
     const catalog = loadCatalog();
-    const { adapters, note } = await loadAdapters();
+    const { adapters, note } = await loadAdapters(process.env);
     console.log(`verify:provider-live -- catalog ${catalog.catalogVersion}, WINTER_HOME=${home}`);
     console.log(`  ${note}`);
     for (const target of plan.targets) {
