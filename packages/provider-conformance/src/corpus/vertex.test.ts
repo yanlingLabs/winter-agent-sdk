@@ -221,7 +221,7 @@ describe("Vertex Gemini: the shared wire mapping", () => {
       harness.bind(fake.url);
       const ctx = vertexContext(harness, fake.url);
       const turn = await foldProviderStream(adapter.streamTurn({ model: GOOGLE_MODELS.replay, messages: [{ role: "user", content: "go" }] }, ctx));
-      expect(turn.nativeState?.items).toEqual([{ partIndex: 2, callId: (turn as { calls: Array<{ id: string }> }).calls[0]!.id, signature: GOOGLE_SIGNATURE }]);
+      expect(turn.nativeState?.items).toEqual([{ partIndex: 2, kind: "function-call", callId: (turn as { calls: Array<{ id: string }> }).calls[0]!.id, signature: GOOGLE_SIGNATURE }]);
       // Same body shape as the Gemini API transport: only the URL and the credential differ.
       const generate = requestsTo(fake, vertexGeneratePath(GOOGLE_MODELS.replay))[0]!;
       expect(geminiContents(generate)).toEqual([{ role: "user", parts: [{ text: "go" }] }]);

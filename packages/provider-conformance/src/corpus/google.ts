@@ -83,10 +83,16 @@ export const GOOGLE_MODELS = {
   noEfforts: "sc-g-no-efforts",
   /** Reports `thoughtsTokenCount` on an EARLY chunk and only `candidatesTokenCount` on the last one. */
   splitUsage: "sc-g-split-usage",
+  /** A SIGNED `thought: true` part followed by an UNSIGNED text part -- the I4 mis-attachment shape. */
+  signedThought: "sc-g-signed-thought",
+  /** A stream that finishes but sends NO `usageMetadata` — the A/B that makes a completion marker observable. */
+  lateUsage: "sc-g-late-usage",
+  /** The SAME stream on a row with no completion-event evidence, so the marker is the only variable. */
+  lateUsageDefault: "sc-g-late-usage-default",
 } as const;
 
 export function testGoogleCatalog(): WinterCatalog {
-  const reasoningIds = [GOOGLE_MODELS.main, GOOGLE_MODELS.full, GOOGLE_MODELS.multiTool, GOOGLE_MODELS.dropBeforeFinish, GOOGLE_MODELS.usage, GOOGLE_MODELS.replay, GOOGLE_MODELS.refusal, GOOGLE_MODELS.splitUsage];
+  const reasoningIds = [GOOGLE_MODELS.main, GOOGLE_MODELS.full, GOOGLE_MODELS.multiTool, GOOGLE_MODELS.dropBeforeFinish, GOOGLE_MODELS.usage, GOOGLE_MODELS.replay, GOOGLE_MODELS.refusal, GOOGLE_MODELS.splitUsage, GOOGLE_MODELS.signedThought, GOOGLE_MODELS.lateUsageDefault];
   return {
     schemaVersion: 1,
     catalogVersion: "0.0.0-lane-b-fixture",
@@ -113,6 +119,12 @@ export function testGoogleCatalog(): WinterCatalog {
       model({ key: `google/${GOOGLE_MODELS.noVision}`, upstreamId: GOOGLE_MODELS.noVision, inputModalities: evidence(["text"]) }),
       model({ key: `google/${GOOGLE_MODELS.capped}`, upstreamId: GOOGLE_MODELS.capped, maxOutputTokens: evidence(2048), reasoning: googleReasoning(`google/${GOOGLE_MODELS.capped}`) }),
       model({ key: `google/${GOOGLE_MODELS.noEfforts}`, upstreamId: GOOGLE_MODELS.noEfforts, reasoning: { supported: evidence(true), efforts: [], continuation: "none" } }),
+      // Minor 7: this row's own evidence names a DIFFERENT completion event, and the adapter honours it.
+      model({
+        key: `google/${GOOGLE_MODELS.lateUsage}`,
+        upstreamId: GOOGLE_MODELS.lateUsage,
+        reasoning: { ...googleReasoning(`google/${GOOGLE_MODELS.lateUsage}`), completionEvent: evidence("the chunk carrying usageMetadata") },
+      }),
     ],
   };
 }
@@ -234,6 +246,17 @@ export function googleScenarioStream(): NonNullable<Parameters<typeof geminiFake
       ]),
     [GOOGLE_MODELS.replay]: (_rec, attempt) => (attempt === 1 ? geminiStreamResponse(REPLAY_CHUNKS) : geminiStreamResponse([{ parts: [{ text: "done" }] }, { finishReason: "STOP" }])),
     [GOOGLE_MODELS.refusal]: () => geminiStreamResponse([{ parts: [{ text: "" }], finishReason: "SAFETY" }]),
+    [GOOGLE_MODELS.signedThought]: () =>
+      geminiStreamResponse([
+        { parts: [{ text: "private reasoning", thought: true, thoughtSignature: GOOGLE_SIGNATURE }] },
+        { parts: [{ text: "the answer" }] },
+        { finishReason: "STOP" },
+      ]),
+    // The SAME stream serves both rows: it finishes, and it never sends `usageMetadata`. A row whose
+    // evidence names the usage chunk as its completion event therefore never sees one — so the
+    // MARKER is the only variable between the two outcomes.
+    [GOOGLE_MODELS.lateUsage]: () => geminiStreamResponse([{ parts: [{ text: "a", thoughtSignature: GOOGLE_SIGNATURE }] }, { finishReason: "STOP" }]),
+    [GOOGLE_MODELS.lateUsageDefault]: () => geminiStreamResponse([{ parts: [{ text: "a", thoughtSignature: GOOGLE_SIGNATURE }] }, { finishReason: "STOP" }]),
     [GOOGLE_MODELS.splitUsage]: () =>
       geminiStreamResponse([
         { parts: [{ text: "thought about it", thought: true }], usageMetadata: { promptTokenCount: 10, thoughtsTokenCount: 9 } },
@@ -506,7 +529,7 @@ export function googleFamilyCorpusCases(config: GoogleFamilyCorpusConfig): Parti
       const turn = await foldTurn(adapter, { model: MODELS.replay, messages: [user("go")] }, ctxFor(fake));
       assert(turn.kind === "tool_use", "expected the first turn to end in a tool call");
       const callId = turn.calls[0]!.id;
-      eq(turn.nativeState?.items, [{ partIndex: 2, callId, signature: GOOGLE_SIGNATURE }], "the captured continuation item, keyed to the call it arrived on");
+      eq(turn.nativeState?.items, [{ partIndex: 2, kind: "function-call", callId, signature: GOOGLE_SIGNATURE }], "the captured continuation item, keyed to the call it arrived on");
 
       // (b) A stream that never reaches its completing chunk captures NOTHING -- even though the
       //     signature was already on the wire.

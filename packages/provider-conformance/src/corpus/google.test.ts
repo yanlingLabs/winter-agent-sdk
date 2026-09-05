@@ -182,7 +182,7 @@ describe("Google GenerateContent: opaque state never leaks", () => {
     const logged: unknown[] = [];
     await withFake({ routes: googleCorpusRoutes() }, async (fake) => {
       const turn = await foldTurn(adapter, { model: GOOGLE_MODELS.replay, messages: [{ role: "user", content: "go" }] }, googleContext(fake.url, { log: (e) => logged.push(e) }));
-      expect(turn.nativeState?.items).toEqual([{ partIndex: 2, callId: (turn as { calls: Array<{ id: string }> }).calls[0]!.id, signature: GOOGLE_SIGNATURE }]);
+      expect(turn.nativeState?.items).toEqual([{ partIndex: 2, kind: "function-call", callId: (turn as { calls: Array<{ id: string }> }).calls[0]!.id, signature: GOOGLE_SIGNATURE }]);
       // Never in a log line...
       expect(JSON.stringify(logged)).not.toContain(GOOGLE_SIGNATURE);
       // ...never in the first request (it had not been minted yet)...
@@ -203,6 +203,73 @@ describe("Google GenerateContent: opaque state never leaks", () => {
       }
       expect(message).not.toContain(GOOGLE_SIGNATURE);
       expect(message).toContain("network");
+    });
+  });
+});
+
+describe("Google GenerateContent: a thought part's signature is never re-keyed (I4)", () => {
+  test("a signed THOUGHT part does not stamp its signature onto the replayed TEXT part", async () => {
+    const adapter = testGoogleAdapter();
+    await withFake({ routes: googleCorpusRoutes() }, async (fake) => {
+      const ctx = googleContext(fake.url);
+      const turn = await foldTurn(adapter, { model: GOOGLE_MODELS.signedThought, messages: [{ role: "user", content: "go" }] }, ctx);
+      // RETAINED as opaque state, keyed as a thought -- so it is not lost...
+      expect(turn.nativeState?.items).toEqual([{ partIndex: 0, kind: "thought", signature: GOOGLE_SIGNATURE }]);
+      expect(turn.thinking?.summary).toBe("private reasoning");
+      expect(turn.text).toBe("the answer");
+
+      // ...and ATTACHED TO NOTHING on replay: a thought part is never replayed as content (R6-8), so
+      // there is no part for its signature to ride, and stamping it on the text part beside it is a
+      // signature minted for one part re-attached to another -- which a validating endpoint can reject.
+      await foldTurn(
+        adapter,
+        {
+          model: GOOGLE_MODELS.signedThought,
+          messages: [
+            { role: "user", content: "go" },
+            { role: "assistant", content: [{ type: "text", text: turn.text ?? "" }], nativeState: { family: "google", continuationDomain: `google/${GOOGLE_MODELS.signedThought}`, items: turn.nativeState?.items ?? [] } },
+          ],
+        },
+        ctx,
+      );
+      const replayed = geminiContents(fake.requests[1]!);
+      expect(replayed[1]?.parts).toEqual([{ text: "the answer" }]);
+      expect(noRequestContains(fake, GOOGLE_SIGNATURE)).toBe(true);
+    });
+  });
+
+  test("a record written BEFORE `kind` existed is read as addressable-by-nothing, not guessed at as text", async () => {
+    const adapter = testGoogleAdapter();
+    await withFake({ routes: googleCorpusRoutes() }, async (fake) => {
+      await foldTurn(
+        adapter,
+        {
+          model: GOOGLE_MODELS.main,
+          messages: [{ role: "assistant", content: [{ type: "text", text: "hi" }], nativeState: { family: "google", continuationDomain: "google/gemini-2.5-pro", items: [{ partIndex: 0, signature: GOOGLE_SIGNATURE }] } }],
+        },
+        googleContext(fake.url),
+      );
+      expect(geminiContents(fake.requests[0]!)[0]?.parts).toEqual([{ text: "hi" }]);
+      expect(noRequestContains(fake, GOOGLE_SIGNATURE)).toBe(true);
+    });
+  });
+
+  test("a descriptor naming a DIFFERENT completion event is honoured, and the marker is the only variable (Minor 7)", async () => {
+    // A/B on ONE stream: it finishes, and it never sends `usageMetadata`. The default row completes
+    // and captures; the row whose evidence names the usage chunk as its completion event never sees
+    // that chunk, so it captures NOTHING and does not report a completed turn — which is the
+    // completion-event rule stated at whichever event a row names.
+    const adapter = testGoogleAdapter();
+    await withFake({ routes: googleCorpusRoutes() }, async (fake) => {
+      const ctx = googleContext(fake.url);
+      const byDefault = [];
+      for await (const e of adapter.streamTurn({ model: GOOGLE_MODELS.lateUsageDefault, messages: [{ role: "user", content: "go" }] }, ctx)) byDefault.push(e);
+      expect(byDefault.map((e) => e.type)).toEqual(["message_start", "text_delta", "native_state", "usage", "done"]);
+
+      const evidenced = [];
+      for await (const e of adapter.streamTurn({ model: GOOGLE_MODELS.lateUsage, messages: [{ role: "user", content: "go" }] }, ctx)) evidenced.push(e);
+      expect(evidenced.map((e) => e.type)).toEqual(["message_start", "text_delta", "error"]);
+      expect(evidenced.some((e) => e.type === "native_state")).toBe(false);
     });
   });
 });

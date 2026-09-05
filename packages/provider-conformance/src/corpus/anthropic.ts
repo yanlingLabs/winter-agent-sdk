@@ -94,6 +94,8 @@ export const ANTHROPIC_MODELS = {
   noEfforts: "sc-no-efforts",
   /** A stream whose later frames are delayed, so a mid-stream abort lands on a PENDING read rather than between two buffered frames. */
   slow: "sc-slow",
+  /** Its row's evidence names `message_stop` as the completion event, not the per-block terminator. */
+  lateCapture: "sc-late-capture",
 } as const;
 
 export function testAnthropicCatalog(): WinterCatalog {
@@ -106,6 +108,12 @@ export function testAnthropicCatalog(): WinterCatalog {
     model({ key: `anthropic/${ANTHROPIC_MODELS.noVision}`, upstreamId: ANTHROPIC_MODELS.noVision, inputModalities: evidence(["text"]) }),
     model({ key: `anthropic/${ANTHROPIC_MODELS.capped}`, upstreamId: ANTHROPIC_MODELS.capped, maxOutputTokens: evidence(2048), reasoning: anthropicReasoning(`anthropic/${ANTHROPIC_MODELS.capped}`) }),
     model({ key: `anthropic/${ANTHROPIC_MODELS.noEfforts}`, upstreamId: ANTHROPIC_MODELS.noEfforts, reasoning: { supported: evidence(true), efforts: [], continuation: "none" } }),
+    // Minor 7: this row's own evidence names a DIFFERENT completion event, and the adapter honours it.
+    model({
+      key: `anthropic/${ANTHROPIC_MODELS.lateCapture}`,
+      upstreamId: ANTHROPIC_MODELS.lateCapture,
+      reasoning: { ...anthropicReasoning(`anthropic/${ANTHROPIC_MODELS.lateCapture}`), completionEvent: evidence("message_stop") },
+    }),
   ];
   return {
     schemaVersion: 1,
@@ -234,6 +242,15 @@ export function anthropicCorpusRoutes(): FakeRoute[] {
       [ANTHROPIC_MODELS.rateLimit]: () =>
         anthropicError(429, "rate_limit_error", "too many requests", { "retry-after": "1", "anthropic-ratelimit-unified-status": "rejected", "anthropic-ratelimit-requests-remaining": "0" }),
       [ANTHROPIC_MODELS.stall]: () => stalledResponse(1_000),
+      [ANTHROPIC_MODELS.lateCapture]: () =>
+        anthropicTurnResponse({
+          blocks: [
+            { type: "thinking", chunks: ["deferred"], signature: "sig-late-1" },
+            { type: "text", chunks: ["after"] },
+            { type: "tool_use", id: "call_l", name: "Read", jsonChunks: ['{"path":"/l"}'] },
+          ],
+          stopReason: "tool_use",
+        }),
       [ANTHROPIC_MODELS.slow]: () => {
         // Frames after the first text delta are DELAYED, so the abort in the mid-stream cancellation
         // case interrupts a read that is genuinely in flight -- aborting between two already-buffered

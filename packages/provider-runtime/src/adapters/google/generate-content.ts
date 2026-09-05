@@ -123,6 +123,22 @@ function capabilityRefusal(reason: string): ProviderRequestError {
   return new ProviderRequestError({ code: "capability", message: reason, retryable: false });
 }
 
+/**
+ * Which chunk this family treats as COMPLETING, from the descriptor's own `completionEvent` evidence.
+ *
+ * MATCHED LENIENTLY, by mention rather than by equality, because the field is a prose-ish
+ * `CapabilityEvidence<string>` and the catalog's existing values read like sentences (Lane A's row
+ * says `response.completed`; this lane's own fixtures say "the chunk carrying finishReason"). An
+ * unrecognised value falls back to the DEFAULT rather than refusing: the default is the conservative
+ * marker, so a fallback can only ever capture LATER, never earlier -- and capturing earlier is the
+ * one failure the completion-event rule exists to prevent.
+ */
+export function googleCompletionMarker(descriptor: WinterModelDescriptor | undefined): "finish-reason" | "usage-metadata" {
+  const declared = descriptor?.reasoning?.completionEvent?.value;
+  if (typeof declared === "string" && /usagemetadata|usage_metadata/i.test(declared)) return "usage-metadata";
+  return "finish-reason";
+}
+
 function malformed(detail: string): ProviderError {
   return { code: "bad_request", message: `the provider stream carried a frame this adapter could not decode: ${detail}`, retryable: false };
 }
@@ -139,16 +155,32 @@ function malformed(detail: string): ProviderError {
 export interface GoogleThoughtSignatureItem {
   /** The wire part index it arrived on. The family's own truth, recorded even though replay keys on `callId` where one exists. */
   partIndex: number;
-  /** The tool-call id this adapter minted for the `functionCall` part. Absent for a text part. */
+  /**
+   * WHICH KIND of part carried it, and this is what makes replay addressable rather than positional.
+   *
+   * A `thought` part is FOREIGN reasoning and is never replayed as content (R6-8) -- so there is no
+   * part on the next request for its signature to ride. Before this discriminator existed, any
+   * non-`functionCall` signature was treated as a text item and stamped onto the first replayed text
+   * block: a signature minted for a thought part, re-attached to a different part, which is exactly
+   * the mis-attachment decision #2 exists to prevent and which a validating endpoint can reject.
+   * A `thought` item is now RETAINED as opaque state and attached to nothing.
+   */
+  kind: "function-call" | "text" | "thought" | "other";
+  /** The tool-call id this adapter minted for the `functionCall` part. Absent for every other kind. */
   callId?: string;
   signature: string;
 }
+
+const ITEM_KINDS: ReadonlySet<string> = new Set(["function-call", "text", "thought", "other"]);
 
 function coerceItem(value: unknown): GoogleThoughtSignatureItem | undefined {
   if (typeof value !== "object" || value === null) return undefined;
   const v = value as Record<string, unknown>;
   if (typeof v["signature"] !== "string" || typeof v["partIndex"] !== "number") return undefined;
-  return { partIndex: v["partIndex"], signature: v["signature"], ...(typeof v["callId"] === "string" ? { callId: v["callId"] } : {}) };
+  // A record written before `kind` existed carries none. It is read as `other` -- attached to
+  // nothing -- rather than guessed at as text, because guessing is the bug this field closes.
+  const kind = typeof v["kind"] === "string" && ITEM_KINDS.has(v["kind"]) ? (v["kind"] as GoogleThoughtSignatureItem["kind"]) : "other";
+  return { partIndex: v["partIndex"], kind, signature: v["signature"], ...(typeof v["callId"] === "string" ? { callId: v["callId"] } : {}) };
 }
 
 // --- wire serialization -------------------------------------------------------------------------------
@@ -213,7 +245,9 @@ export function toContents(messages: ProviderMessageLike[]): SerializeResult {
     const role: "user" | "model" = message.role === "assistant" ? "model" : "user";
     const parts: WirePart[] = [];
     const items = (message.nativeState?.items ?? []).map(coerceItem).filter((i): i is GoogleThoughtSignatureItem => i !== undefined);
-    const textItems = items.filter((i) => i.callId === undefined);
+    // ONLY text-keyed items. A `thought` item has no replayed part to ride and a `function-call` item
+    // is matched by id below; treating either as a text item is the mis-attachment I4 names.
+    const textItems = items.filter((i) => i.kind === "text");
     let textOrdinal = 0;
 
     const blocks: ContentBlockLike[] = typeof message.content === "string" ? (message.content.length > 0 ? [{ type: "text", text: message.content }] : []) : message.content;
@@ -447,6 +481,15 @@ function toStopReason(raw: unknown, sawCall: boolean): "end_turn" | "tool_use" |
 
 // --- the adapter --------------------------------------------------------------------------------------
 
+interface PreparedGoogleRequest {
+  url: string;
+  policy: EndpointPolicy;
+  body: Record<string, unknown>;
+  headers: Record<string, string>;
+  /** Minor 7: the descriptor's own completion marker, resolved once per request. */
+  completionMarker: "finish-reason" | "usage-metadata";
+}
+
 export function createGoogleFamilyAdapter(transport: GoogleTransport, opts: GoogleAdapterOptions = {}): ProviderAdapter {
   let compiled: WinterCatalog | undefined;
   const catalogOf = (): WinterCatalog => opts.catalog ?? (compiled ??= loadCatalog());
@@ -456,7 +499,7 @@ export function createGoogleFamilyAdapter(transport: GoogleTransport, opts: Goog
   // The URL is composed in `prepare`, not at the fetch site: a connection whose project or location
   // is missing or malformed must fail BEFORE the request as a typed `capability` refusal, not from
   // inside the retry callback where it would be normalised as a transport failure.
-  async function prepare(req: TurnRequest, ctx: ProviderContext): Promise<{ url: string; policy: EndpointPolicy; body: Record<string, unknown>; headers: Record<string, string> }> {
+  async function prepare(req: TurnRequest, ctx: ProviderContext): Promise<PreparedGoogleRequest> {
     // CHECKED HERE, not left to `boundedFetch`: preparing a request can itself reach the network
     // (the Vertex transport exchanges a signed assertion for an access token), and an already-aborted
     // caller must not cause a credential exchange for a turn that will never be sent.
@@ -466,11 +509,11 @@ export function createGoogleFamilyAdapter(transport: GoogleTransport, opts: Goog
     const url = `${base}${transport.streamPath(ctx, req.model)}`;
     const body = buildRequestBody(req, descriptor, opts, ctx);
     const headers = await transport.headers(ctx, policy, true);
-    return { url, policy, body, headers };
+    return { url, policy, body, headers, completionMarker: googleCompletionMarker(descriptor) };
   }
 
   async function* streamTurn(req: TurnRequest, ctx: ProviderContext): AsyncGenerator<ProviderEvent> {
-    let prepared: { url: string; policy: EndpointPolicy; body: Record<string, unknown>; headers: Record<string, string> };
+    let prepared: PreparedGoogleRequest;
     try {
       prepared = await prepare(req, ctx);
     } catch (err) {
@@ -558,6 +601,9 @@ export function createGoogleFamilyAdapter(transport: GoogleTransport, opts: Goog
         }
 
         const usage = payload["usageMetadata"] as Record<string, unknown> | undefined;
+        // Minor 7: a row whose evidence names the usage chunk as its completion event holds the
+        // capture until that chunk arrives, rather than taking the finish-reason chunk's word for it.
+        if (prepared.completionMarker === "usage-metadata" && usage !== undefined) finished = true;
         if (typeof usage?.["promptTokenCount"] === "number") inputTokens = usage["promptTokenCount"];
         if (typeof usage?.["candidatesTokenCount"] === "number") candidatesTokens = usage["candidatesTokenCount"];
         // The family bills reasoning separately from the visible answer, so the two are SUMMED into
@@ -582,6 +628,7 @@ export function createGoogleFamilyAdapter(transport: GoogleTransport, opts: Goog
         for (const part of parts) {
           const index = partIndex++;
           const signature = typeof part["thoughtSignature"] === "string" ? part["thoughtSignature"] : undefined;
+          const isThought = part["thought"] === true;
           if (typeof part["functionCall"] === "object" && part["functionCall"] !== null) {
             const call = part["functionCall"] as { name?: unknown; args?: unknown };
             // The id is MINTED here: this family's `functionCall` carries none, and the engine keys
@@ -592,10 +639,17 @@ export function createGoogleFamilyAdapter(transport: GoogleTransport, opts: Goog
             yield { type: "tool_call_start", id, name: typeof call.name === "string" ? call.name : "" };
             yield { type: "tool_call_delta", id, argumentsJsonDelta: JSON.stringify(call.args ?? {}) };
             yield { type: "tool_call_end", id };
-            if (signature !== undefined) signatures.push({ partIndex: index, callId: id, signature });
+            if (signature !== undefined) signatures.push({ partIndex: index, kind: "function-call", callId: id, signature });
             continue;
           }
-          if (signature !== undefined) signatures.push({ partIndex: index, signature });
+          if (signature !== undefined) {
+            // A THOUGHT part's signature is kept but addressable as nothing: retained so the
+            // continuation state is not lost, attached to no replayed part because a foreign summary
+            // never becomes content. (Whether Gemini actually signs thought parts is UNVERIFIED from
+            // here -- the fake can script it; no real endpoint was contacted.)
+            const kind = isThought ? "thought" : typeof part["text"] === "string" ? "text" : "other";
+            signatures.push({ partIndex: index, kind, signature });
+          }
           if (typeof part["text"] === "string") {
             // A `thought` part is FOREIGN reasoning (R6-8): it never becomes content.
             if (part["thought"] === true) yield { type: "thinking_summary_delta", text: part["text"] };
@@ -604,8 +658,10 @@ export function createGoogleFamilyAdapter(transport: GoogleTransport, opts: Goog
         }
 
         if (candidate.finishReason !== undefined && candidate.finishReason !== null) {
+          // The stop REASON is read wherever it appears; whether this chunk COMPLETES the turn is the
+          // descriptor's call.
           stopReason = toStopReason(candidate.finishReason, sawCall);
-          finished = true;
+          if (prepared.completionMarker === "finish-reason") finished = true;
         }
       }
     } catch (err) {

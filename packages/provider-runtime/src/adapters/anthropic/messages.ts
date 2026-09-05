@@ -461,6 +461,21 @@ function toStopReason(raw: unknown): "end_turn" | "tool_use" | "max_tokens" | "r
   }
 }
 
+/**
+ * At which event this family's COMPLETE in-dialect block is captured, from the descriptor's own
+ * `completionEvent` evidence (Minor 7).
+ *
+ * Matched LENIENTLY by mention, for the same reason as the Google resolver: the field is a prose-ish
+ * `CapabilityEvidence<string>`. An unrecognised value falls back to `block-stop`, this family's real
+ * per-block terminator -- the conservative answer, since it is the earliest point at which a block is
+ * genuinely complete and holding longer can only ever delay a capture, never take a partial one.
+ */
+export function anthropicCaptureEvent(descriptor: WinterModelDescriptor | undefined): "block-stop" | "message-stop" {
+  const declared = descriptor?.reasoning?.completionEvent?.value;
+  if (typeof declared === "string" && /message_stop|message-stop/i.test(declared)) return "message-stop";
+  return "block-stop";
+}
+
 function malformed(detail: string): ProviderError {
   return { code: "bad_request", message: `the provider stream carried a frame this adapter could not decode: ${detail}`, retryable: false };
 }
@@ -481,7 +496,7 @@ export function createAnthropicMessagesAdapter(opts: AnthropicAdapterOptions = {
    * matters to a consumer: a thrown value loses the normalized `code`, and `capability` is exactly
    * the code that says "no request was made and none would have helped".
    */
-  async function prepare(req: TurnRequest, ctx: ProviderContext): Promise<{ endpoint: Endpoint; body: Record<string, unknown>; headers: Record<string, string> }> {
+  async function prepare(req: TurnRequest, ctx: ProviderContext): Promise<{ endpoint: Endpoint; body: Record<string, unknown>; headers: Record<string, string>; captureEvent: "block-stop" | "message-stop" }> {
     // CHECKED HERE, not left to `boundedFetch`: preparing a request can itself reach the network
     // (the Vertex transport exchanges a signed assertion for an access token), and an already-aborted
     // caller must not cause a credential exchange for a turn that will never be sent.
@@ -490,7 +505,7 @@ export function createAnthropicMessagesAdapter(opts: AnthropicAdapterOptions = {
     const endpoint = resolveEndpoint(ctx, ANTHROPIC_DEFAULT_BASE_URL);
     const body = buildRequestBody(req, descriptor, opts);
     const headers = await buildHeaders(ctx, endpoint.policy, opts, true);
-    return { endpoint, body, headers };
+    return { endpoint, body, headers, captureEvent: anthropicCaptureEvent(descriptor) };
   }
 
   async function* streamTurn(req: TurnRequest, ctx: ProviderContext): AsyncGenerator<ProviderEvent> {
@@ -499,8 +514,9 @@ export function createAnthropicMessagesAdapter(opts: AnthropicAdapterOptions = {
     let endpoint: Endpoint;
     let body: Record<string, unknown>;
     let headers: Record<string, string>;
+    let captureEvent: "block-stop" | "message-stop";
     try {
-      ({ endpoint, body, headers } = await prepare(req, ctx));
+      ({ endpoint, body, headers, captureEvent } = await prepare(req, ctx));
     } catch (err) {
       yield { type: "error", error: normalizeThrown(err) };
       return;
@@ -544,6 +560,8 @@ export function createAnthropicMessagesAdapter(opts: AnthropicAdapterOptions = {
 
     let bytes = 0;
     const blocks = new Map<number, OpenBlock>();
+    /** Completed in-dialect blocks, in wire order, when the descriptor defers the capture to `message_stop`. */
+    const heldThinking: unknown[] = [];
     let inputTokens = 0;
     let outputTokens = 0;
     let cacheReadTokens: number | undefined;
@@ -634,7 +652,13 @@ export function createAnthropicMessagesAdapter(opts: AnthropicAdapterOptions = {
               // carried one: capture (F) shows the pinned runtime materialising `""` for a
               // signatureless block, and the bridge's own coercion reproduces exactly that -- so
               // omitting it here keeps ONE normalizer for the rule instead of two that can drift.
-              yield { type: "native_thinking_block", block: { type: "thinking", thinking: open.thinking, ...(open.signature !== undefined ? { signature: open.signature } : {}) } };
+              //
+              // WHICH event that is comes from the descriptor (Minor 7): `block-stop` is this
+              // family's real per-block terminator and the default, but a row whose evidence names
+              // `message_stop` holds the completed block until then.
+              const block = { type: "thinking", thinking: open.thinking, ...(open.signature !== undefined ? { signature: open.signature } : {}) };
+              if (captureEvent === "message-stop") heldThinking.push(block);
+              else yield { type: "native_thinking_block", block };
             } else if (open.type === "redacted_thinking") {
               if (open.data === undefined) {
                 // The block IS the opaque continuation state. Dropping it silently breaks the
@@ -644,7 +668,9 @@ export function createAnthropicMessagesAdapter(opts: AnthropicAdapterOptions = {
                 yield { type: "error", error: malformed("a redacted_thinking block completed with no `data`, so its opaque continuation state cannot be carried") };
                 return;
               }
-              yield { type: "native_thinking_block", block: { type: "redacted_thinking", data: open.data } };
+              const block = { type: "redacted_thinking", data: open.data };
+              if (captureEvent === "message-stop") heldThinking.push(block);
+              else yield { type: "native_thinking_block", block };
             } else if (open.type === "tool_use" && open.toolId !== undefined) {
               yield { type: "tool_call_end", id: open.toolId };
             }
@@ -660,6 +686,11 @@ export function createAnthropicMessagesAdapter(opts: AnthropicAdapterOptions = {
           }
           case "message_stop":
             sawMessageStop = true;
+            // Held blocks are released HERE, in wire order, for a row whose evidence names this as its
+            // completion event. A stream that never reaches `message_stop` releases none of them --
+            // the completion-event rule, stated the same way at whichever event the row names.
+            for (const block of heldThinking) yield { type: "native_thinking_block", block };
+            heldThinking.length = 0;
             break;
           case "error": {
             const error = (payload["error"] ?? {}) as Record<string, unknown>;

@@ -246,6 +246,40 @@ describe("Anthropic Messages: images nested inside a tool_result (I2)", () => {
   });
 });
 
+describe("Anthropic Messages: the descriptor's own completion event (Minor 7)", () => {
+  test("a row naming `message_stop` holds its in-dialect blocks until then, and a broken stream releases none", async () => {
+    const adapter = testAnthropicAdapter();
+    await withFake({ routes: anthropicCorpusRoutes() }, async (fake) => {
+      const events = [];
+      for await (const e of adapter.streamTurn({ model: ANTHROPIC_MODELS.lateCapture, messages: [{ role: "user", content: "go" }] }, testContext(fake.url))) events.push(e);
+      // The block is complete at its own `content_block_stop`, but this row's evidence says the
+      // capture happens at `message_stop` -- so it arrives AFTER the text and the tool call, not
+      // interleaved where the default would put it.
+      expect(events.map((e) => e.type)).toEqual([
+        "message_start",
+        "text_delta",
+        "tool_call_start",
+        "tool_call_delta",
+        "tool_call_end",
+        "native_thinking_block",
+        "usage",
+        "done",
+      ]);
+      const turn = await foldTurn(adapter, { model: ANTHROPIC_MODELS.lateCapture, messages: [{ role: "user", content: "go" }] }, testContext(fake.url));
+      expect(turn.thinking?.blocks).toEqual([{ type: "thinking", thinking: "deferred", signature: "sig-late-1" }]);
+    });
+  });
+
+  test("the DEFAULT is the per-block terminator, so an unevidenced row is unchanged", async () => {
+    const adapter = testAnthropicAdapter();
+    await withFake({ routes: anthropicCorpusRoutes() }, async (fake) => {
+      const events = [];
+      for await (const e of adapter.streamTurn({ model: ANTHROPIC_MODELS.full, messages: [{ role: "user", content: "go" }] }, testContext(fake.url))) events.push(e);
+      expect(events[1]).toMatchObject({ type: "native_thinking_block" });
+    });
+  });
+});
+
 describe("Anthropic Messages: retries and the first-byte rule", () => {
   test("a 529 `overloaded_error` normalizes to a retryable `server` error and one `api_retry`", async () => {
     const adapter = testAnthropicAdapter();
