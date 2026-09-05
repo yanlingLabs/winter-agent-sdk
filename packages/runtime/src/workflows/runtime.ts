@@ -11,6 +11,11 @@
 // cap -- which is the property that makes the mirror an optimisation rather than a security control.
 import { randomBytes } from "node:crypto";
 import { spawn as spawnProcess } from "node:child_process";
+// STATIC, never `await import(...)`: this module is bundled into the `bun build --compile`
+// single-file executable, where a dynamic import of a computed-or-not path is exactly the failure
+// class main.ts's own header warns about -- and no gate in this repo exercises a nested `workflow()`
+// through the compiled binary, so that leg would have been unproven as well as fragile.
+import { readFileSync } from "node:fs";
 import { RunJournal, promptKey, type JournalEntry } from "./journal.ts";
 import { WorkflowRegistry } from "./registry.ts";
 import { makeSemaphore, resolveConcurrencyCap, type Semaphore } from "./semaphore.ts";
@@ -19,7 +24,7 @@ import { buildWorkerSpawn, resolveWorkerCommand, workflowSandboxAvailable, type 
 import { persistWorkflowScript, workflowTranscriptDir, workflowRunsDir, resolveWorkflowByName } from "./store.ts";
 import { encodeNdjson, splitNdjson, type BridgeRequest, type BridgeResponse, type WorkerInit, type WorkflowRef } from "./bridge.ts";
 import type { WorkflowSessionRuntime } from "./host-registry.ts";
-import type { WorkflowMeta } from "./meta.ts";
+import { matchPhaseGroup, type WorkflowMeta, type WorkflowMetaPhase } from "./meta.ts";
 import type { AgentOpts, WorkflowRunView, WorkflowStatus } from "./types.ts";
 import type { WorkflowRunHost, WorkflowTaskHandle } from "./seam.ts";
 import type { RuntimeAgentDefinition } from "@yanlinglabs/winter-agent-sdk";
@@ -129,6 +134,14 @@ export interface WorkflowLaunchInput {
 export interface WorkflowLaunchResult {
   taskId: string;
   runId: string;
+  /**
+   * `meta.name` VERBATIM -- item (g) doc-asserts (`4061`) that `WorkflowOutput.workflowName` is
+   * `meta.name` and equals `task_started.workflow_name`. It is threaded rather than recovered from
+   * the persisted filename, because that filename is SANITIZED (`store.ts`'s `sanitizeFileStem`):
+   * a `meta.name` of `My Workflow!` persists as `My-Workflow-<runId>.js`, so a filename-derived name
+   * would silently disagree with the pin for every name outside the slug alphabet.
+   */
+  name: string;
   scriptPath: string;
   transcriptDir: string;
   status: WorkflowStatus;
@@ -154,6 +167,8 @@ interface LiveRun {
   budget: WorkflowBudget;
   journal: RunJournal;
   abort: AbortController;
+  /** The DECLARED phases (WS-11 §1.2). A `phase()` call matching one exactly resolves to it; an unmatched call gets its own group. */
+  declaredPhases: readonly WorkflowMetaPhase[] | undefined;
   /** WS-11 §1.8's abort chaining: stop must cancel IN-FLIGHT bridged agents, not merely the worker process. */
   children: Set<ChildHandle>;
 }
@@ -225,6 +240,7 @@ export class WorkflowRuntime {
       budget: createBudget({ accountant: this.deps.session.accountant, ...(this.deps.session.budgetTotal !== undefined ? { total: this.deps.session.budgetTotal } : {}) }),
       journal: new RunJournal(this.runsDir, runId),
       abort,
+      ...(input.meta.phases !== undefined ? { declaredPhases: input.meta.phases } : { declaredPhases: undefined }),
       children: new Set(),
     };
     this.live.set(runId, run);
@@ -281,7 +297,7 @@ export class WorkflowRuntime {
     };
     run.worker.stdin.write(encodeNdjson(init));
 
-    return { taskId: task.taskId, runId, scriptPath, transcriptDir, status: "running", summary: summarize(input.meta) };
+    return { taskId: task.taskId, runId, name: input.meta.name, scriptPath, transcriptDir, status: "running", summary: summarize(input.meta) };
   }
 
   /**
@@ -340,6 +356,15 @@ export class WorkflowRuntime {
     });
   }
 
+  /**
+   * Whether a run reached `stopped` (as opposed to `failed`). The frozen `WorkflowTaskHandle` has no
+   * `stop()`, so this is how a host renders the third terminal state truthfully -- see
+   * `tools/impl/workflow.ts`'s `fail` implementation.
+   */
+  wasStopped(runId: string): boolean {
+    return this.registry.get(runId)?.status === "stopped";
+  }
+
   /** Test-only: simulates an external kill, for the crash-fallback path. */
   killWorkerForTest(runId: string): void {
     this.live.get(runId)?.worker.kill();
@@ -349,10 +374,21 @@ export class WorkflowRuntime {
 
   private async onWorkerMessage(run: LiveRun, message: BridgeRequest): Promise<void> {
     switch (message.op) {
-      case "phase":
-        this.registry.setPhase(run.runId, message.title);
-        this.emitProgress(run, message.title);
+      case "phase": {
+        // WS-11 §1.2's matching rule, applied at the one moment it applies -- when a `phase()` call
+        // actually arrives. A title matching a DECLARED `meta.phases` entry resolves to that entry
+        // (and its `detail` is what the progress line carries, since the declaration is the richer
+        // description); an unmatched call gets its OWN group rather than being dropped or folded into
+        // the previous one.
+        //
+        // DISCLOSED (report NEEDS_CONTEXT): the frozen `WorkflowProgress` has no group/declared
+        // field, so "its own group" is recorded here and reflected in the progress text, but a host
+        // cannot tell a declared group from an ad-hoc one on the wire.
+        const group = matchPhaseGroup(run.declaredPhases, message.title);
+        this.registry.setPhase(run.runId, group.title);
+        this.emitProgress(run, group.declared && group.detail !== undefined ? `${group.title}: ${group.detail}` : group.title);
         break;
+      }
       case "log":
         this.emitProgress(run, message.message);
         break;
@@ -574,6 +610,11 @@ export class WorkflowRuntime {
     const view = this.registry.get(runId);
     const task = this.tasks.get(runId);
     if (task !== undefined) {
+      // WS-11 §1.8 makes `stopped` its own terminal state, distinct from `failed`, and the pinned
+      // `task_notification.status` union carries all three. The frozen `WorkflowTaskHandle` has only
+      // `complete`/`fail` (no `stop`), so the DISTINCTION is carried out of band: the host's `fail`
+      // implementation consults `wasStopped(runId)` -- see tools/impl/workflow.ts. Without it a user
+      // pressing stop would be told on the wire that their workflow crashed.
       // Terminal seam calls are one-way and idempotent (seam.ts), so a late crash after a reported
       // completion cannot re-fail the task -- but the mapping is still made explicitly here rather
       // than relying on that guard alone.
@@ -592,7 +633,6 @@ async function defaultNestedResolver(ref: WorkflowRef, ctx: { cwd: string; trust
     const resolved = resolveWorkflowByName(ref.name, { cwd: ctx.cwd, trustedWorkspace: ctx.trustedWorkspace });
     return resolved.ok ? { ok: true, source: resolved.source } : { ok: false, error: resolved.error };
   }
-  const { readFileSync } = await import("node:fs");
   try {
     return { ok: true, source: readFileSync(ref.scriptPath, "utf8") };
   } catch (err) {

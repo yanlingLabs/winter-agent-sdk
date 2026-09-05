@@ -16,7 +16,8 @@ import { readFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { replaceExecutor, type ToolExecutionContext, type ToolExecutor, type ToolResultPayload } from "../registry.ts";
 import "../descriptors/workflow.ts"; // self-sufficiency: the "Workflow" stub must be registered before replaceExecutor runs
-import { startTracking, setTaskStatus, getTask } from "./background-task-runtime.ts";
+import { startTracking, setTaskStatus, getTask, listRunningTasks, toBackgroundTasksChangedEntry } from "./background-task-runtime.ts";
+import { wireTaskType } from "../background-tasks.ts";
 import { getWorkflowSession, type WorkflowSessionRuntime } from "../../workflows/host-registry.ts";
 import { WorkflowRuntime, WorkflowRuntimeError, type WorkflowRuntimeDeps, type WorkflowLaunchResult } from "../../workflows/runtime.ts";
 import { parseWorkflowMeta } from "../../workflows/meta.ts";
@@ -68,6 +69,25 @@ function buildRunHost(ctx: ToolExecutionContext, session: WorkflowSessionRuntime
           runtime.stop(meta.runId);
         },
       });
+      // The TOOLS emit `task_started`, not the engine -- verified against tools/impl/bash.ts:461 and
+      // tools/impl/agent.ts:145 rather than assumed. Capture (3) pins BOTH of this frame's
+      // workflow-specific fields for a launch: `task_type: "local_workflow"` and `workflow_name`
+      // equal to `meta.name`. `wireTaskType` is the one mapping (T3's Lane W item 1) -- the internal
+      // kind is never written to the wire by hand.
+      ctx.emitFrame({
+        type: "system",
+        subtype: "task_started",
+        task_id: taskId,
+        description: meta.name,
+        task_type: wireTaskType("workflow"),
+        workflow_name: meta.name,
+        is_backgrounded: true,
+        ...(ctx.toolUseId !== undefined ? { tool_use_id: ctx.toolUseId } : {}),
+        uuid: randomUUID(),
+        session_id: ctx.sessionId,
+      });
+      emitBackgroundTasksChanged(ctx);
+
       let settled = false;
       return {
         taskId,
@@ -93,12 +113,19 @@ function buildRunHost(ctx: ToolExecutionContext, session: WorkflowSessionRuntime
           settled = true;
           if (getTask(taskId) !== undefined) setTaskStatus(taskId, "completed");
           emitNotification(ctx, taskId, "completed", renderSummary(result));
+          emitBackgroundTasksChanged(ctx);
         },
         fail(error: string) {
           if (settled) return;
           settled = true;
-          if (getTask(taskId) !== undefined) setTaskStatus(taskId, "failed");
-          emitNotification(ctx, taskId, "failed", error);
+          // WS-11 §1.8's THIRD terminal state. The frozen WorkflowTaskHandle has only
+          // complete/fail, so a stop would otherwise reach the wire as `failed` -- telling a user who
+          // pressed stop that their workflow crashed. The pinned `task_notification.status` union
+          // carries "stopped" natively; the runtime is asked which of the two this was.
+          const status = runtime.wasStopped(meta.runId) ? "stopped" : "failed";
+          if (getTask(taskId) !== undefined) setTaskStatus(taskId, status);
+          emitNotification(ctx, taskId, status, error);
+          emitBackgroundTasksChanged(ctx);
         },
       };
     },
@@ -112,7 +139,19 @@ function buildRunHost(ctx: ToolExecutionContext, session: WorkflowSessionRuntime
   };
 }
 
-function emitNotification(ctx: ToolExecutionContext, taskId: string, status: "completed" | "failed", summary: string): void {
+function emitBackgroundTasksChanged(ctx: ToolExecutionContext): void {
+  ctx.emitFrame({
+    type: "system",
+    subtype: "background_tasks_changed",
+    // `toBackgroundTasksChangedEntry` applies `wireTaskType` itself, so a workflow row carries
+    // `local_workflow` here with no second literal anywhere in this file.
+    tasks: listRunningTasks().map(toBackgroundTasksChangedEntry),
+    uuid: randomUUID(),
+    session_id: ctx.sessionId,
+  });
+}
+
+function emitNotification(ctx: ToolExecutionContext, taskId: string, status: "completed" | "failed" | "stopped", summary: string): void {
   ctx.emitFrame({
     type: "system",
     subtype: "task_notification",
@@ -237,18 +276,12 @@ function launchToOutput(launched: WorkflowLaunchResult): WorkflowOutput {
     status: "async_launched",
     taskId: launched.taskId,
     taskType: "local_workflow",
-    workflowName: workflowNameOf(launched),
+    workflowName: launched.name,
     runId: launched.runId,
     summary: launched.summary,
     transcriptDir: launched.transcriptDir,
     scriptPath: launched.scriptPath,
   };
-}
-
-/** `WorkflowOutput.workflowName` is doc-asserted (`4061`) to be `meta.name` AND to equal `task_started.workflow_name`. The launch's persisted filename is `<meta.name>-<runId>.js`, so the name is recovered from there rather than threaded twice. */
-function workflowNameOf(launched: WorkflowLaunchResult): string {
-  const file = launched.scriptPath.slice(launched.scriptPath.lastIndexOf("/") + 1);
-  return file.endsWith(`-${launched.runId}.js`) ? file.slice(0, -`-${launched.runId}.js`.length) : file;
 }
 
 // `extractPaths` (RULING P3-F): RAW, unresolved candidates straight out of the input. `scriptPath` is

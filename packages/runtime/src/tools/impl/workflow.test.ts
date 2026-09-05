@@ -12,6 +12,7 @@ import "./workflow.ts";
 import { resetWorkflowToolForTest } from "./workflow.ts";
 import { getRegisteredTool, type ToolExecutionContext, type ToolResultPayload } from "../registry.ts";
 import { createSessionReadState } from "../read-state.ts";
+import { stopTask, resetBackgroundTaskRuntimeForTest } from "./background-task-runtime.ts";
 import { registerWorkflowSession, resetWorkflowSessionForTest } from "../../workflows/host-registry.ts";
 import { inProcessWorkerSpawner } from "../../workflows/worker-harness.ts";
 import { fakeStructuredOutputSeam } from "../../structured/seam.ts";
@@ -70,6 +71,7 @@ beforeEach(() => {
   winterHome = mkdtempSync(join(tmpdir(), "winter-wf-tool-home-"));
   sessionTempDir = mkdtempSync(join(tmpdir(), "winter-wf-tool-temp-"));
   cwd = mkdtempSync(join(tmpdir(), "winter-wf-tool-cwd-"));
+  resetBackgroundTaskRuntimeForTest();
   resetWorkflowToolForTest({ spawnWorker: inProcessWorkerSpawner() });
   registerWorkflowSession({
     winterHome,
@@ -82,6 +84,7 @@ beforeEach(() => {
 afterEach(() => {
   resetWorkflowSessionForTest();
   resetWorkflowToolForTest();
+  resetBackgroundTaskRuntimeForTest();
 });
 
 describe("input schema -- the seven fields and their three doc-asserted rules (item (g))", () => {
@@ -176,6 +179,51 @@ describe("the pinned WorkflowOutput (sdk-tools.d.ts:4053-4089)", () => {
   test("a script with NO meta block fails validation the same way", async () => {
     const out = JSON.parse((await run({ script: `return 1;` })).output) as WorkflowOutput;
     expect(out.error).toContain("meta");
+  });
+});
+
+describe("the background-task frames the TOOL owes (capture (3), and bash.ts/agent.ts's own precedent)", () => {
+  test("task_started carries the PINNED wire task_type and workflow_name -- both fields capture (3) recorded", async () => {
+    const frames: Array<Record<string, unknown>> = [];
+    await run({ script: SCRIPT }, makeCtx({ emitFrame: (f) => frames.push(f as unknown as Record<string, unknown>) }));
+    const started = frames.find((f) => f["subtype"] === "task_started");
+    expect(started).toBeDefined();
+    expect(started!["task_type"]).toBe("local_workflow"); // never the internal "workflow" spelling
+    expect(started!["workflow_name"]).toBe("wf");
+    expect(frames.some((f) => f["subtype"] === "background_tasks_changed")).toBe(true);
+  });
+
+  test("workflowName survives a meta.name the persisted FILENAME has to sanitize", async () => {
+    const out = await output({ script: `export const meta = { name: "My Workflow!", description: "d" };\nreturn 1;` });
+    expect(out.workflowName).toBe("My Workflow!"); // the pin: workflowName IS meta.name (4061)
+    expect(out.scriptPath).toContain("My-Workflow-"); // the file, necessarily, is not
+  });
+
+  test("a STOPPED run reaches the wire as `stopped`, never as `failed` (WS-11 §1.8's third terminal state)", async () => {
+    const frames: Array<Record<string, unknown>> = [];
+    const ctx = makeCtx({
+      emitFrame: (f) => frames.push(f as unknown as Record<string, unknown>),
+      session: {
+        ...makeCtx().session,
+        spawnChild: async () =>
+          ({
+            record: {} as never,
+            status: () => "running" as const,
+            steer: async () => ({ status: "delivered" as const, messageId: "m" }),
+            resume: async () => ({ status: "resumed_and_delivered" as const, messageId: "m" }),
+            result: () => new Promise<never>(() => {}), // never settles: the run is genuinely in flight
+            stop: async () => {},
+          }) as unknown as ChildHandle,
+      },
+    });
+    const out = await output({ script: META + `await agent("hang"); return 1;` }, ctx);
+    await new Promise((res) => setTimeout(res, 60));
+    // TaskStop's own path: the shared background-task registry's `stop` callback this tool registered.
+    expect(stopTask(out.taskId)).toBe(true);
+    await new Promise((res) => setTimeout(res, 60));
+    const notification = frames.find((f) => f["subtype"] === "task_notification");
+    expect(notification).toBeDefined();
+    expect(notification!["status"]).toBe("stopped");
   });
 });
 

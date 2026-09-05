@@ -188,6 +188,18 @@ describe("lifecycle -- running -> completed | failed | stopped (WS-11 §1.8)", (
     expect(view.status).toBe("stopped");
   });
 
+  test("`wasStopped` distinguishes the third terminal state -- a stop is not a failure", async () => {
+    const r = rig();
+    const launched = launch(r, META + `await agent("hang"); return 1;`, {});
+    r.runtime.stop(launched.runId);
+    await r.runtime.await(launched.runId);
+    expect(r.runtime.wasStopped(launched.runId)).toBe(true);
+
+    const failed = launch(r, META + `throw new Error("nope");`);
+    await r.runtime.await(failed.runId);
+    expect(r.runtime.wasStopped(failed.runId)).toBe(false);
+  });
+
   test("stop() on an unknown or already-terminal run is false, never a throw", async () => {
     const r = rig();
     expect(r.runtime.stop("wf_nope")).toBe(false);
@@ -280,6 +292,50 @@ describe("the bridge service loop", () => {
       expect(Object.keys(p.usage!).sort()).toEqual(["duration_ms", "tool_uses", "total_tokens"]);
     }
     expect(progress.at(-1)!.completed).toBe(1);
+  });
+});
+
+describe("declared phases (WS-11 §1.2) -- matched at the moment a phase() call arrives", () => {
+  test("a phase() title matching a DECLARED phase carries that declaration's `detail`; an unmatched one is its own group", async () => {
+    const source = `export const meta = { name: "wf", description: "d", phases: [{ title: "Research", detail: "read the code" }] };
+phase("Research"); phase("Cleanup"); return 1;`;
+    const r = rig();
+    const parsed = parseWorkflowMeta(source);
+    if (!parsed.ok) throw new Error(parsed.error);
+    const launched = r.runtime.launch({ sessionId: "sess-1", cwd: "/synthetic", trustedWorkspace: true, source, meta: parsed.meta }, r.host);
+    const view = await r.runtime.await(launched.runId);
+    expect(view.status).toBe("completed");
+    const summaries = r.log.filter((e) => e.event === "progress").map((e) => (e.detail as WorkflowProgress).summary);
+    expect(summaries).toContain("Research: read the code"); // matched the declaration
+    expect(summaries).toContain("Cleanup"); // its own group, never dropped or folded into the previous one
+  });
+
+  test("matching is EXACT -- a near miss is an ad-hoc group, not the declared one", async () => {
+    const source = `export const meta = { name: "wf", description: "d", phases: [{ title: "Research", detail: "read the code" }] };
+phase("research"); return 1;`;
+    const r = rig();
+    const parsed = parseWorkflowMeta(source);
+    if (!parsed.ok) throw new Error(parsed.error);
+    const launched = r.runtime.launch({ sessionId: "sess-1", cwd: "/synthetic", trustedWorkspace: true, source, meta: parsed.meta }, r.host);
+    await r.runtime.await(launched.runId);
+    const summaries = r.log.filter((e) => e.event === "progress").map((e) => (e.detail as WorkflowProgress).summary);
+    expect(summaries).toContain("research");
+    expect(summaries).not.toContain("research: read the code");
+  });
+});
+
+describe("meta.name is threaded, never recovered from the SANITIZED filename", () => {
+  test("a name outside the slug alphabet keeps its verbatim `meta.name` on the launch result", async () => {
+    const source = `export const meta = { name: "My Workflow!", description: "d" };\nreturn 1;`;
+    const r = rig();
+    const parsed = parseWorkflowMeta(source);
+    if (!parsed.ok) throw new Error(parsed.error);
+    const launched = r.runtime.launch({ sessionId: "sess-1", cwd: "/synthetic", trustedWorkspace: true, source, meta: parsed.meta }, r.host);
+    // The FILE is sanitized (it has to be -- the name becomes a path segment) ...
+    expect(launched.scriptPath).toContain(`My-Workflow-${launched.runId}.js`);
+    // ... while the NAME the pin asserts (`WorkflowOutput.workflowName` = meta.name) is verbatim.
+    expect(launched.name).toBe("My Workflow!");
+    await r.runtime.await(launched.runId);
   });
 });
 
