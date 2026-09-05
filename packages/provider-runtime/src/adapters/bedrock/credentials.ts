@@ -33,9 +33,21 @@ import { redactMaterial, redactRef } from "../../credentials/types.ts";
 import { ProviderRequestError } from "../../http.ts";
 import type { AwsSigningCredentials } from "./sigv4.ts";
 
+/**
+ * The marker that distinguishes "no credential is configured or present" from "a credential was
+ * rejected".
+ *
+ * Both are `code: "auth"` — they are the same taxonomy branch — but they are DIFFERENT ANSWERS to
+ * `validateCredential`, and telling a user their key is invalid when they never configured one sends
+ * them to debug the wrong thing entirely. It rides `providerCode` because that field is exactly "a
+ * finer, machine-readable code beneath the coarse taxonomy", and it is Winter-namespaced so it can
+ * never collide with a code AWS returns.
+ */
+export const WINTER_CREDENTIAL_MISSING = "WinterCredentialMissing";
+
 /** A credential refusal, typed as `auth` so it lands on the same taxonomy branch as a rejected key. NEVER retryable: no amount of backoff produces a credential. */
-function credentialRefusal(message: string): ProviderRequestError {
-  return new ProviderRequestError({ code: "auth", message, retryable: false });
+function credentialRefusal(message: string, missing = false): ProviderRequestError {
+  return new ProviderRequestError({ code: "auth", message, retryable: false, ...(missing ? { providerCode: WINTER_CREDENTIAL_MISSING } : {}) });
 }
 
 /**
@@ -52,6 +64,7 @@ export async function resolveAwsCredentials(ctx: ProviderContext): Promise<AwsSi
   if (ref.kind === "none") {
     throw credentialRefusal(
       "Bedrock requires AWS credentials and this session's provider is configured with no credential reference; set `provider.authRef` to `{ kind: \"aws-default-chain\" }`, a `{ kind: \"file\", format: \"aws-shared-credentials\" }` ref, or a Keychain ref holding AWS material",
+      true,
     );
   }
 
@@ -81,6 +94,7 @@ export async function resolveAwsCredentials(ctx: ProviderContext): Promise<AwsSi
   if (material === null) {
     throw credentialRefusal(
       `Bedrock found no credential at ${redactRef(ref)}${ref.kind === "aws-default-chain" ? " — neither the AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY environment pair nor a shared credentials file provided one (this phase does not use IMDS or STS)" : ""}`,
+      true,
     );
   }
 

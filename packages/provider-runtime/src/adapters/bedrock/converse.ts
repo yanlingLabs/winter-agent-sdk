@@ -61,7 +61,7 @@ import { applyPrivilegedHeaders, createEndpointPolicy, type EndpointPolicy } fro
 import { ProviderRequestError, boundedFetch } from "../../http.ts";
 import { ProviderStallError, normalizeHttpError, normalizeThrown } from "../../errors.ts";
 import { createRetryPolicy, withRetry, type RetryPolicyOptions } from "../../retry.ts";
-import { requireRegion, resolveAwsCredentials } from "./credentials.ts";
+import { WINTER_CREDENTIAL_MISSING, requireRegion, resolveAwsCredentials } from "./credentials.ts";
 import { createEventStreamDecoder, jsonPayload, messageType, stringHeader, type EventStreamMessage } from "./eventstream.ts";
 import { BEDROCK_SERVICE, signRequest } from "./sigv4.ts";
 
@@ -107,6 +107,21 @@ export interface BedrockAdapterOptions {
   /** R6-L PRIVILEGED: cross-account confused-deputy identifiers. They name the operator's account topology and must never reach a user endpoint. */
   sourceAccount?: string;
   sourceArn?: string;
+  /**
+   * The ADAPTER'S OWN endpoint, carrying GENERATED provenance. Defaults to the region-derived
+   * `https://bedrock-runtime.<region>.amazonaws.com` / `https://bedrock.<region>.amazonaws.com` pair.
+   *
+   * **A HOST MUST NOT SET THIS.** A host endpoint is `connection.baseUrl`, which is deliberately a
+   * USER endpoint and therefore loses privileged headers — that difference is the whole of R6-L, and
+   * setting this instead would silently restore them for an endpoint the reviewed catalog never
+   * named. It exists because the gate's POSITIVE branch is otherwise untestable: a generated
+   * endpoint is by definition a real AWS hostname, so without this seam "the privileged header rides
+   * a generated endpoint" could only be asserted about intent, never about a live request.
+   *
+   * `connection.baseUrl`, when present, still WINS over this — a host's explicit redirection is
+   * never overridden by an adapter's own default.
+   */
+  vendorBaseUrl?: string;
   maxBodyBytes?: number;
   timeoutMs?: number;
   retry?: RetryPolicyOptions;
@@ -117,18 +132,20 @@ export interface BedrockAdapterOptions {
 // --- endpoints --------------------------------------------------------------------------------------
 
 /** The two planes Bedrock speaks on. They are DIFFERENT ORIGINS in production, so each needs its own policy. */
-function runtimeBase(ctx: ProviderContext, region: string): { url: string; generated: boolean } {
+function runtimeBase(ctx: ProviderContext, region: string, vendorBaseUrl?: string): { url: string; generated: boolean } {
   const baseUrl = ctx.connection.baseUrl;
   if (baseUrl !== undefined && baseUrl.length > 0) return { url: baseUrl.replace(/\/+$/, ""), generated: false };
+  if (vendorBaseUrl !== undefined && vendorBaseUrl.length > 0) return { url: vendorBaseUrl.replace(/\/+$/, ""), generated: true };
   return { url: `https://bedrock-runtime.${region}.amazonaws.com`, generated: true };
 }
 
-function controlBase(ctx: ProviderContext, region: string): { url: string; generated: boolean } {
+function controlBase(ctx: ProviderContext, region: string, vendorBaseUrl?: string): { url: string; generated: boolean } {
   const baseUrl = ctx.connection.baseUrl;
   // A host that overrode the base URL overrode BOTH planes: it is pointing the adapter at one server
   // (a fake, a proxy, a gateway), and silently reaching past it to the real AWS control plane would
   // be a request the host never authorised.
   if (baseUrl !== undefined && baseUrl.length > 0) return { url: baseUrl.replace(/\/+$/, ""), generated: false };
+  if (vendorBaseUrl !== undefined && vendorBaseUrl.length > 0) return { url: vendorBaseUrl.replace(/\/+$/, ""), generated: true };
   return { url: `https://bedrock.${region}.amazonaws.com`, generated: true };
 }
 
@@ -173,10 +190,34 @@ export function bedrockErrorCode(headers: Headers, body: string): string | undef
   return undefined;
 }
 
+/**
+ * Removes EXACT occurrences of this request's own credential material from a provider error body.
+ *
+ * Belt and braces over the frozen scrubber, and it closes a real gap rather than a theoretical one:
+ * `errors.ts` scrubs a body whose contents `scanForSecrets` recognises, and that scanner has NO
+ * AWS-credential pattern — an access key id or a secret access key echoed back by an endpoint
+ * survives it verbatim into `ProviderError.message`, which is one of the most reliably-logged
+ * strings in the system. Matching the session's OWN material exactly is precise (no false positives,
+ * unlike a "40 base64-ish characters" heuristic) and is exactly what Global Constraints demand:
+ * credential material is redacted everywhere, including thrown error messages.
+ */
+export function redactCredentialMaterial(text: string, secrets: readonly string[]): string {
+  let out = text;
+  for (const secret of secrets) {
+    // Short values are skipped: a two-character "secret" would rewrite unrelated prose, and no real
+    // AWS credential component is that short.
+    if (secret.length < 8) continue;
+    out = out.split(secret).join("***");
+  }
+  return out;
+}
+
 /** The five-way taxonomy from the HTTP status (the frozen normalizer's job), with Bedrock's own code layered on. */
-export function normalizeBedrockError(status: number, headers: Headers, body: string): ProviderError {
-  const base = normalizeHttpError(status, headers, body);
+export function normalizeBedrockError(status: number, headers: Headers, body: string, secrets: readonly string[] = []): ProviderError {
+  // The STRUCTURED CODE comes off the raw body first: it is never credential material, and reading
+  // it after a redaction pass would risk losing it to a coincidental overlap.
   const providerCode = bedrockErrorCode(headers, body);
+  const base = normalizeHttpError(status, headers, redactCredentialMaterial(body, secrets));
   return providerCode !== undefined ? { ...base, providerCode } : base;
 }
 
@@ -681,7 +722,7 @@ export function createBedrockConverseAdapter(options: BedrockAdapterOptions = {}
     body: Uint8Array,
     region: string,
     contentType?: string,
-  ): Promise<Record<string, string>> {
+  ): Promise<{ headers: Record<string, string>; secrets: string[] }> {
     const credentials = await resolveAwsCredentials(ctx);
     const privileged = applyPrivilegedHeaders(policy, {
       ...(options.sourceAccount !== undefined ? { "x-amz-source-account": options.sourceAccount } : {}),
@@ -696,15 +737,26 @@ export function createBedrockConverseAdapter(options: BedrockAdapterOptions = {}
       ...privileged,
     };
     const signed = await signRequest({ method, url, headers, body, credentials, region, service: BEDROCK_SERVICE, date: now() });
-    return { ...headers, ...signed.headers };
+    // The material travels back with the headers so an error body can be scrubbed of THIS session's
+    // own credential exactly — see `redactCredentialMaterial`. It never leaves this closure.
+    return {
+      headers: { ...headers, ...signed.headers },
+      secrets: [credentials.secretAccessKey, credentials.accessKeyId, ...(credentials.sessionToken !== undefined ? [credentials.sessionToken] : [])],
+    };
   }
+
+  // Carried out of `callControlPlane` so its caller can scrub an error body of the same material.
+  // A closure variable rather than a return field because `boundedFetch`'s answer is a `Response`
+  // and widening that would touch every call site for one diagnostic.
+  let controlPlaneSecrets: string[] = [];
 
   async function callControlPlane(ctx: DiscoveryContext, path: string): Promise<Response> {
     const region = requireRegion(ctx);
-    const base = controlBase(ctx, region);
+    const base = controlBase(ctx, region, options.vendorBaseUrl);
     const policy = policyFor(base, ctx);
     const url = `${base.url}${path}`;
-    const headers = await signedRequest(ctx, policy, "GET", url, new Uint8Array(0), region);
+    const { headers, secrets } = await signedRequest(ctx, policy, "GET", url, new Uint8Array(0), region);
+    controlPlaneSecrets = secrets;
     return await boundedFetch(url, {
       method: "GET",
       headers,
@@ -718,7 +770,7 @@ export function createBedrockConverseAdapter(options: BedrockAdapterOptions = {}
   async function foundationModels(ctx: DiscoveryContext): Promise<Array<{ modelId: string; modelName?: string; inputModalities?: string[]; responseStreamingSupported?: boolean }>> {
     const response = await callControlPlane(ctx, "/foundation-models");
     const text = await response.text();
-    if (!response.ok) throw new ProviderRequestError(normalizeBedrockError(response.status, response.headers, text));
+    if (!response.ok) throw new ProviderRequestError(normalizeBedrockError(response.status, response.headers, text, controlPlaneSecrets));
     let parsed: unknown;
     try {
       parsed = JSON.parse(text) as unknown;
@@ -754,6 +806,9 @@ export function createBedrockConverseAdapter(options: BedrockAdapterOptions = {}
         return { ok: true };
       } catch (err) {
         const normalized = normalizeThrown(err);
+        // ABSENT and REJECTED are the same taxonomy branch and DIFFERENT answers: telling a user
+        // their key is invalid when they never configured one sends them to debug the wrong thing.
+        if (normalized.providerCode === WINTER_CREDENTIAL_MISSING) return { ok: false, code: "missing", message: normalized.message };
         if (normalized.code === "auth") return { ok: false, code: "invalid", message: normalized.message };
         if (normalized.code === "capability") return { ok: false, code: "missing", message: normalized.message };
         return { ok: false, code: "network", message: normalized.message };
@@ -805,7 +860,15 @@ interface TurnDeps {
   maxBodyBytes: number;
   timeoutMs: number;
   streamingFor: (modelId: string) => boolean;
-  signedRequest: (ctx: ProviderContext, policy: EndpointPolicy, method: string, url: string, body: Uint8Array, region: string, contentType?: string) => Promise<Record<string, string>>;
+  signedRequest: (
+    ctx: ProviderContext,
+    policy: EndpointPolicy,
+    method: string,
+    url: string,
+    body: Uint8Array,
+    region: string,
+    contentType?: string,
+  ) => Promise<{ headers: Record<string, string>; secrets: string[] }>;
   options: BedrockAdapterOptions;
 }
 
@@ -832,7 +895,7 @@ async function* streamBedrockTurn(req: TurnRequest, ctx: ProviderContext, deps: 
 
   const body = new TextEncoder().encode(JSON.stringify(buildConverseBody(req, descriptor, mappedEffort)));
 
-  const base = runtimeBase(ctx, region);
+  const base = runtimeBase(ctx, region, deps.options.vendorBaseUrl);
   const policy = policyFor(base, ctx);
   const streaming = deps.streamingFor(req.model);
   const url = `${base.url}/model/${encodeURIComponent(req.model)}/${streaming ? "converse-stream" : "converse"}`;
@@ -856,7 +919,7 @@ async function* streamBedrockTurn(req: TurnRequest, ctx: ProviderContext, deps: 
     const response = yield* pumpProviderEvents<Response>(async (emit) =>
       withRetry(
         async () => {
-          const headers = await deps.signedRequest(ctx, policy, "POST", url, body, region, "application/json");
+          const { headers, secrets } = await deps.signedRequest(ctx, policy, "POST", url, body, region, "application/json");
           const res = await boundedFetch(url, {
             method: "POST",
             headers,
@@ -868,7 +931,7 @@ async function* streamBedrockTurn(req: TurnRequest, ctx: ProviderContext, deps: 
           });
           if (!res.ok) {
             const text = await res.text();
-            throw new ProviderRequestError(normalizeBedrockError(res.status, res.headers, text));
+            throw new ProviderRequestError(normalizeBedrockError(res.status, res.headers, text, secrets));
           }
           // THE COMMIT POINT. Everything after this is final — including an exception FRAME, which
           // is Bedrock's way of reporting a throttle that began after the 200.
