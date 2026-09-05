@@ -102,6 +102,12 @@ const WS11_10: ConformanceRow[] = [
       { file: "./workflows/script-api.test.ts", testName: `the FIRST changed call and everything after runs live` },
       { file: "./workflows/script-api.test.ts", testName: `running past the journal's recorded end is a divergence too` },
       { file: "./workflows/script-api.test.ts", testName: `a cached call costs NOTHING against the total-agent cap -- it never spawned` },
+      // r1 (residual round). The bullet has three clauses and the four citations above prove two:
+      // cache hits and first-divergence live re-run. "FAILURE NON-CACHING" was uncited -- the row
+      // read as covered on the strength of tests that say nothing about it, which is the exact
+      // failure mode a citation guard exists to prevent, and it survived the fix wave because the
+      // wave repaired the citations its own retitles broke and recorded that as closing this.
+      { file: "./workflows/runtime.test.ts", testName: `a FAILED agent call is never journaled -- it re-runs LIVE on resume rather than replaying its null (WS-11 §1.5)` },
     ],
   },
   {
