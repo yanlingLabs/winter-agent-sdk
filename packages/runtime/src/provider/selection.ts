@@ -18,7 +18,7 @@
 import type { WinterCatalog } from "@yanlinglabs/winter-provider-catalog";
 import type { CredentialStore, ProviderRegistry, ResolvedModel } from "@yanlinglabs/winter-provider-runtime";
 import { WinterProviderResolutionError, createRegistry } from "@yanlinglabs/winter-provider-runtime";
-import type { CredentialRef, RuntimeConfig } from "@yanlinglabs/winter-agent-sdk";
+import { DEFAULT_PROVIDER_STALL_TIMEOUT_MS, type CredentialRef, type RuntimeConfig } from "@yanlinglabs/winter-agent-sdk";
 import type { Provider } from "../engine.ts";
 
 /**
@@ -278,6 +278,24 @@ export function redactCredentialRef(ref: CredentialRef): string {
     case "none":
       return "none";
   }
+}
+
+/**
+ * R6-6: how the session's stall timeout reaches an adapter.
+ *
+ * THROUGH `ProviderContext`, not `ProviderRequest`, and the placement is the design. A stall watchdog
+ * is a property of the CONNECTION -- an adapter arms it around its own `boundedFetch`/`parseSse`,
+ * once, for every call it makes -- not of one turn's payload. Putting it on the request would invite
+ * a per-turn override that no ruling asks for and that an adapter would have to re-arm mid-stream.
+ *
+ * One resolution site, so the disclosed default cannot be applied differently by two callers.
+ */
+export function resolveStallTimeoutMs(config: RuntimeConfig): number {
+  const configured = config.providerStallTimeoutMs;
+  // A non-positive value is IGNORED rather than honoured, matching `contextWindowTokens`' own
+  // precedent (engine.ts's `createContextAccountant`): a `0` here would mean "abort immediately",
+  // which is never what a host configuring a watchdog intends.
+  return typeof configured === "number" && Number.isFinite(configured) && configured > 0 ? configured : DEFAULT_PROVIDER_STALL_TIMEOUT_MS;
 }
 
 /** Convenience for a caller that has a catalog rather than a registry. One construction site, so a registry is never built twice for one session. */

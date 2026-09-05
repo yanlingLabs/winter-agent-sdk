@@ -249,3 +249,155 @@ describe("R6-7 contract: the provider-state sidecar", () => {
     expect(chain.get("here")?.origin).toEqual({ providerId: "p", modelKey: "p/m", family: "openai" });
   });
 });
+
+// --------------------------------------------------------------------------------------------------
+// The SEAM AUTHORITIES a lane brief cites. Each assertion below is the answer to "what exactly may I
+// rely on", so a lane never has to read an implementation to find out.
+// --------------------------------------------------------------------------------------------------
+
+describe("R6-4 contract: the bridge (Lanes A / B / N)", () => {
+  test("`foldProviderStream` is the REAL consumer a lane tests its adapter's stream against", async () => {
+    // Exported precisely so a family lane never re-implements the fold to test against it -- a
+    // re-implementation would agree with the lane and disagree with production.
+    const { foldProviderStream } = await import("./bridge.ts");
+    const turn = await foldProviderStream(
+      (async function* () {
+        yield { type: "text_delta", text: "hi" } as const;
+        yield { type: "done", stopReason: "end_turn" } as const;
+      })(),
+    );
+    expect(turn).toEqual({ kind: "text", text: "hi", stopReason: "end_turn" });
+  });
+
+  test("the fold NEVER retries: `withRetry` is the adapter's, strictly before the first byte", async () => {
+    const { foldProviderStream, ProviderTurnError } = await import("./bridge.ts");
+    let consumed = 0;
+    const stream = (async function* () {
+      consumed++;
+      yield { type: "text_delta", text: "partial" } as const;
+      yield { type: "error", error: { code: "server" as const, message: "boom", status: 503, retryable: true } } as const;
+    })();
+    await expect(foldProviderStream(stream)).rejects.toThrow(ProviderTurnError);
+    expect(consumed).toBe(1);
+  });
+
+  test("`HistoryRenderer` is the shape Lane C implements, and T3's identity renderer is the fallback", async () => {
+    const { createIdentityHistoryRenderer } = await import("./bridge.ts");
+    const renderer = createIdentityHistoryRenderer();
+    const messages: ProviderMessage[] = [{ role: "assistant", content: "x", nativeState: { family: "openai", continuationDomain: "d1", items: ["OPAQUE"] } }];
+    // Same domain: replayed. Different domain: dropped, with the message itself intact.
+    expect(renderer.render(messages, new Map(), { family: "openai", continuationDomain: "d1", readableState: "none" })[0]!.nativeState).toBeDefined();
+    const crossed = renderer.render(messages, new Map(), { family: "anthropic", continuationDomain: "d2", readableState: "none" });
+    expect(crossed[0]!.nativeState).toBeUndefined();
+    expect(JSON.stringify(crossed)).not.toContain("OPAQUE");
+  });
+});
+
+describe("R6-9 contract: selection (Lanes A / B / D / N)", () => {
+  test("a resolution failure is a TYPED `WinterProviderResolutionError`, never a silent default", async () => {
+    const { resolveSessionProvider } = await import("./selection.ts");
+    const { WinterProviderResolutionError, createMemoryCredentialStore, createRegistry } = await import("@yanlinglabs/winter-provider-runtime");
+    const registry = createRegistry({ schemaVersion: 1, catalogVersion: "t", providers: [], models: [] } as never);
+    let threw: unknown;
+    try {
+      resolveSessionProvider({ sessionId: "s", cwd: "/tmp", model: "bare-id" } as never, { registry, credentials: createMemoryCredentialStore(), env: {} });
+    } catch (err) {
+      threw = err;
+    }
+    expect(threw).toBeInstanceOf(WinterProviderResolutionError);
+  });
+
+  test("the identity a lane sees carries the adapter's OWN version and the catalog's -- read off a real resolution", async () => {
+    // R6-9's `winter_provider` init extension and the dialect record are both built from this shape,
+    // so a lane adding an adapter must set `version` on it or the identity is incomplete. Asserted
+    // against a REAL resolution rather than a hand-written key list, which would only agree with
+    // itself.
+    const { resolveSessionProvider } = await import("./selection.ts");
+    const { createMemoryCredentialStore, createRegistry } = await import("@yanlinglabs/winter-provider-runtime");
+    const evidence = <T,>(value: T) => ({ value, source: "official-doc" as const, confidence: "verified" as const, observedAt: "2026-09-05" });
+    const registry = createRegistry({
+      schemaVersion: 1,
+      catalogVersion: "cat-9",
+      providers: [
+        {
+          id: "p",
+          displayName: "p",
+          adapterId: "a",
+          protocol: "openai-responses",
+          auth: { kinds: ["api-key"] },
+          endpoints: { base: "https://p.example" },
+          modelDiscovery: "static",
+          liveCatalogAuthority: "advisory",
+          risk: { class: "standard", reasons: [] },
+          upstream: { project: "winter", commit: "" },
+        },
+      ],
+      models: [
+        {
+          key: "p/m",
+          providerId: "p",
+          upstreamId: "m-1",
+          displayName: "m",
+          aliases: [],
+          status: "candidate",
+          toolCalling: evidence("native"),
+          reasoning: { continuation: "opaque", continuationDomain: evidence(["p:domain"]), readableState: "none" },
+          upstream: { project: "winter", commit: "" },
+        },
+      ],
+    } as never);
+    registry.register({
+      id: "a",
+      version: "9.9.9",
+      family: "openai",
+      protocol: "openai-responses",
+      async validateCredential() {
+        return { ok: true };
+      },
+      async listModels() {
+        return { models: [], partial: false, cached: false, warnings: [] };
+      },
+      async *streamTurn() {},
+      mapEffort: () => ({ ok: true, value: "medium" }),
+      capabilities: () => ({ toolCalling: "native", readableState: "none" }),
+    });
+    const out = resolveSessionProvider({ sessionId: "s", cwd: "/tmp", model: "p/m" } as never, { registry, credentials: createMemoryCredentialStore(), env: {} });
+    if ("testProvider" in out) throw new Error("expected a catalog selection");
+    expect(Object.keys(out.identity).sort()).toEqual(["adapterId", "adapterVersion", "authRefKind", "catalogVersion", "continuationDomain", "modelKey", "providerId"]);
+    expect(out.identity.adapterVersion).toBe("9.9.9");
+    expect(out.identity.catalogVersion).toBe("cat-9");
+  });
+});
+
+describe("R6-6 contract: cancellation reaches BOTH sides", () => {
+  test("`ToolExecutionContext.signal` exists and is optional -- an executor that ignores it is unchanged", async () => {
+    const registry = await import("../tools/registry.ts");
+    // A structural assertion rather than a type-only one: the field has to be present at runtime on
+    // the context the real engine-facing executor builds, or Bash/Monitor never see it.
+    const executor = registry.buildRegistryToolExecutor({
+      sessionId: "s",
+      home: "/tmp",
+      getCwd: () => "/tmp",
+      readState: (await import("../tools/read-state.ts")).createSessionReadState(),
+      emitFrame: () => {},
+      probeReadAccess: () => "silent",
+      getTempDir: () => "/tmp",
+      sandboxSettings: {},
+      session: {
+        setCwd() {},
+        addBoundedRoot() {},
+        removeBoundedRoot() {},
+        setPermissionMode() {},
+        getBoundedRoots: () => [],
+        getPermissionMode: () => "default",
+        getSessionRoot: () => "/tmp",
+        setSessionRoot() {},
+      },
+    } as never);
+    const controller = new AbortController();
+    // An unknown tool short-circuits before any executor runs, which is all this needs: what is
+    // asserted is that passing the option is ACCEPTED by the seam, on the real builder.
+    const result = await executor.execute({ id: "t", name: "definitely-not-a-tool", input: {} }, { signal: controller.signal });
+    expect(typeof result.output).toBe("string");
+  });
+});

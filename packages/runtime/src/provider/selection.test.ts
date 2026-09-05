@@ -8,7 +8,8 @@ import type { ProviderAdapter } from "@yanlinglabs/winter-provider-runtime";
 import { WinterProviderResolutionError, createMemoryCredentialStore } from "@yanlinglabs/winter-provider-runtime";
 import type { WinterCatalog } from "@yanlinglabs/winter-provider-catalog";
 import type { RuntimeConfig } from "@yanlinglabs/winter-agent-sdk";
-import { createSelectionRegistry, redactCredentialRef, resolveSessionProvider, WINTER_TEST_NAMESPACE } from "./selection.ts";
+import { createSelectionRegistry, redactCredentialRef, resolveSessionProvider, resolveStallTimeoutMs, WINTER_TEST_NAMESPACE } from "./selection.ts";
+import { DEFAULT_PROVIDER_STALL_TIMEOUT_MS } from "@yanlinglabs/winter-agent-sdk";
 import type { Provider } from "../engine.ts";
 
 const adapter = (id: string, family: "openai" | "anthropic"): ProviderAdapter => ({
@@ -255,3 +256,18 @@ function capture(fn: () => unknown): WinterProviderResolutionError {
   }
   throw new Error("expected a throw");
 }
+
+describe("R6-6: the stall timeout", () => {
+  test("the disclosed default applies when nothing is configured", () => {
+    expect(resolveStallTimeoutMs(config())).toBe(DEFAULT_PROVIDER_STALL_TIMEOUT_MS);
+    expect(DEFAULT_PROVIDER_STALL_TIMEOUT_MS).toBe(120000);
+  });
+
+  test("a configured value wins, and a non-positive one is IGNORED rather than honoured", () => {
+    // `0` would mean "abort immediately", which is never what a host configuring a watchdog intends
+    // -- the same reading `createContextAccountant` already applies to a non-positive window.
+    expect(resolveStallTimeoutMs(config({ providerStallTimeoutMs: 5000 }))).toBe(5000);
+    expect(resolveStallTimeoutMs(config({ providerStallTimeoutMs: 0 }))).toBe(DEFAULT_PROVIDER_STALL_TIMEOUT_MS);
+    expect(resolveStallTimeoutMs(config({ providerStallTimeoutMs: -1 }))).toBe(DEFAULT_PROVIDER_STALL_TIMEOUT_MS);
+  });
+});
