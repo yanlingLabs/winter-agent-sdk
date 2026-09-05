@@ -64,7 +64,8 @@
     {
       "id": "deepseek",
       "displayName": "DeepSeek",
-      "protocols": ["openai-chat-completions"],
+      "protocols": ["openai-chat-completions", "openai-responses"],
+      "$comment": "`openai-responses` was ADDED by Lane X, and it is a correction rather than an expansion. Upstream's deepseek entry at v3.8.50 is `format: \"openai-responses\"` with `baseUrl: \"https://api.deepseek.com/responses\"`, so every extracted deepseek model row lands `endpoints: [\"responses\"]`; beneath a provider declaring only Chat Completions, those rows were a responses-only model pointed at a Chat Completions adapter — a contradiction the frozen validator cannot see, because it checks one row at a time while the merge is row-level. `scripts/provider-source-sync.ts --offline` now fails on exactly that shape. `adapterId` deliberately stays `winter.openai-chat-completions`: WS-13 §8.2 warns that DeepSeek's Responses-compatible endpoint accepts `reasoning.summary` without generating one and supports neither `include` nor `previous_response_id`, so \"OpenAI-compatible\" is not the capability test and which surface Lane A drives is its proof to make, not this file's. Listing more protocols than the assigned adapter speaks is the existing shape here (`openai` and `openrouter` both do).",
       "authKinds": ["api-key"],
       "defaultEndpoints": { "api": "https://api.deepseek.com" },
       "modelDiscovery": "openai-models",

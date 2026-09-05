@@ -87,6 +87,24 @@ const AUTHTYPE_TO_KIND: Readonly<Record<string, ProviderAuthKind>> = {
  */
 const KNOWN_EXECUTORS: ReadonlySet<string> = new Set(["default", "bedrock", "vertex"]);
 
+/**
+ * Executors whose PROTOCOL is not the one their `format` field names — the executor wins.
+ *
+ * Upstream's `bedrock` entry is `format: "openai"` with `executor: "bedrock"`, because OmniRoute
+ * translates an OpenAI-shaped request inside its own Bedrock executor. Reading `format` alone
+ * mapped the row to `openai-chat-completions` / `winter.openai-chat-completions`: a row that
+ * validates cleanly and would send Converse traffic to the OpenAI chat adapter the day its overlay
+ * shadow is removed. It is shadowed today, which is exactly why it needed catching here — a latent
+ * misroute in a layer nothing currently reads is the kind that surfaces months later as "why is
+ * Bedrock speaking Chat Completions".
+ *
+ * `vertex` needs no entry: its `format: "gemini"` already names the right protocol, and its executor
+ * only changes the URL, which Winter never takes from upstream anyway.
+ */
+const EXECUTOR_PROTOCOL_OVERRIDE: Readonly<Record<string, ProviderProtocol>> = {
+  bedrock: "bedrock-converse",
+};
+
 /** `reasoningTransport` -> the descriptor's continuation kind. */
 const TRANSPORT_TO_CONTINUATION: Readonly<Record<string, ReasoningCapabilities["continuation"]>> = {
   opaque: "opaque-provider-state",
@@ -283,8 +301,8 @@ export function buildUpstreamLayer(input: BuildUpstreamLayerInput): UpstreamLaye
       }
     }
 
-    const protocol = format === undefined ? undefined : FORMAT_TO_PROTOCOL[format];
-    if (protocol === undefined) {
+    const byFormat = format === undefined ? undefined : FORMAT_TO_PROTOCOL[format];
+    if (byFormat === undefined) {
       throw new ExtractionRefusal(`allowlisted provider "${allowed.upstreamId}" declares upstream format ${JSON.stringify(format)}, which Winter has no protocol for — an unknown protocol FAILS extraction (WS-13 §13) rather than defaulting`);
     }
     const authKind = authType === undefined ? undefined : AUTHTYPE_TO_KIND[authType];
@@ -293,6 +311,18 @@ export function buildUpstreamLayer(input: BuildUpstreamLayerInput): UpstreamLaye
     }
     if (executor === undefined || !KNOWN_EXECUTORS.has(executor)) {
       throw new ExtractionRefusal(`allowlisted provider "${allowed.upstreamId}" uses upstream executor ${JSON.stringify(executor)}, which is not one Winter represents — an unknown executor FAILS extraction (WS-13 §13)`);
+    }
+    // A native-cloud executor OVERRIDES its entry's `format` (see EXECUTOR_PROTOCOL_OVERRIDE).
+    const protocol = EXECUTOR_PROTOCOL_OVERRIDE[executor] ?? byFormat;
+    if (protocol !== byFormat) {
+      reject(
+        allowed.upstreamId,
+        "field",
+        "unrepresentable-protocol",
+        `${allowed.upstreamId}.format`,
+        registryPath,
+        `upstream declares format ${JSON.stringify(format)} with executor ${JSON.stringify(executor)}: the OpenAI shape is what its own executor TRANSLATES FROM, not what the provider speaks on the wire. Winter records the executor's protocol (${protocol}) and drops the format claim.`,
+      );
     }
 
     const adapter = PROTOCOL_TO_ADAPTER[protocol];

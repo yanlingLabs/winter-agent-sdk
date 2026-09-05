@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { OVERLAY_FILES } from "../packages/provider-catalog/src/extract/merge.ts";
-import { COPIED, PKG, THIRD_PARTY, registryIdentifierNames, upstreamIdForRejection, writeOutputs, type ExtractionOutcome } from "./provider-source-sync.ts";
+import { COPIED, PKG, THIRD_PARTY, findEndpointContradictions, registryIdentifierNames, upstreamIdForRejection, writeOutputs, type ExtractionOutcome } from "./provider-source-sync.ts";
 
 /**
  * NO NETWORK anywhere in this file. The network half of the pipeline (`--check`) is proven against a
@@ -171,6 +171,40 @@ describe("the committed inputs are internally consistent", () => {
     const pin = JSON.parse(readFileSync(join(THIRD_PARTY, "UPSTREAM.json"), "utf8")) as { observedAt: string; tagObject: string; commit: string };
     expect(pin.observedAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
     expect(pin.tagObject).not.toBe(pin.commit);
+  });
+});
+
+describe("the CROSS-LAYER gate — the row-level merge's blind spot", () => {
+  const provider = (id: string, protocols: string[]) => ({ id, protocols, adapterId: `winter.${id}` }) as never;
+  const model = (key: string, providerId: string, endpoints: string[]) => ({ key, providerId, endpoints }) as never;
+
+  test("a responses-only model under a chat-only provider is a CONTRADICTION, though every row validates alone", () => {
+    // The real defect this gate was written for: upstream's deepseek entry is
+    // `format: "openai-responses"`, so its extracted model rows land `endpoints: ["responses"]` — and
+    // the overlay provider row that shadows the upstream provider is authored separately. The frozen
+    // validator sees one row at a time and cannot notice.
+    const found = findEndpointContradictions({
+      providers: [provider("deepseek", ["openai-chat-completions"])],
+      models: [model("deepseek/r", "deepseek", ["responses"])],
+    });
+    expect(found).toHaveLength(1);
+    expect(found[0]).toContain("serialized as Chat Completions");
+  });
+
+  test("declaring the Responses protocol resolves it; Azure's own Responses surface counts too", () => {
+    expect(findEndpointContradictions({
+      providers: [provider("deepseek", ["openai-chat-completions", "openai-responses"])],
+      models: [model("deepseek/r", "deepseek", ["responses"])],
+    })).toEqual([]);
+    expect(findEndpointContradictions({
+      providers: [provider("azure-openai", ["azure-openai"])],
+      models: [model("azure-openai/m", "azure-openai", ["chat", "responses"])],
+    })).toEqual([]);
+  });
+
+  test("the COMMITTED catalog is cross-layer consistent", async () => {
+    const catalog = JSON.parse(await Bun.file(join(PKG, "generated", "catalog.json")).text()) as Parameters<typeof findEndpointContradictions>[0];
+    expect(findEndpointContradictions(catalog)).toEqual([]);
   });
 });
 

@@ -265,6 +265,34 @@ describe("unknown vocabularies FAIL extraction (WS-13 §13)", () => {
     });
   }
 
+  test("a NATIVE-CLOUD executor overrides its entry's `format` — and the override is recorded", () => {
+    // Upstream's bedrock entry is `format: "openai"` with `executor: "bedrock"`, because its own
+    // executor TRANSLATES an OpenAI-shaped request. Reading `format` alone produced a row that
+    // validated cleanly and would have sent Converse traffic to the OpenAI chat adapter the day its
+    // overlay shadow was removed — a latent misroute in a layer nothing currently reads.
+    const layer = buildUpstreamLayer(
+      buildInput(allowlistWith([ACME_ROW]), {
+        registry: new Map([["acme", { id: "acme", format: "openai", executor: "bedrock", authType: "apikey", models: [] } as LiteralValue]]),
+      }),
+    );
+    expect(layer.providers[0]!.protocols).toEqual(["bedrock-converse"]);
+    expect(layer.providers[0]!.adapterId).toBe("winter.bedrock-converse");
+    expect(layer.providers[0]!.family).toBe("bedrock");
+    const recorded = layer.rejections.find((r) => r.path === "acme.format")!;
+    expect(recorded.exclusionClass).toBe("unrepresentable-protocol");
+    expect(recorded.reason).toContain("TRANSLATES FROM");
+  });
+
+  test("an executor with NO override still takes its protocol from `format`", () => {
+    const layer = buildUpstreamLayer(
+      buildInput(allowlistWith([ACME_ROW]), {
+        registry: new Map([["acme", { id: "acme", format: "gemini", executor: "vertex", authType: "apikey", models: [] } as LiteralValue]]),
+      }),
+    );
+    expect(layer.providers[0]!.protocols).toEqual(["google-generate-content"]);
+    expect(layer.rejections.some((r) => r.path === "acme.format")).toBe(false);
+  });
+
   test("an identity-critical field the walker could not resolve refuses rather than guessing", () => {
     expect(() =>
       buildUpstreamLayer(buildInput(allowlistWith([ACME_ROW]), { registry: new Map([["acme", { id: "acme", format: "openai", authType: "apikey", models: [] } as LiteralValue]]) })),

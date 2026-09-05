@@ -1489,6 +1489,14 @@
       "reason": "WS-13 §1: the main source pool, curated by LLM relevance and adapter quality — presence upstream is never inclusion"
     },
     {
+      "upstreamId": "bedrock",
+      "scope": "field",
+      "exclusionClass": "unrepresentable-protocol",
+      "path": "bedrock.format",
+      "sourcePath": "open-sse/config/providers/registry/bedrock/index.ts",
+      "reason": "upstream declares format \"openai\" with executor \"bedrock\": the OpenAI shape is what its own executor TRANSLATES FROM, not what the provider speaks on the wire. Winter records the executor's protocol (bedrock-converse) and drops the format claim."
+    },
+    {
       "upstreamId": "black-forest-labs",
       "scope": "provider",
       "exclusionClass": "not-allowlisted",

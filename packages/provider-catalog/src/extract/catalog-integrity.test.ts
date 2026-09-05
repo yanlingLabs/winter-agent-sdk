@@ -62,7 +62,7 @@ describe("the seed is fully replaced", () => {
   test("the extraction actually contributed rows the seed never had", () => {
     const upstreamKeys = new Set(upstreamLayer.models.map((m) => m.key));
     expect(upstreamKeys.size).toBeGreaterThan(40);
-    for (const key of upstreamKeys) expect(catalog.models.some((m) => m.key === key) || catalog.models.some((m) => m.key === key)).toBe(true);
+    for (const key of upstreamKeys) expect([key, catalog.models.some((m) => m.key === key)]).toEqual([key, true]);
     // The gateway's OWN-namespace row, which the registry's self-prefix stripping would otherwise
     // send to the wire without it (T2 re-review r2).
     expect(catalog.models.some((m) => m.key === "openrouter/auto")).toBe(true);

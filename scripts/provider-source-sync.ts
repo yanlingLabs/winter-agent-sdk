@@ -44,6 +44,7 @@ const UPSTREAM_NOTICE = join(THIRD_PARTY, "NOTICE");
 const OUTPUT_PIN = join(PKG, "UPSTREAM.json");
 const UPSTREAM_LAYER = join(PKG, "generated", "upstream-layer.json");
 const DENOMINATOR = join(PKG, "generated", "denominator.json");
+const OUT_CATALOG = join(PKG, "generated", "catalog.json");
 
 /** The two upstream files Winter COPIES, and where each lands. Nothing else from the tree is committed. */
 const COPIED: ReadonlyArray<{ upstreamPath: string; localPath: string }> = [
@@ -257,6 +258,29 @@ function writeOutputs(outcome: ExtractionOutcome, target: { thirdParty: string; 
   }
 }
 
+/**
+ * Every model whose `endpoints` name a surface its own provider's `protocols` cannot serve.
+ *
+ * Exported so the offline gate and its test read the same rule. The mapping is deliberately narrow:
+ * a `responses` endpoint needs an OpenAI-Responses-shaped protocol (`openai-responses`, or
+ * `azure-openai`, whose `/openai/v1` surface serves it), and a `chat` endpoint needs any protocol at
+ * all, because every family Winter speaks has a conversational surface.
+ */
+export function findEndpointContradictions(catalog: { providers: WinterProviderDescriptor[]; models: WinterModelDescriptor[] }): string[] {
+  const byId = new Map(catalog.providers.map((p) => [p.id, p]));
+  const out: string[] = [];
+  for (const model of catalog.models) {
+    const provider = byId.get(model.providerId);
+    if (provider === undefined) continue;
+    if (!model.endpoints.includes("responses")) continue;
+    if (provider.protocols.includes("openai-responses") || provider.protocols.includes("azure-openai")) continue;
+    out.push(
+      `${model.key} declares endpoints ${JSON.stringify(model.endpoints)}, but provider "${provider.id}" declares protocols ${JSON.stringify(provider.protocols)} — a responses-only row would reach the "${provider.adapterId}" adapter and be serialized as Chat Completions`,
+    );
+  }
+  return out.sort();
+}
+
 function readIfPresent(path: string): string {
   return existsSync(path) ? readFileSync(path, "utf8") : "<missing>";
 }
@@ -358,7 +382,24 @@ function runOffline(write = false): number {
     console.error(`provider-source-sync: \`provider:catalog\` failed:\n${stdout}${stderr}`);
     return 1;
   }
-  console.log(`provider-source-sync${write ? "" : " --offline"}: OK — the committed upstream layer validates standalone (${standalone.providers.length} providers, ${standalone.models.length} models)`);
+  // --- the CROSS-LAYER consistency check the frozen validator structurally cannot do -------------
+  //
+  // `validateCatalog` sees one row at a time, and the merge is ROW-LEVEL (an overlay provider row
+  // replaces its upstream twin whole). So an overlay provider can declare a narrower `protocols`
+  // list than the upstream MODEL rows beneath it were built against — and the merged catalog
+  // contradicts itself while every individual row validates cleanly. Not hypothetical: upstream's
+  // deepseek entry is `format: "openai-responses"`, so its model rows land `endpoints: ["responses"]`
+  // beneath an overlay provider that has to say so too, or a responses-only row reaches a Chat
+  // Completions adapter.
+  const merged = readJson<{ providers: WinterProviderDescriptor[]; models: WinterModelDescriptor[] }>(OUT_CATALOG);
+  const contradictions = findEndpointContradictions(merged);
+  if (contradictions.length > 0) {
+    console.error(`provider-source-sync: the MERGED catalog contradicts itself ACROSS LAYERS (${contradictions.length}) — the row-level merge's blind spot:`);
+    for (const line of contradictions) console.error(`  - ${line}`);
+    return 1;
+  }
+
+  console.log(`provider-source-sync${write ? "" : " --offline"}: OK — the committed upstream layer validates standalone (${standalone.providers.length} providers, ${standalone.models.length} models), and the merged catalog is cross-layer consistent`);
   return 0;
 }
 

@@ -133,7 +133,8 @@
       "id": "deepseek",
       "displayName": "DeepSeek",
       "protocols": [
-        "openai-chat-completions"
+        "openai-chat-completions",
+        "openai-responses"
       ],
       "authKinds": [
         "api-key"
