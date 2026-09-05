@@ -314,6 +314,17 @@ export interface EvaluationContext {
    * Absent = the pre-fix behaviour, `<home>/.winter/...` only.
    */
   winterHome?: string;
+  /**
+   * Phase 5 fix wave, B-H1(a): "will this exact call run under the OS sandbox, with
+   * `autoAllowBashIfSandboxed` on?" -- WS-12 §1's composition MUST, which had no consumer at all.
+   *
+   * INJECTED rather than computed here, for the same reason `requiresInteraction` and
+   * `skillIdentities` are: the answer depends on the session's resolved `SandboxSettings`, on
+   * `sandbox-exec` being available on this host, and on the call's own `dangerouslyDisableSandbox`
+   * (P3-J), none of which this module can see. Absent = the pre-fix behaviour, i.e. the setting
+   * stays inert for any caller that does not supply it.
+   */
+  bashRunsSandboxed?: (call: PermissionCall) => boolean;
   hookStage: HookStage;
   promptStage: PromptStage;
   autoEngine: AutoEngine;
@@ -960,6 +971,30 @@ function evaluateModeStage(call: PermissionCall, ctx: EvaluationContext, mode: P
   if (mode === "bypassPermissions") {
     // Standing exceptions above already intercepted anything critical/protected; everything else
     // is an unconditional auto-allow under bypass (WS-07 §6.4).
+    return { kind: "allow" };
+  }
+
+  // --- Phase 5 fix wave, B-H1(a): `autoAllowBashIfSandboxed` (WS-12 §1's composition MUST) ---------
+  //
+  // The setting had TWO type declarations (`sandbox/profile.ts:47`, `sdk/protocol/config.ts:153`) and
+  // ZERO consumers -- a settings key that parses and does nothing, which is the "accepted, preserved,
+  // inert" posture applied to a PERMISSIVE feature. The plan never sanctioned that: an inert
+  // RESTRICTIVE key is harmless, an inert permissive one silently withholds a capability the host
+  // asked for.
+  //
+  // PLACED AFTER the standing exceptions and BEFORE the mode baselines, so the ordering that makes
+  // it safe is structural rather than argued: a critical removal and a protected write are already
+  // intercepted above and can never reach this arm, and stage-2/3 deny/ask rules run BEFORE the mode
+  // stage in `evaluate()` -- so this can only ever silence a prompt for a call nothing else objected
+  // to. `bypassPermissions` returns above and is unaffected; `plan` is deliberately excluded (a plan
+  // session's whole contract is that it does not act).
+  //
+  // THE PREDICATE IS INJECTED, not computed here: whether a given Bash call will ACTUALLY run under
+  // the sandbox depends on the session's resolved `SandboxSettings`, on `sandbox-exec` being
+  // available on this host, and on the call's own `dangerouslyDisableSandbox` (RULING P3-J -- which
+  // must STILL prompt, because a call that opts out of the fence has none of the containment this
+  // allow is paying for). `evaluator.ts` knows none of those; `engine.ts` knows all three.
+  if ((mode === "default" || mode === "dontAsk" || mode === "acceptEdits" || mode === "auto") && ctx.bashRunsSandboxed?.(call) === true) {
     return { kind: "allow" };
   }
 

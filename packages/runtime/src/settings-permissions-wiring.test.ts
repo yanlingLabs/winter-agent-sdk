@@ -303,3 +303,46 @@ describe("C1: settings-file permission rules reach the live evaluator", () => {
     expect(exited.code).not.toBe(0);
   });
 });
+
+// ================================================================================================
+// Phase 5 fix wave, B-H1(a) — the ENGINE's own half of `autoAllowBashIfSandboxed`.
+// ================================================================================================
+//
+// `evaluator.test.ts` proves the arm against an injected predicate. What only a real run can prove
+// is that the engine COMPOSES that predicate from the three facts the evaluator cannot see.
+describe("B-H1(a): `autoAllowBashIfSandboxed` composes end to end", () => {
+  const marker = () => join(cwd, "sbx.txt");
+
+  test.skipIf(process.platform !== "darwin")("ON + a real sandbox: the Bash call runs with NO prompt", async () => {
+    const out = await run(
+      base({ settingSources: [], sandbox: { enabled: true, autoAllowBashIfSandboxed: true } }),
+      "deny",
+      bashTouch(marker()),
+    );
+    expect(out.prompts, "the whole point of the setting").toBe(0);
+    expect(existsSync(marker())).toBe(true);
+  });
+
+  test.skipIf(process.platform !== "darwin")("ON but the call OPTS OUT (P3-J): it prompts again", async () => {
+    const target = marker();
+    const provider = scripted([
+      { kind: "tool_use", calls: [{ id: "c1", name: "Bash", input: { command: `touch ${target}`, dangerouslyDisableSandbox: true } }] },
+      { kind: "text", text: "done" },
+    ]);
+    const out = await run(base({ settingSources: [], sandbox: { enabled: true, autoAllowBashIfSandboxed: true } }), "deny", provider);
+    expect(out.prompts, "a call that switches the fence off earns nothing from the setting").toBe(1);
+    expect(existsSync(target)).toBe(false);
+  });
+
+  test("OFF: the same call prompts -- and this half runs on every platform, because it needs no sandbox", async () => {
+    const out = await run(base({ settingSources: [], sandbox: { enabled: true } }), "deny", bashTouch(marker()));
+    expect(out.prompts).toBe(1);
+    expect(existsSync(marker())).toBe(false);
+  });
+
+  test("ON but the sandbox is DISABLED for the session: no containment, so no allow", async () => {
+    const out = await run(base({ settingSources: [], sandbox: { enabled: false, autoAllowBashIfSandboxed: true } }), "deny", bashTouch(marker()));
+    expect(out.prompts).toBe(1);
+    expect(existsSync(marker())).toBe(false);
+  });
+});

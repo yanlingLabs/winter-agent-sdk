@@ -179,6 +179,9 @@ import { sessionTempDir, type SessionTempDirPaths } from "./paths/temp.ts";
 // executor (bash.ts, monitor.ts) used to hardcode as a module constant -- see
 // RegistryToolExecutorDeps.sandboxSettings's own comment (registry.ts) for the seam this feeds.
 import { DEFAULT_SANDBOX_SETTINGS } from "./sandbox/profile.ts";
+// B-H1(a): whether this HOST can actually sandbox -- a session that asked for one on a machine
+// without `sandbox-exec` gets no containment, and therefore earns no auto-allow.
+import { isSandboxAvailable } from "./sandbox/spawn.ts";
 // Phase 4 Task 8 (rider 3, WS-09 §10): Lane B's pure alias helpers -- single-hop canonical-identity
 // resolution for the permission/hook axis, and duplicate suppression over the advertised partition.
 // Both shipped as pure functions with no engine call site (R4-10 forbade Lane B from adding one);
@@ -1210,6 +1213,29 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // process and leaves any host-registered runtime alone -- see its own header for why the runtime
   // is process-level while the roster contribution is per-run. Withdrawn at teardown.
   const removeChildRosterSource = ensureDefaultMessagingRuntimeRegistered().addChildRosterSource(() => childRoster);
+  // --- Phase 5 fix wave, B-H1(a): the sandboxed-posture predicate ---------------------------------
+  //
+  // WS-12 §1's composition MUST, which had two type declarations and no consumer. Three conditions,
+  // ALL required, and each one is a separate reason the allow would otherwise be unearned:
+  //
+  //   1. the setting is ON for this session (`sandbox.autoAllowBashIfSandboxed`);
+  //   2. the sandbox is ENABLED and genuinely AVAILABLE on this host -- a session that asked for a
+  //      sandbox on a machine with no `sandbox-exec` gets no containment, so it gets no allow;
+  //   3. the call is a Bash-family call that has NOT opted out. RULING P3-J's
+  //      `dangerouslyDisableSandbox: true` still prompts, because a call that switches the fence off
+  //      has none of the containment this allow is paying for -- which is the whole composition.
+  //
+  // Monitor is deliberately EXCLUDED alongside Bash's inclusion, matching the acceptEdits arm's own
+  // I2 scoping ("stricter, never looser"): the setting names Bash and nothing else.
+  const sandboxSettingsForSession = config.sandbox ?? DEFAULT_SANDBOX_SETTINGS;
+  const bashRunsSandboxed = (call: PermissionCall): boolean => {
+    if (sandboxSettingsForSession.autoAllowBashIfSandboxed !== true) return false;
+    if (sandboxSettingsForSession.enabled === false) return false;
+    if (call.toolName !== "Bash") return false;
+    if (call.input["dangerouslyDisableSandbox"] === true) return false;
+    return isSandboxAvailable();
+  };
+
   const makeEvalCtx = (): EvaluationContext => {
     // Preserves the EXACT pre-existing "include the key only when config.additionalDirectories
     // itself was ever set" contract (Finding 6, P2 fix-wave) — union in extraBoundedRoots WITHOUT
@@ -1234,6 +1260,9 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
       // I1: the resolved root, so the P5-B carve-out and its stage-2 deny skip name the SAME
       // directory `workflows/store.ts` persists to.
       ...(resolvedWinterHome !== undefined ? { winterHome: resolvedWinterHome } : {}),
+      // B-H1(a) / WS-12 §1: "will this exact Bash call run under the OS sandbox, with
+      // `autoAllowBashIfSandboxed` on?" -- the three facts the evaluator cannot see, answered here.
+      bashRunsSandboxed: bashRunsSandboxed,
       hookStage: realHookStage,
       promptStage: realPromptStage,
       autoEngine: realAutoEngine,
