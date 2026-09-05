@@ -392,6 +392,17 @@ export function openAiCorpusCases(harness: CorpusHarness): Partial<Record<Corpus
       const events = await collect(harness.stream(fake, req(SCENARIO.happy, { effort: "xhigh" }), { descriptor: { efforts: ["low", "medium", "high"] } }));
       assert(errorOf(events).code === "capability", `an unsupported effort became ${errorOf(events).code}`);
       assert(fake.requests.length === refusedBefore, `an unsupported effort was SENT anyway: ${fake.requests.length - refusedBefore} request(s)`);
+
+      // And with NO descriptor at all — the `allowUnlisted` gateway shape, where a model has no
+      // catalog evidence — the two arms deliberately differ: a NAMED tier passes through (the pin
+      // defines it and Winter has nothing to contradict it), a NUMERIC one is refused, because
+      // snapping a number needs a vocabulary that does not exist.
+      const gatewayBefore = fake.requests.length;
+      await collect(harness.stream(fake, req(SCENARIO.happy, { effort: "high" }), { noDescriptors: true }));
+      assert(fake.requests.length === gatewayBefore + 1, "a named effort on an unlisted model was refused rather than passed through");
+      const numeric = await collect(harness.stream(fake, req(SCENARIO.happy, { effort: 4 }), { noDescriptors: true }));
+      assert(errorOf(numeric).code === "capability", `a numeric effort on an unlisted model became ${errorOf(numeric).code}`);
+      assert(fake.requests.length === gatewayBefore + 1, "a numeric effort with no vocabulary to snap against was SENT anyway");
     },
 
     "opaque-continuation": async ({ fake }) => {

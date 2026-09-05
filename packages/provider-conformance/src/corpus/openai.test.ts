@@ -291,6 +291,46 @@ describe("live wire details the corpus does not ask about", () => {
     }
   });
 
+  test("a model that DISAPPEARS between two discoveries is reported gone only when the page was complete", async () => {
+    // WS-13 §7's sharpest edge: absence means "removed" only when the list was whole. A TRUNCATED
+    // page that happens to omit a model must never read as a removal, which is why `partial` is a
+    // first-class part of the result rather than a warning string.
+    const { startFake } = await import("../fakes/server.ts");
+    const first = await startFake({ routes: openAiModelsRoutes({ pages: [{ rows: [{ id: "alpha" }, { id: "beta" }] }] }) });
+    try {
+      const adapter = createResponsesAdapter({ generatedBaseUrl: first.url, retry: FAST_RETRY });
+      const before = await discoverModels(adapter, testDiscoveryContext({ stallTimeoutMs: STALL_MS }));
+      expect(before.models.map((m) => m.id)).toEqual(["alpha", "beta"]);
+      expect(before.partial).toBe(false);
+    } finally {
+      await first.close();
+    }
+
+    // The same provider, now serving only `alpha`: a COMPLETE page, so beta is genuinely gone.
+    const after = await startFake({ routes: openAiModelsRoutes({ pages: [{ rows: [{ id: "alpha" }] }] }) });
+    try {
+      const adapter = createResponsesAdapter({ generatedBaseUrl: after.url, retry: FAST_RETRY });
+      const removed = await discoverModels(adapter, testDiscoveryContext({ stallTimeoutMs: STALL_MS }));
+      expect(removed.models.map((m) => m.id)).toEqual(["alpha"]);
+      expect(removed.partial).toBe(false);
+    } finally {
+      await after.close();
+    }
+
+    // And the same two models under an ITEM BOUND: beta is missing from the answer, but the answer
+    // says so — `partial: true` plus a warning, never a silent removal.
+    const bounded = await startFake({ routes: openAiModelsRoutes({ pages: [{ rows: [{ id: "alpha" }, { id: "beta" }] }] }) });
+    try {
+      const adapter = createResponsesAdapter({ generatedBaseUrl: bounded.url, retry: FAST_RETRY });
+      const truncated = await discoverModels(adapter, testDiscoveryContext({ stallTimeoutMs: STALL_MS, maxItems: 1 }));
+      expect(truncated.models.map((m) => m.id)).toEqual(["alpha"]);
+      expect(truncated.partial).toBe(true);
+      expect(truncated.warnings.some((w) => w.includes("PARTIAL"))).toBe(true);
+    } finally {
+      await bounded.close();
+    }
+  });
+
   test("a gateway model with NO descriptor passes a named effort through and refuses a numeric one", async () => {
     // R6-K's `allowUnlisted` shape: OpenRouter ids like `anthropic/claude-opus-5` never reach the
     // compiled catalog, so the adapter has no vocabulary to snap a number against.

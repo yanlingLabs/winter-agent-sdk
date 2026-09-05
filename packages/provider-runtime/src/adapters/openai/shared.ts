@@ -625,7 +625,13 @@ export async function fetchOpenAiModels(
     if (!Array.isArray(payload.data)) warnings.push(`discovery page ${page + 1} had no \`data\` array; it contributed no models`);
     for (const row of rows) {
       if (models.length >= ctx.limits.maxItems) {
+        // DISCLOSED IN PROSE AS WELL AS BY THE FLAG. `discoverModels` warns only when the ADAPTER
+        // handed it more rows than the limit; truncating here means it never sees them, so without
+        // this line an item-bounded walk would carry `partial: true` and no explanation of why a
+        // model the caller expected is missing — which is exactly the "absence reads as removal"
+        // failure WS-13 §7 is written against.
         partial = true;
+        warnings.push(`discovery returned more than the ${ctx.limits.maxItems}-model limit; the list was truncated and is PARTIAL`);
         break;
       }
       models.push(rowToModel(row));
