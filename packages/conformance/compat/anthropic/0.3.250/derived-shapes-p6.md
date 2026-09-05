@@ -84,8 +84,18 @@ request it received was logged. The real `~/.claude`, `~/.winter`, `~/.norma` we
 no real username appears anywhere in this file, and every captured path is rendered as a template with
 `<CLAUDE_CONFIG_DIR>` / `<CWD>` placeholders. The macOS Keychain caveat is stated at capture (I).
 
-**Citation verification (second cycle).** _Recorded at the foot of this document under "Citation
-verification"._
+**Citation verification (second cycle).** The second fetch → extract cycle re-verified the identical
+sha256 (`207b771f…b40d95`) and its `sdk.d.ts` hashed **byte-identical** to the first extraction's
+(`3bc8f1b5…b4b1d4d`, 8447 lines), so the two cycles are reading the same bytes rather than two
+plausible copies. Against that second extraction, **245 distinct `file:line → expected-substring`
+citations were checked programmatically: 245 anchored to the line they claim, 0 mismatches.** The
+checker ran on the derivation's line citations, not on prose. Three real errors it caught during the
+pass (`SDKResultSuccess`/`SDKResultError`'s `total_cost_usd` JSDoc off by one at both sites, and
+`SessionStore.load`'s JSDoc start) were corrected before this file was finalised, alongside ten caught
+by the same check against the first extraction (`ModelInfo`'s three field lines, `costBasis`,
+`NonNullableUsage`, `SDKContextUsage`, `SDKResultSuccess.usage`, `SdkBeta`, `listSubkeys`,
+`Settings.availableModels`) and one substantive correction: `Query.setMaxThinkingTokens` **is**
+`@deprecated` (`sdk.d.ts:2483`), which this document had initially claimed it was not.
 
 ---
 
@@ -614,7 +624,7 @@ raw/canonical split `ModelInfo.value`/`resolvedModel` draws, third occurrence of
 
 `provider?` (`1318`) is a bare string whose JSDoc examples are the `AccountInfo.apiProvider` members.
 
-### `result.total_cost_usd` — `sdk.d.ts:4682` (error arm) / `4736` (success arm), JSDoc `4678-4681` / `4732-4735`
+### `result.total_cost_usd` — `sdk.d.ts:4682` (error arm) / `4736` (success arm), JSDoc `4679-4681` / `4733-4735`
 
 Required `number` on both result arms. Doc-asserted lifecycle, restated: it is a cumulative estimate in
 USD for this `query()` call, covering the same query-pipeline calls as `modelUsage`; in
@@ -787,7 +797,7 @@ each a type-level or doc-asserted fact rather than an inference:
    entry collide into a single upserted row. Give each record its own `uuid` and keep `anchorUuid` as a
    payload field.
 3. **`load()` returns `SessionStoreEntry[] | null`, and `null` is ambiguous by design** (`5314`,
-   JSDoc `5306-5313`): adapters that cannot distinguish "never written" from "emptied" may return
+   JSDoc `5302-5313`): adapters that cannot distinguish "never written" from "emptied" may return
    `null` for both, and returned entries need only be **deep-equal**, not byte-equal — the SDK never
    hashes or byte-compares them. So a store-backed provider-state chain **cannot be integrity-checked
    by hashing**, and "no sidecar" is indistinguishable from "sidecar emptied". R6-7's degrade-to-summary
