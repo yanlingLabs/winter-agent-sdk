@@ -56,6 +56,9 @@ import type {
 
 // --- construction options ---------------------------------------------------------------------------
 
+/** How this surface carries a key: OpenAI-style `Authorization: Bearer`, or Azure's own `api-key` header. */
+export type AuthStyle = "bearer" | "azure-api-key";
+
 /** Looks a provider-local model id up in the catalog. See decision 2 in this file's header. */
 export type DescriptorLookup = (providerLocalModelId: string) => WinterModelDescriptor | undefined;
 
@@ -78,6 +81,8 @@ export interface OpenAiAdapterOptions {
   maxBodyBytes?: number;
   /** Milliseconds allowed for response HEADERS. Cleared once they arrive — never a bound on the generation. */
   headerTimeoutMs?: number;
+  /** How this surface carries a key. Azure's deployment path wants `api-key`; every other surface is a bearer. */
+  authStyle?: AuthStyle;
 }
 
 export const DEFAULT_STREAM_BODY_BYTES = 32 * 1024 * 1024;
@@ -138,9 +143,6 @@ export function resolveEndpoint(ctx: ProviderContext, options: OpenAiAdapterOpti
 }
 
 // --- credentials --------------------------------------------------------------------------------------
-
-/** How this surface carries a key: OpenAI-style `Authorization: Bearer`, or Azure's own `api-key` header. */
-export type AuthStyle = "bearer" | "azure-api-key";
 
 export interface ResolvedAuth {
   headers: Record<string, string>;
@@ -591,6 +593,8 @@ export async function fetchOpenAiModels(
   endpoint: ResolvedEndpoint,
   headers: Record<string, string>,
   options: OpenAiAdapterOptions,
+  /** Query parameters every discovery page must carry (Azure's mandatory `api-version`). */
+  extraQuery: Record<string, string> = {},
 ): Promise<ModelCatalogResult> {
   const warnings: string[] = [];
   const models: ModelCatalogResult["models"] = [];
@@ -599,6 +603,7 @@ export async function fetchOpenAiModels(
 
   for (let page = 0; page < MAX_DISCOVERY_PAGES; page++) {
     const url = new URL(`${endpoint.baseUrl}/models`);
+    for (const [name, value] of Object.entries(extraQuery)) url.searchParams.set(name, value);
     if (after !== undefined) url.searchParams.set("after", after);
     const response = await boundedFetch(url.toString(), {
       method: "GET",
