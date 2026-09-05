@@ -20,7 +20,8 @@ import type { ProviderAdapter, ProviderContext, ProviderEvent, TurnRequest } fro
 import { createAnthropicMessagesAdapter } from "../../../provider-runtime/src/adapters/anthropic/index.ts";
 import { foldProviderStream, type FoldedProviderTurn } from "../../../runtime/src/provider/bridge.ts";
 import { anthropicError, anthropicFakeRoutes, anthropicSseFrames, anthropicTurnResponse, assertAnthropicRequest, anthropicBody, messageBlocks, flattenBlockTypes } from "../fakes/anthropic-messages.ts";
-import { jsonResponse, stalledResponse, sseResponse, requestsTo, type FakeRoute, type FakeServer } from "../fakes/server.ts";
+import { jsonResponse, sseResponse, requestsTo, type FakeRoute, type FakeServer } from "../fakes/server.ts";
+import { stalledStreamResponse } from "../fakes/stalled-stream.ts";
 import type { CorpusCaseId, CorpusCaseImpl } from "./runner.ts";
 
 // --- the lane's test catalog ------------------------------------------------------------------------
@@ -233,7 +234,7 @@ export function anthropicCorpusRoutes(): FakeRoute[] {
       [ANTHROPIC_MODELS.auth]: () => anthropicError(401, "authentication_error", "invalid x-api-key"),
       [ANTHROPIC_MODELS.rateLimit]: () =>
         anthropicError(429, "rate_limit_error", "too many requests", { "retry-after": "1", "anthropic-ratelimit-unified-status": "rejected", "anthropic-ratelimit-requests-remaining": "0" }),
-      [ANTHROPIC_MODELS.stall]: () => stalledResponse(4_000),
+      [ANTHROPIC_MODELS.stall]: () => stalledStreamResponse(1_000),
       [ANTHROPIC_MODELS.slow]: () => {
         // Frames after the first text delta are DELAYED, so the abort in the mid-stream cancellation
         // case interrupts a read that is genuinely in flight -- aborting between two already-buffered

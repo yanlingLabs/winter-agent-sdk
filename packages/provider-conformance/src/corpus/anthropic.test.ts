@@ -11,7 +11,7 @@
 // the adapter itself.
 import { describe, expect, test } from "bun:test";
 import { withFake, noRequestContains, requestsTo } from "../fakes/server.ts";
-import { anthropicFakeRoutes, anthropicTurnResponse, assertAnthropicRequest, anthropicBody, messageBlocks } from "../fakes/anthropic-messages.ts";
+import { anthropicError, anthropicFakeRoutes, anthropicTurnResponse, assertAnthropicRequest, anthropicBody, messageBlocks } from "../fakes/anthropic-messages.ts";
 import { createAnthropicMessagesAdapter, ANTHROPIC_ADAPTER_ID, ANTHROPIC_DEFAULT_BASE_URL, mapAnthropicEffort } from "../../../provider-runtime/src/adapters/anthropic/index.ts";
 import { loadCatalog } from "@yanlinglabs/winter-provider-catalog";
 import { foldProviderStream } from "../../../runtime/src/provider/bridge.ts";
@@ -177,6 +177,19 @@ describe("Anthropic Messages: retries and the first-byte rule", () => {
       expect(retries[0]).toMatchObject({ attempt: 1, errorStatus: 529, error: "overloaded" });
       expect(events.at(-1)).toMatchObject({ type: "done", stopReason: "end_turn" });
       expect(requestsTo(fake, "/v1/messages")).toHaveLength(2);
+    });
+  });
+
+  test("a 529 that never clears normalizes to a RETRYABLE `server` error carrying its own status and code", async () => {
+    // The brief names this one explicitly. With no retry budget the first failure is final, so the
+    // normalized error itself is observable rather than being consumed by a successful retry.
+    const adapter = testAnthropicAdapter({ retry: { maxRetries: 0, sleep: async () => {} } });
+    await withFake({ routes: anthropicFakeRoutes({ messages: { "sc-529-always": () => anthropicError(529, "overloaded_error", "Overloaded") } }) }, async (fake) => {
+      const events = [];
+      for await (const event of adapter.streamTurn({ model: "sc-529-always", messages: [{ role: "user", content: "go" }] }, testContext(fake.url))) events.push(event);
+      expect(events).toHaveLength(1);
+      expect(events[0]).toMatchObject({ type: "error", error: { code: "server", status: 529, retryable: true, providerCode: "overloaded_error" } });
+      expect(requestsTo(fake, "/v1/messages")).toHaveLength(1);
     });
   });
 });
