@@ -260,6 +260,32 @@ export function coerceProviderStateRecord(value: unknown): ProviderStateRecord |
   };
 }
 
+/**
+ * Copies a session's provider-state chain onto a FORK.
+ *
+ * `resume --fork-session` copies the transcript's entries with their `uuid`/`parentUuid` untouched
+ * (only each entry's own `sessionId` is re-owned), so the fork's assistant entries carry the SAME
+ * anchors the source's did -- which is exactly what makes copying the chain meaningful rather than a
+ * best-effort guess. Without this, a forked session landed with no chain AND no identity, so its very
+ * first resume took the pre-P6 silent path and lost every native continuation the source had
+ * accumulated, with nothing said (review round 2, M3).
+ *
+ * Each record gets a FRESH `uuid` while keeping its `anchorUuid`: `uuid` is the store's idempotency
+ * key (item (h)), so two sessions sharing record uuids would collide into one upserted row in any
+ * store that dedupes on it. `sessionId` is re-owned to match the fork, mirroring what the transcript
+ * copy already does to its entries.
+ *
+ * Returns the number of records copied -- `0` for a source with no sidecar, which is not an error:
+ * a pre-P6 source has nothing to carry, and the fork is then in exactly the state the source was.
+ */
+export function copyProviderStateForFork(sourcePath: string, destPath: string, destSessionId: string): number {
+  const records = readProviderState(sourcePath);
+  for (const record of records) {
+    appendProviderState(destPath, { ...record, uuid: randomUUID(), sessionId: destSessionId });
+  }
+  return records.length;
+}
+
 /** What one assistant entry's records fold into. `origin` is mandatory in a healthy chain; its ABSENCE is what degrades that message to summary-level. */
 export interface ContinuationLink {
   origin?: MessageOrigin;

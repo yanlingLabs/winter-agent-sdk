@@ -262,3 +262,70 @@ describe("runAdapterCorpus", () => {
     expect(ids).toContain("retry-after-no-replay");
   });
 });
+
+describe("round 2: a torn-down stream must not throw from a timer nobody owns", () => {
+  // FOUND INDEPENDENTLY BY TWO LANES, and the failure mode is why it cost them so much: the throw
+  // came from a bare timer callback, so Bun attributed it to WHICHEVER TEST HAPPENED TO BE RUNNING
+  // when it landed -- this package's own runner suite in one lane, unrelated adapter cases in the
+  // other. A stall scenario ONLY ever ends by the consumer cancelling (the watchdog under test fires
+  // long before `holdMs` by construction), so the "cancelled first" path is the NORMAL path here.
+  async function expectNoUnhandled(fn: () => Promise<void>): Promise<void> {
+    const errors: string[] = [];
+    const onUncaught = (e: unknown): void => {
+      errors.push(e instanceof Error ? e.message : String(e));
+    };
+    process.on("uncaughtException", onUncaught);
+    process.on("unhandledRejection", onUncaught);
+    try {
+      await fn();
+    } finally {
+      process.off("uncaughtException", onUncaught);
+      process.off("unhandledRejection", onUncaught);
+    }
+    expect(errors).toEqual([]);
+  }
+
+  test("stalledResponse: read, CANCEL, then wait past holdMs -- no unhandled error", async () => {
+    await expectNoUnhandled(async () => {
+      const res = stalledResponse(120);
+      const reader = res.body!.getReader();
+      await reader.read();
+      await reader.cancel();
+      // Past `holdMs`: this is exactly when the unguarded timer fired into a closed controller.
+      await new Promise((r) => setTimeout(r, 250));
+    });
+  });
+
+  test("stalledResponse: left to run to its own bound, it still closes cleanly", async () => {
+    // The guard must not have turned the bound into a no-op -- a BROKEN watchdog still has to fail on
+    // a timeout it can explain rather than hanging the runner.
+    await expectNoUnhandled(async () => {
+      const res = stalledResponse(80);
+      expect(await res.text()).toBe(": open\n\n");
+    });
+  });
+
+  test("sseResponse: cancelling MID-DELAY does not throw when the delayed frame comes due", async () => {
+    // The same class one helper over: a `delayMs` await can resolve after the consumer has gone.
+    await expectNoUnhandled(async () => {
+      const res = sseResponse([{ data: "a" }, { data: "b", delayMs: 150 }]);
+      const reader = res.body!.getReader();
+      await reader.read();
+      await reader.cancel();
+      await new Promise((r) => setTimeout(r, 250));
+    });
+  });
+
+  test("a stalled route through a real fake still tears down inside close()'s deadline", async () => {
+    // The end-to-end shape a lane's stall scenario actually uses.
+    await expectNoUnhandled(async () => {
+      await withFake({ routes: [{ path: "/stall", handler: () => stalledResponse(5000) }] }, async (fake) => {
+        const res = await fetch(`${fake.url}/stall`);
+        const reader = res.body!.getReader();
+        await reader.read();
+        await reader.cancel();
+      });
+      await new Promise((r) => setTimeout(r, 200));
+    });
+  });
+});
