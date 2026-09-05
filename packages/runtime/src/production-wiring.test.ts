@@ -332,42 +332,71 @@ describe("wiring warnings are prose an operator can act on", () => {
 // Phase 5 fix wave (B-low): the in-memory leg mints ONE winter home per virtual process.
 // ---------------------------------------------------------------------------------------------
 describe("the in-memory leg's own hermetic root", () => {
-  function inMemoryRoots(): Set<string> {
-    return new Set(readdirSync(tmpdir()).filter((n) => n.startsWith("winter-inmemory-")));
+  // PRIVATE TMPDIR PER TEST, and the reason is a defect these tests carried from the day they were
+  // written (found in P6 T3's review round 2, by a failure that reproduced 1-in-3 IN ISOLATION).
+  //
+  // `resolveInMemoryWinterHome` mints its root with `mkdtempSync(join(tmpdir(), "winter-inmemory-"))`,
+  // and the original assertion counted `winter-inmemory-*` entries in the SHARED `os.tmpdir()` before
+  // and after. That is sound only while nothing else on the machine mints one. It is not: this
+  // repository is developed with several worktrees running `bun test` concurrently, and ANY other
+  // suite's `inMemoryProcess` landing inside the window was attributed to this test -- a failure
+  // indistinguishable at a glance from a real regression, which cost exactly that.
+  //
+  // `os.tmpdir()` reads `TMPDIR` LIVE on POSIX (verified, not assumed), and `inMemoryProcess` runs
+  // IN THIS PROCESS -- so pointing `TMPDIR` at a fresh directory for the duration gives the child
+  // under test a namespace nothing else can reach. The ASSERTION IS UNCHANGED in meaning: still
+  // "exactly one root for a session with no explicit home", just counted somewhere only this test
+  // can write to.
+  //
+  // Restored with `delete` rather than by assigning the saved value back: `process.env.X = undefined`
+  // stores the STRING "undefined", which would leave every later test in this file pointed at a
+  // directory named `undefined`.
+  function withPrivateTmpdir<T>(fn: (privateRoot: string) => Promise<T>): Promise<T> {
+    const original = process.env.TMPDIR;
+    const privateRoot = mkdtempSync(join(tmpdir(), "winter-wiring-tmp-"));
+    process.env.TMPDIR = privateRoot;
+    return (async () => {
+      try {
+        return await fn(privateRoot);
+      } finally {
+        if (original === undefined) delete process.env.TMPDIR;
+        else process.env.TMPDIR = original;
+        rmSync(privateRoot, { recursive: true, force: true });
+      }
+    })();
   }
 
-  test("a session with no explicit home creates exactly ONE `winter-inmemory-` root, not three", async () => {
-    const before = inMemoryRoots();
-    // NEITHER `config.winterHome` NOR `env.WINTER_HOME` -- the only path that mkdtemps at all, and
-    // the default every `scripts/differential.ts` run and most tests take.
-    const config = { sessionId: "s-one-root", cwd, model: "m" } as unknown as RuntimeConfig;
-    const proc = inMemoryProcess(["--config-json", JSON.stringify(config)]);
-    proc.stdin.end();
-    for await (const _ of proc.stdout) void _;
-    await proc.exited;
+  const inMemoryRootsIn = (dir: string): string[] => readdirSync(dir).filter((n) => n.startsWith("winter-inmemory-"));
 
-    const added = [...inMemoryRoots()].filter((n) => !before.has(n));
-    try {
-      // Three call sites (`resolveEngineSession`, the child store, `buildProductionWiring`) each
-      // used to mint their own -- so the wiring read a `.winter` tree nothing wrote to.
-      expect(added).toHaveLength(1);
-    } finally {
-      for (const dir of added) rmSync(join(tmpdir(), dir), { recursive: true, force: true });
-    }
-  });
+  test("a session with no explicit home creates exactly ONE `winter-inmemory-` root, not three", async () =>
+    withPrivateTmpdir(async (privateRoot) => {
+      // NEITHER `config.winterHome` NOR `env.WINTER_HOME` -- the only path that mkdtemps at all, and
+      // the default every `scripts/differential.ts` run and most tests take.
+      const config = { sessionId: "s-one-root", cwd, model: "m" } as unknown as RuntimeConfig;
+      const proc = inMemoryProcess(["--config-json", JSON.stringify(config)]);
+      proc.stdin.end();
+      for await (const _ of proc.stdout) void _;
+      await proc.exited;
 
-  test("`persistSession: false` still mints NOTHING -- the memo is lazy, not eager", async () => {
-    const before = inMemoryRoots();
-    const config = { sessionId: "s-no-root", cwd, model: "m", persistSession: false } as unknown as RuntimeConfig;
-    const proc = inMemoryProcess(["--config-json", JSON.stringify(config)]);
-    proc.stdin.end();
-    for await (const _ of proc.stdout) void _;
-    await proc.exited;
-    // The wiring itself still needs a root to resolve settings against, so this asserts the memo did
-    // not become EAGER rather than that nothing is ever created: at most the one.
-    expect([...inMemoryRoots()].filter((n) => !before.has(n)).length).toBeLessThanOrEqual(1);
-    for (const dir of [...inMemoryRoots()].filter((n) => !before.has(n))) rmSync(join(tmpdir(), dir), { recursive: true, force: true });
-  });
+      // Three call sites (`resolveEngineSession`, the child store, `buildProductionWiring`) each used
+      // to mint their own -- so the wiring read a `.winter` tree nothing wrote to. Counted under THIS
+      // test's private root, so a parallel suite in another worktree cannot inflate it.
+      expect(inMemoryRootsIn(privateRoot)).toHaveLength(1);
+    }));
+
+  test("`persistSession: false` still mints NOTHING -- the memo is lazy, not eager", async () =>
+    withPrivateTmpdir(async (privateRoot) => {
+      const config = { sessionId: "s-no-root", cwd, model: "m", persistSession: false } as unknown as RuntimeConfig;
+      const proc = inMemoryProcess(["--config-json", JSON.stringify(config)]);
+      proc.stdin.end();
+      for await (const _ of proc.stdout) void _;
+      await proc.exited;
+      // The wiring itself still needs a root to resolve settings against, so this asserts the memo did
+      // not become EAGER rather than that nothing is ever created: at most the one. Same private
+      // namespace, same reason -- its `<= 1` was less likely to trip than its sibling's exact count,
+      // but it was reading the same shared directory.
+      expect(inMemoryRootsIn(privateRoot).length).toBeLessThanOrEqual(1);
+    }));
 });
 
 // ---------------------------------------------------------------------------------------------
