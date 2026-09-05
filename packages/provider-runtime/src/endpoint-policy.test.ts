@@ -98,6 +98,39 @@ describe("evaluateEndpoint — the local/private split (R6-11, WS-13 §13)", () 
   });
 });
 
+describe("query strings: refused on a STORED endpoint, allowed on a live REQUEST url (C1)", () => {
+  test("evaluateEndpoint still refuses a query or fragment — a stored `?key=` reaches every log line", () => {
+    expect(reasonOf(evaluateEndpoint("https://api.example.test/v1?key=test-key-abc", { generated: false }))).toContain("query string");
+    expect(reasonOf(evaluateEndpoint("https://api.example.test/v1#frag", { generated: false }))).toContain("fragment");
+  });
+
+  test("evaluateRedirect ACCEPTS a request url carrying a query — two cohort providers cannot be called without one", () => {
+    // Gemini's `?alt=sse` selects streaming; Azure OpenAI's `?api-version=…` is mandatory on every
+    // call. Applying the stored-endpoint rule to request URLs killed both on their first request.
+    const created = createEndpointPolicy("https://api.example.test/v1", { generated: true });
+    if (!created.ok) throw new Error(created.reason);
+    expect(created.policy.evaluateRedirect("https://api.example.test/v1/models/x:streamGenerateContent?alt=sse")).toEqual({
+      ok: true,
+      origin: "https://api.example.test",
+      sameOrigin: true,
+    });
+    expect(created.policy.evaluateRedirect("https://api.example.test/openai/deployments/d/chat/completions?api-version=2024-10-21")).toEqual({
+      ok: true,
+      origin: "https://api.example.test",
+      sameOrigin: true,
+    });
+  });
+
+  test("a redirect TARGET may carry a query too, and the address rules still bite", () => {
+    const created = createEndpointPolicy("https://api.example.test/v1", { generated: true });
+    if (!created.ok) throw new Error(created.reason);
+    expect(created.policy.evaluateRedirect("https://cdn.example.test/x?token=opaque").ok).toBe(true);
+    // Relaxing the query rule must not relax anything else.
+    expect(created.policy.evaluateRedirect("http://169.254.169.254/latest?x=1").ok).toBe(false);
+    expect(created.policy.evaluateRedirect("https://user:pw@api.example.test/v1?a=1").ok).toBe(false);
+  });
+});
+
 describe("createEndpointPolicy — redirect revalidation (R6-11: no credential forwarding across an origin change)", () => {
   test("builds a policy pinned to the accepted origin", () => {
     const created = createEndpointPolicy("https://api.example.test/v1", { generated: true });

@@ -92,6 +92,35 @@ describe("boundedFetch — the happy path", () => {
     expect(f.log[0]!.hasAuthorization).toBe(true);
   });
 
+  test("sends a request URL carrying a QUERY STRING, intact (C1)", async () => {
+    // The regression this pins: `?alt=sse` (Gemini streaming) and `?api-version=…` (Azure, mandatory
+    // on every call) were both refused before any request was issued. Ground truth is what the fake
+    // RECEIVED, so the assertion is on its own log, not on the return value.
+    const seen: string[] = [];
+    const f = fake((_req, url) => {
+      seen.push(`${url.pathname}${url.search}`);
+      return new Response("ok");
+    });
+    const policy = policyFor(f.origin);
+    await boundedFetch(`${f.origin}/v1/models/gemini-2.5-pro:streamGenerateContent?alt=sse`, { timeoutMs: 5000, maxBodyBytes: 1024, policy });
+    await boundedFetch(`${f.origin}/openai/deployments/d/chat/completions?api-version=2024-10-21`, { timeoutMs: 5000, maxBodyBytes: 1024, policy });
+    expect(seen).toEqual([
+      "/v1/models/gemini-2.5-pro:streamGenerateContent?alt=sse",
+      "/openai/deployments/d/chat/completions?api-version=2024-10-21",
+    ]);
+  });
+
+  test("follows a redirect whose Location carries a query, preserving it", async () => {
+    const seen: string[] = [];
+    const f = fake((_req, url) => {
+      seen.push(`${url.pathname}${url.search}`);
+      return url.pathname === "/v1/start" ? new Response(null, { status: 307, headers: { location: "/v1/end?api-version=2024-10-21" } }) : new Response("arrived");
+    });
+    const res = await boundedFetch(`${f.origin}/v1/start`, { timeoutMs: 5000, maxBodyBytes: 1024, policy: policyFor(f.origin) });
+    expect(await res.text()).toBe("arrived");
+    expect(seen).toEqual(["/v1/start", "/v1/end?api-version=2024-10-21"]);
+  });
+
   test("refuses a URL the policy does not admit, WITHOUT issuing a request", async () => {
     const f = fake(() => new Response("should not happen"));
     await expect(
