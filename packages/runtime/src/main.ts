@@ -154,14 +154,28 @@ try {
     env: process.env,
   });
   // Rider 18: registered BEFORE runEngine starts, so the very first turn's Agent call can spawn.
-  // A non-persistent session (`persistSession: false`) gets no store/winterHome at all -- children
-  // then run without durable transcripts, exactly as the parent does, rather than being handed a
-  // store the parent itself was denied.
-  const childWinterHome = config.persistSession === false ? undefined : resolveProductionWinterHome(config, process.env);
+  // A non-persistent session (`persistSession: false`) gets no STORE -- children then run without
+  // durable transcripts, exactly as the parent does, rather than being handed a store the parent
+  // itself was denied.
+  //
+  // R-2 (residual round 2): `winterHome` is now handed over UNCONDITIONALLY; only the STORE is
+  // conditional on persistence. The two used to travel together because the factory's `winterHome`
+  // was purely a transcript-path helper -- "a child gets no store, so it needs no root either" was
+  // true and harmless. NEW-4 made that same value the child's FLOOR ANCHOR
+  // (`buildBaselineDenyRules(resolvedWinterHome)`), and the coupling silently became "a
+  // non-persistent session's child has no resolved-root floors": under forced bypass such a child
+  // wrote into `<root>/projects` and created `<root>/backups`, while the identical parent-direct
+  // write was denied. The parent was never affected -- it takes its root from the wiring regardless.
+  //
+  // Safe in the other direction because `child-engine.ts`'s transcript expression tests
+  // `childStore === undefined` FIRST and only then `deps.winterHome`, so a child with a root and no
+  // store still reports "none -- no durable session store is configured" rather than advertising an
+  // absolute path nothing writes. That ordering is pinned by a fixture.
+  const childWinterHome = resolveProductionWinterHome(config, process.env);
   // ONE store object, shared by the child-engine factory and the fix wave's roster restore below --
   // `resolveEngineSession`'s own `store` is a narrower write-side `SessionPersistence`, which can
   // neither list a session's child subkeys nor read a sidecar back.
-  const childStore = childWinterHome !== undefined ? new WinterCompatibilitySessionStore({ winterHome: childWinterHome }) : undefined;
+  const childStore = config.persistSession === false ? undefined : new WinterCompatibilitySessionStore({ winterHome: childWinterHome });
   // Phase 5 Task 8. Built BEFORE both `registerDefaultChildEngineFactory` and runEngine, because two of its outputs must reach the engine's own
   // startup: the rule set (`withAutoSkillPermissions`, WS-11 §2.2's automatic `Skill(...)` entries,
   // which `runEngine` seeds once and never re-reads) and the init frame's four P5 fields.
@@ -178,7 +192,10 @@ try {
     provider,
     config: effectiveConfig,
     env: process.env,
-    ...(childStore !== undefined && childWinterHome !== undefined ? { store: childStore, winterHome: childWinterHome } : {}),
+    // R-2: TWO spreads, not one. This single conditional was the coupling -- see `childWinterHome`
+    // above for why the floors now depend on it.
+    ...(childStore !== undefined ? { store: childStore } : {}),
+    ...(childWinterHome !== undefined ? { winterHome: childWinterHome } : {}),
     // Phase 5 Task 8: a CHILD gets the same assembler and skill index its parent has.
     ...wiring.childFactoryOptions,
   });

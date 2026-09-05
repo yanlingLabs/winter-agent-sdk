@@ -205,10 +205,23 @@ export function inMemoryProcess(
       // `resolveInMemoryWinterHome` is the in-memory leg's own hermetic root (it must NEVER reach the
       // real process.env fallback -- that function's own header), so a child's transcripts land under
       // the same temp root the parent's do.
-      const childWinterHome = config.persistSession === false ? undefined : winterHomeOnce();
+      // R-2 (residual round 2): `winterHome` is now handed over UNCONDITIONALLY; only the STORE is
+      // conditional on persistence. The two used to travel together because the factory's `winterHome`
+      // was purely a transcript-path helper -- "a child gets no store, so it needs no root either" was
+      // true and harmless. NEW-4 made that same value the child's FLOOR ANCHOR
+      // (`buildBaselineDenyRules(resolvedWinterHome)`), and the coupling silently became "a
+      // non-persistent session's child has no resolved-root floors": under forced bypass such a child
+      // wrote into `<root>/projects` and created `<root>/backups`, while the identical parent-direct
+      // write was denied. The parent was never affected -- it takes its root from the wiring regardless.
+      //
+      // Safe in the other direction because `child-engine.ts`'s transcript expression tests
+      // `childStore === undefined` FIRST and only then `deps.winterHome`, so a child with a root and no
+      // store still reports "none -- no durable session store is configured" rather than advertising an
+      // absolute path nothing writes. That ordering is pinned by a fixture.
+      const childWinterHome = winterHomeOnce();
       // ONE store object, shared by the child-engine factory and the roster restore below (see
       // main.ts's own identical comment for why `resolveEngineSession`'s `store` cannot serve).
-      const childStore = childWinterHome !== undefined ? new WinterCompatibilitySessionStore({ winterHome: childWinterHome }) : undefined;
+      const childStore = config.persistSession === false ? undefined : new WinterCompatibilitySessionStore({ winterHome: childWinterHome });
       // Phase 5 Task 8: the same wiring main.ts builds, from the same function, against this leg's
       // own hermetic `resolveInMemoryWinterHome` root -- which must NEVER reach the real
       // `process.env` fallback (that function's own header), so a differential/equivalence run can
@@ -225,7 +238,10 @@ export function inMemoryProcess(
         provider,
         config: effectiveConfig,
         env: env ?? {},
-        ...(childStore !== undefined && childWinterHome !== undefined ? { store: childStore, winterHome: childWinterHome } : {}),
+        // R-2: TWO spreads, not one. This single conditional was the coupling -- see
+        // `childWinterHome` above for why the floors now depend on it.
+        ...(childStore !== undefined ? { store: childStore } : {}),
+        ...(childWinterHome !== undefined ? { winterHome: childWinterHome } : {}),
         // Phase 5 Task 8: the IDENTICAL mirrors main.ts passes -- a child on the in-memory leg and a
         // child on a spawned/compiled one must have the same context surface.
         ...wiring.childFactoryOptions,

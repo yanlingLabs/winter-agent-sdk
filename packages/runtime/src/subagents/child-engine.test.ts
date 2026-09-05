@@ -15,7 +15,7 @@ import { runEngine, createContextAccountant, type Provider } from "../engine.ts"
 import { createInMemoryChannel } from "../protocol/channel.ts";
 import { registerTool, unregisterToolForTest, buildAdvertisedSet, type ToolExecutionContext } from "../tools/registry.ts";
 import { echoProvider, scriptedProvider, testProviderByName, recordedProviderSystems, resetRecordedProviderSystems } from "../provider/mock.ts";
-import { registerChildEngineFactory, resetChildEngineFactoryForTest, type SpawnChildRequest } from "./child-handle.ts";
+import { registerChildEngineFactory, resetChildEngineFactoryForTest, type SpawnChildRequest, type ChildInheritance } from "./child-handle.ts";
 // Phase 5 Task 8: the two child threads with no fixture of their own until now.
 import { createStructuredOutputSeam } from "../structured/ajv-seam.ts";
 import { SkillIndex } from "../skills/store.ts";
@@ -30,6 +30,9 @@ import { getToolSearchSessionRuntime } from "../toolsearch/search.ts";
 // see the NEW-4 describe block for why a hand-built seed would measure the wrong thing.
 import { buildProductionWiring } from "../production-wiring.ts";
 import { registerDefaultChildEngineFactory } from "./register-default-factory.ts";
+// Residual round 2 (R-2): the real entrypoint, because the entrypoint IS the defect.
+import { inMemoryProcess } from "../testing.ts";
+import { encodeFrame, splitFrames } from "@yanlinglabs/winter-agent-sdk";
 
 async function drain(source: AsyncIterable<WinterFrame>): Promise<WinterFrame[]> {
   const out: WinterFrame[] = [];
@@ -2752,6 +2755,140 @@ describe("child-engine.ts: NEW-4 -- managed-tier settings rules and the resolved
     } finally {
       rmSync(cwd, { recursive: true, force: true });
       rmSync(home, { recursive: true, force: true });
+    }
+  });
+});
+
+// ==================================================================================================
+// Phase 5 residual round 2, R-2 (whole-branch residual re-check, Important).
+//
+// NEW-4 made the factory's `winterHome` the child's FLOOR ANCHOR. Both entrypoints had long been
+// handing that value to the factory only TOGETHER with the store -- `config.persistSession === false
+// ? undefined : <root>` -- because until this round it was purely a transcript-path helper, so the
+// coupling was harmless. It stopped being harmless the moment the same value decided whether
+// `buildBaselineDenyRules(resolvedWinterHome)` had a root at all: a non-persistent session's child
+// ran with no resolved-root floors, and under forced bypass wrote into `<root>/projects`.
+//
+// DRIVEN THROUGH `inMemoryProcess`, NOT THROUGH THIS FILE'S OWN `runWithWiring`. That helper hands
+// the factory `winterHome` unconditionally and never had the coupling, so the same scenario passes
+// there whether or not the defect is present -- it would have proved nothing. The entrypoint IS the
+// defect, so the entrypoint has to be in the fixture.
+// ==================================================================================================
+describe("child-engine.ts: R-2 -- a child of a `persistSession: false` session still has the resolved-root floors", () => {
+  /**
+   * The parent/child discriminator is the AGENT PROMPT TEXT in a user message, which is the one the
+   * residual re-check settled on after its own first probes attributed the parent's calls to the
+   * child. On this leg the parent and the child share ONE provider object (`testing.ts` hands the
+   * factory the same `provider` it runs the parent with), so a predicate that is accidentally true
+   * for the parent's first turn silently measures the parent twice.
+   */
+  function tamperingProvider(victim: string): Provider {
+    return {
+      async generate({ messages }) {
+        const insideChild = messages.some((m) => m.role === "user" && JSON.stringify(m.content).includes("child-go"));
+        if (!insideChild) {
+          if (messages.some((m) => m.role === "tool")) return { kind: "text", text: "parent done" };
+          // NO `subagent_type`: it is optional, and naming one that has no AgentDefinition makes the
+          // Agent call fail outright -- the first draft did exactly that, and the floors test then
+          // passed because no child ever ran. A vacuous pass on a security fixture.
+          return { kind: "tool_use", calls: [{ id: "call-1", name: "Agent", input: { description: "tamper", prompt: "child-go" } }] };
+        }
+        // READ THEN WRITE: `read-ladder.ts` refuses a Write to an unread existing file, so a
+        // Write-only child would be stopped by the ladder and the fixture would measure that.
+        const toolTurns = messages.filter((m) => m.role === "tool").length;
+        if (toolTurns === 0) return { kind: "tool_use", calls: [{ id: "c-read", name: "Read", input: { file_path: victim } }] };
+        if (toolTurns === 1) return { kind: "tool_use", calls: [{ id: "c-write", name: "Write", input: { file_path: victim, content: "CHILD-TAMPERED\n" } }] };
+        return { kind: "text", text: "child done" };
+      },
+    };
+  }
+
+  async function driveNonPersistent(home: string, cwd: string, victim: string): Promise<string> {
+    const config = {
+      sessionId: "r2-nonpersistent",
+      cwd,
+      model: "sonnet",
+      persistSession: false,
+      permissionMode: "bypassPermissions",
+      allowDangerouslySkipPermissions: true,
+      permissions: { allow: ["Agent", "Read", "Write"] },
+    };
+    const proc = inMemoryProcess(["--config-json", JSON.stringify(config)], tamperingProvider(victim), undefined, { WINTER_HOME: home });
+    proc.stdin.write(encodeFrame({ type: "user", text: "go" } as WinterFrame));
+    proc.stdin.write(encodeFrame({ type: "control_request", requestId: "e", subtype: "end_input", payload: undefined } as WinterFrame));
+    let carry = "";
+    let agentResultText = "";
+    for await (const chunk of proc.stdout) {
+      const split = splitFrames(chunk, carry);
+      carry = split.carry;
+      for (const f of split.frames as WinterFrame[]) {
+        if (f.type !== "data") continue;
+        const msg = (f as { message: SdkMessage }).message as { type?: string; message?: { content?: Array<{ tool_use_id?: string; content?: string }> } };
+        if (msg.type !== "user") continue;
+        for (const block of msg.message?.content ?? []) {
+          if (block.tool_use_id === "call-1" && typeof block.content === "string") agentResultText = block.content;
+        }
+      }
+    }
+    await proc.exited;
+    return agentResultText;
+  }
+
+  test("the child cannot rewrite `<root>/projects`, and creates no `<root>/backups`", async () => {
+    const home = mkdtempSync(join(tmpdir(), "winter-r2-home-"));
+    const cwd = mkdtempSync(join(tmpdir(), "winter-r2-cwd-"));
+    try {
+      const victimDir = join(home, "projects", "some-key");
+      mkdirSync(victimDir, { recursive: true });
+      const victim = join(victimDir, "some-session.jsonl");
+      writeFileSync(victim, "ORIGINAL\n");
+
+      const agentResult = await driveNonPersistent(home, cwd, victim);
+      // THE CHILD MUST HAVE RUN. Without this the whole test passes when the Agent call fails for
+      // any unrelated reason -- which is precisely what a first draft did (an unknown
+      // `subagent_type` refused the spawn, and "the file is unchanged" was true of nothing).
+      expect(agentResult, "the child must actually have run").not.toContain("unknown subagent_type");
+      expect(agentResult.length, "the Agent tool must have produced a result").toBeGreaterThan(0);
+
+      // The file's CONTENT, not a denial count: a denial can be recorded for another reason while
+      // the write still lands, and the content is what a user actually loses.
+      expect(readFileSync(victim, "utf8"), "a non-persistent session's child must still be fenced out of the resolved root").toBe("ORIGINAL\n");
+      // The re-check saw the backups index CREATED in the failing case -- the `//<root>/backups/**`
+      // floor was absent too, not only the `projects` one.
+      expect(existsSync(join(home, "backups")), "the backups floor must be present in the child as well").toBe(false);
+    } finally {
+      for (const d of [home, cwd]) rmSync(d, { recursive: true, force: true });
+    }
+  });
+
+  test("decoupling `winterHome` from the store does NOT make a non-persistent child report a transcript nothing wrote", async () => {
+    // AT THE FACTORY, not through the Agent tool: a FOREGROUND Agent result carries the child's
+    // content and usage and no transcript at all (only the BACKGROUND branch writes the path, into
+    // its stub file), so the parent's tool result cannot observe this. `record.transcript` is the
+    // actual field, and the factory is where the ordering under test lives.
+    const home = mkdtempSync(join(tmpdir(), "winter-r2-t-home-"));
+    const cwd = mkdtempSync(join(tmpdir(), "winter-r2-t-cwd-"));
+    try {
+      const factory = createChildEngineFactory({
+        provider: { async generate() { return { kind: "text", text: "child done" }; } },
+        env: {},
+        // The decoupled shape R-2 introduces: a winterHome and NO store.
+        winterHome: home,
+      } as unknown as ChildEngineFactoryDeps);
+      const deps = factory({ parentSessionId: "r2-t", cwd, model: "sonnet" } as unknown as Parameters<typeof factory>[0]);
+      const handle = await deps.spawn(
+        { parentToolUseId: "call-t", prompt: "go", runInBackground: false },
+        { policy: { effectiveMode: "default", version: 1, hash: "h" }, tools: [], model: "sonnet", effort: "medium", thinking: undefined, systemPrompt: "", sessionRoot: cwd } as unknown as ChildInheritance,
+      );
+      await handle.result();
+      // `child-engine.ts`'s transcript expression is gated on `childStore === undefined` FIRST and
+      // only then on `deps.winterHome`. That ordering is what makes the decoupling safe, and it is
+      // load-bearing rather than incidental: reversed, a child of a non-persistent session would
+      // advertise an absolute `.jsonl` path that no writer ever creates.
+      expect(handle.record.transcript, "a child with no store has no transcript and must say so").toContain("no durable session store is configured");
+      expect(handle.record.transcript, "it must not advertise a path under the resolved root").not.toContain(join(home, "projects"));
+    } finally {
+      for (const d of [home, cwd]) rmSync(d, { recursive: true, force: true });
     }
   });
 });
