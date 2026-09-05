@@ -25,7 +25,10 @@ const META = `export const meta = { name: "wf", description: "d" };\n`;
 // `simulateCompletion` call, and every case here needs a child that settles on its own (or pointedly
 // never does, for the abort-chaining test). Owning it also keeps this suite from depending on
 // another lane's fixture shape.
-function fakeChild(opts: { content?: string; status?: ChildResult["status"]; neverSettle?: boolean; onStop?: () => void } = {}): ChildHandle {
+// `structuredOutput` (RULING P5-I, fix wave): the fake carried `status`/`content` only, so the
+// pending P5-I test below could not have gone green even once the field existed -- the shape it
+// pinned was dropped on the way through the double.
+function fakeChild(opts: { content?: string; status?: ChildResult["status"]; structuredOutput?: unknown; neverSettle?: boolean; onStop?: () => void } = {}): ChildHandle {
   let status: ChildResult["status"] | "running" = "running";
   let settle!: (r: ChildResult) => void;
   const result = new Promise<ChildResult>((resolve) => {
@@ -33,7 +36,7 @@ function fakeChild(opts: { content?: string; status?: ChildResult["status"]; nev
   });
   if (opts.neverSettle !== true) {
     status = opts.status ?? "completed";
-    settle({ status: opts.status ?? "completed", content: opts.content ?? "" });
+    settle({ status: opts.status ?? "completed", content: opts.content ?? "", ...("structuredOutput" in opts ? { structuredOutput: opts.structuredOutput } : {}) });
   }
   return {
     record: {
@@ -467,14 +470,20 @@ describe("F3 -- `agent({ schema })` returns the VALIDATED object, or null; never
   });
 
   // PENDING RULING P5-I (spine, fix wave). The parent currently RE-PARSES the child's final text,
-  // because `ChildResult` carries only `content: string` and `child-engine.ts`'s `observe` reads
+  // because `ChildResult` carried only `content: string` and `child-engine.ts`'s `observe` read
   // `message.result` -- which the engine's structured SUCCESS variant does not set. A child genuinely
   // forced onto StructuredOutput therefore usually has NO parseable final text, so the three cases
-  // above are the fallback's behaviour, not the intended one. This pins the shape P5-I should deliver.
-  test.skip("PENDING P5-I: a real child reports its validated object on ChildResult.structuredOutput, and agent() returns it without re-parsing text", async () => {
+  // above are the FALLBACK's behaviour. RULING P5-I (fix wave) landed the intended one, and the test
+  // below -- written against that shape and skipped until it existed -- is now live.
+  test("P5-I LANDED: a child reports its validated object on ChildResult.structuredOutput, and agent() returns it without re-parsing text", async () => {
+    // FLIPPED FROM `.skip` BY THE PHASE 5 FIX WAVE. The shape this pinned is now real:
+    // `ChildResult.structuredOutput` carries what the child's OWN engine validated, and the text
+    // re-parse below is a fallback for a child that produced none. The child here returns EMPTY
+    // text, which is exactly the case the fallback cannot serve -- so a green result can only have
+    // come from the new field.
     const r = rig({
       spawnAgent: async () =>
-        fakeChild({ content: "", structuredOutput: { verdict: "ship it" } } as unknown as { content: string }),
+        fakeChild({ content: "", structuredOutput: { verdict: "ship it" } }),
     });
     const launched = launch(r, META + `return await agent("review", { schema: ${JSON.stringify(SCHEMA)} });`);
     expect((await r.runtime.await(launched.runId)).result).toBe(JSON.stringify({ verdict: "ship it" }));

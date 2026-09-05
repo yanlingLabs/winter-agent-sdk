@@ -48,6 +48,19 @@ export interface ChildResult {
   resolvedModel?: string;
   totalToolUseCount?: number;
   totalDurationMs?: number;
+  /**
+   * RULING P5-I (Phase 5 fix wave): the child's VALIDATED structured result, when it produced one.
+   *
+   * `SpawnChildRequest.outputFormat` threads a schema into the child's own generation config, and the
+   * child's engine validates against it and puts the value on `result.structured_output` -- and
+   * nothing carried it back across this seam. Lane W's `agent({schema})` therefore re-parsed the
+   * child's final TEXT and re-validated it through the same validator, which a child forced onto
+   * `StructuredOutput` generally does not produce at all, so the call mostly resolved `null`.
+   *
+   * ABSENT when the child produced none, and a consumer must fall back to the text re-parse only
+   * then -- never treat unvalidated data as validated (the ruling's own wording).
+   */
+  structuredOutput?: unknown;
 }
 
 export interface ChildHandle {
@@ -169,6 +182,19 @@ export interface ChildEngineRunContext {
   // OPTIONAL so a pre-existing ChildEngineRunContext producer (this phase's own contract-test fakes)
   // keeps compiling; a child that cannot register simply behaves as it did before P4-I.
   registerChildResponseHandler?(handle: (frame: ControlResponseFrame) => boolean): () => void;
+  /**
+   * RULING P5-J (Phase 5 fix wave): fold a DESCENDANT's provider usage into the OWNING session's
+   * cumulative spend.
+   *
+   * A per-run accessor rather than a construction-time mirror, for the reason every other live
+   * accessor on this interface exists: a registered factory is built once and the accountant belongs
+   * to a RUN. Without it a workflow's `budget` bounded only the parent's own turns while every agent
+   * it spawned spent freely -- which is what made `budget.spent()` report an honest but useless 0.
+   *
+   * Adds to the cumulative counter ONLY, never to `contextTokens()`: a child's tokens are spend the
+   * session is responsible for, and they are not part of the parent's own next request.
+   */
+  recordDescendantUsage?(usage: { inputTokens: number; outputTokens: number }): void;
   // Phase 4 Task 8 (rider 26, PRECISED; RULING P4-J(e)): the parent's CURRENT live policy, for
   // WS-10 §9's "a child resume applies the stricter of the recorded and current parent policy".
   // Lane C's Q1 finding: `resolveChildResumeMode` had ZERO call sites anywhere in the repository and

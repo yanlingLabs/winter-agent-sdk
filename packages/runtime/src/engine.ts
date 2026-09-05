@@ -328,6 +328,30 @@ export interface ContextAccountant {
   contextTokens(): number;
   limit(): number;
   record(usage: ProviderUsage): void;
+  /**
+   * RULING P5-J (Phase 5 fix wave): the session's CUMULATIVE token spend, monotonically increasing.
+   *
+   * DELIBERATELY NOT `contextTokens()`, and the difference is the whole ruling.
+   * `contextTokens()` is the LAST provider call's context SIZE -- an overwrite, not an accumulation.
+   * It goes DOWN after a compaction and it says nothing about what a session has spent, so a budget
+   * ceiling read off it would be un-reached by a smaller call and un-reached again by a compaction.
+   * `spentTokens()` only ever grows, which is the only shape a ceiling can be built on.
+   *
+   * CHILD USAGE ROLLS UP. A child engine records into its own accountant for its own context
+   * arithmetic AND adds the same usage here, so a workflow's `budget` bounds the work its agents do
+   * rather than only the parent's own turns -- which was the gap that made `budget.spent()` report
+   * an honest but useless 0.
+   */
+  spentTokens(): number;
+  /**
+   * P5-J: fold a DESCENDANT's usage into this accountant's cumulative total WITHOUT touching
+   * `contextTokens()`.
+   *
+   * Two counters, one call, and they must not be conflated: a child's tokens are spend the session
+   * is responsible for, and they are NOT part of the parent's own next request, so adding them to
+   * the context reading would make the parent compact on a window it does not have.
+   */
+  recordDescendantUsage(usage: ProviderUsage): void;
 }
 
 // Re-exported so a lane reads the seam's default from the SAME module the seam itself lives in
@@ -343,11 +367,19 @@ export interface ContextAccountantOptions {
 export function createContextAccountant(opts: ContextAccountantOptions = {}): ContextAccountant {
   const limit = typeof opts.limit === "number" && Number.isFinite(opts.limit) && opts.limit > 0 ? opts.limit : DEFAULT_CONTEXT_WINDOW_TOKENS;
   let last = 0;
+  // P5-J: the SECOND counter. `last` is overwritten per call (the context reading); `spent` only
+  // ever accumulates. Every generation touches both; a descendant's usage touches only `spent`.
+  let spent = 0;
   return {
     contextTokens: () => last,
     limit: () => limit,
+    spentTokens: () => spent,
     record(usage: ProviderUsage) {
       last = usage.inputTokens + usage.outputTokens;
+      spent += usage.inputTokens + usage.outputTokens;
+    },
+    recordDescendantUsage(usage: ProviderUsage) {
+      spent += usage.inputTokens + usage.outputTokens;
     },
   };
 }
@@ -1682,6 +1714,12 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
                 if (idx !== -1) childResponseHandlers.splice(idx, 1);
               };
             },
+            // RULING P5-J (fix wave): a descendant's provider usage folds into the OWNING session's
+            // cumulative spend, and into nothing else. A per-run accessor, not a construction-time
+            // mirror -- the accountant belongs to a RUN and a registered factory is built once.
+            recordDescendantUsage: (usage: { inputTokens: number; outputTokens: number }): void => {
+              contextAccountant.recordDescendantUsage(usage);
+            },
             // Phase 4 Task 8 (rider 26, RULING P4-J(e)): the parent's CURRENT live policy, read
             // fresh on every call (never a spawn-time snapshot) -- WS-10 §9's stricter-of comparison
             // is only meaningful against the policy in force at RESUME time. `computePolicyHash` is
@@ -2118,6 +2156,12 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
       sessionTempDir: resolveSessionTempPaths().root,
       structured: structuredOutput,
       accountant: contextAccountant,
+      // RULING P5-J (fix wave): the cumulative counter now EXISTS, so `budget.spent()` reads a real
+      // number instead of the honest 0 Lane W had to ship. It is the whole tree's spend -- a child
+      // engine rolls its own generations up through `ChildEngineRunContext.recordDescendantUsage` --
+      // which is what makes a workflow `budget` bound the work its AGENTS do rather than only the
+      // parent's own turns.
+      spentTokens: () => contextAccountant.spentTokens(),
       resolveAgentType: (agentType, ctx) =>
         loadAgentDefinitions({
           home: permissionHome,

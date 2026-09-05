@@ -525,6 +525,11 @@ export class WorkflowRuntime {
       const result = await child.result();
       if (result.status !== "completed") return null;
       if (opts?.schema === undefined) return result.content;
+      // RULING P5-I (fix wave): the child's OWN validated object, when it produced one. The text
+      // re-parse below is now a FALLBACK for a child that produced none -- never a substitute for a
+      // value the child's own engine already validated, and never a path that returns unvalidated
+      // data as validated. Presence, not truthiness: `null`/`0`/`""` are legitimate schema values.
+      if (result.structuredOutput !== undefined) return result.structuredOutput;
       return this.validateStructured(opts.schema as JsonSchema, result.content);
     } catch {
       return null;
@@ -537,14 +542,15 @@ export class WorkflowRuntime {
    * `agent({schema})` rides `SpawnChildRequest.outputFormat` (T3's Lane W item 5) -- the child is put
    * on the identical `StructuredOutput` mechanism the top-level session uses, never a second one.
    *
-   * DISCLOSED GAP (report NEEDS_CONTEXT): `ChildResult` carries only `content: string`, and
-   * `child-engine.ts`'s own `observe` reads `message.result` -- which the engine's structured SUCCESS
-   * variant does not set (engine.ts's `finalResult` carries `structured_output` and no `result`). So
-   * the validated object never reaches the parent through the P4 seam. This parses the child's text
-   * and re-validates it through `host.structured` -- the same validator, so no second opinion is
-   * introduced -- and resolves NULL when there is nothing valid to return, which is the "died on a
-   * terminal error" arm of the same rule. `subagents/**` is frozen to this lane; the real fix is a
-   * `ChildResult.structuredOutput` field.
+   * CLOSED by RULING P5-I (Phase 5 fix wave). `ChildResult.structuredOutput` now carries the child's
+   * own validated object, so `agent({schema})` returns it directly. This function is the FALLBACK
+   * for a child that produced none: it parses the child's text and re-validates it through
+   * `host.structured` -- the same validator, so no second opinion is introduced -- and resolves NULL
+   * when there is nothing valid, which is the "died on a terminal error" arm of the same rule.
+   *
+   * The gap it used to be: `child-engine.ts`'s `observe` read `message.result`, which the engine's
+   * structured SUCCESS variant does not set (it carries `structured_output` and no `result`), so a
+   * child forced onto `StructuredOutput` -- which is every schema'd call -- resolved `null`.
    */
   private validateStructured(schema: JsonSchema, content: string): unknown {
     let parsed: unknown;
@@ -650,7 +656,11 @@ export class WorkflowRuntime {
       ...(group?.phase !== undefined ? { phase: group.phase } : {}),
       ...(group?.declaredPhase !== undefined ? { declaredPhase: group.declaredPhase } : {}),
       usage: {
-        total_tokens: this.deps.session.accountant.contextTokens(),
+        // RULING P5-J (fix wave): the session's CUMULATIVE spend, never `contextTokens()`.
+        // `contextTokens()` is the last provider call's context SIZE -- it goes DOWN after a
+        // compaction, so a progress report built on it would show a workflow's token usage falling
+        // while it ran.
+        total_tokens: this.deps.session.accountant.spentTokens(),
         tool_uses: run.toolUses,
         duration_ms: Date.now() - run.startedAt,
       },

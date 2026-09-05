@@ -100,7 +100,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import type { RuntimeConfig, WinterFrame, SessionStore, ControlResponseFrame, RuntimeHooksConfig, SandboxSettingsConfig, PermissionMode } from "@yanlinglabs/winter-agent-sdk";
 import { compatibilityKeys } from "@yanlinglabs/winter-agent-sdk";
-import { runEngine, type Provider, type ProviderMessage } from "../engine.ts";
+import { runEngine, createContextAccountant, type ContextAccountant, type Provider, type ProviderMessage } from "../engine.ts";
 import { createInMemoryChannel } from "../protocol/channel.ts";
 import { getRegisteredTool, listRegisteredTools } from "../tools/registry.ts";
 import { buildChildTranscriptWriter, childTranscriptSubpath, TranscriptWriter } from "../store/dialect.ts";
@@ -490,10 +490,21 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
         // `end_input` is harmless (`Queue.end` is idempotent) -- so calling this unconditionally, on
         // EVERY terminal status (not only the abrupt-stop/stall paths), is always safe.
         abortGeneration();
-        resolveResultOnce({ status, content, resolvedModel: config.model, totalToolUseCount, totalDurationMs: Date.now() - startedAt });
+        resolveResultOnce({
+          status,
+          content,
+          resolvedModel: config.model,
+          totalToolUseCount,
+          totalDurationMs: Date.now() - startedAt,
+          ...(structuredOutput !== undefined ? { structuredOutput: structuredOutput.value } : {}),
+        });
       }
       currentSettle = settle;
 
+      // P5-I: a BOX, not a bare value, so "the child produced `undefined`" and "the child produced
+      // nothing" stay distinguishable -- the seam's own contract is that absence means fall back to
+      // the text re-parse, and a bare `undefined` would make a legitimate result look like absence.
+      let structuredOutput: { value: unknown } | undefined;
       function observe(frame: WinterFrame): void {
         if (frame.type !== "data") return;
         const message = frame.message as ResultLikeMessage & { message?: { content?: Array<{ type?: string; text?: string; [k: string]: unknown }> } };
@@ -505,6 +516,12 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
         } else if (message.type === "result") {
           const isError = message.is_error === true;
           const resultText = typeof message.result === "string" ? message.result : lastAssistantText;
+          // RULING P5-I: the engine's structured SUCCESS variant sets `structured_output` and NO
+          // `result` (engine.ts) -- which is exactly why `resultText` falls back to the last
+          // assistant text above, and exactly why the validated object needs its own channel. Read
+          // by PRESENCE of the key, not by truthiness: `null`, `0` and `""` are all legitimate
+          // values a caller's schema may permit.
+          if ("structured_output" in message) structuredOutput = { value: message["structured_output"] };
           settle(isError ? "failed" : "completed", resultText);
         }
       }
@@ -562,8 +579,36 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
           ...(deps.skillRuntime.skillOverrides !== undefined ? { skillOverrides: deps.skillRuntime.skillOverrides } : {}),
         });
       }
+      // RULING P5-J: the child's OWN accountant, wrapped so every generation it records ALSO rolls
+      // up into the owning session's cumulative spend. Two counters, deliberately: the child needs
+      // its own `contextTokens()` for its own compaction arithmetic, and the parent needs the tokens
+      // counted against the session's budget -- adding a child's usage to the PARENT's context
+      // reading would make the parent compact on a window it does not have.
+      const rollUp = runCtx.recordDescendantUsage;
+      const childAccountant: ContextAccountant | undefined =
+        rollUp === undefined
+          ? undefined
+          : (() => {
+              const own = createContextAccountant(config.contextWindowTokens !== undefined ? { limit: config.contextWindowTokens } : {});
+              return {
+                contextTokens: () => own.contextTokens(),
+                limit: () => own.limit(),
+                spentTokens: () => own.spentTokens(),
+                record(usage) {
+                  own.record(usage);
+                  rollUp(usage);
+                },
+                recordDescendantUsage(usage) {
+                  // A GRANDCHILD's usage: counted once here and forwarded up, so the owning session's
+                  // total is the whole tree's rather than one level of it.
+                  own.recordDescendantUsage(usage);
+                  rollUp(usage);
+                },
+              };
+            })();
       void runEngine({
         config,
+        ...(childAccountant !== undefined ? { contextAccountant: childAccountant } : {}),
         input: channel.runtime.input,
         output: channel.runtime.output,
         provider: deps.provider,

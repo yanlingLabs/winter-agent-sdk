@@ -11,7 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { WinterFrame, RuntimeConfig, ProtocolSdkMessage as SdkMessage } from "@yanlinglabs/winter-agent-sdk";
 import { WinterCompatibilitySessionStore, compatibilityKeys } from "@yanlinglabs/winter-agent-sdk";
-import { runEngine, type Provider } from "../engine.ts";
+import { runEngine, createContextAccountant, type Provider } from "../engine.ts";
 import { createInMemoryChannel } from "../protocol/channel.ts";
 import { registerTool, unregisterToolForTest, buildAdvertisedSet, type ToolExecutionContext } from "../tools/registry.ts";
 import { echoProvider, scriptedProvider, testProviderByName, recordedProviderSystems, resetRecordedProviderSystems } from "../provider/mock.ts";
@@ -2264,6 +2264,131 @@ describe("child-engine.ts: I4 -- a settings-file hook governs a CHILD, and a chi
       const code = await driveWithChild({ provider: childProvider, compactionController: controller }, dir, ["ReadNotifications"], { contextWindowTokens: 1000 });
       expect(code).toBe(0);
       expect(compactions.length, "with no controller `maybeAutoCompact` returns immediately and a child never compacts").toBeGreaterThan(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+// ================================================================================================
+// Phase 5 fix wave, RULINGS P5-I and P5-J — the two values that never crossed the child seam.
+// ================================================================================================
+describe("child-engine.ts: P5-I -- the child's VALIDATED structured object reaches the parent", () => {
+  /** The parent's own tool_result for `call-1`, wherever it lands in the stream. */
+  function agentResultFor(frames: WinterFrame[], toolUseId: string): Record<string, unknown> {
+    for (const msg of dataMessages(frames)) {
+      if (msg.type !== "user") continue;
+      const content = (msg as unknown as { message?: { content?: Array<{ tool_use_id?: string; content?: string }> } }).message?.content;
+      const block = content?.find((b) => b.tool_use_id === toolUseId);
+      if (block?.content === undefined) continue;
+      return JSON.parse(block.content) as Record<string, unknown>;
+    }
+    throw new Error(`no tool_result for ${toolUseId}`);
+  }
+
+  test("a child with `outputFormat` returns its validated object on `ChildResult.structuredOutput`", async () => {
+    // THE GAP: the engine's structured SUCCESS variant sets `structured_output` and NO `result`, and
+    // `observe` read `message.result` -- so the validated object never crossed the P4 seam and Lane
+    // W's `agent({schema})` fell back to re-parsing the child's final TEXT, which a child forced onto
+    // `StructuredOutput` generally does not produce. It mostly resolved `null`.
+    registerSpawnProbe();
+    cleanupToolNames.push(SPAWN_PROBE);
+    const dir = mkdtempSync(join(tmpdir(), "winter-p5i-"));
+    try {
+      const schema = { type: "object", properties: { verdict: { type: "string" } }, required: ["verdict"], additionalProperties: false };
+      const req: SpawnChildRequest = { parentToolUseId: "call-1", prompt: "decide", runInBackground: false, outputFormat: { type: "json_schema", schema } };
+      const childProvider: Provider = {
+        async generate() {
+          return { kind: "tool_use", calls: [{ id: "so-1", name: "StructuredOutput", input: { verdict: "ship it" } }] };
+        },
+      };
+      registerChildEngineFactory(createChildEngineFactory({ provider: childProvider, structuredOutput: createStructuredOutputSeam() }));
+      const { host, runtime } = createInMemoryChannel();
+      const done = runEngine({
+        config: { sessionId: "p5i", cwd: dir, model: "sonnet", permissions: { allow: [SPAWN_PROBE, "StructuredOutput"] } },
+        input: runtime.input,
+        output: runtime.output,
+        provider: scriptedProvider([{ kind: "tool_use", calls: [{ id: "call-1", name: SPAWN_PROBE, input: req }] }, { kind: "text", text: "parent done" }]),
+      });
+      host.output.write({ type: "user", text: "go" });
+      host.output.write({ type: "control_request", requestId: "e", subtype: "end_input", payload: undefined });
+      const frames = await drain(host.input);
+      expect(await done).toBe(0);
+
+      const parsed = agentResultFor(frames, "call-1") as { result: { structuredOutput?: unknown } };
+      expect(parsed.result.structuredOutput, "the child's own engine validated this; nothing re-parses it").toEqual({ verdict: "ship it" });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("a child that produced NO structured output leaves the field ABSENT -- so a consumer knows to fall back", async () => {
+    // Absence is the contract: `agent({schema})`'s text re-parse is a FALLBACK, and a `undefined`
+    // that meant "the child produced undefined" would make a legitimate result look like absence.
+    registerSpawnProbe();
+    cleanupToolNames.push(SPAWN_PROBE);
+    const dir = mkdtempSync(join(tmpdir(), "winter-p5i-none-"));
+    try {
+      const req: SpawnChildRequest = { parentToolUseId: "call-1", prompt: "just talk", runInBackground: false };
+      registerChildEngineFactory(createChildEngineFactory({ provider: echoProvider }));
+      const { host, runtime } = createInMemoryChannel();
+      const done = runEngine({
+        config: { sessionId: "p5i-none", cwd: dir, model: "sonnet", permissions: { allow: [SPAWN_PROBE] } },
+        input: runtime.input,
+        output: runtime.output,
+        provider: scriptedProvider([{ kind: "tool_use", calls: [{ id: "call-1", name: SPAWN_PROBE, input: req }] }, { kind: "text", text: "parent done" }]),
+      });
+      host.output.write({ type: "user", text: "go" });
+      host.output.write({ type: "control_request", requestId: "e", subtype: "end_input", payload: undefined });
+      const frames = await drain(host.input);
+      expect(await done).toBe(0);
+      const parsed = agentResultFor(frames, "call-1") as { result: Record<string, unknown> };
+      expect("structuredOutput" in parsed.result).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("child-engine.ts: P5-J -- a child's spend rolls up into the owning session's cumulative total", () => {
+  test("two child turns add to the PARENT's `spentTokens()`, and leave its `contextTokens()` alone", async () => {
+    // The distinction IS the ruling. `contextTokens()` is the last call's context SIZE -- it is
+    // overwritten, it goes DOWN after a compaction, and a budget ceiling built on it is un-reached by
+    // a smaller call. `spentTokens()` only grows. A child's tokens are spend the session is
+    // responsible for and are NOT part of the parent's next request, so they must reach one counter
+    // and not the other.
+    registerSpawnProbe();
+    cleanupToolNames.push(SPAWN_PROBE);
+    const dir = mkdtempSync(join(tmpdir(), "winter-p5j-"));
+    try {
+      const parentAccountant = createContextAccountant({ limit: 100000 });
+      const req: SpawnChildRequest = { parentToolUseId: "call-1", prompt: "work", runInBackground: false };
+      let childTurn = 0;
+      const childProvider: Provider = {
+        async generate({ messages }) {
+          childTurn++;
+          if (messages.some((m) => m.role === "tool")) return { kind: "text", text: "child done", usage: { inputTokens: 30, outputTokens: 0 } };
+          return { kind: "tool_use", calls: [{ id: "c", name: "ReadNotifications", input: {} }], usage: { inputTokens: 20, outputTokens: 0 } };
+        },
+      };
+      registerChildEngineFactory(createChildEngineFactory({ provider: childProvider }));
+      const { host, runtime } = createInMemoryChannel();
+      const done = runEngine({
+        config: { sessionId: "p5j", cwd: dir, model: "sonnet", permissions: { allow: [SPAWN_PROBE, "ReadNotifications"] } },
+        input: runtime.input,
+        output: runtime.output,
+        provider: scriptedProvider([{ kind: "tool_use", calls: [{ id: "call-1", name: SPAWN_PROBE, input: req }], usage: { inputTokens: 7, outputTokens: 0 } }, { kind: "text", text: "parent done", usage: { inputTokens: 11, outputTokens: 0 } }]),
+        contextAccountant: parentAccountant,
+      });
+      host.output.write({ type: "user", text: "go" });
+      host.output.write({ type: "control_request", requestId: "e", subtype: "end_input", payload: undefined });
+      await drain(host.input);
+      expect(await done).toBe(0);
+      expect(childTurn, "the child really ran two generations").toBe(2);
+      // 7 + 11 (the parent's own) + 20 + 30 (the child's, rolled up) = 68.
+      expect(parentAccountant.spentTokens()).toBe(68);
+      // ...and the context reading is the PARENT's LAST call alone, untouched by the child.
+      expect(parentAccountant.contextTokens()).toBe(11);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
