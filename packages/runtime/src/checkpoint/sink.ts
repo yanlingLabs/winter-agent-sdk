@@ -53,6 +53,19 @@ export interface FileCheckpointSinkOptions {
    * field carries. Omitted => `cwd` is the whole fence.
    */
   additionalDirectories?: readonly string[];
+  /**
+   * Phase 5 Task 8 (riders 9/16): the session's durable transcript sink, so every checkpoint record
+   * is ALSO visible to a transcript reader (`store/dialect.ts`'s `file-history-snapshot` /
+   * `file-history-delta`). Lane K's concern 1 named exactly this cost of the private sidecar.
+   *
+   * A MIRROR, deliberately, and the sidecar remains this sink's own read authority -- see that
+   * module's own header for the two blockers that keep the retirement half of rider 16 open. The
+   * mirror is best-effort: a store failure NEVER fails the mutation it accompanies, matching
+   * `recordHookAudit`/`recordPermissionUpdate`'s established auxiliary-sink policy. A backup that
+   * exists with no transcript line still restores; a transcript line with no backup would be the
+   * dangerous direction, which is why the sidecar write stays first.
+   */
+  persistence?: { recordFileHistory?(record: CheckpointRecord): void | Promise<void> };
   env?: Record<string, string | undefined>;
 }
 
@@ -70,6 +83,16 @@ export function createFileCheckpointSink(opts: FileCheckpointSinkOptions): FileC
   const versions = new Map<string, number>();
   const snapshotted = new Set<string>();
   const seeded = new Set<string>();
+
+  // Best-effort, and never fails the mutation it accompanies -- see `persistence`'s own header.
+  const mirrorToTranscript = async (record: CheckpointRecord): Promise<void> => {
+    if (opts.persistence?.recordFileHistory === undefined) return;
+    try {
+      await opts.persistence.recordFileHistory(record);
+    } catch {
+      /* auxiliary -- a durable-record failure must not stop a backup that already succeeded */
+    }
+  };
 
   const seed = (sessionUuid: string): void => {
     if (seeded.has(sessionUuid)) return;
@@ -105,7 +128,7 @@ export function createFileCheckpointSink(opts: FileCheckpointSinkOptions): FileC
       // restores to the state at the START of the envelope, so re-copying the file now would store
       // bytes nothing can ever restore to -- this is the "delta-record" half of R5-11.
       if (snapshotted.has(checkpointKey)) {
-        appendCheckpointRecord(home, sessionUuid, {
+        const delta: CheckpointRecord = {
           kind: "delta",
           userMessageUuid: req.userMessageUuid,
           path: absolute,
@@ -115,7 +138,9 @@ export function createFileCheckpointSink(opts: FileCheckpointSinkOptions): FileC
           version: versions.get(versionKey) ?? 0,
           ...(parentRealPath !== undefined ? { parentRealPath } : {}),
           ...anchorFields,
-        });
+        };
+        appendCheckpointRecord(home, sessionUuid, delta);
+        await mirrorToTranscript(delta);
         return;
       }
 
@@ -143,6 +168,7 @@ export function createFileCheckpointSink(opts: FileCheckpointSinkOptions): FileC
         writeFileSync(join(dir, blobName(pathHash, version)), preImage);
       }
       appendCheckpointRecord(home, sessionUuid, record);
+      await mirrorToTranscript(record);
       versions.set(versionKey, version);
       snapshotted.add(checkpointKey);
     },

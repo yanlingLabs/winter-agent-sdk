@@ -127,6 +127,7 @@ import { resolveChildResumeMode, ChildResumeModeIncomparableError } from "../per
 // see ChildEngineFactoryDeps for why each one is a real gap rather than a nicety.
 import type { SystemPromptAssembler } from "../context/seam.ts";
 import { registerSkillSessionRuntime, clearSkillSessionRuntime, type SkillSessionRuntime } from "../skills/runtime.ts";
+import type { StructuredOutputSeam } from "../structured/seam.ts";
 
 export interface ChildEngineFactoryDeps {
   provider: Provider;
@@ -207,6 +208,12 @@ export interface ChildEngineFactoryDeps {
   // runtime" refusal for every `Skill` call. Registered per GENERATION below and withdrawn at
   // settle, mirroring how the MCP/ToolSearch session registries are already handled.
   skillRuntime?: { index: SkillSessionRuntime["index"]; skillOverrides?: SkillSessionRuntime["skillOverrides"] };
+  // The session's structured-output seam. A child needs it whenever `SpawnChildRequest.outputFormat`
+  // is set -- which Lane W's `agent({schema})` does on every schema'd call -- because `outputFormat`
+  // with NO seam is a hard `error_during_execution` on the child's first round (T3's concern 3), and
+  // a `Workflow` run would then fail on its first schema'd agent call rather than validating.
+  // THE PARENT'S OWN INSTANCE (Lane K's NEEDS_CONTEXT 6): one compiled-validator cache per session.
+  structuredOutput?: StructuredOutputSeam;
 }
 
 export function createChildEngineFactory(deps: ChildEngineFactoryDeps): ChildEngineFactory {
@@ -564,6 +571,9 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
         // minimal prompt, no dynamic sections, no WINTER.md and no memory block, which is a strictly
         // worse prompt than the parent's for no stated reason.
         ...(deps.systemPromptAssembler !== undefined ? { systemPromptAssembler: deps.systemPromptAssembler } : {}),
+        // Only meaningful when this child carries an `outputFormat` -- but supplied unconditionally,
+        // because the alternative is a child that fails its FIRST round the moment a caller sets one.
+        ...(deps.structuredOutput !== undefined ? { structuredOutput: deps.structuredOutput } : {}),
         env,
       }).catch(() => {
         settle("failed", "child engine process exited unexpectedly");

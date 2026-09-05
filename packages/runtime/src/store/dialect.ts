@@ -232,6 +232,93 @@ export function compactBoundaryEntry(opts: {
   };
 }
 
+// --- Phase 5 Task 8 (riders 9/16): the two dialect entries the lanes asked the spine for ----------
+//
+// T3 deliberately landed neither, and said why: `store/**` is spine and frozen to lanes, and both
+// entry NAMES and their fields are Winter-defined (items (e)/(i)), so inventing a field set the
+// owning lane would immediately have to change was the worse option. Both lanes came back with a
+// finished field set, which is what these are.
+//
+// NON-CONVERSATIONAL, both of them -- no `message`, exactly like `compact_boundary`. `resume.ts`'s
+// `rebuildProviderMessages` selects on `message !== undefined`, so neither can ever re-enter a
+// rebuilt conversation, and `initialConversationalUuids` (which filters on entry type) does not name
+// them either. They are RECORDS a transcript reader can see, never history.
+
+/** Lane S's `invoked_skills` (skills/attachment.ts) -- the one authority on the payload shape. */
+export const INVOKED_SKILLS_ENTRY_TYPE = "invoked_skills";
+
+/**
+ * Lane K's checkpoint records (checkpoint/file-history.ts's `CheckpointRecord`), one entry per
+ * intercepted mutation.
+ *
+ * WHAT THIS DOES AND DOES NOT CHANGE, stated plainly because rider 16 asks for more than this
+ * lands. Lane K's concern 1 named ONE cost of the private sidecar: "a transcript reader cannot see
+ * that a rewind is possible". That cost is what this closes -- the record is now visible to anyone
+ * reading the session's own transcript. `<home>/backups/<session>/index.jsonl` REMAINS the rewind's
+ * read authority, and rider 16's "retire the sidecar" half is NOT done. Two concrete blockers, both
+ * behavioural rather than cosmetic:
+ *
+ *   1. SCOPING. `FileCheckpointSink.beforeMutation` is scoped by the SEAM's own `req.sessionUuid`,
+ *      which is how a child engine's edits land in the CHILD's subtree rather than the parent's --
+ *      but a sink holds exactly one `SessionPersistence`, the parent's. Routing every record through
+ *      it would silently move a child's file history into the parent's transcript and therefore into
+ *      the parent's rewind scope.
+ *   2. THE READ PATH. `rewindToCheckpoint` is synchronous and reads `index.jsonl` next to the blobs
+ *      it names; `SessionPersistence` is an append-only write sink with no read surface at all, and
+ *      the store's own reader is async.
+ *
+ * So the two are deliberately asymmetric and each says what it is: the transcript entry is the
+ * READABLE record, the sidecar is the OPERATIONAL index co-located with the blobs. Nothing reads the
+ * transcript entry for behaviour, which is what keeps this from being a second producer of a
+ * consumed value -- it is the same shape `recordHookAudit` already has.
+ */
+export const FILE_HISTORY_ENTRY_TYPE_BY_KIND = { snapshot: "file-history-snapshot", delta: "file-history-delta" } as const;
+
+/** Lane K's `CheckpointRecord`, verbatim -- this module never reshapes it. */
+export interface FileHistoryEntryPayload {
+  kind: "snapshot" | "delta";
+  userMessageUuid: string;
+  path: string;
+  pathHash: string;
+  tool: string;
+  at: string;
+  version: number;
+  absent?: boolean;
+  parentRealPath?: string;
+  anchorPath?: string;
+  anchorRealPath?: string;
+}
+
+export function invokedSkillsEntry(opts: {
+  attachment: { type: string; skills: unknown[] };
+  chain: Chain;
+  ctx: SessionCtx;
+  sidechain?: SidechainStamp;
+}): DialectEntryBase & { type: "invoked_skills"; skills: unknown[] } {
+  return {
+    type: INVOKED_SKILLS_ENTRY_TYPE,
+    ...baseFields(opts.ctx, opts.chain),
+    ...(opts.sidechain !== undefined ? { isSidechain: true as const, agentId: opts.sidechain.agentId, parent_tool_use_id: opts.sidechain.parentToolUseId } : {}),
+    // The array is copied, never aliased: the caller's payload is its own and a transcript entry
+    // must not change under it after being appended.
+    skills: [...opts.attachment.skills],
+  };
+}
+
+export function fileHistoryEntry(opts: {
+  record: FileHistoryEntryPayload;
+  chain: Chain;
+  ctx: SessionCtx;
+  sidechain?: SidechainStamp;
+}): DialectEntryBase & { type: string; file_history: FileHistoryEntryPayload } {
+  return {
+    type: FILE_HISTORY_ENTRY_TYPE_BY_KIND[opts.record.kind],
+    ...baseFields(opts.ctx, opts.chain),
+    ...(opts.sidechain !== undefined ? { isSidechain: true as const, agentId: opts.sidechain.agentId, parent_tool_use_id: opts.sidechain.parentToolUseId } : {}),
+    file_history: { ...opts.record },
+  };
+}
+
 export class TranscriptWriterError extends Error {
   constructor(message: string) {
     super(message);
@@ -381,6 +468,40 @@ export class TranscriptWriter implements SessionPersistence {
     return { boundaryUuid: boundary.uuid, anchorUuid: summary.uuid, preservedUuids: preserved };
   }
 
+  /**
+   * Phase 5 Task 8 (rider 16): Lane S's `invoked_skills` attachment, as a real transcript entry.
+   *
+   * Lane S's NEEDS_CONTEXT 1: the payload went to `SkillSessionRuntime.onInvoked`, a HOST sink, and
+   * with no entry the record existed only for as long as the host chose to keep it. Nothing else
+   * about the payload changes -- `skills/attachment.ts` is still its one producer.
+   */
+  async recordInvokedSkills(attachment: { type: string; skills: unknown[] }): Promise<void> {
+    const entry = invokedSkillsEntry({
+      attachment,
+      chain: { parentUuid: this.parentUuid },
+      ctx: this.ctx,
+      ...(this.sidechain !== undefined ? { sidechain: this.sidechain } : {}),
+    });
+    await this.appendWithDialectRecord(entry);
+    this.parentUuid = entry.uuid;
+  }
+
+  /**
+   * Phase 5 Task 8 (riders 9/16): one checkpoint record, as a transcript entry. See
+   * `FILE_HISTORY_ENTRY_TYPE_BY_KIND`'s own header for exactly what this closes and what it does
+   * NOT (the sidecar remains the rewind's read authority).
+   */
+  async recordFileHistory(record: FileHistoryEntryPayload): Promise<void> {
+    const entry = fileHistoryEntry({
+      record,
+      chain: { parentUuid: this.parentUuid },
+      ctx: this.ctx,
+      ...(this.sidechain !== undefined ? { sidechain: this.sidechain } : {}),
+    });
+    await this.appendWithDialectRecord(entry);
+    this.parentUuid = entry.uuid;
+  }
+
   // WS-05 §5.3 / WS-10 §3.4/§7: the `.meta.json` sidecar, via the store's own `agent_metadata`
   // envelope partitioning (session-store.ts's append() -- NEVER written to the jsonl; the dialect
   // layer's own contribution here is nothing more than the envelope TYPE tag, matching
@@ -490,6 +611,10 @@ function withPermissionJournal(writer: TranscriptWriter, location: { winterHome:
     // is `store?.recordCompactBoundary !== undefined`, which would read "no store support" and skip
     // persisting every compaction with no error anywhere.
     recordCompactBoundary: (record) => writer.recordCompactBoundary(record),
+    // Phase 5 Task 8 (riders 9/16): the two new dialect entries, forwarded exactly like the
+    // boundary above -- arrow forms, never method shorthand, for the same `this`-binding reason.
+    recordInvokedSkills: (attachment) => writer.recordInvokedSkills(attachment),
+    recordFileHistory: (record) => writer.recordFileHistory(record),
     flush: () => writer.flush(),
     // Synchronous, matching appendPermissionJournal's own synchronous fs calls (openSync et al.,
     // ruleset.ts) — SessionPersistence's own `void | Promise<void>` return type accepts either, and

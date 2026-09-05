@@ -31,7 +31,7 @@ import { loadPlugins } from "./plugins/loader.ts";
 import { pluginAgentDefinitions, pluginCommandContributions, pluginInitInfo, pluginSkillContributions } from "./plugins/bundle.ts";
 import { SkillIndex } from "./skills/store.ts";
 import { buildSkillListing, type SkillOverrides } from "./skills/listing.ts";
-import { autoSkillPermissionEntries, validateSkillsOption } from "./skills/option.ts";
+import { autoSkillPermissionEntries, isSkillEnabled, validateSkillsOption } from "./skills/option.ts";
 import { registerSkillSessionRuntime, clearSkillSessionRuntime } from "./skills/runtime.ts";
 import { FilesystemCommandResolver } from "./commands/resolver.ts";
 import { slashCommandNames } from "./commands/builtins-listing.ts";
@@ -137,6 +137,16 @@ export interface ProductionWiringOptions {
    * it does, this stays the OS home so nothing here changes a shipped behaviour by accident.
    */
   permissionHome?: string;
+  /**
+   * The session's durable transcript sink (`resolveEngineSession`'s own `store`), so the two P5
+   * dialect entries have somewhere to land: Lane S's `invoked_skills` attachment and Lane K's
+   * `file-history-*` records. Omitted for a non-persistent session, in which case both are simply
+   * never written -- exactly as a session with no store has no durable anything.
+   */
+  persistence?: {
+    recordInvokedSkills?(attachment: { type: string; skills: unknown[] }): void | Promise<void>;
+    recordFileHistory?(record: { kind: "snapshot" | "delta"; userMessageUuid: string; path: string; pathHash: string; tool: string; at: string; version: number; absent?: boolean; parentRealPath?: string; anchorPath?: string; anchorRealPath?: string }): void | Promise<void>;
+  };
 }
 
 export interface ProductionWiring {
@@ -163,6 +173,7 @@ export interface ProductionWiring {
   childFactoryOptions: {
     systemPromptAssembler: SystemPromptAssembler;
     skillRuntime: { index: SkillIndex; skillOverrides?: SkillOverrides };
+    structuredOutput: StructuredOutputSeam;
   };
   /**
    * Non-fatal problems worth telling a host about: a malformed `.winter/mcp.json`, a plugin that
@@ -248,6 +259,18 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
     index: skillIndex,
     ...(config.skills !== undefined ? { skills: config.skills } : {}),
     ...(skillOverrides !== undefined ? { skillOverrides } : {}),
+    // Rider 16: the attachment SINK is the transcript now, where it used to be a host callback with
+    // no default -- so a skill invocation left no durable record at all unless a host supplied one.
+    // Best-effort and fire-and-forget, matching every other auxiliary durable sink in this codebase:
+    // a store failure must never fail the `Skill` call it accompanies (the executor already guards a
+    // throwing sink, and the body still reaches the model either way).
+    ...(opts.persistence?.recordInvokedSkills !== undefined
+      ? {
+          onInvoked: (attachment) => {
+            void Promise.resolve(opts.persistence?.recordInvokedSkills?.(attachment)).catch(() => {});
+          },
+        }
+      : {}),
   });
 
   // (6) THE COMMAND RESOLVER. Skills come from the index built above -- never a second scan -- so
@@ -323,6 +346,9 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
           // Rider 25: the rewind fence. The session's own writable roots, so a file genuinely edited
           // in a granted directory still restores while a tampered index cannot reach outside them.
           ...(config.additionalDirectories !== undefined ? { additionalDirectories: config.additionalDirectories } : {}),
+          // Riders 9/16: the durable, transcript-visible MIRROR of each checkpoint record. The
+          // sidecar next to the blobs stays this sink's own read authority.
+          ...(opts.persistence?.recordFileHistory !== undefined ? { persistence: { recordFileHistory: opts.persistence.recordFileHistory } } : {}),
         })
       : undefined;
 
@@ -333,7 +359,9 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
   // and the live cwd are the same value at startup, which is when the init frame is emitted.
   const initSlashCommands = slashCommandNames(commandResolver, config.cwd);
   // `skills` reflects the session FILTER, not the whole index: a session configured with
-  // `skills: ["review"]` should not advertise every skill on disk as available.
+  // `skills: ["review"]` should not advertise every skill on disk as available. `validateSkillsOption`
+  // returns `index.names()` for `undefined`/`"all"` (capture (4): omission is not "skills off") and
+  // the caller's own list otherwise -- including the empty one, which is a real configuration.
   const initSkills = validation.ok ? validation.skills : [];
   const initPlugins = pluginInitInfo(plugins.bundles);
   // The pinned field is REQUIRED (`sdk.d.ts:4879`). It reports the CONFIGURED name -- the same chain
@@ -350,8 +378,13 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
   // The budget is a share of THIS session's context window (`skillListingBudgetFraction`, default
   // 0.01), so a session with a small window gets a proportionally smaller listing rather than one
   // sized for a window it does not have.
-  const enabledSkillNames = new Set(initSkills);
-  const listedSkills = skillIndex.list().filter((skill) => enabledSkillNames.size === 0 || enabledSkillNames.has(skill.name));
+  //
+  // FILTERED THROUGH LANE S'S OWN `isSkillEnabled`, never a re-derivation. A set-membership check
+  // over `initSkills` reads correctly and is WRONG in two ways: `skills: []` is a legitimate "no
+  // skills" configuration whose empty list a `size === 0 || ...` guard would read as "all" (the
+  // exact inversion), and `isSkillEnabled` is alias-aware in both directions, so an option listing
+  // `.winter:review` enables an invocation of `review` and vice versa.
+  const listedSkills = skillIndex.list().filter((skill) => isSkillEnabled(config.skills, skill.name, skillIndex));
   const skillListing = buildSkillListing(listedSkills, {
     ...(skillOverrides !== undefined ? { skillOverrides } : {}),
     ...(skillListingMaxDescChars !== undefined ? { maxDescChars: skillListingMaxDescChars } : {}),
@@ -378,6 +411,12 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
     childFactoryOptions: {
       systemPromptAssembler,
       skillRuntime: { index: skillIndex, ...(skillOverrides !== undefined ? { skillOverrides } : {}) },
+      // THE SAME INSTANCE the parent runs with -- Lane K's NEEDS_CONTEXT 6: one seam per session so
+      // the compiled-validator cache and the dialect selection are shared. A child needs it because
+      // `SpawnChildRequest.outputFormat` reaches its own generation config (Lane W's
+      // `agent({schema})` rides exactly that), and `outputFormat` with NO seam is a hard
+      // `error_during_execution` on the first round (T3's concern 3).
+      structuredOutput,
     },
     warnings,
     dispose(): void {

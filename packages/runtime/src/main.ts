@@ -169,7 +169,7 @@ try {
   // `withAutoSkillPermissions` is applied to the config the ENGINE gets, not to the one the wiring
   // reads -- the wiring's own `validateSkillsOption` must see the host's original `allowedTools` to
   // decide whether `Skill` is reachable at all.
-  const wiring = await buildProductionWiring({ config: effectiveConfig, env: process.env, winterHome: resolveProductionWinterHome(config, process.env) });
+  const wiring = await buildProductionWiring({ config: effectiveConfig, env: process.env, winterHome: resolveProductionWinterHome(config, process.env), ...(store !== undefined ? { persistence: store } : {}) });
   // Non-fatal, and STDERR only: stdout is the frame stream exclusively (WS-04 §2/§6). A malformed
   // `.winter/mcp.json`, a plugin that would not load, or a `skills` entry naming something unknown
   // must be visible to an operator without taking the session down.

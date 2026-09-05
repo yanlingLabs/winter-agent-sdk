@@ -31,6 +31,7 @@ import { registerChildEngineFactory } from "./child-handle.ts";
 import { createChildEngineFactory } from "./child-engine.ts";
 import type { SystemPromptAssembler } from "../context/seam.ts";
 import type { SkillSessionRuntime } from "../skills/runtime.ts";
+import type { StructuredOutputSeam } from "../structured/seam.ts";
 
 export interface DefaultChildEngineFactoryOptions {
   provider: Provider;
@@ -55,6 +56,9 @@ export interface DefaultChildEngineFactoryOptions {
   // parent's registration -- deliberately, since it must not inherit its parent's `skills` filter).
   systemPromptAssembler?: SystemPromptAssembler;
   skillRuntime?: { index: SkillSessionRuntime["index"]; skillOverrides?: SkillSessionRuntime["skillOverrides"] };
+  // The session's own structured-output seam -- see ChildEngineFactoryDeps for why a child without
+  // one fails its first round the moment `agent({schema})` sets an `outputFormat`.
+  structuredOutput?: StructuredOutputSeam;
 }
 
 // WHOLE-BRANCH M3(d) -- THE ONE-LIVE-SESSION-PER-PROCESS ASSUMPTION, stated plainly because this
@@ -104,6 +108,7 @@ export function registerDefaultChildEngineFactory(opts: DefaultChildEngineFactor
       // Phase 5 Task 8: see this interface's own fields for why each is a real gap.
       ...(opts.systemPromptAssembler !== undefined ? { systemPromptAssembler: opts.systemPromptAssembler } : {}),
       ...(opts.skillRuntime !== undefined ? { skillRuntime: opts.skillRuntime } : {}),
+      ...(opts.structuredOutput !== undefined ? { structuredOutput: opts.structuredOutput } : {}),
     }),
   );
 }

@@ -20,6 +20,18 @@ jobs:
       - run: bun run verify:compiled                # compiled-transport gate (Task 5, WS-02 §7.4): compiles a
                                                       # linux binary via the direct --out path (not the darwin
                                                       # platform package) and re-runs the equivalence suite against it
+      - run: bun run verify:workflow                # P5 Task 8 (rider 8/21): the WORKFLOW half of the same
+                                                      # compiled-binary proof. `verify:compiled` re-runs the
+                                                      # equivalence suite against the binary; this one drives a REAL
+                                                      # workflow end to end through the binary's own
+                                                      # `__workflow-worker` argv dispatch, which no other gate
+                                                      # exercises -- a dispatch that only exists in the COMPILED
+                                                      # entry graph, so a dev-leg run cannot stand in for it.
+                                                      # `sandbox: false` on a host without /usr/bin/sandbox-exec
+                                                      # (this runner) is the script's own documented linux mode:
+                                                      # the SUBJECT there is the argv dispatch and the bridge, and
+                                                      # `launch()` still refuses outright in production when the
+                                                      # sandbox is required and unavailable.
 
   official-fixture-compile:
     # Task 11 (WS-03 §14 dual-compile, official half): a SEPARATE job (not a step on `build`) so its

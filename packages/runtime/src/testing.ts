@@ -189,7 +189,7 @@ export function inMemoryProcess(
       // own hermetic `resolveInMemoryWinterHome` root -- which must NEVER reach the real
       // `process.env` fallback (that function's own header), so a differential/equivalence run can
       // not read a developer's real skills, commands, plugins or settings.
-      const wiring = await buildProductionWiring({ config: effectiveConfig, env: env ?? {}, winterHome: resolveInMemoryWinterHome(config, env) });
+      const wiring = await buildProductionWiring({ config: effectiveConfig, env: env ?? {}, winterHome: resolveInMemoryWinterHome(config, env), ...(store !== undefined ? { persistence: store } : {}) });
       registerDefaultChildEngineFactory({
         provider,
         config: effectiveConfig,

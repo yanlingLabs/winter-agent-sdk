@@ -376,6 +376,20 @@ export interface SessionPersistence {
   // dialect.ts's withPermissionJournal is the one production implementation (same journal file as
   // recordPermissionUpdate, a distinguishable sibling line kind — see that file's own comment).
   recordHookAudit?(entry: HookAuditRecord): void | Promise<void>;
+  /**
+   * Phase 5 Task 8 (rider 16): Lane S's `invoked_skills` attachment. Optional, like every other
+   * method here. The engine never calls it -- `skills/runtime.ts`'s `onInvoked` sink does, wired by
+   * `production-wiring.ts` -- but it lives on this interface because it is a DURABLE session record
+   * and this is the one seam the engine's storage-agnostic contract exposes for those.
+   */
+  recordInvokedSkills?(attachment: { type: string; skills: unknown[] }): void | Promise<void>;
+  /**
+   * Phase 5 Task 8 (riders 9/16): one of Lane K's checkpoint records, as a transcript-visible entry.
+   * See `store/dialect.ts`'s `FILE_HISTORY_ENTRY_TYPE_BY_KIND` for what this closes (a transcript
+   * reader can see that a rewind is possible) and what it does not (the `backups/index.jsonl`
+   * sidecar remains the rewind's own read authority).
+   */
+  recordFileHistory?(record: { kind: "snapshot" | "delta"; userMessageUuid: string; path: string; pathHash: string; tool: string; at: string; version: number; absent?: boolean; parentRealPath?: string; anchorPath?: string; anchorRealPath?: string }): void | Promise<void>;
   // Phase 5 Task 3 (R5-4): "the summary and boundary persist as a `compact_boundary` system entry +
   // summary in the dialect". Optional, matching every other method on this interface's own "entirely
   // optional" contract -- a store that predates this field (or a bare test double) simply never gets

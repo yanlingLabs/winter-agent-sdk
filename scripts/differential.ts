@@ -9,9 +9,16 @@ import { normalizeTrace, compareTraces, type ConformanceTraceEntry } from "winte
 
 // A pinned, synthetic cwd (never process.cwd()) so every recorded trace — and the committed golden
 // compared against it — is byte-identical across machines and CI runners, whose checkout paths
-// differ. The in-memory runtime never touches the filesystem with it (WS-17 §4: differential
-// traces must be deterministic). Shared by every scenario below, not just the original plain-query
-// one, for the same reason.
+// differ (WS-17 §4: differential traces must be deterministic). Shared by every scenario below, not
+// just the original plain-query one, for the same reason.
+//
+// CORRECTED BY Phase 5 Task 8: this comment used to add "the in-memory runtime never touches the
+// filesystem with it", and that is no longer true. `production-wiring.ts` runs on every leg now and
+// parent-walks this cwd for skills, command files, `WINTER.md` and `.winter/mcp.json`, and
+// `context/memory-key.ts` spawns `git --git-common-dir` in it. All of that TOLERATES a nonexistent
+// directory -- verified by probing each builder against this exact path before the wiring landed --
+// which is what keeps the determinism guarantee intact: a path that does not exist has no contents
+// to vary by machine. It is no longer an untouched string, and a future reader must not assume it.
 const FIXTURE_CWD = "/winter-fixture";
 const FIXTURE_MODEL = "sonnet";
 
@@ -54,8 +61,8 @@ export async function traceWinterPlainQuery(): Promise<ConformanceTraceEntry[]> 
     let seq = 0;
     // cwd is pinned to a synthetic constant (never process.cwd()'s default) so the recorded trace —
     // and the committed golden compared against it — is byte-identical across machines and CI
-    // runners, whose checkout paths differ. The in-memory runtime never touches the filesystem with
-    // it (WS-17 §4: differential traces must be deterministic).
+    // runners, whose checkout paths differ (WS-17 §4). See FIXTURE_CWD's own header for what the
+    // P5 wiring now does with this path, and why a nonexistent one is still deterministic.
     for await (const msg of query({
       prompt: "hi",
       options: {
