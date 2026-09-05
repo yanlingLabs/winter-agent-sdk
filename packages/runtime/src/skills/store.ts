@@ -21,6 +21,7 @@ import { join } from "node:path";
 import type { SettingSource } from "@yanlinglabs/winter-agent-sdk";
 import { DEFAULT_SKILL_BODY_BYTES, capBytes, skillNameError, pluginNameError } from "./frontmatter.ts";
 import { SELF_SUBDIR, projectSkillRoots, readSkillMetadata, scanSkillRoot, scanUserSkillRoot, type DiscoveredSkill, type SkillTier } from "./loader.ts";
+import { isStrictPluginOnly, type StrictPluginOnlyCustomization } from "../settings/loaders/strict-plugin-only.ts";
 
 /**
  * WS-01 §2.4 / WS-11 §4: `.winter` IS the canonical plugin name for the project dot-directory. The
@@ -69,6 +70,13 @@ export interface SkillIndexOptions {
   builtinSkills?: readonly DiscoveredSkill[] | undefined;
   /** `Settings.disableBundledSkills` (`sdk.d.ts:5657`). Removes the builtin tier and nothing else. */
   disableBundledSkills?: boolean | undefined;
+  /**
+   * `Settings.strictPluginOnlyCustomization` (`sdk.d.ts:5988`). When it covers `"skills"`, ONLY
+   * plugin-contributed skills load -- project, user, self and builtin are all excluded. Distinct
+   * from source gating: `settingSources` says which settings FILES load, this says which
+   * customization SOURCES may customize at all.
+   */
+  strictPluginOnlyCustomization?: StrictPluginOnlyCustomization | undefined;
   bodyBytes?: number | undefined;
 }
 
@@ -83,10 +91,11 @@ function sourcesAllow(settingSources: SettingSource[] | undefined, tier: Setting
  */
 function discover(opts: SkillIndexOptions): DiscoveredSkill[] {
   const all: DiscoveredSkill[] = [];
-  if (sourcesAllow(opts.settingSources, "project")) {
+  const pluginOnly = isStrictPluginOnly(opts.strictPluginOnlyCustomization, "skills");
+  if (!pluginOnly && sourcesAllow(opts.settingSources, "project")) {
     for (const root of projectSkillRoots(opts.cwd)) all.push(...scanSkillRoot(root, "project"));
   }
-  if (sourcesAllow(opts.settingSources, "user")) {
+  if (!pluginOnly && sourcesAllow(opts.settingSources, "user")) {
     const userRoot = join(opts.home, ".winter", "skills");
     all.push(...scanUserSkillRoot(userRoot));
     all.push(...scanSkillRoot(join(userRoot, SELF_SUBDIR), "self"));
@@ -104,7 +113,7 @@ function discover(opts: SkillIndexOptions): DiscoveredSkill[] {
       });
     }
   }
-  if (opts.disableBundledSkills !== true) all.push(...(opts.builtinSkills ?? []));
+  if (!pluginOnly && opts.disableBundledSkills !== true) all.push(...(opts.builtinSkills ?? []));
   return all;
 }
 

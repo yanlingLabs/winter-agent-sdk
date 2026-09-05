@@ -190,6 +190,23 @@ describe("SkillIndex: tiers, precedence and source gating (WS-11 §2.1, P5 amend
     expect(index.get("alpha")?.source).toBe("project");
   });
 
+  test("`strictPluginOnlyCustomization` covering skills leaves ONLY the plugin tier", () => {
+    const { repo, home } = tree();
+    const plugins = [{ plugin: "acme", skills: [{ name: "beta", description: "plugin beta", path: "/p/acme/skills/beta/SKILL.md" }] }];
+    const builtinSkills = [{ name: "delta", description: "builtin delta", source: "builtin" as const, path: "/b" }];
+    for (const value of [true, ["skills"]] as const) {
+      const index = SkillIndex.build({ cwd: repo, home, plugins, builtinSkills, strictPluginOnlyCustomization: value });
+      expect(index.names()).toEqual(["acme:beta"]);
+    }
+  });
+
+  test("`strictPluginOnlyCustomization` naming OTHER areas, or a malformed value, restricts nothing", () => {
+    const { repo, home } = tree();
+    for (const value of [false, [], ["agents", "hooks"], "yes" as unknown as boolean] as const) {
+      expect(SkillIndex.build({ cwd: repo, home, strictPluginOnlyCustomization: value }).get("alpha")?.source).toBe("project");
+    }
+  });
+
   test("the builtin registry is an EMPTY seam by default -- Winter ships no bundled skills yet", () => {
     const { repo, home } = tree();
     expect(SkillIndex.build({ cwd: repo, home }).list().filter((s) => s.source === "builtin")).toEqual([]);
