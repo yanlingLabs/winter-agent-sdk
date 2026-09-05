@@ -257,6 +257,107 @@ describe("the rejection ledger", () => {
   });
 });
 
+describe("review round 1 — the three Importants, pinned where they broke", () => {
+  test("I1: the UPSTREAM LAYER's vertex row names `winter.vertex-gemini`, not the Gemini adapter", () => {
+    // The overlay row was corrected first, which HID this — and `--offline` validates the upstream
+    // layer standalone precisely so a shadowed row is still checked. A protocol is not an adapter:
+    // Vertex shares GenerateContent with the Gemini API, so deriving the adapter from the protocol
+    // named the Gemini one, and a registry resolves BY ID.
+    const vertex = upstreamLayer.providers.find((p) => p.id === "vertex")!;
+    expect(vertex.adapterId).toBe("winter.vertex-gemini");
+    expect(vertex.protocols).toEqual(["google-generate-content"]);
+    expect(catalog.providers.find((p) => p.id === "vertex")!.adapterId).toBe("winter.vertex-gemini");
+    // ...and the deviation is RECORDED, not silent.
+    const recorded = (rejectionsLedger.rejections as Array<{ upstreamId: string; exclusionClass: string; path: string }>)
+      .find((r) => r.upstreamId === "vertex" && r.path === "vertex.executor");
+    expect(recorded?.exclusionClass).toBe("reviewed-normalization");
+  });
+
+  test("I2: no row is RESPONSES-ONLY under an adapter that speaks Chat Completions", () => {
+    // The gate that shipped keyed on `provider.protocols`, which NOTHING reads — so widening the
+    // declaration silenced it while two DeepSeek rows still routed onto the Chat adapter.
+    const byId = new Map(catalog.providers.map((p) => [p.id, p]));
+    const responsesShaped = new Set(["winter.openai-responses", "winter.azure-openai", "winter.codex-oauth"]);
+    for (const model of catalog.models) {
+      const provider = byId.get(model.providerId)!;
+      const responsesOnly = model.endpoints.includes("responses") && !model.endpoints.includes("chat");
+      if (!responsesOnly) continue;
+      expect([model.key, responsesShaped.has(provider.adapterId)]).toEqual([model.key, true]);
+    }
+    // The two rows that were wrong now ship on the surface their capability is documented for.
+    for (const key of ["deepseek/deepseek-v4-pro", "deepseek/deepseek-v4-flash"]) {
+      expect([key, catalog.models.find((m) => m.key === key)?.endpoints]).toEqual([key, ["chat"]]);
+    }
+  });
+
+  test("I3: no TTS/media row is selectable, and the output-modality stamp no longer claims upstream said it", () => {
+    expect(catalog.models.some((m) => m.key.includes("tts") || m.upstreamId.includes("-tts"))).toBe(false);
+    const excluded = (rejectionsLedger.rejections as Array<{ exclusionClass: string; path: string; reason: string }>)
+      .filter((r) => r.exclusionClass === "out-of-scope");
+    expect(excluded).toHaveLength(1);
+    expect(excluded[0]!.path).toContain("gemini-3.1-flash-tts-preview");
+    expect(excluded[0]!.reason).toContain("TEXT-TO-SPEECH");
+    // Upstream declares NO output modality for any model, so `["text"]` is Winter's inference. It
+    // shipped as `upstream-static`/`inferred`, which reads as "upstream said text".
+    for (const model of catalog.models) {
+      expect([model.key, model.outputModalities.confidence]).toEqual([model.key, "unknown"]);
+      expect(model.outputModalities.sourceRef).toContain("WINTER DEFAULT");
+    }
+  });
+
+  test("the four Vertex MaaS partner rows are `candidate`, not `experimental`", () => {
+    // `experimental` claims a live adapter serves the row. Partner models inherit the Gemini dialect
+    // from a silent upstream entry and are not served over GenerateContent — flagged for Lane B/N.
+    for (const id of ["DeepSeek-V4-Pro", "DeepSeek-V4-Flash", "GLM-5.1-FP8", "Qwen3.6-35B-A3B"]) {
+      const row = catalog.models.find((m) => m.key === `vertex/${id}`)!;
+      expect([id, row.status]).toEqual([id, "candidate"]);
+    }
+    expect(catalog.models.find((m) => m.key === "vertex/gemini-2.5-pro")!.status).toBe("experimental");
+  });
+
+  test("every row claiming `readableState: \"summary\"` says HOW to request one", () => {
+    // A summary capability with no request field is a capability nobody can use, and WS-13 §8.2 wants
+    // summaries requested from session start.
+    for (const model of catalog.models) {
+      if (model.reasoning?.readableState?.value !== "summary") continue;
+      expect([model.key, model.reasoning.summaryRequest?.value.field]).toEqual([model.key, model.reasoning.summaryRequest?.value.field]);
+      expect(model.reasoning.summaryRequest).toBeDefined();
+      expect(model.reasoning.summaryRequest!.source).toBe("official-doc");
+    }
+  });
+
+  test("every `opaque-provider-state` row's continuation domain cites BOTH own-state acceptance and its narrowness", () => {
+    for (const model of catalog.models) {
+      const domain = model.reasoning?.continuationDomain;
+      if (domain === undefined) continue;
+      expect([model.key, domain.confidence]).toEqual([model.key, "declared"]);
+      expect([model.key, domain.source]).toEqual([model.key, "official-doc"]);
+      expect(domain.sourceRef).toMatch(/own-state acceptance|BOTH halves/);
+      expect(domain.value).toEqual([model.key]);
+    }
+  });
+
+  test("PROVENANCE.md's exclusion table matches the ledger, row for row", async () => {
+    // Minor 4 was pure drift: the document said 678 rows and 11 `unrepresentable-protocol` while the
+    // ledger said 680 and 13. A hand-typed count is the line that goes stale first.
+    const doc = await Bun.file(new URL("../../PROVENANCE.md", import.meta.url)).text();
+    const counts = new Map<string, number>();
+    for (const row of rejectionsLedger.rejections as Array<{ exclusionClass: string }>) {
+      counts.set(row.exclusionClass, (counts.get(row.exclusionClass) ?? 0) + 1);
+    }
+    expect(doc).toContain(`carries all **${(rejectionsLedger.rejections as unknown[]).length}** rows`);
+    for (const [cls, n] of counts) {
+      const row = new RegExp(`\\\`${cls.replace(/[-]/g, "\\-")}\\\`\\*{0,2} \\| ${n} \\|`);
+      expect([cls, row.test(doc)]).toEqual([cls, true]);
+    }
+    // No class in the table that the ledger does not have.
+    for (const match of doc.matchAll(/^\| \*{0,2}`([a-z-]+)`\*{0,2} \| (\d+) \|/gm)) {
+      const cls = match[1] ?? "";
+      expect([cls, counts.has(cls)]).toEqual([cls, true]);
+    }
+  });
+});
+
 describe("the denominator obligation (WS-13 §3 step 5)", () => {
   test("is discharged as a COMPUTATION at the pin, with upstream's own claims beside it", () => {
     expect(denominator.catalogueUnion).toBe(352);

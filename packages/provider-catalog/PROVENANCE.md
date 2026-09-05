@@ -70,14 +70,16 @@ twin and a test asserts the two agree, so this document cannot drift away from t
 | `provider.risk` | local override | the reviewed allowlist row |
 | `provider.upstream.{commit,sourcePaths}` | mechanically normalized | the pinned peeled commit and the paths the row was read from |
 | `model.key` / `model.providerId` | mechanically normalized | `<winterId>/<upstream model id>` (WS-13 §8.3) |
-| `model.upstreamId` / `displayName` / `aliases` | copied verbatim | a duplicate id is dropped **and recorded**, never silently de-duplicated |
+| `model.upstreamId` | copied verbatim, **except** a reviewed correction | verbatim unless `allowlist.json`'s `modelOverrides` names it (today: OpenRouter's `auto` → `openrouter/auto`). Every correction is a `reviewed-normalization` ledger row, and the upstream spelling survives as an alias |
+| `model.displayName` / `aliases` | copied verbatim | a duplicate id is dropped **and recorded**, never silently de-duplicated |
 | `model.endpoints` | mechanically normalized | the provider's protocol, or the model's own `targetFormat` when it selects Responses within the same family |
 | `model.contextWindow` / `maxInputTokens` / `maxOutputTokens` | copied verbatim | `contextLength` (falling back to the provider's `defaultContextLength`), `maxInputTokens`, `maxOutputTokens`; non-positive or non-integer values dropped |
-| `model.inputModalities` / `outputModalities` | mechanically normalized | `text` plus `image`/`audio`/`video` from `supportsVision`/`supportsAudio`/`supportsVideo` |
+| `model.inputModalities` | mechanically normalized | `text` plus `image`/`audio`/`video` from `supportsVision`/`supportsAudio`/`supportsVideo` |
+| `model.outputModalities` | **Winter default** | upstream declares NO output modality for any model, so `["text"]` is Winter's inference — see "the output-modality stamp" below |
 | `model.toolCalling` / `nativeTools` | mechanically normalized | upstream `toolCalling` → `native`/`none`; **absent → `none` at `confidence: "unknown"`** |
 | `model.reasoning.{supported,efforts,continuation}` | mechanically normalized | `supportsReasoning` / `supportedThinkingEfforts` / the provider's `reasoningTransport`; an unstated transport becomes `none` |
 | `model.unsupportedParameters` | copied verbatim | when it is an accepted literal; `Object.freeze([...])` is a call expression and is rejected |
-| `model.status` | local override | every extracted row is `candidate`; upstream presence promotes nothing |
+| `model.status` | local override | `candidate` by default; `experimental` where the allowlist's reviewed `initialModelStatus` says so (R6-16's native cloud, 4 of 53 extracted rows), overridable per row. Never `supported` — upstream presence promotes nothing |
 | `*.pricing` | official-doc derived | **overlay only**, from the vendors' pricing pages with the URL and observation instant |
 | `*.classifierEligible` | live-probe proven | **never set** by extraction or overlay (R6-14) |
 | `reasoning.continuationDomain` / `summaryRequest` / `readableState` / `completionEvent` / `toolLoopRequirement` | official-doc derived | **overlay only**; continuation domain is never inferred from a shared HTTP shape |
@@ -90,6 +92,24 @@ inferring it from silence would admit every unproven row to Code/Dispatch/Cowork
 precisely the silent degradation WS-13 §8.1 prohibits. The cost is that upstream-derived Claude and
 GPT rows report `toolCalling: none` until an overlay row or a live probe corrects them; the
 confidence marker on each says `unknown` so nobody reads it as a denial.
+
+**The output-modality stamp says `unknown`, and here is why it cannot say more.** Upstream's
+`RegistryModel` has no output-modality field at all, so `["text"]` on every row is Winter's own
+inference for a chat registry — not something upstream stated. It was shipped as
+`source: "upstream-static", confidence: "inferred"`, which reads as *"upstream said text"*: a false
+claim wearing an upstream label, and precisely the thing that let a text-to-speech model into the
+catalog looking like a text model. Every row now carries `confidence: "unknown"` and a `sourceRef`
+that says WINTER DEFAULT in words. It would be better still as a distinct source, but
+`EvidenceSource` is frozen (`src/types.ts`) and has no `winter-derived` member — a disclosed schema
+gap, not a preference.
+
+**`unsupportedParameters` fails OPEN, and that direction is deliberate.** `toolCalling` fails CLOSED
+because a wrong `native` admits an unproven model to the agent modes; an empty
+`unsupportedParameters` only means Winter will not *pre-reject* a parameter, and the provider's own
+400 is the backstop. But an empty list can mean "upstream states none" OR "upstream states some as an
+`Object.freeze([...])` we refuse to evaluate", and the two must not look alike — so every model in
+the second case gets its own `unresolved-reference` ledger row naming the model and the consequence.
+`openai/o3`, `o3-mini` and `o4-mini` are the ones at this pin.
 
 **`Object.freeze([...])` is rejected like any other call.** "Accept a call when its callee looks
 inert" is a rule that decays the first time upstream renames a helper, and the extractor's one
@@ -156,13 +176,15 @@ unfalsifiable against its own source.
 
 ## What was excluded, and why
 
-`generated/rejections.json` carries all 678 rows, each with an exclusion class:
+`generated/rejections.json` carries all **705** rows. The counts below are generated from the ledger
+and pinned by `catalog-integrity.test.ts` → *"PROVENANCE.md's exclusion table matches the ledger,
+row for row"*, because a hand-typed count is the line that goes stale first and nobody notices.
 
 | Class | Rows | What it means |
 | --- | ---: | --- |
 | `not-allowlisted` | 225 | an api-key provider upstream lists that Winter has not curated (WS-13 §1: presence is never inclusion) |
 | `executable-value` | 116 | functions, arrow functions, `Object.freeze(...)`, `new`, and other calls |
-| `unresolved-reference` | 79 | an identifier whose declaration is outside the allowlist, or was itself rejected |
+| `unresolved-reference` | 98 | an identifier whose declaration is outside the allowlist or was itself rejected — including every model whose `unsupportedParams` could not be read (see below) |
 | `dynamic-expression` | 51 | template literals with substitutions, property access, computed keys |
 | `category-web-cookie` | 35 | browser-session transports, excluded categorically |
 | `identity-header` | 30 | vendor client-identity headers — never imported |
@@ -174,12 +196,14 @@ unfalsifiable against its own source.
 | `category-no-auth` | 13 | reject by default (WS-13 §1) |
 | `category-audio` | 12 | not worker-model providers |
 | `unrepresentable-protocol` | 11 | Vertex's `targetFormat: "claude"` rows — see below |
+| **`reviewed-normalization`** | 7 | **NOT an exclusion.** A row that DID ship, carrying a reviewed, recorded deviation from the pinned tree: the OpenRouter wire id, the Bedrock executor's protocol, the Vertex executor's adapter, the four Vertex partner statuses |
 | `url-builder` | 4 | executable URL builders (WS-13 §13's security floor names this exactly) |
 | `category-cloud-agent` | 3 | remote agent products |
 | `category-upstream-proxy` | 2 | no proxy-of-proxy layer |
+| `category-system` | 1 | `auto` is routing policy, which this layer bans |
 | `duplicate-id` | 1 | upstream's second `gpt-4o` |
 | `no-registry-entry` | 1 | `azure-openai` — catalogued upstream, with no backend entry |
-| `category-system` | 1 | `auto` is routing policy, which this layer bans |
+| **`out-of-scope`** | 1 | **`gemini-3.1-flash-tts-preview`** — a TEXT-TO-SPEECH model. WS-13 §4 is a MUST: `tts` rows never feed the worker-model picker, and `scope` is per PROVIDER, so a `gemini` row cannot declare itself `tts` while its provider is `llm`. Excluded through the allowlist's reviewed `modelOverrides`, never a name heuristic — a heuristic would silently drop a future model whose id happened to match |
 
 **`unrepresentable-protocol` is the interesting one.** Upstream's `vertex` entry lists eleven
 `claude-*` models with `targetFormat: "claude"` — Claude models served over Vertex's endpoint in the

@@ -279,7 +279,9 @@ describe("unknown vocabularies FAIL extraction (WS-13 §13)", () => {
     expect(layer.providers[0]!.adapterId).toBe("winter.bedrock-converse");
     expect(layer.providers[0]!.family).toBe("bedrock");
     const recorded = layer.rejections.find((r) => r.path === "acme.format")!;
-    expect(recorded.exclusionClass).toBe("unrepresentable-protocol");
+    // `reviewed-normalization`, not `unrepresentable-protocol`: the row SHIPPED. Filing a deliberate
+    // normalization under an exclusion class made the ledger's own counts lie about what was dropped.
+    expect(recorded.exclusionClass).toBe("reviewed-normalization");
     expect(recorded.reason).toContain("TRANSLATES FROM");
   });
 
@@ -291,6 +293,47 @@ describe("unknown vocabularies FAIL extraction (WS-13 §13)", () => {
     );
     expect(layer.providers[0]!.protocols).toEqual(["google-generate-content"]);
     expect(layer.rejections.some((r) => r.path === "acme.format")).toBe(false);
+    // ...but the ADAPTER is still overridden, which is the dimension the shipped layer was missing:
+    // Vertex speaks GenerateContent, so its protocol was right and its adapter was not.
+    expect(layer.providers[0]!.adapterId).toBe("winter.vertex-gemini");
+    expect(layer.rejections.find((r) => r.path === "acme.executor")?.exclusionClass).toBe("reviewed-normalization");
+  });
+
+  test("a reviewed model override can correct an id, set a status, or EXCLUDE a row — each recorded", () => {
+    const withOverrides = allowlistWith([ACME_ROW]);
+    withOverrides.modelOverrides = {
+      acme: {
+        "acme-quiet": { id: "vendor/acme-quiet", why: "the vendor documents a qualified id" },
+        "acme-thinks": { status: "experimental", why: "a live adapter serves this one" },
+        "acme-responses": { exclude: true, why: "TEXT-TO-SPEECH — never a worker model" },
+      },
+    };
+    const layer = buildUpstreamLayer(buildInput(withOverrides));
+    const models = new Map(layer.models.map((m) => [m.key, m]));
+    // id: corrected on the wire, with the upstream spelling kept as an alias so both resolve.
+    expect(models.get("acme-winter/vendor/acme-quiet")!.upstreamId).toBe("vendor/acme-quiet");
+    expect(models.get("acme-winter/vendor/acme-quiet")!.aliases).toContain("acme-quiet");
+    // status: overrides the provider's default.
+    expect(models.get("acme-winter/acme-thinks")!.status).toBe("experimental");
+    // exclude: gone from the catalog, present in the ledger with its reason.
+    expect(models.has("acme-winter/acme-responses")).toBe(false);
+    const excluded = layer.rejections.find((r) => r.exclusionClass === "out-of-scope")!;
+    expect(excluded.reason).toContain("TEXT-TO-SPEECH");
+    expect(layer.rejections.filter((r) => r.exclusionClass === "reviewed-normalization").map((r) => r.path).sort()).toEqual([
+      "acme.models[acme-quiet].id",
+      "acme.models[acme-thinks].status",
+    ]);
+  });
+
+  test("`outputModalities` is a WINTER DEFAULT, never stamped as something upstream said", () => {
+    // Upstream's RegistryModel has no output-modality field at all. Shipping `["text"]` as
+    // `upstream-static`/`inferred` read as "upstream said text" — a false claim wearing an upstream
+    // label, and what let a text-to-speech model into the catalog looking like a text model.
+    const layer = buildUpstreamLayer(buildInput(allowlistWith([ACME_ROW])));
+    for (const model of layer.models) {
+      expect([model.key, model.outputModalities.confidence]).toEqual([model.key, "unknown"]);
+      expect(model.outputModalities.sourceRef).toContain("WINTER DEFAULT");
+    }
   });
 
   test("an identity-critical field the walker could not resolve refuses rather than guessing", () => {

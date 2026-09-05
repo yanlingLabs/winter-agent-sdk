@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -115,13 +115,46 @@ describe("--offline is what CI runs, and it is inert", () => {
   });
 
   test("leaves the OVERLAY byte-identical AND untouched", () => {
-    // The behavioural half. `mtime` as well as bytes: a re-write that happened to produce the same
-    // content would still mean the extractor reached the reviewed layer, and the rule is that it
-    // never does.
+    // `mtime` as well as bytes: a re-write that happened to produce the same content would still mean
+    // the extractor reached the reviewed layer, and the rule is that it never does.
     for (const { file, text, mtime } of before) {
       expect(readFileSync(join(PKG, file), "utf8")).toBe(text);
       expect(statSync(join(PKG, file)).mtimeMs).toBe(mtime);
     }
+  });
+
+  test("an EDITED overlay survives a real regeneration byte-for-byte, and the edit reaches the output", () => {
+    // THE BRIEF'S FIXTURE, and the previous version of this test did not earn its title: it ran
+    // `--offline`, which writes no catalog at all, so "the overlay survived" was true of a path that
+    // writes nothing anywhere. This one EDITS `overlay/models.json`, runs the WRITE path
+    // (`provider:catalog`, the only writer of catalog.json/rejections.json), and asserts both halves:
+    // the overlay file is untouched to the byte, AND the edit actually flowed into the regenerated
+    // catalog — which is what proves the generator READ the edited overlay rather than ignoring it.
+    const overlayPath = join(PKG, "overlay/models.json");
+    const saved = [overlayPath, join(PKG, "generated/catalog.json"), join(PKG, "generated/rejections.json")].map((path) => ({ path, bytes: readFileSync(path) }));
+    const MARKER = "Winter overlay-survival probe";
+    try {
+      const edited = JSON.parse(saved[0]!.bytes.toString("utf8")) as { models: Array<{ key: string; displayName: string }> };
+      const target = edited.models.find((m) => m.key === "ollama-local/llama3.1:8b")!;
+      target.displayName = MARKER;
+      const editedText = `${JSON.stringify(edited, null, 2)}\n`;
+      writeFileSync(overlayPath, editedText);
+
+      const run = Bun.spawnSync({ cmd: ["bun", "run", join(REPO, "scripts", "provider-catalog.ts")], cwd: REPO, stdout: "pipe", stderr: "pipe" });
+      expect(`${run.stdout.toString()}${run.stderr.toString()}`).toContain("provider:catalog: wrote");
+      expect(run.exitCode).toBe(0);
+
+      // (1) the overlay is untouched — byte for byte, including my edit.
+      expect(readFileSync(overlayPath, "utf8")).toBe(editedText);
+      // (2) the edit REACHED the output, so the generator really did read the file it left alone.
+      const regenerated = JSON.parse(readFileSync(join(PKG, "generated/catalog.json"), "utf8")) as { models: Array<{ key: string; displayName: string }> };
+      expect(regenerated.models.find((m) => m.key === "ollama-local/llama3.1:8b")!.displayName).toBe(MARKER);
+    } finally {
+      // Restore from saved BYTES rather than by regenerating: a failure mid-test must not be able to
+      // leave the repository holding a probe string.
+      for (const { path, bytes } of saved) writeFileSync(path, bytes);
+    }
+    for (const { path, bytes } of saved) expect(readFileSync(path)).toEqual(bytes);
   });
 
   test("--check and --offline are mutually exclusive (one needs the network, the other refuses it)", () => {
@@ -175,31 +208,61 @@ describe("the committed inputs are internally consistent", () => {
 });
 
 describe("the CROSS-LAYER gate — the row-level merge's blind spot", () => {
-  const provider = (id: string, protocols: string[]) => ({ id, protocols, adapterId: `winter.${id}` }) as never;
+  const provider = (id: string, adapterId: string, protocols: string[]) => ({ id, adapterId, protocols }) as never;
   const model = (key: string, providerId: string, endpoints: string[]) => ({ key, providerId, endpoints }) as never;
 
-  test("a responses-only model under a chat-only provider is a CONTRADICTION, though every row validates alone", () => {
-    // The real defect this gate was written for: upstream's deepseek entry is
-    // `format: "openai-responses"`, so its extracted model rows land `endpoints: ["responses"]` — and
-    // the overlay provider row that shadows the upstream provider is authored separately. The frozen
-    // validator sees one row at a time and cannot notice.
+  test("a responses-ONLY model under a Chat Completions adapter is a contradiction, though every row validates alone", () => {
+    // The real defect: upstream's deepseek entry is `format: "openai-responses"`, so its extracted
+    // model rows land `endpoints: ["responses"]` while the adapter that serves them speaks Chat
+    // Completions. The frozen validator sees one row at a time and cannot notice.
     const found = findEndpointContradictions({
-      providers: [provider("deepseek", ["openai-chat-completions"])],
+      providers: [provider("deepseek", "winter.openai-chat-completions", ["openai-chat-completions"])],
       models: [model("deepseek/r", "deepseek", ["responses"])],
     });
     expect(found).toHaveLength(1);
-    expect(found[0]).toContain("serialized as Chat Completions");
+    expect(found[0]).toContain("RESPONSES ONLY");
   });
 
-  test("declaring the Responses protocol resolves it; Azure's own Responses surface counts too", () => {
-    expect(findEndpointContradictions({
-      providers: [provider("deepseek", ["openai-chat-completions", "openai-responses"])],
+  test("WIDENING `protocols` does NOT silence it — the gate reads `adapterId`, which is what resolution reads", () => {
+    // This is the finding. The first version of this gate consulted `provider.protocols`, so adding
+    // `openai-responses` to the declaration made it go quiet while the two rows still routed onto the
+    // Chat adapter. Nothing in the runtime reads `protocols` at all.
+    const found = findEndpointContradictions({
+      providers: [provider("deepseek", "winter.openai-chat-completions", ["openai-chat-completions", "openai-responses"])],
       models: [model("deepseek/r", "deepseek", ["responses"])],
+    });
+    expect(found).toHaveLength(1);
+    expect(found[0]).toContain("resolution reads `adapterId`");
+  });
+
+  test("a Responses-shaped ADAPTER resolves it; Azure's own Responses surface counts too", () => {
+    expect(findEndpointContradictions({
+      providers: [provider("openai", "winter.openai-responses", ["openai-responses"])],
+      models: [model("openai/o4-mini", "openai", ["responses"])],
     })).toEqual([]);
     expect(findEndpointContradictions({
-      providers: [provider("azure-openai", ["azure-openai"])],
+      providers: [provider("azure-openai", "winter.azure-openai", ["azure-openai"])],
       models: [model("azure-openai/m", "azure-openai", ["chat", "responses"])],
     })).toEqual([]);
+  });
+
+  test("a model available on BOTH surfaces is fine under a Chat adapter — the gate is one-directional on purpose", () => {
+    // `endpoints` records which surfaces a model is AVAILABLE on, not which one its adapter picks, so
+    // only a responses-ONLY row has no surface a Chat adapter can drive. Flagging the reverse would
+    // have been false churn on eight healthy OpenAI rows.
+    expect(findEndpointContradictions({
+      providers: [provider("openrouter", "winter.openai-chat-completions", ["openai-chat-completions"])],
+      models: [model("openrouter/x", "openrouter", ["chat", "responses"])],
+    })).toEqual([]);
+  });
+
+  test("an adapter the gate does not know is REPORTED, never waved through", () => {
+    const found = findEndpointContradictions({
+      providers: [provider("newcloud", "winter.brand-new", ["custom"])],
+      models: [model("newcloud/m", "newcloud", ["responses"])],
+    });
+    expect(found).toHaveLength(1);
+    expect(found[0]).toContain("this gate does not know");
   });
 
   test("the COMMITTED catalog is cross-layer consistent", async () => {

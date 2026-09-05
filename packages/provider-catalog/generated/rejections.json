@@ -1491,7 +1491,7 @@
     {
       "upstreamId": "bedrock",
       "scope": "field",
-      "exclusionClass": "unrepresentable-protocol",
+      "exclusionClass": "reviewed-normalization",
       "path": "bedrock.format",
       "sourcePath": "open-sse/config/providers/registry/bedrock/index.ts",
       "reason": "upstream declares format \"openai\" with executor \"bedrock\": the OpenAI shape is what its own executor TRANSLATES FROM, not what the provider speaks on the wire. Winter records the executor's protocol (bedrock-converse) and drops the format claim."
@@ -2527,6 +2527,14 @@
       "path": "geminiProvider.oauth",
       "sourcePath": "open-sse/config/providers/registry/gemini/index.ts",
       "reason": "OAuth client id/secret defaults and their env names — WS-13 §5/§6: never imported, and Winter's OAuth providers are Winter-owned rows"
+    },
+    {
+      "upstreamId": "gemini",
+      "scope": "model",
+      "exclusionClass": "out-of-scope",
+      "path": "gemini.models[gemini-3.1-flash-tts-preview]",
+      "sourcePath": "open-sse/config/providers/registry/gemini/index.ts",
+      "reason": "reviewed model exclusion: A TEXT-TO-SPEECH model. WS-13 §4/§1 are a MUST: `tts` rows feed a separate subsystem and must never reach the Agent SDK worker-model picker, and the descriptor schema's `scope` is per PROVIDER — a `gemini` row cannot declare itself `tts` while its provider is `llm`. It also exposed the mapper's `outputModalities` default as a false claim: Winter stamps `[\"text\"]` on every row because upstream declares no output modality at all, which for a TTS model is simply wrong. Excluded here rather than shipped as a resolvable `candidate`."
     },
     {
       "upstreamId": "gemini",
@@ -3922,6 +3930,158 @@
     },
     {
       "upstreamId": "openai",
+      "scope": "model",
+      "exclusionClass": "unresolved-reference",
+      "path": "openai.models[gpt-4.1-mini].unsupportedParams",
+      "sourcePath": "open-sse/config/providers/registry/openai/index.ts",
+      "reason": "upstream states unsupported parameters for this model, but as a value the literal extractor refuses (a call expression, or an identifier resolving to one). The row ships with an EMPTY `unsupportedParameters`, which fails OPEN: Winter will not pre-reject a parameter the provider does reject, and the provider's own error is the backstop. Correct it in the overlay with real evidence if the model matters."
+    },
+    {
+      "upstreamId": "openai",
+      "scope": "model",
+      "exclusionClass": "unresolved-reference",
+      "path": "openai.models[gpt-4.1-nano].unsupportedParams",
+      "sourcePath": "open-sse/config/providers/registry/openai/index.ts",
+      "reason": "upstream states unsupported parameters for this model, but as a value the literal extractor refuses (a call expression, or an identifier resolving to one). The row ships with an EMPTY `unsupportedParameters`, which fails OPEN: Winter will not pre-reject a parameter the provider does reject, and the provider's own error is the backstop. Correct it in the overlay with real evidence if the model matters."
+    },
+    {
+      "upstreamId": "openai",
+      "scope": "model",
+      "exclusionClass": "unresolved-reference",
+      "path": "openai.models[gpt-4.1].unsupportedParams",
+      "sourcePath": "open-sse/config/providers/registry/openai/index.ts",
+      "reason": "upstream states unsupported parameters for this model, but as a value the literal extractor refuses (a call expression, or an identifier resolving to one). The row ships with an EMPTY `unsupportedParameters`, which fails OPEN: Winter will not pre-reject a parameter the provider does reject, and the provider's own error is the backstop. Correct it in the overlay with real evidence if the model matters."
+    },
+    {
+      "upstreamId": "openai",
+      "scope": "model",
+      "exclusionClass": "unresolved-reference",
+      "path": "openai.models[gpt-4o-2024-11-20].unsupportedParams",
+      "sourcePath": "open-sse/config/providers/registry/openai/index.ts",
+      "reason": "upstream states unsupported parameters for this model, but as a value the literal extractor refuses (a call expression, or an identifier resolving to one). The row ships with an EMPTY `unsupportedParameters`, which fails OPEN: Winter will not pre-reject a parameter the provider does reject, and the provider's own error is the backstop. Correct it in the overlay with real evidence if the model matters."
+    },
+    {
+      "upstreamId": "openai",
+      "scope": "model",
+      "exclusionClass": "unresolved-reference",
+      "path": "openai.models[gpt-4o-mini].unsupportedParams",
+      "sourcePath": "open-sse/config/providers/registry/openai/index.ts",
+      "reason": "upstream states unsupported parameters for this model, but as a value the literal extractor refuses (a call expression, or an identifier resolving to one). The row ships with an EMPTY `unsupportedParameters`, which fails OPEN: Winter will not pre-reject a parameter the provider does reject, and the provider's own error is the backstop. Correct it in the overlay with real evidence if the model matters."
+    },
+    {
+      "upstreamId": "openai",
+      "scope": "model",
+      "exclusionClass": "unresolved-reference",
+      "path": "openai.models[gpt-4o].unsupportedParams",
+      "sourcePath": "open-sse/config/providers/registry/openai/index.ts",
+      "reason": "upstream states unsupported parameters for this model, but as a value the literal extractor refuses (a call expression, or an identifier resolving to one). The row ships with an EMPTY `unsupportedParameters`, which fails OPEN: Winter will not pre-reject a parameter the provider does reject, and the provider's own error is the backstop. Correct it in the overlay with real evidence if the model matters."
+    },
+    {
+      "upstreamId": "openai",
+      "scope": "model",
+      "exclusionClass": "unresolved-reference",
+      "path": "openai.models[gpt-5.4-mini].unsupportedParams",
+      "sourcePath": "open-sse/config/providers/registry/openai/index.ts",
+      "reason": "upstream states unsupported parameters for this model, but as a value the literal extractor refuses (a call expression, or an identifier resolving to one). The row ships with an EMPTY `unsupportedParameters`, which fails OPEN: Winter will not pre-reject a parameter the provider does reject, and the provider's own error is the backstop. Correct it in the overlay with real evidence if the model matters."
+    },
+    {
+      "upstreamId": "openai",
+      "scope": "model",
+      "exclusionClass": "unresolved-reference",
+      "path": "openai.models[gpt-5.4-nano].unsupportedParams",
+      "sourcePath": "open-sse/config/providers/registry/openai/index.ts",
+      "reason": "upstream states unsupported parameters for this model, but as a value the literal extractor refuses (a call expression, or an identifier resolving to one). The row ships with an EMPTY `unsupportedParameters`, which fails OPEN: Winter will not pre-reject a parameter the provider does reject, and the provider's own error is the backstop. Correct it in the overlay with real evidence if the model matters."
+    },
+    {
+      "upstreamId": "openai",
+      "scope": "model",
+      "exclusionClass": "unresolved-reference",
+      "path": "openai.models[gpt-5.4-pro].unsupportedParams",
+      "sourcePath": "open-sse/config/providers/registry/openai/index.ts",
+      "reason": "upstream states unsupported parameters for this model, but as a value the literal extractor refuses (a call expression, or an identifier resolving to one). The row ships with an EMPTY `unsupportedParameters`, which fails OPEN: Winter will not pre-reject a parameter the provider does reject, and the provider's own error is the backstop. Correct it in the overlay with real evidence if the model matters."
+    },
+    {
+      "upstreamId": "openai",
+      "scope": "model",
+      "exclusionClass": "unresolved-reference",
+      "path": "openai.models[gpt-5.4].unsupportedParams",
+      "sourcePath": "open-sse/config/providers/registry/openai/index.ts",
+      "reason": "upstream states unsupported parameters for this model, but as a value the literal extractor refuses (a call expression, or an identifier resolving to one). The row ships with an EMPTY `unsupportedParameters`, which fails OPEN: Winter will not pre-reject a parameter the provider does reject, and the provider's own error is the backstop. Correct it in the overlay with real evidence if the model matters."
+    },
+    {
+      "upstreamId": "openai",
+      "scope": "model",
+      "exclusionClass": "unresolved-reference",
+      "path": "openai.models[gpt-5.5-pro].unsupportedParams",
+      "sourcePath": "open-sse/config/providers/registry/openai/index.ts",
+      "reason": "upstream states unsupported parameters for this model, but as a value the literal extractor refuses (a call expression, or an identifier resolving to one). The row ships with an EMPTY `unsupportedParameters`, which fails OPEN: Winter will not pre-reject a parameter the provider does reject, and the provider's own error is the backstop. Correct it in the overlay with real evidence if the model matters."
+    },
+    {
+      "upstreamId": "openai",
+      "scope": "model",
+      "exclusionClass": "unresolved-reference",
+      "path": "openai.models[gpt-5.5].unsupportedParams",
+      "sourcePath": "open-sse/config/providers/registry/openai/index.ts",
+      "reason": "upstream states unsupported parameters for this model, but as a value the literal extractor refuses (a call expression, or an identifier resolving to one). The row ships with an EMPTY `unsupportedParameters`, which fails OPEN: Winter will not pre-reject a parameter the provider does reject, and the provider's own error is the backstop. Correct it in the overlay with real evidence if the model matters."
+    },
+    {
+      "upstreamId": "openai",
+      "scope": "model",
+      "exclusionClass": "unresolved-reference",
+      "path": "openai.models[gpt-5.6-luna].unsupportedParams",
+      "sourcePath": "open-sse/config/providers/registry/openai/index.ts",
+      "reason": "upstream states unsupported parameters for this model, but as a value the literal extractor refuses (a call expression, or an identifier resolving to one). The row ships with an EMPTY `unsupportedParameters`, which fails OPEN: Winter will not pre-reject a parameter the provider does reject, and the provider's own error is the backstop. Correct it in the overlay with real evidence if the model matters."
+    },
+    {
+      "upstreamId": "openai",
+      "scope": "model",
+      "exclusionClass": "unresolved-reference",
+      "path": "openai.models[gpt-5.6-sol].unsupportedParams",
+      "sourcePath": "open-sse/config/providers/registry/openai/index.ts",
+      "reason": "upstream states unsupported parameters for this model, but as a value the literal extractor refuses (a call expression, or an identifier resolving to one). The row ships with an EMPTY `unsupportedParameters`, which fails OPEN: Winter will not pre-reject a parameter the provider does reject, and the provider's own error is the backstop. Correct it in the overlay with real evidence if the model matters."
+    },
+    {
+      "upstreamId": "openai",
+      "scope": "model",
+      "exclusionClass": "unresolved-reference",
+      "path": "openai.models[gpt-5.6-terra].unsupportedParams",
+      "sourcePath": "open-sse/config/providers/registry/openai/index.ts",
+      "reason": "upstream states unsupported parameters for this model, but as a value the literal extractor refuses (a call expression, or an identifier resolving to one). The row ships with an EMPTY `unsupportedParameters`, which fails OPEN: Winter will not pre-reject a parameter the provider does reject, and the provider's own error is the backstop. Correct it in the overlay with real evidence if the model matters."
+    },
+    {
+      "upstreamId": "openai",
+      "scope": "model",
+      "exclusionClass": "unresolved-reference",
+      "path": "openai.models[gpt-5.6].unsupportedParams",
+      "sourcePath": "open-sse/config/providers/registry/openai/index.ts",
+      "reason": "upstream states unsupported parameters for this model, but as a value the literal extractor refuses (a call expression, or an identifier resolving to one). The row ships with an EMPTY `unsupportedParameters`, which fails OPEN: Winter will not pre-reject a parameter the provider does reject, and the provider's own error is the backstop. Correct it in the overlay with real evidence if the model matters."
+    },
+    {
+      "upstreamId": "openai",
+      "scope": "model",
+      "exclusionClass": "unresolved-reference",
+      "path": "openai.models[o3-mini].unsupportedParams",
+      "sourcePath": "open-sse/config/providers/registry/openai/index.ts",
+      "reason": "upstream states unsupported parameters for this model, but as a value the literal extractor refuses (a call expression, or an identifier resolving to one). The row ships with an EMPTY `unsupportedParameters`, which fails OPEN: Winter will not pre-reject a parameter the provider does reject, and the provider's own error is the backstop. Correct it in the overlay with real evidence if the model matters."
+    },
+    {
+      "upstreamId": "openai",
+      "scope": "model",
+      "exclusionClass": "unresolved-reference",
+      "path": "openai.models[o3].unsupportedParams",
+      "sourcePath": "open-sse/config/providers/registry/openai/index.ts",
+      "reason": "upstream states unsupported parameters for this model, but as a value the literal extractor refuses (a call expression, or an identifier resolving to one). The row ships with an EMPTY `unsupportedParameters`, which fails OPEN: Winter will not pre-reject a parameter the provider does reject, and the provider's own error is the backstop. Correct it in the overlay with real evidence if the model matters."
+    },
+    {
+      "upstreamId": "openai",
+      "scope": "model",
+      "exclusionClass": "unresolved-reference",
+      "path": "openai.models[o4-mini].unsupportedParams",
+      "sourcePath": "open-sse/config/providers/registry/openai/index.ts",
+      "reason": "upstream states unsupported parameters for this model, but as a value the literal extractor refuses (a call expression, or an identifier resolving to one). The row ships with an EMPTY `unsupportedParameters`, which fails OPEN: Winter will not pre-reject a parameter the provider does reject, and the provider's own error is the backstop. Correct it in the overlay with real evidence if the model matters."
+    },
+    {
+      "upstreamId": "openai",
       "scope": "field",
       "exclusionClass": "unresolved-reference",
       "path": "openaiProvider.models[17].unsupportedParams",
@@ -4027,7 +4187,7 @@
     {
       "upstreamId": "openrouter",
       "scope": "model",
-      "exclusionClass": "unrepresentable-protocol",
+      "exclusionClass": "reviewed-normalization",
       "path": "openrouter.models[auto].id",
       "sourcePath": "open-sse/config/providers/registry/openrouter/index.ts",
       "reason": "reviewed model-id correction: upstream lists \"auto\", Winter records \"openrouter/auto\". OpenRouter documents its auto-router as the qualified id `openrouter/auto`; the pinned upstream entry lists a bare `{ id: \"auto\" }`. Keeping upstream's spelling put `auto` on the wire from BOTH resolution paths — step 1 (the seeded row's own upstreamId) and the `allowUnlisted` pass-through, which strips a self-prefix. Correcting it here fixes both at once, and the `auto` alias keeps the bare spelling resolvable."
@@ -4930,11 +5090,51 @@
     },
     {
       "upstreamId": "vertex",
+      "scope": "field",
+      "exclusionClass": "reviewed-normalization",
+      "path": "vertex.executor",
+      "sourcePath": "open-sse/config/providers/registry/vertex/index.ts",
+      "reason": "executor \"vertex\" speaks the google-generate-content dialect but is served by a DIFFERENT adapter: Winter records \"winter.vertex-gemini\" rather than the protocol's default \"winter.google-generate-content\". A protocol is not an adapter, and a registry resolves BY ID."
+    },
+    {
+      "upstreamId": "vertex",
+      "scope": "model",
+      "exclusionClass": "reviewed-normalization",
+      "path": "vertex.models[DeepSeek-V4-Flash].status",
+      "sourcePath": "open-sse/config/providers/registry/vertex/index.ts",
+      "reason": "reviewed status override: \"candidate\" rather than this provider's \"experimental\". As `DeepSeek-V4-Pro` — a Vertex MaaS partner model inheriting the Gemini dialect from a silent upstream entry."
+    },
+    {
+      "upstreamId": "vertex",
+      "scope": "model",
+      "exclusionClass": "reviewed-normalization",
+      "path": "vertex.models[DeepSeek-V4-Pro].status",
+      "sourcePath": "open-sse/config/providers/registry/vertex/index.ts",
+      "reason": "reviewed status override: \"candidate\" rather than this provider's \"experimental\". A Vertex MaaS PARTNER model. Upstream lists it under an entry whose `format` is `gemini`, so the mapper inherits the GenerateContent dialect for it — but partner models are not served over GenerateContent, and nothing has proven what they do speak here. `candidate` rather than R6-16's `experimental`, because `experimental` is a claim that a live adapter serves the row; flagged for Lane B/N."
+    },
+    {
+      "upstreamId": "vertex",
+      "scope": "model",
+      "exclusionClass": "reviewed-normalization",
+      "path": "vertex.models[GLM-5.1-FP8].status",
+      "sourcePath": "open-sse/config/providers/registry/vertex/index.ts",
+      "reason": "reviewed status override: \"candidate\" rather than this provider's \"experimental\". As `DeepSeek-V4-Pro` — a Vertex MaaS partner model inheriting the Gemini dialect from a silent upstream entry."
+    },
+    {
+      "upstreamId": "vertex",
+      "scope": "model",
+      "exclusionClass": "reviewed-normalization",
+      "path": "vertex.models[Qwen3.6-35B-A3B].status",
+      "sourcePath": "open-sse/config/providers/registry/vertex/index.ts",
+      "reason": "reviewed status override: \"candidate\" rather than this provider's \"experimental\". As `DeepSeek-V4-Pro` — a Vertex MaaS partner model inheriting the Gemini dialect from a silent upstream entry."
+    },
+    {
+      "upstreamId": "vertex",
       "scope": "model",
       "exclusionClass": "unrepresentable-protocol",
       "path": "vertex.models[claude-fable-5].targetFormat",
       "sourcePath": "open-sse/config/providers/registry/vertex/index.ts",
-      "reason": "upstream routes this model over the \"claude\" protocol while its provider speaks \"gemini\". The Winter descriptor schema has no per-model protocol field, so the row would resolve onto the \"winter.google-generate-content\" adapter and serialize the wrong dialect. Refused; a Winter row for it belongs in the overlay under a provider whose protocol matches."
+      "reason": "upstream routes this model over the \"claude\" protocol while its provider speaks \"gemini\". The Winter descriptor schema has no per-model protocol field, so the row would resolve onto the \"winter.vertex-gemini\" adapter and serialize the wrong dialect. Refused; a Winter row for it belongs in the overlay under a provider whose protocol matches."
     },
     {
       "upstreamId": "vertex",
@@ -4942,7 +5142,7 @@
       "exclusionClass": "unrepresentable-protocol",
       "path": "vertex.models[claude-haiku-4-5].targetFormat",
       "sourcePath": "open-sse/config/providers/registry/vertex/index.ts",
-      "reason": "upstream routes this model over the \"claude\" protocol while its provider speaks \"gemini\". The Winter descriptor schema has no per-model protocol field, so the row would resolve onto the \"winter.google-generate-content\" adapter and serialize the wrong dialect. Refused; a Winter row for it belongs in the overlay under a provider whose protocol matches."
+      "reason": "upstream routes this model over the \"claude\" protocol while its provider speaks \"gemini\". The Winter descriptor schema has no per-model protocol field, so the row would resolve onto the \"winter.vertex-gemini\" adapter and serialize the wrong dialect. Refused; a Winter row for it belongs in the overlay under a provider whose protocol matches."
     },
     {
       "upstreamId": "vertex",
@@ -4950,7 +5150,7 @@
       "exclusionClass": "unrepresentable-protocol",
       "path": "vertex.models[claude-opus-4-5].targetFormat",
       "sourcePath": "open-sse/config/providers/registry/vertex/index.ts",
-      "reason": "upstream routes this model over the \"claude\" protocol while its provider speaks \"gemini\". The Winter descriptor schema has no per-model protocol field, so the row would resolve onto the \"winter.google-generate-content\" adapter and serialize the wrong dialect. Refused; a Winter row for it belongs in the overlay under a provider whose protocol matches."
+      "reason": "upstream routes this model over the \"claude\" protocol while its provider speaks \"gemini\". The Winter descriptor schema has no per-model protocol field, so the row would resolve onto the \"winter.vertex-gemini\" adapter and serialize the wrong dialect. Refused; a Winter row for it belongs in the overlay under a provider whose protocol matches."
     },
     {
       "upstreamId": "vertex",
@@ -4958,7 +5158,7 @@
       "exclusionClass": "unrepresentable-protocol",
       "path": "vertex.models[claude-opus-4-6].targetFormat",
       "sourcePath": "open-sse/config/providers/registry/vertex/index.ts",
-      "reason": "upstream routes this model over the \"claude\" protocol while its provider speaks \"gemini\". The Winter descriptor schema has no per-model protocol field, so the row would resolve onto the \"winter.google-generate-content\" adapter and serialize the wrong dialect. Refused; a Winter row for it belongs in the overlay under a provider whose protocol matches."
+      "reason": "upstream routes this model over the \"claude\" protocol while its provider speaks \"gemini\". The Winter descriptor schema has no per-model protocol field, so the row would resolve onto the \"winter.vertex-gemini\" adapter and serialize the wrong dialect. Refused; a Winter row for it belongs in the overlay under a provider whose protocol matches."
     },
     {
       "upstreamId": "vertex",
@@ -4966,7 +5166,7 @@
       "exclusionClass": "unrepresentable-protocol",
       "path": "vertex.models[claude-opus-4-7].targetFormat",
       "sourcePath": "open-sse/config/providers/registry/vertex/index.ts",
-      "reason": "upstream routes this model over the \"claude\" protocol while its provider speaks \"gemini\". The Winter descriptor schema has no per-model protocol field, so the row would resolve onto the \"winter.google-generate-content\" adapter and serialize the wrong dialect. Refused; a Winter row for it belongs in the overlay under a provider whose protocol matches."
+      "reason": "upstream routes this model over the \"claude\" protocol while its provider speaks \"gemini\". The Winter descriptor schema has no per-model protocol field, so the row would resolve onto the \"winter.vertex-gemini\" adapter and serialize the wrong dialect. Refused; a Winter row for it belongs in the overlay under a provider whose protocol matches."
     },
     {
       "upstreamId": "vertex",
@@ -4974,7 +5174,7 @@
       "exclusionClass": "unrepresentable-protocol",
       "path": "vertex.models[claude-opus-4-8].targetFormat",
       "sourcePath": "open-sse/config/providers/registry/vertex/index.ts",
-      "reason": "upstream routes this model over the \"claude\" protocol while its provider speaks \"gemini\". The Winter descriptor schema has no per-model protocol field, so the row would resolve onto the \"winter.google-generate-content\" adapter and serialize the wrong dialect. Refused; a Winter row for it belongs in the overlay under a provider whose protocol matches."
+      "reason": "upstream routes this model over the \"claude\" protocol while its provider speaks \"gemini\". The Winter descriptor schema has no per-model protocol field, so the row would resolve onto the \"winter.vertex-gemini\" adapter and serialize the wrong dialect. Refused; a Winter row for it belongs in the overlay under a provider whose protocol matches."
     },
     {
       "upstreamId": "vertex",
@@ -4982,7 +5182,7 @@
       "exclusionClass": "unrepresentable-protocol",
       "path": "vertex.models[claude-opus-5].targetFormat",
       "sourcePath": "open-sse/config/providers/registry/vertex/index.ts",
-      "reason": "upstream routes this model over the \"claude\" protocol while its provider speaks \"gemini\". The Winter descriptor schema has no per-model protocol field, so the row would resolve onto the \"winter.google-generate-content\" adapter and serialize the wrong dialect. Refused; a Winter row for it belongs in the overlay under a provider whose protocol matches."
+      "reason": "upstream routes this model over the \"claude\" protocol while its provider speaks \"gemini\". The Winter descriptor schema has no per-model protocol field, so the row would resolve onto the \"winter.vertex-gemini\" adapter and serialize the wrong dialect. Refused; a Winter row for it belongs in the overlay under a provider whose protocol matches."
     },
     {
       "upstreamId": "vertex",
@@ -4990,7 +5190,7 @@
       "exclusionClass": "unrepresentable-protocol",
       "path": "vertex.models[claude-sonnet-4-5-v2].targetFormat",
       "sourcePath": "open-sse/config/providers/registry/vertex/index.ts",
-      "reason": "upstream routes this model over the \"claude\" protocol while its provider speaks \"gemini\". The Winter descriptor schema has no per-model protocol field, so the row would resolve onto the \"winter.google-generate-content\" adapter and serialize the wrong dialect. Refused; a Winter row for it belongs in the overlay under a provider whose protocol matches."
+      "reason": "upstream routes this model over the \"claude\" protocol while its provider speaks \"gemini\". The Winter descriptor schema has no per-model protocol field, so the row would resolve onto the \"winter.vertex-gemini\" adapter and serialize the wrong dialect. Refused; a Winter row for it belongs in the overlay under a provider whose protocol matches."
     },
     {
       "upstreamId": "vertex",
@@ -4998,7 +5198,7 @@
       "exclusionClass": "unrepresentable-protocol",
       "path": "vertex.models[claude-sonnet-4-5].targetFormat",
       "sourcePath": "open-sse/config/providers/registry/vertex/index.ts",
-      "reason": "upstream routes this model over the \"claude\" protocol while its provider speaks \"gemini\". The Winter descriptor schema has no per-model protocol field, so the row would resolve onto the \"winter.google-generate-content\" adapter and serialize the wrong dialect. Refused; a Winter row for it belongs in the overlay under a provider whose protocol matches."
+      "reason": "upstream routes this model over the \"claude\" protocol while its provider speaks \"gemini\". The Winter descriptor schema has no per-model protocol field, so the row would resolve onto the \"winter.vertex-gemini\" adapter and serialize the wrong dialect. Refused; a Winter row for it belongs in the overlay under a provider whose protocol matches."
     },
     {
       "upstreamId": "vertex",
@@ -5006,7 +5206,7 @@
       "exclusionClass": "unrepresentable-protocol",
       "path": "vertex.models[claude-sonnet-4-6].targetFormat",
       "sourcePath": "open-sse/config/providers/registry/vertex/index.ts",
-      "reason": "upstream routes this model over the \"claude\" protocol while its provider speaks \"gemini\". The Winter descriptor schema has no per-model protocol field, so the row would resolve onto the \"winter.google-generate-content\" adapter and serialize the wrong dialect. Refused; a Winter row for it belongs in the overlay under a provider whose protocol matches."
+      "reason": "upstream routes this model over the \"claude\" protocol while its provider speaks \"gemini\". The Winter descriptor schema has no per-model protocol field, so the row would resolve onto the \"winter.vertex-gemini\" adapter and serialize the wrong dialect. Refused; a Winter row for it belongs in the overlay under a provider whose protocol matches."
     },
     {
       "upstreamId": "vertex",
@@ -5014,7 +5214,7 @@
       "exclusionClass": "unrepresentable-protocol",
       "path": "vertex.models[claude-sonnet-5].targetFormat",
       "sourcePath": "open-sse/config/providers/registry/vertex/index.ts",
-      "reason": "upstream routes this model over the \"claude\" protocol while its provider speaks \"gemini\". The Winter descriptor schema has no per-model protocol field, so the row would resolve onto the \"winter.google-generate-content\" adapter and serialize the wrong dialect. Refused; a Winter row for it belongs in the overlay under a provider whose protocol matches."
+      "reason": "upstream routes this model over the \"claude\" protocol while its provider speaks \"gemini\". The Winter descriptor schema has no per-model protocol field, so the row would resolve onto the \"winter.vertex-gemini\" adapter and serialize the wrong dialect. Refused; a Winter row for it belongs in the overlay under a provider whose protocol matches."
     },
     {
       "upstreamId": "vertex",

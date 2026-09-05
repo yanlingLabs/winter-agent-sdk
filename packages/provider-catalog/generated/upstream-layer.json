@@ -199,7 +199,7 @@
       },
       "modelDiscovery": "openai-models",
       "liveCatalogAuthority": "unknown",
-      "adapterId": "winter.google-generate-content",
+      "adapterId": "winter.vertex-gemini",
       "family": "google",
       "upstream": {
         "project": "OmniRoute",
@@ -249,9 +249,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-fable-5",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-fable-5 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "none",
@@ -304,9 +304,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-haiku-4.5",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-haiku-4.5 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "none",
@@ -355,9 +355,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-opus-4.5",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-opus-4.5 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "none",
@@ -406,9 +406,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-opus-4.6",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-opus-4.6 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "none",
@@ -457,9 +457,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-opus-4.7",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-opus-4.7 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "none",
@@ -512,9 +512,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-opus-4.8",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-opus-4.8 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "none",
@@ -574,9 +574,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-opus-5",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-opus-5 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "none",
@@ -629,9 +629,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-sonnet-4.5",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-sonnet-4.5 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "none",
@@ -680,9 +680,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-sonnet-4.6",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-sonnet-4.6 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "none",
@@ -731,9 +731,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-sonnet-5",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-sonnet-5 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "none",
@@ -787,9 +787,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/bedrock/index.ts#anthropic.claude-haiku-4-5",
+        "sourceRef": "open-sse/config/providers/registry/bedrock/index.ts#anthropic.claude-haiku-4-5 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "native",
@@ -839,9 +839,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/bedrock/index.ts#anthropic.claude-opus-4-6",
+        "sourceRef": "open-sse/config/providers/registry/bedrock/index.ts#anthropic.claude-opus-4-6 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "native",
@@ -891,9 +891,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/bedrock/index.ts#anthropic.claude-opus-4-7",
+        "sourceRef": "open-sse/config/providers/registry/bedrock/index.ts#anthropic.claude-opus-4-7 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "native",
@@ -943,9 +943,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/bedrock/index.ts#anthropic.claude-sonnet-4-5",
+        "sourceRef": "open-sse/config/providers/registry/bedrock/index.ts#anthropic.claude-sonnet-4-5 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "native",
@@ -995,9 +995,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/bedrock/index.ts#anthropic.claude-sonnet-4-6",
+        "sourceRef": "open-sse/config/providers/registry/bedrock/index.ts#anthropic.claude-sonnet-4-6 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "native",
@@ -1046,9 +1046,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/bedrock/index.ts#openai.gpt-oss-120b-1:0",
+        "sourceRef": "open-sse/config/providers/registry/bedrock/index.ts#openai.gpt-oss-120b-1:0 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "none",
@@ -1104,9 +1104,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/deepseek/index.ts#deepseek-v4-flash",
+        "sourceRef": "open-sse/config/providers/registry/deepseek/index.ts#deepseek-v4-flash — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "native",
@@ -1178,9 +1178,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/deepseek/index.ts#deepseek-v4-pro",
+        "sourceRef": "open-sse/config/providers/registry/deepseek/index.ts#deepseek-v4-pro — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "native",
@@ -1246,9 +1246,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/gemini/index.ts#gemini-2.5-flash",
+        "sourceRef": "open-sse/config/providers/registry/gemini/index.ts#gemini-2.5-flash — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "native",
@@ -1298,9 +1298,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/gemini/index.ts#gemini-2.5-flash-lite",
+        "sourceRef": "open-sse/config/providers/registry/gemini/index.ts#gemini-2.5-flash-lite — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "native",
@@ -1350,9 +1350,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/gemini/index.ts#gemini-2.5-pro",
+        "sourceRef": "open-sse/config/providers/registry/gemini/index.ts#gemini-2.5-pro — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "native",
@@ -1402,9 +1402,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/gemini/index.ts#gemini-3-flash-preview",
+        "sourceRef": "open-sse/config/providers/registry/gemini/index.ts#gemini-3-flash-preview — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "native",
@@ -1454,9 +1454,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/gemini/index.ts#gemini-3.1-flash-lite",
+        "sourceRef": "open-sse/config/providers/registry/gemini/index.ts#gemini-3.1-flash-lite — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "native",
@@ -1471,57 +1471,6 @@
         "sourceRef": "open-sse/config/providers/registry/gemini/index.ts#gemini-3.1-flash-lite",
         "observedAt": "2026-09-05T00:00:00Z",
         "confidence": "inferred"
-      },
-      "unsupportedParameters": [],
-      "status": "candidate"
-    },
-    {
-      "key": "google/gemini-3.1-flash-tts-preview",
-      "providerId": "google",
-      "upstreamId": "gemini-3.1-flash-tts-preview",
-      "displayName": "Gemini 3.1 Flash TTS",
-      "aliases": [],
-      "endpoints": [
-        "chat"
-      ],
-      "contextWindow": {
-        "value": 1048576,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/gemini/index.ts#gemini-3.1-flash-tts-preview",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
-      },
-      "inputModalities": {
-        "value": [
-          "text"
-        ],
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/gemini/index.ts#gemini-3.1-flash-tts-preview",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
-      },
-      "outputModalities": {
-        "value": [
-          "text"
-        ],
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/gemini/index.ts#gemini-3.1-flash-tts-preview",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
-      },
-      "toolCalling": {
-        "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/gemini/index.ts#gemini-3.1-flash-tts-preview",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
-      },
-      "nativeTools": {
-        "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/gemini/index.ts#gemini-3.1-flash-tts-preview",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
       },
       "unsupportedParameters": [],
       "status": "candidate"
@@ -1557,9 +1506,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/gemini/index.ts#gemini-3.1-pro-preview",
+        "sourceRef": "open-sse/config/providers/registry/gemini/index.ts#gemini-3.1-pro-preview — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "native",
@@ -1609,9 +1558,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/gemini/index.ts#gemini-3.7-flash",
+        "sourceRef": "open-sse/config/providers/registry/gemini/index.ts#gemini-3.7-flash — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "native",
@@ -1660,9 +1609,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-4.1",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-4.1 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "none",
@@ -1711,9 +1660,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-4.1-mini",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-4.1-mini — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "none",
@@ -1762,9 +1711,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-4.1-nano",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-4.1-nano — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "none",
@@ -1813,9 +1762,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-4o",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-4o — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "none",
@@ -1864,9 +1813,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-4o-2024-11-20",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-4o-2024-11-20 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "none",
@@ -1915,9 +1864,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-4o-mini",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-4o-mini — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "none",
@@ -1966,9 +1915,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.4",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.4 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "none",
@@ -2017,9 +1966,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.4-mini",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.4-mini — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "none",
@@ -2068,9 +2017,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.4-nano",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.4-nano — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "none",
@@ -2119,9 +2068,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.4-pro",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.4-pro — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "none",
@@ -2170,9 +2119,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.5",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.5 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "none",
@@ -2221,9 +2170,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.5-pro",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.5-pro — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "none",
@@ -2287,9 +2236,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "native",
@@ -2364,9 +2313,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6-luna",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6-luna — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "native",
@@ -2441,9 +2390,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6-sol",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6-sol — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "native",
@@ -2518,9 +2467,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6-terra",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6-terra — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "native",
@@ -2580,9 +2529,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#o3",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#o3 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "none",
@@ -2631,9 +2580,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#o3-mini",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#o3-mini — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "none",
@@ -2682,9 +2631,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#o4-mini",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#o4-mini — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "none",
@@ -2735,9 +2684,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/openrouter/index.ts#auto",
+        "sourceRef": "open-sse/config/providers/registry/openrouter/index.ts#auto — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "none",
@@ -2779,9 +2728,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/vertex/index.ts#DeepSeek-V4-Flash",
+        "sourceRef": "open-sse/config/providers/registry/vertex/index.ts#DeepSeek-V4-Flash — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "none",
@@ -2798,7 +2747,7 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "experimental"
+      "status": "candidate"
     },
     {
       "key": "vertex/DeepSeek-V4-Pro",
@@ -2823,9 +2772,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/vertex/index.ts#DeepSeek-V4-Pro",
+        "sourceRef": "open-sse/config/providers/registry/vertex/index.ts#DeepSeek-V4-Pro — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "none",
@@ -2842,7 +2791,7 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "experimental"
+      "status": "candidate"
     },
     {
       "key": "vertex/GLM-5.1-FP8",
@@ -2867,9 +2816,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/vertex/index.ts#GLM-5.1-FP8",
+        "sourceRef": "open-sse/config/providers/registry/vertex/index.ts#GLM-5.1-FP8 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "none",
@@ -2886,7 +2835,7 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "experimental"
+      "status": "candidate"
     },
     {
       "key": "vertex/Qwen3.6-35B-A3B",
@@ -2911,9 +2860,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/vertex/index.ts#Qwen3.6-35B-A3B",
+        "sourceRef": "open-sse/config/providers/registry/vertex/index.ts#Qwen3.6-35B-A3B — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "none",
@@ -2930,7 +2879,7 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "experimental"
+      "status": "candidate"
     },
     {
       "key": "vertex/gemini-3-flash-preview",
@@ -2955,9 +2904,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/vertex/index.ts#gemini-3-flash-preview",
+        "sourceRef": "open-sse/config/providers/registry/vertex/index.ts#gemini-3-flash-preview — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "none",
@@ -2999,9 +2948,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/vertex/index.ts#gemini-3.1-flash-lite",
+        "sourceRef": "open-sse/config/providers/registry/vertex/index.ts#gemini-3.1-flash-lite — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "none",
@@ -3043,9 +2992,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/vertex/index.ts#gemini-3.1-pro-preview",
+        "sourceRef": "open-sse/config/providers/registry/vertex/index.ts#gemini-3.1-pro-preview — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "none",
@@ -3087,9 +3036,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/vertex/index.ts#gemma-4-31b-it",
+        "sourceRef": "open-sse/config/providers/registry/vertex/index.ts#gemma-4-31b-it — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "none",
@@ -4601,7 +4550,7 @@
     {
       "upstreamId": "bedrock",
       "scope": "field",
-      "exclusionClass": "unrepresentable-protocol",
+      "exclusionClass": "reviewed-normalization",
       "path": "bedrock.format",
       "sourcePath": "open-sse/config/providers/registry/bedrock/index.ts",
       "reason": "upstream declares format \"openai\" with executor \"bedrock\": the OpenAI shape is what its own executor TRANSLATES FROM, not what the provider speaks on the wire. Winter records the executor's protocol (bedrock-converse) and drops the format claim."
@@ -5637,6 +5586,14 @@
       "path": "geminiProvider.oauth",
       "sourcePath": "open-sse/config/providers/registry/gemini/index.ts",
       "reason": "OAuth client id/secret defaults and their env names — WS-13 §5/§6: never imported, and Winter's OAuth providers are Winter-owned rows"
+    },
+    {
+      "upstreamId": "gemini",
+      "scope": "model",
+      "exclusionClass": "out-of-scope",
+      "path": "gemini.models[gemini-3.1-flash-tts-preview]",
+      "sourcePath": "open-sse/config/providers/registry/gemini/index.ts",
+      "reason": "reviewed model exclusion: A TEXT-TO-SPEECH model. WS-13 §4/§1 are a MUST: `tts` rows feed a separate subsystem and must never reach the Agent SDK worker-model picker, and the descriptor schema's `scope` is per PROVIDER — a `gemini` row cannot declare itself `tts` while its provider is `llm`. It also exposed the mapper's `outputModalities` default as a false claim: Winter stamps `[\"text\"]` on every row because upstream declares no output modality at all, which for a TTS model is simply wrong. Excluded here rather than shipped as a resolvable `candidate`."
     },
     {
       "upstreamId": "gemini",
@@ -7032,6 +6989,158 @@
     },
     {
       "upstreamId": "openai",
+      "scope": "model",
+      "exclusionClass": "unresolved-reference",
+      "path": "openai.models[gpt-4.1-mini].unsupportedParams",
+      "sourcePath": "open-sse/config/providers/registry/openai/index.ts",
+      "reason": "upstream states unsupported parameters for this model, but as a value the literal extractor refuses (a call expression, or an identifier resolving to one). The row ships with an EMPTY `unsupportedParameters`, which fails OPEN: Winter will not pre-reject a parameter the provider does reject, and the provider's own error is the backstop. Correct it in the overlay with real evidence if the model matters."
+    },
+    {
+      "upstreamId": "openai",
+      "scope": "model",
+      "exclusionClass": "unresolved-reference",
+      "path": "openai.models[gpt-4.1-nano].unsupportedParams",
+      "sourcePath": "open-sse/config/providers/registry/openai/index.ts",
+      "reason": "upstream states unsupported parameters for this model, but as a value the literal extractor refuses (a call expression, or an identifier resolving to one). The row ships with an EMPTY `unsupportedParameters`, which fails OPEN: Winter will not pre-reject a parameter the provider does reject, and the provider's own error is the backstop. Correct it in the overlay with real evidence if the model matters."
+    },
+    {
+      "upstreamId": "openai",
+      "scope": "model",
+      "exclusionClass": "unresolved-reference",
+      "path": "openai.models[gpt-4.1].unsupportedParams",
+      "sourcePath": "open-sse/config/providers/registry/openai/index.ts",
+      "reason": "upstream states unsupported parameters for this model, but as a value the literal extractor refuses (a call expression, or an identifier resolving to one). The row ships with an EMPTY `unsupportedParameters`, which fails OPEN: Winter will not pre-reject a parameter the provider does reject, and the provider's own error is the backstop. Correct it in the overlay with real evidence if the model matters."
+    },
+    {
+      "upstreamId": "openai",
+      "scope": "model",
+      "exclusionClass": "unresolved-reference",
+      "path": "openai.models[gpt-4o-2024-11-20].unsupportedParams",
+      "sourcePath": "open-sse/config/providers/registry/openai/index.ts",
+      "reason": "upstream states unsupported parameters for this model, but as a value the literal extractor refuses (a call expression, or an identifier resolving to one). The row ships with an EMPTY `unsupportedParameters`, which fails OPEN: Winter will not pre-reject a parameter the provider does reject, and the provider's own error is the backstop. Correct it in the overlay with real evidence if the model matters."
+    },
+    {
+      "upstreamId": "openai",
+      "scope": "model",
+      "exclusionClass": "unresolved-reference",
+      "path": "openai.models[gpt-4o-mini].unsupportedParams",
+      "sourcePath": "open-sse/config/providers/registry/openai/index.ts",
+      "reason": "upstream states unsupported parameters for this model, but as a value the literal extractor refuses (a call expression, or an identifier resolving to one). The row ships with an EMPTY `unsupportedParameters`, which fails OPEN: Winter will not pre-reject a parameter the provider does reject, and the provider's own error is the backstop. Correct it in the overlay with real evidence if the model matters."
+    },
+    {
+      "upstreamId": "openai",
+      "scope": "model",
+      "exclusionClass": "unresolved-reference",
+      "path": "openai.models[gpt-4o].unsupportedParams",
+      "sourcePath": "open-sse/config/providers/registry/openai/index.ts",
+      "reason": "upstream states unsupported parameters for this model, but as a value the literal extractor refuses (a call expression, or an identifier resolving to one). The row ships with an EMPTY `unsupportedParameters`, which fails OPEN: Winter will not pre-reject a parameter the provider does reject, and the provider's own error is the backstop. Correct it in the overlay with real evidence if the model matters."
+    },
+    {
+      "upstreamId": "openai",
+      "scope": "model",
+      "exclusionClass": "unresolved-reference",
+      "path": "openai.models[gpt-5.4-mini].unsupportedParams",
+      "sourcePath": "open-sse/config/providers/registry/openai/index.ts",
+      "reason": "upstream states unsupported parameters for this model, but as a value the literal extractor refuses (a call expression, or an identifier resolving to one). The row ships with an EMPTY `unsupportedParameters`, which fails OPEN: Winter will not pre-reject a parameter the provider does reject, and the provider's own error is the backstop. Correct it in the overlay with real evidence if the model matters."
+    },
+    {
+      "upstreamId": "openai",
+      "scope": "model",
+      "exclusionClass": "unresolved-reference",
+      "path": "openai.models[gpt-5.4-nano].unsupportedParams",
+      "sourcePath": "open-sse/config/providers/registry/openai/index.ts",
+      "reason": "upstream states unsupported parameters for this model, but as a value the literal extractor refuses (a call expression, or an identifier resolving to one). The row ships with an EMPTY `unsupportedParameters`, which fails OPEN: Winter will not pre-reject a parameter the provider does reject, and the provider's own error is the backstop. Correct it in the overlay with real evidence if the model matters."
+    },
+    {
+      "upstreamId": "openai",
+      "scope": "model",
+      "exclusionClass": "unresolved-reference",
+      "path": "openai.models[gpt-5.4-pro].unsupportedParams",
+      "sourcePath": "open-sse/config/providers/registry/openai/index.ts",
+      "reason": "upstream states unsupported parameters for this model, but as a value the literal extractor refuses (a call expression, or an identifier resolving to one). The row ships with an EMPTY `unsupportedParameters`, which fails OPEN: Winter will not pre-reject a parameter the provider does reject, and the provider's own error is the backstop. Correct it in the overlay with real evidence if the model matters."
+    },
+    {
+      "upstreamId": "openai",
+      "scope": "model",
+      "exclusionClass": "unresolved-reference",
+      "path": "openai.models[gpt-5.4].unsupportedParams",
+      "sourcePath": "open-sse/config/providers/registry/openai/index.ts",
+      "reason": "upstream states unsupported parameters for this model, but as a value the literal extractor refuses (a call expression, or an identifier resolving to one). The row ships with an EMPTY `unsupportedParameters`, which fails OPEN: Winter will not pre-reject a parameter the provider does reject, and the provider's own error is the backstop. Correct it in the overlay with real evidence if the model matters."
+    },
+    {
+      "upstreamId": "openai",
+      "scope": "model",
+      "exclusionClass": "unresolved-reference",
+      "path": "openai.models[gpt-5.5-pro].unsupportedParams",
+      "sourcePath": "open-sse/config/providers/registry/openai/index.ts",
+      "reason": "upstream states unsupported parameters for this model, but as a value the literal extractor refuses (a call expression, or an identifier resolving to one). The row ships with an EMPTY `unsupportedParameters`, which fails OPEN: Winter will not pre-reject a parameter the provider does reject, and the provider's own error is the backstop. Correct it in the overlay with real evidence if the model matters."
+    },
+    {
+      "upstreamId": "openai",
+      "scope": "model",
+      "exclusionClass": "unresolved-reference",
+      "path": "openai.models[gpt-5.5].unsupportedParams",
+      "sourcePath": "open-sse/config/providers/registry/openai/index.ts",
+      "reason": "upstream states unsupported parameters for this model, but as a value the literal extractor refuses (a call expression, or an identifier resolving to one). The row ships with an EMPTY `unsupportedParameters`, which fails OPEN: Winter will not pre-reject a parameter the provider does reject, and the provider's own error is the backstop. Correct it in the overlay with real evidence if the model matters."
+    },
+    {
+      "upstreamId": "openai",
+      "scope": "model",
+      "exclusionClass": "unresolved-reference",
+      "path": "openai.models[gpt-5.6-luna].unsupportedParams",
+      "sourcePath": "open-sse/config/providers/registry/openai/index.ts",
+      "reason": "upstream states unsupported parameters for this model, but as a value the literal extractor refuses (a call expression, or an identifier resolving to one). The row ships with an EMPTY `unsupportedParameters`, which fails OPEN: Winter will not pre-reject a parameter the provider does reject, and the provider's own error is the backstop. Correct it in the overlay with real evidence if the model matters."
+    },
+    {
+      "upstreamId": "openai",
+      "scope": "model",
+      "exclusionClass": "unresolved-reference",
+      "path": "openai.models[gpt-5.6-sol].unsupportedParams",
+      "sourcePath": "open-sse/config/providers/registry/openai/index.ts",
+      "reason": "upstream states unsupported parameters for this model, but as a value the literal extractor refuses (a call expression, or an identifier resolving to one). The row ships with an EMPTY `unsupportedParameters`, which fails OPEN: Winter will not pre-reject a parameter the provider does reject, and the provider's own error is the backstop. Correct it in the overlay with real evidence if the model matters."
+    },
+    {
+      "upstreamId": "openai",
+      "scope": "model",
+      "exclusionClass": "unresolved-reference",
+      "path": "openai.models[gpt-5.6-terra].unsupportedParams",
+      "sourcePath": "open-sse/config/providers/registry/openai/index.ts",
+      "reason": "upstream states unsupported parameters for this model, but as a value the literal extractor refuses (a call expression, or an identifier resolving to one). The row ships with an EMPTY `unsupportedParameters`, which fails OPEN: Winter will not pre-reject a parameter the provider does reject, and the provider's own error is the backstop. Correct it in the overlay with real evidence if the model matters."
+    },
+    {
+      "upstreamId": "openai",
+      "scope": "model",
+      "exclusionClass": "unresolved-reference",
+      "path": "openai.models[gpt-5.6].unsupportedParams",
+      "sourcePath": "open-sse/config/providers/registry/openai/index.ts",
+      "reason": "upstream states unsupported parameters for this model, but as a value the literal extractor refuses (a call expression, or an identifier resolving to one). The row ships with an EMPTY `unsupportedParameters`, which fails OPEN: Winter will not pre-reject a parameter the provider does reject, and the provider's own error is the backstop. Correct it in the overlay with real evidence if the model matters."
+    },
+    {
+      "upstreamId": "openai",
+      "scope": "model",
+      "exclusionClass": "unresolved-reference",
+      "path": "openai.models[o3-mini].unsupportedParams",
+      "sourcePath": "open-sse/config/providers/registry/openai/index.ts",
+      "reason": "upstream states unsupported parameters for this model, but as a value the literal extractor refuses (a call expression, or an identifier resolving to one). The row ships with an EMPTY `unsupportedParameters`, which fails OPEN: Winter will not pre-reject a parameter the provider does reject, and the provider's own error is the backstop. Correct it in the overlay with real evidence if the model matters."
+    },
+    {
+      "upstreamId": "openai",
+      "scope": "model",
+      "exclusionClass": "unresolved-reference",
+      "path": "openai.models[o3].unsupportedParams",
+      "sourcePath": "open-sse/config/providers/registry/openai/index.ts",
+      "reason": "upstream states unsupported parameters for this model, but as a value the literal extractor refuses (a call expression, or an identifier resolving to one). The row ships with an EMPTY `unsupportedParameters`, which fails OPEN: Winter will not pre-reject a parameter the provider does reject, and the provider's own error is the backstop. Correct it in the overlay with real evidence if the model matters."
+    },
+    {
+      "upstreamId": "openai",
+      "scope": "model",
+      "exclusionClass": "unresolved-reference",
+      "path": "openai.models[o4-mini].unsupportedParams",
+      "sourcePath": "open-sse/config/providers/registry/openai/index.ts",
+      "reason": "upstream states unsupported parameters for this model, but as a value the literal extractor refuses (a call expression, or an identifier resolving to one). The row ships with an EMPTY `unsupportedParameters`, which fails OPEN: Winter will not pre-reject a parameter the provider does reject, and the provider's own error is the backstop. Correct it in the overlay with real evidence if the model matters."
+    },
+    {
+      "upstreamId": "openai",
       "scope": "field",
       "exclusionClass": "unresolved-reference",
       "path": "openaiProvider.models[17].unsupportedParams",
@@ -7137,7 +7246,7 @@
     {
       "upstreamId": "openrouter",
       "scope": "model",
-      "exclusionClass": "unrepresentable-protocol",
+      "exclusionClass": "reviewed-normalization",
       "path": "openrouter.models[auto].id",
       "sourcePath": "open-sse/config/providers/registry/openrouter/index.ts",
       "reason": "reviewed model-id correction: upstream lists \"auto\", Winter records \"openrouter/auto\". OpenRouter documents its auto-router as the qualified id `openrouter/auto`; the pinned upstream entry lists a bare `{ id: \"auto\" }`. Keeping upstream's spelling put `auto` on the wire from BOTH resolution paths — step 1 (the seeded row's own upstreamId) and the `allowUnlisted` pass-through, which strips a self-prefix. Correcting it here fixes both at once, and the `auto` alias keeps the bare spelling resolvable."
@@ -8040,11 +8149,51 @@
     },
     {
       "upstreamId": "vertex",
+      "scope": "field",
+      "exclusionClass": "reviewed-normalization",
+      "path": "vertex.executor",
+      "sourcePath": "open-sse/config/providers/registry/vertex/index.ts",
+      "reason": "executor \"vertex\" speaks the google-generate-content dialect but is served by a DIFFERENT adapter: Winter records \"winter.vertex-gemini\" rather than the protocol's default \"winter.google-generate-content\". A protocol is not an adapter, and a registry resolves BY ID."
+    },
+    {
+      "upstreamId": "vertex",
+      "scope": "model",
+      "exclusionClass": "reviewed-normalization",
+      "path": "vertex.models[DeepSeek-V4-Flash].status",
+      "sourcePath": "open-sse/config/providers/registry/vertex/index.ts",
+      "reason": "reviewed status override: \"candidate\" rather than this provider's \"experimental\". As `DeepSeek-V4-Pro` — a Vertex MaaS partner model inheriting the Gemini dialect from a silent upstream entry."
+    },
+    {
+      "upstreamId": "vertex",
+      "scope": "model",
+      "exclusionClass": "reviewed-normalization",
+      "path": "vertex.models[DeepSeek-V4-Pro].status",
+      "sourcePath": "open-sse/config/providers/registry/vertex/index.ts",
+      "reason": "reviewed status override: \"candidate\" rather than this provider's \"experimental\". A Vertex MaaS PARTNER model. Upstream lists it under an entry whose `format` is `gemini`, so the mapper inherits the GenerateContent dialect for it — but partner models are not served over GenerateContent, and nothing has proven what they do speak here. `candidate` rather than R6-16's `experimental`, because `experimental` is a claim that a live adapter serves the row; flagged for Lane B/N."
+    },
+    {
+      "upstreamId": "vertex",
+      "scope": "model",
+      "exclusionClass": "reviewed-normalization",
+      "path": "vertex.models[GLM-5.1-FP8].status",
+      "sourcePath": "open-sse/config/providers/registry/vertex/index.ts",
+      "reason": "reviewed status override: \"candidate\" rather than this provider's \"experimental\". As `DeepSeek-V4-Pro` — a Vertex MaaS partner model inheriting the Gemini dialect from a silent upstream entry."
+    },
+    {
+      "upstreamId": "vertex",
+      "scope": "model",
+      "exclusionClass": "reviewed-normalization",
+      "path": "vertex.models[Qwen3.6-35B-A3B].status",
+      "sourcePath": "open-sse/config/providers/registry/vertex/index.ts",
+      "reason": "reviewed status override: \"candidate\" rather than this provider's \"experimental\". As `DeepSeek-V4-Pro` — a Vertex MaaS partner model inheriting the Gemini dialect from a silent upstream entry."
+    },
+    {
+      "upstreamId": "vertex",
       "scope": "model",
       "exclusionClass": "unrepresentable-protocol",
       "path": "vertex.models[claude-fable-5].targetFormat",
       "sourcePath": "open-sse/config/providers/registry/vertex/index.ts",
-      "reason": "upstream routes this model over the \"claude\" protocol while its provider speaks \"gemini\". The Winter descriptor schema has no per-model protocol field, so the row would resolve onto the \"winter.google-generate-content\" adapter and serialize the wrong dialect. Refused; a Winter row for it belongs in the overlay under a provider whose protocol matches."
+      "reason": "upstream routes this model over the \"claude\" protocol while its provider speaks \"gemini\". The Winter descriptor schema has no per-model protocol field, so the row would resolve onto the \"winter.vertex-gemini\" adapter and serialize the wrong dialect. Refused; a Winter row for it belongs in the overlay under a provider whose protocol matches."
     },
     {
       "upstreamId": "vertex",
@@ -8052,7 +8201,7 @@
       "exclusionClass": "unrepresentable-protocol",
       "path": "vertex.models[claude-haiku-4-5].targetFormat",
       "sourcePath": "open-sse/config/providers/registry/vertex/index.ts",
-      "reason": "upstream routes this model over the \"claude\" protocol while its provider speaks \"gemini\". The Winter descriptor schema has no per-model protocol field, so the row would resolve onto the \"winter.google-generate-content\" adapter and serialize the wrong dialect. Refused; a Winter row for it belongs in the overlay under a provider whose protocol matches."
+      "reason": "upstream routes this model over the \"claude\" protocol while its provider speaks \"gemini\". The Winter descriptor schema has no per-model protocol field, so the row would resolve onto the \"winter.vertex-gemini\" adapter and serialize the wrong dialect. Refused; a Winter row for it belongs in the overlay under a provider whose protocol matches."
     },
     {
       "upstreamId": "vertex",
@@ -8060,7 +8209,7 @@
       "exclusionClass": "unrepresentable-protocol",
       "path": "vertex.models[claude-opus-4-5].targetFormat",
       "sourcePath": "open-sse/config/providers/registry/vertex/index.ts",
-      "reason": "upstream routes this model over the \"claude\" protocol while its provider speaks \"gemini\". The Winter descriptor schema has no per-model protocol field, so the row would resolve onto the \"winter.google-generate-content\" adapter and serialize the wrong dialect. Refused; a Winter row for it belongs in the overlay under a provider whose protocol matches."
+      "reason": "upstream routes this model over the \"claude\" protocol while its provider speaks \"gemini\". The Winter descriptor schema has no per-model protocol field, so the row would resolve onto the \"winter.vertex-gemini\" adapter and serialize the wrong dialect. Refused; a Winter row for it belongs in the overlay under a provider whose protocol matches."
     },
     {
       "upstreamId": "vertex",
@@ -8068,7 +8217,7 @@
       "exclusionClass": "unrepresentable-protocol",
       "path": "vertex.models[claude-opus-4-6].targetFormat",
       "sourcePath": "open-sse/config/providers/registry/vertex/index.ts",
-      "reason": "upstream routes this model over the \"claude\" protocol while its provider speaks \"gemini\". The Winter descriptor schema has no per-model protocol field, so the row would resolve onto the \"winter.google-generate-content\" adapter and serialize the wrong dialect. Refused; a Winter row for it belongs in the overlay under a provider whose protocol matches."
+      "reason": "upstream routes this model over the \"claude\" protocol while its provider speaks \"gemini\". The Winter descriptor schema has no per-model protocol field, so the row would resolve onto the \"winter.vertex-gemini\" adapter and serialize the wrong dialect. Refused; a Winter row for it belongs in the overlay under a provider whose protocol matches."
     },
     {
       "upstreamId": "vertex",
@@ -8076,7 +8225,7 @@
       "exclusionClass": "unrepresentable-protocol",
       "path": "vertex.models[claude-opus-4-7].targetFormat",
       "sourcePath": "open-sse/config/providers/registry/vertex/index.ts",
-      "reason": "upstream routes this model over the \"claude\" protocol while its provider speaks \"gemini\". The Winter descriptor schema has no per-model protocol field, so the row would resolve onto the \"winter.google-generate-content\" adapter and serialize the wrong dialect. Refused; a Winter row for it belongs in the overlay under a provider whose protocol matches."
+      "reason": "upstream routes this model over the \"claude\" protocol while its provider speaks \"gemini\". The Winter descriptor schema has no per-model protocol field, so the row would resolve onto the \"winter.vertex-gemini\" adapter and serialize the wrong dialect. Refused; a Winter row for it belongs in the overlay under a provider whose protocol matches."
     },
     {
       "upstreamId": "vertex",
@@ -8084,7 +8233,7 @@
       "exclusionClass": "unrepresentable-protocol",
       "path": "vertex.models[claude-opus-4-8].targetFormat",
       "sourcePath": "open-sse/config/providers/registry/vertex/index.ts",
-      "reason": "upstream routes this model over the \"claude\" protocol while its provider speaks \"gemini\". The Winter descriptor schema has no per-model protocol field, so the row would resolve onto the \"winter.google-generate-content\" adapter and serialize the wrong dialect. Refused; a Winter row for it belongs in the overlay under a provider whose protocol matches."
+      "reason": "upstream routes this model over the \"claude\" protocol while its provider speaks \"gemini\". The Winter descriptor schema has no per-model protocol field, so the row would resolve onto the \"winter.vertex-gemini\" adapter and serialize the wrong dialect. Refused; a Winter row for it belongs in the overlay under a provider whose protocol matches."
     },
     {
       "upstreamId": "vertex",
@@ -8092,7 +8241,7 @@
       "exclusionClass": "unrepresentable-protocol",
       "path": "vertex.models[claude-opus-5].targetFormat",
       "sourcePath": "open-sse/config/providers/registry/vertex/index.ts",
-      "reason": "upstream routes this model over the \"claude\" protocol while its provider speaks \"gemini\". The Winter descriptor schema has no per-model protocol field, so the row would resolve onto the \"winter.google-generate-content\" adapter and serialize the wrong dialect. Refused; a Winter row for it belongs in the overlay under a provider whose protocol matches."
+      "reason": "upstream routes this model over the \"claude\" protocol while its provider speaks \"gemini\". The Winter descriptor schema has no per-model protocol field, so the row would resolve onto the \"winter.vertex-gemini\" adapter and serialize the wrong dialect. Refused; a Winter row for it belongs in the overlay under a provider whose protocol matches."
     },
     {
       "upstreamId": "vertex",
@@ -8100,7 +8249,7 @@
       "exclusionClass": "unrepresentable-protocol",
       "path": "vertex.models[claude-sonnet-4-5-v2].targetFormat",
       "sourcePath": "open-sse/config/providers/registry/vertex/index.ts",
-      "reason": "upstream routes this model over the \"claude\" protocol while its provider speaks \"gemini\". The Winter descriptor schema has no per-model protocol field, so the row would resolve onto the \"winter.google-generate-content\" adapter and serialize the wrong dialect. Refused; a Winter row for it belongs in the overlay under a provider whose protocol matches."
+      "reason": "upstream routes this model over the \"claude\" protocol while its provider speaks \"gemini\". The Winter descriptor schema has no per-model protocol field, so the row would resolve onto the \"winter.vertex-gemini\" adapter and serialize the wrong dialect. Refused; a Winter row for it belongs in the overlay under a provider whose protocol matches."
     },
     {
       "upstreamId": "vertex",
@@ -8108,7 +8257,7 @@
       "exclusionClass": "unrepresentable-protocol",
       "path": "vertex.models[claude-sonnet-4-5].targetFormat",
       "sourcePath": "open-sse/config/providers/registry/vertex/index.ts",
-      "reason": "upstream routes this model over the \"claude\" protocol while its provider speaks \"gemini\". The Winter descriptor schema has no per-model protocol field, so the row would resolve onto the \"winter.google-generate-content\" adapter and serialize the wrong dialect. Refused; a Winter row for it belongs in the overlay under a provider whose protocol matches."
+      "reason": "upstream routes this model over the \"claude\" protocol while its provider speaks \"gemini\". The Winter descriptor schema has no per-model protocol field, so the row would resolve onto the \"winter.vertex-gemini\" adapter and serialize the wrong dialect. Refused; a Winter row for it belongs in the overlay under a provider whose protocol matches."
     },
     {
       "upstreamId": "vertex",
@@ -8116,7 +8265,7 @@
       "exclusionClass": "unrepresentable-protocol",
       "path": "vertex.models[claude-sonnet-4-6].targetFormat",
       "sourcePath": "open-sse/config/providers/registry/vertex/index.ts",
-      "reason": "upstream routes this model over the \"claude\" protocol while its provider speaks \"gemini\". The Winter descriptor schema has no per-model protocol field, so the row would resolve onto the \"winter.google-generate-content\" adapter and serialize the wrong dialect. Refused; a Winter row for it belongs in the overlay under a provider whose protocol matches."
+      "reason": "upstream routes this model over the \"claude\" protocol while its provider speaks \"gemini\". The Winter descriptor schema has no per-model protocol field, so the row would resolve onto the \"winter.vertex-gemini\" adapter and serialize the wrong dialect. Refused; a Winter row for it belongs in the overlay under a provider whose protocol matches."
     },
     {
       "upstreamId": "vertex",
@@ -8124,7 +8273,7 @@
       "exclusionClass": "unrepresentable-protocol",
       "path": "vertex.models[claude-sonnet-5].targetFormat",
       "sourcePath": "open-sse/config/providers/registry/vertex/index.ts",
-      "reason": "upstream routes this model over the \"claude\" protocol while its provider speaks \"gemini\". The Winter descriptor schema has no per-model protocol field, so the row would resolve onto the \"winter.google-generate-content\" adapter and serialize the wrong dialect. Refused; a Winter row for it belongs in the overlay under a provider whose protocol matches."
+      "reason": "upstream routes this model over the \"claude\" protocol while its provider speaks \"gemini\". The Winter descriptor schema has no per-model protocol field, so the row would resolve onto the \"winter.vertex-gemini\" adapter and serialize the wrong dialect. Refused; a Winter row for it belongs in the overlay under a provider whose protocol matches."
     },
     {
       "upstreamId": "vertex",

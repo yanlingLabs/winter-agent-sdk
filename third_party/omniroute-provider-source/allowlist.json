@@ -36,17 +36,29 @@
     { "upstreamId": "azure-openai", "winterId": "azure-openai", "expectedCategory": "apikey", "risk": { "class": "review-required", "reasons": ["native cloud: deployment/api-version identity and Entra auth need their own proof (WS-13 §5)"] },
       "$comment": "PRODUCT-CATALOG ONLY at this pin: `azure-openai` has a row in src/shared/constants/providers/apikey/enterprise-cloud.ts but NO backend RegistryEntry, so upstream contributes its identity and nothing executable. Its endpoints and auth are Winter-authored in the overlay; the rejection ledger records the absence." },
     { "upstreamId": "bedrock", "winterId": "bedrock", "expectedCategory": "apikey", "risk": { "class": "review-required", "reasons": ["native cloud: SigV4 signing + event-stream decoding need their own proof (WS-13 §5)"] } },
-    { "upstreamId": "vertex", "winterId": "vertex", "expectedCategory": "apikey", "initialModelStatus": "experimental", "risk": { "class": "review-required", "reasons": ["native cloud: project/location auth and partner-protocol differences need their own proof (WS-13 §5)"] },
-      "$comment": "`initialModelStatus: \"experimental\"` per R6-16 — the native-cloud families enter the catalog as `experimental`, and Lane B's `winter.vertex-gemini` adapter is live. Absent this field a row is `candidate`, which is what every other provider gets: upstream presence promotes nothing." }
+    { "upstreamId": "vertex", "winterId": "vertex", "expectedCategory": "apikey", "initialModelStatus": "experimental", "adapterIdOverride": "winter.vertex-gemini", "risk": { "class": "review-required", "reasons": ["native cloud: project/location auth and partner-protocol differences need their own proof (WS-13 §5)"] },
+      "$comment": "`adapterIdOverride` is Lane B's `VERTEX_ADAPTER_ID`, read from p6/lane-b's adapters/google/vertex.ts. Without it the mapper derives the adapter from the PROTOCOL, and Vertex shares GenerateContent with the Gemini API — so the extracted row named `winter.google-generate-content` and a registry, which resolves BY ID, would have served a Vertex session from the Gemini API adapter: no location-scoped URL, no ADC credential. The overlay row was corrected first; this fixes the layer `--offline` validates STANDALONE, which is exactly the layer whose defects an overlay shadow hides. `initialModelStatus: \"experimental\"` per R6-16 — the native-cloud families enter the catalog as `experimental`, and Lane B's `winter.vertex-gemini` adapter is live. Absent this field a row is `candidate`, which is what every other provider gets: upstream presence promotes nothing." }
   ],
 
-  "modelIdCorrections": {
-    "$comment": "REVIEWED per-provider corrections to an upstream model id, applied by the mapper and RECORDED in the rejection ledger as a mechanical normalization (never silently). This exists for one narrow class: an upstream id that is not the id the provider documents on its own wire. Presence here is a claim that a human checked the vendor's documentation, so it is deliberately a hand-maintained map rather than a heuristic.",
+  "modelOverrides": {
+    "$comment": "ONE hand-reviewed per-model override map, applied by the mapper and RECORDED in the ledger as a `reviewed-normalization` — never a heuristic, and never silent. Three narrow things it can say about a single upstream model id: `id` corrects a wire id upstream spells differently from the provider's own documentation; `exclude` keeps a row out of the catalog entirely (WS-13 §4's MUST that non-`llm` rows never reach the worker-model picker — upstream has no per-model scope field, and a NAME heuristic would be worse than none because it would silently drop a future model whose id happens to match); `status` overrides the provider's `initialModelStatus` for one row. Every entry carries a `why` that ends up in the ledger, so a reviewer can diff the catalog against the pinned source and find every place they differ with the justification attached.",
     "openrouter": {
       "auto": {
-        "to": "openrouter/auto",
+        "id": "openrouter/auto",
         "why": "OpenRouter documents its auto-router as the qualified id `openrouter/auto`; the pinned upstream entry lists a bare `{ id: \"auto\" }`. Keeping upstream's spelling put `auto` on the wire from BOTH resolution paths — step 1 (the seeded row's own upstreamId) and the `allowUnlisted` pass-through, which strips a self-prefix. Correcting it here fixes both at once, and the `auto` alias keeps the bare spelling resolvable."
       }
+    },
+    "gemini": {
+      "gemini-3.1-flash-tts-preview": {
+        "exclude": true,
+        "why": "A TEXT-TO-SPEECH model. WS-13 §4/§1 are a MUST: `tts` rows feed a separate subsystem and must never reach the Agent SDK worker-model picker, and the descriptor schema's `scope` is per PROVIDER — a `gemini` row cannot declare itself `tts` while its provider is `llm`. It also exposed the mapper's `outputModalities` default as a false claim: Winter stamps `[\"text\"]` on every row because upstream declares no output modality at all, which for a TTS model is simply wrong. Excluded here rather than shipped as a resolvable `candidate`."
+      }
+    },
+    "vertex": {
+      "DeepSeek-V4-Pro": { "status": "candidate", "why": "A Vertex MaaS PARTNER model. Upstream lists it under an entry whose `format` is `gemini`, so the mapper inherits the GenerateContent dialect for it — but partner models are not served over GenerateContent, and nothing has proven what they do speak here. `candidate` rather than R6-16's `experimental`, because `experimental` is a claim that a live adapter serves the row; flagged for Lane B/N." },
+      "DeepSeek-V4-Flash": { "status": "candidate", "why": "As `DeepSeek-V4-Pro` — a Vertex MaaS partner model inheriting the Gemini dialect from a silent upstream entry." },
+      "GLM-5.1-FP8": { "status": "candidate", "why": "As `DeepSeek-V4-Pro` — a Vertex MaaS partner model inheriting the Gemini dialect from a silent upstream entry." },
+      "Qwen3.6-35B-A3B": { "status": "candidate", "why": "As `DeepSeek-V4-Pro` — a Vertex MaaS partner model inheriting the Gemini dialect from a silent upstream entry." }
     }
   },
 
@@ -65,7 +77,6 @@
   },
 
   "blocked": [
-    { "upstreamId": "*", "reason": "Any upstream row whose transport is a browser session, a private/undocumented API, or a consumer subscription is blocked categorically and is never promotable by this file alone (WS-13 §5/§6)." },
     { "upstreamId": "comfyui", "reason": "Image-generation system in the `local` category — WS-13 §1 keeps it out of selectable worker models (report §4.2)." },
     { "upstreamId": "sdwebui", "reason": "Image-generation system in the `local` category — WS-13 §1 keeps it out of selectable worker models (report §4.2)." }
   ],
@@ -73,6 +84,7 @@
   "notes": [
     "`codex-oauth` is NOT extracted from upstream — it is a Winter-owned provider carried over per D11 with originator \"winter\" (WS-01 §3), and its descriptor's `upstream.project` is \"winter\".",
     "The twelve local OpenAI-compatible ids (WS-13 §12) are likewise Winter-owned: their inventories are machine-specific and always come from live discovery, so there is no upstream row to extract.",
-    "Promoting a provider from `blocked`/`review-required` to `approved`, or adding an id to `providers`, is the reviewed allowlist change WS-13 §13 requires before anything can reach `supported`. The extractor has no other door."
+    "Promoting a provider from `blocked`/`review-required` to `approved`, or adding an id to `providers`, is the reviewed allowlist change WS-13 §13 requires before anything can reach `supported`. The extractor has no other door.",
+    "`blocked` names INDIVIDUAL upstream ids only. It previously carried a `\"*\"` sentinel restating WS-13 §5/§6's categorical exclusions (browser sessions, private APIs, consumer subscriptions); the mapper filtered that row out, so it was documentation wearing the shape of a rule. Those exclusions are ENFORCED by `categoryDispositions` above, which fails the run both ways — an allowlisted id whose category is not the api-key candidate pool aborts extraction — so the sentinel is dropped rather than left looking load-bearing."
   ]
 }

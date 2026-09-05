@@ -10,7 +10,7 @@
       "endpoints": ["chat", "responses"],
       "contextWindow": { "value": 1047576, "source": "upstream-static", "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-4.1 at v3.8.50 (5458026c) — `contextLength: 1047576`", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" },
       "inputModalities": { "value": ["text", "image"], "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
-      "outputModalities": { "value": ["text"], "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
+      "outputModalities": { "value": ["text"], "source": "upstream-static", "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, not an upstream statement. `EvidenceSource` is frozen (src/types.ts) with no `winter-derived` member, so the caveat rides the confidence marker and this ref — see PROVENANCE.md.", "confidence": "unknown", "observedAt": "2026-09-05T00:00:00Z" },
       "toolCalling": { "value": "native", "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
       "nativeTools": { "value": true, "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
       "parallelTools": { "value": true, "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
@@ -28,7 +28,7 @@
       "endpoints": ["responses"],
       "contextWindow": { "value": 200000, "source": "upstream-static", "sourceRef": "open-sse/config/providers/registry/openai/index.ts#o4-mini at v3.8.50 (5458026c) — `contextLength: 200000`", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" },
       "inputModalities": { "value": ["text", "image"], "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
-      "outputModalities": { "value": ["text"], "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
+      "outputModalities": { "value": ["text"], "source": "upstream-static", "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, not an upstream statement. `EvidenceSource` is frozen (src/types.ts) with no `winter-derived` member, so the caveat rides the confidence marker and this ref — see PROVENANCE.md.", "confidence": "unknown", "observedAt": "2026-09-05T00:00:00Z" },
       "toolCalling": { "value": "native", "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
       "nativeTools": { "value": true, "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
       "structuredOutput": { "value": true, "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
@@ -41,7 +41,7 @@
         "summaryRequest": { "value": { "field": "reasoning.summary", "values": ["auto", "concise", "detailed"] }, "source": "official-doc", "sourceRef": "continuity report §5.1 — \"Current summary values are `auto`, `concise`, and `detailed`\"; the deprecated `generate_summary` alias is deliberately NOT listed", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" },
         "replayScope": { "value": "current-turn", "source": "official-doc", "sourceRef": "continuity report §5.3 — under `store: false` the COMPLETED output items of the current turn are replayed in their original order", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" },
         "completionEvent": { "value": "response.completed", "source": "official-doc", "sourceRef": "WS-13 §8.2 (amended) — \"OpenAI completed reasoning items (never the `output_item.added` partial) replayed in order under `store:false` + `include: [\"reasoning.encrypted_content\"]`\"", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" },
-        "continuationDomain": { "value": ["openai/o4-mini"], "source": "official-doc", "sourceRef": "continuity report §2.5/§7 — the opaque reasoning item stays with OpenAI, and no documentation places two OpenAI models in one domain. Winter records the MODEL ALONE rather than the provider: WS-13 §8.2 makes continuation domain a first-class fact that is never inferred, and a wider domain would license a cross-model fallback nothing has proven.", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" }
+        "continuationDomain": { "value": ["openai/o4-mini"], "source": "official-doc", "sourceRef": "continuity report §5.1/§5.3 for own-state acceptance — under `store: false` with `include: [\"reasoning.encrypted_content\"]`, the model's own COMPLETED reasoning items are replayed to it in their original order on the next request — and §2.5/§7 for the narrowness: the opaque item stays with OpenAI, and no documentation places two OpenAI models in one domain. Winter records the MODEL ALONE rather than the provider: WS-13 §8.2 makes continuation domain a first-class fact that is never inferred, and a wider domain would license a cross-model fallback nothing has proven.", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" }
       },
       "pricing": { "value": { "inputPerMTokUsd": 1.1, "outputPerMTokUsd": 4.4, "cacheReadPerMTokUsd": 0.275 }, "source": "official-doc", "sourceRef": "https://developers.openai.com/api/docs/pricing — o4-mini standard tier: input $1.10, cached input $0.275, output $4.40 per 1M tokens", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" },
       "unsupportedParameters": [],
@@ -58,7 +58,7 @@
       "contextWindow": { "value": 1000000, "source": "upstream-static", "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-opus-5 at v3.8.50 (5458026c) — `contextLength: 1000000`", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" },
       "maxOutputTokens": { "value": 128000, "source": "upstream-static", "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-opus-5 — `maxOutputTokens: 128000`", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" },
       "inputModalities": { "value": ["text", "image"], "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
-      "outputModalities": { "value": ["text"], "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
+      "outputModalities": { "value": ["text"], "source": "upstream-static", "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, not an upstream statement. `EvidenceSource` is frozen (src/types.ts) with no `winter-derived` member, so the caveat rides the confidence marker and this ref — see PROVENANCE.md.", "confidence": "unknown", "observedAt": "2026-09-05T00:00:00Z" },
       "toolCalling": { "value": "native", "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
       "nativeTools": { "value": true, "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
       "parallelTools": { "value": true, "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
@@ -71,7 +71,7 @@
         "summaryRequest": { "value": { "field": "thinking.display", "values": ["summarized", "omitted"] }, "source": "official-doc", "sourceRef": "derived-shapes-p6.md item (c) — ThinkingAdaptive/ThinkingEnabled `display`", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" },
         "replayScope": { "value": "all-turns", "source": "live-probe", "sourceRef": "continuity report §3 (wire probe of the pinned Claude Agent SDK, 0.3.250→0.3.258) — every uncompacted historical thinking/redacted block is replayed on every later request", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" },
         "completionEvent": { "value": "content_block_stop", "source": "official-doc", "sourceRef": "R6-D's pinned stream vocabulary — a thinking block's `signature` arrives across `signature_delta` events, so the COMPLETE replayable block exists only at `content_block_stop`; an earlier partial copy would replay an unsigned block", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" },
-        "continuationDomain": { "value": ["anthropic/claude-opus-5"], "source": "official-doc", "sourceRef": "continuity report §4.4 — \"when changing Claude models, prior `thinking` and `redacted_thinking` blocks should be stripped because they are tied to the model that produced them. Therefore 'same provider' is not automatically 'same continuation domain.'\" The domain is therefore this model alone, never the Anthropic provider.", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" }
+        "continuationDomain": { "value": ["anthropic/claude-opus-5"], "source": "official-doc", "sourceRef": "continuity report §4.4, BOTH halves. Own-state acceptance: the model's own `thinking` blocks are replayed to it unchanged, in order, with their signatures intact (§4.4's replay rules and its worked request). Why the domain is NARROW: \"when changing Claude models, prior `thinking` and `redacted_thinking` blocks should be stripped because they are tied to the model that produced them. Therefore 'same provider' is not automatically 'same continuation domain.'\" The domain is this model alone, never the Anthropic provider.", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" }
       },
       "pricing": { "value": { "inputPerMTokUsd": 5.0, "outputPerMTokUsd": 25.0, "cacheReadPerMTokUsd": 0.5, "cacheWritePerMTokUsd": 6.25 }, "source": "official-doc", "sourceRef": "https://claude.com/pricing — Opus 5: input $5, output $25, prompt cache read $0.50, prompt cache write $6.25 per 1M tokens", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" },
       "unsupportedParameters": ["temperature", "top_p", "top_k"],
@@ -86,7 +86,7 @@
       "endpoints": ["chat"],
       "contextWindow": { "value": 1048576, "source": "upstream-static", "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-sonnet-5 at v3.8.50 (5458026c) — `contextLength: 1048576`", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" },
       "inputModalities": { "value": ["text", "image"], "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
-      "outputModalities": { "value": ["text"], "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
+      "outputModalities": { "value": ["text"], "source": "upstream-static", "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, not an upstream statement. `EvidenceSource` is frozen (src/types.ts) with no `winter-derived` member, so the caveat rides the confidence marker and this ref — see PROVENANCE.md.", "confidence": "unknown", "observedAt": "2026-09-05T00:00:00Z" },
       "toolCalling": { "value": "native", "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
       "nativeTools": { "value": true, "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
       "parallelTools": { "value": true, "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
@@ -99,7 +99,7 @@
         "summaryRequest": { "value": { "field": "thinking.display", "values": ["summarized", "omitted"] }, "source": "official-doc", "sourceRef": "derived-shapes-p6.md item (c) — ThinkingAdaptive/ThinkingEnabled `display`", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" },
         "replayScope": { "value": "all-turns", "source": "live-probe", "sourceRef": "continuity report §3 (wire probe of the pinned Claude Agent SDK, 0.3.250→0.3.258) — every uncompacted historical thinking/redacted block is replayed on every later request", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" },
         "completionEvent": { "value": "content_block_stop", "source": "official-doc", "sourceRef": "R6-D's pinned stream vocabulary — a thinking block's `signature` arrives across `signature_delta` events, so the COMPLETE replayable block exists only at `content_block_stop`", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" },
-        "continuationDomain": { "value": ["anthropic/claude-sonnet-5"], "source": "official-doc", "sourceRef": "continuity report §4.4 — Anthropic documents model switching as a boundary at which prior `thinking`/`redacted_thinking` blocks are stripped, because they are tied to the producing model; \"same provider\" is therefore not \"same continuation domain\", and this domain is the model alone", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" }
+        "continuationDomain": { "value": ["anthropic/claude-sonnet-5"], "source": "official-doc", "sourceRef": "continuity report §4.4, BOTH halves. Own-state acceptance: §4.4 requires the model's own assistant blocks — `thinking` with its signature, `redacted_thinking` — replayed unchanged and in order across a tool loop. Why the domain is NARROW: Anthropic documents model switching as a boundary at which those blocks are STRIPPED, because they are tied to the producing model; \"same provider\" is therefore not \"same continuation domain\", and this domain is the model alone.", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" }
       },
       "pricing": { "value": { "inputPerMTokUsd": 2.0, "outputPerMTokUsd": 10.0, "cacheReadPerMTokUsd": 0.2, "cacheWritePerMTokUsd": 2.5 }, "source": "official-doc", "sourceRef": "https://claude.com/pricing — Sonnet 5: input $2, output $10, prompt cache read $0.20, prompt cache write $2.50 per 1M tokens", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" },
       "unsupportedParameters": ["temperature", "top_p", "top_k"],
@@ -114,7 +114,7 @@
       "$comment": "Deliberately carries NO `reasoning` block, mirroring derived-shapes-p6.md capture (J): the pinned runtime's haiku row leaves its capability booleans ABSENT rather than false, and absent means unknown. The catalog records unknown by omission for the same reason. Upstream's own anthropic entry lists this model as `claude-haiku-4.5` (a DOTTED id); Winter keeps the dated `claude-haiku-4-5-20251001` spelling the pinned runtime uses, so the two rows coexist — the upstream one under its own key, this one shadowing nothing.",
       "endpoints": ["chat"],
       "inputModalities": { "value": ["text", "image"], "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
-      "outputModalities": { "value": ["text"], "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
+      "outputModalities": { "value": ["text"], "source": "upstream-static", "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, not an upstream statement. `EvidenceSource` is frozen (src/types.ts) with no `winter-derived` member, so the caveat rides the confidence marker and this ref — see PROVENANCE.md.", "confidence": "unknown", "observedAt": "2026-09-05T00:00:00Z" },
       "toolCalling": { "value": "native", "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
       "nativeTools": { "value": true, "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
       "promptCaching": { "value": true, "source": "official-doc", "sourceRef": "https://claude.com/pricing — Haiku 4.5 publishes distinct prompt-cache write and read rates", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" },
@@ -131,7 +131,7 @@
       "endpoints": ["chat"],
       "contextWindow": { "value": 1048576, "source": "upstream-static", "sourceRef": "open-sse/config/providers/registry/gemini/index.ts at v3.8.50 (5458026c) — the provider's `defaultContextLength: 1048576`", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" },
       "inputModalities": { "value": ["text", "image", "audio", "video"], "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
-      "outputModalities": { "value": ["text"], "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
+      "outputModalities": { "value": ["text"], "source": "upstream-static", "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, not an upstream statement. `EvidenceSource` is frozen (src/types.ts) with no `winter-derived` member, so the caveat rides the confidence marker and this ref — see PROVENANCE.md.", "confidence": "unknown", "observedAt": "2026-09-05T00:00:00Z" },
       "toolCalling": { "value": "native", "source": "upstream-static", "sourceRef": "open-sse/config/providers/registry/gemini/index.ts#gemini-2.5-pro — `toolCalling: true`", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" },
       "nativeTools": { "value": true, "source": "upstream-static", "sourceRef": "open-sse/config/providers/registry/gemini/index.ts#gemini-2.5-pro — `toolCalling: true`", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" },
       "structuredOutput": { "value": true, "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
@@ -142,7 +142,7 @@
         "continuation": "opaque-provider-state",
         "readableState": { "value": "summary", "source": "official-doc", "sourceRef": "continuity report §6.1 — summary parts are identified by `part.thought === true`; the underlying chain is not exposed", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" },
         "summaryRequest": { "value": { "field": "thinkingConfig.includeThoughts", "values": ["true"] }, "source": "official-doc", "sourceRef": "continuity report §6.1 — `config.thinkingConfig.includeThoughts: true` on generateContent. The field is a BOOLEAN, recorded here as its single enabling spelling because the schema's `values` is a string list; the Interactions API's `generation_config.thinking_summaries` is a different surface and is not claimed for this endpoint.", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" },
-        "continuationDomain": { "value": ["google/gemini-2.5-pro"], "source": "official-doc", "sourceRef": "continuity report §6.1 — \"A Gemini summary can be forwarded to another family. The `thoughtSignature` cannot.\" Signatures are bound to their exact part and model, so the domain is this model alone.", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" }
+        "continuationDomain": { "value": ["google/gemini-2.5-pro"], "source": "official-doc", "sourceRef": "continuity report §6.1, BOTH halves. Own-state acceptance: a `thoughtSignature` is returned to the SAME model on its exact original part — \"do not concatenate signed parts; do not move a signature to a different part; preserve every accumulated signature in a sequential function-call turn\". Why the domain is NARROW: \"A Gemini summary can be forwarded to another family. The `thoughtSignature` cannot.\" Signatures are bound to their exact part and model, so the domain is this model alone.", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" }
       },
       "pricing": { "value": { "inputPerMTokUsd": 1.25, "outputPerMTokUsd": 10.0, "cacheReadPerMTokUsd": 0.125 }, "source": "official-doc", "sourceRef": "https://ai.google.dev/gemini-api/docs/pricing — Gemini 2.5 Pro paid tier, prompts <= 200k tokens: input $1.25, output $10.00, context-cache read $0.125 per 1M tokens. TIERED UPSTREAM: prompts > 200k are billed $2.50 / $15.00 / $0.25. `ModelPricing` has one rate per direction, so the STANDARD (<=200k) tier is recorded and cost is UNDER-reported for prompts above it — a disclosed schema gap (PROVENANCE.md), not a claim that the higher tier does not exist.", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" },
       "unsupportedParameters": [],
@@ -157,7 +157,7 @@
       "$comment": "UNPRICED on purpose. A gateway's price is the gateway's, not the vendor's: OpenRouter routes to shifting upstream providers with their own margins and data policies, so copying OpenAI's list price here would attribute a number to the wrong billing boundary — the exact confusion WS-13 §8.3 keeps `openai/gpt-x` and `gateway/gpt-x` apart to avoid. `estimateCostUsd` reports 0/\"unknown\" for it, which is the honest answer. OpenRouter's OWN-namespace `auto` row is not here: the pinned upstream entry lists it (`{ id: \"auto\" }`) and it reaches the catalog through the upstream layer as `openrouter/auto`.",
       "endpoints": ["chat"],
       "inputModalities": { "value": ["text", "image"], "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
-      "outputModalities": { "value": ["text"], "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
+      "outputModalities": { "value": ["text"], "source": "upstream-static", "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, not an upstream statement. `EvidenceSource` is frozen (src/types.ts) with no `winter-derived` member, so the caveat rides the confidence marker and this ref — see PROVENANCE.md.", "confidence": "unknown", "observedAt": "2026-09-05T00:00:00Z" },
       "toolCalling": { "value": "native", "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
       "nativeTools": { "value": true, "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
       "unsupportedParameters": [],
@@ -171,7 +171,7 @@
       "aliases": [],
       "endpoints": ["chat"],
       "inputModalities": { "value": ["text"], "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
-      "outputModalities": { "value": ["text"], "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
+      "outputModalities": { "value": ["text"], "source": "upstream-static", "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, not an upstream statement. `EvidenceSource` is frozen (src/types.ts) with no `winter-derived` member, so the caveat rides the confidence marker and this ref — see PROVENANCE.md.", "confidence": "unknown", "observedAt": "2026-09-05T00:00:00Z" },
       "toolCalling": { "value": "native", "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
       "nativeTools": { "value": true, "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
       "reasoning": {
@@ -187,6 +187,198 @@
       "status": "candidate"
     },
     {
+      "key": "deepseek/deepseek-v4-pro",
+      "providerId": "deepseek",
+      "upstreamId": "deepseek-v4-pro",
+      "displayName": "DeepSeek V4 Pro (0813)",
+      "aliases": [],
+      "$comment": "SHADOWS the extracted row, for its ENDPOINT. Upstream's deepseek entry is `format: \"openai-responses\"`, so extraction lands `endpoints: [\"responses\"]` — but the surface Winter drives is Chat Completions (`adapterId: \"winter.openai-chat-completions\"`, where Lane A's DeepSeek profile and its exposed-reasoning capture live). Continuity report §6.3 is why that is the RIGHT surface and not a convenience: thinking mode and the readable `reasoning_content` are documented on the chat-compatible format, while \"the current DeepSeek Responses-compatible endpoint exposes reasoning-text events, but accepts `reasoning.summary` without generating a summary and does not support `include` or `previous_response_id`\". Shipping the row on `responses` pointed a responses-only model at a Chat adapter; shipping it on `chat` points it where the capability is actually proven. `efforts` and every limit are the extracted upstream facts, carried across so the shadow loses nothing.",
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/deepseek/index.ts#deepseek-v4-pro at v3.8.50 (5458026c) — `contextLength: 1_000_000`",
+        "confidence": "declared",
+        "observedAt": "2026-09-05T00:00:00Z"
+      },
+      "maxOutputTokens": {
+        "value": 384000,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/deepseek/index.ts#deepseek-v4-pro at v3.8.50 (5458026c) — `maxOutputTokens: 384_000`",
+        "confidence": "declared",
+        "observedAt": "2026-09-05T00:00:00Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/deepseek/index.ts#deepseek-v4-pro at v3.8.50 (5458026c) — upstream states no vision/audio/video flag",
+        "confidence": "inferred",
+        "observedAt": "2026-09-05T00:00:00Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for any model; `text` is Winter's inference for a chat registry, not an upstream statement",
+        "confidence": "unknown",
+        "observedAt": "2026-09-05T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/deepseek/index.ts#deepseek-v4-pro at v3.8.50 (5458026c) — `toolCalling: true`",
+        "confidence": "declared",
+        "observedAt": "2026-09-05T00:00:00Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/deepseek/index.ts#deepseek-v4-pro at v3.8.50 (5458026c) — `toolCalling: true`",
+        "confidence": "declared",
+        "observedAt": "2026-09-05T00:00:00Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "upstream-static",
+          "sourceRef": "open-sse/config/providers/registry/deepseek/index.ts#deepseek-v4-pro at v3.8.50 (5458026c) — `supportsReasoning: true`",
+          "confidence": "declared",
+          "observedAt": "2026-09-05T00:00:00Z"
+        },
+        "efforts": [
+          "none",
+          "low",
+          "high",
+          "max"
+        ],
+        "continuation": "plaintext",
+        "readableState": {
+          "value": "full-exposed",
+          "source": "official-doc",
+          "sourceRef": "continuity report §6.3 — DeepSeek exposes readable reasoning through `reasoning_content` on the CHAT-compatible format",
+          "confidence": "declared",
+          "observedAt": "2026-09-05T00:00:00Z"
+        },
+        "replayScope": {
+          "value": "current-tool-loop",
+          "source": "official-doc",
+          "sourceRef": "continuity report §6.3 — with `tools` present ALL preceding `reasoning_content` must be passed back; with `tools` absent it is not needed and is ignored if supplied",
+          "confidence": "declared",
+          "observedAt": "2026-09-05T00:00:00Z"
+        },
+        "toolLoopRequirement": {
+          "value": "hard-error",
+          "source": "official-doc",
+          "sourceRef": "continuity report §6.3 — \"dropping it can cause a 400 response\"",
+          "confidence": "declared",
+          "observedAt": "2026-09-05T00:00:00Z"
+        }
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "deepseek/deepseek-v4-flash",
+      "providerId": "deepseek",
+      "upstreamId": "deepseek-v4-flash",
+      "displayName": "DeepSeek V4 Flash (0731)",
+      "aliases": [],
+      "$comment": "As `deepseek/deepseek-v4-pro` — shadows the extracted row for its ENDPOINT, because Winter drives DeepSeek's Chat Completions surface while extraction inherits `responses` from the provider's upstream `format`.",
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/deepseek/index.ts#deepseek-v4-flash at v3.8.50 (5458026c) — `contextLength: 1_000_000`",
+        "confidence": "declared",
+        "observedAt": "2026-09-05T00:00:00Z"
+      },
+      "maxOutputTokens": {
+        "value": 384000,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/deepseek/index.ts#deepseek-v4-flash at v3.8.50 (5458026c) — `maxOutputTokens: 384_000`",
+        "confidence": "declared",
+        "observedAt": "2026-09-05T00:00:00Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/deepseek/index.ts#deepseek-v4-flash at v3.8.50 (5458026c) — upstream states no vision/audio/video flag",
+        "confidence": "inferred",
+        "observedAt": "2026-09-05T00:00:00Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for any model; `text` is Winter's inference for a chat registry, not an upstream statement",
+        "confidence": "unknown",
+        "observedAt": "2026-09-05T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/deepseek/index.ts#deepseek-v4-flash at v3.8.50 (5458026c) — `toolCalling: true`",
+        "confidence": "declared",
+        "observedAt": "2026-09-05T00:00:00Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/deepseek/index.ts#deepseek-v4-flash at v3.8.50 (5458026c) — `toolCalling: true`",
+        "confidence": "declared",
+        "observedAt": "2026-09-05T00:00:00Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "upstream-static",
+          "sourceRef": "open-sse/config/providers/registry/deepseek/index.ts#deepseek-v4-flash at v3.8.50 (5458026c) — `supportsReasoning: true`",
+          "confidence": "declared",
+          "observedAt": "2026-09-05T00:00:00Z"
+        },
+        "efforts": [
+          "none",
+          "low",
+          "high",
+          "max"
+        ],
+        "continuation": "plaintext",
+        "readableState": {
+          "value": "full-exposed",
+          "source": "official-doc",
+          "sourceRef": "continuity report §6.3 — DeepSeek exposes readable reasoning through `reasoning_content` on the CHAT-compatible format",
+          "confidence": "declared",
+          "observedAt": "2026-09-05T00:00:00Z"
+        },
+        "replayScope": {
+          "value": "current-tool-loop",
+          "source": "official-doc",
+          "sourceRef": "continuity report §6.3 — with `tools` present ALL preceding `reasoning_content` must be passed back; with `tools` absent it is not needed and is ignored if supplied",
+          "confidence": "declared",
+          "observedAt": "2026-09-05T00:00:00Z"
+        },
+        "toolLoopRequirement": {
+          "value": "hard-error",
+          "source": "official-doc",
+          "sourceRef": "continuity report §6.3 — \"dropping it can cause a 400 response\"",
+          "confidence": "declared",
+          "observedAt": "2026-09-05T00:00:00Z"
+        }
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
       "key": "codex-oauth/gpt-5.6-sol",
       "providerId": "codex-oauth",
       "upstreamId": "gpt-5.6-sol",
@@ -196,7 +388,7 @@
       "endpoints": ["responses"],
       "contextWindow": { "value": 272000, "source": "upstream-static", "sourceRef": "Norma packages/core/src/providers/codex-config.ts — CODEX_MODELS, a dated static set with its own drift guard", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" },
       "inputModalities": { "value": ["text", "image"], "source": "upstream-static", "sourceRef": "Norma codex-config.ts CODEX_MODELS supportsVision: true", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" },
-      "outputModalities": { "value": ["text"], "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
+      "outputModalities": { "value": ["text"], "source": "upstream-static", "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, not an upstream statement. `EvidenceSource` is frozen (src/types.ts) with no `winter-derived` member, so the caveat rides the confidence marker and this ref — see PROVENANCE.md.", "confidence": "unknown", "observedAt": "2026-09-05T00:00:00Z" },
       "toolCalling": { "value": "native", "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
       "nativeTools": { "value": true, "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
       "reasoning": {
@@ -205,8 +397,9 @@
         "defaultEffort": "medium",
         "continuation": "opaque-provider-state",
         "readableState": { "value": "summary", "source": "official-doc", "sourceRef": "continuity report §5.1 — the Responses surface returns a readable summary, never the raw chain", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" },
+        "summaryRequest": { "value": { "field": "reasoning.summary", "values": ["auto", "concise", "detailed"] }, "source": "official-doc", "sourceRef": "continuity report §5.1 — the Responses surface's summary control and its current values `auto`/`concise`/`detailed`; the deprecated `generate_summary` alias is deliberately not listed. Same evidence as `openai/o4-mini` — the same field on the same wire shape — which is exactly why the DOMAIN still is not shared (§2.5). A `readableState: \"summary\"` claim with no way to REQUEST the summary is a capability nobody can use, so the two travel together.", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" },
         "completionEvent": { "value": "response.completed", "source": "upstream-static", "sourceRef": "Norma packages/core/src/providers/responses-sse.ts — encrypted_content is preserved VERBATIM off the completion event", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" },
-        "continuationDomain": { "value": ["codex-oauth/gpt-5.6-sol"], "source": "official-doc", "sourceRef": "continuity report §2.5 — two endpoints can both use `/v1/responses` while issuing unrelated encrypted payloads, so the Codex backend shares NO domain with `openai/*` despite the shared HTTP shape. WS-13 §8.2: \"OpenAI-compatible\" is never the capability test.", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" }
+        "continuationDomain": { "value": ["codex-oauth/gpt-5.6-sol"], "source": "official-doc", "sourceRef": "continuity report §5.1/§5.3 for own-state acceptance — the Responses surface replays its own completed `reasoning.encrypted_content` items to the same model, which is what Norma's shipped Codex adapter does verbatim off `response.completed` — and §2.5 for the narrowness: two endpoints can both use `/v1/responses` while issuing UNRELATED encrypted payloads, so this backend shares NO domain with `openai/*` despite the shared HTTP shape. WS-13 §8.2: \"OpenAI-compatible\" is never the capability test.", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" }
       },
       "unsupportedParameters": [],
       "status": "candidate"
@@ -220,7 +413,7 @@
       "$comment": "UNPRICED: Azure bills its own regional/deployment rates, which are not the OpenAI list price this catalog read. Upstream has no backend registry entry for `azure-openai` at the pin (rejection class `no-registry-entry`), so every fact here is Winter-authored.",
       "endpoints": ["chat", "responses"],
       "inputModalities": { "value": ["text", "image"], "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
-      "outputModalities": { "value": ["text"], "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
+      "outputModalities": { "value": ["text"], "source": "upstream-static", "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, not an upstream statement. `EvidenceSource` is frozen (src/types.ts) with no `winter-derived` member, so the caveat rides the confidence marker and this ref — see PROVENANCE.md.", "confidence": "unknown", "observedAt": "2026-09-05T00:00:00Z" },
       "toolCalling": { "value": "native", "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
       "nativeTools": { "value": true, "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
       "unsupportedParameters": [],
@@ -235,7 +428,7 @@
       "$comment": "UNPRICED: Bedrock bills AWS's own per-region rates, not the Anthropic list price. The pinned upstream bedrock entry lists a different, newer model set, which reaches the catalog through the upstream layer under its own keys; this row is kept because Lane N's fixtures resolve against it.",
       "endpoints": ["chat"],
       "inputModalities": { "value": ["text", "image"], "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
-      "outputModalities": { "value": ["text"], "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
+      "outputModalities": { "value": ["text"], "source": "upstream-static", "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, not an upstream statement. `EvidenceSource` is frozen (src/types.ts) with no `winter-derived` member, so the caveat rides the confidence marker and this ref — see PROVENANCE.md.", "confidence": "unknown", "observedAt": "2026-09-05T00:00:00Z" },
       "toolCalling": { "value": "native", "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
       "nativeTools": { "value": true, "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
       "unsupportedParameters": [],
@@ -250,7 +443,7 @@
       "$comment": "UNPRICED: Vertex bills Google Cloud's own project/region rates, which are not the Gemini API list price read for `google/gemini-2.5-pro`. Its `continuationDomain` is its OWN key and deliberately does NOT include `google/gemini-2.5-pro`: WS-13 §8.2 makes the exact endpoint+model the capability unit, and nothing has proven a Vertex-issued `thoughtSignature` replays against the Gemini API endpoint or the reverse.",
       "endpoints": ["chat"],
       "inputModalities": { "value": ["text", "image", "audio", "video"], "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
-      "outputModalities": { "value": ["text"], "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
+      "outputModalities": { "value": ["text"], "source": "upstream-static", "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, not an upstream statement. `EvidenceSource` is frozen (src/types.ts) with no `winter-derived` member, so the caveat rides the confidence marker and this ref — see PROVENANCE.md.", "confidence": "unknown", "observedAt": "2026-09-05T00:00:00Z" },
       "toolCalling": { "value": "native", "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
       "nativeTools": { "value": true, "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
       "reasoning": {
@@ -258,7 +451,8 @@
         "efforts": [],
         "continuation": "opaque-provider-state",
         "readableState": { "value": "summary", "source": "official-doc", "sourceRef": "continuity report §6.1 — Vertex serves the same generateContent surface, whose summaries are `part.thought === true` parts", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" },
-        "continuationDomain": { "value": ["vertex/gemini-2.5-pro"], "source": "official-doc", "sourceRef": "continuity report §2.5 — a shared HTTP shape is never evidence of a shared domain; the Vertex endpoint is a different provider boundary from the Gemini API even for the same model name", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" }
+        "summaryRequest": { "value": { "field": "thinkingConfig.includeThoughts", "values": ["true"] }, "source": "official-doc", "sourceRef": "continuity report §6.1 — `config.thinkingConfig.includeThoughts: true` on generateContent, the surface Vertex serves. Same evidence as `google/gemini-2.5-pro`.", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" },
+        "continuationDomain": { "value": ["vertex/gemini-2.5-pro"], "source": "official-doc", "sourceRef": "continuity report §6.1 for own-state acceptance (a `thoughtSignature` returns to the same model on its exact part, and Vertex serves the same generateContent surface) and §2.5 for the narrowness: a shared HTTP shape is never evidence of a shared domain, so the Vertex endpoint is a different provider boundary from the Gemini API even for the same model name.", "confidence": "declared", "observedAt": "2026-09-05T00:00:00Z" }
       },
       "unsupportedParameters": [],
       "status": "experimental"
@@ -272,7 +466,7 @@
       "$comment": "UNPRICED by nature — a local model has no per-token price. Kept as the one seeded LOCAL row so the local path has something resolvable for a fixture; the other eleven local providers intentionally have none, which is what a `liveCatalogAuthority: \"unknown\"` provider with an `allowUnlisted` connection is for. Continuity report §6.4 is why no reasoning block is asserted: a deployed serving stack's reasoning behaviour must be OBSERVED per endpoint, never inferred from the weights or the model family.",
       "endpoints": ["chat"],
       "inputModalities": { "value": ["text"], "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
-      "outputModalities": { "value": ["text"], "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
+      "outputModalities": { "value": ["text"], "source": "upstream-static", "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, not an upstream statement. `EvidenceSource` is frozen (src/types.ts) with no `winter-derived` member, so the caveat rides the confidence marker and this ref — see PROVENANCE.md.", "confidence": "unknown", "observedAt": "2026-09-05T00:00:00Z" },
       "toolCalling": { "value": "native", "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
       "nativeTools": { "value": true, "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
       "unsupportedParameters": [],

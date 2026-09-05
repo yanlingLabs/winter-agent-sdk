@@ -642,9 +642,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-fable-5",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-fable-5 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "none",
@@ -692,7 +692,8 @@
           "text"
         ],
         "source": "upstream-static",
-        "confidence": "inferred",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, not an upstream statement. `EvidenceSource` is frozen (src/types.ts) with no `winter-derived` member, so the caveat rides the confidence marker and this ref — see PROVENANCE.md.",
+        "confidence": "unknown",
         "observedAt": "2026-09-05T00:00:00Z"
       },
       "toolCalling": {
@@ -759,9 +760,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-haiku-4.5",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-haiku-4.5 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "none",
@@ -810,9 +811,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-opus-4.5",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-opus-4.5 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "none",
@@ -861,9 +862,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-opus-4.6",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-opus-4.6 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "none",
@@ -912,9 +913,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-opus-4.7",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-opus-4.7 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "none",
@@ -967,9 +968,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-opus-4.8",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-opus-4.8 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "none",
@@ -1031,7 +1032,8 @@
           "text"
         ],
         "source": "upstream-static",
-        "confidence": "inferred",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, not an upstream statement. `EvidenceSource` is frozen (src/types.ts) with no `winter-derived` member, so the caveat rides the confidence marker and this ref — see PROVENANCE.md.",
+        "confidence": "unknown",
         "observedAt": "2026-09-05T00:00:00Z"
       },
       "toolCalling": {
@@ -1114,7 +1116,7 @@
             "anthropic/claude-opus-5"
           ],
           "source": "official-doc",
-          "sourceRef": "continuity report §4.4 — \"when changing Claude models, prior `thinking` and `redacted_thinking` blocks should be stripped because they are tied to the model that produced them. Therefore 'same provider' is not automatically 'same continuation domain.'\" The domain is therefore this model alone, never the Anthropic provider.",
+          "sourceRef": "continuity report §4.4, BOTH halves. Own-state acceptance: the model's own `thinking` blocks are replayed to it unchanged, in order, with their signatures intact (§4.4's replay rules and its worked request). Why the domain is NARROW: \"when changing Claude models, prior `thinking` and `redacted_thinking` blocks should be stripped because they are tied to the model that produced them. Therefore 'same provider' is not automatically 'same continuation domain.'\" The domain is this model alone, never the Anthropic provider.",
           "confidence": "declared",
           "observedAt": "2026-09-05T00:00:00Z"
         }
@@ -1168,9 +1170,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-sonnet-4.5",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-sonnet-4.5 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "none",
@@ -1219,9 +1221,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-sonnet-4.6",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-sonnet-4.6 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "none",
@@ -1272,7 +1274,8 @@
           "text"
         ],
         "source": "upstream-static",
-        "confidence": "inferred",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, not an upstream statement. `EvidenceSource` is frozen (src/types.ts) with no `winter-derived` member, so the caveat rides the confidence marker and this ref — see PROVENANCE.md.",
+        "confidence": "unknown",
         "observedAt": "2026-09-05T00:00:00Z"
       },
       "toolCalling": {
@@ -1355,7 +1358,7 @@
             "anthropic/claude-sonnet-5"
           ],
           "source": "official-doc",
-          "sourceRef": "continuity report §4.4 — Anthropic documents model switching as a boundary at which prior `thinking`/`redacted_thinking` blocks are stripped, because they are tied to the producing model; \"same provider\" is therefore not \"same continuation domain\", and this domain is the model alone",
+          "sourceRef": "continuity report §4.4, BOTH halves. Own-state acceptance: §4.4 requires the model's own assistant blocks — `thinking` with its signature, `redacted_thinking` — replayed unchanged and in order across a tool loop. Why the domain is NARROW: Anthropic documents model switching as a boundary at which those blocks are STRIPPED, because they are tied to the producing model; \"same provider\" is therefore not \"same continuation domain\", and this domain is the model alone.",
           "confidence": "declared",
           "observedAt": "2026-09-05T00:00:00Z"
         }
@@ -1403,7 +1406,8 @@
           "text"
         ],
         "source": "upstream-static",
-        "confidence": "inferred",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, not an upstream statement. `EvidenceSource` is frozen (src/types.ts) with no `winter-derived` member, so the caveat rides the confidence marker and this ref — see PROVENANCE.md.",
+        "confidence": "unknown",
         "observedAt": "2026-09-05T00:00:00Z"
       },
       "toolCalling": {
@@ -1444,7 +1448,8 @@
           "text"
         ],
         "source": "upstream-static",
-        "confidence": "inferred",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, not an upstream statement. `EvidenceSource` is frozen (src/types.ts) with no `winter-derived` member, so the caveat rides the confidence marker and this ref — see PROVENANCE.md.",
+        "confidence": "unknown",
         "observedAt": "2026-09-05T00:00:00Z"
       },
       "toolCalling": {
@@ -1493,9 +1498,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/bedrock/index.ts#anthropic.claude-haiku-4-5",
+        "sourceRef": "open-sse/config/providers/registry/bedrock/index.ts#anthropic.claude-haiku-4-5 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "native",
@@ -1545,9 +1550,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/bedrock/index.ts#anthropic.claude-opus-4-6",
+        "sourceRef": "open-sse/config/providers/registry/bedrock/index.ts#anthropic.claude-opus-4-6 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "native",
@@ -1597,9 +1602,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/bedrock/index.ts#anthropic.claude-opus-4-7",
+        "sourceRef": "open-sse/config/providers/registry/bedrock/index.ts#anthropic.claude-opus-4-7 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "native",
@@ -1649,9 +1654,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/bedrock/index.ts#anthropic.claude-sonnet-4-5",
+        "sourceRef": "open-sse/config/providers/registry/bedrock/index.ts#anthropic.claude-sonnet-4-5 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "native",
@@ -1701,9 +1706,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/bedrock/index.ts#anthropic.claude-sonnet-4-6",
+        "sourceRef": "open-sse/config/providers/registry/bedrock/index.ts#anthropic.claude-sonnet-4-6 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "native",
@@ -1752,9 +1757,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/bedrock/index.ts#openai.gpt-oss-120b-1:0",
+        "sourceRef": "open-sse/config/providers/registry/bedrock/index.ts#openai.gpt-oss-120b-1:0 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "none",
@@ -1804,7 +1809,8 @@
           "text"
         ],
         "source": "upstream-static",
-        "confidence": "inferred",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, not an upstream statement. `EvidenceSource` is frozen (src/types.ts) with no `winter-derived` member, so the caveat rides the confidence marker and this ref — see PROVENANCE.md.",
+        "confidence": "unknown",
         "observedAt": "2026-09-05T00:00:00Z"
       },
       "toolCalling": {
@@ -1840,6 +1846,20 @@
           "confidence": "declared",
           "observedAt": "2026-09-05T00:00:00Z"
         },
+        "summaryRequest": {
+          "value": {
+            "field": "reasoning.summary",
+            "values": [
+              "auto",
+              "concise",
+              "detailed"
+            ]
+          },
+          "source": "official-doc",
+          "sourceRef": "continuity report §5.1 — the Responses surface's summary control and its current values `auto`/`concise`/`detailed`; the deprecated `generate_summary` alias is deliberately not listed. Same evidence as `openai/o4-mini` — the same field on the same wire shape — which is exactly why the DOMAIN still is not shared (§2.5). A `readableState: \"summary\"` claim with no way to REQUEST the summary is a capability nobody can use, so the two travel together.",
+          "confidence": "declared",
+          "observedAt": "2026-09-05T00:00:00Z"
+        },
         "completionEvent": {
           "value": "response.completed",
           "source": "upstream-static",
@@ -1852,7 +1872,7 @@
             "codex-oauth/gpt-5.6-sol"
           ],
           "source": "official-doc",
-          "sourceRef": "continuity report §2.5 — two endpoints can both use `/v1/responses` while issuing unrelated encrypted payloads, so the Codex backend shares NO domain with `openai/*` despite the shared HTTP shape. WS-13 §8.2: \"OpenAI-compatible\" is never the capability test.",
+          "sourceRef": "continuity report §5.1/§5.3 for own-state acceptance — the Responses surface replays its own completed `reasoning.encrypted_content` items to the same model, which is what Norma's shipped Codex adapter does verbatim off `response.completed` — and §2.5 for the narrowness: two endpoints can both use `/v1/responses` while issuing UNRELATED encrypted payloads, so this backend shares NO domain with `openai/*` despite the shared HTTP shape. WS-13 §8.2: \"OpenAI-compatible\" is never the capability test.",
           "confidence": "declared",
           "observedAt": "2026-09-05T00:00:00Z"
         }
@@ -1882,7 +1902,8 @@
           "text"
         ],
         "source": "upstream-static",
-        "confidence": "inferred",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, not an upstream statement. `EvidenceSource` is frozen (src/types.ts) with no `winter-derived` member, so the caveat rides the confidence marker and this ref — see PROVENANCE.md.",
+        "confidence": "unknown",
         "observedAt": "2026-09-05T00:00:00Z"
       },
       "toolCalling": {
@@ -1939,61 +1960,61 @@
       "displayName": "DeepSeek V4 Flash (0731)",
       "aliases": [],
       "endpoints": [
-        "responses"
+        "chat"
       ],
       "contextWindow": {
         "value": 1000000,
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/deepseek/index.ts#deepseek-v4-flash",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "sourceRef": "open-sse/config/providers/registry/deepseek/index.ts#deepseek-v4-flash at v3.8.50 (5458026c) — `contextLength: 1_000_000`",
+        "confidence": "declared",
+        "observedAt": "2026-09-05T00:00:00Z"
       },
       "maxOutputTokens": {
         "value": 384000,
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/deepseek/index.ts#deepseek-v4-flash",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "sourceRef": "open-sse/config/providers/registry/deepseek/index.ts#deepseek-v4-flash at v3.8.50 (5458026c) — `maxOutputTokens: 384_000`",
+        "confidence": "declared",
+        "observedAt": "2026-09-05T00:00:00Z"
       },
       "inputModalities": {
         "value": [
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/deepseek/index.ts#deepseek-v4-flash",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "sourceRef": "open-sse/config/providers/registry/deepseek/index.ts#deepseek-v4-flash at v3.8.50 (5458026c) — upstream states no vision/audio/video flag",
+        "confidence": "inferred",
+        "observedAt": "2026-09-05T00:00:00Z"
       },
       "outputModalities": {
         "value": [
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/deepseek/index.ts#deepseek-v4-flash",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for any model; `text` is Winter's inference for a chat registry, not an upstream statement",
+        "confidence": "unknown",
+        "observedAt": "2026-09-05T00:00:00Z"
       },
       "toolCalling": {
         "value": "native",
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/deepseek/index.ts#deepseek-v4-flash",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "sourceRef": "open-sse/config/providers/registry/deepseek/index.ts#deepseek-v4-flash at v3.8.50 (5458026c) — `toolCalling: true`",
+        "confidence": "declared",
+        "observedAt": "2026-09-05T00:00:00Z"
       },
       "nativeTools": {
         "value": true,
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/deepseek/index.ts#deepseek-v4-flash",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "sourceRef": "open-sse/config/providers/registry/deepseek/index.ts#deepseek-v4-flash at v3.8.50 (5458026c) — `toolCalling: true`",
+        "confidence": "declared",
+        "observedAt": "2026-09-05T00:00:00Z"
       },
       "reasoning": {
         "supported": {
           "value": true,
           "source": "upstream-static",
-          "sourceRef": "open-sse/config/providers/registry/deepseek/index.ts#deepseek-v4-flash",
-          "observedAt": "2026-09-05T00:00:00Z",
-          "confidence": "inferred"
+          "sourceRef": "open-sse/config/providers/registry/deepseek/index.ts#deepseek-v4-flash at v3.8.50 (5458026c) — `supportsReasoning: true`",
+          "confidence": "declared",
+          "observedAt": "2026-09-05T00:00:00Z"
         },
         "efforts": [
           "none",
@@ -2001,7 +2022,28 @@
           "high",
           "max"
         ],
-        "continuation": "none"
+        "continuation": "plaintext",
+        "readableState": {
+          "value": "full-exposed",
+          "source": "official-doc",
+          "sourceRef": "continuity report §6.3 — DeepSeek exposes readable reasoning through `reasoning_content` on the CHAT-compatible format",
+          "confidence": "declared",
+          "observedAt": "2026-09-05T00:00:00Z"
+        },
+        "replayScope": {
+          "value": "current-tool-loop",
+          "source": "official-doc",
+          "sourceRef": "continuity report §6.3 — with `tools` present ALL preceding `reasoning_content` must be passed back; with `tools` absent it is not needed and is ignored if supplied",
+          "confidence": "declared",
+          "observedAt": "2026-09-05T00:00:00Z"
+        },
+        "toolLoopRequirement": {
+          "value": "hard-error",
+          "source": "official-doc",
+          "sourceRef": "continuity report §6.3 — \"dropping it can cause a 400 response\"",
+          "confidence": "declared",
+          "observedAt": "2026-09-05T00:00:00Z"
+        }
       },
       "unsupportedParameters": [],
       "status": "candidate"
@@ -2013,61 +2055,61 @@
       "displayName": "DeepSeek V4 Pro (0813)",
       "aliases": [],
       "endpoints": [
-        "responses"
+        "chat"
       ],
       "contextWindow": {
         "value": 1000000,
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/deepseek/index.ts#deepseek-v4-pro",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "sourceRef": "open-sse/config/providers/registry/deepseek/index.ts#deepseek-v4-pro at v3.8.50 (5458026c) — `contextLength: 1_000_000`",
+        "confidence": "declared",
+        "observedAt": "2026-09-05T00:00:00Z"
       },
       "maxOutputTokens": {
         "value": 384000,
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/deepseek/index.ts#deepseek-v4-pro",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "sourceRef": "open-sse/config/providers/registry/deepseek/index.ts#deepseek-v4-pro at v3.8.50 (5458026c) — `maxOutputTokens: 384_000`",
+        "confidence": "declared",
+        "observedAt": "2026-09-05T00:00:00Z"
       },
       "inputModalities": {
         "value": [
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/deepseek/index.ts#deepseek-v4-pro",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "sourceRef": "open-sse/config/providers/registry/deepseek/index.ts#deepseek-v4-pro at v3.8.50 (5458026c) — upstream states no vision/audio/video flag",
+        "confidence": "inferred",
+        "observedAt": "2026-09-05T00:00:00Z"
       },
       "outputModalities": {
         "value": [
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/deepseek/index.ts#deepseek-v4-pro",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for any model; `text` is Winter's inference for a chat registry, not an upstream statement",
+        "confidence": "unknown",
+        "observedAt": "2026-09-05T00:00:00Z"
       },
       "toolCalling": {
         "value": "native",
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/deepseek/index.ts#deepseek-v4-pro",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "sourceRef": "open-sse/config/providers/registry/deepseek/index.ts#deepseek-v4-pro at v3.8.50 (5458026c) — `toolCalling: true`",
+        "confidence": "declared",
+        "observedAt": "2026-09-05T00:00:00Z"
       },
       "nativeTools": {
         "value": true,
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/deepseek/index.ts#deepseek-v4-pro",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "sourceRef": "open-sse/config/providers/registry/deepseek/index.ts#deepseek-v4-pro at v3.8.50 (5458026c) — `toolCalling: true`",
+        "confidence": "declared",
+        "observedAt": "2026-09-05T00:00:00Z"
       },
       "reasoning": {
         "supported": {
           "value": true,
           "source": "upstream-static",
-          "sourceRef": "open-sse/config/providers/registry/deepseek/index.ts#deepseek-v4-pro",
-          "observedAt": "2026-09-05T00:00:00Z",
-          "confidence": "inferred"
+          "sourceRef": "open-sse/config/providers/registry/deepseek/index.ts#deepseek-v4-pro at v3.8.50 (5458026c) — `supportsReasoning: true`",
+          "confidence": "declared",
+          "observedAt": "2026-09-05T00:00:00Z"
         },
         "efforts": [
           "none",
@@ -2075,7 +2117,28 @@
           "high",
           "max"
         ],
-        "continuation": "none"
+        "continuation": "plaintext",
+        "readableState": {
+          "value": "full-exposed",
+          "source": "official-doc",
+          "sourceRef": "continuity report §6.3 — DeepSeek exposes readable reasoning through `reasoning_content` on the CHAT-compatible format",
+          "confidence": "declared",
+          "observedAt": "2026-09-05T00:00:00Z"
+        },
+        "replayScope": {
+          "value": "current-tool-loop",
+          "source": "official-doc",
+          "sourceRef": "continuity report §6.3 — with `tools` present ALL preceding `reasoning_content` must be passed back; with `tools` absent it is not needed and is ignored if supplied",
+          "confidence": "declared",
+          "observedAt": "2026-09-05T00:00:00Z"
+        },
+        "toolLoopRequirement": {
+          "value": "hard-error",
+          "source": "official-doc",
+          "sourceRef": "continuity report §6.3 — \"dropping it can cause a 400 response\"",
+          "confidence": "declared",
+          "observedAt": "2026-09-05T00:00:00Z"
+        }
       },
       "unsupportedParameters": [],
       "status": "candidate"
@@ -2111,9 +2174,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/gemini/index.ts#gemini-2.5-flash",
+        "sourceRef": "open-sse/config/providers/registry/gemini/index.ts#gemini-2.5-flash — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "native",
@@ -2163,9 +2226,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/gemini/index.ts#gemini-2.5-flash-lite",
+        "sourceRef": "open-sse/config/providers/registry/gemini/index.ts#gemini-2.5-flash-lite — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "native",
@@ -2216,7 +2279,8 @@
           "text"
         ],
         "source": "upstream-static",
-        "confidence": "inferred",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, not an upstream statement. `EvidenceSource` is frozen (src/types.ts) with no `winter-derived` member, so the caveat rides the confidence marker and this ref — see PROVENANCE.md.",
+        "confidence": "unknown",
         "observedAt": "2026-09-05T00:00:00Z"
       },
       "toolCalling": {
@@ -2273,7 +2337,7 @@
             "google/gemini-2.5-pro"
           ],
           "source": "official-doc",
-          "sourceRef": "continuity report §6.1 — \"A Gemini summary can be forwarded to another family. The `thoughtSignature` cannot.\" Signatures are bound to their exact part and model, so the domain is this model alone.",
+          "sourceRef": "continuity report §6.1, BOTH halves. Own-state acceptance: a `thoughtSignature` is returned to the SAME model on its exact original part — \"do not concatenate signed parts; do not move a signature to a different part; preserve every accumulated signature in a sequential function-call turn\". Why the domain is NARROW: \"A Gemini summary can be forwarded to another family. The `thoughtSignature` cannot.\" Signatures are bound to their exact part and model, so the domain is this model alone.",
           "confidence": "declared",
           "observedAt": "2026-09-05T00:00:00Z"
         }
@@ -2323,9 +2387,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/gemini/index.ts#gemini-3-flash-preview",
+        "sourceRef": "open-sse/config/providers/registry/gemini/index.ts#gemini-3-flash-preview — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "native",
@@ -2375,9 +2439,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/gemini/index.ts#gemini-3.1-flash-lite",
+        "sourceRef": "open-sse/config/providers/registry/gemini/index.ts#gemini-3.1-flash-lite — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "native",
@@ -2392,57 +2456,6 @@
         "sourceRef": "open-sse/config/providers/registry/gemini/index.ts#gemini-3.1-flash-lite",
         "observedAt": "2026-09-05T00:00:00Z",
         "confidence": "inferred"
-      },
-      "unsupportedParameters": [],
-      "status": "candidate"
-    },
-    {
-      "key": "google/gemini-3.1-flash-tts-preview",
-      "providerId": "google",
-      "upstreamId": "gemini-3.1-flash-tts-preview",
-      "displayName": "Gemini 3.1 Flash TTS",
-      "aliases": [],
-      "endpoints": [
-        "chat"
-      ],
-      "contextWindow": {
-        "value": 1048576,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/gemini/index.ts#gemini-3.1-flash-tts-preview",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
-      },
-      "inputModalities": {
-        "value": [
-          "text"
-        ],
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/gemini/index.ts#gemini-3.1-flash-tts-preview",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
-      },
-      "outputModalities": {
-        "value": [
-          "text"
-        ],
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/gemini/index.ts#gemini-3.1-flash-tts-preview",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
-      },
-      "toolCalling": {
-        "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/gemini/index.ts#gemini-3.1-flash-tts-preview",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
-      },
-      "nativeTools": {
-        "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/gemini/index.ts#gemini-3.1-flash-tts-preview",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
       },
       "unsupportedParameters": [],
       "status": "candidate"
@@ -2478,9 +2491,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/gemini/index.ts#gemini-3.1-pro-preview",
+        "sourceRef": "open-sse/config/providers/registry/gemini/index.ts#gemini-3.1-pro-preview — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "native",
@@ -2530,9 +2543,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/gemini/index.ts#gemini-3.7-flash",
+        "sourceRef": "open-sse/config/providers/registry/gemini/index.ts#gemini-3.7-flash — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "native",
@@ -2573,7 +2586,8 @@
           "text"
         ],
         "source": "upstream-static",
-        "confidence": "inferred",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, not an upstream statement. `EvidenceSource` is frozen (src/types.ts) with no `winter-derived` member, so the caveat rides the confidence marker and this ref — see PROVENANCE.md.",
+        "confidence": "unknown",
         "observedAt": "2026-09-05T00:00:00Z"
       },
       "toolCalling": {
@@ -2622,7 +2636,8 @@
           "text"
         ],
         "source": "upstream-static",
-        "confidence": "inferred",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, not an upstream statement. `EvidenceSource` is frozen (src/types.ts) with no `winter-derived` member, so the caveat rides the confidence marker and this ref — see PROVENANCE.md.",
+        "confidence": "unknown",
         "observedAt": "2026-09-05T00:00:00Z"
       },
       "toolCalling": {
@@ -2693,9 +2708,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-4.1-mini",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-4.1-mini — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "none",
@@ -2744,9 +2759,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-4.1-nano",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-4.1-nano — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "none",
@@ -2795,9 +2810,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-4o",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-4o — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "none",
@@ -2846,9 +2861,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-4o-2024-11-20",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-4o-2024-11-20 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "none",
@@ -2897,9 +2912,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-4o-mini",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-4o-mini — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "none",
@@ -2948,9 +2963,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.4",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.4 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "none",
@@ -2999,9 +3014,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.4-mini",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.4-mini — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "none",
@@ -3050,9 +3065,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.4-nano",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.4-nano — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "none",
@@ -3101,9 +3116,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.4-pro",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.4-pro — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "none",
@@ -3152,9 +3167,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.5",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.5 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "none",
@@ -3203,9 +3218,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.5-pro",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.5-pro — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "none",
@@ -3269,9 +3284,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "native",
@@ -3346,9 +3361,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6-luna",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6-luna — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "native",
@@ -3423,9 +3438,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6-sol",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6-sol — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "native",
@@ -3500,9 +3515,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6-terra",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6-terra — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "native",
@@ -3562,9 +3577,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#o3",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#o3 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "none",
@@ -3613,9 +3628,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#o3-mini",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#o3-mini — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "none",
@@ -3664,7 +3679,8 @@
           "text"
         ],
         "source": "upstream-static",
-        "confidence": "inferred",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, not an upstream statement. `EvidenceSource` is frozen (src/types.ts) with no `winter-derived` member, so the caveat rides the confidence marker and this ref — see PROVENANCE.md.",
+        "confidence": "unknown",
         "observedAt": "2026-09-05T00:00:00Z"
       },
       "toolCalling": {
@@ -3740,7 +3756,7 @@
             "openai/o4-mini"
           ],
           "source": "official-doc",
-          "sourceRef": "continuity report §2.5/§7 — the opaque reasoning item stays with OpenAI, and no documentation places two OpenAI models in one domain. Winter records the MODEL ALONE rather than the provider: WS-13 §8.2 makes continuation domain a first-class fact that is never inferred, and a wider domain would license a cross-model fallback nothing has proven.",
+          "sourceRef": "continuity report §5.1/§5.3 for own-state acceptance — under `store: false` with `include: [\"reasoning.encrypted_content\"]`, the model's own COMPLETED reasoning items are replayed to it in their original order on the next request — and §2.5/§7 for the narrowness: the opaque item stays with OpenAI, and no documentation places two OpenAI models in one domain. Winter records the MODEL ALONE rather than the provider: WS-13 §8.2 makes continuation domain a first-class fact that is never inferred, and a wider domain would license a cross-model fallback nothing has proven.",
           "confidence": "declared",
           "observedAt": "2026-09-05T00:00:00Z"
         }
@@ -3782,7 +3798,8 @@
           "text"
         ],
         "source": "upstream-static",
-        "confidence": "inferred",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, not an upstream statement. `EvidenceSource` is frozen (src/types.ts) with no `winter-derived` member, so the caveat rides the confidence marker and this ref — see PROVENANCE.md.",
+        "confidence": "unknown",
         "observedAt": "2026-09-05T00:00:00Z"
       },
       "toolCalling": {
@@ -3832,9 +3849,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/openrouter/index.ts#auto",
+        "sourceRef": "open-sse/config/providers/registry/openrouter/index.ts#auto — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "none",
@@ -3876,9 +3893,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/vertex/index.ts#DeepSeek-V4-Flash",
+        "sourceRef": "open-sse/config/providers/registry/vertex/index.ts#DeepSeek-V4-Flash — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "none",
@@ -3895,7 +3912,7 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "experimental"
+      "status": "candidate"
     },
     {
       "key": "vertex/DeepSeek-V4-Pro",
@@ -3920,9 +3937,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/vertex/index.ts#DeepSeek-V4-Pro",
+        "sourceRef": "open-sse/config/providers/registry/vertex/index.ts#DeepSeek-V4-Pro — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "none",
@@ -3939,7 +3956,7 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "experimental"
+      "status": "candidate"
     },
     {
       "key": "vertex/GLM-5.1-FP8",
@@ -3964,9 +3981,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/vertex/index.ts#GLM-5.1-FP8",
+        "sourceRef": "open-sse/config/providers/registry/vertex/index.ts#GLM-5.1-FP8 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "none",
@@ -3983,7 +4000,7 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "experimental"
+      "status": "candidate"
     },
     {
       "key": "vertex/Qwen3.6-35B-A3B",
@@ -4008,9 +4025,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/vertex/index.ts#Qwen3.6-35B-A3B",
+        "sourceRef": "open-sse/config/providers/registry/vertex/index.ts#Qwen3.6-35B-A3B — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "none",
@@ -4027,7 +4044,7 @@
         "confidence": "unknown"
       },
       "unsupportedParameters": [],
-      "status": "experimental"
+      "status": "candidate"
     },
     {
       "key": "vertex/gemini-2.5-pro",
@@ -4054,7 +4071,8 @@
           "text"
         ],
         "source": "upstream-static",
-        "confidence": "inferred",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, not an upstream statement. `EvidenceSource` is frozen (src/types.ts) with no `winter-derived` member, so the caveat rides the confidence marker and this ref — see PROVENANCE.md.",
+        "confidence": "unknown",
         "observedAt": "2026-09-05T00:00:00Z"
       },
       "toolCalling": {
@@ -4085,12 +4103,24 @@
           "confidence": "declared",
           "observedAt": "2026-09-05T00:00:00Z"
         },
+        "summaryRequest": {
+          "value": {
+            "field": "thinkingConfig.includeThoughts",
+            "values": [
+              "true"
+            ]
+          },
+          "source": "official-doc",
+          "sourceRef": "continuity report §6.1 — `config.thinkingConfig.includeThoughts: true` on generateContent, the surface Vertex serves. Same evidence as `google/gemini-2.5-pro`.",
+          "confidence": "declared",
+          "observedAt": "2026-09-05T00:00:00Z"
+        },
         "continuationDomain": {
           "value": [
             "vertex/gemini-2.5-pro"
           ],
           "source": "official-doc",
-          "sourceRef": "continuity report §2.5 — a shared HTTP shape is never evidence of a shared domain; the Vertex endpoint is a different provider boundary from the Gemini API even for the same model name",
+          "sourceRef": "continuity report §6.1 for own-state acceptance (a `thoughtSignature` returns to the same model on its exact part, and Vertex serves the same generateContent surface) and §2.5 for the narrowness: a shared HTTP shape is never evidence of a shared domain, so the Vertex endpoint is a different provider boundary from the Gemini API even for the same model name.",
           "confidence": "declared",
           "observedAt": "2026-09-05T00:00:00Z"
         }
@@ -4121,9 +4151,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/vertex/index.ts#gemini-3-flash-preview",
+        "sourceRef": "open-sse/config/providers/registry/vertex/index.ts#gemini-3-flash-preview — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "none",
@@ -4165,9 +4195,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/vertex/index.ts#gemini-3.1-flash-lite",
+        "sourceRef": "open-sse/config/providers/registry/vertex/index.ts#gemini-3.1-flash-lite — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "none",
@@ -4209,9 +4239,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/vertex/index.ts#gemini-3.1-pro-preview",
+        "sourceRef": "open-sse/config/providers/registry/vertex/index.ts#gemini-3.1-pro-preview — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "none",
@@ -4253,9 +4283,9 @@
           "text"
         ],
         "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/vertex/index.ts#gemma-4-31b-it",
+        "sourceRef": "open-sse/config/providers/registry/vertex/index.ts#gemma-4-31b-it — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "confidence": "unknown"
       },
       "toolCalling": {
         "value": "none",

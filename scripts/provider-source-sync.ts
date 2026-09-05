@@ -18,7 +18,7 @@
 // `overlay/*.json` for writing, and a test asserts a re-sync leaves them byte-identical (WS-13 §7).
 
 import { execFileSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative, sep } from "node:path";
@@ -28,7 +28,7 @@ import { scanForSecrets, validateCatalog } from "../packages/provider-catalog/sr
 import type { WinterModelDescriptor, WinterProviderDescriptor } from "../packages/provider-catalog/src/types.ts";
 import { fetchUpstream, type AllowlistPath, type MaterializedFile, type UpstreamPin } from "../packages/provider-catalog/src/extract/fetch.ts";
 import { extractAll, type LiteralValue, type Rejection } from "../packages/provider-catalog/src/extract/literal-extractor.ts";
-import { buildUpstreamLayer, ExtractionRefusal, mergeLayers, OVERLAY_FILES, type Allowlist, type UpstreamLayer } from "../packages/provider-catalog/src/extract/merge.ts";
+import { ADAPTER_PROTOCOL, buildUpstreamLayer, ExtractionRefusal, mergeLayers, OVERLAY_FILES, type Allowlist, type UpstreamLayer } from "../packages/provider-catalog/src/extract/merge.ts";
 import { buildExtractionManifest, computeDenominator, type DenominatorReport } from "../packages/provider-catalog/src/extract/ledgers.ts";
 
 const REPO = new URL("../", import.meta.url);
@@ -259,12 +259,20 @@ function writeOutputs(outcome: ExtractionOutcome, target: { thirdParty: string; 
 }
 
 /**
- * Every model whose `endpoints` name a surface its own provider's `protocols` cannot serve.
+ * Every model whose `endpoints` name a surface the adapter that will SERVE it does not speak.
  *
- * Exported so the offline gate and its test read the same rule. The mapping is deliberately narrow:
- * a `responses` endpoint needs an OpenAI-Responses-shaped protocol (`openai-responses`, or
- * `azure-openai`, whose `/openai/v1` surface serves it), and a `chat` endpoint needs any protocol at
- * all, because every family Winter speaks has a conversational surface.
+ * Keyed on the ADAPTER, deliberately, and this is the whole finding. Resolution hands a model to its
+ * provider's `adapterId` (`registry.ts`) and NOTHING reads `provider.protocols` — so a gate that
+ * consulted the protocols list could be satisfied by widening that list, which is precisely what
+ * happened: `deepseek` declared `openai-responses` beside `openai-chat-completions` while its
+ * adapter remained `winter.openai-chat-completions`, the gate went quiet, and two responses-only
+ * rows still routed onto the Chat adapter. The declaration was never the thing that had to change.
+ *
+ * `responses` needs a Responses-shaped adapter; `chat` needs one that is not Responses-only. An
+ * unknown adapter id is reported rather than waved through — a new adapter with no entry here is a
+ * gap in this map, not a licence.
+ *
+ * Exported so the offline gate and its tests read one rule.
  */
 export function findEndpointContradictions(catalog: { providers: WinterProviderDescriptor[]; models: WinterModelDescriptor[] }): string[] {
   const byId = new Map(catalog.providers.map((p) => [p.id, p]));
@@ -272,11 +280,23 @@ export function findEndpointContradictions(catalog: { providers: WinterProviderD
   for (const model of catalog.models) {
     const provider = byId.get(model.providerId);
     if (provider === undefined) continue;
-    if (!model.endpoints.includes("responses")) continue;
-    if (provider.protocols.includes("openai-responses") || provider.protocols.includes("azure-openai")) continue;
-    out.push(
-      `${model.key} declares endpoints ${JSON.stringify(model.endpoints)}, but provider "${provider.id}" declares protocols ${JSON.stringify(provider.protocols)} — a responses-only row would reach the "${provider.adapterId}" adapter and be serialized as Chat Completions`,
-    );
+    const protocol = ADAPTER_PROTOCOL[provider.adapterId];
+    if (protocol === undefined) {
+      out.push(`${model.key}: provider "${provider.id}" names adapter "${provider.adapterId}", whose protocol this gate does not know — add it to ADAPTER_PROTOCOL rather than leaving the row unchecked`);
+      continue;
+    }
+    // ONE DIRECTION ONLY, and the asymmetry is real rather than convenient. A RESPONSES-ONLY row
+    // under a Chat Completions adapter has no surface that adapter can drive — that is the hazard,
+    // and it is what shipped. The reverse is not a hazard: OpenAI's Responses API serves the models
+    // whose `endpoints` say `chat` (the field records which surfaces a model is AVAILABLE on, not
+    // which one its adapter picks), so flagging those would be false churn on eight healthy rows.
+    const responsesShaped = protocol === "openai-responses" || protocol === "azure-openai";
+    const responsesOnly = model.endpoints.includes("responses") && !model.endpoints.includes("chat");
+    if (responsesOnly && !responsesShaped) {
+      out.push(
+        `${model.key} declares endpoints ${JSON.stringify(model.endpoints)} — RESPONSES ONLY — but provider "${provider.id}" is served by "${provider.adapterId}", which speaks ${protocol}, so the row would be serialized as Chat Completions. The provider's \`protocols\` list is NOT what decides this: resolution reads \`adapterId\` and nothing reads \`protocols\` at all.`,
+      );
+    }
   }
   return out.sort();
 }
@@ -424,4 +444,3 @@ export function listSourceFiles(root: string): Array<{ path: string; text: strin
   return out;
 }
 
-void copyFileSync;

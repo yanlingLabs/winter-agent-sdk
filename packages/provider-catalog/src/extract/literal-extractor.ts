@@ -59,7 +59,17 @@ export type ExclusionClass =
   | "not-allowlisted"
   | "no-registry-entry"
   | "duplicate-id"
-  | "unrepresentable-protocol";
+  | "unrepresentable-protocol"
+  /**
+   * NOT an exclusion. A row that DID reach the catalog, carrying a reviewed, recorded deviation from
+   * what the pinned tree literally says (a corrected wire id, an adapter the protocol does not imply,
+   * a per-row status). It shares the ledger with the exclusions because the ledger's job is "every
+   * place the catalog and its source differ, with the reason" — and filing a deliberate normalization
+   * under `unrepresentable-protocol` made the ledger's own counts lie about what was dropped.
+   */
+  | "reviewed-normalization"
+  /** A row excluded because it is not a language model at all (WS-13 §4: `tts`/`stt`/media rows never feed the worker-model picker). */
+  | "out-of-scope";
 
 export interface Rejection {
   scope: "module" | "provider" | "model" | "field";

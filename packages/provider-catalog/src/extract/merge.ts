@@ -46,7 +46,27 @@ export interface AllowlistProviderRow {
    * reach `supported`, which requires the behavioural corpus (WS-13 §13).
    */
   initialModelStatus?: "candidate" | "experimental";
+  /**
+   * The adapter this provider's rows must name, when it is NOT the one its protocol implies.
+   *
+   * Vertex shares the GenerateContent dialect with the Gemini API, so deriving the adapter from the
+   * protocol named `winter.google-generate-content` — and a registry resolves an adapter BY ID, so a
+   * Vertex session would have been served by the Gemini API adapter with no location-scoped URL and
+   * no ADC credential. A protocol is not an adapter.
+   */
+  adapterIdOverride?: string;
   risk: { class: "approved" | "review-required" | "blocked"; reasons: string[] };
+}
+
+/** A hand-reviewed, per-model deviation from what the pinned upstream tree says. Always recorded. */
+export interface ModelOverride {
+  /** Corrects a wire id upstream spells differently from the provider's own documentation. */
+  id?: string;
+  /** Keeps the row OUT of the catalog entirely (WS-13 §4: a non-`llm` row never reaches the worker-model picker). */
+  exclude?: boolean;
+  /** Overrides the provider's `initialModelStatus` for this one row. */
+  status?: "candidate" | "experimental";
+  why: string;
 }
 
 export interface CategoryDisposition {
@@ -60,8 +80,8 @@ export interface Allowlist {
   paths: Array<{ pattern: string; role: "extract" | "claim" | "notice"; why: string }>;
   providers: AllowlistProviderRow[];
   categoryDispositions: Record<string, CategoryDisposition>;
-  /** providerId -> upstream model id -> the corrected wire id, reviewed by hand. */
-  modelIdCorrections?: Record<string, Record<string, { to: string; why: string }>>;
+  /** providerId -> upstream model id -> a hand-reviewed override. Every field is optional but `why`. */
+  modelOverrides?: Record<string, Record<string, ModelOverride>>;
   blocked: Array<{ upstreamId: string; reason: string }>;
   importBoundary: { resolveIdentifiersWithin: string; failOnUnresolvedFields: string[] };
 }
@@ -114,6 +134,22 @@ const EXECUTOR_PROTOCOL_OVERRIDE: Readonly<Record<string, ProviderProtocol>> = {
   bedrock: "bedrock-converse",
 };
 
+/**
+ * Adapter ids the PROTOCOL does not imply — the second dimension, and the one whose absence shipped
+ * a misroute into the upstream layer.
+ *
+ * `EXECUTOR_PROTOCOL_OVERRIDE` fixes the dialect; it does not fix WHO speaks it. Vertex speaks the
+ * same GenerateContent dialect as the Gemini API, so its protocol is right and its adapter is not:
+ * `PROTOCOL_TO_ADAPTER` derived `winter.google-generate-content`, and a registry resolves an adapter
+ * BY ID. The overlay row was corrected first, which hid the layer's own defect — and `--offline`
+ * validates the upstream layer STANDALONE precisely so a shadowed row is still checked.
+ *
+ * A provider's allowlist row may override this too (`adapterIdOverride`), which is the reviewed door.
+ */
+const EXECUTOR_ADAPTER_OVERRIDE: Readonly<Record<string, string>> = {
+  vertex: "winter.vertex-gemini",
+};
+
 /** `reasoningTransport` -> the descriptor's continuation kind. */
 const TRANSPORT_TO_CONTINUATION: Readonly<Record<string, ReasoningCapabilities["continuation"]>> = {
   opaque: "opaque-provider-state",
@@ -130,6 +166,27 @@ const PROTOCOL_TO_ADAPTER: Readonly<Record<ProviderProtocol, { family: string; a
   "bedrock-converse": { family: "bedrock", adapterId: "winter.bedrock-converse" },
   "azure-openai": { family: "openai", adapterId: "winter.azure-openai" },
   custom: { family: "custom", adapterId: "winter.custom" },
+};
+
+/**
+ * Adapter id -> the ONE protocol it speaks. The reverse of `PROTOCOL_TO_ADAPTER`, plus the adapters
+ * a protocol does not imply.
+ *
+ * Exported because the cross-layer gate must key on the ADAPTER, not on the provider's `protocols`
+ * list: resolution hands a model to `provider.adapterId` and nothing reads `protocols` at all, so a
+ * gate that consulted the list passed a responses-only model under a provider that merely DECLARED
+ * `openai-responses` while its adapter spoke Chat Completions.
+ */
+export const ADAPTER_PROTOCOL: Readonly<Record<string, ProviderProtocol>> = {
+  "winter.openai-responses": "openai-responses",
+  "winter.openai-chat-completions": "openai-chat-completions",
+  "winter.local-openai": "openai-chat-completions",
+  "winter.codex-oauth": "openai-responses",
+  "winter.azure-openai": "azure-openai",
+  "winter.anthropic-messages": "anthropic-messages",
+  "winter.google-generate-content": "google-generate-content",
+  "winter.vertex-gemini": "google-generate-content",
+  "winter.bedrock-converse": "bedrock-converse",
 };
 
 /** `targetFormat` on a MODEL, and whether the descriptor schema can express it. */
@@ -267,7 +324,12 @@ export function buildUpstreamLayer(input: BuildUpstreamLayerInput): UpstreamLaye
     const catalogued = categories.get(upstreamId)!;
     const hard = hardBlocked.get(upstreamId);
     if (hard !== undefined) {
-      reject(upstreamId, "provider", "category-local-live-discovery", upstreamId, catalogued.sourcePath, hard);
+      // The CLASS comes from the id's own upstream category, not a hardcode: a hand-blocked id can
+      // sit in any category, and stamping every one of them `category-local-live-discovery` was true
+      // only because today's two both happen to be `local`. The hand-written reason still wins over
+      // the category's generic one — that is the whole point of naming an id individually.
+      const disposition = allowlist.categoryDispositions[catalogued.category];
+      reject(upstreamId, "provider", disposition?.exclusionClass ?? "unsupported-shape", upstreamId, catalogued.sourcePath, hard);
       continue;
     }
     const disposition = allowlist.categoryDispositions[catalogued.category];
@@ -327,14 +389,26 @@ export function buildUpstreamLayer(input: BuildUpstreamLayerInput): UpstreamLaye
       reject(
         allowed.upstreamId,
         "field",
-        "unrepresentable-protocol",
+        "reviewed-normalization",
         `${allowed.upstreamId}.format`,
         registryPath,
         `upstream declares format ${JSON.stringify(format)} with executor ${JSON.stringify(executor)}: the OpenAI shape is what its own executor TRANSLATES FROM, not what the provider speaks on the wire. Winter records the executor's protocol (${protocol}) and drops the format claim.`,
       );
     }
 
-    const adapter = PROTOCOL_TO_ADAPTER[protocol];
+    const derived = PROTOCOL_TO_ADAPTER[protocol];
+    const adapterId = allowed.adapterIdOverride ?? EXECUTOR_ADAPTER_OVERRIDE[executor] ?? derived.adapterId;
+    const adapter = { family: derived.family, adapterId };
+    if (adapterId !== derived.adapterId) {
+      reject(
+        allowed.upstreamId,
+        "field",
+        "reviewed-normalization",
+        `${allowed.upstreamId}.executor`,
+        registryPath,
+        `executor ${JSON.stringify(executor)} speaks the ${protocol} dialect but is served by a DIFFERENT adapter: Winter records ${JSON.stringify(adapterId)} rather than the protocol's default ${JSON.stringify(derived.adapterId)}. A protocol is not an adapter, and a registry resolves BY ID.`,
+      );
+    }
     const baseUrl = str(entry, "baseUrl");
     const defaultEndpoints: Record<string, string> = {};
     // R6-11: generated endpoints are IMMUTABLE and must be parseable absolute URLs with no query
@@ -438,10 +512,17 @@ export function buildUpstreamLayer(input: BuildUpstreamLayerInput): UpstreamLaye
       // A REVIEWED id correction: an upstream id that is not what the provider documents on its own
       // wire. Applied here and RECORDED, never silently — the ledger row is what makes it auditable
       // against the pinned source, which is the whole reason `copied verbatim` is a provenance class.
-      const correction = allowlist.modelIdCorrections?.[allowed.upstreamId]?.[id];
-      const wireId = correction?.to ?? id;
-      if (correction !== undefined) {
-        reject(allowed.upstreamId, "model", "unrepresentable-protocol", `${allowed.upstreamId}.models[${id}].id`, registryPath, `reviewed model-id correction: upstream lists ${JSON.stringify(id)}, Winter records ${JSON.stringify(correction.to)}. ${correction.why}`);
+      const override = allowlist.modelOverrides?.[allowed.upstreamId]?.[id];
+      if (override?.exclude === true) {
+        reject(allowed.upstreamId, "model", "out-of-scope", `${allowed.upstreamId}.models[${id}]`, registryPath, `reviewed model exclusion: ${override.why}`);
+        continue;
+      }
+      const wireId = override?.id ?? id;
+      if (override?.id !== undefined) {
+        reject(allowed.upstreamId, "model", "reviewed-normalization", `${allowed.upstreamId}.models[${id}].id`, registryPath, `reviewed model-id correction: upstream lists ${JSON.stringify(id)}, Winter records ${JSON.stringify(override.id)}. ${override.why}`);
+      }
+      if (override?.status !== undefined) {
+        reject(allowed.upstreamId, "model", "reviewed-normalization", `${allowed.upstreamId}.models[${id}].status`, registryPath, `reviewed status override: ${JSON.stringify(override.status)} rather than this provider's ${JSON.stringify(allowed.initialModelStatus ?? "candidate")}. ${override.why}`);
       }
 
       seen.add(id);
@@ -463,9 +544,18 @@ export function buildUpstreamLayer(input: BuildUpstreamLayerInput): UpstreamLaye
       const toolCalling = bool(raw, "toolCalling");
       const efforts = strArray(raw, "supportedThinkingEfforts") ?? providerEfforts ?? [];
       const reasoningSupported = bool(raw, "supportsReasoning") === true || efforts.length > 0;
+      // FAILS OPEN, deliberately and visibly. `toolCalling` fails CLOSED because a wrong `native`
+      // admits an unproven model to the agent modes; an empty `unsupportedParameters` only means
+      // Winter will not pre-reject a parameter, and the provider's own 400 is the backstop. But
+      // upstream writes some of these as `Object.freeze([...])` — a call the extractor never
+      // evaluates — so an empty list can mean "upstream says none" OR "we could not read it", and
+      // the two must not look alike. Every unreadable one gets a ledger row.
       const unsupportedParameters = strArray(raw, "unsupportedParams") ?? [];
+      if (raw["unsupportedParams"] === undefined && rawHasUnreadableUnsupportedParams(input.moduleRejections, registryPath, id)) {
+        reject(allowed.upstreamId, "model", "unresolved-reference", `${allowed.upstreamId}.models[${id}].unsupportedParams`, registryPath, "upstream states unsupported parameters for this model, but as a value the literal extractor refuses (a call expression, or an identifier resolving to one). The row ships with an EMPTY `unsupportedParameters`, which fails OPEN: Winter will not pre-reject a parameter the provider does reject, and the provider's own error is the backstop. Correct it in the overlay with real evidence if the model matters.");
+      }
       // A corrected id keeps the upstream spelling as an ALIAS, so both resolve to the corrected wire id.
-      const aliases = [...(strArray(raw, "aliases") ?? []), ...(correction !== undefined ? [id] : [])].filter((alias) => alias !== wireId);
+      const aliases = [...(strArray(raw, "aliases") ?? []), ...(override?.id !== undefined ? [id] : [])].filter((alias) => alias !== wireId);
       const ref = `${registryPath}#${id}`;
 
       const reasoning: ReasoningCapabilities | undefined = reasoningSupported
@@ -491,7 +581,13 @@ export function buildUpstreamLayer(input: BuildUpstreamLayerInput): UpstreamLaye
         ...(maxInput !== undefined ? { maxInputTokens: upstreamEvidence(maxInput, observedAt, ref) } : {}),
         ...(maxOutput !== undefined ? { maxOutputTokens: upstreamEvidence(maxOutput, observedAt, ref) } : {}),
         inputModalities: upstreamEvidence(inputModalities, observedAt, ref),
-        outputModalities: upstreamEvidence(["text"], observedAt, ref),
+        // NOT `upstreamEvidence`. Upstream's `RegistryModel` declares NO output modality at all, so
+        // `["text"]` is Winter's own inference for a chat registry — stamping it `inferred` beside an
+        // `upstream-static` source read as "upstream said text", which is a false claim wearing an
+        // upstream label. `confidence: "unknown"` plus a sourceRef that says so in words is the
+        // honest maximum here: `EvidenceSource` is frozen (src/types.ts) and has no `winter-derived`
+        // member, so the caveat cannot live in the source field. Disclosed in PROVENANCE.md.
+        outputModalities: { value: ["text"], source: "upstream-static", sourceRef: `${ref} — WINTER DEFAULT: upstream declares no output modality for any model; "text" is Winter's inference for a chat registry, NOT an upstream statement`, observedAt, confidence: "unknown" },
         // WS-13 §8.1 read fail-closed. Upstream states tool calling on SOME rows only, and an
         // unstated capability is unknown — so an absent flag becomes `none` at `confidence:
         // "unknown"`, never `native`. `native` is what makes a model agent-eligible; inferring it
@@ -508,7 +604,7 @@ export function buildUpstreamLayer(input: BuildUpstreamLayerInput): UpstreamLaye
             : upstreamEvidence(toolCalling, observedAt, ref),
         ...(reasoning !== undefined ? { reasoning } : {}),
         unsupportedParameters,
-        status: allowed.initialModelStatus ?? "candidate",
+        status: override?.status ?? allowed.initialModelStatus ?? "candidate",
       });
     }
   }
@@ -535,6 +631,17 @@ export function buildUpstreamLayer(input: BuildUpstreamLayerInput): UpstreamLaye
     models,
     rejections,
   };
+}
+
+/**
+ * Did the extractor REFUSE this model's `unsupportedParams`, as opposed to upstream not stating any?
+ *
+ * The two produce the same empty array, and only one of them is a gap. The field rejections the
+ * extractor already emitted are the evidence, matched by source path and the model's position in the
+ * rejection path (`…models[17].unsupportedParams`) or by the model id where the walker recorded it.
+ */
+function rawHasUnreadableUnsupportedParams(rejections: readonly Rejection[], sourcePath: string, modelId: string): boolean {
+  return rejections.some((r) => r.sourcePath === sourcePath && r.path.endsWith(".unsupportedParams") && (r.path.includes(`[${modelId}]`) || r.path.includes("models[")));
 }
 
 function safeUrl(value: string): URL | undefined {
