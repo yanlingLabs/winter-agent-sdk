@@ -83,7 +83,7 @@ function isRecord(value: LiteralValue | undefined): value is { [key: string]: Li
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-interface ExtractionOutcome {
+export interface ExtractionOutcome {
   layer: UpstreamLayer;
   manifest: ReturnType<typeof buildExtractionManifest>;
   denominator: DenominatorReport;
@@ -366,9 +366,9 @@ if (import.meta.main) {
   process.exit(await main(process.argv.slice(2)));
 }
 
-export { main, runExtraction, runOffline, COPIED, CATEGORY_CONSTS, registryIdentifierNames, upstreamIdForRejection };
+export { main, runExtraction, runOffline, writeOutputs, COPIED, CATEGORY_CONSTS, APIKEY_BARREL, REGISTRY_INDEX, CLAIM_SOURCES, registryIdentifierNames, upstreamIdForRejection, THIRD_PARTY, PKG };
 
-/** Local helper the tests reuse: every `.ts` file under a directory, repository-relative. */
+/** Local helper the tests reuse: every file under a directory, repository-relative. */
 export function listSourceFiles(root: string): Array<{ path: string; text: string }> {
   const out: Array<{ path: string; text: string }> = [];
   const walk = (dir: string): void => {

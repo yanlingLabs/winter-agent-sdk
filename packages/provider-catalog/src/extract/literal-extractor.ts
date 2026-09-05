@@ -389,37 +389,63 @@ export function extractModuleLiterals(sourcePath: string, text: string, options:
   return { sourcePath, values, rejections, outOfAllowlistImports, importOrigins };
 }
 
+/** How many times `extractAll` may re-walk the set before declaring the resolution stuck. */
+const MAX_RESOLUTION_PASSES = 8;
+
 /**
  * Extract a whole materialized set, resolving cross-module identifier references between
  * ALLOWLISTED files only.
  *
- * Two passes, because upstream's own import graph is not topologically ordered for us and a single
- * pass would drop `openai/index.ts`'s `...GPT_5_6_API_CAPABILITIES` purely because `shared.ts`
- * happened to sort later. Two passes are enough for the depth upstream actually uses (a shared
- * constants module referenced by leaf registry entries) and are bounded by construction — a third
- * pass could only add values that a second one already reached.
+ * ITERATES TO A FIXPOINT rather than running a fixed number of passes, because upstream's import
+ * graph is neither topologically ordered nor shallow. The real chain at the pin is three deep and
+ * runs BACKWARDS against filename order:
+ *
+ *     open-sse/config/providers/index.ts          (REGISTRY -> each provider identifier)
+ *       <- registry/openai/index.ts               (a model spreads GPT_5_6_API_CAPABILITIES)
+ *         <- shared.ts                            (where that constant is declared)
+ *
+ * `index.ts` sorts FIRST and `shared.ts` LAST, so a two-pass version resolved the leaf entries but
+ * handed `index.ts` the stale first-pass copies — and the whole GPT-5.6 family silently lost its
+ * context window, modalities and Responses endpoint while every row still looked plausible. A
+ * fixpoint has no such off-by-one: it stops when a pass adds nothing, and the pass budget exists
+ * only so a pathological graph terminates rather than looping.
+ *
+ * Values accumulate into ONE map that later files in the SAME pass can already read, so a forward
+ * dependency costs no extra pass at all.
  */
 export function extractAll(files: ReadonlyArray<{ path: string; text: string }>): {
   modules: Map<string, ModuleLiterals>;
   exports: Map<string, LiteralValue>;
+  passes: number;
 } {
   const materializedPaths = new Set(files.map((f) => f.path));
-  let exports = new Map<string, LiteralValue>();
+  const exports = new Map<string, LiteralValue>();
   let modules = new Map<string, ModuleLiterals>();
+  let passes = 0;
+  let previous = "";
 
-  for (let pass = 0; pass < 2; pass++) {
-    const nextExports = new Map<string, LiteralValue>();
+  for (let pass = 0; pass < MAX_RESOLUTION_PASSES; pass++) {
+    passes = pass + 1;
     modules = new Map<string, ModuleLiterals>();
     for (const file of files) {
       const module = extractModuleLiterals(file.path, file.text, { externals: exports, materializedPaths });
       modules.set(file.path, module);
       for (const [name, value] of module.values) {
-        nextExports.set(`${file.path}#${name}`, value);
-        if (!nextExports.has(`#${name}`)) nextExports.set(`#${name}`, value);
+        // Unconditional, so a later pass's better-resolved value REPLACES an earlier partial one.
+        // The path-qualified key is what a resolvable import uses; the bare `#name` fallback is
+        // consulted only when a specifier did not resolve to a materialized path, and it is
+        // last-writer-wins in a deterministic file order.
+        exports.set(`${file.path}#${name}`, value);
+        exports.set(`#${name}`, value);
       }
     }
-    exports = nextExports;
+    // Compare the whole extracted state, not just the map size: a pass that REPLACES a partial value
+    // with a complete one adds no keys, and stopping on size alone would freeze exactly the
+    // half-resolved rows this loop exists to finish.
+    const snapshot = JSON.stringify([...modules].map(([path, m]) => [path, [...m.values]]));
+    if (snapshot === previous) break;
+    previous = snapshot;
   }
 
-  return { modules, exports };
+  return { modules, exports, passes };
 }

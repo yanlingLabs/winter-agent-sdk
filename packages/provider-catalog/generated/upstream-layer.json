@@ -2249,9 +2249,23 @@
       "displayName": "GPT-5.6",
       "aliases": [],
       "endpoints": [
-        "chat"
+        "responses"
       ],
       "contextWindow": {
+        "value": 1050000,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "maxInputTokens": {
+        "value": 922000,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "maxOutputTokens": {
         "value": 128000,
         "source": "upstream-static",
         "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6",
@@ -2260,7 +2274,8 @@
       },
       "inputModalities": {
         "value": [
-          "text"
+          "text",
+          "image"
         ],
         "source": "upstream-static",
         "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6",
@@ -2277,18 +2292,29 @@
         "confidence": "inferred"
       },
       "toolCalling": {
-        "value": "none",
+        "value": "native",
         "source": "upstream-static",
         "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "confidence": "inferred"
       },
       "nativeTools": {
-        "value": false,
+        "value": true,
         "source": "upstream-static",
         "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "confidence": "inferred"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "upstream-static",
+          "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6",
+          "observedAt": "2026-09-05T00:00:00Z",
+          "confidence": "inferred"
+        },
+        "efforts": [],
+        "continuation": "opaque-provider-state"
       },
       "unsupportedParameters": [],
       "status": "candidate"
@@ -2300,9 +2326,23 @@
       "displayName": "GPT-5.6 Luna",
       "aliases": [],
       "endpoints": [
-        "chat"
+        "responses"
       ],
       "contextWindow": {
+        "value": 1050000,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6-luna",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "maxInputTokens": {
+        "value": 922000,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6-luna",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "maxOutputTokens": {
         "value": 128000,
         "source": "upstream-static",
         "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6-luna",
@@ -2311,7 +2351,8 @@
       },
       "inputModalities": {
         "value": [
-          "text"
+          "text",
+          "image"
         ],
         "source": "upstream-static",
         "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6-luna",
@@ -2328,18 +2369,29 @@
         "confidence": "inferred"
       },
       "toolCalling": {
-        "value": "none",
+        "value": "native",
         "source": "upstream-static",
         "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6-luna",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "confidence": "inferred"
       },
       "nativeTools": {
-        "value": false,
+        "value": true,
         "source": "upstream-static",
         "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6-luna",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "confidence": "inferred"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "upstream-static",
+          "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6-luna",
+          "observedAt": "2026-09-05T00:00:00Z",
+          "confidence": "inferred"
+        },
+        "efforts": [],
+        "continuation": "opaque-provider-state"
       },
       "unsupportedParameters": [],
       "status": "candidate"
@@ -2351,9 +2403,23 @@
       "displayName": "GPT-5.6 Sol",
       "aliases": [],
       "endpoints": [
-        "chat"
+        "responses"
       ],
       "contextWindow": {
+        "value": 1050000,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6-sol",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "maxInputTokens": {
+        "value": 922000,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6-sol",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "maxOutputTokens": {
         "value": 128000,
         "source": "upstream-static",
         "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6-sol",
@@ -2362,7 +2428,8 @@
       },
       "inputModalities": {
         "value": [
-          "text"
+          "text",
+          "image"
         ],
         "source": "upstream-static",
         "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6-sol",
@@ -2379,18 +2446,29 @@
         "confidence": "inferred"
       },
       "toolCalling": {
-        "value": "none",
+        "value": "native",
         "source": "upstream-static",
         "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6-sol",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "confidence": "inferred"
       },
       "nativeTools": {
-        "value": false,
+        "value": true,
         "source": "upstream-static",
         "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6-sol",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "confidence": "inferred"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "upstream-static",
+          "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6-sol",
+          "observedAt": "2026-09-05T00:00:00Z",
+          "confidence": "inferred"
+        },
+        "efforts": [],
+        "continuation": "opaque-provider-state"
       },
       "unsupportedParameters": [],
       "status": "candidate"
@@ -2402,9 +2480,23 @@
       "displayName": "GPT-5.6 Terra",
       "aliases": [],
       "endpoints": [
-        "chat"
+        "responses"
       ],
       "contextWindow": {
+        "value": 1050000,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6-terra",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "maxInputTokens": {
+        "value": 922000,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6-terra",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "maxOutputTokens": {
         "value": 128000,
         "source": "upstream-static",
         "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6-terra",
@@ -2413,7 +2505,8 @@
       },
       "inputModalities": {
         "value": [
-          "text"
+          "text",
+          "image"
         ],
         "source": "upstream-static",
         "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6-terra",
@@ -2430,18 +2523,29 @@
         "confidence": "inferred"
       },
       "toolCalling": {
-        "value": "none",
+        "value": "native",
         "source": "upstream-static",
         "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6-terra",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "confidence": "inferred"
       },
       "nativeTools": {
-        "value": false,
+        "value": true,
         "source": "upstream-static",
         "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6-terra",
         "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "confidence": "inferred"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "upstream-static",
+          "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6-terra",
+          "observedAt": "2026-09-05T00:00:00Z",
+          "confidence": "inferred"
+        },
+        "efforts": [],
+        "continuation": "opaque-provider-state"
       },
       "unsupportedParameters": [],
       "status": "candidate"
