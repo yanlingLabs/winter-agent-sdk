@@ -64,6 +64,18 @@ export interface ResolvedMcpServerEntry {
   name: string;
   origin: McpConfigSourceOrigin;
   config: McpServerConfigForProcessTransport;
+  /**
+   * RULING P5-K (fix wave): present means "this declaration is VALID but must not connect until the
+   * host says so", and the string is the human-readable why. `createMcpLifecycle` gives such an entry
+   * a slot in the `disabled` state carrying this reason, `start()` makes no connection attempt for
+   * it, and `enableSlot(name)` connects it -- a toggle being, by construction, a host decision.
+   *
+   * DISTINCT FROM `rejected`, deliberately. A rejected declaration is WRONG (malformed, reserved
+   * name, unknown type) and never becomes a slot at all -- it is invisible, which is the right answer
+   * for something that could never work. An untrusted project server is not wrong; it is not yet
+   * permitted, and a host that cannot see it cannot permit it.
+   */
+  disabledReason?: string;
 }
 export interface ShadowedMcpServerEntry {
   name: string;
@@ -122,11 +134,6 @@ function validateServerConfig(raw: unknown): { ok: true; config: McpServerConfig
 }
 export { validateServerConfig };
 
-function isStdioLikeRaw(raw: unknown): boolean {
-  const type = (raw as { type?: unknown } | null)?.type;
-  return type === undefined || type === "stdio";
-}
-
 // Pure function of injected source maps + a trust boolean (no file I/O, no settings-loader, no
 // trust-computation -- ruleset.ts's own `{trustedWorkspace: boolean}` parameter precedent is
 // followed exactly: WHERE `.winter/mcp.json`/settings actually get read from disk, and HOW
@@ -171,17 +178,38 @@ export function resolveMcpServerSources(sources: readonly McpServerSource[], opt
           rejected.push({ name, origin, reason: `"${WINTER_SERVER_NAME}" is a reserved server identity (RULING P4-B, the standing Winter server) -- no source may configure a live MCP server under this name` });
           continue;
         }
-        // WS-09 §1.2 Trust: "a checked-in .winter/mcp.json never auto-runs a stdio server in an
-        // untrusted workspace" -- named for stdio specifically (the highest-risk capability, local
-        // process execution); http/sse/sdk project-sourced configs are NOT gated here, a disclosed
-        // scoping choice rather than a silent broadening of WS-09's own literal MUST.
-        if (origin === "project" && isStdioLikeRaw(raw) && !opts.trustedWorkspace) {
-          rejected.push({ name, origin, reason: "project-sourced stdio MCP server configs require a trusted workspace (WS-09 §1.2, the P2-H class); this workspace is not trusted" });
-          continue;
-        }
         const validated = validateServerConfig(raw);
         if (!validated.ok) {
           rejected.push({ name, origin, reason: validated.reason });
+          continue;
+        }
+        // RULING P5-K (fix wave), amending WS-09 §1.2: a PROJECT-sourced server of ANY transport
+        // requires host-declared trust before it connects.
+        //
+        // P4's gate was stdio-literal ("a checked-in .winter/mcp.json never auto-runs a stdio server
+        // in an untrusted workspace") because process execution was the visible danger. P5 is the
+        // phase that made a cloned repository a PRODUCER for that gate -- `.winter/mcp.json` and a
+        // project `settings.json` `mcpServers` block both feed it now -- and an http/sse server from
+        // a cloned repository is a capability grant too: it receives the session's tool calls with
+        // conversation-derived arguments, and its tool results and descriptions are text the model
+        // reads. The transport is not what makes it dangerous.
+        //
+        // DISABLED, NOT REJECTED. §1.2's trust row calls project-sourced configs capability grants
+        // that follow the project-trust discipline; the host is the one who declares trust, and a
+        // server it cannot see is one it cannot decide about. So the declaration survives, visible,
+        // with its reason, and the host's own enable toggle is the trust decision.
+        //
+        // ONLY `project`. The `plugin` origin stays ungated (host-listed in `Options.plugins`, a
+        // decision made outside the repository -- settings/loaders/plugin-mcp.ts's own reasoning);
+        // `settings` covers the user/local/managed tiers, whose authority is the user's own
+        // (settings/loaders/mcp-config.ts's `ORIGIN_BY_SETTING_SOURCE`); `explicit` is the host's.
+        if (origin === "project" && !opts.trustedWorkspace) {
+          resolved.push({
+            name,
+            origin,
+            config: validated.config,
+            disabledReason: `project-sourced MCP server configs require a trusted workspace (WS-09 §1.2 as amended by RULING P5-K, the P2-H class); this workspace is not trusted, so "${name}" is loaded disabled and can be enabled by the host`,
+          });
           continue;
         }
         resolved.push({ name, origin, config: validated.config });
@@ -480,7 +508,19 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
     // "pending")` anyway, so this placeholder is observable only in the narrow window between
     // construction and `start()` -- a real state, not a lie, since every one of these servers IS
     // about to attempt a connection.
-    slots.set(entry.name, { name: entry.name, origin: entry.origin, config: entry.config, toolNames: [], state: "pending", gen: 0 });
+    // RULING P5-K: a trust-disabled entry is constructed `disabled` HERE rather than made `pending`
+    // and skipped in `start()` -- a slot left pending that nothing will ever connect would make the
+    // blocking-batch path (`waitForPending`, MCP_CONNECTION_NONBLOCKING=0) burn the whole connect
+    // deadline waiting for a transition that cannot come.
+    slots.set(entry.name, {
+      name: entry.name,
+      origin: entry.origin,
+      config: entry.config,
+      toolNames: [],
+      state: entry.disabledReason !== undefined ? "disabled" : "pending",
+      ...(entry.disabledReason !== undefined ? { error: entry.disabledReason } : {}),
+      gen: 0,
+    });
   }
 
   function installExecutorsForSlot(slot: ConnectionSlot, tools: readonly McpToolInfo[]): void {
@@ -679,6 +719,9 @@ export function createMcpLifecycle(deps: McpLifecycleDeps): McpLifecycle {
   async function start(): Promise<void> {
     const alwaysLoadWaits: Promise<void>[] = [];
     for (const slot of slots.values()) {
+      // RULING P5-K: a slot the host has not trusted (or has toggled off) is not connected at
+      // startup, on any transport. It keeps its state and its reason, and `enableSlot` is the door.
+      if (slot.state === "disabled") continue;
       // RULING P4-C's state-only feed applies ONLY when there is no live instance to actually
       // connect to (T3's own engine.ts is the real tool bridge for that case, see this file's own
       // header) -- an "sdk" entry THIS caller supplied a real `inProcessServers[name]` for (this

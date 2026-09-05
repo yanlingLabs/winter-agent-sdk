@@ -101,10 +101,10 @@ describe("resolveMcpServerSources: precedence, strictMcpConfig, trust gating, va
     expect(result.rejected[0]!.reason).toContain("reserved");
   });
 
-  test("project-sourced stdio config is rejected in an untrusted workspace (WS-09 §1.2 trust gate)", () => {
+  test("RULING P5-K: an untrusted project-sourced stdio config loads DISABLED with a visible reason, never connected", () => {
     const result = resolveMcpServerSources([{ origin: "project", servers: { local: { command: "x" } } }], { trustedWorkspace: false });
-    expect(result.resolved).toEqual([]);
-    expect(result.rejected[0]!.reason).toContain("trusted workspace");
+    expect(result.rejected).toEqual([]);
+    expect(result.resolved).toEqual([{ name: "local", origin: "project", config: { command: "x" }, disabledReason: expect.stringContaining("trusted workspace") as unknown as string }]);
   });
 
   test("project-sourced stdio config is ACCEPTED in a trusted workspace", () => {
@@ -112,25 +112,123 @@ describe("resolveMcpServerSources: precedence, strictMcpConfig, trust gating, va
     expect(result.resolved).toEqual([{ name: "local", origin: "project", config: { command: "x" } }]);
   });
 
-  test("project-sourced http/sse configs are NOT trust-gated (disclosed scope: WS-09 §1.2 names stdio specifically)", () => {
+  test("RULING P5-K: an untrusted project-sourced HTTP config is gated too -- the transport is not what makes it a capability grant", () => {
+    // P4's gate was stdio-only because only process spawning looked dangerous. An http/sse server
+    // from a cloned repository receives the session's tool calls (exfiltration by argument) and
+    // answers with tool results and descriptions the model reads -- in a workspace the host never
+    // declared trusted.
     const result = resolveMcpServerSources([{ origin: "project", servers: { remote: { type: "http", url: "https://example.com/mcp" } } }], { trustedWorkspace: false });
-    expect(result.resolved).toEqual([{ name: "remote", origin: "project", config: { type: "http", url: "https://example.com/mcp" } }]);
+    expect(result.resolved).toEqual([
+      { name: "remote", origin: "project", config: { type: "http", url: "https://example.com/mcp" }, disabledReason: expect.stringContaining("trusted workspace") as unknown as string },
+    ]);
   });
 
-  test("a rejected higher-precedence declaration still claims the name -- a lower-precedence source never silently backfills it", () => {
+  test("RULING P5-K: user/settings and plugin tiers are UNCHANGED -- only `project` is gated", () => {
+    const result = resolveMcpServerSources(
+      [
+        { origin: "settings", servers: { fromUser: { type: "http", url: "https://example.com/u" } } },
+        { origin: "plugin", servers: { fromPlugin: { command: "p" } } },
+      ],
+      { trustedWorkspace: false },
+    );
+    expect(result.resolved.map((r) => ({ name: r.name, disabled: r.disabledReason !== undefined }))).toEqual([
+      { name: "fromUser", disabled: false },
+      { name: "fromPlugin", disabled: false },
+    ]);
+  });
+
+  test("an untrusted project config that is also MALFORMED is still a rejection -- the trust gate does not launder a bad config into a toggleable one", () => {
+    const result = resolveMcpServerSources([{ origin: "project", servers: { bad: { type: "http" } } }], { trustedWorkspace: false });
+    expect(result.resolved).toEqual([]);
+    expect(result.rejected[0]!.reason).toContain("url");
+  });
+
+  test("a disabled-by-trust higher-precedence declaration still claims the name -- a lower-precedence source never silently backfills it", () => {
     const sources: McpServerSource[] = [
-      { origin: "project", servers: { gh: { command: "project-cmd" } } }, // untrusted -> rejected
+      { origin: "project", servers: { gh: { command: "project-cmd" } } }, // untrusted -> disabled, not replaced
       { origin: "plugin", servers: { gh: { command: "plugin-cmd" } } }, // valid, but lower precedence than project
     ];
     const result = resolveMcpServerSources(sources, { trustedWorkspace: false });
-    expect(result.resolved).toEqual([]); // NOT plugin's config -- project already claimed "gh"
-    expect(result.rejected).toHaveLength(1);
+    expect(result.resolved.map((r) => r.config)).toEqual([{ command: "project-cmd" }]); // NOT plugin's config
+    expect(result.resolved[0]!.disabledReason).toBeDefined();
     expect(result.shadowed).toEqual([{ name: "gh", origin: "plugin", shadowedBy: "project" }]);
   });
 
   test("an absent 'type' is treated as stdio for validation purposes", () => {
     const result = resolveMcpServerSources([{ origin: "explicit", servers: { s: { command: "x", args: ["--flag"] } } }], { trustedWorkspace: true });
     expect(result.resolved).toEqual([{ name: "s", origin: "explicit", config: { command: "x", args: ["--flag"] } }]);
+  });
+});
+
+describe("RULING P5-K: an untrusted project server reaches the lifecycle DISABLED, and stays host-toggleable", () => {
+  /** Wraps a fixture server so every CONNECTION ATTEMPT is counted -- `disabled` must mean zero. */
+  function counting(server: InProcessMcpServer): { server: InProcessMcpServer; connects: () => number } {
+    let connects = 0;
+    return {
+      server: {
+        connect: async (transport) => {
+          connects++;
+          return server.connect(transport);
+        },
+      },
+      connects: () => connects,
+    };
+  }
+
+  test("start() makes NO connection attempt for it, and its state carries the trust reason", async () => {
+    const fixture = createFixtureMcpServer(defaultFixtureSpec());
+    const probe = counting(fixture);
+    const resolved: ResolvedMcpServerEntry[] = [{ name: "repo", origin: "project", config: { type: "sdk", name: "repo" }, disabledReason: "project-sourced MCP servers require a trusted workspace" }];
+    const lifecycle = createMcpLifecycle({ servers: resolved, envConfig: fastEnv(), elicitationAsk: NO_ELICIT, inProcessServers: { repo: probe.server } });
+    try {
+      await lifecycle.start();
+      expect(probe.connects()).toBe(0);
+      const state = lifecycle.stateSource.snapshot()[0]!;
+      expect(state.state).toBe("disabled");
+      expect(state.error).toContain("trusted workspace");
+      expect(getRegisteredTool("mcp__repo__echo")).toBeUndefined(); // no tools -- the model cannot call it
+    } finally {
+      await lifecycle.dispose();
+      await fixture.close();
+    }
+  });
+
+  test("the host can TOGGLE it on -- a toggle is a host trust decision, and the reason clears when it connects", async () => {
+    const fixture = createFixtureMcpServer(defaultFixtureSpec());
+    const probe = counting(fixture);
+    const resolved: ResolvedMcpServerEntry[] = [{ name: "repo2", origin: "project", config: { type: "sdk", name: "repo2" }, disabledReason: "project-sourced MCP servers require a trusted workspace" }];
+    const lifecycle = createMcpLifecycle({ servers: resolved, envConfig: fastEnv(), elicitationAsk: NO_ELICIT, inProcessServers: { repo2: probe.server } });
+    try {
+      await lifecycle.start();
+      expect(probe.connects()).toBe(0);
+
+      // Through the HOST's own door: `McpControlSeam.toggle` is what a `mcp_toggle` control request
+      // reaches, and a toggle is a host trust decision by construction -- the model cannot issue one.
+      await lifecycle.controlSeam.toggle("repo2", true);
+      expect(probe.connects()).toBe(1);
+      const state = lifecycle.stateSource.snapshot()[0]!;
+      expect(state.state).toBe("connected");
+      expect(state.error).toBeUndefined(); // the trust reason belonged to the disabled state
+      expect(getRegisteredTool("mcp__repo2__echo")).toBeDefined();
+    } finally {
+      await lifecycle.dispose();
+      await fixture.close();
+    }
+  });
+
+  test("MCP_CONNECTION_NONBLOCKING=0 does not WAIT on a disabled slot -- it is never `pending`", async () => {
+    // The trap this pins: a slot constructed `pending` and skipped in `start()` would sit pending
+    // forever, and the blocking-batch path (`waitForPending`) would burn the whole connect deadline.
+    const resolved: ResolvedMcpServerEntry[] = [{ name: "repo3", origin: "project", config: { command: "never-run" }, disabledReason: "untrusted" }];
+    const lifecycle = createMcpLifecycle({ servers: resolved, envConfig: fastEnv({ connectionNonblocking: false, connectTimeoutMs: 5000 }), elicitationAsk: NO_ELICIT });
+    try {
+      const started = Date.now();
+      await lifecycle.start();
+      expect(Date.now() - started).toBeLessThan(1000);
+      expect(lifecycle.stateSource.snapshot()[0]!.state).toBe("disabled");
+    } finally {
+      await lifecycle.dispose();
+    }
   });
 });
 

@@ -71,9 +71,14 @@ describe("loadProjectMcpConfig: `.winter/mcp.json` (WS-01 §2.4)", () => {
     const sources = loadProjectMcpConfig({ cwd: repo }).sources;
     const untrusted = resolveMcpServerSources(sources, { trustedWorkspace: false });
     const trusted = resolveMcpServerSources(sources, { trustedWorkspace: true });
-    expect(untrusted.resolved).toEqual([]);
-    expect(untrusted.rejected[0]!.reason).toContain("trusted workspace");
+    // RULING P5-K (fix wave): the untrusted verdict is now "loaded DISABLED with a visible reason",
+    // not "rejected and invisible" -- the host is who declares trust, and a server it cannot see is
+    // one it cannot decide about. Either way the loader itself still computes no trust of its own,
+    // which is what this fixture is for.
+    expect(untrusted.resolved.map((r) => r.name)).toEqual(["local"]);
+    expect(untrusted.resolved[0]!.disabledReason).toContain("trusted workspace");
     expect(trusted.resolved.map((r) => r.name)).toEqual(["local"]);
+    expect(trusted.resolved[0]!.disabledReason).toBeUndefined();
   });
 });
 

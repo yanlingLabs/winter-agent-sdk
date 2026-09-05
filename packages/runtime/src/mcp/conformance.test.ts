@@ -453,7 +453,7 @@ const ITEM_10: ConformanceRow[] = [
     status: "covered",
     citations: [
       { file: "./lifecycle.test.ts", testName: "explicit beats settings beats project beats plugin for the same name; losers reported as shadowed, never merge" },
-      { file: "./lifecycle.test.ts", testName: "a rejected higher-precedence declaration still claims the name -- a lower-precedence source never silently bac" },
+      { file: "./lifecycle.test.ts", testName: "a disabled-by-trust higher-precedence declaration still claims the name -- a lower-precedence source never" },
       { file: "./lifecycle.test.ts", testName: "strictMcpConfig: only 'explicit' sources are even considered -- settings/project/plugin are skipped entirely, " },
     ],
     note:
@@ -471,6 +471,21 @@ const ITEM_10: ConformanceRow[] = [
     ],
     note:
       "RULING P4-H: §1.2's MUST is unsatisfiable through the SDK's own StdioClientTransport (the pinned 1.30.0 build spreads getDefaultEnvironment() unconditionally and never sets `detached`), so Winter ships its own Transport over node:child_process. The parent-canary fixture is the proof the ruling itself demanded.",
+  },
+  {
+    id: "WS09-10d",
+    spec: "WS-09 §11.10",
+    bullet: "project-sourced server configs follow the project-trust discipline (§1.2's trust row) -- RULING P5-K: ANY transport",
+    status: "covered",
+    citations: [
+      { file: "./lifecycle.test.ts", testName: "RULING P5-K: an untrusted project-sourced stdio config loads DISABLED with a visible reason, never conn" },
+      { file: "./lifecycle.test.ts", testName: "RULING P5-K: an untrusted project-sourced HTTP config is gated too -- the transport is not what makes it" },
+      { file: "./lifecycle.test.ts", testName: "RULING P5-K: user/settings and plugin tiers are UNCHANGED -- only `project` is gated" },
+      { file: "./lifecycle.test.ts", testName: "start() makes NO connection attempt for it, and its state carries the trust reason" },
+      { file: "./lifecycle.test.ts", testName: "the host can TOGGLE it on -- a toggle is a host trust decision, and the reason clears when it connects" },
+    ],
+    note:
+      "P4's gate was stdio-literal, a disclosed scoping choice made when process spawning was the only visible danger. P5 made a cloned repository a PRODUCER for that gate (.winter/mcp.json + a project settings.json mcpServers block), and an http/sse server from a clone is a capability grant too: it receives the session's tool calls with conversation-derived arguments and answers with text the model reads. The untrusted verdict is `disabled` with a visible reason rather than `rejected`, because the host is who declares trust and a server it cannot see is one it cannot decide about; the host's enable toggle IS the trust decision. `plugin` stays ungated (host-listed in Options.plugins).",
   },
   {
     id: "WS09-10c",
