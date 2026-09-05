@@ -3813,9 +3813,25 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
     ...("thinking" in turn && turn.thinking?.summary !== undefined ? { summary: turn.thinking.summary } : {}),
   });
 
-  // A hoisted `function`, not a `const` arrow: the pump closure below is written ABOVE this point
-  // in the file and calls it, and a block-scoped const would be a use-before-declaration error even
-  // though the call only ever happens long after this line has run.
+  /**
+   * R6-C / R6-I: apply a pending `set_model`.
+   *
+   * THE QUIESCENT BOUNDARY IS THE DEFAULT, and immediacy is the exception. A model swapped
+   * mid-generation would split one logical turn across two models, which is exactly the cross-model
+   * history the continuity package exists to avoid -- so a `set_model` arriving mid-turn is PARKED
+   * and applied before the next envelope's first generation. An INTERRUPT ends the turn, so the
+   * boundary has arrived early and the parked switch applies immediately; so does an IDLE session,
+   * where there is no turn to split and waiting would mean waiting for an envelope that may never come.
+   *
+   * The RESOLUTION itself is Lane C/T10's (this is the hook point, not the coordinator): the pending
+   * value is carried verbatim, the pin's three-way reset spelling is honoured HERE because getting it
+   * wrong silently treats the literal string `'default'` as a model id, and the swap is announced on
+   * the Winter-only `system/model_switch` frame plus the dialect record's `providerHistory`.
+   *
+   * A hoisted `function`, not a `const` arrow: the pump closure is written ABOVE this point in the
+   * file and calls it, and a block-scoped const would be a use-before-declaration error even though
+   * the call only ever happens long after this line has run.
+   */
   function applyPendingModelSwitch(reason: "set_model" | "interrupt"): void {
     if (pendingModelSwitch === undefined) return;
     const requested = pendingModelSwitch.model;

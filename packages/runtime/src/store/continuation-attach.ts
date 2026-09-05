@@ -63,7 +63,22 @@ export async function attachContinuationChain(opts: AttachContinuationChainOptio
     return;
   }
 
-  const anchors = new Set(messages.flatMap((m) => (m.role === "assistant" && m.uuid !== undefined ? [m.uuid] : [])));
+  // AN ANCHOR THAT ALREADY CARRIES `origin` IN MEMORY IS PROVENANCE-COMPLETE, and it is excluded from
+  // everything below (review round 2).
+  //
+  // The case this exists for is a FORKED CHILD, and its mechanism is worth stating because it is not
+  // visible from any one file. A child writer's key reuses the PARENT's `sessionId` with a `subpath`,
+  // so an identity lookup by session matches the PARENT's row -- while the child's own fresh writer
+  // has zero records. Fork inheritance hands the child the parent's ALREADY-ANNOTATED messages, whose
+  // assistant entries carry uuids. Every precondition for "the sidecar was deleted" is therefore met
+  // by a perfectly healthy fork, and the resulting frame escapes to the PARENT's host stream.
+  //
+  // The rule that closes it is not a special case for forks: a message the engine already annotated
+  // has its provenance, and a sidecar it was never written to says nothing about it. Anchors WITHOUT
+  // an in-memory origin are still counted, so this is not a blanket suppression -- a mixed history
+  // warns for exactly the messages that genuinely lost their records.
+  const unresolved = messages.filter((m) => m.role === "assistant" && m.uuid !== undefined && m.origin === undefined);
+  const anchors = new Set(unresolved.map((m) => m.uuid!));
   if (anchors.size === 0) return;
 
   // ZERO RECORDS IS TWO DIFFERENT SITUATIONS, and the dialect record's identity block is what
@@ -94,9 +109,8 @@ export async function attachContinuationChain(opts: AttachContinuationChainOptio
 
   const chain = buildContinuationChain(records, anchors);
   let degraded = 0;
-  for (const message of messages) {
-    if (message.role !== "assistant" || message.uuid === undefined) continue;
-    const link = chain.get(message.uuid);
+  for (const message of unresolved) {
+    const link = chain.get(message.uuid!);
     if (link?.origin === undefined) {
       degraded++;
       continue;

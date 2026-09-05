@@ -117,3 +117,49 @@ describe("the guards", () => {
     expect(JSON.stringify(warnings)).not.toContain("ENCRYPTED-OPAQUE-ITEM");
   });
 });
+
+describe("round 2: a FORKED CHILD must not be told its parent's sidecar was deleted", () => {
+  // THE MECHANISM, stated because it is not obvious from any one file. A child writer's key reuses
+  // the PARENT's `sessionId` with a `subpath` (`buildChildTranscriptWriter`), so a summary lookup by
+  // sessionId matches the PARENT's row -- while the child's own fresh writer has zero records. Fork
+  // inheritance hands the child the parent's ALREADY-ANNOTATED messages, whose assistant entries
+  // carry uuids, so the anchor set is non-empty. Every precondition for `provider_state_deleted` is
+  // therefore met by a perfectly healthy fork, and the frame escapes to the PARENT's host stream.
+  //
+  // Two independent legs close it, and both are asserted here: an in-memory `origin` is proof of
+  // provenance regardless of what the sidecar says, and a subpath writer has no identity of its own.
+
+  test("leg (a): an anchor that ALREADY carries `origin` in memory is never counted as deleted", async () => {
+    // Inherited fork history is provenance-complete BY CONSTRUCTION -- the parent attached `origin`
+    // before the fork copied it -- so a sidecar it was never written to says nothing about it.
+    const messages: AttachableMessage[] = [
+      { role: "assistant", uuid: "a-1", origin: { providerId: "openai", modelKey: "openai/o-test", family: "openai" } },
+      { role: "assistant", uuid: "a-2", origin: { providerId: "openai", modelKey: "openai/o-test", family: "openai" } },
+    ];
+    const { warnings } = await attach({ messages, records: [], identity: { providerId: "openai", modelKey: "openai/o-test" } });
+    expect(warnings).toHaveLength(0);
+  });
+
+  test("leg (a): a MIXED history still warns for the anchors that genuinely have no provenance", async () => {
+    // The leg must not become a blanket suppression: an anchor with no in-memory origin AND no
+    // record is still a real degradation.
+    const messages: AttachableMessage[] = [
+      { role: "assistant", uuid: "a-1", origin: { providerId: "openai", modelKey: "openai/o-test", family: "openai" } },
+      { role: "assistant", uuid: "a-2" },
+    ];
+    const { warnings } = await attach({ messages, records: [], identity: { providerId: "openai", modelKey: "openai/o-test" } });
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]!.warning).toBe("provider_state_deleted");
+    expect(String(warnings[0]!.detail)).toContain("1 resumed assistant message");
+  });
+
+  test("leg (a): an in-memory origin also suppresses the per-anchor `provider_state_missing` count", async () => {
+    const messages: AttachableMessage[] = [
+      { role: "assistant", uuid: "a-1", origin: { providerId: "openai", modelKey: "openai/o-test", family: "openai" } },
+      { role: "assistant", uuid: "a-2" },
+    ];
+    const { warnings } = await attach({ messages, records: [record("a-3", "origin", {})] });
+    expect(warnings).toHaveLength(1);
+    expect(String(warnings[0]!.detail)).toContain("1 resumed assistant message");
+  });
+});
