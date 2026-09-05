@@ -149,7 +149,13 @@ export function getWorkflowSession(sessionId?: string): WorkflowSessionRuntime |
  *
  * With no argument it clears the LEGACY slot only -- never the whole map. Clearing every session
  * would reinstate I5 in the other direction: one run's teardown disabling every other live session's
- * workflows. `registerWorkflowSession`'s returned disposer is the preferred form.
+ * workflows.
+ *
+ * AT ENGINE TEARDOWN, USE THE DISPOSER `registerWorkflowSession` RETURNS -- never
+ * `clearWorkflowSession(config.sessionId)`. First-wins protects REGISTRATION from a child engine
+ * (which arrives with its parent's `config.sessionId`); only the identity-checked disposer protects
+ * WITHDRAWAL from the same child, whose teardown would otherwise delete its still-running parent's
+ * entry by key. This by-key form is for a host that is genuinely ending that session.
  */
 export function clearWorkflowSession(sessionId?: string): void {
   if (sessionId === undefined) {

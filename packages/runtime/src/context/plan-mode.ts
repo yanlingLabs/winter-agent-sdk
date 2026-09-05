@@ -76,6 +76,14 @@ export interface PlanModeInput {
 // and `<`/`>` tag boundaries. A Windows-style `C:\...` path is refused; Winter is POSIX-targeted and
 // the whole settings tier is `~/.winter`-shaped.
 //
+// DISCLOSED SCOPE: the alphabet is ASCII, so a legitimate NON-ASCII directory (`plans/計画`) is
+// refused and the default is used -- silently, because this render site has no error channel (the
+// settings half reports project-tier violations; a user-tier value simply arrives). Deliberate for
+// now: widening to unicode admits a large class of look-alike and bidi characters into `system` for
+// a case Winter has not yet seen, and the cost of the refusal is that plans are written to the
+// default directory. Revisit with a real report, and widen with a fixture rather than by loosening
+// the regex.
+//
 // THE SECOND HALF OF THIS RULING is settings-side (another lane's file): a PROJECT-tier
 // `plansDirectory` is accepted only as a relative path under the project root and is reported as an
 // error on that source otherwise, while the user/managed tiers may set absolute paths. This function

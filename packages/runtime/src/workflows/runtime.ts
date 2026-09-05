@@ -397,8 +397,10 @@ export class WorkflowRuntime {
       {
         ...rest,
         // I6: the NEW source/meta and the NEW args win over the recorded launch; absent, the
-        // recorded ones stand. `"args" in opts` rather than `!== undefined`, so an explicit
-        // `args: undefined` (a script whose author cleared them) is honoured as a change.
+        // recorded ones stand. `"args" in opts` rather than `!== undefined`, so a caller of THIS
+        // method can clear args by passing `args: undefined` explicitly. The tool executor cannot
+        // express that (it conditional-spreads on `!== undefined`, matching the launch path), so
+        // through `Workflow` the rule is simply "args given = args replaced".
         ...(opts.replacement !== undefined ? { source: opts.replacement.source, meta: opts.replacement.meta } : {}),
         ...("args" in opts ? { args: opts.args } : {}),
         ...(opts.parentToolUseId !== undefined ? { parentToolUseId: opts.parentToolUseId } : {}),
