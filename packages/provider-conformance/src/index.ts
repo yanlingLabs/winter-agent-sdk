@@ -43,6 +43,15 @@ export type { FakeRoute, FakeServer, RecordedRequest, ScenarioResponder, Scenari
 export { CORPUS_CASES, formatCorpusReport, runAdapterCorpus } from "./corpus/runner.ts";
 export type { CorpusCaseContext, CorpusCaseId, CorpusCaseImpl, CorpusCaseOutcome, CorpusCaseResult, CorpusCaseSpec, CorpusReport, RunAdapterCorpusOptions } from "./corpus/runner.ts";
 
+// --- Phase 6 Lane C: the continuity corpus -------------------------------------------------------
+//
+// Report §12.3's eight named switch cases and its §12.4 security proofs, as DATA plus a runner --
+// the pair-shaped counterpart to `runner.ts`'s per-adapter questions. Exported here so a consumer
+// reaches it through the package's own surface rather than by path (review round 1, minor 4);
+// `corpus/runner.ts` and `fakes/server.ts` remain untouched.
+export { CONTINUITY_CASES, CONTINUITY_CASE_IMPLS, OPAQUE_MARKERS, claudeTurn, createContinuityWorld, formatContinuityReport, openaiTurn, runContinuityCorpus } from "./corpus/continuity.ts";
+export type { ContinuityCaseContext, ContinuityCaseId, ContinuityCaseImpl, ContinuityCaseOutcome, ContinuityCaseSpec, ContinuityReport, ContinuityWorld } from "./corpus/continuity.ts";
+
 // --- Phase 6 Task 8 (Lane D): the classifier safety corpus and the opt-in live gate ---------------
 //
 // Both are DATA plus a runner, for the same reason the adapter corpus is: the offline run (Lane D's
