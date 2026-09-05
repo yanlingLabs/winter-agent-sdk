@@ -176,6 +176,15 @@ describe("the pinned WorkflowOutput (sdk-tools.d.ts:4053-4089)", () => {
     expect(out.runId).toBeUndefined(); // nothing was launched
   });
 
+  test("the validation-failure task_started OMITS workflow_name rather than inventing one -- the meta block is what did not parse", async () => {
+    const frames: Array<Record<string, unknown>> = [];
+    await run({ script: `export const meta = { name: id, description: "d" };\nreturn 1;` }, makeCtx({ emitFrame: (f) => frames.push(f as unknown as Record<string, unknown>) }));
+    const started = frames.find((f) => f["subtype"] === "task_started");
+    expect(started).toBeDefined();
+    expect("workflow_name" in started!).toBe(false);
+    expect(started!["description"]).toContain("failed validation");
+  });
+
   test("a script with NO meta block fails validation the same way", async () => {
     const out = JSON.parse((await run({ script: `return 1;` })).output) as WorkflowOutput;
     expect(out.error).toContain("meta");

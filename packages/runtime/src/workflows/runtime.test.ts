@@ -140,6 +140,13 @@ describe("launch -- the result contract (WS-11 §1.4 + capture (3))", () => {
     await r.runtime.await(launched.runId);
   });
 
+  test("the transcript directory it REPORTS is actually created -- a model reading the path must not get ENOENT", async () => {
+    const r = rig();
+    const launched = launch(r, META + `return 1;`);
+    expect(existsSync(launched.transcriptDir)).toBe(true);
+    await r.runtime.await(launched.runId);
+  });
+
   test("the run is registered as a background task through the HOST seam, with the internal `workflow` kind", () => {
     const r = rig();
     const launched = launch(r, META + `return 1;`);
@@ -452,12 +459,15 @@ describe("resumeFromRunId -- preconditions and the cached prefix (WS-11 §1.5)",
 
     hangNext = false; // the resumed run answers both calls for real
     const before = r.spawned.length;
-    const second = r.runtime.resume(first.runId, "sess-1", r.host);
+    // The RESUMING call's tool_use id, not the original launch's (WS-10 §4 correlation).
+    const second = r.runtime.resume(first.runId, "sess-1", r.host, { parentToolUseId: "tooluse-resume" });
+    expect(r.spawned.length).toBe(before); // nothing dispatched yet -- the assertion below is about the NEW children
     const view = await r.runtime.await(second.runId);
     expect(view.status).toBe("completed");
     expect(view.result).toBe(JSON.stringify(["child:one", "child:two"]));
     // "one" came from the journal; only "two" was dispatched live.
     expect(r.spawned.slice(before).map((s) => s.prompt)).toEqual(["two"]);
+    expect(r.spawned.slice(before).map((s) => s.parentToolUseId)).toEqual(["tooluse-resume"]);
   });
 
   test("a FAILED agent call is never journaled -- it re-runs LIVE on resume rather than replaying its null (WS-11 §1.5)", async () => {

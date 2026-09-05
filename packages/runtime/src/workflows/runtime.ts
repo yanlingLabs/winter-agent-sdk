@@ -15,7 +15,7 @@ import { spawn as spawnProcess } from "node:child_process";
 // single-file executable, where a dynamic import of a computed-or-not path is exactly the failure
 // class main.ts's own header warns about -- and no gate in this repo exercises a nested `workflow()`
 // through the compiled binary, so that leg would have been unproven as well as fragile.
-import { readFileSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { RunJournal, promptKey, type JournalEntry } from "./journal.ts";
 import { WorkflowRegistry } from "./registry.ts";
 import { makeSemaphore, resolveConcurrencyCap, type Semaphore } from "./semaphore.ts";
@@ -209,7 +209,13 @@ export class WorkflowRuntime {
     // Persisted BEFORE the worker starts, so the path in the tool result is real the moment the model
     // reads it -- WS-11 §1.3's edit-then-rerun loop begins with the model editing this exact file.
     const scriptPath = persistWorkflowScript({ ...location, name: input.meta.name, runId, source: input.source });
+    // CREATED, not merely computed: `WorkflowOutput.transcriptDir` is handed to the model, and a
+    // model that reads a path which does not exist gets ENOENT rather than an empty directory.
+    // DISCLOSED (report): Winter's child transcripts are written wherever `subagents/child-engine.ts`
+    // puts them (frozen to this lane), NOT under this directory -- so today it is capture (3)'s
+    // sibling location, present and empty.
     const transcriptDir = workflowTranscriptDir({ ...location, runId });
+    mkdirSync(transcriptDir, { recursive: true, mode: 0o700 });
     this.launches.set(runId, { ...input, runId, scriptPath });
 
     const task = host.createTask("workflow", { runId, name: input.meta.name });
@@ -309,7 +315,7 @@ export class WorkflowRuntime {
    * `sessionId` is taken from the CALLER, never from the input, so a run cannot be resumed into a
    * session that did not own it.
    */
-  resume(runId: string, sessionId: string, host: WorkflowRunHost): WorkflowLaunchResult {
+  resume(runId: string, sessionId: string, host: WorkflowRunHost, opts: { parentToolUseId?: string } = {}): WorkflowLaunchResult {
     const prior = this.registry.get(runId);
     if (prior === undefined) throw new WorkflowRuntimeError("unknown-run", `unknown workflow run "${runId}"`);
     if (prior.sessionId !== sessionId) {
@@ -325,7 +331,17 @@ export class WorkflowRuntime {
     // the id would make the two runs indistinguishable in the registry and would have the new run
     // append to the journal it is replaying.
     const { runId: _priorId, resumeJournal: _priorJournal, ...rest } = original;
-    return this.launch({ ...rest, ...(journal.length > 0 ? { resumeJournal: journal } : {}) }, host);
+    // The RESUMING call's tool_use id, not the original launch's. WS-10 §4 correlates a child's
+    // forwarded frames by `parentToolUseId`, and replaying the prior run's would point every child of
+    // the resumed run at a `tool_use` block from an earlier turn -- which the host cannot match.
+    return this.launch(
+      {
+        ...rest,
+        ...(opts.parentToolUseId !== undefined ? { parentToolUseId: opts.parentToolUseId } : {}),
+        ...(journal.length > 0 ? { resumeJournal: journal } : {}),
+      },
+      host,
+    );
   }
 
   stop(runId: string): boolean {

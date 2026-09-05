@@ -54,6 +54,13 @@ function buildRunHost(ctx: ToolExecutionContext, session: WorkflowSessionRuntime
   return {
     createTask(kind, meta): WorkflowTaskHandle {
       const taskId = randomUUID();
+      // A VALIDATION FAILURE has no `meta.name` -- the meta block is exactly what did not parse. The
+      // failure path passes an empty name, and `workflow_name` is then OMITTED rather than filled
+      // with a plausible-looking literal: the field is optional on the frame, and inventing a value
+      // for a pinned field is the same class of error the WorkflowOutput enumeration test guards
+      // against (the frame has no such guard).
+      const named = meta.name !== "";
+      const description = named ? meta.name : "Workflow (the script failed validation)";
       // Registered in the SHARED background-task registry, so `TaskStop` reaches a workflow run
       // exactly as it reaches a backgrounded Bash command -- which is not a nicety: WS-11 §1.5's
       // resume precondition IS "the prior run stopped first via TaskStop", so a workflow TaskStop
@@ -64,7 +71,7 @@ function buildRunHost(ctx: ToolExecutionContext, session: WorkflowSessionRuntime
         taskId,
         kind: "workflow",
         outputPath: join(ctx.tempDir, "tasks", `${taskId}.output`),
-        description: meta.name,
+        description,
         stop: () => {
           runtime.stop(meta.runId);
         },
@@ -78,9 +85,9 @@ function buildRunHost(ctx: ToolExecutionContext, session: WorkflowSessionRuntime
         type: "system",
         subtype: "task_started",
         task_id: taskId,
-        description: meta.name,
+        description,
         task_type: wireTaskType("workflow"),
-        workflow_name: meta.name,
+        ...(named ? { workflow_name: meta.name } : {}),
         is_backgrounded: true,
         ...(ctx.toolUseId !== undefined ? { tool_use_id: ctx.toolUseId } : {}),
         uuid: randomUUID(),
@@ -100,7 +107,7 @@ function buildRunHost(ctx: ToolExecutionContext, session: WorkflowSessionRuntime
             type: "system",
             subtype: "task_progress",
             task_id: taskId,
-            description: meta.name,
+            description,
             usage: progress.usage ?? { total_tokens: 0, tool_uses: progress.total, duration_ms: 0 },
             ...(progress.summary !== undefined ? { summary: progress.summary } : {}),
             ...(progress.lastToolName !== undefined ? { last_tool_name: progress.lastToolName } : {}),
@@ -220,7 +227,7 @@ const executor: ToolExecutor = {
     // at-least-one rule on its own and must not be refused by the input check below.
     if (typeof input.resumeFromRunId === "string" && input.resumeFromRunId !== "") {
       try {
-        return toolResult(launchToOutput(runtime.resume(input.resumeFromRunId, ctx.sessionId, host)));
+        return toolResult(launchToOutput(runtime.resume(input.resumeFromRunId, ctx.sessionId, host, ctx.toolUseId !== undefined ? { parentToolUseId: ctx.toolUseId } : {})));
       } catch (err) {
         if (err instanceof WorkflowRuntimeError) return toolError(err.message);
         throw err;
@@ -236,7 +243,7 @@ const executor: ToolExecutor = {
     // empty taskId would not be the pinned shape; one with no task behind it would be a lie.
     const meta = parseWorkflowMeta(resolved.source);
     if (!meta.ok) {
-      const task = host.createTask("workflow", { runId: "", name: "workflow" });
+      const task = host.createTask("workflow", { runId: "", name: "" });
       task.fail(meta.error);
       return toolResult({ status: "async_launched", taskId: task.taskId, taskType: "local_workflow", error: meta.error });
     }
