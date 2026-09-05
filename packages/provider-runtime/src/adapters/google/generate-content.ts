@@ -228,6 +228,24 @@ function toFunctionResponsePayload(content: string | ContentBlockLike[]): Record
   return { output: text, ...(imageCount > 0 ? { imageCount } : {}) };
 }
 
+/**
+ * One merged wire entry, kept as BUCKETS until it is assembled.
+ *
+ * Same reason as the Anthropic serializer's: adjacent same-role messages merge into one entry, so a
+ * `functionResponse`'s position is a property of the ASSEMBLED entry, not of the message that
+ * produced it. Rendering a decoration into its own message's part list and then concatenating put a
+ * text part ahead of a later message's `functionResponse` — correct per message, wire-invalid once
+ * merged.
+ */
+interface GoogleEntryBuckets {
+  role: "user" | "model";
+  /** `functionResponse` parts, each immediately followed by the sibling `inlineData` parts its Struct could not carry. */
+  results: WirePart[];
+  /** Winter-authored decoration text, in message order. */
+  decorations: WirePart[];
+  rest: WirePart[];
+}
+
 interface SerializeResult {
   contents: Array<{ role: "user" | "model"; parts: WirePart[] }>;
   /** How many blocks from ANOTHER dialect were dropped at this boundary. Reported as a count, never as content. */
@@ -253,17 +271,20 @@ export function toContents(messages: ProviderMessageLike[]): SerializeResult {
   // already guarantees. (The ids are additionally made unique per stream below -- both fixes,
   // because either one alone leaves the other's failure mode reachable.)
   const names = new Map<string, string>();
-  const contents: SerializeResult["contents"] = [];
+  const entries: GoogleEntryBuckets[] = [];
   let droppedForeignReasoning = 0;
 
   for (const message of messages) {
     const role: "user" | "model" = message.role === "assistant" ? "model" : "user";
-    const parts: WirePart[] = [];
     const items = (message.nativeState?.items ?? []).map(coerceItem).filter((i): i is GoogleThoughtSignatureItem => i !== undefined);
     // ONLY text-keyed items. A `thought` item has no replayed part to ride and a `function-call` item
     // is matched by id below; treating either as a text item is the mis-attachment I4 names.
     const textItems = items.filter((i) => i.kind === "text");
     let textOrdinal = 0;
+
+    const last = entries[entries.length - 1];
+    const entry = last !== undefined && last.role === role ? last : { role, results: [], decorations: [], rest: [] };
+    if (entry !== last) entries.push(entry);
 
     // A Winter-authored annotation rides PLAINLY (R6-3 / R6-8), and its text goes on the wire
     // VERBATIM. `decoration.text` is already the FINISHED, DELIMITED string Lane C produced -- the
@@ -278,11 +299,12 @@ export function toContents(messages: ProviderMessageLike[]): SerializeResult {
     // nobody neutralises is an injection hole; the only safe delimiter is the one whose producer
     // also neutralises it.
     //
-    // It goes in BEFORE the text ordinal is consumed, so a decoration never takes a
-    // `thoughtSignature` meant for the model's own text part. No thinking-block ordering constraint
-    // applies here: another dialect's thinking is dropped at this boundary, so it produces no part
-    // for a decoration to precede.
-    if (message.decoration !== undefined) parts.push({ text: message.decoration.text });
+    // It is filed into its own bucket rather than pushed inline, so it lands AFTER every
+    // `functionResponse` in the assembled entry (this dialect wants the responses first) and before
+    // ordinary content. The text ORDINAL is untouched by it either way, so a decoration never takes a
+    // `thoughtSignature` meant for the model's own text part.
+    if (message.decoration !== undefined) entry.decorations.push({ text: message.decoration.text });
+
     const blocks: ContentBlockLike[] = typeof message.content === "string" ? (message.content.length > 0 ? [{ type: "text", text: message.content }] : []) : message.content;
     for (const block of blocks) {
       switch (block.type) {
@@ -291,16 +313,16 @@ export function toContents(messages: ProviderMessageLike[]): SerializeResult {
           // one text part per message, so the first text-keyed item is the one that belongs here.
           const signature = textItems[textOrdinal]?.signature;
           textOrdinal++;
-          parts.push({ text: block.text, ...(signature !== undefined ? { thoughtSignature: signature } : {}) });
+          entry.rest.push({ text: block.text, ...(signature !== undefined ? { thoughtSignature: signature } : {}) });
           break;
         }
         case "image":
-          parts.push({ inlineData: { mimeType: block.source.media_type, data: block.source.data } });
+          entry.rest.push({ inlineData: { mimeType: block.source.media_type, data: block.source.data } });
           break;
         case "tool_use": {
           names.set(block.id, block.name);
           const signature = items.find((i) => i.callId === block.id)?.signature;
-          parts.push({
+          entry.rest.push({
             functionCall: { name: block.name, args: typeof block.input === "object" && block.input !== null ? block.input : {} },
             ...(signature !== undefined ? { thoughtSignature: signature } : {}),
           });
@@ -315,11 +337,11 @@ export function toContents(messages: ProviderMessageLike[]): SerializeResult {
               `a tool_result for "${block.tool_use_id}" has no matching tool_use in this history, so the functionResponse has no name to carry; Winter refuses the turn rather than dropping the result`,
             );
           }
-          parts.push({ functionResponse: { name, response: toFunctionResponsePayload(block.content) } });
-          // The images the Struct cannot carry, as sibling parts on the same entry, in wire order.
-          // Reaching here at all means the vision gate passed, so the model advertises image input.
+          // The response and the images its Struct could not carry go into the SAME bucket, adjacent
+          // and in order: hoisting the response while leaving its images behind would separate them.
+          entry.results.push({ functionResponse: { name, response: toFunctionResponsePayload(block.content) } });
           for (const image of collectImages(block.content)) {
-            parts.push({ inlineData: { mimeType: image.source.media_type, data: image.source.data } });
+            entry.results.push({ inlineData: { mimeType: image.source.media_type, data: image.source.data } });
           }
           break;
         }
@@ -335,12 +357,13 @@ export function toContents(messages: ProviderMessageLike[]): SerializeResult {
           );
       }
     }
-
-    if (parts.length === 0) continue;
-    const last = contents[contents.length - 1];
-    if (last !== undefined && last.role === role) last.parts.push(...parts);
-    else contents.push({ role, parts });
   }
+
+  // ASSEMBLED PER ENTRY, after every message that merges into it has been filed: the tool responses
+  // first, then the decorations in message order, then ordinary content.
+  const contents = entries
+    .map((entry) => ({ role: entry.role, parts: [...entry.results, ...entry.decorations, ...entry.rest] }))
+    .filter((entry) => entry.parts.length > 0);
 
   return { contents, droppedForeignReasoning };
 }

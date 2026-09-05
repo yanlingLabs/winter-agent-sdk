@@ -64,7 +64,11 @@ describe("toWireMessages", () => {
     expect(wire[0]!.content).toEqual([{ type: "thinking", thinking: "unsigned", signature: "" }]);
   });
 
-  test("adjacent same-role messages merge and empty ones vanish, with block order preserved", () => {
+  test("adjacent same-role messages merge, empty ones vanish, and `tool_result` blocks are HOISTED to the front of the merged turn", () => {
+    // The hoist is a WIRE RULE, not a preference: this endpoint requires `tool_result` blocks at the
+    // start of the turn they ride, and the merge means the constraint is a property of the assembled
+    // ENTRY rather than of any one message. An earlier version of this test pinned
+    // `[text, tool_result]` -- correct per message, and a request the endpoint rejects.
     expect(
       toWireMessages([
         { role: "user", content: "a" },
@@ -73,7 +77,7 @@ describe("toWireMessages", () => {
         { role: "assistant", content: "c" },
       ]),
     ).toEqual([
-      { role: "user", content: [{ type: "text", text: "a" }, { type: "tool_result", tool_use_id: "c1", content: "b" }] },
+      { role: "user", content: [{ type: "tool_result", tool_use_id: "c1", content: "b" }, { type: "text", text: "a" }] },
       { role: "assistant", content: [{ type: "text", text: "c" }] },
     ]);
   });

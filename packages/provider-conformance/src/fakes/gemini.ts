@@ -161,6 +161,38 @@ export function assertGeminiRequest(recorded: RecordedRequest, expected: GeminiR
   }
 }
 
+/**
+ * This dialect's equivalent ordering constraint, enforced so a pin about it can fail.
+ *
+ * A `functionResponse` answers the turn it follows; a text part placed ahead of one inside the same
+ * `user` entry is the shape this lane emitted for a decorated tool message. `inlineData` is exempt:
+ * an image the response's Struct could not carry rides beside it by construction.
+ *
+ * Returns the offending entry index, or `undefined` when every entry is well-formed.
+ */
+export function findFunctionResponseOrderingViolation(recorded: RecordedRequest): number | undefined {
+  let body: { contents?: unknown };
+  try {
+    body = JSON.parse(recorded.body) as { contents?: unknown };
+  } catch {
+    return undefined;
+  }
+  const contents = Array.isArray(body.contents) ? (body.contents as Array<{ parts?: unknown }>) : [];
+  for (const [index, entry] of contents.entries()) {
+    if (!Array.isArray(entry.parts)) continue;
+    let sawOther = false;
+    for (const part of entry.parts as GeminiPart[]) {
+      const kind = partKind(part);
+      if (kind === "functionResponse") {
+        if (sawOther) return index;
+      } else if (kind !== "inlineData") {
+        sawOther = true;
+      }
+    }
+  }
+  return undefined;
+}
+
 export interface GeminiFakeOptions {
   /** modelId -> the scripted answer for `:streamGenerateContent`. */
   stream: Record<string, ((recorded: RecordedRequest, attempt: number) => Response | Promise<Response>) | Response[]>;
@@ -186,6 +218,10 @@ export function geminiFakeRoutes(opts: GeminiFakeOptions): FakeRoute[] {
       path: `${prefix}/models*`,
       method: "POST",
       handler: async (_req, recorded) => {
+        const badEntry = findFunctionResponseOrderingViolation(recorded);
+        if (badEntry !== undefined) {
+          return geminiError(400, "INVALID_ARGUMENT", `contents[${badEntry}]: functionResponse parts must precede any other content in their turn`);
+        }
         const model = geminiModelOf(recorded) ?? "";
         if (recorded.path.endsWith(":countTokens")) {
           return opts.countTokens?.(recorded) ?? new Response(JSON.stringify({ totalTokens: 42 }), { status: 200, headers: { "content-type": "application/json" } });

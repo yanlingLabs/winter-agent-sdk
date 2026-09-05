@@ -409,6 +409,62 @@ describe("Google GenerateContent: a Lane C decoration is RENDERED, not inert (Mi
     });
   });
 
+  test("a decorated TOOL message puts its `functionResponse` FIRST — the decoration follows it", async () => {
+    const adapter = testGoogleAdapter();
+    await withFake({ routes: googleCorpusRoutes() }, async (fake) => {
+      await foldTurn(
+        adapter,
+        {
+          model: GOOGLE_MODELS.main,
+          messages: [
+            { role: "assistant", content: [{ type: "tool_use", id: "c1", name: "Read", input: {} }] },
+            { role: "tool", content: [{ type: "tool_result", tool_use_id: "c1", content: "out" }], decoration: LANE_C_DECORATIONS.tag },
+          ],
+        },
+        googleContext(fake.url),
+      );
+      expect(geminiContents(fake.requests[0]!)[1]?.parts).toEqual([
+        { functionResponse: { name: "Read", response: { output: "out" } } },
+        { text: LANE_C_DECORATIONS.tag.text },
+      ]);
+    });
+  });
+
+  test("TWO consecutive tool messages, the FIRST decorated, still put BOTH responses before the decoration", async () => {
+    const adapter = testGoogleAdapter();
+    await withFake({ routes: googleCorpusRoutes() }, async (fake) => {
+      await foldTurn(
+        adapter,
+        {
+          model: GOOGLE_MODELS.main,
+          messages: [
+            { role: "assistant", content: [{ type: "tool_use", id: "c1", name: "Read", input: {} }, { type: "tool_use", id: "c2", name: "Write", input: {} }] },
+            { role: "tool", content: [{ type: "tool_result", tool_use_id: "c1", content: "one" }], decoration: LANE_C_DECORATIONS.tag },
+            { role: "tool", content: [{ type: "tool_result", tool_use_id: "c2", content: "two" }] },
+          ],
+        },
+        googleContext(fake.url),
+      );
+      expect(geminiContents(fake.requests[0]!)[1]?.parts).toEqual([
+        { functionResponse: { name: "Read", response: { output: "one" } } },
+        { functionResponse: { name: "Write", response: { output: "two" } } },
+        { text: LANE_C_DECORATIONS.tag.text },
+      ]);
+    });
+  });
+
+  test("the fake REJECTS a turn whose functionResponse parts are not first, so these pins can fail", async () => {
+    await withFake({ routes: googleCorpusRoutes() }, async (fake) => {
+      const res = await fetch(`${fake.url}/v1beta/models/${GOOGLE_MODELS.main}:streamGenerateContent?alt=sse`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-goog-api-key": GOOGLE_TEST_KEY },
+        body: JSON.stringify({ contents: [{ role: "user", parts: [{ text: "x" }, { functionResponse: { name: "Read", response: {} } }] }] }),
+      });
+      expect(res.status).toBe(400);
+      expect(await res.text()).toContain("must precede any other content");
+    });
+  });
+
   test("a decoration does not consume the text ordinal a `thoughtSignature` is keyed to", async () => {
     const adapter = testGoogleAdapter();
     await withFake({ routes: googleCorpusRoutes() }, async (fake) => {

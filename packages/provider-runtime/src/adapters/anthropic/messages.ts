@@ -182,22 +182,55 @@ function normalizeContent(content: string | ContentBlockLike[]): Record<string, 
  *     rule cares about.
  */
 /**
- * Splices a decoration's text in after any LEADING in-dialect thinking blocks.
+ * One merged wire entry, kept as BUCKETS until it is assembled.
  *
- * The position is a wire constraint, not a preference: with thinking enabled this endpoint rejects a
- * text block that precedes the turn's own thinking blocks. Placing it at index 0 made a decoration on
- * a reasoning turn into an unsendable request.
+ * The buckets exist because both ordering rules this dialect imposes are properties of the ASSEMBLED
+ * ENTRY, not of any one message -- and adjacent same-role messages merge into one entry. Rendering a
+ * decoration into its own message's block list and then concatenating produced
+ * `[tool_result_1, text, tool_result_2]` for two consecutive tool messages where the first was
+ * decorated: correct per message, wire-invalid once merged.
  */
-function insertDecoration(blocks: Record<string, unknown>[], text: string): Record<string, unknown>[] {
+interface WireEntryBuckets {
+  role: "user" | "assistant";
+  /** `tool_result` blocks. This endpoint requires them at the START of the turn they ride. */
+  results: Record<string, unknown>[];
+  /** The LEADING run of in-dialect thinking blocks. With thinking enabled, no text may precede them. */
+  leading: Record<string, unknown>[];
+  /** Winter-authored decoration text, in message order -- after both hard constraints, before ordinary content. */
+  decorations: Record<string, unknown>[];
+  rest: Record<string, unknown>[];
+}
+
+function isThinkingBlock(block: Record<string, unknown>): boolean {
+  return block["type"] === "thinking" || block["type"] === "redacted_thinking";
+}
+
+/** Files one message's rendered blocks into the entry's buckets, preserving order within each. */
+function fileBlocks(entry: WireEntryBuckets, blocks: Record<string, unknown>[]): void {
+  const nonResults: Record<string, unknown>[] = [];
+  for (const block of blocks) {
+    if (block["type"] === "tool_result") entry.results.push(block);
+    else nonResults.push(block);
+  }
   let at = 0;
-  while (at < blocks.length && (blocks[at]?.["type"] === "thinking" || blocks[at]?.["type"] === "redacted_thinking")) at++;
-  return [...blocks.slice(0, at), { type: "text", text }, ...blocks.slice(at)];
+  // Only the LEADING run is hoisted: a thinking block that genuinely follows text stays where the
+  // model put it, because moving it would rewrite the turn rather than order it.
+  while (at < nonResults.length && isThinkingBlock(nonResults[at]!)) entry.leading.push(nonResults[at++]!);
+  for (; at < nonResults.length; at++) entry.rest.push(nonResults[at]!);
 }
 
 export function toWireMessages(messages: ProviderMessageLike[]): Array<{ role: "user" | "assistant"; content: Record<string, unknown>[] }> {
-  const out: Array<{ role: "user" | "assistant"; content: Record<string, unknown>[] }> = [];
+  const entries: WireEntryBuckets[] = [];
   for (const message of messages) {
     const role: "user" | "assistant" = message.role === "assistant" ? "assistant" : "user";
+    const own = normalizeContent(message.content);
+    if (own.length === 0 && message.decoration === undefined) continue;
+
+    const last = entries[entries.length - 1];
+    const entry = last !== undefined && last.role === role ? last : { role, results: [], leading: [], decorations: [], rest: [] };
+    if (entry !== last) entries.push(entry);
+
+    fileBlocks(entry, own);
     // A Winter-authored annotation rides PLAINLY (R6-3 / R6-8), and its text goes on the wire
     // VERBATIM. `decoration.text` is already the FINISHED, DELIMITED string Lane C produced -- the
     // `<recovered_reasoning_summary provider=… model=…>` tag WS-13 §8.2 names for the tag door, or
@@ -210,18 +243,15 @@ export function toWireMessages(messages: ProviderMessageLike[]): Array<{ role: "
     // summary containing this layer's closing delimiter would break straight out of it. A wrapper
     // nobody neutralises is an injection hole; the only safe delimiter is the one whose producer
     // also neutralises it.
-    //
-    // PLACED AFTER ANY LEADING THINKING BLOCKS, not at index 0: with thinking enabled this endpoint
-    // rejects a text block that precedes the turn's own `thinking`/`redacted_thinking` blocks, so a
-    // decoration on a message that carries them would have made the whole request unsendable.
-    const own = normalizeContent(message.content);
-    const blocks = message.decoration === undefined ? own : insertDecoration(own, message.decoration.text);
-    if (blocks.length === 0) continue;
-    const last = out[out.length - 1];
-    if (last !== undefined && last.role === role) last.content.push(...blocks);
-    else out.push({ role, content: blocks });
+    if (message.decoration !== undefined) entry.decorations.push({ type: "text", text: message.decoration.text });
   }
-  return out;
+
+  // ASSEMBLED PER ENTRY, after every message that merges into it has been filed. Both hard
+  // constraints first -- `tool_result` blocks at the start of their turn, in-dialect thinking ahead
+  // of any text -- then the decorations in message order, then ordinary content.
+  return entries
+    .map((entry) => ({ role: entry.role, content: [...entry.results, ...entry.leading, ...entry.decorations, ...entry.rest] }))
+    .filter((entry) => entry.content.length > 0);
 }
 
 // --- capability resolution ------------------------------------------------------------------------

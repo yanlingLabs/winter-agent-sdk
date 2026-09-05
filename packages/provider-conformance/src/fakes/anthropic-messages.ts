@@ -244,6 +244,39 @@ export function anthropicError(status: number, type: string, message = "fake err
   return errorResponse(status, { type: "error", error: { type, message } }, headers);
 }
 
+/**
+ * The ordering constraint this endpoint actually enforces, enforced HERE too.
+ *
+ * A fake that accepts every ordering cannot fail a pin about ordering -- and this lane shipped a
+ * decoration ahead of a turn's `tool_result` blocks for two rounds with a green corpus, because
+ * nothing on the receiving end cared. The message is Winter's rendering of the documented constraint,
+ * not a captured verbatim vendor string.
+ *
+ * Returns the offending message index, or `undefined` when every turn is well-formed.
+ */
+export function findToolResultOrderingViolation(recorded: RecordedRequest): number | undefined {
+  let body: { messages?: unknown };
+  try {
+    body = JSON.parse(recorded.body) as { messages?: unknown };
+  } catch {
+    return undefined;
+  }
+  const messages = Array.isArray(body.messages) ? (body.messages as Array<{ content?: unknown }>) : [];
+  for (const [index, message] of messages.entries()) {
+    if (!Array.isArray(message.content)) continue;
+    const blocks = message.content as Array<{ type?: unknown }>;
+    let sawOther = false;
+    for (const block of blocks) {
+      if (block.type === "tool_result") {
+        if (sawOther) return index;
+      } else {
+        sawOther = true;
+      }
+    }
+  }
+  return undefined;
+}
+
 export interface AnthropicFakeOptions {
   /** modelId -> the scripted answer for `POST /v1/messages`. A `Response[]` is indexed by attempt, its last element repeating (the base's own retry shape). */
   messages: ScenarioMap;
@@ -274,6 +307,10 @@ export function anthropicFakeRoutes(opts: AnthropicFakeOptions): FakeRoute[] {
       path: "/v1/messages",
       method: "POST",
       handler: async (_req, recorded) => {
+        const badTurn = findToolResultOrderingViolation(recorded);
+        if (badTurn !== undefined) {
+          return anthropicError(400, "invalid_request_error", `messages.${badTurn}: \`tool_result\` blocks must be at the beginning of a turn`);
+        }
         const model = anthropicModelOf(recorded) ?? "";
         const attempt = (attempts.get(model) ?? 0) + 1;
         attempts.set(model, attempt);

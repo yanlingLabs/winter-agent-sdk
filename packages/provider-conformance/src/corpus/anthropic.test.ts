@@ -404,6 +404,69 @@ describe("Anthropic Messages: a Lane C decoration is RENDERED, not inert (Minor 
     });
   });
 
+  test("a decorated TOOL message puts its `tool_result` FIRST — the decoration follows it", async () => {
+    // The endpoint requires `tool_result` blocks at the start of the turn they ride, and a tool-role
+    // message becomes part of a `user` turn. A decoration rendered at index 0 was therefore
+    // wire-invalid; the fake now rejects that ordering, so this pin can fail.
+    const adapter = testAnthropicAdapter();
+    await withFake({ routes: anthropicCorpusRoutes() }, async (fake) => {
+      await foldTurn(
+        adapter,
+        {
+          model: ANTHROPIC_MODELS.main,
+          messages: [
+            { role: "assistant", content: [{ type: "tool_use", id: "c1", name: "Read", input: {} }] },
+            { role: "tool", content: [{ type: "tool_result", tool_use_id: "c1", content: "out" }], decoration: LANE_C_DECORATIONS.tag },
+          ],
+        },
+        testContext(fake.url),
+      );
+      assertAnthropicRequest(fake.requests[0]!, { roles: ["assistant", "user"], blockTypes: ["tool_use", "tool_result", "text"] });
+      expect(messageBlocks(fake.requests[0]!, 1)[1]).toEqual({ type: "text", text: LANE_C_DECORATIONS.tag.text });
+    });
+  });
+
+  test("TWO consecutive tool messages, the FIRST decorated, still put BOTH results before the decoration", async () => {
+    // The constraint is a property of the MERGED entry, not of a message: a per-message fix yields
+    // `[tool_result_1, text, tool_result_2]` here, which is correct per message and rejected on the
+    // wire. This is the case that distinguishes the two fixes.
+    const adapter = testAnthropicAdapter();
+    await withFake({ routes: anthropicCorpusRoutes() }, async (fake) => {
+      await foldTurn(
+        adapter,
+        {
+          model: ANTHROPIC_MODELS.main,
+          messages: [
+            { role: "assistant", content: [{ type: "tool_use", id: "c1", name: "Read", input: {} }, { type: "tool_use", id: "c2", name: "Write", input: {} }] },
+            { role: "tool", content: [{ type: "tool_result", tool_use_id: "c1", content: "one" }], decoration: LANE_C_DECORATIONS.tag },
+            { role: "tool", content: [{ type: "tool_result", tool_use_id: "c2", content: "two" }] },
+          ],
+        },
+        testContext(fake.url),
+      );
+      assertAnthropicRequest(fake.requests[0]!, { roles: ["assistant", "user"], blockTypes: ["tool_use", "tool_use", "tool_result", "tool_result", "text"] });
+      expect(messageBlocks(fake.requests[0]!, 1)).toEqual([
+        { type: "tool_result", tool_use_id: "c1", content: "one" },
+        { type: "tool_result", tool_use_id: "c2", content: "two" },
+        { type: "text", text: LANE_C_DECORATIONS.tag.text },
+      ]);
+    });
+  });
+
+  test("the fake REJECTS a turn whose tool_result blocks are not first, so these pins can fail", async () => {
+    // The guard is only worth having if it bites. Driven directly, because the adapter no longer
+    // produces the ordering it forbids.
+    await withFake({ routes: anthropicCorpusRoutes() }, async (fake) => {
+      const res = await fetch(`${fake.url}/v1/messages`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-api-key": ANTHROPIC_TEST_KEY, "anthropic-version": "2023-06-01" },
+        body: JSON.stringify({ model: ANTHROPIC_MODELS.main, messages: [{ role: "user", content: [{ type: "text", text: "x" }, { type: "tool_result", tool_use_id: "c1", content: "out" }] }] }),
+      });
+      expect(res.status).toBe(400);
+      expect(await res.text()).toContain("must be at the beginning of a turn");
+    });
+  });
+
   test("the decoration is placed AFTER any leading thinking blocks, which this endpoint requires", async () => {
     // With thinking enabled the endpoint rejects a text block that precedes the turn's own thinking
     // blocks -- so a decoration at index 0 made a decorated reasoning turn unsendable.
