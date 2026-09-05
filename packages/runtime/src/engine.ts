@@ -40,7 +40,7 @@ export type { MessageOrigin, ProviderNativeState };
 // R6-7: the sidecar record types the persistence seam carries. `store/provider-state.ts` imports
 // NOTHING from this file (its own types come from provider-runtime), so this is not the circular
 // direction `store/dialect.ts` has to avoid.
-import type { ProviderStateRecord, ProviderStateRecordInput } from "./store/provider-state.ts";
+import { PROVIDER_STATE_FILE_SUFFIX, type ProviderStateRecord, type ProviderStateRecordInput } from "./store/provider-state.ts";
 import type { FrameSource, FrameSink } from "./protocol/channel.ts";
 import { Queue } from "./protocol/channel.ts";
 import { createRpcBridge } from "./rpc/bridge.ts";
@@ -599,6 +599,17 @@ export interface SessionPersistence {
   recordProviderState?(record: ProviderStateRecordInput): void | Promise<void>;
   /** R6-7: the chain, oldest-first, for a resumed session. `undefined`/absent means "no durable chain", which degrades every resumed assistant message to summary-level with a `continuity_warning`. */
   loadProviderState?(): Promise<ProviderStateRecord[]>;
+  /**
+   * R6-9 / WS-16 §4: the resolved provider identity every subsequent dialect record carries
+   * (`providerId`/`modelKey`/`adapterId`/`adapterVersion`/`catalogVersion`/`authRef`/`classifierPin`).
+   *
+   * A SEAM ADDITION beyond the brief's literal block, and it has to be one: the identity fields are
+   * named as this task's deliverable and `SessionPersistence` is the only channel the engine has to
+   * the store. `authRef` is the credential ref's KIND, never its material (R6-10).
+   */
+  setProviderIdentity?(identity: { providerId: string; modelKey: string; adapterId: string; adapterVersion: string; catalogVersion: string; authRefKind: string; classifierPin?: string }): void;
+  /** R6-C: records a model swap in the dialect record's `providerHistory`, alongside the Winter-only `system/model_switch` frame. */
+  recordProviderSwitch?(entry: { from: string; to: string; reason: "fallback" | "set_model" | "interrupt" }): void;
   flush?(): void | Promise<void>;
   // Task 8 (WS-07 §3.3 / phase ruling 2): "a PermissionUpdate with a file destination applies
   // session-effective immediately AND appends to <sessionId>.permission-journal.jsonl for P5
@@ -967,6 +978,14 @@ export function buildBaselineDenyRules(resolvedWinterHome?: string): SourcedRule
         absolute.push(sourceRule({ toolName: tool, ruleContent: `${root}/${dir}/**` }, "deny", "managed"));
       }
     }
+    // Phase 6 Task 3 (R6-7's P4-M MUST): the resolved-root twin of the provider-state read deny
+    // below. Same reason every absolute rule in this block exists -- the floors follow the RESOLVED
+    // winter root, or they protect a directory that does not exist while the real one stays open.
+    for (const tool of PROVIDER_STATE_DENY_TOOLS) {
+      for (const pattern of providerStateDenyPatterns(`${root}/projects`)) {
+        absolute.push(sourceRule({ toolName: tool, ruleContent: pattern }, "deny", "managed"));
+      }
+    }
   }
   return [
     ...absolute,
@@ -1044,7 +1063,44 @@ export function buildBaselineDenyRules(resolvedWinterHome?: string): SourcedRule
     sourceRule({ toolName: "Edit", ruleContent: "~/.winter/backups/**" }, "deny", "managed"),
     sourceRule({ toolName: "NotebookEdit", ruleContent: "~/.winter/backups" }, "deny", "managed"),
     sourceRule({ toolName: "NotebookEdit", ruleContent: "~/.winter/backups/**" }, "deny", "managed"),
+
+    // --- Phase 6 Task 3 (R6-7's P4-M MUST): the provider-state sidecars are READ-DENIED -----------
+    //
+    // These files are the ONLY sink for opaque provider continuation state -- `encrypted_content`,
+    // thinking signatures, `thoughtSignature`, xAI opaque items. The whole architecture rests on that
+    // state never being model-readable, and a model that can `Read` the sidecar reads back exactly
+    // what its own transcript was structurally prevented from carrying.
+    //
+    // READ-SIDE, WHICH INVERTS M13's OWN SCOPING DECISION IMMEDIATELY ABOVE -- and the inversion is
+    // the interesting part. M13 deliberately kept `Read`/`Glob`/`Grep` on `~/.winter/projects/**`
+    // ALLOWED, because `tools/impl/agent.ts`'s `.output` stub hands the model a durable transcript
+    // path with "Read that file directly", so a blanket read deny would regress a shipped
+    // model-facing contract. That reasoning is untouched: this deny names the sidecar FILENAME, never
+    // the tree. A transcript, a `.meta.json` roster sidecar and every other neighbour stay readable,
+    // and provider-state-read-deny.test.ts pairs every denial with that positive control.
+    //
+    // The write side needs nothing new: the M13 block above already denies Write/Edit/NotebookEdit
+    // across all of `~/.winter/projects/**`, which contains these files.
+    ...PROVIDER_STATE_DENY_TOOLS.flatMap((tool) => providerStateDenyPatterns("~/.winter/projects").map((pattern) => sourceRule({ toolName: tool, ruleContent: pattern }, "deny", "managed"))),
   ];
+}
+
+/** The read tools the sidecar deny binds. Mirrors the `~/.winter/run` baseline's own trio -- the sole other baseline READ denial in this product. */
+const PROVIDER_STATE_DENY_TOOLS = ["Read", "Glob", "Grep"] as const;
+
+/**
+ * The deny patterns for one projects root.
+ *
+ * TWO patterns, and both are needed. WS-07 §3.1's glob grammar (permissions/paths.ts) compiles `**`
+ * to "cross directories" and `*` to "within one segment", so `<root>/**` + `/*.provider-state.jsonl`
+ * matches a NESTED sidecar (`<root>/<projectKey>/sess-1.provider-state.jsonl`,
+ * `<root>/<projectKey>/sess-1/subagents/agent-1.provider-state.jsonl`) -- but a `**` segment matches
+ * ZERO OR MORE directories, so the direct-child form is covered by the same pattern. The second
+ * pattern exists for the degenerate `<root>/x.provider-state.jsonl` shape a future layout change
+ * could introduce; two overlapping denies cost nothing and a missing one is silent.
+ */
+function providerStateDenyPatterns(projectsRoot: string): string[] {
+  return [`${projectsRoot}/**/*${PROVIDER_STATE_FILE_SUFFIX}`, `${projectsRoot}/*${PROVIDER_STATE_FILE_SUFFIX}`];
 }
 
 export async function runEngine(opts: EngineOptions): Promise<number> {

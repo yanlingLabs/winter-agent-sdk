@@ -154,6 +154,22 @@ const LOCAL_CF = "[Ll][Oo][Cc][Aa][Ll]";
 const JSON_CF = "[Jj][Ss][Oo][Nn]";
 
 const RULES_FILE_REGEX = String.raw`/\.${WINTER_CF}/${PERMISSIONS_CF}\.${LOCAL_CF}\.${JSON_CF}$`;
+// Phase 6 Task 3 (R6-7's P4-M MUST): the provider-state sidecar filename, case-folded per character
+// for exactly the reason above -- SBPL ignores `(?i)` and the default macOS volume is
+// case-insensitive, so `Sess-1.Provider-State.JSONL` reaches the same file a case-exact regex misses.
+const PROVIDER_CF = "[Pp][Rr][Oo][Vv][Ii][Dd][Ee][Rr]";
+const STATE_CF = "[Ss][Tt][Aa][Tt][Ee]";
+const JSONL_CF = "[Jj][Ss][Oo][Nn][Ll]";
+const PROJECTS_CF = "[Pp][Rr][Oo][Jj][Ee][Cc][Tt][Ss]";
+// ANCHORED AT THE PROJECTS ROOT, never at the filename globally: a user's own
+// `~/notes/foo.provider-state.jsonl` is their file, and a bare-suffix regex would deny reading it.
+// `<projectsRoot>` is interpolated per call because it depends on the resolved winter root.
+// The `projects` SEGMENT is case-folded too, for the same reason the filename is: this rule owns
+// that segment in both anchors, and on a case-insensitive volume `.../Projects/s.provider-state.jsonl`
+// reaches the same file. The root prefix above it is left exactly as resolved -- identical posture to
+// the run-dir and backups denies in this file, which anchor on the resolved path verbatim.
+const providerStateReadDenyRegex = (winterRootRegexSafe: string): string =>
+  String.raw`^${winterRootRegexSafe}/${PROJECTS_CF}/.*\.${PROVIDER_CF}-${STATE_CF}\.${JSONL_CF}$`;
 const SETTINGS_FILE_REGEX = String.raw`/\.${WINTER_CF}/${SETTINGS_CF}\.${JSON_CF}$`;
 const SETTINGS_LOCAL_FILE_REGEX = String.raw`/\.${WINTER_CF}/${SETTINGS_CF}\.${LOCAL_CF}\.${JSON_CF}$`;
 
@@ -280,6 +296,25 @@ export function buildSeatbeltProfile(input: SeatbeltProfileInput): string {
   // filename literals: the WHOLE tree is off-limits, not one filename within it. Only load-bearing
   // when `home` is itself inside a writable root (cwd == home, or a writableRoots entry above it) --
   // otherwise `(deny default)` already covers it, and an unconditional deny costs nothing.
+  // Phase 6 Task 3 (R6-7's P4-M MUST): the provider-state sidecars, READ-side.
+  //
+  // A bash-invoked `cat ~/.winter/projects/<key>/sess-1.provider-state.jsonl` never passes through a
+  // read TOOL's permission fence at all -- reads are otherwise deliberately unrestricted in this
+  // product -- so the seatbelt is the only enforcement point left for a shell-invoked read of the one
+  // file that holds opaque provider state. Exactly the reasoning WS-12 §2 already records for
+  // `<home>/.winter/run`, applied to a file whose whole purpose is to hold what the model must not see.
+  //
+  // A REGEX ON THE FILENAME UNDER THE PROJECTS ROOT, never a `(subpath ...)` deny of the projects tree
+  // -- a subpath deny would also block `cat`-ing a transcript, regressing the model-facing `.output`
+  // stub contract that M13's own read-side scoping decision exists to preserve.
+  const denyProviderStateReadRule = [
+    input.home ? `(deny file-read* (regex #"${providerStateReadDenyRegex(sbplRegexLiteral(canon(join(input.home, ".winter"))))}"))` : "",
+    // The RESOLVED root's own projects directory, when it is not `<home>/.winter` (Phase 5 fix wave I1).
+    input.winterHome && canon(input.winterHome) !== canon(join(input.home ?? "", ".winter")) ? `(deny file-read* (regex #"${providerStateReadDenyRegex(sbplRegexLiteral(canon(input.winterHome)))}"))` : "",
+  ]
+    .filter((r) => r.length > 0)
+    .join("\n");
+
   const denyBackupsDirRule = [
     input.home ? `(deny file-write* (subpath "${sbplString(canon(join(input.home, ".winter", "backups")))}"))` : "",
     // I1: same reasoning as the run deny above -- the store the sink actually writes to is the
@@ -331,6 +366,7 @@ ${machRules})
 (allow file-read*)
 ${denyReadRules}
 ${denyRunDirRule}
+${denyProviderStateReadRule}
 (allow file-write*
 ${writeRules})
 ${denyWriteRules}

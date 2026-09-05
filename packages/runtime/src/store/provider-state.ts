@@ -24,7 +24,7 @@
 //      else. `subpath` is documented as opaque to the adapter, "just a storage-key suffix"
 //      (`sdk.d.ts:5203-5205`) -- a positive licence for a non-transcript key, not a silence.
 import { randomUUID } from "node:crypto";
-import { closeSync, fsyncSync, openSync, readFileSync, statSync, writeSync } from "node:fs";
+import { closeSync, constants as fsConstants, fsyncSync, mkdirSync, openSync, readFileSync, statSync, writeSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import type { MessageOrigin, ProviderNativeState } from "@yanlinglabs/winter-provider-runtime";
 
@@ -54,6 +54,11 @@ export type ProviderStateKind = "origin" | "native-state" | "summary" | "handoff
  * sharing one anchor. `payload` is opaque BY TYPE: `unknown`, so nothing is tempted to inspect it.
  */
 export interface ProviderStateRecord {
+  // The INDEX SIGNATURE is `SessionStoreEntry`'s own (`sdk.d.ts:5372-5377`), reproduced rather than
+  // inherited: a record travels through a host's external store, which the pin types as an OPEN
+  // struct, so a store that round-trips an extra key must not make the record un-assignable. The
+  // INPUT type below is closed instead, so nothing junk can enter from Winter's own side.
+  [k: string]: unknown;
   type: typeof PROVIDER_STATE_ENTRY_TYPE;
   uuid: string;
   timestamp: string;
@@ -74,11 +79,20 @@ export interface ProviderStateRecord {
  * two mistakes item (h) identifies as fatal to an external store. A fully-formed `ProviderStateRecord`
  * also satisfies this type, so a caller that has one (a replay, a test fixture) passes it unchanged.
  */
-export type ProviderStateRecordInput = Omit<ProviderStateRecord, "type" | "uuid" | "timestamp"> & {
+export interface ProviderStateRecordInput {
   type?: typeof PROVIDER_STATE_ENTRY_TYPE;
   uuid?: string;
   timestamp?: string;
-};
+  sessionId: string;
+  anchorUuid: string;
+  provider: string;
+  model: string;
+  family: string;
+  continuationDomain?: string;
+  itemIndex: number;
+  kind: ProviderStateKind;
+  payload: unknown;
+}
 
 /** Stamps the envelope. Separated from the append so the external-store door (which never touches a file) produces byte-identical records. */
 export function toProviderStateRecord(input: ProviderStateRecordInput): ProviderStateRecord {
@@ -130,9 +144,16 @@ export function providerStateSidecarPath(transcriptPath: string): string {
  */
 export function appendProviderState(path: string, input: ProviderStateRecordInput): ProviderStateRecord {
   const record = toProviderStateRecord(input);
-  // 0o600: the sidecar holds provider-opaque state. It is not world- or group-readable, matching the
-  // permission the credentials file store already uses for the same class of content.
-  const fd = openSync(path, "a", 0o600);
+  // THE WRITE-AHEAD WRITER CREATES ITS OWN DIRECTORY, and that is a consequence of the ordering rather
+  // than a convenience: the record is appended BEFORE the transcript's first entry, so on a fresh
+  // session the project directory the store would have created does not exist yet. 0o700 matches the
+  // store's own `ensureSecureDir` posture for the same tree.
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+  // 0o600: the sidecar holds provider-opaque state -- not world- or group-readable, the same
+  // permission the credentials file store uses for the same class of content. O_NOFOLLOW mirrors the
+  // store's write-path symlink hardening (WS-05 §13): a followed write symlink could append
+  // attacker-chosen bytes into an arbitrary file this process can write to.
+  const fd = openSync(path, fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_APPEND | fsConstants.O_NOFOLLOW, 0o600);
   try {
     writeSync(fd, `${JSON.stringify(record)}\n`);
     fsyncSync(fd);
