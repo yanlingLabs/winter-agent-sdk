@@ -9,7 +9,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseSkillFile, skillNameError, pluginNameError, capBytes, DEFAULT_SKILL_BODY_BYTES, SKILL_TRUNCATION_MARKER } from "./frontmatter.ts";
-import { projectSkillRoots, scanSkillRoot, findRepoRoot } from "./loader.ts";
+import { projectSkillRoots, scanSkillRoot, findRepoRoot, readSkillMetadata, SKILL_METADATA_PREFIX_BYTES } from "./loader.ts";
 import { SkillIndex, PROJECT_PLUGIN_NAME } from "./store.ts";
 
 const tempDirs: string[] = [];
@@ -118,8 +118,84 @@ describe("scanSkillRoot", () => {
     mkdirSync(join(root, "bad"), { recursive: true });
     writeFileSync(join(root, "bad", "SKILL.md"), "no frontmatter", "utf8");
     writeFileSync(join(root, "loose.md"), "---\nname: x\ndescription: y\n---\n", "utf8");
-    expect(scanSkillRoot(root, "project").map((s) => s.name)).toEqual(["good"]);
-    expect(scanSkillRoot(join(root, "nope"), "project")).toEqual([]);
+    expect(scanSkillRoot(root, "project").skills.map((s) => s.name)).toEqual(["good"]);
+    expect(scanSkillRoot(join(root, "nope"), "project").skills).toEqual([]);
+  });
+
+  test("A-11: the malformed one is REPORTED, not merely skipped -- a broken skill must be findable", () => {
+    const root = mkTemp("winter-scan-err-");
+    writeSkill(root, "good", { name: "good", description: "d" }, "b");
+    mkdirSync(join(root, "bad"), { recursive: true });
+    writeFileSync(join(root, "bad", "SKILL.md"), "no frontmatter", "utf8");
+    const scanned = scanSkillRoot(root, "project");
+    expect(scanned.errors.map((e) => e.directory)).toEqual(["bad"]);
+    expect(scanned.errors[0]!.path).toBe(join(root, "bad", "SKILL.md"));
+    expect(scanned.errors[0]!.reason).toMatch(/frontmatter/i);
+  });
+});
+
+describe("A-11: the index reads a BOUNDED PREFIX, and an over-bound skill is an indexed error", () => {
+  // The finding (T5 review Nit 5): `SkillIndex.build()` read every SKILL.md IN FULL -- including
+  // every project-tier one, which arrives with a `git clone`, before any trust decision and before
+  // the model runs. "Lazy" meant NOT RETAINED, not NOT READ, so a 64 MB SKILL.md cost 64 MB of heap
+  // at startup. Frontmatter lives at the head of the file, so a bounded prefix is all the index
+  // needs; `load()` keeps the full read.
+
+  test("a huge body costs only the prefix at index time, and `load()` still returns the WHOLE body", () => {
+    const root = mkTemp("winter-bound-");
+    const big = "B".repeat(SKILL_METADATA_PREFIX_BYTES * 2);
+    writeSkill(root, "huge", { name: "huge", description: "a normal description" }, big);
+    const cwd = mkTemp("winter-bound-cwd-");
+    mkdirSync(join(cwd, ".winter"), { recursive: true });
+    // Point the project tier at the fixture root by building the index over its parent.
+    const skills = scanSkillRoot(root, "project").skills;
+    expect(skills.map((s) => s.name)).toEqual(["huge"]);
+    expect(skills[0]!.description).toBe("a normal description");
+
+    // The read bound is real: the metadata read of this file returns only the prefix.
+    const bounded = readSkillMetadata(join(root, "huge", "SKILL.md"), "huge", { maxBytes: SKILL_METADATA_PREFIX_BYTES });
+    expect(bounded.ok).toBe(true);
+    expect(bounded.ok && bounded.skill.body.length).toBeLessThanOrEqual(SKILL_METADATA_PREFIX_BYTES);
+    // ...while the UNBOUNDED read -- what `load()` does -- still sees the whole body.
+    const full = readSkillMetadata(join(root, "huge", "SKILL.md"), "huge");
+    expect(full.ok && full.skill.body.length).toBeGreaterThan(SKILL_METADATA_PREFIX_BYTES);
+  });
+
+  test("frontmatter that exceeds the bound is an INDEXED ERROR naming the bound -- never a silent vanish", () => {
+    const root = mkTemp("winter-overbound-");
+    const skillDir = join(root, "overbound");
+    mkdirSync(skillDir, { recursive: true });
+    // A fence that never closes inside the prefix: the metadata cannot be read, and the skill must
+    // not simply disappear from the listing with no explanation anywhere.
+    writeFileSync(join(skillDir, "SKILL.md"), `---\nname: overbound\ndescription: d\n${"padding: x\n".repeat(20_000)}---\n\nbody`, "utf8");
+    const scanned = scanSkillRoot(root, "project");
+    expect(scanned.skills).toEqual([]);
+    expect(scanned.errors).toHaveLength(1);
+    expect(scanned.errors[0]!.reason).toContain(String(SKILL_METADATA_PREFIX_BYTES));
+  });
+
+  test("the index SURFACES its errors: an unreadable and an over-bound skill both appear in `errors()`", () => {
+    const repo = mkTemp("winter-idx-err-");
+    mkdirSync(join(repo, ".git"), { recursive: true });
+    const root = join(repo, ".winter", "skills");
+    writeSkill(root, "fine", { name: "fine", description: "d" }, "b");
+    mkdirSync(join(root, "broken"), { recursive: true });
+    writeFileSync(join(root, "broken", "SKILL.md"), "not a skill file", "utf8");
+
+    const index = SkillIndex.build({ cwd: repo, winterHome: mkTemp("winter-idx-err-home-") });
+    expect(index.names()).toEqual(["fine"]);
+    expect(index.errors().map((e) => e.directory)).toEqual(["broken"]);
+    expect(index.errors()[0]!.source).toBe("project");
+  });
+
+  test("a skill whose RESOLVED NAME fails the slug jail is an indexed error too, not a silent drop", () => {
+    const repo = mkTemp("winter-jail-err-");
+    mkdirSync(join(repo, ".git"), { recursive: true });
+    const root = join(repo, ".winter", "skills");
+    writeSkill(root, "sneaky", { name: "../escape", description: "d" }, "b");
+    const index = SkillIndex.build({ cwd: repo, winterHome: mkTemp("winter-jail-err-home-") });
+    expect(index.names()).toEqual([]);
+    expect(index.errors()[0]!.reason).toContain("invalid skill name");
   });
 });
 
