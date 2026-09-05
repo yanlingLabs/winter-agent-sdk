@@ -125,6 +125,25 @@ describe("the remaining §8.4 triggers", () => {
     expect(verdict.warnings[0]).toContain("not captured");
   });
 
+  test("SUPPRESSION NEEDS AFFIRMATIVE EVIDENCE: an unspecified completeness warns, and reads differently from a known-incomplete one", () => {
+    // §8.4's second condition is a positive claim. Reading "not denied" as "proven" would have made
+    // every DeepSeek switch classify itself lossless in production, where nothing sets the flag at
+    // all -- while every fixture that passes it explicitly stayed green.
+    const unconfirmed = classifySwitch(DEEPSEEK, OPENAI, {});
+    expect(unconfirmed.lossClass).toBe("warned-lossy");
+    expect(unconfirmed.warnings[0]).toContain("could not confirm");
+    expect(unconfirmed.warnings[0]).not.toContain("not captured");
+    expect(unconfirmed.portable).not.toContain("deepseek/r-reason's complete readable reasoning, forwarded unmodified");
+  });
+
+  test("`lossless-portable` is UNREACHABLE without an explicit completeness claim", () => {
+    // Every combination of the other facts, with completeness left unstated: none may suppress.
+    for (const facts of [{}, { summaryAvailable: true }, { completedToolResults: 3 }, { exposedComplete: false }, { truncated: false }] as const) {
+      expect(classifySwitch(DEEPSEEK, OPENAI, facts).lossClass).toBe("warned-lossy");
+    }
+    expect(classifySwitch(DEEPSEEK, OPENAI, { exposedComplete: true }).lossClass).toBe("lossless-portable");
+  });
+
   test("a mid-turn abort warns EVEN INSIDE a shared domain -- the loss is the unfinished turn", () => {
     const verdict = classifySwitch(OPENAI, OPENAI, { midTurnAbort: true, completedToolResults: 3 });
     expect(verdict.lossClass).toBe("warned-lossy");

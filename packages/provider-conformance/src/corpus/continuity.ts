@@ -52,6 +52,7 @@ export type ContinuityCaseId =
   | "target-receives-available-portable-state"
   | "immediate-switch-cancels-rather-than-splices"
   // --- §12.4's security and privacy proofs ------------------------------------------------------
+  | "suppression-requires-affirmative-evidence"
   | "opaque-state-never-in-a-warning-or-handoff"
   | "handoff-is-data-not-authority"
   | "exposed-reasoning-forwarded-only-when-policy-permits"
@@ -82,6 +83,7 @@ export const CONTINUITY_CASES: readonly ContinuityCaseSpec[] = [
   { id: "target-never-receives-source-opaque-state", question: "is the source's opaque state absent from everything the target sees, in BOTH carriers?", clause: "§12.3(4) / §12.4" },
   { id: "target-receives-available-portable-state", question: "does the target receive the available summary and portable task state?", clause: "§12.3(5) / §9.3" },
   { id: "immediate-switch-cancels-rather-than-splices", question: "does an immediate switch cancel the source loop instead of splicing a foreign model into it?", clause: "§12.3(6) / §8.3" },
+  { id: "suppression-requires-affirmative-evidence", question: "is a no-warning classification reachable ONLY on proof of completeness, never on the absence of a denial?", clause: "§12.4 / §8.4(2)" },
   { id: "opaque-state-never-in-a-warning-or-handoff", question: "can an encrypted payload reach a warning, a handoff or a render report at all?", clause: "§12.4" },
   { id: "handoff-is-data-not-authority", question: "is a handoff delimited, labelled as prior-model data, and unable to terminate its own block?", clause: "§12.4 / §9.3" },
   { id: "exposed-reasoning-forwarded-only-when-policy-permits", question: "is raw exposed reasoning withheld when policy forbids forwarding it?", clause: "§12.4 / §8.4(5)" },
@@ -311,6 +313,22 @@ export const CONTINUITY_CASE_IMPLS: Record<ContinuityCaseId, ContinuityCaseImpl>
     assert(applied.discard!.completedToolResultsRetained === 1, "completed tool facts are retained");
   },
 
+  "suppression-requires-affirmative-evidence": ({ world }) => {
+    // The structural half of the DeepSeek case. §8.4's second suppressing condition is an
+    // AFFIRMATIVE claim -- complete readable reasoning, forwarded unmodified -- so an unstated
+    // completeness must warn. Reading "not denied" as "proven" fails open exactly where production
+    // is silent: nothing writes exposed reasoning to the sidecar yet, so the realistic wiring states
+    // nothing and every DeepSeek switch would call itself lossless.
+    for (const facts of [{}, { summaryAvailable: true }, { completedToolResults: 2 }, { exposedComplete: false }]) {
+      const verdict = classifySwitch(world.endpoints.deepseek, world.endpoints.openai, facts);
+      assert(verdict.lossClass === "warned-lossy", `an unproven completeness must not suppress the warning (facts: ${JSON.stringify(facts)})`);
+      assert(verdict.warnings.length > 0, "and it must actually warn");
+    }
+    assert(
+      classifySwitch(world.endpoints.deepseek, world.endpoints.openai, { exposedComplete: true }).lossClass === "lossless-portable",
+      "while an explicit completeness claim is what earns the lossless classification",
+    );
+  },
   "opaque-state-never-in-a-warning-or-handoff": ({ world }) => {
     const verdict = classifySwitch(world.endpoints.claudeA, world.endpoints.openai, { summaryAvailable: true, truncated: true, midTurnAbort: true, completedToolResults: 2 });
     const handoff = buildPortableHandoff([{ role: "user", content: "go" }, claudeTurn("m1", "answer")], chainOf({ m1: { summary: "a summary" } }), world.endpoints.claudeA);

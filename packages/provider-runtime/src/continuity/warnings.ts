@@ -69,7 +69,14 @@ export function classifySwitch(from: ContinuityEndpoint, to: ContinuityEndpoint,
   const warnings: string[] = [];
   const domainShared = sameDomain(from, to);
   const sourceHidden = from.readableState !== "full-exposed";
-  const exposedComplete = from.readableState === "full-exposed" && facts.exposedComplete !== false;
+  // AFFIRMATIVE EVIDENCE, not the absence of a denial. §8.4's second suppressing condition is a
+  // positive claim -- "the source exposes COMPLETE readable reasoning and Winter WILL pass it
+  // unmodified" -- so `exposedComplete !== false` was the wrong test: an unspecified fact would have
+  // bought the suppression, and the realistic wiring specifies nothing (the write path records no
+  // exposed reasoning at all yet, Lane C report item 8). Every DeepSeek switch would have classified
+  // itself lossless with no warning, in production, while every fixture that passed the flag
+  // explicitly stayed green.
+  const exposedComplete = from.readableState === "full-exposed" && facts.exposedComplete === true;
   const forwardable = !facts.policyBlocksForwarding;
   const truncated = facts.truncated === true;
 
@@ -100,11 +107,14 @@ export function classifySwitch(from: ContinuityEndpoint, to: ContinuityEndpoint,
     );
   }
 
-  // Trigger 3: an exposed-reasoning source whose trace is incomplete. §8.4 is explicit that this warns
-  // even though the source's readable state would otherwise suppress the hidden-reasoning warning.
-  if (!nativeCarries && from.readableState === "full-exposed" && facts.exposedComplete === false) {
+  // Trigger 3, in its two shapes. A KNOWN-incomplete trace and an UNCONFIRMED one are different
+  // facts to a reader -- "some of it is missing" versus "nobody checked" -- and both must warn,
+  // because §8.4's suppression is earned by proof of completeness rather than by its absence.
+  if (!nativeCarries && from.readableState === "full-exposed" && facts.exposedComplete !== true) {
     warnings.push(
-      `${identify(from)} exposes readable reasoning, but part of this turn's trace was not captured, so the handoff to ${identify(to)} is incomplete. Winter carries over ${joinList(portable)}.`,
+      facts.exposedComplete === false
+        ? `${identify(from)} exposes readable reasoning, but part of this turn's trace was not captured, so the handoff to ${identify(to)} is incomplete. Winter carries over ${joinList(portable)}.`
+        : `${identify(from)} exposes readable reasoning, but Winter could not confirm this turn's trace is complete, so the handoff to ${identify(to)} is treated as lossy. Winter carries over ${joinList(portable)}.`,
     );
   }
 
