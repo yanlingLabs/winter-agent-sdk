@@ -690,3 +690,57 @@ describe("dialect-record sentinel (task 8)", () => {
     }
   });
 });
+
+describe("delete() removes the provider-state sidecar too (P6 T3, re-review round 2)", () => {
+  // THE SINGLE SINK FOR OPAQUE PROVIDER STATE MUST NOT OUTLIVE AN EXPLICIT PRODUCT DELETION.
+  //
+  // `<stem>.provider-state.jsonl` holds `encrypted_content`, thinking signatures, `thoughtSignature`
+  // and every other item the whole architecture exists to keep out of model-readable storage. It is
+  // written by the runtime, but its LIFECYCLE at the path level belongs here -- this method is the
+  // one place WS-05 §6's "explicit product deletion transaction" happens, and its own comment already
+  // promised "every sidecar". That promise was false for the one file whose survival matters most.
+  test("a main-key delete removes the session's sidecar, not just its transcript", async () => {
+    const home = freshHome();
+    try {
+      const store = new WinterCompatibilitySessionStore({ winterHome: home });
+      const key = { projectKey: "proj", sessionId: "sess-1" };
+      await store.append(key, [entry()]);
+      const sidecar = join(home, "projects", "proj", "sess-1.provider-state.jsonl");
+      writeFileSync(sidecar, `${JSON.stringify({ type: "winter_provider_state", payload: { items: ["ENCRYPTED-OPAQUE"] } })}\n`);
+      expect(existsSync(sidecar)).toBe(true);
+
+      await store.delete(key);
+
+      expect(existsSync(sidecar)).toBe(false);
+      expect(existsSync(join(home, "projects", "proj", "sess-1.jsonl"))).toBe(false);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test("a CHILD's sidecar goes with the cascade, and so does a targeted subkey's", async () => {
+    const home = freshHome();
+    try {
+      const store = new WinterCompatibilitySessionStore({ winterHome: home });
+      const key = { projectKey: "proj", sessionId: "sess-2" };
+      const childKey = { ...key, subpath: "subagents/agent-1" };
+      await store.append(key, [entry()]);
+      await store.append(childKey, [entry()]);
+      const childSidecar = join(home, "projects", "proj", "sess-2", "subagents", "agent-1.provider-state.jsonl");
+      writeFileSync(childSidecar, "{}\n");
+
+      // A TARGETED subkey delete takes that subkey's own sidecar and nothing else.
+      await store.delete(childKey);
+      expect(existsSync(childSidecar)).toBe(false);
+      expect(existsSync(join(home, "projects", "proj", "sess-2.jsonl"))).toBe(true);
+
+      // And the main-key cascade takes whatever is left of the child tree with it.
+      writeFileSync(join(home, "projects", "proj", "sess-2.provider-state.jsonl"), "{}\n");
+      await store.delete(key);
+      expect(existsSync(join(home, "projects", "proj", "sess-2.provider-state.jsonl"))).toBe(false);
+      expect(existsSync(join(home, "projects", "proj", "sess-2"))).toBe(false);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+});
