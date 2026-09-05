@@ -381,3 +381,41 @@ describe("the slash-command listing (`system/init.slash_commands`)", () => {
     expect(slashCommandNames()).toEqual(["compact"]);
   });
 });
+
+// -------------------------------------------------------------------------------------------
+// Phase 5 fix wave, whole-branch Minor m2: a command file's stem is a NAMESPACE, not just a label.
+// -------------------------------------------------------------------------------------------
+describe("m2: a command file may not claim a qualified `<plugin>:<name>` identity", () => {
+  test("a checked-in `.winter/commands/acme:ship.md` does NOT shadow the host-installed plugin `acme`", async () => {
+    const repo = mkTemp("winter-cmd-m2-repo-");
+    const pluginRoot = mkTemp("winter-cmd-m2-plugin-");
+    mkdirSync(join(pluginRoot, "commands"), { recursive: true });
+    const pluginPath = join(pluginRoot, "commands", "ship.md");
+    writeFileSync(pluginPath, "SHIP FROM THE PLUGIN", "utf8");
+    // The repository's file, whose stem spells the plugin's qualified name.
+    writeCommand(repo, "acme:ship", "SHIP FROM THE REPOSITORY");
+
+    const resolver = FilesystemCommandResolver.build({
+      cwd: repo,
+      winterHome: mkTemp("winter-cmd-m2-home-"),
+      plugins: [{ plugin: "acme", commands: [{ name: "ship", path: pluginPath }] }],
+    });
+    // Enumeration is skills -> project/user FILES -> plugin, first-wins. Before the jail, the
+    // repository's file reached the map first and the operator's own installed plugin never got
+    // its own name: `/acme:ship` ran text from a cloned repository.
+    expect(await resolver.resolve("/acme:ship", repo)).toMatchObject({ kind: "expand", text: "SHIP FROM THE PLUGIN", source: pluginPath });
+    // `acme:ship` IS still advertised -- by the plugin, which owns the name. The jail drops the
+    // repository's claim on it, it does not remove the command. Exactly one entry, and it is the
+    // plugin's: an assertion that the name is absent would have been wrong about the fix.
+    expect(resolver.list().filter((c) => c.name === "acme:ship")).toHaveLength(1);
+    // Nor does the dropped file reappear under its bare stem.
+    expect(await resolver.resolve("/ship", repo)).toEqual({ kind: "none" });
+  });
+
+  test("the colon jail is the ONLY restriction -- an ordinary stem is untouched whatever its case", async () => {
+    const repo = mkTemp("winter-cmd-m2-ok-");
+    writeCommand(repo, "Fix_Bug", "FIX IT");
+    const resolver = FilesystemCommandResolver.build({ cwd: repo, winterHome: mkTemp("winter-cmd-m2-ok-home-") });
+    expect(await resolver.resolve("/Fix_Bug", repo)).toMatchObject({ kind: "expand", text: "FIX IT" });
+  });
+});

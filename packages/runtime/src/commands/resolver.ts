@@ -128,11 +128,28 @@ function scanCommandDir(dir: string, source: SlashCommandOrigin): CommandFile[] 
   }
   const out: CommandFile[] = [];
   for (const file of names) {
+    const stem = basename(file, ".md");
+    // WHOLE-BRANCH MINOR m2: a command file's stem is a NAMESPACE, not just a label. Plugin commands
+    // are `<plugin>:<name>`, and enumeration is skills -> project/user FILES -> plugin with
+    // first-wins -- so a checked-in `.winter/commands/acme:ship.md` reached the map before the
+    // operator's own installed `acme` plugin and took its qualified name. `/acme:ship` then ran text
+    // from a cloned repository under the identity of software the user chose to install. P5-H's
+    // shadowing inversion, arriving through the plugin dimension.
+    //
+    // DELIBERATELY NARROWER THAN THE REVIEW'S SUGGESTED FIX, which was to jail stems to the skill
+    // slug alphabet (`isLegalSkillIdentity`). That alphabet is `/^[a-z0-9][a-z0-9-]{0,63}$/` --
+    // lowercase, digits and hyphens only -- so adopting it would also silently stop loading every
+    // `Fix_Bug.md`, `Deploy.md` or `run_tests.md` that works today. Those names claim nothing and
+    // endanger nothing; the colon is the entire vulnerability, because the colon is the only
+    // character that carries namespace meaning. A jail should cost exactly what the threat costs.
+    // (Path traversal needs no rule here: every `path` is built from `readdirSync` output, never
+    // from a declared name.) The second m2 fixture pins the non-regression.
+    if (stem.includes(":")) continue;
     const path = join(dir, file);
     const meta = readCommandMeta(path);
     if (!meta) continue;
     out.push({
-      name: basename(file, ".md"),
+      name: stem,
       path,
       source,
       ...(meta.description !== undefined ? { description: meta.description } : {}),

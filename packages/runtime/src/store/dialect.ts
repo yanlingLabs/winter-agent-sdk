@@ -258,11 +258,24 @@ export const INVOKED_SKILLS_ENTRY_TYPE = "invoked_skills";
  * read authority, and rider 16's "retire the sidecar" half is NOT done. Two concrete blockers, both
  * behavioural rather than cosmetic:
  *
- *   1. SCOPING. `FileCheckpointSink.beforeMutation` is scoped by the SEAM's own `req.sessionUuid`,
- *      which is how a child engine's edits land in the CHILD's subtree rather than the parent's --
- *      but a sink holds exactly one `SessionPersistence`, the parent's. Routing every record through
- *      it would silently move a child's file history into the parent's transcript and therefore into
- *      the parent's rewind scope.
+ *   1. SCOPING -- CORRECTED IN THE FIX WAVE (B-M2). This used to say the seam's `req.sessionUuid`
+ *      is "how a child engine's edits land in the CHILD's subtree", and that routing records through
+ *      the sink's single parent `SessionPersistence` would move them into the parent's. Both halves
+ *      were wrong, and checking beats reasoning here:
+ *
+ *        * A CHILD HAS NO SINK AT ALL. `fileCheckpointSink` is in `production-wiring.ts`'s
+ *          `engineOptions` and NOT in its `childFactoryOptions`, so in a child engine it is
+ *          `undefined` and the `beforeMutation` call site never runs. There are no child records to
+ *          misroute.
+ *        * AND IF THERE WERE, `sessionUuid` WOULD NOT SEPARATE THEM. The engine stamps
+ *          `sessionUuid: config.sessionId`, and a child's `config.sessionId` IS the owning parent's
+ *          (`runCtx.parentSessionId` -- Phase 4's I1, deliberate, and every session-keyed registry
+ *          downstream reads it that way). The seam field the old text called the scoping mechanism
+ *          carries the parent's identity in both engines.
+ *
+ *      So the real blocker is the inverse of the one recorded: giving children a sink needs a
+ *      scoping key that DOES distinguish them (the `agentId`, which `childTranscriptSubpath` already
+ *      uses for the child's own transcript) before any routing question arises at all.
  *   2. THE READ PATH. `rewindToCheckpoint` is synchronous and reads `index.jsonl` next to the blobs
  *      it names; `SessionPersistence` is an append-only write sink with no read surface at all, and
  *      the store's own reader is async.

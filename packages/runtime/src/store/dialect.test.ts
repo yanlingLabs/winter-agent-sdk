@@ -18,6 +18,10 @@ import type { RuntimeConfig, WinterFrame, SpawnedRuntimeProcess } from "@yanling
 import {
   userEntry,
   assistantEntry,
+  invokedSkillsEntry,
+  fileHistoryEntry,
+  INVOKED_SKILLS_ENTRY_TYPE,
+  FILE_HISTORY_ENTRY_TYPE_BY_KIND,
   TranscriptWriter,
   RUNTIME_ENGINE_VERSION,
   buildChildTranscriptWriter,
@@ -661,5 +665,120 @@ describe("engine wiring (temp WINTER_HOME, in-memory leg)", () => {
 
     expect(explicitTrueBytes).toBe(defaultBytes);
     expect(explicitFalseBytes).toBe(defaultBytes);
+  });
+});
+
+
+// ------------------------------------------------------------------------------------------------
+// Phase 5 fix wave, B-M1: the two entry types rider 16 added shipped with NO tests of their own.
+// The writer methods were exercised only indirectly, and the entries not at all.
+// ------------------------------------------------------------------------------------------------
+describe("B-M1: the rider-16 entry types", () => {
+  test("`invokedSkillsEntry` carries the base fields, the payload, and a COPY of the array", () => {
+    const skills = [{ name: "review", source: "project" }];
+    const entry = invokedSkillsEntry({ attachment: { type: "invoked_skills", skills }, chain: { parentUuid: null }, ctx: CTX });
+    expect(entry.type).toBe(INVOKED_SKILLS_ENTRY_TYPE);
+    expect(entry.type).toBe("invoked_skills");
+    expect(entry.skills).toEqual(skills);
+    expect(entry.parentUuid).toBeNull();
+    expect(entry.sessionId).toBe(CTX.sessionId);
+    expect(entry.cwd).toBe(CTX.cwd);
+    expect(typeof entry.uuid).toBe("string");
+    expect(typeof entry.timestamp).toBe("string");
+    // The copy is the load-bearing part: a transcript entry must not change under a reader because
+    // the caller went on mutating the payload it handed in.
+    skills.push({ name: "sneaked-in-later", source: "project" });
+    expect(entry.skills).toHaveLength(1);
+  });
+
+  test("`fileHistoryEntry` picks its type from the record's KIND and never reshapes the record", () => {
+    const base = {
+      userMessageUuid: "u-1",
+      path: "/winter-fixture/src/a.ts",
+      pathHash: "hash-a",
+      tool: "Edit",
+      at: "2026-09-05T00:00:00.000Z",
+      version: 2,
+      absent: false,
+      parentRealPath: "/winter-fixture/src",
+    } as const;
+    const snap = fileHistoryEntry({ record: { ...base, kind: "snapshot" }, chain: { parentUuid: null }, ctx: CTX });
+    const delta = fileHistoryEntry({ record: { ...base, kind: "delta" }, chain: { parentUuid: null }, ctx: CTX });
+    expect(snap.type).toBe(FILE_HISTORY_ENTRY_TYPE_BY_KIND.snapshot);
+    expect(delta.type).toBe(FILE_HISTORY_ENTRY_TYPE_BY_KIND.delta);
+    expect(snap.type).toBe("file-history-snapshot");
+    expect(delta.type).toBe("file-history-delta");
+    // NESTED under `file_history`, not spread across the entry -- which is the shape a reader has to
+    // know and the one nothing asserted. Every field of Lane K's CheckpointRecord survives verbatim:
+    // this module is a carrier, and a silently-dropped optional (`parentRealPath`, `absent`) is the
+    // failure mode worth pinning.
+    expect(snap.file_history).toEqual({ ...base, kind: "snapshot" });
+    expect(delta.file_history).toEqual({ ...base, kind: "delta" });
+    expect((snap as unknown as Record<string, unknown>)["path"]).toBeUndefined();
+  });
+
+  test("both entries hold the chain and round-trip through the store like any other entry", async () => {
+    const home = freshHome();
+    try {
+      const store = new WinterCompatibilitySessionStore({ winterHome: home });
+      const key = { projectKey: "proj-bm1", sessionId: "sess-bm1" };
+      const writer = new TranscriptWriter({ store, key, ctx: { sessionId: "sess-bm1", cwd: "/winter-fixture", version: "0.0.1" } });
+
+      await writer.recordUserEntry("hi");
+      await writer.recordInvokedSkills({ type: "invoked_skills", skills: [{ name: "review" }] });
+      await writer.recordFileHistory({
+        kind: "snapshot",
+        userMessageUuid: "u-1",
+        path: "/winter-fixture/src/a.ts",
+        pathHash: "hash-a",
+        tool: "Write",
+        at: "2026-09-05T00:00:00.000Z",
+        version: 1,
+      });
+      await writer.recordAssistantEntry([{ type: "text", text: "done" }]);
+
+      const entries = await store.load(key);
+      expect(entries!.map((e) => e.type)).toEqual(["user", "invoked_skills", "file-history-snapshot", "assistant"]);
+      // The chain runs THROUGH them: they are entries in the session's own history, not a sidecar.
+      for (let i = 1; i < entries!.length; i++) expect(entries![i]!.parentUuid).toBe(entries![i - 1]!.uuid);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test("neither entry is CONVERSATIONAL -- a compaction does not preserve or replay them", async () => {
+    const home = freshHome();
+    try {
+      const store = new WinterCompatibilitySessionStore({ winterHome: home });
+      const key = { projectKey: "proj-bm1-conv", sessionId: "sess-bm1-conv" };
+      const writer = new TranscriptWriter({ store, key, ctx: { sessionId: "sess-bm1-conv", cwd: "/winter-fixture", version: "0.0.1" } });
+
+      await writer.recordUserEntry("first");
+      await writer.recordInvokedSkills({ type: "invoked_skills", skills: [] });
+      await writer.recordFileHistory({ kind: "delta", userMessageUuid: "u-1", path: "/winter-fixture/a", pathHash: "h", tool: "Edit", at: "2026-09-05T00:00:00.000Z", version: 1 });
+      await writer.recordAssistantEntry([{ type: "text", text: "reply" }]);
+
+      // `recordCompactBoundary` rebuilds its retained set from the writer's tracked CONVERSATIONAL
+      // uuids. This is the claim the rider-16 header makes in prose -- "nothing reads the transcript
+      // entry for behaviour" -- and it had no test: if either method had called `trackConversational`,
+      // a checkpoint record would be handed to a provider as conversation.
+      //
+      // `retainedCount: 4` DELIBERATELY EXCEEDS the two conversational entries. That is what makes
+      // the negative assertions mean anything: an under-sized count would preserve two entries that
+      // happen to be the user and assistant ones and prove nothing about the other two. Asking for
+      // MORE than exist forces the writer to hand back everything it considers conversational --
+      // so if either new entry were tracked, it would appear here.
+      const result = await writer.recordCompactBoundary({ trigger: "manual", preTokens: 100, summary: "SUMMARY", retainedCount: 4 });
+      const entries = await store.load(key);
+      const byUuid = new Map(entries!.map((e) => [e.uuid, e]));
+      const preservedTypes = result.preservedUuids.map((u) => byUuid.get(u)?.type);
+      // Guard against the vacuous pass: an empty set satisfies every `not.toContain` below.
+      expect(preservedTypes).toHaveLength(2);
+      expect(preservedTypes).not.toContain("invoked_skills");
+      expect(preservedTypes).not.toContain("file-history-delta");
+      expect(new Set(preservedTypes)).toEqual(new Set(["user", "assistant"]));
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 });
