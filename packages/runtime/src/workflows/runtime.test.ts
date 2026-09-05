@@ -595,7 +595,16 @@ describe("abort chaining (WS-11 §1.8): stop cancels IN-FLIGHT bridged agents, n
         fakeChild({ neverSettle: true, onStop: () => stopped.push(req.prompt) }),
     });
     const launched = launch(r, META + `await parallel([() => agent("a"), () => agent("b")]); return 1;`);
-    await new Promise((res) => setTimeout(res, 30)); // let both children be in flight
+    // Wait until BOTH children are genuinely in flight before stopping. A fixed 30 ms sleep
+    // was a timing assumption: it held on a fast darwin box and failed on EVERY linux CI run
+    // (the worker subprocess had spawned at most one child by then, so `stopped` read ["a"]
+    // or []). Polling the rig's own spawn log is the condition the test actually means.
+    const deadline = Date.now() + 5_000;
+    while (r.spawned.length < 2) {
+      if (Date.now() > deadline) throw new Error(`only ${r.spawned.length} of 2 children spawned within 5 s`);
+      await new Promise((res) => setTimeout(res, 5));
+    }
+    await new Promise((res) => setTimeout(res, 0)); // one macrotask so the runtime registers the second handle
     r.runtime.stop(launched.runId);
     await r.runtime.await(launched.runId);
     expect(stopped.sort()).toEqual(["a", "b"]);
