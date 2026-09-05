@@ -492,6 +492,9 @@ describe("R6-17: what a CHILD inherits", () => {
       expect(captured).toBeDefined();
       expect(captured!.effectiveEffort).toBe("high");
       expect(captured!.effectiveThinking).toEqual({ type: "adaptive" });
+      // A NON-fork spawn inherits no history at all -- asserted so the fork fixture below is
+      // demonstrably testing the fork branch and not a field that is always populated.
+      expect(captured!.messages).toBeUndefined();
       // No provider identity has been RESOLVED in this run (selection is wired in T10), so the field
       // is absent rather than fabricated -- which is exactly the contract.
       expect(captured!.provider).toBeUndefined();
@@ -655,5 +658,138 @@ describe("R6-F: a resolution refusal lands on the result shape too", () => {
     expect(result.is_error).toBe(true);
     expect(result.terminal_reason).toBe("api_error");
     expect(result.api_error_status).toBeNull();
+  });
+});
+
+describe("R6-3 sweep consumer 6: the CHILD FORK MIRROR, through a live fork", () => {
+  test("a FORK's inherited history keeps the parent's provider annotations", async () => {
+    // The fixture this replaces spread the array itself and asserted the annotations survived --
+    // which tests JavaScript's spread operator, not `buildChildInheritance`. A `{role, content}`
+    // rebuild of the parent's history left it green while silently stripping `origin`/`nativeState`
+    // from every forked message, and a child would then replay a foreign history as if it were its
+    // own provider's. A mirror can only be tested through the thing that mirrors, so this drives a
+    // real `runEngine` with `fork: true` and reads what the child was actually handed.
+    const { registerChildEngineFactory, resetChildEngineFactoryForTest } = await import("../subagents/child-handle.ts");
+    const { createFakeChildHandle } = await import("../subagents/test-fakes.ts");
+    const { registerTool, unregisterToolForTest } = await import("../tools/registry.ts");
+    const PROBE = "p6_fork_probe";
+    registerTool({
+      descriptor: {
+        canonicalName: PROBE,
+        advertisedName: PROBE,
+        source: "builtin",
+        inputSchema: { type: "object" },
+        description: "fixture: forks a child",
+        exposure: "eager",
+        permissionClass: "read",
+        availability: {},
+        capabilityRequirements: [],
+        disposition: "implement-now",
+      },
+      executor: {
+        async execute(input: unknown, ctx) {
+          if (!ctx.session.spawnChild) return { output: "no spawnChild capability", isError: true };
+          const handle = await ctx.session.spawnChild(input as never);
+          return { output: handle.record.id };
+        },
+      },
+    });
+    let captured: import("../subagents/child-handle.ts").ChildInheritance | undefined;
+    registerChildEngineFactory(() => ({
+      async spawn(_req, inherit) {
+        captured = inherit;
+        return createFakeChildHandle();
+      },
+    }));
+    try {
+      const IDENTITY = { providerId: "openai", modelKey: "openai/o-test", family: "openai", continuationDomain: "openai:responses" };
+      // Turn 1 produces an assistant message carrying BOTH annotations; turn 2 forks; turn 3 ends.
+      const { provider } = recordingProvider([
+        { kind: "text", text: "prior answer", nativeState: { family: "openai", continuationDomain: "openai:responses", items: ["OPAQUE-ITEM"] } },
+        { kind: "tool_use", calls: [{ id: "f1", name: PROBE, input: { parentToolUseId: "f1", prompt: "go", runInBackground: false, fork: true } }] },
+        { kind: "text", text: "done" },
+      ]);
+      const { host, runtime } = createInMemoryChannel();
+      const done = runEngine({
+        config: baseConfig({ permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true }),
+        input: runtime.input,
+        output: runtime.output,
+        provider,
+        providerIdentity: IDENTITY,
+      } as never);
+      const frames: WinterFrame[] = [];
+      const reader = (async () => {
+        for await (const f of host.input) frames.push(f);
+      })();
+      host.output.write({ type: "user", text: "first" });
+      await new Promise((r) => setTimeout(r, 40));
+      host.output.write({ type: "user", text: "second" });
+      host.output.write({ type: "control_request", requestId: "end", subtype: "end_input", payload: undefined });
+      await reader;
+      await done;
+
+      expect(captured).toBeDefined();
+      const inherited = captured!.messages;
+      expect(inherited).toBeDefined();
+      const priorAssistant = inherited!.find((m) => m.role === "assistant");
+      expect(priorAssistant).toBeDefined();
+      // THE ASSERTION THAT RED-FAILS ON A `{role, content}` REBUILD.
+      expect(priorAssistant!.origin).toEqual(IDENTITY);
+      expect(priorAssistant!.nativeState).toEqual({ family: "openai", continuationDomain: "openai:responses", items: ["OPAQUE-ITEM"] });
+      // `uuid` is deliberately NOT asserted here: this session is `persistSession: false`, so no entry
+      // was ever recorded and there is no anchor to carry -- which is correct, not a gap. The anchor's
+      // survival through a persisted session is pinned by provider-state.test.ts's ordering fixture.
+      expect(priorAssistant!.uuid).toBeUndefined();
+    } finally {
+      unregisterToolForTest(PROBE);
+      resetChildEngineFactoryForTest();
+    }
+  });
+});
+
+describe("R6-3 / M3: only LOADED deferred tools are advertised to the provider", () => {
+  test("a deferred tool that this session has not loaded is ABSENT from the request's `tools`", async () => {
+    // WS-09 §8.2's "load != permission" runs both ways. Advertising a schema for a deferred tool the
+    // session has not loaded invites the model to call a name the engine's own load-first check will
+    // refuse BEFORE permission evaluation even starts -- a wasted round trip and a confusing refusal,
+    // every time. The eager control in the same fixture is what proves the filter is a FILTER and not
+    // an empty list.
+    const { registerTool, unregisterToolForTest } = await import("../tools/registry.ts");
+    const EAGER = "p6_eager_probe";
+    const DEFERRED = "p6_deferred_probe";
+    // The deferred probe is NOT `source: "builtin"`: `resolveDeferral`'s own unconditional override
+    // makes a builtin eager whatever its `deferred` flag says (WS-09 §8: core built-ins are never
+    // deferred through the public surface), so a builtin probe would be advertised and the fixture
+    // would fail for a reason that has nothing to do with the filter under test.
+    const descriptor = (name: string, deferred: boolean) => ({
+      canonicalName: name,
+      advertisedName: name,
+      source: (deferred ? "mcp" : "builtin") as "builtin" | "mcp",
+      inputSchema: { type: "object", properties: { q: { type: "string" } } },
+      description: `fixture: ${name}`,
+      exposure: "eager" as const,
+      permissionClass: "read" as const,
+      availability: {},
+      capabilityRequirements: [],
+      disposition: "implement-now" as const,
+      ...(deferred ? { deferred: true } : {}),
+    });
+    registerTool({ descriptor: descriptor(EAGER, false), executor: { async execute() { return { output: "" }; } } });
+    registerTool({ descriptor: descriptor(DEFERRED, true), executor: { async execute() { return { output: "" }; } } });
+    try {
+      const { provider, requests } = recordingProvider([{ kind: "text", text: "done" }]);
+      // Tool Search ACTIVE (`toolSearchEnabled`, the host-facing wire boolean that overrides the
+      // ambient env var), so the deferral partition is real: without activation every declared
+      // deferred tool is advertised eagerly and the fixture would prove nothing.
+      await runTurn({ provider, config: { toolSearchEnabled: true } });
+      const names = (requests[0]!.tools ?? []).map((t) => t.name);
+      expect(names).toContain(EAGER);
+      expect(names).not.toContain(DEFERRED);
+      // …and the schema that DID ride is the descriptor's real one, not a placeholder.
+      expect((requests[0]!.tools ?? []).find((t) => t.name === EAGER)?.inputSchema).toEqual({ type: "object", properties: { q: { type: "string" } } });
+    } finally {
+      unregisterToolForTest(EAGER);
+      unregisterToolForTest(DEFERRED);
+    }
   });
 });

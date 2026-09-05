@@ -344,3 +344,103 @@ describe("R6-7 resume: the chain is re-attached, and a gap is REPORTED", () => {
       }
     }));
 });
+
+describe("R6-7 / I1: the identity block is what distinguishes a DELETED sidecar from one that never existed", () => {
+  const IDENTITY = {
+    providerId: "openai",
+    modelKey: "openai/o-test",
+    family: "openai",
+    continuationDomain: "openai:responses",
+    adapterId: "openai-responses",
+    adapterVersion: "1.0.0",
+    catalogVersion: "0.0.0-seed",
+    authRefKind: "env",
+  } as const;
+
+  async function runSession(opts: { home: string; cwd: string; sessionId: string; resume?: string; identity?: typeof IDENTITY }): Promise<{ frames: unknown[] }> {
+    const { createInMemoryChannel } = await import("../protocol/channel.ts");
+    const { runEngine } = await import("../engine.ts");
+    const resolved = await resolveEngineSession({
+      config: { sessionId: opts.sessionId, cwd: opts.cwd, model: "m", permissionMode: "default", ...(opts.resume !== undefined ? { resume: opts.resume } : {}) } as never,
+      resolveWinterHome: () => opts.home,
+      env: {},
+    });
+    const { host, runtime } = createInMemoryChannel();
+    const done = runEngine({
+      config: resolved.config,
+      input: runtime.input,
+      output: runtime.output,
+      provider: { async generate() { return { kind: "text" as const, text: "ok" }; } },
+      tools: { async execute() { return { output: "" }; } },
+      store: resolved.store!,
+      initialMessages: resolved.initialMessages,
+      ...(opts.identity !== undefined ? { providerIdentity: opts.identity } : {}),
+    } as never);
+    const frames: unknown[] = [];
+    host.output.write({ type: "user", text: "go" });
+    host.output.write({ type: "control_request", requestId: "end", subtype: "end_input", payload: undefined });
+    for await (const f of host.input) frames.push(f);
+    await done;
+    return { frames };
+  }
+
+  const warningsIn = (frames: unknown[]): Array<Record<string, unknown>> =>
+    frames
+      .filter((f) => (f as { type?: string }).type === "data")
+      .map((f) => (f as { message: Record<string, unknown> }).message)
+      .filter((m) => m.type === "system" && m.subtype === "continuity_warning");
+
+  test("a session WITH a resolved identity writes the identity block to the dialect record", () =>
+    withTempHome(async (home) => {
+      const cwd = mkdtempSync(join(tmpdir(), "winter-p6-id-"));
+      try {
+        await runSession({ home, cwd, sessionId: "sess-id-a", identity: IDENTITY });
+        const projectKey = compatibilityKeys(cwd).transcriptProjectKey;
+        const summary = JSON.parse(readFileSync(join(home, "projects", projectKey, "sess-id-a.summary.json"), "utf8")) as Record<string, unknown>;
+        // THE PRODUCTION CALL. `setProviderIdentity` existed, was implemented and was unit-tested,
+        // and nothing called it -- so no session ever wrote this block.
+        expect(summary.providerId).toBe("openai");
+        expect(summary.modelKey).toBe("openai/o-test");
+        expect(summary.adapterId).toBe("openai-responses");
+        expect(summary.adapterVersion).toBe("1.0.0");
+        expect(summary.catalogVersion).toBe("0.0.0-seed");
+        expect(summary.authRef).toBe("env");
+      } finally {
+        rmSync(cwd, { recursive: true, force: true });
+      }
+    }));
+
+  test("a DELETED sidecar resumes with a loss warning -- not silently", () =>
+    withTempHome(async (home) => {
+      const cwd = mkdtempSync(join(tmpdir(), "winter-p6-id-b-"));
+      try {
+        await runSession({ home, cwd, sessionId: "sess-id-b", identity: IDENTITY });
+        const projectKey = compatibilityKeys(cwd).transcriptProjectKey;
+        const sidecar = providerStateSidecarPath(join(home, "projects", projectKey, "sess-id-b.jsonl"));
+        expect(existsSync(sidecar)).toBe(true);
+        rmSync(sidecar); // the case R6-7's early return used to swallow
+
+        const { frames } = await runSession({ home, cwd, sessionId: "fresh-b", resume: "sess-id-b" });
+        const warnings = warningsIn(frames);
+        expect(warnings).toHaveLength(1);
+        expect(warnings[0]!.warning).toBe("provider_state_deleted");
+        expect(String(warnings[0]!.detail)).toContain("assistant message");
+      } finally {
+        rmSync(cwd, { recursive: true, force: true });
+      }
+    }));
+
+  test("a PRE-P6 transcript (no identity block, no sidecar) resumes SILENTLY", () =>
+    withTempHome(async (home) => {
+      const cwd = mkdtempSync(join(tmpdir(), "winter-p6-id-c-"));
+      try {
+        // No `identity` -> no identity block and no records, exactly like every session written
+        // before this phase. Warning on those would fire on essentially every resumed session.
+        await runSession({ home, cwd, sessionId: "sess-id-c" });
+        const { frames } = await runSession({ home, cwd, sessionId: "fresh-c", resume: "sess-id-c" });
+        expect(warningsIn(frames)).toHaveLength(0);
+      } finally {
+        rmSync(cwd, { recursive: true, force: true });
+      }
+    }));
+});

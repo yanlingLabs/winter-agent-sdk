@@ -8,7 +8,7 @@ import type { ProviderAdapter } from "@yanlinglabs/winter-provider-runtime";
 import { WinterProviderResolutionError, createMemoryCredentialStore } from "@yanlinglabs/winter-provider-runtime";
 import type { WinterCatalog } from "@yanlinglabs/winter-provider-catalog";
 import type { RuntimeConfig } from "@yanlinglabs/winter-agent-sdk";
-import { createSelectionRegistry, redactCredentialRef, resolveSessionProvider, resolveStallTimeoutMs, WINTER_TEST_NAMESPACE } from "./selection.ts";
+import { createProviderContext, createSelectionRegistry, redactCredentialRef, resolveSessionProvider, resolveStallTimeoutMs, WINTER_TEST_NAMESPACE } from "./selection.ts";
 import { DEFAULT_PROVIDER_STALL_TIMEOUT_MS } from "@yanlinglabs/winter-agent-sdk";
 import type { Provider } from "../engine.ts";
 
@@ -269,5 +269,39 @@ describe("R6-6: the stall timeout", () => {
     expect(resolveStallTimeoutMs(config({ providerStallTimeoutMs: 5000 }))).toBe(5000);
     expect(resolveStallTimeoutMs(config({ providerStallTimeoutMs: 0 }))).toBe(DEFAULT_PROVIDER_STALL_TIMEOUT_MS);
     expect(resolveStallTimeoutMs(config({ providerStallTimeoutMs: -1 }))).toBe(DEFAULT_PROVIDER_STALL_TIMEOUT_MS);
+  });
+});
+
+describe("M1: createProviderContext is the stall timeout's production caller", () => {
+  test("the context an adapter runs under CARRIES the resolved stall timeout", () => {
+    // `sse.ts` reads `ctx.stallTimeoutMs` on every chunk, so a context assembled without it silently
+    // disables R6-6's watchdog on every stream -- a disclosed option that quietly does nothing.
+    const credentials = createMemoryCredentialStore();
+    expect(createProviderContext(config(), { providerId: "openai", credentials }).stallTimeoutMs).toBe(DEFAULT_PROVIDER_STALL_TIMEOUT_MS);
+    expect(createProviderContext(config({ providerStallTimeoutMs: 7500 }), { providerId: "openai", credentials }).stallTimeoutMs).toBe(7500);
+  });
+
+  test("the connection profile is threaded from config, and an absent field is OMITTED", () => {
+    const ctx = createProviderContext(config({ provider: { providerId: "openai", connection: { baseUrl: "http://127.0.0.1:11434", local: true } } }), {
+      providerId: "openai",
+      credentials: createMemoryCredentialStore(),
+    });
+    expect(ctx.connection).toEqual({ providerId: "openai", baseUrl: "http://127.0.0.1:11434", local: true });
+    expect("region" in ctx.connection).toBe(false);
+  });
+
+  test("an unnamed credential is `none`, never an ambient key", () => {
+    // R6-10: ambient env keys are NEVER scanned implicitly. A host that named no ref has not
+    // authenticated this provider, and an adapter gets a typed refusal rather than a key nobody chose.
+    expect(createProviderContext(config(), { providerId: "openai", credentials: createMemoryCredentialStore() }).authRef).toEqual({ kind: "none" });
+    expect(createProviderContext(config({ provider: { providerId: "openai", authRef: { kind: "env", name: "K" } } }), { providerId: "openai", credentials: createMemoryCredentialStore() }).authRef).toEqual({
+      kind: "env",
+      name: "K",
+    });
+  });
+
+  test("`log` defaults to a NO-OP -- a default that wrote anywhere is a default a careless adapter turns into a leak", () => {
+    const ctx = createProviderContext(config(), { providerId: "openai", credentials: createMemoryCredentialStore() });
+    expect(() => ctx.log({ kind: "request", providerId: "openai", bytes: 10 })).not.toThrow();
   });
 });

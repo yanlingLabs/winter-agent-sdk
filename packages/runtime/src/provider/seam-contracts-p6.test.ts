@@ -88,12 +88,20 @@ describe("R6-3 by-meaning sweep: every consumer of ContentBlock/ProviderTurn/Pro
     expect(text).not.toContain("[object Object]");
   });
 
-  test("consumer 3 -- the advisor's opaque stripping still removes any line that names a marker", () => {
+  // CONSUMERS 3 AND 4 ARE TRIPWIRES, NOT TESTS, and this file is the seam authority six lanes read --
+  // so the distinction is stated rather than left for a reader to discover. Consumer 3 passes with
+  // `stripOpaqueMarkers` DELETED (the flattener already emits nothing opaque, so there is nothing for
+  // the stripper to remove); it fires only if the flattener starts emitting a marker again. Consumer
+  // 4 can only catch a RUNTIME narrowing of `Block`, because the alias `type Block = ContentBlock`
+  // makes any type-level narrowing a compile error long before this runs. Both are worth keeping --
+  // they pin a property that would otherwise have no assertion at all -- but neither is evidence that
+  // the mechanism it names works.
+  test("consumer 3 (TRIPWIRE) -- the advisor's opaque stripping still removes any line that names a marker", () => {
     const { messages } = assembleReviewerMessages([{ role: "assistant", text: providerMessageContentToText(NEW_BLOCKS) }]);
     for (const message of messages) expectNoOpaque(typeof message.content === "string" ? message.content : JSON.stringify(message.content));
   });
 
-  test("consumer 4 -- the dialect Block type persists the new variants verbatim", () => {
+  test("consumer 4 (TRIPWIRE) -- the dialect Block type persists the new variants verbatim", () => {
     // `store/dialect.ts`'s `Block` IS `ContentBlock`; this asserts the alias still carries every
     // variant onto disk rather than a narrowed copy of it.
     const entry = assistantEntry({ content: NEW_BLOCKS, chain: { parentUuid: null }, ctx: { sessionId: "s", cwd: "/tmp", version: "0" } });
@@ -118,18 +126,12 @@ describe("R6-3 by-meaning sweep: every consumer of ContentBlock/ProviderTurn/Pro
     }
   });
 
-  test("consumer 6 -- a ProviderMessage's annotations survive a by-value copy (the child fork mirror)", () => {
-    // `buildChildInheritance` forks with `messages: [...messages]`. A copy that rebuilt each element
-    // as `{role, content}` would silently drop `origin`/`nativeState`, and the child would replay a
-    // foreign history as if it were its own provider's.
-    const origin: MessageOrigin = { providerId: "openai", modelKey: "openai/o-test", family: "openai", continuationDomain: "openai:responses" };
-    const nativeState: ProviderNativeState = { family: "openai", continuationDomain: "openai:responses", items: ["opaque"] };
-    const parent: ProviderMessage[] = [{ role: "assistant", content: "hi", uuid: "u-1", origin, nativeState }];
-    const forked = [...parent];
-    expect(forked[0]!.origin).toEqual(origin);
-    expect(forked[0]!.nativeState).toEqual(nativeState);
-    expect(forked[0]!.uuid).toBe("u-1");
-  });
+  // CONSUMER 6 (the child fork mirror) IS NOT HERE. It was, and the test it replaced spread the
+  // array ITSELF and asserted the annotations survived -- which tests JavaScript's spread operator,
+  // not `engine.ts`'s `buildChildInheritance`. Reverting the real consumer to a `{role, content}`
+  // rebuild left it green. The real fixture drives a live `runEngine` fork and lives in
+  // `engine-seam-p6.test.ts` ("a FORK's inherited history keeps the parent's provider annotations"),
+  // because a mirror can only be tested through the thing that mirrors.
 
   test("consumer 7 -- a tool_use turn carries its leading TEXT (a real model returns both)", () => {
     // R6-3, stated as the reason the field exists: "a real model returns text AND calls in one turn

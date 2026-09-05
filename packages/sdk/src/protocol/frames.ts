@@ -585,7 +585,7 @@ export interface SDKModelSwitchMessage {
 export interface SDKContinuityWarningMessage {
   type: "system";
   subtype: "continuity_warning";
-  warning: "provider_state_missing" | "cross_domain_replay_dropped" | "sidecar_unreadable";
+  warning: "provider_state_missing" | "provider_state_deleted" | "cross_domain_replay_dropped" | "sidecar_unreadable";
   detail: string;
   anchor_uuid?: string;
   uuid: string;
