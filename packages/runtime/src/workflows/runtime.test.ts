@@ -273,16 +273,35 @@ describe("the bridge service loop", () => {
     expect((await r.runtime.await(launched.runId)).result).toBe("null");
   });
 
-  test("a spawnAgent that THROWS is a null result too, never an unhandled rejection in the daemon", async () => {
+  test("m5: a spawnAgent that THROWS FAILS the run with the host's message -- never a swallowable null, never an unhandled rejection", async () => {
+    // The whole-branch m5 finding: `script-api.ts`'s own contract says the three UNSWALLOWABLE
+    // refusals are the agent cap, the budget ceiling and "no spawn capability at all" -- and
+    // `tools/impl/workflow.ts` throws exactly that when `ctx.session.spawnChild` is absent. Folding
+    // it into `null` made a workflow in a session with no child-spawn capability "complete" with
+    // `.filter(Boolean)`-swallowed empties. A child that FAILS or STOPS still resolves null (the two
+    // tests above): those are agent OUTCOMES, this is the host refusing to start one at all.
     const r = rig({
       spawnAgent: async () => {
-        throw new Error("no spawn capability");
+        throw new Error("no child-spawn capability is configured for this session");
       },
     });
     const launched = launch(r, META + `return await agent("x");`);
     const view = await r.runtime.await(launched.runId);
-    expect(view.status).toBe("completed");
-    expect(view.result).toBe("null");
+    expect(view.status).toBe("failed");
+    expect(view.error).toContain("no child-spawn capability");
+    expect(view.result).toBeUndefined();
+  });
+
+  test("m5: a script that TRIES to swallow the refusal still cannot -- the run is already failing", async () => {
+    const r = rig({
+      spawnAgent: async () => {
+        throw new Error("no child-spawn capability is configured for this session");
+      },
+    });
+    const launched = launch(r, META + `const out = []; try { out.push(await agent("x")); } catch { out.push("swallowed"); } return out.filter(Boolean);`);
+    const view = await r.runtime.await(launched.runId);
+    expect(view.status).toBe("failed");
+    expect(view.result).toBeUndefined();
   });
 
   test("phase() updates the run's phase and log() flows through progress", async () => {
@@ -709,6 +728,166 @@ describe("resumeFromRunId -- preconditions and the cached prefix (WS-11 §1.5)",
     const second = r.runtime.resume(first.runId, "sess-1", r.host);
     await r.runtime.await(second.runId);
     expect(r.spawned.slice(before).map((s) => s.prompt)[0]).toBe("one"); // re-ran live
+  });
+});
+
+describe("A-14 -- the reported `transcriptDir` holds the run's own transcript", () => {
+  // The finding: the directory was CREATED and REPORTED and nothing ever wrote to it, so a model
+  // that followed `WorkflowOutput.transcriptDir` found an empty directory. The brief's choice was
+  // "write the run transcript there or stop creating/reporting it"; `transcriptDir` is pinned on the
+  // captured `WorkflowOutput`, so the only honest half is to write it.
+  function transcriptLines(dir: string): Array<Record<string, unknown>> {
+    const path = join(dir, "transcript.jsonl");
+    if (!existsSync(path)) return [];
+    return readFileSync(path, "utf8")
+      .split("\n")
+      .filter((l) => l.trim() !== "")
+      .map((l) => JSON.parse(l) as Record<string, unknown>);
+  }
+
+  test("a completed run records launch, each agent call, and its terminal state", async () => {
+    const r = rig();
+    const launched = launch(r, META + `const a = await agent("one"); return [a];`, { args: { seed: 7 } });
+    await r.runtime.await(launched.runId);
+
+    const lines = transcriptLines(launched.transcriptDir);
+    expect(lines.map((l) => l["kind"])).toEqual(["launch", "agent", "finish"]);
+    expect(lines[0]).toMatchObject({ runId: launched.runId, name: "wf", scriptPath: launched.scriptPath });
+    expect(lines[1]).toMatchObject({ prompt: "one", outcome: "value" });
+    expect(lines[2]).toMatchObject({ status: "completed" });
+  });
+
+  test("an agent that resolves NULL is recorded -- the diagnostic the journal deliberately omits", async () => {
+    // WS-11 §1.8 calls the journal "the first diagnostic surface for empty/unexpected results", and
+    // the journal records SUCCESSFUL calls only (§1.5). A run whose agents all came back null leaves
+    // an empty journal; the transcript is where that shows up.
+    const r = rig({ spawnAgent: async () => fakeChild({ status: "failed", content: "" }) });
+    const launched = launch(r, META + `const a = await agent("one"); return a;`);
+    await r.runtime.await(launched.runId);
+
+    const agentLines = transcriptLines(launched.transcriptDir).filter((l) => l["kind"] === "agent");
+    expect(agentLines).toHaveLength(1);
+    expect(agentLines[0]).toMatchObject({ prompt: "one", outcome: "null" });
+  });
+
+  test("a FAILED run records the failure, and a STOPPED one records `stopped` -- never `failed`", async () => {
+    const r = rig();
+    const failed = launch(r, META + `throw new Error("boom");`);
+    await r.runtime.await(failed.runId);
+    const last = transcriptLines(failed.transcriptDir).at(-1);
+    expect(last).toMatchObject({ kind: "finish", status: "failed" });
+    expect(String(last?.["detail"])).toContain("boom");
+
+    // WS-11 §1.8's third terminal state, on the transcript as well as on the wire.
+    const hanging = rig({ spawnAgent: async () => fakeChild({ neverSettle: true }) });
+    const stopped = launch(hanging, META + `await agent("hang"); return 1;`);
+    await new Promise((res) => setTimeout(res, 40));
+    hanging.runtime.stop(stopped.runId);
+    await hanging.runtime.await(stopped.runId);
+    expect(transcriptLines(stopped.transcriptDir).at(-1)).toMatchObject({ kind: "finish", status: "stopped" });
+  });
+
+  test("large values are CAPPED -- the transcript is durable and must not grow without bound", async () => {
+    const r = rig({ spawnAgent: async () => fakeChild({ content: "y".repeat(20_000) }) });
+    const launched = launch(r, META + `return await agent("${"x".repeat(20_000)}");`);
+    await r.runtime.await(launched.runId);
+
+    const lines = transcriptLines(launched.transcriptDir);
+    expect(lines.length).toBeGreaterThan(2); // never vacuous: the cap is only meaningful over real records
+    for (const line of lines) {
+      expect(JSON.stringify(line).length).toBeLessThan(12_000);
+    }
+  });
+});
+
+describe("resumeFromRunId with an EDITED script -- the fix wave's I6 ruling (WS-11 §1.3's edit-then-resume loop)", () => {
+  // THE RULING: a resume that supplies a new source/args honours the NEW source and args against the
+  // OLD journal. The positional key then diverges at the first changed call and everything from
+  // there runs live -- which is §1.5's contract, arrived at through the door §1.3 actually points
+  // the model at ("edit the persisted script, then resume"). Before this, `resume` rebuilt the
+  // launch from the recorded original and the edit was silently discarded.
+
+  /** One agent completes and is journaled; the next hangs, so the run reaches `stopped` -- the resume precondition. */
+  function stoppableRig() {
+    const hangFor = new Set<string>(["two"]);
+    const r = rig({ spawnAgent: async (req) => (hangFor.has(req.prompt) ? fakeChild({ neverSettle: true }) : fakeChild({ content: `child:${req.prompt}` })) });
+    return { r, hangFor };
+  }
+
+  test("the EDITED script is what runs, and the unchanged prefix still replays from the old journal", async () => {
+    const { r, hangFor } = stoppableRig();
+    const original = META + `const a = await agent("one"); const b = await agent("two"); return [a, b];`;
+    const first = launch(r, original);
+    await new Promise((res) => setTimeout(res, 40));
+    r.runtime.stop(first.runId);
+    await r.runtime.await(first.runId);
+
+    // The model edits the persisted script: the first call is UNCHANGED (so it replays), the second
+    // is different (so it runs live), and the return shape proves which source executed.
+    hangFor.clear();
+    const edited = META + `const a = await agent("one"); const b = await agent("two-EDITED"); return ["edited", a, b];`;
+    const parsed = parseWorkflowMeta(edited);
+    if (!parsed.ok) throw new Error(parsed.error);
+    const before = r.spawned.length;
+    const second = r.runtime.resume(first.runId, "sess-1", r.host, { parentToolUseId: "tooluse-resume", replacement: { source: edited, meta: parsed.meta } });
+
+    const view = await r.runtime.await(second.runId);
+    expect(view.status).toBe("completed");
+    expect(view.result).toBe(JSON.stringify(["edited", "child:one", "child:two-EDITED"]));
+    expect(r.spawned.slice(before).map((s) => s.prompt)).toEqual(["two-EDITED"]); // "one" replayed; the changed call went live
+  });
+
+  test("the resumed run PERSISTS the edited source -- a later resume replays the edit, not the original", async () => {
+    const { r, hangFor } = stoppableRig();
+    const first = launch(r, META + `await agent("two"); return "original";`);
+    await new Promise((res) => setTimeout(res, 40));
+    r.runtime.stop(first.runId);
+    await r.runtime.await(first.runId);
+
+    hangFor.clear();
+    const edited = META + `await agent("one"); return "edited";`;
+    const parsed = parseWorkflowMeta(edited);
+    if (!parsed.ok) throw new Error(parsed.error);
+    const second = r.runtime.resume(first.runId, "sess-1", r.host, { replacement: { source: edited, meta: parsed.meta } });
+    await r.runtime.await(second.runId);
+
+    expect(readFileSync(second.scriptPath, "utf8")).toContain(`return "edited"`);
+  });
+
+  test("NEW `args` are honoured; omitting them replays the ORIGINAL launch's args", async () => {
+    const { r, hangFor } = stoppableRig();
+    const source = META + `await agent("two"); return args.n;`;
+    const first = launch(r, source, { args: { n: 1 } });
+    await new Promise((res) => setTimeout(res, 40));
+    r.runtime.stop(first.runId);
+    await r.runtime.await(first.runId);
+
+    hangFor.clear();
+    const withNewArgs = r.runtime.resume(first.runId, "sess-1", r.host, { args: { n: 2 } });
+    expect((await r.runtime.await(withNewArgs.runId)).result).toBe("2");
+
+    // And the no-args resume of THAT run still sees `{n: 2}` -- the resumed run's own launch input.
+    hangFor.add("two");
+    const third = launch(r, source, { args: { n: 7 } });
+    await new Promise((res) => setTimeout(res, 40));
+    r.runtime.stop(third.runId);
+    await r.runtime.await(third.runId);
+    hangFor.clear();
+    const noArgs = r.runtime.resume(third.runId, "sess-1", r.host);
+    expect((await r.runtime.await(noArgs.runId)).result).toBe("7");
+  });
+
+  test("with NO replacement the ORIGINAL source is replayed -- the ruling's other half", async () => {
+    const { r, hangFor } = stoppableRig();
+    const first = launch(r, META + `await agent("two"); return "original";`);
+    await new Promise((res) => setTimeout(res, 40));
+    r.runtime.stop(first.runId);
+    await r.runtime.await(first.runId);
+
+    hangFor.clear();
+    const second = r.runtime.resume(first.runId, "sess-1", r.host);
+    expect((await r.runtime.await(second.runId)).result).toBe("original");
+    expect(readFileSync(second.scriptPath, "utf8")).toContain(`return "original"`);
   });
 });
 

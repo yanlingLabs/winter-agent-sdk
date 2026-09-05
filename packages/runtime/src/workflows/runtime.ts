@@ -17,6 +17,7 @@ import { spawn as spawnProcess } from "node:child_process";
 // through the compiled binary, so that leg would have been unproven as well as fragile.
 import { mkdirSync, readFileSync } from "node:fs";
 import { RunJournal, promptKey, type JournalEntry } from "./journal.ts";
+import { RunTranscript, capTranscriptField, renderTranscriptValue } from "./transcript.ts";
 import { WorkflowRegistry } from "./registry.ts";
 import { makeSemaphore, resolveConcurrencyCap, type Semaphore } from "./semaphore.ts";
 import { createBudget, type WorkflowBudget } from "./budget.ts";
@@ -179,6 +180,8 @@ interface LiveRun {
   abort: AbortController;
   /** F8: the resume journal this run was SEEDED with, so a `resumed` op can copy its replayed prefix into this run's own journal. */
   seedJournal: readonly JournalEntry[];
+  /** A-14: the run's own record, under the `transcriptDir` this run REPORTS. Best-effort throughout. */
+  transcript: RunTranscript;
   /** The DECLARED phases (WS-11 §1.2). A `phase()` call matching one exactly resolves to it; an unmatched call gets its own group. */
   declaredPhases: readonly WorkflowMetaPhase[] | undefined;
   /** WS-11 §1.8's abort chaining: stop must cancel IN-FLIGHT bridged agents, not merely the worker process. */
@@ -191,6 +194,8 @@ export class WorkflowRuntime {
   private readonly settlers = new Map<string, (view: WorkflowRunView) => void>();
   /** Kept beside `live` because `finish` runs AFTER teardown deleted the LiveRun and still has to settle the task. */
   private readonly tasks = new Map<string, WorkflowTaskHandle>();
+  /** A-14: same reason as `tasks` -- the terminal record is written after the LiveRun is gone. */
+  private readonly transcripts = new Map<string, RunTranscript>();
   /** Each run's source + launch context, so `resume` can replay it verbatim. Never pruned -- one string per run this session launched. */
   private readonly launches = new Map<string, WorkflowLaunchInput & { scriptPath: string }>();
   private readonly runsDir: string;
@@ -223,11 +228,22 @@ export class WorkflowRuntime {
     const scriptPath = persistWorkflowScript({ ...location, name: input.meta.name, runId, source: input.source });
     // CREATED, not merely computed: `WorkflowOutput.transcriptDir` is handed to the model, and a
     // model that reads a path which does not exist gets ENOENT rather than an empty directory.
-    // DISCLOSED (report): Winter's child transcripts are written wherever `subagents/child-engine.ts`
-    // puts them (frozen to this lane), NOT under this directory -- so today it is capture (3)'s
-    // sibling location, present and empty.
+    //
+    // A-14 (fix wave): it is no longer EMPTY either. The run's own transcript is written here --
+    // launch, every `agent()` call and its outcome, phase changes, terminal state (transcript.ts).
+    // Winter's CHILD transcripts are still written wherever `subagents/child-engine.ts` puts them
+    // (another lane's file), which is the standing disclosure; this is the run's record, not theirs.
     const transcriptDir = workflowTranscriptDir({ ...location, runId });
     mkdirSync(transcriptDir, { recursive: true, mode: 0o700 });
+    const transcript = new RunTranscript(transcriptDir);
+    transcript.append({
+      kind: "launch",
+      runId,
+      name: input.meta.name,
+      scriptPath,
+      ...(input.args !== undefined ? { args: renderTranscriptValue(input.args) } : {}),
+      ...(input.resumeJournal !== undefined ? { replayed: input.resumeJournal.length } : {}),
+    });
     this.launches.set(runId, { ...input, runId, scriptPath });
 
     const task = host.createTask("workflow", { runId, name: input.meta.name });
@@ -262,12 +278,14 @@ export class WorkflowRuntime {
       }),
       journal: new RunJournal(this.runsDir, runId),
       seedJournal: input.resumeJournal ?? [],
+      transcript,
       abort,
       ...(input.meta.phases !== undefined ? { declaredPhases: input.meta.phases } : { declaredPhases: undefined }),
       children: new Set(),
     };
     this.live.set(runId, run);
     this.tasks.set(runId, task);
+    this.transcripts.set(runId, transcript);
 
     abort.signal.addEventListener("abort", () => {
       // WS-11 §1.8: "stop/abort cancels in-flight bridged agents (abort chaining), not merely the
@@ -331,8 +349,32 @@ export class WorkflowRuntime {
    * launches a subprocess, so a typo'd runId failing loudly is worth more than a quiet nothing.
    * `sessionId` is taken from the CALLER, never from the input, so a run cannot be resumed into a
    * session that did not own it.
+   *
+   * RULING I6 (fix wave) -- `opts.replacement` / `opts.args`: a resume that supplies a NEW source
+   * (the model edited the persisted script between the stop and the resume, which is exactly what
+   * WS-11 §1.3's loop tells it to do) runs the NEW source against the OLD journal. The positional
+   * replay then diverges at the first changed call and everything from there runs live, which is
+   * §1.5's own contract. This used to rebuild the launch from `this.launches` unconditionally, so a
+   * `{scriptPath: <edited>, resumeFromRunId}` call silently re-ran the PRIOR source and a changed
+   * `args` was dropped -- the edit loop's own door was the one input the door ignored. With neither
+   * supplied, the original launch input is replayed verbatim (the ruling's other half).
    */
-  resume(runId: string, sessionId: string, host: WorkflowRunHost, opts: { parentToolUseId?: string } = {}): WorkflowLaunchResult {
+  resume(
+    runId: string,
+    sessionId: string,
+    host: WorkflowRunHost,
+    opts: {
+      parentToolUseId?: string;
+      /**
+       * The edited script AND its re-parsed meta, together: `meta.name` is what the new run's task,
+       * persisted filename and `WorkflowOutput.workflowName` are built from, so carrying the source
+       * without re-parsing the meta would label the edited run with the old script's name.
+       */
+      replacement?: { source: string; meta: WorkflowLaunchInput["meta"] };
+      /** Supplied = the new args; OMITTED = the original launch's args, unchanged. */
+      args?: unknown;
+    } = {},
+  ): WorkflowLaunchResult {
     const prior = this.registry.get(runId);
     if (prior === undefined) throw new WorkflowRuntimeError("unknown-run", `unknown workflow run "${runId}"`);
     if (prior.sessionId !== sessionId) {
@@ -354,6 +396,13 @@ export class WorkflowRuntime {
     return this.launch(
       {
         ...rest,
+        // I6: the NEW source/meta and the NEW args win over the recorded launch; absent, the
+        // recorded ones stand. `"args" in opts` rather than `!== undefined`, so a caller of THIS
+        // method can clear args by passing `args: undefined` explicitly. The tool executor cannot
+        // express that (it conditional-spreads on `!== undefined`, matching the launch path), so
+        // through `Workflow` the rule is simply "args given = args replaced".
+        ...(opts.replacement !== undefined ? { source: opts.replacement.source, meta: opts.replacement.meta } : {}),
+        ...("args" in opts ? { args: opts.args } : {}),
         ...(opts.parentToolUseId !== undefined ? { parentToolUseId: opts.parentToolUseId } : {}),
         ...(journal.length > 0 ? { resumeJournal: journal } : {}),
       },
@@ -422,6 +471,7 @@ export class WorkflowRuntime {
         // `WorkflowProgress.phase`'s own header.
         const group = matchPhaseGroup(run.declaredPhases, message.title);
         this.registry.setPhase(run.runId, group.title);
+        run.transcript.append({ kind: "phase", title: group.title, declared: group.declared });
         this.emitProgress(run, group.declared && group.detail !== undefined ? `${group.title}: ${group.detail}` : group.title, { phase: group.title, declaredPhase: group.declared });
         break;
       }
@@ -492,10 +542,29 @@ export class WorkflowRuntime {
     const group = message.opts?.phase;
     this.syncCounts(run, group);
     try {
-      const outcome = await this.spawnAndAwaitChild(run, message.prompt, message.opts);
+      const spawned = await this.spawnAndAwaitChild(run, message.prompt, message.opts);
+      if (!spawned.ok) {
+        // m5: the HOST could not start an agent -- the same unswallowable class as the caps above,
+        // and handled the same way: the run fails parent-side with the host's own message, and the
+        // script sees `ok:false` (which `script-api.ts` throws) rather than a null it can filter out.
+        run.transcript.append({ kind: "agent", prompt: capTranscriptField(message.prompt), outcome: "refused", ...(group !== undefined ? { phase: group } : {}) });
+        this.teardown(run.runId, () => this.finish(run.runId, "failed", spawned.error));
+        return { callId: message.callId, ok: false, error: spawned.error, budget: run.budget.snapshot() };
+      }
+      const outcome = spawned.value;
       // WS-11 §1.5: only SUCCESSFUL results are journaled -- a failed call has nothing worth caching,
       // and a later resume should retry it live rather than replay the failure.
       if (outcome !== null) run.journal.append(promptKey(message.prompt, message.opts), outcome);
+      // A-14: the TRANSCRIPT records the null ones too. That asymmetry is the point -- the journal is
+      // a resume cache and a run whose agents all came back null leaves it empty, which is exactly
+      // the case WS-11 §1.8's "first diagnostic surface for empty results" is about.
+      run.transcript.agent({
+        prompt: message.prompt,
+        value: outcome,
+        resolvedNull: outcome === null,
+        ...(group !== undefined ? { phase: group } : {}),
+        ...(message.opts?.label !== undefined ? { label: message.opts.label } : {}),
+      });
       return { callId: message.callId, ok: true, value: outcome, budget: run.budget.snapshot() };
     } finally {
       run.running--;
@@ -508,31 +577,39 @@ export class WorkflowRuntime {
   /**
    * Spawns one child and resolves what `agent()` should see.
    *
-   * NULL, not a throw, for every terminal child outcome (WS-11 §1.6: "Resolves `null` when the user
-   * skips the agent or it dies on a terminal error"). A `spawnAgent` that THROWS is folded into the
-   * same null: from a script's point of view an agent that could not be started and one that died are
-   * the same event, and an unhandled rejection escaping into the daemon is not an option.
+   * NULL, not a throw, for every terminal child OUTCOME (WS-11 §1.6: "Resolves `null` when the user
+   * skips the agent or it dies on a terminal error") -- a failed child, a stopped child, a child
+   * whose text does not validate.
+   *
+   * A `spawnAgent` that THROWS is NOT one of those (whole-branch m5). It means the HOST could not
+   * start an agent at all -- `tools/impl/workflow.ts` throws exactly that when the session has no
+   * child-spawn capability -- and `script-api.ts`'s own contract lists "no spawn capability at all"
+   * beside the agent cap and the budget ceiling as the refusals a script must not be able to
+   * swallow. This used to fold it into the same `null`, so a workflow in a session with no spawn
+   * capability "completed" with `.filter(Boolean)`-swallowed empties and the real cause appeared
+   * nowhere. It now comes back as a refusal, which `serviceAgent` turns into the same
+   * teardown-then-`ok:false` the caps use. Nothing escapes as an unhandled rejection either way.
    */
-  private async spawnAndAwaitChild(run: LiveRun, prompt: string, opts: AgentOpts | undefined): Promise<unknown> {
+  private async spawnAndAwaitChild(run: LiveRun, prompt: string, opts: AgentOpts | undefined): Promise<{ ok: true; value: unknown } | { ok: false; error: string }> {
     let child: ChildHandle;
     try {
       child = await run.host.spawnAgent(this.buildSpawnRequest(run, prompt, opts));
-    } catch {
-      return null;
+    } catch (err) {
+      return { ok: false, error: `workflow agent could not be started: ${err instanceof Error ? err.message : String(err)}` };
     }
     run.children.add(child);
     try {
       const result = await child.result();
-      if (result.status !== "completed") return null;
-      if (opts?.schema === undefined) return result.content;
+      if (result.status !== "completed") return { ok: true, value: null };
+      if (opts?.schema === undefined) return { ok: true, value: result.content };
       // RULING P5-I (fix wave): the child's OWN validated object, when it produced one. The text
       // re-parse below is now a FALLBACK for a child that produced none -- never a substitute for a
       // value the child's own engine already validated, and never a path that returns unvalidated
       // data as validated. Presence, not truthiness: `null`/`0`/`""` are legitimate schema values.
-      if (result.structuredOutput !== undefined) return result.structuredOutput;
-      return this.validateStructured(opts.schema as JsonSchema, result.content);
+      if (result.structuredOutput !== undefined) return { ok: true, value: result.structuredOutput };
+      return { ok: true, value: this.validateStructured(opts.schema as JsonSchema, result.content) };
     } catch {
-      return null;
+      return { ok: true, value: null };
     } finally {
       run.children.delete(child);
     }
@@ -678,6 +755,13 @@ export class WorkflowRuntime {
   }
 
   private finish(runId: string, status: "completed" | "failed" | "stopped", detail?: string): void {
+    // A-14: written FIRST, before the seam calls below -- a throwing host callback must not be able
+    // to leave the run's own record without a terminal line.
+    const transcript = this.transcripts.get(runId);
+    if (transcript !== undefined) {
+      transcript.finish(status, detail);
+      this.transcripts.delete(runId);
+    }
     if (status === "completed") this.registry.complete(runId, { ok: true, result: detail ?? "" });
     else if (status === "failed") this.registry.fail(runId, detail ?? "error");
     // "stopped" was already set by `registry.stop()` before the abort fired -- see registry.ts.

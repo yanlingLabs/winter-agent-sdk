@@ -14,6 +14,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createFileCheckpointSink, CHECKPOINT_BACKUPS_DIRNAME } from "./sink.ts";
 import { checkpointPathHash } from "./file-history.ts";
+import { describeRefusal } from "./rewind.ts";
 
 let home = "";
 let work = "";
@@ -673,5 +674,122 @@ describe("rider 25 (round 2): the root fence resolves symlinks -- a linked ances
     expect(result.filesChanged?.length).toBe(1);
     expect(readFileSync(file, "utf8")).toBe("v0\n");
     expect(result.skippedLinks).toBe(0);
+  });
+});
+
+describe("A-12 (fix wave): the retained `parentRealPath` guard, on the LEGACY records that are its only live use", () => {
+  // WHY THIS FIXTURE EXISTS. The round-2 fix added `anchorPath`/`anchorRealPath` and kept the older
+  // `parentRealPath` check "because removing a guard is never the safe direction and it still
+  // protects records written by an earlier build". Nothing proved that second claim: every record
+  // this build WRITES carries an anchor, so the retained guard was never the thing that refused
+  // anything in any test. These records are hand-built in exactly the shape the previous build
+  // wrote -- `parentRealPath`, no anchor pair -- so the guard is the only one that can fire.
+  //
+  // THE REPLACEMENT DIRECTORY IS INSIDE THE SESSION'S ROOTS, deliberately. A victim outside them is
+  // refused by rider 25's root fence long before any path-identity guard is consulted, and the
+  // fixture would then pass with this guard deleted (verified: it does). One package's directory
+  // swapped for a link to a SIBLING package is in-root, so the retained guard is the only thing
+  // standing between the pre-image and the wrong file.
+  function legacyRecord(sessionUuid: string, record: Record<string, unknown>): void {
+    const dir = join(home, CHECKPOINT_BACKUPS_DIRNAME, sessionUuid);
+    mkdirSync(dir, { recursive: true });
+    appendFileSync(join(dir, "index.jsonl"), `${JSON.stringify(record)}\n`);
+  }
+
+  /** `<work>/<pkg>/config.ts` with a legacy record, plus an in-root sibling to divert it into. */
+  function legacyFixture(sessionUuid: string, pkg: string): { target: string; sibling: string; realDir: string } {
+    const realDir = join(work, pkg);
+    mkdirSync(realDir, { recursive: true });
+    const target = join(realDir, "config.ts");
+    writeFileSync(target, "v1-current\n");
+    const sibling = join(work, `${pkg}-sibling`);
+    mkdirSync(sibling, { recursive: true });
+    writeFileSync(join(sibling, "config.ts"), "ANOTHER PACKAGE'S FILE\n");
+
+    const hash = checkpointPathHash(target);
+    mkdirSync(join(home, CHECKPOINT_BACKUPS_DIRNAME, sessionUuid), { recursive: true });
+    writeFileSync(join(home, CHECKPOINT_BACKUPS_DIRNAME, sessionUuid, `${hash}@v1`), "v0-preimage\n");
+    legacyRecord(sessionUuid, {
+      kind: "snapshot",
+      userMessageUuid: "u-1",
+      path: target,
+      pathHash: hash,
+      tool: "Write",
+      at: new Date().toISOString(),
+      version: 1,
+      // The previous build's shape: the immediate parent's real path, and NO anchor pair.
+      parentRealPath: realpathSync(realDir),
+    });
+    return { target, sibling, realDir };
+  }
+
+  test("a LEGACY record whose parent became a link to a SIBLING directory is REFUSED -- the pre-image never lands in the wrong package", async () => {
+    const { target, sibling, realDir } = legacyFixture("sess-legacy", "pkg");
+    rmSync(realDir, { recursive: true, force: true });
+    symlinkSync(sibling, realDir, "dir"); // in-root, so the root fence passes and only this guard is left
+
+    const sink = createFileCheckpointSink({ home, cwd: work, sessionUuid: "sess-legacy" });
+    const result = await sink.rewind("u-1");
+
+    expect(readFileSync(join(sibling, "config.ts"), "utf8")).toBe("ANOTHER PACKAGE'S FILE\n"); // untouched
+    expect(result.filesChanged).toEqual([]);
+    expect(result.skippedLinks).toBe(1);
+    expect(target).toBe(join(realDir, "config.ts")); // the path the record named, for the reader
+  });
+
+  test("...and it is refused on a dryRun too -- a preview must not promise a write the rewind will refuse", async () => {
+    const { sibling, realDir } = legacyFixture("sess-legacy2", "pkg2");
+    rmSync(realDir, { recursive: true, force: true });
+    symlinkSync(sibling, realDir, "dir");
+    const sink = createFileCheckpointSink({ home, cwd: work, sessionUuid: "sess-legacy2" });
+    expect((await sink.rewind("u-1", { dryRun: true })).filesChanged).toEqual([]);
+  });
+
+  test("the control: an UNMOVED legacy record still restores -- the guard refuses a moved parent, not every legacy record", async () => {
+    const { target } = legacyFixture("sess-legacy3", "pkg3");
+    const sink = createFileCheckpointSink({ home, cwd: work, sessionUuid: "sess-legacy3" });
+    const result = await sink.rewind("u-1");
+    expect(readFileSync(target, "utf8")).toBe("v0-preimage\n");
+    expect(result.filesChanged).toEqual([target]);
+    expect(result.skippedLinks).toBe(0);
+  });
+});
+
+describe("A-12b (fix wave): a refusal names a REAL path component, never the literal `..`", () => {
+  test("a record whose path is not under its own anchor is refused with a message that does not claim `..` is a symlink", async () => {
+    // `firstLinkedComponent`'s defensive arm returns when `relative(anchorPath, target)` climbs --
+    // a record this build never writes. It used to hand back the literal string ".." and the caller
+    // rendered "the path component .. is now a symbolic link", which names a component that is not
+    // one and a cause that is not the cause.
+    const anchor = join(work, "anchor");
+    mkdirSync(anchor, { recursive: true });
+    const outside = join(work, "sibling.ts");
+    writeFileSync(outside, "current\n");
+    const hash = checkpointPathHash(outside);
+    mkdirSync(join(home, CHECKPOINT_BACKUPS_DIRNAME, "sess-12b"), { recursive: true });
+    writeFileSync(join(home, CHECKPOINT_BACKUPS_DIRNAME, "sess-12b", `${hash}@v1`), "preimage\n");
+    appendFileSync(
+      join(home, CHECKPOINT_BACKUPS_DIRNAME, "sess-12b", "index.jsonl"),
+      `${JSON.stringify({ kind: "snapshot", userMessageUuid: "u-1", path: outside, pathHash: hash, tool: "Write", at: new Date().toISOString(), version: 1, anchorPath: anchor, anchorRealPath: realpathSync(anchor) })}\n`,
+    );
+
+    const sink = createFileCheckpointSink({ home, cwd: work, sessionUuid: "sess-12b" });
+    const result = await sink.rewind("u-1");
+    // Refused, and the file is untouched.
+    expect(readFileSync(outside, "utf8")).toBe("current\n");
+    expect(result.filesChanged).toEqual([]);
+    expect(result.skippedLinks).toBe(1);
+    expect(describeRefusal({ path: outside, anchorPath: anchor, anchorRealPath: realpathSync(anchor) })).not.toContain("component ..");
+    expect(describeRefusal({ path: outside, anchorPath: anchor, anchorRealPath: realpathSync(anchor) })).toMatch(/ancestor|inside/i);
+  });
+
+  test("a component that exists but is NOT a directory is named as such, not as a symbolic link", async () => {
+    const anchor = join(work, "anchor2");
+    mkdirSync(anchor, { recursive: true });
+    writeFileSync(join(anchor, "notadir"), "i am a file\n"); // the "directory" the record walks through
+    const target = join(anchor, "notadir", "deep.ts");
+    const message = describeRefusal({ path: target, anchorPath: anchor, anchorRealPath: realpathSync(anchor) });
+    expect(message).toContain("notadir");
+    expect(message).not.toContain("symbolic link");
   });
 });

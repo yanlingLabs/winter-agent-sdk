@@ -17,10 +17,10 @@
 // Plugin and builtin tiers are NOT source-gated: a plugin is loaded because the HOST listed it in
 // `Options.plugins`, a decision made outside the repository (the same reasoning
 // subagents/definitions.ts records for `pluginAgents`), and builtins ship with the runtime.
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import type { SettingSource } from "@yanlinglabs/winter-agent-sdk";
 import { DEFAULT_SKILL_BODY_BYTES, capBytes, skillNameError, pluginNameError } from "./frontmatter.ts";
-import { SELF_SUBDIR, projectSkillRoots, readSkillMetadata, scanSkillRoot, scanUserSkillRoot, type DiscoveredSkill, type SkillTier } from "./loader.ts";
+import { SELF_SUBDIR, projectSkillRoots, readSkillMetadata, scanSkillRoot, scanUserSkillRoot, type DiscoveredSkill, type SkillScanError, type SkillTier } from "./loader.ts";
 import { isStrictPluginOnly, type StrictPluginOnlyCustomization } from "../settings/loaders/strict-plugin-only.ts";
 
 /**
@@ -110,16 +110,21 @@ function sourcesAllow(settingSources: SettingSource[] | undefined, tier: Setting
  * `SkillStore.discover`: project (nearest .winter first) > user > self > plugin > builtin. A builtin
  * is therefore shadowable by any other tier, which is the point of shipping one.
  */
-function discover(opts: SkillIndexOptions): DiscoveredSkill[] {
+function discover(opts: SkillIndexOptions): { all: DiscoveredSkill[]; errors: SkillScanError[] } {
   const all: DiscoveredSkill[] = [];
+  const errors: SkillScanError[] = [];
+  const take = (scanned: { skills: DiscoveredSkill[]; errors: SkillScanError[] }): void => {
+    all.push(...scanned.skills);
+    errors.push(...scanned.errors);
+  };
   const pluginOnly = isStrictPluginOnly(opts.strictPluginOnlyCustomization, "skills");
   if (!pluginOnly && sourcesAllow(opts.settingSources, "project")) {
-    for (const root of projectSkillRoots(opts.cwd)) all.push(...scanSkillRoot(root, "project"));
+    for (const root of projectSkillRoots(opts.cwd)) take(scanSkillRoot(root, "project"));
   }
   if (!pluginOnly && sourcesAllow(opts.settingSources, "user")) {
     const userRoot = join(opts.winterHome, "skills");
-    all.push(...scanUserSkillRoot(userRoot));
-    all.push(...scanSkillRoot(join(userRoot, SELF_SUBDIR), "self"));
+    take(scanUserSkillRoot(userRoot));
+    take(scanSkillRoot(join(userRoot, SELF_SUBDIR), "self"));
   }
   for (const contribution of opts.plugins ?? []) {
     if (pluginNameError(contribution.plugin) !== null) continue; // a plugin name that could traverse never becomes a qualified skill name
@@ -135,7 +140,7 @@ function discover(opts: SkillIndexOptions): DiscoveredSkill[] {
     }
   }
   if (!pluginOnly && opts.disableBundledSkills !== true) all.push(...(opts.builtinSkills ?? []));
-  return all;
+  return { all, errors };
 }
 
 /**
@@ -147,21 +152,31 @@ export class SkillIndex {
   private readonly entries: SkillMeta[];
   private readonly byName: Map<string, SkillMeta>;
   private readonly bodyBytes: number;
+  private readonly scanErrors: SkillScanError[];
 
-  private constructor(entries: SkillMeta[], byName: Map<string, SkillMeta>, bodyBytes: number) {
+  private constructor(entries: SkillMeta[], byName: Map<string, SkillMeta>, bodyBytes: number, scanErrors: SkillScanError[]) {
     this.entries = entries;
     this.byName = byName;
     this.bodyBytes = bodyBytes;
+    this.scanErrors = scanErrors;
   }
 
   static build(opts: SkillIndexOptions): SkillIndex {
     const entries: SkillMeta[] = [];
     const byName = new Map<string, SkillMeta>();
-    for (const found of discover(opts)) {
+    const discovered = discover(opts);
+    const errors = discovered.errors;
+    for (const found of discovered.all) {
       const bare = found.source === "plugin" ? found.name.slice(found.name.indexOf(":") + 1) : found.name;
       // The jail is applied to the RESOLVED skill name -- the one anything can actually reach --
       // rather than to the directory it came from (loader.ts's own header records why).
-      if (skillNameError(bare) !== null) continue;
+      const nameError = skillNameError(bare);
+      if (nameError !== null) {
+        // A-11's rule applied to the OTHER silent drop on this path: a skill whose declared `name:`
+        // escapes the slug alphabet is refused (correctly) and now says so, instead of disappearing.
+        errors.push({ directory: basename(dirname(found.path)), path: found.path, source: found.source, reason: nameError });
+        continue;
+      }
       if (byName.has(found.name)) continue; // first occurrence wins
       const aliases = found.source === "project" ? [`${PROJECT_PLUGIN_NAME}:${found.name}`] : [];
       const meta: SkillMeta = {
@@ -179,7 +194,18 @@ export class SkillIndex {
       // primary name, the project skill keeps its bare identity and simply has no alias slot.
       for (const alias of aliases) if (!byName.has(alias)) byName.set(alias, meta);
     }
-    return new SkillIndex(entries, byName, opts.bodyBytes ?? DEFAULT_SKILL_BODY_BYTES);
+    return new SkillIndex(entries, byName, opts.bodyBytes ?? DEFAULT_SKILL_BODY_BYTES, errors);
+  }
+
+  /**
+   * Every SKILL.md that could NOT become an entry, with the reason (A-11).
+   *
+   * The listing is built from `list()`; this is the parallel channel that stops a broken or oversized
+   * skill from simply not existing. A host that surfaces `wiring.warnings` should include these --
+   * that wiring is another lane's file in this wave and is named in the report as NEEDS_CONTEXT.
+   */
+  errors(): SkillScanError[] {
+    return this.scanErrors.slice();
   }
 
   /** Every skill, in precedence order, by PRIMARY name. Aliases are not separate entries. */
@@ -212,8 +238,10 @@ export class SkillIndex {
   load(name: string): { name: string; body: string; source: SkillTier; path: string } | null {
     const meta = this.byName.get(name);
     if (!meta) return null;
-    const parsed = readSkillMetadata(meta.path, meta.name);
-    if (!parsed) return null;
-    return { name: meta.name, body: capBytes(parsed.body, this.bodyBytes), source: meta.source, path: meta.path };
+    // UNBOUNDED, deliberately: the index-time prefix bound (A-11) exists so discovery does not read
+    // bodies it drops. This call is the invocation, and the body is the whole point of it.
+    const read = readSkillMetadata(meta.path, meta.name);
+    if (!read.ok) return null;
+    return { name: meta.name, body: capBytes(read.skill.body, this.bodyBytes), source: meta.source, path: meta.path };
   }
 }

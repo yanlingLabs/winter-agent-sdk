@@ -2,13 +2,14 @@
 //
 // THESE PRODUCE INPUT AND NOTHING ELSE. `mcp/lifecycle.ts`'s `resolveMcpServerSources` is the
 // authority on validation, precedence, duplicate reporting, the reserved `winter` name and the
-// stdio trust gate; its own header states outright that "WHERE `.winter/mcp.json`/settings actually
+// trust gate; its own header states outright that "WHERE `.winter/mcp.json`/settings actually
 // get read from disk, and HOW workspace trust is computed, are integration concerns for whoever
 // assembles `McpServerSource[]`". This module is that assembler. It computes no trust, validates no
 // server config and connects to nothing.
 //
 // "TRUST-FLAGGED" MEANS THE ORIGIN TAG. The trust gate lives in `resolveMcpServerSources` and fires
-// on `origin === "project"` for stdio-like configs. So the only thing a loader can get wrong about
+// on `origin === "project"` for EVERY transport (RULING P5-K, fix wave -- it was stdio-only through
+// P4, when only process spawning looked dangerous). So the only thing a loader can get wrong about
 // trust is which ORIGIN it tags a source with -- and that is exactly the judgment call below.
 import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -95,16 +96,17 @@ export function loadProjectMcpConfig(opts: { cwd: string; settingSources?: Setti
  *
  * WS-09 §1.2's precedence table ranks `settings` above `project`, where `project` is the ambient
  * `.winter/mcp.json`. Read literally, EVERY settings tier would be `settings` -- and a
- * repo-committed `.winter/settings.json` would then start a stdio server in an untrusted clone,
- * because the trust gate only fires on `origin === "project"`. That is the same self-grant shape
- * P5-A closes on the permission side, arriving through a different file.
+ * repo-committed `.winter/settings.json` would then connect a server in an untrusted clone, because
+ * the trust gate only fires on `origin === "project"`. That is the same self-grant shape P5-A closes
+ * on the permission side, arriving through a different file.
  *
  * So the PROJECT tier maps to `project` (gated) and every other tier to `settings` (ungated):
  * `local` is gitignored and personal and carries user authority under P5-A's own reading, `user` is
  * the user's own file, and `managed`/`flag` are policy and host configuration. The cost is that a
  * project settings.json ranks below a user one rather than between it and `.mcp.json` -- a
- * precedence nuance -- and the alternative cost is executing a repository's process declaration in
- * an untrusted checkout.
+ * precedence nuance -- and the alternative cost is connecting a repository's server declaration in
+ * an untrusted checkout (a process for stdio; a remote tool surface the model calls with
+ * conversation-derived arguments for http/sse -- RULING P5-K's own reasoning).
  */
 const ORIGIN_BY_SETTING_SOURCE: Record<ResolvedSettingSource, McpConfigSourceOrigin> = {
   managed: "settings",

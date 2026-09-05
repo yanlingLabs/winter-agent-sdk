@@ -6,9 +6,9 @@
 // DEFENSIVE THROUGHOUT, Norma parity: a missing root, an unreadable directory, a malformed
 // SKILL.md, a `SKILL.md` that is itself a directory -- every one is SKIPPED, never thrown. A single
 // broken skill in a checked-in `.winter/skills/` must not be able to fail a session's startup.
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { closeSync, openSync, readSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { parseSkillFile } from "./frontmatter.ts";
+import { parseSkillFile, type ParsedSkillFile } from "./frontmatter.ts";
 
 /** WS-11 §2.1's tier table, and `SkillListing["source"]` (context/seam.ts, R5-17) verbatim. */
 export type SkillTier = "project" | "user" | "plugin" | "builtin" | "self";
@@ -26,8 +26,39 @@ export interface DiscoveredSkill {
   plugin?: string;
 }
 
+/** One SKILL.md that could not become an index entry -- surfaced, never silently dropped (A-11). */
+export interface SkillScanError {
+  /** The immediate subdirectory of the scanned root -- what an author would go and look at. */
+  directory: string;
+  /** Absolute path of the SKILL.md. */
+  path: string;
+  source: SkillTier;
+  reason: string;
+}
+
+export interface SkillScanResult {
+  skills: DiscoveredSkill[];
+  errors: SkillScanError[];
+}
+
 /** The reserved subdirectory of the user root that holds agent-authored skills (Norma parity). */
 export const SELF_SUBDIR = "self";
+
+/**
+ * THE INDEX-TIME READ BOUND (fix wave, A-11 / T5 review Nit 5).
+ *
+ * `SkillIndex.build()` used to `readFileSync` every SKILL.md in full and drop the parsed body --
+ * "lazy" meant NOT RETAINED, not NOT READ. That read is unconditional and pre-session: it covers
+ * every `<cwd>/.winter/skills/**` up to the repository root, content that arrives with a `git clone`,
+ * before any trust decision and before the model runs. With no cap at all the bound was "the total
+ * bytes of every skill file in the tree" -- a 64 MB SKILL.md cost 64 MB of heap during startup, and
+ * a startup failure is not something a session can route around.
+ *
+ * Frontmatter lives at the HEAD of the file, so a bounded prefix is everything the index needs.
+ * `load()` keeps the full read (bodies are what it exists to fetch), which is the split that makes
+ * this safe: the cap bounds DISCOVERY, never invocation.
+ */
+export const SKILL_METADATA_PREFIX_BYTES = 65_536;
 
 const USER_ROOT_EXCLUDE: ReadonlySet<string> = new Set([SELF_SUBDIR]);
 
@@ -84,7 +115,7 @@ export function projectSkillRoots(cwd: string): string[] {
  * validation applies the jail to the resolved name (store.ts), which is the name anything can
  * actually reach.
  */
-export function scanSkillRoot(root: string, source: SkillTier, exclude?: ReadonlySet<string>): DiscoveredSkill[] {
+export function scanSkillRoot(root: string, source: SkillTier, exclude?: ReadonlySet<string>): SkillScanResult {
   let dirs: string[];
   try {
     // SORTED, not readdir order: `readdirSync` returns directory order, which differs between
@@ -96,33 +127,85 @@ export function scanSkillRoot(root: string, source: SkillTier, exclude?: Readonl
       .map((e) => e.name)
       .sort();
   } catch {
-    return [];
+    return { skills: [], errors: [] }; // a root that does not exist is not an error -- most sessions have none
   }
-  const out: DiscoveredSkill[] = [];
+  const skills: DiscoveredSkill[] = [];
+  const errors: SkillScanError[] = [];
   for (const dir of dirs) {
     if (exclude?.has(dir)) continue;
     const path = join(root, dir, "SKILL.md");
-    const parsed = readSkillMetadata(path, dir);
-    if (parsed) out.push({ name: parsed.name, description: parsed.description, source, path, ...(parsed.author !== undefined ? { author: parsed.author } : {}) });
+    // BOUNDED at index time (A-11). The unbounded read is `SkillIndex.load()`'s, at invocation.
+    const read = readSkillMetadata(path, dir, { maxBytes: SKILL_METADATA_PREFIX_BYTES });
+    if (read.ok) {
+      skills.push({ name: read.skill.name, description: read.skill.description, source, path, ...(read.skill.author !== undefined ? { author: read.skill.author } : {}) });
+    } else if (read.reason !== ABSENT_SKILL_FILE) {
+      // A directory with no SKILL.md at all is not a broken skill -- it is not a skill. Everything
+      // else (unparseable, unreadable, frontmatter past the bound) is reported: a skill that
+      // vanishes from the listing with no explanation anywhere is the failure mode A-11 names.
+      errors.push({ directory: dir, path, source, reason: read.reason });
+    }
   }
-  return out;
+  return { skills, errors };
 }
 
 /** Scan the user root, skipping its reserved `self/` subdirectory. */
-export function scanUserSkillRoot(root: string): DiscoveredSkill[] {
+export function scanUserSkillRoot(root: string): SkillScanResult {
   return scanSkillRoot(root, "user", USER_ROOT_EXCLUDE);
 }
 
+/** The one reason `scanSkillRoot` does NOT report: a subdirectory that simply holds no SKILL.md. */
+export const ABSENT_SKILL_FILE = "no SKILL.md";
+
+export type SkillMetadataRead = { ok: true; skill: ParsedSkillFile } | { ok: false; reason: string };
+
 /**
- * Read one SKILL.md's METADATA. Returns the parse (body included -- callers drop it) or `undefined`
- * for anything unusable. Shared by `scanSkillRoot` above and by store.ts's `load()`, so the
+ * Read one SKILL.md's METADATA. Shared by `scanSkillRoot` above and by store.ts's `load()`, so the
  * frontmatter contract is applied exactly once.
+ *
+ * `opts.maxBytes` reads only that many bytes from the head of the file (A-11): the frontmatter is at
+ * the top, so the index never pays for a body it is about to drop. WITHOUT it the whole file is
+ * read, which is what `load()` wants and needs.
+ *
+ * A RESULT, not `null`, because the two failures are not the same fact: "this is not a skill" and
+ * "this skill could not be read" both used to disappear identically, which is precisely the silent
+ * vanish A-11 is about. A prefix read that finds an unclosed fence says so, naming the bound, rather
+ * than reporting the file as unparseable -- it may be perfectly valid and merely enormous.
  */
-export function readSkillMetadata(path: string, fallbackName: string): ReturnType<typeof parseSkillFile> {
+export function readSkillMetadata(path: string, fallbackName: string, opts: { maxBytes?: number } = {}): SkillMetadataRead {
+  let raw: string;
+  let truncated = false;
   try {
-    if (!statSync(path).isFile()) return null;
-    return parseSkillFile(readFileSync(path, "utf8"), fallbackName);
-  } catch {
-    return null;
+    if (!statSync(path).isFile()) return { ok: false, reason: ABSENT_SKILL_FILE };
+    if (opts.maxBytes === undefined) {
+      raw = readFileSync(path, "utf8");
+    } else {
+      const read = readPrefix(path, opts.maxBytes);
+      raw = read.text;
+      truncated = read.truncated;
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    // ENOENT is "not a skill"; anything else (EACCES on a chmod 000 file, EISDIR, an I/O error) is a
+    // skill the author meant to have and cannot use.
+    if ((err as NodeJS.ErrnoException | undefined)?.code === "ENOENT") return { ok: false, reason: ABSENT_SKILL_FILE };
+    return { ok: false, reason: `SKILL.md could not be read: ${message}` };
+  }
+  const parsed = parseSkillFile(raw, fallbackName);
+  if (parsed !== null) return { ok: true, skill: parsed };
+  if (truncated) {
+    return { ok: false, reason: `its frontmatter is not closed within the first ${opts.maxBytes} bytes of the file, which is the index-time read bound (SKILL_METADATA_PREFIX_BYTES)` };
+  }
+  return { ok: false, reason: "no usable frontmatter: a SKILL.md needs a `---` fence at the very top of the file with at least a `description:` inside it" };
+}
+
+/** Reads at most `maxBytes` from the head of `path`. `truncated` means the file is longer than that. */
+function readPrefix(path: string, maxBytes: number): { text: string; truncated: boolean } {
+  const fd = openSync(path, "r");
+  try {
+    const buf = Buffer.allocUnsafe(maxBytes);
+    const read = readSync(fd, buf, 0, maxBytes, 0);
+    return { text: buf.subarray(0, read).toString("utf8"), truncated: read >= maxBytes };
+  } finally {
+    closeSync(fd);
   }
 }

@@ -5,8 +5,8 @@
 export { DEFAULT_SKILL_BODY_BYTES, DEFAULT_SKILL_DESCRIPTION_BYTES, SKILL_NAME_PATTERN, SKILL_TRUNCATION_MARKER, capBytes, parseSkillFile, pluginNameError, skillNameError } from "./frontmatter.ts";
 export type { ParsedSkillFile } from "./frontmatter.ts";
 
-export { SELF_SUBDIR, findRepoRoot, projectSkillRoots, readSkillMetadata, scanSkillRoot, scanUserSkillRoot } from "./loader.ts";
-export type { DiscoveredSkill, SkillTier } from "./loader.ts";
+export { SELF_SUBDIR, SKILL_METADATA_PREFIX_BYTES, ABSENT_SKILL_FILE, findRepoRoot, projectSkillRoots, readSkillMetadata, scanSkillRoot, scanUserSkillRoot } from "./loader.ts";
+export type { DiscoveredSkill, SkillMetadataRead, SkillScanError, SkillScanResult, SkillTier } from "./loader.ts";
 
 export { PROJECT_PLUGIN_NAME, SkillIndex } from "./store.ts";
 export type { PluginSkillContribution, SkillIndexOptions, SkillMeta } from "./store.ts";
