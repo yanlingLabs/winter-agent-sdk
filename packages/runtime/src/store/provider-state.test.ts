@@ -524,3 +524,72 @@ describe("round 2: a forked CHILD of a persisted parent emits NO continuity warn
       }
     }));
 });
+
+describe("round 2 / M3: a FORKED session carries its provider-state chain and identity block", () => {
+  test("a fork replays the source's chain, anchored by the SAME entry uuids, and resumes without a warning", () =>
+    withTempHome(async (home) => {
+      const cwd = mkdtempSync(join(tmpdir(), "winter-p6-fork-chain-"));
+      try {
+        const anchor = "ffffffff-1111-4111-8111-111111111111";
+        // A source session with a real identity block and a real chain.
+        const source = await resolveEngineSession({ config: { sessionId: "sess-fork-src", cwd, model: "m", permissionMode: "default" } as never, resolveWinterHome: () => home, env: {} });
+        source.store!.setProviderIdentity!({ providerId: "openai", modelKey: "openai/o-test", adapterId: "openai-responses", adapterVersion: "1.0.0", catalogVersion: "0.0.0-seed", authRefKind: "env" });
+        await source.store!.recordUserEntry("hello");
+        await source.store!.recordProviderState!({ sessionId: "sess-fork-src", anchorUuid: anchor, provider: "openai", model: "openai/o-test", family: "openai", continuationDomain: "openai:responses", itemIndex: 0, kind: "origin", payload: {} });
+        await source.store!.recordProviderState!({ sessionId: "sess-fork-src", anchorUuid: anchor, provider: "openai", model: "openai/o-test", family: "openai", continuationDomain: "openai:responses", itemIndex: 1, kind: "native-state", payload: { items: ["OPAQUE-FORK"] } });
+        await source.store!.recordAssistantEntry([{ type: "text", text: "one" }], { uuid: anchor });
+        await source.store!.flush?.();
+
+        // FORK it.
+        const forked = await resolveEngineSession({
+          config: { sessionId: "unused", cwd, model: "m", permissionMode: "default", resume: "sess-fork-src", forkSession: true } as never,
+          resolveWinterHome: () => home,
+          env: {},
+        });
+        const forkedSessionId = forked.config.sessionId;
+        expect(forkedSessionId).not.toBe("sess-fork-src");
+
+        // The fork preserves entry uuids, which is what makes the copied anchors meaningful.
+        const inherited = forked.initialMessages.find((m) => m.role === "assistant");
+        expect(inherited?.uuid).toBe(anchor);
+
+        // THE CHAIN CAME WITH IT -- re-owned to the fork, re-keyed so two sessions' records can never
+        // collide in a store that upserts on `uuid`, and still anchored on the source's entry uuid.
+        const records = await forked.store!.loadProviderState!();
+        expect(records.map((r) => r.kind)).toEqual(["origin", "native-state"]);
+        for (const r of records) {
+          expect(r.sessionId).toBe(forkedSessionId);
+          expect(r.anchorUuid).toBe(anchor);
+        }
+        const sourceRecords = readProviderState(providerStateSidecarPath(join(home, "projects", compatibilityKeys(cwd).transcriptProjectKey, "sess-fork-src.jsonl")));
+        expect(records.map((r) => r.uuid)).not.toEqual(sourceRecords.map((r) => r.uuid));
+        // The SOURCE is untouched -- a fork only ever reads it.
+        expect(sourceRecords.map((r) => r.sessionId)).toEqual(["sess-fork-src", "sess-fork-src"]);
+
+        // …and so did the IDENTITY BLOCK, which is what keeps the fork off the pre-P6 silent path.
+        expect(await forked.store!.loadProviderIdentity!()).toEqual({ providerId: "openai", modelKey: "openai/o-test" });
+      } finally {
+        rmSync(cwd, { recursive: true, force: true });
+      }
+    }));
+
+  test("forking a source with NO sidecar copies nothing and is not an error", () =>
+    withTempHome(async (home) => {
+      const cwd = mkdtempSync(join(tmpdir(), "winter-p6-fork-bare-"));
+      try {
+        // A pre-P6 source has nothing to carry, and the fork is then in exactly the state it was.
+        const source = await resolveEngineSession({ config: { sessionId: "sess-bare-src", cwd, model: "m", permissionMode: "default" } as never, resolveWinterHome: () => home, env: {} });
+        await source.store!.recordUserEntry("hello");
+        await source.store!.recordAssistantEntry([{ type: "text", text: "one" }]);
+        const forked = await resolveEngineSession({
+          config: { sessionId: "unused", cwd, model: "m", permissionMode: "default", resume: "sess-bare-src", forkSession: true } as never,
+          resolveWinterHome: () => home,
+          env: {},
+        });
+        expect(await forked.store!.loadProviderState!()).toEqual([]);
+        expect(await forked.store!.loadProviderIdentity!()).toBeUndefined();
+      } finally {
+        rmSync(cwd, { recursive: true, force: true });
+      }
+    }));
+});
