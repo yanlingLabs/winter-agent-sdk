@@ -17,8 +17,7 @@ import type { ProviderAdapter, ProviderContext, ProviderEvent, TurnRequest } fro
 import { createGoogleGenerateContentAdapter } from "../../../provider-runtime/src/adapters/google/index.ts";
 import { foldProviderStream, type FoldedProviderTurn } from "../../../runtime/src/provider/bridge.ts";
 import { assertGeminiRequest, geminiBody, geminiContents, geminiError, geminiFakeRoutes, geminiSseFrames, geminiStreamResponse, partKind, type GeminiPart } from "../fakes/gemini.ts";
-import { jsonResponse, sseResponse, type FakeRoute, type FakeServer, type RecordedRequest } from "../fakes/server.ts";
-import { stalledStreamResponse } from "../fakes/stalled-stream.ts";
+import { jsonResponse, sseResponse, stalledResponse, type FakeRoute, type FakeServer, type RecordedRequest } from "../fakes/server.ts";
 import type { CorpusCaseId, CorpusCaseImpl } from "./runner.ts";
 
 const evidence = <T>(value: T): { value: T; source: "upstream-static"; confidence: "inferred"; observedAt: string } => ({
@@ -225,7 +224,7 @@ export function googleScenarioStream(): NonNullable<Parameters<typeof geminiFake
     [GOOGLE_MODELS.retryAfter]: [geminiError(429, "RESOURCE_EXHAUSTED", "slow down", { "retry-after": "2" }), geminiStreamResponse([{ parts: [{ text: "after" }] }, { finishReason: "STOP" }])],
     [GOOGLE_MODELS.auth]: () => geminiError(401, "UNAUTHENTICATED", "API key not valid"),
     [GOOGLE_MODELS.rateLimit]: () => geminiError(429, "RESOURCE_EXHAUSTED", "quota exceeded", { "retry-after": "1", "x-ratelimit-remaining": "0" }),
-    [GOOGLE_MODELS.stall]: () => stalledStreamResponse(1_000),
+    [GOOGLE_MODELS.stall]: () => stalledResponse(1_000),
     [GOOGLE_MODELS.malformed]: () => sseResponse([{ data: "{not json" }]),
     [GOOGLE_MODELS.providerCode]: () => geminiError(400, "INVALID_ARGUMENT", "y".repeat(600)),
     [GOOGLE_MODELS.usage]: () =>
