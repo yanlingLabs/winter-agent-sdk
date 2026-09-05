@@ -3,6 +3,9 @@
 // pre-parsed rule -- see permission-rules.ts's header for why grammar.ts's parseRule cannot do it.
 import { describe, test, expect } from "bun:test";
 import { matchesSkillRule, parseSkillRule, skillRulesAllow } from "./permission-rules.ts";
+import { evaluate, REAL_SPECIAL_CHECKS, NO_OPINION_HOOK_STAGE, NO_OPINION_PROMPT_STAGE, NO_OPINION_AUTO_ENGINE, type EvaluationContext } from "../permissions/evaluator.ts";
+import { emptyRuleSet, sourceRule } from "../permissions/ruleset.ts";
+import { parseRule } from "../permissions/grammar.ts";
 
 const review = { identities: ["review", ".winter:review"] };
 
@@ -96,5 +99,83 @@ describe("skillRulesAllow", () => {
     expect(skillRulesAllow(["Bash(ls)", "Skill(lint)"], review)).toBe(false);
     expect(skillRulesAllow([], review)).toBe(false);
     expect(skillRulesAllow(undefined, review)).toBe(false);
+  });
+});
+
+// ================================================================================================
+// T8 rider 18: the EVALUATOR routes `Skill(...)` rules here. Three failure modes, all silent.
+// ================================================================================================
+//
+// Before this wiring a hand-written `Skill(...)` rule was inert in a live session, and the way it
+// failed depended on the skill's NAME -- which is what makes this worth its own fixture block rather
+// than a line in the module above. Driven through the REAL six-stage `evaluate()`, never through
+// `matchesSkillRule` alone: the unit half is already covered above, and the thing that was broken
+// was the routing.
+describe("rider 18: Skill(...) rules reach the real evaluator", () => {
+  const HOME = "/synthetic/home/tester";
+  const CWD = "/synthetic/workspace";
+
+  /** One raw rule STRING -> the sourced allow entry the evaluator's own rule set holds. */
+  function toAllowEntry(raw: string) {
+    const parsed = parseRule(raw);
+    const source = parsed.specifier?.kind === "pattern" ? (parsed.specifier as { source: string }).source : undefined;
+    return sourceRule({ toolName: parsed.toolName, ...(source !== undefined ? { ruleContent: source } : {}) }, "allow", "sdk");
+  }
+
+  function ctxWith(rules: string[], identities?: (name: string) => readonly string[]): EvaluationContext {
+    return {
+      policy: { mode: "default", rules: { ...emptyRuleSet(), entries: rules.map(toAllowEntry) }, version: 1 },
+      cwd: CWD,
+      sessionRoot: CWD,
+      home: HOME,
+      trustedWorkspace: false,
+      sessionBypassEnabled: false,
+      ...(identities !== undefined ? { skillIdentities: identities } : {}),
+      hookStage: NO_OPINION_HOOK_STAGE,
+      promptStage: NO_OPINION_PROMPT_STAGE,
+      autoEngine: NO_OPINION_AUTO_ENGINE,
+      specialChecks: REAL_SPECIAL_CHECKS,
+      requiresInteraction: () => false,
+    };
+  }
+
+  async function decide(rules: string[], input: Record<string, unknown>, identities?: (name: string) => readonly string[]): Promise<string> {
+    const record = await evaluate({ toolName: "Skill", input, toolUseId: "t" }, ctxWith(rules, identities));
+    return record.decision;
+  }
+
+  test("a per-name allow rule ALLOWS its own skill -- the whole family was inert before the routing", async () => {
+    expect(await decide(["Skill(review)"], { skill: "review" })).toBe("allow");
+  });
+
+  test("a per-name allow rule does NOT allow a different skill", async () => {
+    expect(await decide(["Skill(review)"], { skill: "deploy" })).not.toBe("allow");
+  });
+
+  test("the ARGUMENT PREFIX binds: `Skill(review:src*)` allows `src/a.ts` and refuses `test/a.ts`", async () => {
+    expect(await decide(["Skill(review:src*)"], { skill: "review", args: "src/a.ts" })).toBe("allow");
+    expect(await decide(["Skill(review:src*)"], { skill: "review", args: "test/a.ts" })).not.toBe("allow");
+  });
+
+  test("A HYPHENATED NAME BEHAVES IDENTICALLY -- the rule's CLASS no longer depends on the skill's name (P5-H companion)", async () => {
+    // Before grammar.ts's Skill early return, `Skill(review:*)` parsed as `param` (never matching in
+    // the allow direction) while `Skill(my-skill:*)` parsed as `pattern`. Same shape, same outcome
+    // now, which is the whole claim.
+    expect(parseRule("Skill(review:*)").specifier?.kind).toBe("pattern");
+    expect(parseRule("Skill(my-skill:*)").specifier?.kind).toBe("pattern");
+    expect(parseRule("Skill(.winter:review)").specifier?.kind).toBe("pattern");
+    expect(await decide(["Skill(review:*)"], { skill: "review", args: "x" })).toBe("allow");
+    expect(await decide(["Skill(my-skill:*)"], { skill: "my-skill", args: "x" })).toBe("allow");
+  });
+
+  test("the ALIAS dimension: `Skill(.winter:review)` matches a project skill invoked by its BARE name", async () => {
+    // The identity set is what the session's own SkillIndex reports; without it the rule is
+    // alias-blind (asserted both ways, so the injection is provably load-bearing).
+    expect(await decide(["Skill(.winter:review)"], { skill: "review" }, (n) => (n === "review" ? ["review", ".winter:review"] : [n]))).toBe("allow");
+    expect(await decide(["Skill(.winter:review)"], { skill: "review" })).not.toBe("allow");
+  });
+
+  test("a BARE `Skill` rule still allows everything -- `autoSkillPermissionEntries(\"all\")`'s own form is unchanged", async () => {
+    expect(await decide(["Skill"], { skill: "anything", args: "whatever" })).toBe("allow");
   });
 });

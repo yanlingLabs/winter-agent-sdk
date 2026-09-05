@@ -60,6 +60,11 @@ import { isProtectedWrite as isProtectedPath, isCriticalRemoval as classifyCriti
 // in engine.ts, one level up). auto/config.ts itself imports nothing from this file, so there is no
 // cycle in either direction.
 import { isAutoSuspendedAllowRule, AUTO_MODE_DEFAULT_USE_AUTO_MODE_DURING_PLAN } from "./auto/config.ts";
+// Phase 5 Task 8 (rider 18): the ONE matcher for the `Skill(...)` rule family. Imported rather than
+// re-derived -- `skills/permission-rules.ts` is where the alias/argument split is decided, and a
+// second copy here is exactly the producer/consumer drift R4-2 exists to catch.
+import { matchesSkillRule } from "../skills/permission-rules.ts";
+const SKILL_RULE_TOOL = "Skill";
 
 export type { AutoModeConfig };
 
@@ -290,6 +295,16 @@ export interface EvaluationContext {
   // config flag PolicyStateStore's own bypass gate already checks (policy-state.ts) -- engine.ts
   // threads it through unchanged, one level further.
   sessionBypassEnabled?: boolean;
+  /**
+   * Phase 5 Task 8 (rider 18): every name a skill answers to -- `SkillIndex.identities(name)`.
+   *
+   * Injected rather than imported for the same reason `requiresInteraction` below is: the evaluator
+   * is stateless and holds no session, while the skill index is per-session state
+   * (`skills/runtime.ts`'s registry, keyed `agentId ?? sessionId`). engine.ts supplies it; a direct
+   * caller may omit it, and a `Skill(...)` rule then matches on the literal name alone -- correct,
+   * just blind to the `.winter:<name>` alias a project skill also answers to.
+   */
+  skillIdentities?: (skillName: string) => readonly string[];
   hookStage: HookStage;
   promptStage: PromptStage;
   autoEngine: AutoEngine;
@@ -510,6 +525,30 @@ function matchesRuleForCall(rule: ParsedRule, call: PermissionCall, direction: "
       // documented behavior for an absent sourceDir makes a `/`-anchored rule inert on EITHER
       // direction (MatchFileRuleOptions.sourceDir's own comment) — the same conservative default
       // this whole phase applies to every other unresolvable-anchor case.
+    });
+  }
+
+  // Phase 5 Task 8 (rider 18, WS-07 §3): a `Skill(...)` rule matches on the skill's own IDENTITIES
+  // plus an argument prefix -- routed to `skills/permission-rules.ts`, never to `matchesRule`.
+  //
+  // TWO INDEPENDENT REASONS THE FALLTHROUGH WAS SILENTLY WRONG, both named in Lane S's report:
+  // `matchesRule`'s `"pattern"` case reads `call.input["command"]`, and a Skill call's input is
+  // `{skill, args?}` with no `command` at all -- so every pattern-kind Skill rule compared against
+  // `""`; and `parseRule` used to classify the same rule shape three different ways depending on
+  // whether the skill's name held a hyphen or a leading dot (closed in grammar.ts by the companion
+  // half of this rider).
+  //
+  // `ctx.skillIdentities` is what makes the ALIAS dimension work: a project skill `review` also
+  // answers to `.winter:review`, so a rule written against the official branch's qualified spelling
+  // must match Winter-native discovery's bare one. Absent (every direct evaluator test, and any host
+  // with no skill index) it degrades to the literal name -- correct, just alias-blind.
+  if (rule.toolName === SKILL_RULE_TOOL && call.toolName === SKILL_RULE_TOOL && rule.specifier?.kind === "pattern") {
+    const rawName = call.input["skill"];
+    if (typeof rawName !== "string") return false;
+    const rawArgs = call.input["args"];
+    return matchesSkillRule(rule.specifier.source, {
+      identities: ctx.skillIdentities?.(rawName) ?? [rawName],
+      ...(typeof rawArgs === "string" ? { args: rawArgs } : {}),
     });
   }
 

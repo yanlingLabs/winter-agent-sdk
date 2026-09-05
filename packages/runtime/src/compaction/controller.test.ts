@@ -339,3 +339,4 @@ describe("compaction/controller.ts -- compact()", () => {
     expect(requests).toHaveLength(0);
   });
 });
+

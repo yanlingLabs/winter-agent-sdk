@@ -608,6 +608,9 @@ function parseScalar(token: string): string | boolean {
   return token;
 }
 
+/** The one tool whose specifier is a skill identity + argument prefix (WS-07 §3). */
+const SKILL_RULE_TOOL = "Skill";
+
 const RULE_SHAPE = /^([^\s(]+)\((.*)\)$/s;
 const FIELD_VALUE = /^([A-Za-z_][A-Za-z0-9_]*):(.*)$/s;
 
@@ -665,6 +668,25 @@ export function parseRule(raw: string): ParsedRule {
         isBareEquivalent: false,
       };
     }
+    return { toolName, specifier: { kind: "pattern", source: content }, isBareEquivalent: false };
+  }
+
+  // Phase 5 Task 8 (rider 18, WS-07 §3 "skill name and argument prefix"): a `Skill(...)` rule's
+  // specifier is a skill identity plus an optional argument pattern -- ONE class, always, exactly as
+  // Bash's and the file tools' are.
+  //
+  // WITHOUT THIS EARLY RETURN THE SAME RULE SHAPE PARSED THREE DIFFERENT WAYS depending on the
+  // skill's NAME, because the generic `FIELD_VALUE` dispatch below splits on `[A-Za-z_][A-Za-z0-9_]*:`:
+  //   `Skill(review:*)`         -> `param`   (and an allow-direction param rule never matches)
+  //   `Skill(my-skill:*)`       -> `pattern` (the hyphen fails the field regex)
+  //   `Skill(.winter:review)`   -> `pattern` (the leading dot fails it)
+  // So a user's rule worked or silently did not according to whether their skill's name contained a
+  // hyphen -- the failure mode P5-H's companion clause names ("a hyphen in the skill name must never
+  // change the rule's class"). `source` is the RAW inner text; `skills/permission-rules.ts` owns
+  // splitting it into name + argument prefix, because only it knows the real identity set (a
+  // qualified name contains a colon and no left-to-right parse can tell it from an argument
+  // separator without knowing the names).
+  if (toolName === SKILL_RULE_TOOL) {
     return { toolName, specifier: { kind: "pattern", source: content }, isBareEquivalent: false };
   }
 

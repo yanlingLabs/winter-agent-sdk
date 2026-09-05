@@ -11,6 +11,7 @@ import { buildHookEntriesFromSettings } from "../../hooks/from-config.ts";
 import { buildHookRegistry } from "../../hooks/registry.ts";
 import { loadPlugins } from "../../plugins/loader.ts";
 import { settingsHookSourceInputs, pluginHookEntries, PLUGIN_HOOK_SOURCE } from "./hooks.ts";
+import type { PluginBundle } from "../../plugins/bundle.ts";
 
 const tempDirs: string[] = [];
 function mkTemp(prefix: string): string {
@@ -121,5 +122,47 @@ describe("pluginHookEntries", () => {
     const root = join(parent, "quiet");
     mkdirSync(root, { recursive: true });
     expect(pluginHookEntries(loadPlugins([{ type: "local", path: root }]).bundles)).toEqual({ entries: [], rejected: [] });
+  });
+});
+
+// ================================================================================================
+// T8 rider 19: a plugin hook names ITSELF -- `HookSource` gained a `plugin` member.
+// ================================================================================================
+//
+// Lane S's NEEDS_CONTEXT 4: plugin hooks were filed under `sdk`, which was right on AUTHORITY
+// (ungated by workspace trust, like `pluginAgents`) but made a plugin hook indistinguishable from an
+// `Options.hooks` registration in an audit record. `ResolvedSettingSource` is PINNED and could not
+// grow the member, so the parse still runs under `flag` and the entry is re-stamped -- which is why
+// the assertion is on the ENTRY, not on the parse input.
+describe("rider 19: plugin hooks are sourced `plugin`, rank last, and survive an untrusted workspace", () => {
+  const bundle = (name: string): PluginBundle =>
+    ({
+      name,
+      path: `/synthetic/plugins/${name}`,
+      skills: [],
+      commands: [],
+      agents: {},
+      mcpServers: {},
+      skipMcpDiscovery: false,
+      hooks: { PreToolUse: [{ hooks: [{ type: "command", command: `echo ${name}` }] }] },
+    }) as unknown as PluginBundle;
+
+  test("every plugin entry carries source `plugin`, never `sdk`", () => {
+    const built = pluginHookEntries([bundle("alpha")]);
+    expect(built.entries.length).toBe(1);
+    expect(built.entries[0]!.source).toBe("plugin");
+  });
+
+  test("a plugin hook sorts AFTER an Options.hooks (`sdk`) hook -- a plugin ships a default the host may override", () => {
+    const sdkEntry = buildHookEntriesFromSettings([{ source: "flag", settings: { hooks: { PreToolUse: [{ hooks: [{ type: "command", command: "echo sdk" }] }] } } }]);
+    const pluginEntry = pluginHookEntries([bundle("beta")]);
+    const registry = buildHookRegistry([...pluginEntry.entries, ...sdkEntry.entries], { trustedWorkspace: false });
+    const matching = registry.matching("PreToolUse", "Bash");
+    expect(matching.map((e) => e.source)).toEqual(["sdk", "plugin"]);
+  });
+
+  test("a plugin hook is NOT excluded in an untrusted workspace -- same posture as pluginAgents", () => {
+    const registry = buildHookRegistry(pluginHookEntries([bundle("gamma")]).entries, { trustedWorkspace: false });
+    expect(registry.matching("PreToolUse", "Bash").length).toBe(1);
   });
 });

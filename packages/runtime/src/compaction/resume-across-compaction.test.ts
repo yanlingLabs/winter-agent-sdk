@@ -244,3 +244,75 @@ describe("compaction -- resume across a compaction (R5-4 / WS-11 §7)", () => {
     }
   });
 });
+
+// ================================================================================================
+// T8 rider 17: the ENGINE refuses a controller that compacted nothing.
+// ================================================================================================
+//
+// `compaction/seam.ts`'s `CompactionResult.retained` doc has always claimed "a controller that
+// returns the full input here has compacted nothing and the engine will say so rather than silently
+// looping" -- and `performCompaction` had NO SUCH CHECK. Lane K's own controller closes the hole
+// from its side (`NothingToCompactError`), which is exactly why the gap stayed invisible: the seam
+// exists so a host may supply a DIFFERENT controller, and that one would still trip it.
+//
+// Driven through a real `runEngine` turn, because the claim is about the engine.
+describe("rider 17: a controller that returns the FULL INPUT is refused, and the history never grows", () => {
+  /** The degenerate shape the seam's doc describes: everything retained, nothing folded. */
+  const passthroughController: CompactionController = {
+    shouldCompact: () => true,
+    async compact(input: CompactionInput): Promise<CompactionResult> {
+      return { summary: "a summary of nothing", retained: input.messages.map((m) => ({ ...m })), preTokens: input.accountant.contextTokens(), evidencedToolNames: [] };
+    },
+  };
+
+  test("the engine emits compact_result:'failed' naming the counts, writes NO boundary, and the summary never enters the history", async () => {
+    const home = mkdtempSync(join(tmpdir(), "winter-t8-rider17-"));
+    try {
+      const cwd = join(home, "work");
+      const config: RuntimeConfig = { sessionId: "sess-rider-17", cwd, model: "sonnet", winterHome: home, contextWindowTokens: 1000 };
+      const resolved = await resolveEngineSession({ config, resolveWinterHome: () => home, env: {} });
+
+      const seenMessageCounts: number[] = [];
+      const provider: Provider = {
+        async generate(input): Promise<ProviderTurn> {
+          if (input.system?.includes("compacting a conversation") === true) return { kind: "text", text: "unused" };
+          seenMessageCounts.push(input.messages.length);
+          return { kind: "text", text: "reply", usage: { inputTokens: 950, outputTokens: 0 } };
+        },
+      };
+
+      const { host, runtime } = createInMemoryChannel();
+      const done = runEngine({
+        config: resolved.config,
+        input: runtime.input,
+        output: runtime.output,
+        provider,
+        tools: stubExecutor,
+        ...(resolved.store !== undefined ? { store: resolved.store } : {}),
+        compactionController: passthroughController,
+      });
+      host.output.write({ type: "user", text: "turn one" });
+      host.output.write({ type: "user", text: "turn two" });
+      host.output.write({ type: "user", text: "turn three" });
+      host.output.write({ type: "control_request", requestId: "r", subtype: "end_input", payload: undefined });
+      const frames = await drain(host.input);
+      await done;
+
+      const statuses = dataMessages(frames).filter((m) => m.type === "system" && (m as { subtype?: string }).subtype === "status") as Array<{ compact_result?: string; compact_error?: string }>;
+      const failed = statuses.filter((s) => s.compact_result === "failed");
+      expect(failed.length).toBeGreaterThan(0);
+      expect(failed[0]!.compact_error).toContain("nothing was compacted");
+
+      // No boundary was persisted or emitted: the refusal happens BEFORE persistence.
+      expect(dataMessages(frames).some((m) => m.type === "system" && (m as { subtype?: string }).subtype === "compact_boundary")).toBe(false);
+
+      // THE ACTUAL DAMAGE THE GUARD PREVENTS, measured rather than asserted in prose: without it the
+      // engine swaps its history for `[summary, ...everything]` on every round, so the message count
+      // handed to the provider would climb by MORE than the two messages a plain turn adds. Turn N
+      // sees exactly 2N-1 messages (N users + N-1 assistant replies) when nothing was injected.
+      expect(seenMessageCounts).toEqual([1, 3, 5]);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+});

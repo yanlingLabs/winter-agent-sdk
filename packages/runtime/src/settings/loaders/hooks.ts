@@ -17,18 +17,18 @@ import type { PluginBundle } from "../../plugins/bundle.ts";
 /**
  * The `HookSource` a plugin's hooks are filed under.
  *
- * `HookSource` is `managed | user | project | local | sdk` -- THERE IS NO `plugin` MEMBER, and
- * `hooks/registry.ts` is spine, frozen to this lane. NEEDS_CONTEXT is raised in the report; `sdk` is
- * the correct stand-in meanwhile on two counts: it is the tier `Options.plugins` itself arrives on
- * (the host's own programmatic configuration), and it is UNGATED by workspace trust, which is the
- * right answer for a plugin (subagents/definitions.ts records the identical reasoning for
- * `pluginAgents`: a plugin is a decision made outside the repository, so gating it on which
- * directory the session is in is neither the pin's model nor Winter's).
+ * WAS `sdk`, A DISCLOSED STAND-IN -- Phase 5 Task 8 (rider 19) added the real `plugin` member to
+ * `HookSource`, closing this lane's own NEEDS_CONTEXT 4. The stand-in's visible cost was that a
+ * plugin hook was indistinguishable from an `Options.hooks` registration in an audit record's
+ * `source` field; it now names itself.
  *
- * The visible cost of the stand-in: a plugin hook is indistinguishable from an `Options.hooks`
- * registration in an audit record's `source` field, and it sorts at `SOURCE_RANK.sdk` (last).
+ * UNGATED by workspace trust, unchanged: a plugin is loaded because a decision was made outside the
+ * repository, so gating it on which directory the session is in is neither the pin's model nor
+ * Winter's (`subagents/definitions.ts` records the identical reasoning for `pluginAgents`). It ranks
+ * LAST in the merge order (`SOURCE_RANK.plugin = 5`, after `sdk`) -- a plugin ships defaults every
+ * more-specific source may override.
  */
-export const PLUGIN_HOOK_SOURCE = "sdk" as const;
+export const PLUGIN_HOOK_SOURCE = "plugin" as const;
 
 /** The `resolveSettingsDetailed` / pinned `ResolvedSettings` shapes this accepts -- either field. */
 export interface ResolvedSettingsHookInput {
@@ -68,13 +68,16 @@ export function pluginHookEntries(bundles: readonly PluginBundle[]): HookEntries
     if (bundle.hooks === undefined) continue;
     const built = buildHookEntriesFromSettings([
       {
-        // `flag` is the ResolvedSettingSource that from-config.ts maps to the `sdk` HookSource.
+        // `flag` is the ResolvedSettingSource that from-config.ts maps to the `sdk` HookSource --
+        // and `ResolvedSettingSource` is PINNED (`sdk.d.ts:2783`, `SettingSource | 'managed' |
+        // 'flag'`), so `plugin` may not be added there. The parse runs under `flag`; the entry's
+        // own `source` is re-stamped to `PLUGIN_HOOK_SOURCE` below, alongside the id.
         source: "flag",
         path: bundle.manifestPath ?? bundle.path,
         settings: { hooks: bundle.hooks },
       },
     ]);
-    for (const entry of built.entries) entries.push({ ...entry, id: `plugin:${bundle.name}:${entry.id}` });
+    for (const entry of built.entries) entries.push({ ...entry, source: PLUGIN_HOOK_SOURCE, id: `plugin:${bundle.name}:${entry.id}` });
     rejected.push(...built.rejected);
   }
   return { entries, rejected };

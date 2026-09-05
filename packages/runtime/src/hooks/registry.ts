@@ -86,7 +86,11 @@ export interface HookRegistry {
 // ambiguity by following RuleSource's sibling declaration order (project before local) for
 // consistency with the permission-rule precedent — a documented judgment call (task report), not a
 // spec-pinned fact.
-const SOURCE_RANK: Record<HookSource, number> = { managed: 0, user: 1, project: 2, local: 3, sdk: 4 };
+// Phase 5 Task 8 (rider 19): `plugin` ranks LAST -- see HookSource's own declaration for why (a
+// plugin ships defaults every more-specific source may override), and note it is deliberately
+// NOT in the untrusted-workspace exclusion below, for the same reason `pluginAgents` is not
+// trust-gated.
+const SOURCE_RANK: Record<HookSource, number> = { managed: 0, user: 1, project: 2, local: 3, sdk: 4, plugin: 5 };
 
 function matcherApplies(matcher: string | undefined, toolName: string | undefined): boolean {
   if (matcher === undefined) return true; // WS-08 §2.1: "absent = matches every occurrence."

@@ -219,7 +219,18 @@ export type HookEventName = HookEvent; // WS-08 §10 / task-brief spelling — i
 // RuleSource's own literal declaration order (project before local) for consistency with the
 // sibling permission-rule precedent — a documented judgment call, not a spec-pinned fact — see
 // hooks/registry.ts's own header for where this order is actually applied.)
-export type HookSource = "managed" | "user" | "project" | "local" | "sdk";
+//
+// Phase 5 Task 8 (rider 19): `"plugin"` joins the union. Lane S filed plugin-manifest hooks under
+// `sdk` and named the cost in its own report: a plugin hook was indistinguishable from an
+// `Options.hooks` registration in an audit record's `source` field. It is a real distinction -- a
+// plugin's hooks come from a directory the host or the user installed, not from the host's own
+// programmatic configuration, and an operator reading a hook audit needs to know which.
+//
+// RANKED LAST (after `sdk`), and UNGATED by workspace trust, matching `pluginAgents`' own reasoning
+// verbatim: a plugin is loaded because a decision was made OUTSIDE the repository, so gating it on
+// which directory the session happens to be in is neither the pin's model nor Winter's. Last in the
+// merge order because a plugin ships defaults that every more-specific source may override.
+export type HookSource = "managed" | "user" | "project" | "local" | "sdk" | "plugin";
 
 // The shared input envelope every one of the 31 HookInput members carries beyond its own
 // `hook_event_name` discriminant (derived-shapes item (b), `BaseHookInput`, verbatim field set).

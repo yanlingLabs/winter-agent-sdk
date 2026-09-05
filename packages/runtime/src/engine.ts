@@ -103,6 +103,7 @@ import { registerWorkflowSession, clearWorkflowSession } from "./workflows/host-
 import { resolveProjectDirName } from "./paths/project-dir-name.ts";
 import { loadAgentDefinitions, type PluginAgentDefinition } from "./subagents/definitions.ts";
 import { getPluginAgents } from "./subagents/plugin-agents.ts";
+import { getSkillSessionRuntime } from "./skills/runtime.ts";
 import { buildHookEntriesFromConfig } from "./hooks/from-config.ts";
 // Phase 5 Task 8 (rider 5): a `{type:"command"}` hook entry from a settings file or a plugin manifest
 // has a real executor now -- see the `allHookEntries` block below for why the invoker and the
@@ -1133,6 +1134,11 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
       trustedWorkspace,
       sessionBypassEnabled: config.allowDangerouslySkipPermissions === true,
       ...(additionalDirectories !== undefined ? { additionalDirectories } : {}),
+      // Phase 5 Task 8 (rider 18): every name a skill answers to, out of THIS session's own skill
+      // runtime -- keyed exactly as the Skill executor reads it, so a `Skill(...)` rule and the
+      // invocation it is about always agree on the identity set. Absent for a session with no skill
+      // runtime registered; the evaluator then matches on the literal name.
+      skillIdentities: (skillName: string) => getSkillSessionRuntime(config.agentId ?? config.sessionId)?.index.identities(skillName) ?? [skillName],
       hookStage: realHookStage,
       promptStage: realPromptStage,
       autoEngine: realAutoEngine,
@@ -2724,6 +2730,27 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
       // (which is correct but large) rather than losing the conversation. The pinned status message
       // carries exactly this pair -- `compact_result: "failed"` + `compact_error`.
       const text = err instanceof Error ? err.message : String(err);
+      output.write({ type: "data", message: { type: "system", subtype: "status", status: null, compact_result: "failed", compact_error: text, uuid: randomUUID(), session_id: config.sessionId } });
+      return { ok: false, error: text };
+    }
+
+    // Phase 5 Task 8 (rider 17): THE ENGINE NOW SAYS SO, which is what `compaction/seam.ts`'s
+    // `CompactionResult.retained` doc has always claimed -- "a controller that returns the full
+    // input here has compacted nothing and the engine will say so rather than silently looping."
+    // There was no such check. The engine swaps its whole history for `[summary, ...retained]`, so a
+    // controller returning the full input makes the history LONGER on every round, forever, while
+    // `lastCompactionTokens` records a "successful" compaction that freed nothing.
+    //
+    // Compared by COUNT against the input it was handed, not by identity: a controller may legally
+    // return copies (Lane K's does, and this function hands it copies to begin with), so identity
+    // would never fire. `>=` rather than `>` because retaining exactly as many messages as it was
+    // given is the same "nothing was folded" condition -- the summary is pure growth either way.
+    //
+    // Routed through the SAME failure arm a thrown controller takes (the pinned
+    // `compact_result: "failed"` + `compact_error` pair), because the outcome for the session is
+    // identical: the turn continues on the un-compacted history rather than on a corrupted one.
+    if (result.retained.length >= messages.length) {
+      const text = `the compaction controller returned ${result.retained.length} of ${messages.length} messages, so nothing was compacted -- applying it would grow the history by a summary on every round (compaction/seam.ts's CompactionResult.retained contract)`;
       output.write({ type: "data", message: { type: "system", subtype: "status", status: null, compact_result: "failed", compact_error: text, uuid: randomUUID(), session_id: config.sessionId } });
       return { ok: false, error: text };
     }
