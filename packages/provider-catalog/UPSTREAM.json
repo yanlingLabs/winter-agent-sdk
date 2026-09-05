@@ -1,0 +1,10 @@
+{
+  "$comment": "The upstream PIN the generated layer came from. All-empty on the hand-authored SEED: nothing was extracted, and the emptiness is the honest marker (scripts/provider-catalog.ts turns an empty `commit` into catalogVersion \"0.0.0-seed\"). Lane X fills these in when it lands scripts/provider-source-sync.ts, and `tagObject` records the annotated tag's own object id so a re-tag cannot silently change what \"the same pin\" means.",
+  "upstream": {
+    "tag": "",
+    "tagObject": "",
+    "commit": "",
+    "extractorVersion": "",
+    "overlayVersion": ""
+  }
+}

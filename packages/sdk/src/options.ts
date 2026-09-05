@@ -12,10 +12,19 @@ import type {
   SystemPromptOption,
   OutputFormat,
   SkillsOption,
+  ProviderSelection,
+  ThinkingConfig,
+  EffortLevel,
+  AutoClassifierConfig,
+  AdvisorConfig,
 } from "./protocol/config.ts";
 import type { SettingSource } from "./settings/types.ts";
 import type { SessionStore } from "./store/session-store.ts";
 export type { SdkPluginConfig, SystemPromptOption, OutputFormat, JsonSchemaOutputFormat, SkillsOption } from "./protocol/config.ts";
+// Phase 6 Task 2: the provider-layer option shapes re-exported from the same module a host imports
+// `Options` from — one import site for "the Options-facing provider surface" (the same convention
+// the MCP config union already follows below).
+export type { ProviderSelection, ProviderConnectionConfig, CredentialRef, ThinkingConfig, EffortLevel, AutoClassifierConfig, AdvisorConfig } from "./protocol/config.ts";
 
 // --- Phase 5 Task 2 (derived-shapes-p5.md item (c)): the pinned block-array sentinel --------------
 //
@@ -39,6 +48,19 @@ export const DEFAULT_CONTEXT_WINDOW_TOKENS = 200000;
 export const DEFAULT_COMPACTION_THRESHOLD = 0.92;
 export const DEFAULT_PLANS_DIRECTORY = ".winter/plans";
 export const DEFAULT_OUTPUT_STYLE = "default";
+
+// --- Phase 6 Task 2 (WS-13, rulings R6-6/R6-10): two more of the same kind ------------------------
+//
+// Same posture as the four above: exported CONSTANTS applied runtime-side when the option is
+// absent, never baked into `--config-json` (an unset option stays an ABSENT wire key, so a session
+// that configures neither is byte-identical to every session before they existed).
+//
+// `providerStallTimeoutMs` is a DISCLOSED WINTER option with no pinned counterpart: R6-6 makes a
+// stream with no bytes for this long a typed `ProviderStallError` rather than an indefinite hang.
+// `keychainService` mirrors WS-01 §3's service naming; the dev profile's `com.winter.core.dev` is
+// selected by the host passing it explicitly, never inferred here.
+export const DEFAULT_PROVIDER_STALL_TIMEOUT_MS = 120000;
+export const DEFAULT_KEYCHAIN_SERVICE = "com.winter.core";
 
 // --- Phase 4 Task 2 (WS-09 derived-shapes item (a)): the HOST-facing MCP config union -------------
 //
@@ -420,4 +442,79 @@ export interface Options {
   // `system/init.output_style` (a REQUIRED pinned field, `4879`) reports; absent means
   // DEFAULT_OUTPUT_STYLE.
   outputStyle?: string;
+
+  // --- Phase 6 Task 2 (WS-13; derived-shapes-p6.md items (b)/(c)/(d)/(e)/(g)) ----------------------
+  //
+  // Pure passthrough into RuntimeConfig, the same conditional-spread convention as every field
+  // above. See protocol/config.ts for each type's declaration and its pinned citation.
+
+  /**
+   * DISCLOSED WINTER option (R6-9). Which provider a BARE `model` id resolves against, plus that
+   * provider's connection metadata and credential reference.
+   *
+   * `model` itself stays the pinned bare string and `system/init.model` keeps reporting what the
+   * caller passed — the resolved identity rides Winter-only init extension fields instead. A
+   * qualified `"<providerId>/<model>"` key needs no `provider` at all; the pinned Anthropic aliases
+   * (`sonnet`/`opus`/`haiku`/`claude-*`) resolve to the `anthropic` provider when a credential ref
+   * for it is configured. No model and no provider is a typed resolution error, never a silent
+   * default (WS-13 §9: no routing, no substitution in the provider layer).
+   */
+  provider?: ProviderSelection;
+  /**
+   * `sdk.d.ts:1540` — a **single string carrying a COMMA-SEPARATED list**, tried in order. This is
+   * the pin's own convention, not an oversight: the settings twin `Settings.fallbackModel` (`5577`)
+   * is a `string[]`, and the two shapes coexist with a documented precedence. Typing this `string[]`
+   * would be a parity divergence (derived-shapes-p6.md item (g), finding 1).
+   *
+   * Pinned semantics worth knowing before consuming it: the trigger is "overloaded or unavailable"
+   * (NOT a refusal — the `model_refusal_fallback` frame's `trigger` is the literal `'refusal'`), the
+   * swap emits NO pinned frame at all (capture (G): the only observable is the outgoing request's
+   * `model`), and the primary is re-tried at the START OF EACH USER TURN, so a temporary outage
+   * never permanently demotes the session. Winter additionally emits a disclosed Winter-only
+   * `system/model_switch` frame, and honours a candidate only inside the same continuation domain
+   * (R6-9) — a cross-domain candidate is a typed error at init, never a silent context loss.
+   */
+  fallbackModel?: string;
+  /** `sdk.d.ts:1736`, three arms (`adaptive` | `enabled` | `disabled`). Takes precedence over `maxThinkingTokens`, stated twice in the pin (`1732`, `8215`). */
+  thinking?: ThinkingConfig;
+  /**
+   * `sdk.d.ts:1749`. **No numeric form** — see `EffortLevel`'s own declaration comment (R6-E).
+   *
+   * Pinned adjacent rules a consumer must not fight: `'max'` is session-scoped and deliberately not
+   * persistable (`Settings.effortLevel` excludes it), and the ACTIVE level is the one left after a
+   * per-model silent downgrade — which is exactly what the catalog's `reasoning.efforts` evidence
+   * exists to compute honestly rather than by guess.
+   */
+  effort?: EffortLevel;
+  /**
+   * @deprecated Use `thinking` instead.
+   *
+   * `sdk.d.ts:1758`. Kept and typed rather than dropped, because dropping a pinned Options member is
+   * a drop-in parity break. Its semantics CHANGE BY MODEL and that is the trap: on a modern model it
+   * is reinterpreted as on/off — `0` disables, any other value means *adaptive* — so forwarding
+   * `maxThinkingTokens: 8000` is not "budget 8000" (R6-E maps it exactly that way).
+   */
+  maxThinkingTokens?: number;
+  /**
+   * `stream_event` frames (`SDKPartialAssistantMessage`) are emitted only under this gate (R6-5).
+   * Absent/false keeps the stream byte-identical to every session before partial streaming existed.
+   */
+  includePartialMessages?: boolean;
+  /**
+   * A cumulative USD ceiling for this query's provider spend. **Disclosed INERT for unpriced
+   * models** (R6-H): the descriptor's `pricing` evidence is the only price source, an unpriced model
+   * reports `costUsd: 0` with `costBasis: "unknown"`, and a budget measured against a zero is not a
+   * budget. Winter deliberately does NOT do what the pin does here — capture (K) shows the pinned
+   * runtime reporting a non-zero cost for a model no price table contains, guessing at the default
+   * model's rate. Winter reports the zero and says why.
+   */
+  maxBudgetUsd?: number;
+  /** DISCLOSED WINTER option (R6-6): a stream silent for this long aborts as a typed `ProviderStallError`. Absent means DEFAULT_PROVIDER_STALL_TIMEOUT_MS. */
+  providerStallTimeoutMs?: number;
+  /** DISCLOSED WINTER option (R6-10): the macOS Keychain service every `{ kind: "keychain" }` ref resolves under. Absent means DEFAULT_KEYCHAIN_SERVICE. */
+  keychainService?: string;
+  /** DISCLOSED WINTER option (R6-14): the permission classifier's own model/credential, resolved through the SAME selection path as the session model. With none configured the worker serves only a `classifierEligible` model, else Manual fallback — never a silent weakening. */
+  autoClassifier?: AutoClassifierConfig;
+  /** DISCLOSED WINTER option (P2 carry, wired in T10): the advisor/reviewer backend's model, same selection path. */
+  advisor?: AdvisorConfig;
 }

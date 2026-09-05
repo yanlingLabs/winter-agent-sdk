@@ -2,13 +2,16 @@
   "name": "winter-agent-sdk-workspace",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=18" },
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
     "version:bump": "bun run scripts/bump-version.ts",
     "version:sync": "bun run scripts/sync-version.ts",
     "conformance:fetch": "bun run scripts/fetch-upstream.ts",
     "conformance:snapshot": "bun run scripts/gen-declaration-snapshot.ts",
     "differential": "bun run scripts/differential.ts",
+    "provider:catalog": "bun run scripts/provider-catalog.ts",
     "build:runtime": "bun run scripts/build-runtime.ts",
     "verify:compiled": "bun run scripts/verify-protocol-compiled.ts",
     "verify:workflow": "bun run scripts/verify-workflow.ts",
@@ -20,6 +23,9 @@
     "typescript": "^5.6.0",
     "@yanlinglabs/winter-agent-sdk": "workspace:*",
     "winter-agent-runtime": "workspace:*",
-    "winter-conformance": "workspace:*"
+    "winter-conformance": "workspace:*",
+    "@yanlinglabs/winter-provider-catalog": "workspace:*",
+    "@yanlinglabs/winter-provider-runtime": "workspace:*",
+    "winter-provider-conformance": "workspace:*"
   }
 }

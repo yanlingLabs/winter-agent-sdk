@@ -1,0 +1,162 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://winter.yanling.dev/schema/provider-catalog/v1.json",
+  "title": "WinterCatalog",
+  "description": "WS-13 §4's inert provider catalog. This schema is the CROSS-LANGUAGE contract (Lane X's generator, the Swift decoder, any external consumer); `packages/provider-catalog/src/validate.ts` is the in-repo gate and enforces four structural invariants JSON Schema cannot express on its own — global uniqueness of provider ids and model keys, per-provider uniqueness of `upstreamId ∪ aliases`, that every model's providerId names a provider present in the same document, and the secrets floor. Both must pass; neither substitutes for the other.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "catalogVersion", "upstream", "providers", "models"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "catalogVersion": { "type": "string", "minLength": 1, "description": "\"0.0.0-seed\" marks the hand-authored seed; otherwise \"<upstream tag>+<extractorVersion>\"." },
+    "upstream": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tag", "tagObject", "commit", "extractorVersion", "overlayVersion"],
+      "description": "The upstream pin. Every field may be the EMPTY string: that is how the seed says no extraction produced it.",
+      "properties": {
+        "tag": { "type": "string" },
+        "tagObject": { "type": "string" },
+        "commit": { "type": "string" },
+        "extractorVersion": { "type": "string" },
+        "overlayVersion": { "type": "string" }
+      }
+    },
+    "providers": { "type": "array", "items": { "$ref": "#/$defs/WinterProviderDescriptor" } },
+    "models": { "type": "array", "items": { "$ref": "#/$defs/WinterModelDescriptor" } }
+  },
+  "$defs": {
+    "EvidenceSource": { "enum": ["official-doc", "live-discovery", "live-probe", "upstream-static", "user-override"] },
+    "EvidenceConfidence": { "enum": ["verified", "declared", "inferred", "unknown"] },
+    "evidenceBase": {
+      "type": "object",
+      "required": ["value", "source", "confidence"],
+      "properties": {
+        "source": { "$ref": "#/$defs/EvidenceSource" },
+        "sourceRef": { "type": "string", "minLength": 1 },
+        "observedAt": { "type": "string", "format": "date-time" },
+        "confidence": { "$ref": "#/$defs/EvidenceConfidence" }
+      }
+    },
+    "evidenceNumber": { "allOf": [{ "$ref": "#/$defs/evidenceBase" }], "properties": { "value": { "type": "integer", "exclusiveMinimum": 0 } } },
+    "evidenceBoolean": { "allOf": [{ "$ref": "#/$defs/evidenceBase" }], "properties": { "value": { "type": "boolean" } } },
+    "evidenceStringArray": { "allOf": [{ "$ref": "#/$defs/evidenceBase" }], "properties": { "value": { "type": "array", "items": { "type": "string", "minLength": 1 } } } },
+    "evidenceToolCalling": { "allOf": [{ "$ref": "#/$defs/evidenceBase" }], "properties": { "value": { "enum": ["native", "emulated", "none"] } } },
+    "evidenceReadableState": { "allOf": [{ "$ref": "#/$defs/evidenceBase" }], "properties": { "value": { "enum": ["none", "summary", "full-exposed"] } } },
+    "evidenceReplayScope": { "allOf": [{ "$ref": "#/$defs/evidenceBase" }], "properties": { "value": { "enum": ["current-tool-loop", "current-turn", "selected-turns", "all-turns"] } } },
+    "evidenceToolLoopRequirement": { "allOf": [{ "$ref": "#/$defs/evidenceBase" }], "properties": { "value": { "enum": ["hard-error", "silent-degradation", "not-required"] } } },
+    "evidenceString": { "allOf": [{ "$ref": "#/$defs/evidenceBase" }], "properties": { "value": { "type": "string", "minLength": 1 } } },
+    "evidenceSummaryRequest": {
+      "allOf": [{ "$ref": "#/$defs/evidenceBase" }],
+      "properties": {
+        "value": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["field", "values"],
+          "properties": { "field": { "type": "string", "minLength": 1 }, "values": { "type": "array", "items": { "type": "string" } } }
+        }
+      }
+    },
+    "evidencePricing": {
+      "allOf": [{ "$ref": "#/$defs/evidenceBase" }],
+      "properties": {
+        "value": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["inputPerMTokUsd", "outputPerMTokUsd"],
+          "properties": {
+            "inputPerMTokUsd": { "type": "number", "minimum": 0 },
+            "outputPerMTokUsd": { "type": "number", "minimum": 0 },
+            "cacheReadPerMTokUsd": { "type": "number", "minimum": 0 },
+            "cacheWritePerMTokUsd": { "type": "number", "minimum": 0 }
+          }
+        }
+      }
+    },
+    "WinterProviderDescriptor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "displayName", "protocols", "authKinds", "defaultEndpoints", "modelDiscovery", "liveCatalogAuthority", "adapterId", "family", "upstream", "risk", "scope"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "displayName": { "type": "string", "minLength": 1 },
+        "protocols": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "enum": ["openai-responses", "openai-chat-completions", "anthropic-messages", "google-generate-content", "bedrock-converse", "azure-openai", "custom"] }
+        },
+        "authKinds": { "type": "array", "minItems": 1, "items": { "enum": ["api-key", "oauth-approved", "cloud-credential-chain", "local-none", "custom"] } },
+        "defaultEndpoints": {
+          "type": "object",
+          "description": "Generated endpoints are IMMUTABLE (R6-11). An EMPTY object is legal and meaningful: Azure/Bedrock/Vertex endpoints are region-, deployment- or project-templated and have no reviewable default. No userinfo, no query string.",
+          "additionalProperties": { "type": "string", "format": "uri", "pattern": "^https?://[^?#@]*$" }
+        },
+        "modelDiscovery": { "enum": ["none", "openai-models", "provider-native", "local"] },
+        "liveCatalogAuthority": { "enum": ["authoritative", "partial", "unknown"] },
+        "adapterId": { "type": "string", "minLength": 1 },
+        "family": { "type": "string", "minLength": 1 },
+        "upstream": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["project", "commit", "sourcePaths"],
+          "properties": {
+            "project": { "enum": ["OmniRoute", "winter"] },
+            "commit": { "type": "string" },
+            "sourcePaths": { "type": "array", "items": { "type": "string" } }
+          }
+        },
+        "risk": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["class", "reasons"],
+          "properties": { "class": { "enum": ["approved", "review-required", "blocked"] }, "reasons": { "type": "array", "items": { "type": "string" } } }
+        },
+        "scope": { "enum": ["llm", "stt", "tts", "embedding", "image", "video", "search"] }
+      }
+    },
+    "WinterModelDescriptor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "providerId", "upstreamId", "displayName", "aliases", "endpoints", "inputModalities", "outputModalities", "toolCalling", "nativeTools", "unsupportedParameters", "status"],
+      "properties": {
+        "key": { "type": "string", "minLength": 1, "description": "\"<providerId>/<upstreamId>\" (WS-13 §8.3). Split on the FIRST slash: an OpenRouter upstreamId is itself slash-bearing." },
+        "providerId": { "type": "string", "minLength": 1 },
+        "upstreamId": { "type": "string", "minLength": 1 },
+        "displayName": { "type": "string", "minLength": 1 },
+        "aliases": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "endpoints": { "type": "array", "minItems": 1, "items": { "enum": ["chat", "responses", "embeddings", "image", "audio", "video"] } },
+        "contextWindow": { "$ref": "#/$defs/evidenceNumber" },
+        "maxInputTokens": { "$ref": "#/$defs/evidenceNumber" },
+        "maxOutputTokens": { "$ref": "#/$defs/evidenceNumber" },
+        "inputModalities": { "$ref": "#/$defs/evidenceStringArray" },
+        "outputModalities": { "$ref": "#/$defs/evidenceStringArray" },
+        "toolCalling": { "$ref": "#/$defs/evidenceToolCalling" },
+        "nativeTools": { "$ref": "#/$defs/evidenceBoolean" },
+        "parallelTools": { "$ref": "#/$defs/evidenceBoolean" },
+        "structuredOutput": { "$ref": "#/$defs/evidenceBoolean" },
+        "promptCaching": { "$ref": "#/$defs/evidenceBoolean" },
+        "classifierEligible": { "$ref": "#/$defs/evidenceBoolean" },
+        "pricing": { "$ref": "#/$defs/evidencePricing" },
+        "reasoning": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["supported", "efforts", "continuation"],
+          "properties": {
+            "supported": { "$ref": "#/$defs/evidenceBoolean" },
+            "efforts": { "type": "array", "items": { "type": "string", "minLength": 1 }, "description": "May be EMPTY: a model whose reasoning is budget-controlled (Gemini) or uncontrollable (DeepSeek reasoner) has no named-effort vocabulary." },
+            "defaultEffort": { "type": "string", "minLength": 1 },
+            "continuation": { "enum": ["none", "plaintext", "opaque-provider-state", "server-response-handle"] },
+            "readableState": { "$ref": "#/$defs/evidenceReadableState" },
+            "summaryRequest": { "$ref": "#/$defs/evidenceSummaryRequest" },
+            "replayScope": { "$ref": "#/$defs/evidenceReplayScope" },
+            "continuationDomain": { "$ref": "#/$defs/evidenceStringArray" },
+            "completionEvent": { "$ref": "#/$defs/evidenceString" },
+            "toolLoopRequirement": { "$ref": "#/$defs/evidenceToolLoopRequirement" }
+          }
+        },
+        "unsupportedParameters": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "status": { "enum": ["candidate", "experimental", "supported", "deprecated", "blocked"] }
+      }
+    }
+  }
+}

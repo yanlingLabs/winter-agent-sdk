@@ -1,0 +1,31 @@
+NOTICE — third-party material in @yanlinglabs/winter-provider-catalog
+====================================================================
+
+NONE. As of this file's writing, this package contains NO third-party source code, and no file in
+it was copied from any upstream project.
+
+Why the file exists anyway
+--------------------------
+
+WS-13 §5 permits a narrow, deliberate exception: a *pure helper* may be copied from the OmniRoute
+provider corpus with clean per-file provenance. WS-13 §13's acceptance list then requires "notices
+cover copied files". This NOTICE is that register. It is empty on purpose, and an empty register is
+a stronger statement than a missing one: it says the exception has not been used, rather than
+leaving a reader to guess.
+
+If a future lane copies such a file, it appends an entry here naming the file, the upstream project,
+the exact commit, the upstream path, and the licence — and the copy is not merged without it.
+
+What IS derived from upstream, and how
+--------------------------------------
+
+Catalog DATA (provider ids, endpoint templates, protocol families, auth kinds, model rows) may be
+extracted from the pinned upstream tree into `generated/`. That is inert data, not code: nothing in
+this package or anywhere in Winter imports, evaluates, or executes an upstream module, and WS-13 §13
+states the rule directly — "no executable upstream URL builders", and "a catalog entry alone never
+causes code download or execution". Adapter behaviour is Winter-authored per protocol family
+(WS-13 §5), proven by the behavioural corpus.
+
+The committed catalog at the time of writing is a hand-authored SEED (`catalogVersion:
+"0.0.0-seed"`, an empty `upstream` pin) produced from Winter's own specifications. No upstream
+extraction has run.

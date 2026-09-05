@@ -9,6 +9,12 @@ export type { Options } from "./options.ts";
 // block-array sentinel + the four session defaults that are resolved runtime-side rather than baked
 // into the wire (see options.ts's own header for why they are constants and not wire values).
 export { SYSTEM_PROMPT_DYNAMIC_BOUNDARY, DEFAULT_CONTEXT_WINDOW_TOKENS, DEFAULT_COMPACTION_THRESHOLD, DEFAULT_PLANS_DIRECTORY, DEFAULT_OUTPUT_STYLE } from "./options.ts";
+// Phase 6 Task 2 (WS-13): the provider-layer option shapes + their two runtime-side defaults. Note
+// `CredentialRef` in particular — it is declared ONCE, here in the dependency-free sdk, and
+// re-exported by @yanlinglabs/winter-provider-runtime, so a lane importing it from either package
+// gets the identical type rather than two structurally-similar twins that can drift.
+export { DEFAULT_PROVIDER_STALL_TIMEOUT_MS, DEFAULT_KEYCHAIN_SERVICE } from "./options.ts";
+export type { ProviderSelection, ProviderConnectionConfig, CredentialRef, ThinkingConfig, EffortLevel, AutoClassifierConfig, AdvisorConfig } from "./protocol/config.ts";
 export type { SdkPluginConfig, SystemPromptOption, SystemPromptPreset, OutputFormat, JsonSchemaOutputFormat, SkillsOption, RewindFilesResult, RewindFilesRequest, InitPluginInfo } from "./protocol/config.ts";
 // Phase 4 Task 2 (WS-09 derived-shapes item (a)/(d)): the HOST-facing MCP config union + subagent
 // definition shape a program writing `Options.mcpServers`/`Options.agents` types against — see

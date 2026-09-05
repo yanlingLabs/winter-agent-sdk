@@ -400,4 +400,152 @@ export interface RuntimeConfig {
   trustedWorkspace?: boolean;
   plansDirectory?: string;
   outputStyle?: string;
+
+  // --- Phase 6 Task 2 (WS-13): the provider-layer options' wire mirrors ----------------------------
+  //
+  // Pure passthrough, same conditional-spread convention as every field above — query.ts never
+  // interprets these, it only serializes them; options.ts's own comment on each names the ruling and
+  // the real consumer. Every one is OPTIONAL and absent by default, so a session that configures
+  // none is byte-identical on the wire to every session before these fields existed.
+  //
+  // `model` ABOVE deliberately stays the pinned bare string and `system/init.model` keeps reporting
+  // WHAT THE CALLER PASSED (R6-9: the goldens byte-compare init). The RESOLVED identity rides the
+  // Winter-only `winter_provider` init extension instead — T10's field, not one of these.
+  provider?: ProviderSelection;
+  fallbackModel?: string;
+  thinking?: ThinkingConfig;
+  effort?: EffortLevel;
+  /**
+   * @deprecated Use `thinking` instead.
+   *
+   * CONSUMER AND RULE, named because this field is inert until something applies it and a mapping
+   * with no owner is how a deprecated option quietly keeps its old semantics.
+   *
+   * OWNER: `packages/runtime/src/provider/selection.ts` (T3), at the point where a session's
+   * effective `ThinkingConfig` is resolved and handed to an adapter — NOT the adapter itself, so
+   * every family sees one already-resolved shape rather than each re-deriving it.
+   *
+   * RULE (R6-E, from the pinned deprecation text at `sdk.d.ts:1750-1757`):
+   *   1. `thinking`, when present, WINS outright — the pin states that precedence twice (`1732`,
+   *      `8215`) — and `maxThinkingTokens` is then ignored entirely, not merged.
+   *   2. Otherwise `0` maps to `{ type: "disabled" }`.
+   *   3. Otherwise ANY other value maps to `{ type: "adaptive" }` — deliberately NOT
+   *      `{ type: "enabled", budgetTokens: N }`. This is the trap the pin calls out: on a modern
+   *      model the field is reinterpreted as on/off, so forwarding `maxThinkingTokens: 8000` as a
+   *      budget of 8000 would be a different request from the one the pinned runtime makes.
+   *   4. An adapter MAY re-resolve `enabled` to `adaptive` for a model whose evidence says
+   *      adaptive-only (capture (F) observed exactly that), recorded in the descriptor's `reasoning`
+   *      evidence — that is a per-model adapter rule, downstream of this mapping.
+   */
+  maxThinkingTokens?: number;
+  includePartialMessages?: boolean;
+  maxBudgetUsd?: number;
+  providerStallTimeoutMs?: number;
+  keychainService?: string;
+  autoClassifier?: AutoClassifierConfig;
+  advisor?: AdvisorConfig;
+}
+
+// --- Phase 6 Task 2 (WS-13 §4/§6, rulings R6-9/R6-10/R6-11/R6-E/R6-H): the provider-layer types ---
+//
+// These live HERE, not in provider-runtime, for one structural reason: `Options` needs them, the sdk
+// package is dependency-free and fence-resident (Node-portable, no Bun), and provider-runtime is
+// Bun-only. A type declared in provider-runtime could never reach `Options` without dragging the
+// fence open. provider-runtime's own `types.ts` RE-EXPORTS `CredentialRef` from here, so there is
+// exactly one declaration and a lane importing it from either package gets the identical type.
+//
+// Every shape below is wire-safe JSON: RuntimeConfig mirrors each field verbatim and query.ts
+// serializes it with the same conditional-spread convention as every option above.
+
+/**
+ * The pinned effort vocabulary, `sdk.d.ts:586` (derived-shapes-p6.md item (c)).
+ *
+ * **No numeric member, deliberately (R6-E).** The numeric form exists in the pin on exactly one
+ * surface — `AgentDefinition.effort` (`sdk.d.ts:87`), a per-subagent field — and `Options.effort`
+ * (`1749`) is the bare union. Widening this to `| number` would be an Options-parity divergence.
+ * provider-runtime's `TurnRequest.effort` DOES keep `number`, because a child carrying a numeric
+ * effort reaches an adapter through that seam; the adapter maps it to the nearest verified tier of
+ * the model's own `reasoning.efforts` (the pin states no unit or mapping — a documented absence,
+ * OQ-P6-2 — so this is gap-filling, not divergence).
+ */
+export type EffortLevel = "low" | "medium" | "high" | "xhigh" | "max";
+
+/**
+ * `sdk.d.ts:8216` — three arms, exactly these spellings (derived-shapes-p6.md item (c)).
+ *
+ * Two declaration facts the option's own JSDoc contradicts, resolved in the declaration's favour:
+ * `budgetTokens` is OPTIONAL on the `enabled` arm (`8230`), and `display` exists on `adaptive` and
+ * `enabled` but NOT on `disabled`. The clearing form (`display: null`) exists only on the imperative
+ * surfaces (`setMaxThinkingTokens`), never in `ThinkingConfig` — so it is absent here too.
+ */
+export type ThinkingConfig =
+  | { type: "adaptive"; display?: "summarized" | "omitted" }
+  | { type: "enabled"; budgetTokens?: number; display?: "summarized" | "omitted" }
+  | { type: "disabled" };
+
+/**
+ * R6-10: an OPAQUE reference to credential material, never the material itself. Descriptors and
+ * config alike carry references; the store resolves one at the last responsible moment.
+ *
+ * - `keychain` — one record per provider/account, `account = "<providerId>:<accountId>"`, service
+ *   from `Options.keychainService ?? "com.winter.core"`. Retires Norma's single fixed secret name.
+ * - `env` — a host NAMES the variable explicitly. Ambient keys are NEVER scanned implicitly: an
+ *   `ANTHROPIC_API_KEY` sitting in the environment does not become a credential by existing.
+ * - `file` — a shared-credentials file, a GCP service-account JSON, or a raw single-value file.
+ * - `inline` — a host responsibility: never persisted by the SDK, redacted in every frame and log.
+ * - `aws-default-chain` — env + shared-credentials file only this phase (R6-16: no IMDS/STS).
+ * - `none` — a local endpoint that needs no credential. NOT "unauthenticated by accident".
+ */
+export type CredentialRef =
+  | { kind: "keychain"; account: string; service?: string }
+  | { kind: "env"; name: string }
+  | { kind: "file"; path: string; format: "aws-shared-credentials" | "gcp-service-account-json" | "raw"; profile?: string }
+  | { kind: "inline"; value: string }
+  | { kind: "aws-default-chain" }
+  | { kind: "none" };
+
+/**
+ * Non-secret connection metadata (WS-13 §6: "the selected account/region/project/deployment is
+ * recorded as non-secret connection metadata — never forced through one bearer-token abstraction").
+ *
+ * The wire twin of provider-runtime's `ConnectionProfile`, minus its `providerId` (which is
+ * `ProviderSelection.providerId` here). `baseUrl` is a USER endpoint and goes through the endpoint
+ * policy — generated descriptor endpoints are immutable and never come from this shape (R6-11).
+ */
+export interface ProviderConnectionConfig {
+  baseUrl?: string;
+  headers?: Record<string, string>;
+  region?: string;
+  project?: string;
+  location?: string;
+  deployment?: string;
+  apiVersion?: string;
+  local?: boolean;
+}
+
+/**
+ * R6-9: which provider a bare model id resolves against, plus how to reach and authenticate it.
+ *
+ * `allowUnlisted` sits HERE rather than on `ConnectionProfile` (whose shape T2's brief pins
+ * verbatim): it is a selection-policy bit, not connection metadata. R6-F admits it only for a
+ * local/gateway provider whose `liveCatalogAuthority` is not `authoritative`; anywhere else the
+ * registry ignores it and an unlisted id is still a typed `unknown-model` refusal, because WS-13
+ * §8.3's model-id validation is the whole point of the catalog.
+ */
+export interface ProviderSelection {
+  providerId: string;
+  authRef?: CredentialRef;
+  connection?: ProviderConnectionConfig;
+  allowUnlisted?: boolean;
+}
+
+/** R6-14: the classifier's own route — resolved through the SAME selection path as the session model. */
+export interface AutoClassifierConfig {
+  model: string;
+  authRef?: CredentialRef;
+}
+
+/** The advisor/reviewer backend's own model selection (P2 carry, wired in T10). Same selection path. */
+export interface AdvisorConfig {
+  model: string;
 }

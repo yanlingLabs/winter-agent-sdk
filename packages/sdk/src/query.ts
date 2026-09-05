@@ -469,6 +469,21 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
     ...(options.trustedWorkspace !== undefined ? { trustedWorkspace: options.trustedWorkspace } : {}),
     ...(options.plansDirectory !== undefined ? { plansDirectory: options.plansDirectory } : {}),
     ...(options.outputStyle !== undefined ? { outputStyle: options.outputStyle } : {}),
+    // Phase 6 Task 2 (WS-13): same pure-passthrough convention as every field above. These spreads
+    // are what give RuntimeConfig's provider fields a PRODUCER at all -- a wire mirror nothing sets
+    // is this repo's own recorded "orphaned carry" defect shape (see options.ts's own comments on
+    // `permissionPromptToolName`/`additionalDirectories` for the two prior instances).
+    ...(options.provider !== undefined ? { provider: options.provider } : {}),
+    ...(options.fallbackModel !== undefined ? { fallbackModel: options.fallbackModel } : {}),
+    ...(options.thinking !== undefined ? { thinking: options.thinking } : {}),
+    ...(options.effort !== undefined ? { effort: options.effort } : {}),
+    ...(options.maxThinkingTokens !== undefined ? { maxThinkingTokens: options.maxThinkingTokens } : {}),
+    ...(options.includePartialMessages !== undefined ? { includePartialMessages: options.includePartialMessages } : {}),
+    ...(options.maxBudgetUsd !== undefined ? { maxBudgetUsd: options.maxBudgetUsd } : {}),
+    ...(options.providerStallTimeoutMs !== undefined ? { providerStallTimeoutMs: options.providerStallTimeoutMs } : {}),
+    ...(options.keychainService !== undefined ? { keychainService: options.keychainService } : {}),
+    ...(options.autoClassifier !== undefined ? { autoClassifier: options.autoClassifier } : {}),
+    ...(options.advisor !== undefined ? { advisor: options.advisor } : {}),
   };
 
   // A custom spawnClaudeCodeProcess hook owns process creation entirely (containers, VMs, remote
