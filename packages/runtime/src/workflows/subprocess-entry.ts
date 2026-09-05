@@ -24,8 +24,38 @@
 // the untrusted one.
 import { runWorkflowScript, type AgentBridgeResult, type WorkflowResolveResult } from "./script-api.ts";
 import { encodeNdjson, splitNdjson, type BridgeRequest, type BridgeResponse, type WorkerInit, type WorkflowRef } from "./bridge.ts";
-import { WORKFLOW_WORKER_ARGV_FLAG, WORKFLOW_WORKER_BRIDGE_FLAG } from "./sandbox.ts";
 import type { AgentOpts } from "./types.ts";
+
+// --- The argv contract ---------------------------------------------------------------------------
+//
+// BOTH FLAGS LIVE HERE, in the worker-entry module, because they ARE this entry's argv contract and
+// because `main.ts` -- which today declares the first of them -- CANNOT BE IMPORTED. It has no
+// `import.meta.main` guard: importing it runs the worker dispatch and then
+// `parseConfigFromArgv(process.argv)`, which throws and `process.exit`s the importing process. Any
+// spawner or test that reached for the constant by import would kill itself.
+//
+// TODO(T3 fix round): main.ts is expected to IMPORT `WORKFLOW_WORKER_ARGV_FLAG` from this module
+// rather than declare its own. Until that lands, the value below is the same literal main.ts
+// declares (`git show ff2561e:packages/runtime/src/main.ts`), and worker.test.ts pins the two
+// together by reading main.ts's SOURCE -- the literal-parity technique this codebase already uses
+// for its hand-mirrored constants (P5-D gate 4). The parity test tolerates BOTH shapes, so it stays
+// green across that fix instead of turning red the moment the duplicate declaration goes away.
+
+/** The argv marker that selects the worker role. */
+export const WORKFLOW_WORKER_ARGV_FLAG = "__workflow-worker";
+
+/**
+ * The DISCRIMINATOR. `__workflow-worker` alone means "the worker role was selected"; this flag means
+ * "and a real parent is on the other end of stdio, driving the NDJSON bridge."
+ *
+ * The split exists because R5-15's contract test (frozen) invokes `workflowWorkerMain` with
+ * `["winter", "__workflow-worker", "--run-id", "wf_1"]` and requires the not-implemented exit code
+ * back PROMPTLY. A worker that treated the role flag alone as "start reading init from stdin" would
+ * block that test forever on a stream nothing will ever write to. It also keeps `verify:workflow`'s
+ * RED/GREEN meaningful: a bare role invocation answers 78 in every build, while a bridged one
+ * answers 78 only while the body is a stub.
+ */
+export const WORKFLOW_WORKER_BRIDGE_FLAG = "--bridge";
 
 /**
  * Returned when the worker role was selected but no parent is driving it (no

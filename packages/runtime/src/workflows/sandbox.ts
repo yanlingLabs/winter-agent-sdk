@@ -18,26 +18,12 @@
 import { fileURLToPath } from "node:url";
 import { buildWorkflowWorkerSeatbeltProfile } from "../sandbox/profile.ts";
 import { isSandboxAvailable } from "../sandbox/spawn.ts";
+// The argv contract lives with the ENTRY that reads it (subprocess-entry.ts), never in main.ts --
+// see that module's own header for why main.ts cannot be imported at all. Re-exported here so a
+// spawner needs one import, not two.
+import { WORKFLOW_WORKER_ARGV_FLAG, WORKFLOW_WORKER_BRIDGE_FLAG } from "./subprocess-entry.ts";
 
-// R5-12 / R5-15: `main.ts` declares this same literal and is FROZEN -- and, more to the point, it is
-// UNIMPORTABLE from library code: it has no `import.meta.main` guard, so importing it runs the worker
-// dispatch and then `parseConfigFromArgv(process.argv)`, which throws and exits the host process.
-// Re-declared here and pinned by a SOURCE-TEXT parity test against main.ts (worker.test.ts), the
-// technique this codebase already uses for its other hand-mirrored constants.
-export const WORKFLOW_WORKER_ARGV_FLAG = "__workflow-worker";
-
-/**
- * The DISCRIMINATOR. `__workflow-worker` alone means "the worker role was selected"; this flag means
- * "and a real parent is on the other end of stdio, driving the NDJSON bridge."
- *
- * The split exists because R5-15's contract test (frozen) invokes `workflowWorkerMain` with
- * `["winter", "__workflow-worker", "--run-id", "wf_1"]` and requires the not-implemented exit code
- * back PROMPTLY. A worker that treated the role flag alone as "start reading init from stdin" would
- * block that test forever on a stream nothing will ever write to. It also keeps `verify:workflow`'s
- * RED/GREEN meaningful: a bare role invocation answers 78 in every build, while a bridged one
- * answers 78 only while the body is a stub.
- */
-export const WORKFLOW_WORKER_BRIDGE_FLAG = "--bridge";
+export { WORKFLOW_WORKER_ARGV_FLAG, WORKFLOW_WORKER_BRIDGE_FLAG };
 
 const SANDBOX_EXEC_PATH = "/usr/bin/sandbox-exec";
 

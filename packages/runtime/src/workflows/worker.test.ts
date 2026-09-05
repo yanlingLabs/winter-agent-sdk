@@ -112,13 +112,21 @@ describe("workflowWorkerMain -- argv discipline (R5-15)", () => {
 
 describe("the argv flag constant -- source parity with main.ts (R5-12: main.ts is frozen AND unimportable)", () => {
   // main.ts has NO `import.meta.main` guard: importing it EXECUTES the worker dispatch and then
-  // `parseConfigFromArgv(process.argv)`, which throws and exits the test process. So the flag is
-  // re-declared here and pinned by reading main.ts's SOURCE -- the same literal-parity technique
-  // this codebase already uses for its other hand-mirrored constants (P5-D gate 4).
-  test("`WORKFLOW_WORKER_ARGV_FLAG` matches the literal main.ts declares", () => {
+  // `parseConfigFromArgv(process.argv)`, which throws and exits the test process -- so nothing here
+  // may import it, and the flag is pinned by reading its SOURCE instead (the P5-D gate-4 technique).
+  //
+  // TOLERATES BOTH SHAPES ON PURPOSE. Today main.ts DECLARES the literal; the T3 fix round moves the
+  // declaration into subprocess-entry.ts and leaves main.ts IMPORTING it. A test that only accepted
+  // the first shape would turn red on a fix that makes the drift structurally impossible -- exactly
+  // backwards. Either way this asserts the same thing: main.ts and this module cannot disagree.
+  test("`WORKFLOW_WORKER_ARGV_FLAG` matches main.ts -- whether main.ts declares the literal or imports it", () => {
     const source = readFileSync(fileURLToPath(new URL("../main.ts", import.meta.url)), "utf8");
-    const match = /export const WORKFLOW_WORKER_ARGV_FLAG = "([^"]+)"/.exec(source);
-    expect(match?.[1]).toBe(WORKFLOW_WORKER_ARGV_FLAG);
+    const declared = /export const WORKFLOW_WORKER_ARGV_FLAG = "([^"]+)"/.exec(source);
+    if (declared !== null) {
+      expect(declared[1]).toBe(WORKFLOW_WORKER_ARGV_FLAG);
+      return;
+    }
+    expect(source).toMatch(/import\s*\{[^}]*WORKFLOW_WORKER_ARGV_FLAG[^}]*\}\s*from\s*"\.\/workflows\/subprocess-entry\.ts"/);
   });
 
   test("main.ts dispatches on `process.argv.includes(...)` -- so any argv POSITION reaches the worker", () => {
