@@ -163,12 +163,51 @@ function endpointFromRegistry(registry: ProviderRegistry, origin: MessageOrigin)
   };
 }
 
-/** Drops a domain id whose own evidence is not certified. An id derived with no `continuationDomain` evidence at all is the model's own key -- a single-member self-domain, which claims nothing about sharing and is kept. */
+/**
+ * Applies the certification rule to a derived domain id -- as TWO SEPARATE QUESTIONS, because they
+ * are two different claims and only one of them needs certifying.
+ *
+ *   SELF-REPLAY  ("this model accepts its own state")  -- never needs certification. A model
+ *                replaying what it just produced is not an interoperability claim at all, so no
+ *                amount of weak evidence can make it wrong.
+ *   PAIR-SHARING ("these models accept each other's state") -- always needs it. That is the claim
+ *                §8.4 calls certified, and the one a guess must never buy.
+ *
+ * ROUND 2's CRITICAL WAS THE COST OF CONFLATING THEM. The round-1 gate kept the key-derived id only
+ * when a row carried NO domain evidence -- and every `opaque-provider-state` row in the shipped
+ * catalog carries a single-member list naming ITSELF at `confidence: "unknown"`, so the carve-out
+ * never fired on a real row. Five of the six reasoning models in the product lost same-model native
+ * replay, while `classifySwitch(X, X)` went on reporting `lossless-native` with zero warnings: a
+ * lossless claim standing beside real loss, on every leg, with no switch involved. Testing the
+ * MEMBER LIST rather than the derived id is what separates the two claims -- see the `[a, b]` case
+ * below for why id equality is not good enough.
+ */
 function certifiedDomain(domain: string | undefined, descriptor: WinterModelDescriptor | undefined): string | undefined {
   if (domain === undefined) return undefined;
   const evidence = descriptor?.reasoning?.continuationDomain;
+  // No evidence at all: the registry fell back to the model's own key. A self identity, certified by
+  // construction.
   if (evidence === undefined) return domain;
-  return CERTIFIED_DOMAIN_CONFIDENCES.has(evidence.confidence) ? domain : undefined;
+  // A certified claim rides as-is, however many members it names.
+  if (CERTIFIED_DOMAIN_CONFIDENCES.has(evidence.confidence)) return domain;
+
+  // Uncertified. A list naming exactly this model and nothing else is a SELF claim wearing an
+  // evidence wrapper -- it asserts no sharing, so there is nothing to certify and the id stands.
+  //
+  // THE TEST IS THE LIST, NOT `domain === descriptor.key`, and the difference is a real hole: the
+  // registry derives the id as the alphabetically first member, so an uncertified `openai/o-a` whose
+  // list is `["openai/o-a", "openai/o-b"]` ALSO derives `"openai/o-a"` -- equal to its own key. Under
+  // an id-equality test it would survive and then pair with a CERTIFIED `openai/o-b` that derives the
+  // same id, and the guess would have bought exactly the shared domain this gate exists to refuse.
+  const key = descriptor?.key;
+  if (key !== undefined && evidence.value.length === 1 && evidence.value[0] === key) return key;
+
+  // An uncertified MULTI-member list is a sharing claim with no evidence behind it: refused, so the
+  // state is stripped and the switch warns. Self-replay for such a row is collateral (the bridge
+  // computes the TARGET's id from the ungated registry, so the two sides disagree) -- no row in the
+  // shipped catalog has this shape, and the honest fix is upstream: evidence that names more than one
+  // model should be `declared` at least, since somebody had to decide the models belong together.
+  return undefined;
 }
 
 /** The registry-free fallback: everything the stamp itself carries, and `readableState: "none"` because absence of evidence is not evidence of a summary. */

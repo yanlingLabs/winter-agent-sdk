@@ -160,6 +160,19 @@ describe("the remaining §8.4 triggers", () => {
     expect(verdict.lossClass).toBe("lossless-native");
   });
 
+  test("ROUND 2: a policy block does not warn when the target REPLAYS the source's own state -- nothing had to be forwarded", () => {
+    // Same model on both sides, with a summary that policy forbids forwarding: the summary was never
+    // going to be forwarded, because the real state replays. An over-warn on a no-op.
+    expect(classifySwitch(OPENAI, OPENAI, { policyBlocksForwarding: true, summaryAvailable: true }).warnings).toEqual([]);
+    expect(classifySwitch(DEEPSEEK, DEEPSEEK, { policyBlocksForwarding: true, exposedComplete: true }).warnings).toEqual([]);
+    // Two different models sharing a certified domain: same reasoning, same silence.
+    const a = endpoint({ providerId: "openai", modelKey: "openai/o-a", continuationDomain: "shared-v1" });
+    const b = endpoint({ providerId: "openai", modelKey: "openai/o-b", continuationDomain: "shared-v1" });
+    expect(classifySwitch(a, b, { policyBlocksForwarding: true, summaryAvailable: true }).warnings).toEqual([]);
+    // ... but across a real boundary it still fires.
+    expect(classifySwitch(CLAUDE, OPENAI, { policyBlocksForwarding: true, summaryAvailable: true }).warnings.some((w) => w.includes("policy forbids forwarding"))).toBe(true);
+  });
+
   test("an exposed source with an INCOMPLETE trace warns even though its readable state would suppress it", () => {
     const verdict = classifySwitch(DEEPSEEK, OPENAI, { exposedComplete: false });
     expect(verdict.lossClass).toBe("warned-lossy");

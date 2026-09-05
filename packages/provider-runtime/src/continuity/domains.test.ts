@@ -124,17 +124,72 @@ describe("I2: only CERTIFIED evidence buys a shared domain", () => {
     expect(sameDomain(facts, facts)).toBe(true);
   });
 
-  test("DISCLOSED RESIDUAL: the gate is source-side only, so a weakly-evidenced model loses its OWN replay", () => {
-    // The bridge computes `target.continuationDomain` from the ungated registry, so for a row with
-    // uncertified SHARING evidence the source (gated, no id) and the target (ungated, the shared id)
-    // disagree even when they are the same model -- and the renderer strips that model's own native
-    // state. The direction is safe (more stripping, never less) and the warning is correct via the
-    // same-profile rule, but continuity degrades. Pinned here so the behaviour is visible rather than
-    // surprising; the fix belongs upstream (Lane X: never emit domain evidence below `declared`;
-    // T10: apply the same gate when computing the target's id).
-    const resolveFacts = world("inferred");
-    const source = resolveFacts({ providerId: "openai", modelKey: "openai/o-a", family: "openai" });
-    const ungatedTarget = { continuationDomain: "openai/o-a" };
+  test("ROUND 2 REGRESSION: the catalog's REAL shape -- a single-member self list at `unknown` -- keeps its self id", () => {
+    // THE SHAPE EVERY HAND-BUILT FIXTURE MISSED. Every `opaque-provider-state` row in the shipped
+    // catalog looks like this, and the round-1 gate dropped the id for all of them: same-model native
+    // replay died for five of the six reasoning models in the product while `classifySwitch(X, X)`
+    // still reported `lossless-native`. A list naming only this model asserts no sharing, so there is
+    // nothing for certification to be about.
+    const catalog = fixtureCatalog(
+      [fixtureProvider({ id: "openai" })],
+      [fixtureModel({ key: "openai/o-solo", providerId: "openai", reasoning: fixtureReasoning({ readableState: "summary", domain: ["openai/o-solo"], confidence: "unknown" }) })],
+    );
+    const registry = createRegistry(catalog);
+    registry.register(scriptedAdapter({ id: "openai-adapter" }));
+    const facts = createEndpointResolver(registry)({ providerId: "openai", modelKey: "openai/o-solo", family: "openai" });
+    expect(facts.continuationDomain).toBe("openai/o-solo");
+    expect(sameDomain(facts, facts)).toBe(true);
+    // ... and the id the BRIDGE would put on the target agrees with it, which is what makes the
+    // replay actually happen rather than merely look right on one side.
+    const resolved = registry.resolve({ model: "openai/o-solo" });
+    expect(resolved instanceof Error).toBe(false);
+    const bridgeTargetDomain = (resolved as { continuationDomain?: string }).continuationDomain;
+    expect(bridgeTargetDomain).toBeDefined();
+    expect(sameDomain(facts, { continuationDomain: bridgeTargetDomain! })).toBe(true);
+  });
+
+  test("ROUND 2: an uncertified MULTI-member list is refused, and cannot pair with a certified twin that derives the same id", () => {
+    // Why the test is the LIST and not `domain === descriptor.key`: the registry derives the
+    // alphabetically first member, so uncertified `o-a` with `["o-a","o-b"]` also derives `"o-a"` --
+    // equal to its own key. An id-equality carve-out would let it survive and then match a CERTIFIED
+    // `o-b` deriving the same id, buying exactly the shared domain the gate refuses.
+    const shared = ["openai/o-a", "openai/o-b"];
+    const catalog = fixtureCatalog(
+      [fixtureProvider({ id: "openai" })],
+      [
+        fixtureModel({ key: "openai/o-a", providerId: "openai", reasoning: fixtureReasoning({ readableState: "summary", domain: shared, confidence: "unknown" }) }),
+        fixtureModel({ key: "openai/o-b", providerId: "openai", reasoning: fixtureReasoning({ readableState: "summary", domain: shared, confidence: "verified" }) }),
+      ],
+    );
+    const registry = createRegistry(catalog);
+    registry.register(scriptedAdapter({ id: "openai-adapter" }));
+    const resolveFacts = createEndpointResolver(registry);
+    const weak = resolveFacts({ providerId: "openai", modelKey: "openai/o-a", family: "openai" });
+    const certified = resolveFacts({ providerId: "openai", modelKey: "openai/o-b", family: "openai" });
+    expect(weak.continuationDomain).toBeUndefined();
+    expect(certified.continuationDomain).toBe("openai/o-a");
+    expect(sameDomain(weak, certified)).toBe(false);
+  });
+
+  test("DISCLOSED RESIDUAL: an uncertified MULTI-member row also loses its own replay, and the classifier stays honest about it", () => {
+    // The collateral of refusing that sharing claim: the bridge computes the TARGET's id from the
+    // ungated registry, so the two sides of the SAME model disagree and the renderer strips. No row
+    // in the shipped catalog has this shape (they are all single-member self lists, covered above).
+    //
+    // What matters is that nothing CLAIMS otherwise: the same-profile rule reports `lossless-native`
+    // for a model switching to itself, and that claim is only true because the strip does not happen
+    // for any real row -- which is exactly what real-catalog.test.ts proves, row by row. The honest
+    // fix is upstream: evidence naming more than one model should be `declared` at least.
+    const shared = ["openai/o-a", "openai/o-b"];
+    const catalog = fixtureCatalog(
+      [fixtureProvider({ id: "openai" })],
+      [fixtureModel({ key: "openai/o-a", providerId: "openai", reasoning: fixtureReasoning({ readableState: "summary", domain: shared, confidence: "inferred" }) })],
+    );
+    const registry = createRegistry(catalog);
+    registry.register(scriptedAdapter({ id: "openai-adapter" }));
+    const source = createEndpointResolver(registry)({ providerId: "openai", modelKey: "openai/o-a", family: "openai" });
+    const ungatedTarget = { continuationDomain: "openai/o-a" }; // what the bridge builds
+    expect(source.continuationDomain).toBeUndefined();
     expect(sameDomain(source, ungatedTarget)).toBe(false);
   });
 });

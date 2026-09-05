@@ -111,7 +111,12 @@ export function classifySwitch(from: ContinuityEndpoint, to: ContinuityEndpoint,
   // user who is told only the first will not understand why the summary they can see in the UI did not
   // cross either. The condition is "there was material that would otherwise have crossed" -- warning
   // about a block on nothing would be noise.
-  if (facts.policyBlocksForwarding === true && (facts.summaryAvailable === true || from.readableState === "full-exposed")) {
+  // GATED ON `!nativeCarries`, like trigger 6 (review round 2). When the target replays the source's
+  // own state -- most obviously when it IS the source -- nothing had to be forwarded as text, so a
+  // policy that forbids forwarding blocked nothing. Warning there is an over-warn on a fact a caller
+  // should not have set on a no-op, and every unnecessary warning spends the credibility the
+  // necessary ones need.
+  if (!nativeCarries && facts.policyBlocksForwarding === true && (facts.summaryAvailable === true || from.readableState === "full-exposed")) {
     warnings.push(
       `${identify(from)}'s readable reasoning exists for this turn, but policy forbids forwarding it to ${identify(to)}. Winter carries over ${joinList(portable)}.`,
     );
