@@ -76,14 +76,46 @@ function policyRefusal(reason: string): ProviderRequestError {
   return new ProviderRequestError({ code: "capability", message: reason, retryable: false });
 }
 
-/** Wraps a body so the cap is enforced as bytes are consumed, whatever the headers claimed. */
-function capBody(body: ReadableStream<Uint8Array>, maxBodyBytes: number): ReadableStream<Uint8Array> {
+/**
+ * Wraps a body so the cap is enforced as bytes are consumed, whatever the headers claimed, and so
+ * the caller's abort keeps reaching the stream AFTER headers have arrived.
+ *
+ * The header deadline is cleared once headers land (a generation legitimately runs far longer than
+ * any connect budget), and the caller's abort listener went with it — which left a caller that
+ * simply does `await res.text()` with no way to cancel at all. The listener is re-attached here for
+ * the body's lifetime instead, so `interrupt` reaches a streaming read and a buffering one alike.
+ */
+function capBody(body: ReadableStream<Uint8Array>, maxBodyBytes: number, signal: AbortSignal | undefined): ReadableStream<Uint8Array> {
   const reader = body.getReader();
   let seen = 0;
+  let onAbort: (() => void) | undefined;
+  const detach = (): void => {
+    if (signal !== undefined && onAbort !== undefined) signal.removeEventListener("abort", onAbort);
+    onAbort = undefined;
+  };
   return new ReadableStream<Uint8Array>({
+    start(controller) {
+      if (signal === undefined) return;
+      const abortError = (): Error => {
+        const err = new Error("provider response body aborted by the caller");
+        err.name = "AbortError";
+        return err;
+      };
+      if (signal.aborted) {
+        void reader.cancel().catch(() => {});
+        controller.error(abortError());
+        return;
+      }
+      onAbort = () => {
+        void reader.cancel().catch(() => {});
+        controller.error(abortError());
+      };
+      signal.addEventListener("abort", onAbort, { once: true });
+    },
     async pull(controller) {
       const { done, value } = await reader.read();
       if (done) {
+        detach();
         controller.close();
         return;
       }
@@ -92,6 +124,7 @@ function capBody(body: ReadableStream<Uint8Array>, maxBodyBytes: number): Readab
         // Cancel the source before erroring: leaving an oversized response draining in the
         // background is how a "limit" turns into a limit on what the caller SEES rather than on
         // what the process actually pulls down.
+        detach();
         void reader.cancel().catch(() => {});
         controller.error(new ProviderBodyLimitError(maxBodyBytes));
         return;
@@ -99,6 +132,7 @@ function capBody(body: ReadableStream<Uint8Array>, maxBodyBytes: number): Readab
       controller.enqueue(value);
     },
     cancel(reason) {
+      detach();
       void reader.cancel(reason).catch(() => {});
     },
   });
@@ -113,7 +147,9 @@ function transportError(err: unknown, callerAborted: boolean, timedOut: boolean,
 
 export async function boundedFetch(url: string, init: BoundedFetchInit): Promise<Response> {
   const maxRedirects = init.maxRedirects ?? DEFAULT_MAX_REDIRECTS;
-  const { timeoutMs, maxBodyBytes, policy, signal, maxRedirects: _ignored, ...requestInit } = init;
+  // `body` and `method` are pulled OUT of the spread: a redirect can change either, and spreading
+  // `requestInit` verbatim across a hop would silently re-add the original of each.
+  const { timeoutMs, maxBodyBytes, policy, signal, maxRedirects: _ignored, body: initialBody, method: initialMethod, ...requestInit } = init;
 
   // The FIRST url must be ON the policy's own origin, and that is stricter than the redirect rule on
   // purpose. An adapter builds its request URL from the connection profile the policy was built
@@ -128,6 +164,8 @@ export async function boundedFetch(url: string, init: BoundedFetchInit): Promise
 
   let currentUrl = url;
   let headers = new Headers(requestInit.headers ?? {});
+  let method = initialMethod ?? "GET";
+  let body: BodyInit | null | undefined = initialBody;
 
   for (let hop = 0; ; hop++) {
     const controller = new AbortController();
@@ -146,7 +184,9 @@ export async function boundedFetch(url: string, init: BoundedFetchInit): Promise
 
     let response: Response;
     try {
-      response = await fetch(currentUrl, { ...requestInit, headers, redirect: "manual", signal: controller.signal });
+      // `body` is spread CONDITIONALLY: exactOptionalPropertyTypes forbids an explicit `undefined`,
+      // and a GET carrying `body: undefined` is rejected by the platform anyway.
+      response = await fetch(currentUrl, { ...requestInit, method, ...(body !== undefined && body !== null ? { body } : {}), headers, redirect: "manual", signal: controller.signal });
     } catch (err) {
       throw transportError(err, callerAborted, timedOut, timeoutMs);
     } finally {
@@ -159,7 +199,7 @@ export async function boundedFetch(url: string, init: BoundedFetchInit): Promise
     const location = response.status >= 300 && response.status < 400 ? response.headers.get("location") : null;
     if (location === null) {
       if (response.body === null) return response;
-      return new Response(capBody(response.body, maxBodyBytes), {
+      return new Response(capBody(response.body, maxBodyBytes, signal), {
         status: response.status,
         statusText: response.statusText,
         headers: response.headers,
@@ -195,12 +235,29 @@ export async function boundedFetch(url: string, init: BoundedFetchInit): Promise
       // Nor is there a legitimate case to preserve: no provider in the cohort answers a turn request
       // with a cross-origin redirect. A GET (discovery, a token endpoint) still follows, with its
       // credentials stripped.
-      if (requestInit.body !== undefined && requestInit.body !== null) {
+      if (body !== undefined && body !== null) {
         throw policyRefusal(
           `provider redirected a request WITH A BODY from ${policy.origin} to ${verdict.origin}; refusing to re-send the request payload (which may carry conversation content and opaque provider state) to another origin`,
         );
       }
       headers = stripCredentialHeaders(headers);
+    }
+
+    if (response.status === 303) {
+      // 303 means "go GET this other thing" — the classic POST-then-redirect-to-a-result shape.
+      // Replaying the original method and body would re-submit the request against a URL that
+      // explicitly asked for a GET, which for a turn request means submitting it twice.
+      method = "GET";
+      body = undefined;
+      // A body-shaped header on a request that no longer has one is a lie the server may act on.
+      headers.delete("content-type");
+      headers.delete("content-length");
+    } else if (body !== undefined && body !== null && typeof body === "object" && "getReader" in (body as object)) {
+      // 307/308 (and a 301/302 kept as-is) must replay the body verbatim — and a ReadableStream body
+      // is already partly consumed by the first attempt, so "replaying" it would send a truncated
+      // request or none at all. Refused with a typed error rather than silently mangled; an adapter
+      // that needs redirect-following must buffer its body.
+      throw policyRefusal(`provider redirected a request whose body is a stream, which cannot be replayed — buffer the body or point the connection at the final URL`);
     }
     currentUrl = target;
   }

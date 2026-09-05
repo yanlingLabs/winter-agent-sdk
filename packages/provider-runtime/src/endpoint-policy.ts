@@ -95,17 +95,21 @@ function stripBrackets(hostname: string): string {
 /**
  * Classifies a URL's host WITHOUT resolving anything.
  *
- * Three outcomes: a literal address gets its real class; `localhost` (and its `.localhost` subdomain
- * form) is loopback by RFC 6761, which is the one name whose meaning is reserved rather than
- * resolved; every other name is `undefined` — unknown, and therefore never local.
+ * Three outcomes: a literal address gets its real class; the LITERAL `localhost` is loopback by
+ * RFC 6761, the one name whose meaning is reserved rather than resolved; every other name is
+ * `undefined` — unknown, and therefore never local.
+ *
+ * `*.localhost` was previously treated as loopback too, and that was wrong for this function's
+ * purpose. RFC 6761 asks resolvers to map the subdomain form to loopback, but this module resolves
+ * NOTHING by design (see the file header) — so treating `evil.localhost` as loopback is a claim
+ * about what some resolver will do, on a name a public DNS zone can perfectly well answer for. That
+ * is precisely the resolve-then-trust shape the synchronous contract exists to avoid.
  */
 function classifyHost(hostname: string): AddressClass | undefined {
   const bare = stripBrackets(hostname);
   const family = isIP(bare);
   if (family !== 0) return classifyAddress(bare, family);
-  const lower = bare.toLowerCase();
-  if (lower === "localhost" || lower.endsWith(".localhost")) return "loopback";
-  return undefined;
+  return bare.toLowerCase() === "localhost" ? "loopback" : undefined;
 }
 
 /**

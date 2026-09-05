@@ -19,6 +19,7 @@
 // human `message`, so on a real context-overflow body the cap slices away exactly the field a
 // consumer wants.
 
+import { scanForSecrets } from "@yanlinglabs/winter-provider-catalog";
 import type { ProviderError, SdkAssistantMessageError } from "./types.ts";
 
 /** The body snippet embedded in a normalized message. Norma's own value, kept: enough to diagnose, short enough to log. */
@@ -96,9 +97,29 @@ const OVERLOADED_CODES = new Set(["overloaded_error", "overloaded", "server_over
  * because provider conflicts are routinely transient. The one place the two interact is a 429 whose
  * provider code names a billing exhaustion, which no amount of backoff fixes.
  */
-export function normalizeHttpError(status: number, headers: Headers, body: string): ProviderError {
-  const providerCode = parseProviderErrorCode(body);
+/**
+ * The body snippet, scrubbed.
+ *
+ * A provider's error body is not guaranteed innocuous: a 401 routinely echoes part of the
+ * credential it rejected, and a 400 echoes the offending request back. `ProviderError.message` is
+ * one of the most reliably-logged strings in the system, so anything credential-shaped is replaced
+ * WHOLESALE rather than partially masked — a partial mask still discloses length and prefix, and
+ * the snippet is a diagnostic aid, not evidence worth preserving at that cost.
+ *
+ * Reuses the catalog's own exported scanner, so the definition of "credential-shaped" is the same
+ * one the catalog gate enforces and cannot drift into a second, weaker copy here.
+ */
+function scrubbedSnippet(body: string): string {
   const snippet = body.slice(0, BODY_SNIPPET_CHARS);
+  if (snippet.length === 0) return "";
+  return scanForSecrets(snippet).length > 0 ? "[redacted: the provider's error body contained a credential-shaped string]" : snippet;
+}
+
+export function normalizeHttpError(status: number, headers: Headers, body: string): ProviderError {
+  // Parsed off the FULL body BEFORE both the cap and the scrub: the structured code is the one part
+  // of the body a consumer needs, and it is never itself a credential.
+  const providerCode = parseProviderErrorCode(body);
+  const snippet = scrubbedSnippet(body);
   const message = `HTTP ${status}${snippet.length > 0 ? ` — ${snippet}` : ""}`;
   const retryAfterMs = parseRetryAfterMs(headers.get("retry-after"));
 
@@ -176,6 +197,9 @@ export function toSdkAssistantMessageError(err: ProviderError): SdkAssistantMess
       if (code !== undefined && OVERLOADED_CODES.has(code)) return "overloaded";
       return "server_error";
     case "bad_request":
+      // 402 Payment Required is a BILLING state, not a malformed request — telling a user their
+      // request was invalid when their card expired sends them to debug the wrong thing entirely.
+      if (err.status === 402) return "billing_error";
       if (code !== undefined && MODEL_NOT_FOUND_CODES.has(code)) return "model_not_found";
       if (code !== undefined && MAX_OUTPUT_CODES.has(code)) return "max_output_tokens";
       if (code !== undefined && BILLING_CODES.has(code)) return "billing_error";

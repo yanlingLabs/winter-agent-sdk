@@ -56,6 +56,34 @@ const READABLE_STATES = ["none", "summary", "full-exposed"] as const;
 const REPLAY_SCOPES = ["current-tool-loop", "current-turn", "selected-turns", "all-turns"] as const;
 const TOOL_LOOP_REQUIREMENTS = ["hard-error", "silent-degradation", "not-required"] as const;
 
+/**
+ * The closed vocabularies, exported as ONE object so the JSON Schema can be checked against the
+ * validator rather than the two drifting apart in silence.
+ *
+ * The schema is the cross-language contract (Lane X's generator, the Swift decoder) and nothing in
+ * this repo executes it — no ajv in the fence — so without a parity test its `enum` arrays are
+ * prose. A validator that rejects a value the schema permits (or the reverse) is a row that passes
+ * one gate and fails the other, discovered by whoever is furthest from the change.
+ */
+export const CATALOG_VOCABULARIES = {
+  protocols: PROTOCOLS,
+  authKinds: AUTH_KINDS,
+  evidenceSources: EVIDENCE_SOURCES,
+  evidenceConfidences: EVIDENCE_CONFIDENCES,
+  toolCalling: TOOL_CALLING,
+  modelStatuses: MODEL_STATUSES,
+  modelEndpoints: MODEL_ENDPOINTS,
+  modelDiscovery: MODEL_DISCOVERY,
+  catalogAuthority: CATALOG_AUTHORITY,
+  riskClasses: RISK_CLASSES,
+  providerScopes: PROVIDER_SCOPES,
+  upstreamProjects: UPSTREAM_PROJECTS,
+  continuations: CONTINUATIONS,
+  readableStates: READABLE_STATES,
+  replayScopes: REPLAY_SCOPES,
+  toolLoopRequirements: TOOL_LOOP_REQUIREMENTS,
+} as const satisfies Record<string, readonly string[]>;
+
 // --- secrets floor (WS-13 §6/§13, R6-10: "descriptors never contain secrets; a catalog test greps
 // for key-shaped strings"). Two independent checks, because either alone has a hole:
 //

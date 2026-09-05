@@ -19,7 +19,7 @@ export type {
   WinterProviderDescriptor,
 } from "./types.ts";
 
-export { scanForSecrets, validateCatalog } from "./validate.ts";
+export { CATALOG_VOCABULARIES, scanForSecrets, validateCatalog } from "./validate.ts";
 
 import type { WinterCatalog } from "./types.ts";
 import { validateCatalog } from "./validate.ts";

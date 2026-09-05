@@ -415,7 +415,28 @@ export interface RuntimeConfig {
   fallbackModel?: string;
   thinking?: ThinkingConfig;
   effort?: EffortLevel;
-  /** @deprecated Use `thinking`. R6-E: `0` → disabled, any other value → adaptive. Carried on the wire so a runtime can apply that mapping rather than a host guessing at it. */
+  /**
+   * @deprecated Use `thinking` instead.
+   *
+   * CONSUMER AND RULE, named because this field is inert until something applies it and a mapping
+   * with no owner is how a deprecated option quietly keeps its old semantics.
+   *
+   * OWNER: `packages/runtime/src/provider/selection.ts` (T3), at the point where a session's
+   * effective `ThinkingConfig` is resolved and handed to an adapter — NOT the adapter itself, so
+   * every family sees one already-resolved shape rather than each re-deriving it.
+   *
+   * RULE (R6-E, from the pinned deprecation text at `sdk.d.ts:1750-1757`):
+   *   1. `thinking`, when present, WINS outright — the pin states that precedence twice (`1732`,
+   *      `8215`) — and `maxThinkingTokens` is then ignored entirely, not merged.
+   *   2. Otherwise `0` maps to `{ type: "disabled" }`.
+   *   3. Otherwise ANY other value maps to `{ type: "adaptive" }` — deliberately NOT
+   *      `{ type: "enabled", budgetTokens: N }`. This is the trap the pin calls out: on a modern
+   *      model the field is reinterpreted as on/off, so forwarding `maxThinkingTokens: 8000` as a
+   *      budget of 8000 would be a different request from the one the pinned runtime makes.
+   *   4. An adapter MAY re-resolve `enabled` to `adaptive` for a model whose evidence says
+   *      adaptive-only (capture (F) observed exactly that), recorded in the descriptor's `reasoning`
+   *      evidence — that is a per-model adapter rule, downstream of this mapping.
+   */
   maxThinkingTokens?: number;
   includePartialMessages?: boolean;
   maxBudgetUsd?: number;

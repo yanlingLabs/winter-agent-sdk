@@ -16,7 +16,7 @@ function ctx(over: Partial<DiscoveryContext> = {}): DiscoveryContext {
   };
 }
 
-function adapterReturning(result: ModelCatalogResult | (() => Promise<ModelCatalogResult>)): ProviderAdapter {
+function adapterReturning(result: ModelCatalogResult | ((ctx?: DiscoveryContext) => Promise<ModelCatalogResult>)): ProviderAdapter {
   return {
     id: "winter.test",
     version: "0.0.1",
@@ -25,7 +25,7 @@ function adapterReturning(result: ModelCatalogResult | (() => Promise<ModelCatal
     async validateCredential() {
       return { ok: true };
     },
-    listModels: typeof result === "function" ? result : async () => result,
+    listModels: typeof result === "function" ? ((c: DiscoveryContext) => result(c)) : async () => result,
     // eslint-disable-next-line require-yield
     async *streamTurn() {
       throw new Error("not used");
@@ -78,6 +78,35 @@ describe("discoverModels — bounds", () => {
     await expect(discoverModels(adapter, ctx({ signal: controller.signal }))).rejects.toBeDefined();
     expect(called).toBe(false);
   });
+
+  test("the timeout CANCELS the adapter rather than leaving it running in the background", async () => {
+    // Racing a timer against a bare promise stops the waiting, not the work: the request keeps a
+    // socket and a body alive after this function has already reported a timeout.
+    let observed: AbortSignal | undefined;
+    const slow = adapterReturning(async (c?: DiscoveryContext) => {
+      observed = c?.signal;
+      await new Promise((r) => setTimeout(r, 5000));
+      return clean([{ id: "never" }]);
+    });
+    await expect(discoverModels(slow, ctx({ limits: { maxBytes: 1024, maxItems: 10, timeoutMs: 60 } }))).rejects.toBeDefined();
+    expect(observed).toBeDefined();
+    expect(observed!.aborted).toBe(true);
+  });
+
+  test("a caller's abort mid-flight also reaches the adapter", async () => {
+    const controller = new AbortController();
+    let observed: AbortSignal | undefined;
+    const slow = adapterReturning(async (c?: DiscoveryContext) => {
+      observed = c?.signal;
+      await new Promise((r) => setTimeout(r, 5000));
+      return clean([]);
+    });
+    setTimeout(() => controller.abort(), 30);
+    await expect(
+      discoverModels(slow, ctx({ signal: controller.signal, limits: { maxBytes: 1024, maxItems: 10, timeoutMs: 400 } })),
+    ).rejects.toBeDefined();
+    expect(observed!.aborted).toBe(true);
+  });
 });
 
 describe("discoverModels — untrusted input (WS-13 §7: model ids are untrusted display data)", () => {
@@ -98,7 +127,12 @@ describe("discoverModels — untrusted input (WS-13 §7: model ids are untrusted
     };
     const result = await discoverModels(adapterReturning(dirty), ctx());
     expect(result.models.map((m) => m.id)).toEqual(["good", "also-good"]);
-    expect(result.warnings.length).toBeGreaterThanOrEqual(5);
+    // ONE warning carrying the count — five rows were dropped. A per-drop warning list is unbounded
+    // and is retained in the cached result, so a provider returning ten thousand bad rows would
+    // carry ten thousand identical strings forward on every cache fallback.
+    const drops = result.warnings.filter((w) => w.includes("with no usable id"));
+    expect(drops).toHaveLength(1);
+    expect(drops[0]).toContain("5");
   });
 
   test("drops an id carrying control characters or a newline", async () => {

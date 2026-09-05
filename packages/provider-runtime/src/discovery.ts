@@ -106,19 +106,28 @@ export async function discoverModels(adapter: ProviderAdapter, ctx: DiscoveryCon
 
   let raw: ModelCatalogResult;
   try {
+    // The timeout must CANCEL the adapter, not merely stop waiting for it. Racing a timer against a
+    // bare promise leaves the underlying request running to completion in the background — holding a
+    // socket, a body, and (on a hung provider) doing so for as long as the OS allows, while this
+    // function has already reported a timeout. The controller composes our deadline WITH the
+    // caller's own signal, so the adapter observes exactly one abort source.
+    const controller = new AbortController();
+    const onCallerAbort = (): void => controller.abort();
+    ctx.signal?.addEventListener("abort", onCallerAbort, { once: true });
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       raw = await Promise.race([
-        adapter.listModels(ctx),
+        adapter.listModels({ ...ctx, signal: controller.signal }),
         new Promise<never>((_resolve, reject) => {
-          timer = setTimeout(
-            () => reject(new ProviderRequestError({ code: "timeout", message: `model discovery for "${ctx.connection.providerId}" exceeded ${ctx.limits.timeoutMs}ms`, retryable: true })),
-            ctx.limits.timeoutMs,
-          );
+          timer = setTimeout(() => {
+            controller.abort();
+            reject(new ProviderRequestError({ code: "timeout", message: `model discovery for "${ctx.connection.providerId}" exceeded ${ctx.limits.timeoutMs}ms`, retryable: true }));
+          }, ctx.limits.timeoutMs);
         }),
       ]);
     } finally {
       if (timer !== undefined) clearTimeout(timer);
+      ctx.signal?.removeEventListener("abort", onCallerAbort);
     }
   } catch (err) {
     const cached = cache?.get(key);
@@ -169,9 +178,11 @@ export async function discoverModels(adapter: ProviderAdapter, ctx: DiscoveryCon
   }
 
   if (dropped > 0) {
-    // Each drop is reported individually so the count is visible even when a provider returns
-    // hundreds of malformed rows — a single "some rows were bad" line hides a broken integration.
-    for (let i = 0; i < dropped; i++) warnings.push("discovery dropped a model row with no usable id");
+    // ONE warning carrying the count, not one per drop. The per-drop version was unbounded: a
+    // provider returning ten thousand malformed rows produced ten thousand identical strings, all of
+    // which are retained in the cached result and re-emitted on every fallback. The count is the
+    // whole of the information; repeating the sentence is not.
+    warnings.push(`discovery dropped ${dropped} model row${dropped === 1 ? "" : "s"} with no usable id`);
   }
   if (models.length >= ctx.limits.maxItems && incoming.length > models.length) {
     warnings.push(`discovery returned more than the ${ctx.limits.maxItems}-model limit; the list was truncated and is PARTIAL`);

@@ -238,6 +238,61 @@ describe("boundedFetch — redirects (R6-11: manual, revalidated, no credential 
   });
 });
 
+describe("boundedFetch — redirect method/body semantics", () => {
+  test("a 303 becomes a bodyless GET, and drops the body headers with it", async () => {
+    // The classic POST-then-redirect-to-a-result shape. Replaying the method and body would submit
+    // the request a SECOND time against a URL that explicitly asked for a GET.
+    const seen: Array<{ method: string; path: string; hasBody: boolean; contentType: string | null }> = [];
+    const f = fake(async (req, url) => {
+      seen.push({ method: req.method, path: url.pathname, hasBody: (await req.text()).length > 0, contentType: req.headers.get("content-type") });
+      return url.pathname === "/v1/submit" ? new Response(null, { status: 303, headers: { location: "/v1/result" } }) : new Response("done");
+    });
+    const res = await boundedFetch(`${f.origin}/v1/submit`, {
+      method: "POST",
+      body: JSON.stringify({ a: 1 }),
+      headers: { "content-type": "application/json" },
+      timeoutMs: 5000,
+      maxBodyBytes: 1024,
+      policy: policyFor(f.origin),
+    });
+    expect(await res.text()).toBe("done");
+    expect(seen).toHaveLength(2);
+    expect(seen[0]).toMatchObject({ method: "POST", path: "/v1/submit", hasBody: true });
+    expect(seen[1]!.method).toBe("GET");
+    expect(seen[1]!.hasBody).toBe(false);
+    // A body-shaped header on a request that no longer has one is a lie the server may act on.
+    expect(seen[1]!.contentType).toBeNull();
+  });
+
+  test("a 307 replays the method and body verbatim", async () => {
+    const seen: Array<{ method: string; body: string }> = [];
+    const f = fake(async (req, url) => {
+      seen.push({ method: req.method, body: await req.text() });
+      return url.pathname === "/v1/a" ? new Response(null, { status: 307, headers: { location: "/v1/b" } }) : new Response("done");
+    });
+    await boundedFetch(`${f.origin}/v1/a`, { method: "POST", body: "payload", timeoutMs: 5000, maxBodyBytes: 1024, policy: policyFor(f.origin) });
+    expect(seen).toEqual([
+      { method: "POST", body: "payload" },
+      { method: "POST", body: "payload" },
+    ]);
+  });
+
+  test("REFUSES to follow a redirect when the body is a stream — it cannot be replayed", async () => {
+    // The first attempt has already consumed it, so "replaying" would send a truncated request or
+    // none at all. A typed refusal beats a silently mangled retry.
+    const f = fake(() => new Response(null, { status: 307, headers: { location: "/v1/b" } }));
+    const body = new ReadableStream<Uint8Array>({
+      start(c) {
+        c.enqueue(new TextEncoder().encode("streamed"));
+        c.close();
+      },
+    });
+    await expect(
+      boundedFetch(`${f.origin}/v1/a`, { method: "POST", body, timeoutMs: 5000, maxBodyBytes: 1024, policy: policyFor(f.origin) }),
+    ).rejects.toMatchObject({ code: "capability" });
+  });
+});
+
 describe("boundedFetch — body cap, enforced ON READ", () => {
   test("passes a body under the cap through unchanged", async () => {
     const f = fake(() => new Response("x".repeat(100)));
@@ -324,6 +379,35 @@ describe("boundedFetch — timeout and abort", () => {
       signal: controller.signal,
     }).then(() => undefined, (e: unknown) => e);
     expect((err as { code?: string }).code).toBe("aborted");
+  });
+
+  test("a caller's abort AFTER headers still cancels the body read", async () => {
+    // The header deadline is cleared once headers land, and the caller's abort listener went with
+    // it — leaving a caller that simply awaits `res.text()` with no way to cancel at all. The
+    // listener now lives for the body's lifetime instead.
+    const f = fake(
+      () =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            async start(c) {
+              c.enqueue(new TextEncoder().encode("first"));
+              await new Promise((r) => setTimeout(r, 3000));
+              c.enqueue(new TextEncoder().encode("second"));
+              c.close();
+            },
+          }),
+        ),
+    );
+    const controller = new AbortController();
+    const res = await boundedFetch(`${f.origin}/v1`, {
+      timeoutMs: 5000,
+      maxBodyBytes: 4096,
+      policy: policyFor(f.origin),
+      signal: controller.signal,
+    });
+    setTimeout(() => controller.abort(), 40);
+    const err = await res.text().then(() => undefined, (e: unknown) => e);
+    expect((err as Error).name).toBe("AbortError");
   });
 
   test("a connection refused is a retryable network error with NO status", async () => {
