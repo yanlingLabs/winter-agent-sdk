@@ -703,6 +703,75 @@ describe("resumeFromRunId -- preconditions and the cached prefix (WS-11 §1.5)",
   });
 });
 
+describe("A-14 -- the reported `transcriptDir` holds the run's own transcript", () => {
+  // The finding: the directory was CREATED and REPORTED and nothing ever wrote to it, so a model
+  // that followed `WorkflowOutput.transcriptDir` found an empty directory. The brief's choice was
+  // "write the run transcript there or stop creating/reporting it"; `transcriptDir` is pinned on the
+  // captured `WorkflowOutput`, so the only honest half is to write it.
+  function transcriptLines(dir: string): Array<Record<string, unknown>> {
+    const path = join(dir, "transcript.jsonl");
+    if (!existsSync(path)) return [];
+    return readFileSync(path, "utf8")
+      .split("\n")
+      .filter((l) => l.trim() !== "")
+      .map((l) => JSON.parse(l) as Record<string, unknown>);
+  }
+
+  test("a completed run records launch, each agent call, and its terminal state", async () => {
+    const r = rig();
+    const launched = launch(r, META + `const a = await agent("one"); return [a];`, { args: { seed: 7 } });
+    await r.runtime.await(launched.runId);
+
+    const lines = transcriptLines(launched.transcriptDir);
+    expect(lines.map((l) => l["kind"])).toEqual(["launch", "agent", "finish"]);
+    expect(lines[0]).toMatchObject({ runId: launched.runId, name: "wf", scriptPath: launched.scriptPath });
+    expect(lines[1]).toMatchObject({ prompt: "one", outcome: "value" });
+    expect(lines[2]).toMatchObject({ status: "completed" });
+  });
+
+  test("an agent that resolves NULL is recorded -- the diagnostic the journal deliberately omits", async () => {
+    // WS-11 §1.8 calls the journal "the first diagnostic surface for empty/unexpected results", and
+    // the journal records SUCCESSFUL calls only (§1.5). A run whose agents all came back null leaves
+    // an empty journal; the transcript is where that shows up.
+    const r = rig({ spawnAgent: async () => fakeChild({ status: "failed", content: "" }) });
+    const launched = launch(r, META + `const a = await agent("one"); return a;`);
+    await r.runtime.await(launched.runId);
+
+    const agentLines = transcriptLines(launched.transcriptDir).filter((l) => l["kind"] === "agent");
+    expect(agentLines).toHaveLength(1);
+    expect(agentLines[0]).toMatchObject({ prompt: "one", outcome: "null" });
+  });
+
+  test("a FAILED run records the failure, and a STOPPED one records `stopped` -- never `failed`", async () => {
+    const r = rig();
+    const failed = launch(r, META + `throw new Error("boom");`);
+    await r.runtime.await(failed.runId);
+    const last = transcriptLines(failed.transcriptDir).at(-1);
+    expect(last).toMatchObject({ kind: "finish", status: "failed" });
+    expect(String(last?.["detail"])).toContain("boom");
+
+    // WS-11 §1.8's third terminal state, on the transcript as well as on the wire.
+    const hanging = rig({ spawnAgent: async () => fakeChild({ neverSettle: true }) });
+    const stopped = launch(hanging, META + `await agent("hang"); return 1;`);
+    await new Promise((res) => setTimeout(res, 40));
+    hanging.runtime.stop(stopped.runId);
+    await hanging.runtime.await(stopped.runId);
+    expect(transcriptLines(stopped.transcriptDir).at(-1)).toMatchObject({ kind: "finish", status: "stopped" });
+  });
+
+  test("large values are CAPPED -- the transcript is durable and must not grow without bound", async () => {
+    const r = rig({ spawnAgent: async () => fakeChild({ content: "y".repeat(20_000) }) });
+    const launched = launch(r, META + `return await agent("${"x".repeat(20_000)}");`);
+    await r.runtime.await(launched.runId);
+
+    const lines = transcriptLines(launched.transcriptDir);
+    expect(lines.length).toBeGreaterThan(2); // never vacuous: the cap is only meaningful over real records
+    for (const line of lines) {
+      expect(JSON.stringify(line).length).toBeLessThan(12_000);
+    }
+  });
+});
+
 describe("resumeFromRunId with an EDITED script -- the fix wave's I6 ruling (WS-11 §1.3's edit-then-resume loop)", () => {
   // THE RULING: a resume that supplies a new source/args honours the NEW source and args against the
   // OLD journal. The positional key then diverges at the first changed call and everything from

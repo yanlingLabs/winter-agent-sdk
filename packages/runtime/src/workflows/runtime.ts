@@ -17,6 +17,7 @@ import { spawn as spawnProcess } from "node:child_process";
 // through the compiled binary, so that leg would have been unproven as well as fragile.
 import { mkdirSync, readFileSync } from "node:fs";
 import { RunJournal, promptKey, type JournalEntry } from "./journal.ts";
+import { RunTranscript, renderTranscriptValue } from "./transcript.ts";
 import { WorkflowRegistry } from "./registry.ts";
 import { makeSemaphore, resolveConcurrencyCap, type Semaphore } from "./semaphore.ts";
 import { createBudget, type WorkflowBudget } from "./budget.ts";
@@ -179,6 +180,8 @@ interface LiveRun {
   abort: AbortController;
   /** F8: the resume journal this run was SEEDED with, so a `resumed` op can copy its replayed prefix into this run's own journal. */
   seedJournal: readonly JournalEntry[];
+  /** A-14: the run's own record, under the `transcriptDir` this run REPORTS. Best-effort throughout. */
+  transcript: RunTranscript;
   /** The DECLARED phases (WS-11 §1.2). A `phase()` call matching one exactly resolves to it; an unmatched call gets its own group. */
   declaredPhases: readonly WorkflowMetaPhase[] | undefined;
   /** WS-11 §1.8's abort chaining: stop must cancel IN-FLIGHT bridged agents, not merely the worker process. */
@@ -191,6 +194,8 @@ export class WorkflowRuntime {
   private readonly settlers = new Map<string, (view: WorkflowRunView) => void>();
   /** Kept beside `live` because `finish` runs AFTER teardown deleted the LiveRun and still has to settle the task. */
   private readonly tasks = new Map<string, WorkflowTaskHandle>();
+  /** A-14: same reason as `tasks` -- the terminal record is written after the LiveRun is gone. */
+  private readonly transcripts = new Map<string, RunTranscript>();
   /** Each run's source + launch context, so `resume` can replay it verbatim. Never pruned -- one string per run this session launched. */
   private readonly launches = new Map<string, WorkflowLaunchInput & { scriptPath: string }>();
   private readonly runsDir: string;
@@ -223,11 +228,22 @@ export class WorkflowRuntime {
     const scriptPath = persistWorkflowScript({ ...location, name: input.meta.name, runId, source: input.source });
     // CREATED, not merely computed: `WorkflowOutput.transcriptDir` is handed to the model, and a
     // model that reads a path which does not exist gets ENOENT rather than an empty directory.
-    // DISCLOSED (report): Winter's child transcripts are written wherever `subagents/child-engine.ts`
-    // puts them (frozen to this lane), NOT under this directory -- so today it is capture (3)'s
-    // sibling location, present and empty.
+    //
+    // A-14 (fix wave): it is no longer EMPTY either. The run's own transcript is written here --
+    // launch, every `agent()` call and its outcome, phase changes, terminal state (transcript.ts).
+    // Winter's CHILD transcripts are still written wherever `subagents/child-engine.ts` puts them
+    // (another lane's file), which is the standing disclosure; this is the run's record, not theirs.
     const transcriptDir = workflowTranscriptDir({ ...location, runId });
     mkdirSync(transcriptDir, { recursive: true, mode: 0o700 });
+    const transcript = new RunTranscript(transcriptDir);
+    transcript.append({
+      kind: "launch",
+      runId,
+      name: input.meta.name,
+      scriptPath,
+      ...(input.args !== undefined ? { args: renderTranscriptValue(input.args) } : {}),
+      ...(input.resumeJournal !== undefined ? { replayed: input.resumeJournal.length } : {}),
+    });
     this.launches.set(runId, { ...input, runId, scriptPath });
 
     const task = host.createTask("workflow", { runId, name: input.meta.name });
@@ -262,12 +278,14 @@ export class WorkflowRuntime {
       }),
       journal: new RunJournal(this.runsDir, runId),
       seedJournal: input.resumeJournal ?? [],
+      transcript,
       abort,
       ...(input.meta.phases !== undefined ? { declaredPhases: input.meta.phases } : { declaredPhases: undefined }),
       children: new Set(),
     };
     this.live.set(runId, run);
     this.tasks.set(runId, task);
+    this.transcripts.set(runId, transcript);
 
     abort.signal.addEventListener("abort", () => {
       // WS-11 §1.8: "stop/abort cancels in-flight bridged agents (abort chaining), not merely the
@@ -451,6 +469,7 @@ export class WorkflowRuntime {
         // `WorkflowProgress.phase`'s own header.
         const group = matchPhaseGroup(run.declaredPhases, message.title);
         this.registry.setPhase(run.runId, group.title);
+        run.transcript.append({ kind: "phase", title: group.title, declared: group.declared });
         this.emitProgress(run, group.declared && group.detail !== undefined ? `${group.title}: ${group.detail}` : group.title, { phase: group.title, declaredPhase: group.declared });
         break;
       }
@@ -525,6 +544,16 @@ export class WorkflowRuntime {
       // WS-11 §1.5: only SUCCESSFUL results are journaled -- a failed call has nothing worth caching,
       // and a later resume should retry it live rather than replay the failure.
       if (outcome !== null) run.journal.append(promptKey(message.prompt, message.opts), outcome);
+      // A-14: the TRANSCRIPT records the null ones too. That asymmetry is the point -- the journal is
+      // a resume cache and a run whose agents all came back null leaves it empty, which is exactly
+      // the case WS-11 §1.8's "first diagnostic surface for empty results" is about.
+      run.transcript.agent({
+        prompt: message.prompt,
+        value: outcome,
+        resolvedNull: outcome === null,
+        ...(group !== undefined ? { phase: group } : {}),
+        ...(message.opts?.label !== undefined ? { label: message.opts.label } : {}),
+      });
       return { callId: message.callId, ok: true, value: outcome, budget: run.budget.snapshot() };
     } finally {
       run.running--;
@@ -697,6 +726,13 @@ export class WorkflowRuntime {
   }
 
   private finish(runId: string, status: "completed" | "failed" | "stopped", detail?: string): void {
+    // A-14: written FIRST, before the seam calls below -- a throwing host callback must not be able
+    // to leave the run's own record without a terminal line.
+    const transcript = this.transcripts.get(runId);
+    if (transcript !== undefined) {
+      transcript.finish(status, detail);
+      this.transcripts.delete(runId);
+    }
     if (status === "completed") this.registry.complete(runId, { ok: true, result: detail ?? "" });
     else if (status === "failed") this.registry.fail(runId, detail ?? "error");
     // "stopped" was already set by `registry.stop()` before the abort fired -- see registry.ts.
