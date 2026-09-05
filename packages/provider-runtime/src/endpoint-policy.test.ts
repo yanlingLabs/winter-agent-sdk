@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { classifyAddress } from "./address-classifier.ts";
-import { CREDENTIAL_HEADER_NAMES, createEndpointPolicy, evaluateEndpoint, stripCredentialHeaders } from "./endpoint-policy.ts";
+import { CREDENTIAL_HEADER_NAMES, applyPrivilegedHeaders, createEndpointPolicy, evaluateEndpoint, stripCredentialHeaders } from "./endpoint-policy.ts";
 
 function reasonOf(result: ReturnType<typeof evaluateEndpoint>): string {
   if (result.ok) throw new Error("expected a refusal, got an acceptance");
@@ -216,5 +216,57 @@ describe("stripCredentialHeaders", () => {
     const headers = new Headers({ authorization: "Bearer test-key-abc" });
     stripCredentialHeaders(headers);
     expect(headers.get("authorization")).toBe("Bearer test-key-abc");
+  });
+});
+
+describe("applyPrivilegedHeaders (RULING R6-L: privileged headers only for GENERATED endpoints)", () => {
+  const privileged = { "openai-organization": "org-winter", "openai-project": "proj-winter", originator: "winter" };
+
+  function policyFor(baseUrl: string, generated: boolean) {
+    const created = createEndpointPolicy(baseUrl, generated ? { generated: true } : { generated: false });
+    if (!created.ok) throw new Error(created.reason);
+    return created.policy;
+  }
+
+  test("passes them through for a GENERATED endpoint", () => {
+    expect(applyPrivilegedHeaders(policyFor("https://api.openai.com/v1", true), privileged)).toEqual(privileged);
+  });
+
+  test("DROPS them for a user-supplied endpoint", () => {
+    // The disclosure this prevents: an organisation/project identifier only means something at the
+    // reviewed endpoint it was minted for, and sending it to a user's own base URL tells a host the
+    // catalog never named which account is calling it.
+    expect(applyPrivilegedHeaders(policyFor("https://gateway.example.test/v1", false), privileged)).toEqual({});
+  });
+
+  test("drops them for a user LOCAL endpoint too — `local` is not a trust grant", () => {
+    const created = createEndpointPolicy("http://127.0.0.1:11434/v1", { generated: false, local: true });
+    if (!created.ok) throw new Error(created.reason);
+    expect(applyPrivilegedHeaders(created.policy, privileged)).toEqual({});
+  });
+
+  test("returns a COPY, never the caller's object and never a shared empty", () => {
+    const generated = policyFor("https://api.openai.com/v1", true);
+    const out = applyPrivilegedHeaders(generated, privileged);
+    expect(out).not.toBe(privileged);
+    out["openai-organization"] = "mutated";
+    expect(privileged["openai-organization"]).toBe("org-winter");
+    const a = applyPrivilegedHeaders(policyFor("https://gateway.example.test/v1", false), privileged);
+    const b = applyPrivilegedHeaders(policyFor("https://gateway.example.test/v1", false), privileged);
+    expect(a).not.toBe(b);
+  });
+
+  test("an empty input is an empty output either way — no defaults are invented", () => {
+    expect(applyPrivilegedHeaders(policyFor("https://api.openai.com/v1", true), {})).toEqual({});
+    expect(applyPrivilegedHeaders(policyFor("https://gateway.example.test/v1", false), {})).toEqual({});
+  });
+
+  test("AUTH is not routed through this helper — it has its own, stricter rule", () => {
+    // Dropping auth for user endpoints would make every custom endpoint unreachable while protecting
+    // nothing: a credential the host configured FOR that endpoint belongs there. The origin-change
+    // rule (stripCredentialHeaders) is what governs auth.
+    const stripped = stripCredentialHeaders(new Headers({ authorization: "Bearer test-key-abc" }));
+    expect(stripped.has("authorization")).toBe(false);
+    expect(CREDENTIAL_HEADER_NAMES).toContain("authorization");
   });
 });

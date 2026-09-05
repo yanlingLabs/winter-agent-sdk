@@ -62,6 +62,31 @@ export function stripCredentialHeaders(headers: Headers): Headers {
   return out;
 }
 
+/**
+ * RULING R6-L — the enforcement point for R6-11's "privileged headers only for generated endpoints".
+ *
+ * Identity when the policy's endpoint is GENERATED (a reviewed, immutable descriptor endpoint);
+ * `{}` otherwise. Adapters build their privileged header set and route it through here, so the rule
+ * is a call site rather than prose — before this existed, `EndpointPolicy.generated` was plumbed and
+ * read by nothing at all.
+ *
+ * WHICH headers belong here is documented on `EndpointPolicy` below and is the adapter's judgement,
+ * not this function's: it cannot see a header's meaning, only the endpoint's provenance. The rule of
+ * thumb is "would this value still be true, and still be the operator's business to disclose, at a
+ * URL the reviewed catalog never named?" — an organisation or project identifier fails that test; a
+ * `content-type` passes it.
+ *
+ * Auth is deliberately NOT governed here. It has its own, stricter rule (`stripCredentialHeaders` on
+ * an origin change), and a user endpoint legitimately needs a credential to be reachable at all —
+ * routing auth through this helper would break every custom endpoint rather than protect anything.
+ */
+export function applyPrivilegedHeaders(policy: EndpointPolicy, headers: Record<string, string>): Record<string, string> {
+  // A COPY either way: an adapter that reuses its header object across requests must not have it
+  // emptied underneath it, and a caller must not be able to mutate the policy's answer after the
+  // fact.
+  return policy.generated ? { ...headers } : {};
+}
+
 /** `URL.hostname` keeps the brackets on an IPv6 literal (verified in P3's own monitor work); both `isIP` and the classifier need them gone. */
 function stripBrackets(hostname: string): string {
   return hostname.startsWith("[") && hostname.endsWith("]") ? hostname.slice(1, -1) : hostname;
