@@ -151,6 +151,13 @@ function buildMonitorRunCommandOptions(ctx: ToolExecutionContext): {
   home: string;
   /** Phase 5 fix wave, I1: the resolved `~/.winter` root, distinct from the OS home above. */
   winterHome?: string;
+  /**
+   * Phase 6 Task 3 (R6-6, P4 carry): the engine's per-turn abort, threaded to `runCommand`'s
+   * already-existing process-group kill. Monitor's command half shares Bash's spawn mechanism, so it
+   * shares this obligation -- "a stopped child starts nothing new AND its in-flight command is
+   * killed" is not satisfied by covering only one of the two tools that spawn one.
+   */
+  signal?: AbortSignal;
 } {
   return {
     cwd: ctx.cwd,
@@ -160,6 +167,7 @@ function buildMonitorRunCommandOptions(ctx: ToolExecutionContext): {
     ...computeMonitorDenyPaths(ctx),
     home: ctx.home,
     ...(ctx.winterHome !== undefined ? { winterHome: ctx.winterHome } : {}),
+    ...(ctx.signal !== undefined ? { signal: ctx.signal } : {}),
   };
 }
 

@@ -458,6 +458,57 @@ export interface ProviderThinkingOutput {
 export type ProviderStopReason = "end_turn" | "tool_use" | "max_tokens" | "aborted" | "refusal";
 
 /**
+ * Phase 6 Task 3 (R6-F): the ONE error class the engine recognises as a PROVIDER failure.
+ *
+ * A provider failure that ends a turn does not get its own result subtype. Capture (I) observed the
+ * pinned runtime landing an API failure on `subtype: "success"` with `is_error: true`,
+ * `terminal_reason: "api_error"` and `api_error_status: <status | null>` -- so the engine has to be
+ * able to TELL a provider failure from any other throw, which would otherwise stay
+ * `error_during_execution` exactly as before this phase.
+ *
+ * DECLARED HERE, not in `provider/bridge.ts`, for the same structural reason `ProviderTurn` is
+ * (R6-4): the engine must recognise the type without importing the bridge, and a value import from
+ * engine.ts into bridge.ts and back would be a runtime cycle whose compiled and dev resolutions can
+ * differ. `bridge.ts` re-exports it, so a lane reads it from the module it is working in.
+ *
+ * `status` is ABSENT -- never `null` -- for a connection error with no HTTP response; the frame
+ * producer maps absence to the pinned `api_error_status: null`. (Declared with `declare` and assigned
+ * conditionally because `useDefineForClassFields` would otherwise EMIT an own `status` key holding
+ * `undefined`, making `"status" in err` true for exactly the case the pin distinguishes -- Task 2 hit
+ * this same trap on `ProviderRequestError`.)
+ *
+ * `message` is REDACTED BY CONSTRUCTION at every construction site: no credential material, no
+ * opaque provider state, no raw response body (Global Constraints).
+ */
+export class ProviderTurnError extends Error {
+  /** The structural marker the engine matches on, so an error crossing a package boundary is still recognised. */
+  readonly winterProviderFailure = true as const;
+  declare readonly status?: number;
+  readonly providerCode: string | undefined;
+  constructor(message: string, opts: { status?: number; providerCode?: string; cause?: unknown } = {}) {
+    super(message, opts.cause !== undefined ? { cause: opts.cause } : undefined);
+    this.name = "ProviderTurnError";
+    if (opts.status !== undefined) Object.assign(this, { status: opts.status });
+    this.providerCode = opts.providerCode;
+  }
+}
+
+/** True for a provider failure that must land on R6-F's result shape. STRUCTURAL, not `instanceof`: the error may have been constructed in another package's copy of this module. */
+export function isProviderTurnError(err: unknown): err is ProviderTurnError {
+  return typeof err === "object" && err !== null && (err as { winterProviderFailure?: unknown }).winterProviderFailure === true;
+}
+
+/**
+ * P1 carry: the per-message input byte cap on provider input.
+ *
+ * A DISCLOSED DEFAULT WITH A TYPED ERROR, never a silent truncation -- truncating a message would
+ * hand the model a conversation it never had, and the failure would surface as a confusing answer
+ * rather than as an error. 4 MiB is far above any real message and far below anything that would
+ * stall a serializer.
+ */
+export const DEFAULT_MAX_PROVIDER_MESSAGE_BYTES = 4 * 1024 * 1024;
+
+/**
  * Per-generation token accounting (R5-3). `inputTokens`/`outputTokens` are required because a
  * provider that reports usage at all always knows both; the cache counters are optional because not
  * every provider family exposes them.
@@ -568,7 +619,16 @@ export function createContextAccountant(opts: ContextAccountantOptions = {}): Co
 }
 
 export interface ToolExecutor {
-  execute(call: { id: string; name: string; input: unknown }): Promise<{ output: string }>;
+  /**
+   * Phase 6 Task 3 (R6-6, P4 carry): `opts.signal` is ABORTED when the turn is interrupted.
+   *
+   * OPTIONAL on both sides, and additive: every pre-existing executor keeps satisfying this
+   * interface unchanged, and an executor that ignores the signal behaves exactly as before. What
+   * changes is that an executor which HONOURS it stops the work rather than merely being abandoned --
+   * "a stopped child starts nothing new AND its in-flight Bash is killed" (R6-6), which was
+   * previously impossible because the interrupt was a raced Promise with no channel into the tool.
+   */
+  execute(call: { id: string; name: string; input: unknown }, opts?: { signal?: AbortSignal }): Promise<{ output: string }>;
 }
 
 // Ruling P1-B: the minimal, data-shaped interface the engine needs to record a session (blocks/text
@@ -893,6 +953,16 @@ export interface EngineOptions {
    * (`perSource`'s own highest-first order), then the host's own `Options`.
    */
   settingsRules?: EngineSettingsRuleSeed;
+  /**
+   * Phase 6 Task 3 (P1 carry): the per-message input byte cap on provider input, overridable for
+   * tests and for a host that knows its own provider's real limit.
+   *
+   * An ENGINE OPTION rather than a `RuntimeConfig`/`Options` field, deliberately and disclosed: the
+   * default is a Winter-authored safety bound with no pinned counterpart, and adding an `Options`
+   * field would put an un-pinned knob on the public compatibility surface for a value no host has
+   * asked to tune. Absent -> `DEFAULT_MAX_PROVIDER_MESSAGE_BYTES`.
+   */
+  maxProviderMessageBytes?: number;
 }
 
 /**
@@ -1142,6 +1212,7 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
     initOutputStyle,
     skillListing,
     settingsRules,
+    maxProviderMessageBytes,
   } = opts;
 
   // Task 6 (WS-07 §2/§6.4, Ruling 8): permission startup validation — deliberately the very FIRST
@@ -1490,6 +1561,20 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // `sessionRoot` above: it is only ever READ when a real Agent-tool call actually spawns a child,
   // long after the assignment below has already run.
   let currentAdvertisedCanonicalNames: string[] = [];
+  // --- Phase 6 Task 3: the session's live provider state ------------------------------------------
+  //
+  // `currentModel` is what goes on the REQUEST; `config.model` stays the pinned bare string the
+  // caller passed and is what `system/init.model` reports (R6-9: the goldens byte-compare init), and
+  // it is also the reset target for `set_model`'s three-way reset spelling.
+  let currentModel = config.model;
+  // The RESOLVED identity, once selection has run. `undefined` until then -- which is every pre-P6
+  // session and every test double, and is why the sidecar writes nothing for them rather than
+  // fabricating a provider name.
+  let currentProviderIdentity: { providerId: string; modelKey: string; family: string; continuationDomain?: string } | undefined;
+  // R6-I: a `set_model` arriving mid-turn is PARKED here and applied at the quiescent boundary. The
+  // value is the request's own three-way payload, carried verbatim so the reset spelling is resolved
+  // in exactly one place.
+  let pendingModelSwitch: { model: string | null | undefined } | undefined;
   // Phase 4 Task 3 (MUST 8): the live child roster this run's own spawns append to -- what
   // `MessagingRouterSeam.children()` (messaging/adapter.ts) is defined to read from. No routing
   // logic lives here (WS-10 §15's own split); `onChildRosterReady` (EngineOptions) is this run's own
@@ -1676,10 +1761,48 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
       /* auxiliary — see comment above */
     }
   };
-  const recordAssistant = async (content: ContentBlock[]): Promise<void> => {
+  /**
+   * Phase 6 Task 3 (R6-7): the WRITE-AHEAD assistant record.
+   *
+   * ORDER IS THE WHOLE GUARANTEE. The uuid is minted HERE, the sidecar records naming it as
+   * `anchorUuid` are appended and fsync'd, and only then does the transcript entry go down. A crash
+   * between the two leaves a record with no entry -- ignorable and garbage-collectable
+   * (`buildContinuationChain` drops it) -- and never an entry whose provider state was lost.
+   *
+   * `origin` is MANDATORY for every assistant entry once a provider identity is known; `native-state`
+   * and `summary` ride the same anchor when the turn produced them. A session with no identity yet
+   * (every pre-P6 double, and any run before selection is wired in T10) writes no records at all and
+   * behaves byte-identically to before this task.
+   */
+  const recordAssistant = async (content: ContentBlock[], provenance?: { nativeState?: ProviderNativeState; summary?: string }): Promise<void> => {
     if (!store) return;
+    const uuid = randomUUID();
+    const identity = currentProviderIdentity;
+    if (identity !== undefined && store.recordProviderState !== undefined) {
+      const base = {
+        sessionId: config.sessionId,
+        anchorUuid: uuid,
+        provider: identity.providerId,
+        model: identity.modelKey,
+        family: identity.family,
+        ...(identity.continuationDomain !== undefined ? { continuationDomain: identity.continuationDomain } : {}),
+      };
+      // itemIndex ORDERS the records under one anchor: 0 is always the mandatory `origin`.
+      const records: ProviderStateRecordInput[] = [{ ...base, itemIndex: 0, kind: "origin", payload: {} }];
+      if (provenance?.nativeState !== undefined) records.push({ ...base, itemIndex: records.length, kind: "native-state", payload: { items: provenance.nativeState.items } });
+      if (provenance?.summary !== undefined) records.push({ ...base, itemIndex: records.length, kind: "summary", payload: { text: provenance.summary } });
+      for (const record of records) {
+        try {
+          await store.recordProviderState(record);
+        } catch {
+          // Auxiliary, exactly like every other record* call here: a sidecar write failing must never
+          // fail the turn. The consequence is a DEGRADED resume for that message, which the
+          // continuity warning already exists to report -- not a lost turn.
+        }
+      }
+    }
     try {
-      await store.recordAssistantEntry(content);
+      await store.recordAssistantEntry(content, { uuid });
     } catch {
       /* auxiliary — see comment above */
     }
@@ -1874,7 +1997,19 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
           : {}),
       // WS-10 §3.5: "a fork inherits EVERYTHING... conversation." Copied BY VALUE (a fresh array of
       // the same message objects) so a child can never mutate the parent's own live turn history.
+      //
+      // Phase 6 Task 3 (R6-3's sweep, consumer 6): a SHALLOW array copy, deliberately -- the elements
+      // are the same `ProviderMessage` objects, so `origin`/`nativeState`/`uuid` ride along. A copy
+      // that rebuilt each element as `{role, content}` would strip exactly the annotations that tell
+      // the child which provider produced the history it inherited, and it would do so silently.
       ...(req.fork === true ? { messages: [...messages] } : {}),
+      // Phase 6 Task 3 (R6-17): the parent's RESOLVED provider identity and its EFFECTIVE reasoning
+      // configuration. `model`/`effort`/`thinking` above are the REQUESTED values (a definition's own
+      // override, or the placeholder base); these are what a bare child model id resolves against and
+      // what the child's own provider-state records identify themselves with.
+      ...(currentProviderIdentity !== undefined ? { provider: { ...currentProviderIdentity } } : {}),
+      ...(config.effort !== undefined ? { effectiveEffort: config.effort } : {}),
+      ...(config.thinking !== undefined ? { effectiveThinking: config.thinking } : {}),
       sessionRoot,
     };
   }
@@ -2895,6 +3030,36 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
           if (cf.subtype === "interrupt") {
             output.write({ type: "control_response", requestId: cf.requestId, ok: true });
             interruptCurrentTurn.current?.(); // no-op while idle: nothing active to abort
+            // Phase 6 Task 3 (R6-I): an interrupt ENDS the turn, so the quiescent boundary a parked
+            // `set_model` was waiting for has arrived early -- apply it now rather than leaving the
+            // session on a model the host has already asked it to leave.
+            applyPendingModelSwitch("interrupt");
+            continue;
+          }
+          // --- Phase 6 Task 3 (R6-I): `set_model` ------------------------------------------------
+          //
+          // The pin's own wire shape (`sdk.d.ts:4181-4188`): `{ subtype: 'set_model', model?: string
+          // | null }`, where OMITTED, `null` AND the literal string `'default'` all reset to the
+          // session default. Accepting only `undefined`/`null` as "reset" silently treats `'default'`
+          // as a model id, which is why the payload is carried verbatim and resolved in exactly one
+          // place (`applyPendingModelSwitch`).
+          //
+          // RECORDED, NOT APPLIED, and the ack says the request was accepted rather than that the
+          // model has already changed: applying mid-generation would split one logical turn across
+          // two models, which is the cross-model history the continuity package exists to avoid.
+          if (cf.subtype === "set_model") {
+            const payload = cf.payload;
+            const requested = typeof payload === "object" && payload !== null ? (payload as { model?: unknown }).model : payload;
+            if (requested !== undefined && requested !== null && typeof requested !== "string") {
+              output.write({ type: "control_response", requestId: cf.requestId, ok: false, error: { code: "invalid_model", message: `invalid model: ${JSON.stringify(requested)}` } });
+              continue;
+            }
+            pendingModelSwitch = { model: requested as string | null | undefined };
+            output.write({ type: "control_response", requestId: cf.requestId, ok: true });
+            // IDLE is itself a quiescent boundary: with no turn in flight there is nothing to split,
+            // so the switch takes effect immediately rather than waiting for a next envelope that may
+            // never come. `interruptCurrentTurn.current` is non-null exactly while a turn is running.
+            if (interruptCurrentTurn.current === null) applyPendingModelSwitch("set_model");
             continue;
           }
           if (cf.subtype === "set_permission_mode") {
@@ -3458,6 +3623,210 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
     return copy;
   };
 
+  // --- Phase 6 Task 3: the provider request's own inputs ------------------------------------------
+
+  /**
+   * The ADVERTISED set with real JSON Schemas -- what an adapter puts in the request's `tools` array.
+   *
+   * ONLY LOADED DEFERRED TOOLS, deliberately. WS-09 §8.2's "load != permission" runs the other way
+   * too: advertising a schema for a deferred tool this session has not loaded invites the model to
+   * call a name the engine's own load-first check (`isDeferredAndUnloaded`) will refuse before
+   * permission evaluation even starts -- a wasted round trip and a confusing refusal, every time.
+   *
+   * `advertisedName` is the name the MODEL sees (the alias table's own resolution), never the
+   * canonical one -- a schema keyed on a name the model was not shown is a tool it cannot call.
+   */
+  const providerToolSpecs = (): ProviderToolSpec[] => {
+    const specs: ProviderToolSpec[] = [];
+    for (const descriptor of advertisedPartition.eager) {
+      specs.push({ name: descriptor.advertisedName, description: descriptor.description, inputSchema: descriptor.inputSchema as Record<string, unknown> });
+    }
+    for (const descriptor of advertisedPartition.deferred) {
+      if (!loadedToolSet.isLoaded(descriptor.canonicalName)) continue;
+      specs.push({ name: descriptor.advertisedName, description: descriptor.description, inputSchema: descriptor.inputSchema as Record<string, unknown> });
+    }
+    return specs;
+  };
+
+  /**
+   * P1 carry: the per-message input byte cap, enforced BEFORE the request leaves the engine.
+   *
+   * A TYPED ERROR, never a silent truncation (see `DEFAULT_MAX_PROVIDER_MESSAGE_BYTES`). It is a
+   * `ProviderTurnError` so it lands on R6-F's result shape -- a caller sees "the provider request was
+   * refused", which is what happened, rather than a generic execution error.
+   *
+   * Measured on the SERIALIZED message, because that is what actually goes on the wire: a message
+   * whose `content` is a 4 MiB base64 image block is over the cap however short its text is.
+   */
+  const assertMessagesWithinCap = (msgs: readonly ProviderMessage[]): void => {
+    const cap = maxProviderMessageBytes ?? DEFAULT_MAX_PROVIDER_MESSAGE_BYTES;
+    for (let i = 0; i < msgs.length; i++) {
+      const message = msgs[i]!;
+      const bytes = Buffer.byteLength(typeof message.content === "string" ? message.content : JSON.stringify(message.content), "utf8");
+      if (bytes > cap) {
+        // The message's own CONTENT is never quoted here -- an error message is a log line and a
+        // frame, and this one is about a message that may hold anything.
+        throw new ProviderTurnError(`provider input message ${i} (role "${message.role}") is ${bytes} bytes, over the ${cap}-byte per-message cap; it was NOT truncated`);
+      }
+    }
+  };
+
+  /**
+   * R6-5 / R6-G: the sink one GENERATION streams into, or `undefined` for an auxiliary call.
+   *
+   * `undefined` is the point for auxiliary generations. Capture (F) found the pinned runtime issuing
+   * three POSTs for a two-turn conversation and forwarding stream events for only two of them -- the
+   * first POST is an auxiliary call whose events never reach the host. A Winter emitter that streamed
+   * every provider call would emit frames the pinned runtime suppresses, so the compaction
+   * summariser, the classifier, the advisor and `countTokens` are all built WITHOUT a sink rather
+   * than with one that is filtered later.
+   *
+   * `ttft_ms` rides the FIRST `stream_event` of each forwarded generation (capture (F): exactly 2
+   * frames carried it, one per forwarded turn, on that turn's `message_start`), so the flag is
+   * per-sink and a new sink is built per generation.
+   */
+  const buildStreamSink = (): ProviderStreamSink => {
+    const startedAt = Date.now();
+    let firstEventSent = false;
+    const write = (message: SdkMessage): void => {
+      try {
+        output.write({ type: "data", message });
+      } catch {
+        // A sink must never break a generation: it is an observation channel, and a failed write of
+        // an observation is not a failed turn.
+      }
+    };
+    return {
+      onStreamEvent(event) {
+        // GATED: `stream_event` exists only under `includePartialMessages` (the pin's own
+        // `Options.includePartialMessages`, absent/falsy by default). Everything else on this sink is
+        // ungated -- none of those frames carries a gating option on the pin either.
+        if (config.includePartialMessages !== true) return;
+        const ttft = firstEventSent ? {} : { ttft_ms: Date.now() - startedAt };
+        firstEventSent = true;
+        write({
+          type: "stream_event",
+          event,
+          // ALWAYS `null` here, and present rather than omitted: the pin types this `string | null`,
+          // not optional. A CHILD engine emits `null` too -- the correlation is stamped at the
+          // PARENT's forwarding boundary (`transformChildFrame`), which is the one place that knows
+          // the spawning tool_use id, exactly as it already works for the `assistant`/`user` frames.
+          parent_tool_use_id: null,
+          uuid: randomUUID(),
+          session_id: config.sessionId,
+          ...ttft,
+        });
+      },
+      onRetry(info) {
+        write({
+          type: "system",
+          subtype: "api_retry",
+          attempt: info.attempt,
+          max_retries: info.maxRetries,
+          retry_delay_ms: info.retryDelayMs,
+          // ABSENT on the seam becomes NULL on the frame: the pin's `error_status: number | null`
+          // describes exactly the connection-error case that has no HTTP response.
+          error_status: info.errorStatus ?? null,
+          error: info.error,
+          uuid: randomUUID(),
+          session_id: config.sessionId,
+        });
+      },
+      onRateLimit(info) {
+        // R6-B: this arrives ONLY for subscription-shaped quota (the payload's own `kind` says so at
+        // the type level). An HTTP 429 reaches `onRetry` above with `error: "rate_limit"`, which is
+        // the pinned 429 path capture (G) measured.
+        write({ type: "rate_limit_event", rate_limit_info: { status: "allowed", ...info.info } as never, uuid: randomUUID(), session_id: config.sessionId });
+      },
+      onAuthStatus(info) {
+        write({
+          type: "auth_status",
+          isAuthenticating: info.isAuthenticating,
+          output: info.output ?? [],
+          ...(info.error !== undefined ? { error: info.error } : {}),
+          uuid: randomUUID(),
+          session_id: config.sessionId,
+        });
+      },
+      onReasoningSummary(text) {
+        // R6-8: a foreign summary NEVER enters `assistant.message.content`. It rides this Winter-only
+        // frame live and the sidecar durably -- the durable half is written by `recordAssistant`'s
+        // `summary` record, from the turn's own `thinking.summary`.
+        write({
+          type: "system",
+          subtype: "reasoning_summary",
+          text,
+          provider: currentProviderIdentity?.providerId ?? "",
+          model: currentProviderIdentity?.modelKey ?? currentModel,
+          uuid: randomUUID(),
+          session_id: config.sessionId,
+        });
+      },
+    };
+  };
+
+  /**
+   * R6-C / R6-I: apply a pending `set_model`.
+   *
+   * THE QUIESCENT BOUNDARY IS THE DEFAULT, and immediacy is the exception. A model swapped
+   * mid-generation would split one logical turn across two models, which is exactly the cross-model
+   * history the continuity package exists to avoid -- so a `set_model` arriving mid-turn is PARKED
+   * and applied before the next envelope's first generation. An INTERRUPT ends the turn, so the
+   * boundary has arrived early and the parked switch applies immediately.
+   *
+   * The RESOLUTION itself is Lane C/T10's (this is the hook point, not the coordinator): the pending
+   * value is carried verbatim, the three-way reset spelling is honoured here because getting it wrong
+   * silently treats the literal string `'default'` as a model id, and the swap is announced on the
+   * Winter-only frame plus the dialect record's `providerHistory`.
+   */
+  /**
+   * R6-3: the continuation annotations an assistant message carries in the IN-MEMORY history.
+   *
+   * `origin` is what the cross-family check on a resume, a fallback or a handoff reads; `nativeState`
+   * is the OPAQUE continuation state, carried here so the very next request can replay it exactly
+   * inside the same continuation domain. Neither is ever serialized into `message.content`, and both
+   * are dropped by the compaction summariser's positive rebuild (asserted in the seam contract test).
+   */
+  const providerAnnotations = (turn: ProviderTurn): { origin?: MessageOrigin; nativeState?: ProviderNativeState } => ({
+    ...(currentProviderIdentity !== undefined
+      ? {
+          origin: {
+            providerId: currentProviderIdentity.providerId,
+            modelKey: currentProviderIdentity.modelKey,
+            family: currentProviderIdentity.family,
+            ...(currentProviderIdentity.continuationDomain !== undefined ? { continuationDomain: currentProviderIdentity.continuationDomain } : {}),
+          },
+        }
+      : {}),
+    ...("nativeState" in turn && turn.nativeState !== undefined ? { nativeState: turn.nativeState } : {}),
+  });
+
+  /** R6-7/R6-8: what rides the SIDECAR for this turn -- the opaque native state and any FOREIGN reasoning summary, neither of which may enter the transcript. */
+  const turnProvenance = (turn: ProviderTurn): { nativeState?: ProviderNativeState; summary?: string } => ({
+    ...("nativeState" in turn && turn.nativeState !== undefined ? { nativeState: turn.nativeState } : {}),
+    ...("thinking" in turn && turn.thinking?.summary !== undefined ? { summary: turn.thinking.summary } : {}),
+  });
+
+  // A hoisted `function`, not a `const` arrow: the pump closure below is written ABOVE this point
+  // in the file and calls it, and a block-scoped const would be a use-before-declaration error even
+  // though the call only ever happens long after this line has run.
+  function applyPendingModelSwitch(reason: "set_model" | "interrupt"): void {
+    if (pendingModelSwitch === undefined) return;
+    const requested = pendingModelSwitch.model;
+    pendingModelSwitch = undefined;
+    // The pin's three-way reset spelling (`sdk.d.ts:4184`): omitted, `null`, or the literal
+    // `'default'` all reset to the session default.
+    const next = requested === undefined || requested === null || requested === "default" ? config.model : requested;
+    if (next === currentModel) return;
+    const from = currentModel;
+    currentModel = next;
+    store?.recordProviderSwitch?.({ from, to: next, reason });
+    output.write({
+      type: "data",
+      message: { type: "system", subtype: "model_switch", reason, from_model: from, to_model: next, provider: currentProviderIdentity?.providerId ?? "", uuid: randomUUID(), session_id: config.sessionId },
+    });
+  }
+
   for await (const userFrame of userFrames) {
     // Set BEFORE any await this turn (including recordUser below) so the entire turn — from the
     // moment its envelope is accepted — is interruptible (WS-04 §5).
@@ -3465,6 +3834,15 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
     const interruptSignal = new Promise<void>((resolve) => {
       interruptResolve = resolve;
     });
+    // Phase 6 Task 3 (R6-6): TRUE cancellation, per turn.
+    //
+    // The interrupt was a Promise the engine RACED -- it stopped waiting, and the provider request
+    // and the in-flight tool ran to completion behind an abandoned await. This controller is what
+    // turns "stop waiting" into "stop working": it reaches `provider.generate` (cancelling
+    // pre-header and mid-stream) and `ToolExecutor` through `ToolExecutionContext.signal`, so an
+    // interrupt also kills the in-flight Bash process group. The race stays -- it is what unwinds the
+    // turn promptly -- and the signal is what stops the work the race walked away from.
+    const turnAbort = new AbortController();
     // Fix wave (I5): an interrupt abandons the in-flight tool call -- including an Agent call that
     // is awaiting a foreground child -- so the abandoned child is stopped with it. Ordered
     // resolve-then-stop so the turn unwinds immediately; `stop()` is fire-and-forget and settles
@@ -3472,8 +3850,15 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
     // child's teardown).
     interruptCurrentTurn.current = () => {
       interruptResolve();
+      // Phase 6 Task 3 (R6-6): aborted BEFORE the children are stopped and after the race is
+      // resolved, so the unwind order is unchanged and the in-flight generation/tool stop as well as
+      // being abandoned. `abort()` is idempotent and never throws.
+      turnAbort.abort();
       abortForegroundChildren();
     };
+    // Phase 6 Task 3 (R6-I): the QUIESCENT BOUNDARY. A `set_model` parked during the previous turn
+    // takes effect here -- before this envelope's first generation -- so a turn never spans two models.
+    applyPendingModelSwitch("set_model");
 
     // Finding 3 (P2 fix-wave, IMPORTANT): result.permission_denials, the array the frozen
     // derived-shapes doc calls "the record to trust ... the array is the ledger" (permission_denied
@@ -3589,14 +3974,35 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
 
       let turn: ProviderTurn;
       try {
+        const outboundMessages = requestMessages(assembled.userContextBlocks);
+        // P1 carry: the per-message cap, enforced BEFORE the request leaves the engine. Throws a
+        // `ProviderTurnError`, so it lands on R6-F's result shape through the catch below.
+        assertMessagesWithinCap(outboundMessages);
+        const toolSpecs = providerToolSpecs();
         const raced = await raceInterrupt(
           provider.generate({
-            messages: requestMessages(assembled.userContextBlocks),
+            messages: outboundMessages,
             // `exactOptionalPropertyTypes`: an empty assembled prompt omits the key entirely rather
             // than sending `system: ""`. The two are equivalent to a provider ("this host supplied no
             // system prompt" -- ProviderRequest's own contract), and omitting keeps every
             // pre-P5 consumer, fixture and recorded trace byte-identical to before this task.
             ...(assembled.system.length > 0 ? { system: assembled.system } : {}),
+            // --- Phase 6 Task 3 (R6-3): the real adapter's inputs ----------------------------------
+            //
+            // Every one is CONDITIONALLY SPREAD, so a session that configures none sends the exact
+            // `{ messages }`/`{ messages, system }` shape every pre-P6 provider double already sees.
+            // An empty advertised set omits `tools` rather than sending `[]`: the two are different
+            // requests to a real provider (the second says "you have no tools", the first says
+            // nothing), and a session with no tools is the shape every P1-P5 fixture uses.
+            ...(toolSpecs.length > 0 ? { tools: toolSpecs } : {}),
+            ...(currentModel !== undefined ? { model: currentModel } : {}),
+            ...(config.effort !== undefined ? { effort: config.effort } : {}),
+            ...(config.thinking !== undefined ? { thinking: config.thinking } : {}),
+            signal: turnAbort.signal,
+            // R6-G: a MAIN-LOOP generation gets a sink. Auxiliary calls (the compaction summariser,
+            // the classifier, the advisor, countTokens) build their own requests elsewhere and get
+            // none -- capture (F) observed the pinned runtime suppressing exactly those events.
+            sink: buildStreamSink(),
           }),
           interruptSignal,
         );
@@ -3614,17 +4020,36 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
         if (turn.usage !== undefined) contextAccountant.record(turn.usage);
       } catch (err) {
         const text = err instanceof Error ? err.message : String(err);
-        finalResult = { type: "result", subtype: "error_during_execution", is_error: true, result: text };
+        // Phase 6 Task 3 (R6-F, capture (I)): a PROVIDER failure lands on `subtype: "success"` with
+        // `is_error: true`, `terminal_reason: "api_error"` and `api_error_status: <status | null>` --
+        // the pinned shape, which has no provider-specific result subtype at all
+        // (`SDKResultError`'s union is four members, none of them provider-shaped). Any OTHER throw
+        // stays `error_during_execution`, byte-identical to before this task.
+        finalResult = isProviderTurnError(err)
+          ? { type: "result", subtype: "success", is_error: true, result: text, terminal_reason: "api_error", api_error_status: err.status ?? null }
+          : { type: "result", subtype: "error_during_execution", is_error: true, result: text };
         break roundLoop;
       }
 
       if (turn.kind === "text") {
+        // Phase 6 Task 3 (R6-8): IN-DIALECT thinking blocks lead the content, carrying their REAL
+        // signatures. `turn.thinking.blocks` is Anthropic-family only, by the seam's own contract --
+        // a foreign `summary`/`exposed` never becomes a block here (that is what
+        // `system/reasoning_summary` and the sidecar's `summary` record are for), because the pinned
+        // runtime materialises `signature: ""` on any thinking block that lacks one and replays it
+        // verbatim, so a foreign summary written here would ride a fabricated signature (capture (F)).
+        const thinkingBlocks = ("thinking" in turn ? turn.thinking?.blocks : undefined) ?? [];
+        const assistantBlocks: ContentBlock[] = [...thinkingBlocks, { type: "text", text: turn.text }];
         // Sign-off 5 (whole-branch review): this write intentionally precedes its record-await —
         // the terminal result below is the sole durability barrier for this turn; P6 (partial
         // streaming) must revisit this ordering once intermediate frames become resumable state.
-        output.write({ type: "data", message: { type: "assistant", message: { content: [{ type: "text", text: turn.text }] } } });
-        messages.push({ role: "assistant", content: turn.text });
-        await recordAssistant([{ type: "text", text: turn.text }]);
+        output.write({ type: "data", message: { type: "assistant", message: { content: assistantBlocks } } });
+        // The in-memory history keeps the bare STRING when there is nothing but text -- that is the
+        // shape `rebuildProviderMessages` collapses a single-text-block entry back to, and changing
+        // it would make a resumed session's history differ from a continuous one's (resume.test.ts's
+        // own continuous-vs-split fidelity test).
+        messages.push({ role: "assistant", content: thinkingBlocks.length === 0 ? turn.text : assistantBlocks, ...providerAnnotations(turn) });
+        await recordAssistant(assistantBlocks, turnProvenance(turn));
         finalResult = { type: "result", subtype: "success", is_error: false, result: turn.text };
         break roundLoop;
       }
@@ -3664,12 +4089,22 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
         break roundLoop;
       }
 
-      const toolUseBlocks: ContentBlock[] = turn.calls.map((c) => ({ type: "tool_use", id: c.id, name: c.name, input: c.input }));
+      // Phase 6 Task 3 (R6-3): thinking blocks lead, then the turn's own TEXT, then the calls.
+      //
+      // `turn.text` is the field R6-3 adds for exactly this: a real model returns text AND calls in
+      // one turn, and before it existed that text had nowhere to go and was silently discarded --
+      // losing a whole assistant utterance from the transcript with nothing failing anywhere. It
+      // persists as a LEADING text block, which is the order the model produced it in.
+      const toolUseBlocks: ContentBlock[] = [
+        ...(("thinking" in turn ? turn.thinking?.blocks : undefined) ?? []),
+        ...(turn.text !== undefined && turn.text.length > 0 ? [{ type: "text" as const, text: turn.text }] : []),
+        ...turn.calls.map((c) => ({ type: "tool_use" as const, id: c.id, name: c.name, input: c.input })),
+      ];
       // Sign-off 5 (whole-branch review): this write intentionally precedes its record-await — the
       // terminal result is the sole durability barrier; P6 (partial streaming) must revisit this.
       output.write({ type: "data", message: { type: "assistant", message: { content: toolUseBlocks } } });
-      messages.push({ role: "assistant", content: toolUseBlocks });
-      await recordAssistant(toolUseBlocks);
+      messages.push({ role: "assistant", content: toolUseBlocks, ...providerAnnotations(turn) });
+      await recordAssistant(toolUseBlocks, turnProvenance(turn));
 
       const resultBlocks: ContentBlock[] = [];
       // Set (alongside `finalResult`) exactly when a call in THIS round throws — kept as its own
@@ -4101,7 +4536,9 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
             }
           }
 
-          const raced = await raceInterrupt(tools.execute(executedCall), interruptSignal);
+          // R6-6: the SAME per-turn signal `provider.generate` receives. The race still unwinds the
+          // turn promptly; the signal is what stops the work the race walked away from.
+          const raced = await raceInterrupt(tools.execute(executedCall, { signal: turnAbort.signal }), interruptSignal);
           if (raced.kind === "interrupted") {
             interrupted = true;
             break;

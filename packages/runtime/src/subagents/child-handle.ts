@@ -125,6 +125,35 @@ export interface ChildInheritance {
   outputStyle?: string;
   messages?: ProviderMessage[]; // fork only
   sessionRoot: string;
+  /**
+   * Phase 6 Task 3 (R6-17): the PARENT's RESOLVED provider identity.
+   *
+   * `model` above is the child's own bare string (a definition's override, or the parent's). This is
+   * what that string resolves AGAINST: `AgentDefinition.model` goes through the same selection path
+   * as the session's, against the PARENT's provider unless the id is itself qualified. Without this
+   * field a child with a bare model id had no provider to resolve against at all and would either
+   * pick the host's default or fail -- neither of which is "the parent's provider".
+   *
+   * It is also what makes a child's own provider-state records identify themselves: a child writes
+   * its own sidecar beside its own transcript, and `provider`/`model`/`family` on those records come
+   * from here.
+   *
+   * Absent when the parent has not resolved one (every pre-P6 session and every test double), which
+   * reads as "no provider identity to inherit" -- never a fabricated one.
+   */
+  provider?: { providerId: string; modelKey: string; family: string; continuationDomain?: string };
+  /**
+   * R6-17 / P4 carry: the parent's EFFECTIVE reasoning configuration, from real session concepts.
+   *
+   * `effort` above is a `string` and its base value was the literal `"inherit"` -- an honest
+   * placeholder written when `RuntimeConfig` carried no session-level effort concept at all. It does
+   * now (`config.effort`/`config.thinking`, T2's option mirrors), so these two fields carry the real
+   * resolved values a definition's own override is layered on top of. Kept SEPARATE from `effort`/
+   * `thinking` above rather than replacing them: those are the REQUESTED values (a definition's, or
+   * the placeholder), and WS-10 §3.4's recorded-resolution fields want both halves.
+   */
+  effectiveEffort?: "low" | "medium" | "high" | "xhigh" | "max" | number;
+  effectiveThinking?: { type: "disabled" } | { type: "enabled"; budgetTokens?: number; display?: "summarized" | "omitted" } | { type: "adaptive"; display?: "summarized" | "omitted" };
 }
 
 // engine.ts's own spawn seam: Lane C supplies the implementation via a registered factory (below);
@@ -352,6 +381,20 @@ export function transformChildFrame(
       ...frame,
       message: { ...message, message: { ...inner, content: filtered }, parent_tool_use_id: correlation.parentToolUseId },
     } as WinterFrame;
+  }
+
+  // Phase 6 Task 3 (R6-5): a child's LIVE TOKEN STREAM.
+  //
+  // Two things this frame needs that the catch-all below cannot give it. (1) `parent_tool_use_id` IS
+  // a declared field on `stream_event` (derived-shapes-p6.md item (a)), so an uncorrelated child
+  // stream event reaches a host looking exactly like the main thread's own -- the same
+  // impersonation the init carve-out above exists to prevent. (2) `forwardSubagentText` gates it:
+  // the deltas inside are the child's text and thinking, which WS-10 §4 forwards only when that
+  // option is on. Forwarding them here while the completed `assistant` frame above filters them out
+  // would let a child's prose reach the parent stream in delta form past its own gate.
+  if (message["type"] === "stream_event") {
+    if (!forwardSubagentText) return null;
+    return { ...frame, message: { ...message, parent_tool_use_id: correlation.parentToolUseId } } as WinterFrame;
   }
 
   if (message["type"] === "user") {

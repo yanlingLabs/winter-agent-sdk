@@ -578,3 +578,42 @@ describe("Bash executor (real sandboxed spawn)", () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------------------------
+// Phase 6 Task 3 (R6-6, P4 carry): `ctx.signal` kills the in-flight process GROUP.
+//
+// `runCommand` already had every piece of this -- `detached: true` makes the child its own group
+// leader and an abort triggers the negative-pid SIGKILL that reaps sandbox-exec, bash and every
+// forked grandchild. What was missing was the CHANNEL: nothing upstream had an `AbortSignal` to give
+// it, so an interrupted turn abandoned the await while the command ran to completion. These two
+// fixtures prove the channel end to end -- the option is threaded, and a real spawned process is
+// actually dead afterwards.
+// ---------------------------------------------------------------------------------------------
+describe("R6-6: ctx.signal reaches the spawn", () => {
+  test("buildRunCommandOptions threads ctx.signal, and omits the key when there is none", () => {
+    const controller = new AbortController();
+    expect(buildRunCommandOptions({ command: "true" }, fakeCtx({ signal: controller.signal })).signal).toBe(controller.signal);
+    expect("signal" in buildRunCommandOptions({ command: "true" }, fakeCtx())).toBe(false);
+  });
+
+  t("an abort mid-command kills the process group: the marker file the sleep would have written never appears", async () => {
+    const dir = proj();
+    const marker = join(dir, "survived");
+    const controller = new AbortController();
+    // A grandchild in a subshell, so a signal delivered only to the direct child would leave it
+    // running and the marker would appear anyway -- the negative-pid group kill is what this asserts.
+    const promise = bash()({ command: `( sleep 5; echo alive > ${JSON.stringify(marker)} ) & wait`, timeout: 30000 }, fakeCtx({ cwd: dir, signal: controller.signal }));
+    try {
+      await new Promise((r) => setTimeout(r, 300));
+      controller.abort();
+      const result = await promise;
+      expect(String(result.output)).toContain("aborted");
+    } finally {
+      // Belt and braces: whatever happened above, nothing of this test's own is left running.
+      controller.abort();
+    }
+    // Well past the sleep the marker would have been written after.
+    await new Promise((r) => setTimeout(r, 800));
+    expect(existsSync(marker)).toBe(false);
+  }, 15000);
+});

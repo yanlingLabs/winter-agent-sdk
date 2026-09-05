@@ -170,6 +170,16 @@ function buildRunCommandOptions(
   /** Phase 5 fix wave, I1: the resolved `~/.winter` root, distinct from the OS home above. */
   winterHome?: string;
   dangerouslyDisableSandbox?: boolean;
+  /**
+   * Phase 6 Task 3 (R6-6, P4 carry): the engine's per-turn abort.
+   *
+   * `runCommand` ALREADY had the machinery -- `detached: true` makes the child its own group leader
+   * and an abort triggers the negative-pid SIGKILL that reaps sandbox-exec, bash and every forked
+   * grandchild. What was missing was the CHANNEL: nothing upstream of this function had an
+   * `AbortSignal` to give it, so an interrupted turn abandoned the await and the command kept
+   * running. Threading `ctx.signal` here is the entire fix.
+   */
+  signal?: AbortSignal;
 } {
   return {
     cwd: ctx.cwd,
@@ -180,6 +190,7 @@ function buildRunCommandOptions(
     home: ctx.home,
     ...(ctx.winterHome !== undefined ? { winterHome: ctx.winterHome } : {}),
     ...(input.dangerouslyDisableSandbox !== undefined ? { dangerouslyDisableSandbox: input.dangerouslyDisableSandbox } : {}),
+    ...(ctx.signal !== undefined ? { signal: ctx.signal } : {}),
   };
 }
 
