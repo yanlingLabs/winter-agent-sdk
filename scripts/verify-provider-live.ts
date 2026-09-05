@@ -158,6 +158,10 @@ async function runTarget(target: LiveTarget, catalog: WinterCatalog, adapters: r
       // authoritative -- the registry enforces that; this merely permits a `_MODEL` override that
       // the seed catalog does not carry.
       allowUnlisted: true,
+      // `local` is INFERRED from the URL here, where R6-11 makes it a host DECLARATION. That is
+      // acceptable only because this script IS the host, opt-in, and developer-run: the person who
+      // exported a loopback base url has already declared it by typing it. Nothing in the shipped
+      // runtime infers this bit, and nothing should.
       ...(target.baseUrl !== undefined ? { connection: { baseUrl: target.baseUrl, local: target.baseUrl.includes("127.0.0.1") || target.baseUrl.includes("localhost") } } : {}),
     },
   };

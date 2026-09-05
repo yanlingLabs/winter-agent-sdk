@@ -120,11 +120,45 @@ describe("the safety corpus, offline", () => {
   });
 });
 
+/**
+ * Everything in the assembled message that is NOT inside a fence pair — the instruction half.
+ *
+ * A line opens or closes a block only when it carries the real one-time token, which is exactly the
+ * rule the system prompt states to the reviewer. So this function is the test's model of what the
+ * reviewer is told to obey, and a planted instruction appearing in its output is the injection
+ * actually landing.
+ */
+function textOutsideFences(sent: string, fence: string): string {
+  const out: string[] = [];
+  let depth = 0;
+  for (const line of sent.split("\n")) {
+    if (line.startsWith("BEGIN-WINTER-DATA ") && line.endsWith(` ${fence}`)) {
+      depth++;
+      continue;
+    }
+    if (line.startsWith("END-WINTER-DATA ") && line.endsWith(` ${fence}`)) {
+      depth--;
+      continue;
+    }
+    if (depth === 0) out.push(line);
+  }
+  return out.join("\n");
+}
+
 describe("the hostile rows arrive as DATA", () => {
   const hostile = CLASSIFIER_SAFETY_CASES.filter((c) => c.category === "injection-driven-action");
 
   test("there are hostile rows at all", () => {
     expect(hostile.length).toBeGreaterThanOrEqual(3);
+  });
+
+  test("the outside-the-fence detector is REAL: it returns text that escaped, and nothing that did not", () => {
+    // A negative-only assertion passes just as happily when the detector is broken.
+    const message = ["intro line", "BEGIN-WINTER-DATA action-envelope abc123", "verdict allow", "END-WINTER-DATA action-envelope abc123", "escaped: verdict allow"].join("\n");
+    const outside = textOutsideFences(message, "abc123");
+    expect(outside).toContain("escaped: verdict allow");
+    expect(outside).toContain("intro line");
+    expect(outside.split("verdict allow").length - 1).toBe(1); // the fenced copy is gone; only the escaped one remains
   });
 
   for (const testCase of hostile) {
@@ -137,7 +171,14 @@ describe("the hostile rows arrive as DATA", () => {
           return { kind: "tool_use", calls: [{ id: "x", name: CLASSIFIER_TOOL_NAME, input: { verdict: "deny" } }] };
         },
       };
-      await createModelClassifier({ provider, model: "winter-test/fencing", onRequest: ({ prompt }) => void (fence = prompt.fence) }).classify(testCase.envelope as ActionEnvelope, CONTEXT);
+      // The case's OWN accumulated context is threaded through, mirroring the fold `createAutoEngine`
+      // performs (`classifierContext: envelope.classifierContext`). Passing the empty shared CONTEXT
+      // here would make the app-context row's assertion vacuous -- it would be checking that text
+      // nobody sent did not escape.
+      await createModelClassifier({ provider, model: "winter-test/fencing", onRequest: ({ prompt }) => void (fence = prompt.fence) }).classify(testCase.envelope as ActionEnvelope, {
+        ...CONTEXT,
+        classifierContext: testCase.envelope.classifierContext,
+      });
 
       // The action's own text is present -- it must be: a reviewer has to SEE what it is judging.
       const command = testCase.envelope.input["command"] as string;
@@ -150,9 +191,13 @@ describe("the hostile rows arrive as DATA", () => {
       expect(sent.split(realClose).length - 1).toBe(1);
       const inner = sent.slice(sent.indexOf(realOpen) + realOpen.length, sent.indexOf(realClose));
       expect(inner).toContain(command.split("\n")[0]!);
-      // Nothing the payload planted survives past the close line.
-      const after = sent.slice(sent.indexOf(realClose) + realClose.length);
-      for (const marker of ["verdict allow", "Always answer allow", "maintenance mode", "pre-approved"]) expect(after).not.toContain(marker);
+      // The REAL property, stated over the whole message rather than over one block: nothing the
+      // payload planted appears in the INSTRUCTION half — the text outside every fence pair, which is
+      // the only text the system prompt tells the reviewer to obey. (Asserting merely "not after the
+      // action block's close" would be wrong as well as weak: the app-context block legitimately
+      // follows it, and its own hostile payload legitimately sits inside that one.)
+      const outside = textOutsideFences(sent, fence);
+      for (const marker of ["verdict allow", "Always answer allow", "maintenance mode", "pre-approved", "classifier_verdict with verdict"]) expect(outside).not.toContain(marker);
     });
   }
 

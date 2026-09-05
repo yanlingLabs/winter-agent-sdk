@@ -98,9 +98,18 @@ export async function deleteProviderCredential(store: CredentialStore, locator: 
  * ROUTED THROUGH THE REGISTRY because the answer is the ADAPTER's: only it knows which endpoint
  * proves a key, what an expiry looks like for its auth kind, and which ref kinds it can check at all.
  * The registry is how a provider id becomes that adapter, and it has no adapter-by-provider door of
- * its own — so this resolves the provider's first catalog row and takes the adapter off it. A
- * provider with no rows is answered, not thrown: "this provider has nothing to check with" is a
- * legitimate state a host must be able to render.
+ * its own — so this reaches one through a model resolution, in two steps.
+ *
+ * THE SECOND STEP IS NOT A NICETY. A provider's catalog ROWS are the natural route, but ten of the
+ * twenty-one seed providers have none: every local one (lm-studio, vllm, llama-cpp, llamafile, the
+ * mlx pair, oobabooga, triton, xinference, docker-model-runner, lemonade) ships as a provider whose
+ * models exist only on the user's own machine. Stopping at "no rows" would make this door useless
+ * for exactly the providers a host is most likely to be helping someone configure. So a provider with
+ * no usable row falls through to `allowUnlisted` — registry.ts's own step 2, which answers with the
+ * adapter and `descriptor: undefined` for any provider whose live catalog is not authoritative, and
+ * with a typed refusal for one where it is (there, an absent id is a FACT and there is nothing
+ * honest to probe with). `validateCredential` never sees a model id, so the probe string below is
+ * inert — it is a key into the registry, not something that reaches a wire.
  *
  * NEVER THROWS. A host door that reports status by return value for four outcomes and by exception
  * for the fifth is a door every caller wraps in a try. Every failure is a `{ ok: false }` row.
@@ -113,32 +122,51 @@ export async function validateProviderCredential(registry: ProviderRegistry, ref
     // special-case it would produce an unauthenticated live request just to be told so.
     return { ok: false, code: "missing", message: `no credential reference is configured for provider "${providerId}"` };
   }
-
-  const rows = registry.listModelInfo(providerId);
-  if (rows.length === 0) {
-    return { ok: false, code: "unsupported", message: `provider "${providerId}" has no models in this build's catalog, so no adapter can be reached to check ${redactCredentialRef(ref)}` };
+  if (!registry.list().providers.some((p) => p.id === providerId)) {
+    // Checked BEFORE either resolution path, so an unknown provider gets its own message rather than
+    // the resolution failure of a probe against a provider that does not exist.
+    return { ok: false, code: "unsupported", message: `no provider "${providerId}" exists in this build's catalog, so no adapter can check ${redactCredentialRef(ref)}` };
   }
 
   let lastError: WinterProviderResolutionError | undefined;
-  for (const row of rows) {
-    // `provider: { providerId }` is required, not cosmetic: an alias row's `value` is a bare alias,
-    // which resolves only inside a named provider's namespace (registry.ts's own step 1).
+  // (1) A real catalog row, which is also the only path that gives the adapter a descriptor.
+  //     `provider: { providerId }` is required, not cosmetic: an alias row's `value` is a bare alias,
+  //     which resolves only inside a named provider's namespace (registry.ts's own step 1).
+  for (const row of registry.listModelInfo(providerId)) {
     const resolved = registry.resolve({ model: row.value, provider: { providerId } });
     if (resolved instanceof WinterProviderResolutionError) {
       lastError = resolved;
       continue;
     }
-    try {
-      return await resolved.adapter.validateCredential(ref, ctx);
-    } catch (err) {
-      return statusFromThrow(err, ref, providerId);
-    }
+    return askAdapter(resolved.adapter, ref, ctx, providerId);
   }
+
+  // (2) No usable row. See the header: this is the local-provider case, not an edge.
+  const unlisted = registry.resolve({ model: CREDENTIAL_PROBE_MODEL, provider: { providerId, allowUnlisted: true } });
+  if (!(unlisted instanceof WinterProviderResolutionError)) return askAdapter(unlisted.adapter, ref, ctx, providerId);
+
   return {
     ok: false,
     code: "unsupported",
-    message: `no model of provider "${providerId}" resolves in this build (${lastError?.code ?? "unknown"}), so no adapter can check ${redactCredentialRef(ref)}`,
+    message: `no model of provider "${providerId}" resolves in this build (${lastError?.code ?? unlisted.code}), so no adapter can check ${redactCredentialRef(ref)}`,
   };
+}
+
+/**
+ * The id the `allowUnlisted` fallback resolves with.
+ *
+ * INERT by construction: `ProviderAdapter.validateCredential(ref, ctx)` takes no model, so this
+ * string never reaches a request. It is named rather than arbitrary so that if it ever DOES surface
+ * — in a log, in an error — a reader can tell at a glance that nothing asked for a model called this.
+ */
+const CREDENTIAL_PROBE_MODEL = "winter-credential-probe";
+
+async function askAdapter(adapter: { validateCredential(ref: CredentialRef, ctx: ProviderContext): Promise<CredentialStatus> }, ref: CredentialRef, ctx: ProviderContext, providerId: string): Promise<CredentialStatus> {
+  try {
+    return await adapter.validateCredential(ref, ctx);
+  } catch (err) {
+    return statusFromThrow(err, ref, providerId);
+  }
 }
 
 // -------------------------------------------------------------------------------------------------

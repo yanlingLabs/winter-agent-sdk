@@ -202,7 +202,11 @@ describe("MATERIAL IS REDACTED IN EVERY THROWN ERROR", () => {
 // validateProviderCredential
 // -------------------------------------------------------------------------------------------------
 
-function catalog(models: Array<{ key: string; providerId: string; upstreamId: string; aliases?: string[] }>, providerId = "fake"): WinterCatalog {
+function catalog(
+  models: Array<{ key: string; providerId: string; upstreamId: string; aliases?: string[] }>,
+  providerId = "fake",
+  liveCatalogAuthority: WinterProviderDescriptor["liveCatalogAuthority"] = "partial",
+): WinterCatalog {
   const provider: WinterProviderDescriptor = {
     id: providerId,
     displayName: "Fake",
@@ -210,7 +214,7 @@ function catalog(models: Array<{ key: string; providerId: string; upstreamId: st
     authKinds: ["api-key"],
     defaultEndpoints: { chat: "https://fake.invalid/v1/chat/completions" },
     modelDiscovery: "openai-models",
-    liveCatalogAuthority: "partial",
+    liveCatalogAuthority,
     adapterId: "winter.fake",
     family: "openai",
     upstream: { project: "winter", commit: "", sourcePaths: [] },
@@ -304,11 +308,49 @@ describe("validateProviderCredential", () => {
     expect(asked).toBe(0);
   });
 
-  test("a provider with no catalog rows is ANSWERED, never thrown", async () => {
+  test("an UNKNOWN provider gets its own message, and no probe is attempted", async () => {
     const registry = createRegistry(catalog([{ key: "fake/m", providerId: "fake", upstreamId: "m" }]));
     registry.register(fakeAdapter(async () => ({ ok: true })));
     const status = await validateProviderCredential(registry, { kind: "env", name: "K" }, ctxFor("nobody"));
-    expect(status).toEqual({ ok: false, code: "unsupported", message: 'provider "nobody" has no models in this build\'s catalog, so no adapter can be reached to check env(K)' });
+    expect(status).toEqual({ ok: false, code: "unsupported", message: 'no provider "nobody" exists in this build\'s catalog, so no adapter can check env(K)' });
+  });
+
+  test("a provider with ZERO catalog rows STILL reaches its adapter -- the local-provider case", async () => {
+    // Ten of the twenty-one seed providers are exactly this: every local one ships with no catalog
+    // rows because its models live on the user's own machine. A door that stopped at "no rows" would
+    // be useless for the providers a host most often helps someone configure.
+    const registry = createRegistry(catalog([], "local-thing"));
+    let asked = 0;
+    registry.register(
+      fakeAdapter(async () => {
+        asked++;
+        return { ok: true, accountId: "local" };
+      }),
+    );
+    expect(await validateProviderCredential(registry, { kind: "env", name: "K" }, ctxFor("local-thing"))).toEqual({ ok: true, accountId: "local" });
+    expect(asked).toBe(1);
+  });
+
+  test("...but NOT where the live catalog is AUTHORITATIVE -- there an absent model is a fact, not a gap", async () => {
+    const registry = createRegistry(catalog([], "strict-thing", "authoritative"));
+    let asked = 0;
+    registry.register(
+      fakeAdapter(async () => {
+        asked++;
+        return { ok: true };
+      }),
+    );
+    const status = await validateProviderCredential(registry, { kind: "env", name: "K" }, ctxFor("strict-thing"));
+    expect(status.ok).toBe(false);
+    expect((status as { code: string }).code).toBe("unsupported");
+    expect(asked).toBe(0);
+  });
+
+  test("a zero-row provider whose adapter is not registered is answered, not thrown", async () => {
+    const registry = createRegistry(catalog([], "local-thing"));
+    const status = await validateProviderCredential(registry, { kind: "env", name: "K" }, ctxFor("local-thing"));
+    expect(status.ok).toBe(false);
+    expect((status as { message: string }).message).toContain("no-adapter");
   });
 
   test("a provider whose adapter is not registered is answered, not thrown", async () => {
