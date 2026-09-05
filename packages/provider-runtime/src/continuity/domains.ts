@@ -1,0 +1,152 @@
+// Phase 6 Lane C: continuation-domain and reasoning-evidence FACTS.
+//
+// THE ONE RULE THIS FILE EXISTS TO ENFORCE (WS-13 §8.2, continuity report §2.5): a continuation
+// domain is a first-class fact, never inferred. Two endpoints that both speak `/v1/responses` do NOT
+// share state -- DeepSeek's Responses endpoint accepts `reasoning.summary` without generating one and
+// has neither `include` nor `previous_response_id` -- and the SAME provider across models is not
+// automatically one domain either (Anthropic documents thinking blocks as tied to the producing
+// model). So "OpenAI-compatible", URL shape, provider-id equality and family equality are all
+// FORBIDDEN as the capability test, and none of them appears below.
+//
+// WHERE THE DOMAIN ID COMES FROM, and why nothing here recomputes it. `registry.ts` derives a
+// model's domain id from its descriptor's own `reasoning.continuationDomain` evidence (falling back
+// to the model key, which makes an uncertified model its own single-member domain), and the runtime
+// STAMPS that id onto every `origin` and every `nativeState` it produces. A second derivation here
+// that differed by one rule would put the renderer and the warning matrix into direct contradiction
+// -- "replayed exactly" AND "warned lossy" for the same transfer -- and, per Task 3's own lesson 8,
+// it would fail on the LIVE path while resumed sessions kept working. So: one derivation, in the
+// registry, read through `resolve()`; this file only ever COMPARES stamped ids.
+
+import type { WinterModelDescriptor } from "@yanlinglabs/winter-provider-catalog";
+import { WinterProviderResolutionError, type ProviderRegistry } from "../registry.ts";
+import type { MessageOrigin } from "../types.ts";
+
+/** What a readable-reasoning capability can be. Mirrors `ProviderAdapter.capabilities().readableState` and the descriptor's own evidence. */
+export type ReadableState = "none" | "summary" | "full-exposed";
+
+/**
+ * One side of a transfer: who produced (or will consume) a message, and what its reasoning transport
+ * can do. Built from a stamped `MessageOrigin` plus whatever the catalog knows about that model.
+ */
+export interface ContinuityEndpoint {
+  providerId: string;
+  modelKey: string;
+  family: string;
+  /** The STAMPED continuation-domain id. Absent means "this model's native state is not documented to be replayable anywhere" -- never "any domain". */
+  continuationDomain?: string;
+  readableState: ReadableState;
+  /** Whether this model documents a way to ASK for a readable summary (§9.1's proactive-summary policy). */
+  summaryRequest?: { field: string; values: string[] };
+}
+
+/** The subset of an endpoint the domain test reads. Deliberately tiny: a `nativeState` and a render target are both valid arguments. */
+export interface DomainFacts {
+  continuationDomain?: string;
+}
+
+/**
+ * Do these two sides share a continuation domain?
+ *
+ * TRUE requires BOTH sides to carry a stamped id AND the ids to be equal. Every other shape is false,
+ * including the one that looks safest: two sides that both have NO domain id are NOT the same domain,
+ * because absence means "undocumented", and two undocumented transports are not thereby the same
+ * transport. Reading absence as a wildcard is how an OpenAI reasoning item would be replayed into
+ * Anthropic on a session where neither model happened to carry evidence.
+ *
+ * There is deliberately no `providerId`/`family` argument. Adding one would make it possible to write
+ * the forbidden test.
+ */
+export function sameDomain(a: DomainFacts | undefined, b: DomainFacts | undefined): boolean {
+  const left = a?.continuationDomain;
+  const right = b?.continuationDomain;
+  if (left === undefined || right === undefined) return false;
+  return left === right;
+}
+
+/** Whether two sides belong to the same wire family. NEVER a substitute for `sameDomain` -- two Claude models are one family and (absent evidence) two domains. */
+export function sameFamily(a: { family: string } | undefined, b: { family: string } | undefined): boolean {
+  if (a === undefined || b === undefined) return false;
+  return a.family === b.family;
+}
+
+/** The descriptor's readable-reasoning evidence, or `"none"` when it declares none. Reading a bare `supported: true` as "has a summary" would be exactly the timeless boolean WS-13 §4 forbids. */
+export function readableStateOf(descriptor: WinterModelDescriptor | undefined): ReadableState {
+  return descriptor?.reasoning?.readableState?.value ?? "none";
+}
+
+/** The provider's own documented summary-request field and its accepted values (Anthropic `display`, OpenAI `reasoning.summary`, Gemini `includeThoughts`). */
+export function summaryRequestOf(descriptor: WinterModelDescriptor | undefined): { field: string; values: string[] } | undefined {
+  return descriptor?.reasoning?.summaryRequest?.value;
+}
+
+/**
+ * §9.1's proactive-summary policy: ask for a summary from session start whenever the model documents
+ * HOW to ask.
+ *
+ * THE TEST IS `summaryRequest`, NOT `readableState`, and the difference is a live provider rather
+ * than a nicety: DeepSeek's readable state is `full-exposed` (it returns `reasoning_content`) while
+ * its Responses compatibility does not generate REQUESTED summaries at all -- so a policy keyed on
+ * readable state asks DeepSeek for something it will never produce, on every request of the session.
+ * A model with no `summaryRequest` evidence is one Winter does not know how to ask, and asking anyway
+ * is the silent assumption §9.1 closes with ("do not silently assume summaries are free or
+ * universally available").
+ */
+export function shouldRequestSummary(descriptor: WinterModelDescriptor | undefined): boolean {
+  return summaryRequestOf(descriptor) !== undefined;
+}
+
+/**
+ * Turns a stamped `MessageOrigin` into the full endpoint facts, through the REGISTRY.
+ *
+ * The registry is the only capability authority (R6-12: Lane C reads capability facts through T2's
+ * registry). `resolve()` returns an ERROR OBJECT rather than throwing, and the fallback for one is
+ * the stamped origin itself: a message produced by a model that has since left the catalog still
+ * knows its own provider, model and domain, and degrading it to "unknown" would drop a valid native
+ * replay because a catalog row was renamed.
+ *
+ * Cached per `modelKey` for the lifetime of the returned function: one render pass asks about the
+ * same handful of models once per message, and `resolve` walks the catalog indexes each time.
+ */
+export function createEndpointResolver(registry: ProviderRegistry): (origin: MessageOrigin) => ContinuityEndpoint {
+  const cache = new Map<string, ContinuityEndpoint>();
+  return (origin: MessageOrigin): ContinuityEndpoint => {
+    const cached = cache.get(origin.modelKey);
+    if (cached !== undefined) return cached;
+    const facts = endpointFromRegistry(registry, origin);
+    cache.set(origin.modelKey, facts);
+    return facts;
+  };
+}
+
+function endpointFromRegistry(registry: ProviderRegistry, origin: MessageOrigin): ContinuityEndpoint {
+  const resolved = registry.resolve({ model: origin.modelKey, provider: { providerId: origin.providerId } });
+  if (resolved instanceof WinterProviderResolutionError) return endpointFromOrigin(origin);
+  const descriptor = resolved.descriptor;
+  const summaryRequest = summaryRequestOf(descriptor);
+  return {
+    providerId: resolved.providerId,
+    modelKey: resolved.modelKey,
+    family: origin.family,
+    // The registry's OWN id wins over the stamped one when both exist -- a catalog refresh that
+    // certifies a new domain should take effect for messages already in the history, which is the
+    // §9.7 "returning to an earlier provider" case seen from the other side.
+    ...(resolved.continuationDomain !== undefined
+      ? { continuationDomain: resolved.continuationDomain }
+      : origin.continuationDomain !== undefined
+        ? { continuationDomain: origin.continuationDomain }
+        : {}),
+    readableState: readableStateOf(descriptor),
+    ...(summaryRequest !== undefined ? { summaryRequest } : {}),
+  };
+}
+
+/** The registry-free fallback: everything the stamp itself carries, and `readableState: "none"` because absence of evidence is not evidence of a summary. */
+export function endpointFromOrigin(origin: MessageOrigin): ContinuityEndpoint {
+  return {
+    providerId: origin.providerId,
+    modelKey: origin.modelKey,
+    family: typeof origin.family === "string" ? origin.family : String(origin.family),
+    ...(origin.continuationDomain !== undefined ? { continuationDomain: origin.continuationDomain } : {}),
+    readableState: "none",
+  };
+}
