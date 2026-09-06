@@ -16,7 +16,7 @@
 // EVERY TOKEN HERE IS FAKE AND LOOKS IT (`test-token-…`).
 
 import { jsonResponse, startFake, type FakeRoute, type FakeServer, type RecordedRequest, type ScenarioResponder } from "./server.ts";
-import { responsesModelOf } from "./openai-responses.ts";
+import { callPairingRefusal, responsesModelOf } from "./openai-responses.ts";
 
 export const FAKE_ACCOUNT_ID = "acct-test-0001";
 export const FAKE_ACCESS_TOKEN = "test-token-codex-access";
@@ -100,6 +100,12 @@ export async function startCodexFake(opts: CodexFakeOptions): Promise<CodexFakeS
   const needsRefresh = new Set(opts.requireRefreshFor ?? []);
 
   const handler = (req: Request, recorded: RecordedRequest): Response | Promise<Response> => {
+    // The SAME pairing invariant the Responses fake models (Lane A r3 carry): codex speaks Responses
+    // over the ChatGPT backend, so a `function_call_output` that does not follow its `function_call`
+    // is as invalid here as there. Without it this fake would accept the one shape the family's
+    // decoration placement exists to avoid — and be the surface where a regression hides.
+    const pairing = callPairingRefusal(recorded.body);
+    if (pairing !== undefined) return pairing;
     const authorization = req.headers.get("authorization") ?? "";
     bearers.push(authorization.startsWith("Bearer ") ? authorization.slice("Bearer ".length) : authorization);
     const model = responsesModelOf(recorded);

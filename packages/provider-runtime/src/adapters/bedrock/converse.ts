@@ -57,7 +57,8 @@ import type {
   ProviderMessageLike,
   TurnRequest,
 } from "../../types.ts";
-import { applyPrivilegedHeaders, createEndpointPolicy, type EndpointPolicy } from "../../endpoint-policy.ts";
+import { CREDENTIAL_HEADER_NAMES, applyPrivilegedHeaders, createEndpointPolicy, type EndpointPolicy } from "../../endpoint-policy.ts";
+import { THINKING_ENABLED_NEEDS_BUDGET } from "../refusals.ts";
 import { ProviderRequestError, boundedFetch } from "../../http.ts";
 import { ProviderStallError, normalizeHttpError, normalizeThrown } from "../../errors.ts";
 import { createRetryPolicy, withRetry, type RetryPolicyOptions } from "../../retry.ts";
@@ -179,13 +180,21 @@ function controlBase(ctx: ProviderContext, region: string, vendorBaseUrl?: strin
  * transport: the signer owns every `x-amz-*` it emits plus `authorization`, and `host` is computed
  * from the URL and is a forbidden header for `fetch` anyway. A profile supplying one would have it
  * folded into the signed set and then overwritten, signing a value that never rides.
+ *
+ * IT ALSO DROPS THE FAMILY-FOREIGN CREDENTIAL NAMES (fix-wave F-3): a `cookie`,
+ * `proxy-authorization`, `x-api-key`, `api-key` or `x-goog-api-key` in a profile is a
+ * misconfiguration on every family, and this filter is the only one a Bedrock request passes
+ * through -- it runs INSTEAD of `hostHeaders`, not before it, because the signer's own rules are
+ * what shape it. The two lists are kept in step by `CREDENTIAL_HEADER_NAMES`: `x-amz-security-token`
+ * and the two SigV4 date/digest names are already covered by the `x-amz-` prefix above.
  */
 function filterConnectionHeaders(headers: Record<string, string> | undefined): Record<string, string> {
   if (headers === undefined) return {};
   const out: Record<string, string> = {};
   for (const [name, value] of Object.entries(headers)) {
     const lower = name.toLowerCase();
-    if (lower === "authorization" || lower === "host" || lower === "content-length" || lower.startsWith("x-amz-")) continue;
+    if (lower === "host" || lower === "content-length" || lower.startsWith("x-amz-")) continue;
+    if (CREDENTIAL_HEADER_NAMES.includes(lower)) continue;
     out[lower] = value;
   }
   return out;
@@ -233,33 +242,25 @@ export function bedrockErrorCode(headers: Headers, body: string): string | undef
 }
 
 /**
- * Removes EXACT occurrences of this request's own credential material from a provider error body.
+ * Re-exported from `errors.ts`, where this now lives (T2 carry).
  *
- * Belt and braces over the frozen scrubber, and it closes a real gap rather than a theoretical one:
- * `errors.ts` scrubs a body whose contents `scanForSecrets` recognises, and that scanner has NO
- * AWS-credential pattern — an access key id or a secret access key echoed back by an endpoint
- * survives it verbatim into `ProviderError.message`, which is one of the most reliably-logged
- * strings in the system. Matching the session's OWN material exactly is precise (no false positives,
- * unlike a "40 base64-ish characters" heuristic) and is exactly what Global Constraints demand:
- * credential material is redacted everywhere, including thrown error messages.
+ * It was written here because the gap it closes was found here — `scanForSecrets` is pattern-based,
+ * and while it does know `AKIA…`/`ASIA…` access key IDS, no pattern can match a SECRET access key
+ * (forty base64-ish characters) without matching arbitrary prose, so one echoed back by an endpoint
+ * survived verbatim into `ProviderError.message`. But nothing about "the pattern scanner cannot have
+ * a pattern for MY family's shapeless credential" is Bedrock-specific, and the next family to notice
+ * would have written a second copy. The shared normalizer takes a per-request `secrets` list now; this name stays so the
+ * lane's own fixtures and any external caller keep working.
  */
-export function redactCredentialMaterial(text: string, secrets: readonly string[]): string {
-  let out = text;
-  for (const secret of secrets) {
-    // Short values are skipped: a two-character "secret" would rewrite unrelated prose, and no real
-    // AWS credential component is that short.
-    if (secret.length < 8) continue;
-    out = out.split(secret).join("***");
-  }
-  return out;
-}
+export { redactCredentialMaterial } from "../../errors.ts";
 
 /** The five-way taxonomy from the HTTP status (the frozen normalizer's job), with Bedrock's own code layered on. */
 export function normalizeBedrockError(status: number, headers: Headers, body: string, secrets: readonly string[] = []): ProviderError {
   // The STRUCTURED CODE comes off the raw body first: it is never credential material, and reading
-  // it after a redaction pass would risk losing it to a coincidental overlap.
+  // it after a redaction pass would risk losing it to a coincidental overlap. (`normalizeHttpError`
+  // now applies the same rule internally for the code IT parses.)
   const providerCode = bedrockErrorCode(headers, body);
-  const base = normalizeHttpError(status, headers, redactCredentialMaterial(body, secrets));
+  const base = normalizeHttpError(status, headers, body, secrets);
   return providerCode !== undefined ? { ...base, providerCode } : base;
 }
 
@@ -434,7 +435,7 @@ function thinkingFields(thinking: TurnRequest["thinking"], descriptor: WinterMod
     // not ask for. Lane B refuses the identical Anthropic-dialect object for the identical model
     // family, and two adapters answering the same question differently is worse than either answer.
     // The wording is Lane B's, so a caller who moves a session between the two reads one sentence.
-    throw refuse('thinking `{ type: "enabled" }` carries no budgetTokens, which this endpoint requires. Pass `budgetTokens`, or ask for `{ type: "adaptive" }` if the model should decide.');
+    throw refuse(THINKING_ENABLED_NEEDS_BUDGET);
   }
   if (thinking.type === "enabled") return { type: "enabled", budget_tokens: thinking.budgetTokens };
   return { type: "adaptive" };

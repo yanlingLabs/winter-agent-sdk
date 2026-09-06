@@ -263,3 +263,43 @@ describe("normalizeHttpError — the body snippet is scrubbed (Minor 2)", () => 
     expect(err.message).not.toContain("[redacted");
   });
 });
+
+describe("normalizeHttpError — a per-request `secrets` list (T2 carry: the hoist)", () => {
+  test("credential material the pattern scanner CANNOT recognise is redacted by exact match", () => {
+    // Why the exact-match half exists at all: `scanForSecrets` is pattern-based and has no
+    // AWS-credential pattern, so an access key id echoed back by an endpoint survived it verbatim
+    // into `ProviderError.message`. That is not a Bedrock property — it is true of every family
+    // whose credential shape the scanner has no pattern for, which is why the helper now lives here
+    // instead of inside one adapter.
+    // The SECRET ACCESS KEY, not the access key id: `AKIA…`/`ASIA…` ids DO have a pattern
+    // (`validate.ts`'s "AWS access key id"), and the 40-character base64-ish secret half does not —
+    // no pattern could have one without matching arbitrary prose of that length.
+    const secretAccessKey = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY";
+    const body = JSON.stringify({ __type: "UnrecognizedClientException", message: `The request signature we calculated does not match: ${secretAccessKey}` });
+    // WITHOUT the list, the scanner sees nothing key-shaped and the body rides verbatim — the gap,
+    // pinned, so the fix below cannot be mistaken for the scanner having caught it.
+    expect(scanForSecrets(body)).toEqual([]);
+    expect(normalizeHttpError(400, h(), body).message).toContain(secretAccessKey);
+    // WITH it, the exact occurrence goes and the structured code survives.
+    const redacted = normalizeHttpError(400, h(), body, [secretAccessKey]);
+    expect(redacted.message).not.toContain(secretAccessKey);
+    expect(redacted.message).toContain("***");
+    expect(redacted.message).toContain("UnrecognizedClientException");
+  });
+
+  test("a SHORT value never rewrites unrelated prose, and an empty list is exactly the old behaviour", () => {
+    const body = JSON.stringify({ error: { message: "messages: at least one message is required", code: "invalid_request_error" } });
+    // "at" is a substring of the message; no real credential component is that short.
+    expect(normalizeHttpError(400, h(), body, ["at"]).message).toContain("at least one message is required");
+    expect(normalizeHttpError(400, h(), body, []).message).toBe(normalizeHttpError(400, h(), body).message);
+  });
+
+  test("redaction runs BEFORE the snippet is taken, so a secret past the cap cannot survive it", () => {
+    // The same ordering lesson as the pattern scan's: truncate first and a secret straddling the
+    // boundary leaves a disclosing prefix behind.
+    const secret = "ASIAQUITELONGSESSIONTOKENVALUE12345";
+    const body = `${"z".repeat(190)}${secret}`;
+    const err = normalizeHttpError(400, h(), body, [secret]);
+    expect(err.message).not.toContain("ASIAQUITELONG");
+  });
+});

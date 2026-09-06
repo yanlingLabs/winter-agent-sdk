@@ -283,8 +283,10 @@ describe("review round 1 — the three Importants, pinned where they broke", () 
     for (const model of catalog.models) {
       const provider = byId.get(model.providerId)!;
       const protocol = ADAPTER_PROTOCOL[provider.adapterId];
-      expect([provider.id, protocol]).toEqual([provider.id, protocol]);
-      expect(protocol).toBeDefined();
+      // Named in the assertion so a failure says WHICH provider has no protocol. The line that used
+      // to precede this was `expect([id, protocol]).toEqual([id, protocol])` -- a tautology that can
+      // never fail (Lane X r2); the label belongs on the assertion that does the work.
+      expect([provider.id, provider.adapterId, protocol !== undefined]).toEqual([provider.id, provider.adapterId, true]);
       const responsesOnly = model.endpoints.includes("responses") && !model.endpoints.includes("chat");
       if (!responsesOnly) continue;
       expect([model.key, protocol === "openai-responses" || protocol === "azure-openai"]).toEqual([model.key, true]);
@@ -330,7 +332,16 @@ describe("review round 1 — the three Importants, pinned where they broke", () 
     expect(excluded[0]!.reason).toContain("TEXT-TO-SPEECH");
     // Upstream declares NO output modality for any model, so `["text"]` is Winter's inference. It
     // shipped as `upstream-static`/`inferred`, which reads as "upstream said text".
+    //
+    // THE COMMITTED DATA STILL SAYS `upstream-static`, AND THAT IS PINNED ON PURPOSE. The mapper now
+    // stamps `winter-default` (see `pipeline.test.ts`, which asserts it on the mapper's live
+    // output), but the committed upstream LAYER is only rewritten by a NETWORK `provider:sync` --
+    // `--offline` re-merges what is on disk and `provider:catalog` never re-extracts. So the field
+    // carries the old label until that sync runs, and this line is what says so out loud rather than
+    // leaving a reader to assume the change reached the data. When the sync lands, this assertion
+    // fails and names the one value to flip.
     for (const model of catalog.models) {
+      expect([model.key, model.outputModalities.source]).toEqual([model.key, "upstream-static"]);
       expect([model.key, model.outputModalities.confidence]).toEqual([model.key, "unknown"]);
       expect(model.outputModalities.sourceRef).toContain("WINTER DEFAULT");
     }
@@ -362,7 +373,13 @@ describe("review round 1 — the three Importants, pinned where they broke", () 
         "google-generate-content": "thinkingConfig.includeThoughts",
       };
       const protocol = ADAPTER_PROTOCOL[catalog.providers.find((p) => p.id === model.providerId)!.adapterId]!;
-      expect([model.key, request.value.field]).toEqual([model.key, expected[protocol] ?? request.value.field]);
+      // NO `?? request.value.field` FALLBACK (Lane X r2). That spelling made the assertion a
+      // tautology for any family outside the three-key map -- a new summary-capable family would
+      // have joined the catalog with its field unchecked and this gate still green. A family with a
+      // summary-capable row and no entry here is the gate's own gap, so it FAILS and names itself.
+      const expectedField = expected[protocol];
+      expect([model.key, protocol, expectedField !== undefined]).toEqual([model.key, protocol, true]);
+      expect([model.key, request.value.field]).toEqual([model.key, expectedField!]);
       expect(request.value.values.length).toBeGreaterThan(0);
     }
   });

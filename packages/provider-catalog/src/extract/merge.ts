@@ -474,6 +474,31 @@ export function buildUpstreamLayer(input: BuildUpstreamLayerInput): UpstreamLaye
     const transport = str(entry, "reasoningTransport");
     const seen = new Set<string>();
 
+    // FAIL-CLOSED ON THE INDEX CORRELATION (Lane X r2). `rawModels` is the extractor's COMPACTED
+    // array: a refused element is dropped from it and a spread is expanded into it, while the
+    // walker's rejection paths carry the SYNTACTIC element index. Where the two diverge, a
+    // `models[N].unsupportedParams` rejection correlates to the wrong model — a ledger row making a
+    // false claim about a row that never had the field, which is the exact defect class the
+    // `path.includes("models[")` version of this correlation was fixed for.
+    //
+    // They agree today only because no allowlisted provider's `models` array compacts. That is a
+    // property of the current pin, not of the code, and twelve real `models[N] (spread)` rejections
+    // exist upstream — so the guard is on the CONDITION, not on today's data: a file whose module
+    // rejections touch a `models[N]` element at all has its per-model correlation refused wholesale,
+    // with one ledger row saying so. The rows still ship (the field fails open either way); what is
+    // withheld is a per-model claim the indices cannot support.
+    const correlationSafe = !modelIndexCorrelationBroken(input.moduleRejections, registryPath);
+    if (!correlationSafe) {
+      reject(
+        allowed.upstreamId,
+        "provider",
+        "unsupported-shape",
+        `${allowed.upstreamId}.models`,
+        registryPath,
+        "an element of this file's `models` array was itself refused or spread, so the extractor's COMPACTED array and the walker's SYNTACTIC element indices no longer line up. Per-model correlation of field-level rejections is refused for this file rather than reported against whichever row happens to share an index; the model rows ship unchanged, and an unreadable `unsupportedParams` fails open exactly as it does elsewhere.",
+      );
+    }
+
     for (const [modelIndex, raw] of rawModels.entries()) {
       if (!isRecord(raw)) {
         reject(allowed.upstreamId, "model", "unsupported-shape", `${allowed.upstreamId}.models[?]`, registryPath, "a model entry that is not an object literal");
@@ -561,7 +586,7 @@ export function buildUpstreamLayer(input: BuildUpstreamLayerInput): UpstreamLaye
       // evaluates — so an empty list can mean "upstream says none" OR "we could not read it", and
       // the two must not look alike. Every unreadable one gets a ledger row.
       const unsupportedParameters = strArray(raw, "unsupportedParams") ?? [];
-      if (raw["unsupportedParams"] === undefined && rawHasUnreadableUnsupportedParams(input.moduleRejections, registryPath, modelIndex)) {
+      if (correlationSafe && raw["unsupportedParams"] === undefined && rawHasUnreadableUnsupportedParams(input.moduleRejections, registryPath, modelIndex)) {
         reject(allowed.upstreamId, "model", "unresolved-reference", `${allowed.upstreamId}.models[${id}].unsupportedParams`, registryPath, "upstream states unsupported parameters for this model, but as a value the literal extractor refuses (a call expression, or an identifier resolving to one). The row ships with an EMPTY `unsupportedParameters`, which fails OPEN: Winter will not pre-reject a parameter the provider does reject, and the provider's own error is the backstop. Correct it in the overlay with real evidence if the model matters.");
       }
       // A corrected id keeps the upstream spelling as an ALIAS, so both resolve to the corrected wire id.
@@ -591,13 +616,15 @@ export function buildUpstreamLayer(input: BuildUpstreamLayerInput): UpstreamLaye
         ...(maxInput !== undefined ? { maxInputTokens: upstreamEvidence(maxInput, observedAt, ref) } : {}),
         ...(maxOutput !== undefined ? { maxOutputTokens: upstreamEvidence(maxOutput, observedAt, ref) } : {}),
         inputModalities: upstreamEvidence(inputModalities, observedAt, ref),
-        // NOT `upstreamEvidence`. Upstream's `RegistryModel` declares NO output modality at all, so
-        // `["text"]` is Winter's own inference for a chat registry — stamping it `inferred` beside an
-        // `upstream-static` source read as "upstream said text", which is a false claim wearing an
-        // upstream label. `confidence: "unknown"` plus a sourceRef that says so in words is the
-        // honest maximum here: `EvidenceSource` is frozen (src/types.ts) and has no `winter-derived`
-        // member, so the caveat cannot live in the source field. Disclosed in PROVENANCE.md.
-        outputModalities: { value: ["text"], source: "upstream-static", sourceRef: `${ref} — WINTER DEFAULT: upstream declares no output modality for any model; "text" is Winter's inference for a chat registry, NOT an upstream statement`, observedAt, confidence: "unknown" },
+        // NOT `upstreamEvidence`, and no longer `upstream-static` either. Upstream's `RegistryModel`
+        // declares NO output modality at all, so `["text"]` is Winter's own inference for a chat
+        // registry — and the label now says that in the SOURCE FIELD rather than only in a sourceRef
+        // sentence. `EvidenceSource` was frozen when this shipped, so the caveat had nowhere
+        // machine-readable to live and a reader filtering for "what upstream said" got a Winter
+        // guess; `winter-default` is the member added for exactly this (Lane X r1 carry). The
+        // sourceRef prose stays, because "why" is not something an enum can carry. Disclosed in
+        // PROVENANCE.md.
+        outputModalities: { value: ["text"], source: "winter-default", sourceRef: `${ref} — WINTER DEFAULT: upstream declares no output modality for any model; "text" is Winter's inference for a chat registry, NOT an upstream statement`, observedAt, confidence: "unknown" },
         // WS-13 §8.1 read fail-closed. Upstream states tool calling on SOME rows only, and an
         // unstated capability is unknown — so an absent flag becomes `none` at `confidence:
         // "unknown"`, never `native`. `native` is what makes a model agent-eligible; inferring it
@@ -662,6 +689,24 @@ export function buildUpstreamLayer(input: BuildUpstreamLayerInput): UpstreamLaye
 function rawHasUnreadableUnsupportedParams(rejections: readonly Rejection[], sourcePath: string, modelIndex: number): boolean {
   const suffix = `models[${modelIndex}].unsupportedParams`;
   return rejections.some((r) => r.sourcePath === sourcePath && r.path.endsWith(suffix));
+}
+
+/**
+ * Whether this file's model indices can be correlated at all (Lane X r2).
+ *
+ * The index the caller has is a position in the extractor's COMPACTED `models` array; the index in a
+ * rejection path is the SYNTACTIC element position. A refused element is dropped from the first and
+ * still counted in the second, and a spread contributes one syntactic index and any number of
+ * compacted ones — so a single `models[N]`-level rejection in a file is enough to make every
+ * correlation after it off by an unknown amount.
+ *
+ * The match is on ELEMENT-level paths only (`…models[7]`, `…models[7] (spread)`), not on field-level
+ * ones (`…models[7].unsupportedParams`): a refused FIELD leaves its element in place and shifts
+ * nothing. That distinction is the whole reason this can stay narrow instead of disabling the ledger
+ * row for every file that has any rejection at all.
+ */
+function modelIndexCorrelationBroken(rejections: readonly Rejection[], sourcePath: string): boolean {
+  return rejections.some((r) => r.sourcePath === sourcePath && /\.models\[\d+\](?: \(spread\))?$/.test(r.path));
 }
 
 function safeUrl(value: string): URL | undefined {

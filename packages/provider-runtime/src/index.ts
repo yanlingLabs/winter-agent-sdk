@@ -29,6 +29,7 @@ export {
   ProviderStallError,
   isProviderError,
   normalizeHttpError,
+  redactCredentialMaterial,
   normalizeThrown,
   parseProviderErrorCode,
   parseRetryAfterMs,

@@ -238,6 +238,34 @@ describe("createRegistry — allowUnlisted (R6-F)", () => {
     expect(failure(fullRegistry().resolve({ model: "openai/not-a-real-model", provider: { allowUnlisted: true } })).code).toBe("unknown-model");
   });
 
+  test("M-5 / ruling F-4: the `anthropic` row is AUTHORITATIVE, so `allowUnlisted` buys it nothing", () => {
+    // The whole-branch review's M-5: the shipped row said `liveCatalogAuthority: "unknown"`, which
+    // is the PERMISSIVE direction — it opened the R6-F pass-through for a provider whose live Models
+    // endpoint enumerates every model the credential can use, and the resolution-failure message
+    // advertised that door in the `p6-resolution-failure` golden. The fix is DATA, not code: the
+    // overlay row now carries the same evidence class the openai and google rows do.
+    //
+    // Asserted on the SHIPPED catalog rather than on a hand-built descriptor, because the claim is
+    // about the row that actually ships — a fixture provider would have re-stated the rule against
+    // itself and stayed green through the re-stamp either way.
+    const registry = fullRegistry();
+    expect(loadCatalog().providers.find((p) => p.id === "anthropic")?.liveCatalogAuthority).toBe("authoritative");
+    for (const provider of [{ providerId: "anthropic", allowUnlisted: true }, { providerId: "anthropic" }, { allowUnlisted: true }]) {
+      const err = failure(registry.resolve({ model: "anthropic/definitely-not-a-model", provider }));
+      expect([JSON.stringify(provider), err.code]).toEqual([JSON.stringify(provider), "unknown-model"]);
+      // And the message names the door ONLY when it is open — which for this provider it now is not.
+      expect(err.message).toContain("its live catalog is authoritative, so absence is definitive");
+      expect(err.message).not.toContain("allowUnlisted");
+    }
+    // The door is untouched where it belongs: the gateway and the local providers still have it, and
+    // `azure-openai`/`codex-oauth` stay `unknown` on purpose (a user-chosen Azure deployment name is
+    // never catalogued, so `allowUnlisted` is their normal configuration).
+    expect(ok(registry.resolve({ model: "anthropic/claude-opus-5", provider: { providerId: "openrouter", allowUnlisted: true } })).providerId).toBe("openrouter");
+    for (const id of ["azure-openai", "codex-oauth"]) {
+      expect([id, loadCatalog().providers.find((p) => p.id === id)?.liveCatalogAuthority]).toEqual([id, "unknown"]);
+    }
+  });
+
   test("without allowUnlisted, an unlisted local id is still refused", () => {
     expect(failure(fullRegistry().resolve({ model: "ollama-local/qwen3:14b" })).code).toBe("unknown-model");
   });

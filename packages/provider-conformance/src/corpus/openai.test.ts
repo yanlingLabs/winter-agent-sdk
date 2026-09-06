@@ -242,6 +242,70 @@ describe("live wire details the corpus does not ask about", () => {
     });
   });
 
+  test("F-2 / M-9: `enabled` with no effort rides at the row's defaultEffort, or is REFUSED with NOTHING on the wire", async () => {
+    // The family's own answer to "`enabled` without a budget", asserted on the live wire on both
+    // surfaces. There is no budget field here, so `enabled` means reasoning ON at the row's own
+    // `defaultEffort` — and when the row has none, the caller is TOLD.
+    //
+    // The refused half is the one that shipped wrong: the request went out carrying
+    // `include: ["reasoning.encrypted_content"]` and no `reasoning` object at all, so the model did
+    // not think, the caller was told nothing, and the turn succeeded. That is the silent downgrade
+    // WS-13 §8.2 prohibits, and the pin is REQUEST COUNT 0 — a message assertion alone cannot see it.
+    await withResponsesFake(async (fake) => {
+      const withDefault = createResponsesAdapter({ generatedBaseUrl: fake.url, retry: FAST_RETRY, descriptors: descriptorsFor({ efforts: ["low", "medium", "high"], defaultEffort: "medium" }) });
+      await drain(withDefault.streamTurn({ model: SCENARIO.happy, messages: [], thinking: { type: "enabled" } }, testContext({ stallTimeoutMs: STALL_MS })));
+      const body = JSON.parse(fake.requests.at(-1)!.body) as Record<string, unknown>;
+      expect(body["reasoning"]).toEqual({ effort: "medium" });
+      expect(body["include"]).toEqual(["reasoning.encrypted_content"]);
+
+      const before = fake.requests.length;
+      const noDefault = createResponsesAdapter({ generatedBaseUrl: fake.url, retry: FAST_RETRY, descriptors: descriptorsFor({ efforts: ["low", "medium", "high"] }) });
+      for (const thinking of [{ type: "enabled" as const }, { type: "adaptive" as const }]) {
+        const events = await drain(noDefault.streamTurn({ model: SCENARIO.happy, messages: [], thinking }, testContext({ stallTimeoutMs: STALL_MS })));
+        const error = events.find((e) => e.type === "error");
+        expect(error?.type === "error" ? error.error.code : "").toBe("capability");
+        expect(error?.type === "error" ? error.error.message : "").toContain("declares no defaultEffort");
+      }
+      expect(fake.requests).toHaveLength(before);
+    });
+
+    await withChatFake(async (fake) => {
+      const withDefault = createChatCompletionsAdapter({ generatedBaseUrl: fake.url, retry: FAST_RETRY, descriptors: descriptorsFor({ efforts: ["low", "medium", "high"], defaultEffort: "high" }) });
+      await drain(withDefault.streamTurn({ model: SCENARIO.happy, messages: [], thinking: { type: "enabled" } }, testContext({ stallTimeoutMs: STALL_MS })));
+      expect((JSON.parse(fake.requests.at(-1)!.body) as Record<string, unknown>)["reasoning_effort"]).toBe("high");
+
+      const before = fake.requests.length;
+      const noDefault = createChatCompletionsAdapter({ generatedBaseUrl: fake.url, retry: FAST_RETRY, descriptors: descriptorsFor({ efforts: ["low", "medium", "high"] }) });
+      const events = await drain(noDefault.streamTurn({ model: SCENARIO.happy, messages: [], thinking: { type: "enabled" } }, testContext({ stallTimeoutMs: STALL_MS })));
+      expect(events.find((e) => e.type === "error")?.type).toBe("error");
+      expect(fake.requests).toHaveLength(before);
+    });
+  });
+
+  test("F-3: a CREDENTIAL-shaped host header never rides — `cookie` + `x-trace` puts only `x-trace` on the wire", async () => {
+    // This family always stripped `CREDENTIAL_HEADER_NAMES` from the profile before calling
+    // `hostHeaders`; the strip now lives INSIDE `hostHeaders`, so every family gets it and this file
+    // no longer keeps a second copy of the rule. The fixture is what proves the move was lossless.
+    await withResponsesFake(async (fake) => {
+      const adapter = createResponsesAdapter({ generatedBaseUrl: fake.url, retry: FAST_RETRY, descriptors: () => undefined });
+      const headers = { cookie: "session=SMUGGLED-COOKIE", "proxy-authorization": "Basic SMUGGLED-PROXY", "x-goog-api-key": "SMUGGLED-GOOG", "x-trace": "keep" };
+      // On the GENERATED endpoint, where `hostHeaders` passes identity headers through by design.
+      await drain(adapter.streamTurn({ model: SCENARIO.happy, messages: [] }, testContext({ headers, stallTimeoutMs: STALL_MS })));
+      let recorded = fake.requests.at(-1)!;
+      expect(recorded.headers["x-trace"]).toBe("keep");
+      expect(recorded.headers["cookie"]).toBeUndefined();
+      expect(recorded.headers["proxy-authorization"]).toBeUndefined();
+      expect(recorded.headers["x-goog-api-key"]).toBeUndefined();
+      // And on a USER endpoint, where the identity rule also applies.
+      const viaProfile = createResponsesAdapter({ retry: FAST_RETRY, descriptors: () => undefined });
+      await drain(viaProfile.streamTurn({ model: SCENARIO.happy, messages: [] }, testContext({ baseUrl: fake.url, local: true, headers, stallTimeoutMs: STALL_MS })));
+      recorded = fake.requests.at(-1)!;
+      expect(recorded.headers["x-trace"]).toBe("keep");
+      expect(recorded.headers["cookie"]).toBeUndefined();
+      for (const marker of ["SMUGGLED-COOKIE", "SMUGGLED-PROXY", "SMUGGLED-GOOG"]) expect([marker, noRequestContains(fake, marker)]).toEqual([marker, true]);
+    });
+  });
+
   test("a retry observation is yielded BEFORE the request it precedes reaches the fake", async () => {
     // The ordering `pumpEvents` exists for, asserted against the fake's own request log rather than
     // against the adapter's intent: a post-hoc flush would put the event after BOTH requests.
@@ -397,7 +461,7 @@ describe("live wire details the corpus does not ask about", () => {
       expect(events.some((e) => e.type === "done")).toBe(true);
       const input = (JSON.parse(fake.requests.at(-1)!.body) as { input: Array<Record<string, unknown>> }).input;
       const output = input.find((item) => item.type === "function_call_output");
-      expect(output?.output).toBe(`${"[winter:context] "}${marker}\nthe file body`);
+      expect(output?.output).toBe(`${marker}\nthe file body`);
       // Nothing was inserted: the output follows its call directly.
       expect(input[input.indexOf(output!) - 1]!.type).toBe("function_call");
     });
@@ -408,7 +472,7 @@ describe("live wire details the corpus does not ask about", () => {
       expect(events.some((e) => e.type === "done")).toBe(true);
       const messages = (JSON.parse(fake.requests.at(-1)!.body) as { messages: Array<Record<string, unknown>> }).messages;
       const toolIndex = messages.findIndex((m) => m.role === "tool");
-      expect(messages[toolIndex]!.content).toBe(`${"[winter:context] "}${marker}\nthe file body`);
+      expect(messages[toolIndex]!.content).toBe(`${marker}\nthe file body`);
       // ADJACENCY: the tool message answers the assistant `tool_calls` message immediately before it.
       expect(messages[toolIndex - 1]!.role).toBe("assistant");
       expect(Array.isArray(messages[toolIndex - 1]!.tool_calls)).toBe(true);
@@ -428,7 +492,7 @@ describe("live wire details the corpus does not ask about", () => {
           model: SCENARIO.happy,
           messages: [
             { role: "assistant", content: "", tool_calls: [{ id: "call_1", type: "function", function: { name: "Read", arguments: "{}" } }] },
-            { role: "user", content: "[winter:context] a note" },
+            { role: "user", content: "a note" },
             { role: "tool", tool_call_id: "call_1", content: "ok" },
           ],
         }),
@@ -445,7 +509,29 @@ describe("live wire details the corpus does not ask about", () => {
           model: SCENARIO.happy,
           input: [
             { type: "function_call", call_id: "call_1", name: "Read", arguments: "{}" },
-            { type: "message", role: "user", content: [{ type: "input_text", text: "[winter:context] a note" }] },
+            { type: "message", role: "user", content: [{ type: "input_text", text: "a note" }] },
+            { type: "function_call_output", call_id: "call_1", output: "ok" },
+          ],
+        }),
+      });
+      expect(response.status).toBe(400);
+      expect(await response.text()).toContain("must follow the 'function_call' it answers");
+    });
+  });
+
+  test("the CODEX fake refuses the same broken pairing — it speaks Responses too (Lane A r3 carry)", async () => {
+    // Same guard-on-the-guards as the two above. codex is Responses over a different backend, so
+    // the invariant is identical; a fake that accepted an item between a call and its output would
+    // be the one surface where the round-3 regression could return unseen.
+    await withCodexFake(async (fake) => {
+      const response = await fetch(`${fake.url}/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: SCENARIO.happy,
+          input: [
+            { type: "function_call", call_id: "call_1", name: "Read", arguments: "{}" },
+            { type: "message", role: "user", content: [{ type: "input_text", text: "a note" }] },
             { type: "function_call_output", call_id: "call_1", output: "ok" },
           ],
         }),
@@ -506,27 +592,49 @@ describe("live wire details the corpus does not ask about", () => {
     }
   }, 20_000);
 
-  test("a DECORATION reaches the LIVE wire on both surfaces (minor 11 tripwire)", async () => {
+  test("a DECORATION reaches the LIVE wire on both surfaces, VERBATIM — the recorded segment EQUALS Lane C's text (I-3)", async () => {
     // The unit tests pin the mapping; this pins that nothing between the mapper and the socket drops
     // it. Lane C's decorations were inert before this — built, persisted, then silently discarded,
     // with the switch coordinator already reporting the context as carried.
-    const marker = "DECORATION-REACHED-THE-WIRE";
+    //
+    // EQUALS, not "contains once". The round-1 tripwire counted occurrences of the marker, which is
+    // blind to a WRAPPER: this family shipped every decoration behind a `[winter:context] ` prefix
+    // of its own and the count-based pin stayed green for three rounds (whole-branch review I-3).
+    // The recorded text block/segment must be the decoration text and nothing else, which is what
+    // the other three families' pins already assert.
+    //
+    // Lane C's REAL output is used, not a bare marker: the text arrives already delimited and its
+    // §9.6 budget is counted on exactly these bytes, so a layer that re-delimits it is visible here.
+    const marker = '<recovered_reasoning_summary provider="anthropic" model="claude-opus-5">DECORATION-REACHED-THE-WIRE</recovered_reasoning_summary>';
     await withResponsesFake(async (fake) => {
       const adapter = createResponsesAdapter({ generatedBaseUrl: fake.url, retry: FAST_RETRY, descriptors: () => undefined });
       await drain(adapter.streamTurn({ model: SCENARIO.happy, messages: [{ role: "user", content: "q", decoration: { text: marker, door: "tag" } }] }, testContext({ stallTimeoutMs: STALL_MS })));
-      expect(fake.requests.at(-1)!.body).toContain(marker);
+      const input = (JSON.parse(fake.requests.at(-1)!.body) as { input: Array<Record<string, unknown>> }).input;
+      // The decoration LEADS its message as its own part, byte-for-byte, with the content after it.
+      expect(input).toEqual([
+        {
+          type: "message",
+          role: "user",
+          content: [
+            { type: "input_text", text: marker },
+            { type: "input_text", text: "q" },
+          ],
+        },
+      ]);
     });
     await withChatFake(async (fake) => {
       const adapter = createChatCompletionsAdapter({ generatedBaseUrl: fake.url, retry: FAST_RETRY, descriptors: () => undefined });
       await drain(adapter.streamTurn({ model: SCENARIO.happy, messages: [{ role: "user", content: "q", decoration: { text: marker, door: "thinking-channel" } }] }, testContext({ stallTimeoutMs: STALL_MS })));
-      expect(fake.requests.at(-1)!.body).toContain(marker);
       // Carried PLAINLY, never dressed as the model's own reasoning channel (R6-8). Asserted over
       // every MESSAGE: `reasoning_content` lives on `messages[i]`, never at the top level, so the
       // previous top-level check could not have failed and proved nothing.
       const messages = (JSON.parse(fake.requests.at(-1)!.body) as { messages: Array<Record<string, unknown>> }).messages;
-      expect(messages.length).toBeGreaterThan(0);
       expect(messages.every((m) => !("reasoning_content" in m))).toBe(true);
-      expect(messages.some((m) => typeof m.content === "string" && m.content.includes(marker))).toBe(true);
+      // The chat surface joins a text-only message into ONE string, so the whole content is pinned:
+      // the decoration's own segment is everything before the newline, and a prefix or wrapper of
+      // this layer's own changes it.
+      const user = messages.find((m) => m.role === "user");
+      expect(user?.content).toBe(`${marker}\nq`);
     });
   });
 

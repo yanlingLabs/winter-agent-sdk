@@ -41,7 +41,7 @@ const PROTOCOLS: readonly ProviderProtocol[] = [
   "custom",
 ];
 const AUTH_KINDS: readonly ProviderAuthKind[] = ["api-key", "oauth-approved", "cloud-credential-chain", "local-none", "custom"];
-const EVIDENCE_SOURCES: readonly EvidenceSource[] = ["official-doc", "live-discovery", "live-probe", "upstream-static", "user-override"];
+const EVIDENCE_SOURCES: readonly EvidenceSource[] = ["official-doc", "live-discovery", "live-probe", "upstream-static", "user-override", "local-override", "winter-default"];
 const EVIDENCE_CONFIDENCES: readonly EvidenceConfidence[] = ["verified", "declared", "inferred", "unknown"];
 const TOOL_CALLING: readonly ToolCalling[] = ["native", "emulated", "none"];
 const MODEL_STATUSES: readonly ModelStatus[] = ["candidate", "experimental", "supported", "deprecated", "blocked"];
@@ -240,6 +240,14 @@ function checkEvidence(errs: Errors, value: unknown, path: string, checkValue: (
   else checkValue(value.value, `${path}.value`);
   errs.enum(value, "source", path, EVIDENCE_SOURCES);
   errs.enum(value, "confidence", path, EVIDENCE_CONFIDENCES);
+  // WINTER'S OWN SOURCES CANNOT BE `verified`. `winter-default` is a value chosen in the absence of
+  // any statement and `local-override` is a non-vendor declaration — neither is something a probe or
+  // a document confirmed, and `verified` is what promotes a row (WS-13 §13). Without this the two
+  // new members would be a laundering route into the assurance the other five have to earn.
+  const source = value["source"];
+  if ((source === "winter-default" || source === "local-override") && value["confidence"] === "verified") {
+    errs.add(`${path}.confidence`, `evidence sourced "${source}" is Winter's own and can never be "verified" — nothing external confirmed it`);
+  }
   errs.optStr(value, "sourceRef", path);
   const observedAt = value["observedAt"];
   if (observedAt !== undefined && (typeof observedAt !== "string" || !ISO_INSTANT_RE.test(observedAt))) {

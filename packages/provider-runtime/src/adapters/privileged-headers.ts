@@ -16,10 +16,19 @@
 // value only means something at the reviewed endpoint it was minted for". A family that defines its
 // own adds it through `extraPrivileged` — nothing here guesses on a family's behalf.
 //
-// AUTH IS DELIBERATELY NOT HERE, for the same reason `applyPrivilegedHeaders` excludes it: a
-// credential has its own, stricter rule (`stripCredentialHeaders` on an origin change), and a user
-// endpoint legitimately needs one to be reachable at all.
-import type { EndpointPolicy } from "../endpoint-policy.ts";
+// CREDENTIAL-SHAPED NAMES ARE DROPPED UNCONDITIONALLY, on a generated endpoint as well (fix-wave
+// ruling F-3, whole-branch review M-4). This is NOT the auth rule `applyPrivilegedHeaders` excludes
+// -- an ADAPTER must be able to attach a credential to a user endpoint or nothing is reachable. It
+// is the rule for the HOST's own map: a `ConnectionProfile` is non-secret connection metadata by
+// contract (WS-13 §6), so a credential appearing in it is a misconfiguration to drop rather than a
+// second auth channel to honour, whatever the endpoint's provenance.
+//
+// Before this, the three families read the rule two different ways: the OpenAI family stripped
+// `CREDENTIAL_HEADER_NAMES` from the profile before calling this helper, and Anthropic/Google/Vertex
+// did not -- so a host `cookie` or `proxy-authorization` rode every Anthropic and Google request,
+// and Bedrock's own filter (which stays, for the SigV4 names it owns) missed the same three. Folding
+// the strip in here is what makes "one filter every family goes through" true rather than aspirational.
+import { CREDENTIAL_HEADER_NAMES, type EndpointPolicy } from "../endpoint-policy.ts";
 
 /**
  * Header names that carry an ORGANISATION / PROJECT / ACCOUNT identity.
@@ -32,16 +41,27 @@ export const PRIVILEGED_IDENTITY_HEADERS: readonly string[] = ["x-goog-user-proj
 /**
  * The host's own connection headers, filtered for the endpoint they are about to be sent to.
  *
- * IDENTITY on a generated endpoint (a reviewed descriptor endpoint vouches for the identity headers
- * that belong to it); on a user endpoint the privileged names are dropped and everything else is
- * kept — a host's proxy token, a tracing header, a `user-agent` are all its own business.
+ * TWO RULES, with deliberately different reach:
+ *
+ *   CREDENTIALS — every name on `CREDENTIAL_HEADER_NAMES` is dropped ALWAYS, generated endpoint or
+ *     not. A profile is non-secret connection metadata by contract; a credential in it is a
+ *     misconfiguration, and a reviewed endpoint does not make it less of one.
+ *
+ *   IDENTITY — the privileged names are dropped on a USER endpoint only; on a generated one a
+ *     reviewed descriptor endpoint vouches for the identity headers that belong to it. (Three of the
+ *     four privileged names are on the credential list too, so `x-goog-quota-project` is the only
+ *     header where the two rules actually differ.)
+ *
+ * Everything else is kept on both — a host's proxy token, a tracing header, a `user-agent` are all
+ * its own business.
  *
  * Returns a COPY either way, so a `ConnectionProfile` reused across requests is never mutated.
  */
 export function hostHeaders(policy: EndpointPolicy, headers: Record<string, string> | undefined, extraPrivileged: readonly string[] = []): Record<string, string> {
   if (headers === undefined) return {};
-  if (policy.generated) return { ...headers };
-  const blocked = new Set([...PRIVILEGED_IDENTITY_HEADERS, ...extraPrivileged].map((name) => name.toLowerCase()));
+  const blocked = new Set(
+    (policy.generated ? CREDENTIAL_HEADER_NAMES : [...CREDENTIAL_HEADER_NAMES, ...PRIVILEGED_IDENTITY_HEADERS, ...extraPrivileged]).map((name) => name.toLowerCase()),
+  );
   const out: Record<string, string> = {};
   for (const [name, value] of Object.entries(headers)) {
     if (blocked.has(name.toLowerCase())) continue;

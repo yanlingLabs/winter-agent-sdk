@@ -4,6 +4,7 @@ import {
   awsUriEncode,
   buildCanonicalRequest,
   buildStringToSign,
+  canonicalHeaders,
   canonicalQuery,
   canonicalUri,
   computeSignature,
@@ -207,6 +208,25 @@ describe("the signing pieces", () => {
     expect(parseAuthorization(undefined)).toBeUndefined();
     expect(parseAuthorization("Bearer sk-nope")).toBeUndefined();
     expect(parseAuthorization("AWS4-HMAC-SHA256 Credential=a/b/c/d/WRONG, SignedHeaders=host, Signature=x")).toBeUndefined();
+  });
+});
+
+describe("canonicalHeaders", () => {
+  test("two SPELLINGS of one header name canonicalise to ONE entry (Lane N r1 carry)", () => {
+    // Latent, not live: every caller today lowercases before this is reached. But the signature says
+    // `Record<string, string>` and nothing else does, so a future caller passing both spellings would
+    // have emitted `x-amz-date` twice in the canonical block AND in `SignedHeaders` — which AWS
+    // rejects with an `InvalidSignatureException` whose text is about the signature rather than the
+    // duplicate, so the failure reads as a broken signer. `byLower` already collapsed the values.
+    const { canonical, signed } = canonicalHeaders({ "X-Amz-Date": "20260906T000000Z", "x-amz-date": "20260906T000000Z", host: "bedrock.example" });
+    expect(signed).toBe("host;x-amz-date");
+    expect(canonical).toBe("host:bedrock.example\nx-amz-date:20260906T000000Z\n");
+  });
+
+  test("names are lowercased and sorted; values are trimmed and their whitespace runs collapsed", () => {
+    const { canonical, signed } = canonicalHeaders({ "Content-Type": "  application/json  ", HOST: "a.example", "x-trace": "one  two\tthree" });
+    expect(signed).toBe("content-type;host;x-trace");
+    expect(canonical).toBe("content-type:application/json\nhost:a.example\nx-trace:one two three\n");
   });
 });
 

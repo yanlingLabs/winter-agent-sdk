@@ -59,7 +59,7 @@
       "type": "result",
       "subtype": "success",
       "is_error": true,
-      "result": "model \"definitely-not-a-model-t10\" is not in provider \"anthropic\"'s catalog — set `provider.allowUnlisted: true` to pass an unlisted id through",
+      "result": "model \"definitely-not-a-model-t10\" is not in provider \"anthropic\"'s catalog (its live catalog is authoritative, so absence is definitive)",
       "terminal_reason": "api_error",
       "api_error_status": null,
       "permission_denials": []
