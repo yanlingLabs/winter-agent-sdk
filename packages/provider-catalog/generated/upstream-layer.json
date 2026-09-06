@@ -11,7 +11,7 @@
         "api-key"
       ],
       "defaultEndpoints": {
-        "api": "https://api.anthropic.com/v1/messages"
+        "api": "https://api.anthropic.com"
       },
       "modelDiscovery": "none",
       "liveCatalogAuthority": "unknown",
@@ -81,7 +81,7 @@
         "api-key"
       ],
       "defaultEndpoints": {
-        "api": "https://api.deepseek.com/responses"
+        "api": "https://api.deepseek.com"
       },
       "modelDiscovery": "none",
       "liveCatalogAuthority": "unknown",
@@ -118,7 +118,7 @@
         "api-key"
       ],
       "defaultEndpoints": {
-        "api": "https://generativelanguage.googleapis.com/v1beta/models"
+        "api": "https://generativelanguage.googleapis.com"
       },
       "modelDiscovery": "none",
       "liveCatalogAuthority": "unknown",
@@ -153,7 +153,7 @@
         "api-key"
       ],
       "defaultEndpoints": {
-        "api": "https://api.openai.com/v1/chat/completions"
+        "api": "https://api.openai.com/v1"
       },
       "modelDiscovery": "none",
       "liveCatalogAuthority": "unknown",
@@ -188,7 +188,7 @@
         "api-key"
       ],
       "defaultEndpoints": {
-        "api": "https://openrouter.ai/api/v1/chat/completions"
+        "api": "https://openrouter.ai/api/v1"
       },
       "modelDiscovery": "openai-models",
       "liveCatalogAuthority": "unknown",
@@ -4359,6 +4359,14 @@
       "reason": "provider request headers carry client-identity mirroring (vendor CLI user-agents, beta flags, stainless versions) — WS-13 §5: never imported; Winter adapters author their own"
     },
     {
+      "upstreamId": "anthropic",
+      "scope": "field",
+      "exclusionClass": "reviewed-normalization",
+      "path": "anthropic.baseUrl",
+      "sourcePath": "open-sse/config/providers/registry/anthropic/index.ts",
+      "reason": "upstream states the full \"claude\" path \"https://api.anthropic.com/v1/messages\"; Winter records the API ROOT \"https://api.anthropic.com\" because every adapter in this family APPENDS its own protocol path to `connection.baseUrl` (a row carrying the full path reaches \".../chat/completions/chat/completions\"). Exactly \"/v1/messages\" is removed and nothing else — the URL is never trimmed to an origin."
+    },
+    {
       "upstreamId": "antigravity",
       "scope": "provider",
       "exclusionClass": "category-oauth",
@@ -5215,6 +5223,14 @@
       "reason": "provider request headers carry client-identity mirroring (vendor CLI user-agents, beta flags, stainless versions) — WS-13 §5: never imported; Winter adapters author their own"
     },
     {
+      "upstreamId": "deepseek",
+      "scope": "field",
+      "exclusionClass": "reviewed-normalization",
+      "path": "deepseek.baseUrl",
+      "sourcePath": "open-sse/config/providers/registry/deepseek/index.ts",
+      "reason": "upstream states the full \"openai-responses\" path \"https://api.deepseek.com/responses\"; Winter records the API ROOT \"https://api.deepseek.com\" because every adapter in this family APPENDS its own protocol path to `connection.baseUrl` (a row carrying the full path reaches \".../chat/completions/chat/completions\"). Exactly \"/responses\" is removed and nothing else — the URL is never trimmed to an origin."
+    },
+    {
       "upstreamId": "deepseek-web",
       "scope": "provider",
       "exclusionClass": "category-web-cookie",
@@ -5629,6 +5645,14 @@
       "path": "gemini.models[gemini-3.1-flash-tts-preview]",
       "sourcePath": "open-sse/config/providers/registry/gemini/index.ts",
       "reason": "reviewed model exclusion: A TEXT-TO-SPEECH model. WS-13 §4/§1 are a MUST: `tts` rows feed a separate subsystem and must never reach the Agent SDK worker-model picker, and the descriptor schema's `scope` is per PROVIDER — a `gemini` row cannot declare itself `tts` while its provider is `llm`. It also exposed the mapper's `outputModalities` default as a false claim: Winter stamps `[\"text\"]` on every row because upstream declares no output modality at all, which for a TTS model is simply wrong. Excluded here rather than shipped as a resolvable `candidate`."
+    },
+    {
+      "upstreamId": "gemini",
+      "scope": "field",
+      "exclusionClass": "reviewed-normalization",
+      "path": "gemini.baseUrl",
+      "sourcePath": "open-sse/config/providers/registry/gemini/index.ts",
+      "reason": "upstream states the full \"gemini\" path \"https://generativelanguage.googleapis.com/v1beta/models\"; Winter records the API ROOT \"https://generativelanguage.googleapis.com\" because every adapter in this family APPENDS its own protocol path to `connection.baseUrl` (a row carrying the full path reaches \".../chat/completions/chat/completions\"). Exactly \"/v1beta/models\" is removed and nothing else — the URL is never trimmed to an origin."
     },
     {
       "upstreamId": "gemini",
@@ -7026,6 +7050,14 @@
       "upstreamId": "openai",
       "scope": "field",
       "exclusionClass": "reviewed-normalization",
+      "path": "openai.baseUrl",
+      "sourcePath": "open-sse/config/providers/registry/openai/index.ts",
+      "reason": "upstream states the full \"openai\" path \"https://api.openai.com/v1/chat/completions\"; Winter records the API ROOT \"https://api.openai.com/v1\" because every adapter in this family APPENDS its own protocol path to `connection.baseUrl` (a row carrying the full path reaches \".../chat/completions/chat/completions\"). Exactly \"/chat/completions\" is removed and nothing else — the URL is never trimmed to an origin."
+    },
+    {
+      "upstreamId": "openai",
+      "scope": "field",
+      "exclusionClass": "reviewed-normalization",
       "path": "openai.executor",
       "sourcePath": "open-sse/config/providers/registry/openai/index.ts",
       "reason": "executor \"default\" speaks the openai-chat-completions dialect but is served by a DIFFERENT adapter: Winter records \"winter.openai-responses\" rather than the protocol's default \"winter.openai-chat-completions\". A protocol is not an adapter, and a registry resolves BY ID."
@@ -7157,6 +7189,14 @@
       "path": "openrouterProvider.headers",
       "sourcePath": "open-sse/config/providers/registry/openrouter/index.ts",
       "reason": "provider request headers carry client-identity mirroring (vendor CLI user-agents, beta flags, stainless versions) — WS-13 §5: never imported; Winter adapters author their own"
+    },
+    {
+      "upstreamId": "openrouter",
+      "scope": "field",
+      "exclusionClass": "reviewed-normalization",
+      "path": "openrouter.baseUrl",
+      "sourcePath": "open-sse/config/providers/registry/openrouter/index.ts",
+      "reason": "upstream states the full \"openai\" path \"https://openrouter.ai/api/v1/chat/completions\"; Winter records the API ROOT \"https://openrouter.ai/api/v1\" because every adapter in this family APPENDS its own protocol path to `connection.baseUrl` (a row carrying the full path reaches \".../chat/completions/chat/completions\"). Exactly \"/chat/completions\" is removed and nothing else — the URL is never trimmed to an origin."
     },
     {
       "upstreamId": "openrouter",

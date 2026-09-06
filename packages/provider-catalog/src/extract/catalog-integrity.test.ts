@@ -204,12 +204,21 @@ describe("standing floors", () => {
   });
 
   test("every extracted capability records itself as `upstream-static`, never as documentation or a probe", () => {
+    // `outputModalities` is DELIBERATELY absent from this list: upstream declares no output modality
+    // for any model, so it is the one field the mapper emits as `winter-default` rather than as
+    // something upstream said. Its own stamp is pinned by the I3 case below, which is stricter than
+    // this loop would be -- source, confidence AND the sourceRef that says WINTER DEFAULT in words.
     for (const model of upstreamLayer.models as unknown as WinterModelDescriptor[]) {
-      for (const evidence of [model.contextWindow, model.inputModalities, model.outputModalities, model.toolCalling, model.nativeTools, model.maxInputTokens, model.maxOutputTokens]) {
+      for (const evidence of [model.contextWindow, model.inputModalities, model.toolCalling, model.nativeTools, model.maxInputTokens, model.maxOutputTokens]) {
         if (evidence === undefined) continue;
         expect(evidence.source).toBe("upstream-static");
         expect(["inferred", "unknown"]).toContain(evidence.confidence);
       }
+    }
+    // ...and the negative half, so removing a field from the list above cannot quietly widen it:
+    // NOTHING in the layer claims documentation or a probe.
+    for (const model of upstreamLayer.models as unknown as WinterModelDescriptor[]) {
+      expect([model.key, ["upstream-static", "winter-default"].includes(model.outputModalities.source)]).toEqual([model.key, true]);
     }
   });
 });
@@ -333,15 +342,15 @@ describe("review round 1 — the three Importants, pinned where they broke", () 
     // Upstream declares NO output modality for any model, so `["text"]` is Winter's inference. It
     // shipped as `upstream-static`/`inferred`, which reads as "upstream said text".
     //
-    // THE COMMITTED DATA STILL SAYS `upstream-static`, AND THAT IS PINNED ON PURPOSE. The mapper now
-    // stamps `winter-default` (see `pipeline.test.ts`, which asserts it on the mapper's live
-    // output), but the committed upstream LAYER is only rewritten by a NETWORK `provider:sync` --
-    // `--offline` re-merges what is on disk and `provider:catalog` never re-extracts. So the field
-    // carries the old label until that sync runs, and this line is what says so out loud rather than
-    // leaving a reader to assume the change reached the data. When the sync lands, this assertion
-    // fails and names the one value to flip.
+    // THE SYNC HAS NOW LANDED (P6.5 lane X2). This assertion previously pinned `upstream-static`
+    // with a note saying the mapper had been changed to stamp `winter-default` but the committed
+    // upstream LAYER still carried the old label, because that file is rewritten ONLY by a NETWORK
+    // `provider:sync` -- `--offline` re-merges what is on disk and `provider:catalog` never
+    // re-extracts, so neither CI gate could see the gap. The note said "when the sync lands, this
+    // assertion fails and names the one value to flip"; lane X2's first network run is that sync,
+    // and this is the flip. 99 evidence rows across both generated files moved in that one commit.
     for (const model of catalog.models) {
-      expect([model.key, model.outputModalities.source]).toEqual([model.key, "upstream-static"]);
+      expect([model.key, model.outputModalities.source]).toEqual([model.key, "winter-default"]);
       expect([model.key, model.outputModalities.confidence]).toEqual([model.key, "unknown"]);
       expect(model.outputModalities.sourceRef).toContain("WINTER DEFAULT");
     }
@@ -453,5 +462,54 @@ describe("notices cover copied files (WS-13 §13)", () => {
   test("...and states that no third-party SOURCE CODE is in this package", async () => {
     const notice = await Bun.file(new URL("../../NOTICE", import.meta.url)).text();
     expect(notice).toContain("NO THIRD-PARTY SOURCE CODE");
+  });
+});
+
+/**
+ * WS-13b §2 (P6.5 lane X2): the endpoint SHAPE, checked on BOTH layers.
+ *
+ * `packages/runtime/src/provider/catalog-endpoint-shape.test.ts` proves what the adapter does with
+ * `defaultEndpoints.api` by measuring it against a loopback fake. This is the catalog-side half, and
+ * it reads the UPSTREAM LAYER as well as the merged catalog for the reason `--offline` already
+ * validates the layer standalone: an overlay row shadows its upstream twin whole, so a defect the
+ * overlay happens to correct sits in the layer unread until the day the shadow comes off — which is
+ * precisely what widening does. That is how this class survived the whole of P6.
+ */
+describe("WS-13b §2: `defaultEndpoints.api` carries the API ROOT on both layers", () => {
+  /** The adapters that append their own protocol path to `connection.baseUrl`. */
+  const APPENDING = new Set(["winter.openai-chat-completions", "winter.openai-responses", "winter.local-openai", "winter.codex-oauth", "winter.anthropic-messages", "winter.azure-openai"]);
+  const PROTOCOL_PATH = /\/chat\/completions$|\/responses$|\/v1\/messages$|\/v1beta\/models$/;
+
+  test.each([
+    ["the MERGED catalog", () => catalog.providers],
+    ["the UPSTREAM LAYER, standalone (a shadowed row is still checked)", () => upstreamLayer.providers],
+  ])("%s: no row on a path-appending adapter states a protocol path", (_label, rows) => {
+    const offenders = rows()
+      .filter((p) => APPENDING.has(p.adapterId))
+      .map((p) => `${p.id} -> ${p.defaultEndpoints["api"] ?? ""}`)
+      .filter((line) => PROTOCOL_PATH.test(line));
+    expect(offenders).toEqual([]);
+  });
+
+  test("...and no row on a path-appending adapter is left with NO endpoint at all", () => {
+    // An absent `api` is not the safe direction: `resolveEndpoint` falls back to the ADAPTER's own
+    // vendor default, so an endpoint-less row on the shared chat adapter sends this provider's
+    // credential to api.openai.com. `bedrock`/`vertex` are single-provider adapters and exempt --
+    // their `api` is never copied into a connection, and Azure's is a deployment template the host
+    // must supply, which is why `winter.azure-openai` is exempt from THIS half only.
+    const missing = catalog.providers
+      .filter((p) => APPENDING.has(p.adapterId) && p.adapterId !== "winter.azure-openai")
+      .filter((p) => (p.defaultEndpoints["api"] ?? "").length === 0)
+      .map((p) => p.id);
+    expect(missing).toEqual([]);
+  });
+
+  test("every endpoint strip the mapper performed is RECORDED in the ledger with both strings", () => {
+    const strips = (rejectionsLedger.rejections as Array<{ exclusionClass: string; path: string; reason: string }>).filter((r) => r.exclusionClass === "reviewed-normalization" && r.path.endsWith(".baseUrl"));
+    expect(strips.length).toBeGreaterThan(0);
+    for (const strip of strips) {
+      expect(strip.reason).toContain("API ROOT");
+      expect(strip.reason).toContain("never trimmed to an origin");
+    }
   });
 });

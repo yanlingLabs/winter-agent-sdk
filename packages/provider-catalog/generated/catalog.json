@@ -796,8 +796,8 @@
         "value": [
           "text"
         ],
-        "source": "upstream-static",
-        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, not an upstream statement. `EvidenceSource` is frozen (src/types.ts) with no `winter-derived` member, so the caveat rides the confidence marker and this ref — see PROVENANCE.md.",
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
         "confidence": "unknown",
         "observedAt": "2026-09-05T00:00:00Z"
       },
@@ -1136,8 +1136,8 @@
         "value": [
           "text"
         ],
-        "source": "upstream-static",
-        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, not an upstream statement. `EvidenceSource` is frozen (src/types.ts) with no `winter-derived` member, so the caveat rides the confidence marker and this ref — see PROVENANCE.md.",
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
         "confidence": "unknown",
         "observedAt": "2026-09-05T00:00:00Z"
       },
@@ -1378,8 +1378,8 @@
         "value": [
           "text"
         ],
-        "source": "upstream-static",
-        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, not an upstream statement. `EvidenceSource` is frozen (src/types.ts) with no `winter-derived` member, so the caveat rides the confidence marker and this ref — see PROVENANCE.md.",
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
         "confidence": "unknown",
         "observedAt": "2026-09-05T00:00:00Z"
       },
@@ -1510,8 +1510,8 @@
         "value": [
           "text"
         ],
-        "source": "upstream-static",
-        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, not an upstream statement. `EvidenceSource` is frozen (src/types.ts) with no `winter-derived` member, so the caveat rides the confidence marker and this ref — see PROVENANCE.md.",
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
         "confidence": "unknown",
         "observedAt": "2026-09-05T00:00:00Z"
       },
@@ -1552,8 +1552,8 @@
         "value": [
           "text"
         ],
-        "source": "upstream-static",
-        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, not an upstream statement. `EvidenceSource` is frozen (src/types.ts) with no `winter-derived` member, so the caveat rides the confidence marker and this ref — see PROVENANCE.md.",
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
         "confidence": "unknown",
         "observedAt": "2026-09-05T00:00:00Z"
       },
@@ -1913,8 +1913,8 @@
         "value": [
           "text"
         ],
-        "source": "upstream-static",
-        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, not an upstream statement. `EvidenceSource` is frozen (src/types.ts) with no `winter-derived` member, so the caveat rides the confidence marker and this ref — see PROVENANCE.md.",
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
         "confidence": "unknown",
         "observedAt": "2026-09-05T00:00:00Z"
       },
@@ -2006,8 +2006,8 @@
         "value": [
           "text"
         ],
-        "source": "upstream-static",
-        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, not an upstream statement. `EvidenceSource` is frozen (src/types.ts) with no `winter-derived` member, so the caveat rides the confidence marker and this ref — see PROVENANCE.md.",
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
         "confidence": "unknown",
         "observedAt": "2026-09-05T00:00:00Z"
       },
@@ -2094,8 +2094,8 @@
         "value": [
           "text"
         ],
-        "source": "upstream-static",
-        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for any model; `text` is Winter's inference for a chat registry, not an upstream statement",
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
         "confidence": "unknown",
         "observedAt": "2026-09-05T00:00:00Z"
       },
@@ -2189,8 +2189,8 @@
         "value": [
           "text"
         ],
-        "source": "upstream-static",
-        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for any model; `text` is Winter's inference for a chat registry, not an upstream statement",
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
         "confidence": "unknown",
         "observedAt": "2026-09-05T00:00:00Z"
       },
@@ -2383,8 +2383,8 @@
         "value": [
           "text"
         ],
-        "source": "upstream-static",
-        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, not an upstream statement. `EvidenceSource` is frozen (src/types.ts) with no `winter-derived` member, so the caveat rides the confidence marker and this ref — see PROVENANCE.md.",
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
         "confidence": "unknown",
         "observedAt": "2026-09-05T00:00:00Z"
       },
@@ -2690,8 +2690,8 @@
         "value": [
           "text"
         ],
-        "source": "upstream-static",
-        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, not an upstream statement. `EvidenceSource` is frozen (src/types.ts) with no `winter-derived` member, so the caveat rides the confidence marker and this ref — see PROVENANCE.md.",
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
         "confidence": "unknown",
         "observedAt": "2026-09-05T00:00:00Z"
       },
@@ -2740,8 +2740,8 @@
         "value": [
           "text"
         ],
-        "source": "upstream-static",
-        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, not an upstream statement. `EvidenceSource` is frozen (src/types.ts) with no `winter-derived` member, so the caveat rides the confidence marker and this ref — see PROVENANCE.md.",
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
         "confidence": "unknown",
         "observedAt": "2026-09-05T00:00:00Z"
       },
@@ -3783,8 +3783,8 @@
         "value": [
           "text"
         ],
-        "source": "upstream-static",
-        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, not an upstream statement. `EvidenceSource` is frozen (src/types.ts) with no `winter-derived` member, so the caveat rides the confidence marker and this ref — see PROVENANCE.md.",
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
         "confidence": "unknown",
         "observedAt": "2026-09-05T00:00:00Z"
       },
@@ -3902,8 +3902,8 @@
         "value": [
           "text"
         ],
-        "source": "upstream-static",
-        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, not an upstream statement. `EvidenceSource` is frozen (src/types.ts) with no `winter-derived` member, so the caveat rides the confidence marker and this ref — see PROVENANCE.md.",
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
         "confidence": "unknown",
         "observedAt": "2026-09-05T00:00:00Z"
       },
@@ -4175,8 +4175,8 @@
         "value": [
           "text"
         ],
-        "source": "upstream-static",
-        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, not an upstream statement. `EvidenceSource` is frozen (src/types.ts) with no `winter-derived` member, so the caveat rides the confidence marker and this ref — see PROVENANCE.md.",
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
         "confidence": "unknown",
         "observedAt": "2026-09-05T00:00:00Z"
       },

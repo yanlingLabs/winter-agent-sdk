@@ -63,7 +63,7 @@ twin and a test asserts the two agree, so this document cannot drift away from t
 | `provider.displayName` | copied verbatim | the product-catalog row's `name` |
 | `provider.protocols` | mechanically normalized | upstream `format` through a closed map; an unknown format **fails the run** |
 | `provider.authKinds` | mechanically normalized | upstream `authType` through a closed map; an unknown auth value **fails the run** |
-| `provider.defaultEndpoints` | copied verbatim | upstream `baseUrl`/`responsesBaseUrl`/`modelsUrl` exactly as written, including the full chat path. A URL carrying userinfo or a query string is dropped and recorded (R6-11) |
+| `provider.defaultEndpoints` | mechanically normalized | `api` is upstream's `baseUrl` with exactly the path its own `format` names removed (`/chat/completions`, `/responses`, `/v1/messages`, `/v1beta/models`) — the API **root**, and the exact inverse of what every adapter in that family appends to `connection.baseUrl`. Never a trim to an origin. A `default`-executor row whose URL does not end in its format's suffix, or states none, **fails the run**. `bedrock`/`vertex` are exempt and stay verbatim. `responsesBaseUrl`/`modelsUrl` are copied verbatim. A URL carrying userinfo or a query string is dropped and recorded (R6-11) |
 | `provider.modelDiscovery` | mechanically normalized | derived from `modelsUrl`/`passthroughModels`; upstream has no such field |
 | `provider.liveCatalogAuthority` | mechanically normalized | upstream `liveCatalogAuthoritative` when **stated**; unstated becomes `unknown`, never upstream's `true` default |
 | `provider.adapterId` / `provider.family` | local override | the Winter adapter family the protocol routes to; upstream's `executor` never crosses |
@@ -104,11 +104,26 @@ member added for exactly this (`src/types.ts`), so a reader filtering evidence B
 gets a Winter guess wearing an upstream label. The prose stays alongside it, because *why* is not
 something an enum can carry.
 
-One honest wrinkle while this settles: the committed `generated/upstream-layer.json` is rewritten
-only by a NETWORK `provider:sync`, so its rows still read `upstream-static` until that sync runs.
-Both states are pinned — `pipeline.test.ts` asserts `winter-default` on the mapper's live output,
-`catalog-integrity.test.ts` asserts `upstream-static` on today's committed data — so the transition
-is a failing assertion naming one value to flip, not a silent inconsistency.
+**That wrinkle is now closed, and how it stayed open is worth recording.** The committed
+`generated/upstream-layer.json` is rewritten only by a NETWORK `provider:sync`, which is deliberately
+absent from CI (a maintainer action, not a per-push gate). `--offline` re-merges what is on disk and
+`provider:catalog` never re-extracts, so when the mapper changed to stamp `winter-default` the
+committed layer kept saying `upstream-static`, `catalog.json` inherited it through the merge, and
+**neither CI gate could see the gap** — the transition was pinned by a comment rather than by a
+regeneration. P6.5 lane X2's first network run performed the sync: 99 evidence rows across the two
+generated files moved in one commit, and `provider-source-sync --check` reports byte-identical
+regeneration again. The general lesson is the one this document already makes about counts: a
+generated file that only one un-gated command can write will drift, and the drift will look exactly
+like a comment that is still true.
+
+**The overlay's fifteen model rows were carrying the same false label, and a stale reason for it.**
+Each stamped `outputModalities` as `upstream-static` with a `sourceRef` explaining that
+*"`EvidenceSource` is frozen (src/types.ts) with no `winter-derived` member, so the caveat rides the
+confidence marker and this ref"*. That was true when those rows were written and false by the time
+the member was added — the mapper was updated, the fifteen hand-authored rows were not, and their
+own justification went on citing a constraint that no longer existed. All fifteen now stamp
+`winter-default` with a ref that says what is actually true. Nothing in the merged catalog claims
+upstream stated an output modality any more, from either layer.
 
 **`unsupportedParameters` fails OPEN, and that direction is deliberate.** `toolCalling` fails CLOSED
 because a wrong `native` admits an unproven model to the agent modes; an empty
@@ -127,13 +142,45 @@ guarantee is that it never evaluates anything. The cost is visible and bounded: 
 `o4-mini` lose their upstream `unsupportedParams`, which appear in `generated/rejections.json` under
 `unresolved-reference` for a reviewer to see and the overlay to carry with real evidence.
 
-## Endpoints diverge from upstream on purpose
+## Endpoints diverge from upstream on purpose — and the divergence is now the MAPPER's, not the overlay's
 
-Upstream's `baseUrl` is the full chat path (`https://api.openai.com/v1/chat/completions`); the
-overlay's is the API root (`https://api.openai.com/v1`), because Winter's adapters compose paths
-themselves. The verbatim upstream values are preserved in `generated/upstream-layer.json`, so the
-divergence is visible rather than laundered. It is a **local override**, and the overlay row's
-values are the ones that ship.
+Upstream's `baseUrl` is the full chat path (`https://api.openai.com/v1/chat/completions`). Winter's
+adapters compose paths themselves, so what a descriptor must carry is the API **root**
+(`https://api.openai.com/v1`). Until P6.5 only the OVERLAY said so: the extractor recorded upstream's
+path verbatim and every upstream row was shadowed by a hand-authored overlay row that quietly
+corrected it. The two layers therefore disagreed about the shape of this one field for the whole of
+P6, and nothing failed — because no unshadowed upstream row had ever reached an adapter.
+
+Widening the catalog is precisely what removes those shadows, so the disagreement was about to
+become a hundred-odd rows that 404 at runtime. The mechanism has two links in different packages,
+each reasonable on its own:
+
+1. `runtime/src/provider/session-provider.ts`'s `connectionFrom` copies `defaultEndpoints.api` into
+   `connection.baseUrl` **as soon as more than one provider shares an adapter id**;
+2. the adapter then appends its own protocol path —
+   `adapters/openai/chat-completions.ts`: `` `${endpoint.baseUrl}/chat/completions` ``.
+
+Measured against a loopback fake: a row carrying the full path reaches
+`/v1/chat/completions/chat/completions`.
+
+So the mapper now records the root, by removing **exactly** the path the row's own upstream `format`
+names (`FORMAT_ENDPOINT_SUFFIX` in `src/extract/merge.ts`) — the exact inverse of what the adapter
+appends, and nothing more. A URL is still never trimmed to an ORIGIN; a `default`-executor row whose
+URL does not end in its format's suffix, or states none at all, **fails the run** rather than
+shipping with an absent `api` (an absent one is not inert — `resolveEndpoint` falls back to the
+adapter's own vendor default, so the row would send that provider's credential to another vendor).
+`bedrock`/`vertex` are exempt: single-provider adapters whose `api` is never copied into a
+connection, and whose URLs are region/deployment templates rather than protocol paths.
+
+**The evidence that this is the right transformation, rather than a convenient one:** five
+independent human reviews had already performed this exact strip by hand, in `overlay/providers.json`,
+before any of this code existed — and the rule reproduces all five byte-for-byte. `pipeline.test.ts`
+→ *"THE PROOF THIS IS THE RIGHT TRANSFORM: it reproduces all five hand-authored overlay endpoints"*
+pins that, and `runtime/src/provider/catalog-endpoint-shape.test.ts` measures the adapter's half
+against a fake rather than describing it.
+
+Every strip is a `reviewed-normalization` ledger row naming both strings, so the divergence stays
+visible rather than laundered.
 
 ## The denominator (WS-13 §3 step 5)
 
@@ -186,7 +233,7 @@ unfalsifiable against its own source.
 
 ## What was excluded, and why
 
-`generated/rejections.json` carries all **690** rows. The counts below are generated from the ledger
+`generated/rejections.json` carries all **695** rows. The counts below are generated from the ledger
 and pinned by `catalog-integrity.test.ts` → *"PROVENANCE.md's exclusion table matches the ledger,
 row for row"*, because a hand-typed count is the line that goes stale first and nobody notices.
 
@@ -206,7 +253,7 @@ row for row"*, because a hand-typed count is the line that goes stale first and 
 | `category-no-auth` | 13 | reject by default (WS-13 §1) |
 | `category-audio` | 12 | not worker-model providers |
 | `unrepresentable-protocol` | 11 | Vertex's `targetFormat: "claude"` rows — see below |
-| **`reviewed-normalization`** | 8 | **NOT an exclusion.** A row that DID ship, carrying a reviewed, recorded deviation from the pinned tree: the OpenRouter wire id, the Bedrock executor's protocol, the OpenAI and Vertex adapter overrides, the four Vertex partner statuses |
+| **`reviewed-normalization`** | 13 | **NOT an exclusion.** A row that DID ship, carrying a reviewed, recorded deviation from the pinned tree: the OpenRouter wire id, the Bedrock executor's protocol, the OpenAI and Vertex adapter overrides, the four Vertex partner statuses, and the **five endpoint strips** (WS-13b §2 — see "Endpoints diverge from upstream on purpose") |
 | `url-builder` | 4 | executable URL builders (WS-13 §13's security floor names this exactly) |
 | `category-cloud-agent` | 3 | remote agent products |
 | `category-upstream-proxy` | 2 | no proxy-of-proxy layer |
