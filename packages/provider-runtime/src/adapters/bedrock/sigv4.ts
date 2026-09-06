@@ -118,11 +118,18 @@ export function canonicalQuery(search: string): string {
  * Names are lowercased and sorted; values are trimmed and their internal runs of whitespace
  * collapsed to a single space (AWS's own rule, and the reason a header value with a stray double
  * space still verifies).
+ *
+ * NAMES ARE DE-DUPLICATED AFTER LOWERCASING, and that is a latent-bug fix rather than a live one
+ * (Lane N r1 carry). Every caller today hands this a map whose keys are already lowercase, so the
+ * two spellings cannot both be present — but nothing in the signature *type* says so, and a future
+ * caller passing `{ "X-Amz-Date": …, "x-amz-date": … }` would have produced `x-amz-date` TWICE in
+ * both the canonical block and `SignedHeaders`. AWS would reject that with an
+ * `InvalidSignatureException` whose text is about the signature, not about a duplicate header, so
+ * the failure would read as a broken signer. `byLower` already collapsed the VALUES; only the name
+ * list did not.
  */
 export function canonicalHeaders(headers: Record<string, string>): { canonical: string; signed: string } {
-  const names = Object.keys(headers)
-    .map((n) => n.toLowerCase())
-    .sort();
+  const names = [...new Set(Object.keys(headers).map((n) => n.toLowerCase()))].sort();
   const byLower = new Map(Object.entries(headers).map(([name, value]) => [name.toLowerCase(), value]));
   const canonical = names.map((name) => `${name}:${(byLower.get(name) ?? "").trim().replace(/\s+/g, " ")}\n`).join("");
   return { canonical, signed: names.join(";") };

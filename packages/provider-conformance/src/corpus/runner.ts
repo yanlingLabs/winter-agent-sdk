@@ -14,6 +14,7 @@
 // fake received (`FakeServer.requests`), never what the adapter believed it sent. A case that
 // asserts on adapter intent proves nothing about the wire.
 import type { FakeServer } from "../fakes/server.ts";
+import { describeCaseFailure } from "./classifier-safety.ts";
 
 /** The WS-13 §13 case ids. Stable strings: a lane keys its implementations on them and a report names them. */
 export type CorpusCaseId =
@@ -154,7 +155,12 @@ export async function runAdapterCorpus(opts: RunAdapterCorpusOptions): Promise<C
       }
       outcomes.push({ id: spec.id, status: "passed" });
     } catch (err) {
-      outcomes.push({ id: spec.id, status: "failed", detail: err instanceof Error ? err.message : String(err) });
+      // NOT `err.message` unconditionally (Lane D r1 carry). A fixture's own assertion message is
+      // Winter's sentence and is the whole value of a failing line; a normalized PROVIDER error's
+      // message embeds a snippet of the provider's response body, and this report is printed to a
+      // terminal and pasted into review packages. `describeCaseFailure` keeps the first and renders
+      // the second as identity.
+      outcomes.push({ id: spec.id, status: "failed", detail: describeCaseFailure(err) });
     }
   }
   const ok = outcomes.every((o) => o.status === "passed" || o.status === "skipped");
