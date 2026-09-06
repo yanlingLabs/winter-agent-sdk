@@ -15,6 +15,10 @@ describe("refreshOauthMaterial", () => {
         const form = await req.text();
         expect(form).toContain("grant_type=refresh_token");
         expect(form).toContain("client_id=client-1");
+        // `extraFields` is the HONEST-IDENTITY door on a refresh: a flow that names Winter at login
+        // and goes quiet when it renews the token is honest exactly once (WS-13b §4 / D21). Lane O's
+        // xAI row rides its `referrer` through here, so the path is exercised rather than exported.
+        expect(form).toContain("referrer=winter-agent-sdk");
         return Response.json({ access_token: "new-access", refresh_token: "new-refresh", expires_in: 3600 });
       },
     });
@@ -22,7 +26,7 @@ describe("refreshOauthMaterial", () => {
       const store = createMemoryCredentialStore();
       const ref = { kind: "keychain" as const, account: "prov:acct" };
       await store.set(ref, { kind: "oauth", accessToken: "old", refreshToken: "old-refresh", expiresAt: 1 });
-      const fresh = await refreshOauthMaterial({ store, ref, tokenUrl: `http://127.0.0.1:${server.port}/token`, clientId: "client-1", now: () => 1_000 });
+      const fresh = await refreshOauthMaterial({ store, ref, tokenUrl: `http://127.0.0.1:${server.port}/token`, clientId: "client-1", now: () => 1_000, extraFields: { referrer: "winter-agent-sdk" } });
       expect(fresh.accessToken).toBe("new-access");
       expect((await store.get(ref))?.kind).toBe("oauth");
       expect(fresh.expiresAt).toBe(1_000 + 3600 * 1000);
