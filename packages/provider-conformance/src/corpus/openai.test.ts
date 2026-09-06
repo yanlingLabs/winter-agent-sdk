@@ -353,6 +353,10 @@ describe("live wire details the corpus does not ask about", () => {
       expect(turns[0]?.headers.originator).toBe("winter");
       expect(turns[0]?.headers["chatgpt-account-id"]).toBe(FAKE_ACCOUNT_ID);
       expect(turns[0]?.headers["openai-beta"]).toBe("responses=experimental");
+      // WS-13b: `originator: winter` is the codex backend's OWN identity field; the user-agent is
+      // the transport-level one, and BOTH have to name Winter. Pinned on the codex fake specifically
+      // because this is the adapter with a second identity channel to get wrong.
+      expect(turns[0]?.headers["user-agent"]).toBe(winterUserAgent());
       // The proof that this was a REFRESH and not a plain retry: the second request carried a
       // DIFFERENT bearer. A request count alone cannot tell the two apart.
       expect(fake.bearers[0]).not.toBe(fake.bearers[1]);

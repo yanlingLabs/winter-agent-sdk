@@ -5,6 +5,7 @@
 import { describe, expect, test } from "bun:test";
 import { createMemoryCredentialStore } from "../../credentials/memory.ts";
 import { refreshOauthMaterial } from "./refresh.ts";
+import { winterUserAgent } from "../../identity.ts";
 
 describe("refreshOauthMaterial", () => {
   test("exchanges the refresh token, persists the new material, never logs it", async () => {
@@ -13,6 +14,10 @@ describe("refreshOauthMaterial", () => {
       port: 0,
       fetch: async (req) => {
         const form = await req.text();
+        // WS-13b: the token endpoint sees Winter's own user-agent, not Bun's default. The negative
+        // is what carries it -- Bun supplies `Bun/<version>` when nothing sets the header, so a
+        // presence-only check would pass on a helper that never set one.
+        expect(req.headers.get("user-agent")).toBe(winterUserAgent());
         expect(form).toContain("grant_type=refresh_token");
         expect(form).toContain("client_id=client-1");
         // `extraFields` is the HONEST-IDENTITY door on a refresh: a flow that names Winter at login

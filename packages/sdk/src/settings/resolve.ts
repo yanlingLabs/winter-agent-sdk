@@ -181,6 +181,46 @@ function unionRuleArray(tiersLowestFirst: readonly { values: Settings }[], key: 
   return out.length > 0 ? out : undefined;
 }
 
+/**
+ * RULING R6b-9: `providers.<id>.enabled` is RESTRICTIVE-ONLY across tiers.
+ *
+ * The effective value is `false` if ANY tier says `false`. A lower tier may DISABLE a provider; it
+ * can never re-enable one a higher tier disabled.
+ *
+ * WHY THIS KEY AND NOT THE PLAIN MERGE. `providers.<id>.enabled` is R6b-7's reversion switch: it is
+ * what lets an operator turn `xai-oauth` off, without a release, the day a vendor rejects Winter's
+ * honest identity (WS-13b §4). Under the ordinary replace-by-higher-tier merge a CLONED REPOSITORY's
+ * `.winter/settings.json` could carry `{"providers":{"xai-oauth":{"enabled":true}}}` and put the
+ * provider back — a repository re-granting itself a capability its operator withdrew, which is the
+ * exact self-grant shape RULING P5-A closes for permissions. A switch a repository can flip back is
+ * not a switch.
+ *
+ * NOT an OVERLAY_NEVER_KEY, deliberately: those DROP a project tier's value entirely, which would
+ * also drop a project's legitimate `false`. Disabling is a tightening every tier may make; only the
+ * enabling direction is restricted. Same asymmetry as `permissions.deny` vs `permissions.allow`.
+ *
+ * ACCEPTED COST (recorded in the ruling): a project cannot re-enable a provider its user disabled.
+ * The user flips their own tier.
+ */
+function restrictProviderEnables(effective: Record<string, unknown>, tiersLowestFirst: readonly { values: Settings }[]): void {
+  const disabled = new Set<string>();
+  for (const tier of tiersLowestFirst) {
+    const block = tier.values["providers"];
+    if (!isPlainObject(block)) continue;
+    for (const [id, value] of Object.entries(block)) {
+      if (isPlainObject(value) && (value as { enabled?: unknown }).enabled === false) disabled.add(id);
+    }
+  }
+  if (disabled.size === 0) return;
+  const merged = effective["providers"];
+  const providers: Record<string, unknown> = isPlainObject(merged) ? { ...merged } : {};
+  for (const id of disabled) {
+    const entry = providers[id];
+    providers[id] = { ...(isPlainObject(entry) ? entry : {}), enabled: false };
+  }
+  effective["providers"] = providers;
+}
+
 /** Replaces `effective.permissions`' four rule arrays with the union across `tiersLowestFirst`. */
 function unionPermissionRuleArrays(effective: Record<string, unknown>, tiersLowestFirst: readonly { values: Settings }[]): void {
   const merged = effective["permissions"];
@@ -290,10 +330,11 @@ export async function resolveSettingsDetailed(opts: ResolveSettingsDetailedOptio
   // The one exception to the replace-by-higher-tier merge above. Runs on the OVERLAY-FILTERED view
   // for the same reason the merge does -- a project tier's own contribution is filtered identically
   // in both places, so a never-key can never sneak back in through the union.
-  unionPermissionRuleArrays(
-    effective,
-    lowestFirst.map((entry) => ({ values: entry.source === "project" ? withoutOverlayNeverKeys(entry.values) : entry.values })),
-  );
+  const overlayFilteredTiers = lowestFirst.map((entry) => ({ values: entry.source === "project" ? withoutOverlayNeverKeys(entry.values) : entry.values }));
+  unionPermissionRuleArrays(effective, overlayFilteredTiers);
+  // RULING R6b-9, the SECOND exception to replace-by-higher-tier. Same overlay-filtered view, same
+  // reason: a tier's contribution is read here exactly as it was merged above.
+  restrictProviderEnables(effective, overlayFilteredTiers);
 
   const perSource = [...lowestFirst].reverse();
   return {

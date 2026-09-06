@@ -62,10 +62,43 @@ describe("settings.providers.<id>.enabled (WS-13b R6b-7)", () => {
     expect(providers["deepseek"]?.enabled).toBe(false);
   });
 
-  test("a higher tier wins on the SAME provider id, like every other setting", async () => {
+  // --- RULING R6b-9: restrictive-only across tiers -------------------------------------------------
+  //
+  // This key is R6b-7's reversion switch, so the enabling direction is the one that has to be
+  // protected: a repository that could re-enable a provider its operator withdrew would make the
+  // switch worthless the moment it mattered.
+  test("R6b-9: a PROJECT tier can never re-enable what the USER tier disabled — the reversion switch is operator-immune", async () => {
     writeUser({ providers: { qoder: { enabled: false } } });
     writeProject({ providers: { qoder: { enabled: true } } });
-    expect((await resolve())["qoder"]?.enabled).toBe(true);
+    expect((await resolve())["qoder"]?.enabled).toBe(false);
+  });
+
+  test("R6b-9: it works in the other direction too — a PROJECT `false` disables even though the user said nothing", async () => {
+    // The discriminating half. Without it, the assertion above could equally mean "the project tier
+    // is ignored for this key", which is a different (and wrong) rule: disabling is a tightening
+    // every tier may make.
+    writeProject({ providers: { qoder: { enabled: false } } });
+    expect((await resolve())["qoder"]?.enabled).toBe(false);
+  });
+
+  test("R6b-9: ANY tier's `false` wins, and it does not disturb the sibling ids either tier enabled", async () => {
+    writeUser({ providers: { qoder: { enabled: true }, deepseek: { enabled: true } } });
+    writeProject({ providers: { qoder: { enabled: false } } });
+    const providers = await resolve();
+    expect(providers["qoder"]?.enabled).toBe(false);
+    expect(providers["deepseek"]?.enabled).toBe(true);
+  });
+
+  test("R6b-9 does NOT invent rows: a provider no tier mentions stays absent from the map", async () => {
+    writeUser({ providers: { qoder: { enabled: false } } });
+    expect((await resolve())["openai"]).toBeUndefined();
+  });
+
+  test("a higher tier still wins on every OTHER shape in the block — only `enabled: false` is sticky", async () => {
+    writeUser({ providers: { qoder: { enabled: true, note: "user" } } });
+    writeProject({ providers: { qoder: { enabled: true, note: "project" } } });
+    const raw = (await resolveSettingsDetailed({ cwd, winterHome: home, env: {} })).effective["providers"] as Record<string, { note?: string }>;
+    expect(raw["qoder"]?.note).toBe("project");
   });
 
   test("a malformed block is inert rather than fatal — a settings file is JSON and may say anything", async () => {

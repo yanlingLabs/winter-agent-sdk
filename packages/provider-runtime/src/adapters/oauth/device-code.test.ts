@@ -5,11 +5,13 @@
 // field on EVERY request and the test asserts on all of them.
 import { describe, expect, test } from "bun:test";
 import { runDeviceCodeFlow } from "./device-code.ts";
+import { winterUserAgent } from "../../identity.ts";
 
 describe("runDeviceCodeFlow (RFC 8628)", () => {
   test("requests a device code, reports the user code, polls until the token arrives, and sends the identity field on EVERY request", async () => {
     let polls = 0;
     const seenIdentity: string[] = [];
+    const seenUserAgent: string[] = [];
     const server = Bun.serve({
       hostname: "127.0.0.1",
       port: 0,
@@ -17,6 +19,7 @@ describe("runDeviceCodeFlow (RFC 8628)", () => {
         const url = new URL(req.url);
         const form = new URLSearchParams(await req.text());
         seenIdentity.push(form.get("referrer") ?? "MISSING");
+        seenUserAgent.push(req.headers.get("user-agent") ?? "MISSING");
         if (url.pathname === "/device") return Response.json({ device_code: "dev-1", user_code: "ABCD-EFGH", verification_uri: "https://example.invalid/activate", interval: 0 });
         polls += 1;
         if (polls < 2) return Response.json({ error: "authorization_pending" }, { status: 400 });
@@ -42,6 +45,10 @@ describe("runDeviceCodeFlow (RFC 8628)", () => {
       expect(statuses.join("\n")).toContain("https://example.invalid/activate");
       expect(seenIdentity.every((v) => v === "winter-agent-sdk")).toBe(true);
       expect(seenIdentity).toHaveLength(3);
+      // BOTH identity channels, on the device request and on every poll: the form field the vendor's
+      // flow reads, and the user-agent its logs and edge see.
+      expect(seenUserAgent.every((v) => v === winterUserAgent())).toBe(true);
+      expect(seenUserAgent).toHaveLength(3);
       expect(polls).toBe(2);
     } finally {
       server.stop(true);

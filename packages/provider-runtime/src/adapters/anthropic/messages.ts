@@ -500,8 +500,10 @@ async function buildHeaders(ctx: ProviderContext, policy: EndpointPolicy, opts: 
   // organisation header of its own today, so it adds nothing to the shared list -- the call site
   // exists so that when it does, the enforcement is already here.
   const headers: Record<string, string> = {
-    // WS-13b HONEST IDENTITY. FIRST, so a user connection profile can still override it -- a host
-    // speaking about its own proxy is the one sanctioned override, and `hostHeaders` is its door.
+    // WS-13b HONEST IDENTITY. FIRST, so a host's own `ConnectionProfile.headers` is spread over it.
+    // The override is EXACT-KEY, as it is for every header here: a profile spelling `User-Agent`
+    // adds a second key and `Headers` joins the two into one comma-separated value rather than
+    // replacing. Header-case normalisation belongs to R6-L's enforcement point, not here.
     "user-agent": winterUserAgent(),
     ...hostHeaders(policy, ctx.connection.headers),
     "anthropic-version": ANTHROPIC_API_VERSION,

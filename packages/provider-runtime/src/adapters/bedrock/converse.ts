@@ -801,7 +801,10 @@ export function createBedrockConverseAdapter(options: BedrockAdapterOptions): Be
       // WS-13b HONEST IDENTITY. `user-agent` is NOT an `x-amz-*` name, so it survives
       // `filterConnectionHeaders` and lands in the SIGNED set -- which is what we want: an identity
       // header outside the signature is one an intermediary can rewrite without breaking anything.
-      // It is spread FIRST so a host profile may still override it for its own proxy.
+      // It is spread FIRST so a host profile is spread over it for its own proxy -- exact-key, as
+      // for every header here; `filterConnectionHeaders` lowercases what it keeps, so a profile's
+      // `User-Agent` DOES replace this one on this family (the OpenAI/Anthropic/Google builders
+      // spread the profile's raw keys and would join the two spellings instead).
       "user-agent": winterUserAgent(),
       accept: "application/json",
       ...(contentType !== undefined ? { "content-type": contentType } : {}),

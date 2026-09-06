@@ -20,6 +20,7 @@
 
 import { createEndpointPolicy } from "../../endpoint-policy.ts";
 import { ProviderRequestError, boundedFetch } from "../../http.ts";
+import { winterUserAgent } from "../../identity.ts";
 import type { LoginConfig, OAuthTokens } from "../openai/pkce.ts";
 
 export interface DeviceCodeConfig {
@@ -79,7 +80,10 @@ async function postForm(url: string, fields: Record<string, string>): Promise<{ 
   if (!built.ok) throw new ProviderRequestError({ code: "capability", message: built.reason, retryable: false });
   const response = await boundedFetch(url, {
     method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" },
+    // WS-13b: Winter names itself on the device request and on every poll, in the HEADER as well as
+    // in `identity`. The form field is what the vendor's flow reads; the user-agent is what its
+    // logs and its edge see, and D21's honest-originator rule is about both.
+    headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json", "user-agent": winterUserAgent() },
     body: new URLSearchParams(fields).toString(),
     policy: built.policy,
     maxBodyBytes: 512 * 1024,

@@ -142,11 +142,19 @@ export interface Settings {
    * setting is that answer; a compile-time constant is not.
    *
    * ABSENT MEANS ENABLED. Silence is not a disablement, so an unlisted provider resolves normally
-   * and only an explicit `enabled: false` refuses. Restrictive-only in effect, so it is not an
-   * OVERLAY_NEVER_KEY: a repository may turn a provider OFF for its own checkout, which is a
-   * tightening every tier is allowed to make.
+   * and only an explicit `enabled: false` refuses.
    *
-   * NOT an overlay-never key and NOT trust-gated for the same reason `disableAutoMode` is not.
+   * RESTRICTIVE-ONLY ACROSS TIERS (RULING R6b-9), enforced by `restrictProviderEnables` in
+   * `resolve.ts` rather than by the ordinary merge: the effective value is `false` if ANY tier says
+   * `false`, and a lower tier's `true` never re-enables what a higher one disabled. Without that,
+   * a cloned repository's `.winter/settings.json` could put back a provider its operator withdrew —
+   * and this key IS the reversion switch (R6b-7 / WS-13b §4), so a switch a repository can flip back
+   * would not be one.
+   *
+   * NOT an OVERLAY_NEVER_KEY, deliberately: a never-key drops the project tier's value entirely,
+   * which would also drop a project's legitimate `false`. Disabling is a tightening every tier may
+   * make; only the enabling direction is restricted — the same asymmetry `permissions.deny` and
+   * `permissions.allow` already carry.
    */
   providers?: Record<string, { enabled?: boolean }>;
   [key: string]: unknown;

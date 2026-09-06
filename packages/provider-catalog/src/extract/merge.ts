@@ -68,7 +68,8 @@ export interface AllowlistProviderRow {
   /**
    * WS-13b §1 (D21): the documented third-party path this row ships through, with its citation.
    * Also copied verbatim, and REQUIRED: an allowlist entry missing it fails the run rather than
-   * producing a row whose admission nobody can check (see `admissionOf` below).
+   * producing a row whose admission nobody can check — see step (0) at the top of
+   * `buildUpstreamLayer`, which refuses before anything is classified.
    */
   admission: { basis: "api-key" | "oauth-documented" | "keyless-documented" | "local" | "cloud-credential"; citation: string };
 }
@@ -503,8 +504,9 @@ export function buildUpstreamLayer(input: BuildUpstreamLayerInput): UpstreamLaye
       upstream: { project: "OmniRoute", commit, sourcePaths },
       risk: allowed.risk,
       scope: "llm",
-      // WS-13b §1: the reviewed allowlist entry's own evidence, copied onto the row. `admissionOf`
-      // has already refused the run if either is missing or names the audit's `unknown` class.
+      // WS-13b §1: the reviewed allowlist entry's own evidence, copied onto the row. Step (0) at
+      // the top of this function has already refused the run if either field is missing or if the
+      // citation names the audit's `unknown` class, so both are present and checked by here.
       pricingBasis: allowed.pricingBasis,
       admission: allowed.admission,
     });

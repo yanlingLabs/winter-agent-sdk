@@ -29,6 +29,7 @@
 import { CredentialResolutionError, redactRef } from "../../credentials/types.ts";
 import { createEndpointPolicy } from "../../endpoint-policy.ts";
 import { boundedFetch } from "../../http.ts";
+import { winterUserAgent } from "../../identity.ts";
 import type { CredentialMaterial, CredentialRef, CredentialStore } from "../../types.ts";
 
 /** The oauth arm of `CredentialMaterial` — what a refresh reads, merges into, and writes back. */
@@ -77,7 +78,10 @@ export async function refreshOauthMaterial(input: RefreshOauthMaterialInput): Pr
 
   const response = await boundedFetch(tokenUrl, {
     method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" },
+    // WS-13b: a token endpoint is a vendor request like any other, so Winter names itself here too.
+    // Lanes A2/O build their flows on this helper; an identity that stopped at the chat endpoint
+    // would leave every OAuth row anonymous on the one request that renews its credential.
+    headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json", "user-agent": winterUserAgent() },
     body: new URLSearchParams({ grant_type: "refresh_token", client_id: clientId, refresh_token: existing.refreshToken, ...(input.extraFields ?? {}) }).toString(),
     policy: built.policy,
     maxBodyBytes: 512 * 1024,
