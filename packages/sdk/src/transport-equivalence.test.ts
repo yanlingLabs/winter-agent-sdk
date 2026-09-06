@@ -42,6 +42,8 @@ import type { WinterFrame, ControlRequestFrame, ControlResponseFrame } from "./p
 import type { RuntimeConfig } from "./protocol/config.ts";
 import type { CanUseTool, PermissionMode } from "./permissions/types.ts";
 import type { Options, WinterMcpServerInstance } from "./options.ts";
+import type { ModelInfo } from "./protocol/config.ts";
+import { PROVIDER_STATE_FILE_SUFFIX } from "./store/session-store.ts";
 import { inMemoryProcess } from "winter-agent-runtime/testing";
 import {
   echoProvider,
@@ -431,7 +433,18 @@ interface QueryScenarioOptions {
   // method query.test.ts's own setPermissionMode() test drives — exposed here so a scenario can
   // fire a genuine mid-stream mode switch from an OBSERVED point (e.g. "the first round's result"),
   // never a real-clock guess.
-  onMessage?: (msg: { type: string }, ctx: { proc: SpawnedRuntimeProcess | undefined; abort: () => void; setPermissionMode: (mode: PermissionMode) => Promise<void> }) => void;
+  onMessage?: (
+    msg: { type: string },
+    ctx: {
+      proc: SpawnedRuntimeProcess | undefined;
+      abort: () => void;
+      setPermissionMode: (mode: PermissionMode) => Promise<void>;
+      // P6 fix wave (Ruling E-2): the R6-I picker flow -- `supportedModels()[i].value` into
+      // `setModel()` -- driven between two turns of one session, on every leg.
+      setModel: (model?: string) => Promise<void>;
+      supportedModels: () => Promise<ModelInfo[]>;
+    },
+  ) => void;
   // Phase 4 fix wave (T8 review I2): WS-10 §4's own forwarding gate -- with it ON, a child's text
   // and its tool_use/tool_result blocks reach the parent's wire stamped with `parent_tool_use_id`,
   // which is the whole point of the scenario below. Off (the default) for every pre-existing
@@ -520,7 +533,13 @@ async function traceViaQuery(leg: LegName, scenario: QueryScenarioOptions): Prom
     });
     for await (const msg of gen) {
       entries.push({ sequence: entries.length, direction: "runtime-to-host", kind: kindOfMessage(msg), payload: msg });
-      scenario.onMessage?.(msg, { proc: capture.proc, abort: () => abortController?.abort(), setPermissionMode: (mode) => gen.setPermissionMode(mode) });
+      scenario.onMessage?.(msg, {
+        proc: capture.proc,
+        abort: () => abortController?.abort(),
+        setPermissionMode: (mode) => gen.setPermissionMode(mode),
+        setModel: (model) => gen.setModel(model),
+        supportedModels: () => gen.supportedModels(),
+      });
     }
   } catch (e) {
     thrown = e;
@@ -1913,9 +1932,14 @@ function registerEquivalenceScenarios(legA: LegName, legB: LegName): void {
         const id = `${sessionId}-${leg}`;
         const first = await traceViaQuery(leg, { ...base, model: SCENARIO_MODELS.anthropic, prompt: "first", sessionId: id });
         expect(first.thrown).toBeUndefined();
+        // Counted BEFORE this leg's resumed turn (fix wave, Lane D's r1 Minor): the assertion below
+        // proves THIS leg went out under the new wire id, not merely that some leg did.
+        const childWireBefore = fake.requests.filter((r) => r.body.includes(`"model":"${SCENARIO_CHILD_WIRE_ID}"`)).length;
         const switched = await traceViaQuery(leg, { ...base, model: SCENARIO_CHILD_MODEL, prompt: "second", resume: id });
         expect(switched.thrown).toBeUndefined();
         traces.push(switched);
+        // GROUND TRUTH, per leg: the resumed turn genuinely went out under the NEW wire id.
+        expect(fake.requests.filter((r) => r.body.includes(`"model":"${SCENARIO_CHILD_WIRE_ID}"`)).length).toBeGreaterThan(childWireBefore);
 
         // (a) The resumed session re-resolved the NEW model, and reports it.
         const init = switched.trace[0]!.payload as { model: string; winter_provider?: Record<string, unknown> };
@@ -1933,8 +1957,6 @@ function registerEquivalenceScenarios(legA: LegName, legB: LegName): void {
       }
       // And the two legs agree frame for frame.
       expect(compareTraces(traces[0]!.trace, traces[1]!.trace)).toEqual([]);
-      // GROUND TRUTH: the resumed turn genuinely went out under the NEW wire id.
-      expect(fake.requests.some((r) => r.body.includes(`"model":"${SCENARIO_CHILD_WIRE_ID}"`))).toBe(true);
     } finally {
       await fake.close();
     }
@@ -1999,6 +2021,187 @@ function registerEquivalenceScenarios(legA: LegName, legB: LegName): void {
       await fake.close();
     }
   });
+
+  // ==============================================================================================
+  // P6 fix wave: the switch seam (Ruling E-2) and fallback (Ruling E-3), on every leg.
+  // ==============================================================================================
+
+  /** A two-turn streaming prompt whose SECOND turn waits for the host's own action between them. */
+  function gatedTwoTurns(): { prompt: AsyncIterable<string>; release: () => void } {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    async function* turns(): AsyncGenerator<string> {
+      yield "first";
+      await gate;
+      yield "second";
+    }
+    return { prompt: turns(), release };
+  }
+
+  /** The provider-state sidecar this leg's session wrote under the shared test home. */
+  function sidecarRecords(sessionId: string): Array<Record<string, unknown>> {
+    const path = join(TEST_WINTER_HOME, "projects", compatibilityKeys(FIXTURE_CWD).transcriptProjectKey, `${sessionId}${PROVIDER_STATE_FILE_SUFFIX}`);
+    if (!existsSync(path)) return [];
+    return readFileSync(path, "utf8")
+      .split("\n")
+      .filter((line) => line.length > 0)
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+  }
+
+  test("p6-set-model (R6-I through Ruling E-2): `setModel(supportedModels()[i].value)` between two turns puts the row's WIRE id on the wire, announces the switch with keys, warns about the cross-domain replay and writes the handoff record -- on every leg", async () => {
+    const fake = await startScenarioFake();
+    try {
+      const sessionId = randomUUID();
+      for (const leg of [legA, legB]) {
+        const id = `${sessionId}-${leg}`;
+        const { prompt, release } = gatedTwoTurns();
+        let acted = false;
+        let pickedValue: string | undefined;
+        const result = await traceViaQuery(leg, {
+          prompt,
+          sessionId: id,
+          model: SCENARIO_MODELS.anthropic,
+          provider: fakeProvider(fake),
+          allowedTools: [SCENARIO_TOOL_NAME],
+          registryBackedTools: true,
+          onMessage: (msg, ctx) => {
+            if (msg.type !== "result" || acted) return;
+            acted = true;
+            // THE R6-I FLOW, verbatim: a picker row's `value` -- the CATALOG KEY -- into `setModel`.
+            void (async () => {
+              const rows = await ctx.supportedModels();
+              const row = rows.find((r) => r.value === SCENARIO_CHILD_MODEL);
+              pickedValue = row?.value;
+              if (row !== undefined) await ctx.setModel(row.value);
+            })().finally(release);
+          },
+        });
+        expect(result.thrown).toBeUndefined();
+        expect(pickedValue).toBe(SCENARIO_CHILD_MODEL);
+        // (a) THE WIRE: turn 1 on the session's own wire id, turn 2 on the ROW's wire id -- never the key.
+        const wire = fake.requests.filter((r) => r.path === "/v1/messages").map((r) => /"model":"([^"]+)"/.exec(r.body)?.[1]);
+        expect(wire.slice(-1)[0]).toBe(SCENARIO_CHILD_WIRE_ID);
+        expect(wire.includes(SCENARIO_CHILD_MODEL)).toBe(false);
+        // (b) THE FRAMES: the switch announced with BOTH ids as keys, preceded by the cross-domain
+        // warning (sonnet-5 declares a single-member continuation domain; the haiku row declares
+        // none), which names counts and identities only.
+        const kinds = result.trace.map((e) => e.kind);
+        expect(kinds.indexOf("system/continuity_warning")).toBeGreaterThan(-1);
+        expect(kinds.indexOf("system/continuity_warning")).toBeLessThan(kinds.indexOf("system/model_switch"));
+        const switchFrame = result.trace.find((e) => e.kind === "system/model_switch")!.payload as { reason: string; from_model: string; to_model: string; provider: string };
+        expect(switchFrame).toMatchObject({ reason: "set_model", from_model: SCENARIO_MODELS.anthropic, to_model: SCENARIO_CHILD_MODEL, provider: "anthropic" });
+        const warning = result.trace.find((e) => e.kind === "system/continuity_warning")!.payload as { warning: string; detail: string };
+        expect(warning.warning).toBe("cross_domain_replay_dropped");
+        expect(warning.detail).toContain(`switching from ${SCENARIO_MODELS.anthropic} to ${SCENARIO_CHILD_MODEL}`);
+        // (c) THE SIDECAR: the `handoff` record, anchored at the source's last entry, beside the origins.
+        const records = sidecarRecords(id);
+        const handoff = records.find((r) => r.kind === "handoff");
+        expect(handoff, `${leg}: no handoff record in the sidecar`).toBeDefined();
+        expect(handoff!.model).toBe(SCENARIO_MODELS.anthropic);
+        expect(records.some((r) => r.kind === "origin" && r.anchorUuid === handoff!.anchorUuid && r.model === SCENARIO_MODELS.anthropic)).toBe(true);
+        // Post-switch origins name the NEW model: the second turn's entry.
+        expect(records.some((r) => r.kind === "origin" && r.model === SCENARIO_CHILD_MODEL)).toBe(true);
+      }
+    } finally {
+      await fake.close();
+    }
+  });
+
+  test("p6-set-model (refusal): a key qualified for ANOTHER provider is `invalid_model` on the control response and never parked -- the next turn stays on the session's model, on every leg", async () => {
+    const fake = await startScenarioFake();
+    try {
+      for (const leg of [legA, legB]) {
+        const { prompt, release } = gatedTwoTurns();
+        let acted = false;
+        let rejection: unknown;
+        const before = fake.requests.length;
+        const result = await traceViaQuery(leg, {
+          prompt,
+          model: SCENARIO_MODELS.anthropic,
+          provider: fakeProvider(fake),
+          allowedTools: [SCENARIO_TOOL_NAME],
+          registryBackedTools: true,
+          onMessage: (msg, ctx) => {
+            if (msg.type !== "result" || acted) return;
+            acted = true;
+            void ctx
+              .setModel(SCENARIO_MODELS.openaiResponses)
+              .catch((err: unknown) => {
+                rejection = err;
+              })
+              .finally(release);
+          },
+        });
+        expect(result.thrown).toBeUndefined();
+        // `Query.setModel()` REJECTS with the control response's own code (R6-K's provider-mismatch).
+        expect(rejection).toBeDefined();
+        expect((rejection as { code?: string }).code).toBe("invalid_model");
+        expect(String((rejection as Error).message)).toContain("provider-mismatch");
+        expect(result.trace.filter((e) => e.kind === "system/model_switch")).toHaveLength(0);
+        // Every request of both turns went out under the session's own wire id.
+        const wire = fake.requests.slice(before).map((r) => /"model":"([^"]+)"/.exec(r.body)?.[1]);
+        expect(wire.length).toBeGreaterThan(0);
+        expect(wire.every((m) => m === "claude-sonnet-5")).toBe(true);
+      }
+    } finally {
+      await fake.close();
+    }
+  });
+
+  test("p6-fallback (R6-C through Ruling E-3): the primary fails 503 x(maxRetries+1), the candidate serves the turn, `model_switch{reason:'fallback'}` carries the keys -- on every leg", async () => {
+    // A same-domain pair on the real catalog: neither gemini-2.5-flash nor -flash-lite declares a
+    // reasoning transport, so both sit in the empty domain and R6-9's init check admits the pair.
+    // `retry-after: 1` bounds the scenario at 10 s per leg (R6-6 honours the header verbatim; a
+    // jittered schedule would be up to 30 s per step) -- the cost is disclosed in the report.
+    const fake = await startScenarioFake({ failModel: { wireModel: "gemini-2.5-flash", status: 503, retryAfter: "1" } });
+    try {
+      const scenario = {
+        prompt: "fall back",
+        model: SCENARIO_MODELS.gemini,
+        fallbackModel: "google/gemini-2.5-flash-lite",
+        provider: fakeProvider(fake),
+        allowedTools: [SCENARIO_TOOL_NAME],
+        registryBackedTools: true,
+      } satisfies QueryScenarioOptions;
+      const scrubDelay = (entries: ConformanceTraceEntry[]): ConformanceTraceEntry[] =>
+        JSON.parse(JSON.stringify(entries).replace(/\\?"retry_delay_ms\\?":\d+/g, '"retry_delay_ms":0')) as ConformanceTraceEntry[];
+      const traces: ConformanceTraceEntry[][] = [];
+      for (const leg of [legA, legB]) {
+        const before = fake.requests.length;
+        const result = await traceViaQuery(leg, scenario);
+        expect(result.thrown).toBeUndefined();
+        traces.push(result.trace);
+        const mine = fake.requests.slice(before);
+        // THE WIRE: 11 attempts on the primary (R6-6's 10 retries + the first), then the candidate's
+        // own tool round -- Gemini carries the model in the PATH.
+        expect(mine.filter((r) => r.path.includes("/models/gemini-2.5-flash:")).length).toBe(11);
+        expect(mine.filter((r) => r.path.includes("/models/gemini-2.5-flash-lite:")).length).toBe(2);
+        // THE FRAMES: ten `api_retry`s with the 503, then ONE Winter `model_switch{reason:"fallback"}`
+        // with the keys, then the candidate's turn to a clean result. No vendor frame (R6-C: silent
+        // at parity) -- `model_refusal_*` is for a refusal, never an overload.
+        const retries = result.trace.filter((e) => e.kind === "system/api_retry");
+        expect(retries).toHaveLength(10);
+        expect((retries[0]!.payload as { error_status: number }).error_status).toBe(503);
+        const switches = result.trace.filter((e) => e.kind === "system/model_switch");
+        expect(switches).toHaveLength(1);
+        expect(switches[0]!.payload).toMatchObject({ reason: "fallback", from_model: SCENARIO_MODELS.gemini, to_model: "google/gemini-2.5-flash-lite", provider: "google" });
+        expect(result.trace.some((e) => e.kind.startsWith("system/model_refusal"))).toBe(false);
+        const final = result.trace.find((e) => e.kind === "result")!.payload as { is_error?: boolean; result?: string };
+        expect(final.is_error).toBeFalsy();
+        expect(final.result).toBe(SCENARIO_FINAL_TEXT);
+      }
+      // The two legs agree frame for frame (delays scrubbed: the header makes them 1000 ms, but a
+      // real clock is still a real clock; Gemini's self-minted call ids scrubbed, as in
+      // `p6-gemini-fake`).
+      const scrubGeminiCallIds = (entries: ConformanceTraceEntry[]): ConformanceTraceEntry[] =>
+        JSON.parse(JSON.stringify(entries).replace(/google-call-[0-9a-f]+-\d+/g, "google-call-SCRUBBED")) as ConformanceTraceEntry[];
+      expect(compareTraces(scrubGeminiCallIds(scrubDelay(traces[0]!)), scrubGeminiCallIds(scrubDelay(traces[1]!)))).toEqual([]);
+    } finally {
+      await fake.close();
+    }
+  }, 120_000);
 
   test("interrupt mid-turn", async () => {
     const a = await traceInterrupt(legA);

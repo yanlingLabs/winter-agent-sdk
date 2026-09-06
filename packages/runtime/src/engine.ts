@@ -4207,8 +4207,10 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
         warning: "cross_domain_replay_dropped",
         // COUNTS AND IDENTITY ONLY. `classification.warnings` is `warnings.ts`'s own prose, which by
         // construction names ids and never a payload (`SwitchFacts` has no field one could arrive in).
+        // NO `anchor_uuid`: a per-run entry uuid would make the frame differ across transport legs
+        // and goldens (the trace normalizer keeps `anchor_uuid` deliberately); the handoff record
+        // below carries the anchor for a reader that needs it.
         detail: `switching from ${from.modelKey} to ${to.modelKey}: ${dropped} assistant message${dropped === 1 ? "" : "s"} carrying native continuation state will not be replayed natively. ${classification.warnings.join(" ")}`,
-        ...(lastSource?.uuid !== undefined ? { anchor_uuid: lastSource.uuid } : {}),
         uuid: randomUUID(),
         session_id: config.sessionId,
       },

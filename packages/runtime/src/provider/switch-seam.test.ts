@@ -215,7 +215,8 @@ describe("Ruling E-2: `set_model` resolves FIRST and the switch rebuilds provide
       expect(handoff).toBeDefined();
       expect(handoff!.anchorUuid).toBe(lastSourceOrigin.anchorUuid);
       expect(handoff!.model).toBe("prova/m1");
-      expect(warnings[0]!.anchor_uuid).toBe(lastSourceOrigin.anchorUuid);
+      // The frame carries NO anchor (a per-run uuid would break cross-leg and golden comparison); the record does.
+      expect(warnings[0]!.anchor_uuid).toBeUndefined();
       const payload = handoff!.payload as { text: string; target: { providerId: string; modelKey: string } };
       expect(payload.text).toContain("<prior_model_handoff");
       expect(payload.text).toContain("prova / prova/m1");

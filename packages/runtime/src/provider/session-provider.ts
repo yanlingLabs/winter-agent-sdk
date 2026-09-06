@@ -361,9 +361,12 @@ export function buildSessionProvider(opts: SessionProviderOptions): SessionProvi
 
   // The session's own provider, for the cross-provider test below. Read LAZILY (a closure over a
   // `let`), because `buildProvider` is defined before selection has run and the session's resolved
-  // provider is only known afterwards; a host that configured `provider.providerId` answers at once.
+  // provider is only known afterwards. THE RESOLVED ID WINS over `config.provider.providerId`: a
+  // session on a qualified `<providerId>/<model>` key resolves against the KEY's provider whatever
+  // the host wrote in `providerId` (selection.ts ignores it for a qualified key), so the key's
+  // provider is the session's -- and the session's `authRef`/`connection` were configured for it.
   let sessionResolvedProviderId: string | undefined;
-  const sessionProviderId = (): string | undefined => config.provider?.providerId ?? sessionResolvedProviderId;
+  const sessionProviderId = (): string | undefined => sessionResolvedProviderId ?? config.provider?.providerId;
 
   /**
    * RULING E-1 -- the credential and connection rule for every provider this wiring builds.
@@ -380,7 +383,12 @@ export function buildSessionProvider(opts: SessionProviderOptions): SessionProvi
    * vendor A's key on the wire to vendor B's endpoint -- and this function is the closed door.
    */
   const describeTargetMaterial = (resolved: ResolvedModel, buildOpts: BuildProviderOptions = {}): TargetMaterial => {
-    const crossProvider = sessionProviderId() !== undefined && resolved.providerId !== sessionProviderId();
+    // BEFORE selection has completed, the only target this builder ever sees is the session's own
+    // model (`resolveSessionProvider` builds it through `deps.buildProvider`), and the session's own
+    // model is never cross-provider -- whatever `config.provider.providerId` says, since a qualified
+    // key overrides it. Every later target (classifier, advisor, child, switch) is judged against the
+    // provider selection actually resolved to.
+    const crossProvider = sessionResolvedProviderId !== undefined && resolved.providerId !== sessionResolvedProviderId;
     // A cross-provider target's connection is ITS OWN generated endpoint; the session's user
     // connection (a proxy, a gateway, custom headers) is the session provider's business.
     const connection = crossProvider ? generatedConnectionForProvider(catalog, resolved.provider) : connectionForProvider(config, catalog, resolved.provider);
