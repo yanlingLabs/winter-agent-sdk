@@ -58,7 +58,7 @@ export type { ContinuityCaseContext, ContinuityCaseId, ContinuityCaseImpl, Conti
 // runtime-side fixture, against a scripted `Provider` double) and the live run
 // (`scripts/verify-provider-live.ts`, opt-in) must ask the identical questions, or "the corpus
 // passed" means two different things depending on who said it.
-export { CLASSIFIER_SAFETY_CASES, CLASSIFIER_SAFETY_CATEGORIES, describeThrown, formatClassifierSafetyReport, runClassifierSafetyCorpus } from "./corpus/classifier-safety.ts";
+export { CLASSIFIER_SAFETY_CASES, CLASSIFIER_SAFETY_CATEGORIES, describeCaseFailure, describeReasonCode, describeThrown, formatClassifierSafetyReport, runClassifierSafetyCorpus } from "./corpus/classifier-safety.ts";
 export type {
   ClassifierSafetyAnswer,
   ClassifierSafetyCase,

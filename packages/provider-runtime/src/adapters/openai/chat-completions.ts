@@ -104,11 +104,19 @@ export function mapChatMessages(messages: readonly ProviderMessageLike[], replay
       // message with 'tool_calls'"), which would fail the whole turn rather than merely lose the
       // note. Prefixing keeps it adjacent to exactly what it annotates and adds nothing to the wire.
       let toolPrefix = decorationText(message);
+      let rendered = false;
       for (const block of blocks) {
         if (block.type !== "tool_result") continue;
         out.push({ role: "tool", tool_call_id: block.tool_use_id, content: prefixToolResult(toolPrefix, toolResultText(block.content)) });
         toolPrefix = undefined;
+        rendered = true;
       }
+      // A tool-role message with NO `tool_result` block — string content, say, from a host-supplied
+      // history — used to render as NOTHING AT ALL: the message and its decoration vanished, and the
+      // Responses mapper turned the same input into a user message (Lane A r3 carry). It cannot be a
+      // `tool` message here, because this surface requires a `tool_call_id` and there is no result to
+      // take one from; so it becomes what Responses already makes it, and the content survives.
+      if (!rendered) out.push({ role: "user", content: userContentParts(blocks, toolPrefix).content });
       continue;
     }
 

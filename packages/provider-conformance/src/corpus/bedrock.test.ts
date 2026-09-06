@@ -3,6 +3,7 @@ import { createRegistry } from "../../../provider-runtime/src/registry.ts";
 import { adapterAsProvider, foldProviderStream } from "../../../runtime/src/provider/bridge.ts";
 import { createBedrockConverseAdapter } from "../../../provider-runtime/src/adapters/bedrock/converse.ts";
 import { signRequest } from "../../../provider-runtime/src/adapters/bedrock/sigv4.ts";
+import { THINKING_ENABLED_NEEDS_BUDGET } from "../../../provider-runtime/src/adapters/refusals.ts";
 import { CORPUS_CASES, formatCorpusReport, runAdapterCorpus } from "./runner.ts";
 import { noRequestContains } from "../fakes/server.ts";
 import { FAKE_ACCESS_KEY_ID, FAKE_SECRET_ACCESS_KEY, bedrockError, eventStreamResponse, startBedrockFake, textTurnFrames } from "../fakes/bedrock.ts";
@@ -186,7 +187,9 @@ describe("T10 review round 1 (#16): Lane C's decoration text reaches the Bedrock
     // Bedrock request needs SigV4 material and a region the shared scenario fake does not serve.
     // Lane N's OWN fake does serve both, so the assertion belongs here — the controller's ruling was
     // about the assertion existing on a real recorded request, not about which fake carries it.
-    const DECORATION = "WINTER-T10-DECORATION-MARKER: recovered reasoning from a prior model";
+    // Lane C's REAL output shape, already delimited: the ruling is that this layer adds nothing to
+    // it, so a fixture whose text carries no delimiters of its own cannot show a re-delimiting.
+    const DECORATION = '<recovered_reasoning_summary provider="openai" model="gpt-5.6-sol">WINTER-T10-DECORATION-MARKER</recovered_reasoning_summary>';
     const fake = await startBedrockFake({ scenarios: bedrockScenarios() });
     try {
       const harness = createBedrockHarness(fake);
@@ -197,9 +200,13 @@ describe("T10 review round 1 (#16): Lane C's decoration text reaches the Bedrock
         ),
       );
       const body = fake.requests[0]!.body;
-      // VERBATIM, and EXACTLY ONCE: a second occurrence would mean the adapter wrapped it again on
-      // top of the renderer's own delimiters, which the controller's ruling forbids.
-      expect(body.split(DECORATION).length - 1).toBe(1);
+      // EQUALS, not "contains once" (whole-branch review I-3). A count is blind to a WRAPPER — the
+      // OpenAI family shipped every decoration behind a `[winter:context] ` prefix for three rounds
+      // under exactly that pin — so the recorded BLOCK must be the decoration text and nothing else.
+      const parsed = JSON.parse(body) as { messages: Array<{ role: string; content: Array<Record<string, unknown>> }> };
+      expect(parsed.messages[0]!.content).toEqual([{ text: "hi" }, { text: DECORATION }]);
+      // And exactly once: no second copy anywhere else in the request either.
+      expect(body.split(JSON.stringify(DECORATION).slice(1, -1)).length - 1).toBe(1);
     } finally {
       await fake.close();
     }
@@ -236,6 +243,98 @@ describe("R6-L: privileged headers ride a GENERATED endpoint and are dropped for
       expect(fake.signatures[0]!.signedHeaders).not.toContain("x-amz-source-arn");
       // The account number reached NOTHING — not a header, not a body, not the signature.
       expect(noRequestContains(fake, "111122223333")).toBe(true);
+    } finally {
+      await fake.close();
+    }
+  });
+
+  test("a CONNECTION PROFILE cannot smuggle `x-amz-source-account`/`x-amz-source-arn` past the gate (Lane N r1 carry)", async () => {
+    // The gate above governs the set the ADAPTER builds. The profile is the other door: a host that
+    // writes the same names into `connection.headers` would put them on a user endpoint with no gate
+    // in the way at all. `filterConnectionHeaders`' `x-amz-` prefix drop closes it — INCIDENTALLY,
+    // which is why it is pinned here rather than left to the prefix rule's own good intentions.
+    const fake = await startBedrockFake({ scenarios: bedrockScenarios() });
+    try {
+      const harness = createBedrockHarness(fake);
+      const ctx = {
+        ...harness.ctx,
+        connection: {
+          ...harness.ctx.connection,
+          headers: { "x-amz-source-account": "999988887777", "x-amz-source-arn": "arn:aws:bedrock:us-east-1:999988887777:agent/SMUGGLED", "x-trace": "keep" },
+        },
+      };
+      await foldProviderStream(harness.adapter.streamTurn({ model: BEDROCK_CORPUS_MODEL, messages: [{ role: "user", content: "hi" }] }, ctx));
+      const recorded = fake.requests[0]!;
+      expect(recorded.headers["x-amz-source-account"]).toBeUndefined();
+      expect(recorded.headers["x-amz-source-arn"]).toBeUndefined();
+      expect(fake.signatures[0]!.signedHeaders).not.toContain("x-amz-source-account");
+      expect(noRequestContains(fake, "999988887777")).toBe(true);
+      // A header that collides with nothing is still the host's to send.
+      expect(recorded.headers["x-trace"]).toBe("keep");
+    } finally {
+      await fake.close();
+    }
+  });
+
+  test("F-3: the family-foreign CREDENTIAL names are dropped too — `cookie` + `x-trace` -> only `x-trace`", async () => {
+    // Bedrock's filter owned the SigV4 names (`authorization`, `host`, `x-amz-*`) and missed
+    // `cookie`, `proxy-authorization`, `x-api-key`, `api-key` and `x-goog-api-key` — which are
+    // misconfigurations on every family, this one included. It now consults
+    // `CREDENTIAL_HEADER_NAMES`, the same list `hostHeaders` uses, so the two cannot drift.
+    const fake = await startBedrockFake({ scenarios: bedrockScenarios() });
+    try {
+      const harness = createBedrockHarness(fake);
+      const ctx = {
+        ...harness.ctx,
+        connection: {
+          ...harness.ctx.connection,
+          headers: { cookie: "session=SMUGGLED-COOKIE", "proxy-authorization": "Basic SMUGGLED-PROXY", "x-api-key": "SMUGGLED-KEY", "x-goog-api-key": "SMUGGLED-GOOG", "x-trace": "keep" },
+        },
+      };
+      await foldProviderStream(harness.adapter.streamTurn({ model: BEDROCK_CORPUS_MODEL, messages: [{ role: "user", content: "hi" }] }, ctx));
+      const recorded = fake.requests[0]!;
+      expect(recorded.headers["x-trace"]).toBe("keep");
+      for (const name of ["cookie", "proxy-authorization", "x-api-key", "x-goog-api-key"]) expect([name, recorded.headers[name]]).toEqual([name, undefined]);
+      // Not signed either: a dropped header must never be a signed-then-removed one.
+      for (const name of ["cookie", "proxy-authorization", "x-api-key"]) expect([name, fake.signatures[0]!.signedHeaders.includes(name)]).toEqual([name, false]);
+      expect(fake.signatures[0]!.verified).toBe(true);
+      for (const marker of ["SMUGGLED-COOKIE", "SMUGGLED-PROXY", "SMUGGLED-KEY", "SMUGGLED-GOOG"]) expect([marker, noRequestContains(fake, marker)]).toEqual([marker, true]);
+    } finally {
+      await fake.close();
+    }
+  });
+});
+
+describe("WS-13 §8.2: `enabled` without a budget is REFUSED, in the family's shared sentence (F-2 / I-4)", () => {
+  test("nothing reaches the wire, and the sentence is Anthropic's own", async () => {
+    // I-4: the WS-13 §8.2 amendment said this adapter re-resolves `enabled` -> `adaptive`. It does
+    // not, and must not: R6-E permits that re-resolution only for models whose EVIDENCE says
+    // adaptive-only, and no catalog field carries that evidence, so it would be a silent
+    // substitution of a config the caller never asked for. It refuses -- in the same sentence Lane B
+    // uses for the identical Anthropic-dialect object on the identical model family.
+    const fake = await startBedrockFake({ scenarios: bedrockScenarios() });
+    try {
+      const harness = createBedrockHarness(fake);
+      // This adapter raises the refusal from the body builder, so the typed error surfaces as a
+      // THROW rather than an `error` event -- which is itself the proof that nothing was streamed.
+      await expect(harness.events({ thinking: { type: "enabled" } })).rejects.toThrow(THINKING_ENABLED_NEEDS_BUDGET);
+      // REQUEST COUNT 0 is the half a message assertion cannot give: refused BEFORE the request,
+      // never sent for the endpoint to 400.
+      expect(fake.requests).toHaveLength(0);
+    } finally {
+      await fake.close();
+    }
+  });
+
+  test("with a budget it IS represented, as `additionalModelRequestFields.thinking`", async () => {
+    const fake = await startBedrockFake({ scenarios: bedrockScenarios() });
+    try {
+      const harness = createBedrockHarness(fake);
+      await foldProviderStream(
+        harness.adapter.streamTurn({ model: BEDROCK_CORPUS_MODEL, messages: [{ role: "user", content: "hi" }], thinking: { type: "enabled", budgetTokens: 4096 } }, harness.ctx),
+      );
+      const body = JSON.parse(fake.requests[0]!.body) as { additionalModelRequestFields?: Record<string, unknown> };
+      expect(body.additionalModelRequestFields?.["thinking"]).toEqual({ type: "enabled", budget_tokens: 4096 });
     } finally {
       await fake.close();
     }

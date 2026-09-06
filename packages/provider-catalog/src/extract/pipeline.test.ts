@@ -331,6 +331,12 @@ describe("unknown vocabularies FAIL extraction (WS-13 §13)", () => {
     // label, and what let a text-to-speech model into the catalog looking like a text model.
     const layer = buildUpstreamLayer(buildInput(allowlistWith([ACME_ROW])));
     for (const model of layer.models) {
+      // The label is in the SOURCE FIELD now (Lane X r1 carry). `EvidenceSource` was frozen when
+      // this shipped, so the caveat could only live in a `sourceRef` sentence -- and a reader
+      // filtering evidence by `source` still got a Winter guess wearing an upstream label.
+      // `winter-default` is the member added for exactly this; the prose stays, because "why" is not
+      // something an enum can carry.
+      expect([model.key, model.outputModalities.source]).toEqual([model.key, "winter-default"]);
       expect([model.key, model.outputModalities.confidence]).toEqual([model.key, "unknown"]);
       expect(model.outputModalities.sourceRef).toContain("WINTER DEFAULT");
     }
@@ -380,6 +386,61 @@ describe("unknown vocabularies FAIL extraction (WS-13 §13)", () => {
     expect(models.get("acme-winter/readable")!.unsupportedParameters).toEqual(["top_p"]);
     expect(models.get("acme-winter/refused")!.unsupportedParameters).toEqual([]);
     expect(models.get("acme-winter/silent")!.unsupportedParameters).toEqual([]);
+  });
+
+  test("a refused or spread `models` ELEMENT fails the per-model correlation CLOSED, with one ledger row (Lane X r2)", () => {
+    // The index the correlation above uses is a position in the extractor's COMPACTED array, while
+    // the rejection path carries the SYNTACTIC element index. Here they diverge by exactly one: a
+    // spread of a non-array is refused as `acme.models[1] (spread)` and contributes nothing to the
+    // compacted array, so the model AFTER it sits at compacted 1 and syntactic 2 -- and the naive
+    // correlation would report `later`'s unreadable field against `first`.
+    //
+    // Nothing on the current pin makes the two diverge, which is precisely why the guard is on the
+    // CONDITION rather than on today's data: twelve real `models[N] (spread)` rejections exist
+    // upstream, and the failure they would cause is a ledger row making a FALSE claim about a row
+    // that never had the field.
+    const sources = [
+      { path: "open-sse/config/providers/shared.ts", text: "export const FROZEN = Object.freeze([\"temperature\"]);\nexport const NOT_AN_ARRAY = Object.freeze({ nope: true });" },
+      {
+        path: "open-sse/config/providers/registry/acme/index.ts",
+        text: [
+          'import { FROZEN, NOT_AN_ARRAY } from "../../shared.ts";',
+          "export const acmeProvider = {",
+          '  id: "acme", format: "openai", executor: "default", authType: "apikey",',
+          "  models: [",
+          '    { id: "first", name: "First" },',
+          "    ...NOT_AN_ARRAY,",
+          '    { id: "later", name: "Later", unsupportedParams: FROZEN },',
+          "  ],",
+          "};",
+        ].join("\n"),
+      },
+      { path: "open-sse/config/providers/index.ts", text: 'import { acmeProvider } from "./registry/acme/index.ts";\nexport const REGISTRY = { acme: acmeProvider };' },
+      ...Object.entries(CATEGORY_FILES).map(([path, text]) => ({ path, text })),
+    ];
+    const { modules } = extractAll(sources);
+    const moduleRejections: Rejection[] = [];
+    for (const module of modules.values()) moduleRejections.push(...module.rejections);
+    // The precondition this guard exists for: the walker really did record an ELEMENT-level path.
+    expect(moduleRejections.some((r) => /\.models\[\d+\] \(spread\)$/.test(r.path))).toBe(true);
+
+    const registryLiteral = modules.get("open-sse/config/providers/index.ts")!.values.get("REGISTRY") as Record<string, LiteralValue>;
+    const layer = buildUpstreamLayer({ ...buildInput(allowlistWith([ACME_ROW])), registry: new Map(Object.entries(registryLiteral)), moduleRejections });
+
+    // ONE row, at provider scope, saying the correlation was refused -- and NO per-model claim, in
+    // particular none against `first`, which is where the off-by-one would have landed it.
+    const correlation = layer.rejections.filter((r) => r.path === "acme.models");
+    expect(correlation).toHaveLength(1);
+    expect(correlation[0]!.scope).toBe("provider");
+    expect(correlation[0]!.reason).toContain("no longer line up");
+    // The MERGE made no per-model claim. (The walker's own field-level row survives untouched: it
+    // is a true statement about a source location, and it is the merge's correlation of that row to
+    // a MODEL that the indices cannot support.)
+    expect(layer.rejections.filter((r) => r.scope === "model" && r.path.endsWith(".unsupportedParams"))).toEqual([]);
+    // The rows still ship, and the field still fails open.
+    const models = new Map(layer.models.map((m) => [m.key, m]));
+    expect([...models.keys()].sort()).toEqual(["acme-winter/first", "acme-winter/later"]);
+    expect(models.get("acme-winter/later")!.unsupportedParameters).toEqual([]);
   });
 
   test("a `\"*\"` wildcard in `blocked` is REFUSED, never filtered away", () => {
@@ -546,10 +607,23 @@ describe("the lane's own source files stay TEXT", () => {
     const { readdirSync } = await import("node:fs");
     const { fileURLToPath } = await import("node:url");
     const root = fileURLToPath(dir);
-    const files = readdirSync(root).filter((name) => name.endsWith(".ts"));
-    expect(files.length).toBeGreaterThan(4);
-    for (const name of files) {
-      const bytes = new Uint8Array(await Bun.file(`${root}${name}`).arrayBuffer());
+    // EVERY lane source, which is what the commit and the report claimed while this scanned
+    // `src/extract/` alone (Lane X r2). The sync SCRIPT and its test are lane sources too, they are
+    // written by the same hands, and they are exactly where a separator typed as a literal would go
+    // unnoticed for the same reason -- so they are named here as fixed relative paths rather than
+    // left to a directory listing that cannot see outside this package.
+    const repoRoot = fileURLToPath(new URL("../../../../", dir));
+    const scanned = [
+      ...readdirSync(root).filter((name) => name.endsWith(".ts")).map((name) => ({ name, path: `${root}${name}` })),
+      { name: "scripts/provider-source-sync.ts", path: `${repoRoot}scripts/provider-source-sync.ts` },
+      { name: "scripts/provider-source-sync.test.ts", path: `${repoRoot}scripts/provider-source-sync.test.ts` },
+    ];
+    expect(scanned.length).toBeGreaterThan(6);
+    for (const { name, path } of scanned) {
+      // A path that stops existing must FAIL rather than silently scan nothing -- the whole class of
+      // defect here is a check that looks like it ran.
+      expect([name, await Bun.file(path).exists()]).toEqual([name, true]);
+      const bytes = new Uint8Array(await Bun.file(path).arrayBuffer());
       const offenders: string[] = [];
       for (let i = 0; i < bytes.length; i++) {
         const byte = bytes[i]!;

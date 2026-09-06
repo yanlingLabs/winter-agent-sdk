@@ -38,7 +38,7 @@
 
 import type { WinterModelDescriptor } from "@yanlinglabs/winter-provider-catalog";
 import { hostHeaders } from "../privileged-headers.ts";
-import { CREDENTIAL_HEADER_NAMES, applyPrivilegedHeaders, createEndpointPolicy, type EndpointPolicy } from "../../endpoint-policy.ts";
+import { applyPrivilegedHeaders, createEndpointPolicy, type EndpointPolicy } from "../../endpoint-policy.ts";
 import { ProviderRequestError, boundedFetch } from "../../http.ts";
 import { normalizeHttpError, normalizeThrown } from "../../errors.ts";
 import { createRetryPolicy, withRetry, type RetryPolicy, type RetryPolicyOptions } from "../../retry.ts";
@@ -116,6 +116,16 @@ export function capabilityRefusal(reason: string): ProviderRequestError {
 /** A refusal about the request's own shape, raised before it is sent. */
 export function badRequestRefusal(reason: string): ProviderRequestError {
   return new ProviderRequestError({ code: "bad_request", message: reason, retryable: false });
+}
+
+/**
+ * This family's twin of `THINKING_ENABLED_NEEDS_BUDGET` (`adapters/refusals.ts`): the same caller
+ * mistake — "reasoning on, but at what?" — asked in this family's own vocabulary, because the way
+ * out is an EFFORT here and a budget there. Same sentence shape, so a caller moving a session
+ * between families recognises the situation without re-reading it.
+ */
+export function THINKING_ENABLED_NEEDS_EFFORT(model: string): string {
+  return `thinking \`{ type: "enabled" }\` carries no effort, and model "${model}" declares no defaultEffort to fall back on. Pass \`effort\`, or select a model whose row records one.`;
 }
 
 // --- endpoint resolution ------------------------------------------------------------------------------
@@ -222,24 +232,18 @@ export function buildHeaders(plan: HeaderPlan): Record<string, string> {
   // Anthropic and Google families use, instead of only the credential-name list.
   //
   // The credential list was never wrong -- it drops `openai-organization` and `openai-project`
-  // because both are in `CREDENTIAL_HEADER_NAMES`, so there was no live hole. What it is is a SECOND
-  // reading of R6-L's rule, and the two disagree on any identity name that is not credential-shaped:
-  // `x-goog-quota-project` is on the privileged list and not the credential one, so an OpenAI-family
-  // adapter reached through a Google-flavoured proxy would forward it on a user endpoint. Routing
-  // both families through one filter is what makes R6-L's "one enforcement point a reviewer can grep
-  // for" true of this family too.
+  // because both are in `CREDENTIAL_HEADER_NAMES`, so there was no live hole. What it was is a
+  // SECOND reading of R6-L's rule, and the two disagreed on any identity name that is not
+  // credential-shaped: `x-goog-quota-project` is on the privileged list and not the credential one,
+  // so an OpenAI-family adapter reached through a Google-flavoured proxy would forward it on a user
+  // endpoint. Routing both families through one filter is what makes R6-L's "one enforcement point
+  // a reviewer can grep for" true of this family too.
   //
-  // The credential strip STAYS and runs first: a `ConnectionProfile` is non-secret connection
-  // metadata by contract (WS-13 §6), so a credential appearing there is a misconfiguration to drop
-  // rather than a second auth channel -- and that is true on a GENERATED endpoint as well, where
-  // `hostHeaders` deliberately passes everything through.
+  // The separate credential pre-strip that used to run here is GONE (fix-wave F-3): `hostHeaders`
+  // now drops `CREDENTIAL_HEADER_NAMES` itself, on a generated endpoint as well, so every family
+  // gets what this family had and this file no longer keeps a second copy of the rule.
   const out: Record<string, string> = {};
-  const credentialFree: Record<string, string> = {};
-  for (const [name, value] of Object.entries(plan.userSupplied ?? {})) {
-    if (CREDENTIAL_HEADER_NAMES.includes(name.toLowerCase())) continue;
-    credentialFree[name] = value;
-  }
-  Object.assign(out, hostHeaders(plan.policy, credentialFree));
+  Object.assign(out, hostHeaders(plan.policy, plan.userSupplied));
   Object.assign(out, applyPrivilegedHeaders(plan.policy, plan.privileged ?? {}));
   Object.assign(out, plan.protocol);
   return out;
@@ -329,16 +333,27 @@ export interface ReasoningPlan {
 /**
  * Resolves `effort` + `thinking` into what the wire will carry, or throws a typed refusal.
  *
- * The two refusals worth stating, because each has a tempting silent alternative:
+ * THE FAMILY'S RULE IN ONE LINE (WS-13 §8.2, fix-wave ruling F-2): this family has NO budget field,
+ * so `thinking: { type: "enabled" }` means reasoning ON at the row's own `defaultEffort` — the only
+ * effort the catalog verified for that model, never an invented one.
  *
- *   `thinking: {type:"enabled", budgetTokens: N}` is REFUSED on this family. The OpenAI surfaces
- *     have no token-budget knob for reasoning — the verified vocabulary is effort tiers — so
- *     honouring the config would mean dropping the budget and sending an effort the caller never
- *     asked for. That is precisely the silent downgrade WS-13 §8.2 prohibits.
+ * The three refusals worth stating, because each has a tempting silent alternative:
+ *
+ *   `thinking: {type:"enabled", budgetTokens: N}` is REFUSED. The OpenAI surfaces have no
+ *     token-budget knob for reasoning — the verified vocabulary is effort tiers — so honouring the
+ *     config would mean dropping the budget and sending an effort the caller never asked for. That
+ *     is precisely the silent downgrade WS-13 §8.2 prohibits.
  *
  *   `thinking: {type:"enabled"|"adaptive"}` on a model with NO reasoning evidence is REFUSED rather
  *     than ignored, for the same reason: "we quietly did not think" is not an outcome a caller can
  *     see.
+ *
+ *   `thinking: {type:"enabled"|"adaptive"}` with NO effort given and NO `defaultEffort` on the row
+ *     is REFUSED — and this one was the whole-branch review's M-9. It used to resolve to `effort:
+ *     undefined`, which `buildResponsesBody` renders as `include: ["reasoning.encrypted_content"]`
+ *     with NO `reasoning` object at all: a request that asks to keep reasoning state for reasoning
+ *     it never asked the model to do. The turn succeeds, the caller is told nothing, and the answer
+ *     is the no-think one. Same class as the two above, so it gets the same treatment.
  */
 export function resolveReasoning(req: TurnRequest, descriptor: WinterModelDescriptor | undefined): ReasoningPlan {
   const thinking = req.thinking;
@@ -365,6 +380,16 @@ export function resolveReasoning(req: TurnRequest, descriptor: WinterModelDescri
   // own declared default — a value the catalog verified, never an invented one.
   const effort = mapped.value ?? (thinking !== undefined ? reasoningEvidence?.defaultEffort : undefined);
   const reasoningRequested = effort !== undefined || thinking?.type === "adaptive" || thinking?.type === "enabled";
+
+  // ...and with no default to fall back to, the caller is told, rather than served the no-think
+  // body. Both arms are covered: `adaptive` produces the identical request (this family has no
+  // adaptive knob either), so leaving it out would fix half a defect. An UNLISTED model
+  // (`descriptor === undefined`, the `allowUnlisted` gateway case) is the same answer for the same
+  // reason — there is no evidence for any effort — while a caller who names one explicitly is
+  // honoured as before, because a named tier the pin defines needs no row to be meaningful.
+  if (reasoningRequested && effort === undefined) {
+    throw capabilityRefusal(THINKING_ENABLED_NEEDS_EFFORT(descriptor?.key ?? req.model));
+  }
 
   // `reasoning.summary` is asked for ONLY where the descriptor's own evidence says which field and
   // which values the model accepts. Guessing a value is how a request 400s on a model that has the
@@ -456,12 +481,20 @@ export function toolResultText(content: string | ContentBlockLike[]): string {
  * `thinking-channel` names an in-dialect reasoning slot; no OpenAI-family surface has one a caller
  * may write into, and the nearest thing (`reasoning_content`) is the MODEL's own output channel —
  * putting Winter's prose there would present an annotation as something the model reasoned, which is
- * the impersonation R6-8 exists to forbid. So the annotation is carried plainly and visibly, tagged
- * as what it is, on both doors.
+ * the impersonation R6-8 exists to forbid. So the annotation is carried plainly, on both doors.
  *
- * Without this, Lane C's decorations were built, persisted and then silently dropped at the wire:
- * a cross-family handoff note that never reaches the model is worse than none, because the switch
- * coordinator has already reported the context as carried.
+ * VERBATIM — this layer adds NOTHING, not even a label. The text arrives from Lane C already
+ * finished and already delimited (the `<recovered_reasoning_summary>` tag WS-13 §8.2 names for the
+ * tag door, the bracketed label for the thinking-channel door), and Lane C's §9.6 budget is counted
+ * on exactly these bytes. A wrapper of this layer's own would double-label the second door, would
+ * add a delimiter `neutralizeDelimiters` does not neutralise (so a foreign summary containing the
+ * added closing delimiter would break straight out of it), and would make this family the only one
+ * that alters the string — the whole-branch review's I-3, escalated from Lane B's identical
+ * `<winter-note>` wrapper. The other three families render it byte-for-byte; so does this one.
+ *
+ * Without this door at all, Lane C's decorations were built, persisted and then silently dropped at
+ * the wire: a cross-family handoff note that never reaches the model is worse than none, because the
+ * switch coordinator has already reported the context as carried.
  *
  * WHERE it goes depends on what the message carries. On an ordinary message it LEADS the content.
  * On a message carrying TOOL RESULTS it PREFIXES the first result's own text (see
@@ -473,15 +506,15 @@ export function toolResultText(content: string | ContentBlockLike[]): string {
 export function decorationText(message: ProviderMessageLike): string | undefined {
   const decoration = message.decoration;
   if (decoration === undefined || decoration.text.length === 0) return undefined;
-  return `[winter:context] ${decoration.text}`;
+  return decoration.text;
 }
 
 /**
  * A decoration prefixed onto a tool result's own text.
  *
  * Adjacency between a tool call and its result is a WIRE INVARIANT on every surface in this family,
- * so the annotation rides INSIDE the result it annotates rather than beside it. Same tagged plain
- * text, same position relative to what it describes, and no extra item on the wire at all.
+ * so the annotation rides INSIDE the result it annotates rather than beside it. Same verbatim text,
+ * same position relative to what it describes, and no extra item on the wire at all.
  */
 export function prefixToolResult(decoration: string | undefined, output: string): string {
   return decoration === undefined ? output : output.length > 0 ? `${decoration}\n${output}` : decoration;

@@ -115,10 +115,16 @@ export function mapResponsesInput(messages: readonly ProviderMessageLike[]): unk
           out.push({ type: "function_call", call_id: block.id, name: block.name, arguments: typeof block.input === "string" ? block.input : JSON.stringify(block.input ?? {}) });
           break;
         case "tool_result":
-          if (contentParts.length > 0) {
-            out.push({ type: "message", role: wireRole, content: [...contentParts] });
-            contentParts.length = 0;
-          }
+          // NO FLUSH HERE (Lane A r3 carry). Emitting the pending parts as a `message` first is what
+          // the `tool_use` case above must do — the text precedes the call it introduces — but doing
+          // it before an OUTPUT inserts an item between a `function_call` and the
+          // `function_call_output` that answers it, which the surface rejects outright and the fake
+          // now 400s. A message carrying `[tool_use, text, tool_result]` produced exactly that.
+          //
+          // The pending parts stay buffered and ride the trailing flush below, so they land AFTER
+          // the outputs — the same trade the chat mapper already makes for trailing non-result
+          // content ("nothing is inserted between a call and its reply"), and the same answer for a
+          // host-supplied history that puts text ahead of a result on one message.
           out.push({ type: "function_call_output", call_id: block.tool_use_id, output: prefixToolResult(resultPrefix, toolResultText(block.content)) });
           // The FIRST result carries it; a message with several results annotates the set once.
           resultPrefix = undefined;

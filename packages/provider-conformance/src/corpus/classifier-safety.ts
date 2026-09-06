@@ -369,7 +369,12 @@ export async function runClassifierSafetyCorpus(
         expected: testCase.expected,
         actual: answer.verdict,
         agreed: answer.verdict === testCase.expected,
-        ...(answer.reasonCode !== undefined ? { detail: answer.reasonCode } : {}),
+        // ROUTED THROUGH A DESCRIBER, not printed (Lane D r1 carry). Winter's OWN reason codes are a
+        // closed vocabulary and are exactly what a reader needs; a `model:`-prefixed one is up to 64
+        // characters the MODEL wrote, and `detail` is rendered straight to an operator's terminal by
+        // `formatClassifierSafetyReport`. The namespace is the diagnosis ("the model authored this");
+        // its content is not, and on the live leg it is untrusted text from a classified envelope.
+        ...(answer.reasonCode !== undefined ? { detail: describeReasonCode(answer.reasonCode) } : {}),
       };
     } catch (err) {
       outcome = {
@@ -408,6 +413,45 @@ export function describeThrown(err: unknown): string {
   if (typeof v.status === "number") parts.push(`status=${v.status}`);
   if (typeof v.providerCode === "string") parts.push(`providerCode=${v.providerCode}`);
   return parts.join(" ");
+}
+
+/**
+ * A verdict's `reasonCode`, rendered as identity rather than as content.
+ *
+ * Winter's own codes (`timeout`, `schema_invalid`, …) are a CLOSED vocabulary and pass through
+ * verbatim — they are the whole diagnosis. A `model:`-prefixed code is up to 64 characters the model
+ * wrote, and this string is printed to a terminal, so what survives is the fact that the model
+ * authored it and how much it said.
+ *
+ * The namespace is MIRRORED, not imported — this package must not import the runtime (see the
+ * structural-envelope note at the top of this file, and the dependency direction it states) — so it
+ * follows that same rule's second half: the mirror is not trusted. `runner.test.ts` asserts this
+ * constant equals `MODEL_REASON_CODE_PREFIX` in `classifier/verdict-schema.ts`, because the whole
+ * reason the namespace exists is that a model answering `reasonCode: "timeout"` must not be able to
+ * look like a genuine transport timeout — and a drifted copy here would silently un-redact it.
+ */
+export const MODEL_REASON_CODE_PREFIX = "model:";
+
+export function describeReasonCode(reasonCode: string): string {
+  if (!reasonCode.startsWith(MODEL_REASON_CODE_PREFIX)) return reasonCode;
+  return `${MODEL_REASON_CODE_PREFIX}<model-authored, ${reasonCode.length - MODEL_REASON_CODE_PREFIX.length} chars>`;
+}
+
+/**
+ * A case failure, rendered for a report.
+ *
+ * The split is between WINTER-AUTHORED text and PROVIDER-AUTHORED text, not between error classes.
+ * A fixture's own `throw new Error("expected the Vertex location path …")` is Winter's sentence and
+ * is the entire value of a failing corpus line. A normalized provider error's message embeds a
+ * truncated snippet of the provider's RESPONSE BODY (`errors.ts`), and these reports are printed to
+ * an operator's terminal and pasted into review packages — so anything carrying the normalized
+ * provider shape (`code`, `status`, `providerCode`) is rendered as identity instead.
+ */
+export function describeCaseFailure(err: unknown): string {
+  const v = err as { code?: unknown; status?: unknown; providerCode?: unknown } | null;
+  const looksProviderShaped = typeof v === "object" && v !== null && (typeof v.code === "string" || typeof v.status === "number" || typeof v.providerCode === "string");
+  if (looksProviderShaped) return describeThrown(err);
+  return err instanceof Error ? err.message : describeThrown(err);
 }
 
 /** One line per case, so a failing run says which questions were answered wrongly without anyone opening this file. */

@@ -111,6 +111,30 @@ describe("thinking: represented, or refused before the request", () => {
     expect(() => resolveReasoning(req({ thinking: { type: "adaptive" } }), descriptor({ noReasoning: true }))).toThrow(/declares no reasoning capability/);
   });
 
+  test("`enabled` maps to reasoning ON at the row's OWN defaultEffort — this family has no budget field, so that IS the rule (F-2)", () => {
+    const plan = resolveReasoning(req({ thinking: { type: "enabled" } }), descriptor({ defaultEffort: "high" }));
+    expect(plan).toEqual({ effort: "high", wantsEncryptedContent: true, enabled: true });
+  });
+
+  test("`enabled`/`adaptive` with NO effort and NO defaultEffort is REFUSED — never the silent no-think body (M-9)", () => {
+    // What it used to do: resolve to `effort: undefined`, which `buildResponsesBody` renders as
+    // `include: ["reasoning.encrypted_content"]` with NO `reasoning` object — a request asking to
+    // keep the state of reasoning it never asked for. The turn succeeded and the caller was told
+    // nothing. BOTH arms are covered: `adaptive` produces the identical body on this family.
+    for (const thinking of [{ type: "enabled" as const }, { type: "adaptive" as const }]) {
+      expect(() => resolveReasoning(req({ thinking }), descriptor())).toThrow(/declares no defaultEffort/);
+      // Same class as the budget refusal on the other three families, in this family's vocabulary:
+      // the way out here is an EFFORT, so that is what the sentence asks for.
+      expect(() => resolveReasoning(req({ thinking }), descriptor())).toThrow(/Pass `effort`/);
+      // An UNLISTED model is the same answer for the same reason: no row, no evidence for any effort.
+      expect(() => resolveReasoning(req({ thinking }), NO_DESCRIPTORS())).toThrow(/declares no defaultEffort/);
+    }
+    // ...but an EXPLICIT effort is honoured on both, listed or not — a named tier the pin defines
+    // needs no row to be meaningful, and nothing is being guessed.
+    expect(resolveReasoning(req({ thinking: { type: "enabled" }, effort: "low" }), descriptor()).effort).toBe("low");
+    expect(resolveReasoning(req({ thinking: { type: "adaptive" }, effort: "high" }), NO_DESCRIPTORS()).effort).toBe("high");
+  });
+
   test("a summary is requested ONLY where the descriptor says which field and value to use", () => {
     // Guessing a summary value is how a request 400s on a model that has the field but not that member.
     const without = resolveReasoning(req({ effort: "high", requestSummary: true }), descriptor());

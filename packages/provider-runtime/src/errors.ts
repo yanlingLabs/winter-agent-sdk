@@ -123,11 +123,44 @@ function scrubbedSnippet(body: string): string {
   return body.slice(0, BODY_SNIPPET_CHARS);
 }
 
-export function normalizeHttpError(status: number, headers: Headers, body: string): ProviderError {
-  // Parsed off the FULL body BEFORE both the cap and the scrub: the structured code is the one part
-  // of the body a consumer needs, and it is never itself a credential.
+/**
+ * Removes EXACT occurrences of a request's OWN credential material from a provider error body.
+ *
+ * HOISTED HERE from the Bedrock adapter (T2 carry), because the gap it closes is not Bedrock's.
+ * `scrubbedSnippet` scrubs a body whose contents `scanForSecrets` RECOGNISES, and that scanner is
+ * pattern-based: it knows `sk-`, `AKIA…`, `AIza…`, a PEM block. What it cannot know is a credential
+ * with no recognisable shape — an AWS SECRET access key is forty base64-ish characters, and no
+ * pattern could match that without matching arbitrary prose of the same length. Such a value echoed
+ * back by an endpoint survives verbatim into `ProviderError.message`, one of the most
+ * reliably-logged strings in the system, and the next family's shapeless token will do the same.
+ *
+ * Exact matching against the material THIS request actually carried is the complement: precise (no
+ * false positives, unlike a "40 base64-ish characters" heuristic) and family-agnostic, because the
+ * caller names its own secrets rather than this file guessing their shape. Belt and braces — the
+ * pattern scan still runs, and either one alone leaves the other's blind spot reachable.
+ */
+export function redactCredentialMaterial(text: string, secrets: readonly string[]): string {
+  let out = text;
+  for (const secret of secrets) {
+    // Short values are skipped: a two-character "secret" would rewrite unrelated prose, and no real
+    // credential component is that short.
+    if (secret.length < 8) continue;
+    out = out.split(secret).join("***");
+  }
+  return out;
+}
+
+/**
+ * @param secrets Credential material THIS request carried, redacted from the body by exact match
+ *   before the snippet is taken. Optional and empty by default: a family with nothing to declare
+ *   passes nothing and gets exactly the previous behaviour.
+ */
+export function normalizeHttpError(status: number, headers: Headers, body: string, secrets: readonly string[] = []): ProviderError {
+  // Parsed off the FULL, UNREDACTED body BEFORE the redaction, the cap and the scrub: the structured
+  // code is the one part of the body a consumer needs, it is never itself a credential, and reading
+  // it after a redaction pass would risk losing it to a coincidental overlap.
   const providerCode = parseProviderErrorCode(body);
-  const snippet = scrubbedSnippet(body);
+  const snippet = scrubbedSnippet(redactCredentialMaterial(body, secrets));
   const message = `HTTP ${status}${snippet.length > 0 ? ` — ${snippet}` : ""}`;
   const retryAfterMs = parseRetryAfterMs(headers.get("retry-after"));
 

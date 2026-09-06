@@ -26,7 +26,7 @@
     "models": { "type": "array", "items": { "$ref": "#/$defs/WinterModelDescriptor" } }
   },
   "$defs": {
-    "EvidenceSource": { "enum": ["official-doc", "live-discovery", "live-probe", "upstream-static", "user-override"] },
+    "EvidenceSource": { "enum": ["official-doc", "live-discovery", "live-probe", "upstream-static", "user-override", "local-override", "winter-default"] },
     "EvidenceConfidence": { "enum": ["verified", "declared", "inferred", "unknown"] },
     "evidenceBase": {
       "type": "object",

@@ -46,6 +46,7 @@ import { normalizeHttpError, normalizeThrown } from "../../errors.ts";
 import { createRetryPolicy, withRetry, type RetryPolicyOptions } from "../../retry.ts";
 import { applyPrivilegedHeaders, createEndpointPolicy, type EndpointPolicy } from "../../endpoint-policy.ts";
 import { hostHeaders } from "../privileged-headers.ts";
+import { THINKING_ENABLED_NEEDS_BUDGET } from "../refusals.ts";
 import { collectImages, containsImage } from "../content-blocks.ts";
 import { parseSse } from "../../sse.ts";
 import type {
@@ -438,11 +439,18 @@ function buildThinkingConfig(req: TurnRequest, descriptor: WinterModelDescriptor
     else if (req.thinking.type === "enabled") {
       // The pin types `budgetTokens` OPTIONAL and its own JSDoc renders the arm as requiring one --
       // "a well-typed value with undefined semantics in the pin" (derived-shapes item (c)). Sending
-      // it budget-less would mean silently serving `enabled` as the model's own default, which for
-      // some models is no thinking at all: a silent downgrade, which WS-13 §8.2 prohibits outright.
-      // The caller is told to say which it meant.
+      // it budget-less would mean silently serving `enabled` as `thinkingConfig`'s own default,
+      // which for some models is no thinking at all: a silent downgrade, which WS-13 §8.2 prohibits
+      // outright. The caller is told to say which it meant.
+      //
+      // THE SENTENCE IS ANTHROPIC'S AND BEDROCK'S, BYTE FOR BYTE (fix-wave ruling F-2). The reason
+      // differs by family -- there the endpoint rejects a budget-less enabled config, here it
+      // accepts one and quietly defaults -- but the caller's situation and the two ways out of it
+      // are identical, and three adapters answering the same question in three sentences is how a
+      // caller moving a session between families learns to read three error messages instead of one.
+      // The family-specific REASON stays here, in the comment, where it belongs.
       if (req.thinking.budgetTokens === undefined) {
-        return { ok: false, reason: 'thinking `{ type: "enabled" }` carries no budgetTokens, and this family expresses a budget-less request as the model\'s own default — which is a silent downgrade. Pass `budgetTokens`, or ask for `{ type: "adaptive" }` if the model should decide.' };
+        return { ok: false, reason: THINKING_ENABLED_NEEDS_BUDGET };
       }
       config = { thinkingBudget: req.thinking.budgetTokens };
     } else config = {};

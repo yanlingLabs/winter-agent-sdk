@@ -2,7 +2,7 @@
 
 import { describe, expect, test } from "bun:test";
 import { createAzureOpenAIAdapter } from "../../../provider-runtime/src/adapters/openai/azure.ts";
-import { FAST_RETRY, testContext } from "../../../provider-runtime/src/adapters/openai/testing.ts";
+import { FAST_RETRY, descriptor, testContext } from "../../../provider-runtime/src/adapters/openai/testing.ts";
 import { createMemoryCredentialStore } from "../../../provider-runtime/src/credentials/memory.ts";
 import type { CredentialRef, ProviderEvent } from "@yanlinglabs/winter-provider-runtime";
 import { formatCorpusReport, runAdapterCorpus } from "./runner.ts";
@@ -11,6 +11,7 @@ import { chatCorpusScenarios, responsesCorpusScenarios } from "./openai-scenario
 import { AZURE_CLASSIC_API_VERSION, AZURE_DEPLOYMENT, azureClassicHarness, azurePreviewHarness } from "./azure.ts";
 import { FAKE_ENTRA_TOKEN, apiVersionOf, startAzureFake } from "../fakes/azure-openai.ts";
 import { openAiModelsRoutes } from "../fakes/openai-models.ts";
+import { noRequestContains } from "../fakes/server.ts";
 import type { FakeServer } from "../fakes/server.ts";
 
 async function withAzureFake<T>(fn: (fake: FakeServer) => Promise<T>): Promise<T> {
@@ -25,6 +26,9 @@ async function withAzureFake<T>(fn: (fake: FakeServer) => Promise<T>): Promise<T
     await fake.close();
   }
 }
+
+/** A row with a verified effort vocabulary but NO `defaultEffort` — the M-9 case. */
+const descriptorWithoutDefaultEffort = descriptor({ efforts: ["low", "medium", "high"] });
 
 const RUNS: CorpusHarness[] = [azureClassicHarness(), azurePreviewHarness()];
 
@@ -86,6 +90,91 @@ describe("azure specifics on the live wire", () => {
       const recorded = fake.requests.at(-1)!;
       expect(recorded.headers.authorization).toBe("Bearer ***");
       expect(recorded.headers["api-key"]).toBeUndefined();
+    });
+  });
+
+  test("the Azure fake REFUSES a message inserted between a tool call and its result, on BOTH surfaces (Lane A r3 carry)", async () => {
+    // A guard on the guards. This fake modelled `api-version` and nothing about the body, so round
+    // 3's broken decoration shape would have passed every Azure fixture — the same blindness that
+    // let it pass on OpenAI for two rounds. Coverage transferring through a shared MAPPER says
+    // nothing about what a FAKE will accept.
+    await withAzureFake(async (fake) => {
+      const classic = await fetch(`${fake.url}/openai/deployments/${AZURE_DEPLOYMENT}/chat/completions?api-version=${AZURE_CLASSIC_API_VERSION}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: SCENARIO.happy,
+          messages: [
+            { role: "assistant", content: "", tool_calls: [{ id: "call_1", type: "function", function: { name: "Read", arguments: "{}" } }] },
+            { role: "user", content: "a note" },
+            { role: "tool", tool_call_id: "call_1", content: "ok" },
+          ],
+        }),
+      });
+      expect(classic.status).toBe(400);
+      expect(await classic.text()).toContain("must be a response to a preceeding message with 'tool_calls'");
+
+      const preview = await fetch(`${fake.url}/openai/v1/responses?api-version=preview`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: SCENARIO.happy,
+          input: [
+            { type: "function_call", call_id: "call_1", name: "Read", arguments: "{}" },
+            { type: "message", role: "user", content: [{ type: "input_text", text: "a note" }] },
+            { type: "function_call_output", call_id: "call_1", output: "ok" },
+          ],
+        }),
+      });
+      expect(preview.status).toBe(400);
+      expect(await preview.text()).toContain("must follow the 'function_call' it answers");
+    });
+  });
+
+  test("F-2 / M-9: `enabled` with no effort and no defaultEffort is REFUSED here too, with NOTHING on the wire", async () => {
+    // Azure DELEGATES to the family's own adapters, so it inherits `resolveReasoning` by
+    // construction — which is exactly the claim worth pinning, because "coverage transfers via the
+    // shared mapper" is an assertion about wiring that only a live request can settle. The turn is
+    // refused before the delegate starts streaming, so the deployment path is never even addressed.
+    await withAzureFake(async (fake) => {
+      const adapter = createAzureOpenAIAdapter({ retry: FAST_RETRY, descriptors: () => descriptorWithoutDefaultEffort });
+      const before = fake.requests.length;
+      const events = await drain(
+        adapter.streamTurn(
+          { model: SCENARIO.happy, messages: [], thinking: { type: "enabled" } },
+          testContext({ providerId: "azure-openai", baseUrl: fake.url, local: true, deployment: AZURE_DEPLOYMENT, apiVersion: AZURE_CLASSIC_API_VERSION }),
+        ),
+      );
+      const error = events.find((e) => e.type === "error");
+      expect(error?.type === "error" ? error.error.code : "").toBe("capability");
+      expect(error?.type === "error" ? error.error.message : "").toContain("declares no defaultEffort");
+      expect(fake.requests).toHaveLength(before);
+    });
+  });
+
+  test("F-3: a CREDENTIAL-shaped host header never rides — `cookie` + `x-trace` puts only `x-trace` on the wire", async () => {
+    // Azure's whole surface is a CONNECTION PROFILE variant, so the profile's header map is the one
+    // input a host is most likely to reach for — which is exactly why the drop has to be pinned here
+    // and not only on the vanilla OpenAI surface.
+    await withAzureFake(async (fake) => {
+      const adapter = createAzureOpenAIAdapter({ retry: FAST_RETRY, descriptors: () => undefined });
+      const ctx = testContext({
+        providerId: "azure-openai",
+        baseUrl: fake.url,
+        local: true,
+        deployment: AZURE_DEPLOYMENT,
+        apiVersion: AZURE_CLASSIC_API_VERSION,
+        headers: { cookie: "session=SMUGGLED-COOKIE", "api-key": "SMUGGLED-KEY", "x-trace": "keep" },
+      });
+      await drain(adapter.streamTurn({ model: SCENARIO.happy, messages: [] }, ctx));
+      const recorded = fake.requests.at(-1)!;
+      expect(recorded.headers["x-trace"]).toBe("keep");
+      expect(recorded.headers["cookie"]).toBeUndefined();
+      // A profile `api-key` is dropped, NOT honoured — and the turn's real credential still rides,
+      // so a misconfiguration can never quietly become the key that authenticated the request.
+      expect(recorded.headers["api-key"]).toBe("***");
+      expect(noRequestContains(fake, "SMUGGLED-KEY")).toBe(true);
+      expect(noRequestContains(fake, "SMUGGLED-COOKIE")).toBe(true);
     });
   });
 

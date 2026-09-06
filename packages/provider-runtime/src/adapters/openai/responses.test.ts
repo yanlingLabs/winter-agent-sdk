@@ -86,12 +86,51 @@ describe("mapResponsesInput", () => {
   test("a `tool` role NEVER reaches the wire — the Responses input has no such role (minor 4)", () => {
     // Residual text on a tool message rides as a USER message; a literal `role: "tool"` is a 400.
     // The flush paths ahead of a tool_use / tool_result block used the raw role and hit exactly that.
+    //
+    // It now rides AFTER the output rather than before it (Lane A r3 carry): a `message` between a
+    // `function_call` and the `function_call_output` answering it is rejected outright, so the text
+    // that used to be flushed ahead of the output is the exact item the surface refuses.
     const out = mapResponsesInput([
       { role: "tool", content: [{ type: "text", text: "a note about the result" }, { type: "tool_result", tool_use_id: "call_1", content: "ok" }] },
     ]);
     expect(JSON.stringify(out)).not.toContain('"role":"tool"');
-    expect(out[0]).toEqual({ type: "message", role: "user", content: [{ type: "input_text", text: "a note about the result" }] });
-    expect(out[1]).toEqual({ type: "function_call_output", call_id: "call_1", output: "ok" });
+    expect(out[0]).toEqual({ type: "function_call_output", call_id: "call_1", output: "ok" });
+    expect(out[1]).toEqual({ type: "message", role: "user", content: [{ type: "input_text", text: "a note about the result" }] });
+  });
+
+  test("TEXT before a tool_result never splits a call from its output (Lane A r3 carry)", () => {
+    // The shape the whole-branch review named: `[tool_use, text, tool_result]` on ONE message
+    // produced `function_call, message, function_call_output` — an item between a call and its
+    // answer, which the surface (and, since round 3, the fake) rejects. The text moves after.
+    const out = mapResponsesInput([
+      {
+        role: "assistant",
+        content: [
+          { type: "tool_use", id: "call_1", name: "Read", input: {} },
+          { type: "text", text: "and here is why" },
+          { type: "tool_result", tool_use_id: "call_1", content: "ok" },
+        ],
+      },
+    ]);
+    expect(out).toEqual([
+      { type: "function_call", call_id: "call_1", name: "Read", arguments: "{}" },
+      { type: "function_call_output", call_id: "call_1", output: "ok" },
+      { type: "message", role: "assistant", content: [{ type: "output_text", text: "and here is why" }] },
+    ]);
+    // A tool_use still flushes what came BEFORE it — that text introduces the call and belongs ahead
+    // of it, and nothing sits between a call and an output there.
+    expect(mapResponsesInput([{ role: "assistant", content: [{ type: "text", text: "calling" }, { type: "tool_use", id: "c", name: "T", input: {} }] }])).toEqual([
+      { type: "message", role: "assistant", content: [{ type: "output_text", text: "calling" }] },
+      { type: "function_call", call_id: "c", name: "T", arguments: "{}" },
+    ]);
+  });
+
+  test("a tool-role message with STRING content renders the SAME on both surfaces (Lane A r3 carry)", () => {
+    // Chat rendered `[]` for this — the message and its decoration vanished — while Responses made
+    // it a user message. Two mappers over one `ProviderMessageLike` disagreeing about whether a
+    // message exists is the divergence; the content survives on both now.
+    const out = mapResponsesInput([{ role: "tool", content: "just text", decoration: { text: "note", door: "tag" } }]);
+    expect(out).toEqual([{ type: "message", role: "user", content: [{ type: "input_text", text: "note" }, { type: "input_text", text: "just text" }] }]);
   });
 
   test("a Winter DECORATION leads its message as plain text, on either door (minor 11)", () => {
@@ -104,14 +143,14 @@ describe("mapResponsesInput", () => {
         type: "message",
         role: "user",
         content: [
-          { type: "input_text", text: "[winter:context] prior model summarised: X" },
+          { type: "input_text", text: "prior model summarised: X" },
           { type: "input_text", text: "the question" },
         ],
       });
     }
     // An assistant-side annotation uses that role's own part type.
     const assistant = mapResponsesInput([{ role: "assistant", content: "answer", decoration: { text: "note", door: "tag" } }]);
-    expect(assistant[0]).toEqual({ type: "message", role: "assistant", content: [{ type: "output_text", text: "[winter:context] note" }, { type: "output_text", text: "answer" }] });
+    expect(assistant[0]).toEqual({ type: "message", role: "assistant", content: [{ type: "output_text", text: "note" }, { type: "output_text", text: "answer" }] });
   });
 
   test("a decoration on a TOOL message prefixes the output — never an item between a call and its reply (round 3)", () => {
@@ -121,7 +160,7 @@ describe("mapResponsesInput", () => {
     ]);
     expect(out).toEqual([
       { type: "function_call", call_id: "call_1", name: "Read", arguments: "{}" },
-      { type: "function_call_output", call_id: "call_1", output: "[winter:context] note\nthe file body" },
+      { type: "function_call_output", call_id: "call_1", output: "note\nthe file body" },
     ]);
   });
 
@@ -137,7 +176,7 @@ describe("mapResponsesInput", () => {
       },
     ]);
     expect(out).toEqual([
-      { type: "function_call_output", call_id: "call_1", output: "[winter:context] note\nfirst" },
+      { type: "function_call_output", call_id: "call_1", output: "note\nfirst" },
       { type: "function_call_output", call_id: "call_2", output: "second" },
     ]);
   });

@@ -47,6 +47,7 @@ import { normalizeHttpError, normalizeThrown } from "../../errors.ts";
 import { createRetryPolicy, withRetry, type RetryPolicyOptions } from "../../retry.ts";
 import { applyPrivilegedHeaders, createEndpointPolicy, type EndpointPolicy } from "../../endpoint-policy.ts";
 import { hostHeaders } from "../privileged-headers.ts";
+import { THINKING_ENABLED_NEEDS_BUDGET } from "../refusals.ts";
 import { containsImage } from "../content-blocks.ts";
 import { parseSse } from "../../sse.ts";
 import type {
@@ -336,7 +337,7 @@ function buildThinking(req: TurnRequest, descriptor: WinterModelDescriptor | und
       // budget-less is a request we KNOW will fail upstream. That is exactly what the
       // reject-before-the-request rule exists for, and the `budget >= max_tokens` check below cannot
       // catch it (an absent budget skips it).
-      return { ok: false, reason: 'thinking `{ type: "enabled" }` carries no budgetTokens, which this endpoint requires. Pass `budgetTokens`, or ask for `{ type: "adaptive" }` if the model should decide.' };
+      return { ok: false, reason: THINKING_ENABLED_NEEDS_BUDGET };
     }
     base = requestedBudget !== undefined ? { type: "enabled", budget_tokens: requestedBudget } : { type: req.thinking.type };
   }
