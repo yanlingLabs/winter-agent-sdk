@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { scanForSecrets, validateCatalog } from "../validate.ts";
 import { extractAll, type LiteralValue, type Rejection } from "./literal-extractor.ts";
-import { buildUpstreamLayer, ExtractionRefusal, mergeLayers, type Allowlist, type BuildUpstreamLayerInput } from "./merge.ts";
+import { buildUpstreamLayer, ExtractionRefusal, FORMAT_ENDPOINT_SUFFIX, mergeLayers, type Allowlist, type BuildUpstreamLayerInput } from "./merge.ts";
 import { computeDenominator, FIELD_PROVENANCE, findClaimedProviderCount } from "./ledgers.ts";
 
 /**
@@ -206,7 +206,7 @@ describe("the mapper", () => {
   test("`liveCatalogAuthoritative: true` is honoured when STATED; unstated is `unknown`, not upstream's default", () => {
     expect(layer.providers[0]!.liveCatalogAuthority).toBe("authoritative");
     const noFlag = buildUpstreamLayer(buildInput(allowlistWith([ACME_ROW]), {
-      registry: new Map([["acme", { id: "acme", format: "openai", executor: "default", authType: "apikey", models: [] } as LiteralValue]]),
+      registry: new Map([["acme", { id: "acme", format: "openai", executor: "default", authType: "apikey", baseUrl: "https://api.acme.test/v1/chat/completions", models: [] } as LiteralValue]]),
     }));
     expect(noFlag.providers[0]!.liveCatalogAuthority).toBe("unknown");
   });
@@ -359,6 +359,8 @@ describe("unknown vocabularies FAIL extraction (WS-13 §13)", () => {
     const excluded = layer.rejections.find((r) => r.exclusionClass === "out-of-scope")!;
     expect(excluded.reason).toContain("TEXT-TO-SPEECH");
     expect(layer.rejections.filter((r) => r.exclusionClass === "reviewed-normalization").map((r) => r.path).sort()).toEqual([
+      // The endpoint strip is a reviewed normalization too (WS-13b §2) and is recorded like one.
+      "acme.baseUrl",
       "acme.models[acme-quiet].id",
       "acme.models[acme-thinks].status",
     ]);
@@ -393,7 +395,7 @@ describe("unknown vocabularies FAIL extraction (WS-13 §13)", () => {
         text: [
           'import { FROZEN } from "../../shared.ts";',
           "export const acmeProvider = {",
-          '  id: "acme", format: "openai", executor: "default", authType: "apikey",',
+          '  id: "acme", format: "openai", executor: "default", authType: "apikey", baseUrl: "https://api.acme.test/v1/chat/completions",',
           "  models: [",
           '    { id: "readable", name: "Readable", unsupportedParams: ["top_p"] },',
           '    { id: "refused", name: "Refused", unsupportedParams: FROZEN },',
@@ -445,7 +447,7 @@ describe("unknown vocabularies FAIL extraction (WS-13 §13)", () => {
         text: [
           'import { FROZEN, NOT_AN_ARRAY } from "../../shared.ts";',
           "export const acmeProvider = {",
-          '  id: "acme", format: "openai", executor: "default", authType: "apikey",',
+          '  id: "acme", format: "openai", executor: "default", authType: "apikey", baseUrl: "https://api.acme.test/v1/chat/completions",',
           "  models: [",
           '    { id: "first", name: "First" },',
           "    ...NOT_AN_ARRAY,",
@@ -671,6 +673,93 @@ describe("the lane's own source files stay TEXT", () => {
         if (byte < 0x20 && byte !== 0x09 && byte !== 0x0a && byte !== 0x0d) offenders.push(`${name}: 0x${byte.toString(16)} at byte ${i}`);
       }
       expect([name, offenders]).toEqual([name, []]);
+    }
+  });
+});
+
+/**
+ * WS-13b §2 (P6.5 lane X2): `defaultEndpoints.api` is the API ROOT, not upstream's full path.
+ *
+ * The defect this pins was invisible while only eight rows existed and every one was shadowed by a
+ * hand-authored overlay row. Widening the catalog is exactly what removes the shadows, and
+ * `session-provider.ts`'s `connectionFrom` copies `defaultEndpoints.api` into `connection.baseUrl`
+ * as soon as more than one provider shares an adapter — after which every adapter family appends
+ * its own protocol path. Measured against a loopback fake before this rule existed: a row carrying
+ * `https://host/v1/chat/completions` reached `/v1/chat/completions/chat/completions`.
+ */
+describe("WS-13b §2: the API root, and the refusals that keep it honest", () => {
+  const rowFor = (upstreamId: string) => ({ ...ACME_ROW, upstreamId, winterId: `${upstreamId}-winter` });
+
+  /** One synthetic registry entry, mapped through the real `buildUpstreamLayer`. */
+  function layerFor(entry: Record<string, unknown>, upstreamId = "acme"): ReturnType<typeof buildUpstreamLayer> {
+    return buildUpstreamLayer(
+      buildInput(allowlistWith([rowFor(upstreamId)]), {
+        registry: new Map([[upstreamId, entry as LiteralValue]]),
+        registrySourcePaths: new Map([[upstreamId, "open-sse/config/providers/registry/acme/index.ts"]]),
+        categories: new Map([[upstreamId, { category: "apikey", sourcePath: "src/shared/constants/providers/apikey.ts", row: { id: upstreamId, name: `${upstreamId} display` } as LiteralValue }]]),
+        moduleRejections: [],
+      }),
+    );
+  }
+
+  const base = { id: "acme", executor: "default", authType: "apikey", models: [] };
+
+  test.each([
+    ["openai", "https://api.acme.test/v1/chat/completions", "https://api.acme.test/v1"],
+    ["openai-responses", "https://api.acme.test/responses", "https://api.acme.test"],
+    ["claude", "https://api.acme.test/v1/messages", "https://api.acme.test"],
+    ["gemini", "https://api.acme.test/v1beta/models", "https://api.acme.test"],
+  ])("format %s: the path the adapter APPENDS is removed, and only that", (format, baseUrl, root) => {
+    const layer = layerFor({ ...base, format, baseUrl });
+    expect(layer.providers[0]!.defaultEndpoints["api"]).toBe(root);
+  });
+
+  test("the strip is RECORDED as a reviewed-normalization naming both strings — never silent", () => {
+    const layer = layerFor({ ...base, format: "openai", baseUrl: "https://api.acme.test/v1/chat/completions" });
+    const row = layer.rejections.find((r) => r.path === "acme.baseUrl");
+    expect(row?.exclusionClass).toBe("reviewed-normalization");
+    expect(row?.reason).toContain("https://api.acme.test/v1/chat/completions");
+    expect(row?.reason).toContain("https://api.acme.test/v1");
+  });
+
+  test("a URL that does NOT end in its own format's path FAILS the run rather than shipping a guess", () => {
+    // Winter cannot know what upstream's executor appends to this — the executor is outside the
+    // import boundary. Refusing names the allowlist entry a reviewer would go and fix.
+    expect(() => layerFor({ ...base, format: "openai", baseUrl: "https://api.acme.test/v1" })).toThrow(/endpoint-not-derivable/);
+  });
+
+  test("NO baseUrl at all fails the same way — an absent `api` is not inert on a shared adapter", () => {
+    // `resolveEndpoint` falls back to the ADAPTER's own vendor default, so an endpoint-less row on
+    // winter.openai-chat-completions would send this provider's credential to api.openai.com.
+    expect(() => layerFor({ ...base, format: "openai" })).toThrow(/endpoint-not-derivable/);
+  });
+
+  test("a native-cloud executor is EXEMPT: single-provider adapters never have their `api` copied", () => {
+    // Vertex's URL is a project/location template, not a protocol path; bedrock states none at all.
+    const layer = layerFor({ id: "acme", format: "gemini", executor: "vertex", authType: "apikey", baseUrl: "https://us-central1-aiplatform.googleapis.com/v1/projects", models: [] });
+    expect(layer.providers[0]!.defaultEndpoints["api"]).toBe("https://us-central1-aiplatform.googleapis.com/v1/projects");
+    expect(layer.rejections.some((r) => r.path === "acme.baseUrl")).toBe(false);
+  });
+
+  test("THE PROOF THIS IS THE RIGHT TRANSFORM: it reproduces all five hand-authored overlay endpoints", async () => {
+    // Five independent human reviews already performed this strip by hand, in `overlay/
+    // providers.json`, before any of this code existed. If the rule reproduces every one of them
+    // byte-for-byte it is not a guess — it is the transformation the reviewers were doing.
+    const overlay = (await Bun.file(new URL("../../overlay/providers.json", import.meta.url)).json()) as { providers: Array<{ id: string; defaultEndpoints: Record<string, string> }> };
+    const overlayApi = new Map(overlay.providers.map((p) => [p.id, p.defaultEndpoints["api"]]));
+    const cases: Array<[string, string, string, string]> = [
+      // winterId, upstream format, upstream baseUrl at v3.8.50, — expected == the overlay's own value
+      ["openai", "openai", "https://api.openai.com/v1/chat/completions", "https://api.openai.com/v1"],
+      ["anthropic", "claude", "https://api.anthropic.com/v1/messages", "https://api.anthropic.com"],
+      ["google", "gemini", "https://generativelanguage.googleapis.com/v1beta/models", "https://generativelanguage.googleapis.com"],
+      ["openrouter", "openai", "https://openrouter.ai/api/v1/chat/completions", "https://openrouter.ai/api/v1"],
+      ["deepseek", "openai-responses", "https://api.deepseek.com/responses", "https://api.deepseek.com"],
+    ];
+    for (const [winterId, format, upstreamBaseUrl, root] of cases) {
+      const suffix = FORMAT_ENDPOINT_SUFFIX[format]!;
+      expect([winterId, upstreamBaseUrl.slice(0, -suffix.length)]).toEqual([winterId, root]);
+      // ...and that root is EXACTLY what the reviewer wrote in the overlay.
+      expect([winterId, overlayApi.get(winterId)]).toEqual([winterId, root]);
     }
   });
 });
