@@ -145,9 +145,11 @@ export async function startAnthropicConsoleLogin(store: CredentialStore, options
     callbackPort: options.callbackPort ?? CONSOLE_OAUTH.callbackPort,
     callbackPath: CONSOLE_OAUTH.callbackPath,
     label: "Anthropic Console",
-    // R-A2-1: JSON, because that is the ONLY encoding this endpoint is observed receiving. See the
-    // capture's §2.3 -- the artifact's own authorization-code grant posts `application/json`.
+    // R-A2-1: JSON, because that is the ONLY encoding this endpoint is observed receiving, and
+    // `state` on the grant, because the artifact's own authorization-code request carries it. Both
+    // are opt-in on `LoginConfig` so that matching THIS endpoint changes nothing about codex's.
     bodyEncoding: "json",
+    includeStateInTokenRequest: true,
     scope: CONSOLE_OAUTH.scope,
     ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
     openUrl: options.openUrl,

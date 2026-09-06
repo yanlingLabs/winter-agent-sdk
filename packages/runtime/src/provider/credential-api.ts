@@ -286,13 +286,34 @@ function statusFromThrow(err: unknown, ref: CredentialRef, providerId: string): 
 export type ProviderLoginId = "anthropic" | "codex-oauth" | "xai-oauth" | "qoder";
 
 export interface StartProviderLoginOptions {
-  /** Opens the browser. HOST-supplied: the SDK never shells out to one, and a login is a host action. */
+  /**
+   * Opens the browser. HOST-supplied: the SDK never shells out to one, and a login is a host action.
+   *
+   * **A DEVICE-CODE FLOW NEVER CALLS THIS.** That is the whole point of RFC 8628 — the device has no
+   * browser to open, so there is no URL to hand one. Its verification URL and its user code reach the
+   * host through `onAuthStatus.output` instead, and a host that renders a device login by waiting for
+   * `openUrl` will wait forever while the two strings the user actually needs go past on the other
+   * channel. Required rather than optional only because the two flows that exist today are both
+   * loopback ones; a device flow may be handed a function that is never invoked.
+   */
   openUrl: (url: string) => Promise<void>;
   /** Overridden by a fixture; production uses each flow's own derived constants. */
   authorizeUrl?: string;
   tokenUrl?: string;
   /** Anthropic Console only: where the account id is read from. Ignored by flows that do not need one. */
   profileUrl?: string;
+  /**
+   * Device-code flows only (RFC 8628): where the device authorization request is posted.
+   *
+   * Present ahead of its flows for the same reason `ProviderLoginId` carries all four members — and
+   * for one more that is not cosmetic. Without a fixture endpoint here, a test driving a device login
+   * THROUGH THIS DOOR has nowhere to point it and would reach the vendor live, which the phase's
+   * hermeticity rule forbids outright. An option that only appears alongside its implementation is an
+   * option whose first test cannot be written.
+   */
+  deviceCodeUrl?: string;
+  /** Device-code flows only: the poll interval FLOOR in ms. The vendor's own `interval` wins when larger. */
+  pollIntervalMs?: number;
   callbackPort?: number;
   timeoutMs?: number;
   /** The Keychain service the record lands in — `config.keychainService` from the host. */

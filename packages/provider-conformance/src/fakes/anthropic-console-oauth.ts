@@ -107,6 +107,14 @@ export async function startAnthropicConsoleOauthFake(opts: AnthropicConsoleOauth
           }
           const grant = body["grant_type"];
           if (grant === "authorization_code") {
+            // `state` IS REQUIRED ON THIS GRANT, because the artifact's own authorization-code
+            // request carries it (the capture's §2.3). Enforced by the fake rather than only asserted
+            // by a test, so that a flow which silently stopped sending it fails HERE -- at the
+            // endpoint that would have rejected it -- instead of passing everything except one
+            // assertion somebody could later relax.
+            if (typeof body["state"] !== "string" || body["state"].length === 0) {
+              return jsonResponse({ error: "invalid_request", error_description: "the authorization_code grant carried no state" }, 400);
+            }
             const verifier = typeof body["code_verifier"] === "string" ? body["code_verifier"] : "";
             const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier));
             if (!challenges.has(base64Url(new Uint8Array(digest)))) {

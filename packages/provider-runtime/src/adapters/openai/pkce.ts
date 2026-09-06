@@ -74,6 +74,18 @@ export interface LoginConfig {
    * outright. The default keeps codex byte-identical.
    */
   bodyEncoding?: "form" | "json";
+  /**
+   * Whether the authorization-code grant carries `state`. Defaults to `false`.
+   *
+   * `state` is NOT an RFC 6749 token-request parameter — it is the authorize-request nonce echoed
+   * back on the redirect, and this flow has already compared it before accepting the code. The
+   * Anthropic Console client sends it on the grant anyway, so Winter matches that endpoint's observed
+   * request; every other flow must not, because sending a parameter a vendor never sees from its own
+   * client is a gratuitous difference on the one request whose failure mode is "your login is
+   * broken". It was briefly unconditional and the controller reverted it: codex's token request is
+   * byte-identical to what it was before this lane, and a fixture pins the exact body to keep it so.
+   */
+  includeStateInTokenRequest?: boolean;
   scope: string;
   timeoutMs?: number;
   /** Opens the browser. HOST-supplied: the SDK never shells out to a browser itself. */
@@ -261,13 +273,23 @@ export async function runLoginFlow(cfg: LoginConfig): Promise<OAuthTokens> {
     cfg.openUrl(authUrl.toString()).catch((err: unknown) => rejectFlow(new Error(`could not open the browser: ${err instanceof Error ? err.message : String(err)}`)));
     const code = await codePromise;
     report("exchanging the authorization code");
-    // `state` RIDES THE EXCHANGE (P6.5 ruling R-A2-1). It is not an RFC 6749 token-request parameter
-    // -- it is the authorize-request nonce echoed back on the redirect, and this flow has already
-    // compared it before accepting the code. The Anthropic Console client sends it on the grant
-    // anyway, and an authorization server ignores a parameter it does not recognise, so sending it
-    // matches the observed request at no cost. It is not a credential: it is a value this process
-    // minted and has already seen come back.
-    const tokens = await exchange(cfg.tokenUrl, { grant_type: "authorization_code", client_id: cfg.clientId, code, redirect_uri: redirectUri, code_verifier: verifier, state }, label, cfg.bodyEncoding ?? "form");
+    // `state` rides the exchange ONLY for a flow that asks (see `includeStateInTokenRequest`). It is
+    // not a credential -- it is a value this process minted and has already seen come back -- but it
+    // is also not a parameter the codex endpoint has ever been observed receiving, so it is opt-in
+    // rather than universal.
+    const tokens = await exchange(
+      cfg.tokenUrl,
+      {
+        grant_type: "authorization_code",
+        client_id: cfg.clientId,
+        code,
+        redirect_uri: redirectUri,
+        code_verifier: verifier,
+        ...(cfg.includeStateInTokenRequest === true ? { state } : {}),
+      },
+      label,
+      cfg.bodyEncoding ?? "form",
+    );
     cfg.onAuthStatus?.({ isAuthenticating: false, output: ["signed in"] });
     return tokens;
   } catch (err) {
