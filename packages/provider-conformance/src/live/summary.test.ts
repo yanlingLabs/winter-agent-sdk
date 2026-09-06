@@ -12,7 +12,8 @@
 import { test, expect, describe } from "bun:test";
 import { CredentialResolutionError } from "@yanlinglabs/winter-provider-runtime";
 import { describeThrown } from "../corpus/classifier-safety.ts";
-import { AUTH_DIMENSION_FIELDS, authDimensionsOf, LIVE_CASES } from "./cases.ts";
+import type { ProviderAdapter, ProviderEvent } from "@yanlinglabs/winter-provider-runtime";
+import { AUTH_DIMENSION_FIELDS, authDimensionsOf, LIVE_CASE_IMPLS, LIVE_CASES, type LiveCaseContext, type LiveCaseResult } from "./cases.ts";
 import { formatLiveRow, liveRowSummary, type LiveReport } from "./index.ts";
 
 /** A finished report, built by hand. The `detail` strings are what a real run's cases produce. */
@@ -121,6 +122,134 @@ describe("WS-13b §4: the inference-path reversion condition reports AUTH DIMENS
   test("the case is part of the live run, and its question names the property it tests", () => {
     const spec = LIVE_CASES.find((c) => c.id === "honest-identity-inference");
     expect(spec?.question).toContain("no vendor client header");
+  });
+});
+
+// -------------------------------------------------------------------------------------------------
+// Review round 2, I1: the reversion SEMANTICS belong to the OAuth rows, not to every subscription row.
+//
+// Four catalog rows are `pricingBasis: "subscription"` — `xai-oauth` and `codex-oauth` (entitlements
+// reached under Winter's own identity) and `clinepass` and `kimi-coding` (ordinary API-KEY products
+// with a seat price). Under one gate a mistyped key on `clinepass` was reported as WS-13b §4's
+// reversion condition, the remediation named `xai-oauth` whichever row had failed, and a success on an
+// api-key row was stamped with an identity claim that request never made.
+//
+// HERMETIC WITHOUT AN ENDPOINT TO PIN. `live/index.ts`'s header rule — a fixture driving these cases
+// must pin BOTH the endpoint and the adapter — is about fixtures that can reach a network. The
+// adapter below is an in-memory generator: there is no `fetch`, no URL and no credential anywhere in
+// this block, so there is no endpoint to pin and nothing that could resolve to a vendor.
+// -------------------------------------------------------------------------------------------------
+describe("WS-13b §4 (review r2 I1): a subscription row's refusal is read by its AUTH PATH, not by its price", () => {
+  const REFUSAL_BODY = '{"error":{"message":"unauthorized","auth_kind":"bearer","x_xai_token_auth":"none"}}';
+
+  /** An adapter that answers one turn with the scripted outcome. No network, no credential, no clock. */
+  function scriptedAdapter(outcome: { kind: "auth-error" } | { kind: "ok" }): ProviderAdapter {
+    return {
+      id: "winter.fixture",
+      version: "0.0.0-fixture",
+      family: "openai",
+      protocol: "openai-chat-completions",
+      async validateCredential() {
+        return { ok: true };
+      },
+      async listModels() {
+        return { models: [], partial: false, cached: false, warnings: [] };
+      },
+      streamTurn(): AsyncIterable<ProviderEvent> {
+        return (async function* () {
+          if (outcome.kind === "auth-error") {
+            yield { type: "error", error: { code: "auth", message: REFUSAL_BODY, status: 401, retryable: false } } as ProviderEvent;
+            return;
+          }
+          yield { type: "text_delta", text: "ready" } as ProviderEvent;
+          yield { type: "done", stopReason: "end_turn" } as ProviderEvent;
+        })();
+      },
+      mapEffort() {
+        return { ok: true, value: undefined };
+      },
+      capabilities() {
+        return { toolCalling: "native", readableState: "none" };
+      },
+    } as unknown as ProviderAdapter;
+  }
+
+  function caseCtx(providerId: string, targetKind: "api-key" | "oauth", outcome: { kind: "auth-error" } | { kind: "ok" }): LiveCaseContext {
+    return {
+      providerId,
+      adapter: scriptedAdapter(outcome),
+      // The only ProviderContext fields these cases touch. `connection.baseUrl` is a loopback port
+      // nothing listens on, and nothing in this fixture dials it.
+      ctx: { connection: { providerId, baseUrl: "http://127.0.0.1:1", local: true }, credentials: {}, authRef: { kind: "none" }, stallTimeoutMs: 1_000, log: () => {} } as unknown as LiveCaseContext["ctx"],
+      model: "probe-model",
+      descriptor: {} as NonNullable<LiveCaseContext["descriptor"]>,
+      pricingBasis: "subscription",
+      targetKind,
+    };
+  }
+
+  const run = (ctx: LiveCaseContext): Promise<LiveCaseResult> => LIVE_CASE_IMPLS["honest-identity-inference"](ctx);
+
+  test("`xai-oauth`: an OAuth entitlement's 401 IS the reversion condition, names its own provider in the remediation, and reports the vendor's auth dimensions", async () => {
+    const err = await run(caseCtx("xai-oauth", "oauth", { kind: "auth-error" })).then(
+      () => undefined,
+      (e: unknown) => e as Error,
+    );
+    expect(err?.name).toBe("LiveCaseAssertionError");
+    expect(err?.message).toContain("reversion condition");
+    expect(err?.message).toContain('providers["xai-oauth"].enabled');
+    expect(err?.message).toContain("x_xai_token_auth=none");
+    // The vendor's prose is not carried across even though the allowlisted fields are.
+    expect(err?.message).not.toContain("unauthorized");
+    // ...and Winter states what it did not do.
+    expect(err?.message).toContain("did NOT retry with the product's client header");
+  });
+
+  test("`codex-oauth`: the SAME semantics, and the remediation names CODEX -- an operator following it disables the row that actually failed", async () => {
+    // The bug this test exists for: the remediation was a hardcoded `xai-oauth`, so an operator whose
+    // codex entitlement was refused would have disabled a provider they were not even testing while
+    // the one that failed stayed on. The close-out live run exercises codex-oauth.
+    const err = await run(caseCtx("codex-oauth", "oauth", { kind: "auth-error" })).then(
+      () => undefined,
+      (e: unknown) => e as Error,
+    );
+    expect(err?.message).toContain('providers["codex-oauth"].enabled');
+    expect(err?.message).not.toContain("xai-oauth");
+    expect(err?.message).toContain("reversion condition");
+  });
+
+  test("`clinepass`: an API-KEY row on a subscription plan reads its 401 as a KEY failure -- never as the vendor rejecting Winter's identity", async () => {
+    const err = await run(caseCtx("clinepass", "api-key", { kind: "auth-error" })).then(
+      () => undefined,
+      (e: unknown) => e as Error,
+    );
+    expect(err?.name).toBe("LiveCaseAssertionError");
+    expect(err?.message).toContain("clinepass");
+    expect(err?.message).toContain("this says nothing about Winter's identity");
+    // The three things a false alarm would have said.
+    expect(err?.message).not.toContain("reversion condition");
+    expect(err?.message).not.toContain("xai-oauth");
+    expect(err?.message).not.toContain("impersonation");
+  });
+
+  test("the SUCCESS stamp is for OAuth rows only -- an api-key turn never asked whether an unregistered agent identity is served", async () => {
+    const oauthOk = await run(caseCtx("xai-oauth", "oauth", { kind: "ok" }));
+    expect(oauthOk.status).toBe("ok");
+    expect(oauthOk.detail).toContain("PROMOTABLE");
+    expect(oauthOk.detail).toContain("NO vendor client header sent");
+
+    const keyOk = await run(caseCtx("clinepass", "api-key", { kind: "ok" }));
+    expect(keyOk.status).toBe("ok");
+    expect(keyOk.detail).not.toContain("PROMOTABLE");
+    expect(keyOk.detail).not.toContain("vendor client header");
+    expect(keyOk.detail).toContain("No identity claim");
+  });
+
+  test("a run that did not say which path the credential came down DECLINES -- the wrong reading of a refusal is an accusation", async () => {
+    const { targetKind: _dropped, ...withoutKind } = caseCtx("xai-oauth", "oauth", { kind: "auth-error" });
+    const result = await run(withoutKind as LiveCaseContext);
+    expect(result.status).toBe("skipped");
+    expect(result.detail).toContain("neither reading");
   });
 });
 

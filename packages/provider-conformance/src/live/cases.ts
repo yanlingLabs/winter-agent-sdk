@@ -89,7 +89,8 @@ export const AUTH_DIMENSION_FIELDS: readonly string[] = ["auth_kind", "x_xai_tok
  *
  * Exported for its own unit test, because "a marker elsewhere in the same body never survives" is the
  * property that makes this safe and it must be falsifiable without a vendor. Values are bounded to a
- * scalar shape (`[\w.:-]+`), so a field whose value is a sentence contributes nothing.
+ * scalar shape (`[\w.:/-]+` — the `/` admits a scoped value like `grok-cli:access` written as a path
+ * and a bare URL host), so a field whose value is a sentence contributes only its first token.
  */
 export function authDimensionsOf(message: string): string[] {
   const found: string[] = [];
@@ -102,19 +103,29 @@ export function authDimensionsOf(message: string): string[] {
   return found;
 }
 
-/** The Winter-authored half of a refused inference report: what the operator must decide, and what Winter will not do to help them decide it. */
-function renderReversion(dimensions: readonly string[]): string {
+/**
+ * The Winter-authored half of a refused OAUTH inference report: what the operator must decide, and
+ * what Winter will not do to help them decide it.
+ *
+ * `providerId` is threaded rather than assumed. The first version hardcoded
+ * `providers["xai-oauth"].enabled` as the remediation, and the gate reached it for FOUR rows —
+ * `codex-oauth` among them, which the close-out run will exercise — so an operator following the
+ * line would have disabled a provider they were not testing while the one that failed stayed on.
+ */
+function renderReversion(providerId: string, dimensions: readonly string[]): string {
   return (
     ` -- the entitlement REFUSED a turn carrying Winter's own identity and no vendor client header. ` +
     `Auth dimensions the vendor named: ${dimensions.length === 0 ? "(none in the allowlist)" : dimensions.join(", ")}. ` +
     `If the bearer is valid and unexpired, this is WS-13b §4's reversion condition on the inference path: an honest unregistered agent identity ` +
     `the vendor rejects is a partner allowlist in fact, and the row reverts to impersonation-required. ` +
     `Winter did NOT retry with the product's client header and never will — that would be the impersonation D21 excludes. ` +
-    `Turn the row off without a release by setting providers["xai-oauth"].enabled to false in settings.`
+    `Turn the row off without a release by setting providers["${providerId}"].enabled to false in settings.`
   );
 }
 
 export interface LiveCaseContext {
+  /** The catalog PROVIDER id. Named in a report's remediation, so it is threaded rather than assumed. */
+  providerId: string;
   adapter: ProviderAdapter;
   ctx: ProviderContext;
   /** The provider-local id that goes on the wire (never the catalog key). */
@@ -127,6 +138,20 @@ export interface LiveCaseContext {
    * `subscription` is what "an entitlement rather than a key" means in catalog terms.
    */
   pricingBasis?: "token" | "subscription" | "free";
+  /**
+   * WHICH DOCUMENTED THIRD-PARTY PATH this run's credential came down (WS-13b §1), supplied by the
+   * gate that planned the target.
+   *
+   * It is the discriminator the reversion case needs and the one `pricingBasis` cannot be:
+   * `subscription` catches four rows and two of them (`clinepass`, `kimi-coding`) are ordinary
+   * API-KEY products with a seat price. Reporting a bad key on one of those as "the vendor rejected
+   * Winter's identity" would be a false alarm about the one thing this phase is careful about.
+   *
+   * `ProviderContext.authRef` cannot answer it: its `kind` is a LOCATOR (`keychain`/`env`/…), never
+   * the material's — a host may legitimately keep an api key in the Keychain. Absent, the case
+   * declines rather than guessing.
+   */
+  targetKind?: "api-key" | "oauth" | "keyless";
   signal?: AbortSignal;
 }
 
@@ -321,35 +346,62 @@ export const LIVE_CASE_IMPLS: Record<LiveCaseId, (ctx: LiveCaseContext) => Promi
    * allowlisted field, so a human has the evidence to decide — and the decision, per the ruling, is
    * a human's.
    *
-   * Gated on `pricingBasis === "subscription"`, which is what "an entitlement rather than a key"
-   * means in catalog terms; every other row skips with that fact.
+   * TWO GATES, NOT ONE (review round 2, I1). `pricingBasis === "subscription"` says the row is an
+   * entitlement rather than metered traffic — but four rows are subscription-priced and two of them
+   * (`clinepass`, `kimi-coding`) are ordinary API-KEY products with a seat price. So the REVERSION
+   * SEMANTICS are gated on `targetKind === "oauth"` as well, and an api-key subscription row takes
+   * the ordinary reading: a 401 there is a bad key, not a vendor rejecting Winter's identity.
+   *
+   * The distinction is not pedantic. Under one gate this case would have (a) reported a mistyped key
+   * as WS-13b §4's reversion condition, (b) told the operator to disable `xai-oauth` when
+   * `codex-oauth` was the row that failed, and (c) stamped an api-key request "PROMOTABLE … with NO
+   * vendor client header sent" — a question that request never asked.
    */
   async "honest-identity-inference"(ctx: LiveCaseContext): Promise<LiveCaseResult> {
     if (ctx.descriptor === undefined) return { status: "skipped", detail: "no catalog descriptor (an allowUnlisted pass-through), so the row's pricing basis is unknown" };
     if (ctx.pricingBasis !== "subscription") {
-      return { status: "skipped", detail: `the row's pricingBasis is "${ctx.pricingBasis ?? "unknown"}"; the inference-path reversion condition is about a subscription entitlement (WS-13b §4)` };
+      return { status: "skipped", detail: `the row's pricingBasis is "${ctx.pricingBasis ?? "unknown"}"; this case is about a subscription entitlement (WS-13b §4)` };
     }
+    if (ctx.targetKind === undefined) {
+      // DECLINES rather than guessing: without knowing which documented path the credential came
+      // down, neither reading of a refusal is supportable, and the wrong one is an accusation.
+      return { status: "skipped", detail: "the run did not say which documented third-party path this credential came down, so a refusal here supports neither reading" };
+    }
+    const oauth = ctx.targetKind === "oauth";
     let measured: StreamMeasurement;
     try {
       measured = await drain(ctx.adapter.streamTurn(turnRequest(ctx), ctx.ctx));
     } catch (err) {
-      // An adapter that THREW rather than emitting an error event. Same treatment: identity from the
-      // fields, dimensions from the allowlist, and not one byte of the message itself.
+      // An adapter that THREW rather than emitting an error event. Same treatment either way:
+      // identity from the fields, dimensions from the allowlist, and not one byte of the message.
       const message = err instanceof Error ? err.message : "";
-      throw new LiveCaseAssertionError(`${describeThrown(err)}${renderReversion(authDimensionsOf(message))}`);
+      throw new LiveCaseAssertionError(
+        oauth
+          ? `${describeThrown(err)}${renderReversion(ctx.providerId, authDimensionsOf(message))}`
+          : `${describeThrown(err)} -- an API-KEY row on a subscription plan, so this is evidence about the key or the endpoint and NOT about Winter's identity`,
+      );
     }
     if (measured.errorCode !== undefined) {
-      const dimensions = authDimensionsOf(measured.errorMessage ?? "");
       const identity = `code=${measured.errorCode}${measured.errorStatus === undefined ? "" : ` status=${measured.errorStatus}`}`;
-      if (measured.errorCode !== "auth") throw new LiveCaseAssertionError(`the turn failed for a non-auth reason (${identity}), so it is evidence about the endpoint rather than about Winter's identity`);
-      throw new LiveCaseAssertionError(`${identity}${renderReversion(dimensions)}`);
+      if (measured.errorCode !== "auth") throw new LiveCaseAssertionError(`the turn failed for a non-auth reason (${identity}), so it is evidence about the endpoint rather than about the credential`);
+      if (!oauth) {
+        // The ordinary reading. A seat-priced API-KEY row's 401 is a bad, revoked or unentitled key —
+        // and saying "the vendor rejected Winter's identity" here would be a false alarm about the
+        // one thing this phase is careful about.
+        throw new LiveCaseAssertionError(`${identity} -- an API-KEY row on a subscription plan refused the key (check that ${ctx.providerId}'s key is valid and the seat is active); this says nothing about Winter's identity`);
+      }
+      throw new LiveCaseAssertionError(`${identity}${renderReversion(ctx.providerId, authDimensionsOf(measured.errorMessage ?? ""))}`);
     }
-    if (measured.stopReason === undefined) throw new LiveCaseAssertionError("the stream never reported a stop reason, so neither reading of the reversion condition is supported");
+    if (measured.stopReason === undefined) throw new LiveCaseAssertionError("the stream never reported a stop reason, so the turn supports no reading at all");
+    const measurements = `stopReason=${measured.stopReason}, textBytes=${measured.textBytes}`;
     return {
       status: "ok",
-      detail:
-        `PROMOTABLE: the entitlement served a turn to Winter's own identity with NO vendor client header sent ` +
-        `(stopReason=${measured.stopReason}, textBytes=${measured.textBytes}). The reversion condition did not fire.`,
+      // The honest-identity STAMP is for OAuth rows only. An api-key turn carries a key the user
+      // minted in their own account; whether the vendor would serve an unregistered agent identity
+      // is not a question it asked, and claiming the answer would be evidence Winter never gathered.
+      detail: oauth
+        ? `PROMOTABLE: the entitlement served a turn to Winter's own identity with NO vendor client header sent (${measurements}). The reversion condition did not fire.`
+        : `the subscription plan served a turn on its API KEY (${measurements}). No identity claim: this row's credential is a key, not an entitlement reached under Winter's own identity.`,
     };
   },
 

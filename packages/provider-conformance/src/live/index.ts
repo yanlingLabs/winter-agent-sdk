@@ -56,6 +56,8 @@ export interface RunLiveCasesOptions {
   descriptor?: WinterModelDescriptor;
   /** The PROVIDER row's pricing basis (WS-13b §1). Gates the inference-path reversion case. */
   pricingBasis?: "token" | "subscription" | "free";
+  /** Which documented third-party path this run's credential came down. `runLiveTarget` supplies it from the gate's own plan. */
+  targetKind?: LiveTargetKindLabel;
   signal?: AbortSignal;
   /** Progress, one line per case as it finishes. Identifiers and counts only — the case details already obey that rule. */
   onProgress?: (outcome: LiveCaseOutcome) => void;
@@ -63,11 +65,17 @@ export interface RunLiveCasesOptions {
 
 export async function runLiveCases(opts: RunLiveCasesOptions): Promise<LiveReport> {
   const caseCtx: LiveCaseContext = {
+    // The provider id reaches the CASES, not only the report: a remediation line that names the wrong
+    // provider is worse than one that names none (review round 2, I1).
+    providerId: opts.providerId,
     adapter: opts.adapter,
     ctx: opts.ctx,
     model: opts.model,
     ...(opts.descriptor !== undefined ? { descriptor: opts.descriptor } : {}),
     ...(opts.pricingBasis !== undefined ? { pricingBasis: opts.pricingBasis } : {}),
+    // Absent when a caller used `runLiveCases` directly rather than `runLiveTarget`. The case that
+    // reads it declines in that state rather than guessing which auth path it is looking at.
+    ...(opts.targetKind !== undefined ? { targetKind: opts.targetKind } : {}),
     ...(opts.signal !== undefined ? { signal: opts.signal } : {}),
   };
   const outcomes: LiveCaseOutcome[] = [];
@@ -178,13 +186,19 @@ export function formatLiveRow(row: LiveRowSummary): string {
  * something other than the run it names.
  */
 export async function runLiveTarget(opts: RunLiveCasesOptions & LiveRowSummaryOptions): Promise<{ report: LiveReport; row: LiveRowSummary }> {
-  const report = await runLiveCases(opts);
+  // `kind` reaches the CASES as `targetKind`, not only the row: the caller already stated which
+  // documented path this credential came down, and a case that had to re-derive it would be a
+  // second, drifting answer to a question already settled.
+  const report = await runLiveCases({ ...opts, targetKind: opts.kind });
   return { report, row: liveRowSummary(report, { kind: opts.kind, identityHeader: opts.identityHeader }) };
 }
 
 /** One line per case. Identifiers, counts and durations only — never a byte of what a provider returned. */
 export function formatLiveReport(report: LiveReport): string {
   const byId = new Map(LIVE_CASES.map((c) => [c.id, c]));
-  const lines = report.outcomes.map((o) => `    ${o.status.padEnd(7)} ${o.id.padEnd(17)} ${String(o.ms).padStart(6)}ms  ${o.detail}  (${byId.get(o.id)?.question ?? ""})`);
+  // 25 = the longest case id (`honest-identity-inference`). Hard-coding a width is what let the sixth
+  // case ship misaligned against a 17 that fitted the first five, so it is DERIVED from the ids.
+  const idWidth = Math.max(...LIVE_CASES.map((c) => c.id.length));
+  const lines = report.outcomes.map((o) => `    ${o.status.padEnd(7)} ${o.id.padEnd(idWidth)} ${String(o.ms).padStart(6)}ms  ${o.detail}  (${byId.get(o.id)?.question ?? ""})`);
   return [`  live: ${report.providerId} / ${report.modelKey} via ${report.adapterId}@${report.adapterVersion} -- ${report.ok ? "OK" : "FAILED"}`, ...lines].join("\n");
 }

@@ -658,8 +658,11 @@ const WIDENING_ROWS: ConformanceRow[] = [
       { file: `${CORPUS}/xai-oauth.test.ts`, testName: "R6b-7: the reversion SWITCH works on this row" },
       { file: `${LIVE}/summary.test.ts`, testName: "only the allowlisted fields survive -- a marker sitting in the SAME body does not" },
       { file: `${LIVE}/summary.test.ts`, testName: "the allowlist is a CLOSED list -- every field it names is one an auth refusal reports, and nothing else is read" },
+      { file: `${LIVE}/summary.test.ts`, testName: "`xai-oauth`: an OAuth entitlement's 401 IS the reversion condition, names its own provider in the remediation" },
+      { file: `${LIVE}/summary.test.ts`, testName: "`codex-oauth`: the SAME semantics, and the remediation names CODEX" },
+      { file: `${LIVE}/summary.test.ts`, testName: "`clinepass`: an API-KEY row on a subscription plan reads its 401 as a KEY failure" },
     ],
-    note: "The last three citations are the INFERENCE-PATH half of the condition, which only a live run can answer: a 401/403 on a valid subscription bearer sent with Winter's identity alone. The gate reports the vendor's own auth dimensions through a closed allowlist and NEVER retries with the product header to prove the point (D21).",
+    note: "The last five citations are the INFERENCE-PATH half of the condition, which only a live run can answer: a 401/403 on a valid subscription bearer sent with Winter's identity alone. The gate reports the vendor's own auth dimensions through a closed allowlist and NEVER retries with the product header to prove the point (D21). The reversion SEMANTICS are gated on the target's auth path, not its price: four rows are subscription-priced and two of them are ordinary api-key products, whose 401 is a bad key and says nothing about Winter's identity (review round 2, I1).",
   },
   {
     id: "WS13b-9",
