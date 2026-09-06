@@ -366,6 +366,6 @@ export async function startProviderLogin(providerId: ProviderLoginId, store: Cre
       // third-party inference endpoint either. Its documented programmatic route is a Personal
       // Access Token, and its documented agent route is its own Agent SDK / Cloud Agents, which is
       // the agent-transport class WS-13 §8.2 excludes. There is nothing here to sign in to.
-      throw new CredentialResolutionError("unsupported", `the "${providerId}" login is not wired in this build yet, so there is nothing to sign in to; no browser was opened and no record was written`);
+      throw new CredentialResolutionError("unsupported", `the "${providerId}" login is not wired in this build, so there is nothing to sign in to; no browser was opened and no record was written`);
   }
 }
