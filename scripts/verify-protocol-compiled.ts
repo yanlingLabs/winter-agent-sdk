@@ -99,6 +99,13 @@ async function verifyCatalogInBinary(binPath: string): Promise<void> {
       | { winter_provider?: unknown }
       | undefined;
     if (refusedInit === undefined) throw new Error("verify:compiled: the unknown-model session emitted no system/init — a resolution failure must still start the session (capture (I))");
+    // THE EXIT CODE, pinned explicitly (fix wave, T10 r1 Minor): `runCompiledSession` returns it
+    // without throwing, so the shape assertions above never saw it. A resolution failure is a
+    // completed turn (the pinned result is yielded, then `query()` throws on the HOST side), so the
+    // binary exits 0 exactly like the known-model run -- a non-zero code here would mean the process
+    // died before or instead of landing the pinned shape.
+    if (refused.exitCode !== 0) throw new Error(`verify:compiled: the unknown-model session exited ${refused.exitCode}, expected 0 (the refusal is a completed turn, not a crash)\n${refused.stderr}`);
+    if (ok.exitCode !== 0) throw new Error(`verify:compiled: the known-model session exited ${ok.exitCode}, expected 0\n${ok.stderr}`);
     if (refusedInit.winter_provider !== undefined) throw new Error("verify:compiled: the unknown-model session reported a `winter_provider` identity it cannot have resolved");
     const refusedResult = refused.frames.map((f) => (f as { message?: { type?: string } }).message).find((m) => m?.type === "result") as
       | { is_error?: boolean; terminal_reason?: string; api_error_status?: number | null; result?: string }

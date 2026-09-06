@@ -25,6 +25,7 @@ import {
   constants as fsConstants,
 } from "node:fs";
 import type { Dirent } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 
 // T7 F6 (fix-wave): WinterStoreLeaseError is NOT used by name in this file's own body — it is only
@@ -699,6 +700,45 @@ export class WinterCompatibilitySessionStore implements SessionStore {
    * with no summary yet, which is indistinguishable from one that never existed and is the honest
    * answer to both.
    */
+  /**
+   * P6 fix wave (the public `forkSession()` door): copies a session's provider-state sidecar onto a
+   * FORK. Winter-only, on the concrete class like `readSessionSummary`, and generic by design -- the
+   * sdk cannot import the runtime's record codec (WS-02 §3), so this is a LINE rewrite: every parseable
+   * record is re-owned to the fork's `sessionId` and given a FRESH `uuid` (the store's idempotency key;
+   * two sessions sharing record uuids would collide into one upserted row) while its `anchorUuid` stays
+   * -- `forkSessionByKey` keeps entry uuids, which is exactly what makes the copied anchors meaningful.
+   * An unparseable line (a torn tail) is skipped, never fatal; a source with no sidecar copies nothing.
+   * Written with the same 0600 / O_APPEND / O_NOFOLLOW / fsync posture the transcript gets. Returns the
+   * number of records copied.
+   */
+  async copyProviderStateForFork(src: SessionKey, dest: SessionKey): Promise<number> {
+    const { stem: srcStem } = locateResource(this.winterHome, src);
+    const { stem: destStem, dirLevels } = locateResource(this.winterHome, dest);
+    let raw: string;
+    try {
+      raw = readFileSync(`${srcStem}${PROVIDER_STATE_FILE_SUFFIX}`, "utf8");
+    } catch (err) {
+      if ((err as { code?: unknown }).code === "ENOENT") return 0;
+      throw err;
+    }
+    const lines: string[] = [];
+    for (const line of raw.split("\n")) {
+      if (line.length === 0) continue;
+      let record: unknown;
+      try {
+        record = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      if (typeof record !== "object" || record === null || Array.isArray(record)) continue;
+      lines.push(JSON.stringify({ ...(record as Record<string, unknown>), uuid: randomUUID(), sessionId: dest.sessionId }));
+    }
+    if (lines.length === 0) return 0;
+    for (const level of dirLevels) ensureSecureDir(level);
+    appendLinesAtomically(`${destStem}${PROVIDER_STATE_FILE_SUFFIX}`, lines);
+    return lines.length;
+  }
+
   async readSessionSummary(key: { projectKey: string; sessionId: string }): Promise<SessionSummaryEntry | null> {
     assertSafeSingleSegment(key.projectKey, "projectKey");
     assertSafeSingleSegment(key.sessionId, "sessionId");

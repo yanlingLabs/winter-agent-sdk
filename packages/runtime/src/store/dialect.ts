@@ -57,7 +57,6 @@ import { createFileAutoCounterStore, type AutoCounterStore } from "../permission
 import {
   PROVIDER_STATE_SUBPATH,
   appendProviderState,
-  copyProviderStateForFork,
   coerceProviderStateRecord,
   providerStateSidecarPath,
   readProviderState,
@@ -1115,48 +1114,11 @@ export async function resolveEngineSession(opts: {
     // process is still actively using is legitimate and must stay legal; the eager lease claim
     // below runs AFTER this block, against whichever identity (original or forked) is the ACTUAL
     // target from here on, so a fork never needs (and never takes) the pre-fork session's lease.
+    // P6 fix wave: the fork's PROVIDER STATE (chain + identity block) is carried by
+    // `forkSessionByKey` itself, at the store level, for this path AND the public `forkSession()`
+    // door -- one implementation. Phase 6 Task 3's runtime-side copy (review round 2, M3) lived here
+    // and left the public door chain-less; the store-level carry closes both with one primitive.
     const forked = await forkSessionByKey(store, { projectKey: targetProjectKey, sessionId: targetSessionId });
-    // Phase 6 Task 3 (review round 2, M3): the fork carries its PROVIDER STATE too.
-    //
-    // `forkSessionByKey` copies entries with `uuid`/`parentUuid` untouched, so the fork's assistant
-    // entries carry the SAME anchors -- which is what makes copying the chain meaningful rather than
-    // a guess. Without it a forked session landed with no chain and no identity block, took the
-    // pre-P6 silent path on its very first resume, and lost every native continuation the source had
-    // accumulated with nothing said.
-    //
-    // AUXILIARY, like every other store side effect on this path: a fork whose sidecar could not be
-    // copied is a fork with a degraded chain, which the resume warning already reports. It is never a
-    // reason to fail a fork whose CONVERSATION copied fine.
-    try {
-      copyProviderStateForFork(
-        providerStateSidecarPath(join(winterHome, "projects", targetProjectKey, `${targetSessionId}.jsonl`)),
-        providerStateSidecarPath(join(winterHome, "projects", targetProjectKey, `${forked.sessionId}.jsonl`)),
-        forked.sessionId,
-      );
-      // The IDENTITY BLOCK travels with it. It is what the resume side reads to tell "this session
-      // had provider state" from "this session predates the concept", so a fork that copied the
-      // records but not the block would still take the silent path.
-      const summaryStore = store as { readSessionSummary?(key: { projectKey: string; sessionId: string }): Promise<Record<string, unknown> | null> };
-      const sourceSummary = summaryStore.readSessionSummary !== undefined ? await summaryStore.readSessionSummary({ projectKey: targetProjectKey, sessionId: targetSessionId }) : null;
-      if (sourceSummary !== null && typeof sourceSummary.providerId === "string" && typeof sourceSummary.modelKey === "string") {
-        const identity: DialectProviderIdentity = {
-          providerId: sourceSummary.providerId,
-          modelKey: sourceSummary.modelKey,
-          ...(typeof sourceSummary.adapterId === "string" ? { adapterId: sourceSummary.adapterId } : {}),
-          ...(typeof sourceSummary.adapterVersion === "string" ? { adapterVersion: sourceSummary.adapterVersion } : {}),
-          ...(typeof sourceSummary.catalogVersion === "string" ? { catalogVersion: sourceSummary.catalogVersion } : {}),
-          ...(typeof sourceSummary.authRef === "string" ? { authRefKind: sourceSummary.authRef } : {}),
-          ...(typeof sourceSummary.classifierPin === "string" ? { classifierPin: sourceSummary.classifierPin } : {}),
-        };
-        const stamp = new TranscriptWriter({ store, key: { projectKey: targetProjectKey, sessionId: forked.sessionId }, ctx: { sessionId: forked.sessionId, cwd: config.cwd, version: RUNTIME_ENGINE_VERSION, projectDirName: targetProjectKey } });
-        stamp.setProviderIdentity(identity);
-        // One dialect-only append: the store folds the record into the fork's summary and writes NO
-        // transcript line for it (`DIALECT_RECORD_ENTRY_TYPE` is partitioned out by construction).
-        await stamp.stampDialectRecord();
-      }
-    } catch {
-      /* auxiliary — see the comment above */
-    }
     targetSessionId = forked.sessionId;
   }
 

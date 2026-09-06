@@ -8,7 +8,7 @@ import type { ProtocolSdkMessage as SdkMessage, RuntimeConfig, WinterFrame } fro
 import type { WinterCatalog } from "@yanlinglabs/winter-provider-catalog";
 import { createMemoryCredentialStore } from "@yanlinglabs/winter-provider-runtime";
 import { buildSessionProvider } from "./session-provider.ts";
-import { runEngine } from "../engine.ts";
+import { runEngine, type ProviderUsage } from "../engine.ts";
 import { stubExecutor } from "./mock.ts";
 import { createInMemoryChannel } from "../protocol/channel.ts";
 import type { AutoAuditRecord } from "../permissions/auto/engine.ts";
@@ -44,7 +44,7 @@ async function drive(opts: { fake: RawChatFake; catalog: WinterCatalog; config: 
     tools: stubExecutor,
     providerIdentity: { providerId: identity.providerId, modelKey: identity.modelKey, family: String(wiring.resolved!.adapter.family), adapterId: identity.adapterId, adapterVersion: identity.adapterVersion, catalogVersion: identity.catalogVersion, authRefKind: identity.authRefKind },
     resolveModelSwitch: wiring.resolveModelSwitch,
-    priceUsage: (modelKey, usage) => wiring.priceUsage(modelKey, usage),
+    priceUsage: (modelKey: string, usage: ProviderUsage) => wiring.priceUsage(modelKey, usage),
     ...(wiring.classifier !== undefined ? { classifier: wiring.classifier } : {}),
     ...(wiring.classifierIdentity !== undefined ? { classifierIdentity: wiring.classifierIdentity } : {}),
     autoAudit: { record: (entry: AutoAuditRecord) => void audits.push(entry) },
