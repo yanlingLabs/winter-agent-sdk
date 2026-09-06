@@ -264,6 +264,8 @@ const ADAPTER_ROWS: ConformanceRow[] = [
     citations: [
       { file: `${CORPUS}/anthropic.test.ts`, testName: "a `tool_reference` block is a TYPED REFUSAL, never a silent drop" },
       { file: `${RUNTIME}/provider/selection.test.ts`, testName: "a candidate on ANOTHER PROVIDER is a typed error AT INIT" },
+      // P6 fix wave (Ruling E-3): the fallback that DOES engage is announced, never silent.
+      { file: `${SDK}/transport-equivalence.test.ts`, testName: "p6-fallback (R6-C through Ruling E-3)" },
     ],
   },
 ];
@@ -387,7 +389,100 @@ const INTEGRATION_ROWS: ConformanceRow[] = [
   },
 ];
 
-const ALL_ROWS: ConformanceRow[] = [...CATALOG_ROWS, ...ADAPTER_ROWS, ...INTEGRATION_ROWS];
+// --- P6 fix wave (Lane E): the rows for the fixtures the whole-branch review's Criticals and
+// Importants produced. "new" rather than "covered", like every row a task adds for a gap it closes.
+const FIX_WAVE_ROWS: ConformanceRow[] = [
+  {
+    id: "WS13-I13",
+    spec: "WS-13 §13 (integration)",
+    bullet: "Keychain secrets never cross a provider boundary: a target on ANOTHER provider (classifier, advisor, R6-17 child) never inherits the session's credential or user endpoint (§6 Phase 6 amendment, Ruling E-1)",
+    status: "new",
+    citations: [
+      { file: `${RUNTIME}/provider/cross-provider-credential.test.ts`, testName: "(P1a, inverted) an R6-17 child on another provider is built with THAT provider's own keychain record" },
+      { file: `${RUNTIME}/provider/cross-provider-credential.test.ts`, testName: "(P1b, inverted) the classifier route's OWN" },
+      { file: `${RUNTIME}/provider/cross-provider-credential.test.ts`, testName: "a cross-provider target reaches its OWN generated endpoint" },
+      { file: `${RUNTIME}/provider/cross-provider-credential.test.ts`, testName: "the spawn reports the child, the model and the provider on stderr AND on the parent's stream" },
+    ],
+    note: "Whole-branch C-1 (probe P1): vendor A's key on the wire to vendor B's endpoint. Two providers on the shared chat adapter, each with its own loopback fake, the other fake asserting it saw none of the session's material.",
+  },
+  {
+    id: "WS13-I14",
+    spec: "WS-13 §13 (integration)",
+    bullet: "identity across a model SWITCH via the control request: `set_model` resolves FIRST (R6-K under the session provider), the wire carries the resolved row's own id never the catalog key, `model_switch` and `providerHistory` carry keys, post-switch origins name the new model (R6-I amendment, Ruling E-2)",
+    status: "new",
+    citations: [
+      { file: `${RUNTIME}/provider/switch-seam.test.ts`, testName: "(P2b, inverted) the QUALIFIED catalog key" },
+      { file: `${RUNTIME}/provider/switch-seam.test.ts`, testName: "a key qualified for ANOTHER provider is" },
+      { file: `${RUNTIME}/provider/engine-seam-p6.test.ts`, testName: "(whole-branch M-8) the SAME hook points through a CATALOG-RESOLVED adapter with a KEY" },
+      { file: `${SDK}/transport-equivalence.test.ts`, testName: "p6-set-model (R6-I through Ruling E-2)" },
+      { file: `${SDK}/transport-equivalence.test.ts`, testName: "p6-set-model (refusal)" },
+    ],
+    note: "Whole-branch C-2 (probe P2): the picker row's `value` went on the wire verbatim and every post-switch origin named the old model. The three-leg scenario drives `supportedModels()[i].value` into `setModel()`.",
+  },
+  {
+    id: "WS13-I15",
+    spec: "WS-13 §13 (integration)",
+    bullet: "no silent cross-domain replay: a `warned-lossy` switch emits `continuity_warning: cross_domain_replay_dropped` (counts and identity only) and persists the `handoff` sidecar record built by `buildPortableHandoff` (§8.2 / WS-05 §13)",
+    status: "new",
+    citations: [
+      { file: `${RUNTIME}/provider/switch-seam.test.ts`, testName: "a CROSS-DOMAIN switch emits" },
+      { file: `${RUNTIME}/provider/switch-seam.test.ts`, testName: "sidecar record anchored at the source's last entry (M-6)" },
+      { file: `${RUNTIME}/provider/switch-seam.test.ts`, testName: "a SAME-DOMAIN switch (two models declaring one certified domain) is lossless" },
+      { file: `${RUNTIME}/provider/switch-seam.test.ts`, testName: "parked MID-TURN and applied on interrupt" },
+    ],
+    note: "The frame carries no anchor uuid (a per-run value); the record does. On the interrupt path the same value carries the matrix's mid-turn-abort loss (trigger 7), disclosed in WS-03.",
+  },
+  {
+    id: "WS13-I16",
+    spec: "WS-13 §13 (integration)",
+    bullet: "fallback ENGAGES on an R6-6 retryable-class failure after retries, through the same seam, same domain only, announced as `model_switch{reason:\"fallback\"}` both ways, silent at parity (R6-C amendment, Ruling E-3)",
+    status: "new",
+    citations: [
+      { file: `${RUNTIME}/provider/switch-seam.test.ts`, testName: "the primary fails on a retryable class -> the candidate serves the SAME round" },
+      { file: `${RUNTIME}/provider/switch-seam.test.ts`, testName: "a NON-retryable class never engages a fallback" },
+      { file: `${RUNTIME}/provider/switch-seam.test.ts`, testName: "a candidate OUTSIDE the current model's continuation domain is skipped" },
+      { file: `${SDK}/transport-equivalence.test.ts`, testName: "p6-fallback (R6-C through Ruling E-3)" },
+    ],
+    note: "Whole-branch I-1: `fallbackModel` was accepted, domain-checked at init and never engaged. The three-leg scenario exhausts a real `withRetry` (503 x11, `Retry-After: 1`) on gemini-2.5-flash and serves the turn on flash-lite.",
+  },
+  {
+    id: "WS13-I17",
+    spec: "WS-13 §13 (integration)",
+    bullet: "usage accounting reaches the host: a priced row's results carry `total_cost_usd` and `modelUsage` from the descriptor's pricing evidence; an unpriced row carries no cost field; `maxBudgetUsd` stops the next request on `error_max_budget_usd` (R6-H amendment, Ruling E-4)",
+    status: "new",
+    citations: [
+      { file: `${RUNTIME}/provider/cost-and-pin.test.ts`, testName: "a PRICED row: the result carries the exact" },
+      { file: `${RUNTIME}/provider/cost-and-pin.test.ts`, testName: "an UNPRICED row: no cost field at all" },
+      { file: `${RUNTIME}/provider/cost-and-pin.test.ts`, testName: "the request that would cross an already-exceeded ceiling never goes out" },
+      { file: "../goldens/p6-anthropic-fake.trace.json", testName: "\"modelUsage\"" },
+    ],
+    note: "Whole-branch I-2: `estimateCostUsd` had no production caller. The golden citation pins that a priced family trace carries the row; `total_cost_usd` is scrubbed by the trace normalizer, so the golden cannot pin it.",
+  },
+  {
+    id: "WS13-I18",
+    spec: "WS-13 §13 (integration)",
+    bullet: "the classifier is PINNED by the session's first successful classification (`classifierPin` on the dialect identity + the `fallback_state` audit record) -- §10, Ruling E-5",
+    status: "new",
+    citations: [
+      { file: `${RUNTIME}/provider/cost-and-pin.test.ts`, testName: "through the REAL route against the fake: the identity is restamped with" },
+      { file: `${RUNTIME}/provider/cost-and-pin.test.ts`, testName: "a classification that yields NO verdict pins nothing" },
+    ],
+    note: "Whole-branch I-5: the pin was accepted by the dialect and stamped by nothing.",
+  },
+  {
+    id: "WS13-I19",
+    spec: "WS-13 §13 (integration)",
+    bullet: "daemon restart preserves provider identity across a FORK made through the public session API: the chain and the identity block travel with it (WS-05 §13, the fix-wave carry)",
+    status: "new",
+    citations: [
+      { file: `${RUNTIME}/store/fork-door.test.ts`, testName: "a fork made through the session API resumes with the source's origins and native state re-attached" },
+      { file: `${RUNTIME}/store/provider-state.test.ts`, testName: "a fork replays the source's chain, anchored by the SAME entry uuids, and resumes without a warning" },
+    ],
+    note: "T3 re-review round 2 M3: the public door landed chain-less. One store-level primitive now serves both doors.",
+  },
+];
+
+const ALL_ROWS: ConformanceRow[] = [...CATALOG_ROWS, ...ADAPTER_ROWS, ...INTEGRATION_ROWS, ...FIX_WAVE_ROWS];
 
 describe("WS-13 §13 conformance matrix (Phase 6 Task 10)", () => {
   test("every row is covered, newly tested here, or deferred with a named owning-phase reasoning -- zero unexplained bullets", () => {

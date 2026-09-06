@@ -65,4 +65,56 @@ export type { DiscoveryCache } from "./discovery.ts";
 // `adapters/index.ts` additionally carries `createShippedAdapters`, the ONE construction site for
 // every adapter this build ships — see its header for why the descriptor lookup lives there.
 export * from "./adapters/index.ts";
-export * from "./continuity/index.ts";
+// P6 fix wave (Ruling E-2): the continuity module BY NAME rather than by star -- the export list IS
+// the production surface, and the retired switch coordinator (deleted) is not on it. The engine owns
+// the switch point; a future "coordinator" reaching the barrel by star-export would be the duplicate
+// the ruling retired.
+export {
+  RECOVERED_REASONING_TAG,
+  MIN_DECORATION_BODY_CHARS,
+  buildDecoration,
+  decorationOverhead,
+  doorFor,
+  escapeAttribute,
+  escapeInline,
+  neutralizeDelimiters,
+  trimToBudget,
+  createEndpointResolver,
+  endpointFromOrigin,
+  readableStateOf,
+  sameDomain,
+  sameFamily,
+  shouldRequestSummary,
+  summaryRequestOf,
+  applyDecorationToContent,
+  createHistoryRenderer,
+  classifySwitch,
+  INSTRUCTION_FILE_BASENAMES,
+  PRIOR_MODEL_HANDOFF_TAG,
+  buildPortableHandoff,
+  handoffDecoration,
+} from "./continuity/index.ts";
+export type {
+  Decoration,
+  DecorationDoor,
+  DecorationInput,
+  DecorationSource,
+  ContinuityEndpoint,
+  DomainFacts,
+  ReadableState,
+  ContinuationChainLike,
+  ContinuationLinkLike,
+  HistoryRendererOptions,
+  HistoryTarget,
+  MaterialKind,
+  RenderReport,
+  RenderedDecoration,
+  WinterHistoryRenderer,
+  LossClass,
+  SwitchClassification,
+  SwitchFacts,
+  HandoffToolFact,
+  PortableHandoff,
+  PortableHandoffOptions,
+  PortableHandoffSections,
+} from "./continuity/index.ts";

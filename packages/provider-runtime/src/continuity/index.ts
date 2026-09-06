@@ -20,8 +20,15 @@ export type { ContinuationChainLike, ContinuationLinkLike, HistoryRendererOption
 export { classifySwitch } from "./warnings.ts";
 export type { LossClass, SwitchClassification, SwitchFacts } from "./warnings.ts";
 
-export { createSwitchCoordinator } from "./coordinator.ts";
-export type { ApplyContext, AppliedSwitch, DiscardReport, ImmediateContext, PendingSwitch, SwitchAction, SwitchCoordinator, SwitchDecision, SwitchMode, SwitchOwner, SwitchRequest } from "./coordinator.ts";
+// P6 fix wave (Ruling E-2): `createSwitchCoordinator` is GONE. Its bookkeeping -- the pending slot,
+// the trigger-to-reason mapping, the "owner cancels" contract -- was a second copy of state the engine
+// already owns (`pendingModelSwitch`, `interruptCurrentTurn`), and a second copy is how the two
+// disagree. What the switch point actually needs are the two PURE functions above and below:
+// `classifySwitch` (the loss matrix) and `buildPortableHandoff` (the boundary handoff), wired by the
+// runtime's `applyPendingModelSwitch` through the `resolveModelSwitch` seam
+// (`provider/session-provider.ts`). The conformance corpus's §12.3 switch cases drive the same two
+// functions directly; the engine half of each (the wait, the delivery, the cancel) is pinned by the
+// runtime's own fixtures (`provider/switch-seam.test.ts`, `provider/engine-seam-p6.test.ts`).
 
 export { INSTRUCTION_FILE_BASENAMES, PRIOR_MODEL_HANDOFF_TAG, buildPortableHandoff, handoffDecoration } from "./handoff.ts";
 export type { HandoffToolFact, PortableHandoff, PortableHandoffOptions, PortableHandoffSections } from "./handoff.ts";

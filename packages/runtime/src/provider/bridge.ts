@@ -25,7 +25,7 @@
 //      carrying the provider's status and structured code -- never a raw body, never credential
 //      material, never opaque state.
 import type { ProviderAdapter, ProviderContext, ProviderError, ProviderEvent, ProviderMessageLike, ResolvedModel, TurnRequest } from "@yanlinglabs/winter-provider-runtime";
-import { shouldRequestSummary } from "@yanlinglabs/winter-provider-runtime";
+import { normalizeThrown, shouldRequestSummary } from "@yanlinglabs/winter-provider-runtime";
 import type { WireContentBlock, WireStreamEvent } from "@yanlinglabs/winter-agent-sdk";
 import {
   ProviderTurnError,
@@ -232,9 +232,15 @@ export async function foldProviderStream(stream: AsyncIterable<ProviderEvent>, s
   let stopReason: ProviderStopReason | undefined;
   let nativeState: ProviderNativeState | undefined;
   const emitter = new StreamEventEmitter(sink);
+  // Fix wave round 2 (R-E2): has the STREAM begun? Every event except the pre-stream observations
+  // (`retry`, `rate_limit`, `auth_status`) and the failure itself marks it -- the same line
+  // `policy.commit()` draws in the adapters (the first SSE event). Carried onto the typed error so
+  // the engine's fallback honours R6-6's first-byte rule.
+  let committed = false;
 
   try {
     for await (const event of stream) {
+      if (event.type !== "retry" && event.type !== "rate_limit" && event.type !== "auth_status" && event.type !== "error") committed = true;
       switch (event.type) {
         case "message_start":
           emitter.messageStart(event.id, event.model);
@@ -317,11 +323,11 @@ export async function foldProviderStream(stream: AsyncIterable<ProviderEvent>, s
           emitter.messageStop(event.stopReason);
           break;
         case "error":
-          throw providerErrorToTurnError(event.error);
+          throw providerErrorToTurnError(event.error, committed);
       }
     }
   } catch (err) {
-    throw toProviderTurnError(err);
+    throw toProviderTurnError(err, committed);
   }
 
   // The summary reaches the host ONCE, complete -- not per delta. A frame per delta would be a
@@ -477,11 +483,16 @@ function coerceDialectThinkingBlock(value: unknown): ({ type: "thinking"; thinki
 /** The longest a provider's own message may be in a `ProviderTurnError`. A provider error body can be arbitrarily long, and this string reaches a frame and a log. */
 const MAX_ERROR_MESSAGE_CHARS = 400;
 
-function providerErrorToTurnError(error: ProviderError): ProviderTurnError {
+function providerErrorToTurnError(error: ProviderError, committed = false): ProviderTurnError {
   const message = error.message.length > MAX_ERROR_MESSAGE_CHARS ? `${error.message.slice(0, MAX_ERROR_MESSAGE_CHARS)}...` : error.message;
   return new ProviderTurnError(`provider request failed (${error.code}): ${message}`, {
     ...(error.status !== undefined ? { status: error.status } : {}),
     ...(error.providerCode !== undefined ? { providerCode: error.providerCode } : {}),
+    // Fix wave (Ruling E-3): the R6-6 class rides the typed error, so the engine's fallback trigger
+    // reads a verdict rather than parsing a message. Round 2 (R-E2): and whether the stream had begun.
+    code: error.code,
+    retryable: error.retryable,
+    committed,
   });
 }
 
@@ -494,13 +505,19 @@ function providerErrorToTurnError(error: ProviderError): ProviderTurnError {
  * log. Only a BOUNDED message survives (Global Constraints: credential material is redacted
  * everywhere, including thrown error messages).
  */
-export function toProviderTurnError(err: unknown): ProviderTurnError {
+export function toProviderTurnError(err: unknown, committed = false): ProviderTurnError {
   if (err instanceof ProviderTurnError) return err;
   if (typeof err === "object" && err !== null && (err as { winterProviderFailure?: unknown }).winterProviderFailure === true) return err as ProviderTurnError;
+  // A resolution refusal is R6-F's shape by NAME (`isProviderTurnError`) and keeps its typed `code`:
+  // re-wrapping it would hide the code a caller reads (Ruling E-1's `no-credential-for-provider`).
+  if (typeof err === "object" && err !== null && (err as { name?: unknown }).name === "WinterProviderResolutionError") return err as ProviderTurnError;
   const raw = err instanceof Error ? err.message : String(err);
   const message = raw.length > MAX_ERROR_MESSAGE_CHARS ? `${raw.slice(0, MAX_ERROR_MESSAGE_CHARS)}...` : raw;
-  const status = typeof err === "object" && err !== null && typeof (err as { status?: unknown }).status === "number" ? (err as { status: number }).status : undefined;
-  return new ProviderTurnError(`provider request failed: ${message}`, status !== undefined ? { status } : {});
+  // Fix wave (Ruling E-3): the SAME normalization the adapters apply, so a raw throw carries R6-6's
+  // verdict too. `normalizeThrown` never quotes a body -- the bounded `message` above is what travels.
+  const normalized = normalizeThrown(err);
+  const status = typeof err === "object" && err !== null && typeof (err as { status?: unknown }).status === "number" ? (err as { status: number }).status : normalized.status;
+  return new ProviderTurnError(`provider request failed: ${message}`, { ...(status !== undefined ? { status } : {}), code: normalized.code, retryable: normalized.retryable, committed });
 }
 
 /**

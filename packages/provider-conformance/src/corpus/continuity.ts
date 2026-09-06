@@ -23,7 +23,6 @@ import {
   buildPortableHandoff,
   classifySwitch,
   createHistoryRenderer,
-  createSwitchCoordinator,
   handoffDecoration,
   sameDomain,
   shouldRequestSummary,
@@ -251,27 +250,39 @@ export const CONTINUITY_CASE_IMPLS: Record<ContinuityCaseId, ContinuityCaseImpl>
   },
 
   "switch-during-tool-loop-waits": ({ world }) => {
-    const coordinator = createSwitchCoordinator();
-    const decision = coordinator.request({ from: world.endpoints.claudeA, to: world.endpoints.openai, turnActive: true, facts: { summaryAvailable: true } });
-    assert(decision.action === "defer-to-boundary", "the default must wait for the quiescent boundary");
-    assert(coordinator.pending() !== undefined, "and the transition must be recorded, not dropped");
-    assert(coordinator.apply("quiescent-boundary") !== undefined, "and it must apply once the boundary arrives");
+    // P6 fix wave (Ruling E-2): the WAIT itself is the engine's -- it parks a `set_model` and applies
+    // it at the quiescent boundary (`packages/runtime/src/provider/engine-seam-p6.test.ts`, "a
+    // set_model arriving BETWEEN turns applies at the next turn's quiescent boundary";
+    // `switch-seam.test.ts`, "a `set_model` parked MID-TURN and applied on interrupt"). What the PURE
+    // matrix proves is WHY waiting is the default: the same transition classified at the boundary
+    // carries no abort loss, and forced mid-turn it does -- the loss the wait exists to avoid.
+    const deferred = classifySwitch(world.endpoints.claudeA, world.endpoints.openai, { summaryAvailable: true });
+    const forced = classifySwitch(world.endpoints.claudeA, world.endpoints.openai, { summaryAvailable: true, midTurnAbort: true });
+    assert(!deferred.warnings.some((w) => w.includes("cancelled before it finished")), "a switch applied at the boundary must report no cancelled turn");
+    assert(forced.warnings.some((w) => w.includes("cancelled before it finished")), "the same switch forced mid-turn must report the cancelled turn -- the loss the default avoids");
+    assert(forced.warnings.length > deferred.warnings.length, "so the deferred switch is strictly the less lossy of the two");
   },
   "source-receives-every-native-tool-result": ({ world }) => {
-    // The coordinator cannot change the model of an in-flight turn: it has no reference to one. This
-    // case proves that by driving a tool loop around a pending switch and checking every delivery.
-    const coordinator = createSwitchCoordinator();
-    const deliveries: string[] = [];
-    let currentModel = world.endpoints.claudeA.modelKey;
-    coordinator.request({ from: world.endpoints.claudeA, to: world.endpoints.openai, turnActive: true });
-    for (const toolUseId of ["t1", "t2", "t3"]) {
-      deliveries.push(`${currentModel}:${toolUseId}`);
-      assert(coordinator.pending() !== undefined, "the switch must still be pending mid-loop");
-    }
-    const applied = coordinator.apply("quiescent-boundary")!;
-    currentModel = applied.to.modelKey;
-    assert(deliveries.every((d) => d.startsWith("anthropic/claude-a:")), "every native tool result must reach the model that authored the call");
-    assert(currentModel === "openai/o-reason", "and the switch must take effect only afterwards");
+    // The DELIVERY is the engine's (a parked switch never applies inside a tool loop -- the runtime
+    // fixtures named above). The pure half proved here: at the boundary every tool call the source
+    // COMPLETED crosses as a FACT the handoff carries, attributed to the source and drawn from real
+    // results only -- nothing is fabricated for a call that produced none.
+    const messages: ProviderMessageLike[] = [
+      { role: "user", content: "read the three files" },
+      {
+        role: "assistant",
+        uuid: "m1",
+        origin: { providerId: "anthropic", modelKey: "anthropic/claude-a", family: "anthropic" },
+        content: ["t1", "t2", "t3"].map((id) => ({ type: "tool_use" as const, id, name: "Read", input: { file_path: `/work/${id}.ts` } })),
+      },
+      { role: "tool", content: ["t1", "t2", "t3"].map((id) => ({ type: "tool_result" as const, tool_use_id: id, content: `contents of ${id}` })) },
+    ];
+    const handoff = buildPortableHandoff(messages, chainOf({}), world.endpoints.claudeA);
+    assert(handoff.sections.toolFacts.length === 3, "every completed native tool result must cross as a fact");
+    assert(handoff.sections.toolFacts.every((fact) => fact.ok && fact.name === "Read"), "each attributed to the call that produced it");
+    assert(handoff.sections.artifacts.length === 3, "and the files they touched are the artifacts");
+    const verdict = classifySwitch(world.endpoints.claudeA, world.endpoints.openai, { summaryAvailable: true, completedToolResults: 3 });
+    assert(verdict.portable.includes("3 completed tool results and their facts"), "the warning must name the completed results as portable");
   },
   "target-never-receives-source-opaque-state": ({ world }) => {
     const renderer = createHistoryRenderer(world.registry);
@@ -299,18 +310,24 @@ export const CONTINUITY_CASE_IMPLS: Record<ContinuityCaseId, ContinuityCaseImpl>
     assert(JSON.stringify(rendered).includes("claude's visible answer"), "and the visible conversation must cross intact");
   },
   "immediate-switch-cancels-rather-than-splices": ({ world }) => {
-    const coordinator = createSwitchCoordinator();
-    const cancels: string[] = [];
-    const messages = [{ role: "user" as const, content: "do the work" }, claudeTurn("m1", "calling a tool")];
+    // The CANCEL is the engine's interrupt path (`switch-seam.test.ts`, "a `set_model` parked
+    // MID-TURN and applied on interrupt ... classified with `midTurnAbort`"). The pure half: an
+    // immediate switch is classified as an ABORT -- it reports the cancelled turn, keeps the completed
+    // facts, undoes nothing -- and the handoff built over an unfinished native loop fabricates no
+    // result and appends nothing to close it.
+    const verdict = classifySwitch(world.endpoints.claudeA, world.endpoints.openai, { summaryAvailable: true, midTurnAbort: true, completedToolResults: 1 });
+    assert(verdict.lossClass === "warned-lossy", "an immediate switch is always lossy: the turn is unfinished");
+    assert(verdict.warnings.some((w) => w.includes("cancelled before it finished")), "it must report the cancelled turn");
+    assert(verdict.warnings.some((w) => w.includes("nothing that ran is undone")), "and say that side effects are not rolled back");
+    assert(verdict.portable.includes("1 completed tool result and their facts"), "completed tool facts are retained");
+    const messages: ProviderMessageLike[] = [
+      { role: "user", content: "do the work" },
+      { role: "assistant", uuid: "m1", origin: { providerId: "anthropic", modelKey: "anthropic/claude-a", family: "anthropic" }, content: [{ type: "tool_use", id: "t-open", name: "Bash", input: { command: "make" } }] },
+    ];
     const before = messages.length;
-    const decision = coordinator.request({ from: world.endpoints.claudeA, to: world.endpoints.openai, mode: "immediate", turnActive: true });
-    assert(decision.action === "cancel-then-switch", "an explicit immediate switch must cancel, not splice");
-    const applied = coordinator.applyImmediately({ owner: { cancel: (reason) => cancels.push(reason) }, messages, completedToolResults: 1 })!;
-    assert(cancels.length === 1, "the source turn must be cancelled through its owner, exactly once");
-    assert(applied.discard?.fabricatedToolResults === 0, "no tool result may be fabricated to close the loop");
-    assert(applied.discard?.incompleteToolLoop === true, "and the native loop must be marked incomplete");
+    const handoff = buildPortableHandoff(messages, chainOf({}), world.endpoints.claudeA);
+    assert(handoff.sections.toolFacts.length === 0, "no tool result may be fabricated to close the open call");
     assert(messages.length === before, "nothing may be appended to the conversation to make it look complete");
-    assert(applied.discard!.completedToolResultsRetained === 1, "completed tool facts are retained");
   },
 
   "suppression-requires-affirmative-evidence": ({ world }) => {

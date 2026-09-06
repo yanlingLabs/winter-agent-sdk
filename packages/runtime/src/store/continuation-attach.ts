@@ -8,7 +8,7 @@
 // provider produced each of those messages, and what opaque continuation state it left behind, live
 // in the sidecar. This is where the two halves are put back together.
 import type { SdkMessage } from "@yanlinglabs/winter-agent-sdk";
-import { buildContinuationChain, type ProviderStateRecord } from "./provider-state.ts";
+import { buildContinuationChain, type ContinuationChain, type ProviderStateRecord } from "./provider-state.ts";
 
 /** The half of `SessionPersistence` this needs. Narrowed so a caller can hand it a two-method double. */
 export interface ContinuationChainSource {
@@ -32,6 +32,12 @@ export interface AttachContinuationChainOptions {
   warn: (message: SdkMessage) => void;
   /** Injected so a fixture's warning uuid is deterministic. */
   newUuid: () => string;
+  /**
+   * P6 fix wave (T10 r1 Minor): the persisted identity, ALREADY LOADED by the caller. The engine reads
+   * it once for the resume-time switch comparison; without this the zero-records branch below re-read
+   * it -- one extra summary I/O per resumed run. Absent -> `store.loadProviderIdentity` as before.
+   */
+  identity?: () => Promise<{ providerId: string; modelKey: string } | undefined>;
 }
 
 /**
@@ -42,9 +48,13 @@ export interface AttachContinuationChainOptions {
  * to the model: it will not get its exact native replay, so a user who sees a worse continuation than
  * they expected deserves to know why.
  */
-export async function attachContinuationChain(opts: AttachContinuationChainOptions): Promise<void> {
+export async function attachContinuationChain(opts: AttachContinuationChainOptions): Promise<ContinuationChain> {
   const { messages, store, sessionId, warn, newUuid } = opts;
-  if (store.loadProviderState === undefined || messages.length === 0) return;
+  // The chain is RETURNED (fix wave, Ruling E-2) so the engine can keep the resumed half beside the
+  // records it writes itself -- the portable handoff at a later switch reads a source message's
+  // summary off it. Empty for every early return: nothing folded, nothing to hand back.
+  const empty: ContinuationChain = new Map();
+  if (store.loadProviderState === undefined || messages.length === 0) return empty;
 
   let records: ProviderStateRecord[];
   try {
@@ -60,7 +70,7 @@ export async function attachContinuationChain(opts: AttachContinuationChainOptio
       uuid: newUuid(),
       session_id: sessionId,
     });
-    return;
+    return empty;
   }
 
   // AN ANCHOR THAT ALREADY CARRIES `origin` IN MEMORY IS PROVENANCE-COMPLETE, and it is excluded from
@@ -79,7 +89,7 @@ export async function attachContinuationChain(opts: AttachContinuationChainOptio
   // warns for exactly the messages that genuinely lost their records.
   const unresolved = messages.filter((m) => m.role === "assistant" && m.uuid !== undefined && m.origin === undefined);
   const anchors = new Set(unresolved.map((m) => m.uuid!));
-  if (anchors.size === 0) return;
+  if (anchors.size === 0) return empty;
 
   // ZERO RECORDS IS TWO DIFFERENT SITUATIONS, and the dialect record's identity block is what
   // separates them (review round 1, I1).
@@ -94,8 +104,8 @@ export async function attachContinuationChain(opts: AttachContinuationChainOptio
   // degraded to summary-level, and R6-7 is explicit that a degradation carries the loss warning. The
   // identity block is the "record of expectation" that tells the two apart.
   if (records.length === 0) {
-    const hadIdentity = store.loadProviderIdentity !== undefined ? await store.loadProviderIdentity() : undefined;
-    if (hadIdentity === undefined) return;
+    const hadIdentity = opts.identity !== undefined ? await opts.identity() : store.loadProviderIdentity !== undefined ? await store.loadProviderIdentity() : undefined;
+    if (hadIdentity === undefined) return empty;
     warn({
       type: "system",
       subtype: "continuity_warning",
@@ -104,7 +114,7 @@ export async function attachContinuationChain(opts: AttachContinuationChainOptio
       uuid: newUuid(),
       session_id: sessionId,
     });
-    return;
+    return empty;
   }
 
   const chain = buildContinuationChain(records, anchors);
@@ -134,4 +144,5 @@ export async function attachContinuationChain(opts: AttachContinuationChainOptio
       session_id: sessionId,
     });
   }
+  return chain;
 }

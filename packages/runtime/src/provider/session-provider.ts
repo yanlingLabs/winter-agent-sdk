@@ -13,9 +13,14 @@
 // FOUR THINGS IT REFUSES TO DO, each of them a ruling rather than a preference:
 //
 //   1. NO SILENT DEFAULT (R6-9). A session with no resolvable model does not fall back to an echo
-//      provider or to a built-in model — it throws `WinterProviderResolutionError` before the init
-//      frame, and the entrypoint's own top-level catch reports it. A session that cannot say which
-//      model it is running must not run.
+//      provider or to a built-in model — its refusal is DEFERRED onto its first generation (review
+//      round 1, Critical A): the session starts, `system/init` carries no `winter_provider`, and the
+//      first `generate()` throws the typed `WinterProviderResolutionError`, which lands on R6-F's
+//      pinned result shape. A session that cannot say which model it is running never generates.
+//   5. NO CREDENTIAL INHERITANCE ACROSS PROVIDERS (fix wave, Ruling E-1). A provider built for a
+//      target on ANOTHER provider than the session's -- a classifier, an advisor, an R6-17 child --
+//      never receives the session's `authRef` or the session's user `connection`. See
+//      `describeTargetMaterial` for the three-step rule and the fixture that pins it.
 //   2. NO SECOND `ProviderContext` CONSTRUCTOR. `createProviderContext` (selection.ts) is the only
 //      one, because the stall timeout, the auth ref and the log sink are five decisions a second
 //      constructor would silently make differently — and `sse.ts` reads `ctx.stallTimeoutMs` on
@@ -37,21 +42,25 @@ import {
   CredentialResolutionError,
   WinterProviderResolutionError,
   createCompositeCredentialStore,
+  createEndpointResolver,
   createEnvCredentialStore,
+  estimateCostUsd,
   createFileCredentialStore,
   createHistoryRenderer,
   createMemoryCredentialStore,
   createRegistry,
   createShippedAdapters,
 } from "@yanlinglabs/winter-provider-runtime";
+import type { MessageOrigin } from "@yanlinglabs/winter-provider-runtime";
 import { createKeychainCredentialStore } from "./keychain-store.ts";
+import { providerCredentialRef } from "./credential-api.ts";
 import { adapterAsProvider, type HistoryRenderer } from "./bridge.ts";
 import { testProviderForNamespace } from "./mock.ts";
-import { createProviderContext, resolveSessionProvider, type SelectionDeps, type SessionProviderSelection, type WinterProviderIdentity } from "./selection.ts";
+import { createProviderContext, redactCredentialRef, resolveSessionProvider, type SelectionDeps, type SessionProviderSelection, type WinterProviderIdentity } from "./selection.ts";
 import { createModelClassifier, selectClassifierRoute, type ClassifierRoute } from "./classifier/model-classifier.ts";
 import type { ClassifierInterface } from "../permissions/auto/engine.ts";
 import { buildContinuationChain, type ContinuationChain, type ProviderStateRecord } from "../store/provider-state.ts";
-import type { Provider, ProviderRequest, ProviderTurn } from "../engine.ts";
+import type { ModelSwitchResolution, PricedUsage, Provider, ProviderRequest, ProviderTurn, ProviderUsage, ResolveModelSwitch } from "../engine.ts";
 
 /**
  * The pinned `ApiKeySource` vocabulary (`sdk.d.ts:127`), of which the JSDoc marks five members
@@ -172,19 +181,64 @@ export interface SessionProviderWiring {
   /** The advisor/reviewer backend (P2 carry, `config.advisor.model`). Absent when unconfigured. */
   advisorProvider?: Provider;
   /**
-   * Builds a `Provider` for any resolved model against THIS session's credentials, connection and
-   * renderer.
+   * Builds a `Provider` for any resolved model against THAT TARGET's material (Ruling E-1), the
+   * session's renderer and the session's chain.
    *
    * Exposed because R6-17's per-child provider needs the identical construction — a child built
    * through a second construction path would get a different context (and, per
    * `createProviderContext`'s own header, could silently lose the stall watchdog).
    */
-  buildProvider(resolved: ResolvedModel): Provider;
+  buildProvider(resolved: ResolvedModel, opts?: BuildProviderOptions): Provider;
+  /** Ruling E-1: WHICH credential and connection `buildProvider` would use for this target, and why. Pure -- no store is consulted. */
+  describeTargetMaterial(resolved: ResolvedModel, opts?: BuildProviderOptions): TargetMaterial;
+  /** The provider this session is configured for (`config.provider.providerId`, else the resolved model's). Undefined only for a session with neither. */
+  sessionProviderId(): string | undefined;
+  /**
+   * P6 fix wave (Ruling E-2): THE SWITCH SEAM -- `EngineOptions.resolveModelSwitch`. R6-K resolution
+   * under the session provider, `buildProvider` under Ruling E-1, the resolved identity, and the two
+   * continuity endpoints `classifySwitch` compares. Present on every arm: a session that started
+   * unresolvable can be handed a model that resolves and recover.
+   */
+  resolveModelSwitch: ResolveModelSwitch;
+  /** P6 fix wave (Ruling E-3): `fallbackModel`'s candidates as catalog keys, in order, domain-checked at init. Empty for the reserved namespace and for a refused session. */
+  fallbackModelKeys: string[];
+  /** P6 fix wave (Ruling E-4, R6-H): prices one generation for the model it ran on, from the catalog's `pricing` evidence. `undefined` for an unpriced row. */
+  priceUsage(modelKey: string, usage: ProviderUsage): PricedUsage | undefined;
+  /** P6 fix wave (Ruling E-5, R6-14): the resolved classifier model's key, for the session pin. Present exactly when `classifier` is. */
+  classifierIdentity?: { modelKey: string };
   /** R6-I: the `supportedModels()` rows for this session. */
   supportedModels(): ModelInfo[];
   /** R6-I / capture (d): the initialize-response account surface. Never `system/init` — the pin has no account field there. */
   accountInfo(): AccountInfo;
 }
+
+/** What a caller may pass to `buildProvider`. `authRef` is the target ROUTE's own credential (a classifier's `autoClassifier.authRef`, an advisor's `advisor.authRef`). */
+export interface BuildProviderOptions {
+  authRef?: CredentialRef;
+}
+
+/**
+ * Ruling E-1: the credential and connection a provider built for `resolved` is given.
+ *
+ * `source` records which step of the rule answered:
+ *   - `route`            an explicit `authRef` on the target's own route;
+ *   - `session`          the target IS the session's provider, so the session's own material;
+ *   - `provider-record`  the target provider's OWN keychain record (`<providerId>:default`, R6-10's
+ *                        one-record-per-provider/account), whose existence the built provider
+ *                        verifies on its first generation and refuses (typed) when absent.
+ *
+ * `crossProvider` is the fact every consumer keys on: a cross-provider target's `connection` is its
+ * own generated endpoint -- never the session's user `baseUrl`/headers.
+ */
+export interface TargetMaterial {
+  authRef: CredentialRef;
+  connection?: ProviderConnectionConfig;
+  source: "route" | "session" | "provider-record";
+  crossProvider: boolean;
+}
+
+/** The account id a target provider's OWN keychain record is looked up under when a route names no ref (Ruling E-1 step 2). Disclosed in WS-13 §6. */
+export const DEFAULT_PROVIDER_ACCOUNT_ID = "default";
 
 /**
  * The production credential store: Keychain, then env, then file, then inline.
@@ -252,6 +306,20 @@ export function createProductionCredentialStore(config: RuntimeConfig, env: Reco
  */
 export function connectionForProvider(config: RuntimeConfig, catalog: WinterCatalog, provider: WinterProviderDescriptor): ProviderConnectionConfig | undefined {
   const configured = config.provider?.connection;
+  return connectionFrom(configured, catalog, provider);
+}
+
+/**
+ * Ruling E-1: a CROSS-PROVIDER target's connection. The session's user `connection` is NOT consulted
+ * -- a user `baseUrl` and its headers belong to the session's own provider -- so the target reaches
+ * its own generated endpoint (copied into the profile for a multi-provider adapter, per the rule
+ * above; left to the adapter's reviewed default otherwise).
+ */
+export function generatedConnectionForProvider(catalog: WinterCatalog, provider: WinterProviderDescriptor): ProviderConnectionConfig | undefined {
+  return connectionFrom(undefined, catalog, provider);
+}
+
+function connectionFrom(configured: ProviderConnectionConfig | undefined, catalog: WinterCatalog, provider: WinterProviderDescriptor): ProviderConnectionConfig | undefined {
   if (configured?.baseUrl !== undefined && configured.baseUrl.length > 0) return configured;
   const sharesAdapter = catalog.providers.filter((p) => p.adapterId === provider.adapterId).length > 1;
   if (!sharesAdapter) return configured;
@@ -276,11 +344,11 @@ function descriptorFor(catalog: WinterCatalog, modelKey: string): WinterModelDes
 /**
  * Builds the session's provider, identity, classifier and account surface.
  *
- * THROWS `WinterProviderResolutionError` when the session names no resolvable model (R6-9). The
- * entrypoints let it propagate to their own top-level catch, which exits non-zero with the reason on
- * stderr BEFORE any frame is written — the same lifecycle a failed resume resolution already has, and
- * the one shape a host can act on. (R6-F's `is_error` result shape governs a provider failure that
- * ends a TURN; a session that cannot be constructed never reaches a turn.)
+ * NEVER THROWS for an unresolvable session model (R6-9, as reversed in review round 1): the refusal
+ * is DEFERRED -- this returns a wiring whose `provider.generate()` rethrows the typed
+ * `WinterProviderResolutionError`, so the session still starts, `system/init` is emitted (with no
+ * `winter_provider`), and the first generation lands on R6-F's pinned result shape before `query()`
+ * throws. `resolutionError` carries the reason so an entrypoint can also report it on stderr.
  */
 export function buildSessionProvider(opts: SessionProviderOptions): SessionProviderWiring {
   const { config, env } = opts;
@@ -296,22 +364,171 @@ export function buildSessionProvider(opts: SessionProviderOptions): SessionProvi
   const renderer: HistoryRenderer = createHistoryRenderer(registry);
   const chain = opts.chain ?? ((): ContinuationChain => new Map());
 
-  const buildProvider = (resolved: ResolvedModel): Provider => {
-    // The config handed to `createProviderContext` differs from the session's in exactly one field:
-    // the connection profile, resolved against THIS provider's catalog row (see
-    // `connectionForProvider`). `providerId` is filled in from the resolved model when the host named
-    // no provider at all -- a qualified `<providerId>/<model>` key is a provider selection.
-    const connection = connectionForProvider(config, catalog, resolved.provider);
-    const selectionForContext: ProviderSelection = {
-      ...(config.provider ?? {}),
-      providerId: config.provider?.providerId ?? resolved.providerId,
+  // THE SESSION'S PROVIDER, AS A STATE (fix wave round 2, R-E1). Three states, and the difference
+  // between the last two is a credential boundary:
+  //   - `resolving`: selection has not completed. The ONLY target `buildProvider` sees in this state
+  //     is the session's own model (`resolveSessionProvider` builds it through `deps.buildProvider`),
+  //     and the session's own model is never cross-provider.
+  //   - `{ known }`: the provider selection resolved to, or -- for a session whose model FAILED to
+  //     resolve -- the provider selection's own rule names: `config.provider.providerId`, else the
+  //     qualified key's prefix (a qualified `<providerId>/<model>` key IS a provider selection). THE
+  //     RESOLVED ID WINS over `config.provider.providerId`: selection ignores the latter for a
+  //     qualified key, so the key's provider is the session's and its `authRef`/`connection` were
+  //     configured for it.
+  //   - `unknown`: nothing names a provider (a refused session with neither, or the reserved test
+  //     namespace). `describeTargetMaterial` then FAILS CLOSED: every target is treated as another
+  //     provider and gets ITS OWN record or a typed refusal -- never the session's material, which
+  //     re-review probe P4 showed reaching vendor B through a later `set_model` on a refused session.
+  let sessionProvider: "resolving" | "unknown" | { known: string } = "resolving";
+  const sessionProviderId = (): string | undefined => (typeof sessionProvider === "object" ? sessionProvider.known : undefined);
+  /** Selection's own reading of which provider a REFUSED session named: the configured id, else the qualified prefix when it is a catalog provider. */
+  const providerNamedByConfig = (): string | undefined => {
+    if (config.provider?.providerId !== undefined) return config.provider.providerId;
+    const model = config.model ?? "";
+    const slash = model.indexOf("/");
+    if (slash <= 0) return undefined;
+    const prefix = model.slice(0, slash);
+    return catalog.providers.some((p) => p.id === prefix) ? prefix : undefined;
+  };
+
+  /**
+   * RULING E-1 -- the credential and connection rule for every provider this wiring builds.
+   *
+   * Resolution order for the TARGET's material:
+   *   (1) an explicit `authRef` on the target's own route (`autoClassifier.authRef`, `advisor.authRef`);
+   *   (2) the session's own material -- ONLY when the target is the session's own provider;
+   *   (3) the target provider's OWN keychain record (`<providerId>:default`; R6-10 keeps one record
+   *       per provider/account), verified at the built provider's first generation and refused with
+   *       a typed `no-credential-for-provider` when absent.
+   *
+   * What never happens: a target on another provider receiving the session's `authRef`, or the
+   * session's user `baseUrl`/headers. Probe P1 of the whole-branch review showed exactly that --
+   * vendor A's key on the wire to vendor B's endpoint -- and this function is the closed door.
+   */
+  const describeTargetMaterial = (resolved: ResolvedModel, buildOpts: BuildProviderOptions = {}): TargetMaterial => {
+    // `resolving`: the session's own model, never cross-provider (see the state's own comment).
+    // `unknown`: FAIL CLOSED -- cross-provider, so the target gets its own record or a typed refusal.
+    // `{ known }`: the ordinary comparison.
+    const crossProvider = sessionProvider === "resolving" ? false : sessionProvider === "unknown" ? true : resolved.providerId !== sessionProvider.known;
+    // A cross-provider target's connection is ITS OWN generated endpoint; the session's user
+    // connection (a proxy, a gateway, custom headers) is the session provider's business.
+    const connection = crossProvider ? generatedConnectionForProvider(catalog, resolved.provider) : connectionForProvider(config, catalog, resolved.provider);
+    if (buildOpts.authRef !== undefined) {
+      return { authRef: buildOpts.authRef, ...(connection !== undefined ? { connection } : {}), source: "route", crossProvider };
+    }
+    if (!crossProvider) {
+      return { authRef: config.provider?.authRef ?? { kind: "none" }, ...(connection !== undefined ? { connection } : {}), source: "session", crossProvider };
+    }
+    return {
+      authRef: providerCredentialRef({ providerId: resolved.providerId, accountId: DEFAULT_PROVIDER_ACCOUNT_ID, ...(config.keychainService !== undefined ? { service: config.keychainService } : {}) }),
       ...(connection !== undefined ? { connection } : {}),
+      source: "provider-record",
+      crossProvider,
+    };
+  };
+
+  const buildProvider = (resolved: ResolvedModel, buildOpts: BuildProviderOptions = {}): Provider => {
+    const material = describeTargetMaterial(resolved, buildOpts);
+    // The config handed to `createProviderContext` carries the TARGET's material and nothing of the
+    // session's selection beyond `allowUnlisted`: `providerId` is the resolved model's own (a
+    // qualified `<providerId>/<model>` key is a provider selection), `authRef` and `connection` are
+    // what `describeTargetMaterial` chose. `createProviderContext` stays the ONE constructor.
+    const selectionForContext: ProviderSelection = {
+      providerId: resolved.providerId,
+      authRef: material.authRef,
+      ...(material.connection !== undefined ? { connection: material.connection } : {}),
+      ...(config.provider?.allowUnlisted !== undefined ? { allowUnlisted: config.provider.allowUnlisted } : {}),
     };
     const ctx = createProviderContext(
       { ...config, provider: selectionForContext },
       { providerId: resolved.providerId, credentials, ...(opts.log !== undefined ? { log: opts.log } : {}) },
     );
-    return adapterAsProvider(resolved, ctx, { renderer, chain });
+    const built = adapterAsProvider(resolved, ctx, { renderer, chain });
+    if (material.source !== "provider-record") return built;
+    // Step (3)'s VERIFICATION. The record is looked up before the first request rather than left to
+    // the adapter: an adapter reports a missing credential as its own family's auth failure, which
+    // reads as "the key was rejected" when the truth is "no key was ever configured for this
+    // provider". Verified once; the material itself is never held here (R6-10).
+    let verified = false;
+    return {
+      async generate(input: ProviderRequest): Promise<ProviderTurn> {
+        if (!verified) {
+          const found = await credentials.get(material.authRef);
+          if (found === null) {
+            throw new WinterProviderResolutionError(
+              "no-credential-for-provider",
+              `no credential is configured for provider "${resolved.providerId}" (looked up the keychain record ${redactCredentialRef(material.authRef)}); a target on another provider than this session's never inherits the session's credential -- store one for "${resolved.providerId}" or pass the route its own \`authRef\``,
+            );
+          }
+          verified = true;
+        }
+        return built.generate(input);
+      },
+    };
+  };
+
+  // RULING E-2: the switch seam. Resolution goes UNDER THE SESSION PROVIDER (R6-K), so a bare id, an
+  // alias and this provider's own qualified key all resolve here, and a key qualified for ANOTHER
+  // provider is a `provider-mismatch` refusal -- never a substitution, never a parked switch. The
+  // `from` endpoint is looked up through the same registry the renderer uses, so the classification
+  // and the replay decision cannot disagree about a domain.
+  const endpointFor = createEndpointResolver(registry);
+  const familyOf = (origin: MessageOrigin): string => {
+    if (typeof origin.family === "string" && origin.family.length > 0) return origin.family;
+    // A persisted identity carries no family (the resume-time comparison); the adapter's is the fact.
+    const resolvedFrom = registry.resolve({ model: origin.modelKey, provider: { providerId: origin.providerId } });
+    return resolvedFrom instanceof WinterProviderResolutionError ? "" : String(resolvedFrom.adapter.family);
+  };
+  const resolveModelSwitch: ResolveModelSwitch = (model, from) => {
+    const providerId = sessionProviderId();
+    const result = registry.resolve({
+      model,
+      ...(providerId !== undefined || config.provider?.allowUnlisted !== undefined
+        ? { provider: { ...(providerId !== undefined ? { providerId } : {}), ...(config.provider?.allowUnlisted !== undefined ? { allowUnlisted: config.provider.allowUnlisted } : {}) } }
+        : {}),
+    });
+    if (result instanceof WinterProviderResolutionError) return { refused: true, code: result.code, message: result.message };
+    const material = describeTargetMaterial(result);
+    const family = String(result.adapter.family);
+    const resolution: ModelSwitchResolution = {
+      provider: buildProvider(result),
+      identity: {
+        providerId: result.providerId,
+        modelKey: result.modelKey,
+        family,
+        ...(result.continuationDomain !== undefined ? { continuationDomain: result.continuationDomain } : {}),
+        adapterId: result.adapterId,
+        adapterVersion: result.adapter.version,
+        catalogVersion: result.catalogVersion,
+        authRefKind: material.authRef.kind,
+      },
+      to: endpointFor({ providerId: result.providerId, modelKey: result.modelKey, family, ...(result.continuationDomain !== undefined ? { continuationDomain: result.continuationDomain } : {}) }),
+      ...(from !== undefined ? { from: endpointFor({ ...from, family: familyOf(from) }) } : {}),
+    };
+    return resolution;
+  };
+
+  // RULING E-4 (R6-H): the price of one generation, from the descriptor's `pricing` evidence and
+  // nothing else. `estimateCostUsd` answers `"unknown"` for an unpriced or inferred row, which is
+  // `undefined` here -- no field is invented for it. `contextWindow`/`maxOutputTokens` come from the
+  // descriptor when known and are otherwise omitted, exactly as the R6-H amendment states.
+  const priceUsage = (modelKey: string, usage: ProviderUsage): PricedUsage | undefined => {
+    const providerId = sessionProviderId();
+    const result = registry.resolve({ model: modelKey, ...(providerId !== undefined ? { provider: { providerId } } : {}) });
+    if (result instanceof WinterProviderResolutionError || result.descriptor === undefined) return undefined;
+    const estimate = estimateCostUsd({ inputTokens: usage.inputTokens, outputTokens: usage.outputTokens, ...(usage.cacheReadTokens !== undefined ? { cacheReadTokens: usage.cacheReadTokens } : {}), ...(usage.cacheWriteTokens !== undefined ? { cacheWriteTokens: usage.cacheWriteTokens } : {}) }, result.descriptor);
+    if (estimate.costBasis !== "list") return undefined;
+    const apiProvider = API_PROVIDER_BY_PROVIDER_ID[result.providerId];
+    const contextWindow = result.descriptor.contextWindow?.value;
+    const maxOutputTokens = result.descriptor.maxOutputTokens?.value;
+    return {
+      costUsd: estimate.costUsd,
+      costBasis: "list",
+      canonicalModel: result.descriptor.key,
+      ...(apiProvider !== undefined ? { provider: apiProvider } : {}),
+      ...(typeof contextWindow === "number" ? { contextWindow } : {}),
+      ...(typeof maxOutputTokens === "number" ? { maxOutputTokens } : {}),
+    };
   };
 
   const deps: SelectionDeps = {
@@ -327,6 +544,12 @@ export function buildSessionProvider(opts: SessionProviderOptions): SessionProvi
     selection = resolveSessionProvider(config, deps);
   } catch (err) {
     if (!(err instanceof WinterProviderResolutionError)) throw err;
+    // R-E1: the REFUSED session still has a provider selection -- the configured id, or the
+    // qualified key's own prefix -- and every later target is judged against it: a `set_model` to
+    // another provider's key is R6-K's `provider-mismatch`, a same-provider target keeps the session's
+    // material, and a session that named nothing fails closed (`unknown`).
+    const named = providerNamedByConfig();
+    sessionProvider = named !== undefined ? { known: named } : "unknown";
     // THE DEFERRED REFUSAL. Everything a session needs to START is present; the one thing it does not
     // have is a provider, and the ONE thing it will ever do with a provider is generate. So the
     // refusal is carried on `generate` and nowhere else: no identity (there is none to report), no
@@ -344,7 +567,16 @@ export function buildSessionProvider(opts: SessionProviderOptions): SessionProvi
       resolutionError: err,
       apiKeySource: apiKeySourceFor(config.provider?.authRef),
       classifierRoute: { kind: "manual-fallback", reason: `this session's own model could not be resolved (${err.code}), so there is nothing to route a classifier through` },
-      buildProvider: refuse,
+      // The REAL builder, not a second refusal (fix wave: the `buildProvider: refuse` arm was
+      // unreachable). A session that started unresolvable can still be handed a model that DOES
+      // resolve -- `set_model` through the switch seam below -- and recover; the refusal is the
+      // session model's, not the wiring's.
+      buildProvider,
+      describeTargetMaterial,
+      sessionProviderId,
+      resolveModelSwitch,
+      fallbackModelKeys: [],
+      priceUsage: () => undefined,
       supportedModels: () => [],
       accountInfo: () => ({}),
     };
@@ -357,6 +589,8 @@ export function buildSessionProvider(opts: SessionProviderOptions): SessionProvi
   // an init frame carrying a fabricated provider row would make every golden a statement about a
   // test double.
   if ("testProvider" in selection) {
+    // A scripted double has no catalog identity: nothing may be judged "the session's provider".
+    sessionProvider = "unknown";
     return {
       provider: selection.testProvider,
       registry,
@@ -365,12 +599,18 @@ export function buildSessionProvider(opts: SessionProviderOptions): SessionProvi
       apiKeySource: apiKeySourceFor(config.provider?.authRef),
       classifierRoute: { kind: "manual-fallback", reason: "this session runs the reserved winter-test provider namespace, which has no catalog model to route a classifier through" },
       buildProvider,
+      describeTargetMaterial,
+      sessionProviderId,
+      resolveModelSwitch,
+      fallbackModelKeys: [],
+      priceUsage: () => undefined,
       supportedModels: () => [],
       accountInfo: () => ({}),
     };
   }
 
   const { identity, resolved } = selection;
+  sessionProvider = { known: resolved.providerId };
   const authRef = config.provider?.authRef;
 
   // --- R6-14: the classifier route ----------------------------------------------------------------
@@ -383,11 +623,19 @@ export function buildSessionProvider(opts: SessionProviderOptions): SessionProvi
   const classifierRouteRaw = selectClassifierRoute(config, (modelKey) => descriptorFor(catalog, modelKey));
   let classifierRoute = classifierRouteRaw;
   let classifier: ClassifierInterface | undefined;
+  let classifierIdentity: { modelKey: string } | undefined;
   if (classifierRouteRaw.kind === "configured") {
     try {
       const classifierResolved = registry.resolve({ model: classifierRouteRaw.model });
       if (classifierResolved instanceof WinterProviderResolutionError) throw classifierResolved;
-      classifier = createModelClassifier({ provider: buildProvider(classifierResolved), model: classifierResolved.providerModelId });
+      classifierIdentity = { modelKey: classifierResolved.modelKey };
+      // Ruling E-1 (whole-branch C-1, probe P1b): the route's OWN `authRef` reaches the builder. It
+      // was carried onto the route and then dropped here, so a classifier on another provider went
+      // out with the SESSION's credential.
+      classifier = createModelClassifier({
+        provider: buildProvider(classifierResolved, classifierRouteRaw.authRef !== undefined ? { authRef: classifierRouteRaw.authRef } : {}),
+        model: classifierResolved.providerModelId,
+      });
     } catch (err) {
       classifier = undefined;
       classifierRoute = {
@@ -397,6 +645,7 @@ export function buildSessionProvider(opts: SessionProviderOptions): SessionProvi
     }
   } else if (classifierRouteRaw.kind === "worker-eligible") {
     classifier = createModelClassifier({ provider: buildProvider(resolved), model: resolved.providerModelId });
+    classifierIdentity = { modelKey: resolved.modelKey };
   }
 
   // --- the advisor/reviewer backend (P2 carry, disclosed) ------------------------------------------
@@ -407,7 +656,10 @@ export function buildSessionProvider(opts: SessionProviderOptions): SessionProvi
   const advisorModel = config.advisor?.model;
   if (advisorModel !== undefined && advisorModel.trim().length > 0) {
     const advisorResolved = registry.resolve({ model: advisorModel });
-    if (!(advisorResolved instanceof WinterProviderResolutionError)) advisorProvider = buildProvider(advisorResolved);
+    // Ruling E-1: the advisor's own `authRef` (mirroring the classifier's), never the session's.
+    if (!(advisorResolved instanceof WinterProviderResolutionError)) {
+      advisorProvider = buildProvider(advisorResolved, config.advisor?.authRef !== undefined ? { authRef: config.advisor.authRef } : {});
+    }
   }
 
   return {
@@ -428,8 +680,16 @@ export function buildSessionProvider(opts: SessionProviderOptions): SessionProvi
     ...(config.contextWindowTokens === undefined && selection.contextWindow !== undefined ? { contextWindowTokens: selection.contextWindow } : {}),
     classifierRoute,
     ...(classifier !== undefined ? { classifier } : {}),
+    ...(classifier !== undefined && classifierIdentity !== undefined ? { classifierIdentity } : {}),
     ...(advisorProvider !== undefined ? { advisorProvider } : {}),
     buildProvider,
+    describeTargetMaterial,
+    sessionProviderId,
+    resolveModelSwitch,
+    // Ruling E-3: the keys, not the `ResolvedModel`s -- the engine re-resolves through the seam at
+    // engagement time, so a candidate is always built fresh under the rule in force then.
+    fallbackModelKeys: selection.fallbackModels.map((candidate) => candidate.modelKey),
+    priceUsage,
     supportedModels: () => registry.listModelInfo(resolved.providerId),
     accountInfo: () => {
       const apiProvider = API_PROVIDER_BY_PROVIDER_ID[resolved.providerId];

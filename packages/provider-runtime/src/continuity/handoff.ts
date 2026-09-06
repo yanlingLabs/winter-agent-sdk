@@ -73,8 +73,8 @@ export interface PortableHandoff {
    * The REASONING specifically was trimmed. Tracked apart from `truncated` because they mean
    * different things to §9.6: a clipped tool excerpt is a display bound, while a clipped reasoning
    * trace is state the target will not receive -- and the second one, and only the second one, must
-   * flip a would-be-lossless transfer to warned-lossy. The switch coordinator folds THIS flag into
-   * its facts, never `truncated`.
+   * flip a would-be-lossless transfer to warned-lossy. The engine's switch point folds THIS flag
+   * into its `SwitchFacts`, never `truncated`.
    */
   reasoningTruncated: boolean;
 }

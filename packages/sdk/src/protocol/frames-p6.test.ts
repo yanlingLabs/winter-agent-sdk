@@ -197,6 +197,20 @@ test("the Winter-only continuity_warning frame reports a degraded resume without
   expect(roundTrip(message)).toEqual(message);
 });
 
+test("the fix wave's two continuity_warning values round-trip: cross_domain_replay_dropped (a lossy switch) and child_provider_refused (an R6-17 child with no credential of its own)", () => {
+  for (const warning of ["cross_domain_replay_dropped", "child_provider_refused"] as const) {
+    const message: SDKContinuityWarningMessage = {
+      type: "system",
+      subtype: "continuity_warning",
+      warning,
+      detail: "counts and identity only",
+      uuid: "u",
+      session_id: "s",
+    };
+    expect(roundTrip(message)).toEqual(message);
+  }
+});
+
 test("a provider failure that ends a turn rides result.subtype 'success' with is_error and api_error_status (R6-F)", () => {
   const message: SdkMessage = {
     type: "result",

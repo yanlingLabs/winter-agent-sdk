@@ -67,6 +67,8 @@ import { buildSessionProvider, type SessionProviderOptions, type SessionProvider
 import type { Provider } from "./engine.ts";
 import type { ClassifierInterface } from "./permissions/auto/engine.ts";
 import { WinterProviderResolutionError } from "@yanlinglabs/winter-provider-runtime";
+import { redactCredentialRef } from "./provider/selection.ts";
+import type { PricedUsage, ProviderUsage, ResolveModelSwitch } from "./engine.ts";
 
 // --- narrowing the six undeclared settings keys ---------------------------------------------------
 //
@@ -366,6 +368,14 @@ export interface ProductionWiring {
     apiKeySource: string;
     providerSupportsToolSearch?: boolean;
     classifier?: ClassifierInterface;
+    /** P6 fix wave (Ruling E-2): the switch seam, from the session's own wiring. */
+    resolveModelSwitch?: ResolveModelSwitch;
+    /** P6 fix wave (Ruling E-3): `fallbackModel`'s candidates as catalog keys, present only when configured. */
+    fallbackModels?: string[];
+    /** P6 fix wave (Ruling E-4): R6-H's price of one generation, from the session's own wiring. */
+    priceUsage?: (modelKey: string, usage: ProviderUsage) => PricedUsage | undefined;
+    /** P6 fix wave (Ruling E-5): the classifier model's key, for the session pin -- present exactly when `classifier` is. */
+    classifierIdentity?: { modelKey: string };
     /** R6-I: the `list_models` control handler's source. */
     supportedModels: () => unknown[];
     /** The Winter-only `account_info` control handler's source. */
@@ -805,6 +815,18 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
       apiKeySource: providerWiring.apiKeySource,
       supportedModels: () => providerWiring.supportedModels(),
       accountInfo: () => providerWiring.accountInfo(),
+      // P6 fix wave (Rulings E-2 / E-3): the switch seam and the fallback candidates, from the SAME
+      // wiring the session's own provider came from -- one resolution path, on every leg. WITHHELD
+      // for the reserved `winter-test/<name>` namespace: a scripted double has no catalog to resolve a
+      // target against, so the seam could only ever refuse, and `set_model` on a double keeps its
+      // pre-fix shape (the string is parked and applied verbatim) -- which is what every pre-P6
+      // fixture drives. A refused session DOES get the seam: that is how it recovers.
+      ...(providerWiring.identity !== undefined || providerWiring.resolutionError !== undefined ? { resolveModelSwitch: providerWiring.resolveModelSwitch } : {}),
+      ...(providerWiring.fallbackModelKeys.length > 0 ? { fallbackModels: providerWiring.fallbackModelKeys } : {}),
+      // P6 fix wave (Rulings E-4 / E-5): cost from the catalog's own pricing evidence; the classifier
+      // model's key for the R6-14 pin.
+      priceUsage: (modelKey, usage) => providerWiring.priceUsage(modelKey, usage),
+      ...(providerWiring.classifierIdentity !== undefined ? { classifierIdentity: providerWiring.classifierIdentity } : {}),
       ...(providerWiring.providerSupportsToolSearch !== undefined ? { providerSupportsToolSearch: providerWiring.providerSupportsToolSearch } : {}),
       ...(providerWiring.classifier !== undefined ? { classifier: providerWiring.classifier } : {}),
       systemPromptAssembler,
@@ -853,7 +875,7 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
       // `AgentDefinition.model` reaches the same catalog the parent did -- and returns `undefined`
       // when the model resolves to what the parent is already running, so the common case builds no
       // second adapter and every pre-P6 child is byte-identical.
-      resolveChildProvider: (model: string) => {
+      resolveChildProvider: async (model: string) => {
         const registry = providerWiring.registry;
         const parent = providerWiring.resolved;
         if (parent === undefined) return undefined; // a scripted double has no catalog to resolve against
@@ -864,6 +886,46 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
         const resolvedChild = model.includes("/") ? registry.resolve({ model }) : registry.resolve({ model, provider: { providerId: parent.providerId } });
         if (resolvedChild instanceof WinterProviderResolutionError) return undefined;
         if (resolvedChild.modelKey === parent.modelKey) return undefined;
+        // RULING E-1 (whole-branch C-1, probe P1a): a child on ANOTHER provider gets that provider's
+        // OWN material -- never the parent's `authRef`, never the parent's user `baseUrl`. When the
+        // rule lands on the target provider's keychain record, its EXISTENCE is probed here, before
+        // the spawn commits: a child that would only discover the missing key at its first
+        // generation is a child that fails after the parent already delegated to it. The probe reads
+        // presence only; the material itself never leaves the store (R6-10).
+        const material = providerWiring.describeTargetMaterial(resolvedChild);
+        if (material.source === "provider-record") {
+          let present = false;
+          try {
+            present = (await providerWiring.credentials.get(material.authRef)) !== null;
+          } catch {
+            present = false; // a store that cannot answer is a store with no record to offer
+          }
+          if (!present) {
+            const reason = `no keychain record ${redactCredentialRef(material.authRef)} and no \`authRef\` on the child's own route (a child on another provider never inherits the parent's credential, Ruling E-1)`;
+            // R-E3 (fix wave round 2): the refused child gets the DEFERRED-REFUSAL provider -- the same
+            // shape an unresolvable session model gets. Its first generation lands on R6-F with NO
+            // request anywhere: never the parent's provider with the foreign key on the parent's wire.
+            const refusal = new WinterProviderResolutionError("no-credential-for-provider", `no credential is configured for provider "${resolvedChild.providerId}": ${reason}`);
+            return {
+              refused: { providerId: resolvedChild.providerId, modelKey: resolvedChild.modelKey, reason },
+              provider: {
+                async generate(): Promise<never> {
+                  throw refusal;
+                },
+              },
+              identity: {
+                providerId: resolvedChild.providerId,
+                modelKey: resolvedChild.modelKey,
+                family: String(resolvedChild.adapter.family),
+                ...(resolvedChild.continuationDomain !== undefined ? { continuationDomain: resolvedChild.continuationDomain } : {}),
+                adapterId: resolvedChild.adapterId,
+                adapterVersion: resolvedChild.adapter.version,
+                catalogVersion: resolvedChild.catalogVersion,
+                authRefKind: material.authRef.kind,
+              },
+            };
+          }
+        }
         return {
           provider: providerWiring.buildProvider(resolvedChild),
           identity: {
@@ -874,7 +936,9 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
             adapterId: resolvedChild.adapterId,
             adapterVersion: resolvedChild.adapter.version,
             catalogVersion: resolvedChild.catalogVersion,
-            ...(providerWiring.identity?.authRefKind !== undefined ? { authRefKind: providerWiring.identity.authRefKind } : {}),
+            // M-7: the CHILD's own material's kind -- the parent's `authRefKind` was stamped here
+            // before, misreporting a cross-provider child's credential as its parent's.
+            authRefKind: material.authRef.kind,
           },
         };
       },

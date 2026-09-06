@@ -621,10 +621,37 @@ describe("T10 wiring: Lane C's decoration text reaches the WIRE, in every shippe
 
         const request = fake.requests.find((r) => r.path.endsWith(path));
         expect(request, `${family}: the fake received no request on ${path}`).toBeDefined();
-        // VERBATIM, and EXACTLY ONCE: a second occurrence would mean an adapter wrapped it again on
-        // top of the renderer's own delimiters, which is what the ruling forbids.
-        const occurrences = (request!.body.split(DECORATION).length ?? 1) - 1;
-        expect(occurrences, `${family}: expected the decoration text exactly once in the request body`).toBe(1);
+        // EQUALITY, not "contains once" (P6 fix wave, the controller's merge note): the whole-branch
+        // review's probe P3 showed the OpenAI family prefixing `[winter:context] ` onto the text, which
+        // a count-of-occurrences assertion cannot see. The RECORDED block (or, for the chat family's
+        // plain-string content, the recorded leading SEGMENT) must EQUAL Lane C's delimited text.
+        const body = JSON.parse(request!.body) as unknown;
+        const textBlocks: string[] = [];
+        const walk = (value: unknown): void => {
+          if (Array.isArray(value)) {
+            for (const item of value) walk(item);
+          } else if (typeof value === "object" && value !== null) {
+            for (const [key, inner] of Object.entries(value)) {
+              if (key === "text" && typeof inner === "string") textBlocks.push(inner);
+              else walk(inner);
+            }
+          }
+        };
+        walk(body);
+        if (family === "openai-chat") {
+          // A text-only chat message is a plain string: the decoration is its leading segment, then a
+          // newline, then the user's own text -- and NOTHING before the decoration.
+          const content = (body as { messages: Array<{ role: string; content: unknown }> }).messages.find((m) => m.role === "user")!.content;
+          expect(typeof content).toBe("string");
+          const segments = (content as string).split("\n");
+          expect(segments[0], `${family}: the leading segment must EQUAL the decoration`).toBe(DECORATION);
+          expect(segments.slice(1).join("\n")).toBe("carry it");
+        } else {
+          // One block EQUAL to the decoration, and no other block carrying it inside a wrapper.
+          expect(textBlocks.filter((t) => t === DECORATION), `${family}: expected exactly one text block EQUAL to the decoration`).toHaveLength(1);
+          expect(textBlocks.filter((t) => t !== DECORATION && t.includes(DECORATION)), `${family}: no block may carry the decoration inside a wrapper`).toHaveLength(0);
+          expect(textBlocks).toContain("carry it");
+        }
       } finally {
         await fake.close();
       }

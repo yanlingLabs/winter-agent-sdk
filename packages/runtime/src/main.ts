@@ -224,6 +224,9 @@ try {
     provider,
     config: effectiveConfig,
     env: process.env,
+    // Ruling E-1: a refused cross-provider child reports on the SAME stderr channel every wiring
+    // warning uses (stdout stays the frame stream, WS-04 §2/§6).
+    warn: (line) => process.stderr.write(`${line}\n`),
     // R-2: TWO spreads, not one. This single conditional was the coupling -- see `childWinterHome`
     // above for why the floors now depend on it.
     ...(childStore !== undefined ? { store: childStore } : {}),

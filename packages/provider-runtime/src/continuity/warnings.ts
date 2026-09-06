@@ -144,7 +144,12 @@ export function classifySwitch(from: ContinuityEndpoint, to: ContinuityEndpoint,
   // Trigger 6, and it is a SEPARATE line rather than a variant of the first because the reader's
   // question is different: they did not change vendors, and the reason this is still lossy is that
   // this pair of models has no tested continuation rule between them.
-  if (!nativeCarries && from.providerId === to.providerId) {
+  // GATED ON `sourceReasons` (P6 fix wave): a source with NO reasoning transport has no state to
+  // certify. Review I1 gated trigger 1 on it; this trigger still warned a chat model about the
+  // uncertified replay of reasoning state it never had, the moment the wiring switched between two
+  // such models on one provider -- an over-warn that spends exactly the credibility this file's
+  // header says the necessary warnings need.
+  if (!nativeCarries && sourceReasons && from.providerId === to.providerId) {
     warnings.push(
       `${from.providerId} has not certified that ${from.modelKey}'s reasoning state is valid for ${to.modelKey}; Winter will not replay it across the two, so this switch is treated as lossy even though the provider is unchanged.`,
     );

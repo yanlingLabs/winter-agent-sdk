@@ -41,6 +41,8 @@ export interface DefaultChildEngineFactoryOptions {
   provider: Provider;
   /** Phase 6 Task 10 (R6-17): the per-child provider resolver -- see `ChildEngineFactoryDeps.resolveChildProvider` for what it closes. */
   resolveChildProvider?: ChildEngineFactoryDeps["resolveChildProvider"];
+  /** P6 fix wave (Ruling E-1): the operator's stderr line for a refused cross-provider child -- see `ChildEngineFactoryDeps.warn`. */
+  warn?: ChildEngineFactoryDeps["warn"];
   // The session's EFFECTIVE config (post-`resolveEngineSession`), which is what every mirror below
   // is taken from -- never the raw pre-resolution config.
   config: RuntimeConfig;
@@ -115,6 +117,7 @@ export function registerDefaultChildEngineFactory(opts: DefaultChildEngineFactor
     createChildEngineFactory({
       provider: opts.provider,
       ...(opts.resolveChildProvider !== undefined ? { resolveChildProvider: opts.resolveChildProvider } : {}),
+      ...(opts.warn !== undefined ? { warn: opts.warn } : {}),
       env: opts.env,
       ...(opts.store !== undefined ? { store: opts.store } : {}),
       ...(opts.winterHome !== undefined ? { winterHome: opts.winterHome } : {}),

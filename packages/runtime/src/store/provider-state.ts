@@ -269,41 +269,12 @@ export function coerceProviderStateRecord(value: unknown): ProviderStateRecord |
   };
 }
 
-/**
- * Copies a session's provider-state chain onto a FORK.
- *
- * `resume --fork-session` copies the transcript's entries with their `uuid`/`parentUuid` untouched
- * (only each entry's own `sessionId` is re-owned), so the fork's assistant entries carry the SAME
- * anchors the source's did -- which is exactly what makes copying the chain meaningful rather than a
- * best-effort guess. Without this, a forked session landed with no chain AND no identity, so its very
- * first resume took the pre-P6 silent path and lost every native continuation the source had
- * accumulated, with nothing said (review round 2, M3).
- *
- * Each record gets a FRESH `uuid` while keeping its `anchorUuid`: `uuid` is the store's idempotency
- * key (item (h)), so two sessions sharing record uuids would collide into one upserted row in any
- * store that dedupes on it. `sessionId` is re-owned to match the fork, mirroring what the transcript
- * copy already does to its entries.
- *
- * Returns the number of records copied -- `0` for a source with no sidecar, which is not an error:
- * a pre-P6 source has nothing to carry, and the fork is then in exactly the state the source was.
- *
- * **THERE IS A SECOND FORK DOOR THIS DOES NOT COVER, and it is disclosed rather than silently
- * half-fixed** (P6 T3 re-review round 2). `resolveEngineSession`'s `resume + forkSession` path calls
- * this; the PUBLIC `forkSession(sessionId, opts)` in `packages/sdk/src/sessions.ts` calls
- * `forkSessionByKey` bare, so a host forking through the session API still lands without the chain
- * or the identity block -- and therefore resumes on the pre-P6 SILENT path, exactly the state this
- * function exists to prevent. It is not fixed here because the sdk cannot import this codec (WS-02
- * §3's dependency inversion), so closing it means a store-level GENERIC sidecar copy in
- * `fork-session.ts` -- a change to a shared primitive that four lanes are currently building on.
- * Recorded as a fix-wave item in task-3-report.md.
- */
-export function copyProviderStateForFork(sourcePath: string, destPath: string, destSessionId: string): number {
-  const records = readProviderState(sourcePath);
-  for (const record of records) {
-    appendProviderState(destPath, { ...record, uuid: randomUUID(), sessionId: destSessionId });
-  }
-  return records.length;
-}
+// P6 fix wave: `copyProviderStateForFork` is GONE from here. The fork's chain is carried by the sdk
+// store's own `WinterCompatibilitySessionStore.copyProviderStateForFork` (a generic line rewrite:
+// fresh record `uuid`, re-owned `sessionId`, `anchorUuid` untouched), called by `forkSessionByKey`
+// for BOTH fork doors -- the runtime's `resume + forkSession` path and the public `forkSession()`,
+// which T3's re-review found chain-less. One primitive, one implementation; the codec here keeps the
+// record SEMANTICS and the read side.
 
 /** What one assistant entry's records fold into. `origin` is mandatory in a healthy chain; its ABSENCE is what degrades that message to summary-level. */
 export interface ContinuationLink {

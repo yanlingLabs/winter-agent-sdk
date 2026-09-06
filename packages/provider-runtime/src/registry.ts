@@ -40,7 +40,14 @@ export type ResolutionErrorCode =
   | "no-provider-for-bare-model"
   /** RULING R6-K: the model id is qualified for one provider while the session is configured for another. Never resolved either way — see `resolve`'s own header. */
   | "provider-mismatch"
-  | "capability";
+  | "capability"
+  /**
+   * P6 fix wave, Ruling E-1: a provider built for a target on ANOTHER provider than the session's has
+   * no credential of its own -- no explicit `authRef` on the target's route and no keychain record for
+   * the target provider. The session's credential is NEVER substituted (`session-provider.ts`
+   * `describeTargetMaterial`); this code is what the deferred refusal carries instead.
+   */
+  | "no-credential-for-provider";
 
 export class WinterProviderResolutionError extends Error {
   readonly code: ResolutionErrorCode;

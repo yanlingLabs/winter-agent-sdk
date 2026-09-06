@@ -125,7 +125,20 @@
       "subtype": "success",
       "is_error": false,
       "result": "the provider scenario is done",
-      "permission_denials": []
+      "permission_denials": [],
+      "modelUsage": {
+        "openai/gpt-4.1": {
+          "inputTokens": 14,
+          "outputTokens": 8,
+          "cacheReadInputTokens": 0,
+          "cacheCreationInputTokens": 0,
+          "webSearchRequests": 0,
+          "costUSD": 0.000092,
+          "contextWindow": 1047576,
+          "canonicalModel": "openai/gpt-4.1",
+          "costBasis": "list"
+        }
+      }
     }
   }
 ]

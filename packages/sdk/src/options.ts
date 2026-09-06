@@ -466,13 +466,18 @@ export interface Options {
    * is a `string[]`, and the two shapes coexist with a documented precedence. Typing this `string[]`
    * would be a parity divergence (derived-shapes-p6.md item (g), finding 1).
    *
-   * Pinned semantics worth knowing before consuming it: the trigger is "overloaded or unavailable"
-   * (NOT a refusal — the `model_refusal_fallback` frame's `trigger` is the literal `'refusal'`), the
-   * swap emits NO pinned frame at all (capture (G): the only observable is the outgoing request's
-   * `model`), and the primary is re-tried at the START OF EACH USER TURN, so a temporary outage
-   * never permanently demotes the session. Winter additionally emits a disclosed Winter-only
-   * `system/model_switch` frame, and honours a candidate only inside the same continuation domain
-   * (R6-9) — a cross-domain candidate is a typed error at init, never a silent context loss.
+   * Pinned semantics, AS IMPLEMENTED (P6 fix wave, Ruling E-3): the trigger is an R6-6
+   * retryable-class provider failure -- 5xx/overloaded, 429 (non-billing), 408, network, timeout --
+   * AFTER the adapter's own retries are exhausted (NOT a refusal: the `model_refusal_fallback`
+   * frame's `trigger` is the literal `'refusal'`). The failed round is re-run on the next candidate,
+   * candidates are tried in order, each once per turn, and the primary is re-tried at the START OF
+   * EACH USER TURN, so a temporary outage never permanently demotes the session. The swap emits NO
+   * pinned frame (capture (G): the only observable is the outgoing request's `model`); Winter
+   * additionally emits its disclosed `system/model_switch{reason: "fallback"}` for the swap AND for
+   * the restoration, and records both in the dialect record's `providerHistory`. A candidate is
+   * honoured only inside the CURRENT model's continuation domain (R6-9) -- a cross-domain candidate
+   * is a typed error at init and is skipped at engagement time if a `set_model` has since moved the
+   * session. A `set_model` parked during a fallback turn supersedes the restoration.
    */
   fallbackModel?: string;
   /** `sdk.d.ts:1736`, three arms (`adaptive` | `enabled` | `disabled`). Takes precedence over `maxThinkingTokens`, stated twice in the pin (`1732`, `8215`). */
@@ -501,12 +506,19 @@ export interface Options {
    */
   includePartialMessages?: boolean;
   /**
-   * A cumulative USD ceiling for this query's provider spend. **Disclosed INERT for unpriced
-   * models** (R6-H): the descriptor's `pricing` evidence is the only price source, an unpriced model
-   * reports `costUsd: 0` with `costBasis: "unknown"`, and a budget measured against a zero is not a
-   * budget. Winter deliberately does NOT do what the pin does here — capture (K) shows the pinned
-   * runtime reporting a non-zero cost for a model no price table contains, guessing at the default
-   * model's rate. Winter reports the zero and says why.
+   * A cumulative USD ceiling for this query's provider spend, LIVE since the P6 fix wave (Ruling
+   * E-4, R6-H). Checked BEFORE every provider request: once the accrued `total_cost_usd` exceeds it,
+   * the next request does not go out and the turn ends on the pinned `error_max_budget_usd` result
+   * (`is_error: true`), which carries the cost that crossed it. The generation that crossed the
+   * ceiling still delivers its own frames -- the cut is a request never sent, not an answer lost.
+   *
+   * The descriptor's `pricing` evidence is the ONLY price source: a priced row makes every result
+   * frame carry `total_cost_usd` (accumulated over the whole run and repeated on each result) and a
+   * `modelUsage` row keyed by the model string, with the catalog key as `canonicalModel` and
+   * `costBasis: "list"`; an UNPRICED row emits NO cost field at all and leaves this ceiling inert
+   * (disclosed). Winter deliberately does NOT do what the pin does here -- capture (K) shows the
+   * pinned runtime reporting a non-zero cost for a model no price table contains -- and it does not
+   * emit the main-loop-only `usage` block, which the pin's own JSDoc deprioritises (disclosed).
    */
   maxBudgetUsd?: number;
   /** DISCLOSED WINTER option (R6-6): a stream silent for this long aborts as a typed `ProviderStallError`. Absent means DEFAULT_PROVIDER_STALL_TIMEOUT_MS. */
@@ -515,6 +527,12 @@ export interface Options {
   keychainService?: string;
   /** DISCLOSED WINTER option (R6-14): the permission classifier's own model/credential, resolved through the SAME selection path as the session model. With none configured the worker serves only a `classifierEligible` model, else Manual fallback — never a silent weakening. */
   autoClassifier?: AutoClassifierConfig;
-  /** DISCLOSED WINTER option (P2 carry, wired in T10): the advisor/reviewer backend's model, same selection path. */
+  /**
+   * DISCLOSED WINTER option (P2 carry, wired in T10): the advisor/reviewer backend's model, same
+   * selection path. Its optional `authRef` (fix wave, Ruling E-1) is the advisor's OWN credential:
+   * a target on another provider than the session's never inherits the session's -- it uses the
+   * route's ref, else the target provider's own keychain record (`<providerId>:default`), else a
+   * typed `no-credential-for-provider` refusal at its first generation.
+   */
   advisor?: AdvisorConfig;
 }

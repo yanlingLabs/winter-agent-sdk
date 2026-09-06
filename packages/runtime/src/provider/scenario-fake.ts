@@ -221,6 +221,21 @@ export interface ScenarioFakeOptions {
   firstAttemptStatus?: number;
   /** Answer EVERY request with this status. Drives R6-F's terminal provider failure. */
   alwaysFailStatus?: number;
+  /**
+   * P6 fix wave (Ruling E-3): answer every request for ONE wire model with this status -- in the body
+   * (`"model":"<id>"`) or, for the Gemini family, in the PATH (`/models/<id>:`, the colon so that
+   * `gemini-2.5-flash` does not also match `gemini-2.5-flash-lite`) -- and serve every other model
+   * normally. `retryAfter` is sent verbatim: R6-6 honours a positive `Retry-After` in place of its
+   * jittered backoff, which is what keeps a retries-exhausted scenario at a bounded wall-clock
+   * (10 retries x the header, rather than 10 jittered steps capped at 30 s each).
+   */
+  failModel?: { wireModel: string; status: number; retryAfter?: string };
+  /**
+   * P6 fix wave round 2 (R-E2): on the Anthropic route, send `message_start` and then DROP the
+   * connection -- a failure AFTER the first byte, which the adapter normalizes as a network error
+   * (retryable) that the fold has already committed to. The class R6-6 forbids replaying.
+   */
+  dropAfterFirstEvent?: boolean;
 }
 
 export async function startScenarioFake(options: ScenarioFakeOptions = {}): Promise<ScenarioFake> {
@@ -239,6 +254,12 @@ export async function startScenarioFake(options: ScenarioFakeOptions = {}): Prom
       });
       const body = req.method === "GET" || req.method === "HEAD" ? "" : await req.text();
       requests.push({ method: req.method, path: url.pathname, search: url.search, headers, body });
+      if (options.failModel !== undefined && (body.includes(`"model":"${options.failModel.wireModel}"`) || url.pathname.includes(`/models/${options.failModel.wireModel}:`))) {
+        return new Response(JSON.stringify({ error: { message: "winter scenario fake: scripted failure for one model", type: "server_error" } }), {
+          status: options.failModel.status,
+          headers: { "content-type": "application/json", ...(options.failModel.retryAfter !== undefined ? { "retry-after": options.failModel.retryAfter } : {}) },
+        });
+      }
       if (options.alwaysFailStatus !== undefined) {
         return new Response(JSON.stringify({ error: { message: "winter scenario fake: scripted provider failure", type: "server_error" } }), {
           status: options.alwaysFailStatus,
@@ -272,6 +293,18 @@ export async function startScenarioFake(options: ScenarioFakeOptions = {}): Prom
 
       if (url.pathname === "/v1/messages") {
         const { frames, events } = anthropicFrames(withTool && !isChild, delegating);
+        if (options.dropAfterFirstEvent === true) {
+          const first = `event: ${events[0]}\ndata: ${JSON.stringify(frames[0])}\n\n`;
+          const torn = new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode(first));
+              // Errored, not closed: a closed stream is a clean EOF the adapter reports as "incomplete",
+              // an ERRORED one is the torn socket a real outage produces.
+              setTimeout(() => controller.error(new Error("winter scenario fake: connection dropped after the first event")), 5);
+            },
+          });
+          return new Response(torn, { headers: { "content-type": "text/event-stream", "cache-control": "no-cache" } });
+        }
         return sse(frames, events);
       }
       if (url.pathname === "/responses") return sse(responsesFrames(withTool));

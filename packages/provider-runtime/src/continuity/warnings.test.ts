@@ -95,6 +95,16 @@ describe("I1: a switch that is not a switch, and a source with nothing to lose",
     expect(sameDomain(CHAT, CHAT)).toBe(false); // ... and the domain test still says nothing, correctly
   });
 
+  test("a NON-REASONING source switching to ANOTHER model on the SAME provider raises no uncertified-state warning either (fix wave)", () => {
+    // The wiring's own case: two chat models on one provider, neither with a continuation domain.
+    // Trigger 6 used to fire here -- "openai has not certified that openai/gpt-chat's reasoning
+    // state is valid for openai/gpt-chat-2" -- about a state the source never had.
+    const CHAT_2: ContinuityEndpoint = { ...CHAT, modelKey: "openai/gpt-chat-2" };
+    const verdict = classifySwitch(CHAT, CHAT_2, {});
+    expect(verdict.warnings).toEqual([]);
+    expect(verdict.lossClass).toBe("lossless-native");
+  });
+
   test("a NON-REASONING source raises no hidden-reasoning warning when it switches away", () => {
     const verdict = classifySwitch(CHAT, CLAUDE, { completedToolResults: 1 });
     expect(verdict.warnings).toEqual([]);
