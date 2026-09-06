@@ -25,6 +25,7 @@
 //      carrying the provider's status and structured code -- never a raw body, never credential
 //      material, never opaque state.
 import type { ProviderAdapter, ProviderContext, ProviderError, ProviderEvent, ProviderMessageLike, ResolvedModel, TurnRequest } from "@yanlinglabs/winter-provider-runtime";
+import { shouldRequestSummary } from "@yanlinglabs/winter-provider-runtime";
 import type { WireContentBlock, WireStreamEvent } from "@yanlinglabs/winter-agent-sdk";
 import {
   ProviderTurnError,
@@ -169,9 +170,15 @@ export function adapterAsProvider(resolved: ResolvedModel, ctx: ProviderContext,
         ...(input.effort !== undefined ? { effort: input.effort } : {}),
         ...(input.thinking !== undefined ? { thinking: input.thinking } : {}),
         ...(input.signal !== undefined ? { signal: input.signal } : {}),
-        // Ask for a readable SUMMARY only where the model's own evidence says how, and only when the
-        // model exposes one at all. Never a request for raw reasoning.
-        ...(target.readableState !== "none" ? { requestSummary: true } : {}),
+        // Ask for a readable SUMMARY only where the model's own evidence says HOW to ask.
+        //
+        // T10 RECONCILIATION (Lane C wiring item 7). This keyed on `readableState !== "none"`, which
+        // is a different question: `readableState` says a summary is READABLE, `summaryRequest` says
+        // the descriptor knows which field to set to ask for one. A model with the first and not the
+        // second got `requestSummary: true` and every adapter then had nothing to do with it —
+        // silently, since asking for nothing is indistinguishable from not asking. `shouldRequestSummary`
+        // is Lane C's own predicate and is now the single reader of that evidence.
+        ...(shouldRequestSummary(resolved.descriptor) ? { requestSummary: true } : {}),
       };
 
       let stream: AsyncIterable<ProviderEvent>;

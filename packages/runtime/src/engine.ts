@@ -3903,7 +3903,23 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   /** R6-7/R6-8: what rides the SIDECAR for this turn -- the opaque native state and any FOREIGN reasoning summary, neither of which may enter the transcript. */
   const turnProvenance = (turn: ProviderTurn): { nativeState?: ProviderNativeState; summary?: string } => ({
     ...("nativeState" in turn && turn.nativeState !== undefined ? { nativeState: turn.nativeState } : {}),
-    ...("thinking" in turn && turn.thinking?.summary !== undefined ? { summary: turn.thinking.summary } : {}),
+    // T10 (Lane C wiring item 8): `exposed` as well as `summary`.
+    //
+    // `ProviderThinkingOutput` declares both -- a provider-authored SUMMARY and the model's own
+    // EXPOSED reasoning -- and only the first was ever recorded. So a family whose reasoning channel
+    // IS the model's own output (the exposed-reasoning families) wrote no `summary` record at all,
+    // its sidecar carried nothing for those turns, and the continuity renderer had no material to
+    // decorate a later cross-family message with. The whole no-warning class Lane C built for those
+    // families was unreachable, silently, because the write path stopped one field short.
+    //
+    // `summary` WINS when both are present: a provider-authored summary is the shape R6-8 permits to
+    // travel, and the raw exposed text is the fallback for a family that produces no summary of its own.
+    // Either way it lands in the sidecar and NEVER in `assistant.message.content`.
+    ...("thinking" in turn && turn.thinking?.summary !== undefined
+      ? { summary: turn.thinking.summary }
+      : "thinking" in turn && turn.thinking?.exposed !== undefined
+        ? { summary: turn.thinking.exposed }
+        : {}),
   });
 
   /**
