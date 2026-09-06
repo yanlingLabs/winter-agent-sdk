@@ -23,7 +23,11 @@ import { chatCorpusScenarios } from "./openai-scenarios.ts";
 import { SCENARIO, bodyOf, turnRequests } from "./openai.ts";
 
 const catalog = loadCatalog();
+// Narrowed once, loudly: every assertion below is about THIS row, and `ROW?.x` on a missing row
+// would make three of them pass vacuously against `undefined`.
 const ROW = catalog.providers.find((p) => p.id === "xai-oauth");
+if (ROW === undefined) throw new Error("the committed catalog has no `xai-oauth` provider row");
+const ROW_API = ROW.defaultEndpoints["api"] ?? "";
 
 /** A live, unexpired subscription token in an in-memory store, under the ref the login would have written. */
 const REF: Extract<CredentialRef, { kind: "keychain" }> = { kind: "keychain", account: "xai-oauth:acct-x" };
@@ -70,8 +74,7 @@ describe("winter.xai-oauth on the wire (WS-13b §4)", () => {
   });
 
   test("the catalog row is SUBSCRIPTION-priced, so nothing it returns can feed R6-H cost", () => {
-    expect(ROW).toBeDefined();
-    expect(ROW?.pricingBasis).toBe("subscription");
+    expect(ROW.pricingBasis).toBe("subscription");
     // A subscription row with a per-token price would be a contradiction the pricing basis hides.
     for (const model of catalog.models.filter((m) => m.providerId === "xai-oauth")) {
       expect(model.pricing).toBeUndefined();
@@ -80,21 +83,21 @@ describe("winter.xai-oauth on the wire (WS-13b §4)", () => {
   });
 
   test("the row's admission is evidence: an oauth-documented basis citing the audit and the pinned client", () => {
-    expect(ROW?.admission.basis).toBe("oauth-documented");
-    expect(ROW?.admission.citation).toContain("audit:2.5");
+    expect(ROW.admission.basis).toBe("oauth-documented");
+    expect(ROW.admission.citation).toContain("audit:2.5");
     // The pinned commit travels WITH the row, so a reviewer reading the catalog alone can still
     // reach the artifact the constants came from.
-    expect(ROW?.admission.citation).toContain(DERIVED_XAI_COMMIT);
-    expect(ROW?.authKinds).toEqual(["oauth-approved"]);
+    expect(ROW.admission.citation).toContain(DERIVED_XAI_COMMIT);
+    expect(ROW.authKinds).toEqual(["oauth-approved"]);
   });
 
   test("the row's endpoint is the subscription proxy the capture derived, and the adapter agrees with it", () => {
     // The catalog row and the adapter constant are two independent statements of the same fact, and
     // `createShippedAdapters` wires the ROW's value in. If they ever diverge, the shipped request
     // goes somewhere the reviewed row does not name.
-    expect(ROW?.defaultEndpoints["api"]).toBe(DERIVED_XAI.apiBaseUrl);
-    expect(XAI_OAUTH.apiBaseUrl).toBe(ROW?.defaultEndpoints["api"]);
-    expect(ROW?.defaultEndpoints["api"]).not.toContain("api.x.ai");
+    expect(ROW_API).toBe(DERIVED_XAI.apiBaseUrl);
+    expect(ROW_API).toBe(XAI_OAUTH.apiBaseUrl);
+    expect(ROW_API).not.toContain("api.x.ai");
   });
 
   test("the adapter this build ships is registered under the id the row names", () => {
@@ -102,6 +105,6 @@ describe("winter.xai-oauth on the wire (WS-13b §4)", () => {
     // shipped — the exact thing `createShippedAdapters` exists to make impossible.
     const ids = createShippedAdapters(catalog).map((a) => a.id);
     expect(ids).toContain(XAI_OAUTH_ADAPTER_ID);
-    expect(ids).toContain(ROW?.adapterId);
+    expect(ids).toContain(ROW.adapterId);
   });
 });

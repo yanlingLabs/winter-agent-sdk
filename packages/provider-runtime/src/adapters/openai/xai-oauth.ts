@@ -22,12 +22,13 @@
 // THE ENDPOINT IS THE PROXY, NOT THE METERED API. See `XAI_OAUTH.apiBaseUrl` — this is the single
 // most load-bearing correction the capture made to the plan.
 
-import type { CredentialMaterial, CredentialRef, CredentialStore, ProviderAdapter } from "../../types.ts";
+import type { CredentialMaterial, CredentialRef, CredentialStore, ProviderAdapter, ProviderContext, ProviderEvent, TurnRequest } from "../../types.ts";
 import { ProviderRequestError } from "../../http.ts";
 import { runDeviceCodeFlow } from "../oauth/device-code.ts";
+import { refreshOauthMaterial } from "../oauth/refresh.ts";
 import type { OAuthTokens } from "./pkce.ts";
 import { createChatCompletionsAdapter, type ChatTurnOptions } from "./chat-completions.ts";
-import { capabilityRefusal } from "./shared.ts";
+import { capabilityRefusal, errorEvent } from "./shared.ts";
 
 /** The registered adapter id. One provider, so it is a constant rather than an option. */
 export const XAI_OAUTH_ADAPTER_ID = "winter.xai-oauth";
@@ -205,16 +206,72 @@ export async function startXaiLogin(store: CredentialStore, options: XaiLoginOpt
   return { ref, accountId, expiresAt: tokens.expiresAt };
 }
 
+/** How close to expiry the stored token may get before a turn refreshes it. One minute — long enough to cover a slow turn setup, short enough not to churn. */
+const REFRESH_WINDOW_MS = 60_000;
+
+export interface XaiAdapterOptions extends Omit<ChatTurnOptions, "generatedBaseUrl"> {
+  generatedBaseUrl?: string;
+  /** Overridden by a fixture; production uses `XAI_OAUTH.tokenUrl`. */
+  tokenUrl?: string;
+}
+
+/**
+ * Spends the refresh token BEFORE the turn, when the access token is about to expire.
+ *
+ * Without this the login would store a refresh token nothing ever uses and the user would be sent
+ * back to a consent screen every hour — the credential would be, in practice, worse than an API key.
+ * Proactive rather than codex's refresh-on-401 because that path lives inside the Responses turn
+ * this adapter does not own; the shared helper does the exchange, the merge (a partial response
+ * never clobbers a known-good refresh token) and the write-back.
+ *
+ * THE IDENTITY RIDES THE REFRESH TOO. `extraFields` puts Winter's name on the refresh form for the
+ * same reason it rides every poll: an originator that is honest only at login is honest once.
+ */
+async function refreshIfExpiring(ctx: ProviderContext, tokenUrl: string): Promise<void> {
+  // R6-10 puts tokens in one Keychain record; a non-keychain ref has nowhere durable to write back
+  // to, so there is nothing useful to do here for one.
+  if (ctx.authRef.kind !== "keychain") return;
+  const material = await ctx.credentials.get(ctx.authRef);
+  if (material === null || material.kind !== "oauth") return;
+  if (material.refreshToken === undefined) return;
+  if (material.expiresAt === undefined || material.expiresAt - Date.now() > REFRESH_WINDOW_MS) return;
+  await refreshOauthMaterial({
+    store: ctx.credentials,
+    ref: ctx.authRef,
+    tokenUrl,
+    clientId: XAI_OAUTH.clientId,
+    extraFields: { [XAI_OAUTH.identityField]: XAI_OAUTH.identityValue },
+  });
+}
+
 /**
  * `winter.xai-oauth` — the chat adapter, at xAI's subscription proxy, on an oauth bearer.
  *
  * A composition rather than a copy, and deliberately so: everything about the TURN is
  * `openai-chat-completions@1`'s, and `resolveAuth` already turns `oauth` material into
- * `Authorization: Bearer <accessToken>`. What differs is the endpoint and the id the registry
- * resolves it by, so only those two are restated. Copying the turn would have given this row its own
- * drifting version of streaming, tool-call mapping and error classification for no gain.
+ * `Authorization: Bearer <accessToken>`. What differs is the endpoint, the id the registry resolves
+ * it by, and the refresh above — so only those are restated. Copying the turn would have given this
+ * row its own drifting version of streaming, tool-call mapping and error classification for no gain.
  */
-export function createXaiOauthAdapter(options: Omit<ChatTurnOptions, "generatedBaseUrl"> & { generatedBaseUrl?: string }): ProviderAdapter {
+export function createXaiOauthAdapter(options: XaiAdapterOptions): ProviderAdapter {
   const base = createChatCompletionsAdapter({ ...options, generatedBaseUrl: options.generatedBaseUrl ?? XAI_OAUTH.apiBaseUrl });
-  return { ...base, id: XAI_OAUTH_ADAPTER_ID };
+  const tokenUrl = options.tokenUrl ?? XAI_OAUTH.tokenUrl;
+  return {
+    ...base,
+    id: XAI_OAUTH_ADAPTER_ID,
+    streamTurn(req: TurnRequest, ctx: ProviderContext): AsyncIterable<ProviderEvent> {
+      return (async function* () {
+        try {
+          await refreshIfExpiring(ctx, tokenUrl);
+        } catch (err) {
+          // Surfaced as an error EVENT, the shape every other failure in this family takes — an
+          // exception out of the iterator would be a second failure mode for callers to handle. The
+          // helper's own error names the ref and a status, never the token.
+          yield errorEvent(err);
+          return;
+        }
+        yield* base.streamTurn(req, ctx);
+      })();
+    },
+  };
 }

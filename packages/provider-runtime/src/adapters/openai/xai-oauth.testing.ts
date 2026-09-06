@@ -25,6 +25,8 @@ export interface XaiRecordedRequest {
 export interface XaiOauthFake {
   deviceCodeUrl: string;
   tokenUrl: string;
+  /** Set by `startXaiChatFake` only — the base URL a `generatedBaseUrl` points at. */
+  url?: string;
   requests: XaiRecordedRequest[];
   close(): Promise<void>;
 }
@@ -55,6 +57,46 @@ const ACCOUNT_ID = "acct-x";
 function fakeIdToken(sub: string = ACCOUNT_ID): string {
   const b64 = (value: unknown): string => btoa(JSON.stringify(value)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
   return `${b64({ alg: "ES256", typ: "JWT" })}.${b64({ sub, email: "someone@example.invalid" })}.c2ln`;
+}
+
+/**
+ * A minimal `/chat/completions` double, so a REFRESH test can prove the turn that followed carried
+ * the new token.
+ *
+ * Deliberately tiny rather than a second copy of the conformance chat fake: the only questions asked
+ * of it are "did a turn happen" and "what did it carry", and the full corpus fake lives on the other
+ * side of a dependency direction this package cannot import across.
+ */
+export async function startXaiChatFake(): Promise<XaiOauthFake> {
+  const requests: XaiRecordedRequest[] = [];
+  const server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: async (req) => {
+      const url = new URL(req.url);
+      const body = await req.text();
+      const headers: Record<string, string> = {};
+      for (const [name, value] of req.headers) {
+        headers[name.toLowerCase()] = /^(authorization|x-api-key|api-key)$/i.test(name) ? `${value.split(" ")[0] ?? ""} ***`.trim() : value;
+      }
+      requests.push({ method: req.method, path: url.pathname, headers, body });
+      const frames = [
+        `data: ${JSON.stringify({ id: "cmpl-1", choices: [{ index: 0, delta: { content: "ok" } }] })}\n\n`,
+        `data: ${JSON.stringify({ id: "cmpl-1", choices: [{ index: 0, delta: {}, finish_reason: "stop" }] })}\n\n`,
+        "data: [DONE]\n\n",
+      ].join("");
+      return new Response(frames, { headers: { "content-type": "text/event-stream" } });
+    },
+  });
+  return {
+    deviceCodeUrl: `http://127.0.0.1:${server.port}/unused`,
+    tokenUrl: `http://127.0.0.1:${server.port}/unused`,
+    url: `http://127.0.0.1:${server.port}`,
+    requests,
+    close: async () => {
+      await server.stop(true);
+    },
+  };
 }
 
 export async function startXaiOauthFake(opts: XaiOauthFakeOptions = {}): Promise<XaiOauthFake> {
@@ -94,6 +136,13 @@ export async function startXaiOauthFake(opts: XaiOauthFakeOptions = {}): Promise
       }
 
       if (url.pathname === "/oauth2/token") {
+        // The REFRESH grant, on the same endpoint the device grant polls — which is what the
+        // authorization server actually does, and what lets one fixture cover both halves of the
+        // credential's life. The identity guard above applies to it too, so a refresh that dropped
+        // Winter's name would fail here rather than pass unnoticed.
+        if (form.get("grant_type") === "refresh_token") {
+          return Response.json({ access_token: "test-token-xai-access-refreshed", expires_in: 3600, token_type: "Bearer" });
+        }
         if (opts.rejectIdentity !== undefined && identity === opts.rejectIdentity) {
           return Response.json({ error: "access_denied", error_description: "client not allowed" }, { status: 400 });
         }

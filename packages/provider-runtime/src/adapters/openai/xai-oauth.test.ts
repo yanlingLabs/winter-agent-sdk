@@ -13,8 +13,9 @@
 import { describe, expect, test } from "bun:test";
 import { createMemoryCredentialStore } from "../../credentials/memory.ts";
 import { DERIVED_XAI } from "./xai-derived-shapes.ts";
-import { XAI_CONSENT_DISCLOSURE, XAI_OAUTH, startXaiLogin, xaiCredentialRef } from "./xai-oauth.ts";
-import { startXaiOauthFake } from "./xai-oauth.testing.ts";
+import { XAI_CONSENT_DISCLOSURE, XAI_OAUTH, createXaiOauthAdapter, startXaiLogin, xaiCredentialRef } from "./xai-oauth.ts";
+import { startXaiChatFake, startXaiOauthFake } from "./xai-oauth.testing.ts";
+import { testContext } from "./testing.ts";
 
 describe("xai-oauth (WS-13b §4, prong 2)", () => {
   test("constants are the pinned public client's", () => {
@@ -146,6 +147,57 @@ describe("xai-oauth (WS-13b §4, prong 2)", () => {
     // show the vendor's product. Not impersonation, but a misattribution a host must surface.
     expect(XAI_CONSENT_DISCLOSURE).toContain("Grok Build");
     expect(XAI_CONSENT_DISCLOSURE).toContain("winter-agent-sdk");
+  });
+
+  // --- the refresh half of the credential's life ---------------------------------------------------
+
+  test("a turn on a NEARLY-EXPIRED token refreshes it first, persists the new one, and names Winter on the refresh form too", async () => {
+    const fake = await startXaiOauthFake();
+    try {
+      const ref = xaiCredentialRef("acct-x");
+      const store = createMemoryCredentialStore([[ref, { kind: "oauth", accessToken: "test-token-xai-access", refreshToken: "test-token-xai-refresh", accountId: "acct-x", expiresAt: Date.now() + 5_000 }]]);
+      const chat = await startXaiChatFake();
+      try {
+        const adapter = createXaiOauthAdapter({ generatedBaseUrl: chat.url!, tokenUrl: fake.tokenUrl, descriptors: () => undefined });
+        const events: string[] = [];
+        for await (const e of adapter.streamTurn({ model: "grok-4.6", messages: [{ role: "user", content: "hi" }] }, { ...testContext({ providerId: "xai-oauth" }), credentials: store, authRef: ref })) events.push(e.type);
+        expect(events).not.toContain("error");
+
+        const material = await store.get(ref);
+        if (material?.kind !== "oauth") throw new Error("expected oauth material");
+        expect(material.accessToken).toBe("test-token-xai-access-refreshed");
+        // The merge rule: a refresh response carrying no refresh token must not clobber the good one.
+        expect(material.refreshToken).toBe("test-token-xai-refresh");
+
+        const refreshes = fake.requests.filter((r) => new URLSearchParams(r.body).get("grant_type") === "refresh_token");
+        expect(refreshes).toHaveLength(1);
+        expect(new URLSearchParams(refreshes[0]!.body).get(XAI_OAUTH.identityField)).toBe("winter-agent-sdk");
+        // And the turn that followed carried the NEW token, not the stale one.
+        expect(chat.requests[0]?.headers["authorization"]).toBe("Bearer ***");
+      } finally {
+        await chat.close();
+      }
+    } finally {
+      await fake.close();
+    }
+  });
+
+  test("a turn on a HEALTHY token does not refresh — the window is a window, not an every-turn round trip", async () => {
+    const fake = await startXaiOauthFake();
+    try {
+      const ref = xaiCredentialRef("acct-x");
+      const store = createMemoryCredentialStore([[ref, { kind: "oauth", accessToken: "test-token-xai-access", refreshToken: "test-token-xai-refresh", accountId: "acct-x", expiresAt: Date.now() + 3_600_000 }]]);
+      const chat = await startXaiChatFake();
+      try {
+        const adapter = createXaiOauthAdapter({ generatedBaseUrl: chat.url!, tokenUrl: fake.tokenUrl, descriptors: () => undefined });
+        for await (const _ of adapter.streamTurn({ model: "grok-4.6", messages: [{ role: "user", content: "hi" }] }, { ...testContext({ providerId: "xai-oauth" }), credentials: store, authRef: ref })) void _;
+        expect(fake.requests).toHaveLength(0);
+      } finally {
+        await chat.close();
+      }
+    } finally {
+      await fake.close();
+    }
   });
 
   test("the subscription endpoint is the proxy the capture found, NOT the metered api-key surface", () => {
