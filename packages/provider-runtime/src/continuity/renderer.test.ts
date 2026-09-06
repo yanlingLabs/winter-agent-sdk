@@ -315,7 +315,7 @@ describe("MINOR 6: stale-decoration symmetry on the no-origin path", () => {
     expect(JSON.stringify(messages[0])).not.toContain("STALE");
   });
 
-  test("a USER message's decoration is LEFT ALONE -- it is the switch coordinator's handoff note", () => {
+  test("a USER message's decoration is LEFT ALONE -- it is the switch point's handoff note", () => {
     const renderer = createHistoryRenderer(buildRegistry());
     const carrier: ProviderMessageLike = { role: "user", content: "carry on", decoration: { text: "<prior_model_handoff …>", door: "tag" } };
     const { messages } = renderer.renderWithReport([carrier], chainOf({}), OPENAI);

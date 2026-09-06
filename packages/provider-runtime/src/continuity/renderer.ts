@@ -26,8 +26,9 @@
 //   - raw hidden reasoning is never synthesized into a decoration from an in-dialect thinking block.
 //     The material is the provider's OWN readable summary (or its exposed reasoning), captured from
 //     its own summary channel into the sidecar. A Claude message whose summary was never captured
-//     therefore carries nothing across the boundary -- and the switch coordinator warns that it is
-//     summary-less, which is the honest outcome rather than forwarding a private chain of thought.
+//     therefore carries nothing across the boundary -- and the switch point's classification warns
+//     that it is summary-less, which is the honest outcome rather than forwarding a private chain of
+//     thought.
 
 import type { ProviderRegistry } from "../registry.ts";
 import type { ContentBlockLike, MessageOrigin, ProviderMessageLike, ProviderNativeState } from "../types.ts";
@@ -82,7 +83,7 @@ export interface RenderReport {
   withoutMaterial: number;
   /** Material dropped ENTIRELY because the render's total decoration budget was exhausted. */
   budgetDropped: number;
-  /** ANY truncation or budget drop. The switch coordinator reads this to flip a would-be-lossless transfer to warned-lossy. */
+  /** ANY truncation or budget drop. The engine's switch point reads this to flip a would-be-lossless transfer to warned-lossy. */
   truncated: boolean;
   /**
    * Decorations placed on the THINKING-CHANNEL door, which only the target family's own adapter can
@@ -101,7 +102,7 @@ export interface HistoryRendererOptions {
   /**
    * §12.4 / §8.4: whether raw exposed reasoning may be forwarded at all. `false` suppresses
    * `exposed` material (a provider or user policy that forbids forwarding) while leaving
-   * provider-produced summaries alone; the coordinator turns it into the policy-blocked warning.
+   * provider-produced summaries alone; `classifySwitch` turns it into the policy-blocked warning.
    */
   allowExposedForwarding?: boolean;
   /** Called with every render's report. The frozen seam returns only messages; this is the side channel that keeps truncation observable through it. */
@@ -152,8 +153,8 @@ export function createHistoryRenderer(registry: ProviderRegistry, options: Histo
         // SYMMETRY with the same-domain path: an ASSISTANT message carrying a decoration but no
         // origin has a foreign model's material on it and no provenance to justify it, so the stale
         // annotation comes off. User and tool messages are left entirely alone -- a decoration there
-        // is the switch coordinator's HANDOFF note, deliberately attached to the user message that
-        // opens the target's first turn, and stripping it would silently discard the handoff.
+        // is a HANDOFF note, deliberately attached to the user message that opens the target's first
+        // turn, and stripping it would silently discard the handoff.
         if (message.role !== "assistant" || message.decoration === undefined) return message;
         const { decoration: _staleOrphan, ...kept } = message;
         return kept as unknown as M;
