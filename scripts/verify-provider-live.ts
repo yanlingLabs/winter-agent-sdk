@@ -58,7 +58,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadCatalog, type WinterCatalog, type WinterProviderDescriptor } from "@yanlinglabs/winter-provider-catalog";
 import { createEnvCredentialStore, winterUserAgent, type CredentialStore, type ProviderAdapter } from "@yanlinglabs/winter-provider-runtime";
-import { formatClassifierSafetyReport, formatLiveRow, liveRowSummary, formatLiveReport, runClassifierSafetyCorpus, runLiveCases } from "winter-provider-conformance";
+import { formatClassifierSafetyReport, formatLiveRow, formatLiveReport, runClassifierSafetyCorpus, runLiveTarget, type LiveTargetKindLabel } from "winter-provider-conformance";
 import { adapterAsProvider } from "../packages/runtime/src/provider/bridge.ts";
 import { createProviderContext, createSelectionRegistry, resolveSessionProvider } from "../packages/runtime/src/provider/selection.ts";
 import { createKeychainCredentialStore } from "../packages/runtime/src/provider/keychain-store.ts";
@@ -91,8 +91,15 @@ export function liveEnvPrefix(providerId: string): string {
  */
 export const CREDENTIAL_REF_SUFFIX = "_CREDENTIAL_REF";
 
-/** WS-13b §1's three documented third-party paths, one target kind each. */
-export type LiveTargetKind = "api-key" | "oauth" | "keyless";
+/**
+ * WS-13b §1's three documented third-party paths, one target kind each.
+ *
+ * ALIASED rather than re-spelled: the row this kind ends up on is built in
+ * `provider-conformance`, and two declarations of one union is the drift this repository polices
+ * everywhere else. The package declares it because the package is the shared library; a package
+ * importing a type out of `scripts/` would be the wrong direction.
+ */
+export type LiveTargetKind = LiveTargetKindLabel;
 
 export interface LiveTarget {
   providerId: string;
@@ -369,19 +376,24 @@ async function runTarget(target: LiveTarget, catalog: WinterCatalog, adapters: r
   // rendered here: Global Constraints class an account id with keys and tokens.
   console.log(`  ${target.providerId}: ${identity.modelKey} via ${identity.adapterId}@${identity.adapterVersion} (catalog ${identity.catalogVersion}, kind ${target.kind}, auth ${identity.authRefKind} named by ${target.selectedBy})`);
 
-  const report = await runLiveCases({
+  // ONE call, not `runLiveCases` followed by a separate fold: the row must be built from the run it
+  // names, and a two-call site is one where a later edit can report a row for something else — or
+  // forget the row entirely.
+  const { report, row } = await runLiveTarget({
     providerId: target.providerId,
     modelKey: resolved.modelKey,
     adapter: resolved.adapter,
     ctx,
     model: resolved.providerModelId,
     ...(resolved.descriptor !== undefined ? { descriptor: resolved.descriptor } : {}),
+    kind: target.kind,
+    // What THIS BUILD sends. That it is actually on the wire is pinned by the corpus, not observed here.
+    identityHeader: winterUserAgent(),
   });
   console.log(formatLiveReport(report));
   // The one-line per-target ROW (WS-13b §7), printed after the per-case detail because it is the
-  // line that gets pasted into a report. `identityHeader` is what THIS BUILD sends; that it is
-  // actually on the wire is pinned by the corpus, not observed here.
-  console.log(formatLiveRow(liveRowSummary(report, { kind: target.kind, identityHeader: winterUserAgent() })));
+  // line that gets pasted into a report.
+  console.log(formatLiveRow(row));
 
   // R6-14's evidence leg. RECORDED, never a gate: the ruling makes a live corpus pass the
   // precondition for setting `classifierEligible` in the overlay, and that is a human decision made
