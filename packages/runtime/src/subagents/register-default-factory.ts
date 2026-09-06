@@ -28,7 +28,7 @@
 import type { Provider } from "../engine.ts";
 import type { RuntimeConfig, SessionStore } from "@yanlinglabs/winter-agent-sdk";
 import { registerChildEngineFactory } from "./child-handle.ts";
-import { createChildEngineFactory } from "./child-engine.ts";
+import { createChildEngineFactory, type ChildEngineFactoryDeps } from "./child-engine.ts";
 import type { SystemPromptAssembler } from "../context/seam.ts";
 import type { SkillSessionRuntime } from "../skills/runtime.ts";
 import type { StructuredOutputSeam } from "../structured/seam.ts";
@@ -39,6 +39,8 @@ import type { SkillListing } from "../context/seam.ts";
 
 export interface DefaultChildEngineFactoryOptions {
   provider: Provider;
+  /** Phase 6 Task 10 (R6-17): the per-child provider resolver -- see `ChildEngineFactoryDeps.resolveChildProvider` for what it closes. */
+  resolveChildProvider?: ChildEngineFactoryDeps["resolveChildProvider"];
   // The session's EFFECTIVE config (post-`resolveEngineSession`), which is what every mirror below
   // is taken from -- never the raw pre-resolution config.
   config: RuntimeConfig;
@@ -112,6 +114,7 @@ export function registerDefaultChildEngineFactory(opts: DefaultChildEngineFactor
   registerChildEngineFactory(
     createChildEngineFactory({
       provider: opts.provider,
+      ...(opts.resolveChildProvider !== undefined ? { resolveChildProvider: opts.resolveChildProvider } : {}),
       env: opts.env,
       ...(opts.store !== undefined ? { store: opts.store } : {}),
       ...(opts.winterHome !== undefined ? { winterHome: opts.winterHome } : {}),

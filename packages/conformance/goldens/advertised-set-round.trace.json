@@ -7,7 +7,7 @@
       "type": "system",
       "subtype": "init",
       "cwd": "/winter-fixture",
-      "model": "sonnet",
+      "model": "winter-test/echo",
       "permissionMode": "default",
       "tools": [
         "Agent",
@@ -41,6 +41,7 @@
         "Workflow",
         "Write"
       ],
+      "apiKeySource": "none",
       "slash_commands": [
         "compact"
       ],

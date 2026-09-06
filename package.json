@@ -12,6 +12,7 @@
     "conformance:snapshot": "bun run scripts/gen-declaration-snapshot.ts",
     "differential": "bun run scripts/differential.ts",
     "provider:catalog": "bun run scripts/provider-catalog.ts",
+    "provider:sync": "bun run scripts/provider-source-sync.ts",
     "build:runtime": "bun run scripts/build-runtime.ts",
     "verify:compiled": "bun run scripts/verify-protocol-compiled.ts",
     "verify:workflow": "bun run scripts/verify-workflow.ts",

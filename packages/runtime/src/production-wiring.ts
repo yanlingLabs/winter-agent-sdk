@@ -59,6 +59,14 @@ import { registerPluginAgents, clearPluginAgents } from "./subagents/plugin-agen
 import type { PluginAgentDefinition } from "./subagents/definitions.ts";
 import type { StrictPluginOnlyCustomization } from "./settings/loaders/strict-plugin-only.ts";
 import { DEFAULT_OUTPUT_STYLE } from "@yanlinglabs/winter-agent-sdk";
+// Phase 6 Task 10: the provider half of the same "one function, three legs" argument this module's
+// own header makes. Before this, `main.ts` picked a provider from an env var and `testing.ts` took
+// one as a parameter -- two entrypoints, two policies, and NEITHER of them the catalog-first
+// selection R6-9 requires. Now both call this module and this module calls one builder.
+import { buildSessionProvider, type SessionProviderOptions, type SessionProviderWiring } from "./provider/session-provider.ts";
+import type { Provider } from "./engine.ts";
+import type { ClassifierInterface } from "./permissions/auto/engine.ts";
+import { WinterProviderResolutionError } from "@yanlinglabs/winter-provider-runtime";
 
 // --- narrowing the six undeclared settings keys ---------------------------------------------------
 //
@@ -319,6 +327,19 @@ export interface ProductionWiringOptions {
     recordInvokedSkills?(attachment: { type: string; skills: unknown[] }): void | Promise<void>;
     recordFileHistory?(record: { kind: "snapshot" | "delta"; userMessageUuid: string; path: string; pathHash: string; tool: string; at: string; version: number; absent?: boolean; parentRealPath?: string; anchorPath?: string; anchorRealPath?: string }): void | Promise<void>;
   };
+  /**
+   * Phase 6 Task 10: what the session's PROVIDER is built from.
+   *
+   * Every field is an injection point a TEST uses and production leaves alone: the catalog (a fixture
+   * owns its own rows), the credential store (an in-memory one, never the Keychain), the reserved
+   * `winter-test/<name>` namespace's scripted double, and the resumed continuation chain. Production
+   * passes only `testProviders` (the harness alias R6-13 keeps) and the OS home.
+   *
+   * OMITTING THE WHOLE OBJECT still runs selection: there is no "skip the provider" mode, because a
+   * mode that skipped it is exactly how a leg ends up with a different provider policy from the other
+   * two.
+   */
+  provider?: Omit<SessionProviderOptions, "config" | "env">;
 }
 
 export interface ProductionWiring {
@@ -326,6 +347,29 @@ export interface ProductionWiring {
   engineOptions: {
     winterHome: string;
     settingsRules: SettingsRuleSeed;
+    // --- Phase 6 Task 10 (R6-9/R6-14) -----------------------------------------------------------
+    //
+    // `providerIdentity` is what makes the write-ahead sidecar path and the `winter_provider` init
+    // extension live; `apiKeySource` is the pinned REQUIRED init field; `classifier` is R6-14's
+    // route, absent for a Manual fallback (which is `createAutoEngine`'s own default and must stay
+    // distinguishable from "a classifier that always abstains").
+    providerIdentity?: {
+      providerId: string;
+      modelKey: string;
+      family: string;
+      continuationDomain?: string;
+      adapterId?: string;
+      adapterVersion?: string;
+      catalogVersion?: string;
+      authRefKind?: string;
+    };
+    apiKeySource: string;
+    providerSupportsToolSearch?: boolean;
+    classifier?: ClassifierInterface;
+    /** R6-I: the `list_models` control handler's source. */
+    supportedModels: () => unknown[];
+    /** The Winter-only `account_info` control handler's source. */
+    accountInfo: () => unknown;
     systemPromptAssembler: SystemPromptAssembler;
     commandResolver: FilesystemCommandResolver;
     compactionController: CompactionController;
@@ -361,9 +405,26 @@ export interface ProductionWiring {
   childFactoryOptions: Required<
     Pick<
       DefaultChildEngineFactoryOptions,
-      "systemPromptAssembler" | "skillRuntime" | "skillListing" | "settingsRules" | "structuredOutput" | "extraHookEntries" | "compactionControllerFactory"
+      "systemPromptAssembler" | "skillRuntime" | "skillListing" | "settingsRules" | "structuredOutput" | "extraHookEntries" | "compactionControllerFactory" | "resolveChildProvider"
     >
   >;
+  /**
+   * Phase 6 Task 10: the session's provider, and everything resolved with it.
+   *
+   * `provider` is spread into `runEngine` by both entrypoints; the rest is what the control handlers
+   * (`supportedModels`/`accountInfo`) and the report read. See `session-provider.ts`.
+   */
+  providerWiring: SessionProviderWiring;
+  /**
+   * The config the ENGINE should run, which differs from the input config in the provider-derived
+   * defaults only (`contextWindowTokens` from the descriptor when the host stated none).
+   *
+   * RETURNED rather than mutated: `ProductionWiringOptions.config` is what every other consumer in
+   * this function reads, and a builder that silently rewrote its own input would make the ordering
+   * between the two invisible at the call site -- the same argument `withAutoSkillPermissions`'
+   * header already makes.
+   */
+  config: RuntimeConfig;
   /**
    * Non-fatal problems worth telling a host about: a malformed `.winter/mcp.json`, a plugin that
    * would not load, a `skills` option naming something unknown. NEVER thrown -- Lane S's
@@ -685,6 +746,28 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
   // same for directory grants). Seeding tagged entries gets P5-A for free and keeps ONE
   // implementation of it. `filterEscalatingDefaultMode` IS called -- it is a whole-resolution
   // question (which tier set the mode), not a per-entry one.
+  // (17) THE PROVIDER (Phase 6 Task 10, R6-9/R6-13/R6-14/R6-17).
+  //
+  // A RESOLUTION FAILURE NO LONGER STOPS THE SESSION FROM STARTING (review round 1, Critical A).
+  // R6-9's refusal is "surfaced in T1's captured failure shape", and that shape has a `system/init`
+  // in it: the session constructs, reports no `winter_provider`, and its first generation lands on
+  // R6-F's `is_error` result before `query()` throws. Refusing here produced zero frames and a
+  // `CLIConnectionError` -- strictly less information, on a shape the pin does not have.
+  //
+  // The operator still gets the reason on STDERR, through the same `warnings` channel every other
+  // non-fatal wiring problem uses. Two channels, deliberately: the host reads frames, the operator
+  // reads stderr, and a session that cannot name its model owes both an answer.
+  const providerWiring = buildSessionProvider({
+    config,
+    env,
+    ...(opts.provider ?? {}),
+  });
+  if (providerWiring.resolutionError !== undefined) {
+    warnings.push(
+      `provider selection failed (${providerWiring.resolutionError.code}): ${providerWiring.resolutionError.message} -- this session starts, but its first generation will fail with a provider error`,
+    );
+  }
+
   const settingsRules = buildSettingsRuleSeed(resolved, {
     // NEW-3: the two conditions `PolicyStateStore`'s bypass gate throws on, so the seed never hands
     // the engine a mode the engine will refuse. Passed rather than re-derived inside the seed
@@ -695,9 +778,35 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
   for (const warning of settingsRules.warnings) warnings.push(warning);
 
   return {
+    providerWiring,
+    // The provider-derived config defaults. `contextWindowTokens` is the only one today, and it is a
+    // DEFAULT: an explicit host value always wins (see `session-provider.ts` for why).
+    config: providerWiring.contextWindowTokens !== undefined ? { ...config, contextWindowTokens: providerWiring.contextWindowTokens } : config,
     engineOptions: {
       winterHome,
       settingsRules,
+      ...(providerWiring.identity !== undefined
+        ? {
+            providerIdentity: {
+              providerId: providerWiring.identity.providerId,
+              modelKey: providerWiring.identity.modelKey,
+              // The engine's `providerIdentity.family` is the ADAPTER family, which is what the
+              // continuation-domain check compares; `WinterProviderIdentity` carries the catalog
+              // half. `resolved.adapter.family` is the one authority for it.
+              family: String(providerWiring.resolved?.adapter.family ?? ""),
+              ...(providerWiring.identity.continuationDomain !== undefined ? { continuationDomain: providerWiring.identity.continuationDomain } : {}),
+              adapterId: providerWiring.identity.adapterId,
+              adapterVersion: providerWiring.identity.adapterVersion,
+              catalogVersion: providerWiring.identity.catalogVersion,
+              authRefKind: providerWiring.identity.authRefKind,
+            },
+          }
+        : {}),
+      apiKeySource: providerWiring.apiKeySource,
+      supportedModels: () => providerWiring.supportedModels(),
+      accountInfo: () => providerWiring.accountInfo(),
+      ...(providerWiring.providerSupportsToolSearch !== undefined ? { providerSupportsToolSearch: providerWiring.providerSupportsToolSearch } : {}),
+      ...(providerWiring.classifier !== undefined ? { classifier: providerWiring.classifier } : {}),
       systemPromptAssembler,
       commandResolver,
       compactionController,
@@ -740,6 +849,35 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
         createCompactionController({
           ...(config.compactionThreshold !== undefined ? { compactionThreshold: config.compactionThreshold } : {}),
         }),
+      // R6-17: the per-child provider. Resolved through the SESSION's own registry, so a child's
+      // `AgentDefinition.model` reaches the same catalog the parent did -- and returns `undefined`
+      // when the model resolves to what the parent is already running, so the common case builds no
+      // second adapter and every pre-P6 child is byte-identical.
+      resolveChildProvider: (model: string) => {
+        const registry = providerWiring.registry;
+        const parent = providerWiring.resolved;
+        if (parent === undefined) return undefined; // a scripted double has no catalog to resolve against
+        // R6-17 verbatim: a BARE id resolves against the PARENT's provider; a QUALIFIED
+        // `<providerId>/<model>` key names its own. Passing the parent's id alongside a qualified key
+        // would hit R6-K's `provider-mismatch` and silently fall back to the parent -- which is the
+        // one outcome a child that explicitly named another provider must not get.
+        const resolvedChild = model.includes("/") ? registry.resolve({ model }) : registry.resolve({ model, provider: { providerId: parent.providerId } });
+        if (resolvedChild instanceof WinterProviderResolutionError) return undefined;
+        if (resolvedChild.modelKey === parent.modelKey) return undefined;
+        return {
+          provider: providerWiring.buildProvider(resolvedChild),
+          identity: {
+            providerId: resolvedChild.providerId,
+            modelKey: resolvedChild.modelKey,
+            family: String(resolvedChild.adapter.family),
+            ...(resolvedChild.continuationDomain !== undefined ? { continuationDomain: resolvedChild.continuationDomain } : {}),
+            adapterId: resolvedChild.adapterId,
+            adapterVersion: resolvedChild.adapter.version,
+            catalogVersion: resolvedChild.catalogVersion,
+            ...(providerWiring.identity?.authRefKind !== undefined ? { authRefKind: providerWiring.identity.authRefKind } : {}),
+          },
+        };
+      },
     },
     warnings,
     dispose(): void {

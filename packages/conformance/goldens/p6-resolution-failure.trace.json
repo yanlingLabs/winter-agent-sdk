@@ -7,7 +7,7 @@
       "type": "system",
       "subtype": "init",
       "cwd": "/winter-fixture",
-      "model": "winter-test/echo",
+      "model": "anthropic/definitely-not-a-model-t10",
       "permissionMode": "default",
       "tools": [
         "Agent",
@@ -54,65 +54,14 @@
   {
     "sequence": 1,
     "direction": "runtime-to-host",
-    "kind": "assistant",
-    "payload": {
-      "type": "assistant",
-      "message": {
-        "content": [
-          {
-            "type": "tool_use",
-            "id": "test-call-1",
-            "name": "test_tool",
-            "input": {
-              "probe": true
-            }
-          }
-        ]
-      }
-    }
-  },
-  {
-    "sequence": 2,
-    "direction": "runtime-to-host",
-    "kind": "user",
-    "payload": {
-      "type": "user",
-      "message": {
-        "content": [
-          {
-            "type": "tool_result",
-            "tool_use_id": "test-call-1",
-            "content": "test_tool:{\"probe\":true}"
-          }
-        ]
-      }
-    }
-  },
-  {
-    "sequence": 3,
-    "direction": "runtime-to-host",
-    "kind": "assistant",
-    "payload": {
-      "type": "assistant",
-      "message": {
-        "content": [
-          {
-            "type": "text",
-            "text": "tool round done"
-          }
-        ]
-      }
-    }
-  },
-  {
-    "sequence": 4,
-    "direction": "runtime-to-host",
     "kind": "result",
     "payload": {
       "type": "result",
       "subtype": "success",
-      "is_error": false,
-      "result": "tool round done",
+      "is_error": true,
+      "result": "model \"definitely-not-a-model-t10\" is not in provider \"anthropic\"'s catalog — set `provider.allowUnlisted: true` to pass an unlisted id through",
+      "terminal_reason": "api_error",
+      "api_error_status": null,
       "permission_denials": []
     }
   }

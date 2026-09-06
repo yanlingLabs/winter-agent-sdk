@@ -57,18 +57,16 @@ export interface ResolveRequest {
   provider?: { providerId?: string; allowUnlisted?: boolean };
 }
 
-/** The pinned `ModelInfo` shape (`sdk.d.ts:1261-1300`): three required fields, six optional. */
-export interface ModelInfo {
-  value: string;
-  resolvedModel?: string;
-  displayName: string;
-  description: string;
-  supportsEffort?: boolean;
-  supportedEffortLevels?: Array<"low" | "medium" | "high" | "xhigh" | "max">;
-  supportsAdaptiveThinking?: boolean;
-  supportsFastMode?: boolean;
-  supportsAutoMode?: boolean;
-}
+/**
+ * The pinned `ModelInfo` shape (`sdk.d.ts:1261-1300`): three required fields, six optional.
+ *
+ * RE-EXPORTED from the sdk rather than declared here (T10), the same way `CredentialRef` already is:
+ * `Query.supportedModels()` puts this shape on the sdk's public surface, and two independent copies
+ * of a pinned wire type are how the producer and the consumer of one round trip start disagreeing
+ * about an optional field. One declaration; either import path gets it.
+ */
+import type { ModelInfo } from "@yanlinglabs/winter-agent-sdk";
+export type { ModelInfo };
 
 export interface RegistryListing {
   catalogVersion: string;

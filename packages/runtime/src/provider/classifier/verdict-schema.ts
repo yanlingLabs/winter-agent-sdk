@@ -72,8 +72,6 @@ export const CLASSIFIER_NO_VERDICT_REASONS = [
   "wrong_tool",
   /** The provider reported `stopReason: "refusal"` — §10.6-5's "safety refusal" arm. */
   "refusal",
-  /** A turn kind this classifier never asks for (the test-affordance `rpc_probe`). */
-  "unexpected_turn",
   /** The generation threw: transport, auth, resolution, a typed `ProviderTurnError`, anything. */
   "provider_error",
   /** `timeoutMs` elapsed before the generation resolved. */

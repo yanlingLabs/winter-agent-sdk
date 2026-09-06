@@ -23,7 +23,7 @@ test("query yields system/init, assistant, result in order", async () => {
   const seen: string[] = [];
   for await (const msg of query({
     prompt: "ping",
-    options: { model: "sonnet", spawnClaudeCodeProcess: (opts) => inMemoryProcess(opts.args) },
+    options: { model: "winter-test/echo", spawnClaudeCodeProcess: (opts) => inMemoryProcess(opts.args) },
   })) {
     seen.push(msg.type);
   }
@@ -39,7 +39,7 @@ test("error-result-then-throw: the terminal error result is yielded, THEN the it
   try {
     for await (const msg of query({
       prompt: "ping",
-      options: { spawnClaudeCodeProcess: (opts) => inMemoryProcess(opts.args, boom) },
+      options: { model: "winter-test/echo", spawnClaudeCodeProcess: (opts) => inMemoryProcess(opts.args, boom) },
     })) {
       yielded.push(msg.type);
       if (msg.type === "result") { /* observe the error result before the throw */ expect((msg as { is_error?: boolean }).is_error).toBe(true); }
@@ -116,7 +116,15 @@ function captureConfigJson(): { hook: (opts: SpawnRuntimeOptions) => SpawnedRunt
     hook(opts: SpawnRuntimeOptions) {
       const idx = opts.args.indexOf("--config-json");
       captured = JSON.parse(opts.args[idx + 1] as string) as Record<string, unknown>;
-      return inMemoryProcess(opts.args);
+      // Phase 6 Task 10: the CAPTURE is the subject of every assertion below and is taken from the
+      // args VERBATIM, before this line. What actually RUNS is given a model in the reserved
+      // `winter-test/<name>` namespace, because production selection is now catalog-first and
+      // refuses a model it cannot resolve (R6-9) -- `Options.model`'s own default is the pinned
+      // `"sonnet"` alias, which needs an anthropic credential this test has none of and must not
+      // acquire. Substituting here rather than setting `model` on every one of these tests keeps
+      // each one's assertion about the field it is actually testing.
+      const runnable = JSON.stringify({ ...(captured as Record<string, unknown>), model: "winter-test/echo" });
+      return inMemoryProcess([...opts.args.slice(0, idx + 1), runnable, ...opts.args.slice(idx + 2)]);
     },
     get() {
       if (captured === undefined) throw new Error("captureConfigJson: spawnClaudeCodeProcess was never invoked");
@@ -413,7 +421,7 @@ test("Task 9: a pre-allocated Options.sessionId round-trips into the init frame'
   let sawInitSessionId: string | undefined;
   for await (const msg of query({
     prompt: "ping",
-    options: { sessionId: explicitId, persistSession: false, spawnClaudeCodeProcess: (opts) => inMemoryProcess(opts.args) },
+    options: { sessionId: explicitId, persistSession: false, model: "winter-test/echo", spawnClaudeCodeProcess: (opts) => inMemoryProcess(opts.args) },
   })) {
     if (msg.type === "system" && msg.subtype === "init") sawInitSessionId = (msg as { session_id: string }).session_id;
   }
@@ -728,7 +736,7 @@ test("setPermissionMode(): sends a real control request mid-iteration; an invali
     await promptGate; // keep the stream open (WS-04 §3: streaming input) until the turn completes
   }
 
-  const gen = query({ prompt: prompt(), options: { spawnClaudeCodeProcess: (opts) => inMemoryProcess(opts.args, echoProvider) } });
+  const gen = query({ prompt: prompt(), options: { model: "winter-test/echo", spawnClaudeCodeProcess: (opts) => inMemoryProcess(opts.args, echoProvider) } });
 
   let validPromise: Promise<void> | undefined;
   let invalidPromise: Promise<void> | undefined;
@@ -778,7 +786,7 @@ test("interrupt(): sends a real control request and resolves on ack; drain seman
     await promptGate;
   }
 
-  const gen = query({ prompt: prompt(), options: { spawnClaudeCodeProcess: (opts) => inMemoryProcess(opts.args, blockingProvider) } });
+  const gen = query({ prompt: prompt(), options: { model: "winter-test/echo", spawnClaudeCodeProcess: (opts) => inMemoryProcess(opts.args, blockingProvider) } });
 
   let interruptPromise: Promise<void> | undefined;
   void (async () => {
@@ -1306,6 +1314,7 @@ test("default mode: an unmatched tool call reaches canUseTool through the REAL e
         called = true;
         return { behavior: "allow" };
       },
+      model: "winter-test/tooluse",
       spawnClaudeCodeProcess: (opts) => inMemoryProcess(opts.args, testProviderByName("tooluse")),
     },
   });
@@ -1334,6 +1343,7 @@ test("the null escape through the REAL engine+bridge (Task 8 review fix regressi
         internalRef.current!.respondPermission(opts.requestId, { behavior: "allow" });
         return null; // the legitimate null escape: already answered out of band, above
       },
+      model: "winter-test/tooluse",
       spawnClaudeCodeProcess: (opts) => inMemoryProcess(opts.args, testProviderByName("tooluse")),
     },
   });
@@ -1361,6 +1371,7 @@ test("dontAsk mode: canUseTool is NEVER invoked through the REAL engine, even fo
         called = true;
         return { behavior: "allow" };
       },
+      model: "winter-test/tooluse",
       spawnClaudeCodeProcess: (opts) => inMemoryProcess(opts.args, testProviderByName("tooluse")),
     },
   });
@@ -1383,7 +1394,7 @@ test("dontAsk mode: canUseTool is NEVER invoked through the REAL engine, even fo
 // already be silently no-op-ing post-.end()) -- hanging the caller forever with no diagnostic.
 // Mirrors rpc/bridge.ts's own `closed` latch (runtime side) on the wrapper side.
 test("Item 1: a control call issued AFTER the generator completes rejects immediately with a typed error, instead of hanging forever", async () => {
-  const gen = query({ prompt: "hi", options: { spawnClaudeCodeProcess: (opts) => inMemoryProcess(opts.args) } });
+  const gen = query({ prompt: "hi", options: { model: "winter-test/echo", spawnClaudeCodeProcess: (opts) => inMemoryProcess(opts.args) } });
   for await (const _msg of gen) {
     /* drain to natural completion (sawTerminal) */
   }
@@ -1399,7 +1410,7 @@ test("Item 1: a control call issued AFTER the generator completes rejects immedi
 });
 
 test("Item 1: setPermissionMode issued AFTER the generator completes ALSO rejects immediately (the guard is not interrupt-specific)", async () => {
-  const gen = query({ prompt: "hi", options: { spawnClaudeCodeProcess: (opts) => inMemoryProcess(opts.args) } });
+  const gen = query({ prompt: "hi", options: { model: "winter-test/echo", spawnClaudeCodeProcess: (opts) => inMemoryProcess(opts.args) } });
   for await (const _msg of gen) {
     /* drain to natural completion */
   }
@@ -1414,7 +1425,7 @@ test("Item 1: setPermissionMode issued AFTER the generator completes ALSO reject
 });
 
 test("Item 1: a control call issued an early consumer .return() away from the generator (never drained to sawTerminal) ALSO rejects, not just the natural-completion path", async () => {
-  const gen = query({ prompt: "hi", options: { spawnClaudeCodeProcess: (opts) => inMemoryProcess(opts.args) } });
+  const gen = query({ prompt: "hi", options: { model: "winter-test/echo", spawnClaudeCodeProcess: (opts) => inMemoryProcess(opts.args) } });
   for await (const _msg of gen) {
     break; // an early exit -- triggers the generator's own finally via an implicit .return()
   }

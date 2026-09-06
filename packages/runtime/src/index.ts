@@ -30,6 +30,24 @@ export { createContextAccountant, DEFAULT_CONTEXT_WINDOW_TOKENS } from "./engine
 // Phase 5 Task 2: the mock family's `system` recorder (provider/mock.ts) -- same out-of-package
 // reasoning as above; T8's cross-leg assertion reads it from here.
 export { recordedProviderSystems, resetRecordedProviderSystems } from "./provider/mock.ts";
+// Phase 6 Task 10: the SHARED provider-scenario fake. Named on the barrel for the identical reason
+// the mock family's recorder is -- its two consumers (`packages/sdk/src/transport-equivalence.test.ts`
+// and `scripts/differential.ts`) live outside this package and cannot use a relative import, and one
+// definition is what keeps the equivalence suite and the goldens from drifting apart.
+export {
+  SCENARIO_FINAL_TEXT,
+  SCENARIO_FIRST_TEXT,
+  SCENARIO_CHILD_AGENT,
+  SCENARIO_CHILD_MODEL,
+  SCENARIO_CHILD_WIRE_ID,
+  SCENARIO_DELEGATE_MARKER,
+  SCENARIO_MODELS,
+  SCENARIO_TOOL_CALLING_NONE,
+  SCENARIO_TOOL_INPUT,
+  SCENARIO_TOOL_NAME,
+  startScenarioFake,
+} from "./provider/scenario-fake.ts";
+export type { ScenarioFake, ScenarioFakeOptions, ScenarioRequest } from "./provider/scenario-fake.ts";
 // Phase 5 Task 2 (R5-4 / WS-09 §8.5): the compaction reset seam.
 export { onCompaction } from "./tools/registry.ts";
 

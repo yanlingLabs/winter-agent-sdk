@@ -189,6 +189,7 @@ async function* codexTurn(req: TurnRequest, ctx: ProviderContext, options: Codex
     if (auth.material.kind !== "oauth") throw new CodexAuthRefusal(`codex-oauth needs an oauth credential, not "${auth.material.kind}"`);
     tokens = auth.material;
     plan = {
+      model: req.model,
       url: `${endpoint.baseUrl}/responses`,
       headers: codexHeaders(endpoint.policy, tokens, ctx, options),
       endpoint,

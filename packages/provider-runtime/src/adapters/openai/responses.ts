@@ -188,7 +188,31 @@ function isUnrepresentableCall(itemType: string): boolean {
  * One instance per turn: the reasoning-item accumulator, the seen-a-call flag and the
  * did-this-call-stream-its-arguments map are all per-turn state.
  */
+/**
+ * Which stream event this family treats as COMPLETING, from the descriptor's own `completionEvent`
+ * evidence (review round 1, C — ledger line 36).
+ *
+ * Lane B's pattern, applied here: `anthropicCaptureEvent` and the Google resolver both read this
+ * field, and this family hard-coded `"response.completed"` — so a catalog row that DECLARED a
+ * different terminator was silently ignored, and the evidence existed for two families out of four.
+ *
+ * MATCHED LENIENTLY BY MENTION, for the same reason those two are: the field is a prose-ish
+ * `CapabilityEvidence<string>`, not an enum. `"response.completed"` stays as the fallback and is the
+ * conservative answer — the pinned terminator for this surface, and the one every unlisted row means.
+ *
+ * `response.incomplete` is always ALSO treated as terminal and is deliberately not configurable: it
+ * is a truncation, not a completion, and a row that named some other event would still have to end
+ * its stream somewhere.
+ */
+export function responsesCompletionEvent(descriptor: WinterModelDescriptor | undefined): string {
+  const declared = descriptor?.reasoning?.completionEvent?.value;
+  return typeof declared === "string" && declared.trim().length > 0 ? declared.trim() : "response.completed";
+}
+
 export class ResponsesStreamMapper {
+  /** The event this stream's descriptor says completes a response. Injected so the mapper never reaches for a catalog itself. */
+  constructor(private readonly completionEvent: string = "response.completed") {}
+
   private sawToolCall = false;
   private sawRefusal = false;
   private started = false;
@@ -214,6 +238,10 @@ export class ResponsesStreamMapper {
     const payload = parseSseJson(data);
     if (payload === undefined) return [];
     const type = typeof payload.type === "string" ? payload.type : "";
+    // The DESCRIPTOR's terminator, checked before the fixed table: a row that declares its own
+    // completion event is honoured, and every row that declares none lands on the `"response.completed"`
+    // default this resolver returns, which is the same literal the table used to hard-code.
+    if (type === this.completionEvent) return this.onCompleted(payload);
     switch (type) {
       case "response.created":
         return this.onCreated(payload);
@@ -233,7 +261,6 @@ export class ResponsesStreamMapper {
         return this.onArgumentsDelta(payload);
       case "response.output_item.done":
         return this.onItemDone(payload);
-      case "response.completed":
       case "response.incomplete":
         return this.onCompleted(payload);
       case "response.failed":
@@ -427,6 +454,8 @@ function itemOf(payload: Record<string, unknown>): Record<string, unknown> | und
 
 /** What a Responses-speaking adapter (plain OpenAI, codex-oauth, Azure's preview surface) has to supply beyond the request body. */
 export interface ResponsesTurnPlan {
+  /** The provider-local model id this plan is for — the descriptor lookup's key (review round 1, C). */
+  model: string;
   url: string;
   headers: Record<string, string>;
   endpoint: ResolvedEndpoint;
@@ -455,7 +484,7 @@ export interface ResponsesTurnPlan {
 export async function* streamResponsesTurn(plan: ResponsesTurnPlan, signal: AbortSignal | undefined): AsyncIterable<ProviderEvent> {
   const queue = plan.queue ?? new EventQueue();
   const policy = makeRetryPolicy(plan.options);
-  const mapper = new ResponsesStreamMapper();
+  const mapper = new ResponsesStreamMapper(responsesCompletionEvent(plan.options.descriptors?.(plan.model)));
   let response: Response;
   try {
     response = yield* pumpEvents(
@@ -602,7 +631,7 @@ export async function* responsesTurn(
       privileged: { ...privilegedHeaders(options), ...(auth.accountId !== undefined ? { "chatgpt-account-id": auth.accountId } : {}) },
       userSupplied: ctx.connection.headers,
     });
-    plan = { url: urlFor(endpoint.baseUrl), headers, endpoint, ctx, options, body: JSON.stringify(buildResponsesBody(req, reasoning, descriptor)) };
+    plan = { model: req.model, url: urlFor(endpoint.baseUrl), headers, endpoint, ctx, options, body: JSON.stringify(buildResponsesBody(req, reasoning, descriptor)) };
   } catch (err) {
     yield errorEvent(err);
     return;

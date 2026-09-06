@@ -108,7 +108,7 @@ import {
 // reference left in the codebase is test-only). `createInMemoryAutoCounterStore` is the fallback
 // for a non-persistent session (autoStateStore undefined below), mirroring how `approvalStore`
 // being undefined already means "no durable approval machinery this run."
-import { createAutoEngine, NO_OP_AUTO_AUDIT_RECORDER } from "./permissions/auto/engine.ts";
+import { createAutoEngine, NO_OP_AUTO_AUDIT_RECORDER, type ClassifierInterface } from "./permissions/auto/engine.ts";
 import { createInMemoryAutoCounterStore, computePolicyHash, type AutoCounterStore } from "./permissions/auto/caches.ts";
 // T9's PostToolUse-accumulated classifierContext (WS-07 §10.4/§10.6-8) — reducer.ts's own
 // AttributedContext type, threaded into the auto engine's getClassifierContext closure below.
@@ -547,16 +547,17 @@ export interface ProviderUsage {
 // ahead of the tool_use blocks, which is the order the model produced it in.
 export type ProviderTurn =
   | { kind: "text"; text: string; usage?: ProviderUsage; stopReason?: ProviderStopReason; thinking?: ProviderThinkingOutput; nativeState?: ProviderNativeState }
-  | { kind: "tool_use"; calls: Array<{ id: string; name: string; input: unknown }>; text?: string; usage?: ProviderUsage; stopReason?: ProviderStopReason; thinking?: ProviderThinkingOutput; nativeState?: ProviderNativeState }
-  // Task 2 (WS-04 §3.1): a P1-only test-affordance turn kind (WINTER_TEST_PROVIDER=rpcprobe,
-  // provider/mock.ts) that proves the runtime-originated control-RPC bridge round trip end-to-end
-  // on every transport leg (the transport-equivalence suite's rpcprobe scenario). The ENGINE
-  // performs bridge.request(subtype, payload) on the provider's behalf when it sees this kind
-  // (round loop below) — Provider.generate() itself never touches the bridge directly, staying a
-  // plain, transport-agnostic function for every other turn kind. REMOVE at P6 alongside
-  // provider/mock.ts's whole test-provider family; a real permission/hook RPC (Tasks 8/10) is
-  // issued from the evaluator/hook runner, not from this turn kind.
-  | { kind: "rpc_probe"; subtype: string; payload: unknown; usage?: ProviderUsage };
+  | { kind: "tool_use"; calls: Array<{ id: string; name: string; input: unknown }>; text?: string; usage?: ProviderUsage; stopReason?: ProviderStopReason; thinking?: ProviderThinkingOutput; nativeState?: ProviderNativeState };
+  // Phase 6 Task 10 (R6-13): THE `rpc_probe` TURN KIND IS GONE.
+  //
+  // It was a P1-only scaffold whose whole purpose was to prove the runtime-originated control-RPC
+  // bridge round-trips on every transport leg, at a time when no REAL runtime-originated RPC
+  // existed. R6-13 made its removal conditional on that no longer being true, and the condition is
+  // met: `transport-equivalence.test.ts`'s "Ruling P2-B" scenario drives a genuine permission
+  // control_request the host answers, and the hooked-tool-round scenario drives a genuine `hook`
+  // one -- both inside `registerEquivalenceScenarios`, so both run on the in-memory leg, a real
+  // spawned child AND the compiled binary. A scaffold that duplicates a shipped path is a second
+  // implementation of it.
 
 export interface Provider {
   generate(input: ProviderRequest): Promise<ProviderTurn>;
@@ -1014,6 +1015,52 @@ export interface EngineOptions {
     catalogVersion?: string;
     authRefKind?: string;
   };
+  /**
+   * Phase 6 Task 10: the pinned `system/init.apiKeySource` (`sdk.d.ts:4860`, REQUIRED).
+   *
+   * An ENGINE OPTION rather than something derived here, for the same reason `providerIdentity` is:
+   * the mapping from Winter's own `CredentialRef` kinds onto the pin's four-member vocabulary is the
+   * WIRING's decision (`provider/session-provider.ts`'s `apiKeySourceFor`, which documents why every
+   * non-`ANTHROPIC_API_KEY` shape reports `'none'`), and the engine must stay driveable by a plain
+   * double that has no credential model at all.
+   *
+   * Absent -> `"none"`, which is the honest value for a session with no credential ref and is what
+   * every pre-P6 golden's init frame is regenerated against.
+   */
+  apiKeySource?: string;
+  /**
+   * Phase 6 Task 10 (R6-I): the session's model catalogue and account surface, as the control
+   * handlers below answer them.
+   *
+   * BOTH ARE FUNCTIONS, not values, and both come from the WIRING rather than being computed here:
+   * the engine has no registry and no credential model, and giving it one would be a second
+   * resolution path that could disagree with the session's own.
+   *
+   * `supportedModels` answers the pinned payload-free `list_models` control request
+   * (`sdk.d.ts:3855`), whose own JSDoc frames it as "ask the worker" — a table inside the binary, per
+   * capture (J), never a `/v1/models` fetch. Absent -> the handler answers an empty array, which is
+   * the honest answer for a session running a scripted double.
+   */
+  supportedModels?: () => unknown[];
+  /**
+   * `account_info` is a WINTER-ONLY control subtype, disclosed.
+   *
+   * The pin carries `AccountInfo` on the `initialize`/`reinitialize` RESPONSE (`sdk.d.ts:3804`), and
+   * derived-shapes-p6 item (d) is explicit that `system/init` must NOT grow an `account` field for
+   * parity. Winter's protocol has no `initialize` control request to hang it on, so the surface it
+   * does expose (`Query.accountInfo()`) needs a subtype of its own rather than a field on a frame the
+   * pin does not put it on.
+   */
+  accountInfo?: () => unknown;
+  /**
+   * Phase 6 Task 10 (R6-14): the session's REAL classifier, or absent for a Manual fallback.
+   *
+   * P2 shipped `createAutoEngine`'s own `alwaysNoVerdictClassifier` default and said the real
+   * model-routed classifier was P6's job. This is that wire. ABSENCE IS MEANINGFUL and is not the
+   * same as a classifier that abstains: R6-14's Manual fallback is a session that was never given a
+   * reviewer it had evidence for, and `selectClassifierRoute` records WHY.
+   */
+  classifier?: ClassifierInterface;
 }
 
 /**
@@ -1265,6 +1312,10 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
     settingsRules,
     maxProviderMessageBytes,
     providerIdentity,
+    apiKeySource,
+    classifier,
+    supportedModels,
+    accountInfo,
   } = opts;
 
   // Task 6 (WS-07 §2/§6.4, Ruling 8): permission startup validation — deliberately the very FIRST
@@ -1591,6 +1642,11 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
     counters: autoStateStore ?? createInMemoryAutoCounterStore(),
     audit: NO_OP_AUTO_AUDIT_RECORDER,
     getClassifierContext: () => accumulatedClassifierContext,
+    // Phase 6 Task 10 (R6-14): the P2 counters go LIVE. Conditionally spread, so a session with a
+    // Manual route keeps `createAutoEngine`'s own always-no-verdict default byte-identically --
+    // which is the point of the distinction: "no reviewer we have evidence for" and "a reviewer that
+    // abstained" are different session states and must stay separable in the audit.
+    ...(classifier !== undefined ? { classifier } : {}),
   });
   // Task 1 (P3, WS-06 §1.1 ToolExecutionContext.session): the session posture-mutation seam's own
   // live state. `currentCwd` starts at `config.cwd` and `extraBoundedRoots` starts empty -- for
@@ -2960,6 +3016,27 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
       model: config.model,
       permissionMode: policyStateStore.getState().mode,
       tools: advertisedToolNames,
+      // Phase 6 Task 10 (derived-shapes-p6 item (d)): the pinned REQUIRED `apiKeySource`
+      // (`sdk.d.ts:4860`). Winter emitted no such field before this phase, which was a real parity
+      // gap rather than a deliberate omission -- a consumer switching on it read `undefined`.
+      apiKeySource: apiKeySource ?? "none",
+      // R6-9: the RESOLVED identity rides a Winter-only init EXTENSION, never `model` -- which stays
+      // the pinned bare string the caller passed, because the goldens byte-compare it. Absent for a
+      // session with no resolved identity (a scripted double, every pre-P6 session), so nothing
+      // fabricates a provider row.
+      ...(providerIdentity !== undefined
+        ? {
+            winter_provider: {
+              providerId: providerIdentity.providerId,
+              modelKey: providerIdentity.modelKey,
+              ...(providerIdentity.adapterId !== undefined ? { adapterId: providerIdentity.adapterId } : {}),
+              ...(providerIdentity.adapterVersion !== undefined ? { adapterVersion: providerIdentity.adapterVersion } : {}),
+              ...(providerIdentity.catalogVersion !== undefined ? { catalogVersion: providerIdentity.catalogVersion } : {}),
+              ...(providerIdentity.continuationDomain !== undefined ? { continuationDomain: providerIdentity.continuationDomain } : {}),
+              ...(providerIdentity.authRefKind !== undefined ? { authRefKind: providerIdentity.authRefKind } : {}),
+            },
+          }
+        : {}),
       ...initLoadedSurface,
       ...(mcpServersWire !== undefined ? { mcp_servers: mcpServersWire } : {}),
     },
@@ -3134,6 +3211,22 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
             if (interruptCurrentTurn.current === null) applyPendingModelSwitch("set_model");
             continue;
           }
+          // --- Phase 6 Task 10 (R6-I): `list_models` and `account_info` ---------------------------
+          //
+          // `list_models` is PAYLOAD-FREE on the pin and is answered from the session's own registry
+          // — capture (J) established that the pinned runtime serves this from a table inside the
+          // binary and issues no `/v1/models` request at all, so a handler that reached for live
+          // discovery here would be a behavioural divergence, not an improvement.
+          if (cf.subtype === "list_models") {
+            output.write({ type: "control_response", requestId: cf.requestId, ok: true, payload: supportedModels?.() ?? [] });
+            continue;
+          }
+          // Winter-only, disclosed — see `EngineOptions.accountInfo` for why the pin's own surface
+          // (the initialize response) has no counterpart here.
+          if (cf.subtype === "account_info") {
+            output.write({ type: "control_response", requestId: cf.requestId, ok: true, payload: accountInfo?.() ?? {} });
+            continue;
+          }
           if (cf.subtype === "set_permission_mode") {
             // Task 6 (WS-07 §2/§6.4) upgrade over T2's minimal handler: still validates the payload
             // is one of the six public values (unchanged — a wire-level guard against arbitrary
@@ -3296,6 +3389,37 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
       warn: (message) => output.write({ type: "data", message }),
       newUuid: randomUUID,
     });
+
+    // --- Phase 6 Task 10 review round 1 (D): A RESUME THAT CHANGES THE MODEL IS A SWITCH ----------
+    //
+    // R6-I's boundary rule was implemented for the `set_model` CONTROL REQUEST only, which reads as
+    // complete until you notice the other way a session's model changes: a host resumes a session and
+    // passes a different `Options.model`. The engine starts with `currentModel` already set to the new
+    // value, so from inside one run nothing switched -- and the session silently ran a different model
+    // from the one its transcript was built on, with no frame saying so and nothing in the dialect
+    // record's `providerHistory`.
+    //
+    // HERE is the first quiescent boundary there is: after the resumed history is folded back and
+    // before the first generation. The comparison is against the PERSISTED identity, which is the only
+    // record of what the previous run actually used; a session with none (a fresh one, or a store that
+    // does not keep identities) announces nothing, exactly as before.
+    const persisted = store.loadProviderIdentity !== undefined ? await store.loadProviderIdentity() : undefined;
+    if (persisted !== undefined && currentProviderIdentity !== undefined && persisted.modelKey !== currentProviderIdentity.modelKey) {
+      store.recordProviderSwitch?.({ from: persisted.modelKey, to: currentProviderIdentity.modelKey, reason: "set_model" });
+      output.write({
+        type: "data",
+        message: {
+          type: "system",
+          subtype: "model_switch",
+          reason: "set_model",
+          from_model: persisted.modelKey,
+          to_model: currentProviderIdentity.modelKey,
+          provider: currentProviderIdentity.providerId,
+          uuid: randomUUID(),
+          session_id: config.sessionId,
+        },
+      });
+    }
   }
 
   // M6 (fix wave, P3 close-out): wire the advisor's REAL transcript source, now that `messages`
@@ -3810,7 +3934,23 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   /** R6-7/R6-8: what rides the SIDECAR for this turn -- the opaque native state and any FOREIGN reasoning summary, neither of which may enter the transcript. */
   const turnProvenance = (turn: ProviderTurn): { nativeState?: ProviderNativeState; summary?: string } => ({
     ...("nativeState" in turn && turn.nativeState !== undefined ? { nativeState: turn.nativeState } : {}),
-    ...("thinking" in turn && turn.thinking?.summary !== undefined ? { summary: turn.thinking.summary } : {}),
+    // T10 (Lane C wiring item 8): `exposed` as well as `summary`.
+    //
+    // `ProviderThinkingOutput` declares both -- a provider-authored SUMMARY and the model's own
+    // EXPOSED reasoning -- and only the first was ever recorded. So a family whose reasoning channel
+    // IS the model's own output (the exposed-reasoning families) wrote no `summary` record at all,
+    // its sidecar carried nothing for those turns, and the continuity renderer had no material to
+    // decorate a later cross-family message with. The whole no-warning class Lane C built for those
+    // families was unreachable, silently, because the write path stopped one field short.
+    //
+    // `summary` WINS when both are present: a provider-authored summary is the shape R6-8 permits to
+    // travel, and the raw exposed text is the fallback for a family that produces no summary of its own.
+    // Either way it lands in the sidecar and NEVER in `assistant.message.content`.
+    ...("thinking" in turn && turn.thinking?.summary !== undefined
+      ? { summary: turn.thinking.summary }
+      : "thinking" in turn && turn.thinking?.exposed !== undefined
+        ? { summary: turn.thinking.exposed }
+        : {}),
   });
 
   /**
@@ -4106,33 +4246,6 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
         const textAnchor = await recordAssistant(assistantBlocks, turnProvenance(turn));
         messages.push({ role: "assistant", content: thinkingBlocks.length === 0 ? turn.text : assistantBlocks, ...(textAnchor !== undefined ? { uuid: textAnchor } : {}), ...providerAnnotations(turn) });
         finalResult = { type: "result", subtype: "success", is_error: false, result: turn.text };
-        break roundLoop;
-      }
-
-      if (turn.kind === "rpc_probe") {
-        // See this type's own comment on ProviderTurn above: P1-only, REMOVE at P6. Every path
-        // below ends in `break roundLoop` so TS's narrowing of `turn` to the tool_use variant past
-        // this point (via `turn.calls` further down) still holds.
-        //
-        // Deliberately NOT raced against interruptSignal the way provider.generate()/tools.execute()
-        // are above: an interrupt arriving while this await is in flight still gets ACKed by the
-        // pump (unconditional), but has no effect on this wait — a known gap acceptable for a
-        // P1-only test scaffold that's never itself interrupted, not a spec requirement. A real
-        // permission/hook RPC (Tasks 8/10) will need to decide its own interrupt-during-wait
-        // semantics (WS-07/WS-08), which may differ from this.
-        let replyText: string;
-        try {
-          const response = await bridge.request<{ text: string }>(turn.subtype, turn.payload);
-          replyText = `rpc reply: ${response.text}`;
-        } catch (err) {
-          const text = err instanceof Error ? err.message : String(err);
-          finalResult = { type: "result", subtype: "error_during_execution", is_error: true, result: text };
-          break roundLoop;
-        }
-        output.write({ type: "data", message: { type: "assistant", message: { content: [{ type: "text", text: replyText }] } } });
-        messages.push({ role: "assistant", content: replyText });
-        await recordAssistant([{ type: "text", text: replyText }]);
-        finalResult = { type: "result", subtype: "success", is_error: false, result: replyText };
         break roundLoop;
       }
 

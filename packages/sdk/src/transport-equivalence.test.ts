@@ -26,10 +26,8 @@
 //    precisely via the scripted provider's own "entered" signal instead of a timer.
 //  - split-frame-carry: exercises splitFrames' carry mechanism directly at the transport boundary
 //    (a frame's bytes deliberately split across two stdin writes) — unrelated to query() at all.
-//  - rpcprobe (Task 2, WS-04 §3.1): a runtime-originated control_request mid-turn, answered with a
-//    scripted control_response — proves the RUNTIME side (engine.ts + createRpcBridge) behaves
-//    identically on every leg; deliberately bypasses query()'s own handler registry, which is
-//    covered separately (in-memory only) by query.test.ts.
+//  - (rpcprobe was the fourth of these until Phase 6 Task 10 removed it with the `rpc_probe` turn
+//    kind — R6-13's condition was met by the real permission/hook control-RPC scenarios below.)
 import { describe, test, expect, afterAll } from "bun:test";
 import { fileURLToPath } from "node:url";
 import { mkdtempSync, mkdirSync, rmSync, readFileSync, writeFileSync, existsSync, realpathSync } from "node:fs";
@@ -65,6 +63,17 @@ import {
   SUBAGENT_CHILD_PROBE_TEXT,
   // Phase 5 Task 8: the fixture skill's name, shared with provider/mock.ts's own `p5skill` case.
   P5_FIXTURE_SKILL_NAME,
+  // Phase 6 Task 10: the SHARED provider-scenario fake -- one definition, consumed by this file and
+  // by scripts/differential.ts, so the equivalence suite and the goldens cannot drift.
+  SCENARIO_CHILD_AGENT,
+  SCENARIO_CHILD_MODEL,
+  SCENARIO_CHILD_WIRE_ID,
+  SCENARIO_DELEGATE_MARKER,
+  SCENARIO_FINAL_TEXT,
+  SCENARIO_MODELS,
+  SCENARIO_TOOL_NAME,
+  startScenarioFake,
+  type ScenarioFake,
 } from "winter-agent-runtime";
 import { normalizeTrace, compareTraces, type ConformanceTraceEntry } from "winter-conformance/trace";
 
@@ -89,7 +98,17 @@ afterAll(() => {
 // within a single test run — not with a byte-fixed golden across machines/time — so process.cwd()
 // (always real) is the right fixture here, not a synthetic constant.
 const FIXTURE_CWD = process.cwd();
-const FIXTURE_MODEL = "sonnet";
+// Phase 6 Task 10 (R6-9/R6-13): the fixture model moved INTO the reserved namespace.
+//
+// Production selection is catalog-first now and refuses a model it cannot resolve -- the pinned
+// `"sonnet"` alias resolves to the `anthropic` provider only when a credential ref for it is
+// configured, and no test has (or may have) one. `winter-test/<name>` is the ONE door to an
+// in-process scripted double, and `WINTER_TEST_PROVIDER` remains the harness's alias for it,
+// honoured because `config.model` is already in that namespace.
+//
+// `system/init.model` reports WHAT THE CALLER PASSED (R6-9), so this value is visible in every
+// golden -- which is why the goldens move in the same commit as this line and in no other.
+const FIXTURE_MODEL = "winter-test/echo";
 
 // Absolute path to the real winter entrypoint. There is no package export for a non-data file like
 // an entrypoint script (nor should there be one — this is test-only wiring, never a runtime
@@ -252,6 +271,8 @@ function spawnHook(
   // `process.env` to registerDefaultChildEngineFactory; testing.ts hands inMemoryProcess's own env
   // parameter, which is this same object).
   scenarioEnv?: Record<string, string | undefined>,
+  // Phase 6 Task 10: see `QueryScenarioOptions.registryBackedTools` for why this is explicit.
+  registryBackedTools?: boolean,
 ): SpawnClaudeCodeProcess {
   return (opts: SpawnRuntimeOptions): SpawnedRuntimeProcess => {
     // WINTER_HOME merged in for every leg (Task 8 HARD CONSTRAINT) — ahead of the
@@ -280,7 +301,7 @@ function spawnHook(
       proc = inMemoryProcess(
         opts.args,
         testProviderName ? testProviderByName(testProviderName) : echoProvider,
-        testProviderName !== undefined && REGISTRY_BACKED_TEST_PROVIDERS.has(testProviderName) ? undefined : stubExecutor,
+        registryBackedTools === true || (testProviderName !== undefined && REGISTRY_BACKED_TEST_PROVIDERS.has(testProviderName)) ? undefined : stubExecutor,
         env,
       );
     } else if (leg === "compiled") {
@@ -429,6 +450,29 @@ interface QueryScenarioOptions {
   enableFileCheckpointing?: boolean;
   skills?: Options["skills"];
   settingSources?: Options["settingSources"];
+  // --- Phase 6 Task 10: the provider-layer axes -------------------------------------------------
+  //
+  // `model` and `provider` are what point a session at the shared loopback fake, and both must be
+  // real `Options` fields for the same reason every field above is: a spawned or compiled leg
+  // receives its WHOLE configuration as `--config-json`, so anything not on `RuntimeConfig` is
+  // simply unreachable there.
+  model?: string;
+  provider?: Options["provider"];
+  /**
+   * Whether the IN-MEMORY leg dispatches tool calls through the real registry, as every spawned leg
+   * always does.
+   *
+   * IT HAS TO BE EXPLICIT. `spawnHook` selects `stubExecutor` for the in-memory leg unless the
+   * scenario names a `testProviderName` in `REGISTRY_BACKED_TEST_PROVIDERS` — a rule written when the
+   * only way to script a provider was by NAME. A P6 scenario scripts its provider through a loopback
+   * FAKE and names no test provider at all, so it fell into the stub branch and its in-memory leg
+   * echoed `Glob:{...}` while its child leg ran the real Glob: a genuine cross-leg divergence
+   * produced by the harness, not by the runtime.
+   */
+  registryBackedTools?: boolean;
+  fallbackModel?: string;
+  includePartialMessages?: boolean;
+  agents?: Options["agents"];
 }
 
 interface ScenarioResult {
@@ -445,9 +489,9 @@ async function traceViaQuery(leg: LegName, scenario: QueryScenarioOptions): Prom
     const gen = query({
       prompt: scenario.prompt,
       options: {
-        model: FIXTURE_MODEL,
+        model: scenario.model ?? FIXTURE_MODEL,
         cwd: FIXTURE_CWD,
-        spawnClaudeCodeProcess: spawnHook(leg, scenario.testProviderName, capture, scenario.env),
+        spawnClaudeCodeProcess: spawnHook(leg, scenario.testProviderName, capture, scenario.env, scenario.registryBackedTools),
         ...(abortController ? { abortController } : {}),
         ...(scenario.sessionId !== undefined ? { sessionId: scenario.sessionId } : {}),
         ...(scenario.resume !== undefined ? { resume: scenario.resume } : {}),
@@ -468,6 +512,10 @@ async function traceViaQuery(leg: LegName, scenario: QueryScenarioOptions): Prom
         ...(scenario.enableFileCheckpointing !== undefined ? { enableFileCheckpointing: scenario.enableFileCheckpointing } : {}),
         ...(scenario.skills !== undefined ? { skills: scenario.skills } : {}),
         ...(scenario.settingSources !== undefined ? { settingSources: scenario.settingSources } : {}),
+        ...(scenario.provider !== undefined ? { provider: scenario.provider } : {}),
+        ...(scenario.fallbackModel !== undefined ? { fallbackModel: scenario.fallbackModel } : {}),
+        ...(scenario.includePartialMessages !== undefined ? { includePartialMessages: scenario.includePartialMessages } : {}),
+        ...(scenario.agents !== undefined ? { agents: scenario.agents } : {}),
       },
     });
     for await (const msg of gen) {
@@ -706,71 +754,6 @@ async function traceSplitFrameCarry(leg: LegName): Promise<ConformanceTraceEntry
   }
 }
 
-// --- Task 2 (WS-04 §3.1, direction inversion): a runtime-originated control_request mid-turn -----
-//
-// Raw-driver pattern (like traceInterrupt/traceMultiTurn above), not traceViaQuery: what's under
-// test here is the RUNTIME side (engine.ts's round loop + createRpcBridge) behaving identically
-// whether it's running in-memory or as a real/compiled child — main.ts and testing.ts's
-// inMemoryProcess both call the SAME runEngine. Manually answering the control_request with a
-// scripted control_response proves that parity directly, without needing query()'s own handler
-// registry (covered separately, in-memory only, by query.test.ts) at all.
-async function traceRpcProbe(leg: LegName): Promise<ConformanceTraceEntry[]> {
-  const proc = buildRawProc(leg, "rpcprobe", "rpc-probe-fixture");
-  try {
-    const driver = createDriver(proc);
-    const entries: ConformanceTraceEntry[] = [];
-
-    const init = await driver.nextFrame();
-    pushFrame(entries, init!);
-    const sys = await driver.nextFrame();
-    pushFrame(entries, sys!);
-
-    driver.send({ type: "user", text: "probe" });
-
-    // The runtime originates a control_request mid-turn (WS-04 §3.1) — answer it exactly like a
-    // real host would; requestId is a runtime-generated UUID, already in trace.ts's VOLATILE set,
-    // so it normalizes away and never causes a spurious cross-leg diff.
-    const req = await driver.nextFrame();
-    expect(req?.type).toBe("control_request");
-    const reqFrame = req as ControlRequestFrame;
-    expect(reqFrame.subtype).toBe("test_rpc_probe");
-    expect(reqFrame.payload).toEqual({ probe: "ping" });
-    pushFrame(entries, req!);
-    driver.send({ type: "control_response", requestId: reqFrame.requestId, ok: true, payload: { text: "pong" } });
-
-    const assistant = await driver.nextFrame();
-    expect(assistant?.type).toBe("data");
-    pushFrame(entries, assistant!);
-    const result = await driver.nextFrame();
-    expect(result?.type).toBe("data");
-    pushFrame(entries, result!);
-
-    driver.send({ type: "control_request", requestId: "end-input-1", subtype: "end_input", payload: undefined });
-    const ack = await driver.nextFrame();
-    expect(ack?.type).toBe("control_response");
-    expect((ack as ControlResponseFrame).ok).toBe(true);
-    pushFrame(entries, ack!);
-
-    const eof = await driver.nextFrame();
-    expect(eof).toBeNull();
-
-    const exitInfo = await proc.exited; // natural exit — proves the engine terminates on its own
-    pushExit(entries, { code: exitInfo.code, signal: exitInfo.signal });
-    return normalizeTrace(entries);
-  } finally {
-    proc.kill();
-    await proc.exited;
-  }
-}
-
-// --- Task 9 (WS-05 §7): resume across a NEW process/instance, same leg -------------------------
-//
-// Two separate query() calls (two separate SpawnedRuntimeProcess instances — a real child/compiled
-// leg genuinely exits between them) sharing the SAME sessionId over the SAME leg's spawnHook, which
-// already merges in TEST_WINTER_HOME for every leg (Task 8's HARD CONSTRAINT) — so this exercises a
-// real cross-process resume, not merely in-process state reuse. The "reflect" test provider
-// (provider/mock.ts) is what lets the SECOND run's assistant reply prove "the provider saw the
-// first run's history" from OUTSIDE the process, on every leg including a real spawned child.
 async function traceResumeScenario(leg: LegName): Promise<{ trace: ConformanceTraceEntry[]; sessionId: string; secondAssistantText: string }> {
   const sessionId = randomUUID();
   const entries: ConformanceTraceEntry[] = [];
@@ -1704,6 +1687,319 @@ function registerEquivalenceScenarios(legA: LegName, legB: LegName): void {
     expect(typeof outcome.messageId).toBe("string");
   }, 20_000);
 
+  // --- Phase 6 Task 10: the PROVIDER equivalence scenarios --------------------------------------
+  //
+  // Every scenario below runs a REAL adapter -- resolved from the compiled catalog by the production
+  // selection path -- against ONE loopback fake this harness starts, on every leg this pairing
+  // covers. That is the whole claim: an in-memory session, a spawned `winter` child and (when
+  // WINTER_COMPILED_BIN is set) the compiled binary all reach the SAME 127.0.0.1 port, and their
+  // frame streams are identical.
+  //
+  // WHY THE FAKE IS STARTED HERE AND NOT PER LEG. Two fakes would prove that two sessions each talked
+  // to their own server, which is not the question. One fake means one request log, and that log is
+  // the ground truth for what a provider was actually asked -- never adapter intent.
+  //
+  // `connection.baseUrl` makes this a USER endpoint by definition (R6-11), which is correct and is
+  // itself asserted: no privileged header may ride it. `local: true` is required because plain http
+  // to a loopback address is refused unless the profile declares a local installation.
+  function fakeProvider(fake: ScenarioFake): Options["provider"] {
+    return {
+      providerId: "unused-when-the-model-is-qualified",
+      authRef: { kind: "inline", value: "test" },
+      connection: { baseUrl: fake.url, local: true },
+    };
+  }
+
+  for (const [name, model, path] of [
+    ["p6-anthropic-fake", SCENARIO_MODELS.anthropic, "/v1/messages"],
+    ["p6-openai-responses-fake", SCENARIO_MODELS.openaiResponses, "/responses"],
+    ["p6-openai-chat-fake", SCENARIO_MODELS.openaiChat, "/chat/completions"],
+    ["p6-gemini-fake", SCENARIO_MODELS.gemini, ":streamGenerateContent"],
+  ] as const) {
+    test(`${name}: text -> tool round -> final, on every leg against the SAME loopback fake`, async () => {
+      const fake = await startScenarioFake();
+      try {
+        const scenario = { prompt: "run the provider scenario", model, provider: fakeProvider(fake), allowedTools: [SCENARIO_TOOL_NAME], registryBackedTools: true } satisfies QueryScenarioOptions;
+        const a = await traceViaQuery(legA, scenario);
+        const b = await traceViaQuery(legB, scenario);
+        // GEMINI MINTS ITS OWN CALL IDS. `generateContent`'s `functionCall` carries no id at all, so
+        // the adapter has to invent one per call — a genuinely per-run value, like every uuid this
+        // file already scrubs, and NOT a cross-leg divergence.
+        const scrubCallIds = (entries: ConformanceTraceEntry[]): ConformanceTraceEntry[] =>
+          JSON.parse(JSON.stringify(entries).replace(/google-call-[0-9a-f]+-\d+/g, "google-call-SCRUBBED")) as ConformanceTraceEntry[];
+        expect(compareTraces(scrubCallIds(a.trace), scrubCallIds(b.trace))).toEqual([]);
+        expect(a.thrown).toBeUndefined();
+        expect(b.thrown).toBeUndefined();
+
+        // The shape of a real tool round: text+call, the tool result, then the final answer.
+        expect(a.trace.map((e) => e.kind)).toEqual(["system/init", "assistant", "user", "assistant", "result", "exit"]);
+
+        // R6-9: `system/init.model` is WHAT THE CALLER PASSED, and the RESOLVED identity rides the
+        // Winter-only extension -- WRITTEN BY PRODUCTION, on a real spawned process, not by a test.
+        const init = a.trace[0]!.payload as { model: string; apiKeySource: string; winter_provider?: Record<string, unknown> };
+        expect(init.model).toBe(model);
+        expect(init.apiKeySource).toBe("none");
+        expect(init.winter_provider).toBeDefined();
+        expect(init.winter_provider?.modelKey).toBe(model);
+        expect(init.winter_provider?.providerId).toBe(model.slice(0, model.indexOf("/")));
+        expect(typeof init.winter_provider?.adapterId).toBe("string");
+        expect(init.winter_provider?.authRefKind).toBe("inline");
+
+        // The final text came from the FAKE, so the whole chain ran.
+        const final = a.trace[3]!.payload as { message: { content: Array<{ type: string; text?: string }> } };
+        expect(final.message.content.some((blk) => blk.type === "text" && blk.text === SCENARIO_FINAL_TEXT)).toBe(true);
+
+        // GROUND TRUTH: two requests per leg, on this family's own path, and NO privileged header on
+        // a user endpoint.
+        const matching = fake.requests.filter((r) => r.path.endsWith(path));
+        expect(matching.length).toBe(4); // two legs x (tool turn + final turn)
+        expect(matching[0]?.method).toBe("POST");
+        for (const request of matching) {
+          expect(request.headers["originator"]).toBeUndefined();
+          expect(request.headers["openai-organization"]).toBeUndefined();
+        }
+        // The second request of each leg carries the tool RESULT back -- the round genuinely closed.
+        expect(matching.filter((r) => /tool_result|function_call_output|functionResponse|"role":"tool"/.test(r.body)).length).toBe(2);
+        // THE WIRE MODEL ID, on EVERY request (review round 1's recommendation). The catalog KEY used
+        // to go out here -- `anthropic/claude-sonnet-5`, a name no provider has heard of -- and the
+        // goldens are byte-frozen against the fixed version, so without this assertion a regression
+        // would only be caught if it happened to move a golden. `wireModel` is the descriptor's own
+        // `upstreamId`: the part of the key after the provider prefix.
+        // Gemini puts the model in the PATH (`/v1beta/models/<id>:streamGenerateContent`) rather than
+        // in the body, so the assertion is "on the request", not "in the body" -- the same claim
+        // either way, and phrasing it as the body alone would silently pass for that family.
+        const wireModel = model.slice(model.indexOf("/") + 1);
+        expect(matching.every((r) => r.body.includes(`"model":"${wireModel}"`) || r.path.includes(wireModel))).toBe(true);
+        expect(matching.some((r) => r.body.includes(`"model":"${model}"`) || r.path.includes(encodeURIComponent(model)))).toBe(false);
+      } finally {
+        await fake.close();
+      }
+    });
+  }
+
+  test("p6-stream-events: `includePartialMessages` forwards the raw stream vocabulary, identically on every leg", async () => {
+    const fake = await startScenarioFake();
+    try {
+      const scenario = {
+        prompt: "stream it",
+        model: SCENARIO_MODELS.anthropic,
+        provider: fakeProvider(fake),
+        includePartialMessages: true,
+        allowedTools: [SCENARIO_TOOL_NAME],
+        registryBackedTools: true,
+      } satisfies QueryScenarioOptions;
+      const a = await traceViaQuery(legA, scenario);
+      const b = await traceViaQuery(legB, scenario);
+      // `ttft_ms` is a REAL-CLOCK measurement that rides the first `stream_event` of each forwarded
+      // generation (R6-G). Two legs measure two different machines' worth of latency; scrubbing it is
+      // the same treatment every other volatile value in this file already gets.
+      const scrubTtft = (entries: ConformanceTraceEntry[]): ConformanceTraceEntry[] =>
+        JSON.parse(JSON.stringify(entries).replace(/\\?"ttft_ms\\?":\d+/g, '"ttft_ms":0')) as ConformanceTraceEntry[];
+      expect(compareTraces(scrubTtft(a.trace), scrubTtft(b.trace))).toEqual([]);
+      const streamEvents = a.trace.filter((e) => e.kind === "stream_event");
+      expect(streamEvents.length).toBeGreaterThan(0);
+      // R6-5: adapters normalize every family onto the PINNED Anthropic-shaped raw vocabulary.
+      const names = new Set(streamEvents.map((e) => ((e.payload as { event?: { type?: string } }).event?.type ?? "")));
+      expect(names.has("message_start")).toBe(true);
+      expect(names.has("content_block_delta")).toBe(true);
+      // R6-G: `ping` never reaches the consumer.
+      expect(names.has("ping")).toBe(false);
+    } finally {
+      await fake.close();
+    }
+  });
+
+  test("p6-stream-events (negative control): WITHOUT includePartialMessages there is not one stream_event", async () => {
+    const fake = await startScenarioFake();
+    try {
+      const scenario = { prompt: "stream it", model: SCENARIO_MODELS.anthropic, provider: fakeProvider(fake), allowedTools: [SCENARIO_TOOL_NAME], registryBackedTools: true } satisfies QueryScenarioOptions;
+      const a = await traceViaQuery(legA, scenario);
+      const b = await traceViaQuery(legB, scenario);
+      expect(compareTraces(a.trace, b.trace)).toEqual([]);
+      expect(a.trace.filter((e) => e.kind === "stream_event").length).toBe(0);
+    } finally {
+      await fake.close();
+    }
+  });
+
+  test("p6-retry-ratelimit: a 429 becomes `api_retry`, identically on every leg — and NEVER `rate_limit_event` (R6-B)", async () => {
+    const fake = await startScenarioFake({ firstAttemptStatus: 429 });
+    try {
+      const scenario = { prompt: "retry me", model: SCENARIO_MODELS.anthropic, provider: fakeProvider(fake), allowedTools: [SCENARIO_TOOL_NAME], registryBackedTools: true } satisfies QueryScenarioOptions;
+      const a = await traceViaQuery(legA, scenario);
+      const b = await traceViaQuery(legB, scenario);
+      // `retry_delay_ms` is a real-clock figure; everything else about the frame is fixed.
+      const scrubDelay = (entries: ConformanceTraceEntry[]): ConformanceTraceEntry[] =>
+        JSON.parse(JSON.stringify(entries).replace(/\\?"retry_delay_ms\\?":\d+/g, '"retry_delay_ms":0')) as ConformanceTraceEntry[];
+      expect(compareTraces(scrubDelay(a.trace), scrubDelay(b.trace))).toEqual([]);
+      expect(a.thrown).toBeUndefined();
+
+      // `system/api_retry`: `kindOfMessage` renders every `type: "system"` frame as `system/<subtype>`.
+      const retries = a.trace.filter((e) => e.kind === "system/api_retry");
+      expect(retries.length).toBeGreaterThan(0);
+      const first = retries[0]!.payload as { attempt: number; error_status: number; error: string; max_retries: number };
+      expect(first.error_status).toBe(429);
+      expect(first.error).toBe("rate_limit");
+      expect(first.attempt).toBe(1);
+      // R6-B: an API-KEY 429 is `api_retry`, never `rate_limit_event` — whose vocabulary is
+      // subscription/overage-shaped. Header-derived limits never become frames.
+      expect(a.trace.filter((e) => e.kind === "system/rate_limit_event").length).toBe(0);
+      // The retry actually re-sent: the fake saw a second request on the same path.
+      expect(fake.requests.filter((r) => r.path === "/v1/messages").length).toBeGreaterThan(2);
+    } finally {
+      await fake.close();
+    }
+  });
+
+  test("p6-provider-failure (R6-F): a terminal provider failure lands on `success`+`is_error`, and query() ALSO throws — on every leg", async () => {
+    // 400, not 500: a bad_request is terminal on the FIRST attempt (R6-6 retries only
+    // 408/409/429/5xx/network/timeout), so this scenario proves the failure SHAPE without spending a
+    // real exponential backoff per leg to get there.
+    const fake = await startScenarioFake({ alwaysFailStatus: 400 });
+    try {
+      const scenario = { prompt: "fail", model: SCENARIO_MODELS.anthropic, provider: fakeProvider(fake), allowedTools: [SCENARIO_TOOL_NAME], registryBackedTools: true } satisfies QueryScenarioOptions;
+      const a = await traceViaQuery(legA, scenario);
+      const b = await traceViaQuery(legB, scenario);
+      const scrubDelay = (entries: ConformanceTraceEntry[]): ConformanceTraceEntry[] =>
+        JSON.parse(JSON.stringify(entries).replace(/\\?"retry_delay_ms\\?":\d+/g, '"retry_delay_ms":0')) as ConformanceTraceEntry[];
+      expect(compareTraces(scrubDelay(a.trace), scrubDelay(b.trace))).toEqual([]);
+
+      // The PINNED failure shape, capture (I): not a new result subtype.
+      const result = a.trace.find((e) => e.kind === "result")!.payload as { subtype: string; is_error?: boolean; terminal_reason?: string; api_error_status?: number | null };
+      expect(result.subtype).toBe("success");
+      expect(result.is_error).toBe(true);
+      expect(result.terminal_reason).toBe("api_error");
+      // ...AND `query()` throws after yielding it.
+      expect(a.thrown).toBeInstanceOf(ResultError);
+      expect(b.thrown).toBeInstanceOf(ResultError);
+    } finally {
+      await fake.close();
+    }
+  });
+
+  test("p6-resume-identity: the resolved identity survives a resume, on every leg", async () => {
+    const fake = await startScenarioFake();
+    try {
+      const sessionId = randomUUID();
+      const scenario: Omit<QueryScenarioOptions, "prompt"> = { model: SCENARIO_MODELS.anthropic, provider: fakeProvider(fake), allowedTools: [SCENARIO_TOOL_NAME], registryBackedTools: true };
+      for (const leg of [legA, legB]) {
+        const id = `${sessionId}-${leg}`;
+        const first = await traceViaQuery(leg, { ...scenario, prompt: "first", sessionId: id });
+        expect(first.thrown).toBeUndefined();
+        const resumed = await traceViaQuery(leg, { ...scenario, prompt: "second", resume: id });
+        expect(resumed.thrown).toBeUndefined();
+        const init = resumed.trace[0]!.payload as { winter_provider?: Record<string, unknown> };
+        // THE POINT: a resumed session re-resolves the same identity rather than starting anonymous.
+        expect(init.winter_provider?.modelKey).toBe(SCENARIO_MODELS.anthropic);
+        expect(init.winter_provider?.providerId).toBe("anthropic");
+      }
+    } finally {
+      await fake.close();
+    }
+  });
+
+  test("p6-resume-identity (switch half): a DIFFERENT model on resume applies at the first boundary and announces `model_switch`, on every leg", async () => {
+    // The brief's second half, and it is a different claim from the one above: resuming with the SAME
+    // model must keep the identity, and resuming with ANOTHER must (a) actually switch -- the fake
+    // sees the NEW model id on the wire -- and (b) say so on the Winter-only `system/model_switch`
+    // frame, at the first quiescent boundary rather than mid-turn. Without the frame a host has no
+    // way to tell a switched session from one that silently ignored its own configuration.
+    const fake = await startScenarioFake();
+    try {
+      const sessionId = randomUUID();
+      const base: Omit<QueryScenarioOptions, "prompt"> = { provider: fakeProvider(fake), allowedTools: [SCENARIO_TOOL_NAME], registryBackedTools: true };
+      const traces: ScenarioResult[] = [];
+      for (const leg of [legA, legB]) {
+        const id = `${sessionId}-${leg}`;
+        const first = await traceViaQuery(leg, { ...base, model: SCENARIO_MODELS.anthropic, prompt: "first", sessionId: id });
+        expect(first.thrown).toBeUndefined();
+        const switched = await traceViaQuery(leg, { ...base, model: SCENARIO_CHILD_MODEL, prompt: "second", resume: id });
+        expect(switched.thrown).toBeUndefined();
+        traces.push(switched);
+
+        // (a) The resumed session re-resolved the NEW model, and reports it.
+        const init = switched.trace[0]!.payload as { model: string; winter_provider?: Record<string, unknown> };
+        expect(init.model).toBe(SCENARIO_CHILD_MODEL);
+        expect(init.winter_provider?.modelKey).toBe(SCENARIO_CHILD_MODEL);
+
+        // (b) The switch is ANNOUNCED. `system/model_switch` carries the from/to pair and the reason.
+        const switchFrames = switched.trace.filter((e) => e.kind === "system/model_switch");
+        expect(switchFrames.length).toBe(1);
+        const frame = switchFrames[0]!.payload as { reason: string; from_model: string; to_model: string; provider: string };
+        expect(frame.reason).toBe("set_model");
+        expect(frame.from_model).toBe(SCENARIO_MODELS.anthropic);
+        expect(frame.to_model).toBe(SCENARIO_CHILD_MODEL);
+        expect(frame.provider).toBe("anthropic");
+      }
+      // And the two legs agree frame for frame.
+      expect(compareTraces(traces[0]!.trace, traces[1]!.trace)).toEqual([]);
+      // GROUND TRUTH: the resumed turn genuinely went out under the NEW wire id.
+      expect(fake.requests.some((r) => r.body.includes(`"model":"${SCENARIO_CHILD_WIRE_ID}"`))).toBe(true);
+    } finally {
+      await fake.close();
+    }
+  });
+
+  test("p6-resolution-failure: an unresolvable model still emits `system/init`, then R6-F's result shape, then throws — on every leg", async () => {
+    // REVIEW ROUND 1, CRITICAL A. R6-9's refusal is "surfaced in T1's captured failure shape", and
+    // capture (I)'s shape HAS an init frame in it. Refusing at construction produced zero frames and
+    // a `CLIConnectionError`, so a host learned nothing from the stream at all.
+    //
+    // No fake is needed and none is started: the point is that NOTHING is ever sent. A model no
+    // catalog contains cannot produce a request, and the absence of one is part of the claim.
+    const scenario = { prompt: "resolve me", model: "anthropic/definitely-not-a-model-t10", provider: { providerId: "anthropic", authRef: { kind: "inline" as const, value: "test" } } } satisfies QueryScenarioOptions;
+    const a = await traceViaQuery(legA, scenario);
+    const b = await traceViaQuery(legB, scenario);
+    expect(compareTraces(a.trace, b.trace)).toEqual([]);
+
+    // (1) THE SESSION STARTED. An init frame, reporting the model the CALLER passed...
+    expect(a.trace[0]!.kind).toBe("system/init");
+    const init = a.trace[0]!.payload as { model: string; winter_provider?: unknown };
+    expect(init.model).toBe("anthropic/definitely-not-a-model-t10");
+    // ...and NO `winter_provider`, because nothing resolved. Reporting one would be a fabrication.
+    expect(init.winter_provider).toBeUndefined();
+
+    // (2) THE PINNED FAILURE SHAPE (capture (I)): not a new result subtype, and `api_error_status`
+    // is null because no request was ever made.
+    const result = a.trace.find((e) => e.kind === "result")!.payload as { subtype: string; is_error?: boolean; terminal_reason?: string; api_error_status?: number | null };
+    expect(result.subtype).toBe("success");
+    expect(result.is_error).toBe(true);
+    expect(result.terminal_reason).toBe("api_error");
+    expect(result.api_error_status).toBeNull();
+
+    // (3) ...AND `query()` throws after yielding it.
+    expect(a.thrown).toBeInstanceOf(ResultError);
+    expect(b.thrown).toBeInstanceOf(ResultError);
+  });
+
+  test("p6-child-own-provider (R6-17): a child with its OWN model runs off its OWN provider — the fake saw the CHILD's model id", async () => {
+    const fake = await startScenarioFake();
+    try {
+      // The child's definition names a DIFFERENT model in the same provider. R6-17's whole point is
+      // that the field reaching `AgentDefinition.model` proves nothing until something downstream
+      // resolves it -- so the assertion is on the wire: a request body carrying the CHILD's model id,
+      // which can only be there if a provider was built for it.
+      const childModel = SCENARIO_CHILD_MODEL;
+      const scenario = {
+        prompt: `${SCENARIO_DELEGATE_MARKER}: delegate to the probe`,
+        model: SCENARIO_MODELS.anthropic,
+        provider: fakeProvider(fake),
+        allowedTools: ["Agent", SCENARIO_TOOL_NAME],
+        agents: { [SCENARIO_CHILD_AGENT]: { description: "the R6-17 probe", prompt: "you are the probe", model: childModel } },
+        registryBackedTools: true,
+      } satisfies QueryScenarioOptions;
+      const a = await traceViaQuery(legA, scenario);
+      expect(a.thrown).toBeUndefined();
+      const bodies = fake.requests.map((r) => r.body);
+      // The PARENT's model id is on the wire...
+      expect(bodies.some((body) => body.includes('"model":"claude-sonnet-5"'))).toBe(true);
+      // ...and so is the CHILD's, which is only possible if `resolveChildProvider` built one.
+      expect(bodies.some((body) => body.includes(`"model":"${SCENARIO_CHILD_WIRE_ID}"`))).toBe(true);
+    } finally {
+      await fake.close();
+    }
+  });
+
   test("interrupt mid-turn", async () => {
     const a = await traceInterrupt(legA);
     const b = await traceInterrupt(legB);
@@ -1724,17 +2020,15 @@ function registerEquivalenceScenarios(legA: LegName, legB: LegName): void {
   // mid-turn (rpcprobe test-provider arm) — proves the round trip (request out, scripted answer in,
   // answer embedded in the reply) is leg-invariant, the same way every other scenario here proves
   // leg-invariance for host-originated control traffic.
-  test("runtime-originated control RPC mid-turn (rpcprobe)", async () => {
-    const a = await traceRpcProbe(legA);
-    const b = await traceRpcProbe(legB);
-    expect(compareTraces(a, b)).toEqual([]);
-    expect(a.map((e) => e.kind)).toEqual(["init", "system/init", "control_request", "assistant", "result", "control_response", "exit"]);
-    const assistantMsg = a[3]!.payload as { message: { content: unknown } };
-    expect(assistantMsg.message.content).toEqual([{ type: "text", text: "rpc reply: pong" }]);
-    const resultMsg = a[4]!.payload as { subtype?: string; result?: string };
-    expect(resultMsg.subtype).toBe("success");
-    expect(resultMsg.result).toBe("rpc reply: pong");
-  });
+  // Phase 6 Task 10 (R6-13): the `rpcprobe` scenario is GONE with the turn kind it drove.
+  //
+  // Its claim -- "a runtime-originated control_request round-trips identically on every leg" -- is
+  // now made by two REAL paths in this same function: the "Ruling P2-B" permission scenario (a
+  // genuine `permission` control_request the host answers with an updatedInput) and the
+  // hooked-tool-round scenario (a genuine `hook` one, with its public lifecycle frames). Both run on
+  // every leg this pairing covers, including the compiled binary. The scaffold was the only reason
+  // `rpc_probe` existed on `ProviderTurn`, and a scaffold that duplicates a shipped path is a second
+  // implementation of it.
 
   test("error-result-then-throw (boom)", async () => {
     const a = await traceViaQuery(legA, { prompt: "hi", testProviderName: "boom" });

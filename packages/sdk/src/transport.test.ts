@@ -43,7 +43,7 @@ const initFrame = (protocolVersion: string = PROTOCOL_VERSION) =>
     protocolVersion: protocolVersion as `${number}.${number}`,
     sessionId: "s",
     cwd: "/x",
-    model: "sonnet",
+    model: "winter-test/echo",
     permissionMode: "default",
     tools: [],
   });
@@ -51,7 +51,7 @@ const initFrame = (protocolVersion: string = PROTOCOL_VERSION) =>
 const systemFrame = () =>
   encodeFrame({
     type: "data",
-    message: { type: "system", subtype: "init", session_id: "s", cwd: "/x", model: "sonnet", permissionMode: "default", tools: [] },
+    message: { type: "system", subtype: "init", session_id: "s", cwd: "/x", model: "winter-test/echo", permissionMode: "default", tools: [] },
   });
 
 // --- resolution order ---------------------------------------------------------------------------
@@ -224,6 +224,10 @@ test("abort signal drains buffered frames then the iterator ends with the pinned
     for await (const msg of query({
       prompt: "hi",
       options: {
+        // Phase 6 Task 10: production selection is catalog-first and refuses a model it cannot
+        // resolve (R6-9), so a scripted double is reached through the reserved namespace (R6-13)
+        // rather than by handing `inMemoryProcess` a function and leaving `model` at its default.
+        model: "winter-test/echo",
         spawnClaudeCodeProcess: (opts) => inMemoryProcess(opts.args, hangingProvider),
         abortController: controller,
       },

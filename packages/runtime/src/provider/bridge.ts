@@ -25,6 +25,7 @@
 //      carrying the provider's status and structured code -- never a raw body, never credential
 //      material, never opaque state.
 import type { ProviderAdapter, ProviderContext, ProviderError, ProviderEvent, ProviderMessageLike, ResolvedModel, TurnRequest } from "@yanlinglabs/winter-provider-runtime";
+import { shouldRequestSummary } from "@yanlinglabs/winter-provider-runtime";
 import type { WireContentBlock, WireStreamEvent } from "@yanlinglabs/winter-agent-sdk";
 import {
   ProviderTurnError,
@@ -95,6 +96,22 @@ export interface AdapterProviderOptions {
   renderer?: HistoryRenderer;
   /** Overrides the adapter on `resolved`. The one caller is a test that wants a scripted adapter against a real `ResolvedModel`. */
   adapter?: ProviderAdapter;
+  /**
+   * Phase 6 Task 10 (Lane C wiring item 2): THE RESUMED CONTINUATION CHAIN.
+   *
+   * A GETTER, because the chain is re-attached asynchronously at the start of a run
+   * (`attachContinuationChain`) — long after this provider is constructed — so a captured value would
+   * always be the empty map this option replaces.
+   *
+   * What it buys: `createHistoryRenderer` reads a message's `origin` off the message itself when the
+   * engine already annotated it, and otherwise off `chain.get(message.uuid)`. The second path is the
+   * one that matters for a RESUMED history whose `summary` records (R6-8's foreign reasoning, which
+   * may never enter the transcript) live only in the sidecar: without the chain those messages render
+   * with no decoration at all, which looks exactly like a session that had nothing to say.
+   *
+   * Absent -> an empty chain, which is what T3 shipped and what a non-persistent session genuinely has.
+   */
+  chain?: () => ContinuationChain;
 }
 
 /**
@@ -127,12 +144,25 @@ export function adapterAsProvider(resolved: ResolvedModel, ctx: ProviderContext,
 
   return {
     async generate(input: ProviderRequest): Promise<FoldedProviderTurn> {
-      // The chain is the RENDERER's input, and at this seam the engine's own messages already carry
-      // their annotations -- so an empty chain is the honest value here rather than a re-derivation.
-      // Lane C's renderer reads a real one; the identity renderer ignores it entirely.
-      const rendered = renderer.render(input.messages, new Map(), target);
+      // The chain is the RENDERER's input. The engine's own messages already carry their annotations
+      // for everything THIS run produced; `opts.chain` is what supplies the RESUMED half (T10's
+      // wiring passes the sidecar-derived chain, see `AdapterProviderOptions.chain`). Absent -> the
+      // empty map T3 shipped, which is what a non-persistent session genuinely has.
+      const rendered = renderer.render(input.messages, opts.chain?.() ?? new Map(), target);
       const request: TurnRequest = {
-        model: input.model ?? resolved.providerModelId,
+        // THE PROVIDER-LOCAL ID, never the catalog KEY.
+        //
+        // The engine puts `currentModel` on every request, and `currentModel` starts at `config.model`
+        // — which for a catalog-resolved session is the QUALIFIED `<providerId>/<model>` key (R6-9's
+        // own selection spelling). Forwarding it verbatim put `anthropic/claude-sonnet-5` in the wire
+        // body of every such session: a model id no provider has ever heard of, on every request, and
+        // invisible to any test that passed `model` explicitly. The equivalence scenarios found it
+        // because a loopback fake records what was actually sent.
+        //
+        // A DIFFERENT id still passes through verbatim, which is what makes `set_model` to another
+        // model on the same provider work — the qualified form is translated, anything else is the
+        // caller's own word.
+        model: input.model === undefined || input.model === resolved.modelKey ? resolved.providerModelId : input.model,
         messages: rendered as ProviderMessageLike[],
         ...(input.system !== undefined ? { system: input.system } : {}),
         ...(input.tools !== undefined ? { tools: input.tools } : {}),
@@ -140,9 +170,15 @@ export function adapterAsProvider(resolved: ResolvedModel, ctx: ProviderContext,
         ...(input.effort !== undefined ? { effort: input.effort } : {}),
         ...(input.thinking !== undefined ? { thinking: input.thinking } : {}),
         ...(input.signal !== undefined ? { signal: input.signal } : {}),
-        // Ask for a readable SUMMARY only where the model's own evidence says how, and only when the
-        // model exposes one at all. Never a request for raw reasoning.
-        ...(target.readableState !== "none" ? { requestSummary: true } : {}),
+        // Ask for a readable SUMMARY only where the model's own evidence says HOW to ask.
+        //
+        // T10 RECONCILIATION (Lane C wiring item 7). This keyed on `readableState !== "none"`, which
+        // is a different question: `readableState` says a summary is READABLE, `summaryRequest` says
+        // the descriptor knows which field to set to ask for one. A model with the first and not the
+        // second got `requestSummary: true` and every adapter then had nothing to do with it —
+        // silently, since asking for nothing is indistinguishable from not asking. `shouldRequestSummary`
+        // is Lane C's own predicate and is now the single reader of that evidence.
+        ...(shouldRequestSummary(resolved.descriptor) ? { requestSummary: true } : {}),
       };
 
       let stream: AsyncIterable<ProviderEvent>;

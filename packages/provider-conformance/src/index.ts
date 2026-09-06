@@ -70,3 +70,35 @@ export type {
 } from "./corpus/classifier-safety.ts";
 export { LIVE_CASES, LiveCaseAssertionError, formatLiveReport, runLiveCases } from "./live/index.ts";
 export type { LiveCaseContext, LiveCaseId, LiveCaseOutcome, LiveCaseSpec, LiveReport, RunLiveCasesOptions } from "./live/index.ts";
+
+// --- Phase 6 Task 10: the per-family fakes and corpora, as NAMESPACES ----------------------------
+//
+// Four adapter lanes added `fakes/<family>.ts` and `corpus/<family>.ts` beside the spine's two frozen
+// files exactly as R6-12 told them to — and this barrel, frozen for the same reason, could not name
+// them. So every cross-package consumer reached them by relative path, which is the drift a barrel
+// exists to prevent.
+//
+// NAMESPACES RATHER THAN A FLAT `export *`, and the reason is not style. `corpus/anthropic.ts` and
+// `corpus/google.ts` BOTH export `collectEvents`, `foldTurn` and `foldFailure` — a star-export
+// collision is silently EXCLUDED from the re-export set rather than reported, so a flat barrel would
+// publish a surface that quietly omits three names each lane genuinely uses. A namespace per module
+// is collision-proof by construction, and it keeps `anthropicCorpus.foldTurn` readable at the call
+// site about which family's fold it is.
+export * as anthropicCorpus from "./corpus/anthropic.ts";
+export * as azureCorpus from "./corpus/azure.ts";
+export * as bedrockCorpus from "./corpus/bedrock.ts";
+export * as googleCorpus from "./corpus/google.ts";
+export * as openaiCorpus from "./corpus/openai.ts";
+export * as openaiScenarios from "./corpus/openai-scenarios.ts";
+export * as vertexCorpus from "./corpus/vertex.ts";
+
+export * as anthropicFake from "./fakes/anthropic-messages.ts";
+export * as azureFake from "./fakes/azure-openai.ts";
+export * as bedrockFake from "./fakes/bedrock.ts";
+export * as codexFake from "./fakes/codex-oauth.ts";
+export * as geminiFake from "./fakes/gemini.ts";
+export * as openaiChatFake from "./fakes/openai-chat.ts";
+export * as openaiModelsFake from "./fakes/openai-models.ts";
+export * as openaiResponsesFake from "./fakes/openai-responses.ts";
+export * as vertexFake from "./fakes/vertex.ts";
+export { OPAQUE_FIELD_NAMES, redactOpaqueFields } from "./fakes/redact-opaque.ts";

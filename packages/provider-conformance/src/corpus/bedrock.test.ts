@@ -179,6 +179,33 @@ describe("the fake's own signature check is load-bearing", () => {
   });
 });
 
+describe("T10 review round 1 (#16): Lane C's decoration text reaches the Bedrock WIRE", () => {
+  test("the decoration rides the request VERBATIM, exactly once, as a plain text part", async () => {
+    // The other four families are asserted on the recorded request in
+    // `runtime/src/provider/session-provider.test.ts`; Bedrock could not join them there because a
+    // Bedrock request needs SigV4 material and a region the shared scenario fake does not serve.
+    // Lane N's OWN fake does serve both, so the assertion belongs here — the controller's ruling was
+    // about the assertion existing on a real recorded request, not about which fake carries it.
+    const DECORATION = "WINTER-T10-DECORATION-MARKER: recovered reasoning from a prior model";
+    const fake = await startBedrockFake({ scenarios: bedrockScenarios() });
+    try {
+      const harness = createBedrockHarness(fake);
+      await foldProviderStream(
+        harness.adapter.streamTurn(
+          { model: BEDROCK_CORPUS_MODEL, messages: [{ role: "user", content: "hi", decoration: { text: DECORATION, door: "tag" } }] },
+          harness.ctx,
+        ),
+      );
+      const body = fake.requests[0]!.body;
+      // VERBATIM, and EXACTLY ONCE: a second occurrence would mean the adapter wrapped it again on
+      // top of the renderer's own delimiters, which the controller's ruling forbids.
+      expect(body.split(DECORATION).length - 1).toBe(1);
+    } finally {
+      await fake.close();
+    }
+  });
+});
+
 describe("R6-L: privileged headers ride a GENERATED endpoint and are dropped for a USER one", () => {
   test("a generated endpoint carries x-amz-source-account, and it is part of the signature", async () => {
     const fake = await startBedrockFake({ scenarios: bedrockScenarios() });

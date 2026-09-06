@@ -333,7 +333,7 @@ describe("P1-N: recorded project dir name (record + apply half)", () => {
     try {
       const sessionId = randomUUID();
       const cwd = "/winter-fixture";
-      const config: RuntimeConfig = { sessionId, cwd, model: "sonnet" };
+      const config: RuntimeConfig = { sessionId, cwd, model: "winter-test/echo" };
       await runOneEnvelope(config, home, { WINTER_PROJECT_DIR_NAME: "custom-name" });
 
       const jsonlPath = join(home, "projects", "custom-name", `${sessionId}.jsonl`);
@@ -353,11 +353,11 @@ describe("P1-N: recorded project dir name (record + apply half)", () => {
     try {
       const sessionId = randomUUID();
       const cwd = "/winter-fixture";
-      const createConfig: RuntimeConfig = { sessionId, cwd, model: "sonnet" };
+      const createConfig: RuntimeConfig = { sessionId, cwd, model: "winter-test/echo" };
       await runOneEnvelope(createConfig, home, { WINTER_PROJECT_DIR_NAME: "custom-name" });
 
       // Resume in a NEW process/instance with the override UNSET this time.
-      const resumeConfig: RuntimeConfig = { sessionId: randomUUID(), cwd, model: "sonnet", resume: sessionId };
+      const resumeConfig: RuntimeConfig = { sessionId: randomUUID(), cwd, model: "winter-test/echo", resume: sessionId };
       await runOneEnvelope(resumeConfig, home, { WINTER_PROJECT_DIR_NAME: undefined });
 
       // Continued writes land in the ORIGINAL custom-name directory, never a fresh plain-default one.
@@ -388,10 +388,10 @@ describe("P1-N: recorded project dir name (record + apply half)", () => {
     try {
       const sessionId = randomUUID();
       const cwd = "/winter-fixture";
-      const createConfig: RuntimeConfig = { sessionId, cwd, model: "sonnet" };
+      const createConfig: RuntimeConfig = { sessionId, cwd, model: "winter-test/echo" };
       await runOneEnvelope(createConfig, home, { WINTER_PROJECT_DIR_NAME: "custom-name-original" });
 
-      const resumeConfig: RuntimeConfig = { sessionId: randomUUID(), cwd, model: "sonnet", resume: sessionId };
+      const resumeConfig: RuntimeConfig = { sessionId: randomUUID(), cwd, model: "winter-test/echo", resume: sessionId };
       await runOneEnvelope(resumeConfig, home, { WINTER_PROJECT_DIR_NAME: "totally-different-name" });
 
       const originalPath = join(home, "projects", "custom-name-original", `${sessionId}.jsonl`);
@@ -419,7 +419,7 @@ describe("resume wiring end-to-end (temp WINTER_HOME, in-memory leg)", () => {
     try {
       const cwd = "/winter-fixture";
       const firstId = randomUUID();
-      await runOneEnvelope({ sessionId: firstId, cwd, model: "sonnet" }, home, {});
+      await runOneEnvelope({ sessionId: firstId, cwd, model: "winter-test/echo" }, home, {});
 
       const projectKey = compatibilityKeys(cwd).transcriptProjectKey;
       const store = new WinterCompatibilitySessionStore({ winterHome: home });
@@ -427,7 +427,7 @@ describe("resume wiring end-to-end (temp WINTER_HOME, in-memory leg)", () => {
       const lastUuidBeforeResume = beforeResume![beforeResume!.length - 1]!.uuid;
 
       // continue: true — sessionId here is a throwaway; the engine overrides it with the resolved target.
-      await runOneEnvelope({ sessionId: randomUUID(), cwd, model: "sonnet", continue: true }, home, {});
+      await runOneEnvelope({ sessionId: randomUUID(), cwd, model: "winter-test/echo", continue: true }, home, {});
 
       const after = await store.load({ projectKey, sessionId: firstId });
       expect(after!.length).toBe(4); // 2 envelopes x (user + assistant)
@@ -473,7 +473,7 @@ describe("resume wiring end-to-end (temp WINTER_HOME, in-memory leg)", () => {
       try {
         // Ruling P2-I: allowedTools pre-approves both tool names so they execute — this test is
         // about resume fidelity, not permissions.
-        const continuousConfig: RuntimeConfig = { sessionId: randomUUID(), cwd, model: "sonnet", allowedTools: ["good", "bad"] };
+        const continuousConfig: RuntimeConfig = { sessionId: randomUUID(), cwd, model: "winter-test/echo", allowedTools: ["good", "bad"] };
         const proc = inMemoryProcess(["--config-json", JSON.stringify(continuousConfig)], continuousProvider, throwingTools, {
           WINTER_HOME: continuousHome,
         });
@@ -490,7 +490,7 @@ describe("resume wiring end-to-end (temp WINTER_HOME, in-memory leg)", () => {
       // --- split run: envelope 1 in run A, envelope 2 resumed in a NEW instance (run B) -----------
       const sessionId = randomUUID();
       await runOneEnvelopeCustom(
-        { sessionId, cwd, model: "sonnet", allowedTools: ["good", "bad"] }, // Ruling P2-I: same pre-approval as the continuous run above
+        { sessionId, cwd, model: "winter-test/echo", allowedTools: ["good", "bad"] }, // Ruling P2-I: same pre-approval as the continuous run above
         home,
         {},
         scriptedProvider([{ kind: "tool_use", calls: [{ id: "call1", name: "good", input: {} }, { id: "call2", name: "bad", input: {} }] }]),
@@ -505,7 +505,7 @@ describe("resume wiring end-to-end (temp WINTER_HOME, in-memory leg)", () => {
           return { kind: "text", text: "done" };
         },
       };
-      await runOneEnvelopeCustom({ sessionId: randomUUID(), cwd, model: "sonnet", resume: sessionId }, home, {}, splitProvider, stubExecutor, "again");
+      await runOneEnvelopeCustom({ sessionId: randomUUID(), cwd, model: "winter-test/echo", resume: sessionId }, home, {}, splitProvider, stubExecutor, "again");
 
       expect(splitCalls.length).toBe(1);
       // Phase 6 Task 3 (R6-7): an assistant message now carries its own entry uuid. The uuid is a
@@ -564,7 +564,7 @@ describe("resume wiring end-to-end (temp WINTER_HOME, in-memory leg)", () => {
       const continuousHome = home;
       try {
         // Ruling P2-I: allowedTools:["slow_tool"] pre-approves so execution genuinely starts.
-        const continuousConfig: RuntimeConfig = { sessionId: randomUUID(), cwd, model: "sonnet", allowedTools: ["slow_tool"] };
+        const continuousConfig: RuntimeConfig = { sessionId: randomUUID(), cwd, model: "winter-test/echo", allowedTools: ["slow_tool"] };
         const proc = inMemoryProcess(["--config-json", JSON.stringify(continuousConfig)], continuousProvider, blockingTools, {
           WINTER_HOME: continuousHome,
         });
@@ -596,7 +596,7 @@ describe("resume wiring end-to-end (temp WINTER_HOME, in-memory leg)", () => {
       await (async () => {
         // Ruling P2-I: allowedTools:["slow_tool"] pre-approves so execution genuinely starts.
         const proc = inMemoryProcess(
-          ["--config-json", JSON.stringify({ sessionId, cwd, model: "sonnet", allowedTools: ["slow_tool"] })],
+          ["--config-json", JSON.stringify({ sessionId, cwd, model: "winter-test/echo", allowedTools: ["slow_tool"] })],
           runAProvider,
           runABlockingTools,
           { WINTER_HOME: home },
@@ -616,7 +616,7 @@ describe("resume wiring end-to-end (temp WINTER_HOME, in-memory leg)", () => {
           return { kind: "text", text: "after interrupt" };
         },
       };
-      await runOneEnvelopeCustom({ sessionId: randomUUID(), cwd, model: "sonnet", resume: sessionId }, home, {}, splitProvider, stubExecutor, "again");
+      await runOneEnvelopeCustom({ sessionId: randomUUID(), cwd, model: "winter-test/echo", resume: sessionId }, home, {}, splitProvider, stubExecutor, "again");
 
       expect(splitCalls.length).toBe(1);
       // Phase 6 Task 3 (R6-7): an assistant message now carries its own entry uuid. The uuid is a
@@ -637,14 +637,14 @@ describe("resume wiring end-to-end (temp WINTER_HOME, in-memory leg)", () => {
     try {
       const cwd = "/winter-fixture";
       const originalId = randomUUID();
-      await runOneEnvelope({ sessionId: originalId, cwd, model: "sonnet" }, home, {});
+      await runOneEnvelope({ sessionId: originalId, cwd, model: "winter-test/echo" }, home, {});
 
       const projectKey = compatibilityKeys(cwd).transcriptProjectKey;
       const store = new WinterCompatibilitySessionStore({ winterHome: home });
       const originalPath = join(home, "projects", projectKey, `${originalId}.jsonl`);
       const originalBytesBefore = readFileSync(originalPath);
 
-      const { frames } = await runOneEnvelope({ sessionId: randomUUID(), cwd, model: "sonnet", resume: originalId, forkSession: true }, home, {});
+      const { frames } = await runOneEnvelope({ sessionId: randomUUID(), cwd, model: "winter-test/echo", resume: originalId, forkSession: true }, home, {});
       const initFrame = frames.find((f) => f.type === "init") as { sessionId: string } | undefined;
       expect(initFrame).toBeDefined();
       const forkedId = initFrame!.sessionId;
@@ -674,7 +674,7 @@ describe("resume wiring end-to-end (temp WINTER_HOME, in-memory leg)", () => {
 
       // Two envelopes so there's real content to truncate away.
       await (async () => {
-        const proc = inMemoryProcess(["--config-json", JSON.stringify({ sessionId, cwd, model: "sonnet" })], undefined, undefined, { WINTER_HOME: home });
+        const proc = inMemoryProcess(["--config-json", JSON.stringify({ sessionId, cwd, model: "winter-test/echo" })], undefined, undefined, { WINTER_HOME: home });
         proc.stdin.write(encodeFrame({ type: "user", text: "go" }));
         proc.stdin.write(encodeFrame({ type: "user", text: "again" }));
         proc.stdin.write(encodeFrame({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined }));
@@ -687,7 +687,7 @@ describe("resume wiring end-to-end (temp WINTER_HOME, in-memory leg)", () => {
       const atUuid = before![0]!.uuid!; // truncate back to right after the FIRST user entry — always set by this engine's own producer
 
       await runOneEnvelope(
-        { sessionId: randomUUID(), cwd, model: "sonnet", resume: sessionId, resumeSessionAt: atUuid, resumeDropsTurn: true },
+        { sessionId: randomUUID(), cwd, model: "winter-test/echo", resume: sessionId, resumeSessionAt: atUuid, resumeDropsTurn: true },
         home,
         {},
       );
@@ -718,7 +718,7 @@ describe("resume wiring end-to-end (temp WINTER_HOME, in-memory leg)", () => {
       // Two envelopes in ONE process, both echoed deterministically: u1("go")/a1("echo: go"),
       // u2("again")/a2("echo: again") — entries 0..3.
       await (async () => {
-        const proc = inMemoryProcess(["--config-json", JSON.stringify({ sessionId, cwd, model: "sonnet" })], echoProvider, stubExecutor, {
+        const proc = inMemoryProcess(["--config-json", JSON.stringify({ sessionId, cwd, model: "winter-test/echo" })], echoProvider, stubExecutor, {
           WINTER_HOME: home,
         });
         proc.stdin.write(encodeFrame({ type: "user", text: "go" }));
@@ -734,7 +734,7 @@ describe("resume wiring end-to-end (temp WINTER_HOME, in-memory leg)", () => {
       // Branch off u1: resumeSessionAt(u1Uuid) + one new envelope "rebranched" — abandons u2/a2
       // ("again"/"echo: again") on disk, grows a new branch off u1.
       await runOneEnvelopeCustom(
-        { sessionId: randomUUID(), cwd, model: "sonnet", resume: sessionId, resumeSessionAt: u1Uuid, resumeDropsTurn: true },
+        { sessionId: randomUUID(), cwd, model: "winter-test/echo", resume: sessionId, resumeSessionAt: u1Uuid, resumeDropsTurn: true },
         home,
         {},
         echoProvider,
@@ -753,7 +753,7 @@ describe("resume wiring end-to-end (temp WINTER_HOME, in-memory leg)", () => {
         },
       };
       await runOneEnvelopeCustom(
-        { sessionId: randomUUID(), cwd, model: "sonnet", resume: sessionId },
+        { sessionId: randomUUID(), cwd, model: "winter-test/echo", resume: sessionId },
         home,
         {},
         capturingProvider,
@@ -775,7 +775,7 @@ describe("resume wiring end-to-end (temp WINTER_HOME, in-memory leg)", () => {
     try {
       const explicitId = "44444444-4444-4444-8444-444444444444";
       const cwd = "/winter-fixture";
-      const { frames } = await runOneEnvelope({ sessionId: explicitId, cwd, model: "sonnet" }, home, {});
+      const { frames } = await runOneEnvelope({ sessionId: explicitId, cwd, model: "winter-test/echo" }, home, {});
 
       const initFrame = frames.find((f) => f.type === "init") as { sessionId: string } | undefined;
       expect(initFrame?.sessionId).toBe(explicitId);
@@ -793,7 +793,7 @@ describe("resume wiring end-to-end (temp WINTER_HOME, in-memory leg)", () => {
       const cwd = "/winter-fixture";
       const sessionId = randomUUID();
       const { frames } = await runOneEnvelope(
-        { sessionId, cwd, model: "sonnet", persistSession: false, resume: randomUUID(), continue: true },
+        { sessionId, cwd, model: "winter-test/echo", persistSession: false, resume: randomUUID(), continue: true },
         home,
         {},
       );
@@ -826,7 +826,7 @@ describe("Ruling P1-S: eager lease acquisition at resume resolution", () => {
       const sessionId = randomUUID();
       // A real session, genuinely resumable — the failure under test must come from the eager
       // lease check, never from findResumeTarget's own not-found path.
-      await runOneEnvelope({ sessionId, cwd, model: "sonnet" }, home, {});
+      await runOneEnvelope({ sessionId, cwd, model: "winter-test/echo" }, home, {});
 
       const projectKey = compatibilityKeys(cwd).transcriptProjectKey;
       const store = new WinterCompatibilitySessionStore({ winterHome: home });
@@ -844,7 +844,7 @@ describe("Ruling P1-S: eager lease acquisition at resume resolution", () => {
       let thrown: unknown;
       try {
         await resolveEngineSession({
-          config: { sessionId: randomUUID(), cwd, model: "sonnet", resume: sessionId },
+          config: { sessionId: randomUUID(), cwd, model: "winter-test/echo", resume: sessionId },
           resolveWinterHome: () => home,
           env: {},
         });
@@ -873,7 +873,7 @@ describe("Ruling P1-S: eager lease acquisition at resume resolution", () => {
     try {
       const cwd = "/winter-fixture";
       const sessionId = randomUUID();
-      await runOneEnvelope({ sessionId, cwd, model: "sonnet" }, home, {});
+      await runOneEnvelope({ sessionId, cwd, model: "winter-test/echo" }, home, {});
       const projectKey = compatibilityKeys(cwd).transcriptProjectKey;
 
       dummy = Bun.spawn([process.execPath, "-e", "setInterval(() => {}, 2147483647);"], { stdout: "ignore", stderr: "ignore" });
@@ -881,7 +881,7 @@ describe("Ruling P1-S: eager lease acquisition at resume resolution", () => {
       writeFileSync(lockPath, JSON.stringify({ pid: dummy.pid, startTimeMs: Date.now() }));
 
       const proc = inMemoryProcess(
-        ["--config-json", JSON.stringify({ sessionId: randomUUID(), cwd, model: "sonnet", resume: sessionId })],
+        ["--config-json", JSON.stringify({ sessionId: randomUUID(), cwd, model: "winter-test/echo", resume: sessionId })],
         undefined,
         undefined,
         { WINTER_HOME: home },
@@ -923,7 +923,7 @@ describe("Task 8: resolveEngineSession's store journals PermissionUpdates (WS-07
     try {
       const sessionId = randomUUID();
       const cwd = "/winter-fixture";
-      const { store } = await resolveEngineSession({ config: { sessionId, cwd, model: "sonnet" }, resolveWinterHome: () => home, env: {} });
+      const { store } = await resolveEngineSession({ config: { sessionId, cwd, model: "winter-test/echo" }, resolveWinterHome: () => home, env: {} });
       expect(store?.recordPermissionUpdate).toBeDefined();
 
       const update: PermissionUpdate = { type: "addRules", rules: [{ toolName: "Bash", ruleContent: "rm -rf /tmp/x" }], behavior: "allow", destination: "userSettings" };
@@ -946,7 +946,7 @@ describe("Task 8: resolveEngineSession's store journals PermissionUpdates (WS-07
     try {
       const sessionId = randomUUID();
       const cwd = "/winter-fixture";
-      const { store } = await resolveEngineSession({ config: { sessionId, cwd, model: "sonnet" }, resolveWinterHome: () => home, env: {} });
+      const { store } = await resolveEngineSession({ config: { sessionId, cwd, model: "winter-test/echo" }, resolveWinterHome: () => home, env: {} });
       const update: PermissionUpdate = { type: "setMode", mode: "acceptEdits", destination: "session" };
       await store!.recordPermissionUpdate!(update, "session");
 
@@ -960,7 +960,7 @@ describe("Task 8: resolveEngineSession's store journals PermissionUpdates (WS-07
 
   test("persistSession:false: no store at all, so there is nothing to journal (matches every other SessionPersistence method's own contract)", async () => {
     const { store } = await resolveEngineSession({
-      config: { sessionId: randomUUID(), cwd: "/winter-fixture", model: "sonnet", persistSession: false },
+      config: { sessionId: randomUUID(), cwd: "/winter-fixture", model: "winter-test/echo", persistSession: false },
       resolveWinterHome: () => {
         throw new Error("must not be called when persistSession is false");
       },
@@ -983,7 +983,7 @@ describe("Task 10: resolveEngineSession's store journals hook audit records (WS-
     try {
       const sessionId = randomUUID();
       const cwd = "/winter-fixture";
-      const { store } = await resolveEngineSession({ config: { sessionId, cwd, model: "sonnet" }, resolveWinterHome: () => home, env: {} });
+      const { store } = await resolveEngineSession({ config: { sessionId, cwd, model: "winter-test/echo" }, resolveWinterHome: () => home, env: {} });
       expect(store?.recordHookAudit).toBeDefined();
 
       const entry: HookAuditRecord = {
@@ -1014,7 +1014,7 @@ describe("Task 10: resolveEngineSession's store journals hook audit records (WS-
     try {
       const sessionId = randomUUID();
       const cwd = "/winter-fixture";
-      const { store } = await resolveEngineSession({ config: { sessionId, cwd, model: "sonnet" }, resolveWinterHome: () => home, env: {} });
+      const { store } = await resolveEngineSession({ config: { sessionId, cwd, model: "winter-test/echo" }, resolveWinterHome: () => home, env: {} });
 
       const update: PermissionUpdate = { type: "addRules", rules: [{ toolName: "Bash", ruleContent: "ls *" }], behavior: "allow", destination: "userSettings" };
       await store!.recordPermissionUpdate!(update, "session");
@@ -1039,7 +1039,7 @@ describe("Task 10: resolveEngineSession's store journals hook audit records (WS-
 
   test("persistSession:false: no store at all, so there is nothing to journal (matches recordPermissionUpdate's own identical contract)", async () => {
     const { store } = await resolveEngineSession({
-      config: { sessionId: randomUUID(), cwd: "/winter-fixture", model: "sonnet", persistSession: false },
+      config: { sessionId: randomUUID(), cwd: "/winter-fixture", model: "winter-test/echo", persistSession: false },
       resolveWinterHome: () => {
         throw new Error("must not be called when persistSession is false");
       },

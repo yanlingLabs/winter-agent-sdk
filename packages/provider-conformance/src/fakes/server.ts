@@ -56,7 +56,11 @@ export interface StartFakeOptions {
   closeDeadlineMs?: number;
 }
 
-const CREDENTIAL_HEADERS: ReadonlySet<string> = new Set(["authorization", "x-api-key", "api-key", "x-goog-api-key", "proxy-authorization"]);
+// `x-amz-security-token` added at T10 (Lane N re-review concern 6): a SigV4 session token is
+// credential material exactly like a bearer, it rides its own header rather than `authorization`, and
+// without it here every recorded Bedrock request logged an operator's session token in full. The
+// redaction sweep is only as wide as this list.
+const CREDENTIAL_HEADERS: ReadonlySet<string> = new Set(["authorization", "x-api-key", "api-key", "x-goog-api-key", "proxy-authorization", "x-amz-security-token"]);
 
 /** Renders a header value for the log. A credential header keeps its SCHEME (which is diagnostic) and loses its material. */
 function redactHeaderValue(name: string, value: string): string {

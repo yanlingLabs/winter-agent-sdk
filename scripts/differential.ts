@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { query, encodeFrame, splitFrames, ResultError, type RuntimeConfig, type WinterFrame } from "@yanlinglabs/winter-agent-sdk";
 import { inMemoryProcess } from "winter-agent-runtime/testing";
-import { testProviderByName, scriptedProvider, registerTool, MCP_SDK_TEST_SERVER_NAME, MCP_SDK_TEST_TOOL_NAME, P5_FIXTURE_SKILL_NAME } from "winter-agent-runtime";
+import { testProviderByName, scriptedProvider, registerTool, MCP_SDK_TEST_SERVER_NAME, MCP_SDK_TEST_TOOL_NAME, P5_FIXTURE_SKILL_NAME, SCENARIO_MODELS, SCENARIO_TOOL_NAME, startScenarioFake } from "winter-agent-runtime";
 import { normalizeTrace, compareTraces, type ConformanceTraceEntry } from "winter-conformance/trace";
 
 // A pinned, synthetic cwd (never process.cwd()) so every recorded trace — and the committed golden
@@ -20,7 +20,17 @@ import { normalizeTrace, compareTraces, type ConformanceTraceEntry } from "winte
 // which is what keeps the determinism guarantee intact: a path that does not exist has no contents
 // to vary by machine. It is no longer an untouched string, and a future reader must not assume it.
 const FIXTURE_CWD = "/winter-fixture";
-const FIXTURE_MODEL = "sonnet";
+// Phase 6 Task 10 (R6-9/R6-13): the fixture model moved INTO the reserved namespace.
+//
+// Production selection is catalog-first now and refuses a model it cannot resolve -- the pinned
+// `"sonnet"` alias resolves to the `anthropic` provider only when a credential ref for it is
+// configured, and no test has (or may have) one. `winter-test/<name>` is the ONE door to an
+// in-process scripted double, and `WINTER_TEST_PROVIDER` remains the harness's alias for it,
+// honoured because `config.model` is already in that namespace.
+//
+// `system/init.model` reports WHAT THE CALLER PASSED (R6-9), so this value is visible in every
+// golden -- which is why the goldens move in the same commit as this line and in no other.
+const FIXTURE_MODEL = "winter-test/echo";
 
 // --- Phase 5 Task 8: the injected-context scrub ---------------------------------------------------
 //
@@ -81,7 +91,7 @@ export async function traceWinterPlainQuery(): Promise<ConformanceTraceEntry[]> 
     for await (const msg of query({
       prompt: "hi",
       options: {
-        model: "sonnet",
+        model: FIXTURE_MODEL,
         cwd: "/winter-fixture",
         spawnClaudeCodeProcess: (opts) => inMemoryProcess(opts.args, undefined, undefined, { ...opts.env, WINTER_HOME: winterHome }),
       },
@@ -1169,7 +1179,100 @@ const SCENARIOS: Scenario[] = [
   { name: "structured-output-round", trace: traceWinterStructuredOutputRound, goldenFile: "structured-output-round.trace.json" },
   { name: "structured-exhaustion-round", trace: traceWinterStructuredExhaustionRound, goldenFile: "structured-exhaustion-round.trace.json" },
   { name: "skill-invocation-round", trace: traceWinterSkillInvocationRound, goldenFile: "skill-invocation-round.trace.json" },
+  // Phase 6 Task 10: one golden per shipped protocol FAMILY, each a real adapter driven against the
+  // shared loopback fake. Four families, four wire mappings, four frozen frame streams.
+  { name: "p6-anthropic-fake", trace: () => traceProviderScenario("p6-anthropic", SCENARIO_MODELS.anthropic), goldenFile: "p6-anthropic-fake.trace.json" },
+  { name: "p6-openai-responses-fake", trace: () => traceProviderScenario("p6-openai-responses", SCENARIO_MODELS.openaiResponses), goldenFile: "p6-openai-responses-fake.trace.json" },
+  { name: "p6-openai-chat-fake", trace: () => traceProviderScenario("p6-openai-chat", SCENARIO_MODELS.openaiChat), goldenFile: "p6-openai-chat-fake.trace.json" },
+  { name: "p6-gemini-fake", trace: () => traceProviderScenario("p6-gemini", SCENARIO_MODELS.gemini), goldenFile: "p6-gemini-fake.trace.json" },
+  // Review round 1 (Critical A): the RESOLUTION-FAILURE shape, byte-frozen. This is the golden that
+  // makes the ruling durable -- an init frame with no `winter_provider`, then R6-F's result with
+  // `api_error_status: null`. A regression back to "refuse at construction" produces zero frames and
+  // cannot match it.
+  { name: "p6-resolution-failure", trace: traceWinterResolutionFailure, goldenFile: "p6-resolution-failure.trace.json" },
 ];
+
+// --- Phase 6 Task 10: the provider-layer goldens -------------------------------------------------
+//
+// The BYTE-FROZEN half of the equivalence scenarios. `transport-equivalence.test.ts` proves the same
+// choreographies are identical ACROSS transports; these freeze what one of them actually looks like,
+// which is the only thing that catches a change every leg makes together.
+//
+// DETERMINISTIC DESPITE A LIVE SERVER, and that is worth stating because it is not obvious: the fake
+// binds an EPHEMERAL port, but nothing about the port reaches the frame stream — the base URL is
+// configuration, not output. What does reach it is the init frame's `model` (the caller's own string),
+// the `winter_provider` identity block (catalog data), the assistant blocks and the tool result — all
+// fixed. The tool's own pattern matches nothing in any checkout, so its result is the empty string on
+// every machine.
+async function traceProviderScenario(name: string, model: string): Promise<ConformanceTraceEntry[]> {
+  const winterHome = mkdtempSync(join(tmpdir(), `winter-differential-${name}-`));
+  const fake = await startScenarioFake();
+  try {
+    const entries: ConformanceTraceEntry[] = [];
+    let seq = 0;
+    for await (const msg of query({
+      prompt: "run the provider scenario",
+      options: {
+        model,
+        cwd: FIXTURE_CWD,
+        // A USER endpoint (R6-11), declared local because plain http to a loopback address is
+        // otherwise refused. `inline` because a golden may never touch a real credential store.
+        provider: { providerId: model.slice(0, model.indexOf("/")), authRef: { kind: "inline", value: "test" }, connection: { baseUrl: fake.url, local: true } },
+        allowedTools: [SCENARIO_TOOL_NAME],
+        // `undefined` tools -> the REAL registry-backed executor, which is what every spawned leg
+        // uses. `stubExecutor` here would freeze an echo instead of the tool the scenario ran.
+        spawnClaudeCodeProcess: (opts) => inMemoryProcess(opts.args, undefined, undefined, { ...opts.env, WINTER_HOME: winterHome }),
+      },
+    })) {
+      const kind = msg.type === "system" ? `system/${(msg as { subtype: string }).subtype}` : msg.type;
+      entries.push({ sequence: seq++, direction: "runtime-to-host", kind, payload: msg });
+    }
+    // Gemini mints its own call ids (its wire carries none), so they are per-run by construction.
+    const scrubbed = JSON.parse(JSON.stringify(scrubWinterHome(entries, winterHome)).replace(/google-call-[0-9a-f]+-\d+/g, "google-call-SCRUBBED")) as ConformanceTraceEntry[];
+    return normalizeTrace(scrubbed);
+  } finally {
+    await fake.close();
+    rmSync(winterHome, { recursive: true, force: true });
+  }
+}
+
+/**
+ * The RESOLUTION-FAILURE shape (review round 1, Critical A).
+ *
+ * NO FAKE IS STARTED, and that is part of the claim: a model no catalog contains cannot produce a
+ * request, so there is nothing for a server to receive. What the host gets instead is a session that
+ * started (`system/init`, carrying the model the caller passed and NO `winter_provider`) and a first
+ * generation that lands on R6-F's pinned failure shape with `api_error_status: null`.
+ */
+async function traceWinterResolutionFailure(): Promise<ConformanceTraceEntry[]> {
+  const winterHome = mkdtempSync(join(tmpdir(), "winter-differential-p6-resolution-"));
+  try {
+    const entries: ConformanceTraceEntry[] = [];
+    let seq = 0;
+    try {
+      for await (const msg of query({
+        prompt: "resolve me",
+        options: {
+          model: "anthropic/definitely-not-a-model-t10",
+          cwd: FIXTURE_CWD,
+          provider: { providerId: "anthropic", authRef: { kind: "inline", value: "test" } },
+          spawnClaudeCodeProcess: (opts) => inMemoryProcess(opts.args, undefined, undefined, { ...opts.env, WINTER_HOME: winterHome }),
+        },
+      })) {
+        const kind = msg.type === "system" ? `system/${(msg as { subtype: string }).subtype}` : msg.type;
+        entries.push({ sequence: seq++, direction: "runtime-to-host", kind, payload: msg });
+      }
+    } catch (err) {
+      // `query()` throws AFTER yielding the terminal result -- that is the pinned behaviour, so the
+      // throw is expected and the FRAMES above are the golden. Rethrowing anything else would hide a
+      // real regression behind an expected one.
+      if (!(err instanceof ResultError)) throw err;
+    }
+    return normalizeTrace(scrubWinterHome(entries, winterHome));
+  } finally {
+    rmSync(winterHome, { recursive: true, force: true });
+  }
+}
 
 // Sign-off 3 directive (whole-branch review): `--update` turns this script from a comparator into
 // checked-in golden-regeneration tooling — the project had none (T11 review F5 closed the loop: an

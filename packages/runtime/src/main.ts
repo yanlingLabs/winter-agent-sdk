@@ -15,7 +15,7 @@ import type { RuntimeConfig } from "@yanlinglabs/winter-agent-sdk";
 import { splitFrames, encodeFrame } from "@yanlinglabs/winter-agent-sdk";
 import type { FrameSource, FrameSink } from "./protocol/channel.ts";
 import { runEngine, type Provider } from "./engine.ts";
-import { echoProvider, stubExecutor, isTestProviderName, testProviderByName, registerBgTaskTestTool } from "./provider/mock.ts";
+import { stubExecutor, isTestProviderName, testProviderForNamespace, registerBgTaskTestTool } from "./provider/mock.ts";
 import { resolveEngineSession, resolveProductionWinterHome } from "./store/dialect.ts";
 // Phase 4 Task 8 (rider 18): the ONE production registration of Lane C's child-engine factory --
 // see that module's own header for why it is a SHARED helper both entrypoints call rather than an
@@ -29,6 +29,7 @@ import { registerDefaultChildEngineFactory } from "./subagents/register-default-
 // compaction and no checkpointing, while the in-memory harness had all five (or vice versa) --
 // which WS-04 §12 makes a release blocker.
 import { buildProductionWiring, withAutoSkillPermissions } from "./production-wiring.ts";
+import { loadResumedChain } from "./provider/session-provider.ts";
 import { WinterCompatibilitySessionStore, compatibilityKeys } from "@yanlinglabs/winter-agent-sdk";
 import { restoreChildRoster } from "./subagents/restore.ts";
 // Phase 5 Task 3 (RULING R5-15): the pinned worker entry. Lane W replaces the BODY of
@@ -58,26 +59,36 @@ function parseConfigFromArgv(argv: string[]): RuntimeConfig {
   return JSON.parse(raw) as RuntimeConfig;
 }
 
-// P1 test-only provider selection (WINTER_TEST_PROVIDER) — see provider/mock.ts's
-// testProviderByName for the full rationale: this is what lets the CHILD leg of Task 4's
-// transport-equivalence suite (packages/sdk/src/transport-equivalence.test.ts) script the same
-// error/tool-use/hang behaviors an in-process test double gets for free, since a real spawned
-// process can't be handed a JS function. Default (unset / empty) is echoProvider — byte-identical
-// to every other P1 entrypoint's default. REMOVE at P6 alongside provider/mock.ts's half (real
-// providers land then).
-function resolveProvider(): Provider {
-  const raw = process.env.WINTER_TEST_PROVIDER;
-  if (raw === undefined || raw === "") return echoProvider;
-  if (!isTestProviderName(raw)) {
+// Phase 6 Task 10 (R6-13): the reserved `winter-test/<name>` namespace's resolver.
+//
+// THE ENV VAR IS NO LONGER A PROVIDER SWITCH. Production selection is catalog-first
+// (`provider/selection.ts`), and `WINTER_TEST_PROVIDER` survives only as the HARNESS'S ALIAS for the
+// reserved namespace -- honoured, per the ruling, only when `config.model` is absent or already in
+// that namespace. Selection does that check; this function answers the narrower question of which
+// scripted double a given namespace name means.
+//
+// The P3 "bgtask" PAIRING is the one thing that could not move into `mock.ts`: that provider's
+// target tool has to be REGISTERED in this process for a call to it to do anything but echo through
+// the `unregisteredToolExecutor` fallback, and registration is an entrypoint action, not a lookup.
+function resolveNamespacedTestProvider(name: string): Provider | undefined {
+  if (name === "bgtask") registerBgTaskTestTool();
+  return testProviderForNamespace(name);
+}
+
+// A harness that exports an UNRECOGNISED `WINTER_TEST_PROVIDER` used to fail here with a named
+// error. It still fails -- selection raises `WinterProviderResolutionError` ("no in-process test
+// provider is registered under ...") when the namespace resolves to nothing -- but only when the env
+// var is actually consulted, which after the ruling means only when `config.model` leaves room for
+// it. This check keeps the OLD failure for the OLD case: a bare, unrecognised value exported with no
+// model configured, which is a harness mistake worth naming at the entrypoint rather than deep
+// inside resolution.
+function assertRecognizedTestProviderEnv(env: Record<string, string | undefined>): void {
+  const raw = env["WINTER_TEST_PROVIDER"];
+  if (raw === undefined || raw === "") return;
+  const name = raw.startsWith("winter-test/") ? raw.slice("winter-test/".length) : raw;
+  if (name !== "echo" && !isTestProviderName(name)) {
     throw new Error(`winter: unrecognized WINTER_TEST_PROVIDER '${raw}'`);
   }
-  // P3 fix round 1 (RULING P3-C): "bgtask" needs its OWN registered tool for a call to it to do
-  // anything but echo through the unregisteredToolExecutor fallback (below) -- see
-  // provider/mock.ts's registerBgTaskTestTool for why the provider and the tool are a pair, never
-  // one without the other. Every other TestProviderName's own target ("test_tool"/"mystery_tool")
-  // needs no such pairing -- they were never meant to do more than echo.
-  if (raw === "bgtask") registerBgTaskTestTool();
-  return testProviderByName(raw);
 }
 
 // stdin -> FrameSource, decoded through splitFrames+carry — the identical codec path
@@ -137,7 +148,7 @@ if (process.argv.includes(WORKFLOW_WORKER_ARGV_FLAG)) {
 
 try {
   const config = parseConfigFromArgv(process.argv);
-  const provider = resolveProvider();
+  assertRecognizedTestProviderEnv(process.env);
   // Task 8: persists by default (RuntimeConfig.persistSession defaults ON) to config.winterHome, or
   // else the real WINTER_HOME|~/.winter (resolveProductionWinterHome) — this is the REAL production
   // entrypoint, so unlike testing.ts's inMemoryProcess it deliberately DOES fall through to the
@@ -183,7 +194,28 @@ try {
   // `withAutoSkillPermissions` is applied to the config the ENGINE gets, not to the one the wiring
   // reads -- the wiring's own `validateSkillsOption` must see the host's original `allowedTools` to
   // decide whether `Skill` is reachable at all.
-  const wiring = await buildProductionWiring({ config: effectiveConfig, env: process.env, winterHome: resolveProductionWinterHome(config, process.env), ...(store !== undefined ? { persistence: store } : {}) });
+  // R6-7: the RESUMED continuation chain, read once from the sidecar before the run starts -- see
+  // `loadResumedChain` for why the renderer needs it and an empty map is not equivalent.
+  const providerChain = await loadResumedChain(store, initialMessages);
+  const wiring = await buildProductionWiring({
+    config: effectiveConfig,
+    env: process.env,
+    winterHome: resolveProductionWinterHome(config, process.env),
+    ...(store !== undefined ? { persistence: store } : {}),
+    // Phase 6 Task 10: the PRODUCTION provider inputs. Only two, and both are the real environment
+    // this entrypoint deliberately falls through to (the same posture `resolveProductionWinterHome`
+    // takes): the reserved-namespace resolver, and the OS home the `file` credential store resolves
+    // `~/.aws/credentials` under. The catalog and the credential store are left at their production
+    // defaults -- the compiled catalog and the Keychain/env/file/inline composite.
+    provider: {
+      testProviders: resolveNamespacedTestProvider,
+      ...(process.env.HOME !== undefined ? { home: process.env.HOME } : {}),
+      // R6-7: the RESUMED continuation chain, read through the same store the sidecar was written
+      // to. A getter, because `attachContinuationChain` re-attaches it after the run starts.
+      chain: () => providerChain,
+    },
+  });
+  const provider = wiring.providerWiring.provider;
   // Non-fatal, and STDERR only: stdout is the frame stream exclusively (WS-04 §2/§6). A malformed
   // `.winter/mcp.json`, a plugin that would not load, or a `skills` entry naming something unknown
   // must be visible to an operator without taking the session down.
@@ -210,7 +242,10 @@ try {
       ? await restoreChildRoster(childStore, { projectKey: compatibilityKeys(effectiveConfig.cwd).transcriptProjectKey, sessionId: effectiveConfig.sessionId })
       : undefined;
   const code = await runEngine({
-    config: withAutoSkillPermissions(effectiveConfig),
+    // `wiring.config` -- the effective config PLUS the provider-derived defaults (the descriptor's
+    // own context window when the host stated none). Never `effectiveConfig` directly: that would
+    // silently drop them.
+    config: withAutoSkillPermissions(wiring.config),
     ...wiring.engineOptions,
     input: stdinFrameSource(),
     output: stdoutFrameSink,

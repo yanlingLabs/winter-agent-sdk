@@ -49,7 +49,11 @@ function catalog(): WinterCatalog {
     displayName: key,
     aliases,
     status: "candidate" as const,
-    contextWindow: 200000,
+    // T10: `evidence(...)`, not a bare number. `WinterModelDescriptor.contextWindow` is a
+    // `CapabilityEvidence<number>`, and this fixture's bare number is exactly why selection's own
+    // `descriptor.contextWindow` read (an OBJECT in production, discarded by its `typeof === "number"`
+    // guard) passed here while every real session silently fell back to the 200000 default.
+    contextWindow: evidence(200000),
     toolCalling: evidence("native" as const),
     reasoning: { continuation: "opaque" as const, continuationDomain: evidence([domain]), readableState: "none" as const },
     upstream: { project: "winter", commit: "" },

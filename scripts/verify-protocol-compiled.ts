@@ -19,8 +19,103 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildRuntime } from "./build-runtime.ts";
+import { loadCatalog } from "@yanlinglabs/winter-provider-catalog";
+import { encodeFrame, splitFrames, type WinterFrame } from "@yanlinglabs/winter-agent-sdk";
+import { SCENARIO_FINAL_TEXT, SCENARIO_MODELS, SCENARIO_TOOL_NAME, startScenarioFake } from "winter-agent-runtime";
 
 const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
+
+/**
+ * Phase 6 Task 10: THE CATALOG RESOLVES INSIDE THE BINARY.
+ *
+ * This is a leg the equivalence suite cannot supply, and the reason is the whole point of the gate.
+ * `@yanlinglabs/winter-provider-catalog` imports its data as a BUNDLED JSON MODULE precisely because
+ * `bun build --compile` produces a single-file executable whose `$bunfs` has no repository beside it —
+ * a runtime path read would resolve to nothing there while type-checking and every dev-mode test
+ * passed. That is the exact "silently breaks only in the compiled form" class, and the only way to
+ * disprove it is to make a COMPILED session resolve a real catalog row and report what it resolved.
+ *
+ * Two legs, and the negative one is not decoration: a binary with an EMPTY catalog would refuse every
+ * model, which looks identical to a binary with a working catalog refusing an unknown one. So the
+ * positive leg asserts the resolved identity field-for-field against the catalog this repo compiled
+ * IN, and the negative leg asserts the refusal is `unknown-model` rather than a bundling failure.
+ */
+async function runCompiledSession(binPath: string, config: Record<string, unknown>, winterHome: string): Promise<{ frames: WinterFrame[]; stderr: string; exitCode: number }> {
+  const proc = Bun.spawn([binPath, "--run", "--config-json", JSON.stringify(config)], {
+    cwd: REPO_ROOT,
+    env: { ...process.env, WINTER_HOME: winterHome },
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  proc.stdin.write(encodeFrame({ type: "user", text: "run the compiled catalog probe" }));
+  proc.stdin.write(encodeFrame({ type: "control_request", requestId: "c1", subtype: "end_input", payload: undefined }));
+  proc.stdin.flush();
+  const [stdout, stderr, exitCode] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
+  await proc.stdin.end();
+  return { frames: splitFrames(stdout, "").frames, stderr, exitCode };
+}
+
+async function verifyCatalogInBinary(binPath: string): Promise<void> {
+  const catalog = loadCatalog();
+  const winterHome = mkdtempSync(join(tmpdir(), "winter-verify-compiled-home-"));
+  const fake = await startScenarioFake();
+  try {
+    const model = SCENARIO_MODELS.anthropic;
+    const base = {
+      sessionId: "verify-compiled-catalog",
+      cwd: REPO_ROOT,
+      allowedTools: [SCENARIO_TOOL_NAME],
+      provider: { providerId: "anthropic", authRef: { kind: "inline", value: "test" }, connection: { baseUrl: fake.url, local: true } },
+    };
+
+    console.log("verify:compiled — probing that the CATALOG resolves inside the compiled binary...");
+    const ok = await runCompiledSession(binPath, { ...base, model }, winterHome);
+    const init = ok.frames.map((f) => (f as { message?: { type?: string; subtype?: string } }).message).find((m) => m?.type === "system" && m?.subtype === "init") as
+      | { model?: string; winter_provider?: Record<string, unknown> }
+      | undefined;
+    if (init === undefined) throw new Error(`verify:compiled: the compiled binary emitted no system/init frame (exit ${ok.exitCode})\n${ok.stderr}`);
+    const identity = init.winter_provider;
+    if (identity === undefined) throw new Error("verify:compiled: the compiled binary's init frame carries NO `winter_provider` — the catalog did not resolve inside the binary");
+    if (identity["modelKey"] !== model) throw new Error(`verify:compiled: resolved modelKey ${String(identity["modelKey"])}, expected ${model}`);
+    if (identity["catalogVersion"] !== catalog.catalogVersion) {
+      throw new Error(`verify:compiled: the binary reports catalogVersion ${String(identity["catalogVersion"])} but this repo compiled ${catalog.catalogVersion} — the bundled catalog is not the one that was built in`);
+    }
+    if (identity["adapterId"] !== "winter.anthropic-messages") throw new Error(`verify:compiled: resolved adapterId ${String(identity["adapterId"])}`);
+    // The session RAN: the fake, in this process, was contacted by the compiled binary.
+    if (fake.requests.length === 0) throw new Error("verify:compiled: the compiled binary never reached the loopback fake");
+    const finalText = JSON.stringify(ok.frames).includes(SCENARIO_FINAL_TEXT);
+    if (!finalText) throw new Error("verify:compiled: the compiled binary's session never produced the scripted final answer");
+
+    console.log("verify:compiled — probing that an UNKNOWN model is a typed refusal inside the binary (the negative control)...");
+    const refused = await runCompiledSession(binPath, { ...base, sessionId: "verify-compiled-unknown", model: "anthropic/no-such-model-t10" }, winterHome);
+    // THE SHAPE, not the exit code (review round 1, Critical A). A resolution failure no longer stops
+    // the session from starting: it emits `system/init` and lands its first generation on R6-F's
+    // pinned result, so the process exits 0 like any other completed turn. What discriminates a
+    // working catalog from an EMPTY one is therefore not "did it refuse" — an empty catalog refuses
+    // everything — but the pair: the known model resolved and reported `winter_provider` above, and
+    // the unknown one reports NONE and fails with the catalog's own words.
+    const refusedInit = refused.frames.map((f) => (f as { message?: { type?: string; subtype?: string } }).message).find((m) => m?.type === "system" && m?.subtype === "init") as
+      | { winter_provider?: unknown }
+      | undefined;
+    if (refusedInit === undefined) throw new Error("verify:compiled: the unknown-model session emitted no system/init — a resolution failure must still start the session (capture (I))");
+    if (refusedInit.winter_provider !== undefined) throw new Error("verify:compiled: the unknown-model session reported a `winter_provider` identity it cannot have resolved");
+    const refusedResult = refused.frames.map((f) => (f as { message?: { type?: string } }).message).find((m) => m?.type === "result") as
+      | { is_error?: boolean; terminal_reason?: string; api_error_status?: number | null; result?: string }
+      | undefined;
+    if (refusedResult?.is_error !== true || refusedResult.terminal_reason !== "api_error" || refusedResult.api_error_status !== null) {
+      throw new Error(`verify:compiled: the unknown-model session did not land on the pinned failure shape; got ${JSON.stringify(refusedResult)}`);
+    }
+    // The catalog's OWN words, which an empty catalog could not produce for the known model either.
+    if (!String(refusedResult.result ?? "").includes("is not in provider") && !refused.stderr.includes("is not in provider")) {
+      throw new Error(`verify:compiled: the refusal did not name the catalog miss; result was ${JSON.stringify(refusedResult?.result)} and stderr was:\n${refused.stderr}`);
+    }
+    console.log(`verify:compiled OK — the catalog (${catalog.catalogVersion}: ${catalog.providers.length} providers, ${catalog.models.length} models) resolves inside the compiled binary`);
+  } finally {
+    await fake.close();
+    rmSync(winterHome, { recursive: true, force: true });
+  }
+}
 
 if (import.meta.main) {
   const workDir = mkdtempSync(join(tmpdir(), "winter-verify-compiled-"));
@@ -28,6 +123,11 @@ if (import.meta.main) {
   try {
     console.log("verify:compiled — compiling the winter runtime to a temp path...");
     await buildRuntime({ out: binPath });
+
+    // FIRST, because it is the cheaper and more specific failure: if the catalog did not survive
+    // bundling, every provider scenario in the suite below fails for one reason and reports it as
+    // twenty.
+    await verifyCatalogInBinary(binPath);
 
     console.log(`verify:compiled — running the transport-equivalence suite with WINTER_COMPILED_BIN=${binPath} ...`);
     const proc = Bun.spawn([process.execPath, "test", "packages/sdk/src/transport-equivalence.test.ts"], {

@@ -7,7 +7,7 @@
       "type": "system",
       "subtype": "init",
       "cwd": "/winter-fixture",
-      "model": "winter-test/echo",
+      "model": "anthropic/claude-sonnet-5",
       "permissionMode": "default",
       "tools": [
         "Agent",
@@ -24,15 +24,11 @@
         "Glob",
         "Grep",
         "ListAgents",
-        "ListMcpResourcesTool",
         "Monitor",
         "NotebookEdit",
         "PushNotification",
         "Read",
-        "ReadMcpResourceDirTool",
-        "ReadMcpResourceTool",
         "ReadNotifications",
-        "RefreshMcpTools",
         "ReportFindings",
         "ScheduleWakeup",
         "SendMessage",
@@ -43,24 +39,25 @@
         "TaskOutput",
         "TaskStop",
         "TaskUpdate",
-        "WaitForMcpServers",
         "Workflow",
-        "Write",
-        "mcp__t8mcpsdk__echo"
+        "Write"
       ],
       "apiKeySource": "none",
+      "winter_provider": {
+        "providerId": "anthropic",
+        "modelKey": "anthropic/claude-sonnet-5",
+        "adapterId": "winter.anthropic-messages",
+        "adapterVersion": "1",
+        "catalogVersion": "v3.8.50+winter.1",
+        "continuationDomain": "anthropic/claude-sonnet-5",
+        "authRefKind": "inline"
+      },
       "slash_commands": [
         "compact"
       ],
       "output_style": "default",
       "skills": [],
-      "plugins": [],
-      "mcp_servers": [
-        {
-          "name": "t8mcpsdk",
-          "status": "connected"
-        }
-      ]
+      "plugins": []
     }
   },
   {
@@ -72,11 +69,15 @@
       "message": {
         "content": [
           {
+            "type": "text",
+            "text": "checking the tree"
+          },
+          {
             "type": "tool_use",
-            "id": "mcpsdk-call-1",
-            "name": "mcp__t8mcpsdk__echo",
+            "id": "toolu_p6",
+            "name": "Glob",
             "input": {
-              "x": 1
+              "pattern": "*.winter-t10-no-such-file"
             }
           }
         ]
@@ -93,8 +94,8 @@
         "content": [
           {
             "type": "tool_result",
-            "tool_use_id": "mcpsdk-call-1",
-            "content": "echo:{\"x\":1}"
+            "tool_use_id": "toolu_p6",
+            "content": "Error: path not found: /winter-fixture"
           }
         ]
       }
@@ -110,7 +111,7 @@
         "content": [
           {
             "type": "text",
-            "text": "mcp sdk done"
+            "text": "the provider scenario is done"
           }
         ]
       }
@@ -124,7 +125,7 @@
       "type": "result",
       "subtype": "success",
       "is_error": false,
-      "result": "mcp sdk done",
+      "result": "the provider scenario is done",
       "permission_denials": []
     }
   }

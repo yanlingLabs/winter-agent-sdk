@@ -37,6 +37,7 @@
 //      a bare `fetch` in an adapter silently opts out of all five.
 
 import type { WinterModelDescriptor } from "@yanlinglabs/winter-provider-catalog";
+import { hostHeaders } from "../privileged-headers.ts";
 import { CREDENTIAL_HEADER_NAMES, applyPrivilegedHeaders, createEndpointPolicy, type EndpointPolicy } from "../../endpoint-policy.ts";
 import { ProviderRequestError, boundedFetch } from "../../http.ts";
 import { normalizeHttpError, normalizeThrown } from "../../errors.ts";
@@ -217,11 +218,28 @@ export interface HeaderPlan {
  * auth channel to honour.
  */
 export function buildHeaders(plan: HeaderPlan): Record<string, string> {
+  // Review round 1 (B): the host's own headers go through `hostHeaders()`, the SAME filter the
+  // Anthropic and Google families use, instead of only the credential-name list.
+  //
+  // The credential list was never wrong -- it drops `openai-organization` and `openai-project`
+  // because both are in `CREDENTIAL_HEADER_NAMES`, so there was no live hole. What it is is a SECOND
+  // reading of R6-L's rule, and the two disagree on any identity name that is not credential-shaped:
+  // `x-goog-quota-project` is on the privileged list and not the credential one, so an OpenAI-family
+  // adapter reached through a Google-flavoured proxy would forward it on a user endpoint. Routing
+  // both families through one filter is what makes R6-L's "one enforcement point a reviewer can grep
+  // for" true of this family too.
+  //
+  // The credential strip STAYS and runs first: a `ConnectionProfile` is non-secret connection
+  // metadata by contract (WS-13 §6), so a credential appearing there is a misconfiguration to drop
+  // rather than a second auth channel -- and that is true on a GENERATED endpoint as well, where
+  // `hostHeaders` deliberately passes everything through.
   const out: Record<string, string> = {};
+  const credentialFree: Record<string, string> = {};
   for (const [name, value] of Object.entries(plan.userSupplied ?? {})) {
     if (CREDENTIAL_HEADER_NAMES.includes(name.toLowerCase())) continue;
-    out[name] = value;
+    credentialFree[name] = value;
   }
+  Object.assign(out, hostHeaders(plan.policy, credentialFree));
   Object.assign(out, applyPrivilegedHeaders(plan.policy, plan.privileged ?? {}));
   Object.assign(out, plan.protocol);
   return out;

@@ -85,7 +85,7 @@ describe("WS-10 §7: a resumed session rebuilds its child roster from durable st
     const cwd = "/winter-fixture";
     const sessionId = randomUUID();
 
-    const firstFrames = await runOneEnvelope({ sessionId, cwd, model: "sonnet", permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true }, home, spawningProvider);
+    const firstFrames = await runOneEnvelope({ sessionId, cwd, model: "winter-test/echo", permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true }, home, spawningProvider);
     const spawnResult = toolResultContent(firstFrames, "agent-call-1");
     expect(spawnResult, "session 1 must genuinely spawn a child").toBeDefined();
     const agentId = (JSON.parse(spawnResult!) as { agentId: string }).agentId;
@@ -94,7 +94,7 @@ describe("WS-10 §7: a resumed session rebuilds its child roster from durable st
     // A SEPARATE run, resuming the same session -- the shape a restart takes (store/resume.test.ts's
     // own established fixture): a fresh instance id plus `resume`.
     const secondFrames = await runOneEnvelope(
-      { sessionId: randomUUID(), cwd, model: "sonnet", resume: sessionId, permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true },
+      { sessionId: randomUUID(), cwd, model: "winter-test/echo", resume: sessionId, permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true },
       home,
       listingProvider,
     );
@@ -110,11 +110,11 @@ describe("WS-10 §7: a resumed session rebuilds its child roster from durable st
     const home = freshHome();
     const cwd = "/winter-fixture";
     const sessionId = randomUUID();
-    const firstFrames = await runOneEnvelope({ sessionId, cwd, model: "sonnet", permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true }, home, spawningProvider);
+    const firstFrames = await runOneEnvelope({ sessionId, cwd, model: "winter-test/echo", permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true }, home, spawningProvider);
     const agentId = (JSON.parse(toolResultContent(firstFrames, "agent-call-1")!) as { agentId: string }).agentId;
 
     const forkFrames = await runOneEnvelope(
-      { sessionId: randomUUID(), cwd, model: "sonnet", resume: sessionId, forkSession: true, permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true },
+      { sessionId: randomUUID(), cwd, model: "winter-test/echo", resume: sessionId, forkSession: true, permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true },
       home,
       listingProvider,
     );

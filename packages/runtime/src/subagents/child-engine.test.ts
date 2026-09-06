@@ -53,7 +53,7 @@ function dataMessages(frames: WinterFrame[]): SdkMessage[] {
 // real prompting mode (the disclosed-gap test below) override this AND pre-seed an explicit allow
 // rule for their own outer fixture tool call instead.
 const baseConfig = (overrides: Partial<RuntimeConfig> = {}): RuntimeConfig => ({
-  sessionId: "parent-s", cwd: "/tmp/winter-lane-c-child-engine-tests", model: "sonnet",
+  sessionId: "parent-s", cwd: "/tmp/winter-lane-c-child-engine-tests", model: "winter-test/echo",
   permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true,
   ...overrides,
 });
@@ -249,7 +249,7 @@ describe("child-engine.ts: foreground spawn end-to-end (WS-10 §1/§3/§4/§7)",
 
     expect(parsed.result.status).toBe("completed");
     expect(parsed.result.content).toBe("echo: hello child");
-    expect(parsed.record.model).toEqual({ effectiveModel: "sonnet", effectiveEffort: "inherit" });
+    expect(parsed.record.model).toEqual({ effectiveModel: "winter-test/echo", effectiveEffort: "inherit" });
     // The parent's own baseConfig() default is bypassPermissions (see that helper's own comment) --
     // WS-07 §11 FORCES bypass onto every descendant, so a bare child inherits it too.
     expect(parsed.record.permission).toMatchObject({ effectiveMode: "bypassPermissions" });
@@ -1972,7 +1972,7 @@ describe("child-engine.ts: the watchdog pause is paired with a SUCCESSFUL forwar
         // permission control_request -- the frame whose forward throws.
         policy: { effectiveMode: "default", parentPolicyVersion: 1, parentPolicyHash: "h" },
         tools: [NEEDS_PROMPT],
-        model: "sonnet",
+        model: "winter-test/echo",
         effort: "inherit",
         thinking: undefined,
         systemPrompt: "",
@@ -2183,7 +2183,7 @@ describe("child-engine.ts: I4 -- a settings-file hook governs a CHILD, and a chi
       config: {
         sessionId: `i4-${Math.random().toString(36).slice(2, 8)}`,
         cwd,
-        model: "sonnet",
+        model: "winter-test/echo",
         // `permissions.allow`, NOT `allowedTools`: only the former is mirrored onto a child
         // (`parentPermissionRules`, the P4 C1 fix), so without it the child's own call reaches a
         // prompt nothing here answers and the child stalls instead of running its tool.
@@ -2312,7 +2312,7 @@ describe("child-engine.ts: P5-I -- the child's VALIDATED structured object reach
       registerChildEngineFactory(createChildEngineFactory({ provider: childProvider, structuredOutput: createStructuredOutputSeam() }));
       const { host, runtime } = createInMemoryChannel();
       const done = runEngine({
-        config: { sessionId: "p5i", cwd: dir, model: "sonnet", permissions: { allow: [SPAWN_PROBE, "StructuredOutput"] } },
+        config: { sessionId: "p5i", cwd: dir, model: "winter-test/echo", permissions: { allow: [SPAWN_PROBE, "StructuredOutput"] } },
         input: runtime.input,
         output: runtime.output,
         provider: scriptedProvider([{ kind: "tool_use", calls: [{ id: "call-1", name: SPAWN_PROBE, input: req }] }, { kind: "text", text: "parent done" }]),
@@ -2340,7 +2340,7 @@ describe("child-engine.ts: P5-I -- the child's VALIDATED structured object reach
       registerChildEngineFactory(createChildEngineFactory({ provider: echoProvider }));
       const { host, runtime } = createInMemoryChannel();
       const done = runEngine({
-        config: { sessionId: "p5i-none", cwd: dir, model: "sonnet", permissions: { allow: [SPAWN_PROBE] } },
+        config: { sessionId: "p5i-none", cwd: dir, model: "winter-test/echo", permissions: { allow: [SPAWN_PROBE] } },
         input: runtime.input,
         output: runtime.output,
         provider: scriptedProvider([{ kind: "tool_use", calls: [{ id: "call-1", name: SPAWN_PROBE, input: req }] }, { kind: "text", text: "parent done" }]),
@@ -2381,7 +2381,7 @@ describe("child-engine.ts: P5-J -- a child's spend rolls up into the owning sess
       registerChildEngineFactory(createChildEngineFactory({ provider: childProvider }));
       const { host, runtime } = createInMemoryChannel();
       const done = runEngine({
-        config: { sessionId: "p5j", cwd: dir, model: "sonnet", permissions: { allow: [SPAWN_PROBE, "ReadNotifications"] } },
+        config: { sessionId: "p5j", cwd: dir, model: "winter-test/echo", permissions: { allow: [SPAWN_PROBE, "ReadNotifications"] } },
         input: runtime.input,
         output: runtime.output,
         provider: scriptedProvider([{ kind: "tool_use", calls: [{ id: "call-1", name: SPAWN_PROBE, input: req }], usage: { inputTokens: 7, outputTokens: 0 } }, { kind: "text", text: "parent done", usage: { inputTokens: 11, outputTokens: 0 } }]),
@@ -2473,7 +2473,7 @@ describe("child-engine.ts: NEW-4 -- managed-tier settings rules and the resolved
     const config = {
       sessionId: `new4-${randomUUID()}`,
       cwd: opts.cwd,
-      model: "sonnet",
+      model: "winter-test/echo",
       permissions: { allow: [SPAWN_PROBE, ...opts.allow] },
       ...(opts.permissionMode !== undefined ? { permissionMode: opts.permissionMode } : {}),
       ...(opts.permissionMode === "bypassPermissions" ? { allowDangerouslySkipPermissions: true } : {}),
@@ -2807,7 +2807,7 @@ describe("child-engine.ts: R-2 -- a child of a `persistSession: false` session s
     const config = {
       sessionId: "r2-nonpersistent",
       cwd,
-      model: "sonnet",
+      model: "winter-test/echo",
       persistSession: false,
       permissionMode: "bypassPermissions",
       allowDangerouslySkipPermissions: true,
@@ -2875,10 +2875,10 @@ describe("child-engine.ts: R-2 -- a child of a `persistSession: false` session s
         // The decoupled shape R-2 introduces: a winterHome and NO store.
         winterHome: home,
       } as unknown as ChildEngineFactoryDeps);
-      const deps = factory({ parentSessionId: "r2-t", cwd, model: "sonnet" } as unknown as Parameters<typeof factory>[0]);
+      const deps = factory({ parentSessionId: "r2-t", cwd, model: "winter-test/echo" } as unknown as Parameters<typeof factory>[0]);
       const handle = await deps.spawn(
         { parentToolUseId: "call-t", prompt: "go", runInBackground: false },
-        { policy: { effectiveMode: "default", version: 1, hash: "h" }, tools: [], model: "sonnet", effort: "medium", thinking: undefined, systemPrompt: "", sessionRoot: cwd } as unknown as ChildInheritance,
+        { policy: { effectiveMode: "default", version: 1, hash: "h" }, tools: [], model: "winter-test/echo", effort: "medium", thinking: undefined, systemPrompt: "", sessionRoot: cwd } as unknown as ChildInheritance,
       );
       await handle.result();
       // `child-engine.ts`'s transcript expression is gated on `childStore === undefined` FIRST and
@@ -2913,7 +2913,7 @@ describe("child-engine.ts: R-1 -- the managed bypass veto binds in a child by de
     const config = {
       sessionId: `r1-${randomUUID()}`,
       cwd: opts.cwd,
-      model: "sonnet",
+      model: "winter-test/echo",
       persistSession: false,
       allowDangerouslySkipPermissions: true,
       // `Agent` ONLY. `permissions.allow` is mirrored onto the child, so listing the child's own tool
