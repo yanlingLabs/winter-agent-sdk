@@ -24,8 +24,25 @@ export type ProviderProtocol =
 /** How a provider is authenticated. `local-none` is a real, first-class kind — a local endpoint with no key is not a degenerate api-key case (WS-13 §6). */
 export type ProviderAuthKind = "api-key" | "oauth-approved" | "cloud-credential-chain" | "local-none" | "custom";
 
-/** Where a capability claim came from. Ordered loosely from most to least durable. */
-export type EvidenceSource = "official-doc" | "live-discovery" | "live-probe" | "upstream-static" | "user-override";
+/**
+ * Where a capability claim came from. Ordered loosely from most to least durable.
+ *
+ * The last two are WINTER'S OWN, and they exist because the alternative was a false label. The
+ * upstream mapper has to stamp `outputModalities` on every row, upstream's `RegistryModel` declares
+ * no output modality for ANY model, and the only members available were provider-shaped -- so
+ * `["text"]`, which is Winter's inference for a chat registry, shipped as `source: "upstream-static"`
+ * with the caveat pushed into a `sourceRef` sentence nothing reads programmatically. A reader
+ * filtering for "what upstream said" got a Winter guess (whole-branch review, Lane X r1 carry).
+ *
+ *   `winter-default` — a value WINTER chose in the absence of any upstream or vendor statement. Not
+ *     a normalization of anything: the field is required and something has to be in it.
+ *   `local-override` — a value from a LOCAL, non-vendor declaration: an operator's own configuration
+ *     for a local endpoint, which is neither a vendor document nor a probe of one.
+ *
+ * Both are strictly less durable than `user-override` (a deliberate human statement about a specific
+ * row), so they sort last. Neither may ever carry `confidence: "verified"`; the validator enforces it.
+ */
+export type EvidenceSource = "official-doc" | "live-discovery" | "live-probe" | "upstream-static" | "user-override" | "local-override" | "winter-default";
 
 /** How much the reader should trust the claim. `unknown` is a legitimate, recordable state — never a reason to omit the evidence wrapper and assert a bare value. */
 export type EvidenceConfidence = "verified" | "declared" | "inferred" | "unknown";

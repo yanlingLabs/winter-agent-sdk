@@ -98,10 +98,17 @@ confidence marker on each says `unknown` so nobody reads it as a denial.
 inference for a chat registry — not something upstream stated. It was shipped as
 `source: "upstream-static", confidence: "inferred"`, which reads as *"upstream said text"*: a false
 claim wearing an upstream label, and precisely the thing that let a text-to-speech model into the
-catalog looking like a text model. Every row now carries `confidence: "unknown"` and a `sourceRef`
-that says WINTER DEFAULT in words. It would be better still as a distinct source, but
-`EvidenceSource` is frozen (`src/types.ts`) and has no `winter-derived` member — a disclosed schema
-gap, not a preference.
+catalog looking like a text model. Every row carries `confidence: "unknown"` and a `sourceRef`
+that says WINTER DEFAULT in words, and the mapper now also stamps `source: "winter-default"` — the
+member added for exactly this (`src/types.ts`), so a reader filtering evidence BY SOURCE no longer
+gets a Winter guess wearing an upstream label. The prose stays alongside it, because *why* is not
+something an enum can carry.
+
+One honest wrinkle while this settles: the committed `generated/upstream-layer.json` is rewritten
+only by a NETWORK `provider:sync`, so its rows still read `upstream-static` until that sync runs.
+Both states are pinned — `pipeline.test.ts` asserts `winter-default` on the mapper's live output,
+`catalog-integrity.test.ts` asserts `upstream-static` on today's committed data — so the transition
+is a failing assertion naming one value to flip, not a silent inconsistency.
 
 **`unsupportedParameters` fails OPEN, and that direction is deliberate.** `toolCalling` fails CLOSED
 because a wrong `native` admits an unproven model to the agent modes; an empty
