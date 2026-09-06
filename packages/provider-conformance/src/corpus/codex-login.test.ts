@@ -14,7 +14,8 @@ import { startCodexLogin } from "../../../provider-runtime/src/adapters/openai/c
 import { CODEX } from "../../../provider-runtime/src/adapters/openai/codex-config.ts";
 import { base64Url } from "../../../provider-runtime/src/adapters/openai/pkce.ts";
 import { createMemoryCredentialStore } from "../../../provider-runtime/src/credentials/memory.ts";
-import { startFake } from "../fakes/server.ts";
+import { startFake, type RecordedRequest } from "../fakes/server.ts";
+import { winterUserAgent } from "../../../provider-runtime/src/identity.ts";
 import { FAKE_ACCOUNT_ID, FAKE_ACCESS_TOKEN, FAKE_REFRESH_TOKEN, codexTokenRoute } from "../fakes/codex-oauth.ts";
 import type { CodexTokenEndpointOptions } from "../fakes/codex-oauth.ts";
 
@@ -31,7 +32,7 @@ function browserThatApproves(overrides: { state?: string; code?: string | null }
   };
 }
 
-async function withTokenEndpoint<T>(opts: CodexTokenEndpointOptions, fn: (url: string, requests: Array<{ body: string }>) => Promise<T>): Promise<T> {
+async function withTokenEndpoint<T>(opts: CodexTokenEndpointOptions, fn: (url: string, requests: RecordedRequest[]) => Promise<T>): Promise<T> {
   const fake = await startFake({ routes: [codexTokenRoute(opts)] });
   try {
     return await fn(`${fake.url}/oauth/token`, fake.requests);
@@ -66,6 +67,13 @@ describe("startCodexLogin", () => {
       expect(material?.kind === "oauth" ? material.accessToken : "").toBe(FAKE_ACCESS_TOKEN);
       expect(material?.kind === "oauth" ? material.refreshToken : "").toBe(FAKE_REFRESH_TOKEN);
       expect(material?.kind === "oauth" ? material.accountId : "").toBe(FAKE_ACCOUNT_ID);
+
+      // WS-13b: the LOGIN's token request names Winter, exactly as the refresh and the turn do. The
+      // negative is what carries it -- Bun's fetch supplies `Bun/<version>` when nothing sets the
+      // header, so a presence-only check would pass on the exchange that never set one, which is
+      // precisely the state this file pinned before.
+      expect(requests[0]!.headers["user-agent"]).toBe(winterUserAgent());
+      expect(requests[0]!.headers["user-agent"]).not.toMatch(/bun/i);
 
       // The exchange was a PKCE authorization-code grant with the verifier, and the verifier never
       // rode the authorize URL (which is the browser-visible half).
