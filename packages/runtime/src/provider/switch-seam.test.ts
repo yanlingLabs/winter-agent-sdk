@@ -21,6 +21,8 @@ import { stubExecutor } from "./mock.ts";
 import { createInMemoryChannel } from "../protocol/channel.ts";
 import type { ProviderStateRecordInput } from "../store/provider-state.ts";
 import { chatCatalog, chatModel, chatProvider, startRawChatFake, type RawChatFake } from "./raw-chat-fake.test-support.ts";
+import { loadCatalog } from "@yanlinglabs/winter-provider-catalog";
+import { startScenarioFake, SCENARIO_CHILD_MODEL } from "./scenario-fake.ts";
 import { buildProductionWiring } from "../production-wiring.ts";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -563,6 +565,142 @@ describe("Ruling E-3: `fallbackModel` engages on an R6-6 retryable-class failure
       { from: "p/a", to: "p/b", reason: "fallback" },
       { from: "p/b", to: "p/c", reason: "set_model" },
     ]);
+  });
+
+  // --- Re-review round 1, R-E2: NEVER after the first byte (R6-6) -----------------------------
+
+  test("(R-E2) a retryable failure AFTER the stream committed does NOT engage a fallback: one `message_start` reached the host, the turn lands on R6-F, no `model_switch`, the candidate is never called", async () => {
+    const a: Provider = {
+      async generate(input) {
+        // The stream began -- the host may already have been shown something -- and then the
+        // connection died with a retryable class.
+        input.sink?.onStreamEvent({ type: "message_start", message: { role: "assistant", content: [] } as never });
+        throw new ProviderTurnError("provider request failed (network): the connection dropped mid-stream", { code: "network", retryable: true, committed: true });
+      },
+    };
+    const b = recording(["never"]);
+    const seam = scriptedSeam({ "p/a": a, "p/b": b.provider }, () => undefined);
+    const switches: Array<{ from: string; to: string; reason: string }> = [];
+    const { host, runtime } = createInMemoryChannel();
+    const frames: WinterFrame[] = [];
+    const reader = (async () => {
+      for await (const f of host.input) frames.push(f);
+    })();
+    const done = runEngine({
+      config: { sessionId: "fixe-r-e2", cwd: process.cwd(), model: "p/a", persistSession: false, includePartialMessages: true } as RuntimeConfig,
+      input: runtime.input,
+      output: runtime.output,
+      provider: a,
+      tools: stubExecutor,
+      providerIdentity: { providerId: "p", modelKey: "p/a", family: "openai" },
+      resolveModelSwitch: seam,
+      fallbackModels: ["p/b"],
+      store: { recordUserEntry() {}, recordAssistantEntry() {}, recordProviderSwitch(entry: { from: string; to: string; reason: string }) { switches.push(entry); } },
+    } as never);
+    host.output.write({ type: "user", text: "go" });
+    host.output.write({ type: "control_request", requestId: "end", subtype: "end_input", payload: undefined });
+    await reader;
+    await done;
+    const messages = dataMessages(frames);
+    expect(messages.filter((m) => m.type === "stream_event")).toHaveLength(1);
+    const result = messages.find((m) => m.type === "result") as Record<string, unknown>;
+    expect(result.is_error).toBe(true);
+    expect(result.terminal_reason).toBe("api_error");
+    expect(switchFrames(messages)).toHaveLength(0);
+    expect(switches).toEqual([]);
+    expect(b.requests).toHaveLength(0);
+  });
+
+  test("(R-E2) the fold marks the error COMMITTED once any stream event was seen -- and not for a failure before the first byte", async () => {
+    async function* afterFirstByte() {
+      yield { type: "message_start" as const, id: "m", model: "x" };
+      yield { type: "error" as const, error: { code: "network" as const, message: "dropped", retryable: true } };
+    }
+    async function* beforeFirstByte() {
+      yield { type: "retry" as const, attempt: 1, maxRetries: 10, retryDelayMs: 0, errorStatus: 503, error: "server_error" as never };
+      yield { type: "error" as const, error: { code: "server" as const, message: "503 after retries", status: 503, retryable: true } };
+    }
+    async function* throwsAfterDelta(): AsyncGenerator<never> {
+      yield { type: "text_delta", text: "partial" } as never;
+      throw new Error("socket hang up");
+    }
+    const failWith = async (stream: AsyncIterable<unknown>): Promise<ProviderTurnError> => {
+      try {
+        await foldProviderStream(stream as never);
+      } catch (err) {
+        return err as ProviderTurnError;
+      }
+      throw new Error("the fold must have rejected");
+    };
+    expect((await failWith(afterFirstByte())).committed).toBe(true);
+    // A `retry` observation precedes the stream; the failure after it is still pre-first-byte.
+    expect((await failWith(beforeFirstByte())).committed).toBe(false);
+    const thrown = await failWith(throwsAfterDelta());
+    expect(thrown.committed).toBe(true);
+    expect(thrown.retryable).toBe(true);
+  });
+
+  test("(R-E2, end to end) a REAL adapter whose stream is torn after `message_start` yields a COMMITTED failure, and the session's `fallbackModel` does NOT engage: one request on the wire, R6-F, no switch", async () => {
+    // Two verdicts, and either alone forbids engagement. The fold marks the failure COMMITTED (a
+    // `message_start` was seen); the Anthropic adapter, applying R6-6 at its own boundary, reports a
+    // torn stream as `network`/`retryable: false`. The engine's `committed` gate is what covers the
+    // OTHER production shape -- a body read that THROWS mid-stream, which `normalizeThrown` classes
+    // as a retryable network error -- pinned by the scripted fixture above; this one proves the real
+    // chain and the real verdict.
+    const fake = await startScenarioFake({ dropAfterFirstEvent: true });
+    try {
+      const primary = SCENARIO_CHILD_MODEL; // no continuation domain, so a same-provider candidate is admitted at init
+      const candidate = "anthropic/claude-haiku-4.5";
+      const cfg = { sessionId: "fixe-r-e2-e2e", cwd: process.cwd(), model: primary, fallbackModel: candidate, persistSession: false, provider: { providerId: "anthropic", authRef: { kind: "inline", value: "fixture" }, connection: { baseUrl: fake.url, local: true } } } as RuntimeConfig;
+      const wiring = buildSessionProvider({ config: cfg, env: {}, catalog: loadCatalog(), credentials: createMemoryCredentialStore() });
+      expect(wiring.fallbackModelKeys).toEqual([candidate]);
+      // The adapter's own verdict on the torn stream, through the bridge.
+      let thrown: unknown;
+      try {
+        await wiring.provider.generate({ messages: [{ role: "user", content: "hello" }] });
+      } catch (err) {
+        thrown = err;
+      }
+      expect(thrown).toBeInstanceOf(ProviderTurnError);
+      expect((thrown as ProviderTurnError).committed).toBe(true);
+      expect((thrown as ProviderTurnError).code).toBe("network");
+      expect((thrown as ProviderTurnError).retryable).toBe(false); // the adapter's own R6-6 line
+      expect(fake.requests.filter((r) => r.path === "/v1/messages")).toHaveLength(1);
+      // And the engine, with the candidate configured, never engages it.
+      const switches: Array<{ from: string; to: string; reason: string }> = [];
+      const { host, runtime } = createInMemoryChannel();
+      const frames: WinterFrame[] = [];
+      const reader = (async () => {
+        for await (const f of host.input) frames.push(f);
+      })();
+      const identity = wiring.identity!;
+      const done = runEngine({
+        config: cfg,
+        input: runtime.input,
+        output: runtime.output,
+        provider: wiring.provider,
+        tools: stubExecutor,
+        providerIdentity: { providerId: identity.providerId, modelKey: identity.modelKey, family: "anthropic", adapterId: identity.adapterId, adapterVersion: identity.adapterVersion, catalogVersion: identity.catalogVersion, authRefKind: identity.authRefKind },
+        resolveModelSwitch: wiring.resolveModelSwitch,
+        fallbackModels: wiring.fallbackModelKeys,
+        store: { recordUserEntry() {}, recordAssistantEntry() {}, recordProviderSwitch(entry: { from: string; to: string; reason: string }) { switches.push(entry); } },
+      } as never);
+      host.output.write({ type: "user", text: "go" });
+      host.output.write({ type: "control_request", requestId: "end", subtype: "end_input", payload: undefined });
+      await reader;
+      await done;
+      const messages = dataMessages(frames);
+      const result = messages.find((m) => m.type === "result") as Record<string, unknown>;
+      expect(result.is_error).toBe(true);
+      expect(result.terminal_reason).toBe("api_error");
+      expect(switchFrames(messages)).toHaveLength(0);
+      expect(switches).toEqual([]);
+      // Exactly ONE more request: the primary's. The candidate never went out.
+      expect(fake.requests.filter((r) => r.path === "/v1/messages")).toHaveLength(2);
+      expect(fake.requests.every((r) => r.body.includes(`"model":"claude-haiku-4-5-20251001"`))).toBe(true);
+    } finally {
+      await fake.close();
+    }
   });
 
   test("the bridge carries R6-6's verdict onto the typed error: an adapter's normalized `server` error folds to `retryable: true`, a `bad_request` to `false`", async () => {

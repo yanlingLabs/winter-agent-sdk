@@ -503,13 +503,21 @@ export class ProviderTurnError extends Error {
    */
   readonly code: string | undefined;
   readonly retryable: boolean | undefined;
-  constructor(message: string, opts: { status?: number; providerCode?: string; code?: string; retryable?: boolean; cause?: unknown } = {}) {
+  /**
+   * Fix wave round 2 (R-E2, R6-6): had the stream already BEGUN when this failure happened? Set by the
+   * bridge from the fold's own event count. `withRetry`'s first-byte rule ("after `commit()` every
+   * failure is final -- the caller may already have shown text") binds the fallback exactly as it
+   * binds a retry: a committed failure ends the turn on R6-F and never engages a candidate.
+   */
+  readonly committed: boolean | undefined;
+  constructor(message: string, opts: { status?: number; providerCode?: string; code?: string; retryable?: boolean; committed?: boolean; cause?: unknown } = {}) {
     super(message, opts.cause !== undefined ? { cause: opts.cause } : undefined);
     this.name = "ProviderTurnError";
     if (opts.status !== undefined) Object.assign(this, { status: opts.status });
     this.providerCode = opts.providerCode;
     this.code = opts.code;
     this.retryable = opts.retryable;
+    this.committed = opts.committed;
   }
 }
 
@@ -4652,10 +4660,14 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
         // RULING E-3 (whole-branch I-1): a retryable-class provider failure -- `withRetry` has already
         // spent R6-6's budget on it -- engages the next fallback candidate and RE-RUNS this round on
         // it. Nothing was consumed: the catch sits before any tool executes, so re-generating is a
-        // fresh request, not a replay. A committed mid-stream failure of a retryable class is
-        // treated the same way (disclosed): the turn it interrupted is lost either way, and a second
-        // model is the more useful outcome than a dead turn.
-        if (isProviderTurnError(err) && err.retryable === true && engageFallback()) continue roundLoop;
+        // fresh request, not a replay.
+        //
+        // NEVER AFTER THE FIRST BYTE (fix wave round 2, R-E2). A failure the stream had already
+        // COMMITTED to -- `message_start` or a delta was seen before the error -- is final, exactly
+        // as it is for `withRetry` (retry.ts's first-byte rule): the host may already have been shown
+        // text, and a second model re-answering behind it is the replay R6-6 forbids. Such a failure
+        // ends the turn on R6-F, as it does for a session with no fallback at all.
+        if (isProviderTurnError(err) && err.retryable === true && err.committed !== true && engageFallback()) continue roundLoop;
         const text = err instanceof Error ? err.message : String(err);
         // Phase 6 Task 3 (R6-F, capture (I)): a PROVIDER failure lands on `subtype: "success"` with
         // `is_error: true`, `terminal_reason: "api_error"` and `api_error_status: <status | null>` --

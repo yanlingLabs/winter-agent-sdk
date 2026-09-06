@@ -230,6 +230,12 @@ export interface ScenarioFakeOptions {
    * (10 retries x the header, rather than 10 jittered steps capped at 30 s each).
    */
   failModel?: { wireModel: string; status: number; retryAfter?: string };
+  /**
+   * P6 fix wave round 2 (R-E2): on the Anthropic route, send `message_start` and then DROP the
+   * connection -- a failure AFTER the first byte, which the adapter normalizes as a network error
+   * (retryable) that the fold has already committed to. The class R6-6 forbids replaying.
+   */
+  dropAfterFirstEvent?: boolean;
 }
 
 export async function startScenarioFake(options: ScenarioFakeOptions = {}): Promise<ScenarioFake> {
@@ -287,6 +293,18 @@ export async function startScenarioFake(options: ScenarioFakeOptions = {}): Prom
 
       if (url.pathname === "/v1/messages") {
         const { frames, events } = anthropicFrames(withTool && !isChild, delegating);
+        if (options.dropAfterFirstEvent === true) {
+          const first = `event: ${events[0]}\ndata: ${JSON.stringify(frames[0])}\n\n`;
+          const torn = new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode(first));
+              // Errored, not closed: a closed stream is a clean EOF the adapter reports as "incomplete",
+              // an ERRORED one is the torn socket a real outage produces.
+              setTimeout(() => controller.error(new Error("winter scenario fake: connection dropped after the first event")), 5);
+            },
+          });
+          return new Response(torn, { headers: { "content-type": "text/event-stream", "cache-control": "no-cache" } });
+        }
         return sse(frames, events);
       }
       if (url.pathname === "/responses") return sse(responsesFrames(withTool));
