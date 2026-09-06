@@ -14,7 +14,7 @@ export { SYSTEM_PROMPT_DYNAMIC_BOUNDARY, DEFAULT_CONTEXT_WINDOW_TOKENS, DEFAULT_
 // re-exported by @yanlinglabs/winter-provider-runtime, so a lane importing it from either package
 // gets the identical type rather than two structurally-similar twins that can drift.
 export { DEFAULT_PROVIDER_STALL_TIMEOUT_MS, DEFAULT_KEYCHAIN_SERVICE } from "./options.ts";
-export type { ProviderSelection, ProviderConnectionConfig, CredentialRef, ThinkingConfig, EffortLevel, AutoClassifierConfig, AdvisorConfig } from "./protocol/config.ts";
+export type { ProviderSelection, ProviderConnectionConfig, CredentialRef, ThinkingConfig, EffortLevel, AutoClassifierConfig, AdvisorConfig, ModelInfo, AccountInfo } from "./protocol/config.ts";
 export type { SdkPluginConfig, SystemPromptOption, SystemPromptPreset, OutputFormat, JsonSchemaOutputFormat, SkillsOption, RewindFilesResult, RewindFilesRequest, InitPluginInfo } from "./protocol/config.ts";
 // Phase 4 Task 2 (WS-09 derived-shapes item (a)/(d)): the HOST-facing MCP config union + subagent
 // definition shape a program writing `Options.mcpServers`/`Options.agents` types against — see

@@ -125,7 +125,12 @@ export function resolveSessionProvider(config: RuntimeConfig, deps: SelectionDep
     authRefKind: authRef.kind,
   };
 
-  const contextWindow = resolved.descriptor?.contextWindow;
+  // T10: `.value`, NOT the evidence object. `WinterModelDescriptor.contextWindow` is a
+  // `CapabilityEvidence<number>` (`{ value, source, observedAt, confidence }`), so reading the field
+  // itself gave an OBJECT that the `typeof === "number"` guard below then discarded -- every session
+  // silently fell back to the engine's 200000 default no matter what its descriptor said, and nothing
+  // failed because the guard's whole job is to be permissive about absence.
+  const contextWindow = resolved.descriptor?.contextWindow?.value;
   const capabilities = resolved.descriptor !== undefined ? resolved.adapter.capabilities(resolved.descriptor) : undefined;
 
   return {

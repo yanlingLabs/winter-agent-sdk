@@ -65,7 +65,8 @@ export interface ResolveRequest {
  * of a pinned wire type are how the producer and the consumer of one round trip start disagreeing
  * about an optional field. One declaration; either import path gets it.
  */
-export type { ModelInfo } from "@yanlinglabs/winter-agent-sdk";
+import type { ModelInfo } from "@yanlinglabs/winter-agent-sdk";
+export type { ModelInfo };
 
 export interface RegistryListing {
   catalogVersion: string;

@@ -34,6 +34,7 @@ import { loadCatalog } from "@yanlinglabs/winter-provider-catalog";
 import type { CredentialRef, ProviderConnectionConfig, ProviderSelection, RuntimeConfig } from "@yanlinglabs/winter-agent-sdk";
 import type { CredentialStore, ModelInfo, ProviderContext, ProviderRegistry, ResolvedModel } from "@yanlinglabs/winter-provider-runtime";
 import {
+  CredentialResolutionError,
   WinterProviderResolutionError,
   createCompositeCredentialStore,
   createEnvCredentialStore,
@@ -189,8 +190,28 @@ export interface SessionProviderWiring {
  * it, and a runtime without it reports a typed failure at the point of use rather than at import.
  */
 export function createProductionCredentialStore(config: RuntimeConfig, env: Record<string, string | undefined>, home: string): CredentialStore {
+  // THE KEYCHAIN MEMBER IS ADAPTED, and the reason is a genuine disagreement between two shipped
+  // contracts that only a live composition can expose.
+  //
+  // `createCompositeCredentialStore` advances to its next member ONLY when the current one throws a
+  // typed `unsupported`; it RETURNS whatever else the member answers, `null` included.
+  // `createKeychainCredentialStore` answers `null` for a ref it does not own -- and its own header
+  // says it does so *for the composite's benefit*. Both are unit-tested against their own reading.
+  // Composed as written, the keychain member answers `null` first for every `env`/`file`/`inline`
+  // ref and the composite returns it: EVERY non-keychain credential in production resolves to "no
+  // credential", and the failure surfaces as an unauthenticated provider call, far from here.
+  //
+  // Adapted at the composition site rather than fixed in either file: each is correct in isolation,
+  // and this is the one place that has to pick a reading.
+  const keychain = createKeychainCredentialStore(config.keychainService);
   return createCompositeCredentialStore([
-    createKeychainCredentialStore(config.keychainService),
+    {
+      ...keychain,
+      async get(ref) {
+        if (ref.kind !== "keychain") throw new CredentialResolutionError("unsupported", `the keychain credential store does not serve ${ref.kind} refs`);
+        return keychain.get(ref);
+      },
+    },
     createEnvCredentialStore({ env }),
     // `home` is the OS home the default `~/.aws/credentials` location resolves under, PASSED rather
     // than read here: a test that let this reach the developer's real home would be reading a real

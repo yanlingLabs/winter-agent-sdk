@@ -64,6 +64,26 @@ export const SHIPPED_ADAPTER_IDS = [
 ] as const;
 
 /**
+ * The GENERATED endpoint one adapter speaks to, from the catalog rather than from a constant.
+ *
+ * R6-11 makes a generated descriptor endpoint immutable and reviewed, and `applyPrivilegedHeaders`
+ * gates the identity-bearing headers on exactly that reviewed status — so the endpoint's AUTHORITY
+ * should be the catalog row that declares it, not a string compiled into the adapter. The adapter's
+ * own constant stays as the fallback for a build with no row.
+ *
+ * ONLY FOR AN ADAPTER SERVING EXACTLY ONE PROVIDER. An adapter with several (twelve local runners,
+ * deepseek + openrouter) has no single generated endpoint, and each of its providers reaches its own
+ * through the connection profile instead — see `connectionForProvider` in the runtime's wiring for
+ * that half and the fixture that pins both directions.
+ */
+function generatedBaseUrlForAdapter(catalog: WinterCatalog, adapterId: string): string | undefined {
+  const providers = catalog.providers.filter((p) => p.adapterId === adapterId);
+  if (providers.length !== 1) return undefined;
+  const api = providers[0]?.defaultEndpoints["api"];
+  return api !== undefined && api.length > 0 ? api : undefined;
+}
+
+/**
  * Builds every adapter this build ships against ONE catalog.
  *
  * The production wiring's only adapter-construction site (`production-wiring.ts`), and the corpus's
@@ -72,12 +92,16 @@ export const SHIPPED_ADAPTER_IDS = [
  */
 export function createShippedAdapters(catalog: WinterCatalog): ProviderAdapter[] {
   const lookup = (adapterId: string): AdapterDescriptorLookup => descriptorLookupForAdapter(catalog, adapterId);
+  const generated = (c: WinterCatalog, adapterId: string): { generatedBaseUrl?: string } => {
+    const url = generatedBaseUrlForAdapter(c, adapterId);
+    return url !== undefined ? { generatedBaseUrl: url } : {};
+  };
   return [
     // Lane A — the OpenAI family.
-    createResponsesAdapter({ descriptors: lookup("winter.openai-responses") }),
-    createChatCompletionsAdapter({ descriptors: lookup("winter.openai-chat-completions") }),
-    createCodexOauthAdapter({ descriptors: lookup("winter.codex-oauth") }),
-    createAzureOpenAIAdapter({ descriptors: lookup("winter.azure-openai") }),
+    createResponsesAdapter({ descriptors: lookup("winter.openai-responses"), ...generated(catalog, "winter.openai-responses") }),
+    createChatCompletionsAdapter({ descriptors: lookup("winter.openai-chat-completions"), ...generated(catalog, "winter.openai-chat-completions") }),
+    createCodexOauthAdapter({ descriptors: lookup("winter.codex-oauth"), ...generated(catalog, "winter.codex-oauth") }),
+    createAzureOpenAIAdapter({ descriptors: lookup("winter.azure-openai"), ...generated(catalog, "winter.azure-openai") }),
     // Registered under the id the catalog's twelve local rows actually point at (see
     // `LocalAdapterOptions.id`'s own header for why that id is overridable at all).
     createLocalOpenAIAdapter({ descriptors: lookup("winter.local-openai"), id: "winter.local-openai" }),
