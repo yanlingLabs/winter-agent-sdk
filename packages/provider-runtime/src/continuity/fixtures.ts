@@ -96,7 +96,7 @@ export function fixtureProvider(init: { id: string; adapterId?: string; family?:
     // WS-13b §1: both fields are REQUIRED on every provider row, so a fixture states its
     // own basis rather than inheriting one — a row-shape change fails HERE, at the fixture.
     pricingBasis: "token",
-    admission: { basis: "api-key", citation: "fixture:continuity" },
+    admission: { basis: "api-key", citation: "fixture:continuity", tier: "local" },
   };
 }
 

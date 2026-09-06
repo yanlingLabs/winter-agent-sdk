@@ -31,6 +31,7 @@ import {
   prefixToolResult,
   errorEvent,
   fetchOpenAiModels,
+  identityFor,
   imageDataUrl,
   isStreamTerminator,
   makeRetryPolicy,
@@ -416,6 +417,7 @@ export async function* chatTurn(
       // an account-scoped value, to xAI's subscription proxy. `ResolvedAuth` no longer carries an
       // `accountId` at all, so there is nothing here to author it from.
       privileged: privilegedHeaders(options),
+      identity: identityFor(options, ctx),
       userSupplied: ctx.connection.headers,
     });
     url = urlFor(endpoint);
@@ -468,14 +470,14 @@ export function createChatCompletionsAdapter(options: ChatTurnOptions): Provider
     async validateCredential(ref: CredentialRef, ctx: ProviderContext): Promise<CredentialStatus> {
       const endpoint = resolveEndpoint(ctx, options, OPENAI_CHAT_BASE_URL);
       const auth = await resolveAuth(ctx, options.authStyle ?? "bearer");
-      const headers = buildHeaders({ policy: endpoint.policy, protocol: { accept: "application/json", ...auth.headers }, privileged: privilegedHeaders(options), userSupplied: ctx.connection.headers });
+      const headers = buildHeaders({ policy: endpoint.policy, protocol: { accept: "application/json", ...auth.headers }, privileged: privilegedHeaders(options), identity: identityFor(options, ctx), userSupplied: ctx.connection.headers });
       return validateViaModels(ref, ctx, endpoint, headers, options, auth.material !== null);
     },
 
     async listModels(ctx: DiscoveryContext): Promise<ModelCatalogResult> {
       const endpoint = resolveEndpoint(ctx, options, OPENAI_CHAT_BASE_URL);
       const auth = await resolveAuth(ctx, options.authStyle ?? "bearer");
-      const headers = buildHeaders({ policy: endpoint.policy, protocol: { accept: "application/json", ...auth.headers }, privileged: privilegedHeaders(options), userSupplied: ctx.connection.headers });
+      const headers = buildHeaders({ policy: endpoint.policy, protocol: { accept: "application/json", ...auth.headers }, privileged: privilegedHeaders(options), identity: identityFor(options, ctx), userSupplied: ctx.connection.headers });
       return fetchOpenAiModels(ctx, endpoint, headers, options);
     },
 

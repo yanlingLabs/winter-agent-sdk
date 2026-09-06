@@ -119,7 +119,7 @@ export function vertexTransport(opts: VertexAdapterOptions = {}): GoogleTranspor
       return { base, policy: built.policy };
     },
 
-    async headers(ctx, policy, json) {
+    async headers(ctx, policy, json, identity) {
       const material = await ctx.credentials.get(ctx.authRef);
       if (material === null) throw refusal("no Google Cloud credential is configured for this Vertex connection");
       const key = sourceKey(ctx);
@@ -146,6 +146,8 @@ export function vertexTransport(opts: VertexAdapterOptions = {}): GoogleTranspor
         // WS-13b HONEST IDENTITY. FIRST, so a host profile is spread over it -- exact-key, as for
         // every header here (a differently-cased `User-Agent` is JOINED by `Headers`, not replaced).
         "user-agent": winterUserAgent(),
+        // The row's own second identity field (R-FW-2), beside the user-agent and before the host's map.
+        ...identity,
         ...hostHeaders(policy, ctx.connection.headers),
         authorization: `Bearer ${token}`,
         ...(json ? { "content-type": "application/json" } : {}),

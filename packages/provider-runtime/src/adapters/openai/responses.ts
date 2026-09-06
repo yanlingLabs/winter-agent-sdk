@@ -37,6 +37,7 @@ import {
   capabilityRefusal,
   errorEvent,
   fetchOpenAiModels,
+  identityFor,
   imageDataUrl,
   makeRetryPolicy,
   mapEffortAgainst,
@@ -566,14 +567,14 @@ export function createResponsesAdapter(options: OpenAiAdapterOptions): ProviderA
     async validateCredential(ref: CredentialRef, ctx: ProviderContext): Promise<CredentialStatus> {
       const endpoint = resolveEndpoint(ctx, options, OPENAI_API_BASE_URL);
       const auth = await resolveAuth(ctx, "bearer");
-      const headers = buildHeaders({ policy: endpoint.policy, protocol: { accept: "application/json", ...auth.headers }, privileged: privilegedHeaders(options), userSupplied: ctx.connection.headers });
+      const headers = buildHeaders({ policy: endpoint.policy, protocol: { accept: "application/json", ...auth.headers }, privileged: privilegedHeaders(options), identity: identityFor(options, ctx), userSupplied: ctx.connection.headers });
       return validateViaModels(ref, ctx, endpoint, headers, options, auth.material !== null);
     },
 
     async listModels(ctx: DiscoveryContext): Promise<ModelCatalogResult> {
       const endpoint = resolveEndpoint(ctx, options, OPENAI_API_BASE_URL);
       const auth = await resolveAuth(ctx, "bearer");
-      const headers = buildHeaders({ policy: endpoint.policy, protocol: { accept: "application/json", ...auth.headers }, privileged: privilegedHeaders(options), userSupplied: ctx.connection.headers });
+      const headers = buildHeaders({ policy: endpoint.policy, protocol: { accept: "application/json", ...auth.headers }, privileged: privilegedHeaders(options), identity: identityFor(options, ctx), userSupplied: ctx.connection.headers });
       return fetchOpenAiModels(ctx, endpoint, headers, options);
     },
 
@@ -639,6 +640,7 @@ export async function* responsesTurn(
       // (`codexHeaders`) from its own credential material and is unaffected; this plain Responses
       // adapter serves any row on `winter.openai-responses`, none of which is the codex backend.
       privileged: privilegedHeaders(options),
+      identity: identityFor(options, ctx),
       userSupplied: ctx.connection.headers,
     });
     plan = { model: req.model, url: urlFor(endpoint.baseUrl), headers, endpoint, ctx, options, body: JSON.stringify(buildResponsesBody(req, reasoning, descriptor)) };

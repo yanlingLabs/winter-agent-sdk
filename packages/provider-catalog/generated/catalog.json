@@ -43,7 +43,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://agentrouter.org — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", Anthropic Messages at https://agentrouter.org. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://agentrouter.org — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", Anthropic Messages at https://agentrouter.org. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -80,7 +81,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://agnes-ai.com — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://apihub.agnes-ai.com/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://agnes-ai.com — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://apihub.agnes-ai.com/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -117,7 +119,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://www.ai21.com — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.ai21.com/studio/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://www.ai21.com — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.ai21.com/studio/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -152,9 +155,13 @@
       "pricingBasis": "free",
       "admission": {
         "basis": "keyless-documented",
-        "citation": "audit:§2.2 `aihorde` / §5.1 — AI Horde's published Swagger (aihorde.net/api/swagger.json) and site (aihorde.net), retrieved 2026-09-06: security scheme is an `apikey` header (\"The API Key corresponding to a registered user\"), and the site documents connecting ANONYMOUSLY with a published default key at reduced priority. Free and crowdsourced: \"volunteers share spare computer power\". Endpoints accept an optional `Client-Agent` header — an honest client-identity field."
+        "citation": "audit:§2.2 `aihorde` / §5.1 — AI Horde's published Swagger (aihorde.net/api/swagger.json) and site (aihorde.net), retrieved 2026-09-06: security scheme is an `apikey` header (\"The API Key corresponding to a registered user\"), and the site documents connecting ANONYMOUSLY with a published default key at reduced priority. Free and crowdsourced: \"volunteers share spare computer power\". Endpoints accept an optional `Client-Agent` header — an honest client-identity field.",
+        "tier": "audit"
       },
-      "scope": "llm"
+      "scope": "llm",
+      "identityHeaders": {
+        "Client-Agent": "winter-agent-sdk:<version>:https://github.com/yanlingLabs/winter-agent-sdk"
+      }
     },
     {
       "id": "aimlapi",
@@ -190,7 +197,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://aimlapi.com — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.aimlapi.com/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://aimlapi.com — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.aimlapi.com/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -223,7 +231,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://www.aionlabs.ai/docs — the vendor's own documentation, retrieved 2026-09-06: the docs page's own text names the OpenAI-compatible base `https://api.aionlabs.ai/v1`."
+        "citation": "https://www.aionlabs.ai/docs — the vendor's own documentation, retrieved 2026-09-06: the docs page's own text names the OpenAI-compatible base `https://api.aionlabs.ai/v1`.",
+        "tier": "fetched-document"
       },
       "scope": "llm"
     },
@@ -262,7 +271,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://bailian.console.alibabacloud.com/ — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://dashscope-intl.aliyuncs.com/compatible-mode/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://bailian.console.alibabacloud.com/ — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://dashscope-intl.aliyuncs.com/compatible-mode/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -300,7 +310,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://dashscope.console.aliyun.com/ — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://dashscope.aliyuncs.com/compatible-mode/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://dashscope.console.aliyun.com/ — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://dashscope.aliyuncs.com/compatible-mode/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -337,7 +348,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://developer.ant-ling.com/en/docs/ — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.ant-ling.com/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://developer.ant-ling.com/en/docs/ — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.ant-ling.com/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -372,7 +384,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "oauth-documented",
-        "citation": "spec:WS-13b §0 D20"
+        "citation": "spec:WS-13b §0 D20",
+        "tier": "spec-ruling"
       },
       "scope": "llm"
     },
@@ -406,7 +419,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://docs.anyapi.ai — the vendor's own documentation, retrieved 2026-09-06: the docs home documents `https://api.anyapi.ai/v1/chat/completions` with `Authorization: Bearer $ANYAPI_KEY`."
+        "citation": "https://docs.anyapi.ai — the vendor's own documentation, retrieved 2026-09-06: the docs home documents `https://api.anyapi.ai/v1/chat/completions` with `Authorization: Bearer $ANYAPI_KEY`.",
+        "tier": "fetched-document"
       },
       "scope": "llm"
     },
@@ -445,7 +459,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://api.airforce — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.airforce/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://api.airforce — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.airforce/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -479,7 +494,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://docs.arcee.ai/ — the vendor's own documentation, retrieved 2026-09-06: the docs home documents base `https://api.arcee.ai/api/v1` with `Authorization: Bearer api-key`."
+        "citation": "https://docs.arcee.ai/ — the vendor's own documentation, retrieved 2026-09-06: the docs home documents base `https://api.arcee.ai/api/v1` with `Authorization: Bearer api-key`.",
+        "tier": "fetched-document"
       },
       "scope": "llm"
     },
@@ -515,7 +531,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "cloud-credential",
-        "citation": "https://azure.microsoft.com/products/ai-services/openai-service — the vendor's own product page as OmniRoute's product catalog records it at 5458026. The credential is the OPERATOR'S OWN Azure subscription key against their own resource endpoint, which is why the basis is cloud-credential rather than api-key. EVIDENCE TIER: pinned-upstream — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://azure.microsoft.com/products/ai-services/openai-service — the vendor's own product page as OmniRoute's product catalog records it at 5458026. The credential is the OPERATOR'S OWN Azure subscription key against their own resource endpoint, which is why the basis is cloud-credential rather than api-key. EVIDENCE TIER: pinned-upstream — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       },
       "scope": "llm"
     },
@@ -554,7 +571,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://b.ai — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.b.ai/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://b.ai — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.b.ai/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -591,7 +609,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://www.baichuan-ai.com/ — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.baichuan-ai.com/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://www.baichuan-ai.com/ — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.baichuan-ai.com/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -628,7 +647,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://ernie.baidu.com/ — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://qianfan.baidubce.com/v2. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://ernie.baidu.com/ — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://qianfan.baidubce.com/v2. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -665,7 +685,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://baseten.co — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://inference.baseten.co/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://baseten.co — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://inference.baseten.co/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -703,7 +724,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://bazaarlink.ai — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://bazaarlink.ai/api/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://bazaarlink.ai — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://bazaarlink.ai/api/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -737,7 +759,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "cloud-credential",
-        "citation": "https://aws.amazon.com/bedrock — the vendor's own product page as OmniRoute's product catalog records it at 5458026. The credential is the OPERATOR'S OWN AWS account, signed with SigV4, which is why the basis is cloud-credential rather than api-key. EVIDENCE TIER: pinned-upstream — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://aws.amazon.com/bedrock — the vendor's own product page as OmniRoute's product catalog records it at 5458026. The credential is the OPERATOR'S OWN AWS account, signed with SigV4, which is why the basis is cloud-credential rather than api-key. EVIDENCE TIER: pinned-upstream — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       },
       "scope": "llm"
     },
@@ -776,7 +799,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://blackbox.ai — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.blackbox.ai/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://blackbox.ai — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.blackbox.ai/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -814,7 +838,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://www.bluesminds.com — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.bluesminds.com/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://www.bluesminds.com — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.bluesminds.com/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -852,7 +877,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://console.byteplus.com/ark — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://ark.ap-southeast.bytepluses.com/api/v3. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://console.byteplus.com/ark — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://ark.ap-southeast.bytepluses.com/api/v3. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -889,7 +915,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://bytez.com — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.bytez.com/models/v2/openai/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://bytez.com — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.bytez.com/models/v2/openai/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -926,7 +953,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://inference-docs.cerebras.ai/ — Cerebras's own Inference API documentation, retrieved 2026-09-06: OpenAI-compatible base `https://api.cerebras.ai/v1` with `Authorization: Bearer ${CEREBRAS_API_KEY}`, \"mostly compatible with OpenAI's client libraries\". The base matches the API root the mapper derives from the pinned RegistryEntry, so two independent sources agree. (Round-1 finding I-3: the previous citation, `https://inference.cerebras.ai`, 301s to `chat.cerebras.ai` — a chat product, not documentation.)"
+        "citation": "https://inference-docs.cerebras.ai/ — Cerebras's own Inference API documentation, retrieved 2026-09-06: OpenAI-compatible base `https://api.cerebras.ai/v1` with `Authorization: Bearer ${CEREBRAS_API_KEY}`, \"mostly compatible with OpenAI's client libraries\". The base matches the API root the mapper derives from the pinned RegistryEntry, so two independent sources agree. (Round-1 finding I-3: the previous citation, `https://inference.cerebras.ai`, 301s to `chat.cerebras.ai` — a chat product, not documentation.)",
+        "tier": "fetched-document"
       }
     },
     {
@@ -964,7 +992,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://hyper.charm.land — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://hyper.charm.land/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://hyper.charm.land — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://hyper.charm.land/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -1001,7 +1030,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://chutes.ai — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://llm.chutes.ai/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://chutes.ai — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://llm.chutes.ai/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -1035,7 +1065,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "audit:§2.1 `cline` / §5.2 — Cline's public API reference (docs.cline.bot/api/overview, retrieved 2026-09-06): OpenAI-compatible Chat Completions at `https://api.cline.bot/api/v1/chat/completions`, `Authorization: Bearer YOUR_API_KEY`, keys from Settings -> API Keys in app.cline.bot; Cline-provider billing is pay-as-you-go credits."
+        "citation": "audit:§2.1 `cline` / §5.2 — Cline's public API reference (docs.cline.bot/api/overview, retrieved 2026-09-06): OpenAI-compatible Chat Completions at `https://api.cline.bot/api/v1/chat/completions`, `Authorization: Bearer YOUR_API_KEY`, keys from Settings -> API Keys in app.cline.bot; Cline-provider billing is pay-as-you-go credits.",
+        "tier": "audit"
       },
       "scope": "llm"
     },
@@ -1070,7 +1101,8 @@
       "pricingBasis": "subscription",
       "admission": {
         "basis": "api-key",
-        "citation": "audit:§2.1 `clinepass` / §5.2 — ClinePass docs (docs.cline.bot/getting-started/clinepass, retrieved 2026-09-06), which permit third-party use in terms: \"You can use ClinePass models from your own scripts, apps, or automation\". Same base and same API keys as `cline`; \"ClinePass is a flat monthly subscription\" ($9.99/mo), NOT token-priced."
+        "citation": "audit:§2.1 `clinepass` / §5.2 — ClinePass docs (docs.cline.bot/getting-started/clinepass, retrieved 2026-09-06), which permit third-party use in terms: \"You can use ClinePass models from your own scripts, apps, or automation\". Same base and same API keys as `cline`; \"ClinePass is a flat monthly subscription\" ($9.99/mo), NOT token-priced.",
+        "tier": "audit"
       },
       "scope": "llm"
     },
@@ -1108,7 +1140,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://api.ncloud-docs.com/docs/en/ai-naver-clovastudio-summary — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://clovastudio.stream.ntruss.com/v1/openai. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://api.ncloud-docs.com/docs/en/ai-naver-clovastudio-summary — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://clovastudio.stream.ntruss.com/v1/openai. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -1145,7 +1178,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://mistral.ai — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://codestral.mistral.ai/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://mistral.ai — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://codestral.mistral.ai/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -1178,7 +1212,8 @@
       "pricingBasis": "subscription",
       "admission": {
         "basis": "oauth-documented",
-        "citation": "audit:recorded-ruling-codex"
+        "citation": "audit:§1 — the third-party-access audit's codex reference model: a vendor's public product OAuth client used with an HONEST originator (`originator: \"winter\"`, D11 / WS-01 §3), which is the shape D21 admits.",
+        "tier": "audit"
       },
       "scope": "llm"
     },
@@ -1217,7 +1252,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://cohere.com — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.cohere.com/compatibility/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://cohere.com — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.cohere.com/compatibility/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -1254,7 +1290,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://coze.com — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.coze.com/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://coze.com — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.coze.com/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -1291,7 +1328,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://crof.ai — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://crof.ai/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://crof.ai — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://crof.ai/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -1328,7 +1366,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://deepinfra.com — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.deepinfra.com/v1/openai. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://deepinfra.com — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.deepinfra.com/v1/openai. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -1365,7 +1404,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://platform.deepseek.com — the vendor's own developer platform as OmniRoute's product catalog records it at 5458026; the api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Responses at https://api.deepseek.com. EVIDENCE TIER: pinned-upstream — see PROVENANCE.md \"Two tiers of admission citation\". The audit covers the OAuth/keyless ids and carries no citation for this one."
+        "citation": "https://platform.deepseek.com — the vendor's own developer platform as OmniRoute's product catalog records it at 5458026; the api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Responses at https://api.deepseek.com. EVIDENCE TIER: pinned-upstream — see PROVENANCE.md \"Two tiers of admission citation\". The audit covers the OAuth/keyless ids and carries no citation for this one.",
+        "tier": "pinned-upstream"
       },
       "scope": "llm"
     },
@@ -1400,7 +1440,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://api-docs.deepseek.com/guides/anthropic_api — DeepSeek's own guide, retrieved 2026-09-06: \"our API has added support for the Anthropic API format, with the base_url being https://api.deepseek.com/anthropic\", and `export ANTHROPIC_BASE_URL=https://api.deepseek.com/anthropic`. Same user-minted API key as the `deepseek` row."
+        "citation": "https://api-docs.deepseek.com/guides/anthropic_api — DeepSeek's own guide, retrieved 2026-09-06: \"our API has added support for the Anthropic API format, with the base_url being https://api.deepseek.com/anthropic\", and `export ANTHROPIC_BASE_URL=https://api.deepseek.com/anthropic`. Same user-minted API key as the `deepseek` row.",
+        "tier": "fetched-document"
       },
       "scope": "llm"
     },
@@ -1439,7 +1480,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://dgrid.ai — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.dgrid.ai/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://dgrid.ai — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.dgrid.ai/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -1472,7 +1514,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://docs.digitalocean.com/products/gradient-ai-platform/reference/api/serverless-inference/ — the vendor's own documentation, retrieved 2026-09-06: DigitalOcean documents Serverless Inference on its own base `https://inference.do-ai.run`, independent of the control-plane API, with chat at `https://inference.do-ai.run/v1/chat/completions` and an inference key as a Bearer token."
+        "citation": "https://docs.digitalocean.com/products/gradient-ai-platform/reference/api/serverless-inference/ — the vendor's own documentation, retrieved 2026-09-06: DigitalOcean documents Serverless Inference on its own base `https://inference.do-ai.run`, independent of the control-plane API, with chat at `https://inference.do-ai.run/v1/chat/completions` and an inference key as a Bearer token.",
+        "tier": "fetched-document"
       },
       "scope": "llm"
     },
@@ -1511,7 +1554,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://dit.ai — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.dit.ai/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://dit.ai — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.dit.ai/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -1542,7 +1586,8 @@
       "pricingBasis": "free",
       "admission": {
         "basis": "local",
-        "citation": "local"
+        "citation": "local",
+        "tier": "local"
       },
       "scope": "llm"
     },
@@ -1580,7 +1625,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://doubao.com — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://ark.cn-beijing.volces.com/api/v3. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://doubao.com — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://ark.cn-beijing.volces.com/api/v3. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -1613,7 +1659,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://www.dxnt.com/docs — the vendor's own documentation, retrieved 2026-09-06: the vendor's own API documentation names the OpenAI-compatible base `https://www.dxnt.com/v1`."
+        "citation": "https://www.dxnt.com/docs — the vendor's own documentation, retrieved 2026-09-06: the vendor's own API documentation names the OpenAI-compatible base `https://www.dxnt.com/v1`.",
+        "tier": "fetched-document"
       },
       "scope": "llm"
     },
@@ -1647,7 +1694,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://docs.electronhub.ai/api-reference/chat/completions — the vendor's own documentation, retrieved 2026-09-06: the chat-completions reference documents base `https://api.electronhub.ai/v1` with `Authorization: Bearer YOUR_API_KEY` (keys prefixed `ek-`)."
+        "citation": "https://docs.electronhub.ai/api-reference/chat/completions — the vendor's own documentation, retrieved 2026-09-06: the chat-completions reference documents base `https://api.electronhub.ai/v1` with `Authorization: Bearer YOUR_API_KEY` (keys prefixed `ek-`).",
+        "tier": "fetched-document"
       },
       "scope": "llm"
     },
@@ -1685,7 +1733,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://factory.ai — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.factory.ai/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://factory.ai — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.factory.ai/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -1718,7 +1767,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://docs.fastrouter.ai/ — the vendor's own documentation, retrieved 2026-09-06: the docs home documents base `https://api.fastrouter.ai/api/v1` as a drop-in OpenAI SDK replacement."
+        "citation": "https://docs.fastrouter.ai/ — the vendor's own documentation, retrieved 2026-09-06: the docs home documents base `https://api.fastrouter.ai/api/v1` as a drop-in OpenAI SDK replacement.",
+        "tier": "fetched-document"
       },
       "scope": "llm"
     },
@@ -1756,7 +1806,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://featherless.ai — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.featherless.ai/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://featherless.ai — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.featherless.ai/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -1793,7 +1844,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://fireworks.ai — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.fireworks.ai/inference/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://fireworks.ai — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.fireworks.ai/inference/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -1831,7 +1883,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://freeaiapikey.com — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.freeaiapikey.com/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://freeaiapikey.com — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.freeaiapikey.com/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -1865,7 +1918,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://freeinference.org — the vendor's own documentation, retrieved 2026-09-06: the site's own documentation names `https://freeinference.org/v1/chat/completions`."
+        "citation": "https://freeinference.org — the vendor's own documentation, retrieved 2026-09-06: the site's own documentation names `https://freeinference.org/v1/chat/completions`.",
+        "tier": "fetched-document"
       },
       "scope": "llm"
     },
@@ -1904,7 +1958,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://freemodel.dev — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.freemodel.dev/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://freemodel.dev — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.freemodel.dev/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -1942,7 +1997,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://freetheai.xyz — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.freetheai.xyz/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://freetheai.xyz — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.freetheai.xyz/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -1980,7 +2036,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://friendli.ai — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.friendli.ai/serverless/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://friendli.ai — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.friendli.ai/serverless/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -2017,7 +2074,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://galadriel.com — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.galadriel.ai/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://galadriel.com — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.galadriel.ai/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -2051,7 +2109,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://ai.google.dev/gemini-api/docs/pricing"
+        "citation": "https://ai.google.dev/gemini-api/docs/pricing",
+        "tier": "fetched-document"
       },
       "scope": "llm"
     },
@@ -2089,7 +2148,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://groq.com — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.groq.com/openai/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://groq.com — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.groq.com/openai/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -2122,7 +2182,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://helyxai.space — the vendor's own documentation, retrieved 2026-09-06: the vendor's own site documents `https://helyxai.space/v1/chat/completions`."
+        "citation": "https://helyxai.space — the vendor's own documentation, retrieved 2026-09-06: the vendor's own site documents `https://helyxai.space/v1/chat/completions`.",
+        "tier": "fetched-document"
       },
       "scope": "llm"
     },
@@ -2160,7 +2221,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://www.heroku.com — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://us.inference.heroku.com/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://www.heroku.com — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://us.inference.heroku.com/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -2198,7 +2260,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://huggingface.co — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://router.huggingface.co/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://huggingface.co — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://router.huggingface.co/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -2235,7 +2298,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://hyperbolic.xyz — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.hyperbolic.xyz/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://hyperbolic.xyz — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.hyperbolic.xyz/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -2272,7 +2336,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://xinghuo.xfyun.cn — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://spark-api-open.xf-yun.com/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://xinghuo.xfyun.cn — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://spark-api-open.xf-yun.com/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -2309,7 +2374,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://docs.inceptionlabs.ai — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.inceptionlabs.ai/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://docs.inceptionlabs.ai — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.inceptionlabs.ai/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -2346,7 +2412,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://inference.net — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.inference.net/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://inference.net — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.inference.net/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -2383,7 +2450,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://internlm.intern-ai.org.cn/ — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://chat.intern-ai.org.cn/api/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://internlm.intern-ai.org.cn/ — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://chat.intern-ai.org.cn/api/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -2421,7 +2489,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://kenari.id — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://kenari.id/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://kenari.id — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://kenari.id/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -2458,7 +2527,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://kie.ai — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.kie.ai/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://kie.ai — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.kie.ai/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -2492,7 +2562,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "audit:§2.1 `kilocode` / §5.2 — Kilo Gateway authentication docs (kilo.ai/docs/gateway/authentication, retrieved 2026-09-06): OpenAI-compatible API at base `https://api.kilo.ai/api/gateway`, \"Bearer token passed in the Authorization header\", organization tokens via `X-KiloCode-OrganizationId`, per-token pricing with free credits."
+        "citation": "audit:§2.1 `kilocode` / §5.2 — Kilo Gateway authentication docs (kilo.ai/docs/gateway/authentication, retrieved 2026-09-06): OpenAI-compatible API at base `https://api.kilo.ai/api/gateway`, \"Bearer token passed in the Authorization header\", organization tokens via `X-KiloCode-OrganizationId`, per-token pricing with free credits.",
+        "tier": "audit"
       },
       "scope": "llm"
     },
@@ -2527,7 +2598,8 @@
       "pricingBasis": "subscription",
       "admission": {
         "basis": "api-key",
-        "citation": "https://www.kimi.com/code/docs/en/ — Kimi Code's own docs, retrieved 2026-09-06: Anthropic-compatible base `https://api.kimi.com/coding/`, OpenAI-compatible `https://api.kimi.com/coding/v1`; \"Kimi members can create and manage API Keys in the Kimi Code Console\"; billing is a membership subscription (monthly/annual) with rate limiting, expressly contrasted with the platform's pay-as-you-go; the docs NAME Claude Code, OpenCode and Codex as clients. Audit §4/§5.2."
+        "citation": "https://www.kimi.com/code/docs/en/ — Kimi Code's own docs, retrieved 2026-09-06: Anthropic-compatible base `https://api.kimi.com/coding/`, OpenAI-compatible `https://api.kimi.com/coding/v1`; \"Kimi members can create and manage API Keys in the Kimi Code Console\"; billing is a membership subscription (monthly/annual) with rate limiting, expressly contrasted with the platform's pay-as-you-go; the docs NAME Claude Code, OpenCode and Codex as clients. Audit §4/§5.2.",
+        "tier": "fetched-document"
       },
       "scope": "llm"
     },
@@ -2565,7 +2637,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://lambda.ai — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.lambda.ai/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://lambda.ai — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.lambda.ai/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -2596,7 +2669,8 @@
       "pricingBasis": "free",
       "admission": {
         "basis": "local",
-        "citation": "local"
+        "citation": "local",
+        "tier": "local"
       },
       "scope": "llm"
     },
@@ -2635,7 +2709,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://liquid.ai — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://inference.liquid.ai/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://liquid.ai — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://inference.liquid.ai/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -2668,7 +2743,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://docs.literouter.com — the vendor's own documentation, retrieved 2026-09-06: the docs introduction names the OpenAI-compatible base `https://api.literouter.com/v1`."
+        "citation": "https://docs.literouter.com — the vendor's own documentation, retrieved 2026-09-06: the docs introduction names the OpenAI-compatible base `https://api.literouter.com/v1`.",
+        "tier": "fetched-document"
       },
       "scope": "llm"
     },
@@ -2700,7 +2776,8 @@
       "pricingBasis": "free",
       "admission": {
         "basis": "local",
-        "citation": "local"
+        "citation": "local",
+        "tier": "local"
       },
       "scope": "llm"
     },
@@ -2732,7 +2809,8 @@
       "pricingBasis": "free",
       "admission": {
         "basis": "local",
-        "citation": "local"
+        "citation": "local",
+        "tier": "local"
       },
       "scope": "llm"
     },
@@ -2766,7 +2844,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://docs.llm.kiwi/ — the vendor's own documentation, retrieved 2026-09-06: the docs home documents base `https://api.llm.kiwi/v1` with `Authorization: Bearer YOUR_API_KEY` (keys prefixed `sk_kiwi_`)."
+        "citation": "https://docs.llm.kiwi/ — the vendor's own documentation, retrieved 2026-09-06: the docs home documents base `https://api.llm.kiwi/v1` with `Authorization: Bearer YOUR_API_KEY` (keys prefixed `sk_kiwi_`).",
+        "tier": "fetched-document"
       },
       "scope": "llm"
     },
@@ -2805,7 +2884,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://llm7.io — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.llm7.io/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://llm7.io — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.llm7.io/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -2839,7 +2919,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://docs.llmgateway.io/ — the vendor's own documentation, retrieved 2026-09-06: the docs home documents base `https://api.llmgateway.io/v1` (or a self-hosted instance) authenticated with an LLM Gateway API key."
+        "citation": "https://docs.llmgateway.io/ — the vendor's own documentation, retrieved 2026-09-06: the docs home documents base `https://api.llmgateway.io/v1` (or a self-hosted instance) authenticated with an LLM Gateway API key.",
+        "tier": "fetched-document"
       },
       "scope": "llm"
     },
@@ -2871,7 +2952,8 @@
       "pricingBasis": "free",
       "admission": {
         "basis": "local",
-        "citation": "local"
+        "citation": "local",
+        "tier": "local"
       },
       "scope": "llm"
     },
@@ -2906,7 +2988,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://logfare.ai/docs — the vendor's own documentation, retrieved 2026-09-06: the API docs name base `https://logfare.ai/v1` and enumerate `/chat/completions`, `/messages`, `/models`."
+        "citation": "https://logfare.ai/docs — the vendor's own documentation, retrieved 2026-09-06: the API docs name base `https://logfare.ai/v1` and enumerate `/chat/completions`, `/messages`, `/models`.",
+        "tier": "fetched-document"
       },
       "scope": "llm"
     },
@@ -2944,7 +3027,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://longcat.chat/platform/docs — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.longcat.chat/openai/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://longcat.chat/platform/docs — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.longcat.chat/openai/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -2977,7 +3061,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://docs.meganova.ai — the vendor's own documentation, retrieved 2026-09-06: the docs overview names the OpenAI-compatible base `https://api.meganova.ai/v1`."
+        "citation": "https://docs.meganova.ai — the vendor's own documentation, retrieved 2026-09-06: the docs overview names the OpenAI-compatible base `https://api.meganova.ai/v1`.",
+        "tier": "fetched-document"
       },
       "scope": "llm"
     },
@@ -3015,7 +3100,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://llama.developer.meta.com — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.llama.com/compat/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://llama.developer.meta.com — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.llama.com/compat/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -3046,14 +3132,15 @@
       "risk": {
         "class": "review-required",
         "reasons": [
-          "WS-13b §1 admission evidence is PINNED-UPSTREAM, not a fetched vendor document: the citation names the vendor site OmniRoute records, and the api-key path is attested by the pinned RegistryEntry rather than by a doc this lane read"
+          "admission is fetched-document (the vendor's own OpenAI-SDK reference, cross-checked against the pinned RegistryEntry), but no live gate case has run against this endpoint"
         ]
       },
       "scope": "llm",
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://www.minimax.io — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.minimax.io/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://platform.minimax.io/docs/api-reference/text-openai-api — MiniMax's own OpenAI-SDK reference (\"OpenAI SDK\"), retrieved 2026-09-06: `export OPENAI_BASE_URL=https://api.minimax.io/v1` with `export OPENAI_API_KEY=${YOUR_API_KEY}`, i.e. an OpenAI-compatible surface reached with the user's own key. That base is byte-identical to the API root the mapper derives from this id's pinned RegistryEntry, so two independent sources agree — which is why this row moved off the pinned-upstream tier (whole-branch review M-4: it sat there while its own `minimax-anthropic` sibling cited a fetched MiniMax document naming the same key).",
+        "tier": "fetched-document"
       }
     },
     {
@@ -3086,7 +3173,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — MiniMax's own Anthropic-SDK reference, retrieved 2026-09-06: base URL `https://api.minimax.io/anthropic`, used through `client.messages.create()`, so the Messages route is `/anthropic/v1/messages`. Same user-minted key as the `minimax` row."
+        "citation": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — MiniMax's own Anthropic-SDK reference, retrieved 2026-09-06: base URL `https://api.minimax.io/anthropic`, used through `client.messages.create()`, so the Messages route is `/anthropic/v1/messages`. Same user-minted key as the `minimax` row.",
+        "tier": "fetched-document"
       },
       "scope": "llm"
     },
@@ -3125,7 +3213,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://www.minimaxi.com — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.minimaxi.com/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://www.minimaxi.com — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.minimaxi.com/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -3162,7 +3251,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://mistral.ai — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.mistral.ai/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://mistral.ai — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.mistral.ai/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -3193,7 +3283,8 @@
       "pricingBasis": "free",
       "admission": {
         "basis": "local",
-        "citation": "local"
+        "citation": "local",
+        "tier": "local"
       },
       "scope": "llm"
     },
@@ -3225,7 +3316,8 @@
       "pricingBasis": "free",
       "admission": {
         "basis": "local",
-        "citation": "local"
+        "citation": "local",
+        "tier": "local"
       },
       "scope": "llm"
     },
@@ -3260,7 +3352,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://mnnai.ru/docs — the vendor's own documentation, retrieved 2026-09-06: the docs name the primary OpenAI-compatible base `https://api.mnnai.ru/v1` with `/chat/completions` and `/models`."
+        "citation": "https://mnnai.ru/docs — the vendor's own documentation, retrieved 2026-09-06: the docs name the primary OpenAI-compatible base `https://api.mnnai.ru/v1` with `/chat/completions` and `/models`.",
+        "tier": "fetched-document"
       },
       "scope": "llm"
     },
@@ -3298,7 +3391,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://modal.com/docs — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.modal.ai/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://modal.com/docs — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.modal.ai/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -3336,7 +3430,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://modelscope.cn — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api-inference.modelscope.cn/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://modelscope.cn — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api-inference.modelscope.cn/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -3369,7 +3464,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "audit:§4 / §2.1 `kimi-coding` — docs/research/Provider-third-party-access-audit.md, retrieved 2026-09-06: \"the token-priced platform API (https://api.moonshot.ai/v1, MOONSHOT_API_KEY, OpenAI- and Anthropic-format compatible) remains an ordinary api-key provider\", citing platform.kimi.ai/docs/overview."
+        "citation": "audit:§4 / §2.1 `kimi-coding` — docs/research/Provider-third-party-access-audit.md, retrieved 2026-09-06: \"the token-priced platform API (https://api.moonshot.ai/v1, MOONSHOT_API_KEY, OpenAI- and Anthropic-format compatible) remains an ordinary api-key provider\", citing platform.kimi.ai/docs/overview.",
+        "tier": "audit"
       },
       "scope": "llm"
     },
@@ -3407,7 +3503,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://morphllm.com — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.morphllm.com/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://morphllm.com — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.morphllm.com/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -3440,7 +3537,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://docs.naga.ac/api-reference/overview — the vendor's own documentation, retrieved 2026-09-06: the API-reference overview documents `baseURL` `https://api.naga.ac/v1` with `Authorization: Bearer YOUR_API_KEY` (an `x-api-key` alternative is offered for inference endpoints)."
+        "citation": "https://docs.naga.ac/api-reference/overview — the vendor's own documentation, retrieved 2026-09-06: the API-reference overview documents `baseURL` `https://api.naga.ac/v1` with `Authorization: Bearer YOUR_API_KEY` (an `x-api-key` alternative is offered for inference endpoints).",
+        "tier": "fetched-document"
       },
       "scope": "llm"
     },
@@ -3480,7 +3578,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://nano-gpt.com — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://nano-gpt.com/api/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://nano-gpt.com — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://nano-gpt.com/api/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -3513,7 +3612,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://docs.tokenfactory.nebius.com/ — the vendor's own documentation, retrieved 2026-09-06: the docs home documents base `https://api.tokenfactory.nebius.com/v1/` with `Authorization: Bearer $NEBIUS_API_KEY`."
+        "citation": "https://docs.tokenfactory.nebius.com/ — the vendor's own documentation, retrieved 2026-09-06: the docs home documents base `https://api.tokenfactory.nebius.com/v1/` with `Authorization: Bearer $NEBIUS_API_KEY`.",
+        "tier": "fetched-document"
       },
       "scope": "llm"
     },
@@ -3551,7 +3651,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://docs.nlpcloud.com — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.nlpcloud.io/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://docs.nlpcloud.com — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.nlpcloud.io/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -3588,7 +3689,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://portal.nousresearch.com/help — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://inference-api.nousresearch.com/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://portal.nousresearch.com/help — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://inference-api.nousresearch.com/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -3626,7 +3728,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://novita.ai — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.novita.ai/openai/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://novita.ai — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.novita.ai/openai/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -3663,7 +3766,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://nscale.com — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://inference.api.nscale.com/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://nscale.com — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://inference.api.nscale.com/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -3701,7 +3805,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://nube.sh — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://ai.nube.sh/api/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://nube.sh — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://ai.nube.sh/api/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -3738,7 +3843,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://build.nvidia.com — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://integrate.api.nvidia.com/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://build.nvidia.com — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://integrate.api.nvidia.com/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -3772,7 +3878,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://docs.ofox.ai — the vendor's own documentation, retrieved 2026-09-06: the docs name the OpenAI-compatible base `https://api.ofox.ai/v1` and `/chat/completions`."
+        "citation": "https://docs.ofox.ai — the vendor's own documentation, retrieved 2026-09-06: the docs name the OpenAI-compatible base `https://api.ofox.ai/v1` and `/chat/completions`.",
+        "tier": "fetched-document"
       },
       "scope": "llm"
     },
@@ -3811,7 +3918,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://ollama.com/settings/keys — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://ollama.com/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://ollama.com/settings/keys — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://ollama.com/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -3842,7 +3950,8 @@
       "pricingBasis": "free",
       "admission": {
         "basis": "local",
-        "citation": "local"
+        "citation": "local",
+        "tier": "local"
       },
       "scope": "llm"
     },
@@ -3874,7 +3983,8 @@
       "pricingBasis": "free",
       "admission": {
         "basis": "local",
-        "citation": "local"
+        "citation": "local",
+        "tier": "local"
       },
       "scope": "llm"
     },
@@ -3913,7 +4023,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://openadapter.dev — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.openadapter.in/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://openadapter.dev — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.openadapter.in/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -3948,7 +4059,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://developers.openai.com/api/docs/pricing"
+        "citation": "https://developers.openai.com/api/docs/pricing",
+        "tier": "fetched-document"
       },
       "scope": "llm"
     },
@@ -3983,7 +4095,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "audit:§2.2 `opencode` / §5.2 — OpenCode Zen docs (opencode.ai/docs/zen/, retrieved 2026-09-06): base `https://opencode.ai/zen/v1/` with `/responses`, `/messages`, `/chat/completions` and `/models/[model-id]`; key issued on signing up for Zen; pay-as-you-go per 1M tokens, several models temporarily free."
+        "citation": "audit:§2.2 `opencode` / §5.2 — OpenCode Zen docs (opencode.ai/docs/zen/, retrieved 2026-09-06): base `https://opencode.ai/zen/v1/` with `/responses`, `/messages`, `/chat/completions` and `/models/[model-id]`; key issued on signing up for Zen; pay-as-you-go per 1M tokens, several models temporarily free.",
+        "tier": "audit"
       },
       "scope": "llm"
     },
@@ -4018,7 +4131,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "audit:§2.1 `openference` / §5.2 — Openference's own docs (docs.openference.com/introduction + /faq, retrieved 2026-09-06): curated OpenAI-compatible gateway at `https://api.openference.com/v1`, key from the dashboard, and the docs instruct the reader to \"Point any supported coding tool… to https://api.openference.com/v1\", naming Cursor, Claude Code, Cline, Codex, OpenCode and Pi."
+        "citation": "audit:§2.1 `openference` / §5.2 — Openference's own docs (docs.openference.com/introduction + /faq, retrieved 2026-09-06): curated OpenAI-compatible gateway at `https://api.openference.com/v1`, key from the dashboard, and the docs instruct the reader to \"Point any supported coding tool… to https://api.openference.com/v1\", naming Cursor, Claude Code, Cline, Codex, OpenCode and Pi.",
+        "tier": "audit"
       },
       "scope": "llm"
     },
@@ -4056,7 +4170,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://openrouter.ai — the vendor's own site as OmniRoute's product catalog records it at 5458026; the api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://openrouter.ai/api/v1. EVIDENCE TIER: pinned-upstream — see PROVENANCE.md \"Two tiers of admission citation\". The audit (docs/research/Provider-third-party-access-audit.md) covers the OAuth/keyless ids and carries NO citation for this one, so its 51 references cannot upgrade this row."
+        "citation": "https://openrouter.ai — the vendor's own site as OmniRoute's product catalog records it at 5458026; the api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://openrouter.ai/api/v1. EVIDENCE TIER: pinned-upstream — see PROVENANCE.md \"Two tiers of admission citation\". The audit (docs/research/Provider-third-party-access-audit.md) covers the OAuth/keyless ids and carries NO citation for this one, so its 51 references cannot upgrade this row.",
+        "tier": "pinned-upstream"
       },
       "scope": "llm"
     },
@@ -4094,7 +4209,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://www.perplexity.ai — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.perplexity.ai. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://www.perplexity.ai — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.perplexity.ai. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -4131,7 +4247,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://pioneer.ai — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.pioneer.ai/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://pioneer.ai — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.pioneer.ai/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -4168,7 +4285,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://plamo.preferredai.jp/api — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.platform.preferredai.jp/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://plamo.preferredai.jp/api — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.platform.preferredai.jp/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -4201,7 +4319,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://docs.poolside.ai/api/overview — the vendor's own documentation, retrieved 2026-09-06: the API overview documents base `https://inference.poolside.ai/v1` with `Authorization: Bearer <api-key>`."
+        "citation": "https://docs.poolside.ai/api/overview — the vendor's own documentation, retrieved 2026-09-06: the API overview documents base `https://inference.poolside.ai/v1` with `Authorization: Bearer <api-key>`.",
+        "tier": "fetched-document"
       },
       "scope": "llm"
     },
@@ -4239,7 +4358,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://publicai.co — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.publicai.co/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://publicai.co — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.publicai.co/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -4277,7 +4397,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://cloud.baidu.com/product-s/qianfan_home — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://qianfan.baidubce.com/v2. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://cloud.baidu.com/product-s/qianfan_home — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://qianfan.baidubce.com/v2. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -4315,7 +4436,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://www.qiniu.com — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.qnaigc.com/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://www.qiniu.com — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.qnaigc.com/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -4353,7 +4475,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://www.qwencloud.com/ — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://dashscope-intl.aliyuncs.com/compatible-mode/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://www.qwencloud.com/ — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://dashscope-intl.aliyuncs.com/compatible-mode/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -4390,7 +4513,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://www.qwencloud.com/pricing/token-plan — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://www.qwencloud.com/pricing/token-plan — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -4427,7 +4551,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://docs.reka.ai/chat/overview — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.reka.ai/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://docs.reka.ai/chat/overview — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.reka.ai/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -4460,7 +4585,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://docs.requesty.ai/quickstart — the vendor's own documentation, retrieved 2026-09-06: the quickstart documents base `https://router.requesty.ai/v1` with `Authorization: Bearer $REQUESTY_API_KEY`, as a drop-in OpenAI replacement."
+        "citation": "https://docs.requesty.ai/quickstart — the vendor's own documentation, retrieved 2026-09-06: the quickstart documents base `https://router.requesty.ai/v1` with `Authorization: Bearer $REQUESTY_API_KEY`, as a drop-in OpenAI replacement.",
+        "tier": "fetched-document"
       },
       "scope": "llm"
     },
@@ -4494,7 +4620,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://docs.routeway.ai/ — the vendor's own documentation, retrieved 2026-09-06: the docs home documents base `https://api.routeway.ai/v1` with `Authorization: Bearer $ROUTEWAY_API_KEY`."
+        "citation": "https://docs.routeway.ai/ — the vendor's own documentation, retrieved 2026-09-06: the docs home documents base `https://api.routeway.ai/v1` with `Authorization: Bearer $ROUTEWAY_API_KEY`.",
+        "tier": "fetched-document"
       },
       "scope": "llm"
     },
@@ -4532,7 +4659,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://sambanova.ai — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.sambanova.ai/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://sambanova.ai — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.sambanova.ai/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -4569,7 +4697,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://docs.sarvam.ai — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.sarvam.ai/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://docs.sarvam.ai — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.sarvam.ai/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -4606,7 +4735,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://www.scaleway.com/en/docs/ai-data/generative-apis/ — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.scaleway.ai/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://www.scaleway.com/en/docs/ai-data/generative-apis/ — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.scaleway.ai/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -4639,7 +4769,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://docs.sea-lion.ai/guides/inferencing/api/ — the vendor's own documentation, retrieved 2026-09-06: the inferencing guide documents base `https://api.sea-lion.ai/v1` with `Authorization: Bearer YOUR_API_KEY`."
+        "citation": "https://docs.sea-lion.ai/guides/inferencing/api/ — the vendor's own documentation, retrieved 2026-09-06: the inferencing guide documents base `https://api.sea-lion.ai/v1` with `Authorization: Bearer YOUR_API_KEY`.",
+        "tier": "fetched-document"
       },
       "scope": "llm"
     },
@@ -4677,7 +4808,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://platform.sensenova.cn — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://token.sensenova.cn/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://platform.sensenova.cn — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://token.sensenova.cn/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -4710,7 +4842,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://docs.siliconflow.com/en/api-reference/chat-completions/chat-completions — the vendor's own documentation, retrieved 2026-09-06: the API reference's own OpenAPI `servers` block is `url: https://api.siliconflow.com/v1` with path `/chat/completions`, `bearerAuth: type: http, scheme: bearer`."
+        "citation": "https://docs.siliconflow.com/en/api-reference/chat-completions/chat-completions — the vendor's own documentation, retrieved 2026-09-06: the API reference's own OpenAPI `servers` block is `url: https://api.siliconflow.com/v1` with path `/chat/completions`, `bearerAuth: type: http, scheme: bearer`.",
+        "tier": "fetched-document"
       },
       "scope": "llm"
     },
@@ -4748,7 +4881,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://xinghuo.xfyun.cn — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://spark-api-open.xf-yun.com/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://xinghuo.xfyun.cn — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://spark-api-open.xf-yun.com/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -4781,7 +4915,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://speka.me/docs — the vendor's own documentation, retrieved 2026-09-06: the API reference is titled \"OpenAI-Compatible AI API Docs\" and names base `https://speka.me/v1`."
+        "citation": "https://speka.me/docs — the vendor's own documentation, retrieved 2026-09-06: the API reference is titled \"OpenAI-Compatible AI API Docs\" and names base `https://speka.me/v1`.",
+        "tier": "fetched-document"
       },
       "scope": "llm"
     },
@@ -4819,7 +4954,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://stepfun.com — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.stepfun.com/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://stepfun.com — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.stepfun.com/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -4857,7 +4993,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://synthetic.new — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.synthetic.new/openai/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://synthetic.new — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.synthetic.new/openai/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -4895,7 +5032,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://tabitoken.com — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", Anthropic Messages at https://tabitoken.com. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://tabitoken.com — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", Anthropic Messages at https://tabitoken.com. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -4932,7 +5070,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://hunyuan.tencent.com — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.hunyuan.cloud.tencent.com/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://hunyuan.tencent.com — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.hunyuan.cloud.tencent.com/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -4965,7 +5104,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://docs.together.ai/docs/chat-overview — the vendor's own documentation, retrieved 2026-09-06: the chat-overview page documents `https://api.together.ai/v1/chat/completions` with `Authorization: Bearer $TOGETHER_API_KEY`."
+        "citation": "https://docs.together.ai/docs/chat-overview — the vendor's own documentation, retrieved 2026-09-06: the chat-overview page documents `https://api.together.ai/v1/chat/completions` with `Authorization: Bearer $TOGETHER_API_KEY`.",
+        "tier": "fetched-document"
       },
       "scope": "llm"
     },
@@ -4997,7 +5137,8 @@
       "pricingBasis": "free",
       "admission": {
         "basis": "local",
-        "citation": "local"
+        "citation": "local",
+        "tier": "local"
       },
       "scope": "llm"
     },
@@ -5035,7 +5176,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://docs.opentyphoon.ai — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.opentyphoon.ai/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://docs.opentyphoon.ai — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.opentyphoon.ai/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -5069,7 +5211,8 @@
       "pricingBasis": "free",
       "admission": {
         "basis": "keyless-documented",
-        "citation": "audit:§2.2 `uncloseai` / §5.1 — uncloseai.com and its terms of use (uncloseai.com/terms-of-use.html), retrieved 2026-09-06: OpenAI-compatible endpoints at `hermes.ai.unturf.com/v1`, `qwen.ai.unturf.com/v1`, `speech.ai.unturf.com/v1`; the service states it does NOT require a valid API key and is \"completely public domain\"; third-party clients are explicitly encouraged (\"open source client implementations in 42+ programming languages\")."
+        "citation": "audit:§2.2 `uncloseai` / §5.1 — uncloseai.com and its terms of use (uncloseai.com/terms-of-use.html), retrieved 2026-09-06: OpenAI-compatible endpoints at `hermes.ai.unturf.com/v1`, `qwen.ai.unturf.com/v1`, `speech.ai.unturf.com/v1`; the service states it does NOT require a valid API key and is \"completely public domain\"; third-party clients are explicitly encouraged (\"open source client implementations in 42+ programming languages\").",
+        "tier": "audit"
       },
       "scope": "llm"
     },
@@ -5107,7 +5250,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://www.upstage.ai — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.upstage.ai/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://www.upstage.ai — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.upstage.ai/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -5144,7 +5288,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://v0.dev — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.v0.dev/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://v0.dev — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.v0.dev/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -5181,7 +5326,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://venice.ai — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.venice.ai/api/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://venice.ai — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.venice.ai/api/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -5218,7 +5364,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://vercel.com/docs/ai-gateway — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://ai-gateway.vercel.sh/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://vercel.com/docs/ai-gateway — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://ai-gateway.vercel.sh/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -5252,7 +5399,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "cloud-credential",
-        "citation": "https://cloud.google.com/vertex-ai — the vendor's own product page as OmniRoute's product catalog records it at 5458026. The credential is the OPERATOR'S OWN GCP project via Application Default Credentials, which is why the basis is cloud-credential rather than api-key. EVIDENCE TIER: pinned-upstream — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://cloud.google.com/vertex-ai — the vendor's own product page as OmniRoute's product catalog records it at 5458026. The credential is the OPERATOR'S OWN GCP project via Application Default Credentials, which is why the basis is cloud-credential rather than api-key. EVIDENCE TIER: pinned-upstream — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       },
       "scope": "llm"
     },
@@ -5284,7 +5432,8 @@
       "pricingBasis": "free",
       "admission": {
         "basis": "local",
-        "citation": "local"
+        "citation": "local",
+        "tier": "local"
       },
       "scope": "llm"
     },
@@ -5318,7 +5467,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://docs.voidai.app/ — the vendor's own documentation, retrieved 2026-09-06: the docs home documents base `https://api.voidai.app/v1` with `Authorization: Bearer sk-voidai-…`."
+        "citation": "https://docs.voidai.app/ — the vendor's own documentation, retrieved 2026-09-06: the docs home documents base `https://api.voidai.app/v1` with `Authorization: Bearer sk-voidai-…`.",
+        "tier": "fetched-document"
       },
       "scope": "llm"
     },
@@ -5356,7 +5506,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://www.volcengine.com — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://ark.cn-beijing.volces.com/api/v3. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://www.volcengine.com — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://ark.cn-beijing.volces.com/api/v3. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -5393,7 +5544,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://console.volcengine.com/ark/region:cn-beijing/subscription/agent-plan — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://ark.cn-beijing.volces.com/api/plan/v3. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://console.volcengine.com/ark/region:cn-beijing/subscription/agent-plan — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://ark.cn-beijing.volces.com/api/plan/v3. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -5430,7 +5582,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://console.volcengine.com/ark/region:cn-beijing/subscription/coding-plan — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://ark.cn-beijing.volces.com/api/coding/v3. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://console.volcengine.com/ark/region:cn-beijing/subscription/coding-plan — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://ark.cn-beijing.volces.com/api/coding/v3. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -5467,7 +5620,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://wafer.ai — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", Anthropic Messages at https://pass.wafer.ai. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://wafer.ai — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", Anthropic Messages at https://pass.wafer.ai. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -5504,7 +5658,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://wandb.ai — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.inference.wandb.ai/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://wandb.ai — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.inference.wandb.ai/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -5541,7 +5696,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://dev.writer.com — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.writer.com/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://dev.writer.com — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.writer.com/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -5575,7 +5731,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://docs.x.ai/docs/overview — xAI's own developer overview, retrieved 2026-09-06: `\"base_url\": \"https://api.x.ai/v1\"` with `Authorization: Bearer $XAI_API_KEY`, driven through the OpenAI client. Audit §2.1/§2.5 records the same base and that this key path is token-priced, distinct from the subscription OAuth flow."
+        "citation": "https://docs.x.ai/docs/overview — xAI's own developer overview, retrieved 2026-09-06: `\"base_url\": \"https://api.x.ai/v1\"` with `Authorization: Bearer $XAI_API_KEY`, driven through the OpenAI client. Audit §2.1/§2.5 records the same base and that this key path is token-priced, distinct from the subscription OAuth flow.",
+        "tier": "fetched-document"
       },
       "scope": "llm"
     },
@@ -5610,7 +5767,8 @@
       "pricingBasis": "subscription",
       "admission": {
         "basis": "oauth-documented",
-        "citation": "audit:2.5 — vendor announcement https://x.ai/news/grok-opencode (\"More open-source agents and integrations are coming soon\") + xAI's own public client, Apache-2.0, https://github.com/xai-org/grok-build at commit 72a61251fcffb464bcc687aeb5a998e5a98ec0c9; constants derived in packages/conformance/compat/xai/grok-build/derived-shapes-p6b-xai.md"
+        "citation": "audit:2.5 — vendor announcement https://x.ai/news/grok-opencode (\"More open-source agents and integrations are coming soon\") + xAI's own public client, Apache-2.0, https://github.com/xai-org/grok-build at commit 72a61251fcffb464bcc687aeb5a998e5a98ec0c9; constants derived in packages/conformance/compat/xai/grok-build/derived-shapes-p6b-xai.md",
+        "tier": "audit"
       },
       "scope": "llm"
     },
@@ -5642,7 +5800,8 @@
       "pricingBasis": "free",
       "admission": {
         "basis": "local",
-        "citation": "local"
+        "citation": "local",
+        "tier": "local"
       },
       "scope": "llm"
     },
@@ -5680,7 +5839,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://01.ai — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.lingyiwanwu.com/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://01.ai — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.lingyiwanwu.com/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -5713,7 +5873,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://yolo-auto.com/docs — the vendor's own documentation, retrieved 2026-09-06: the docs are titled \"OpenAI-Compatible API Docs\" and name base `https://yolo-auto.com/v1` with `/models`."
+        "citation": "https://yolo-auto.com/docs — the vendor's own documentation, retrieved 2026-09-06: the docs are titled \"OpenAI-Compatible API Docs\" and name base `https://yolo-auto.com/v1` with `/models`.",
+        "tier": "fetched-document"
       },
       "scope": "llm"
     },
@@ -5747,7 +5908,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://docs.z.ai/devpack/tool/others — z.ai's own GLM Coding Plan docs, retrieved 2026-09-06: the \"Coding Endpoint\" table lists `https://api.z.ai/api/coding/paas/v4` under \"OpenAI Chat Completions\", and the Cline configuration example repeats it."
+        "citation": "https://docs.z.ai/devpack/tool/others — z.ai's own GLM Coding Plan docs, retrieved 2026-09-06: the \"Coding Endpoint\" table lists `https://api.z.ai/api/coding/paas/v4` under \"OpenAI Chat Completions\", and the Cline configuration example repeats it.",
+        "tier": "fetched-document"
       },
       "scope": "llm"
     },
@@ -5785,7 +5947,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://docs.z.ai/devpack/tool/claude — z.ai's own GLM Coding Plan documentation for Anthropic-compatible clients, retrieved 2026-09-06: `ANTHROPIC_BASE_URL` is `\"https://api.z.ai/api/anthropic\"`, which is byte-identical to the API root the mapper derives from this id's pinned RegistryEntry (`format: \"claude\"` at `https://api.z.ai/api/anthropic/v1/messages`). Two independent sources, one value. (Round-1 finding I-4: the previous citation named `open.bigmodel.cn`, the mainland product site, and sat in the pinned-upstream tier although the lane had fetched this document.)"
+        "citation": "https://docs.z.ai/devpack/tool/claude — z.ai's own GLM Coding Plan documentation for Anthropic-compatible clients, retrieved 2026-09-06: `ANTHROPIC_BASE_URL` is `\"https://api.z.ai/api/anthropic\"`, which is byte-identical to the API root the mapper derives from this id's pinned RegistryEntry (`format: \"claude\"` at `https://api.z.ai/api/anthropic/v1/messages`). Two independent sources, one value. (Round-1 finding I-4: the previous citation named `open.bigmodel.cn`, the mainland product site, and sat in the pinned-upstream tier although the lane had fetched this document.)",
+        "tier": "fetched-document"
       }
     },
     {
@@ -5823,7 +5986,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://zenmux.ai — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://zenmux.ai/api/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://zenmux.ai — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://zenmux.ai/api/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
+        "tier": "pinned-upstream"
       }
     },
     {
@@ -5856,7 +6020,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://www.zerolimitai.com — the vendor's own documentation, retrieved 2026-09-06: the vendor's own site names the OpenAI-compatible base `https://www.zerolimitai.com/api/v1`."
+        "citation": "https://www.zerolimitai.com — the vendor's own documentation, retrieved 2026-09-06: the vendor's own site names the OpenAI-compatible base `https://www.zerolimitai.com/api/v1`.",
+        "tier": "fetched-document"
       },
       "scope": "llm"
     },
@@ -5890,7 +6055,8 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://zyloai.net/docs — the vendor's own documentation, retrieved 2026-09-06: the docs name the OpenAI-compatible base `https://api.zyloai.net/v1`."
+        "citation": "https://zyloai.net/docs — the vendor's own documentation, retrieved 2026-09-06: the docs name the OpenAI-compatible base `https://api.zyloai.net/v1`.",
+        "tier": "fetched-document"
       },
       "scope": "llm"
     }

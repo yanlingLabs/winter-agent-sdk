@@ -30,7 +30,7 @@
 import { describe, expect, test } from "bun:test";
 import { loadCatalog, type WinterCatalog } from "@yanlinglabs/winter-provider-catalog";
 import type { CredentialRef, CredentialMaterial } from "@yanlinglabs/winter-provider-runtime";
-import { createMemoryCredentialStore } from "@yanlinglabs/winter-provider-runtime";
+import { createMemoryCredentialStore, winterUserAgent } from "@yanlinglabs/winter-provider-runtime";
 import type { RuntimeConfig } from "@yanlinglabs/winter-agent-sdk";
 import { buildSessionProvider } from "../../../runtime/src/provider/session-provider.ts";
 import { anthropicFakeRoutes, anthropicTurnResponse } from "../fakes/anthropic-messages.ts";
@@ -186,4 +186,49 @@ describe("WS-13 §5 / fix-wave R-FW-1: no row reaches its vendor carrying ANOTHE
     // And the exemption is scoped to the DIALECT's adapter: the same name on a chat row fails.
     expect(crossVendorHeaderViolations({ providerId: "aihorde", adapterId: "winter.openai-chat-completions" }, { "anthropic-version": "2023-06-01" })).toHaveLength(1);
   });
+});
+
+/**
+ * WS-13b §2/§7/§8.4 + audit §5.1 (fix-wave R-FW-2, whole-branch review I-2): THE SECOND IDENTITY
+ * FIELD ACTUALLY ARRIVES.
+ *
+ * The spec asks for "a truthful `Client-Agent`" on the keyless rows, and what shipped was a row
+ * whose citation NAMES the header and no code that sends it — the row author handed it to "the
+ * adapter owner", whose brief was the live gate. So the assertion here is the LIVE REQUEST, on the
+ * PRODUCTION path, and the table is read off the catalog rather than written out: a future row that
+ * declares `identityHeaders` and is never wired into its family gets a red here without anybody
+ * remembering to add a case.
+ */
+describe("WS-13b §7/§8.4: every row that DECLARES an identity header actually sends it", () => {
+  const declaring = CATALOG.providers.filter((p) => p.identityHeaders !== undefined && Object.keys(p.identityHeaders).length > 0);
+
+  test("the catalog declares at least one — the sweep below is not vacuous", () => {
+    // `aihorde` today. If this ever goes to zero the obligation was deleted, not satisfied.
+    expect(declaring.map((p) => p.id)).toEqual(["aihorde"]);
+  });
+
+  test.each(declaring.map((p) => [p.id] as const))("%s sends its declared identity header, with `<version>` substituted", async (id) => {
+    const provider = CATALOG.providers.find((p) => p.id === id)!;
+    // `authKinds` decides the material, so a keyless-documented row is driven exactly as the live
+    // gate drives it rather than however this file finds convenient.
+    const { requests } = await driveRow({ id, why: "declares identityHeaders", material: provider.authKinds.includes("oauth-approved") ? "oauth" : "api-key" });
+    expect(requests).toHaveLength(1);
+    const version = winterUserAgent().split("/")[1]!;
+    for (const [name, declared] of Object.entries(provider.identityHeaders ?? {})) {
+      const expected = declared.split("<version>").join(version);
+      // Header names arrive lowercased on the recorder, as they do on the wire.
+      expect([id, name, requests[0]?.headers[name.toLowerCase()]]).toEqual([id, name, expected]);
+      // The substitution actually happened: a value still carrying the placeholder would be a
+      // literal `<version>` on the wire, which reads as a bug report to whoever receives it.
+      expect(requests[0]?.headers[name.toLowerCase()]).not.toContain("<version>");
+    }
+  }, 15_000);
+
+  test("a row that declares NONE sends none — the header is per-row, not per-adapter", async () => {
+    // `openrouter` is on the SAME `winter.openai-chat-completions` instance as `aihorde`. If the
+    // seam were adapter-scoped rather than row-scoped, this is where it would show.
+    const { requests } = await driveRow(ROWS.find((r) => r.id === "openrouter")!);
+    expect(requests[0]?.headers["client-agent"]).toBeUndefined();
+    expect(requests[0]?.headers["user-agent"]).toBe(winterUserAgent());
+  }, 15_000);
 });

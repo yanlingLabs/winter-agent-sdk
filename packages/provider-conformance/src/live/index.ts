@@ -154,11 +154,24 @@ export interface LiveRowSummary {
    * "every request carries Winter's OWN user-agent"), against the live request a fake received.
    */
   identityHeader: string;
+  /**
+   * The row's ADMISSION EVIDENCE TIER (fix-wave R-FW-3, condition (b)).
+   *
+   * Printed because promotion is TWO-KEY: a live pass alone does not promote a row — it takes a live
+   * pass AND a fetched vendor document, with the citation upgraded in the same reviewed commit. A
+   * green row from a `pinned-upstream` provider says "the path works", not "the evidence is
+   * complete", and an operator reading a pasted row is exactly who would otherwise promote it by
+   * habit.
+   *
+   * A catalog fact, read off the resolved provider row — never re-derived here.
+   */
+  admissionTier: string;
 }
 
 export interface LiveRowSummaryOptions {
   kind: LiveTargetKindLabel;
   identityHeader: string;
+  admissionTier: string;
 }
 
 /** Folds a finished `LiveReport` into its one-line row. Pure: no adapter, no endpoint, no clock. */
@@ -171,12 +184,13 @@ export function liveRowSummary(report: LiveReport, opts: LiveRowSummaryOptions):
     latencyMs: report.outcomes.reduce((total, outcome) => total + outcome.ms, 0),
     toolCallOk: report.outcomes.some((outcome) => outcome.id === "tool-round" && outcome.status === "ok"),
     identityHeader: opts.identityHeader,
+    admissionTier: opts.admissionTier,
   };
 }
 
 /** `key=value` pairs, in a fixed order, so a run's rows grep and diff. */
 export function formatLiveRow(row: LiveRowSummary): string {
-  return `  live-row providerId=${row.providerId} model=${row.model} kind=${row.kind} ok=${row.ok} latencyMs=${row.latencyMs} toolCallOk=${row.toolCallOk} identityHeader=${row.identityHeader}`;
+  return `  live-row providerId=${row.providerId} model=${row.model} kind=${row.kind} ok=${row.ok} latencyMs=${row.latencyMs} toolCallOk=${row.toolCallOk} identityHeader=${row.identityHeader} admissionTier=${row.admissionTier}`;
 }
 
 /**
@@ -190,7 +204,7 @@ export async function runLiveTarget(opts: RunLiveCasesOptions & LiveRowSummaryOp
   // documented path this credential came down, and a case that had to re-derive it would be a
   // second, drifting answer to a question already settled.
   const report = await runLiveCases({ ...opts, targetKind: opts.kind });
-  return { report, row: liveRowSummary(report, { kind: opts.kind, identityHeader: opts.identityHeader }) };
+  return { report, row: liveRowSummary(report, { kind: opts.kind, identityHeader: opts.identityHeader, admissionTier: opts.admissionTier }) };
 }
 
 /** One line per case. Identifiers, counts and durations only — never a byte of what a provider returned. */

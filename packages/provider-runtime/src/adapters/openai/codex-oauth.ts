@@ -32,6 +32,7 @@ import { refreshTokens, runLoginFlow, type OAuthTokens } from "./pkce.ts";
 import { refreshOauthMaterial } from "../oauth/refresh.ts";
 import { QuotaManager, quotaEvent } from "./quota.ts";
 import { buildResponsesBody, privilegedHeaders, streamResponsesTurn, type ResponsesTurnPlan } from "./responses.ts";
+import { identityFor } from "./shared.ts";
 import {
   EventQueue,
   assertRepresentableTools,
@@ -299,6 +300,7 @@ function codexHeaders(policy: ResponsesTurnPlan["endpoint"]["policy"], tokens: E
     policy,
     protocol: { "content-type": "application/json", accept: "text/event-stream", "OpenAI-Beta": CODEX.headers["OpenAI-Beta"]!, authorization: `Bearer ${tokens.accessToken}` },
     privileged: { ...privilegedHeaders(options), originator: CODEX.headers.originator!, ...(tokens.accountId !== undefined ? { "chatgpt-account-id": tokens.accountId } : {}) },
+    identity: identityFor(options, ctx),
     userSupplied: ctx.connection.headers,
   });
 }

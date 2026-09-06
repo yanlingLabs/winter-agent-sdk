@@ -182,8 +182,67 @@ export interface WinterProviderDescriptor {
    * a class of rows (WS-13 §1's disposition table admits the reviewed api-key/cloud allowlist rows);
    * `local` for a `local-none` row, whose "vendor" is the operator's own machine.
    */
-  admission: { basis: "api-key" | "oauth-documented" | "keyless-documented" | "local" | "cloud-credential"; citation: string };
+  admission: { basis: "api-key" | "oauth-documented" | "keyless-documented" | "local" | "cloud-credential"; citation: string; tier: AdmissionTier };
+  /**
+   * WS-13b §2/§7/§8.4 (fix-wave ruling R-FW-2): the SECOND identity field this vendor names, if it
+   * names one.
+   *
+   * Winter's `User-Agent` is unconditional and lives in code (`identity.ts`). This is the per-row
+   * half: AI Horde documents a `Client-Agent: <name>:<version>:<contact>` field, and the spec's own
+   * words are "a truthful `Client-Agent`" — an obligation that fell between the row author (who
+   * cited the header) and the adapter owner (whose lane was the live gate), and shipped as prose on
+   * neither side. Making it DATA on the row is what stops that: the row that documents the header is
+   * the row that carries it, and one seam applies every row's.
+   *
+   * WHAT MAY BE HERE, enforced by `validateCatalog` rather than by review:
+   *   - the NAME must be one of a Winter-authored allowlist (`Client-Agent` today). A row may not
+   *     invent a header name, and it may certainly not name a vendor's product-identity field —
+   *     that is the exact thing WS-13 §5 and D21 forbid, and a free-text name field would be a hole
+   *     straight through both.
+   *   - the VALUE must begin `winter-agent-sdk`. Winter names ITSELF in every identity field; a
+   *     value naming an editor, a CLI or a first-party product is not a configuration mistake to
+   *     fix later, it is impersonation.
+   *   - `<version>` in the value is substituted by the adapter with this build's own version, so a
+   *     release cannot leave a stale number on the wire.
+   *
+   * NOT routed through `applyPrivilegedHeaders`. This is Winter's own identity, the same class as
+   * the `User-Agent` beside it — it discloses nothing about the operator, and gating it on a
+   * generated endpoint would silently drop it for every multi-provider row, whose reviewed endpoint
+   * is COPIED into the connection profile and therefore evaluated as a user endpoint (seam 1c).
+   * `aihorde` is exactly such a row, so a privileged reading would have delivered the header in a
+   * fixture and never in production.
+   */
+  identityHeaders?: Record<string, string>;
 }
+
+/**
+ * WS-13b §1 (fix-wave ruling R-FW-3): HOW GOOD the evidence behind `admission.citation` is, as DATA.
+ *
+ * The tiers were prose before this — a marker inside the citation STRING, explained in PROVENANCE.md
+ * — and the one test that claimed to keep the fifteen reviewed rows out of the weakest tier could
+ * not: it matched `^https?:\/\/`, which a pinned-upstream citation also satisfies. Nothing in the
+ * validator, the live gate or the promotion path could key on a substring, so the label drifted from
+ * the rows it described (`minimax` sat in the weak tier while its own sibling cited a fetched
+ * MiniMax document naming the same base URL).
+ *
+ *   `fetched-document`  a page this repository's lane FETCHED and READ, quoted in the citation with
+ *                       the date it was retrieved. The strongest tier and the only one a `supported`
+ *                       model may sit on.
+ *   `pinned-upstream`   the vendor's own site as OmniRoute's product catalog records it at the pin,
+ *                       plus the pinned `RegistryEntry` (auth type, dialect, base URL). An admission
+ *                       of the PATH and a placeholder for the DOCUMENT: honest, consequential
+ *                       (`review-required`, models `candidate`), and never a claimed review that did
+ *                       not happen.
+ *   `spec-ruling`       a Winter spec ruling admits the row as a class (WS-13b §0 D20).
+ *   `audit`             the third-party-access audit's own evidence table.
+ *   `local`             the "vendor" is the operator's own machine.
+ *
+ * PROMOTION IS TWO-KEY (ruling (b)): a live-gate pass AND a fetched vendor document, with the
+ * citation upgraded in the same reviewed commit. `catalog-integrity.test.ts` asserts the half a test
+ * can hold — no `approved` row and no `supported` model on `pinned-upstream` — and the live gate's
+ * report row prints the tier so a promotion cannot be made from a pinned row by habit.
+ */
+export type AdmissionTier = "fetched-document" | "pinned-upstream" | "spec-ruling" | "local" | "audit";
 
 export interface WinterCatalog {
   schemaVersion: 1;

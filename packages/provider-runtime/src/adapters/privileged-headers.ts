@@ -39,6 +39,26 @@ import { CREDENTIAL_HEADER_NAMES, type EndpointPolicy } from "../endpoint-policy
 export const PRIVILEGED_IDENTITY_HEADERS: readonly string[] = ["x-goog-user-project", "x-goog-quota-project", "openai-organization", "openai-project"];
 
 /**
+ * WINTER'S OWN IDENTITY NAMES — dropped from a host's map on a GENERATED endpoint (whole-branch
+ * review M-1).
+ *
+ * The INVERSE of the privileged rule above, and deliberately so. `identity.ts` says the User-Agent
+ * is "deliberately NOT configurable" and names exactly one sanctioned override: "the operator
+ * speaking about their own proxy" — that is a USER endpoint. What the code did was let the same
+ * `ConnectionProfile.headers['user-agent']` replace Winter's identity on the VENDOR'S OWN reviewed
+ * endpoint too, which is the one place the admission rule cares about: a host could present Winter
+ * to a vendor as an editor or a first-party CLI, through a field nothing else guards.
+ *
+ * `client-agent` is here for the same reason and by the same reading (fix-wave R-FW-2): it is the
+ * second half of the same identity, so one rule governs both rather than two that can drift.
+ *
+ * NOT ON THE PRIVILEGED LIST, because the two rules point opposite ways: a privileged name is
+ * dropped on a USER endpoint and kept on a generated one; an identity name is kept on a user
+ * endpoint (the operator's proxy is theirs to describe) and dropped on a generated one.
+ */
+export const WINTER_IDENTITY_HEADERS: readonly string[] = ["user-agent", "client-agent"];
+
+/**
  * The host's own connection headers, filtered for the endpoint they are about to be sent to.
  *
  * TWO RULES, with deliberately different reach:
@@ -47,20 +67,27 @@ export const PRIVILEGED_IDENTITY_HEADERS: readonly string[] = ["x-goog-user-proj
  *     not. A profile is non-secret connection metadata by contract; a credential in it is a
  *     misconfiguration, and a reviewed endpoint does not make it less of one.
  *
- *   IDENTITY — the privileged names are dropped on a USER endpoint only; on a generated one a
+ *   PRIVILEGED — the privileged names are dropped on a USER endpoint only; on a generated one a
  *     reviewed descriptor endpoint vouches for the identity headers that belong to it. (Three of the
  *     four privileged names are on the credential list too, so `x-goog-quota-project` is the only
  *     header where the two rules actually differ.)
  *
- * Everything else is kept on both — a host's proxy token, a tracing header, a `user-agent` are all
- * its own business.
+ *   WINTER'S IDENTITY — `user-agent`/`client-agent` are dropped on a GENERATED endpoint, the exact
+ *     inverse (M-1). The sanctioned override is the operator describing THEIR OWN proxy; letting the
+ *     same field replace Winter's name at the vendor's own endpoint is how a host would present
+ *     Winter as an editor or a first-party CLI, which is the thing the admission rule forbids.
+ *
+ * Everything else is kept on both — a host's proxy token, a tracing header — as its own business.
  *
  * Returns a COPY either way, so a `ConnectionProfile` reused across requests is never mutated.
  */
 export function hostHeaders(policy: EndpointPolicy, headers: Record<string, string> | undefined, extraPrivileged: readonly string[] = []): Record<string, string> {
   if (headers === undefined) return {};
   const blocked = new Set(
-    (policy.generated ? CREDENTIAL_HEADER_NAMES : [...CREDENTIAL_HEADER_NAMES, ...PRIVILEGED_IDENTITY_HEADERS, ...extraPrivileged]).map((name) => name.toLowerCase()),
+    (policy.generated
+      ? [...CREDENTIAL_HEADER_NAMES, ...WINTER_IDENTITY_HEADERS]
+      : [...CREDENTIAL_HEADER_NAMES, ...PRIVILEGED_IDENTITY_HEADERS, ...extraPrivileged]
+    ).map((name) => name.toLowerCase()),
   );
   const out: Record<string, string> = {};
   for (const [name, value] of Object.entries(headers)) {

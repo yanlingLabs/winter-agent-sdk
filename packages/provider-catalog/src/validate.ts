@@ -54,6 +54,20 @@ const PROVIDER_SCOPES = ["llm", "stt", "tts", "embedding", "image", "video", "se
 const UPSTREAM_PROJECTS = ["OmniRoute", "winter"] as const;
 const PRICING_BASES = ["token", "subscription", "free"] as const;
 const ADMISSION_BASES = ["api-key", "oauth-documented", "keyless-documented", "local", "cloud-credential"] as const;
+const ADMISSION_TIERS = ["fetched-document", "pinned-upstream", "spec-ruling", "local", "audit"] as const;
+
+/**
+ * The header NAMES a reviewed row may put in `identityHeaders` (fix-wave R-FW-2).
+ *
+ * ONE ENTRY, and widening it is a deliberate edit with a vendor document behind it. `Client-Agent`
+ * is AI Horde's documented `<name>:<version>:<contact>` client-identity field. A row that needs a
+ * different second identity field adds its name here, in review, beside the document that names it —
+ * which is the whole difference between a Winter-authored identity and an imported one.
+ */
+export const WINTER_IDENTITY_HEADER_NAMES: readonly string[] = ["Client-Agent"];
+
+/** Every identity value names Winter. `identity.ts` substitutes `<version>` at request time. */
+export const WINTER_IDENTITY_VALUE_PREFIX = "winter-agent-sdk";
 const CONTINUATIONS = ["none", "plaintext", "opaque-provider-state", "server-response-handle"] as const;
 const READABLE_STATES = ["none", "summary", "full-exposed"] as const;
 const REPLAY_SCOPES = ["current-tool-loop", "current-turn", "selected-turns", "all-turns"] as const;
@@ -83,6 +97,7 @@ export const CATALOG_VOCABULARIES = {
   upstreamProjects: UPSTREAM_PROJECTS,
   pricingBases: PRICING_BASES,
   admissionBases: ADMISSION_BASES,
+  admissionTiers: ADMISSION_TIERS,
   continuations: CONTINUATIONS,
   readableStates: READABLE_STATES,
   replayScopes: REPLAY_SCOPES,
@@ -387,6 +402,16 @@ function checkProvider(errs: Errors, v: unknown, path: string): void {
     errs.add(`${path}.admission`, `required — WS-13b §1 (D21): a row ships only through a DOCUMENTED third-party path, and the citation that admits it travels on the row. Got ${describe(admission)}`, "admission-missing");
   } else {
     errs.enum(admission, "basis", `${path}.admission`, ADMISSION_BASES);
+    // R-FW-3: the evidence TIER is data, and required. It was a marker inside the citation string,
+    // which meant nothing could key on it -- the one test that claimed to enforce it matched
+    // `^https?://`, which a pinned-upstream citation satisfies just as happily as a fetched
+    // document's URL. `admission-tier-missing` is its own code because `catalog-integrity` keys the
+    // promotion rule on the value.
+    if (admission["tier"] === undefined) {
+      errs.add(`${path}.admission.tier`, "required — WS-13b §1 (fix-wave R-FW-3): every row records HOW GOOD its admission evidence is, because promotion is two-key (a live pass AND a fetched document) and a rule keyed on a substring inside the citation is a rule that drifts", "admission-tier-missing");
+    } else {
+      errs.enum(admission, "tier", `${path}.admission`, ADMISSION_TIERS);
+    }
     const citation = admission["citation"];
     if (typeof citation !== "string" || citation.trim().length === 0) {
       errs.add(`${path}.admission.citation`, `expected a non-empty citation (a vendor URL, \`audit:<section>\`, \`spec:<section>\`, or \`local\`), got ${describe(citation)}`, "admission-missing");
@@ -395,6 +420,37 @@ function checkProvider(errs: Errors, v: unknown, path: string): void {
       // found", whose disposition is EXCLUDE — so this is not weak evidence to flag, it is a row
       // that may not ship at all, and the refusal has to be here rather than in a reviewer's head.
       errs.add(`${path}.admission.citation`, `cites the audit's \`unknown\` evidence class (${JSON.stringify(citation)}) — WS-13b §1: "a row whose evidence is \`unknown\` does not ship". Find the document or drop the row`, "admission-unknown");
+    }
+  }
+
+  // WS-13b §7/§8.4 (R-FW-2): the row's SECOND identity field, if the vendor names one.
+  //
+  // Both halves are enforcement, not tidiness. A free-text NAME would let a row put a vendor's
+  // product-identity header on the wire, which WS-13 §5 and D21 exist to forbid — so the name comes
+  // from a Winter-authored allowlist and a row may not invent one. A free-text VALUE would let a row
+  // present Winter as an editor or a first-party CLI in the very field whose purpose is honest
+  // identity — so it must name Winter, in Winter's own form.
+  const identityHeaders = v["identityHeaders"];
+  if (identityHeaders !== undefined) {
+    if (!isRecord(identityHeaders)) {
+      errs.add(`${path}.identityHeaders`, `expected an object of header name -> value, got ${describe(identityHeaders)}`, "identity-header-invalid");
+    } else {
+      for (const [name, value] of Object.entries(identityHeaders)) {
+        if (!WINTER_IDENTITY_HEADER_NAMES.some((allowed) => allowed.toLowerCase() === name.toLowerCase())) {
+          errs.add(
+            `${path}.identityHeaders.${name}`,
+            `${JSON.stringify(name)} is not a Winter-authored identity header. WS-13 §5 / D21: a row may not name its own header here — a vendor's product-identity field is exactly what that rule forbids. Allowed: ${WINTER_IDENTITY_HEADER_NAMES.join(", ")}`,
+            "identity-header-invalid",
+          );
+        }
+        if (typeof value !== "string" || !value.startsWith(WINTER_IDENTITY_VALUE_PREFIX)) {
+          errs.add(
+            `${path}.identityHeaders.${name}`,
+            `expected a value naming Winter (starting ${JSON.stringify(WINTER_IDENTITY_VALUE_PREFIX)}; \`<version>\` is substituted by the adapter), got ${describe(value)} — an identity field that names anything else is not a configuration error, it is impersonation`,
+            "identity-header-invalid",
+          );
+        }
+      }
     }
   }
 

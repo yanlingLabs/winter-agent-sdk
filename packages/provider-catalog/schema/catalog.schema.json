@@ -119,12 +119,19 @@
         "admission": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["basis", "citation"],
-          "description": "WS-13b §1 (D21): the documented third-party path this row ships through. `citation` is a vendor URL, `audit:<section>`, `spec:<section>` or `local`; the in-repo validator additionally REFUSES a citation naming the audit's `unknown` evidence class (R6b-3).",
+          "required": ["basis", "citation", "tier"],
+          "description": "WS-13b §1 (D21): the documented third-party path this row ships through. `citation` is a vendor URL, `audit:<section>`, `spec:<section>` or `local`; the in-repo validator additionally REFUSES a citation naming the audit's `unknown` evidence class (R6b-3). `tier` is how good that evidence is (fix-wave R-FW-3): promotion is two-key — a live-gate pass AND a fetched vendor document — and no `approved` row or `supported` model may sit on `pinned-upstream`.",
           "properties": {
             "basis": { "enum": ["api-key", "oauth-documented", "keyless-documented", "local", "cloud-credential"] },
-            "citation": { "type": "string", "minLength": 1 }
+            "citation": { "type": "string", "minLength": 1 },
+            "tier": { "enum": ["fetched-document", "pinned-upstream", "spec-ruling", "local", "audit"] }
           }
+        },
+        "identityHeaders": {
+          "type": "object",
+          "description": "WS-13b §7/§8.4 (fix-wave R-FW-2): the SECOND identity field this vendor names, if it names one (AI Horde's `Client-Agent`). Winter-authored only: the in-repo validator restricts the NAMES to an allowlist and requires every value to name Winter (`winter-agent-sdk…`; `<version>` is substituted by the adapter). Sent beside the unconditional `User-Agent` and NOT gated on a generated endpoint — it is Winter's own identity, not the operator's.",
+          "propertyNames": { "enum": ["Client-Agent"] },
+          "additionalProperties": { "type": "string", "minLength": 1 }
         }
       }
     },

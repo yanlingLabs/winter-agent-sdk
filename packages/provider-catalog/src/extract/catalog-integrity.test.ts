@@ -552,11 +552,69 @@ describe("WS-13b §2: the widened catalog", () => {
     const row = byId.get(id);
     expect(row?.adapterId).toBe(adapterId);
     expect(row?.pricingBasis).toBe(basis);
-    // A URL or an `audit:` reference -- the two FETCHED-DOCUMENT tiers. These fifteen rows are the
-    // ones the audit and the vendors' own docs cover, so none of them may fall back to the
-    // pinned-upstream tier the 107 allowlist admissions use (PROVENANCE.md, "Two tiers").
-    expect(row?.admission.citation).toMatch(/^https?:\/\/|^audit:/);
+    // These fifteen rows are the ones the audit and the vendors' own docs cover, so none of them may
+    // fall back to the pinned-upstream tier (PROVENANCE.md, "Two tiers").
+    //
+    // KEYED ON THE TIER FIELD, not on the citation's shape (whole-branch review M-4, ruling R-FW-3).
+    // This assertion used to read `/^https?:\/\/|^audit:/`, which CANNOT enforce what its own comment
+    // claimed: a pinned-upstream citation begins `https://` too, so the check passed for every row
+    // in the table whatever tier it was on -- and `minimax` sat on `pinned-upstream` while its own
+    // sibling cited a fetched MiniMax document naming the same base URL. The tier is data now, so
+    // the rule can be stated as the rule.
+    expect([id, row?.admission.tier]).not.toEqual([id, "pinned-upstream"]);
     expect(catalog.models.some((m) => m.providerId === id && m.status === "candidate")).toBe(true);
+  });
+
+  test("the evidence TIER is data on every row, and it AGREES with the prose it was derived from", () => {
+    // Ruling R-FW-3, condition (a). The tier used to live inside the citation STRING as an
+    // "EVIDENCE TIER: pinned-upstream" marker, explained in PROVENANCE.md and keyed on by nothing —
+    // so the one test that claimed to enforce it could not (see the table above), and the label was
+    // free to drift from the row it described.
+    //
+    // THE AGREEMENT IS THE TRIPWIRE. The tier was DERIVED from the marker text once; asserting the
+    // two still count the same is what makes a later edit to one without the other a red rather than
+    // a silent divergence. (Deriving the field per-run instead would make this vacuous — it would be
+    // comparing the marker to itself.)
+    const withMarker = catalog.providers.filter((p) => p.admission.citation.includes("EVIDENCE TIER: pinned-upstream")).map((p) => p.id).sort();
+    const onTier = catalog.providers.filter((p) => p.admission.tier === "pinned-upstream").map((p) => p.id).sort();
+    expect(onTier).toEqual(withMarker);
+    expect(onTier.length).toBeGreaterThan(50);
+    // ...and no row is missing one. `validateCatalog` refuses that, so this is the assertion that
+    // the shipped artifact went through it.
+    expect(catalog.providers.filter((p) => p.admission.tier === undefined).map((p) => p.id)).toEqual([]);
+  });
+
+  test("PROMOTION IS TWO-KEY: no `approved` row and no `supported` model sits on the pinned-upstream tier", () => {
+    // Ruling R-FW-3, condition (b). A pinned-upstream citation is an admission of the PATH (the
+    // api-key prong, satisfied by the pinned RegistryEntry) and a PLACEHOLDER for the document. So a
+    // row may ship on it — labelled, `review-required`, models `candidate` — but promoting one takes
+    // two keys: a live-gate pass AND a fetched vendor document, with the citation upgraded in the
+    // same reviewed commit. The second key is what this asserts; the live gate's report row prints
+    // the tier so the first cannot be granted from a pinned row by habit.
+    expect(catalog.providers.filter((p) => p.admission.tier === "pinned-upstream" && p.risk.class === "approved").map((p) => p.id)).toEqual([]);
+    const pinned = new Set(catalog.providers.filter((p) => p.admission.tier === "pinned-upstream").map((p) => p.id));
+    expect(catalog.models.filter((m) => pinned.has(m.providerId) && m.status === "supported").map((m) => m.key)).toEqual([]);
+  });
+
+  test("WS-13b §8.4: `aihorde` declares the `Client-Agent` its own citation names — the obligation is DATA, not prose", () => {
+    // Whole-branch review I-2. The row cited the header and nothing sent it: X2 handed the header to
+    // "Lane L / the adapter owner", whose brief was the live gate, and it appeared on neither
+    // ledger. The row that documents the vendor's field is now the row that carries it.
+    //
+    // The value is asserted here; that it REACHES THE WIRE is asserted against a live request in
+    // `provider-conformance/src/corpus/cross-vendor-headers.test.ts`, "aihorde sends its declared
+    // identity header, with `<version>` substituted".
+    const aihorde = byId.get("aihorde");
+    expect(aihorde?.identityHeaders).toEqual({ "Client-Agent": "winter-agent-sdk:<version>:https://github.com/yanlingLabs/winter-agent-sdk" });
+    expect(aihorde?.admission.citation).toContain("Client-Agent");
+    // Every declared identity header names WINTER, on every row that has one. `validateCatalog`
+    // refuses anything else; this is the assertion over the SHIPPED artifact.
+    for (const provider of catalog.providers) {
+      for (const [name, value] of Object.entries(provider.identityHeaders ?? {})) {
+        expect([provider.id, name]).toEqual([provider.id, "Client-Agent"]);
+        expect([provider.id, value.startsWith("winter-agent-sdk")]).toEqual([provider.id, true]);
+      }
+    }
   });
 
   test("every user- and audit-excluded id is ABSENT from the catalog and PRESENT in the ledger with its reason", () => {

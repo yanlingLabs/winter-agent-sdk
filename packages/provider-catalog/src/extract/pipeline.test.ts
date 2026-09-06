@@ -110,7 +110,7 @@ const ACME_ROW = {
   // WS-13b §1: an allowlist entry carries its own admission evidence, and `buildUpstreamLayer`
   // refuses the run without it (see "rows are evidence" below).
   pricingBasis: "token" as const,
-  admission: { basis: "api-key" as const, citation: "https://acme.test/pricing" },
+  admission: { basis: "api-key" as const, citation: "https://acme.test/pricing", tier: "fetched-document" as const },
 };
 
 function buildInput(allowlist: Allowlist, patch: Partial<BuildUpstreamLayerInput> = {}): BuildUpstreamLayerInput {
@@ -233,7 +233,7 @@ describe("curation and class transitions (WS-13 §3 step 7 / §13)", () => {
   test("...and a REVIEWED allowlist edit is the ONLY thing that admits it", () => {
     const layer = buildUpstreamLayer(buildInput(allowlistWith([
       ACME_ROW,
-      { upstreamId: "spare", winterId: "spare", expectedCategory: "apikey", risk: { class: "approved", reasons: [] }, pricingBasis: "token" as const, admission: { basis: "api-key" as const, citation: "https://spare.test/pricing" } },
+      { upstreamId: "spare", winterId: "spare", expectedCategory: "apikey", risk: { class: "approved", reasons: [] }, pricingBasis: "token" as const, admission: { basis: "api-key" as const, citation: "https://spare.test/pricing", tier: "fetched-document" as const } },
     ])));
     // It is admitted, but only as far as the pipeline can honestly take it: upstream has no backend
     // registry entry for `spare`, so the row is recorded as such rather than fabricated.
@@ -245,7 +245,7 @@ describe("curation and class transitions (WS-13 §3 step 7 / §13)", () => {
     // direction is what stops an id from being quietly imported after upstream moves it into a
     // cookie/OAuth class — an allowlist that is merely trusted cannot notice.
     expect(() =>
-      buildUpstreamLayer(buildInput(allowlistWith([{ upstreamId: "ghost", winterId: "ghost", expectedCategory: "web-cookie", risk: { class: "approved", reasons: [] }, pricingBasis: "token" as const, admission: { basis: "api-key" as const, citation: "https://ghost.test/pricing" } }]))),
+      buildUpstreamLayer(buildInput(allowlistWith([{ upstreamId: "ghost", winterId: "ghost", expectedCategory: "web-cookie", risk: { class: "approved", reasons: [] }, pricingBasis: "token" as const, admission: { basis: "api-key" as const, citation: "https://ghost.test/pricing", tier: "fetched-document" as const } }]))),
     ).toThrow(/class transition BLOCKED/);
   });
 
@@ -266,7 +266,7 @@ describe("curation and class transitions (WS-13 §3 step 7 / §13)", () => {
   });
 
   test("an allowlisted entry with an EMPTY citation fails the same way — a present-but-blank field is not evidence", () => {
-    expect(() => buildUpstreamLayer(buildInput(allowlistWith([{ ...ACME_ROW, admission: { basis: "api-key" as const, citation: "   " } }])))).toThrow(/admission-missing/);
+    expect(() => buildUpstreamLayer(buildInput(allowlistWith([{ ...ACME_ROW, admission: { basis: "api-key" as const, citation: "   ", tier: "fetched-document" as const } }])))).toThrow(/admission-missing/);
   });
 
   test("an allowlisted entry with NO pricingBasis fails the run (admission-missing)", () => {
@@ -275,19 +275,19 @@ describe("curation and class transitions (WS-13 §3 step 7 / §13)", () => {
   });
 
   test("an allowlisted entry citing the audit's `unknown` evidence class is REFUSED (admission-unknown), never imported", () => {
-    expect(() => buildUpstreamLayer(buildInput(allowlistWith([{ ...ACME_ROW, admission: { basis: "api-key" as const, citation: "audit:unknown" } }])))).toThrow(/admission-unknown/);
+    expect(() => buildUpstreamLayer(buildInput(allowlistWith([{ ...ACME_ROW, admission: { basis: "api-key" as const, citation: "audit:unknown", tier: "audit" as const } }])))).toThrow(/admission-unknown/);
   });
 
   test("the reviewed pricing basis and admission citation are COPIED onto the generated row, never derived", () => {
-    const layer = buildUpstreamLayer(buildInput(allowlistWith([{ ...ACME_ROW, pricingBasis: "subscription" as const, admission: { basis: "oauth-documented" as const, citation: "audit:5.1" } }])));
+    const layer = buildUpstreamLayer(buildInput(allowlistWith([{ ...ACME_ROW, pricingBasis: "subscription" as const, admission: { basis: "oauth-documented" as const, citation: "audit:5.1", tier: "audit" as const } }])));
     const row = layer.providers.find((provider) => provider.id === "acme-winter");
     expect(row?.pricingBasis).toBe("subscription");
-    expect(row?.admission).toEqual({ basis: "oauth-documented", citation: "audit:5.1" });
+    expect(row?.admission).toEqual({ basis: "oauth-documented", citation: "audit:5.1", tier: "audit" });
   });
 
   test("an allowlist entry that matches NO upstream row fails loudly — a silently empty extraction is the worse outcome", () => {
     expect(() =>
-      buildUpstreamLayer(buildInput(allowlistWith([{ upstreamId: "google", winterId: "google", expectedCategory: "apikey", risk: { class: "approved", reasons: [] }, pricingBasis: "token" as const, admission: { basis: "api-key" as const, citation: "https://google.test/pricing" } }]))),
+      buildUpstreamLayer(buildInput(allowlistWith([{ upstreamId: "google", winterId: "google", expectedCategory: "apikey", risk: { class: "approved", reasons: [] }, pricingBasis: "token" as const, admission: { basis: "api-key" as const, citation: "https://google.test/pricing", tier: "fetched-document" as const } }]))),
     ).toThrow(/has no product-catalog row/);
   });
 });

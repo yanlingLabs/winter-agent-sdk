@@ -86,7 +86,7 @@ export function testVertexCatalog(): WinterCatalog {
         // WS-13b §1: both fields are REQUIRED on every provider row, so a fixture states its
         // own basis rather than inheriting one — a row-shape change fails HERE, at the fixture.
         pricingBasis: "token",
-        admission: { basis: "cloud-credential", citation: "fixture:vertex-corpus" },
+        admission: { basis: "cloud-credential", citation: "fixture:vertex-corpus", tier: "local" },
       },
     ],
     models: [

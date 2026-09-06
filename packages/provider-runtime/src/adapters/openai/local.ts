@@ -31,6 +31,7 @@ import {
   buildHeaders,
   capabilitiesFrom,
   fetchOpenAiModels,
+  identityFor,
   httpErrorFrom,
   mapEffortAgainst,
   resolveAuth,
@@ -66,7 +67,7 @@ export function createLocalOpenAIAdapter(options: LocalAdapterOptions): Provider
     async validateCredential(ref: CredentialRef, ctx: ProviderContext): Promise<CredentialStatus> {
       const endpoint = resolveEndpoint(ctx, options);
       const auth = await resolveAuth(ctx, options.authStyle ?? "bearer");
-      const headers = buildHeaders({ policy: endpoint.policy, protocol: { accept: "application/json", ...auth.headers }, userSupplied: ctx.connection.headers });
+      const headers = buildHeaders({ policy: endpoint.policy, protocol: { accept: "application/json", ...auth.headers }, identity: identityFor(options, ctx), userSupplied: ctx.connection.headers });
       // `hasCredential: true` unconditionally: on a local endpoint, having none is a valid
       // configuration, so "missing" is never the right verdict here.
       return validateViaModels(ref, ctx, endpoint, headers, options, true);
@@ -75,7 +76,7 @@ export function createLocalOpenAIAdapter(options: LocalAdapterOptions): Provider
     async listModels(ctx: DiscoveryContext): Promise<ModelCatalogResult> {
       const endpoint = resolveEndpoint(ctx, options);
       const auth = await resolveAuth(ctx, options.authStyle ?? "bearer");
-      const headers = buildHeaders({ policy: endpoint.policy, protocol: { accept: "application/json", ...auth.headers }, userSupplied: ctx.connection.headers });
+      const headers = buildHeaders({ policy: endpoint.policy, protocol: { accept: "application/json", ...auth.headers }, identity: identityFor(options, ctx), userSupplied: ctx.connection.headers });
       try {
         return await fetchOpenAiModels(ctx, endpoint, headers, options);
       } catch (err) {

@@ -525,6 +525,9 @@ async function runTarget(target: LiveTarget, catalog: WinterCatalog, adapters: r
     kind: target.kind,
     // What THIS BUILD sends. That it is actually on the wire is pinned by the corpus, not observed here.
     identityHeader: winterUserAgent(),
+    // The row's evidence tier (R-FW-3(b)): promotion is TWO-KEY, so an operator reading a green row
+    // sees whether the second key -- a fetched vendor document -- is already in hand.
+    admissionTier: resolved.provider.admission.tier,
   });
   console.log(formatLiveReport(report));
   // The one-line per-target ROW (WS-13b §7), printed after the per-case detail because it is the

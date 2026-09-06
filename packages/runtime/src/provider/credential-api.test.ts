@@ -227,7 +227,7 @@ function catalog(
     // WS-13b §1: both fields are REQUIRED on every provider row, so a fixture states its
     // own basis rather than inheriting one — a row-shape change fails HERE, at the fixture.
     pricingBasis: "token",
-    admission: { basis: "api-key", citation: "fixture:credential-api" },
+    admission: { basis: "api-key", citation: "fixture:credential-api", tier: "local" },
   };
   const verified = { source: "official-doc", confidence: "verified" } as const;
   return {

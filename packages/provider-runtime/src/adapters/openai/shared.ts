@@ -38,7 +38,7 @@
 
 import type { WinterModelDescriptor } from "@yanlinglabs/winter-provider-catalog";
 import { hostHeaders } from "../privileged-headers.ts";
-import { winterUserAgent } from "../../identity.ts";
+import { winterIdentityHeaders, winterUserAgent, type IdentityHeaderLookup } from "../../identity.ts";
 import { applyPrivilegedHeaders, createEndpointPolicy, type EndpointPolicy } from "../../endpoint-policy.ts";
 import { ProviderRequestError, boundedFetch } from "../../http.ts";
 import { normalizeHttpError, normalizeThrown } from "../../errors.ts";
@@ -100,6 +100,16 @@ export interface OpenAiAdapterOptions {
   headerTimeoutMs?: number;
   /** How this surface carries a key. Azure's deployment path wants `api-key`; every other surface is a bearer. */
   authStyle?: AuthStyle;
+  /**
+   * WS-13b §7/§8.4 (fix-wave R-FW-2): the per-ROW second identity field, looked up by
+   * `ctx.connection.providerId`.
+   *
+   * A LOOKUP rather than a value, because this family's adapters are multi-provider: one
+   * `winter.openai-chat-completions` instance serves a hundred and thirty-six rows, so "the identity
+   * headers" is a property of the row a turn is for, not of the adapter. Optional, and absent means
+   * `{}` — only a vendor that NAMES a second identity field gets one.
+   */
+  identityHeaders?: IdentityHeaderLookup;
 }
 
 export const DEFAULT_STREAM_BODY_BYTES = 32 * 1024 * 1024;
@@ -228,6 +238,15 @@ export interface HeaderPlan {
   protocol: Record<string, string>;
   /** Identifiers that only mean something at the reviewed endpoint they were minted for (R6-L). */
   privileged?: Record<string, string>;
+  /**
+   * WINTER'S OWN second identity field for this row (`Client-Agent`), already `<version>`-substituted.
+   *
+   * Spread with the `user-agent`, BEFORE the host's map and NOT through `applyPrivilegedHeaders` —
+   * it is Winter's name, not the operator's account topology, and gating it on a generated endpoint
+   * would drop it for every multi-provider row (whose reviewed endpoint is copied into the profile
+   * and evaluated as a user endpoint). `identityFor` builds it.
+   */
+  identity?: Record<string, string>;
   /** `ConnectionProfile.headers` — the host's own additions (OpenRouter's attribution pair, a proxy token's sibling header). */
   userSupplied?: Record<string, string> | undefined;
 }
@@ -262,11 +281,16 @@ export function buildHeaders(plan: HeaderPlan): Record<string, string> {
   // is exact-key. A profile spelling `User-Agent` produces a SECOND key, and `Headers` joins the two
   // spellings into one comma-separated value rather than replacing. Header-case normalisation
   // belongs to R6-L's enforcement point, not here.
-  const out: Record<string, string> = { "user-agent": winterUserAgent() };
+  const out: Record<string, string> = { "user-agent": winterUserAgent(), ...(plan.identity ?? {}) };
   Object.assign(out, hostHeaders(plan.policy, plan.userSupplied));
   Object.assign(out, applyPrivilegedHeaders(plan.policy, plan.privileged ?? {}));
   Object.assign(out, plan.protocol);
   return out;
+}
+
+/** This row's Winter-authored identity headers, for a `HeaderPlan`. One call shape for every site in the family. */
+export function identityFor(options: Pick<OpenAiAdapterOptions, "identityHeaders">, ctx: ProviderContext): Record<string, string> {
+  return winterIdentityHeaders(options.identityHeaders, ctx.connection.providerId);
 }
 
 // --- effort, thinking and limits -------------------------------------------------------------------------
