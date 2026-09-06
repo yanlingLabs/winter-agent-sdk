@@ -22,7 +22,8 @@ import { WinterProviderResolutionError, createMemoryCredentialStore, type Creden
 import { buildSessionProvider, DEFAULT_PROVIDER_ACCOUNT_ID } from "./session-provider.ts";
 import { providerCredentialRef } from "./credential-api.ts";
 import { buildProductionWiring } from "../production-wiring.ts";
-import { runEngine, type Provider } from "../engine.ts";
+import { runEngine, type Provider, type ProviderRequest } from "../engine.ts";
+import { stubExecutor } from "./mock.ts";
 import { createInMemoryChannel } from "../protocol/channel.ts";
 import { scriptedProvider } from "./mock.ts";
 import { registerTool, unregisterToolForTest, type ToolExecutionContext } from "../tools/registry.ts";
@@ -283,6 +284,101 @@ describe("Ruling E-1: a target on ANOTHER provider never inherits the session's 
     });
   });
 
+  // --- Re-review round 1, R-E1: the C-1 class on the REFUSED arm (probe P4) ---------------------
+
+  /** Drives the real engine on a wiring: turn, `set_model`, turn -- and returns what the host saw. */
+  async function driveRefusedSession(config: RuntimeConfig, catalog: WinterCatalog, credentials: CredentialStore, setModel: string): Promise<{ ack: { ok: boolean; error?: { code: string; message: string } }; results: Array<Record<string, unknown>> }> {
+    const wiring = buildSessionProvider({ config, env: {}, catalog, credentials });
+    expect(wiring.resolutionError, "the session model must have FAILED to resolve for this fixture").toBeDefined();
+    const { host, runtime } = createInMemoryChannel();
+    const frames: WinterFrame[] = [];
+    const reader = (async () => {
+      for await (const f of host.input) frames.push(f);
+    })();
+    const done = runEngine({ config, input: runtime.input, output: runtime.output, provider: wiring.provider, tools: stubExecutor, resolveModelSwitch: wiring.resolveModelSwitch } as never);
+    const results = () => frames.filter((f) => f.type === "data").map((f) => (f as { message: SdkMessage }).message).filter((m) => m.type === "result") as Array<Record<string, unknown>>;
+    const until = async (predicate: () => boolean, what: string): Promise<void> => {
+      const deadline = Date.now() + 15_000;
+      while (!predicate()) {
+        if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
+        await new Promise((r) => setTimeout(r, 5));
+      }
+    };
+    host.output.write({ type: "user", text: "first" });
+    await until(() => results().length === 1, "the first result");
+    host.output.write({ type: "control_request", requestId: "sm", subtype: "set_model", payload: { model: setModel } });
+    await until(() => frames.some((f) => f.type === "control_response" && (f as { requestId: string }).requestId === "sm"), "the set_model ack");
+    host.output.write({ type: "user", text: "second" });
+    await until(() => results().length === 2, "the second result");
+    host.output.write({ type: "control_request", requestId: "end", subtype: "end_input", payload: undefined });
+    await reader;
+    await done;
+    const ack = frames.find((f) => f.type === "control_response" && (f as { requestId: string }).requestId === "sm") as { ok: boolean; error?: { code: string; message: string } };
+    return { ack, results: results() };
+  }
+
+  /** A session that names its provider ONLY through its qualified model key and carries a secret -- the wire-reachable shape probe P4 drove (`--config-json` accepts it). */
+  const keyOnlySession = (model: string): RuntimeConfig => ({ sessionId: "fixe-p4", cwd: process.cwd(), model, persistSession: false, provider: { authRef: { kind: "inline", value: SECRET_A } } }) as never;
+
+  test("(P4, inverted) a session WITHOUT providerId whose model failed to resolve still has a provider -- its qualified prefix -- so `set_model` to another provider's key is a provider-mismatch refusal and vendor B's fake receives NOTHING", async () => {
+    await withTwoFakes(async (fakeA, fakeB) => {
+      const catalog = catalogFor(fakeA.url, fakeB.url);
+      const wiring = buildSessionProvider({ config: keyOnlySession("prova/never-existed"), env: {}, catalog, credentials: credentialsWith(false) });
+      expect(wiring.sessionProviderId()).toBe("prova");
+      const resolvedB = wiring.registry.resolve({ model: "provb/bmodel" });
+      if (resolvedB instanceof WinterProviderResolutionError) throw resolvedB;
+      expect(wiring.describeTargetMaterial(resolvedB).crossProvider).toBe(true);
+      const { ack, results } = await driveRefusedSession(keyOnlySession("prova/never-existed"), catalog, credentialsWith(false), "provb/bmodel");
+      expect(ack.ok).toBe(false);
+      expect(ack.error?.code).toBe("invalid_model");
+      expect(ack.error?.message).toContain("provider-mismatch");
+      expect(results.map((r) => r.terminal_reason)).toEqual(["api_error", "api_error"]);
+      expect(fakeB.requests.length).toBe(0);
+      expect(fakeA.requests.length).toBe(0);
+    });
+  });
+
+  test("(P4, the fail-closed half) a refused session that names NO catalog provider at all treats EVERY target as another provider: `set_model provb/bmodel` resolves, and vendor B gets its OWN record or a typed refusal -- never the session's secret", async () => {
+    await withTwoFakes(async (fakeA, fakeB) => {
+      const catalog = catalogFor(fakeA.url, fakeB.url);
+      // (i) no record for provb: the switch is accepted (the key resolves on its own), the next turn
+      //     lands on the typed no-credential refusal, and nothing reaches either fake.
+      const wiring = buildSessionProvider({ config: keyOnlySession("nowhere/x"), env: {}, catalog, credentials: credentialsWith(false) });
+      expect(wiring.sessionProviderId()).toBeUndefined();
+      const resolvedA = wiring.registry.resolve({ model: "prova/amodel" });
+      if (resolvedA instanceof WinterProviderResolutionError) throw resolvedA;
+      expect(wiring.describeTargetMaterial(resolvedA).crossProvider, "an UNKNOWN session provider fails closed even for the key's own vendor").toBe(true);
+      const refused = await driveRefusedSession(keyOnlySession("nowhere/x"), catalog, credentialsWith(false), "provb/bmodel");
+      expect(refused.ack.ok).toBe(true);
+      expect(String(refused.results[1]!.result)).toContain("no credential is configured for provider \"provb\"");
+      expect(String(refused.results[1]!.result)).not.toContain(SECRET_A);
+      expect(fakeB.requests.length).toBe(0);
+      // (ii) provb's OWN record present: the switched turn goes out under B's key, never the session's.
+      const served = await driveRefusedSession(keyOnlySession("nowhere/x"), catalog, credentialsWith(true), "provb/bmodel");
+      expect(served.ack.ok).toBe(true);
+      expect(served.results[1]!.is_error).toBeFalsy();
+      expect(fakeB.requests.length).toBe(1);
+      expect(fakeB.requests[0]!.authorization).toBe(`Bearer ${SECRET_B_RECORD}`);
+      assertNoSessionMaterial(fakeB.requests[0]!);
+      expect(fakeA.requests.length).toBe(0);
+    });
+  });
+
+  test("CONTROL (P4): with `providerId` configured the refused session's provider is that one -- a foreign key is still a mismatch, and its own key recovers on the session's material", async () => {
+    await withTwoFakes(async (fakeA, fakeB) => {
+      const catalog = catalogFor(fakeA.url, fakeB.url);
+      const mismatch = await driveRefusedSession(sessionConfig({ model: "prova/never-existed" }), catalog, credentialsWith(false), "provb/bmodel");
+      expect(mismatch.ack.ok).toBe(false);
+      expect(mismatch.ack.error?.message).toContain("provider-mismatch");
+      expect(fakeB.requests.length).toBe(0);
+      const recovered = await driveRefusedSession(sessionConfig({ model: "prova/never-existed" }), catalog, credentialsWith(false), "prova/amodel");
+      expect(recovered.ack.ok).toBe(true);
+      expect(recovered.results[1]!.is_error).toBeFalsy();
+      expect(fakeA.requests[0]!.authorization).toBe(`Bearer ${SECRET_A}`);
+      expect(fakeB.requests.length).toBe(0);
+    });
+  });
+
   test("CONTROL: a target on the session's OWN provider keeps the session's material -- the pre-fix same-provider world is unchanged", async () => {
     await withTwoFakes(async (fakeA, fakeB) => {
       const wiring = buildSessionProvider({
@@ -397,16 +493,23 @@ describe("Ruling E-1: a refused cross-provider child is LOUD -- a stderr line an
     });
   }
 
-  test("the spawn reports the child, the model and the provider on stderr AND on the parent's stream, then the child runs (on the parent's provider) rather than being dropped", async () => {
+  test("the spawn reports the child, the model and the provider on stderr AND on the parent's stream, and the child's first generation is R6-F's refusal -- NO request on the parent's provider, none on any wire (R-E3)", async () => {
     await withTwoFakes(async (fakeA, fakeB) => {
       registerSpawnProbe();
       const winterHome = mkdtempSync(join(tmpdir(), "winter-fixe-e1-spawn-"));
       try {
         const wiring = await buildProductionWiring({ config: sessionConfig(), env: {}, winterHome, provider: { catalog: catalogFor(fakeA.url, fakeB.url), credentials: credentialsWith(false) } });
         const warnings: string[] = [];
-        // The CHILD's fallback provider is a scripted double, so the assertion is about the report,
-        // not about a network turn.
-        const parentProvider: Provider = scriptedProvider([{ kind: "text", text: "child ran on the parent's double" }]);
+        // The parent's provider is a COUNTING double: R-E3's claim is that the refused child never
+        // generates on it -- not once.
+        const parentGenerations: ProviderRequest[] = [];
+        const parentDouble = scriptedProvider([{ kind: "text", text: "the parent's double must never serve the child" }]);
+        const parentProvider: Provider = {
+          async generate(input) {
+            parentGenerations.push(input);
+            return parentDouble.generate(input);
+          },
+        };
         registerChildEngineFactory(
           createChildEngineFactory({
             provider: parentProvider,
@@ -448,10 +551,17 @@ describe("Ruling E-1: a refused cross-provider child is LOUD -- a stderr line an
         expect(warning!.warning).toBe("child_provider_refused");
         expect(String(warning!.detail)).toContain('provider "provb"');
         expect(JSON.stringify(warning)).not.toContain(SECRET_A);
-        // (3) the child still RAN -- on the parent's double -- and the parent's turn completed.
+        // (3) the child's first generation was the DEFERRED REFUSAL (R6-F), carrying the typed reason
+        //     and naming the provider -- and the parent's own turn still completed around it.
         const toolResult = messages.find((m) => m.type === "user") as { message: { content: Array<{ content?: string }> } } | undefined;
-        expect(JSON.stringify(toolResult)).toContain("child ran on the parent's double");
-        // (4) and no fake was ever contacted with anything.
+        const rendered = JSON.stringify(toolResult);
+        expect(rendered).toContain("no credential is configured for provider");
+        expect(rendered).toContain("provb");
+        expect(rendered).not.toContain("the parent's double must never serve the child");
+        expect(rendered).not.toContain(SECRET_A);
+        // (4) the parent's provider served the PARENT's two turns and nothing else: the child never
+        //     generated on it, and no fake was ever contacted with anything.
+        expect(parentGenerations.length).toBe(0);
         expect(fakeA.requests.length).toBe(0);
         expect(fakeB.requests.length).toBe(0);
       } finally {

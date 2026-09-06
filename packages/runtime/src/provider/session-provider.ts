@@ -364,14 +364,32 @@ export function buildSessionProvider(opts: SessionProviderOptions): SessionProvi
   const renderer: HistoryRenderer = createHistoryRenderer(registry);
   const chain = opts.chain ?? ((): ContinuationChain => new Map());
 
-  // The session's own provider, for the cross-provider test below. Read LAZILY (a closure over a
-  // `let`), because `buildProvider` is defined before selection has run and the session's resolved
-  // provider is only known afterwards. THE RESOLVED ID WINS over `config.provider.providerId`: a
-  // session on a qualified `<providerId>/<model>` key resolves against the KEY's provider whatever
-  // the host wrote in `providerId` (selection.ts ignores it for a qualified key), so the key's
-  // provider is the session's -- and the session's `authRef`/`connection` were configured for it.
-  let sessionResolvedProviderId: string | undefined;
-  const sessionProviderId = (): string | undefined => sessionResolvedProviderId ?? config.provider?.providerId;
+  // THE SESSION'S PROVIDER, AS A STATE (fix wave round 2, R-E1). Three states, and the difference
+  // between the last two is a credential boundary:
+  //   - `resolving`: selection has not completed. The ONLY target `buildProvider` sees in this state
+  //     is the session's own model (`resolveSessionProvider` builds it through `deps.buildProvider`),
+  //     and the session's own model is never cross-provider.
+  //   - `{ known }`: the provider selection resolved to, or -- for a session whose model FAILED to
+  //     resolve -- the provider selection's own rule names: `config.provider.providerId`, else the
+  //     qualified key's prefix (a qualified `<providerId>/<model>` key IS a provider selection). THE
+  //     RESOLVED ID WINS over `config.provider.providerId`: selection ignores the latter for a
+  //     qualified key, so the key's provider is the session's and its `authRef`/`connection` were
+  //     configured for it.
+  //   - `unknown`: nothing names a provider (a refused session with neither, or the reserved test
+  //     namespace). `describeTargetMaterial` then FAILS CLOSED: every target is treated as another
+  //     provider and gets ITS OWN record or a typed refusal -- never the session's material, which
+  //     re-review probe P4 showed reaching vendor B through a later `set_model` on a refused session.
+  let sessionProvider: "resolving" | "unknown" | { known: string } = "resolving";
+  const sessionProviderId = (): string | undefined => (typeof sessionProvider === "object" ? sessionProvider.known : undefined);
+  /** Selection's own reading of which provider a REFUSED session named: the configured id, else the qualified prefix when it is a catalog provider. */
+  const providerNamedByConfig = (): string | undefined => {
+    if (config.provider?.providerId !== undefined) return config.provider.providerId;
+    const model = config.model ?? "";
+    const slash = model.indexOf("/");
+    if (slash <= 0) return undefined;
+    const prefix = model.slice(0, slash);
+    return catalog.providers.some((p) => p.id === prefix) ? prefix : undefined;
+  };
 
   /**
    * RULING E-1 -- the credential and connection rule for every provider this wiring builds.
@@ -388,12 +406,10 @@ export function buildSessionProvider(opts: SessionProviderOptions): SessionProvi
    * vendor A's key on the wire to vendor B's endpoint -- and this function is the closed door.
    */
   const describeTargetMaterial = (resolved: ResolvedModel, buildOpts: BuildProviderOptions = {}): TargetMaterial => {
-    // BEFORE selection has completed, the only target this builder ever sees is the session's own
-    // model (`resolveSessionProvider` builds it through `deps.buildProvider`), and the session's own
-    // model is never cross-provider -- whatever `config.provider.providerId` says, since a qualified
-    // key overrides it. Every later target (classifier, advisor, child, switch) is judged against the
-    // provider selection actually resolved to.
-    const crossProvider = sessionResolvedProviderId !== undefined && resolved.providerId !== sessionResolvedProviderId;
+    // `resolving`: the session's own model, never cross-provider (see the state's own comment).
+    // `unknown`: FAIL CLOSED -- cross-provider, so the target gets its own record or a typed refusal.
+    // `{ known }`: the ordinary comparison.
+    const crossProvider = sessionProvider === "resolving" ? false : sessionProvider === "unknown" ? true : resolved.providerId !== sessionProvider.known;
     // A cross-provider target's connection is ITS OWN generated endpoint; the session's user
     // connection (a proxy, a gateway, custom headers) is the session provider's business.
     const connection = crossProvider ? generatedConnectionForProvider(catalog, resolved.provider) : connectionForProvider(config, catalog, resolved.provider);
@@ -528,6 +544,12 @@ export function buildSessionProvider(opts: SessionProviderOptions): SessionProvi
     selection = resolveSessionProvider(config, deps);
   } catch (err) {
     if (!(err instanceof WinterProviderResolutionError)) throw err;
+    // R-E1: the REFUSED session still has a provider selection -- the configured id, or the
+    // qualified key's own prefix -- and every later target is judged against it: a `set_model` to
+    // another provider's key is R6-K's `provider-mismatch`, a same-provider target keeps the session's
+    // material, and a session that named nothing fails closed (`unknown`).
+    const named = providerNamedByConfig();
+    sessionProvider = named !== undefined ? { known: named } : "unknown";
     // THE DEFERRED REFUSAL. Everything a session needs to START is present; the one thing it does not
     // have is a provider, and the ONE thing it will ever do with a provider is generate. So the
     // refusal is carried on `generate` and nowhere else: no identity (there is none to report), no
@@ -567,6 +589,8 @@ export function buildSessionProvider(opts: SessionProviderOptions): SessionProvi
   // an init frame carrying a fabricated provider row would make every golden a statement about a
   // test double.
   if ("testProvider" in selection) {
+    // A scripted double has no catalog identity: nothing may be judged "the session's provider".
+    sessionProvider = "unknown";
     return {
       provider: selection.testProvider,
       registry,
@@ -586,7 +610,7 @@ export function buildSessionProvider(opts: SessionProviderOptions): SessionProvi
   }
 
   const { identity, resolved } = selection;
-  sessionResolvedProviderId = resolved.providerId;
+  sessionProvider = { known: resolved.providerId };
   const authRef = config.provider?.authRef;
 
   // --- R6-14: the classifier route ----------------------------------------------------------------
