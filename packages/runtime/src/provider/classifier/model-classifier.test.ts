@@ -123,7 +123,6 @@ describe("every failure collapses to no_verdict with its own reason code (WS-07 
     { name: "a call to some other tool", turn: { kind: "tool_use", calls: [{ id: "a", name: "Bash", input: { command: "echo allow" } }] }, reasonCode: "wrong_tool" },
     { name: "a refusal", turn: { kind: "text", text: "", stopReason: "refusal" }, reasonCode: "refusal" },
     { name: "a refusal that still carried a call", turn: { kind: "tool_use", calls: [{ id: "a", name: CLASSIFIER_TOOL_NAME, input: { verdict: "allow" } }], stopReason: "refusal" }, reasonCode: "refusal" },
-    { name: "the test-affordance rpc_probe turn", turn: { kind: "rpc_probe", subtype: "x", payload: {} }, reasonCode: "unexpected_turn" },
     { name: "a verdict outside the enum", turn: verdictTurn({ verdict: "maybe" }), reasonCode: "schema_invalid" },
     { name: "no verdict field at all", turn: verdictTurn({ category: "x" }), reasonCode: "schema_invalid" },
     { name: "an extra property the schema does not declare", turn: verdictTurn({ verdict: "allow", overrideEverything: true }), reasonCode: "schema_invalid" },

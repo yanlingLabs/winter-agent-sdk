@@ -227,8 +227,15 @@ function checkCitations(doc: Doc, dts: string[]): { checked: number; problems: C
         const squash = (t: string): string => t.replace(/[^A-Za-z0-9]/g, "").toLowerCase();
         const nearSquashed = squash(near);
         if (subjects.some((t) => near.includes(t) || nearSquashed.includes(squash(t)))) continue;
+        // T10 (Minor 1, parked at T1): the `push` immediately followed by `pop` that used to stand
+        // here was DEAD CODE -- `exactLineMisses` was appended to and un-appended in the same two
+        // statements, so the channel it feeds (`exactLineMisses`, reported separately from
+        // `problems`) received nothing, ever, and the "exact line missed but the token exists
+        // nearby" case was silently indistinguishable from the "token is nowhere" case. Recorded
+        // rather than merely deleted: the array is still reported, and it is now genuinely fed --
+        // an exact-line miss is a real, separately-reported observation about a citation whose
+        // sentence is otherwise sound.
         exactLineMisses.push({ docLine: block.start, cited: cite.line, tokens: reported });
-        exactLineMisses.pop();
         const foundAt: number[] = [];
         for (const t of reported.length > 0 ? reported : subjects) {
           for (let k = 0; k < dts.length && foundAt.length < 6; k++) if (dts[k]!.includes(t)) foundAt.push(k + 1);
@@ -305,10 +312,35 @@ function checkNgrams(doc: Doc, hayText: string): NgramRun[] {
   if (cur) blocks.push(cur);
 
   // Every "..." span in non-fenced text, normalised — a run inside one is a marked quotation.
+  //
+  // T10 (Minor 2, parked at T1): AND THE QUOTING LINE MUST CARRY A CITATION. The summary line calls
+  // this bucket "quoted-and-cited" and only the first half was ever checked, so a document could
+  // reproduce vendor prose word for word, wrap it in quotation marks, cite nothing, and be excused by
+  // the one scan whose entire purpose is to catch transcription. A quotation with no citation is not
+  // evidence; it is a transcription with punctuation around it, and it now falls through to `prose`,
+  // which FAILS.
+  //
+  // The citation form is the same one check (a) parses: a backticked `sdk.d.ts:NNN` or, inside the
+  // derivation section, a bare backticked number.
+  const CITATION_ON_LINE = /`(?:sdk\.d\.ts:)?\d{1,4}`/;
   const quoted = new Set<string>();
+  let uncitedQuotations = 0;
   for (let i = 0; i < doc.lines.length; i++) {
     if (doc.fenced[i]) continue;
-    for (const m of doc.lines[i]!.matchAll(/"([^"]{8,})"/g)) quoted.add(normalise(m[1]!));
+    const line = doc.lines[i]!;
+    const spans = [...line.matchAll(/"([^"]{8,})"/g)];
+    if (spans.length === 0) continue;
+    // The citation may sit on the quoting line or on the line immediately after it — a long quotation
+    // is routinely followed by its own `(sdk.d.ts:NNN)` attribution on the next line.
+    const cited = CITATION_ON_LINE.test(line) || CITATION_ON_LINE.test(doc.lines[i + 1] ?? "") || CITATION_ON_LINE.test(doc.lines[i - 1] ?? "");
+    if (!cited) {
+      uncitedQuotations += spans.length;
+      continue;
+    }
+    for (const m of spans) quoted.add(normalise(m[1]!));
+  }
+  if (uncitedQuotations > 0) {
+    console.log(`  note: ${uncitedQuotations} quoted span(s) carry NO citation on or beside their line — a run inside one is classified PROSE, not "quoted-and-cited"`);
   }
   const quotedJoined = [...quoted].join(" || ");
 

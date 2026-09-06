@@ -547,16 +547,17 @@ export interface ProviderUsage {
 // ahead of the tool_use blocks, which is the order the model produced it in.
 export type ProviderTurn =
   | { kind: "text"; text: string; usage?: ProviderUsage; stopReason?: ProviderStopReason; thinking?: ProviderThinkingOutput; nativeState?: ProviderNativeState }
-  | { kind: "tool_use"; calls: Array<{ id: string; name: string; input: unknown }>; text?: string; usage?: ProviderUsage; stopReason?: ProviderStopReason; thinking?: ProviderThinkingOutput; nativeState?: ProviderNativeState }
-  // Task 2 (WS-04 §3.1): a P1-only test-affordance turn kind (WINTER_TEST_PROVIDER=rpcprobe,
-  // provider/mock.ts) that proves the runtime-originated control-RPC bridge round trip end-to-end
-  // on every transport leg (the transport-equivalence suite's rpcprobe scenario). The ENGINE
-  // performs bridge.request(subtype, payload) on the provider's behalf when it sees this kind
-  // (round loop below) — Provider.generate() itself never touches the bridge directly, staying a
-  // plain, transport-agnostic function for every other turn kind. REMOVE at P6 alongside
-  // provider/mock.ts's whole test-provider family; a real permission/hook RPC (Tasks 8/10) is
-  // issued from the evaluator/hook runner, not from this turn kind.
-  | { kind: "rpc_probe"; subtype: string; payload: unknown; usage?: ProviderUsage };
+  | { kind: "tool_use"; calls: Array<{ id: string; name: string; input: unknown }>; text?: string; usage?: ProviderUsage; stopReason?: ProviderStopReason; thinking?: ProviderThinkingOutput; nativeState?: ProviderNativeState };
+  // Phase 6 Task 10 (R6-13): THE `rpc_probe` TURN KIND IS GONE.
+  //
+  // It was a P1-only scaffold whose whole purpose was to prove the runtime-originated control-RPC
+  // bridge round-trips on every transport leg, at a time when no REAL runtime-originated RPC
+  // existed. R6-13 made its removal conditional on that no longer being true, and the condition is
+  // met: `transport-equivalence.test.ts`'s "Ruling P2-B" scenario drives a genuine permission
+  // control_request the host answers, and the hooked-tool-round scenario drives a genuine `hook`
+  // one -- both inside `registerEquivalenceScenarios`, so both run on the in-memory leg, a real
+  // spawned child AND the compiled binary. A scaffold that duplicates a shipped path is a second
+  // implementation of it.
 
 export interface Provider {
   generate(input: ProviderRequest): Promise<ProviderTurn>;
@@ -4198,33 +4199,6 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
         const textAnchor = await recordAssistant(assistantBlocks, turnProvenance(turn));
         messages.push({ role: "assistant", content: thinkingBlocks.length === 0 ? turn.text : assistantBlocks, ...(textAnchor !== undefined ? { uuid: textAnchor } : {}), ...providerAnnotations(turn) });
         finalResult = { type: "result", subtype: "success", is_error: false, result: turn.text };
-        break roundLoop;
-      }
-
-      if (turn.kind === "rpc_probe") {
-        // See this type's own comment on ProviderTurn above: P1-only, REMOVE at P6. Every path
-        // below ends in `break roundLoop` so TS's narrowing of `turn` to the tool_use variant past
-        // this point (via `turn.calls` further down) still holds.
-        //
-        // Deliberately NOT raced against interruptSignal the way provider.generate()/tools.execute()
-        // are above: an interrupt arriving while this await is in flight still gets ACKed by the
-        // pump (unconditional), but has no effect on this wait — a known gap acceptable for a
-        // P1-only test scaffold that's never itself interrupted, not a spec requirement. A real
-        // permission/hook RPC (Tasks 8/10) will need to decide its own interrupt-during-wait
-        // semantics (WS-07/WS-08), which may differ from this.
-        let replyText: string;
-        try {
-          const response = await bridge.request<{ text: string }>(turn.subtype, turn.payload);
-          replyText = `rpc reply: ${response.text}`;
-        } catch (err) {
-          const text = err instanceof Error ? err.message : String(err);
-          finalResult = { type: "result", subtype: "error_during_execution", is_error: true, result: text };
-          break roundLoop;
-        }
-        output.write({ type: "data", message: { type: "assistant", message: { content: [{ type: "text", text: replyText }] } } });
-        messages.push({ role: "assistant", content: replyText });
-        await recordAssistant([{ type: "text", text: replyText }]);
-        finalResult = { type: "result", subtype: "success", is_error: false, result: replyText };
         break roundLoop;
       }
 

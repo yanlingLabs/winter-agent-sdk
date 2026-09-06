@@ -26,10 +26,8 @@
 //    precisely via the scripted provider's own "entered" signal instead of a timer.
 //  - split-frame-carry: exercises splitFrames' carry mechanism directly at the transport boundary
 //    (a frame's bytes deliberately split across two stdin writes) — unrelated to query() at all.
-//  - rpcprobe (Task 2, WS-04 §3.1): a runtime-originated control_request mid-turn, answered with a
-//    scripted control_response — proves the RUNTIME side (engine.ts + createRpcBridge) behaves
-//    identically on every leg; deliberately bypasses query()'s own handler registry, which is
-//    covered separately (in-memory only) by query.test.ts.
+//  - (rpcprobe was the fourth of these until Phase 6 Task 10 removed it with the `rpc_probe` turn
+//    kind — R6-13's condition was met by the real permission/hook control-RPC scenarios below.)
 import { describe, test, expect, afterAll } from "bun:test";
 import { fileURLToPath } from "node:url";
 import { mkdtempSync, mkdirSync, rmSync, readFileSync, writeFileSync, existsSync, realpathSync } from "node:fs";
@@ -756,71 +754,6 @@ async function traceSplitFrameCarry(leg: LegName): Promise<ConformanceTraceEntry
   }
 }
 
-// --- Task 2 (WS-04 §3.1, direction inversion): a runtime-originated control_request mid-turn -----
-//
-// Raw-driver pattern (like traceInterrupt/traceMultiTurn above), not traceViaQuery: what's under
-// test here is the RUNTIME side (engine.ts's round loop + createRpcBridge) behaving identically
-// whether it's running in-memory or as a real/compiled child — main.ts and testing.ts's
-// inMemoryProcess both call the SAME runEngine. Manually answering the control_request with a
-// scripted control_response proves that parity directly, without needing query()'s own handler
-// registry (covered separately, in-memory only, by query.test.ts) at all.
-async function traceRpcProbe(leg: LegName): Promise<ConformanceTraceEntry[]> {
-  const proc = buildRawProc(leg, "rpcprobe", "rpc-probe-fixture");
-  try {
-    const driver = createDriver(proc);
-    const entries: ConformanceTraceEntry[] = [];
-
-    const init = await driver.nextFrame();
-    pushFrame(entries, init!);
-    const sys = await driver.nextFrame();
-    pushFrame(entries, sys!);
-
-    driver.send({ type: "user", text: "probe" });
-
-    // The runtime originates a control_request mid-turn (WS-04 §3.1) — answer it exactly like a
-    // real host would; requestId is a runtime-generated UUID, already in trace.ts's VOLATILE set,
-    // so it normalizes away and never causes a spurious cross-leg diff.
-    const req = await driver.nextFrame();
-    expect(req?.type).toBe("control_request");
-    const reqFrame = req as ControlRequestFrame;
-    expect(reqFrame.subtype).toBe("test_rpc_probe");
-    expect(reqFrame.payload).toEqual({ probe: "ping" });
-    pushFrame(entries, req!);
-    driver.send({ type: "control_response", requestId: reqFrame.requestId, ok: true, payload: { text: "pong" } });
-
-    const assistant = await driver.nextFrame();
-    expect(assistant?.type).toBe("data");
-    pushFrame(entries, assistant!);
-    const result = await driver.nextFrame();
-    expect(result?.type).toBe("data");
-    pushFrame(entries, result!);
-
-    driver.send({ type: "control_request", requestId: "end-input-1", subtype: "end_input", payload: undefined });
-    const ack = await driver.nextFrame();
-    expect(ack?.type).toBe("control_response");
-    expect((ack as ControlResponseFrame).ok).toBe(true);
-    pushFrame(entries, ack!);
-
-    const eof = await driver.nextFrame();
-    expect(eof).toBeNull();
-
-    const exitInfo = await proc.exited; // natural exit — proves the engine terminates on its own
-    pushExit(entries, { code: exitInfo.code, signal: exitInfo.signal });
-    return normalizeTrace(entries);
-  } finally {
-    proc.kill();
-    await proc.exited;
-  }
-}
-
-// --- Task 9 (WS-05 §7): resume across a NEW process/instance, same leg -------------------------
-//
-// Two separate query() calls (two separate SpawnedRuntimeProcess instances — a real child/compiled
-// leg genuinely exits between them) sharing the SAME sessionId over the SAME leg's spawnHook, which
-// already merges in TEST_WINTER_HOME for every leg (Task 8's HARD CONSTRAINT) — so this exercises a
-// real cross-process resume, not merely in-process state reuse. The "reflect" test provider
-// (provider/mock.ts) is what lets the SECOND run's assistant reply prove "the provider saw the
-// first run's history" from OUTSIDE the process, on every leg including a real spawned child.
 async function traceResumeScenario(leg: LegName): Promise<{ trace: ConformanceTraceEntry[]; sessionId: string; secondAssistantText: string }> {
   const sessionId = randomUUID();
   const entries: ConformanceTraceEntry[] = [];
@@ -2002,17 +1935,15 @@ function registerEquivalenceScenarios(legA: LegName, legB: LegName): void {
   // mid-turn (rpcprobe test-provider arm) — proves the round trip (request out, scripted answer in,
   // answer embedded in the reply) is leg-invariant, the same way every other scenario here proves
   // leg-invariance for host-originated control traffic.
-  test("runtime-originated control RPC mid-turn (rpcprobe)", async () => {
-    const a = await traceRpcProbe(legA);
-    const b = await traceRpcProbe(legB);
-    expect(compareTraces(a, b)).toEqual([]);
-    expect(a.map((e) => e.kind)).toEqual(["init", "system/init", "control_request", "assistant", "result", "control_response", "exit"]);
-    const assistantMsg = a[3]!.payload as { message: { content: unknown } };
-    expect(assistantMsg.message.content).toEqual([{ type: "text", text: "rpc reply: pong" }]);
-    const resultMsg = a[4]!.payload as { subtype?: string; result?: string };
-    expect(resultMsg.subtype).toBe("success");
-    expect(resultMsg.result).toBe("rpc reply: pong");
-  });
+  // Phase 6 Task 10 (R6-13): the `rpcprobe` scenario is GONE with the turn kind it drove.
+  //
+  // Its claim -- "a runtime-originated control_request round-trips identically on every leg" -- is
+  // now made by two REAL paths in this same function: the "Ruling P2-B" permission scenario (a
+  // genuine `permission` control_request the host answers with an updatedInput) and the
+  // hooked-tool-round scenario (a genuine `hook` one, with its public lifecycle frames). Both run on
+  // every leg this pairing covers, including the compiled binary. The scaffold was the only reason
+  // `rpc_probe` existed on `ProviderTurn`, and a scaffold that duplicates a shipped path is a second
+  // implementation of it.
 
   test("error-result-then-throw (boom)", async () => {
     const a = await traceViaQuery(legA, { prompt: "hi", testProviderName: "boom" });

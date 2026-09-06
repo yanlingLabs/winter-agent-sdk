@@ -118,7 +118,11 @@ function collapseTurn(turn: ProviderTurn): ClassifierRawResult {
   // that also happened to carry a tool call is still a refusal to review.
   if ("stopReason" in turn && turn.stopReason === "refusal") return noVerdict("refusal");
   if (turn.kind === "text") return noVerdict("no_tool_call");
-  if (turn.kind === "rpc_probe") return noVerdict("unexpected_turn");
+  // The `unexpected_turn` arm used to live here for the engine's `rpc_probe` kind, which T10 removed
+  // (R6-13). Its reason CODE went with it, and deliberately: `model-classifier.test.ts`'s own
+  // "every declared reason code is reachable" test is what keeps this vocabulary honest, and a
+  // member nothing can produce is exactly the lie that test exists to catch. A future turn kind that
+  // needs one adds it back with the arm that reaches it.
   if (turn.calls.length === 0) return noVerdict("no_tool_call");
   if (turn.calls.length > 1) return noVerdict("multiple_calls");
   const call = turn.calls[0]!;

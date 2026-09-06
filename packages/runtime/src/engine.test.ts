@@ -772,66 +772,19 @@ test("set_permission_mode: an invalid mode is rejected ok:false/invalid_mode, th
   expect(code).toBe(0);
 });
 
-// --- Task 2 (WS-04 §3.1, direction inversion): the pump now ALSO routes incoming control_response
-// frames (host->runtime) to the bridge's handleResponse — the mirror of the pre-existing
-// control_request handling. rpc_probe is the P1-only ProviderTurn kind that exercises this: the
-// engine performs bridge.request() on the scripted provider's behalf and embeds the host's answer
-// in the turn's reply (see engine.ts's round loop, and provider/mock.ts's "rpcprobe" arm / the
-// transport-equivalence suite's cross-leg scenario for the same round trip on a real/compiled
-// child).
-
-test("Task 2: a rpc_probe turn writes a runtime-originated control_request; the pump routes the host's control_response back to it and the reply embeds the answer", async () => {
-  const { host, runtime } = createInMemoryChannel();
-  const provider: Provider = {
-    async generate() {
-      return { kind: "rpc_probe", subtype: "test_rpc_probe", payload: { probe: "ping" } };
-    },
-  };
-  const done = runEngine({ config: baseConfig(), input: runtime.input, output: runtime.output, provider, tools: stubExecutor });
-
-  host.output.write({ type: "user", text: "go" });
-
-  const seen: WinterFrame[] = [];
-  let reqId: string | undefined;
-  let reqPayload: unknown;
-  for await (const f of host.input) {
-    seen.push(f);
-    if (f.type === "control_request") {
-      reqId = (f as ControlRequestFrame).requestId;
-      reqPayload = (f as ControlRequestFrame).payload;
-      break;
-    }
-  }
-  expect(reqId).toBeDefined();
-  expect(reqPayload).toEqual({ probe: "ping" });
-
-  host.output.write({ type: "control_response", requestId: reqId!, ok: true, payload: { text: "pong" } });
-  host.output.write({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined });
-
-  for await (const f of host.input) {
-    seen.push(f);
-    if (f.type === "data" && (f as { message: SdkMessage }).message.type === "result") break;
-  }
-  const rest = await drain(host.input);
-  seen.push(...rest);
-  const code = await done;
-
-  const msgs = dataMessages(seen);
-  const assistantMsg = msgs.find((m) => m.type === "assistant") as { message: { content: unknown } };
-  expect(assistantMsg.message.content).toEqual([{ type: "text", text: "rpc reply: pong" }]);
-  const result = msgs.find((m) => m.type === "result");
-  // Finding 3 (P2 fix-wave): permission_denials is now always present -- [] here, this turn denied nothing.
-  expect(result).toEqual({ type: "result", subtype: "success", is_error: false, result: "rpc reply: pong", permission_denials: [] });
-  expect(code).toBe(0);
-});
-
-// --- Task 10 (WS-08 §1/§9/§10): the real hooks engine wired into engine.ts --------------------
+// --- Phase 6 Task 10 (R6-13): THE `rpc_probe` TEST IS GONE, WITH ITS TURN KIND ---------------------
 //
-// Proves each of the seven engine-lifecycle call sites actually fires a REAL "hook"
-// control_request through the real registry (built from config.hooks) + the real bridge — not
-// merely at the runner.ts/hook-stage.ts layer, which already covers interpretation of a hook's
-// ANSWER exhaustively. One hook per event, answered generically ({ok:true, payload:{}}); this
-// test's own job is "did the right RPC fire, in the right order, with the right identity."
+// It proved that the pump routes an incoming `control_response` back to the bridge -- the mirror of
+// the pre-existing `control_request` handling -- using a P1-only `ProviderTurn` kind whose only
+// purpose was to make the engine issue a runtime-originated RPC at a time when nothing real did.
+//
+// Something real does now, on more legs than this test ever ran on. R6-13 made the removal
+// conditional on exactly that, and `transport-equivalence.test.ts`'s "Ruling P2-B" scenario (a
+// genuine permission `control_request` the host answers, inside `registerEquivalenceScenarios`) and
+// its hooked-tool-round sibling (a genuine `hook` one) drive the identical round trip on the
+// in-memory leg, a real spawned child and the compiled binary. `query.test.ts`'s own permission and
+// hook tests cover the wrapper half. A scaffold that duplicates a shipped path is a second
+// implementation of it, and the shipped one is the one worth keeping green.
 
 test("Task 10: SessionStart/UserPromptSubmit/PostToolUse/PermissionDenied/Stop/SessionEnd all fire real 'hook' control_requests, in order, through the real registry+bridge", async () => {
   const { host, runtime } = createInMemoryChannel();

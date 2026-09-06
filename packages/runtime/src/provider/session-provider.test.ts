@@ -395,6 +395,18 @@ describe("T10 wiring: R6-13 — the reserved namespace has NO catalog identity",
     expect(wiring.provider).toBe(echoProvider);
   });
 
+  test("THE FENCE: the shipped catalog names no `winter-test` provider, so a real row can never shadow the namespace", () => {
+    const catalog = loadCatalog();
+    // A provider id, an adapter id, or a model key that started with the reserved prefix would make
+    // the namespace ambiguous -- and `resolveSessionProvider` checks the namespace FIRST, so the
+    // ambiguity would resolve in the DOUBLE's favour and a real model would silently become a
+    // scripted one. The check is on the shipped data because that is the half a lane could move.
+    expect(catalog.providers.filter((p) => p.id.startsWith("winter-test"))).toEqual([]);
+    expect(catalog.providers.filter((p) => p.adapterId.startsWith("winter-test"))).toEqual([]);
+    expect(catalog.models.filter((m) => m.key.startsWith("winter-test/"))).toEqual([]);
+    expect(catalog.models.filter((m) => m.aliases.some((a) => a.startsWith("winter-test")))).toEqual([]);
+  });
+
   test("an UNREGISTERED reserved name is a typed refusal, never a silent miss", () => {
     let thrown: unknown;
     try {
