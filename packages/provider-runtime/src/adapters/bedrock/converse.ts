@@ -65,6 +65,7 @@ import { createRetryPolicy, withRetry, type RetryPolicyOptions } from "../../ret
 import { WINTER_CREDENTIAL_MISSING, requireRegion, resolveAwsCredentials } from "./credentials.ts";
 import { createEventStreamDecoder, jsonPayload, messageType, stringHeader, type EventStreamMessage } from "./eventstream.ts";
 import { BEDROCK_SERVICE, signRequest } from "./sigv4.ts";
+import { winterUserAgent } from "../../identity.ts";
 
 export const BEDROCK_ADAPTER_ID = "winter.bedrock-converse";
 export const BEDROCK_ADAPTER_VERSION = "1";
@@ -797,6 +798,11 @@ export function createBedrockConverseAdapter(options: BedrockAdapterOptions): Be
       ...(options.sourceArn !== undefined ? { "x-amz-source-arn": options.sourceArn } : {}),
     });
     const headers: Record<string, string> = {
+      // WS-13b HONEST IDENTITY. `user-agent` is NOT an `x-amz-*` name, so it survives
+      // `filterConnectionHeaders` and lands in the SIGNED set -- which is what we want: an identity
+      // header outside the signature is one an intermediary can rewrite without breaking anything.
+      // It is spread FIRST so a host profile may still override it for its own proxy.
+      "user-agent": winterUserAgent(),
       accept: "application/json",
       ...(contentType !== undefined ? { "content-type": contentType } : {}),
       // The host's own extra headers, FILTERED. They are spread after `accept`/`content-type` (which

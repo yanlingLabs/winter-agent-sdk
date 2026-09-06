@@ -27,6 +27,7 @@ import { openAiModelsRoutes } from "../fakes/openai-models.ts";
 import { noRequestContains } from "../fakes/server.ts";
 import type { FakeServer } from "../fakes/server.ts";
 import { adapterAsProvider } from "../../../runtime/src/provider/bridge.ts";
+import { winterUserAgent } from "../../../provider-runtime/src/identity.ts";
 
 /** A short stall budget: the stall case must fail fast, and every other scenario's frames are well inside it. */
 const STALL_MS = 200;
@@ -303,6 +304,25 @@ describe("live wire details the corpus does not ask about", () => {
       expect(recorded.headers["x-trace"]).toBe("keep");
       expect(recorded.headers["cookie"]).toBeUndefined();
       for (const marker of ["SMUGGLED-COOKIE", "SMUGGLED-PROXY", "SMUGGLED-GOOG"]) expect([marker, noRequestContains(fake, marker)]).toEqual([marker, true]);
+    });
+  });
+
+  test("WS-13b: every request carries Winter's OWN user-agent, on both surfaces", async () => {
+    // Winter's identity, on the wire, read off the fake's recorded request -- not off the adapter's
+    // intent. The negative half is the load-bearing one: Bun's fetch sends `Bun/<version>` when
+    // nothing sets the header, so an adapter that simply forgot would still have SOME user-agent
+    // and a presence-only assertion would pass.
+    await withResponsesFake(async (fake) => {
+      const adapter = createResponsesAdapter({ generatedBaseUrl: fake.url, retry: FAST_RETRY, descriptors: () => undefined });
+      await drain(adapter.streamTurn({ model: SCENARIO.happy, messages: [] }, testContext({ stallTimeoutMs: STALL_MS })));
+      expect(fake.requests.length).toBeGreaterThan(0);
+      for (const recorded of fake.requests) expect(recorded.headers["user-agent"]).toBe(winterUserAgent());
+    });
+    await withChatFake(async (fake) => {
+      const adapter = createChatCompletionsAdapter({ generatedBaseUrl: fake.url, retry: FAST_RETRY, descriptors: () => undefined });
+      await drain(adapter.streamTurn({ model: SCENARIO.happy, messages: [] }, testContext({ stallTimeoutMs: STALL_MS })));
+      expect(fake.requests.length).toBeGreaterThan(0);
+      for (const recorded of fake.requests) expect(recorded.headers["user-agent"]).toBe(winterUserAgent());
     });
   });
 

@@ -46,6 +46,10 @@ export {
 export type { RetryPolicy, RetryPolicyOptions } from "./retry.ts";
 export { DEFAULT_MAX_REDIRECTS, ProviderBodyLimitError, ProviderRequestError, boundedFetch } from "./http.ts";
 export type { BoundedFetchInit } from "./http.ts";
+// WS-13b (P6.5 spine): Winter's own wire identity. Exported because the widening lanes' new
+// adapters and connect screens must reach the SAME function -- a second literal is how a
+// family ends up presenting as something else.
+export { winterUserAgent } from "./identity.ts";
 export { parseSse } from "./sse.ts";
 export type { SseEvent, SseOptions } from "./sse.ts";
 export { WinterProviderResolutionError, createRegistry, estimateCostUsd } from "./registry.ts";

@@ -47,6 +47,7 @@ import { normalizeHttpError, normalizeThrown } from "../../errors.ts";
 import { createRetryPolicy, withRetry, type RetryPolicyOptions } from "../../retry.ts";
 import { applyPrivilegedHeaders, createEndpointPolicy, type EndpointPolicy } from "../../endpoint-policy.ts";
 import { hostHeaders } from "../privileged-headers.ts";
+import { winterUserAgent } from "../../identity.ts";
 import { THINKING_ENABLED_NEEDS_BUDGET } from "../refusals.ts";
 import { containsImage } from "../content-blocks.ts";
 import { parseSse } from "../../sse.ts";
@@ -499,6 +500,9 @@ async function buildHeaders(ctx: ProviderContext, policy: EndpointPolicy, opts: 
   // organisation header of its own today, so it adds nothing to the shared list -- the call site
   // exists so that when it does, the enforcement is already here.
   const headers: Record<string, string> = {
+    // WS-13b HONEST IDENTITY. FIRST, so a user connection profile can still override it -- a host
+    // speaking about its own proxy is the one sanctioned override, and `hostHeaders` is its door.
+    "user-agent": winterUserAgent(),
     ...hostHeaders(policy, ctx.connection.headers),
     "anthropic-version": ANTHROPIC_API_VERSION,
     ...(json ? { "content-type": "application/json" } : {}),

@@ -38,6 +38,7 @@
 
 import type { WinterModelDescriptor } from "@yanlinglabs/winter-provider-catalog";
 import { hostHeaders } from "../privileged-headers.ts";
+import { winterUserAgent } from "../../identity.ts";
 import { applyPrivilegedHeaders, createEndpointPolicy, type EndpointPolicy } from "../../endpoint-policy.ts";
 import { ProviderRequestError, boundedFetch } from "../../http.ts";
 import { normalizeHttpError, normalizeThrown } from "../../errors.ts";
@@ -242,7 +243,10 @@ export function buildHeaders(plan: HeaderPlan): Record<string, string> {
   // The separate credential pre-strip that used to run here is GONE (fix-wave F-3): `hostHeaders`
   // now drops `CREDENTIAL_HEADER_NAMES` itself, on a generated endpoint as well, so every family
   // gets what this family had and this file no longer keeps a second copy of the rule.
-  const out: Record<string, string> = {};
+  // WS-13b HONEST IDENTITY. FIRST, so a user connection profile can still override it -- a host
+  // speaking about its own proxy is the one sanctioned override, and it arrives through
+  // `hostHeaders` immediately below. Nothing else here may name a product that is not Winter.
+  const out: Record<string, string> = { "user-agent": winterUserAgent() };
   Object.assign(out, hostHeaders(plan.policy, plan.userSupplied));
   Object.assign(out, applyPrivilegedHeaders(plan.policy, plan.privileged ?? {}));
   Object.assign(out, plan.protocol);

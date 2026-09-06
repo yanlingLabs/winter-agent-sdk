@@ -6,6 +6,7 @@ import { signRequest } from "../../../provider-runtime/src/adapters/bedrock/sigv
 import { THINKING_ENABLED_NEEDS_BUDGET } from "../../../provider-runtime/src/adapters/refusals.ts";
 import { CORPUS_CASES, formatCorpusReport, runAdapterCorpus } from "./runner.ts";
 import { noRequestContains } from "../fakes/server.ts";
+import { winterUserAgent } from "../../../provider-runtime/src/identity.ts";
 import { FAKE_ACCESS_KEY_ID, FAKE_SECRET_ACCESS_KEY, bedrockError, eventStreamResponse, startBedrockFake, textTurnFrames } from "../fakes/bedrock.ts";
 import {
   BEDROCK_CORPUS_MODEL,
@@ -21,6 +22,28 @@ import {
 // The corpus RUN, plus the live fixtures that are not corpus questions: the guard on the fake's own
 // signature check, the two sides of R6-L, the streaming/non-streaming equivalence, and the
 // cross-chunk decode. Every one of them asserts on the fake's recorded request.
+
+describe("Bedrock Converse: WS-13b honest identity", () => {
+  test("every request carries Winter's OWN user-agent, and the fake's SigV4 check still passes with it in the signed set", async () => {
+    // Winter's identity, read off the LIVE request. The negative half carries the weight: Bun's
+    // fetch supplies `Bun/<version>` when nothing sets the header, so an adapter that simply forgot
+    // would still have A user-agent and a presence-only assertion would pass.
+    // Bedrock is the one family where this is more than a header: `user-agent` is not an `x-amz-*`
+    // name, so it survives `filterConnectionHeaders` and lands in the SIGNED set. The fake verifies
+    // the signature, so a header added outside the signing input would fail here rather than
+    // silently ride unsigned.
+    const fake = await startBedrockFake({ scenarios: bedrockScenarios() });
+    try {
+      const harness = createBedrockHarness(fake);
+      const turn = await foldProviderStream(harness.adapter.streamTurn({ model: BEDROCK_CORPUS_MODEL, messages: [{ role: "user", content: "hi" }] }, harness.ctx));
+      expect(turn.kind).toBe("text");
+      expect(fake.requests.length).toBeGreaterThan(0);
+      for (const recorded of fake.requests) expect(recorded.headers["user-agent"]).toBe(winterUserAgent());
+    } finally {
+      await fake.close();
+    }
+  }, 30_000);
+});
 
 describe("the WS-13 §13 corpus for bedrock-converse@1", () => {
   test("every required case passes against the hand-built descriptor", async () => {

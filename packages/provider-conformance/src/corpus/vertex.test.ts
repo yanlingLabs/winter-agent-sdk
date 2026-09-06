@@ -23,6 +23,7 @@ import {
 } from "../../../provider-runtime/src/adapters/google/index.ts";
 import { foldProviderStream } from "../../../runtime/src/provider/bridge.ts";
 import { GOOGLE_MODELS, GOOGLE_SIGNATURE } from "./google.ts";
+import { winterUserAgent } from "../../../provider-runtime/src/identity.ts";
 import { formatCorpusReport, runAdapterCorpus } from "./runner.ts";
 import {
   VERTEX_LOCATION,
@@ -36,6 +37,23 @@ import {
   vertexCorpusCases,
   vertexGeneratePath,
 } from "./vertex.ts";
+
+describe("Vertex Gemini: WS-13b honest identity", () => {
+  test("the GenerateContent request carries Winter's OWN user-agent", async () => {
+    // Winter's identity, read off the LIVE request. The negative half carries the weight: Bun's
+    // fetch supplies `Bun/<version>` when nothing sets the header, so an adapter that simply forgot
+    // would still have A user-agent and a presence-only assertion would pass.
+    const adapter = testVertexAdapter();
+    const harness = await createVertexHarness();
+    await withFake({ routes: harness.routes }, async (fake) => {
+      harness.bind(fake.url);
+      await foldProviderStream(adapter.streamTurn({ model: GOOGLE_MODELS.main, messages: [{ role: "user", content: "hi" }] }, vertexContext(harness, fake.url)));
+      const generate = requestsTo(fake, vertexGeneratePath(GOOGLE_MODELS.main));
+      expect(generate.length).toBeGreaterThan(0);
+      for (const recorded of generate) expect(recorded.headers["user-agent"]).toBe(winterUserAgent());
+    });
+  });
+});
 
 describe("Vertex Gemini: the location endpoint (ruling R6-A, verbatim)", () => {
   test("composes exactly the URL the ruling names", () => {

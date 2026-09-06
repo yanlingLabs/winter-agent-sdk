@@ -17,9 +17,22 @@ import { loadCatalog } from "@yanlinglabs/winter-provider-catalog";
 import { THINKING_ENABLED_NEEDS_BUDGET } from "../../../provider-runtime/src/adapters/refusals.ts";
 import { foldProviderStream } from "../../../runtime/src/provider/bridge.ts";
 import { formatCorpusReport, runAdapterCorpus } from "./runner.ts";
+import { winterUserAgent } from "../../../provider-runtime/src/identity.ts";
 import { ANTHROPIC_MODELS, ANTHROPIC_TEST_KEY, anthropicCorpusCases, anthropicCorpusRoutes, foldTurn, testAnthropicAdapter, testAnthropicCatalog, testContext } from "./anthropic.ts";
 
 describe("Anthropic Messages: the live request", () => {
+  test("WS-13b: every request carries Winter's OWN user-agent, never an editor or vendor CLI identity", async () => {
+    // Winter's identity, read off the LIVE request. The negative half carries the weight: Bun's
+    // fetch supplies `Bun/<version>` when nothing sets the header, so an adapter that simply forgot
+    // would still have A user-agent and a presence-only assertion would pass.
+    const adapter = createAnthropicMessagesAdapter({ catalog: testAnthropicCatalog() });
+    await withFake({ routes: anthropicCorpusRoutes() }, async (fake) => {
+      await foldTurn(adapter, { model: ANTHROPIC_MODELS.main, messages: [{ role: "user", content: "hi" }] }, testContext(fake.url));
+      expect(fake.requests.length).toBeGreaterThan(0);
+      for (const recorded of fake.requests) expect(recorded.headers["user-agent"]).toBe(winterUserAgent());
+    });
+  });
+
   test("carries the model, system, messages, tools, tool_choice and the family's headers", async () => {
     const adapter = createAnthropicMessagesAdapter({ catalog: testAnthropicCatalog() });
     await withFake(
