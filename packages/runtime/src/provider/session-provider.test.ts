@@ -17,6 +17,7 @@ import type { WinterCatalog, WinterModelDescriptor, WinterProviderDescriptor } f
 import { loadCatalog } from "@yanlinglabs/winter-provider-catalog";
 import { WinterProviderResolutionError, createMemoryCredentialStore, type CredentialMaterial } from "@yanlinglabs/winter-provider-runtime";
 import { startFake, sseResponse, jsonResponse, type FakeServer } from "winter-provider-conformance";
+import { startScenarioFake } from "./scenario-fake.ts";
 import { buildSessionProvider, apiKeySourceFor, connectionForProvider } from "./session-provider.ts";
 import { echoProvider } from "./mock.ts";
 import type { ProviderMessage } from "../engine.ts";
@@ -562,6 +563,54 @@ describe("T10 wiring: the pinned `apiKeySource` mapping (disclosed gap-fill)", (
     expect(apiKeySourceFor({ kind: "none" })).toBe("none");
     expect(apiKeySourceFor(undefined)).toBe("none");
   });
+});
+
+describe("T10 wiring: Lane C's decoration text reaches the WIRE, in every shipped family", () => {
+  // THE CONTROLLER'S RULING, verbatim: "`ProviderMessageLike.decoration.text` is rendered VERBATIM as
+  // plain text in the target's message; no adapter adds a second wrapper", and T10 "asserts the exact
+  // text on the fake's recorded request".
+  //
+  // A grep for `decoration` in each adapter is NOT that assertion — it cannot distinguish rendering
+  // code from a type import or a comment, and Lane C's whole cross-family surface is inert if any one
+  // family drops it. The subject here is therefore the RECORDED REQUEST, per family, driven through
+  // the same `adapterAsProvider` chain a session uses.
+  const DECORATION = "WINTER-T10-DECORATION-MARKER: recovered reasoning from a prior model";
+
+  for (const [family, providerId, adapterId, path] of [
+    ["anthropic", "t10anthropic", "winter.anthropic-messages", "/v1/messages"],
+    ["openai-responses", "t10openai", "winter.openai-responses", "/responses"],
+    ["openai-chat", "t10chat", "winter.openai-chat-completions", "/chat/completions"],
+    ["google", "t10google", "winter.google-generate-content", ":streamGenerateContent"],
+  ] as const) {
+    test(`${family}: the decoration text rides the request VERBATIM, once, with no second wrapper`, async () => {
+      const fake = await startScenarioFake();
+      try {
+        const model = `${providerId}/t10-decorated`;
+        const catalog = catalogWith(
+          [testProvider({ id: providerId, adapterId, family: family.startsWith("google") ? "google" : family.startsWith("anthropic") ? "anthropic" : "openai", api: fake.url })],
+          [testModel({ key: model, providerId, upstreamId: "t10-decorated" })],
+        );
+        const wiring = buildSessionProvider({
+          config: baseConfig({ model, provider: { providerId, authRef: { kind: "inline", value: "test" }, connection: { baseUrl: fake.url, local: true } } }),
+          env: {},
+          catalog,
+          credentials: createMemoryCredentialStore(),
+        });
+        await wiring.provider.generate({
+          messages: [{ role: "user", content: "carry it", decoration: { text: DECORATION, door: "tag" } }],
+        });
+
+        const request = fake.requests.find((r) => r.path.endsWith(path));
+        expect(request, `${family}: the fake received no request on ${path}`).toBeDefined();
+        // VERBATIM, and EXACTLY ONCE: a second occurrence would mean an adapter wrapped it again on
+        // top of the renderer's own delimiters, which is what the ruling forbids.
+        const occurrences = (request!.body.split(DECORATION).length ?? 1) - 1;
+        expect(occurrences, `${family}: expected the decoration text exactly once in the request body`).toBe(1);
+      } finally {
+        await fake.close();
+      }
+    });
+  }
 });
 
 describe("T10 wiring: hermetic credentials", () => {
