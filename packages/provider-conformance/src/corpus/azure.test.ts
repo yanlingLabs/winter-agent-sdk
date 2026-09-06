@@ -11,6 +11,7 @@ import { chatCorpusScenarios, responsesCorpusScenarios } from "./openai-scenario
 import { AZURE_CLASSIC_API_VERSION, AZURE_DEPLOYMENT, azureClassicHarness, azurePreviewHarness } from "./azure.ts";
 import { FAKE_ENTRA_TOKEN, apiVersionOf, startAzureFake } from "../fakes/azure-openai.ts";
 import { openAiModelsRoutes } from "../fakes/openai-models.ts";
+import { noRequestContains } from "../fakes/server.ts";
 import type { FakeServer } from "../fakes/server.ts";
 
 async function withAzureFake<T>(fn: (fake: FakeServer) => Promise<T>): Promise<T> {
@@ -86,6 +87,32 @@ describe("azure specifics on the live wire", () => {
       const recorded = fake.requests.at(-1)!;
       expect(recorded.headers.authorization).toBe("Bearer ***");
       expect(recorded.headers["api-key"]).toBeUndefined();
+    });
+  });
+
+  test("F-3: a CREDENTIAL-shaped host header never rides — `cookie` + `x-trace` puts only `x-trace` on the wire", async () => {
+    // Azure's whole surface is a CONNECTION PROFILE variant, so the profile's header map is the one
+    // input a host is most likely to reach for — which is exactly why the drop has to be pinned here
+    // and not only on the vanilla OpenAI surface.
+    await withAzureFake(async (fake) => {
+      const adapter = createAzureOpenAIAdapter({ retry: FAST_RETRY, descriptors: () => undefined });
+      const ctx = testContext({
+        providerId: "azure-openai",
+        baseUrl: fake.url,
+        local: true,
+        deployment: AZURE_DEPLOYMENT,
+        apiVersion: AZURE_CLASSIC_API_VERSION,
+        headers: { cookie: "session=SMUGGLED-COOKIE", "api-key": "SMUGGLED-KEY", "x-trace": "keep" },
+      });
+      await drain(adapter.streamTurn({ model: SCENARIO.happy, messages: [] }, ctx));
+      const recorded = fake.requests.at(-1)!;
+      expect(recorded.headers["x-trace"]).toBe("keep");
+      expect(recorded.headers["cookie"]).toBeUndefined();
+      // A profile `api-key` is dropped, NOT honoured — and the turn's real credential still rides,
+      // so a misconfiguration can never quietly become the key that authenticated the request.
+      expect(recorded.headers["api-key"]).toBe("***");
+      expect(noRequestContains(fake, "SMUGGLED-KEY")).toBe(true);
+      expect(noRequestContains(fake, "SMUGGLED-COOKIE")).toBe(true);
     });
   });
 

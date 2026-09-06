@@ -242,6 +242,30 @@ describe("live wire details the corpus does not ask about", () => {
     });
   });
 
+  test("F-3: a CREDENTIAL-shaped host header never rides — `cookie` + `x-trace` puts only `x-trace` on the wire", async () => {
+    // This family always stripped `CREDENTIAL_HEADER_NAMES` from the profile before calling
+    // `hostHeaders`; the strip now lives INSIDE `hostHeaders`, so every family gets it and this file
+    // no longer keeps a second copy of the rule. The fixture is what proves the move was lossless.
+    await withResponsesFake(async (fake) => {
+      const adapter = createResponsesAdapter({ generatedBaseUrl: fake.url, retry: FAST_RETRY, descriptors: () => undefined });
+      const headers = { cookie: "session=SMUGGLED-COOKIE", "proxy-authorization": "Basic SMUGGLED-PROXY", "x-goog-api-key": "SMUGGLED-GOOG", "x-trace": "keep" };
+      // On the GENERATED endpoint, where `hostHeaders` passes identity headers through by design.
+      await drain(adapter.streamTurn({ model: SCENARIO.happy, messages: [] }, testContext({ headers, stallTimeoutMs: STALL_MS })));
+      let recorded = fake.requests.at(-1)!;
+      expect(recorded.headers["x-trace"]).toBe("keep");
+      expect(recorded.headers["cookie"]).toBeUndefined();
+      expect(recorded.headers["proxy-authorization"]).toBeUndefined();
+      expect(recorded.headers["x-goog-api-key"]).toBeUndefined();
+      // And on a USER endpoint, where the identity rule also applies.
+      const viaProfile = createResponsesAdapter({ retry: FAST_RETRY, descriptors: () => undefined });
+      await drain(viaProfile.streamTurn({ model: SCENARIO.happy, messages: [] }, testContext({ baseUrl: fake.url, local: true, headers, stallTimeoutMs: STALL_MS })));
+      recorded = fake.requests.at(-1)!;
+      expect(recorded.headers["x-trace"]).toBe("keep");
+      expect(recorded.headers["cookie"]).toBeUndefined();
+      for (const marker of ["SMUGGLED-COOKIE", "SMUGGLED-PROXY", "SMUGGLED-GOOG"]) expect([marker, noRequestContains(fake, marker)]).toEqual([marker, true]);
+    });
+  });
+
   test("a retry observation is yielded BEFORE the request it precedes reaches the fake", async () => {
     // The ordering `pumpEvents` exists for, asserted against the fake's own request log rather than
     // against the adapter's intent: a post-hoc flush would put the event after BOTH requests.

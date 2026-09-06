@@ -551,3 +551,36 @@ describe("Anthropic Messages: the WS-13 §13 corpus", () => {
     });
   }, 30_000);
 });
+
+describe("R6-L / F-3: a CREDENTIAL-shaped host header never rides", () => {
+  test("a connection profile carrying `cookie` + `x-trace` puts only `x-trace` on the wire (M-4)", async () => {
+    // `hostHeaders` used to strip the four IDENTITY names only, so a host `cookie`,
+    // `proxy-authorization` or `x-api-key` in a connection profile reached this family's wire on
+    // every request — and a profile `x-api-key` would have been overwritten by the real credential
+    // anyway, which is the shape that makes the misconfiguration invisible. A `ConnectionProfile` is
+    // non-secret connection metadata by contract (WS-13 §6): a credential in it is dropped, never
+    // honoured as a second auth channel.
+    const adapter = testAnthropicAdapter();
+    await withFake({ routes: anthropicCorpusRoutes() }, async (fake) => {
+      await foldTurn(
+        adapter,
+        { model: ANTHROPIC_MODELS.main, messages: [{ role: "user", content: "hi" }] },
+        testContext(fake.url, {
+          connection: {
+            providerId: "anthropic",
+            baseUrl: fake.url,
+            local: true,
+            headers: { cookie: "session=SMUGGLED-COOKIE", "proxy-authorization": "Basic SMUGGLED-PROXY", "x-api-key": "SMUGGLED-KEY", "x-trace": "keep" },
+          },
+        }),
+      );
+      const recorded = fake.requests[0]!;
+      expect(recorded.headers["x-trace"]).toBe("keep");
+      expect(recorded.headers["cookie"]).toBeUndefined();
+      expect(recorded.headers["proxy-authorization"]).toBeUndefined();
+      for (const marker of ["SMUGGLED-COOKIE", "SMUGGLED-PROXY", "SMUGGLED-KEY"]) expect([marker, noRequestContains(fake, marker)]).toEqual([marker, true]);
+      // The turn's REAL credential still rides: this rule is about the host's map, never about auth.
+      expect(recorded.headers["x-api-key"]).toBeDefined();
+    });
+  });
+});

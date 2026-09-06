@@ -246,6 +246,62 @@ describe("R6-L: privileged headers ride a GENERATED endpoint and are dropped for
       await fake.close();
     }
   });
+
+  test("a CONNECTION PROFILE cannot smuggle `x-amz-source-account`/`x-amz-source-arn` past the gate (Lane N r1 carry)", async () => {
+    // The gate above governs the set the ADAPTER builds. The profile is the other door: a host that
+    // writes the same names into `connection.headers` would put them on a user endpoint with no gate
+    // in the way at all. `filterConnectionHeaders`' `x-amz-` prefix drop closes it — INCIDENTALLY,
+    // which is why it is pinned here rather than left to the prefix rule's own good intentions.
+    const fake = await startBedrockFake({ scenarios: bedrockScenarios() });
+    try {
+      const harness = createBedrockHarness(fake);
+      const ctx = {
+        ...harness.ctx,
+        connection: {
+          ...harness.ctx.connection,
+          headers: { "x-amz-source-account": "999988887777", "x-amz-source-arn": "arn:aws:bedrock:us-east-1:999988887777:agent/SMUGGLED", "x-trace": "keep" },
+        },
+      };
+      await foldProviderStream(harness.adapter.streamTurn({ model: BEDROCK_CORPUS_MODEL, messages: [{ role: "user", content: "hi" }] }, ctx));
+      const recorded = fake.requests[0]!;
+      expect(recorded.headers["x-amz-source-account"]).toBeUndefined();
+      expect(recorded.headers["x-amz-source-arn"]).toBeUndefined();
+      expect(fake.signatures[0]!.signedHeaders).not.toContain("x-amz-source-account");
+      expect(noRequestContains(fake, "999988887777")).toBe(true);
+      // A header that collides with nothing is still the host's to send.
+      expect(recorded.headers["x-trace"]).toBe("keep");
+    } finally {
+      await fake.close();
+    }
+  });
+
+  test("F-3: the family-foreign CREDENTIAL names are dropped too — `cookie` + `x-trace` -> only `x-trace`", async () => {
+    // Bedrock's filter owned the SigV4 names (`authorization`, `host`, `x-amz-*`) and missed
+    // `cookie`, `proxy-authorization`, `x-api-key`, `api-key` and `x-goog-api-key` — which are
+    // misconfigurations on every family, this one included. It now consults
+    // `CREDENTIAL_HEADER_NAMES`, the same list `hostHeaders` uses, so the two cannot drift.
+    const fake = await startBedrockFake({ scenarios: bedrockScenarios() });
+    try {
+      const harness = createBedrockHarness(fake);
+      const ctx = {
+        ...harness.ctx,
+        connection: {
+          ...harness.ctx.connection,
+          headers: { cookie: "session=SMUGGLED-COOKIE", "proxy-authorization": "Basic SMUGGLED-PROXY", "x-api-key": "SMUGGLED-KEY", "x-goog-api-key": "SMUGGLED-GOOG", "x-trace": "keep" },
+        },
+      };
+      await foldProviderStream(harness.adapter.streamTurn({ model: BEDROCK_CORPUS_MODEL, messages: [{ role: "user", content: "hi" }] }, ctx));
+      const recorded = fake.requests[0]!;
+      expect(recorded.headers["x-trace"]).toBe("keep");
+      for (const name of ["cookie", "proxy-authorization", "x-api-key", "x-goog-api-key"]) expect([name, recorded.headers[name]]).toEqual([name, undefined]);
+      // Not signed either: a dropped header must never be a signed-then-removed one.
+      for (const name of ["cookie", "proxy-authorization", "x-api-key"]) expect([name, fake.signatures[0]!.signedHeaders.includes(name)]).toEqual([name, false]);
+      expect(fake.signatures[0]!.verified).toBe(true);
+      for (const marker of ["SMUGGLED-COOKIE", "SMUGGLED-PROXY", "SMUGGLED-KEY", "SMUGGLED-GOOG"]) expect([marker, noRequestContains(fake, marker)]).toEqual([marker, true]);
+    } finally {
+      await fake.close();
+    }
+  });
 });
 
 describe("Converse and ConverseStream are indistinguishable to a consumer", () => {

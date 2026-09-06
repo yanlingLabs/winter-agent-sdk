@@ -57,7 +57,7 @@ import type {
   ProviderMessageLike,
   TurnRequest,
 } from "../../types.ts";
-import { applyPrivilegedHeaders, createEndpointPolicy, type EndpointPolicy } from "../../endpoint-policy.ts";
+import { CREDENTIAL_HEADER_NAMES, applyPrivilegedHeaders, createEndpointPolicy, type EndpointPolicy } from "../../endpoint-policy.ts";
 import { ProviderRequestError, boundedFetch } from "../../http.ts";
 import { ProviderStallError, normalizeHttpError, normalizeThrown } from "../../errors.ts";
 import { createRetryPolicy, withRetry, type RetryPolicyOptions } from "../../retry.ts";
@@ -179,13 +179,21 @@ function controlBase(ctx: ProviderContext, region: string, vendorBaseUrl?: strin
  * transport: the signer owns every `x-amz-*` it emits plus `authorization`, and `host` is computed
  * from the URL and is a forbidden header for `fetch` anyway. A profile supplying one would have it
  * folded into the signed set and then overwritten, signing a value that never rides.
+ *
+ * IT ALSO DROPS THE FAMILY-FOREIGN CREDENTIAL NAMES (fix-wave F-3): a `cookie`,
+ * `proxy-authorization`, `x-api-key`, `api-key` or `x-goog-api-key` in a profile is a
+ * misconfiguration on every family, and this filter is the only one a Bedrock request passes
+ * through -- it runs INSTEAD of `hostHeaders`, not before it, because the signer's own rules are
+ * what shape it. The two lists are kept in step by `CREDENTIAL_HEADER_NAMES`: `x-amz-security-token`
+ * and the two SigV4 date/digest names are already covered by the `x-amz-` prefix above.
  */
 function filterConnectionHeaders(headers: Record<string, string> | undefined): Record<string, string> {
   if (headers === undefined) return {};
   const out: Record<string, string> = {};
   for (const [name, value] of Object.entries(headers)) {
     const lower = name.toLowerCase();
-    if (lower === "authorization" || lower === "host" || lower === "content-length" || lower.startsWith("x-amz-")) continue;
+    if (lower === "host" || lower === "content-length" || lower.startsWith("x-amz-")) continue;
+    if (CREDENTIAL_HEADER_NAMES.includes(lower)) continue;
     out[lower] = value;
   }
   return out;

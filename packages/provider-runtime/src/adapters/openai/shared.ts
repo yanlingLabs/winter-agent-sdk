@@ -38,7 +38,7 @@
 
 import type { WinterModelDescriptor } from "@yanlinglabs/winter-provider-catalog";
 import { hostHeaders } from "../privileged-headers.ts";
-import { CREDENTIAL_HEADER_NAMES, applyPrivilegedHeaders, createEndpointPolicy, type EndpointPolicy } from "../../endpoint-policy.ts";
+import { applyPrivilegedHeaders, createEndpointPolicy, type EndpointPolicy } from "../../endpoint-policy.ts";
 import { ProviderRequestError, boundedFetch } from "../../http.ts";
 import { normalizeHttpError, normalizeThrown } from "../../errors.ts";
 import { createRetryPolicy, withRetry, type RetryPolicy, type RetryPolicyOptions } from "../../retry.ts";
@@ -222,24 +222,18 @@ export function buildHeaders(plan: HeaderPlan): Record<string, string> {
   // Anthropic and Google families use, instead of only the credential-name list.
   //
   // The credential list was never wrong -- it drops `openai-organization` and `openai-project`
-  // because both are in `CREDENTIAL_HEADER_NAMES`, so there was no live hole. What it is is a SECOND
-  // reading of R6-L's rule, and the two disagree on any identity name that is not credential-shaped:
-  // `x-goog-quota-project` is on the privileged list and not the credential one, so an OpenAI-family
-  // adapter reached through a Google-flavoured proxy would forward it on a user endpoint. Routing
-  // both families through one filter is what makes R6-L's "one enforcement point a reviewer can grep
-  // for" true of this family too.
+  // because both are in `CREDENTIAL_HEADER_NAMES`, so there was no live hole. What it was is a
+  // SECOND reading of R6-L's rule, and the two disagreed on any identity name that is not
+  // credential-shaped: `x-goog-quota-project` is on the privileged list and not the credential one,
+  // so an OpenAI-family adapter reached through a Google-flavoured proxy would forward it on a user
+  // endpoint. Routing both families through one filter is what makes R6-L's "one enforcement point
+  // a reviewer can grep for" true of this family too.
   //
-  // The credential strip STAYS and runs first: a `ConnectionProfile` is non-secret connection
-  // metadata by contract (WS-13 §6), so a credential appearing there is a misconfiguration to drop
-  // rather than a second auth channel -- and that is true on a GENERATED endpoint as well, where
-  // `hostHeaders` deliberately passes everything through.
+  // The separate credential pre-strip that used to run here is GONE (fix-wave F-3): `hostHeaders`
+  // now drops `CREDENTIAL_HEADER_NAMES` itself, on a generated endpoint as well, so every family
+  // gets what this family had and this file no longer keeps a second copy of the rule.
   const out: Record<string, string> = {};
-  const credentialFree: Record<string, string> = {};
-  for (const [name, value] of Object.entries(plan.userSupplied ?? {})) {
-    if (CREDENTIAL_HEADER_NAMES.includes(name.toLowerCase())) continue;
-    credentialFree[name] = value;
-  }
-  Object.assign(out, hostHeaders(plan.policy, credentialFree));
+  Object.assign(out, hostHeaders(plan.policy, plan.userSupplied));
   Object.assign(out, applyPrivilegedHeaders(plan.policy, plan.privileged ?? {}));
   Object.assign(out, plan.protocol);
   return out;

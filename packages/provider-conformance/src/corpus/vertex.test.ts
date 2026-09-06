@@ -409,6 +409,40 @@ describe("Vertex Gemini: the shared wire mapping", () => {
     });
   });
 
+  test("a CREDENTIAL-shaped host header never rides: `cookie` + `x-trace` -> only `x-trace` (F-3 / M-4)", async () => {
+    // Vertex mints its own bearer, so a host `authorization` in the profile could not displace it —
+    // but `cookie` and `proxy-authorization` had nothing stopping them, on this transport as on the
+    // Gemini one. The rule now lives in `hostHeaders`, which both share.
+    const adapter = testVertexAdapter();
+    const harness = await createVertexHarness();
+    await withFake({ routes: harness.routes }, async (fake) => {
+      harness.bind(fake.url);
+      await foldProviderStream(
+        adapter.streamTurn(
+          { model: GOOGLE_MODELS.main, messages: [{ role: "user", content: "hi" }] },
+          vertexContext(harness, fake.url, {
+            connection: {
+              providerId: "vertex",
+              baseUrl: fake.url,
+              local: true,
+              project: VERTEX_PROJECT,
+              location: VERTEX_LOCATION,
+              headers: { cookie: "session=SMUGGLED-COOKIE", "proxy-authorization": "Basic SMUGGLED-PROXY", "x-trace": "keep" },
+            },
+          }),
+        ),
+      );
+      const generate = requestsTo(fake, vertexGeneratePath(GOOGLE_MODELS.main))[0]!;
+      expect(generate.headers["x-trace"]).toBe("keep");
+      expect(generate.headers["cookie"]).toBeUndefined();
+      expect(generate.headers["proxy-authorization"]).toBeUndefined();
+      // The transport's OWN bearer is untouched: this rule is about the host's map, never about auth.
+      // (The fake redacts every credential value before recording it, hence the scheme-plus-`***`.)
+      expect(generate.headers["authorization"]).toBe("Bearer ***");
+      for (const marker of ["SMUGGLED-COOKIE", "SMUGGLED-PROXY"]) expect([marker, noRequestContains(fake, marker)]).toEqual([marker, true]);
+    });
+  });
+
   test("`countTokens` reaches the location endpoint's own `:countTokens` method", async () => {
     const adapter = testVertexAdapter();
     const harness = await createVertexHarness();
