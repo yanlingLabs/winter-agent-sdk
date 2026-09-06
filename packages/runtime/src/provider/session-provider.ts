@@ -42,6 +42,7 @@ import {
   CredentialResolutionError,
   WinterProviderResolutionError,
   createCompositeCredentialStore,
+  createEndpointResolver,
   createEnvCredentialStore,
   createFileCredentialStore,
   createHistoryRenderer,
@@ -49,6 +50,7 @@ import {
   createRegistry,
   createShippedAdapters,
 } from "@yanlinglabs/winter-provider-runtime";
+import type { MessageOrigin } from "@yanlinglabs/winter-provider-runtime";
 import { createKeychainCredentialStore } from "./keychain-store.ts";
 import { providerCredentialRef } from "./credential-api.ts";
 import { adapterAsProvider, type HistoryRenderer } from "./bridge.ts";
@@ -57,7 +59,7 @@ import { createProviderContext, redactCredentialRef, resolveSessionProvider, typ
 import { createModelClassifier, selectClassifierRoute, type ClassifierRoute } from "./classifier/model-classifier.ts";
 import type { ClassifierInterface } from "../permissions/auto/engine.ts";
 import { buildContinuationChain, type ContinuationChain, type ProviderStateRecord } from "../store/provider-state.ts";
-import type { Provider, ProviderRequest, ProviderTurn } from "../engine.ts";
+import type { ModelSwitchResolution, Provider, ProviderRequest, ProviderTurn, ResolveModelSwitch } from "../engine.ts";
 
 /**
  * The pinned `ApiKeySource` vocabulary (`sdk.d.ts:127`), of which the JSDoc marks five members
@@ -190,6 +192,15 @@ export interface SessionProviderWiring {
   describeTargetMaterial(resolved: ResolvedModel, opts?: BuildProviderOptions): TargetMaterial;
   /** The provider this session is configured for (`config.provider.providerId`, else the resolved model's). Undefined only for a session with neither. */
   sessionProviderId(): string | undefined;
+  /**
+   * P6 fix wave (Ruling E-2): THE SWITCH SEAM -- `EngineOptions.resolveModelSwitch`. R6-K resolution
+   * under the session provider, `buildProvider` under Ruling E-1, the resolved identity, and the two
+   * continuity endpoints `classifySwitch` compares. Present on every arm: a session that started
+   * unresolvable can be handed a model that resolves and recover.
+   */
+  resolveModelSwitch: ResolveModelSwitch;
+  /** P6 fix wave (Ruling E-3): `fallbackModel`'s candidates as catalog keys, in order, domain-checked at init. Empty for the reserved namespace and for a refused session. */
+  fallbackModelKeys: string[];
   /** R6-I: the `supportedModels()` rows for this session. */
   supportedModels(): ModelInfo[];
   /** R6-I / capture (d): the initialize-response account surface. Never `system/init` — the pin has no account field there. */
@@ -427,6 +438,47 @@ export function buildSessionProvider(opts: SessionProviderOptions): SessionProvi
     };
   };
 
+  // RULING E-2: the switch seam. Resolution goes UNDER THE SESSION PROVIDER (R6-K), so a bare id, an
+  // alias and this provider's own qualified key all resolve here, and a key qualified for ANOTHER
+  // provider is a `provider-mismatch` refusal -- never a substitution, never a parked switch. The
+  // `from` endpoint is looked up through the same registry the renderer uses, so the classification
+  // and the replay decision cannot disagree about a domain.
+  const endpointFor = createEndpointResolver(registry);
+  const familyOf = (origin: MessageOrigin): string => {
+    if (typeof origin.family === "string" && origin.family.length > 0) return origin.family;
+    // A persisted identity carries no family (the resume-time comparison); the adapter's is the fact.
+    const resolvedFrom = registry.resolve({ model: origin.modelKey, provider: { providerId: origin.providerId } });
+    return resolvedFrom instanceof WinterProviderResolutionError ? "" : String(resolvedFrom.adapter.family);
+  };
+  const resolveModelSwitch: ResolveModelSwitch = (model, from) => {
+    const providerId = sessionProviderId();
+    const result = registry.resolve({
+      model,
+      ...(providerId !== undefined || config.provider?.allowUnlisted !== undefined
+        ? { provider: { ...(providerId !== undefined ? { providerId } : {}), ...(config.provider?.allowUnlisted !== undefined ? { allowUnlisted: config.provider.allowUnlisted } : {}) } }
+        : {}),
+    });
+    if (result instanceof WinterProviderResolutionError) return { refused: true, code: result.code, message: result.message };
+    const material = describeTargetMaterial(result);
+    const family = String(result.adapter.family);
+    const resolution: ModelSwitchResolution = {
+      provider: buildProvider(result),
+      identity: {
+        providerId: result.providerId,
+        modelKey: result.modelKey,
+        family,
+        ...(result.continuationDomain !== undefined ? { continuationDomain: result.continuationDomain } : {}),
+        adapterId: result.adapterId,
+        adapterVersion: result.adapter.version,
+        catalogVersion: result.catalogVersion,
+        authRefKind: material.authRef.kind,
+      },
+      to: endpointFor({ providerId: result.providerId, modelKey: result.modelKey, family, ...(result.continuationDomain !== undefined ? { continuationDomain: result.continuationDomain } : {}) }),
+      ...(from !== undefined ? { from: endpointFor({ ...from, family: familyOf(from) }) } : {}),
+    };
+    return resolution;
+  };
+
   const deps: SelectionDeps = {
     registry,
     credentials,
@@ -464,6 +516,8 @@ export function buildSessionProvider(opts: SessionProviderOptions): SessionProvi
       buildProvider,
       describeTargetMaterial,
       sessionProviderId,
+      resolveModelSwitch,
+      fallbackModelKeys: [],
       supportedModels: () => [],
       accountInfo: () => ({}),
     };
@@ -486,6 +540,8 @@ export function buildSessionProvider(opts: SessionProviderOptions): SessionProvi
       buildProvider,
       describeTargetMaterial,
       sessionProviderId,
+      resolveModelSwitch,
+      fallbackModelKeys: [],
       supportedModels: () => [],
       accountInfo: () => ({}),
     };
@@ -563,6 +619,10 @@ export function buildSessionProvider(opts: SessionProviderOptions): SessionProvi
     buildProvider,
     describeTargetMaterial,
     sessionProviderId,
+    resolveModelSwitch,
+    // Ruling E-3: the keys, not the `ResolvedModel`s -- the engine re-resolves through the seam at
+    // engagement time, so a candidate is always built fresh under the rule in force then.
+    fallbackModelKeys: selection.fallbackModels.map((candidate) => candidate.modelKey),
     supportedModels: () => registry.listModelInfo(resolved.providerId),
     accountInfo: () => {
       const apiProvider = API_PROVIDER_BY_PROVIDER_ID[resolved.providerId];

@@ -68,6 +68,7 @@ import type { Provider } from "./engine.ts";
 import type { ClassifierInterface } from "./permissions/auto/engine.ts";
 import { WinterProviderResolutionError } from "@yanlinglabs/winter-provider-runtime";
 import { redactCredentialRef } from "./provider/selection.ts";
+import type { ResolveModelSwitch } from "./engine.ts";
 
 // --- narrowing the six undeclared settings keys ---------------------------------------------------
 //
@@ -367,6 +368,10 @@ export interface ProductionWiring {
     apiKeySource: string;
     providerSupportsToolSearch?: boolean;
     classifier?: ClassifierInterface;
+    /** P6 fix wave (Ruling E-2): the switch seam, from the session's own wiring. */
+    resolveModelSwitch?: ResolveModelSwitch;
+    /** P6 fix wave (Ruling E-3): `fallbackModel`'s candidates as catalog keys, present only when configured. */
+    fallbackModels?: string[];
     /** R6-I: the `list_models` control handler's source. */
     supportedModels: () => unknown[];
     /** The Winter-only `account_info` control handler's source. */
@@ -806,6 +811,10 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
       apiKeySource: providerWiring.apiKeySource,
       supportedModels: () => providerWiring.supportedModels(),
       accountInfo: () => providerWiring.accountInfo(),
+      // P6 fix wave (Rulings E-2 / E-3): the switch seam and the fallback candidates, from the SAME
+      // wiring the session's own provider came from -- one resolution path, on every leg.
+      resolveModelSwitch: providerWiring.resolveModelSwitch,
+      ...(providerWiring.fallbackModelKeys.length > 0 ? { fallbackModels: providerWiring.fallbackModelKeys } : {}),
       ...(providerWiring.providerSupportsToolSearch !== undefined ? { providerSupportsToolSearch: providerWiring.providerSupportsToolSearch } : {}),
       ...(providerWiring.classifier !== undefined ? { classifier: providerWiring.classifier } : {}),
       systemPromptAssembler,

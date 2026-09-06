@@ -10,6 +10,9 @@ import type { ProtocolSdkMessage as SdkMessage, RuntimeConfig, WinterFrame } fro
 import { createInMemoryChannel } from "../protocol/channel.ts";
 import { runEngine, DEFAULT_MAX_PROVIDER_MESSAGE_BYTES, ProviderTurnError, type Provider, type ProviderRequest, type ProviderTurn, type ToolExecutor } from "../engine.ts";
 import { stubExecutor } from "./mock.ts";
+import { createMemoryCredentialStore } from "@yanlinglabs/winter-provider-runtime";
+import { buildSessionProvider } from "./session-provider.ts";
+import { chatCatalog, chatModel, chatProvider, startRawChatFake } from "./raw-chat-fake.test-support.ts";
 
 async function drain(source: AsyncIterable<WinterFrame>): Promise<WinterFrame[]> {
   const out: WinterFrame[] = [];
@@ -412,6 +415,41 @@ describe("R6-I: the set_model hook points", () => {
       expect(requests[0]!.model).toBe("sonnet");
       expect(requests[1]!.model).toBe("opus");
       expect(requests[2]!.model).toBe("sonnet"); // back to config.model, the session default
+    }
+  });
+
+  test("(whole-branch M-8) the SAME hook points through a CATALOG-RESOLVED adapter with a KEY: the wire carries the provider-local id, never the key, and the switch is announced with keys", async () => {
+    // The fixtures above script the provider and speak bare ids, which is exactly why C-2 was
+    // invisible: a scripted double cannot tell a key from a wire id. This variant drives the real
+    // `buildSessionProvider` chain against a loopback fake and reads the ground truth off its log.
+    const fake = await startRawChatFake();
+    try {
+      const catalog = chatCatalog([chatProvider("prova", fake.url)], [chatModel({ key: "prova/m1", providerId: "prova", upstreamId: "m1" }), chatModel({ key: "prova/m2", providerId: "prova", upstreamId: "m2" })]);
+      const config: RuntimeConfig = { sessionId: "m8", cwd: "/tmp/x", model: "prova/m1", persistSession: false, provider: { providerId: "prova", authRef: { kind: "inline", value: "fixture" } } } as RuntimeConfig;
+      const wiring = buildSessionProvider({ config, env: {}, catalog, credentials: createMemoryCredentialStore() });
+      const { host, runtime } = createInMemoryChannel();
+      const done = runEngine({
+        config,
+        input: runtime.input,
+        output: runtime.output,
+        provider: wiring.provider,
+        tools: stubExecutor,
+        providerIdentity: { providerId: "prova", modelKey: "prova/m1", family: "openai", adapterId: wiring.identity!.adapterId, adapterVersion: wiring.identity!.adapterVersion, catalogVersion: wiring.identity!.catalogVersion, authRefKind: "inline" },
+        resolveModelSwitch: wiring.resolveModelSwitch,
+      });
+      host.output.write({ type: "user", text: "first" });
+      // The KEY, as a picker row's `value` carries it (R6-I) -- P2b's exact request.
+      host.output.write({ type: "control_request", requestId: "m1", subtype: "set_model", payload: { model: "prova/m2" } });
+      host.output.write({ type: "user", text: "second" });
+      host.output.write({ type: "control_request", requestId: "end", subtype: "end_input", payload: undefined });
+      const frames = await drain(host.input);
+      await done;
+      expect(fake.requests.map((r) => r.model)).toEqual(["m1", "m2"]);
+      const switches = dataMessages(frames).filter((m) => m.type === "system" && (m as { subtype?: string }).subtype === "model_switch") as Array<Record<string, unknown>>;
+      expect(switches).toHaveLength(1);
+      expect(switches[0]).toMatchObject({ reason: "set_model", from_model: "prova/m1", to_model: "prova/m2", provider: "prova" });
+    } finally {
+      await fake.close();
     }
   });
 

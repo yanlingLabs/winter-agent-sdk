@@ -35,12 +35,15 @@ import {
 // types can live down there while `ProviderTurn`/`ProviderMessage`/`ContentBlock` stay up here.
 // `TurnRequest` is imported for its `toolChoice`/`effort`/`thinking` member types, so the engine's
 // request and an adapter's request cannot drift apart on the three fields they share.
-import type { MessageOrigin, ProviderNativeState, TurnRequest } from "@yanlinglabs/winter-provider-runtime";
+import type { ContinuityEndpoint, MessageOrigin, ProviderNativeState, TurnRequest } from "@yanlinglabs/winter-provider-runtime";
+// P6 fix wave (Ruling E-2): the two PURE continuity functions the switch point calls. Value imports
+// from the provider-runtime barrel, one direction (runtime -> provider-runtime), same as every adapter.
+import { buildPortableHandoff, classifySwitch } from "@yanlinglabs/winter-provider-runtime";
 export type { MessageOrigin, ProviderNativeState };
 // R6-7: the sidecar record types the persistence seam carries. `store/provider-state.ts` imports
 // NOTHING from this file (its own types come from provider-runtime), so this is not the circular
 // direction `store/dialect.ts` has to avoid.
-import { PROVIDER_STATE_FILE_SUFFIX, type ProviderStateRecord, type ProviderStateRecordInput } from "./store/provider-state.ts";
+import { PROVIDER_STATE_FILE_SUFFIX, type ContinuationLink, type ProviderStateRecord, type ProviderStateRecordInput } from "./store/provider-state.ts";
 // Review round 1 (M8): the two pure clusters this file used to inline. Both are plain functions of
 // their inputs -- `provider/stream-frames.ts` imports only the `ProviderStreamSink` TYPE from here, and
 // `store/continuation-attach.ts` imports nothing from here at all (its message shape is structural,
@@ -491,11 +494,22 @@ export class ProviderTurnError extends Error {
   readonly winterProviderFailure = true as const;
   declare readonly status?: number;
   readonly providerCode: string | undefined;
-  constructor(message: string, opts: { status?: number; providerCode?: string; cause?: unknown } = {}) {
+  /**
+   * P6 fix wave (Ruling E-3): the normalized error's Winter CODE (`server`/`rate_limit`/`network`/
+   * `timeout`/...) and R6-6's own `retryable` verdict, carried off the adapter's normalized error by
+   * the bridge. `retryable === true` is the fallback trigger: it is exactly the class `withRetry`
+   * retries and has, by the time the engine sees the error, given up on. Absent on an error that
+   * was never normalized (a bare throw with no provider shape).
+   */
+  readonly code: string | undefined;
+  readonly retryable: boolean | undefined;
+  constructor(message: string, opts: { status?: number; providerCode?: string; code?: string; retryable?: boolean; cause?: unknown } = {}) {
     super(message, opts.cause !== undefined ? { cause: opts.cause } : undefined);
     this.name = "ProviderTurnError";
     if (opts.status !== undefined) Object.assign(this, { status: opts.status });
     this.providerCode = opts.providerCode;
+    this.code = opts.code;
+    this.retryable = opts.retryable;
   }
 }
 
@@ -562,6 +576,54 @@ export type ProviderTurn =
 export interface Provider {
   generate(input: ProviderRequest): Promise<ProviderTurn>;
 }
+
+/**
+ * Phase 6 (R6-9), widened by the fix wave: the session's RESOLVED provider identity as the engine
+ * carries it -- the `MessageOrigin` half every `origin` record and `providerAnnotations` read, plus
+ * the catalog/credential half the dialect record stores. One shape for the startup identity
+ * (`EngineOptions.providerIdentity`) and for every identity a switch installs, so a restamp after a
+ * `set_model` or a fallback writes the SAME fields the startup stamp did.
+ */
+export interface EngineProviderIdentity {
+  providerId: string;
+  modelKey: string;
+  family: string;
+  continuationDomain?: string;
+  adapterId?: string;
+  adapterVersion?: string;
+  catalogVersion?: string;
+  authRefKind?: string;
+}
+
+/**
+ * P6 fix wave (Ruling E-2): what the switch seam answers for a target model it could resolve.
+ *
+ * `provider` is BUILT (a fresh `adapterAsProvider` under Ruling E-1's material rule), `identity` is
+ * what the engine installs as `currentProviderIdentity`, `to` carries the target's continuity facts
+ * for `classifySwitch`, and `from` the source's when the caller named one.
+ */
+export interface ModelSwitchResolution {
+  provider: Provider;
+  identity: EngineProviderIdentity;
+  to: ContinuityEndpoint;
+  from?: ContinuityEndpoint;
+}
+
+/** The seam's typed refusal: R6-K's `provider-mismatch`, `unknown-model`, and every other resolution code -- NEVER a parked switch. */
+export interface ModelSwitchRefusal {
+  refused: true;
+  code: string;
+  message: string;
+}
+
+/**
+ * P6 fix wave (Ruling E-2): the switch seam, shaped like `resolveChildProvider`. Owned by
+ * `provider/session-provider.ts`: R6-K resolution UNDER THE SESSION PROVIDER (a qualified key naming
+ * another provider is `provider-mismatch`), `buildProvider` under Ruling E-1, and the resolved
+ * identity. The engine calls it FIRST -- before parking anything -- so an unresolvable target is a
+ * control-response refusal, never a model string the wire later chokes on.
+ */
+export type ResolveModelSwitch = (model: string, from?: MessageOrigin) => ModelSwitchResolution | ModelSwitchRefusal;
 
 /**
  * The session's running context-window accounting (R5-3), and the input R5-4's compaction trigger
@@ -1000,21 +1062,12 @@ export interface EngineOptions {
    * an ENGINE OPTION rather than something the engine resolves itself, for the same reason the
    * provider is (the engine must stay driveable by a plain double).
    */
-  providerIdentity?: {
-    providerId: string;
-    modelKey: string;
-    family: string;
-    continuationDomain?: string;
-    // WIDENED in review round 1 (I1). The `MessageOrigin`-shaped version could not carry the catalog
-    // and credential half of R6-9's identity, so `setProviderIdentity` -- declared, implemented and
-    // unit-tested -- had NO production caller and no session ever wrote an identity block. Optional,
-    // so every existing caller is unaffected and a caller that knows only the origin still writes the
-    // block that the resume side reads.
-    adapterId?: string;
-    adapterVersion?: string;
-    catalogVersion?: string;
-    authRefKind?: string;
-  };
+  // WIDENED in review round 1 (I1). The `MessageOrigin`-shaped version could not carry the catalog
+  // and credential half of R6-9's identity, so `setProviderIdentity` -- declared, implemented and
+  // unit-tested -- had NO production caller and no session ever wrote an identity block. The four
+  // catalog/credential fields are optional, so every existing caller is unaffected and a caller that
+  // knows only the origin still writes the block that the resume side reads.
+  providerIdentity?: EngineProviderIdentity;
   /**
    * Phase 6 Task 10: the pinned `system/init.apiKeySource` (`sdk.d.ts:4860`, REQUIRED).
    *
@@ -1061,6 +1114,18 @@ export interface EngineOptions {
    * reviewer it had evidence for, and `selectClassifierRoute` records WHY.
    */
   classifier?: ClassifierInterface;
+  /**
+   * P6 fix wave (Ruling E-2): the switch seam -- see `ResolveModelSwitch`. Absent for a session on a
+   * scripted double, in which case `set_model` keeps its pre-fix shape: the requested string is
+   * parked verbatim and applied at the boundary with no identity to rebuild (every pre-P6 fixture).
+   */
+  resolveModelSwitch?: ResolveModelSwitch;
+  /**
+   * P6 fix wave (Ruling E-3): `fallbackModel`'s candidates as CATALOG KEYS, in order, already
+   * domain-checked at init by selection. Engaged through `resolveModelSwitch` when a generation fails
+   * on an R6-6 retryable class after `withRetry` gave up -- see the generation catch.
+   */
+  fallbackModels?: string[];
 }
 
 /**
@@ -1316,6 +1381,8 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
     classifier,
     supportedModels,
     accountInfo,
+    resolveModelSwitch,
+    fallbackModels,
   } = opts;
 
   // Task 6 (WS-07 §2/§6.4, Ruling 8): permission startup validation — deliberately the very FIRST
@@ -1678,26 +1745,65 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // The RESOLVED identity, once selection has run. `undefined` until then -- which is every pre-P6
   // session and every test double, and is why the sidecar writes nothing for them rather than
   // fabricating a provider name.
-  let currentProviderIdentity: { providerId: string; modelKey: string; family: string; continuationDomain?: string } | undefined = providerIdentity;
+  let currentProviderIdentity: EngineProviderIdentity | undefined = providerIdentity;
+  // P6 fix wave (Ruling E-2): THE ONE LIVE PROVIDER REFERENCE. `provider` (the option) is what the
+  // session started on; a `set_model` or a fallback swaps THIS, and both readers -- the main
+  // generation and the compaction summariser -- read it, so neither can keep calling the old model.
+  let activeProvider: Provider = provider;
+  // R6-14 (fix wave, Ruling E-5): the classifier identity PINNED by the first successful
+  // classification. Restamped with every identity write below, so a switch never drops it.
+  let classifierPin: string | undefined;
   // Review round 1 (I1): THE PRODUCTION CALL. Without it `setProviderIdentity` was a fully
   // implemented, unit-tested seam that nothing invoked -- so no session wrote R6-9's identity fields
   // to its dialect record, and the resume side had no way to tell a DELETED sidecar from one that
   // never existed. Made once, at startup, because the identity is the session's and the writer
   // restamps it on every append of its own accord.
-  if (providerIdentity !== undefined) {
+  //
+  // Fix wave: ONE stamp function. `setProviderIdentity` SETS (dialect.ts), it does not merge, so a
+  // restamp after a switch, a fallback or the classifier pin must carry the WHOLE identity plus the
+  // pin already earned -- a partial restamp silently drops the rest from the dialect record.
+  const stampIdentity = (): void => {
+    const identity = currentProviderIdentity;
+    if (identity === undefined) return;
     store?.setProviderIdentity?.({
-      providerId: providerIdentity.providerId,
-      modelKey: providerIdentity.modelKey,
-      ...(providerIdentity.adapterId !== undefined ? { adapterId: providerIdentity.adapterId } : {}),
-      ...(providerIdentity.adapterVersion !== undefined ? { adapterVersion: providerIdentity.adapterVersion } : {}),
-      ...(providerIdentity.catalogVersion !== undefined ? { catalogVersion: providerIdentity.catalogVersion } : {}),
-      ...(providerIdentity.authRefKind !== undefined ? { authRefKind: providerIdentity.authRefKind } : {}),
+      providerId: identity.providerId,
+      modelKey: identity.modelKey,
+      ...(identity.adapterId !== undefined ? { adapterId: identity.adapterId } : {}),
+      ...(identity.adapterVersion !== undefined ? { adapterVersion: identity.adapterVersion } : {}),
+      ...(identity.catalogVersion !== undefined ? { catalogVersion: identity.catalogVersion } : {}),
+      ...(identity.authRefKind !== undefined ? { authRefKind: identity.authRefKind } : {}),
+      ...(classifierPin !== undefined ? { classifierPin } : {}),
     });
-  }
-  // R6-I: a `set_model` arriving mid-turn is PARKED here and applied at the quiescent boundary. The
-  // value is the request's own three-way payload, carried verbatim so the reset spelling is resolved
-  // in exactly one place.
-  let pendingModelSwitch: { model: string | null | undefined } | undefined;
+  };
+  stampIdentity();
+  /** The `MessageOrigin` half of the current identity -- what the switch seam classifies FROM. */
+  const currentOrigin = (): MessageOrigin | undefined =>
+    currentProviderIdentity === undefined
+      ? undefined
+      : {
+          providerId: currentProviderIdentity.providerId,
+          modelKey: currentProviderIdentity.modelKey,
+          family: currentProviderIdentity.family,
+          ...(currentProviderIdentity.continuationDomain !== undefined ? { continuationDomain: currentProviderIdentity.continuationDomain } : {}),
+        };
+  // R6-I: a `set_model` arriving mid-turn is PARKED here and applied at the quiescent boundary.
+  //
+  // Fix wave (Ruling E-2): RESOLVED FIRST. With the switch seam present, `model` is the target's
+  // CATALOG KEY and `resolution` its built provider and identity; the reset spelling was already
+  // applied at the control request. Without the seam (a scripted double) `model` is the request's
+  // own string after the reset, applied verbatim as before.
+  let pendingModelSwitch: { model: string | undefined; resolution?: ModelSwitchResolution } | undefined;
+  // P6 fix wave (Ruling E-3): the primary a fallback displaced, restored at the next user turn.
+  let fallbackFrom: { provider: Provider; identity: EngineProviderIdentity | undefined; model: string } | undefined;
+  let fallbackCursor = 0;
+  // The engine's OWN turn history. Declared HERE (fix wave) rather than beside the resume fold
+  // below, because the pump can service a `set_model` before that point and the switch reads it.
+  const messages: ProviderMessage[] = initialMessages ? [...initialMessages] : [];
+  // P6 fix wave (Ruling E-2): the session's continuation chain AS THE ENGINE KNOWS IT -- the resumed
+  // half (folded back by `attachContinuationChain`) plus every record this run wrote. The portable
+  // handoff reads a source message's `summary` off it; nothing else does, and opaque native state is
+  // never read from here (the renderer has its own chain getter).
+  const sessionChain: Map<string, ContinuationLink> = new Map();
   // Phase 4 Task 3 (MUST 8): the live child roster this run's own spawns append to -- what
   // `MessagingRouterSeam.children()` (messaging/adapter.ts) is defined to read from. No routing
   // logic lives here (WS-10 §15's own split); `onChildRosterReady` (EngineOptions) is this run's own
@@ -1923,6 +2029,11 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
           // continuity warning already exists to report -- not a lost turn.
         }
       }
+      // The in-memory half of the chain: origin + the readable summary, never the opaque state.
+      sessionChain.set(uuid, {
+        origin: { providerId: identity.providerId, modelKey: identity.modelKey, family: identity.family, ...(identity.continuationDomain !== undefined ? { continuationDomain: identity.continuationDomain } : {}) },
+        ...(provenance?.summary !== undefined ? { summary: provenance.summary } : {}),
+      });
     }
     try {
       await store.recordAssistantEntry(content, { uuid });
@@ -3203,8 +3314,32 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
               output.write({ type: "control_response", requestId: cf.requestId, ok: false, error: { code: "invalid_model", message: `invalid model: ${JSON.stringify(requested)}` } });
               continue;
             }
-            pendingModelSwitch = { model: requested as string | null | undefined };
-            output.write({ type: "control_response", requestId: cf.requestId, ok: true });
+            // The pin's three-way reset spelling (`sdk.d.ts:4184`): omitted, `null`, or the literal
+            // `'default'` all reset to the session default.
+            const target = requested === undefined || requested === null || requested === "default" ? config.model : requested;
+            if (resolveModelSwitch !== undefined && target !== undefined) {
+              // RULING E-2: RESOLVE FIRST. Whole-branch C-2: the native path parked the request's own
+              // string and put it on the wire -- the catalog KEY for a picker row's `value` (P2b), and
+              // a key qualified for ANOTHER provider went to this session's adapter. Under R6-K the
+              // seam refuses both, and the refusal is the control response, never a parked switch.
+              const resolution = resolveModelSwitch(target, currentOrigin());
+              if ("refused" in resolution) {
+                output.write({ type: "control_response", requestId: cf.requestId, ok: false, error: { code: "invalid_model", message: `${resolution.code}: ${resolution.message}` } });
+                continue;
+              }
+              output.write({ type: "control_response", requestId: cf.requestId, ok: true });
+              // The model already running is not a switch -- the same exact profile never warns and
+              // never announces (`classifySwitch`'s own I1). A parked switch back to the current
+              // model is DROPPED, so a `set_model X` then `set_model <current>` mid-turn nets to nothing.
+              if (resolution.identity.modelKey === (currentProviderIdentity?.modelKey ?? currentModel)) {
+                pendingModelSwitch = undefined;
+                continue;
+              }
+              pendingModelSwitch = { model: resolution.identity.modelKey, resolution };
+            } else {
+              pendingModelSwitch = { model: target };
+              output.write({ type: "control_response", requestId: cf.requestId, ok: true });
+            }
             // IDLE is itself a quiescent boundary: with no turn in flight there is nothing to split,
             // so the switch takes effect immediately rather than waiting for a next envelope that may
             // never come. `interruptCurrentTurn.current` is non-null exactly while a turn is running.
@@ -3373,7 +3508,7 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // signal, because `result` also fires for a turn that immediately continues a streaming input.
   emitNotification("idle", "Waiting for input.");
 
-  const messages: ProviderMessage[] = initialMessages ? [...initialMessages] : [];
+  // `messages` is declared beside the live provider state above (fix wave).
 
   // Phase 6 Task 3 (R6-7): re-attach the CONTINUATION CHAIN to a resumed history.
   //
@@ -3382,13 +3517,18 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // The logic itself lives in `store/continuation-attach.ts` (review round 1, M8): it is a pure
   // function of a message array and a persistence seam, and belongs beside the codec it consumes.
   if (store !== undefined) {
-    await attachContinuationChain({
+    // ONE identity read (fix wave, the T10 r1 duplicate): loaded here and handed to
+    // `attachContinuationChain`, which used to re-read it for the zero-records case.
+    const persisted = store.loadProviderIdentity !== undefined ? await store.loadProviderIdentity() : undefined;
+    const resumedChain = await attachContinuationChain({
       messages,
       store,
       sessionId: config.sessionId,
       warn: (message) => output.write({ type: "data", message }),
       newUuid: randomUUID,
+      identity: () => Promise.resolve(persisted),
     });
+    for (const [anchor, link] of resumedChain) sessionChain.set(anchor, link);
 
     // --- Phase 6 Task 10 review round 1 (D): A RESUME THAT CHANGES THE MODEL IS A SWITCH ----------
     //
@@ -3403,9 +3543,22 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
     // before the first generation. The comparison is against the PERSISTED identity, which is the only
     // record of what the previous run actually used; a session with none (a fresh one, or a store that
     // does not keep identities) announces nothing, exactly as before.
-    const persisted = store.loadProviderIdentity !== undefined ? await store.loadProviderIdentity() : undefined;
-    if (persisted !== undefined && currentProviderIdentity !== undefined && persisted.modelKey !== currentProviderIdentity.modelKey) {
-      store.recordProviderSwitch?.({ from: persisted.modelKey, to: currentProviderIdentity.modelKey, reason: "set_model" });
+    //
+    // Fix wave (Ruling E-2): the SAME classification the control-request switch gets, through the
+    // same seam -- a resume onto a model in another continuation domain is a cross-domain switch and
+    // carries the same `cross_domain_replay_dropped` warning and handoff record. And a resume onto a
+    // model that resolves to NO identity (the reserved test double, an unresolvable model) still
+    // ANNOUNCES the switch, with the model string the caller passed and an empty `provider` -- the
+    // model changed, and a host with no frame could not know (disclosed, WS-13 §13).
+    const resumedTo = currentProviderIdentity?.modelKey ?? currentModel ?? config.model;
+    if (persisted !== undefined && resumedTo !== undefined && persisted.modelKey !== resumedTo) {
+      if (resolveModelSwitch !== undefined && currentProviderIdentity !== undefined) {
+        const compared = resolveModelSwitch(currentProviderIdentity.modelKey, { providerId: persisted.providerId, modelKey: persisted.modelKey, family: "" });
+        if (!("refused" in compared) && compared.from !== undefined) {
+          announceLossyTransfer(compared.from, compared.to, "set_model");
+        }
+      }
+      store.recordProviderSwitch?.({ from: persisted.modelKey, to: resumedTo, reason: "set_model" });
       output.write({
         type: "data",
         message: {
@@ -3413,8 +3566,8 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
           subtype: "model_switch",
           reason: "set_model",
           from_model: persisted.modelKey,
-          to_model: currentProviderIdentity.modelKey,
-          provider: currentProviderIdentity.providerId,
+          to_model: resumedTo,
+          provider: currentProviderIdentity?.providerId ?? "",
           uuid: randomUUID(),
           session_id: config.sessionId,
         },
@@ -3658,7 +3811,9 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
         trigger,
         customInstructions: effectiveInstructions.length > 0 ? effectiveInstructions : null,
         accountant: contextAccountant,
-        provider,
+        // The LIVE provider (fix wave): after a `set_model` the summariser must run on the model the
+        // session is generating with, not the one it started on.
+        provider: activeProvider,
       });
     } catch (err) {
       // A failed compaction is REPORTED, never fatal: the turn continues on the un-compacted history
@@ -3974,18 +4129,154 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
    */
   function applyPendingModelSwitch(reason: "set_model" | "interrupt"): void {
     if (pendingModelSwitch === undefined) return;
-    const requested = pendingModelSwitch.model;
+    const { model: next, resolution } = pendingModelSwitch;
     pendingModelSwitch = undefined;
-    // The pin's three-way reset spelling (`sdk.d.ts:4184`): omitted, `null`, or the literal
-    // `'default'` all reset to the session default.
-    const next = requested === undefined || requested === null || requested === "default" ? config.model : requested;
-    if (next === currentModel) return;
-    const from = currentModel;
-    currentModel = next;
-    store?.recordProviderSwitch?.({ from, to: next, reason });
+    // A parked `set_model` WINS over an engaged fallback (Ruling E-3): the host chose a model, so the
+    // primary the fallback would have restored is no longer the session's model.
+    fallbackFrom = undefined;
+    fallbackCursor = 0;
+    if (resolution === undefined) {
+      // No seam (a scripted double): the pre-fix shape, verbatim -- the string goes on the wire.
+      if (next === undefined || next === currentModel) return;
+      const from = currentModel;
+      currentModel = next;
+      store?.recordProviderSwitch?.({ from: from ?? "", to: next, reason });
+      output.write({
+        type: "data",
+        message: { type: "system", subtype: "model_switch", reason, from_model: from ?? "", to_model: next, provider: currentProviderIdentity?.providerId ?? "", uuid: randomUUID(), session_id: config.sessionId },
+      });
+      return;
+    }
+    if (resolution.identity.modelKey === currentProviderIdentity?.modelKey) return;
+    // RULING E-2: classify and, when lossy, warn and hand off -- BEFORE the swap, because the handoff
+    // and the classification read the SOURCE's messages and chain.
+    if (resolution.from !== undefined) announceLossyTransfer(resolution.from, resolution.to, reason);
+    installIdentity(resolution, reason);
+  }
+
+  /**
+   * Swaps the live provider, the identity and the model key, restamps the dialect record, and
+   * announces the switch with BOTH ids as catalog keys (whole-branch M-3) -- `model_switch` on the
+   * wire and `providerHistory` in the dialect record.
+   */
+  function installIdentity(resolution: ModelSwitchResolution, reason: "set_model" | "interrupt" | "fallback"): void {
+    const from = currentProviderIdentity?.modelKey ?? currentModel ?? config.model ?? "";
+    activeProvider = resolution.provider;
+    currentProviderIdentity = resolution.identity;
+    // The CATALOG KEY, never the request's spelling: the bridge translates exactly the resolved
+    // model's own key to its wire id (`bridge.ts`), so an alias or a provider-local id parked here
+    // would reach the wire verbatim.
+    currentModel = resolution.identity.modelKey;
+    stampIdentity();
+    store?.recordProviderSwitch?.({ from, to: resolution.identity.modelKey, reason });
     output.write({
       type: "data",
-      message: { type: "system", subtype: "model_switch", reason, from_model: from, to_model: next, provider: currentProviderIdentity?.providerId ?? "", uuid: randomUUID(), session_id: config.sessionId },
+      message: { type: "system", subtype: "model_switch", reason, from_model: from, to_model: resolution.identity.modelKey, provider: resolution.identity.providerId, uuid: randomUUID(), session_id: config.sessionId },
+    });
+  }
+
+  /**
+   * RULING E-2's warning half: `classifySwitch` over the two endpoints with the facts THIS session
+   * can honestly state, and -- for a `warned-lossy` transfer -- the `cross_domain_replay_dropped`
+   * frame (counts and identity only, never content) plus the `handoff` sidecar record built by
+   * `buildPortableHandoff` (whole-branch M-6: the `handoff` kind gains its producer).
+   *
+   * THE HANDOFF IS BUILT FIRST (the retired coordinator's own review C1 finding, kept): it is where
+   * §9.6's trimming happens, and only its `reasoningTruncated` flag may flip a would-be-lossless
+   * classification to lossy. `exposedComplete` is never asserted -- the write path records exposed
+   * reasoning as a summary and cannot vouch for its completeness -- so a `full-exposed` source warns,
+   * which is the affirmative-evidence rule `warnings.ts` states.
+   */
+  function announceLossyTransfer(from: ContinuityEndpoint, to: ContinuityEndpoint, reason: "set_model" | "interrupt" | "fallback"): void {
+    const lastSource = [...messages].reverse().find((m) => m.role === "assistant" && m.origin?.modelKey === from.modelKey && m.uuid !== undefined);
+    const handoff = buildPortableHandoff(messages, sessionChain, from);
+    const summaryAvailable = lastSource?.uuid !== undefined && sessionChain.get(lastSource.uuid)?.summary !== undefined;
+    const classification = classifySwitch(from, to, {
+      summaryAvailable,
+      completedToolResults: handoff.sections.toolFacts.filter((fact) => fact.ok).length,
+      ...(handoff.reasoningTruncated ? { truncated: true } : {}),
+      ...(reason === "interrupt" ? { midTurnAbort: true } : {}),
+    });
+    if (classification.lossClass !== "warned-lossy") return;
+    const dropped = messages.filter((m) => m.role === "assistant" && m.nativeState !== undefined && (to.continuationDomain === undefined || m.nativeState.continuationDomain !== to.continuationDomain)).length;
+    output.write({
+      type: "data",
+      message: {
+        type: "system",
+        subtype: "continuity_warning",
+        warning: "cross_domain_replay_dropped",
+        // COUNTS AND IDENTITY ONLY. `classification.warnings` is `warnings.ts`'s own prose, which by
+        // construction names ids and never a payload (`SwitchFacts` has no field one could arrive in).
+        detail: `switching from ${from.modelKey} to ${to.modelKey}: ${dropped} assistant message${dropped === 1 ? "" : "s"} carrying native continuation state will not be replayed natively. ${classification.warnings.join(" ")}`,
+        ...(lastSource?.uuid !== undefined ? { anchor_uuid: lastSource.uuid } : {}),
+        uuid: randomUUID(),
+        session_id: config.sessionId,
+      },
+    });
+    if (lastSource?.uuid === undefined || store?.recordProviderState === undefined) return;
+    // The `handoff` record, anchored at the source's LAST entry (WS-05 §13: "a portable handoff
+    // summary is persisted as a `handoff` sidecar record"). Its consumer is the cross-runtime
+    // Claude-leg door, not the Winter renderer -- which decorates per message on its own -- so it is
+    // written and NOT attached to the next request. `itemIndex` 3 sits after the three per-turn
+    // kinds (origin 0, native-state 1, summary 2). Auxiliary: a failed write degrades the handoff,
+    // never the switch.
+    void Promise.resolve(
+      store.recordProviderState({
+        sessionId: config.sessionId,
+        anchorUuid: lastSource.uuid,
+        provider: from.providerId,
+        model: from.modelKey,
+        family: from.family,
+        ...(from.continuationDomain !== undefined ? { continuationDomain: from.continuationDomain } : {}),
+        itemIndex: 3,
+        kind: "handoff",
+        payload: { text: handoff.text, truncated: handoff.truncated, reasoningTruncated: handoff.reasoningTruncated, target: { providerId: to.providerId, modelKey: to.modelKey } },
+      }),
+    ).catch(() => {});
+  }
+
+  /**
+   * RULING E-3: engage the next `fallbackModel` candidate after a generation failed on an R6-6
+   * retryable class with `withRetry` exhausted. Silent at parity (no vendor frame -- capture (G));
+   * Winter announces `model_switch{reason:"fallback"}` and records `providerHistory`. Candidates are
+   * tried in order, each once per turn; only a candidate in the CURRENT model's continuation domain
+   * qualifies (selection checked the list against the STARTUP model, and a `set_model` since may
+   * have moved the session). Returns `false` when none engages, and the failure lands on R6-F.
+   */
+  function engageFallback(): boolean {
+    if (resolveModelSwitch === undefined || fallbackModels === undefined) return false;
+    const currentKey = currentProviderIdentity?.modelKey ?? currentModel;
+    for (let i = fallbackCursor; i < fallbackModels.length; i++) {
+      const candidate = fallbackModels[i]!;
+      const resolution = resolveModelSwitch(candidate, currentOrigin());
+      if ("refused" in resolution) continue;
+      if (resolution.identity.modelKey === currentKey) continue;
+      if (currentProviderIdentity !== undefined && resolution.identity.continuationDomain !== currentProviderIdentity.continuationDomain) continue;
+      fallbackFrom ??= { provider: activeProvider, identity: currentProviderIdentity, model: currentModel };
+      fallbackCursor = i + 1;
+      installIdentity(resolution, "fallback");
+      return true;
+    }
+    return false;
+  }
+
+  /** RULING E-3's second half: the primary is RE-TRIED at the start of each user turn -- restore it, announced, before a parked `set_model` (which, if present, wins instead). */
+  function restorePrimaryAfterFallback(): void {
+    if (fallbackFrom === undefined) return;
+    const restored = fallbackFrom;
+    fallbackFrom = undefined;
+    fallbackCursor = 0;
+    if (pendingModelSwitch !== undefined) return; // the host's own switch supersedes the primary
+    const from = currentProviderIdentity?.modelKey ?? currentModel ?? "";
+    activeProvider = restored.provider;
+    currentProviderIdentity = restored.identity;
+    currentModel = restored.model;
+    stampIdentity();
+    const to = restored.identity?.modelKey ?? restored.model;
+    store?.recordProviderSwitch?.({ from, to, reason: "fallback" });
+    output.write({
+      type: "data",
+      message: { type: "system", subtype: "model_switch", reason: "fallback", from_model: from, to_model: to, provider: restored.identity?.providerId ?? "", uuid: randomUUID(), session_id: config.sessionId },
     });
   }
 
@@ -4020,6 +4311,9 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
     };
     // Phase 6 Task 3 (R6-I): the QUIESCENT BOUNDARY. A `set_model` parked during the previous turn
     // takes effect here -- before this envelope's first generation -- so a turn never spans two models.
+    // Fix wave (Ruling E-3): the primary a fallback displaced is re-tried at each user turn, FIRST --
+    // unless a parked `set_model` supersedes it.
+    restorePrimaryAfterFallback();
     applyPendingModelSwitch("set_model");
 
     // Finding 3 (P2 fix-wave, IMPORTANT): result.permission_denials, the array the frozen
@@ -4142,7 +4436,7 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
         assertMessagesWithinCap(outboundMessages);
         const toolSpecs = providerToolSpecs();
         const raced = await raceInterrupt(
-          provider.generate({
+          activeProvider.generate({
             messages: outboundMessages,
             // `exactOptionalPropertyTypes`: an empty assembled prompt omits the key entirely rather
             // than sending `system: ""`. The two are equivalent to a provider ("this host supplied no
@@ -4210,6 +4504,13 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
           });
         }
       } catch (err) {
+        // RULING E-3 (whole-branch I-1): a retryable-class provider failure -- `withRetry` has already
+        // spent R6-6's budget on it -- engages the next fallback candidate and RE-RUNS this round on
+        // it. Nothing was consumed: the catch sits before any tool executes, so re-generating is a
+        // fresh request, not a replay. A committed mid-stream failure of a retryable class is
+        // treated the same way (disclosed): the turn it interrupted is lost either way, and a second
+        // model is the more useful outcome than a dead turn.
+        if (isProviderTurnError(err) && err.retryable === true && engageFallback()) continue roundLoop;
         const text = err instanceof Error ? err.message : String(err);
         // Phase 6 Task 3 (R6-F, capture (I)): a PROVIDER failure lands on `subtype: "success"` with
         // `is_error: true`, `terminal_reason: "api_error"` and `api_error_status: <status | null>` --

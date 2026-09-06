@@ -25,7 +25,7 @@
 //      carrying the provider's status and structured code -- never a raw body, never credential
 //      material, never opaque state.
 import type { ProviderAdapter, ProviderContext, ProviderError, ProviderEvent, ProviderMessageLike, ResolvedModel, TurnRequest } from "@yanlinglabs/winter-provider-runtime";
-import { shouldRequestSummary } from "@yanlinglabs/winter-provider-runtime";
+import { normalizeThrown, shouldRequestSummary } from "@yanlinglabs/winter-provider-runtime";
 import type { WireContentBlock, WireStreamEvent } from "@yanlinglabs/winter-agent-sdk";
 import {
   ProviderTurnError,
@@ -482,6 +482,10 @@ function providerErrorToTurnError(error: ProviderError): ProviderTurnError {
   return new ProviderTurnError(`provider request failed (${error.code}): ${message}`, {
     ...(error.status !== undefined ? { status: error.status } : {}),
     ...(error.providerCode !== undefined ? { providerCode: error.providerCode } : {}),
+    // Fix wave (Ruling E-3): the R6-6 class rides the typed error, so the engine's fallback trigger
+    // reads a verdict rather than parsing a message.
+    code: error.code,
+    retryable: error.retryable,
   });
 }
 
@@ -497,10 +501,16 @@ function providerErrorToTurnError(error: ProviderError): ProviderTurnError {
 export function toProviderTurnError(err: unknown): ProviderTurnError {
   if (err instanceof ProviderTurnError) return err;
   if (typeof err === "object" && err !== null && (err as { winterProviderFailure?: unknown }).winterProviderFailure === true) return err as ProviderTurnError;
+  // A resolution refusal is R6-F's shape by NAME (`isProviderTurnError`) and keeps its typed `code`:
+  // re-wrapping it would hide the code a caller reads (Ruling E-1's `no-credential-for-provider`).
+  if (typeof err === "object" && err !== null && (err as { name?: unknown }).name === "WinterProviderResolutionError") return err as ProviderTurnError;
   const raw = err instanceof Error ? err.message : String(err);
   const message = raw.length > MAX_ERROR_MESSAGE_CHARS ? `${raw.slice(0, MAX_ERROR_MESSAGE_CHARS)}...` : raw;
-  const status = typeof err === "object" && err !== null && typeof (err as { status?: unknown }).status === "number" ? (err as { status: number }).status : undefined;
-  return new ProviderTurnError(`provider request failed: ${message}`, status !== undefined ? { status } : {});
+  // Fix wave (Ruling E-3): the SAME normalization the adapters apply, so a raw throw carries R6-6's
+  // verdict too. `normalizeThrown` never quotes a body -- the bounded `message` above is what travels.
+  const normalized = normalizeThrown(err);
+  const status = typeof err === "object" && err !== null && typeof (err as { status?: unknown }).status === "number" ? (err as { status: number }).status : normalized.status;
+  return new ProviderTurnError(`provider request failed: ${message}`, { ...(status !== undefined ? { status } : {}), code: normalized.code, retryable: normalized.retryable });
 }
 
 /**
