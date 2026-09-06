@@ -57,7 +57,13 @@
 //   ... WINTER_LIVE_KEYCHAIN_SERVICE=com.winter.live.20260906               # REQUIRED for any Keychain path
 //   ... WINTER_LIVE_XAI_OAUTH_CREDENTIAL_REF=keychain:xai-oauth:<account>   # an OAuth row, from that service
 //   ... WINTER_LIVE_UNCLOSEAI=1                          # a keyless row (`free`, and documents no api key)
-//   ... WINTER_LIVE_AIHORDE_API_KEY=0000000000           # a free row that DOES document a key: the vendor's own anonymous value
+//   ... WINTER_LIVE_DEEPSEEK_ANTHROPIC_BEARER=sk-...   # the SAME api key as `Authorization: Bearer`
+//         (M-3: an Anthropic-dialect sibling whose vendor page targets Claude Code may accept only the
+//          bearer form. On a 401, retry as bearer BEFORE concluding the key is bad. Wins over _API_KEY.)
+//   ... WINTER_LIVE_AIHORDE_API_KEY=<the vendor's published anonymous key>   # a free row that DOES document a key
+//         (NOT SPELLED HERE, on purpose — X2 decision (e): "a test that spells a credential verbatim puts it in
+//          the repository just as surely as the row would have", and a comment is no different. The value is on
+//          AI Horde's own site, which the `aihorde` row's citation names.)
 //   ... WINTER_LIVE_OPENAI_MODEL=openai/o4-mini          # override the model (a catalog key or a provider-local id)
 //   ... WINTER_LIVE_OLLAMA_LOCAL_BASE_URL=http://127.0.0.1:11434/v1   # a local/gateway endpoint
 //
@@ -132,6 +138,20 @@ export interface LiveTarget {
   /** The catalog key (or a provider-local id when overridden). */
   model: string;
   baseUrl?: string;
+  /**
+   * How an API-KEY target presents its credential (whole-branch review M-3). `undefined` means the
+   * family's default, which for the Anthropic dialect is `x-api-key`.
+   *
+   * NOT a fourth `LiveTargetKind`. The kind is the DOCUMENTED PATH a credential came down — that is
+   * what the run's evidence is about, and a bearer here is the same user-minted API key presented in
+   * the other form the vendor's own documentation implies. The four `deepseek-anthropic`-class
+   * siblings carry `authKinds: ["api-key"]`, so `messages.ts` sends `x-api-key`; but what their
+   * citations actually establish is that the vendor's page targets Claude Code, whose auth-token
+   * mode sends `Authorization: Bearer`. Whether these endpoints ALSO accept `x-api-key` is a LIVE
+   * condition this gate could not vary at all, so a vendor that accepts only the bearer form
+   * produced a 401 that reads "bad key".
+   */
+  authStyle?: "bearer";
 }
 
 export type LiveRunPlan =
@@ -274,13 +294,15 @@ export function planLiveRun(env: Record<string, string | undefined>, catalog: Wi
     const prefix = liveEnvPrefix(provider.id);
     const refEnvName = `${prefix}${CREDENTIAL_REF_SUFFIX}`;
     const keyEnvName = `${prefix}_API_KEY`;
+    const bearerEnvName = `${prefix}_BEARER`;
     const keylessEnvName = prefix;
     const ref = named(env[refEnvName]);
     const key = named(env[keyEnvName]);
+    const bearer = named(env[bearerEnvName]);
     const keyless = env[keylessEnvName] === "1";
 
     const authKinds = `authKinds=${provider.authKinds.join(",")}`;
-    let selected: { kind: LiveTargetKind; selectedBy: string; authRef: CredentialRef } | undefined;
+    let selected: { kind: LiveTargetKind; selectedBy: string; authRef: CredentialRef; authStyle?: "bearer" } | undefined;
     if (ref !== undefined) {
       const authRef = parseKeychainRef(ref);
       if (!admitsOauth(provider)) {
@@ -300,6 +322,19 @@ export function planLiveRun(env: Record<string, string | undefined>, catalog: Wi
         // sessions of work.
         if (key !== undefined) warnings.push(`${provider.id} names both ${refEnvName} and ${keyEnvName}; the credential ref wins and the API-key variable is unused`);
         selected = { kind: "oauth", selectedBy: refEnvName, authRef };
+      }
+    } else if (bearer !== undefined) {
+      // M-3: the SAME documented path, the other presentation. It rides the api-key arm's predicate
+      // because it IS an api-key row's credential — what differs is the header the adapter puts it
+      // in, which is a live fact about the vendor's endpoint and not a second admission basis.
+      if (!admitsApiKey(provider)) {
+        warnings.push(`${bearerEnvName} names ${provider.id}, whose documented path is OAuth and not an API key (${authKinds}); use ${refEnvName}=keychain:<account>`);
+      } else {
+        // BEARER WINS over `_API_KEY` when both are exported, and says so. An operator sets it after
+        // a 401 on the default form, so silently preferring the variable that just failed would
+        // reproduce the failure and read as "the retry did nothing".
+        if (key !== undefined) warnings.push(`${provider.id} names both ${bearerEnvName} and ${keyEnvName}; the bearer form wins and the API-key variable is unused`);
+        selected = { kind: "api-key", selectedBy: bearerEnvName, authRef: { kind: "env", name: bearerEnvName }, authStyle: "bearer" };
       }
     } else if (key !== undefined) {
       if (!admitsApiKey(provider)) {
@@ -453,12 +488,37 @@ export function credentialStoreFor(
       return keychain(requireLiveKeychainService(env));
     }
     case "api-key":
+      // The env store mints `api-key` material, which is exactly right for the default form. A
+      // BEARER target wraps it (see `bearerStore`) rather than teaching the shared store a second
+      // shape: the difference is this gate's, not the credential model's.
       return createEnvCredentialStore({ env: process.env });
     case "keyless":
       // `{kind:"none"}` resolves to null on every store; an EMPTY env store makes that structural
       // rather than incidental — this target has nothing it could send even by mistake.
       return createEnvCredentialStore({ env: {} });
   }
+}
+
+/**
+ * Re-presents an env store's `api-key` material as `bearer` (M-3).
+ *
+ * A WRAPPER, not a second store kind and not a new `CredentialRef` shape: the value is the same
+ * user-minted API key, and the only thing that differs is the header the adapter puts it in
+ * (`messages.ts` already supports both — `x-api-key` for `api-key` material, `Authorization: Bearer`
+ * for `bearer`). Teaching `createEnvCredentialStore` a per-ref format would put a live-gate
+ * convenience into the shipped credential model.
+ *
+ * Read-only, like the store it wraps: `set`/`delete` pass straight through to its refusals.
+ */
+export function bearerStore(inner: CredentialStore): CredentialStore {
+  return {
+    async get(ref) {
+      const material = await inner.get(ref);
+      return material !== null && material.kind === "api-key" ? { kind: "bearer", token: material.key } : material;
+    },
+    set: inner.set.bind(inner),
+    delete: inner.delete.bind(inner),
+  };
 }
 
 async function runTarget(target: LiveTarget, catalog: WinterCatalog, adapters: readonly ProviderAdapter[]): Promise<boolean> {
@@ -484,7 +544,8 @@ async function runTarget(target: LiveTarget, catalog: WinterCatalog, adapters: r
     },
   };
 
-  const credentials = credentialStoreFor(target.kind, process.env);
+  const base = credentialStoreFor(target.kind, process.env);
+  const credentials = target.authStyle === "bearer" ? bearerStore(base) : base;
   const ctx = createProviderContext(config, {
     providerId: target.providerId,
     credentials,
@@ -525,6 +586,9 @@ async function runTarget(target: LiveTarget, catalog: WinterCatalog, adapters: r
     kind: target.kind,
     // What THIS BUILD sends. That it is actually on the wire is pinned by the corpus, not observed here.
     identityHeader: winterUserAgent(),
+    // The row's evidence tier (R-FW-3(b)): promotion is TWO-KEY, so an operator reading a green row
+    // sees whether the second key -- a fetched vendor document -- is already in hand.
+    admissionTier: resolved.provider.admission.tier,
   });
   console.log(formatLiveReport(report));
   // The one-line per-target ROW (WS-13b §7), printed after the per-case detail because it is the

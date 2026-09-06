@@ -23,6 +23,7 @@
 // are overlay-only, by construction rather than by discipline.
 
 import type {
+  AdmissionTier,
   CapabilityEvidence,
   ProviderAuthKind,
   ProviderProtocol,
@@ -82,7 +83,13 @@ export interface AllowlistProviderRow {
    * producing a row whose admission nobody can check — see step (0) at the top of
    * `buildUpstreamLayer`, which refuses before anything is classified.
    */
-  admission: { basis: "api-key" | "oauth-documented" | "keyless-documented" | "local" | "cloud-credential"; citation: string };
+  admission: { basis: "api-key" | "oauth-documented" | "keyless-documented" | "local" | "cloud-credential"; citation: string; tier: AdmissionTier };
+  /**
+   * WS-13b §7/§8.4 (fix-wave R-FW-2): the vendor's own second identity field, copied verbatim like
+   * the two above. Absent for every allowlist row today -- only a vendor that DOCUMENTS such a field
+   * gets one, and none of the extracted entries does.
+   */
+  identityHeaders?: Record<string, string>;
 }
 
 /** A hand-reviewed, per-model deviation from what the pinned upstream tree says. Always recorded. */
@@ -628,7 +635,10 @@ export function buildUpstreamLayer(input: BuildUpstreamLayerInput): UpstreamLaye
       // the top of this function has already refused the run if either field is missing or if the
       // citation names the audit's `unknown` class, so both are present and checked by here.
       pricingBasis: allowed.pricingBasis,
+      // The evidence TIER travels inside `admission`, so it is copied by this one line with the rest
+      // of the entry's own evidence (fix-wave R-FW-3).
       admission: allowed.admission,
+      ...(allowed.identityHeaders !== undefined ? { identityHeaders: allowed.identityHeaders } : {}),
     });
 
     // --- models ---------------------------------------------------------------------------------

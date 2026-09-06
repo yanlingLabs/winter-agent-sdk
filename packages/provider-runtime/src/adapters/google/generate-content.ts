@@ -46,7 +46,7 @@ import { normalizeHttpError, normalizeThrown } from "../../errors.ts";
 import { createRetryPolicy, withRetry, type RetryPolicyOptions } from "../../retry.ts";
 import { applyPrivilegedHeaders, createEndpointPolicy, type EndpointPolicy } from "../../endpoint-policy.ts";
 import { hostHeaders } from "../privileged-headers.ts";
-import { winterUserAgent } from "../../identity.ts";
+import { identityHeaderLookup, winterIdentityHeaders, winterUserAgent, type IdentityHeaderLookup } from "../../identity.ts";
 import { THINKING_ENABLED_NEEDS_BUDGET } from "../refusals.ts";
 import { collectImages, containsImage } from "../content-blocks.ts";
 import { parseSse } from "../../sse.ts";
@@ -108,7 +108,13 @@ export interface GoogleTransport {
   readonly version: string;
   /** Resolves the base URL and its endpoint policy, or throws a typed capability refusal. */
   endpoint(ctx: ProviderContext): { base: string; policy: EndpointPolicy };
-  headers(ctx: ProviderContext, policy: EndpointPolicy, json: boolean): Promise<Record<string, string>>;
+  /**
+   * `identity` is the ROW's own Winter-authored second identity field (WS-13b §7/§8.4, R-FW-2),
+   * already `<version>`-substituted -- `{}` for every row whose vendor names none, which is every
+   * row this family serves today. It is a PARAMETER rather than something a transport derives,
+   * because a transport has no catalog and the adapter above it does.
+   */
+  headers(ctx: ProviderContext, policy: EndpointPolicy, json: boolean, identity: Record<string, string>): Promise<Record<string, string>>;
   // EVERY path builder takes the CONTEXT as well as the model, and that is not decoration: Vertex's
   // path carries the connection's project and location, and a transport that captured the connection
   // in a closure instead would race between two concurrent turns on different connections -- sending
@@ -570,6 +576,8 @@ interface PreparedGoogleRequest {
 export function createGoogleFamilyAdapter(transport: GoogleTransport, opts: GoogleAdapterOptions = {}): ProviderAdapter {
   let compiled: WinterCatalog | undefined;
   const catalogOf = (): WinterCatalog => opts.catalog ?? (compiled ??= loadCatalog());
+  let identityLookup: IdentityHeaderLookup | undefined;
+  const identityFor = (ctx: ProviderContext): Record<string, string> => winterIdentityHeaders((identityLookup ??= identityHeaderLookup(catalogOf())), ctx.connection.providerId);
   const timeoutMs = opts.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
   const maxBodyBytes = opts.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES;
 
@@ -585,7 +593,7 @@ export function createGoogleFamilyAdapter(transport: GoogleTransport, opts: Goog
     const { base, policy } = transport.endpoint(ctx);
     const url = `${base}${transport.streamPath(ctx, req.model)}`;
     const body = buildRequestBody(req, descriptor, opts, ctx);
-    const headers = await transport.headers(ctx, policy, true);
+    const headers = await transport.headers(ctx, policy, true, identityFor(ctx));
     // Minor 7: the descriptor's completion evidence is VALIDATED here and carries no state onward,
     // because this family has exactly one honourable marker. A row naming another is refused before
     // the request; there is nothing left to branch on downstream.
@@ -776,7 +784,7 @@ export function createGoogleFamilyAdapter(transport: GoogleTransport, opts: Goog
       const descriptor = findDescriptor(catalogOf(), ctx.connection.providerId, req.model);
       const { base, policy } = transport.endpoint(ctx);
       const body = buildRequestBody(req, descriptor, opts, ctx, "count");
-      const headers = await transport.headers(ctx, policy, true);
+      const headers = await transport.headers(ctx, policy, true, identityFor(ctx));
       const res = await boundedFetch(`${base}${transport.countTokensPath(ctx, req.model)}`, {
         method: "POST",
         headers,
@@ -816,7 +824,7 @@ export function createGoogleFamilyAdapter(transport: GoogleTransport, opts: Goog
         return { ok: false, code: "unsupported", message: `the ${transport.id} adapter has no live credential probe in this phase; the credential resolves but has not been verified` };
       }
       const { base, policy } = transport.endpoint(ctx);
-      const headers = await transport.headers({ ...ctx, authRef: ref }, policy, false);
+      const headers = await transport.headers({ ...ctx, authRef: ref }, policy, false, identityFor(ctx));
       try {
         const res = await boundedFetch(`${base}${transport.listPath(ctx, undefined, 1)}`, { method: "GET", headers, timeoutMs, maxBodyBytes: 1024 * 1024, policy });
         const text = await res.text();
@@ -836,7 +844,7 @@ export function createGoogleFamilyAdapter(transport: GoogleTransport, opts: Goog
         return { models: [], partial: true, cached: false, warnings: [`the ${transport.id} adapter has no bounded model-list endpoint in this phase; the compiled catalog is the only inventory and is NOT authoritative`] };
       }
       const { base, policy } = transport.endpoint(ctx);
-      const headers = await transport.headers(ctx, policy, false);
+      const headers = await transport.headers(ctx, policy, false, identityFor(ctx));
       const models: ModelCatalogResult["models"] = [];
       const warnings: string[] = [];
       let pageToken: string | undefined;
@@ -924,7 +932,7 @@ export function geminiTransport(): GoogleTransport {
       if (!built.ok) throw capabilityRefusal(built.reason);
       return { base, policy: built.policy };
     },
-    async headers(ctx, policy, json) {
+    async headers(ctx, policy, json, identity) {
       const material = await ctx.credentials.get(ctx.authRef);
       // HOST HEADERS FIRST, so nothing below can be silently overridden -- a host header spread LAST
       // could replace `content-type`, or (for Vertex) the bearer token this transport just minted.
@@ -938,6 +946,9 @@ export function geminiTransport(): GoogleTransport {
         // WS-13b HONEST IDENTITY. FIRST, so a host profile is spread over it -- exact-key, as for
         // every header here (a differently-cased `User-Agent` is JOINED by `Headers`, not replaced).
         "user-agent": winterUserAgent(),
+        // The row's own second identity field (R-FW-2). Beside the user-agent, before the host's
+        // map, and NOT through `applyPrivilegedHeaders` -- it is Winter's name, not the operator's.
+        ...identity,
         ...hostHeaders(policy, ctx.connection.headers),
         ...(json ? { "content-type": "application/json" } : {}),
         ...applyPrivilegedHeaders(policy, ctx.connection.project !== undefined ? { "x-goog-user-project": ctx.connection.project } : {}),

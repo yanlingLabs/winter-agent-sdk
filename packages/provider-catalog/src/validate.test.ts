@@ -23,7 +23,7 @@ function baseProvider(over: Partial<WinterProviderDescriptor> = {}): WinterProvi
     // WS-13b §1 (P6.5 spine): both fields are REQUIRED on every row, so the shared valid fixture
     // carries them — a negative case deletes or corrupts one, exactly like every other field here.
     pricingBasis: "token",
-    admission: { basis: "api-key", citation: "https://vendor.example/pricing" },
+    admission: { basis: "api-key", citation: "https://vendor.example/pricing", tier: "fetched-document" },
     ...over,
   };
 }
@@ -399,6 +399,7 @@ describe("JSON Schema / validator enum parity (Minor 9)", () => {
     ["toolLoopRequirements", "$defs.evidenceToolLoopRequirement.properties.value"],
     ["pricingBases", "$defs.WinterProviderDescriptor.properties.pricingBasis"],
     ["admissionBases", "$defs.WinterProviderDescriptor.properties.admission.properties.basis"],
+    ["admissionTiers", "$defs.WinterProviderDescriptor.properties.admission.properties.tier"],
   ];
 
   test("every vocabulary the validator enforces is the SAME SET the schema declares", () => {
@@ -484,7 +485,55 @@ describe("WS-13b §1: rows are evidence", () => {
   });
 
   test("a subscription-priced row is legal and keeps its own basis", () => {
-    const catalog = baseCatalog({ providers: [baseProvider({ pricingBasis: "subscription", admission: { basis: "oauth-documented", citation: "audit:5.1" } })] });
+    const catalog = baseCatalog({ providers: [baseProvider({ pricingBasis: "subscription", admission: { basis: "oauth-documented", citation: "audit:5.1", tier: "audit" } })] });
+    expect(validateCatalog(catalog).ok).toBe(true);
+  });
+
+  // --- fix-wave R-FW-3: the evidence TIER is data and is required ----------------------------------
+
+  test("a row with NO admission tier is refused with code admission-tier-missing", () => {
+    // The whole point of making the tier data. While it lived inside the citation string, the one
+    // test that claimed to enforce it matched `^https?://` -- which a pinned-upstream citation
+    // satisfies just as well as a fetched document's URL, so it enforced nothing.
+    const broken = structuredClone(shipped) as unknown as { providers: Array<{ admission: { tier?: string } }> };
+    delete broken.providers[0]!.admission.tier;
+    const result = validateCatalog(broken);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("unreachable");
+    expect(result.errors.map((e) => e.code)).toContain("admission-tier-missing");
+  });
+
+  test("an admission tier outside the five named values is refused", () => {
+    const broken = structuredClone(shipped) as unknown as { providers: Array<{ admission: { tier: string } }> };
+    broken.providers[0]!.admission.tier = "probably-fine";
+    expectRejected(broken, "admission.tier");
+  });
+
+  // --- fix-wave R-FW-2: `identityHeaders` is Winter-authored, both halves --------------------------
+
+  test("an identity header the Winter allowlist does not name is refused — a row may not invent one", () => {
+    // WS-13 §5 / D21: client-identity headers are never imported and Winter adapters author their
+    // own. A free-text NAME field on a reviewed row would be a hole straight through that rule, so
+    // the name comes from an allowlist a reviewer edits deliberately.
+    const catalog = baseCatalog({ providers: [baseProvider({ identityHeaders: { "X-Editor-Client": "winter-agent-sdk/1" } })] });
+    const result = validateCatalog(catalog);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("unreachable");
+    expect(result.errors.map((e) => e.code)).toContain("identity-header-invalid");
+  });
+
+  test("an identity header VALUE that does not name Winter is refused — an identity field naming another product is impersonation", () => {
+    const catalog = baseCatalog({ providers: [baseProvider({ identityHeaders: { "Client-Agent": "some-editor:1.0:x@example" } })] });
+    const result = validateCatalog(catalog);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("unreachable");
+    expect(result.errors.map((e) => e.code)).toContain("identity-header-invalid");
+  });
+
+  test("...and the honest form is accepted, `<version>` placeholder and all", () => {
+    // The positive leg. Without it the two refusals above would pass just as happily against a
+    // validator that rejected every `identityHeaders` value, which is a different bug.
+    const catalog = baseCatalog({ providers: [baseProvider({ identityHeaders: { "Client-Agent": "winter-agent-sdk:<version>:https://github.com/yanlingLabs/winter-agent-sdk" } })] });
     expect(validateCatalog(catalog).ok).toBe(true);
   });
 });

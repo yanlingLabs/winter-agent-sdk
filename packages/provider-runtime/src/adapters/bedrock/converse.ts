@@ -65,7 +65,8 @@ import { createRetryPolicy, withRetry, type RetryPolicyOptions } from "../../ret
 import { WINTER_CREDENTIAL_MISSING, requireRegion, resolveAwsCredentials } from "./credentials.ts";
 import { createEventStreamDecoder, jsonPayload, messageType, stringHeader, type EventStreamMessage } from "./eventstream.ts";
 import { BEDROCK_SERVICE, signRequest } from "./sigv4.ts";
-import { winterUserAgent } from "../../identity.ts";
+import { winterIdentityHeaders, winterUserAgent, type IdentityHeaderLookup } from "../../identity.ts";
+import { WINTER_IDENTITY_HEADERS } from "../privileged-headers.ts";
 
 export const BEDROCK_ADAPTER_ID = "winter.bedrock-converse";
 export const BEDROCK_ADAPTER_VERSION = "1";
@@ -154,6 +155,16 @@ export interface BedrockAdapterOptions {
   retry?: RetryPolicyOptions;
   /** Injected so a fixture can pin a signature against a known-answer vector. */
   now?: () => Date;
+  /**
+   * WS-13b §7/§8.4 (fix-wave R-FW-2): the per-ROW second identity field, looked up by
+   * `ctx.connection.providerId`.
+   *
+   * A CONSTRUCTION OPTION here rather than a catalog derivation (the shape the Anthropic and Google
+   * families use), because this adapter takes a `descriptors` lookup and never a catalog.
+   * `createShippedAdapters` supplies it; a fixture that omits it gets `{}`, which is what every
+   * Bedrock row carries today.
+   */
+  identityHeaders?: IdentityHeaderLookup;
 }
 
 // --- endpoints --------------------------------------------------------------------------------------
@@ -188,14 +199,22 @@ function controlBase(ctx: ProviderContext, region: string, vendorBaseUrl?: strin
  * through -- it runs INSTEAD of `hostHeaders`, not before it, because the signer's own rules are
  * what shape it. The two lists are kept in step by `CREDENTIAL_HEADER_NAMES`: `x-amz-security-token`
  * and the two SigV4 date/digest names are already covered by the `x-amz-` prefix above.
+ *
+ * AND IT DROPS WINTER'S OWN IDENTITY NAMES ON A GENERATED ENDPOINT (whole-branch review M-1), which
+ * is why it now takes the policy. This family is the one where the override actually BIT: the filter
+ * lowercases what it keeps, so a profile's `User-Agent` genuinely REPLACED Winter's here (the other
+ * builders spread the profile's raw keys and `Headers` joins the two spellings) -- and the replaced
+ * value then went into the SIGNED set. Same rule as `hostHeaders`, stated once there and applied
+ * here through the shared constant rather than a second list.
  */
-function filterConnectionHeaders(headers: Record<string, string> | undefined): Record<string, string> {
+function filterConnectionHeaders(policy: EndpointPolicy, headers: Record<string, string> | undefined): Record<string, string> {
   if (headers === undefined) return {};
   const out: Record<string, string> = {};
   for (const [name, value] of Object.entries(headers)) {
     const lower = name.toLowerCase();
     if (lower === "host" || lower === "content-length" || lower.startsWith("x-amz-")) continue;
     if (CREDENTIAL_HEADER_NAMES.includes(lower)) continue;
+    if (policy.generated && WINTER_IDENTITY_HEADERS.includes(lower)) continue;
     out[lower] = value;
   }
   return out;
@@ -806,6 +825,10 @@ export function createBedrockConverseAdapter(options: BedrockAdapterOptions): Be
       // `User-Agent` DOES replace this one on this family (the OpenAI/Anthropic/Google builders
       // spread the profile's raw keys and would join the two spellings instead).
       "user-agent": winterUserAgent(),
+      // The row's own second identity field (R-FW-2). Beside the user-agent and inside the SIGNED
+      // set for the same reason it is: an identity header outside the signature is one an
+      // intermediary can rewrite without breaking anything.
+      ...winterIdentityHeaders(options.identityHeaders, ctx.connection.providerId),
       accept: "application/json",
       ...(contentType !== undefined ? { "content-type": contentType } : {}),
       // The host's own extra headers, FILTERED. They are spread after `accept`/`content-type` (which
@@ -816,7 +839,7 @@ export function createBedrockConverseAdapter(options: BedrockAdapterOptions): Be
       // overwritten by the real one, producing a signature over a value that is not on the request.
       // Those names are the protocol's, not a profile's, so they are dropped here rather than
       // silently mangled downstream.
-      ...filterConnectionHeaders(ctx.connection.headers),
+      ...filterConnectionHeaders(policy, ctx.connection.headers),
       ...privileged,
     };
     const signed = await signRequest({ method, url, headers, body, credentials, region, service: BEDROCK_SERVICE, date: now() });

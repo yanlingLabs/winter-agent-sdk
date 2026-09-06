@@ -326,6 +326,31 @@ describe("live wire details the corpus does not ask about", () => {
     });
   });
 
+  test("M-1: a profile `user-agent` does NOT replace Winter's on a GENERATED endpoint, and DOES on a user one", async () => {
+    // `identity.ts` says the User-Agent is "deliberately NOT configurable" and names exactly one
+    // sanctioned override -- "the operator speaking about their own proxy", i.e. a USER endpoint.
+    // Nothing enforced the second half, so the same `ConnectionProfile.headers['user-agent']`
+    // replaced Winter's identity at the VENDOR'S own reviewed endpoint, which is the one place the
+    // admission rule is about. Both directions, because a rule that dropped it everywhere would pass
+    // the first assertion while removing a capability the header exists for.
+    const PROFILE_UA = "some-editor/9.9.9";
+    await withResponsesFake(async (fake) => {
+      const adapter = createResponsesAdapter({ generatedBaseUrl: fake.url, retry: FAST_RETRY, descriptors: () => undefined });
+      await drain(adapter.streamTurn({ model: SCENARIO.happy, messages: [] }, testContext({ stallTimeoutMs: STALL_MS, headers: { "user-agent": PROFILE_UA } })));
+      expect(fake.requests[0]?.headers["user-agent"]).toBe(winterUserAgent());
+    });
+    await withChatFake(async (fake) => {
+      const adapter = createChatCompletionsAdapter({ generatedBaseUrl: fake.url, retry: FAST_RETRY, descriptors: () => undefined });
+      await drain(adapter.streamTurn({ model: SCENARIO.happy, messages: [] }, testContext({ stallTimeoutMs: STALL_MS, headers: { "user-agent": PROFILE_UA } })));
+      expect(fake.requests[0]?.headers["user-agent"]).toBe(winterUserAgent());
+      // The USER endpoint: the SAME fake at the SAME url, only its reviewed status differs -- which
+      // is exactly what the rule gates on.
+      const user = createChatCompletionsAdapter({ retry: FAST_RETRY, descriptors: () => undefined });
+      await drain(user.streamTurn({ model: SCENARIO.happy, messages: [] }, testContext({ stallTimeoutMs: STALL_MS, baseUrl: fake.url, local: true, headers: { "user-agent": PROFILE_UA } })));
+      expect(fake.requests[1]?.headers["user-agent"]).toBe(PROFILE_UA);
+    });
+  });
+
   test("a retry observation is yielded BEFORE the request it precedes reaches the fake", async () => {
     // The ordering `pumpEvents` exists for, asserted against the fake's own request log rather than
     // against the adapter's intent: a post-hoc flush would put the event after BOTH requests.

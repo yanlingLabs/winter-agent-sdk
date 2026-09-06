@@ -708,6 +708,38 @@ describe("D20: Anthropic Console OAuth on the wire", () => {
     });
   });
 
+  test("M-3: `bearer` material rides as `Authorization: Bearer` and NEVER as `x-api-key` — the sibling rows' live condition", async () => {
+    // Whole-branch review M-3. The four `<id>-anthropic` siblings carry `authKinds: ["api-key"]`, so
+    // this adapter sends `x-api-key`; but what their citations establish is that the vendor's own
+    // page targets Claude Code, whose auth-token mode sends `Authorization: Bearer`. Whether those
+    // endpoints ALSO accept `x-api-key` is a LIVE condition, and the gate now has a
+    // `WINTER_LIVE_<P>_BEARER` selector to vary it.
+    //
+    // `messages.ts` already supported `bearer` material -- and NOTHING asserted it, so "the gate can
+    // now produce a bearer" rested on a branch no test drove. This is that assertion, on the wire.
+    // The row is a SIBLING id, not `anthropic`, so the D20 beta cannot ride along and make the
+    // request look right for the wrong reason.
+    const store = createMemoryCredentialStore();
+    const ref = { kind: "keychain" as const, account: "deepseek-anthropic:bearer-fixture" };
+    await store.set(ref, { kind: "bearer", token: "test-token-sibling-bearer" });
+    const adapter = testAnthropicAdapter();
+    await withFake({ routes: anthropicCorpusRoutes() }, async (fake) => {
+      await foldTurn(
+        adapter,
+        { model: ANTHROPIC_MODELS.main, messages: [{ role: "user", content: "hi" }] },
+        testContext(fake.url, { connection: { providerId: "deepseek-anthropic", baseUrl: fake.url, local: true }, credentials: store, authRef: ref }),
+      );
+      const turn = fake.requests.at(-1)!;
+      // The fake redacts a credential value as it records it, so the SCHEME is asserted without a
+      // token ever entering an assertion or a failure message.
+      expect(turn.headers["authorization"]).toBe("Bearer ***");
+      expect(turn.headers["x-api-key"]).toBeUndefined();
+      // ...and no vendor beta: this is a third party's row, not Anthropic's.
+      expect(turn.headers["anthropic-beta"]).toBeUndefined();
+      expect(turn.headers["anthropic-version"]).toBeDefined();
+    });
+  });
+
   test("WS-13b: an OAuth turn still names Winter and carries NO vendor product identity — not in the user-agent, and not in the beta list", async () => {
     const oauthFake = await startAnthropicConsoleOauthFake();
     try {

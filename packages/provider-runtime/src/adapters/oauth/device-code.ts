@@ -120,8 +120,27 @@ export async function runDeviceCodeFlow(cfg: DeviceCodeConfig): Promise<OAuthTok
   const verificationUri = typeof payload.verification_uri === "string" ? payload.verification_uri : undefined;
   const verificationUriComplete = typeof payload.verification_uri_complete === "string" ? payload.verification_uri_complete : undefined;
   if (deviceCode === undefined || userCode === undefined || verificationUri === undefined) {
+    // THE VENDOR'S ERROR CODE, CARRIED (fix-wave carry, Lane O review Important 3). RFC 8628 lets
+    // the DEVICE step fail the same ways the poll can — `access_denied` among them — and this throw
+    // reported only the HTTP status. `xai-oauth.ts` classifies the reversion condition by reading
+    // the code back, so a refusal at the device step was undetectable: an unregistered client the
+    // vendor rejects at the door looked like a plain 4xx.
+    //
+    // ONLY THE CODE. `deviceError` admits `[a-z_]+` and nothing else, so the vendor's
+    // `error_description` — which routinely quotes the request — cannot reach a message or a field,
+    // and the "never echoes the body" rule is enforced by the shape rather than by care.
+    const deviceError = typeof device.body["error"] === "string" && /^[a-z_]+$/.test(device.body["error"]) ? device.body["error"] : undefined;
+    const detail = deviceError ?? `HTTP ${device.status}`;
     cfg.onAuthStatus?.({ isAuthenticating: false, error: `the device authorization request returned HTTP ${device.status} without a device code, user code and verification URI` });
-    throw new ProviderRequestError({ code: device.status >= 500 ? "server" : "auth", message: `the device authorization request failed: HTTP ${device.status}`, status: device.status, retryable: device.status >= 500 });
+    throw new ProviderRequestError({
+      code: device.status >= 500 ? "server" : "auth",
+      message: `the device authorization request failed: ${detail}`,
+      status: device.status,
+      ...(deviceError !== undefined ? { providerCode: deviceError } : {}),
+      // A FIELD, not only a substring of the message. A consumer that has to regex a sentence to
+      // classify a failure is one reworded sentence away from misclassifying it.
+      retryable: device.status >= 500,
+    });
   }
 
   // The user code and the URL, together, are the whole of what the person signing in needs. The
@@ -172,6 +191,15 @@ export async function runDeviceCodeFlow(cfg: DeviceCodeConfig): Promise<OAuthTok
     // likely to be pasted somewhere.
     const detail = error ?? `HTTP ${poll.status}`;
     cfg.onAuthStatus?.({ isAuthenticating: false, error: `the device login failed: ${detail}` });
-    throw new ProviderRequestError({ code: poll.status >= 500 ? "server" : "auth", message: `the device login failed: ${detail}`, status: poll.status, retryable: false });
+    // `providerCode` here too, for the same reason: the message shape stays byte-identical (the
+    // reversion tests read it), and the code is additionally available as a field so a consumer
+    // need not parse a sentence.
+    throw new ProviderRequestError({
+      code: poll.status >= 500 ? "server" : "auth",
+      message: `the device login failed: ${detail}`,
+      status: poll.status,
+      ...(error !== undefined ? { providerCode: error } : {}),
+      retryable: false,
+    });
   }
 }

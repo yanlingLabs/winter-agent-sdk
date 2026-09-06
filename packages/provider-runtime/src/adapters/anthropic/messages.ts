@@ -47,7 +47,7 @@ import { normalizeHttpError, normalizeThrown } from "../../errors.ts";
 import { createRetryPolicy, withRetry, type RetryPolicyOptions } from "../../retry.ts";
 import { applyPrivilegedHeaders, createEndpointPolicy, type EndpointPolicy } from "../../endpoint-policy.ts";
 import { hostHeaders } from "../privileged-headers.ts";
-import { winterUserAgent } from "../../identity.ts";
+import { identityHeaderLookup, winterIdentityHeaders, winterUserAgent, type IdentityHeaderLookup } from "../../identity.ts";
 import { THINKING_ENABLED_NEEDS_BUDGET } from "../refusals.ts";
 import { containsImage } from "../content-blocks.ts";
 import { parseSse } from "../../sse.ts";
@@ -552,7 +552,7 @@ async function resolveFreshMaterial(ctx: ProviderContext, opts: AnthropicAdapter
   });
 }
 
-async function buildHeaders(ctx: ProviderContext, policy: EndpointPolicy, opts: AnthropicAdapterOptions, json: boolean): Promise<Record<string, string>> {
+async function buildHeaders(ctx: ProviderContext, policy: EndpointPolicy, opts: AnthropicAdapterOptions, json: boolean, identity: Record<string, string> = {}): Promise<Record<string, string>> {
   const material = await resolveFreshMaterial(ctx, opts);
   // D20: an OAuth bearer and the `oauth_auth` beta travel together on this family -- the pinned
   // artifact's own auth builder is a ternary between `{Authorization, anthropic-beta}` and
@@ -582,6 +582,10 @@ async function buildHeaders(ctx: ProviderContext, policy: EndpointPolicy, opts: 
     // adds a second key and `Headers` joins the two into one comma-separated value rather than
     // replacing. Header-case normalisation belongs to R6-L's enforcement point, not here.
     "user-agent": winterUserAgent(),
+    // The row's OWN second identity field (WS-13b §7/§8.4, R-FW-2), beside the user-agent and BEFORE
+    // the host's map -- Winter's name, not the operator's account topology, and therefore not routed
+    // through `applyPrivilegedHeaders`. `{}` for every row whose vendor names no such field.
+    ...identity,
     ...hostHeaders(policy, ctx.connection.headers),
     "anthropic-version": ANTHROPIC_API_VERSION,
     ...(json ? { "content-type": "application/json" } : {}),
@@ -647,6 +651,11 @@ export function createAnthropicMessagesAdapter(opts: AnthropicAdapterOptions = {
   // its own catalog must never pay for (or depend on) the compiled one.
   let compiled: WinterCatalog | undefined;
   const catalogOf = (): WinterCatalog => opts.catalog ?? (compiled ??= loadCatalog());
+  // DERIVED from the catalog this adapter already resolves, not a separate construction option: this
+  // adapter is multi-provider (R6b-5) and takes a catalog anyway, so a wiring that forgot to pass a
+  // lookup is unrepresentable here.
+  let identityLookup: IdentityHeaderLookup | undefined;
+  const identityFor = (ctx: ProviderContext): Record<string, string> => winterIdentityHeaders((identityLookup ??= identityHeaderLookup(catalogOf())), ctx.connection.providerId);
   const timeoutMs = opts.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
   const maxBodyBytes = opts.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES;
 
@@ -666,7 +675,7 @@ export function createAnthropicMessagesAdapter(opts: AnthropicAdapterOptions = {
     const descriptor = findDescriptor(catalogOf(), ctx.connection.providerId, req.model);
     const endpoint = resolveEndpoint(ctx, ANTHROPIC_DEFAULT_BASE_URL);
     const body = buildRequestBody(req, descriptor, opts);
-    const headers = await buildHeaders(ctx, endpoint.policy, opts, true);
+    const headers = await buildHeaders(ctx, endpoint.policy, opts, true, identityFor(ctx));
     return { endpoint, body, headers, captureEvent: anthropicCaptureEvent(descriptor) };
   }
 
@@ -917,7 +926,7 @@ export function createAnthropicMessagesAdapter(opts: AnthropicAdapterOptions = {
       const descriptor = findDescriptor(catalogOf(), ctx.connection.providerId, req.model);
       const endpoint = resolveEndpoint(ctx, ANTHROPIC_DEFAULT_BASE_URL);
       const body = buildRequestBody(req, descriptor, opts, "count");
-      const headers = await buildHeaders(ctx, endpoint.policy, opts, true);
+      const headers = await buildHeaders(ctx, endpoint.policy, opts, true, identityFor(ctx));
       const res = await boundedFetch(`${endpoint.base}/v1/messages/count_tokens`, {
         method: "POST",
         headers,
@@ -964,7 +973,7 @@ export function createAnthropicMessagesAdapter(opts: AnthropicAdapterOptions = {
         return { ok: false, code: "unsupported", message: `the Anthropic Messages adapter cannot validate credential material of kind "${material.kind}"` };
       }
       const endpoint = resolveEndpoint(ctx, ANTHROPIC_DEFAULT_BASE_URL);
-      const headers = await buildHeaders({ ...ctx, authRef: ref }, endpoint.policy, opts, false);
+      const headers = await buildHeaders({ ...ctx, authRef: ref }, endpoint.policy, opts, false, identityFor(ctx));
       try {
         const res = await boundedFetch(`${endpoint.base}/v1/models?limit=1`, { method: "GET", headers, timeoutMs, maxBodyBytes: 1024 * 1024, policy: endpoint.policy });
         const text = await res.text();
@@ -987,7 +996,7 @@ export function createAnthropicMessagesAdapter(opts: AnthropicAdapterOptions = {
      */
     async listModels(ctx: DiscoveryContext): Promise<ModelCatalogResult> {
       const endpoint = resolveEndpoint(ctx, ANTHROPIC_DEFAULT_BASE_URL);
-      const headers = await buildHeaders(ctx, endpoint.policy, opts, false);
+      const headers = await buildHeaders(ctx, endpoint.policy, opts, false, identityFor(ctx));
       const models: ModelCatalogResult["models"] = [];
       const warnings: string[] = [];
       let after: string | undefined;

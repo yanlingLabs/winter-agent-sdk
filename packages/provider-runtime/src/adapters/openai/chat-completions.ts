@@ -31,6 +31,7 @@ import {
   prefixToolResult,
   errorEvent,
   fetchOpenAiModels,
+  identityFor,
   imageDataUrl,
   isStreamTerminator,
   makeRetryPolicy,
@@ -410,7 +411,13 @@ export async function* chatTurn(
     headers = buildHeaders({
       policy: endpoint.policy,
       protocol: { "content-type": "application/json", accept: "text/event-stream", ...extraProtocolHeaders, ...auth.headers },
-      privileged: { ...privilegedHeaders(options), ...(auth.accountId !== undefined ? { "chatgpt-account-id": auth.accountId } : {}) },
+      // NO `chatgpt-account-id` (fix-wave R-FW-1 / whole-branch review I-1). It is the CODEX
+      // backend's header and `codex-oauth.ts` authors it there; this adapter is the one `xai-oauth`
+      // composes, so the branch that used to sit here sent another vendor's product header, holding
+      // an account-scoped value, to xAI's subscription proxy. `ResolvedAuth` no longer carries an
+      // `accountId` at all, so there is nothing here to author it from.
+      privileged: privilegedHeaders(options),
+      identity: identityFor(options, ctx),
       userSupplied: ctx.connection.headers,
     });
     url = urlFor(endpoint);
@@ -463,14 +470,14 @@ export function createChatCompletionsAdapter(options: ChatTurnOptions): Provider
     async validateCredential(ref: CredentialRef, ctx: ProviderContext): Promise<CredentialStatus> {
       const endpoint = resolveEndpoint(ctx, options, OPENAI_CHAT_BASE_URL);
       const auth = await resolveAuth(ctx, options.authStyle ?? "bearer");
-      const headers = buildHeaders({ policy: endpoint.policy, protocol: { accept: "application/json", ...auth.headers }, privileged: privilegedHeaders(options), userSupplied: ctx.connection.headers });
+      const headers = buildHeaders({ policy: endpoint.policy, protocol: { accept: "application/json", ...auth.headers }, privileged: privilegedHeaders(options), identity: identityFor(options, ctx), userSupplied: ctx.connection.headers });
       return validateViaModels(ref, ctx, endpoint, headers, options, auth.material !== null);
     },
 
     async listModels(ctx: DiscoveryContext): Promise<ModelCatalogResult> {
       const endpoint = resolveEndpoint(ctx, options, OPENAI_CHAT_BASE_URL);
       const auth = await resolveAuth(ctx, options.authStyle ?? "bearer");
-      const headers = buildHeaders({ policy: endpoint.policy, protocol: { accept: "application/json", ...auth.headers }, privileged: privilegedHeaders(options), userSupplied: ctx.connection.headers });
+      const headers = buildHeaders({ policy: endpoint.policy, protocol: { accept: "application/json", ...auth.headers }, privileged: privilegedHeaders(options), identity: identityFor(options, ctx), userSupplied: ctx.connection.headers });
       return fetchOpenAiModels(ctx, endpoint, headers, options);
     },
 

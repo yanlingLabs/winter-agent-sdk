@@ -152,6 +152,76 @@ describe("runDeviceCodeFlow (RFC 8628)", () => {
     }
   });
 
+  test("an `access_denied` at the DEVICE step surfaces the code — as `providerCode` and in the message", async () => {
+    // Fix-wave carry (Lane O review Important 3). RFC 8628 lets the device step fail the ways the
+    // poll can, and this throw used to report only the HTTP status — so `xai-oauth`'s reversion
+    // classifier, which reads the code back, could not see a refusal at the door: an unregistered
+    // client the vendor rejects looked like a plain 4xx and never reached the reversion arm.
+    const MARKER = "MARKER-vendor-prose-must-not-survive";
+    const server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      // The vendor's real shape: the machine-readable code beside a human sentence that routinely
+      // quotes the request.
+      fetch: async () => Response.json({ error: "access_denied", error_description: `${MARKER}: this client is not permitted` }, { status: 400 }),
+    });
+    try {
+      let thrown: unknown;
+      try {
+        await runDeviceCodeFlow({
+          clientId: "public-client",
+          deviceCodeUrl: `http://127.0.0.1:${server.port}/device`,
+          tokenUrl: `http://127.0.0.1:${server.port}/token`,
+          scope: "openid",
+          identity: { field: "referrer", value: "winter-agent-sdk" },
+          pollIntervalMs: 5,
+        });
+      } catch (err) {
+        thrown = err;
+      }
+      // THE FIELD, which is the point: a consumer that had to regex a sentence to classify a failure
+      // is one reworded sentence away from misclassifying it.
+      expect((thrown as { providerCode?: string }).providerCode).toBe("access_denied");
+      expect((thrown as Error).message).toContain("access_denied");
+      // ...and the vendor's prose does NOT survive, on either channel. `error_description` quotes the
+      // request, and a login failure is the moment a message is most likely to be pasted somewhere.
+      expect((thrown as Error).message).not.toContain(MARKER);
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  test("a NON-CODE `error` value at the device step is refused as prose and does not become a providerCode", async () => {
+    // The shape guard, not a nicety: the field is admitted only when it matches `[a-z_]+`, so a
+    // vendor that puts a sentence (or an object rendered as one) in `error` cannot smuggle it into
+    // the message or the field. Without this the carry above would be a new echo channel.
+    const server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: async () => Response.json({ error: "Your request 12345 was denied for user a@b.c" }, { status: 400 }),
+    });
+    try {
+      let thrown: unknown;
+      try {
+        await runDeviceCodeFlow({
+          clientId: "public-client",
+          deviceCodeUrl: `http://127.0.0.1:${server.port}/device`,
+          tokenUrl: `http://127.0.0.1:${server.port}/token`,
+          scope: "openid",
+          identity: { field: "referrer", value: "winter-agent-sdk" },
+          pollIntervalMs: 5,
+        });
+      } catch (err) {
+        thrown = err;
+      }
+      expect((thrown as { providerCode?: string }).providerCode).toBeUndefined();
+      expect((thrown as Error).message).toBe("the device authorization request failed: HTTP 400");
+      expect((thrown as Error).message).not.toContain("a@b.c");
+    } finally {
+      server.stop(true);
+    }
+  });
+
   test("the flow gives up at `timeoutMs` rather than polling a vendor forever", async () => {
     const server = Bun.serve({
       hostname: "127.0.0.1",

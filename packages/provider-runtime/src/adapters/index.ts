@@ -20,6 +20,7 @@
 // adapter and incapable of returning another adapter's row.
 import type { WinterCatalog, WinterModelDescriptor } from "@yanlinglabs/winter-provider-catalog";
 import type { ProviderAdapter } from "../types.ts";
+import { identityHeaderLookup } from "../identity.ts";
 import { createAnthropicMessagesAdapter } from "./anthropic/index.ts";
 import { createGoogleGenerateContentAdapter, createVertexGeminiAdapter } from "./google/index.ts";
 import { createBedrockConverseAdapter } from "./bedrock/index.ts";
@@ -93,31 +94,36 @@ function generatedBaseUrlForAdapter(catalog: WinterCatalog, adapterId: string): 
  */
 export function createShippedAdapters(catalog: WinterCatalog): ProviderAdapter[] {
   const lookup = (adapterId: string): AdapterDescriptorLookup => descriptorLookupForAdapter(catalog, adapterId);
+  // WS-13b §7/§8.4 (fix-wave R-FW-2): the per-ROW identity headers, indexed ONCE off this catalog
+  // and handed to every family that takes a construction option for them. The Anthropic and Google
+  // families take a `catalog` instead and derive the identical index themselves — a shape a wiring
+  // cannot forget — so they are absent from the calls below on purpose, not by omission.
+  const identityHeaders = identityHeaderLookup(catalog);
   const generated = (c: WinterCatalog, adapterId: string): { generatedBaseUrl?: string } => {
     const url = generatedBaseUrlForAdapter(c, adapterId);
     return url !== undefined ? { generatedBaseUrl: url } : {};
   };
   return [
     // Lane A — the OpenAI family.
-    createResponsesAdapter({ descriptors: lookup("winter.openai-responses"), ...generated(catalog, "winter.openai-responses") }),
-    createChatCompletionsAdapter({ descriptors: lookup("winter.openai-chat-completions"), ...generated(catalog, "winter.openai-chat-completions") }),
-    createCodexOauthAdapter({ descriptors: lookup("winter.codex-oauth"), ...generated(catalog, "winter.codex-oauth") }),
+    createResponsesAdapter({ descriptors: lookup("winter.openai-responses"), identityHeaders, ...generated(catalog, "winter.openai-responses") }),
+    createChatCompletionsAdapter({ descriptors: lookup("winter.openai-chat-completions"), identityHeaders, ...generated(catalog, "winter.openai-chat-completions") }),
+    createCodexOauthAdapter({ descriptors: lookup("winter.codex-oauth"), identityHeaders, ...generated(catalog, "winter.codex-oauth") }),
     // `winter.xai-oauth` — the chat adapter at xAI's SUBSCRIPTION proxy. `generated(...)` reads the
     // endpoint off the catalog row rather than the adapter's own constant, which is what keeps the
     // reviewed row and the shipped request agreeing; the constant is the fallback for a build with
     // no row. The row is `pricingBasis: "subscription"`, so nothing it returns feeds R6-H cost.
-    createXaiOauthAdapter({ descriptors: lookup("winter.xai-oauth"), ...generated(catalog, "winter.xai-oauth") }),
-    createAzureOpenAIAdapter({ descriptors: lookup("winter.azure-openai"), ...generated(catalog, "winter.azure-openai") }),
+    createXaiOauthAdapter({ descriptors: lookup("winter.xai-oauth"), identityHeaders, ...generated(catalog, "winter.xai-oauth") }),
+    createAzureOpenAIAdapter({ descriptors: lookup("winter.azure-openai"), identityHeaders, ...generated(catalog, "winter.azure-openai") }),
     // Registered under the id the catalog's twelve local rows actually point at (see
     // `LocalAdapterOptions.id`'s own header for why that id is overridable at all).
-    createLocalOpenAIAdapter({ descriptors: lookup("winter.local-openai"), id: "winter.local-openai" }),
+    createLocalOpenAIAdapter({ descriptors: lookup("winter.local-openai"), identityHeaders, id: "winter.local-openai" }),
     // Lane B — Anthropic Messages, Google GenerateContent, and Vertex over the same wire mapping.
     // These take the CATALOG rather than a lookup (their own option shape) and derive the same rows.
     createAnthropicMessagesAdapter({ catalog }),
     createGoogleGenerateContentAdapter({ catalog }),
     createVertexGeminiAdapter({ catalog }),
     // Lane N — Bedrock Converse (experimental).
-    createBedrockConverseAdapter({ descriptors: lookup("winter.bedrock-converse") }),
+    createBedrockConverseAdapter({ descriptors: lookup("winter.bedrock-converse"), identityHeaders }),
   ];
 }
 

@@ -43,6 +43,30 @@ describe("Bedrock Converse: WS-13b honest identity", () => {
       await fake.close();
     }
   }, 30_000);
+
+  test("M-1: a profile `user-agent` does NOT replace Winter's on a GENERATED endpoint, and DOES on a user one", async () => {
+    // THIS FAMILY IS WHERE THE OVERRIDE ACTUALLY BIT. `filterConnectionHeaders` lowercases what it
+    // keeps, so a profile's `User-Agent` genuinely REPLACED Winter's here (the other builders spread
+    // the profile's raw keys and `Headers` joins the two spellings into one value instead) -- and the
+    // replaced value then went into the SIGNED set, so the vendor would have seen a signed request
+    // from `winter-agent-sdk` claiming to be an editor. Both directions, on the same fake: only the
+    // endpoint's reviewed status differs, which is exactly what the rule gates on.
+    const PROFILE_UA = "some-editor/9.9.9";
+    const fake = await startBedrockFake({ scenarios: bedrockScenarios() });
+    try {
+      const generated = createBedrockHarness(fake, { asGeneratedEndpoint: true });
+      const withProfile = { ...generated.ctx, connection: { ...generated.ctx.connection, headers: { "User-Agent": PROFILE_UA } } };
+      await foldProviderStream(generated.adapter.streamTurn({ model: BEDROCK_CORPUS_MODEL, messages: [{ role: "user", content: "hi" }] }, withProfile));
+      expect(fake.requests.at(-1)?.headers["user-agent"]).toBe(winterUserAgent());
+
+      const user = createBedrockHarness(fake);
+      const userWithProfile = { ...user.ctx, connection: { ...user.ctx.connection, headers: { "User-Agent": PROFILE_UA } } };
+      await foldProviderStream(user.adapter.streamTurn({ model: BEDROCK_CORPUS_MODEL, messages: [{ role: "user", content: "hi" }] }, userWithProfile));
+      expect(fake.requests.at(-1)?.headers["user-agent"]).toBe(PROFILE_UA);
+    } finally {
+      await fake.close();
+    }
+  }, 30_000);
 });
 
 describe("the WS-13 §13 corpus for bedrock-converse@1", () => {

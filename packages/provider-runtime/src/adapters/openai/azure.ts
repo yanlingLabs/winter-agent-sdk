@@ -30,7 +30,7 @@ import type { WinterModelDescriptor } from "@yanlinglabs/winter-provider-catalog
 import type { CredentialRef, CredentialStatus, DiscoveryContext, ModelCatalogResult, ProviderAdapter, ProviderContext, ProviderEvent, TurnRequest } from "../../types.ts";
 import { chatTurn } from "./chat-completions.ts";
 import { responsesTurn } from "./responses.ts";
-import { buildHeaders, capabilitiesFrom, capabilityRefusal, errorEvent, fetchOpenAiModels, mapEffortAgainst, resolveAuth, resolveEndpoint, validateViaModels, type OpenAiAdapterOptions } from "./shared.ts";
+import { buildHeaders, capabilitiesFrom, capabilityRefusal, errorEvent, fetchOpenAiModels, identityFor, mapEffortAgainst, resolveAuth, resolveEndpoint, validateViaModels, type OpenAiAdapterOptions } from "./shared.ts";
 
 /** The `apiVersion` that selects the `/openai/v1` Responses surface rather than the deployment path. */
 export const AZURE_PREVIEW_API_VERSION = "preview";
@@ -91,7 +91,7 @@ export function createAzureOpenAIAdapter(options: AzureAdapterOptions): Provider
       const routing = azureRouting(ctx, withAuthStyle);
       const endpoint = resolveEndpoint(ctx, withAuthStyle);
       const auth = await resolveAuth(ctx, withAuthStyle.authStyle ?? "azure-api-key");
-      const headers = buildHeaders({ policy: endpoint.policy, protocol: { accept: "application/json", ...auth.headers }, userSupplied: ctx.connection.headers });
+      const headers = buildHeaders({ policy: endpoint.policy, protocol: { accept: "application/json", ...auth.headers }, identity: identityFor(options, ctx), userSupplied: ctx.connection.headers });
       // `api-version` rides the PROBE too. Without it Azure answers 400 on every call, which
       // normalized to `network` and reported a perfectly valid key as unreachable.
       return validateViaModels(ref, ctx, { ...endpoint, baseUrl: azureModelsBase(endpoint.baseUrl, routing) }, headers, withAuthStyle, auth.material !== null, { "api-version": routing.apiVersion });
@@ -101,7 +101,7 @@ export function createAzureOpenAIAdapter(options: AzureAdapterOptions): Provider
       const routing = azureRouting(ctx, withAuthStyle);
       const endpoint = resolveEndpoint(ctx, withAuthStyle);
       const auth = await resolveAuth(ctx, withAuthStyle.authStyle ?? "azure-api-key");
-      const headers = buildHeaders({ policy: endpoint.policy, protocol: { accept: "application/json", ...auth.headers }, userSupplied: ctx.connection.headers });
+      const headers = buildHeaders({ policy: endpoint.policy, protocol: { accept: "application/json", ...auth.headers }, identity: identityFor(options, ctx), userSupplied: ctx.connection.headers });
       // `api-version` rides EVERY discovery page too — a paged walk that dropped it would 400 on
       // page two only, which is the worst possible place to find out.
       return fetchOpenAiModels(ctx, { ...endpoint, baseUrl: azureModelsBase(endpoint.baseUrl, routing) }, headers, withAuthStyle, { "api-version": routing.apiVersion });

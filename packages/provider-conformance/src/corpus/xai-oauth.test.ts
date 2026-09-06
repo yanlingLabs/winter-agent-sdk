@@ -19,6 +19,7 @@ import { FAST_RETRY, descriptor, testContext } from "../../../provider-runtime/s
 import { createMemoryCredentialStore } from "../../../provider-runtime/src/credentials/memory.ts";
 import { winterUserAgent } from "../../../provider-runtime/src/identity.ts";
 import { startOpenAiChatFake } from "../fakes/openai-chat.ts";
+import { crossVendorViolationsIn } from "./cross-vendor-headers.ts";
 import { chatCorpusScenarios } from "./openai-scenarios.ts";
 import { SCENARIO, bodyOf, turnRequests } from "./openai.ts";
 import { WinterProviderResolutionError } from "@yanlinglabs/winter-provider-runtime";
@@ -71,6 +72,17 @@ describe("winter.xai-oauth on the wire (WS-13b §4)", () => {
       // WS-13 §5, on the generation path as well as the login path.
       for (const banned of DERIVED_XAI.vendorOnlyHeaders) expect(turn.headers[banned]).toBeUndefined();
       expect(turn.headers["user-agent"]).not.toMatch(/grok/i);
+
+      // ...AND THE CROSS-VENDOR SWEEP (fix wave R-FW-1 / review I-1). The denylist above is xAI's
+      // OWN six names, which is why it could not see `chatgpt-account-id: <the xAI OIDC sub>` — a
+      // header named for a DIFFERENT vendor, stamped by the plain chat adapter this row composes for
+      // any oauth material carrying an `accountId`, and passed rather than dropped because this
+      // adapter is single-provider and its endpoint is therefore GENERATED. The sweep is keyed on
+      // the row's own identity, so it sees every other vendor's namespace at once.
+      expect(crossVendorViolationsIn({ providerId: "xai-oauth", adapterId: XAI_OAUTH_ADAPTER_ID }, turns)).toEqual([]);
+      // Named explicitly beside the general rule: this is the exact header the review found, and a
+      // reader of this file should not have to derive it from the prefix table.
+      expect(turn.headers["chatgpt-account-id"]).toBeUndefined();
     } finally {
       await fake.close();
     }
@@ -103,7 +115,7 @@ describe("winter.xai-oauth on the wire (WS-13b §4)", () => {
     expect(ROW_API).not.toContain("api.x.ai");
   });
 
-  test("R6b-7: the reversion SWITCH works on this row — `providers[\"xai-oauth\"].enabled: false` refuses it at resolution, by name", () => {
+  test("R6b-7: the reversion SWITCH works on this row — the per-provider enabled setting refuses it at resolution, by name", () => {
     // T1 pinned the mechanism generically (on `ollama-local`); this pins it on the row the ruling was
     // WRITTEN for. The audit's condition is "ship it behind a setting that can be turned off without
     // a release" — that is a claim about THIS provider id, and nothing else asserted it.
@@ -126,6 +138,20 @@ describe("winter.xai-oauth on the wire (WS-13b §4)", () => {
     expect(err).toBeInstanceOf(WinterProviderResolutionError);
     expect((err as WinterProviderResolutionError).code).toBe("provider-disabled");
     expect((err as Error).message).toContain("providers.xai-oauth.enabled");
+  });
+
+  test("the repository NOTICE pins the SAME commit the derived constants were read at", async () => {
+    // Fix-wave carry (release gates). `NOTICE` is the attribution a release ships and
+    // `DERIVED_XAI_COMMIT` is what the capture actually read; nothing tied the two, so a re-capture
+    // at a newer commit could update the constants and leave the NOTICE attesting to an artifact
+    // Winter no longer derives from — which is the one claim in that file a reader relies on.
+    const notice = await Bun.file(new URL("../../../../NOTICE", import.meta.url)).text();
+    expect(notice).toContain(DERIVED_XAI_COMMIT);
+    // ...and the repository it names, so the commit is not a bare hex string a reader cannot resolve.
+    expect(notice).toContain("xai-org/grok-build");
+    // The row carries it too, which is what lets a reviewer reading the CATALOG alone reach the
+    // artifact. Three statements of one fact, all machine-checked against each other.
+    expect(ROW.admission.citation).toContain(DERIVED_XAI_COMMIT);
   });
 
   test("the adapter this build ships is registered under the id the row names", () => {

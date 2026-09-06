@@ -131,14 +131,17 @@ function reversionConditionMessage(): string {
  * `expired_token`, …) … naming ONLY the code — never the `error_description`"). It does not put the
  * code in a field, so this reads it back off that documented shape.
  *
- * That makes this a text dependency on a spine file, which is worth naming: `adapters/oauth/**` is
- * on the phase's no-touch list, so adding a `providerCode` there was not this lane's to make. The
- * dependency is not silent, though — the reversion tests drive the REAL helper through a fake that
- * answers `access_denied`, so if that message shape ever changes, they fail rather than quietly
- * misclassifying. A `providerCode` on that throw would be strictly better and is recommended.
+ * THE FIELD FIRST, the text as a fallback. `runDeviceCodeFlow` now sets `providerCode` on BOTH of
+ * its throws (fix-wave carry, Lane O review Important 3) — which is what makes a refusal at the
+ * DEVICE step detectable at all: that throw used to report only an HTTP status, so an unregistered
+ * client the vendor rejects at the door looked like a plain 4xx and never reached the reversion
+ * arm. The regex stays as the fallback for a `ProviderRequestError` raised by an older path, and
+ * because the message shape is the helper's documented contract; the reversion tests drive the REAL
+ * helper through a fake that answers `access_denied`, so both readings are exercised.
  */
 function deviceFlowErrorCode(err: unknown): string | undefined {
   if (!(err instanceof ProviderRequestError)) return undefined;
+  if (err.providerCode !== undefined) return err.providerCode;
   const match = /^the device login failed: ([a-z_]+)$/.exec(err.message);
   return match?.[1];
 }
@@ -209,7 +212,7 @@ export async function startXaiLogin(store: CredentialStore, options: XaiLoginOpt
 /** How close to expiry the stored token may get before a turn refreshes it. One minute — long enough to cover a slow turn setup, short enough not to churn. */
 const REFRESH_WINDOW_MS = 60_000;
 
-export interface XaiAdapterOptions extends Omit<ChatTurnOptions, "generatedBaseUrl"> {
+export interface XaiAdapterOptions extends Omit<ChatTurnOptions, "generatedBaseUrl" | "organization" | "project"> {
   generatedBaseUrl?: string;
   /** Overridden by a fixture; production uses `XAI_OAUTH.tokenUrl`. */
   tokenUrl?: string;
@@ -254,7 +257,17 @@ async function refreshIfExpiring(ctx: ProviderContext, tokenUrl: string): Promis
  * row its own drifting version of streaming, tool-call mapping and error classification for no gain.
  */
 export function createXaiOauthAdapter(options: XaiAdapterOptions): ProviderAdapter {
-  const base = createChatCompletionsAdapter({ ...options, generatedBaseUrl: options.generatedBaseUrl ?? XAI_OAUTH.apiBaseUrl });
+  // BELT AND BRACES ON THE CROSS-VENDOR HEADER RULE (fix-wave R-FW-1 / whole-branch review I-1).
+  //
+  // The composed adapter's only remaining route to an `openai-*` request header is
+  // `privilegedHeaders(options)`, which reads `organization`/`project` and emits
+  // `OpenAI-Organization`/`OpenAI-Project`. Those are OpenAI's product headers and mean nothing at
+  // xAI's proxy, so this row must not be able to send them however it is constructed. `Omit`ing them
+  // from `XaiAdapterOptions` is the compile-time half; deleting them off the forwarded object is the
+  // runtime half, because a caller reaching this function through a widened structural type (or from
+  // untyped JS) would otherwise still get them through the spread.
+  const { organization: _organization, project: _project, ...forwarded } = options as XaiAdapterOptions & { organization?: string; project?: string };
+  const base = createChatCompletionsAdapter({ ...forwarded, generatedBaseUrl: options.generatedBaseUrl ?? XAI_OAUTH.apiBaseUrl });
   const tokenUrl = options.tokenUrl ?? XAI_OAUTH.tokenUrl;
   return {
     ...base,
