@@ -341,16 +341,41 @@ const INTEGRATION_ROWS: ConformanceRow[] = [
     spec: "WS-13 §13 (integration)",
     bullet: "the compiled artifact resolves the catalog (the bundled-JSON-module claim, proved on the real binary)",
     status: "new",
-    citations: [{ file: `${SCRIPTS}/verify-protocol-compiled.ts`, testName: "the catalog (${catalog.catalogVersion}: ${catalog.providers.length} providers" }],
-    note: "A gate rather than a `bun test` case, because the subject IS the compiled binary: a path read that resolves in dev and to nothing inside `$bunfs` is the exact class this leg exists to disprove, and no dev-mode test can see it.",
+    // Review round 1 (I): the citation is the THROW, not the success line. A `console.log` is what a
+    // gate prints when it passes; the assertion is what makes it a gate, and deleting the throw would
+    // leave the log — and the old citation — intact.
+    citations: [
+      { file: `${SCRIPTS}/verify-protocol-compiled.ts`, testName: "the bundled catalog is not the one that was built in" },
+      { file: `${SCRIPTS}/verify-protocol-compiled.ts`, testName: "an unknown model did NOT refuse — a binary with an empty catalog would also refuse the known one" },
+    ],
+    note: "A gate rather than a `bun test` case, because the subject IS the compiled binary: a path read that resolves in dev and to nothing inside `$bunfs` is the exact class this leg exists to disprove, and no dev-mode test can see it. Both citations are THROWS -- the catalog-version mismatch and the negative control.",
   },
   {
     id: "WS13-I9",
     spec: "WS-13 §13 (integration)",
     bullet: "a capability change can never grant filesystem / shell / network / permission behaviour -- the harness stays the enforcement boundary",
     status: "covered",
-    citations: [{ file: `${RUNTIME}/provider/session-provider.test.ts`, testName: "a bare model with no provider is a TYPED refusal, not a silent fallback to an echo provider" }],
+    citations: [{ file: `${RUNTIME}/provider/session-provider.test.ts`, testName: "a bare model with no provider CONSTRUCTS, reports no identity, and refuses on the first generation" }],
     note: "The provider layer's whole reach is which endpoint is called with which body; every tool call still goes through the permission evaluator, which no catalog row can address. The cited row pins the narrower claim this phase actually changed: selection refuses rather than substituting.",
+  },
+  {
+    id: "WS13-I11",
+    spec: "WS-13 §13 (integration)",
+    bullet: "R6-9's refusal is surfaced in T1's CAPTURED failure shape (init, then the pinned result, then a throw)",
+    status: "new",
+    citations: [
+      { file: `${SDK}/transport-equivalence.test.ts`, testName: "p6-resolution-failure: an unresolvable model still emits `system/init`" },
+      { file: "../goldens/p6-resolution-failure.trace.json", testName: "api_error_status" },
+    ],
+    note: "Review round 1, Critical A. Refusing at construction produced ZERO frames and a `CLIConnectionError`; the pinned shape has an init frame in it. The golden is what makes the ruling durable -- a regression back to refusing at construction cannot match a two-frame trace.",
+  },
+  {
+    id: "WS13-I12",
+    spec: "WS-13 §13 (integration)",
+    bullet: "identity across a model SWITCH on resume (R6-I's boundary rule, the non-control-request half)",
+    status: "new",
+    citations: [{ file: `${SDK}/transport-equivalence.test.ts`, testName: "p6-resume-identity (switch half): a DIFFERENT model on resume applies at the first boundary" }],
+    note: "Review round 1, D. The boundary rule was implemented for the `set_model` control request only; a host that resumes with a different `Options.model` changed the session's model with no frame saying so.",
   },
   {
     id: "WS13-I10",
