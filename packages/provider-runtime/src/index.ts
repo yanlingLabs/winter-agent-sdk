@@ -65,10 +65,10 @@ export type { DiscoveryCache } from "./discovery.ts";
 // `adapters/index.ts` additionally carries `createShippedAdapters`, the ONE construction site for
 // every adapter this build ships — see its header for why the descriptor lookup lives there.
 export * from "./adapters/index.ts";
-// P6 fix wave (Ruling E-2): the continuity module BY NAME rather than by star, so that the retired
-// switch coordinator -- kept in the sub-barrel as a test helper for the conformance corpus -- is not
-// on the production surface. The engine owns the switch point; a production caller reaching for a
-// coordinator by package name is the duplicate the ruling retired.
+// P6 fix wave (Ruling E-2): the continuity module BY NAME rather than by star -- the export list IS
+// the production surface, and the retired switch coordinator (deleted) is not on it. The engine owns
+// the switch point; a future "coordinator" reaching the barrel by star-export would be the duplicate
+// the ruling retired.
 export {
   RECOVERED_REASONING_TAG,
   MIN_DECORATION_BODY_CHARS,
