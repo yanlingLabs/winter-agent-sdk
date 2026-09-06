@@ -7,8 +7,8 @@ The committed catalog is the merge of two layers, performed by `scripts/provider
 
 | Layer | Source | Owner | Present |
 | --- | --- | --- | --- |
-| upstream | `generated/upstream-layer.json`, extracted from the pinned OmniRoute tree by `scripts/provider-source-sync.ts` | the extractor | **yes** — 114 providers, 550 models |
-| overlay | `overlay/providers.json` + `overlay/models.json`, hand-authored and reviewed | Winter | yes — 34 providers, 55 models |
+| upstream | `generated/upstream-layer.json`, extracted from the pinned OmniRoute tree by `scripts/provider-source-sync.ts` | the extractor | **yes** — 106 providers, 540 models |
+| overlay | `overlay/providers.json` + `overlay/models.json`, hand-authored and reviewed | Winter | yes — 63 providers, 63 models |
 
 **The overlay always wins.** WS-13 §7: live discovery and upstream extraction never silently
 overwrite `official-doc`/`live-probe` overlay entries, so a conflicting upstream row is dropped in
@@ -106,6 +106,18 @@ vendor's terms of service. Its own text says so, in every row. Two consequences 
 * the audit's own `unknown` disposition is a **different and stronger** statement, and it excludes:
   an id whose decisive document was looked for and not found is in `blocked`, not admitted at this
   tier. `codebuddy-cn` is the worked example.
+
+**A citation is checked for LIVENESS, not just for shape (round-1 finding I-3).** Every
+`pinned-upstream` citation host was swept with a HEAD, a GET where the host refuses HEAD, and one
+retry on 5xx. Eight rows cited something that is not a document and were moved to `blocked` with the
+sweep result on the row: three NXDOMAIN (`llamagate`, `monsterapi`, `tokenrouter`), two HTTP 404
+(`sumopod`, `token-kiosk`), one persistent 530 (`x5lab`), one HTTP 200 whose entire body is the
+string "New API" (`chenzk` — a bare gateway shell), and one permanent redirect to a *different
+company's* product page after an acquisition (`predibase` → `rubrik.com`). Two more were repaired
+rather than dropped: `cerebras` cited a page that 301s to a chat product and now cites its Inference
+API docs, and `zai-anthropic` cited the mainland product site although the lane had fetched z.ai's
+own Claude-client doc. A citation is a row's entire evidence, so a citation that resolves to nothing
+is a row with no evidence.
 
 **What decision (a) asked for and why it could not be met as written.** The P6.5 plan asked lane X2
 to upgrade five `spec:WS-13 §1` citations (`deepseek`, `openrouter`, `azure-openai`, `bedrock`,
@@ -228,7 +240,7 @@ Recomputed at every run into `generated/denominator.json`. At this pin:
 | noauth | 13 | blocked |
 | oauth | 25 | blocked |
 | web-cookie | 35 | blocked |
-| apikey | 233 | candidate pool — 115 allowlisted, 118 rejected `not-allowlisted`, 0 named individually in `blocked` |
+| apikey | 233 | candidate pool — 107 allowlisted, 126 rejected `not-allowlisted`, 0 named individually in `blocked` |
 | local | 14 | Winter-owned (12 chat backends; `comfyui`/`sdwebui` excluded as image systems) |
 | search | 14 | blocked |
 | audio | 12 | blocked |
@@ -264,27 +276,27 @@ unfalsifiable against its own source.
 
 ## What was excluded, and why
 
-`generated/rejections.json` carries all **723** rows. The counts below are generated from the ledger
+`generated/rejections.json` carries all **722** rows. The counts below are generated from the ledger
 and pinned by `catalog-integrity.test.ts` → *"PROVENANCE.md's exclusion table matches the ledger,
 row for row"*, because a hand-typed count is the line that goes stale first and nobody notices.
 
 | Class | Rows | What it means |
 | --- | ---: | --- |
-| `not-allowlisted` | 118 | an api-key provider upstream lists that Winter has not curated (WS-13 §1: presence is never inclusion). P6.5 cut this from 225 by admitting 107 and naming the rest INDIVIDUALLY in `blocked` with a ruling each — a generic class row is not an exclusion anyone can review |
+| `not-allowlisted` | 126 | an api-key provider upstream lists that Winter has not curated (WS-13 §1: presence is never inclusion). P6.5 cut this from 225 by admitting 107 and naming the rest INDIVIDUALLY in `blocked` with a ruling each — a generic class row is not an exclusion anyone can review |
 | `executable-value` | 116 | functions, arrow functions, `Object.freeze(...)`, `new`, and other calls |
 | `unresolved-reference` | 82 | an identifier whose declaration is outside the allowlist or was itself rejected — including the **three** models whose `unsupportedParams` could not be read (see below) |
 | `dynamic-expression` | 51 | template literals with substitutions, property access, computed keys |
 | `category-web-cookie` | 35 | browser-session transports, excluded categorically |
 | `identity-header` | 30 | vendor client-identity headers — never imported |
 | `category-oauth` | 25 | generic OAuth import is rejected; Winter's OAuth providers are Winter-owned rows |
-| `unsupported-shape` | 49 | opaque runtime config, request defaults, malformed rows, and (P6.5) a `modelsUrl`/`responsesBaseUrl` carrying a query string or userinfo — R6-11 drops it rather than trimming, because a URL minus its query is a different request (`fireworks` is the one at this pin) |
+| `unsupported-shape` | 47 | opaque runtime config, request defaults, malformed rows, and (P6.5) a `modelsUrl`/`responsesBaseUrl` carrying a query string or userinfo — R6-11 drops it rather than trimming, because a URL minus its query is a different request (`fireworks` is the one at this pin) |
 | `credential-material` | 19 | OAuth client ids/secrets and literal anonymous API keys |
 | `category-local-live-discovery` | 14 | local backends (Winter-owned, live-discovery only) plus the two image systems |
 | `category-search` | 14 | not LLM providers |
 | `category-no-auth` | 13 | reject by default (WS-13 §1) |
 | `category-audio` | 12 | not worker-model providers |
 | `unrepresentable-protocol` | 11 | Vertex's `targetFormat: "claude"` rows — see below |
-| **`reviewed-normalization`** | 121 | **NOT an exclusion.** A row that DID ship, carrying a reviewed, recorded deviation from the pinned tree: the OpenRouter wire id, the Bedrock executor's protocol, the OpenAI and Vertex adapter overrides, the four Vertex partner statuses, and **one endpoint strip per admitted row** (WS-13b §2 — see "Endpoints diverge from upstream on purpose"), which is now the bulk of the class |
+| **`reviewed-normalization`** | 114 | **NOT an exclusion.** A row that DID ship, carrying a reviewed, recorded deviation from the pinned tree: the OpenRouter wire id, the Bedrock executor's protocol, the OpenAI and Vertex adapter overrides, the four Vertex partner statuses, and **one endpoint strip per admitted row** (WS-13b §2 — see "Endpoints diverge from upstream on purpose"), which is now the bulk of the class |
 | `url-builder` | 4 | executable URL builders (WS-13 §13's security floor names this exactly) |
 | `category-cloud-agent` | 3 | remote agent products |
 | `category-upstream-proxy` | 2 | no proxy-of-proxy layer |
@@ -400,6 +412,42 @@ row is unpriced too, by construction: the extractor cannot emit `pricing` at all
 R6-14 sets it only after the safety corpus passes live. The catalog's answer to "may this model
 serve as the permission classifier?" therefore remains **no** — Manual fallback, the fail-safe
 direction, never a silent weakening.
+
+## The helper-built entries: probed, then admitted or refused individually (round-1 finding I-1)
+
+74 upstream `apikey` ids are built by a **helper call** (`buildOpenAiCompatibleRegistryEntry(...)`)
+or a shared constant, which the literal extractor refuses to evaluate — so the pinned tree yields no
+endpoint, auth, executor or model list for them, only the product-catalog identity. Round 1 ruled
+that carrying all 74 on one generic reason was not good enough: an id is admitted from the **vendor's
+own documentation** where one exists, and refused **individually, with the probe result**, where it
+does not.
+
+| outcome | n | what it means |
+| --- | ---: | --- |
+| **admitted** as reviewed overlay rows | **29** | a vendor documentation page was fetched and read on 2026-09-06 **and** it names a fixed API root |
+| refused — out of **scope** | 14 | image, video, embedding, reranking or web-extraction services. Not held pending a document: more evidence would not admit them |
+| refused — **probed, not confirmed** | 20 | a docs page was reached but states no base URL, or the host answered 403/530, or the endpoint is ambiguous by design |
+| refused — probed and unconfirmed (enterprise) | 9 | per-deployment or per-tenant hosts, or no docs page reached |
+| refused — endpoint is a **template** | 2 | `azure-ai`, `oci`: `https://<resource>…` / `https://…<region>…` is not an endpoint |
+
+For the 14 admitted from the probe list, **two independent sources agree on the base**: the vendor's
+own documentation page, and the base upstream's product catalog states in its `apiHint` at the pin.
+Neither was taken on the other's word, and no row was authored from the pinned tree alone —
+hand-transcribing a helper call's arguments is precisely the extraction the literal extractor
+refuses, so it is not a substitute for the document.
+
+**Three traps, recorded because each looks like an admission until it is read.** `openference-api` is
+not a provider: its documentation *is* the shipped `openference` row's documentation, on the same
+base — one vendor wearing two ids. `hcnsec` and `helixmind` declare `format: "claude"` with a
+`/v1/chat/completions` base, so the entry contradicts its own dialect and neither value can be
+trusted; the vendor's doc is the tie-breaker and neither has a readable one. `muse-code` has no
+vendor doc at all — its recorded `website` is a GitHub repository URL.
+
+**Ruling carried from round 1:** `azure-ai` and `oci` have real documented public APIs and are
+refused only because `defaultEndpoints.api` is immutable generated data (R6-11) and a per-tenant
+template is not an endpoint. A **dedicated host-supplied-endpoint adapter shape**, of the kind
+`azure-openai` already has, is a **spine item for the fix wave**; both ids are admissible the day it
+exists.
 
 ## Dialect siblings, and the two keyless rows (P6.5, R6b-5 / WS-13b §8.4)
 

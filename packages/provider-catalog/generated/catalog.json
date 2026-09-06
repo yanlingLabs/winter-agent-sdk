@@ -194,6 +194,40 @@
       }
     },
     {
+      "id": "aion",
+      "displayName": "Aion Labs",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.aionlabs.ai/v1"
+      },
+      "modelDiscovery": "openai-models",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "admission is a FETCHED vendor document, but no live gate case has run against this endpoint and no terms page was read for it"
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://www.aionlabs.ai/docs — the vendor's own documentation, retrieved 2026-09-06: the docs page's own text names the OpenAI-compatible base `https://api.aionlabs.ai/v1`."
+      },
+      "scope": "llm"
+    },
+    {
       "id": "alibaba",
       "displayName": "Alibaba Cloud Model Studio",
       "protocols": [
@@ -342,6 +376,40 @@
       "scope": "llm"
     },
     {
+      "id": "anyapi",
+      "displayName": "AnyAPI AI",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.anyapi.ai/v1"
+      },
+      "modelDiscovery": "openai-models",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "admission is a FETCHED vendor document, but no live gate case has run against this endpoint and no terms page was read for it"
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://docs.anyapi.ai — the vendor's own documentation, retrieved 2026-09-06: the docs home documents `https://api.anyapi.ai/v1/chat/completions` with `Authorization: Bearer $ANYAPI_KEY`."
+      },
+      "scope": "llm"
+    },
+    {
       "id": "api-airforce",
       "displayName": "Api.airforce",
       "protocols": [
@@ -378,6 +446,41 @@
         "basis": "api-key",
         "citation": "https://api.airforce — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.airforce/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
       }
+    },
+    {
+      "id": "arcee-ai",
+      "displayName": "Arcee AI",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.arcee.ai/api/v1"
+      },
+      "modelDiscovery": "openai-models",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "admission is a FETCHED vendor document, but no live gate case has run against this endpoint and no terms page was read for it",
+          "NO backend RegistryEntry exists at the pin — the vendor's document is the ONLY source for this row, with no pinned-tree value to cross-check it against"
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://docs.arcee.ai/ — the vendor's own documentation, retrieved 2026-09-06: the docs home documents base `https://api.arcee.ai/api/v1` with `Authorization: Bearer api-key`."
+      },
+      "scope": "llm"
     },
     {
       "id": "azure-openai",
@@ -815,14 +918,14 @@
       "risk": {
         "class": "review-required",
         "reasons": [
-          "WS-13b §1 admission evidence is PINNED-UPSTREAM, not a fetched vendor document: the citation names the vendor site OmniRoute records, and the api-key path is attested by the pinned RegistryEntry rather than by a doc this lane read"
+          "WS-13b §1 admission evidence is a FETCHED vendor document, but no live gate case has run against this endpoint"
         ]
       },
       "scope": "llm",
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://inference.cerebras.ai — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.cerebras.ai/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://inference-docs.cerebras.ai/ — Cerebras's own Inference API documentation, retrieved 2026-09-06: OpenAI-compatible base `https://api.cerebras.ai/v1` with `Authorization: Bearer ${CEREBRAS_API_KEY}`, \"mostly compatible with OpenAI's client libraries\". The base matches the API root the mapper derives from the pinned RegistryEntry, so two independent sources agree. (Round-1 finding I-3: the previous citation, `https://inference.cerebras.ai`, 301s to `chat.cerebras.ai` — a chat product, not documentation.)"
       }
     },
     {
@@ -861,44 +964,6 @@
       "admission": {
         "basis": "api-key",
         "citation": "https://hyper.charm.land — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://hyper.charm.land/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
-      }
-    },
-    {
-      "id": "chenzk",
-      "displayName": "Chenzk API",
-      "protocols": [
-        "openai-chat-completions"
-      ],
-      "authKinds": [
-        "api-key"
-      ],
-      "defaultEndpoints": {
-        "api": "https://chenzk.top/v1",
-        "models": "https://chenzk.top/v1/models"
-      },
-      "modelDiscovery": "openai-models",
-      "liveCatalogAuthority": "unknown",
-      "adapterId": "winter.openai-chat-completions",
-      "family": "openai",
-      "upstream": {
-        "project": "OmniRoute",
-        "commit": "5458026c216f77a3da68ea49152dc33470cfe2cb",
-        "sourcePaths": [
-          "open-sse/config/providers/registry/chenzk/index.ts",
-          "src/shared/constants/providers/apikey/index.ts"
-        ]
-      },
-      "risk": {
-        "class": "review-required",
-        "reasons": [
-          "WS-13b §1 admission evidence is PINNED-UPSTREAM, not a fetched vendor document: the citation names the vendor site OmniRoute records, and the api-key path is attested by the pinned RegistryEntry rather than by a doc this lane read"
-        ]
-      },
-      "scope": "llm",
-      "pricingBasis": "token",
-      "admission": {
-        "basis": "api-key",
-        "citation": "https://chenzk.top — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://chenzk.top/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
       }
     },
     {
@@ -1377,6 +1442,40 @@
       }
     },
     {
+      "id": "digitalocean",
+      "displayName": "DigitalOcean Gradient (Serverless Inference)",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://inference.do-ai.run/v1"
+      },
+      "modelDiscovery": "openai-models",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "admission is a FETCHED vendor document, but no live gate case has run against this endpoint and no terms page was read for it"
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://docs.digitalocean.com/products/gradient-ai-platform/reference/api/serverless-inference/ — the vendor's own documentation, retrieved 2026-09-06: DigitalOcean documents Serverless Inference on its own base `https://inference.do-ai.run`, independent of the control-plane API, with chat at `https://inference.do-ai.run/v1/chat/completions` and an inference key as a Bearer token."
+      },
+      "scope": "llm"
+    },
+    {
       "id": "dit",
       "displayName": "DIT.ai",
       "protocols": [
@@ -1484,6 +1583,74 @@
       }
     },
     {
+      "id": "dxnt",
+      "displayName": "DXNT",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://www.dxnt.com/v1"
+      },
+      "modelDiscovery": "openai-models",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "admission is a FETCHED vendor document, but no live gate case has run against this endpoint and no terms page was read for it"
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://www.dxnt.com/docs — the vendor's own documentation, retrieved 2026-09-06: the vendor's own API documentation names the OpenAI-compatible base `https://www.dxnt.com/v1`."
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "electronhub",
+      "displayName": "ElectronHub",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.electronhub.ai/v1"
+      },
+      "modelDiscovery": "openai-models",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "admission is a FETCHED vendor document, but no live gate case has run against this endpoint and no terms page was read for it"
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://docs.electronhub.ai/api-reference/chat/completions — the vendor's own documentation, retrieved 2026-09-06: the chat-completions reference documents base `https://api.electronhub.ai/v1` with `Authorization: Bearer YOUR_API_KEY` (keys prefixed `ek-`)."
+      },
+      "scope": "llm"
+    },
+    {
       "id": "factory",
       "displayName": "Factory",
       "protocols": [
@@ -1519,6 +1686,40 @@
         "basis": "api-key",
         "citation": "https://factory.ai — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.factory.ai/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
       }
+    },
+    {
+      "id": "fastrouter",
+      "displayName": "FastRouter",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.fastrouter.ai/api/v1"
+      },
+      "modelDiscovery": "openai-models",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "admission is a FETCHED vendor document, but no live gate case has run against this endpoint and no terms page was read for it"
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://docs.fastrouter.ai/ — the vendor's own documentation, retrieved 2026-09-06: the docs home documents base `https://api.fastrouter.ai/api/v1` as a drop-in OpenAI SDK replacement."
+      },
+      "scope": "llm"
     },
     {
       "id": "featherless-ai",
@@ -1631,6 +1832,41 @@
         "basis": "api-key",
         "citation": "https://freeaiapikey.com — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.freeaiapikey.com/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
       }
+    },
+    {
+      "id": "freeinference",
+      "displayName": "FreeInference",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://freeinference.org/v1"
+      },
+      "modelDiscovery": "openai-models",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "admission is a FETCHED vendor document, but no live gate case has run against this endpoint and no terms page was read for it",
+          "the vendor's terms permit prompt/response LOGGING and publication of anonymized research data — a host must surface that before any session touches this provider (upstream's own `apiHint` says the same)"
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://freeinference.org — the vendor's own documentation, retrieved 2026-09-06: the site's own documentation names `https://freeinference.org/v1/chat/completions`."
+      },
+      "scope": "llm"
     },
     {
       "id": "freemodel-dev",
@@ -1854,6 +2090,40 @@
         "basis": "api-key",
         "citation": "https://groq.com — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.groq.com/openai/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
       }
+    },
+    {
+      "id": "helyxai",
+      "displayName": "Helyx AI",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://helyxai.space/v1"
+      },
+      "modelDiscovery": "openai-models",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "admission is a FETCHED vendor document, but no live gate case has run against this endpoint and no terms page was read for it"
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://helyxai.space — the vendor's own documentation, retrieved 2026-09-06: the vendor's own site documents `https://helyxai.space/v1/chat/completions`."
+      },
+      "scope": "llm"
     },
     {
       "id": "heroku",
@@ -2368,6 +2638,40 @@
       }
     },
     {
+      "id": "literouter",
+      "displayName": "LiteRouter",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.literouter.com/v1"
+      },
+      "modelDiscovery": "openai-models",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "admission is a FETCHED vendor document, but no live gate case has run against this endpoint and no terms page was read for it"
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://docs.literouter.com — the vendor's own documentation, retrieved 2026-09-06: the docs introduction names the OpenAI-compatible base `https://api.literouter.com/v1`."
+      },
+      "scope": "llm"
+    },
+    {
       "id": "llama-cpp",
       "displayName": "llama.cpp server (local)",
       "protocols": [
@@ -2432,8 +2736,8 @@
       "scope": "llm"
     },
     {
-      "id": "llamagate",
-      "displayName": "LlamaGate",
+      "id": "llm-kiwi",
+      "displayName": "llm.kiwi",
       "protocols": [
         "openai-chat-completions"
       ],
@@ -2441,32 +2745,29 @@
         "api-key"
       ],
       "defaultEndpoints": {
-        "api": "https://llamagate.ai/v1"
+        "api": "https://api.llm.kiwi/v1"
       },
-      "modelDiscovery": "none",
+      "modelDiscovery": "openai-models",
       "liveCatalogAuthority": "unknown",
       "adapterId": "winter.openai-chat-completions",
       "family": "openai",
       "upstream": {
-        "project": "OmniRoute",
-        "commit": "5458026c216f77a3da68ea49152dc33470cfe2cb",
-        "sourcePaths": [
-          "open-sse/config/providers/registry/llamagate/index.ts",
-          "src/shared/constants/providers/apikey/index.ts"
-        ]
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
       },
       "risk": {
         "class": "review-required",
         "reasons": [
-          "WS-13b §1 admission evidence is PINNED-UPSTREAM, not a fetched vendor document: the citation names the vendor site OmniRoute records, and the api-key path is attested by the pinned RegistryEntry rather than by a doc this lane read"
+          "admission is a FETCHED vendor document, but no live gate case has run against this endpoint and no terms page was read for it"
         ]
       },
-      "scope": "llm",
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://llamagate.ai — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://llamagate.ai/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
-      }
+        "citation": "https://docs.llm.kiwi/ — the vendor's own documentation, retrieved 2026-09-06: the docs home documents base `https://api.llm.kiwi/v1` with `Authorization: Bearer YOUR_API_KEY` (keys prefixed `sk_kiwi_`)."
+      },
+      "scope": "llm"
     },
     {
       "id": "llm7",
@@ -2507,6 +2808,41 @@
       }
     },
     {
+      "id": "llmgateway",
+      "displayName": "LLM Gateway",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.llmgateway.io/v1"
+      },
+      "modelDiscovery": "openai-models",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "admission is a FETCHED vendor document, but no live gate case has run against this endpoint and no terms page was read for it",
+          "the fetched docs home names the base URL but does not spell the auth HEADER; the adapter's OpenAI-family bearer default is an assumption until the live gate runs"
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://docs.llmgateway.io/ — the vendor's own documentation, retrieved 2026-09-06: the docs home documents base `https://api.llmgateway.io/v1` (or a self-hosted instance) authenticated with an LLM Gateway API key."
+      },
+      "scope": "llm"
+    },
+    {
       "id": "lm-studio",
       "displayName": "LM Studio (local)",
       "protocols": [
@@ -2535,6 +2871,41 @@
       "admission": {
         "basis": "local",
         "citation": "local"
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "logfare",
+      "displayName": "Logfare",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://logfare.ai/v1"
+      },
+      "modelDiscovery": "openai-models",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "admission is a FETCHED vendor document, but no live gate case has run against this endpoint and no terms page was read for it",
+          "the vendor logs prompts, completions and metadata for research (opt-out at logfare.ai/consent) — a host must surface that before use"
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://logfare.ai/docs — the vendor's own documentation, retrieved 2026-09-06: the API docs name base `https://logfare.ai/v1` and enumerate `/chat/completions`, `/messages`, `/models`."
       },
       "scope": "llm"
     },
@@ -2576,6 +2947,40 @@
       }
     },
     {
+      "id": "meganova-ai",
+      "displayName": "MegaNova AI",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.meganova.ai/v1"
+      },
+      "modelDiscovery": "openai-models",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "admission is a FETCHED vendor document, but no live gate case has run against this endpoint and no terms page was read for it"
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://docs.meganova.ai — the vendor's own documentation, retrieved 2026-09-06: the docs overview names the OpenAI-compatible base `https://api.meganova.ai/v1`."
+      },
+      "scope": "llm"
+    },
+    {
       "id": "meta-llama",
       "displayName": "Meta Llama API",
       "protocols": [
@@ -2614,7 +3019,7 @@
     },
     {
       "id": "minimax",
-      "displayName": "Minimax Coding",
+      "displayName": "MiniMax (OpenAI dialect)",
       "protocols": [
         "openai-chat-completions"
       ],
@@ -2824,6 +3229,41 @@
       "scope": "llm"
     },
     {
+      "id": "mnn-ai",
+      "displayName": "MNN AI",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.mnnai.ru/v1"
+      },
+      "modelDiscovery": "openai-models",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "admission is a FETCHED vendor document, but no live gate case has run against this endpoint and no terms page was read for it",
+          "jurisdiction: a Russian-domiciled endpoint; upstream's own `apiHint` says to review privacy and regional data-transfer requirements before use"
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://mnnai.ru/docs — the vendor's own documentation, retrieved 2026-09-06: the docs name the primary OpenAI-compatible base `https://api.mnnai.ru/v1` with `/chat/completions` and `/models`."
+      },
+      "scope": "llm"
+    },
+    {
       "id": "modal",
       "displayName": "Modal",
       "protocols": [
@@ -2899,43 +3339,6 @@
       }
     },
     {
-      "id": "monsterapi",
-      "displayName": "MonsterAPI",
-      "protocols": [
-        "openai-chat-completions"
-      ],
-      "authKinds": [
-        "api-key"
-      ],
-      "defaultEndpoints": {
-        "api": "https://api.monsterapi.ai/v1"
-      },
-      "modelDiscovery": "none",
-      "liveCatalogAuthority": "unknown",
-      "adapterId": "winter.openai-chat-completions",
-      "family": "openai",
-      "upstream": {
-        "project": "OmniRoute",
-        "commit": "5458026c216f77a3da68ea49152dc33470cfe2cb",
-        "sourcePaths": [
-          "open-sse/config/providers/registry/monsterapi/index.ts",
-          "src/shared/constants/providers/apikey/index.ts"
-        ]
-      },
-      "risk": {
-        "class": "review-required",
-        "reasons": [
-          "WS-13b §1 admission evidence is PINNED-UPSTREAM, not a fetched vendor document: the citation names the vendor site OmniRoute records, and the api-key path is attested by the pinned RegistryEntry rather than by a doc this lane read"
-        ]
-      },
-      "scope": "llm",
-      "pricingBasis": "token",
-      "admission": {
-        "basis": "api-key",
-        "citation": "https://monsterapi.ai — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.monsterapi.ai/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
-      }
-    },
-    {
       "id": "moonshot",
       "displayName": "Moonshot AI (Kimi platform)",
       "protocols": [
@@ -3007,6 +3410,40 @@
       }
     },
     {
+      "id": "naga-ai",
+      "displayName": "NagaAI",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.naga.ac/v1"
+      },
+      "modelDiscovery": "openai-models",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "admission is a FETCHED vendor document, but no live gate case has run against this endpoint and no terms page was read for it"
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://docs.naga.ac/api-reference/overview — the vendor's own documentation, retrieved 2026-09-06: the API-reference overview documents `baseURL` `https://api.naga.ac/v1` with `Authorization: Bearer YOUR_API_KEY` (an `x-api-key` alternative is offered for inference endpoints)."
+      },
+      "scope": "llm"
+    },
+    {
       "id": "nanogpt",
       "displayName": "NanoGPT",
       "protocols": [
@@ -3044,6 +3481,40 @@
         "basis": "api-key",
         "citation": "https://nano-gpt.com — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://nano-gpt.com/api/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
       }
+    },
+    {
+      "id": "nebius",
+      "displayName": "Nebius Token Factory",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.tokenfactory.nebius.com/v1"
+      },
+      "modelDiscovery": "openai-models",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "admission is a FETCHED vendor document, but no live gate case has run against this endpoint and no terms page was read for it"
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://docs.tokenfactory.nebius.com/ — the vendor's own documentation, retrieved 2026-09-06: the docs home documents base `https://api.tokenfactory.nebius.com/v1/` with `Authorization: Bearer $NEBIUS_API_KEY`."
+      },
+      "scope": "llm"
     },
     {
       "id": "nlpcloud",
@@ -3268,6 +3739,41 @@
         "basis": "api-key",
         "citation": "https://build.nvidia.com — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://integrate.api.nvidia.com/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
       }
+    },
+    {
+      "id": "ofoxai",
+      "displayName": "OfoxAI",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.ofox.ai/v1"
+      },
+      "modelDiscovery": "openai-models",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "admission is a FETCHED vendor document, but no live gate case has run against this endpoint and no terms page was read for it",
+          "the same vendor documents an Anthropic-dialect base (`https://api.ofox.ai/anthropic/v1/messages`) and a Gemini one; only the OpenAI dialect ships, so an `ofoxai-anthropic` sibling is available work (R6b-5) and not a defect in this row"
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://docs.ofox.ai — the vendor's own documentation, retrieved 2026-09-06: the docs name the OpenAI-compatible base `https://api.ofox.ai/v1` and `/chat/completions`."
+      },
+      "scope": "llm"
     },
     {
       "id": "ollama-cloud",
@@ -3665,8 +4171,8 @@
       }
     },
     {
-      "id": "predibase",
-      "displayName": "Predibase",
+      "id": "poolside",
+      "displayName": "Poolside",
       "protocols": [
         "openai-chat-completions"
       ],
@@ -3674,32 +4180,29 @@
         "api-key"
       ],
       "defaultEndpoints": {
-        "api": "https://serving.app.predibase.com/v1"
+        "api": "https://inference.poolside.ai/v1"
       },
-      "modelDiscovery": "none",
+      "modelDiscovery": "openai-models",
       "liveCatalogAuthority": "unknown",
       "adapterId": "winter.openai-chat-completions",
       "family": "openai",
       "upstream": {
-        "project": "OmniRoute",
-        "commit": "5458026c216f77a3da68ea49152dc33470cfe2cb",
-        "sourcePaths": [
-          "open-sse/config/providers/registry/predibase/index.ts",
-          "src/shared/constants/providers/apikey/index.ts"
-        ]
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
       },
       "risk": {
         "class": "review-required",
         "reasons": [
-          "WS-13b §1 admission evidence is PINNED-UPSTREAM, not a fetched vendor document: the citation names the vendor site OmniRoute records, and the api-key path is attested by the pinned RegistryEntry rather than by a doc this lane read"
+          "admission is a FETCHED vendor document, but no live gate case has run against this endpoint and no terms page was read for it"
         ]
       },
-      "scope": "llm",
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://predibase.com — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://serving.app.predibase.com/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
-      }
+        "citation": "https://docs.poolside.ai/api/overview — the vendor's own documentation, retrieved 2026-09-06: the API overview documents base `https://inference.poolside.ai/v1` with `Authorization: Bearer <api-key>`."
+      },
+      "scope": "llm"
     },
     {
       "id": "publicai",
@@ -3927,6 +4430,74 @@
       }
     },
     {
+      "id": "requesty",
+      "displayName": "Requesty Router",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://router.requesty.ai/v1"
+      },
+      "modelDiscovery": "openai-models",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "admission is a FETCHED vendor document, but no live gate case has run against this endpoint and no terms page was read for it"
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://docs.requesty.ai/quickstart — the vendor's own documentation, retrieved 2026-09-06: the quickstart documents base `https://router.requesty.ai/v1` with `Authorization: Bearer $REQUESTY_API_KEY`, as a drop-in OpenAI replacement."
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "routeway",
+      "displayName": "Routeway",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.routeway.ai/v1"
+      },
+      "modelDiscovery": "openai-models",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "admission is a FETCHED vendor document, but no live gate case has run against this endpoint and no terms page was read for it"
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://docs.routeway.ai/ — the vendor's own documentation, retrieved 2026-09-06: the docs home documents base `https://api.routeway.ai/v1` with `Authorization: Bearer $ROUTEWAY_API_KEY`."
+      },
+      "scope": "llm"
+    },
+    {
       "id": "sambanova",
       "displayName": "SambaNova",
       "protocols": [
@@ -4038,6 +4609,40 @@
       }
     },
     {
+      "id": "sealion",
+      "displayName": "SEA-LION",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.sea-lion.ai/v1"
+      },
+      "modelDiscovery": "openai-models",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "admission is a FETCHED vendor document, but no live gate case has run against this endpoint and no terms page was read for it"
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://docs.sea-lion.ai/guides/inferencing/api/ — the vendor's own documentation, retrieved 2026-09-06: the inferencing guide documents base `https://api.sea-lion.ai/v1` with `Authorization: Bearer YOUR_API_KEY`."
+      },
+      "scope": "llm"
+    },
+    {
       "id": "sensenova",
       "displayName": "SenseNova",
       "protocols": [
@@ -4073,6 +4678,40 @@
         "basis": "api-key",
         "citation": "https://platform.sensenova.cn — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://token.sensenova.cn/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
       }
+    },
+    {
+      "id": "siliconflow",
+      "displayName": "SiliconFlow",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.siliconflow.com/v1"
+      },
+      "modelDiscovery": "openai-models",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "admission is a FETCHED vendor document, but no live gate case has run against this endpoint and no terms page was read for it"
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://docs.siliconflow.com/en/api-reference/chat-completions/chat-completions — the vendor's own documentation, retrieved 2026-09-06: the API reference's own OpenAPI `servers` block is `url: https://api.siliconflow.com/v1` with path `/chat/completions`, `bearerAuth: type: http, scheme: bearer`."
+      },
+      "scope": "llm"
     },
     {
       "id": "sparkdesk",
@@ -4112,6 +4751,40 @@
       }
     },
     {
+      "id": "speka",
+      "displayName": "Speka AI",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://speka.me/v1"
+      },
+      "modelDiscovery": "openai-models",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "admission is a FETCHED vendor document, but no live gate case has run against this endpoint and no terms page was read for it"
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://speka.me/docs — the vendor's own documentation, retrieved 2026-09-06: the API reference is titled \"OpenAI-Compatible AI API Docs\" and names base `https://speka.me/v1`."
+      },
+      "scope": "llm"
+    },
+    {
       "id": "stepfun",
       "displayName": "StepFun",
       "protocols": [
@@ -4146,44 +4819,6 @@
       "admission": {
         "basis": "api-key",
         "citation": "https://stepfun.com — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.stepfun.com/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
-      }
-    },
-    {
-      "id": "sumopod",
-      "displayName": "SumoPod",
-      "protocols": [
-        "openai-chat-completions"
-      ],
-      "authKinds": [
-        "api-key"
-      ],
-      "defaultEndpoints": {
-        "api": "https://ai.sumopod.com/v1",
-        "models": "https://ai.sumopod.com/v1/models"
-      },
-      "modelDiscovery": "openai-models",
-      "liveCatalogAuthority": "unknown",
-      "adapterId": "winter.openai-chat-completions",
-      "family": "openai",
-      "upstream": {
-        "project": "OmniRoute",
-        "commit": "5458026c216f77a3da68ea49152dc33470cfe2cb",
-        "sourcePaths": [
-          "open-sse/config/providers/registry/sumopod/index.ts",
-          "src/shared/constants/providers/apikey/index.ts"
-        ]
-      },
-      "risk": {
-        "class": "review-required",
-        "reasons": [
-          "WS-13b §1 admission evidence is PINNED-UPSTREAM, not a fetched vendor document: the citation names the vendor site OmniRoute records, and the api-key path is attested by the pinned RegistryEntry rather than by a doc this lane read"
-        ]
-      },
-      "scope": "llm",
-      "pricingBasis": "token",
-      "admission": {
-        "basis": "api-key",
-        "citation": "https://ai.sumopod.com — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://ai.sumopod.com/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
       }
     },
     {
@@ -4300,8 +4935,8 @@
       }
     },
     {
-      "id": "token-kiosk",
-      "displayName": "Token Kiosk",
+      "id": "together",
+      "displayName": "Together AI",
       "protocols": [
         "openai-chat-completions"
       ],
@@ -4309,71 +4944,29 @@
         "api-key"
       ],
       "defaultEndpoints": {
-        "api": "https://agent-router.gaib.ai/v1",
-        "models": "https://agent-router.gaib.ai/v1/models"
+        "api": "https://api.together.ai/v1"
       },
       "modelDiscovery": "openai-models",
       "liveCatalogAuthority": "unknown",
       "adapterId": "winter.openai-chat-completions",
       "family": "openai",
       "upstream": {
-        "project": "OmniRoute",
-        "commit": "5458026c216f77a3da68ea49152dc33470cfe2cb",
-        "sourcePaths": [
-          "open-sse/config/providers/registry/token-kiosk/index.ts",
-          "src/shared/constants/providers/apikey/index.ts"
-        ]
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
       },
       "risk": {
         "class": "review-required",
         "reasons": [
-          "WS-13b §1 admission evidence is PINNED-UPSTREAM, not a fetched vendor document: the citation names the vendor site OmniRoute records, and the api-key path is attested by the pinned RegistryEntry rather than by a doc this lane read"
+          "admission is a FETCHED vendor document, but no live gate case has run against this endpoint and no terms page was read for it"
         ]
       },
-      "scope": "llm",
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://agent-router.gaib.ai — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://agent-router.gaib.ai/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
-      }
-    },
-    {
-      "id": "tokenrouter",
-      "displayName": "TokenRouter",
-      "protocols": [
-        "openai-chat-completions"
-      ],
-      "authKinds": [
-        "api-key"
-      ],
-      "defaultEndpoints": {
-        "api": "https://api.tokenrouter.com/v1",
-        "models": "https://api.tokenrouter.com/v1/models"
+        "citation": "https://docs.together.ai/docs/chat-overview — the vendor's own documentation, retrieved 2026-09-06: the chat-overview page documents `https://api.together.ai/v1/chat/completions` with `Authorization: Bearer $TOGETHER_API_KEY`."
       },
-      "modelDiscovery": "openai-models",
-      "liveCatalogAuthority": "unknown",
-      "adapterId": "winter.openai-chat-completions",
-      "family": "openai",
-      "upstream": {
-        "project": "OmniRoute",
-        "commit": "5458026c216f77a3da68ea49152dc33470cfe2cb",
-        "sourcePaths": [
-          "open-sse/config/providers/registry/tokenrouter/index.ts",
-          "src/shared/constants/providers/apikey/index.ts"
-        ]
-      },
-      "risk": {
-        "class": "review-required",
-        "reasons": [
-          "WS-13b §1 admission evidence is PINNED-UPSTREAM, not a fetched vendor document: the citation names the vendor site OmniRoute records, and the api-key path is attested by the pinned RegistryEntry rather than by a doc this lane read"
-        ]
-      },
-      "scope": "llm",
-      "pricingBasis": "token",
-      "admission": {
-        "basis": "api-key",
-        "citation": "https://tokenrouter.com — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.tokenrouter.com/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
-      }
+      "scope": "llm"
     },
     {
       "id": "triton",
@@ -4695,6 +5288,40 @@
       "scope": "llm"
     },
     {
+      "id": "void-ai",
+      "displayName": "VoidAI",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.voidai.app/v1"
+      },
+      "modelDiscovery": "openai-models",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "admission is a FETCHED vendor document, but no live gate case has run against this endpoint and no terms page was read for it"
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://docs.voidai.app/ — the vendor's own documentation, retrieved 2026-09-06: the docs home documents base `https://api.voidai.app/v1` with `Authorization: Bearer sk-voidai-…`."
+      },
+      "scope": "llm"
+    },
+    {
       "id": "volcengine",
       "displayName": "Volcengine",
       "protocols": [
@@ -4917,44 +5544,6 @@
       }
     },
     {
-      "id": "x5lab",
-      "displayName": "X5Lab",
-      "protocols": [
-        "openai-chat-completions"
-      ],
-      "authKinds": [
-        "api-key"
-      ],
-      "defaultEndpoints": {
-        "api": "https://api.x5lab.dev/v1",
-        "models": "https://api.x5lab.dev/v1/models"
-      },
-      "modelDiscovery": "openai-models",
-      "liveCatalogAuthority": "unknown",
-      "adapterId": "winter.openai-chat-completions",
-      "family": "openai",
-      "upstream": {
-        "project": "OmniRoute",
-        "commit": "5458026c216f77a3da68ea49152dc33470cfe2cb",
-        "sourcePaths": [
-          "open-sse/config/providers/registry/x5lab/index.ts",
-          "src/shared/constants/providers/apikey/index.ts"
-        ]
-      },
-      "risk": {
-        "class": "review-required",
-        "reasons": [
-          "WS-13b §1 admission evidence is PINNED-UPSTREAM, not a fetched vendor document: the citation names the vendor site OmniRoute records, and the api-key path is attested by the pinned RegistryEntry rather than by a doc this lane read"
-        ]
-      },
-      "scope": "llm",
-      "pricingBasis": "token",
-      "admission": {
-        "basis": "api-key",
-        "citation": "https://x5lab.dev — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.x5lab.dev/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
-      }
-    },
-    {
       "id": "xai",
       "displayName": "xAI (Grok)",
       "protocols": [
@@ -5059,6 +5648,40 @@
       }
     },
     {
+      "id": "yolo-auto",
+      "displayName": "Yolo-Auto",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://yolo-auto.com/v1"
+      },
+      "modelDiscovery": "openai-models",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "admission is a FETCHED vendor document, but no live gate case has run against this endpoint and no terms page was read for it"
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://yolo-auto.com/docs — the vendor's own documentation, retrieved 2026-09-06: the docs are titled \"OpenAI-Compatible API Docs\" and name base `https://yolo-auto.com/v1` with `/models`."
+      },
+      "scope": "llm"
+    },
+    {
       "id": "zai",
       "displayName": "Z.AI GLM Coding (OpenAI dialect)",
       "protocols": [
@@ -5119,14 +5742,14 @@
       "risk": {
         "class": "review-required",
         "reasons": [
-          "WS-13b §1 admission evidence is PINNED-UPSTREAM, not a fetched vendor document: the citation names the vendor site OmniRoute records, and the api-key path is attested by the pinned RegistryEntry rather than by a doc this lane read"
+          "WS-13b §1 admission evidence is a FETCHED vendor document, but no live gate case has run against this endpoint; the OpenAI-dialect sibling `zai` is a reviewed overlay row from the same vendor's docs"
         ]
       },
       "scope": "llm",
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://open.bigmodel.cn — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", Anthropic Messages at https://api.z.ai/api/anthropic. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://docs.z.ai/devpack/tool/claude — z.ai's own GLM Coding Plan documentation for Anthropic-compatible clients, retrieved 2026-09-06: `ANTHROPIC_BASE_URL` is `\"https://api.z.ai/api/anthropic\"`, which is byte-identical to the API root the mapper derives from this id's pinned RegistryEntry (`format: \"claude\"` at `https://api.z.ai/api/anthropic/v1/messages`). Two independent sources, one value. (Round-1 finding I-4: the previous citation named `open.bigmodel.cn`, the mainland product site, and sat in the pinned-upstream tier although the lane had fetched this document.)"
       }
     },
     {
@@ -5166,6 +5789,74 @@
         "basis": "api-key",
         "citation": "https://zenmux.ai — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://zenmux.ai/api/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
       }
+    },
+    {
+      "id": "zerolimitai",
+      "displayName": "ZeroLimitAI",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://www.zerolimitai.com/api/v1"
+      },
+      "modelDiscovery": "openai-models",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "admission is a FETCHED vendor document, but no live gate case has run against this endpoint and no terms page was read for it"
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://www.zerolimitai.com — the vendor's own documentation, retrieved 2026-09-06: the vendor's own site names the OpenAI-compatible base `https://www.zerolimitai.com/api/v1`."
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "zylo-api",
+      "displayName": "Zylo AI",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.zyloai.net/v1"
+      },
+      "modelDiscovery": "openai-models",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "admission is a FETCHED vendor document, but no live gate case has run against this endpoint and no terms page was read for it"
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://zyloai.net/docs — the vendor's own documentation, retrieved 2026-09-06: the docs name the OpenAI-compatible base `https://api.zyloai.net/v1`."
+      },
+      "scope": "llm"
     }
   ],
   "models": [
@@ -8431,6 +9122,50 @@
         "sourceRef": "open-sse/config/providers/registry/api-airforce/index.ts#x-ai/grok-3",
         "observedAt": "2026-09-05T00:00:00Z",
         "confidence": "unknown"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "arcee-ai/trinity-large-thinking",
+      "providerId": "arcee-ai",
+      "upstreamId": "trinity-large-thinking",
+      "displayName": "trinity-large-thinking",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://docs.arcee.ai/ — the model is listed as a chat model; no vision/audio/video capability is stated",
+        "confidence": "inferred",
+        "observedAt": "2026-09-06T00:00:00Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-06T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "official-doc",
+        "sourceRef": "https://docs.arcee.ai/ — the page names this model id but states no tool-calling capability. ABSENT fails CLOSED: `native` is what makes a model agent-eligible (WS-13 §8.1) and is never inferred from silence",
+        "confidence": "unknown",
+        "observedAt": "2026-09-06T00:00:00Z"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "official-doc",
+        "sourceRef": "https://docs.arcee.ai/ — no tool-calling capability stated; fails closed",
+        "confidence": "unknown",
+        "observedAt": "2026-09-06T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "candidate"
@@ -21471,94 +22206,6 @@
       "status": "candidate"
     },
     {
-      "key": "monsterapi/meta-llama/Llama-3.3-70B-Instruct",
-      "providerId": "monsterapi",
-      "upstreamId": "meta-llama/Llama-3.3-70B-Instruct",
-      "displayName": "Llama 3.3 70B Instruct",
-      "aliases": [],
-      "endpoints": [
-        "chat"
-      ],
-      "inputModalities": {
-        "value": [
-          "text"
-        ],
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/monsterapi/index.ts#meta-llama/Llama-3.3-70B-Instruct",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
-      },
-      "outputModalities": {
-        "value": [
-          "text"
-        ],
-        "source": "winter-default",
-        "sourceRef": "open-sse/config/providers/registry/monsterapi/index.ts#meta-llama/Llama-3.3-70B-Instruct — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
-      },
-      "toolCalling": {
-        "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/monsterapi/index.ts#meta-llama/Llama-3.3-70B-Instruct",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
-      },
-      "nativeTools": {
-        "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/monsterapi/index.ts#meta-llama/Llama-3.3-70B-Instruct",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
-      },
-      "unsupportedParameters": [],
-      "status": "candidate"
-    },
-    {
-      "key": "monsterapi/meta-llama/Meta-Llama-3.1-8B-Instruct",
-      "providerId": "monsterapi",
-      "upstreamId": "meta-llama/Meta-Llama-3.1-8B-Instruct",
-      "displayName": "Llama 3.1 8B Instruct",
-      "aliases": [],
-      "endpoints": [
-        "chat"
-      ],
-      "inputModalities": {
-        "value": [
-          "text"
-        ],
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/monsterapi/index.ts#meta-llama/Meta-Llama-3.1-8B-Instruct",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
-      },
-      "outputModalities": {
-        "value": [
-          "text"
-        ],
-        "source": "winter-default",
-        "sourceRef": "open-sse/config/providers/registry/monsterapi/index.ts#meta-llama/Meta-Llama-3.1-8B-Instruct — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
-      },
-      "toolCalling": {
-        "value": "none",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/monsterapi/index.ts#meta-llama/Meta-Llama-3.1-8B-Instruct",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
-      },
-      "nativeTools": {
-        "value": false,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/monsterapi/index.ts#meta-llama/Meta-Llama-3.1-8B-Instruct",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
-      },
-      "unsupportedParameters": [],
-      "status": "candidate"
-    },
-    {
       "key": "moonshot/kimi-k2.6",
       "providerId": "moonshot",
       "upstreamId": "kimi-k2.6",
@@ -21834,6 +22481,50 @@
         },
         "efforts": [],
         "continuation": "none"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "nebius/deepseek-ai/DeepSeek-R1-0528",
+      "providerId": "nebius",
+      "upstreamId": "deepseek-ai/DeepSeek-R1-0528",
+      "displayName": "deepseek-ai/DeepSeek-R1-0528",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://docs.tokenfactory.nebius.com/ — the model is listed as a chat model; no vision/audio/video capability is stated",
+        "confidence": "inferred",
+        "observedAt": "2026-09-06T00:00:00Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-06T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "official-doc",
+        "sourceRef": "https://docs.tokenfactory.nebius.com/ — the page names this model id but states no tool-calling capability. ABSENT fails CLOSED: `native` is what makes a model agent-eligible (WS-13 §8.1) and is never inferred from silence",
+        "confidence": "unknown",
+        "observedAt": "2026-09-06T00:00:00Z"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "official-doc",
+        "sourceRef": "https://docs.tokenfactory.nebius.com/ — no tool-calling capability stated; fails closed",
+        "confidence": "unknown",
+        "observedAt": "2026-09-06T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "candidate"
@@ -28557,6 +29248,50 @@
       "status": "candidate"
     },
     {
+      "key": "poolside/poolside/laguna-s-2.1",
+      "providerId": "poolside",
+      "upstreamId": "poolside/laguna-s-2.1",
+      "displayName": "poolside/laguna-s-2.1",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://docs.poolside.ai/api/overview — the model is listed as a chat model; no vision/audio/video capability is stated",
+        "confidence": "inferred",
+        "observedAt": "2026-09-06T00:00:00Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-06T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "official-doc",
+        "sourceRef": "https://docs.poolside.ai/api/overview — the page names this model id but states no tool-calling capability. ABSENT fails CLOSED: `native` is what makes a model agent-eligible (WS-13 §8.1) and is never inferred from silence",
+        "confidence": "unknown",
+        "observedAt": "2026-09-06T00:00:00Z"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "official-doc",
+        "sourceRef": "https://docs.poolside.ai/api/overview — no tool-calling capability stated; fails closed",
+        "confidence": "unknown",
+        "observedAt": "2026-09-06T00:00:00Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
       "key": "qianfan/ernie-5.0-thinking-latest",
       "providerId": "qianfan",
       "upstreamId": "ernie-5.0-thinking-latest",
@@ -30310,6 +31045,50 @@
       "status": "candidate"
     },
     {
+      "key": "sealion/aisingapore/Qwen-SEA-LION-v4.5-27B-IT",
+      "providerId": "sealion",
+      "upstreamId": "aisingapore/Qwen-SEA-LION-v4.5-27B-IT",
+      "displayName": "aisingapore/Qwen-SEA-LION-v4.5-27B-IT",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://docs.sea-lion.ai/guides/inferencing/api/ — the model is listed as a chat model; no vision/audio/video capability is stated",
+        "confidence": "inferred",
+        "observedAt": "2026-09-06T00:00:00Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-06T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "official-doc",
+        "sourceRef": "https://docs.sea-lion.ai/guides/inferencing/api/ — the page names this model id but states no tool-calling capability. ABSENT fails CLOSED: `native` is what makes a model agent-eligible (WS-13 §8.1) and is never inferred from silence",
+        "confidence": "unknown",
+        "observedAt": "2026-09-06T00:00:00Z"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "official-doc",
+        "sourceRef": "https://docs.sea-lion.ai/guides/inferencing/api/ — no tool-calling capability stated; fails closed",
+        "confidence": "unknown",
+        "observedAt": "2026-09-06T00:00:00Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
       "key": "sensenova/deepseek-v4-flash",
       "providerId": "sensenova",
       "upstreamId": "deepseek-v4-flash",
@@ -30508,6 +31287,94 @@
         "sourceRef": "open-sse/config/providers/registry/sensenova/index.ts#sensenova-6.7-flash-lite",
         "observedAt": "2026-09-05T00:00:00Z",
         "confidence": "inferred"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "siliconflow/Qwen/Qwen3-32B",
+      "providerId": "siliconflow",
+      "upstreamId": "Qwen/Qwen3-32B",
+      "displayName": "Qwen/Qwen3-32B",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://docs.siliconflow.com/en/api-reference/chat-completions/chat-completions — the model is listed as a chat model; no vision/audio/video capability is stated",
+        "confidence": "inferred",
+        "observedAt": "2026-09-06T00:00:00Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-06T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "official-doc",
+        "sourceRef": "https://docs.siliconflow.com/en/api-reference/chat-completions/chat-completions — the page names this model id but states no tool-calling capability. ABSENT fails CLOSED: `native` is what makes a model agent-eligible (WS-13 §8.1) and is never inferred from silence",
+        "confidence": "unknown",
+        "observedAt": "2026-09-06T00:00:00Z"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "official-doc",
+        "sourceRef": "https://docs.siliconflow.com/en/api-reference/chat-completions/chat-completions — no tool-calling capability stated; fails closed",
+        "confidence": "unknown",
+        "observedAt": "2026-09-06T00:00:00Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "siliconflow/deepseek-ai/DeepSeek-V3",
+      "providerId": "siliconflow",
+      "upstreamId": "deepseek-ai/DeepSeek-V3",
+      "displayName": "deepseek-ai/DeepSeek-V3",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://docs.siliconflow.com/en/api-reference/chat-completions/chat-completions — the model is listed as a chat model; no vision/audio/video capability is stated",
+        "confidence": "inferred",
+        "observedAt": "2026-09-06T00:00:00Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-06T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "official-doc",
+        "sourceRef": "https://docs.siliconflow.com/en/api-reference/chat-completions/chat-completions — the page names this model id but states no tool-calling capability. ABSENT fails CLOSED: `native` is what makes a model agent-eligible (WS-13 §8.1) and is never inferred from silence",
+        "confidence": "unknown",
+        "observedAt": "2026-09-06T00:00:00Z"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "official-doc",
+        "sourceRef": "https://docs.siliconflow.com/en/api-reference/chat-completions/chat-completions — no tool-calling capability stated; fails closed",
+        "confidence": "unknown",
+        "observedAt": "2026-09-06T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "candidate"
@@ -31919,443 +32786,89 @@
       "status": "candidate"
     },
     {
-      "key": "token-kiosk/claude-3-5-sonnet",
-      "providerId": "token-kiosk",
-      "upstreamId": "claude-3-5-sonnet",
-      "displayName": "Claude 3.5 Sonnet (Token Kiosk)",
+      "key": "together/Qwen/Qwen3.5-9B",
+      "providerId": "together",
+      "upstreamId": "Qwen/Qwen3.5-9B",
+      "displayName": "Qwen/Qwen3.5-9B",
       "aliases": [],
       "endpoints": [
         "chat"
       ],
-      "contextWindow": {
-        "value": 200000,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/token-kiosk/index.ts#claude-3-5-sonnet",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
-      },
       "inputModalities": {
         "value": [
-          "text",
-          "image"
+          "text"
         ],
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/token-kiosk/index.ts#claude-3-5-sonnet",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "source": "official-doc",
+        "sourceRef": "https://docs.together.ai/docs/chat-overview — the model is listed as a chat model; no vision/audio/video capability is stated",
+        "confidence": "inferred",
+        "observedAt": "2026-09-06T00:00:00Z"
       },
       "outputModalities": {
         "value": [
           "text"
         ],
         "source": "winter-default",
-        "sourceRef": "open-sse/config/providers/registry/token-kiosk/index.ts#claude-3-5-sonnet — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-06T00:00:00Z"
       },
       "toolCalling": {
-        "value": "native",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/token-kiosk/index.ts#claude-3-5-sonnet",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "value": "none",
+        "source": "official-doc",
+        "sourceRef": "https://docs.together.ai/docs/chat-overview — the page names this model id but states no tool-calling capability. ABSENT fails CLOSED: `native` is what makes a model agent-eligible (WS-13 §8.1) and is never inferred from silence",
+        "confidence": "unknown",
+        "observedAt": "2026-09-06T00:00:00Z"
       },
       "nativeTools": {
-        "value": true,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/token-kiosk/index.ts#claude-3-5-sonnet",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "value": false,
+        "source": "official-doc",
+        "sourceRef": "https://docs.together.ai/docs/chat-overview — no tool-calling capability stated; fails closed",
+        "confidence": "unknown",
+        "observedAt": "2026-09-06T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "candidate"
     },
     {
-      "key": "token-kiosk/deepseek-r1",
-      "providerId": "token-kiosk",
-      "upstreamId": "deepseek-r1",
-      "displayName": "DeepSeek R1 (Token Kiosk)",
+      "key": "together/meta-llama/Llama-3.3-70B-Instruct-Turbo",
+      "providerId": "together",
+      "upstreamId": "meta-llama/Llama-3.3-70B-Instruct-Turbo",
+      "displayName": "meta-llama/Llama-3.3-70B-Instruct-Turbo",
       "aliases": [],
       "endpoints": [
         "chat"
       ],
-      "contextWindow": {
-        "value": 64000,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/token-kiosk/index.ts#deepseek-r1",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
-      },
       "inputModalities": {
         "value": [
           "text"
         ],
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/token-kiosk/index.ts#deepseek-r1",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "source": "official-doc",
+        "sourceRef": "https://docs.together.ai/docs/chat-overview — the model is listed as a chat model; no vision/audio/video capability is stated",
+        "confidence": "inferred",
+        "observedAt": "2026-09-06T00:00:00Z"
       },
       "outputModalities": {
         "value": [
           "text"
         ],
         "source": "winter-default",
-        "sourceRef": "open-sse/config/providers/registry/token-kiosk/index.ts#deepseek-r1 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-06T00:00:00Z"
       },
       "toolCalling": {
-        "value": "native",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/token-kiosk/index.ts#deepseek-r1",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "value": "none",
+        "source": "official-doc",
+        "sourceRef": "https://docs.together.ai/docs/chat-overview — the page names this model id but states no tool-calling capability. ABSENT fails CLOSED: `native` is what makes a model agent-eligible (WS-13 §8.1) and is never inferred from silence",
+        "confidence": "unknown",
+        "observedAt": "2026-09-06T00:00:00Z"
       },
       "nativeTools": {
-        "value": true,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/token-kiosk/index.ts#deepseek-r1",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
-      },
-      "reasoning": {
-        "supported": {
-          "value": true,
-          "source": "upstream-static",
-          "sourceRef": "open-sse/config/providers/registry/token-kiosk/index.ts#deepseek-r1",
-          "observedAt": "2026-09-05T00:00:00Z",
-          "confidence": "inferred"
-        },
-        "efforts": [],
-        "continuation": "none"
-      },
-      "unsupportedParameters": [],
-      "status": "candidate"
-    },
-    {
-      "key": "token-kiosk/deepseek-v3",
-      "providerId": "token-kiosk",
-      "upstreamId": "deepseek-v3",
-      "displayName": "DeepSeek V3 (Token Kiosk)",
-      "aliases": [],
-      "endpoints": [
-        "chat"
-      ],
-      "contextWindow": {
-        "value": 64000,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/token-kiosk/index.ts#deepseek-v3",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
-      },
-      "inputModalities": {
-        "value": [
-          "text"
-        ],
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/token-kiosk/index.ts#deepseek-v3",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
-      },
-      "outputModalities": {
-        "value": [
-          "text"
-        ],
-        "source": "winter-default",
-        "sourceRef": "open-sse/config/providers/registry/token-kiosk/index.ts#deepseek-v3 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
-      },
-      "toolCalling": {
-        "value": "native",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/token-kiosk/index.ts#deepseek-v3",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
-      },
-      "nativeTools": {
-        "value": true,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/token-kiosk/index.ts#deepseek-v3",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
-      },
-      "unsupportedParameters": [],
-      "status": "candidate"
-    },
-    {
-      "key": "token-kiosk/kimi-k1.5",
-      "providerId": "token-kiosk",
-      "upstreamId": "kimi-k1.5",
-      "displayName": "Kimi K1.5 (Token Kiosk)",
-      "aliases": [],
-      "endpoints": [
-        "chat"
-      ],
-      "contextWindow": {
-        "value": 128000,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/token-kiosk/index.ts#kimi-k1.5",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
-      },
-      "inputModalities": {
-        "value": [
-          "text"
-        ],
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/token-kiosk/index.ts#kimi-k1.5",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
-      },
-      "outputModalities": {
-        "value": [
-          "text"
-        ],
-        "source": "winter-default",
-        "sourceRef": "open-sse/config/providers/registry/token-kiosk/index.ts#kimi-k1.5 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
-      },
-      "toolCalling": {
-        "value": "native",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/token-kiosk/index.ts#kimi-k1.5",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
-      },
-      "nativeTools": {
-        "value": true,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/token-kiosk/index.ts#kimi-k1.5",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
-      },
-      "unsupportedParameters": [],
-      "status": "candidate"
-    },
-    {
-      "key": "token-kiosk/minimax-m6",
-      "providerId": "token-kiosk",
-      "upstreamId": "minimax-m6",
-      "displayName": "MiniMax M6 (Token Kiosk)",
-      "aliases": [],
-      "endpoints": [
-        "chat"
-      ],
-      "contextWindow": {
-        "value": 128000,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/token-kiosk/index.ts#minimax-m6",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
-      },
-      "inputModalities": {
-        "value": [
-          "text"
-        ],
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/token-kiosk/index.ts#minimax-m6",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
-      },
-      "outputModalities": {
-        "value": [
-          "text"
-        ],
-        "source": "winter-default",
-        "sourceRef": "open-sse/config/providers/registry/token-kiosk/index.ts#minimax-m6 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
-      },
-      "toolCalling": {
-        "value": "native",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/token-kiosk/index.ts#minimax-m6",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
-      },
-      "nativeTools": {
-        "value": true,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/token-kiosk/index.ts#minimax-m6",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
-      },
-      "unsupportedParameters": [],
-      "status": "candidate"
-    },
-    {
-      "key": "tokenrouter/deepseek-v4-flash",
-      "providerId": "tokenrouter",
-      "upstreamId": "deepseek-v4-flash",
-      "displayName": "DeepSeek V4 Flash (TokenRouter)",
-      "aliases": [],
-      "endpoints": [
-        "chat"
-      ],
-      "contextWindow": {
-        "value": 163840,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/tokenrouter/index.ts#deepseek-v4-flash",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
-      },
-      "inputModalities": {
-        "value": [
-          "text"
-        ],
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/tokenrouter/index.ts#deepseek-v4-flash",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
-      },
-      "outputModalities": {
-        "value": [
-          "text"
-        ],
-        "source": "winter-default",
-        "sourceRef": "open-sse/config/providers/registry/tokenrouter/index.ts#deepseek-v4-flash — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
-      },
-      "toolCalling": {
-        "value": "native",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/tokenrouter/index.ts#deepseek-v4-flash",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
-      },
-      "nativeTools": {
-        "value": true,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/tokenrouter/index.ts#deepseek-v4-flash",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
-      },
-      "reasoning": {
-        "supported": {
-          "value": true,
-          "source": "upstream-static",
-          "sourceRef": "open-sse/config/providers/registry/tokenrouter/index.ts#deepseek-v4-flash",
-          "observedAt": "2026-09-05T00:00:00Z",
-          "confidence": "inferred"
-        },
-        "efforts": [],
-        "continuation": "none"
-      },
-      "unsupportedParameters": [],
-      "status": "candidate"
-    },
-    {
-      "key": "tokenrouter/deepseek-v4-pro",
-      "providerId": "tokenrouter",
-      "upstreamId": "deepseek-v4-pro",
-      "displayName": "DeepSeek V4 Pro (TokenRouter)",
-      "aliases": [],
-      "endpoints": [
-        "chat"
-      ],
-      "contextWindow": {
-        "value": 163840,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/tokenrouter/index.ts#deepseek-v4-pro",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
-      },
-      "inputModalities": {
-        "value": [
-          "text"
-        ],
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/tokenrouter/index.ts#deepseek-v4-pro",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
-      },
-      "outputModalities": {
-        "value": [
-          "text"
-        ],
-        "source": "winter-default",
-        "sourceRef": "open-sse/config/providers/registry/tokenrouter/index.ts#deepseek-v4-pro — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
-      },
-      "toolCalling": {
-        "value": "native",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/tokenrouter/index.ts#deepseek-v4-pro",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
-      },
-      "nativeTools": {
-        "value": true,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/tokenrouter/index.ts#deepseek-v4-pro",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
-      },
-      "reasoning": {
-        "supported": {
-          "value": true,
-          "source": "upstream-static",
-          "sourceRef": "open-sse/config/providers/registry/tokenrouter/index.ts#deepseek-v4-pro",
-          "observedAt": "2026-09-05T00:00:00Z",
-          "confidence": "inferred"
-        },
-        "efforts": [],
-        "continuation": "none"
-      },
-      "unsupportedParameters": [],
-      "status": "candidate"
-    },
-    {
-      "key": "tokenrouter/minimax-3",
-      "providerId": "tokenrouter",
-      "upstreamId": "minimax-3",
-      "displayName": "MiniMax 3 (free, TokenRouter)",
-      "aliases": [],
-      "endpoints": [
-        "chat"
-      ],
-      "contextWindow": {
-        "value": 128000,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/tokenrouter/index.ts#minimax-3",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
-      },
-      "inputModalities": {
-        "value": [
-          "text"
-        ],
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/tokenrouter/index.ts#minimax-3",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
-      },
-      "outputModalities": {
-        "value": [
-          "text"
-        ],
-        "source": "winter-default",
-        "sourceRef": "open-sse/config/providers/registry/tokenrouter/index.ts#minimax-3 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "unknown"
-      },
-      "toolCalling": {
-        "value": "native",
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/tokenrouter/index.ts#minimax-3",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
-      },
-      "nativeTools": {
-        "value": true,
-        "source": "upstream-static",
-        "sourceRef": "open-sse/config/providers/registry/tokenrouter/index.ts#minimax-3",
-        "observedAt": "2026-09-05T00:00:00Z",
-        "confidence": "inferred"
+        "value": false,
+        "source": "official-doc",
+        "sourceRef": "https://docs.together.ai/docs/chat-overview — no tool-calling capability stated; fails closed",
+        "confidence": "unknown",
+        "observedAt": "2026-09-06T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "candidate"

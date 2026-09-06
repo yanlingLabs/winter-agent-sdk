@@ -39,6 +39,41 @@
       "scope": "llm"
     },
     {
+      "id": "aion",
+      "displayName": "Aion Labs",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "$comment": "WS-13b §2 / round-1 finding I-1 (reviewer list (e) — this lane's own documentation probe). A WINTER-OWNED row: its upstream entry is built by a HELPER CALL the literal extractor refuses to evaluate, so NOTHING here was transcribed from the pinned tree's executable half — the endpoint and dialect are the VENDOR'S OWN documented values, fetched and read on 2026-09-06 (the `fetched-document` citation tier, PROVENANCE.md). TWO INDEPENDENT SOURCES agree on the base: the vendor's documentation page, and the base upstream's product catalog states in its own `apiHint` at the pin. Neither was taken on the other's word. `defaultEndpoints.api` is the API ROOT: the adapter appends `/chat/completions` itself (WS-13b §2).",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.aionlabs.ai/v1"
+      },
+      "modelDiscovery": "openai-models",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "admission is a FETCHED vendor document, but no live gate case has run against this endpoint and no terms page was read for it"
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://www.aionlabs.ai/docs — the vendor's own documentation, retrieved 2026-09-06: the docs page's own text names the OpenAI-compatible base `https://api.aionlabs.ai/v1`."
+      },
+      "scope": "llm"
+    },
+    {
       "id": "anthropic",
       "$comment": "REVIEWED (P6 fix wave, ruling F-4): `liveCatalogAuthority` re-stamped `unknown` -> `authoritative`, and `modelDiscovery` `none` -> `provider-native`. EVIDENCE CLASS, the same one the openai and google rows carry: Anthropic's live Models endpoint enumerates every model the credential can use, so an id absent from it does not exist. The adapter serves that endpoint (`adapters/anthropic/messages.ts` `listModels`, paginated over `/v1/models` by `last_id`/`after_id`), which is why `modelDiscovery: \"none\"` was wrong in the first place -- Lane B's own corpus catalog already declares this provider `provider-native`. WHAT IT CHANGES: `authoritative` is R6-F's precondition read the other way round, so the `allowUnlisted` pass-through CLOSES for this provider (registry.ts step 2 / `resolveWithin`) and an unlisted anthropic id is now a definitive `unknown-model` instead of an id passed through to the wire -- which is the whole-branch review's M-5. The `modelDiscovery` value is production-inert: the one reader (`runtime/src/provider/session-provider.ts`, `=== \"local\"`) treats every non-local value alike. NO registry code changed. `azure-openai` and `codex-oauth` deliberately stay `unknown`: an Azure deployment name is user-chosen and will never be catalogued, so `allowUnlisted` is their normal configuration and the door stays open for them.",
       "displayName": "Anthropic",
@@ -71,6 +106,77 @@
       "admission": {
         "basis": "api-key",
         "citation": "https://claude.com/pricing"
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "anyapi",
+      "displayName": "AnyAPI AI",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "$comment": "WS-13b §2 / round-1 finding I-1 (reviewer list (e) — this lane's own documentation probe). A WINTER-OWNED row: its upstream entry is built by a HELPER CALL the literal extractor refuses to evaluate, so NOTHING here was transcribed from the pinned tree's executable half — the endpoint and dialect are the VENDOR'S OWN documented values, fetched and read on 2026-09-06 (the `fetched-document` citation tier, PROVENANCE.md). TWO INDEPENDENT SOURCES agree on the base: the vendor's documentation page, and the base upstream's product catalog states in its own `apiHint` at the pin. Neither was taken on the other's word. `defaultEndpoints.api` is the API ROOT: the adapter appends `/chat/completions` itself (WS-13b §2).",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.anyapi.ai/v1"
+      },
+      "modelDiscovery": "openai-models",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "admission is a FETCHED vendor document, but no live gate case has run against this endpoint and no terms page was read for it"
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://docs.anyapi.ai — the vendor's own documentation, retrieved 2026-09-06: the docs home documents `https://api.anyapi.ai/v1/chat/completions` with `Authorization: Bearer $ANYAPI_KEY`."
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "arcee-ai",
+      "displayName": "Arcee AI",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "$comment": "WS-13b §2 / round-1 finding I-1 (reviewer list (a) — docs URL and base URL confirmed by the round-1 reviewer, then RE-FETCHED by this lane). A WINTER-OWNED row: its upstream entry is built by a HELPER CALL the literal extractor refuses to evaluate, so NOTHING here was transcribed from the pinned tree's executable half — the endpoint and dialect are the VENDOR'S OWN documented values, fetched and read on 2026-09-06 (the `fetched-document` citation tier, PROVENANCE.md). The base is the one the vendor's page states. `defaultEndpoints.api` is the API ROOT: the adapter appends `/chat/completions` itself (WS-13b §2).",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.arcee.ai/api/v1"
+      },
+      "modelDiscovery": "openai-models",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "admission is a FETCHED vendor document, but no live gate case has run against this endpoint and no terms page was read for it",
+          "NO backend RegistryEntry exists at the pin — the vendor's document is the ONLY source for this row, with no pinned-tree value to cross-check it against"
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://docs.arcee.ai/ — the vendor's own documentation, retrieved 2026-09-06: the docs home documents base `https://api.arcee.ai/api/v1` with `Authorization: Bearer api-key`."
       },
       "scope": "llm"
     },
@@ -327,6 +433,41 @@
       "scope": "llm"
     },
     {
+      "id": "digitalocean",
+      "displayName": "DigitalOcean Gradient (Serverless Inference)",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "$comment": "WS-13b §2 / round-1 finding I-1 (reviewer list (a) — docs URL and base URL confirmed by the round-1 reviewer, then RE-FETCHED by this lane). A WINTER-OWNED row: its upstream entry is built by a HELPER CALL the literal extractor refuses to evaluate, so NOTHING here was transcribed from the pinned tree's executable half — the endpoint and dialect are the VENDOR'S OWN documented values, fetched and read on 2026-09-06 (the `fetched-document` citation tier, PROVENANCE.md). The base is the one the vendor's page states. `defaultEndpoints.api` is the API ROOT: the adapter appends `/chat/completions` itself (WS-13b §2).",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://inference.do-ai.run/v1"
+      },
+      "modelDiscovery": "openai-models",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "admission is a FETCHED vendor document, but no live gate case has run against this endpoint and no terms page was read for it"
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://docs.digitalocean.com/products/gradient-ai-platform/reference/api/serverless-inference/ — the vendor's own documentation, retrieved 2026-09-06: DigitalOcean documents Serverless Inference on its own base `https://inference.do-ai.run`, independent of the control-plane API, with chat at `https://inference.do-ai.run/v1/chat/completions` and an inference key as a Bearer token."
+      },
+      "scope": "llm"
+    },
+    {
       "id": "docker-model-runner",
       "displayName": "Docker Model Runner (local)",
       "$comment": "All twelve local rows now name `winter.local-openai` — the DEFAULT id Lane A's `createLocalOpenAIAdapter` exports — where they previously named `winter.openai-chat-completions`. That was not merely a mismatch: a registry resolves an adapter BY ID, so registering the local adapter under the chat-completions id (which is what Lane A's wiring line had to do to match this file) SHADOWED the real Chat Completions adapter for openai, openrouter and deepseek. Lane A can now drop the `id:` override from `createLocalOpenAIAdapter({ descriptors })`.",
@@ -356,6 +497,147 @@
       "admission": {
         "basis": "local",
         "citation": "local"
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "dxnt",
+      "displayName": "DXNT",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "$comment": "WS-13b §2 / round-1 finding I-1 (reviewer list (e) — this lane's own documentation probe). A WINTER-OWNED row: its upstream entry is built by a HELPER CALL the literal extractor refuses to evaluate, so NOTHING here was transcribed from the pinned tree's executable half — the endpoint and dialect are the VENDOR'S OWN documented values, fetched and read on 2026-09-06 (the `fetched-document` citation tier, PROVENANCE.md). TWO INDEPENDENT SOURCES agree on the base: the vendor's documentation page, and the base upstream's product catalog states in its own `apiHint` at the pin. Neither was taken on the other's word. `defaultEndpoints.api` is the API ROOT: the adapter appends `/chat/completions` itself (WS-13b §2).",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://www.dxnt.com/v1"
+      },
+      "modelDiscovery": "openai-models",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "admission is a FETCHED vendor document, but no live gate case has run against this endpoint and no terms page was read for it"
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://www.dxnt.com/docs — the vendor's own documentation, retrieved 2026-09-06: the vendor's own API documentation names the OpenAI-compatible base `https://www.dxnt.com/v1`."
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "electronhub",
+      "displayName": "ElectronHub",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "$comment": "WS-13b §2 / round-1 finding I-1 (reviewer list (a) — docs URL and base URL confirmed by the round-1 reviewer, then RE-FETCHED by this lane). A WINTER-OWNED row: its upstream entry is built by a HELPER CALL the literal extractor refuses to evaluate, so NOTHING here was transcribed from the pinned tree's executable half — the endpoint and dialect are the VENDOR'S OWN documented values, fetched and read on 2026-09-06 (the `fetched-document` citation tier, PROVENANCE.md). The base is the one the vendor's page states. `defaultEndpoints.api` is the API ROOT: the adapter appends `/chat/completions` itself (WS-13b §2).",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.electronhub.ai/v1"
+      },
+      "modelDiscovery": "openai-models",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "admission is a FETCHED vendor document, but no live gate case has run against this endpoint and no terms page was read for it"
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://docs.electronhub.ai/api-reference/chat/completions — the vendor's own documentation, retrieved 2026-09-06: the chat-completions reference documents base `https://api.electronhub.ai/v1` with `Authorization: Bearer YOUR_API_KEY` (keys prefixed `ek-`)."
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "fastrouter",
+      "displayName": "FastRouter",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "$comment": "WS-13b §2 / round-1 finding I-1 (reviewer list (a) — docs URL and base URL confirmed by the round-1 reviewer, then RE-FETCHED by this lane). A WINTER-OWNED row: its upstream entry is built by a HELPER CALL the literal extractor refuses to evaluate, so NOTHING here was transcribed from the pinned tree's executable half — the endpoint and dialect are the VENDOR'S OWN documented values, fetched and read on 2026-09-06 (the `fetched-document` citation tier, PROVENANCE.md). The base is the one the vendor's page states. `defaultEndpoints.api` is the API ROOT: the adapter appends `/chat/completions` itself (WS-13b §2).",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.fastrouter.ai/api/v1"
+      },
+      "modelDiscovery": "openai-models",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "admission is a FETCHED vendor document, but no live gate case has run against this endpoint and no terms page was read for it"
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://docs.fastrouter.ai/ — the vendor's own documentation, retrieved 2026-09-06: the docs home documents base `https://api.fastrouter.ai/api/v1` as a drop-in OpenAI SDK replacement."
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "freeinference",
+      "displayName": "FreeInference",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "$comment": "WS-13b §2 / round-1 finding I-1 (reviewer list (e) — this lane's own documentation probe). A WINTER-OWNED row: its upstream entry is built by a HELPER CALL the literal extractor refuses to evaluate, so NOTHING here was transcribed from the pinned tree's executable half — the endpoint and dialect are the VENDOR'S OWN documented values, fetched and read on 2026-09-06 (the `fetched-document` citation tier, PROVENANCE.md). TWO INDEPENDENT SOURCES agree on the base: the vendor's documentation page, and the base upstream's product catalog states in its own `apiHint` at the pin. Neither was taken on the other's word. `defaultEndpoints.api` is the API ROOT: the adapter appends `/chat/completions` itself (WS-13b §2).",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://freeinference.org/v1"
+      },
+      "modelDiscovery": "openai-models",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "admission is a FETCHED vendor document, but no live gate case has run against this endpoint and no terms page was read for it",
+          "the vendor's terms permit prompt/response LOGGING and publication of anonymized research data — a host must surface that before any session touches this provider (upstream's own `apiHint` says the same)"
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://freeinference.org — the vendor's own documentation, retrieved 2026-09-06: the site's own documentation names `https://freeinference.org/v1/chat/completions`."
       },
       "scope": "llm"
     },
@@ -391,6 +673,41 @@
       "admission": {
         "basis": "api-key",
         "citation": "https://ai.google.dev/gemini-api/docs/pricing"
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "helyxai",
+      "displayName": "Helyx AI",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "$comment": "WS-13b §2 / round-1 finding I-1 (reviewer list (e) — this lane's own documentation probe). A WINTER-OWNED row: its upstream entry is built by a HELPER CALL the literal extractor refuses to evaluate, so NOTHING here was transcribed from the pinned tree's executable half — the endpoint and dialect are the VENDOR'S OWN documented values, fetched and read on 2026-09-06 (the `fetched-document` citation tier, PROVENANCE.md). TWO INDEPENDENT SOURCES agree on the base: the vendor's documentation page, and the base upstream's product catalog states in its own `apiHint` at the pin. Neither was taken on the other's word. `defaultEndpoints.api` is the API ROOT: the adapter appends `/chat/completions` itself (WS-13b §2).",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://helyxai.space/v1"
+      },
+      "modelDiscovery": "openai-models",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "admission is a FETCHED vendor document, but no live gate case has run against this endpoint and no terms page was read for it"
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://helyxai.space — the vendor's own documentation, retrieved 2026-09-06: the vendor's own site documents `https://helyxai.space/v1/chat/completions`."
       },
       "scope": "llm"
     },
@@ -499,6 +816,41 @@
       "scope": "llm"
     },
     {
+      "id": "literouter",
+      "displayName": "LiteRouter",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "$comment": "WS-13b §2 / round-1 finding I-1 (reviewer list (e) — this lane's own documentation probe). A WINTER-OWNED row: its upstream entry is built by a HELPER CALL the literal extractor refuses to evaluate, so NOTHING here was transcribed from the pinned tree's executable half — the endpoint and dialect are the VENDOR'S OWN documented values, fetched and read on 2026-09-06 (the `fetched-document` citation tier, PROVENANCE.md). TWO INDEPENDENT SOURCES agree on the base: the vendor's documentation page, and the base upstream's product catalog states in its own `apiHint` at the pin. Neither was taken on the other's word. `defaultEndpoints.api` is the API ROOT: the adapter appends `/chat/completions` itself (WS-13b §2).",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.literouter.com/v1"
+      },
+      "modelDiscovery": "openai-models",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "admission is a FETCHED vendor document, but no live gate case has run against this endpoint and no terms page was read for it"
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://docs.literouter.com — the vendor's own documentation, retrieved 2026-09-06: the docs introduction names the OpenAI-compatible base `https://api.literouter.com/v1`."
+      },
+      "scope": "llm"
+    },
+    {
       "id": "llama-cpp",
       "displayName": "llama.cpp server (local)",
       "protocols": [
@@ -563,6 +915,77 @@
       "scope": "llm"
     },
     {
+      "id": "llm-kiwi",
+      "displayName": "llm.kiwi",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "$comment": "WS-13b §2 / round-1 finding I-1 (reviewer list (a) — docs URL and base URL confirmed by the round-1 reviewer, then RE-FETCHED by this lane). A WINTER-OWNED row: its upstream entry is built by a HELPER CALL the literal extractor refuses to evaluate, so NOTHING here was transcribed from the pinned tree's executable half — the endpoint and dialect are the VENDOR'S OWN documented values, fetched and read on 2026-09-06 (the `fetched-document` citation tier, PROVENANCE.md). The base is the one the vendor's page states. `defaultEndpoints.api` is the API ROOT: the adapter appends `/chat/completions` itself (WS-13b §2).",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.llm.kiwi/v1"
+      },
+      "modelDiscovery": "openai-models",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "admission is a FETCHED vendor document, but no live gate case has run against this endpoint and no terms page was read for it"
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://docs.llm.kiwi/ — the vendor's own documentation, retrieved 2026-09-06: the docs home documents base `https://api.llm.kiwi/v1` with `Authorization: Bearer YOUR_API_KEY` (keys prefixed `sk_kiwi_`)."
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "llmgateway",
+      "displayName": "LLM Gateway",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "$comment": "WS-13b §2 / round-1 finding I-1 (reviewer list (a) — docs URL and base URL confirmed by the round-1 reviewer, then RE-FETCHED by this lane). A WINTER-OWNED row: its upstream entry is built by a HELPER CALL the literal extractor refuses to evaluate, so NOTHING here was transcribed from the pinned tree's executable half — the endpoint and dialect are the VENDOR'S OWN documented values, fetched and read on 2026-09-06 (the `fetched-document` citation tier, PROVENANCE.md). The base is the one the vendor's page states. `defaultEndpoints.api` is the API ROOT: the adapter appends `/chat/completions` itself (WS-13b §2).",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.llmgateway.io/v1"
+      },
+      "modelDiscovery": "openai-models",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "admission is a FETCHED vendor document, but no live gate case has run against this endpoint and no terms page was read for it",
+          "the fetched docs home names the base URL but does not spell the auth HEADER; the adapter's OpenAI-family bearer default is an assumption until the live gate runs"
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://docs.llmgateway.io/ — the vendor's own documentation, retrieved 2026-09-06: the docs home documents base `https://api.llmgateway.io/v1` (or a self-hosted instance) authenticated with an LLM Gateway API key."
+      },
+      "scope": "llm"
+    },
+    {
       "id": "lm-studio",
       "displayName": "LM Studio (local)",
       "protocols": [
@@ -591,6 +1014,77 @@
       "admission": {
         "basis": "local",
         "citation": "local"
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "logfare",
+      "displayName": "Logfare",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "$comment": "WS-13b §2 / round-1 finding I-1 (reviewer list (e) — this lane's own documentation probe). A WINTER-OWNED row: its upstream entry is built by a HELPER CALL the literal extractor refuses to evaluate, so NOTHING here was transcribed from the pinned tree's executable half — the endpoint and dialect are the VENDOR'S OWN documented values, fetched and read on 2026-09-06 (the `fetched-document` citation tier, PROVENANCE.md). TWO INDEPENDENT SOURCES agree on the base: the vendor's documentation page, and the base upstream's product catalog states in its own `apiHint` at the pin. Neither was taken on the other's word. `defaultEndpoints.api` is the API ROOT: the adapter appends `/chat/completions` itself (WS-13b §2).",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://logfare.ai/v1"
+      },
+      "modelDiscovery": "openai-models",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "admission is a FETCHED vendor document, but no live gate case has run against this endpoint and no terms page was read for it",
+          "the vendor logs prompts, completions and metadata for research (opt-out at logfare.ai/consent) — a host must surface that before use"
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://logfare.ai/docs — the vendor's own documentation, retrieved 2026-09-06: the API docs name base `https://logfare.ai/v1` and enumerate `/chat/completions`, `/messages`, `/models`."
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "meganova-ai",
+      "displayName": "MegaNova AI",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "$comment": "WS-13b §2 / round-1 finding I-1 (reviewer list (e) — this lane's own documentation probe). A WINTER-OWNED row: its upstream entry is built by a HELPER CALL the literal extractor refuses to evaluate, so NOTHING here was transcribed from the pinned tree's executable half — the endpoint and dialect are the VENDOR'S OWN documented values, fetched and read on 2026-09-06 (the `fetched-document` citation tier, PROVENANCE.md). TWO INDEPENDENT SOURCES agree on the base: the vendor's documentation page, and the base upstream's product catalog states in its own `apiHint` at the pin. Neither was taken on the other's word. `defaultEndpoints.api` is the API ROOT: the adapter appends `/chat/completions` itself (WS-13b §2).",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.meganova.ai/v1"
+      },
+      "modelDiscovery": "openai-models",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "admission is a FETCHED vendor document, but no live gate case has run against this endpoint and no terms page was read for it"
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://docs.meganova.ai — the vendor's own documentation, retrieved 2026-09-06: the docs overview names the OpenAI-compatible base `https://api.meganova.ai/v1`."
       },
       "scope": "llm"
     },
@@ -694,6 +1188,42 @@
       "scope": "llm"
     },
     {
+      "id": "mnn-ai",
+      "displayName": "MNN AI",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "$comment": "WS-13b §2 / round-1 finding I-1 (reviewer list (e) — this lane's own documentation probe). A WINTER-OWNED row: its upstream entry is built by a HELPER CALL the literal extractor refuses to evaluate, so NOTHING here was transcribed from the pinned tree's executable half — the endpoint and dialect are the VENDOR'S OWN documented values, fetched and read on 2026-09-06 (the `fetched-document` citation tier, PROVENANCE.md). TWO INDEPENDENT SOURCES agree on the base: the vendor's documentation page, and the base upstream's product catalog states in its own `apiHint` at the pin. Neither was taken on the other's word. `defaultEndpoints.api` is the API ROOT: the adapter appends `/chat/completions` itself (WS-13b §2).",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.mnnai.ru/v1"
+      },
+      "modelDiscovery": "openai-models",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "admission is a FETCHED vendor document, but no live gate case has run against this endpoint and no terms page was read for it",
+          "jurisdiction: a Russian-domiciled endpoint; upstream's own `apiHint` says to review privacy and regional data-transfer requirements before use"
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://mnnai.ru/docs — the vendor's own documentation, retrieved 2026-09-06: the docs name the primary OpenAI-compatible base `https://api.mnnai.ru/v1` with `/chat/completions` and `/models`."
+      },
+      "scope": "llm"
+    },
+    {
       "id": "moonshot",
       "displayName": "Moonshot AI (Kimi platform)",
       "protocols": [
@@ -725,6 +1255,112 @@
       "admission": {
         "basis": "api-key",
         "citation": "audit:§4 / §2.1 `kimi-coding` — docs/research/Provider-third-party-access-audit.md, retrieved 2026-09-06: \"the token-priced platform API (https://api.moonshot.ai/v1, MOONSHOT_API_KEY, OpenAI- and Anthropic-format compatible) remains an ordinary api-key provider\", citing platform.kimi.ai/docs/overview."
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "naga-ai",
+      "displayName": "NagaAI",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "$comment": "WS-13b §2 / round-1 finding I-1 (reviewer list (a) — docs URL and base URL confirmed by the round-1 reviewer, then RE-FETCHED by this lane). A WINTER-OWNED row: its upstream entry is built by a HELPER CALL the literal extractor refuses to evaluate, so NOTHING here was transcribed from the pinned tree's executable half — the endpoint and dialect are the VENDOR'S OWN documented values, fetched and read on 2026-09-06 (the `fetched-document` citation tier, PROVENANCE.md). The base is the one the vendor's page states. `defaultEndpoints.api` is the API ROOT: the adapter appends `/chat/completions` itself (WS-13b §2).",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.naga.ac/v1"
+      },
+      "modelDiscovery": "openai-models",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "admission is a FETCHED vendor document, but no live gate case has run against this endpoint and no terms page was read for it"
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://docs.naga.ac/api-reference/overview — the vendor's own documentation, retrieved 2026-09-06: the API-reference overview documents `baseURL` `https://api.naga.ac/v1` with `Authorization: Bearer YOUR_API_KEY` (an `x-api-key` alternative is offered for inference endpoints)."
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "nebius",
+      "displayName": "Nebius Token Factory",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "$comment": "WS-13b §2 / round-1 finding I-1 (reviewer list (a) — docs URL and base URL confirmed by the round-1 reviewer, then RE-FETCHED by this lane). A WINTER-OWNED row: its upstream entry is built by a HELPER CALL the literal extractor refuses to evaluate, so NOTHING here was transcribed from the pinned tree's executable half — the endpoint and dialect are the VENDOR'S OWN documented values, fetched and read on 2026-09-06 (the `fetched-document` citation tier, PROVENANCE.md). The base is the one the vendor's page states. `defaultEndpoints.api` is the API ROOT: the adapter appends `/chat/completions` itself (WS-13b §2).",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.tokenfactory.nebius.com/v1"
+      },
+      "modelDiscovery": "openai-models",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "admission is a FETCHED vendor document, but no live gate case has run against this endpoint and no terms page was read for it"
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://docs.tokenfactory.nebius.com/ — the vendor's own documentation, retrieved 2026-09-06: the docs home documents base `https://api.tokenfactory.nebius.com/v1/` with `Authorization: Bearer $NEBIUS_API_KEY`."
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "ofoxai",
+      "displayName": "OfoxAI",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "$comment": "WS-13b §2 / round-1 finding I-1 (reviewer list (e) — this lane's own documentation probe). A WINTER-OWNED row: its upstream entry is built by a HELPER CALL the literal extractor refuses to evaluate, so NOTHING here was transcribed from the pinned tree's executable half — the endpoint and dialect are the VENDOR'S OWN documented values, fetched and read on 2026-09-06 (the `fetched-document` citation tier, PROVENANCE.md). TWO INDEPENDENT SOURCES agree on the base: the vendor's documentation page, and the base upstream's product catalog states in its own `apiHint` at the pin. Neither was taken on the other's word. `defaultEndpoints.api` is the API ROOT: the adapter appends `/chat/completions` itself (WS-13b §2).",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.ofox.ai/v1"
+      },
+      "modelDiscovery": "openai-models",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "admission is a FETCHED vendor document, but no live gate case has run against this endpoint and no terms page was read for it",
+          "the same vendor documents an Anthropic-dialect base (`https://api.ofox.ai/anthropic/v1/messages`) and a Gemini one; only the OpenAI dialect ships, so an `ofoxai-anthropic` sibling is available work (R6b-5) and not a defect in this row"
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://docs.ofox.ai — the vendor's own documentation, retrieved 2026-09-06: the docs name the OpenAI-compatible base `https://api.ofox.ai/v1` and `/chat/completions`."
       },
       "scope": "llm"
     },
@@ -940,6 +1576,251 @@
       "scope": "llm"
     },
     {
+      "id": "poolside",
+      "displayName": "Poolside",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "$comment": "WS-13b §2 / round-1 finding I-1 (reviewer list (a) — docs URL and base URL confirmed by the round-1 reviewer, then RE-FETCHED by this lane). A WINTER-OWNED row: its upstream entry is built by a HELPER CALL the literal extractor refuses to evaluate, so NOTHING here was transcribed from the pinned tree's executable half — the endpoint and dialect are the VENDOR'S OWN documented values, fetched and read on 2026-09-06 (the `fetched-document` citation tier, PROVENANCE.md). The base is the one the vendor's page states. `defaultEndpoints.api` is the API ROOT: the adapter appends `/chat/completions` itself (WS-13b §2).",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://inference.poolside.ai/v1"
+      },
+      "modelDiscovery": "openai-models",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "admission is a FETCHED vendor document, but no live gate case has run against this endpoint and no terms page was read for it"
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://docs.poolside.ai/api/overview — the vendor's own documentation, retrieved 2026-09-06: the API overview documents base `https://inference.poolside.ai/v1` with `Authorization: Bearer <api-key>`."
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "requesty",
+      "displayName": "Requesty Router",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "$comment": "WS-13b §2 / round-1 finding I-1 (reviewer list (a) — docs URL and base URL confirmed by the round-1 reviewer, then RE-FETCHED by this lane). A WINTER-OWNED row: its upstream entry is built by a HELPER CALL the literal extractor refuses to evaluate, so NOTHING here was transcribed from the pinned tree's executable half — the endpoint and dialect are the VENDOR'S OWN documented values, fetched and read on 2026-09-06 (the `fetched-document` citation tier, PROVENANCE.md). The base is the one the vendor's page states. `defaultEndpoints.api` is the API ROOT: the adapter appends `/chat/completions` itself (WS-13b §2).",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://router.requesty.ai/v1"
+      },
+      "modelDiscovery": "openai-models",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "admission is a FETCHED vendor document, but no live gate case has run against this endpoint and no terms page was read for it"
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://docs.requesty.ai/quickstart — the vendor's own documentation, retrieved 2026-09-06: the quickstart documents base `https://router.requesty.ai/v1` with `Authorization: Bearer $REQUESTY_API_KEY`, as a drop-in OpenAI replacement."
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "routeway",
+      "displayName": "Routeway",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "$comment": "WS-13b §2 / round-1 finding I-1 (reviewer list (a) — docs URL and base URL confirmed by the round-1 reviewer, then RE-FETCHED by this lane). A WINTER-OWNED row: its upstream entry is built by a HELPER CALL the literal extractor refuses to evaluate, so NOTHING here was transcribed from the pinned tree's executable half — the endpoint and dialect are the VENDOR'S OWN documented values, fetched and read on 2026-09-06 (the `fetched-document` citation tier, PROVENANCE.md). The base is the one the vendor's page states. `defaultEndpoints.api` is the API ROOT: the adapter appends `/chat/completions` itself (WS-13b §2).",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.routeway.ai/v1"
+      },
+      "modelDiscovery": "openai-models",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "admission is a FETCHED vendor document, but no live gate case has run against this endpoint and no terms page was read for it"
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://docs.routeway.ai/ — the vendor's own documentation, retrieved 2026-09-06: the docs home documents base `https://api.routeway.ai/v1` with `Authorization: Bearer $ROUTEWAY_API_KEY`."
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "sealion",
+      "displayName": "SEA-LION",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "$comment": "WS-13b §2 / round-1 finding I-1 (reviewer list (a) — docs URL and base URL confirmed by the round-1 reviewer, then RE-FETCHED by this lane). A WINTER-OWNED row: its upstream entry is built by a HELPER CALL the literal extractor refuses to evaluate, so NOTHING here was transcribed from the pinned tree's executable half — the endpoint and dialect are the VENDOR'S OWN documented values, fetched and read on 2026-09-06 (the `fetched-document` citation tier, PROVENANCE.md). The base is the one the vendor's page states. `defaultEndpoints.api` is the API ROOT: the adapter appends `/chat/completions` itself (WS-13b §2).",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.sea-lion.ai/v1"
+      },
+      "modelDiscovery": "openai-models",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "admission is a FETCHED vendor document, but no live gate case has run against this endpoint and no terms page was read for it"
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://docs.sea-lion.ai/guides/inferencing/api/ — the vendor's own documentation, retrieved 2026-09-06: the inferencing guide documents base `https://api.sea-lion.ai/v1` with `Authorization: Bearer YOUR_API_KEY`."
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "siliconflow",
+      "displayName": "SiliconFlow",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "$comment": "WS-13b §2 / round-1 finding I-1 (reviewer list (a) — docs URL and base URL confirmed by the round-1 reviewer, then RE-FETCHED by this lane). A WINTER-OWNED row: its upstream entry is built by a HELPER CALL the literal extractor refuses to evaluate, so NOTHING here was transcribed from the pinned tree's executable half — the endpoint and dialect are the VENDOR'S OWN documented values, fetched and read on 2026-09-06 (the `fetched-document` citation tier, PROVENANCE.md). The base is the one the vendor's page states. `defaultEndpoints.api` is the API ROOT: the adapter appends `/chat/completions` itself (WS-13b §2).",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.siliconflow.com/v1"
+      },
+      "modelDiscovery": "openai-models",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "admission is a FETCHED vendor document, but no live gate case has run against this endpoint and no terms page was read for it"
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://docs.siliconflow.com/en/api-reference/chat-completions/chat-completions — the vendor's own documentation, retrieved 2026-09-06: the API reference's own OpenAPI `servers` block is `url: https://api.siliconflow.com/v1` with path `/chat/completions`, `bearerAuth: type: http, scheme: bearer`."
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "speka",
+      "displayName": "Speka AI",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "$comment": "WS-13b §2 / round-1 finding I-1 (reviewer list (e) — this lane's own documentation probe). A WINTER-OWNED row: its upstream entry is built by a HELPER CALL the literal extractor refuses to evaluate, so NOTHING here was transcribed from the pinned tree's executable half — the endpoint and dialect are the VENDOR'S OWN documented values, fetched and read on 2026-09-06 (the `fetched-document` citation tier, PROVENANCE.md). TWO INDEPENDENT SOURCES agree on the base: the vendor's documentation page, and the base upstream's product catalog states in its own `apiHint` at the pin. Neither was taken on the other's word. `defaultEndpoints.api` is the API ROOT: the adapter appends `/chat/completions` itself (WS-13b §2).",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://speka.me/v1"
+      },
+      "modelDiscovery": "openai-models",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "admission is a FETCHED vendor document, but no live gate case has run against this endpoint and no terms page was read for it"
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://speka.me/docs — the vendor's own documentation, retrieved 2026-09-06: the API reference is titled \"OpenAI-Compatible AI API Docs\" and names base `https://speka.me/v1`."
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "together",
+      "displayName": "Together AI",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "$comment": "WS-13b §2 / round-1 finding I-1 (reviewer list (a) — docs URL and base URL confirmed by the round-1 reviewer, then RE-FETCHED by this lane). A WINTER-OWNED row: its upstream entry is built by a HELPER CALL the literal extractor refuses to evaluate, so NOTHING here was transcribed from the pinned tree's executable half — the endpoint and dialect are the VENDOR'S OWN documented values, fetched and read on 2026-09-06 (the `fetched-document` citation tier, PROVENANCE.md). The base is the one the vendor's page states. `defaultEndpoints.api` is the API ROOT: the adapter appends `/chat/completions` itself (WS-13b §2).",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.together.ai/v1"
+      },
+      "modelDiscovery": "openai-models",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "admission is a FETCHED vendor document, but no live gate case has run against this endpoint and no terms page was read for it"
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://docs.together.ai/docs/chat-overview — the vendor's own documentation, retrieved 2026-09-06: the chat-overview page documents `https://api.together.ai/v1/chat/completions` with `Authorization: Bearer $TOGETHER_API_KEY`."
+      },
+      "scope": "llm"
+    },
+    {
       "id": "triton",
       "displayName": "NVIDIA Triton Inference Server (local)",
       "protocols": [
@@ -1076,6 +1957,41 @@
       "scope": "llm"
     },
     {
+      "id": "void-ai",
+      "displayName": "VoidAI",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "$comment": "WS-13b §2 / round-1 finding I-1 (reviewer list (a) — docs URL and base URL confirmed by the round-1 reviewer, then RE-FETCHED by this lane). A WINTER-OWNED row: its upstream entry is built by a HELPER CALL the literal extractor refuses to evaluate, so NOTHING here was transcribed from the pinned tree's executable half — the endpoint and dialect are the VENDOR'S OWN documented values, fetched and read on 2026-09-06 (the `fetched-document` citation tier, PROVENANCE.md). The base is the one the vendor's page states. `defaultEndpoints.api` is the API ROOT: the adapter appends `/chat/completions` itself (WS-13b §2).",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.voidai.app/v1"
+      },
+      "modelDiscovery": "openai-models",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "admission is a FETCHED vendor document, but no live gate case has run against this endpoint and no terms page was read for it"
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://docs.voidai.app/ — the vendor's own documentation, retrieved 2026-09-06: the docs home documents base `https://api.voidai.app/v1` with `Authorization: Bearer sk-voidai-…`."
+      },
+      "scope": "llm"
+    },
+    {
       "id": "xai",
       "displayName": "xAI (Grok)",
       "protocols": [
@@ -1144,6 +2060,41 @@
       "scope": "llm"
     },
     {
+      "id": "yolo-auto",
+      "displayName": "Yolo-Auto",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "$comment": "WS-13b §2 / round-1 finding I-1 (reviewer list (e) — this lane's own documentation probe). A WINTER-OWNED row: its upstream entry is built by a HELPER CALL the literal extractor refuses to evaluate, so NOTHING here was transcribed from the pinned tree's executable half — the endpoint and dialect are the VENDOR'S OWN documented values, fetched and read on 2026-09-06 (the `fetched-document` citation tier, PROVENANCE.md). TWO INDEPENDENT SOURCES agree on the base: the vendor's documentation page, and the base upstream's product catalog states in its own `apiHint` at the pin. Neither was taken on the other's word. `defaultEndpoints.api` is the API ROOT: the adapter appends `/chat/completions` itself (WS-13b §2).",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://yolo-auto.com/v1"
+      },
+      "modelDiscovery": "openai-models",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "admission is a FETCHED vendor document, but no live gate case has run against this endpoint and no terms page was read for it"
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://yolo-auto.com/docs — the vendor's own documentation, retrieved 2026-09-06: the docs are titled \"OpenAI-Compatible API Docs\" and name base `https://yolo-auto.com/v1` with `/models`."
+      },
+      "scope": "llm"
+    },
+    {
       "id": "zai",
       "displayName": "Z.AI GLM Coding (OpenAI dialect)",
       "protocols": [
@@ -1175,6 +2126,76 @@
       "admission": {
         "basis": "api-key",
         "citation": "https://docs.z.ai/devpack/tool/others — z.ai's own GLM Coding Plan docs, retrieved 2026-09-06: the \"Coding Endpoint\" table lists `https://api.z.ai/api/coding/paas/v4` under \"OpenAI Chat Completions\", and the Cline configuration example repeats it."
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "zerolimitai",
+      "displayName": "ZeroLimitAI",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "$comment": "WS-13b §2 / round-1 finding I-1 (reviewer list (e) — this lane's own documentation probe). A WINTER-OWNED row: its upstream entry is built by a HELPER CALL the literal extractor refuses to evaluate, so NOTHING here was transcribed from the pinned tree's executable half — the endpoint and dialect are the VENDOR'S OWN documented values, fetched and read on 2026-09-06 (the `fetched-document` citation tier, PROVENANCE.md). TWO INDEPENDENT SOURCES agree on the base: the vendor's documentation page, and the base upstream's product catalog states in its own `apiHint` at the pin. Neither was taken on the other's word. `defaultEndpoints.api` is the API ROOT: the adapter appends `/chat/completions` itself (WS-13b §2).",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://www.zerolimitai.com/api/v1"
+      },
+      "modelDiscovery": "openai-models",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "admission is a FETCHED vendor document, but no live gate case has run against this endpoint and no terms page was read for it"
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://www.zerolimitai.com — the vendor's own documentation, retrieved 2026-09-06: the vendor's own site names the OpenAI-compatible base `https://www.zerolimitai.com/api/v1`."
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "zylo-api",
+      "displayName": "Zylo AI",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "$comment": "WS-13b §2 / round-1 finding I-1 (reviewer list (e) — this lane's own documentation probe). A WINTER-OWNED row: its upstream entry is built by a HELPER CALL the literal extractor refuses to evaluate, so NOTHING here was transcribed from the pinned tree's executable half — the endpoint and dialect are the VENDOR'S OWN documented values, fetched and read on 2026-09-06 (the `fetched-document` citation tier, PROVENANCE.md). TWO INDEPENDENT SOURCES agree on the base: the vendor's documentation page, and the base upstream's product catalog states in its own `apiHint` at the pin. Neither was taken on the other's word. `defaultEndpoints.api` is the API ROOT: the adapter appends `/chat/completions` itself (WS-13b §2).",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.zyloai.net/v1"
+      },
+      "modelDiscovery": "openai-models",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "admission is a FETCHED vendor document, but no live gate case has run against this endpoint and no terms page was read for it"
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://zyloai.net/docs — the vendor's own documentation, retrieved 2026-09-06: the docs name the OpenAI-compatible base `https://api.zyloai.net/v1`."
       },
       "scope": "llm"
     }

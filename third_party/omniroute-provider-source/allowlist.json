@@ -2,43 +2,218 @@
   "$comment": "Extractor INPUT contract (WS-13 §3/§13; OmniRoute report §11.2). Hand-maintained and reviewed, in two halves. (1) `paths` is the VERSIONED path allowlist the sparse checkout materializes — the extractor refuses to materialize anything outside it and never widens the boundary on its own. (2) `providers` is the reviewed provider intake list: a row's `risk` is what the extractor stamps onto the generated WinterProviderDescriptor, and promoting one to \"approved\" is a deliberate, reviewed edit. No upstream source is vendored under this directory beyond the upstream LICENSE/NOTICE copies the extraction manifest records — see README.md.",
   "allowlistVersion": 3,
   "upstreamProject": "OmniRoute",
-
   "importBoundary": {
     "$comment": "WS-13 §3 step 2 says an import outside the allowlist \"fails the job for review; the boundary never auto-widens\". Taken as a rule about WIDENING, not about aborting: the literal extractor never follows an import at all, so a value that would have to come from an unmaterialized module is DROPPED with a recorded rejection (`unresolved-reference`), and the offending specifier is listed in the ledger's `outOfAllowlistImports` so drift stays visible. Aborting instead would make the pipeline unrunnable by construction — `open-sse/config/providers/shared.ts` imports a dozen modules outside any reviewable provider-data boundary. The boundary keeps its teeth through `failOnUnresolvedFields`: an allowlisted provider whose IDENTITY-critical field cannot be resolved from materialized files fails the run for review.",
     "resolveIdentifiersWithin": "materialized-allowlisted-files-only",
-    "failOnUnresolvedFields": ["id", "format", "executor", "authType"]
+    "failOnUnresolvedFields": [
+      "id",
+      "format",
+      "executor",
+      "authType"
+    ]
   },
-
   "paths": [
-    { "pattern": "/LICENSE", "role": "notice", "why": "OmniRoute root MIT licence — copied into third_party/ and registered in the extraction manifest (report §12)." },
-    { "pattern": "/THIRD_PARTY_NOTICES.md", "role": "notice", "why": "Upstream's own third-party notices — copied beside the licence so a reader of Winter's NOTICE can reach upstream's provenance record." },
-    { "pattern": "/package.json", "role": "claim", "why": "The upstream package version at the pin. Read for the provenance record only; no descriptor field is derived from it." },
-    { "pattern": "/README.md", "role": "claim", "why": "One of the two upstream provider-COUNT claim sources. Read only to compute the denominator discrepancy WS-13 §3 step 5 requires the extractor to report; never a descriptor input." },
-    { "pattern": "/docs/reference/PROVIDER_REFERENCE.md", "role": "claim", "why": "The generated provider reference — the second count claim source, and the per-category denominator. Report §5 warns its header is not a release authority, so it is read as a CLAIM to be checked against the enumerated tree, never as truth." },
-    { "pattern": "/open-sse/config/providerPluginManifest.ts", "role": "extract", "why": "The upstream-supported JSON-safe projection boundary (report §5) — read for its own reviewed field list." },
-    { "pattern": "/open-sse/config/providerPluginManifestRegistry.ts", "role": "extract", "why": "Companion to the manifest projection." },
-    { "pattern": "/open-sse/config/providerPluginManifestUrl.ts", "role": "extract", "why": "Companion to the manifest projection." },
-    { "pattern": "/open-sse/config/providers/**", "role": "extract", "why": "The backend registry (report §3.2): the execution-shaped provider entries and their static model rows. This is the main descriptor input." },
-    { "pattern": "/src/shared/constants/providers.ts", "role": "extract", "why": "The product-catalog barrel (report §3.1) — category membership and display metadata." },
-    { "pattern": "/src/shared/constants/providers/**", "role": "extract", "why": "The per-category product-catalog literals. These carry the category each upstream id belongs to, which is what WS-13 §1's disposition table keys on." },
-    { "pattern": "/src/lib/providerModels/modelDiscovery.ts", "role": "extract", "why": "The live-discovery normalizer (report §3.3) — read for the discovery response shapes Winter's own bounded discovery must accept." },
-    { "pattern": "/src/lib/db/migrations/*retire*.sql", "role": "extract", "why": "Retirement migrations for GPL-derived and provenance-hold integrations (report §12). ZERO MATCHES AT THIS PIN — see PROVENANCE.md; the pattern stays so a future bump picks them up." },
-    { "pattern": "/src/lib/db/migrations/*provenance*.sql", "role": "extract", "why": "Provenance-hold migrations. Zero matches at this pin, kept for the same reason." }
+    {
+      "pattern": "/LICENSE",
+      "role": "notice",
+      "why": "OmniRoute root MIT licence — copied into third_party/ and registered in the extraction manifest (report §12)."
+    },
+    {
+      "pattern": "/THIRD_PARTY_NOTICES.md",
+      "role": "notice",
+      "why": "Upstream's own third-party notices — copied beside the licence so a reader of Winter's NOTICE can reach upstream's provenance record."
+    },
+    {
+      "pattern": "/package.json",
+      "role": "claim",
+      "why": "The upstream package version at the pin. Read for the provenance record only; no descriptor field is derived from it."
+    },
+    {
+      "pattern": "/README.md",
+      "role": "claim",
+      "why": "One of the two upstream provider-COUNT claim sources. Read only to compute the denominator discrepancy WS-13 §3 step 5 requires the extractor to report; never a descriptor input."
+    },
+    {
+      "pattern": "/docs/reference/PROVIDER_REFERENCE.md",
+      "role": "claim",
+      "why": "The generated provider reference — the second count claim source, and the per-category denominator. Report §5 warns its header is not a release authority, so it is read as a CLAIM to be checked against the enumerated tree, never as truth."
+    },
+    {
+      "pattern": "/open-sse/config/providerPluginManifest.ts",
+      "role": "extract",
+      "why": "The upstream-supported JSON-safe projection boundary (report §5) — read for its own reviewed field list."
+    },
+    {
+      "pattern": "/open-sse/config/providerPluginManifestRegistry.ts",
+      "role": "extract",
+      "why": "Companion to the manifest projection."
+    },
+    {
+      "pattern": "/open-sse/config/providerPluginManifestUrl.ts",
+      "role": "extract",
+      "why": "Companion to the manifest projection."
+    },
+    {
+      "pattern": "/open-sse/config/providers/**",
+      "role": "extract",
+      "why": "The backend registry (report §3.2): the execution-shaped provider entries and their static model rows. This is the main descriptor input."
+    },
+    {
+      "pattern": "/src/shared/constants/providers.ts",
+      "role": "extract",
+      "why": "The product-catalog barrel (report §3.1) — category membership and display metadata."
+    },
+    {
+      "pattern": "/src/shared/constants/providers/**",
+      "role": "extract",
+      "why": "The per-category product-catalog literals. These carry the category each upstream id belongs to, which is what WS-13 §1's disposition table keys on."
+    },
+    {
+      "pattern": "/src/lib/providerModels/modelDiscovery.ts",
+      "role": "extract",
+      "why": "The live-discovery normalizer (report §3.3) — read for the discovery response shapes Winter's own bounded discovery must accept."
+    },
+    {
+      "pattern": "/src/lib/db/migrations/*retire*.sql",
+      "role": "extract",
+      "why": "Retirement migrations for GPL-derived and provenance-hold integrations (report §12). ZERO MATCHES AT THIS PIN — see PROVENANCE.md; the pattern stays so a future bump picks them up."
+    },
+    {
+      "pattern": "/src/lib/db/migrations/*provenance*.sql",
+      "role": "extract",
+      "why": "Provenance-hold migrations. Zero matches at this pin, kept for the same reason."
+    }
   ],
-
   "providers": [
-    { "upstreamId": "openai", "winterId": "openai", "expectedCategory": "apikey", "pricingBasis": "token", "admission": { "basis": "api-key", "citation": "https://developers.openai.com/api/docs/pricing" }, "adapterIdOverride": "winter.openai-responses", "risk": { "class": "approved", "reasons": [] },
-      "$comment": "`adapterIdOverride` because upstream's `format: \"openai\"` names its own DEFAULT execution path (Chat Completions), not the surface Winter drives. Six of upstream's own openai rows carry `targetFormat: \"openai-responses\"` — the *-pro and GPT-5.6 families are responses-ONLY, and upstream says so per model while its provider-level `format` does not — so deriving the adapter from `format` produced responses-only rows under a Chat Completions adapter. The overlay row has said `winter.openai-responses` since the seed, which is exactly what hid it: the merged catalog was consistent while the layer `--offline` validates STANDALONE was not. Found by extending that gate to the standalone layer (review r2 minor 5), which is the same shadow class as the Vertex adapter misroute." },
-    { "upstreamId": "anthropic", "winterId": "anthropic", "expectedCategory": "apikey", "pricingBasis": "token", "admission": { "basis": "api-key", "citation": "https://claude.com/pricing" }, "risk": { "class": "approved", "reasons": [] } },
-    { "upstreamId": "gemini", "winterId": "google", "expectedCategory": "apikey", "pricingBasis": "token", "admission": { "basis": "api-key", "citation": "https://ai.google.dev/gemini-api/docs/pricing" }, "risk": { "class": "approved", "reasons": [] },
-      "$comment": "The upstream id is `gemini`, not `google` — allowlistVersion 1 named `google` on both sides, which matched no upstream row at v3.8.50 and would have silently produced no google extraction at all. `winterId` stays `google` because WS-13 §12 and every seeded row use it." },
-    { "upstreamId": "openrouter", "winterId": "openrouter", "expectedCategory": "apikey", "pricingBasis": "token", "admission": { "basis": "api-key", "citation": "https://openrouter.ai — the vendor's own site as OmniRoute's product catalog records it at 5458026; the api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://openrouter.ai/api/v1. EVIDENCE TIER: pinned-upstream — see PROVENANCE.md \"Two tiers of admission citation\". The audit (docs/research/Provider-third-party-access-audit.md) covers the OAuth/keyless ids and carries NO citation for this one, so its 51 references cannot upgrade this row." }, "risk": { "class": "review-required", "reasons": ["gateway: capability parity is model-by-model (WS-13 §14.4); per-request provider/data-policy controls must be preserved"] } },
-    { "upstreamId": "deepseek", "winterId": "deepseek", "expectedCategory": "apikey", "pricingBasis": "token", "admission": { "basis": "api-key", "citation": "https://platform.deepseek.com — the vendor's own developer platform as OmniRoute's product catalog records it at 5458026; the api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Responses at https://api.deepseek.com. EVIDENCE TIER: pinned-upstream — see PROVENANCE.md \"Two tiers of admission citation\". The audit covers the OAuth/keyless ids and carries no citation for this one." }, "risk": { "class": "review-required", "reasons": ["reasoning continuity is tool-loop fragile (WS-13 §8.2: missing reasoning state mid-tool-loop is a hard error)"] } },
-    { "upstreamId": "azure-openai", "winterId": "azure-openai", "expectedCategory": "apikey", "pricingBasis": "token", "admission": { "basis": "cloud-credential", "citation": "https://azure.microsoft.com/products/ai-services/openai-service — the vendor's own product page as OmniRoute's product catalog records it at 5458026. The credential is the OPERATOR'S OWN Azure subscription key against their own resource endpoint, which is why the basis is cloud-credential rather than api-key. EVIDENCE TIER: pinned-upstream — see PROVENANCE.md \"Two tiers of admission citation\"." }, "risk": { "class": "review-required", "reasons": ["native cloud: deployment/api-version identity and Entra auth need their own proof (WS-13 §5)"] },
-      "$comment": "PRODUCT-CATALOG ONLY at this pin: `azure-openai` has a row in src/shared/constants/providers/apikey/enterprise-cloud.ts but NO backend RegistryEntry, so upstream contributes its identity and nothing executable. Its endpoints and auth are Winter-authored in the overlay; the rejection ledger records the absence." },
-    { "upstreamId": "bedrock", "winterId": "bedrock", "expectedCategory": "apikey", "pricingBasis": "token", "admission": { "basis": "cloud-credential", "citation": "https://aws.amazon.com/bedrock — the vendor's own product page as OmniRoute's product catalog records it at 5458026. The credential is the OPERATOR'S OWN AWS account, signed with SigV4, which is why the basis is cloud-credential rather than api-key. EVIDENCE TIER: pinned-upstream — see PROVENANCE.md \"Two tiers of admission citation\"." }, "risk": { "class": "review-required", "reasons": ["native cloud: SigV4 signing + event-stream decoding need their own proof (WS-13 §5)"] } },
-    { "upstreamId": "vertex", "winterId": "vertex", "expectedCategory": "apikey", "pricingBasis": "token", "admission": { "basis": "cloud-credential", "citation": "https://cloud.google.com/vertex-ai — the vendor's own product page as OmniRoute's product catalog records it at 5458026. The credential is the OPERATOR'S OWN GCP project via Application Default Credentials, which is why the basis is cloud-credential rather than api-key. EVIDENCE TIER: pinned-upstream — see PROVENANCE.md \"Two tiers of admission citation\"." }, "initialModelStatus": "experimental", "adapterIdOverride": "winter.vertex-gemini", "risk": { "class": "review-required", "reasons": ["native cloud: project/location auth and partner-protocol differences need their own proof (WS-13 §5)"] },
-      "$comment": "`adapterIdOverride` is Lane B's `VERTEX_ADAPTER_ID`, read from p6/lane-b's adapters/google/vertex.ts. Without it the mapper derives the adapter from the PROTOCOL, and Vertex shares GenerateContent with the Gemini API — so the extracted row named `winter.google-generate-content` and a registry, which resolves BY ID, would have served a Vertex session from the Gemini API adapter: no location-scoped URL, no ADC credential. The overlay row was corrected first; this fixes the layer `--offline` validates STANDALONE, which is exactly the layer whose defects an overlay shadow hides. `initialModelStatus: \"experimental\"` per R6-16 — the native-cloud families enter the catalog as `experimental`, and Lane B's `winter.vertex-gemini` adapter is live. Absent this field a row is `candidate`, which is what every other provider gets: upstream presence promotes nothing." },
+    {
+      "upstreamId": "openai",
+      "winterId": "openai",
+      "expectedCategory": "apikey",
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://developers.openai.com/api/docs/pricing"
+      },
+      "adapterIdOverride": "winter.openai-responses",
+      "risk": {
+        "class": "approved",
+        "reasons": []
+      },
+      "$comment": "`adapterIdOverride` because upstream's `format: \"openai\"` names its own DEFAULT execution path (Chat Completions), not the surface Winter drives. Six of upstream's own openai rows carry `targetFormat: \"openai-responses\"` — the *-pro and GPT-5.6 families are responses-ONLY, and upstream says so per model while its provider-level `format` does not — so deriving the adapter from `format` produced responses-only rows under a Chat Completions adapter. The overlay row has said `winter.openai-responses` since the seed, which is exactly what hid it: the merged catalog was consistent while the layer `--offline` validates STANDALONE was not. Found by extending that gate to the standalone layer (review r2 minor 5), which is the same shadow class as the Vertex adapter misroute."
+    },
+    {
+      "upstreamId": "anthropic",
+      "winterId": "anthropic",
+      "expectedCategory": "apikey",
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://claude.com/pricing"
+      },
+      "risk": {
+        "class": "approved",
+        "reasons": []
+      }
+    },
+    {
+      "upstreamId": "gemini",
+      "winterId": "google",
+      "expectedCategory": "apikey",
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://ai.google.dev/gemini-api/docs/pricing"
+      },
+      "risk": {
+        "class": "approved",
+        "reasons": []
+      },
+      "$comment": "The upstream id is `gemini`, not `google` — allowlistVersion 1 named `google` on both sides, which matched no upstream row at v3.8.50 and would have silently produced no google extraction at all. `winterId` stays `google` because WS-13 §12 and every seeded row use it."
+    },
+    {
+      "upstreamId": "openrouter",
+      "winterId": "openrouter",
+      "expectedCategory": "apikey",
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://openrouter.ai — the vendor's own site as OmniRoute's product catalog records it at 5458026; the api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://openrouter.ai/api/v1. EVIDENCE TIER: pinned-upstream — see PROVENANCE.md \"Two tiers of admission citation\". The audit (docs/research/Provider-third-party-access-audit.md) covers the OAuth/keyless ids and carries NO citation for this one, so its 51 references cannot upgrade this row."
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "gateway: capability parity is model-by-model (WS-13 §14.4); per-request provider/data-policy controls must be preserved"
+        ]
+      }
+    },
+    {
+      "upstreamId": "deepseek",
+      "winterId": "deepseek",
+      "expectedCategory": "apikey",
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://platform.deepseek.com — the vendor's own developer platform as OmniRoute's product catalog records it at 5458026; the api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Responses at https://api.deepseek.com. EVIDENCE TIER: pinned-upstream — see PROVENANCE.md \"Two tiers of admission citation\". The audit covers the OAuth/keyless ids and carries no citation for this one."
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "reasoning continuity is tool-loop fragile (WS-13 §8.2: missing reasoning state mid-tool-loop is a hard error)"
+        ]
+      }
+    },
+    {
+      "upstreamId": "azure-openai",
+      "winterId": "azure-openai",
+      "expectedCategory": "apikey",
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "cloud-credential",
+        "citation": "https://azure.microsoft.com/products/ai-services/openai-service — the vendor's own product page as OmniRoute's product catalog records it at 5458026. The credential is the OPERATOR'S OWN Azure subscription key against their own resource endpoint, which is why the basis is cloud-credential rather than api-key. EVIDENCE TIER: pinned-upstream — see PROVENANCE.md \"Two tiers of admission citation\"."
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "native cloud: deployment/api-version identity and Entra auth need their own proof (WS-13 §5)"
+        ]
+      },
+      "$comment": "PRODUCT-CATALOG ONLY at this pin: `azure-openai` has a row in src/shared/constants/providers/apikey/enterprise-cloud.ts but NO backend RegistryEntry, so upstream contributes its identity and nothing executable. Its endpoints and auth are Winter-authored in the overlay; the rejection ledger records the absence."
+    },
+    {
+      "upstreamId": "bedrock",
+      "winterId": "bedrock",
+      "expectedCategory": "apikey",
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "cloud-credential",
+        "citation": "https://aws.amazon.com/bedrock — the vendor's own product page as OmniRoute's product catalog records it at 5458026. The credential is the OPERATOR'S OWN AWS account, signed with SigV4, which is why the basis is cloud-credential rather than api-key. EVIDENCE TIER: pinned-upstream — see PROVENANCE.md \"Two tiers of admission citation\"."
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "native cloud: SigV4 signing + event-stream decoding need their own proof (WS-13 §5)"
+        ]
+      }
+    },
+    {
+      "upstreamId": "vertex",
+      "winterId": "vertex",
+      "expectedCategory": "apikey",
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "cloud-credential",
+        "citation": "https://cloud.google.com/vertex-ai — the vendor's own product page as OmniRoute's product catalog records it at 5458026. The credential is the OPERATOR'S OWN GCP project via Application Default Credentials, which is why the basis is cloud-credential rather than api-key. EVIDENCE TIER: pinned-upstream — see PROVENANCE.md \"Two tiers of admission citation\"."
+      },
+      "initialModelStatus": "experimental",
+      "adapterIdOverride": "winter.vertex-gemini",
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "native cloud: project/location auth and partner-protocol differences need their own proof (WS-13 §5)"
+        ]
+      },
+      "$comment": "`adapterIdOverride` is Lane B's `VERTEX_ADAPTER_ID`, read from p6/lane-b's adapters/google/vertex.ts. Without it the mapper derives the adapter from the PROTOCOL, and Vertex shares GenerateContent with the Gemini API — so the extracted row named `winter.google-generate-content` and a registry, which resolves BY ID, would have served a Vertex session from the Gemini API adapter: no location-scoped URL, no ADC credential. The overlay row was corrected first; this fixes the layer `--offline` validates STANDALONE, which is exactly the layer whose defects an overlay shadow hides. `initialModelStatus: \"experimental\"` per R6-16 — the native-cloud families enter the catalog as `experimental`, and Lane B's `winter.vertex-gemini` adapter is live. Absent this field a row is `candidate`, which is what every other provider gets: upstream presence promotes nothing."
+    },
     {
       "upstreamId": "agentrouter",
       "winterId": "agentrouter",
@@ -335,12 +510,12 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://inference.cerebras.ai — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.cerebras.ai/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://inference-docs.cerebras.ai/ — Cerebras's own Inference API documentation, retrieved 2026-09-06: OpenAI-compatible base `https://api.cerebras.ai/v1` with `Authorization: Bearer ${CEREBRAS_API_KEY}`, \"mostly compatible with OpenAI's client libraries\". The base matches the API root the mapper derives from the pinned RegistryEntry, so two independent sources agree. (Round-1 finding I-3: the previous citation, `https://inference.cerebras.ai`, 301s to `chat.cerebras.ai` — a chat product, not documentation.)"
       },
       "risk": {
         "class": "review-required",
         "reasons": [
-          "WS-13b §1 admission evidence is PINNED-UPSTREAM, not a fetched vendor document: the citation names the vendor site OmniRoute records, and the api-key path is attested by the pinned RegistryEntry rather than by a doc this lane read"
+          "WS-13b §1 admission evidence is a FETCHED vendor document, but no live gate case has run against this endpoint"
         ]
       },
       "$comment": "D24/R6b-4: a readable api-key entry at the pin — OpenAI Chat Completions dialect, 3 seeded model row(s), api root https://api.cerebras.ai/v1. Coding relevance is NOT asserted per row: models enter `candidate` and only the live gate (WS-13 §13) promotes any of them."
@@ -361,23 +536,6 @@
         ]
       },
       "$comment": "D24/R6b-4: a readable api-key entry at the pin — OpenAI Chat Completions dialect, 1 seeded model row(s), api root https://hyper.charm.land/v1. Coding relevance is NOT asserted per row: models enter `candidate` and only the live gate (WS-13 §13) promotes any of them."
-    },
-    {
-      "upstreamId": "chenzk",
-      "winterId": "chenzk",
-      "expectedCategory": "apikey",
-      "pricingBasis": "token",
-      "admission": {
-        "basis": "api-key",
-        "citation": "https://chenzk.top — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://chenzk.top/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
-      },
-      "risk": {
-        "class": "review-required",
-        "reasons": [
-          "WS-13b §1 admission evidence is PINNED-UPSTREAM, not a fetched vendor document: the citation names the vendor site OmniRoute records, and the api-key path is attested by the pinned RegistryEntry rather than by a doc this lane read"
-        ]
-      },
-      "$comment": "D24/R6b-4: a readable api-key entry at the pin — OpenAI Chat Completions dialect, 0 seeded model row(s), api root https://chenzk.top/v1. Coding relevance is NOT asserted per row: models enter `candidate` and only the live gate (WS-13 §13) promotes any of them."
     },
     {
       "upstreamId": "chutes",
@@ -890,23 +1048,6 @@
       "$comment": "D24/R6b-4: a readable api-key entry at the pin — OpenAI Chat Completions dialect, 1 seeded model row(s), api root https://inference.liquid.ai/v1. Coding relevance is NOT asserted per row: models enter `candidate` and only the live gate (WS-13 §13) promotes any of them."
     },
     {
-      "upstreamId": "llamagate",
-      "winterId": "llamagate",
-      "expectedCategory": "apikey",
-      "pricingBasis": "token",
-      "admission": {
-        "basis": "api-key",
-        "citation": "https://llamagate.ai — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://llamagate.ai/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
-      },
-      "risk": {
-        "class": "review-required",
-        "reasons": [
-          "WS-13b §1 admission evidence is PINNED-UPSTREAM, not a fetched vendor document: the citation names the vendor site OmniRoute records, and the api-key path is attested by the pinned RegistryEntry rather than by a doc this lane read"
-        ]
-      },
-      "$comment": "D24/R6b-4: a readable api-key entry at the pin — OpenAI Chat Completions dialect, 0 seeded model row(s), api root https://llamagate.ai/v1. Coding relevance is NOT asserted per row: models enter `candidate` and only the live gate (WS-13 §13) promotes any of them."
-    },
-    {
       "upstreamId": "llm7",
       "winterId": "llm7",
       "expectedCategory": "apikey",
@@ -972,7 +1113,8 @@
           "WS-13b §1 admission evidence is PINNED-UPSTREAM, not a fetched vendor document: the citation names the vendor site OmniRoute records, and the api-key path is attested by the pinned RegistryEntry rather than by a doc this lane read"
         ]
       },
-      "$comment": "D24/R6b-4: a readable api-key entry at the pin — OpenAI Chat Completions dialect, 5 seeded model row(s), api root https://api.minimax.io/v1. Coding relevance is NOT asserted per row: models enter `candidate` and only the live gate (WS-13 §13) promotes any of them."
+      "$comment": "D24/R6b-4: a readable api-key entry at the pin — OpenAI Chat Completions dialect, 5 seeded model row(s), api root https://api.minimax.io/v1. Coding relevance is NOT asserted per row: models enter `candidate` and only the live gate (WS-13 §13) promotes any of them.",
+      "displayNameOverride": "MiniMax (OpenAI dialect)"
     },
     {
       "upstreamId": "minimax-cn",
@@ -1041,23 +1183,6 @@
         ]
       },
       "$comment": "D24/R6b-4: a readable api-key entry at the pin — OpenAI Chat Completions dialect, 0 seeded model row(s), api root https://api-inference.modelscope.cn/v1. Coding relevance is NOT asserted per row: models enter `candidate` and only the live gate (WS-13 §13) promotes any of them."
-    },
-    {
-      "upstreamId": "monsterapi",
-      "winterId": "monsterapi",
-      "expectedCategory": "apikey",
-      "pricingBasis": "token",
-      "admission": {
-        "basis": "api-key",
-        "citation": "https://monsterapi.ai — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.monsterapi.ai/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
-      },
-      "risk": {
-        "class": "review-required",
-        "reasons": [
-          "WS-13b §1 admission evidence is PINNED-UPSTREAM, not a fetched vendor document: the citation names the vendor site OmniRoute records, and the api-key path is attested by the pinned RegistryEntry rather than by a doc this lane read"
-        ]
-      },
-      "$comment": "D24/R6b-4: a readable api-key entry at the pin — OpenAI Chat Completions dialect, 2 seeded model row(s), api root https://api.monsterapi.ai/v1. Coding relevance is NOT asserted per row: models enter `candidate` and only the live gate (WS-13 §13) promotes any of them."
     },
     {
       "upstreamId": "morph",
@@ -1281,23 +1406,6 @@
       "$comment": "D24/R6b-4: a readable api-key entry at the pin — OpenAI Chat Completions dialect, 1 seeded model row(s), api root https://api.platform.preferredai.jp/v1. Coding relevance is NOT asserted per row: models enter `candidate` and only the live gate (WS-13 §13) promotes any of them."
     },
     {
-      "upstreamId": "predibase",
-      "winterId": "predibase",
-      "expectedCategory": "apikey",
-      "pricingBasis": "token",
-      "admission": {
-        "basis": "api-key",
-        "citation": "https://predibase.com — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://serving.app.predibase.com/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
-      },
-      "risk": {
-        "class": "review-required",
-        "reasons": [
-          "WS-13b §1 admission evidence is PINNED-UPSTREAM, not a fetched vendor document: the citation names the vendor site OmniRoute records, and the api-key path is attested by the pinned RegistryEntry rather than by a doc this lane read"
-        ]
-      },
-      "$comment": "D24/R6b-4: a readable api-key entry at the pin — OpenAI Chat Completions dialect, 0 seeded model row(s), api root https://serving.app.predibase.com/v1. Coding relevance is NOT asserted per row: models enter `candidate` and only the live gate (WS-13 §13) promotes any of them."
-    },
-    {
       "upstreamId": "publicai",
       "winterId": "publicai",
       "expectedCategory": "apikey",
@@ -1502,23 +1610,6 @@
       "$comment": "D24/R6b-4: a readable api-key entry at the pin — OpenAI Chat Completions dialect, 5 seeded model row(s), api root https://api.stepfun.com/v1. Coding relevance is NOT asserted per row: models enter `candidate` and only the live gate (WS-13 §13) promotes any of them."
     },
     {
-      "upstreamId": "sumopod",
-      "winterId": "sumopod",
-      "expectedCategory": "apikey",
-      "pricingBasis": "token",
-      "admission": {
-        "basis": "api-key",
-        "citation": "https://ai.sumopod.com — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://ai.sumopod.com/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
-      },
-      "risk": {
-        "class": "review-required",
-        "reasons": [
-          "WS-13b §1 admission evidence is PINNED-UPSTREAM, not a fetched vendor document: the citation names the vendor site OmniRoute records, and the api-key path is attested by the pinned RegistryEntry rather than by a doc this lane read"
-        ]
-      },
-      "$comment": "D24/R6b-4: a readable api-key entry at the pin — OpenAI Chat Completions dialect, 0 seeded model row(s), api root https://ai.sumopod.com/v1. Coding relevance is NOT asserted per row: models enter `candidate` and only the live gate (WS-13 §13) promotes any of them."
-    },
-    {
       "upstreamId": "synthetic",
       "winterId": "synthetic",
       "expectedCategory": "apikey",
@@ -1568,40 +1659,6 @@
         ]
       },
       "$comment": "D24/R6b-4: a readable api-key entry at the pin — OpenAI Chat Completions dialect, 6 seeded model row(s), api root https://api.hunyuan.cloud.tencent.com/v1. Coding relevance is NOT asserted per row: models enter `candidate` and only the live gate (WS-13 §13) promotes any of them."
-    },
-    {
-      "upstreamId": "token-kiosk",
-      "winterId": "token-kiosk",
-      "expectedCategory": "apikey",
-      "pricingBasis": "token",
-      "admission": {
-        "basis": "api-key",
-        "citation": "https://agent-router.gaib.ai — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://agent-router.gaib.ai/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
-      },
-      "risk": {
-        "class": "review-required",
-        "reasons": [
-          "WS-13b §1 admission evidence is PINNED-UPSTREAM, not a fetched vendor document: the citation names the vendor site OmniRoute records, and the api-key path is attested by the pinned RegistryEntry rather than by a doc this lane read"
-        ]
-      },
-      "$comment": "D24/R6b-4: a readable api-key entry at the pin — OpenAI Chat Completions dialect, 5 seeded model row(s), api root https://agent-router.gaib.ai/v1. Coding relevance is NOT asserted per row: models enter `candidate` and only the live gate (WS-13 §13) promotes any of them."
-    },
-    {
-      "upstreamId": "tokenrouter",
-      "winterId": "tokenrouter",
-      "expectedCategory": "apikey",
-      "pricingBasis": "token",
-      "admission": {
-        "basis": "api-key",
-        "citation": "https://tokenrouter.com — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.tokenrouter.com/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
-      },
-      "risk": {
-        "class": "review-required",
-        "reasons": [
-          "WS-13b §1 admission evidence is PINNED-UPSTREAM, not a fetched vendor document: the citation names the vendor site OmniRoute records, and the api-key path is attested by the pinned RegistryEntry rather than by a doc this lane read"
-        ]
-      },
-      "$comment": "D24/R6b-4: a readable api-key entry at the pin — OpenAI Chat Completions dialect, 3 seeded model row(s), api root https://api.tokenrouter.com/v1. Coding relevance is NOT asserted per row: models enter `candidate` and only the live gate (WS-13 §13) promotes any of them."
     },
     {
       "upstreamId": "typhoon",
@@ -1791,23 +1848,6 @@
       "$comment": "D24/R6b-4: a readable api-key entry at the pin — OpenAI Chat Completions dialect, 2 seeded model row(s), api root https://api.writer.com/v1. Coding relevance is NOT asserted per row: models enter `candidate` and only the live gate (WS-13 §13) promotes any of them."
     },
     {
-      "upstreamId": "x5lab",
-      "winterId": "x5lab",
-      "expectedCategory": "apikey",
-      "pricingBasis": "token",
-      "admission": {
-        "basis": "api-key",
-        "citation": "https://x5lab.dev — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://api.x5lab.dev/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
-      },
-      "risk": {
-        "class": "review-required",
-        "reasons": [
-          "WS-13b §1 admission evidence is PINNED-UPSTREAM, not a fetched vendor document: the citation names the vendor site OmniRoute records, and the api-key path is attested by the pinned RegistryEntry rather than by a doc this lane read"
-        ]
-      },
-      "$comment": "D24/R6b-4: a readable api-key entry at the pin — OpenAI Chat Completions dialect, 0 seeded model row(s), api root https://api.x5lab.dev/v1. Coding relevance is NOT asserted per row: models enter `candidate` and only the live gate (WS-13 §13) promotes any of them."
-    },
-    {
       "upstreamId": "yi",
       "winterId": "yi",
       "expectedCategory": "apikey",
@@ -1832,12 +1872,12 @@
       "pricingBasis": "token",
       "admission": {
         "basis": "api-key",
-        "citation": "https://open.bigmodel.cn — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", Anthropic Messages at https://api.z.ai/api/anthropic. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\"."
+        "citation": "https://docs.z.ai/devpack/tool/claude — z.ai's own GLM Coding Plan documentation for Anthropic-compatible clients, retrieved 2026-09-06: `ANTHROPIC_BASE_URL` is `\"https://api.z.ai/api/anthropic\"`, which is byte-identical to the API root the mapper derives from this id's pinned RegistryEntry (`format: \"claude\"` at `https://api.z.ai/api/anthropic/v1/messages`). Two independent sources, one value. (Round-1 finding I-4: the previous citation named `open.bigmodel.cn`, the mainland product site, and sat in the pinned-upstream tier although the lane had fetched this document.)"
       },
       "risk": {
         "class": "review-required",
         "reasons": [
-          "WS-13b §1 admission evidence is PINNED-UPSTREAM, not a fetched vendor document: the citation names the vendor site OmniRoute records, and the api-key path is attested by the pinned RegistryEntry rather than by a doc this lane read"
+          "WS-13b §1 admission evidence is a FETCHED vendor document, but no live gate case has run against this endpoint; the OpenAI-dialect sibling `zai` is a reviewed overlay row from the same vendor's docs"
         ]
       },
       "$comment": "D24/R6b-4: a readable api-key entry at the pin — Anthropic Messages dialect, 7 seeded model row(s), api root https://api.z.ai/api/anthropic. Coding relevance is NOT asserted per row: models enter `candidate` and only the live gate (WS-13 §13) promotes any of them."
@@ -1860,7 +1900,6 @@
       "$comment": "D24/R6b-4: a readable api-key entry at the pin — OpenAI Chat Completions dialect, 9 seeded model row(s), api root https://zenmux.ai/api/v1. Coding relevance is NOT asserted per row: models enter `candidate` and only the live gate (WS-13 §13) promotes any of them."
     }
   ],
-
   "modelOverrides": {
     "$comment": "ONE hand-reviewed per-model override map, applied by the mapper and RECORDED in the ledger as a `reviewed-normalization` — never a heuristic, and never silent. Three narrow things it can say about a single upstream model id: `id` corrects a wire id upstream spells differently from the provider's own documentation; `exclude` keeps a row out of the catalog entirely (WS-13 §4's MUST that non-`llm` rows never reach the worker-model picker — upstream has no per-model scope field, and a NAME heuristic would be worse than none because it would silently drop a future model whose id happens to match); `status` overrides the provider's `initialModelStatus` for one row. Every entry carries a `why` that ends up in the ledger, so a reviewer can diff the catalog against the pinned source and find every place they differ with the justification attached.",
     "openrouter": {
@@ -1876,31 +1915,81 @@
       }
     },
     "vertex": {
-      "DeepSeek-V4-Pro": { "status": "candidate", "why": "A Vertex MaaS PARTNER model. Upstream lists it under an entry whose `format` is `gemini`, so the mapper inherits the GenerateContent dialect for it — but partner models are not served over GenerateContent, and nothing has proven what they do speak here. `candidate` rather than R6-16's `experimental`, because `experimental` is a claim that a live adapter serves the row; flagged for Lane B/N." },
-      "DeepSeek-V4-Flash": { "status": "candidate", "why": "As `DeepSeek-V4-Pro` — a Vertex MaaS partner model inheriting the Gemini dialect from a silent upstream entry." },
-      "GLM-5.1-FP8": { "status": "candidate", "why": "As `DeepSeek-V4-Pro` — a Vertex MaaS partner model inheriting the Gemini dialect from a silent upstream entry." },
-      "Qwen3.6-35B-A3B": { "status": "candidate", "why": "As `DeepSeek-V4-Pro` — a Vertex MaaS partner model inheriting the Gemini dialect from a silent upstream entry." }
+      "DeepSeek-V4-Pro": {
+        "status": "candidate",
+        "why": "A Vertex MaaS PARTNER model. Upstream lists it under an entry whose `format` is `gemini`, so the mapper inherits the GenerateContent dialect for it — but partner models are not served over GenerateContent, and nothing has proven what they do speak here. `candidate` rather than R6-16's `experimental`, because `experimental` is a claim that a live adapter serves the row; flagged for Lane B/N."
+      },
+      "DeepSeek-V4-Flash": {
+        "status": "candidate",
+        "why": "As `DeepSeek-V4-Pro` — a Vertex MaaS partner model inheriting the Gemini dialect from a silent upstream entry."
+      },
+      "GLM-5.1-FP8": {
+        "status": "candidate",
+        "why": "As `DeepSeek-V4-Pro` — a Vertex MaaS partner model inheriting the Gemini dialect from a silent upstream entry."
+      },
+      "Qwen3.6-35B-A3B": {
+        "status": "candidate",
+        "why": "As `DeepSeek-V4-Pro` — a Vertex MaaS partner model inheriting the Gemini dialect from a silent upstream entry."
+      }
     }
   },
-
   "categoryDispositions": {
     "$comment": "WS-13 §1's disposition table, as DATA the extractor applies. `candidate-pool` means \"eligible for the `providers` intake list above\" — never \"included\": an api-key row absent from that list is still rejected, with class `not-allowlisted`. Every other category fails closed at import time, whatever the allowlist says (the check runs BOTH ways: an allowlisted id whose upstream category is not `candidate-pool` fails the run, which is the class transition WS-13 §3 step 7 blocks).",
-    "noauth": { "disposition": "blocked", "exclusionClass": "category-no-auth", "reason": "WS-13 §1: reject by default; individually allowlistable only after protocol and terms review" },
-    "oauth": { "disposition": "blocked", "exclusionClass": "category-oauth", "reason": "WS-13 §1/§6: generic OAuth import is rejected; only provider-authorized product flows, which are Winter-owned rows, never extracted ones" },
-    "web-cookie": { "disposition": "blocked", "exclusionClass": "category-web-cookie", "reason": "WS-13 §1: excluded categorically — browser-session transport" },
-    "apikey": { "disposition": "candidate-pool", "exclusionClass": "not-allowlisted", "reason": "WS-13 §1: the main source pool, curated by LLM relevance and adapter quality — presence upstream is never inclusion" },
-    "local": { "disposition": "winter-owned", "exclusionClass": "category-local-live-discovery", "reason": "WS-13 §12: the twelve chat/self-hosted backends are Winter-owned rows on live discovery (machine-specific inventories); image-only systems are excluded from worker models" },
-    "search": { "disposition": "blocked", "exclusionClass": "category-search", "reason": "WS-13 §1: not an LLM provider" },
-    "audio": { "disposition": "blocked", "exclusionClass": "category-audio", "reason": "WS-13 §1: not an Agent SDK worker-model provider" },
-    "upstream-proxy": { "disposition": "blocked", "exclusionClass": "category-upstream-proxy", "reason": "WS-13 §1: no proxy-of-proxy layer" },
-    "cloud-agent": { "disposition": "blocked", "exclusionClass": "category-cloud-agent", "reason": "WS-13 §1: remote agent products, not model providers" },
-    "system": { "disposition": "blocked", "exclusionClass": "category-system", "reason": "WS-13 §1/§9: `auto` is routing policy, which this layer bans outright" }
+    "noauth": {
+      "disposition": "blocked",
+      "exclusionClass": "category-no-auth",
+      "reason": "WS-13 §1: reject by default; individually allowlistable only after protocol and terms review"
+    },
+    "oauth": {
+      "disposition": "blocked",
+      "exclusionClass": "category-oauth",
+      "reason": "WS-13 §1/§6: generic OAuth import is rejected; only provider-authorized product flows, which are Winter-owned rows, never extracted ones"
+    },
+    "web-cookie": {
+      "disposition": "blocked",
+      "exclusionClass": "category-web-cookie",
+      "reason": "WS-13 §1: excluded categorically — browser-session transport"
+    },
+    "apikey": {
+      "disposition": "candidate-pool",
+      "exclusionClass": "not-allowlisted",
+      "reason": "WS-13 §1: the main source pool, curated by LLM relevance and adapter quality — presence upstream is never inclusion"
+    },
+    "local": {
+      "disposition": "winter-owned",
+      "exclusionClass": "category-local-live-discovery",
+      "reason": "WS-13 §12: the twelve chat/self-hosted backends are Winter-owned rows on live discovery (machine-specific inventories); image-only systems are excluded from worker models"
+    },
+    "search": {
+      "disposition": "blocked",
+      "exclusionClass": "category-search",
+      "reason": "WS-13 §1: not an LLM provider"
+    },
+    "audio": {
+      "disposition": "blocked",
+      "exclusionClass": "category-audio",
+      "reason": "WS-13 §1: not an Agent SDK worker-model provider"
+    },
+    "upstream-proxy": {
+      "disposition": "blocked",
+      "exclusionClass": "category-upstream-proxy",
+      "reason": "WS-13 §1: no proxy-of-proxy layer"
+    },
+    "cloud-agent": {
+      "disposition": "blocked",
+      "exclusionClass": "category-cloud-agent",
+      "reason": "WS-13 §1: remote agent products, not model providers"
+    },
+    "system": {
+      "disposition": "blocked",
+      "exclusionClass": "category-system",
+      "reason": "WS-13 §1/§9: `auto` is routing policy, which this layer bans outright"
+    }
   },
-
   "blocked": [
     {
       "upstreamId": "360ai",
-      "reason": "unknown evidence — WS-13b §1 / audit OQ class, CARRIED not excluded on the merits: this upstream entry is built by a HELPER CALL (`buildOpenAiCompatibleRegistryEntry(...)`) or a shared constant, which the literal extractor refuses to evaluate, so the pinned tree yields no endpoint, auth, executor or model list for it — only the product-catalog identity (`360 AI`, https://ai.360.cn). Admitting it would need a reviewed overlay row authored from the VENDOR'S OWN DOCS, and P6.5 fetched none for this id; hand-transcribing the helper's arguments out of the pinned tree is precisely the extraction the literal extractor refuses, so it is not the substitute. WS-13b §1: a row whose evidence is `unknown` does not ship."
+      "reason": "probed 2026-09-06 and NOT admitted — WS-13b §1 / Step 5 (round-1 finding I-1, list (e)): docs page reached (`https://ai.360.cn/docs`, HTTP 200) but it states NO OpenAI-compatible base URL, and upstream's own `authHint` says only \"Get API key at ai.360.cn\". Step 5's bar is a confirmed vendor documentation page AND a fixed endpoint; hand-transcribing the helper call's arguments out of the pinned tree is the extraction the literal extractor refuses, so it is not the substitute. Re-admissible through a reviewed overlay row the day the document is found."
     },
     {
       "upstreamId": "agy",
@@ -1912,11 +2001,7 @@
     },
     {
       "upstreamId": "ainative",
-      "reason": "unknown evidence — WS-13b §1 / audit OQ class, CARRIED not excluded on the merits: this upstream entry is built by a HELPER CALL (`buildOpenAiCompatibleRegistryEntry(...)`) or a shared constant, which the literal extractor refuses to evaluate, so the pinned tree yields no endpoint, auth, executor or model list for it — only the product-catalog identity (`AINative Studio`, https://ainative.studio). Admitting it would need a reviewed overlay row authored from the VENDOR'S OWN DOCS, and P6.5 fetched none for this id; hand-transcribing the helper's arguments out of the pinned tree is precisely the extraction the literal extractor refuses, so it is not the substitute. WS-13b §1: a row whose evidence is `unknown` does not ship."
-    },
-    {
-      "upstreamId": "aion",
-      "reason": "unknown evidence — WS-13b §1 / audit OQ class, CARRIED not excluded on the merits: this upstream entry is built by a HELPER CALL (`buildOpenAiCompatibleRegistryEntry(...)`) or a shared constant, which the literal extractor refuses to evaluate, so the pinned tree yields no endpoint, auth, executor or model list for it — only the product-catalog identity (`Aion Labs`, https://www.aionlabs.ai). Admitting it would need a reviewed overlay row authored from the VENDOR'S OWN DOCS, and P6.5 fetched none for this id; hand-transcribing the helper's arguments out of the pinned tree is precisely the extraction the literal extractor refuses, so it is not the substitute. WS-13b §1: a row whose evidence is `unknown` does not ship."
+      "reason": "probed 2026-09-06 and NOT admitted — WS-13b §1 / Step 5 (round-1 finding I-1, list (e)): docs page reached (`https://docs.ainative.studio`, HTTP 200) but the page states no base URL; upstream's `apiHint` names `https://api.ainative.studio/api/v1`, which is ONE source, and Step 5's bar is the vendor's own document. Step 5's bar is a confirmed vendor documentation page AND a fixed endpoint; hand-transcribing the helper call's arguments out of the pinned tree is the extraction the literal extractor refuses, so it is not the substitute. Re-admissible through a reviewed overlay row the day the document is found."
     },
     {
       "upstreamId": "amazon-q",
@@ -1927,24 +2012,16 @@
       "reason": "user ruling 2026-09-06 (WS-13b D22, §5): excluded by name from the OAuth category. No provider row, no adapter, no flag — a flag would ship code whose only purpose is to present another product's client identity, and the flag's default state does not change what the code is."
     },
     {
-      "upstreamId": "anyapi",
-      "reason": "unknown evidence — WS-13b §1 / audit OQ class, CARRIED not excluded on the merits: this upstream entry is built by a HELPER CALL (`buildOpenAiCompatibleRegistryEntry(...)`) or a shared constant, which the literal extractor refuses to evaluate, so the pinned tree yields no endpoint, auth, executor or model list for it — only the product-catalog identity (`AnyAPI AI`, https://anyapi.ai). Admitting it would need a reviewed overlay row authored from the VENDOR'S OWN DOCS, and P6.5 fetched none for this id; hand-transcribing the helper's arguments out of the pinned tree is precisely the extraction the literal extractor refuses, so it is not the substitute. WS-13b §1: a row whose evidence is `unknown` does not ship."
-    },
-    {
-      "upstreamId": "arcee-ai",
-      "reason": "unknown evidence — WS-13b §1 / audit OQ class, CARRIED not excluded on the merits: this upstream entry is built by a HELPER CALL (`buildOpenAiCompatibleRegistryEntry(...)`) or a shared constant, which the literal extractor refuses to evaluate, so the pinned tree yields no endpoint, auth, executor or model list for it — only the product-catalog identity (`Arcee AI`, https://arcee.ai). Admitting it would need a reviewed overlay row authored from the VENDOR'S OWN DOCS, and P6.5 fetched none for this id; hand-transcribing the helper's arguments out of the pinned tree is precisely the extraction the literal extractor refuses, so it is not the substitute. WS-13b §1: a row whose evidence is `unknown` does not ship."
-    },
-    {
       "upstreamId": "auggie",
       "reason": "agent transport — WS-13b §8.2 (ruled EXCLUDED from Winter: \"whatever is agent transport like Claude Agent SDK, exclude it\"): stdio to an installed product. These drive an INSTALLED PRODUCT rather than serving a model endpoint, so they are not provider rows in any admissible form — and the raw `api.githubcopilot.com` path is separately excluded on identity alone (audit §3a). WS-13b §6 is retained as the record of why, so the provider layer never grows an impersonating adapter for them; nothing is owed to any phase."
     },
     {
       "upstreamId": "auriko",
-      "reason": "unknown evidence — WS-13b §1 / audit OQ class, CARRIED not excluded on the merits: this upstream entry is built by a HELPER CALL (`buildOpenAiCompatibleRegistryEntry(...)`) or a shared constant, which the literal extractor refuses to evaluate, so the pinned tree yields no endpoint, auth, executor or model list for it — only the product-catalog identity (`Auriko`, https://www.auriko.ai). Admitting it would need a reviewed overlay row authored from the VENDOR'S OWN DOCS, and P6.5 fetched none for this id; hand-transcribing the helper's arguments out of the pinned tree is precisely the extraction the literal extractor refuses, so it is not the substitute. WS-13b §1: a row whose evidence is `unknown` does not ship."
+      "reason": "probed 2026-09-06 and NOT admitted — WS-13b §1 / Step 5 (round-1 finding I-1, list (e)): docs page reached (`https://docs.auriko.ai`, HTTP 200) and it says the API is OpenAI-compatible, but the reached page states no base URL. Step 5's bar is a confirmed vendor documentation page AND a fixed endpoint; hand-transcribing the helper call's arguments out of the pinned tree is the extraction the literal extractor refuses, so it is not the substitute. Re-admissible through a reviewed overlay row the day the document is found."
     },
     {
       "upstreamId": "azure-ai",
-      "reason": "unknown evidence — WS-13b §1 / audit OQ class, CARRIED not excluded on the merits: this upstream entry is built by a HELPER CALL (`buildOpenAiCompatibleRegistryEntry(...)`) or a shared constant, which the literal extractor refuses to evaluate, so the pinned tree yields no endpoint, auth, executor or model list for it — only the product-catalog identity (`Azure AI Foundry`, https://learn.microsoft.com/azure/ai-foundry). Admitting it would need a reviewed overlay row authored from the VENDOR'S OWN DOCS, and P6.5 fetched none for this id; hand-transcribing the helper's arguments out of the pinned tree is precisely the extraction the literal extractor refuses, so it is not the substitute. WS-13b §1: a row whose evidence is `unknown` does not ship."
+      "reason": "endpoint not derivable — WS-13b §2 (round-1 finding I-1, list (b)): Azure AI Foundry has a real, documented public API, but its base URL is a PER-TENANT TEMPLATE (`https://<resource>.services.ai.azure.com/openai/v1/` or `https://<resource>.openai.azure.com/openai/v1/` — the operator's own resource name), not a fixed host. `defaultEndpoints.api` is immutable generated data (R6-11) and a template is not an endpoint, so an overlay row here would be the exact failure this lane's own endpoint rule exists to prevent — a row that validates and cannot serve a turn. Docs: https://learn.microsoft.com/azure/ai-foundry. RULING (round 1): a dedicated host-supplied-endpoint adapter shape, of the kind `azure-openai` already has, is a SPINE item for the fix wave; this id is admissible the day it exists."
     },
     {
       "upstreamId": "bailian-coding-plan",
@@ -1952,19 +2029,23 @@
     },
     {
       "upstreamId": "black-forest-labs",
-      "reason": "unknown evidence — WS-13b §1 / audit OQ class, CARRIED not excluded on the merits: this upstream entry is built by a HELPER CALL (`buildOpenAiCompatibleRegistryEntry(...)`) or a shared constant, which the literal extractor refuses to evaluate, so the pinned tree yields no endpoint, auth, executor or model list for it — only the product-catalog identity (`Black Forest Labs`, https://blackforestlabs.ai). Admitting it would need a reviewed overlay row authored from the VENDOR'S OWN DOCS, and P6.5 fetched none for this id; hand-transcribing the helper's arguments out of the pinned tree is precisely the extraction the literal extractor refuses, so it is not the substitute. WS-13b §1: a row whose evidence is `unknown` does not ship."
+      "reason": "out of scope — WS-13 §1/§4, D24 (round-1 finding I-1, list (c)): image generation (FLUX). `WinterProviderDescriptor.scope` is per PROVIDER and this catalog carries `llm` rows only; a image service has no chat surface to bind and must never reach the Agent SDK worker-model picker. Re-filed off \"unknown evidence\" in round 1: this id is not held pending a document — MORE evidence would not admit it, which is what makes it a different exclusion from the ones that are."
     },
     {
       "upstreamId": "chat-oripe",
-      "reason": "unknown evidence — WS-13b §1 / audit OQ class, CARRIED not excluded on the merits: this upstream entry is built by a HELPER CALL (`buildOpenAiCompatibleRegistryEntry(...)`) or a shared constant, which the literal extractor refuses to evaluate, so the pinned tree yields no endpoint, auth, executor or model list for it — only the product-catalog identity (`Chat Oripe`, https://api.oriper.com). Admitting it would need a reviewed overlay row authored from the VENDOR'S OWN DOCS, and P6.5 fetched none for this id; hand-transcribing the helper's arguments out of the pinned tree is precisely the extraction the literal extractor refuses, so it is not the substitute. WS-13b §1: a row whose evidence is `unknown` does not ship."
+      "reason": "probed 2026-09-06 and NOT admitted — WS-13b §1 / Step 5 (round-1 finding I-1, list (e)): HTTP 530 (Cloudflare origin unreachable) on `https://api.oriper.com` — and upstream's own `apiHint` already says to use it \"only after confirming the provider's current documentation, terms and key issuance\". Step 5's bar is a confirmed vendor documentation page AND a fixed endpoint; hand-transcribing the helper call's arguments out of the pinned tree is the extraction the literal extractor refuses, so it is not the substitute. Re-admissible through a reviewed overlay row the day the document is found."
     },
     {
       "upstreamId": "chatanywhere",
-      "reason": "unknown evidence — WS-13b §1 / audit OQ class, CARRIED not excluded on the merits: this upstream entry is built by a HELPER CALL (`buildOpenAiCompatibleRegistryEntry(...)`) or a shared constant, which the literal extractor refuses to evaluate, so the pinned tree yields no endpoint, auth, executor or model list for it — only the product-catalog identity (`ChatAnywhere`, https://chatanywhere.tech). Admitting it would need a reviewed overlay row authored from the VENDOR'S OWN DOCS, and P6.5 fetched none for this id; hand-transcribing the helper's arguments out of the pinned tree is precisely the extraction the literal extractor refuses, so it is not the substitute. WS-13b §1: a row whose evidence is `unknown` does not ship."
+      "reason": "probed 2026-09-06 and NOT admitted — WS-13b §1 / Step 5 (round-1 finding I-1, list (e)): docs reached (HTTP 200) but the endpoint is AMBIGUOUS BY DESIGN: the docs name `https://api.chatanywhere.tech/v1` while upstream's `apiHint` says to use `https://api.chatanywhere.org/v1` outside China. Two hosts, no single documented base — and the vendor's terms are non-commercial, which a general-purpose agent host cannot satisfy. Step 5's bar is a confirmed vendor documentation page AND a fixed endpoint; hand-transcribing the helper call's arguments out of the pinned tree is the extraction the literal extractor refuses, so it is not the substitute. Re-admissible through a reviewed overlay row the day the document is found."
     },
     {
       "upstreamId": "cheaperinference",
       "reason": "unrepresentable upstream vocabulary — WS-13 §13 / WS-13b §2: `executor: \"cheaperinference\"` is a bespoke OmniRoute execution path Winter does not represent — WS-13 §1's exclusion classes ARE the executors the mapper's closed set omits, and an unknown executor fails the run rather than defaulting. Allowlisting it would FAIL the extraction run, not produce a row."
+    },
+    {
+      "upstreamId": "chenzk",
+      "reason": "docs do not exist — WS-13b §1 / Step 4 (round-1 finding I-3): the `pinned-upstream` admission citation for this row named a page that is not there. Liveness sweep result: HTTP 200 but NOT A DOCUMENT: the page's entire body is the string \"New API\" — a bare gateway shell with no vendor identification, no base URL, no auth scheme, no model list and no terms (`https://chenzk.top`, read 2026-09-06). A citation is the row's entire evidence, so a citation that resolves to nothing is a row with no evidence, and WS-13b §1 does not ship one. Re-admissible through a reviewed overlay row the day a real vendor doc is found."
     },
     {
       "upstreamId": "chipotle",
@@ -1972,7 +2053,7 @@
     },
     {
       "upstreamId": "clarifai",
-      "reason": "unknown evidence — WS-13b §1 / audit OQ class, CARRIED not excluded on the merits: this upstream entry is built by a HELPER CALL (`buildOpenAiCompatibleRegistryEntry(...)`) or a shared constant, which the literal extractor refuses to evaluate, so the pinned tree yields no endpoint, auth, executor or model list for it — only the product-catalog identity (`Clarifai`, https://docs.clarifai.com). Admitting it would need a reviewed overlay row authored from the VENDOR'S OWN DOCS, and P6.5 fetched none for this id; hand-transcribing the helper's arguments out of the pinned tree is precisely the extraction the literal extractor refuses, so it is not the substitute. WS-13b §1: a row whose evidence is `unknown` does not ship."
+      "reason": "probed and NOT confirmed — WS-13b §1 (round-1 finding I-1, list (d)), probed 2026-09-06: a platform API whose chat surface and base URL were not established by the probe. Step 5's bar is a confirmed docs page AND a fixed endpoint; this id cleared neither, and Winter does not author a row from a base it cannot cite. Re-admissible the day one is found."
     },
     {
       "upstreamId": "claude",
@@ -1988,7 +2069,7 @@
     },
     {
       "upstreamId": "cloudcode-one",
-      "reason": "unknown evidence — WS-13b §1 / audit OQ class, CARRIED not excluded on the merits: this upstream entry is built by a HELPER CALL (`buildOpenAiCompatibleRegistryEntry(...)`) or a shared constant, which the literal extractor refuses to evaluate, so the pinned tree yields no endpoint, auth, executor or model list for it — only the product-catalog identity (`CloudCode.ONE`, https://cloudcode.one). Admitting it would need a reviewed overlay row authored from the VENDOR'S OWN DOCS, and P6.5 fetched none for this id; hand-transcribing the helper's arguments out of the pinned tree is precisely the extraction the literal extractor refuses, so it is not the substitute. WS-13b §1: a row whose evidence is `unknown` does not ship."
+      "reason": "probed 2026-09-06 and NOT admitted — WS-13b §1 / Step 5 (round-1 finding I-1, list (e)): the site was reached (HTTP 200) but there is no documentation page and it states no base URL; upstream's `apiHint` is the only source. Step 5's bar is a confirmed vendor documentation page AND a fixed endpoint; hand-transcribing the helper call's arguments out of the pinned tree is the extraction the literal extractor refuses, so it is not the substitute. Re-admissible through a reviewed overlay row the day the document is found."
     },
     {
       "upstreamId": "cloudflare-ai",
@@ -2032,7 +2113,7 @@
     },
     {
       "upstreamId": "datarobot",
-      "reason": "unknown evidence — WS-13b §1 / audit OQ class, CARRIED not excluded on the merits: this upstream entry is built by a HELPER CALL (`buildOpenAiCompatibleRegistryEntry(...)`) or a shared constant, which the literal extractor refuses to evaluate, so the pinned tree yields no endpoint, auth, executor or model list for it — only the product-catalog identity (`DataRobot`, https://docs.datarobot.com). Admitting it would need a reviewed overlay row authored from the VENDOR'S OWN DOCS, and P6.5 fetched none for this id; hand-transcribing the helper's arguments out of the pinned tree is precisely the extraction the literal extractor refuses, so it is not the substitute. WS-13b §1: a row whose evidence is `unknown` does not ship."
+      "reason": "probed and NOT confirmed — WS-13b §1 (round-1 finding I-1, list (d)), probed 2026-09-06: an enterprise platform whose inference host is per-deployment, not a fixed public base. Step 5's bar is a confirmed docs page AND a fixed endpoint; this id cleared neither, and Winter does not author a row from a base it cannot cite. Re-admissible the day one is found."
     },
     {
       "upstreamId": "deepai",
@@ -2055,32 +2136,16 @@
       "reason": "endpoint not derivable — WS-13b §2: upstream states `https://api.dify.ai`, which does not end in `/chat/completions`, the path its own `format: \"openai\"` names and the path Winter's adapter for that family APPENDS to `connection.baseUrl`. The API root is therefore not derivable from the pinned tree — upstream's executor is outside the import boundary, so what it does with this URL is unknowable here — and Winter refuses to guess an endpoint rather than ship a row that would 404 or reach the wrong host. Admissible later through a reviewed overlay row authored from the vendor's own docs."
     },
     {
-      "upstreamId": "digitalocean",
-      "reason": "unknown evidence — WS-13b §1 / audit OQ class, CARRIED not excluded on the merits: this upstream entry is built by a HELPER CALL (`buildOpenAiCompatibleRegistryEntry(...)`) or a shared constant, which the literal extractor refuses to evaluate, so the pinned tree yields no endpoint, auth, executor or model list for it — only the product-catalog identity (`DigitalOcean`, https://docs.digitalocean.com/products/ai-platform/). Admitting it would need a reviewed overlay row authored from the VENDOR'S OWN DOCS, and P6.5 fetched none for this id; hand-transcribing the helper's arguments out of the pinned tree is precisely the extraction the literal extractor refuses, so it is not the substitute. WS-13b §1: a row whose evidence is `unknown` does not ship."
-    },
-    {
       "upstreamId": "duckduckgo-web",
       "reason": "user ruling 2026-09-06 (WS-13b D22, §5): excluded by name from the keyless/free category. Admission of the rest of that category (aihorde, uncloseai) does not reach these four."
     },
     {
-      "upstreamId": "dxnt",
-      "reason": "unknown evidence — WS-13b §1 / audit OQ class, CARRIED not excluded on the merits: this upstream entry is built by a HELPER CALL (`buildOpenAiCompatibleRegistryEntry(...)`) or a shared constant, which the literal extractor refuses to evaluate, so the pinned tree yields no endpoint, auth, executor or model list for it — only the product-catalog identity (`DXNT / DX Token`, https://www.dxnt.com). Admitting it would need a reviewed overlay row authored from the VENDOR'S OWN DOCS, and P6.5 fetched none for this id; hand-transcribing the helper's arguments out of the pinned tree is precisely the extraction the literal extractor refuses, so it is not the substitute. WS-13b §1: a row whose evidence is `unknown` does not ship."
-    },
-    {
-      "upstreamId": "electronhub",
-      "reason": "unknown evidence — WS-13b §1 / audit OQ class, CARRIED not excluded on the merits: this upstream entry is built by a HELPER CALL (`buildOpenAiCompatibleRegistryEntry(...)`) or a shared constant, which the literal extractor refuses to evaluate, so the pinned tree yields no endpoint, auth, executor or model list for it — only the product-catalog identity (`Electron Hub`, https://www.electronhub.ai). Admitting it would need a reviewed overlay row authored from the VENDOR'S OWN DOCS, and P6.5 fetched none for this id; hand-transcribing the helper's arguments out of the pinned tree is precisely the extraction the literal extractor refuses, so it is not the substitute. WS-13b §1: a row whose evidence is `unknown` does not ship."
-    },
-    {
       "upstreamId": "empower",
-      "reason": "unknown evidence — WS-13b §1 / audit OQ class, CARRIED not excluded on the merits: this upstream entry is built by a HELPER CALL (`buildOpenAiCompatibleRegistryEntry(...)`) or a shared constant, which the literal extractor refuses to evaluate, so the pinned tree yields no endpoint, auth, executor or model list for it — only the product-catalog identity (`Empower`, https://docs.empower.dev). Admitting it would need a reviewed overlay row authored from the VENDOR'S OWN DOCS, and P6.5 fetched none for this id; hand-transcribing the helper's arguments out of the pinned tree is precisely the extraction the literal extractor refuses, so it is not the substitute. WS-13b §1: a row whose evidence is `unknown` does not ship."
+      "reason": "probed and NOT confirmed — WS-13b §1 (round-1 finding I-1, list (d)), probed 2026-09-06: no vendor documentation page was reached. Step 5's bar is a confirmed docs page AND a fixed endpoint; this id cleared neither, and Winter does not author a row from a base it cannot cite. Re-admissible the day one is found."
     },
     {
       "upstreamId": "fal-ai",
-      "reason": "unknown evidence — WS-13b §1 / audit OQ class, CARRIED not excluded on the merits: this upstream entry is built by a HELPER CALL (`buildOpenAiCompatibleRegistryEntry(...)`) or a shared constant, which the literal extractor refuses to evaluate, so the pinned tree yields no endpoint, auth, executor or model list for it — only the product-catalog identity (`Fal.ai`, https://fal.ai). Admitting it would need a reviewed overlay row authored from the VENDOR'S OWN DOCS, and P6.5 fetched none for this id; hand-transcribing the helper's arguments out of the pinned tree is precisely the extraction the literal extractor refuses, so it is not the substitute. WS-13b §1: a row whose evidence is `unknown` does not ship."
-    },
-    {
-      "upstreamId": "fastrouter",
-      "reason": "unknown evidence — WS-13b §1 / audit OQ class, CARRIED not excluded on the merits: this upstream entry is built by a HELPER CALL (`buildOpenAiCompatibleRegistryEntry(...)`) or a shared constant, which the literal extractor refuses to evaluate, so the pinned tree yields no endpoint, auth, executor or model list for it — only the product-catalog identity (`FastRouter`, https://fastrouter.ai). Admitting it would need a reviewed overlay row authored from the VENDOR'S OWN DOCS, and P6.5 fetched none for this id; hand-transcribing the helper's arguments out of the pinned tree is precisely the extraction the literal extractor refuses, so it is not the substitute. WS-13b §1: a row whose evidence is `unknown` does not ship."
+      "reason": "out of scope — WS-13 §1/§4, D24 (round-1 finding I-1, list (c)): image/video/audio generative media. `WinterProviderDescriptor.scope` is per PROVIDER and this catalog carries `llm` rows only; a image service has no chat surface to bind and must never reach the Agent SDK worker-model picker. Re-filed off \"unknown evidence\" in round 1: this id is not held pending a document — MORE evidence would not admit it, which is what makes it a different exclusion from the ones that are."
     },
     {
       "upstreamId": "felo-web",
@@ -2088,19 +2153,15 @@
     },
     {
       "upstreamId": "fenayai",
-      "reason": "unknown evidence — WS-13b §1 / audit OQ class, CARRIED not excluded on the merits: this upstream entry is built by a HELPER CALL (`buildOpenAiCompatibleRegistryEntry(...)`) or a shared constant, which the literal extractor refuses to evaluate, so the pinned tree yields no endpoint, auth, executor or model list for it — only the product-catalog identity (`FenayAI`, https://fenayai.com). Admitting it would need a reviewed overlay row authored from the VENDOR'S OWN DOCS, and P6.5 fetched none for this id; hand-transcribing the helper's arguments out of the pinned tree is precisely the extraction the literal extractor refuses, so it is not the substitute. WS-13b §1: a row whose evidence is `unknown` does not ship."
+      "reason": "probed 2026-09-06 and NOT admitted — WS-13b §1 / Step 5 (round-1 finding I-1, list (e)): HTTP 530 (Cloudflare origin unreachable) on `https://fenayai.com`. Step 5's bar is a confirmed vendor documentation page AND a fixed endpoint; hand-transcribing the helper call's arguments out of the pinned tree is the extraction the literal extractor refuses, so it is not the substitute. Re-admissible through a reviewed overlay row the day the document is found."
     },
     {
       "upstreamId": "free-ai",
-      "reason": "unknown evidence — WS-13b §1 / audit OQ class, CARRIED not excluded on the merits: this upstream entry is built by a HELPER CALL (`buildOpenAiCompatibleRegistryEntry(...)`) or a shared constant, which the literal extractor refuses to evaluate, so the pinned tree yields no endpoint, auth, executor or model list for it — only the product-catalog identity (`Free.ai`, https://free.ai). Admitting it would need a reviewed overlay row authored from the VENDOR'S OWN DOCS, and P6.5 fetched none for this id; hand-transcribing the helper's arguments out of the pinned tree is precisely the extraction the literal extractor refuses, so it is not the substitute. WS-13b §1: a row whose evidence is `unknown` does not ship."
+      "reason": "probed 2026-09-06 and NOT admitted — WS-13b §1 / Step 5 (round-1 finding I-1, list (e)): docs reached (HTTP 200) but the documented endpoint is NON-STANDARD: `https://api.free.ai/v1/chat/` (upstream's own `apiHint` calls it \"the nonstandard but OpenAI-shaped\" path). The API root is therefore not derivable by the rule this lane's mapper applies, and guessing one is what WS-13b §2 refuses. Step 5's bar is a confirmed vendor documentation page AND a fixed endpoint; hand-transcribing the helper call's arguments out of the pinned tree is the extraction the literal extractor refuses, so it is not the substitute. Re-admissible through a reviewed overlay row the day the document is found."
     },
     {
       "upstreamId": "freebuff",
       "reason": "unrepresentable upstream vocabulary — WS-13 §13 / WS-13b §2: `executor: \"freebuff\"` is a bespoke OmniRoute execution path Winter does not represent — WS-13 §1's exclusion classes ARE the executors the mapper's closed set omits, and an unknown executor fails the run rather than defaulting. Allowlisting it would FAIL the extraction run, not produce a row."
-    },
-    {
-      "upstreamId": "freeinference",
-      "reason": "unknown evidence — WS-13b §1 / audit OQ class, CARRIED not excluded on the merits: this upstream entry is built by a HELPER CALL (`buildOpenAiCompatibleRegistryEntry(...)`) or a shared constant, which the literal extractor refuses to evaluate, so the pinned tree yields no endpoint, auth, executor or model list for it — only the product-catalog identity (`FreeInference`, https://freeinference.org). Admitting it would need a reviewed overlay row authored from the VENDOR'S OWN DOCS, and P6.5 fetched none for this id; hand-transcribing the helper's arguments out of the pinned tree is precisely the extraction the literal extractor refuses, so it is not the substitute. WS-13b §1: a row whose evidence is `unknown` does not ship."
     },
     {
       "upstreamId": "g4f-gemini",
@@ -2124,7 +2185,7 @@
     },
     {
       "upstreamId": "getgoapi",
-      "reason": "unknown evidence — WS-13b §1 / audit OQ class, CARRIED not excluded on the merits: this upstream entry is built by a HELPER CALL (`buildOpenAiCompatibleRegistryEntry(...)`) or a shared constant, which the literal extractor refuses to evaluate, so the pinned tree yields no endpoint, auth, executor or model list for it — only the product-catalog identity (`GoAPI`, https://api.getgoapi.com). Admitting it would need a reviewed overlay row authored from the VENDOR'S OWN DOCS, and P6.5 fetched none for this id; hand-transcribing the helper's arguments out of the pinned tree is precisely the extraction the literal extractor refuses, so it is not the substitute. WS-13b §1: a row whose evidence is `unknown` does not ship."
+      "reason": "probed 2026-09-06 and NOT admitted — WS-13b §1 / Step 5 (round-1 finding I-1, list (e)): docs page reached (`https://api.getgoapi.com/docs`, HTTP 200) but it is a 5 KB landing shell that states no base URL, no auth scheme and no model list. Step 5's bar is a confirmed vendor documentation page AND a fixed endpoint; hand-transcribing the helper call's arguments out of the pinned tree is the extraction the literal extractor refuses, so it is not the substitute. Re-admissible through a reviewed overlay row the day the document is found."
     },
     {
       "upstreamId": "ghe-copilot",
@@ -2140,7 +2201,7 @@
     },
     {
       "upstreamId": "gitlab",
-      "reason": "unknown evidence — WS-13b §1 / audit OQ class, CARRIED not excluded on the merits: this upstream entry is built by a HELPER CALL (`buildOpenAiCompatibleRegistryEntry(...)`) or a shared constant, which the literal extractor refuses to evaluate, so the pinned tree yields no endpoint, auth, executor or model list for it — only the product-catalog identity (`GitLab Duo PAT`, https://docs.gitlab.com/user/duo_agent_platform/code_suggestions/). Admitting it would need a reviewed overlay row authored from the VENDOR'S OWN DOCS, and P6.5 fetched none for this id; hand-transcribing the helper's arguments out of the pinned tree is precisely the extraction the literal extractor refuses, so it is not the substitute. WS-13b §1: a row whose evidence is `unknown` does not ship."
+      "reason": "probed and NOT confirmed — round-1 finding I-1, list (d): this id COLLAPSES INTO the deferred `gitlab-duo` entry above, which carries the full ruling. GitLab's AI surface is code-completion REST plus a GraphQL `aiAction` chat mutation — a custom transport, not an existing Winter dialect — and is marked \"Status: Experiment\" upstream. Nothing is owed to any phase (R6b-8)."
     },
     {
       "upstreamId": "gitlab-duo",
@@ -2176,15 +2237,11 @@
     },
     {
       "upstreamId": "hcnsec",
-      "reason": "unknown evidence — WS-13b §1 / audit OQ class, CARRIED not excluded on the merits: this upstream entry is built by a HELPER CALL (`buildOpenAiCompatibleRegistryEntry(...)`) or a shared constant, which the literal extractor refuses to evaluate, so the pinned tree yields no endpoint, auth, executor or model list for it — only the product-catalog identity (`Huancheng Public API`, https://api.hcnsec.cn). Admitting it would need a reviewed overlay row authored from the VENDOR'S OWN DOCS, and P6.5 fetched none for this id; hand-transcribing the helper's arguments out of the pinned tree is precisely the extraction the literal extractor refuses, so it is not the substitute. WS-13b §1: a row whose evidence is `unknown` does not ship."
+      "reason": "probed 2026-09-06 and NOT admitted — WS-13b §1 / Step 5 (round-1 finding I-1, list (e)): TRAP, named in the round-1 findings: the pinned entry declares `format: \"claude\"` with a `/v1/chat/completions` base — the entry CONTRADICTS ITS OWN DIALECT, so neither value can be trusted. The vendor's doc is the tie-breaker and there is none: `https://api.hcnsec.cn/docs` is a 4.5 KB page stating no base URL. Step 5's bar is a confirmed vendor documentation page AND a fixed endpoint; hand-transcribing the helper call's arguments out of the pinned tree is the extraction the literal extractor refuses, so it is not the substitute. Re-admissible through a reviewed overlay row the day the document is found."
     },
     {
       "upstreamId": "helixmind",
-      "reason": "unknown evidence — WS-13b §1 / audit OQ class, CARRIED not excluded on the merits: this upstream entry is built by a HELPER CALL (`buildOpenAiCompatibleRegistryEntry(...)`) or a shared constant, which the literal extractor refuses to evaluate, so the pinned tree yields no endpoint, auth, executor or model list for it — only the product-catalog identity (`HelixMind`, https://helixmind.online). Admitting it would need a reviewed overlay row authored from the VENDOR'S OWN DOCS, and P6.5 fetched none for this id; hand-transcribing the helper's arguments out of the pinned tree is precisely the extraction the literal extractor refuses, so it is not the substitute. WS-13b §1: a row whose evidence is `unknown` does not ship."
-    },
-    {
-      "upstreamId": "helyxai",
-      "reason": "unknown evidence — WS-13b §1 / audit OQ class, CARRIED not excluded on the merits: this upstream entry is built by a HELPER CALL (`buildOpenAiCompatibleRegistryEntry(...)`) or a shared constant, which the literal extractor refuses to evaluate, so the pinned tree yields no endpoint, auth, executor or model list for it — only the product-catalog identity (`Helyx AI`, https://helyxai.space). Admitting it would need a reviewed overlay row authored from the VENDOR'S OWN DOCS, and P6.5 fetched none for this id; hand-transcribing the helper's arguments out of the pinned tree is precisely the extraction the literal extractor refuses, so it is not the substitute. WS-13b §1: a row whose evidence is `unknown` does not ship."
+      "reason": "probed 2026-09-06 and NOT admitted — WS-13b §1 / Step 5 (round-1 finding I-1, list (e)): TRAP, named in the round-1 findings: the pinned entry declares `format: \"claude\"` with a `/v1/chat/completions` base, contradicting its own dialect. HTTP 403 on `https://helixmind.online`, so no vendor document could break the tie. Step 5's bar is a confirmed vendor documentation page AND a fixed endpoint; hand-transcribing the helper call's arguments out of the pinned tree is the extraction the literal extractor refuses, so it is not the substitute. Re-admissible through a reviewed overlay row the day the document is found."
     },
     {
       "upstreamId": "ideogram",
@@ -2192,11 +2249,11 @@
     },
     {
       "upstreamId": "jina-ai",
-      "reason": "unknown evidence — WS-13b §1 / audit OQ class, CARRIED not excluded on the merits: this upstream entry is built by a HELPER CALL (`buildOpenAiCompatibleRegistryEntry(...)`) or a shared constant, which the literal extractor refuses to evaluate, so the pinned tree yields no endpoint, auth, executor or model list for it — only the product-catalog identity (`Jina AI (Foundation API)`, https://jina.ai). Admitting it would need a reviewed overlay row authored from the VENDOR'S OWN DOCS, and P6.5 fetched none for this id; hand-transcribing the helper's arguments out of the pinned tree is precisely the extraction the literal extractor refuses, so it is not the substitute. WS-13b §1: a row whose evidence is `unknown` does not ship."
+      "reason": "out of scope — WS-13 §1/§4, D24 (round-1 finding I-1, list (c)): text embeddings and rerankers. `WinterProviderDescriptor.scope` is per PROVIDER and this catalog carries `llm` rows only; a embedding service has no chat surface to bind and must never reach the Agent SDK worker-model picker. Re-filed off \"unknown evidence\" in round 1: this id is not held pending a document — MORE evidence would not admit it, which is what makes it a different exclusion from the ones that are."
     },
     {
       "upstreamId": "jina-reader",
-      "reason": "unknown evidence — WS-13b §1 / audit OQ class, CARRIED not excluded on the merits: this upstream entry is built by a HELPER CALL (`buildOpenAiCompatibleRegistryEntry(...)`) or a shared constant, which the literal extractor refuses to evaluate, so the pinned tree yields no endpoint, auth, executor or model list for it — only the product-catalog identity (`Jina Reader (r.jina.ai)`, https://jina.ai/reader). Admitting it would need a reviewed overlay row authored from the VENDOR'S OWN DOCS, and P6.5 fetched none for this id; hand-transcribing the helper's arguments out of the pinned tree is precisely the extraction the literal extractor refuses, so it is not the substitute. WS-13b §1: a row whose evidence is `unknown` does not ship."
+      "reason": "out of scope — WS-13 §1/§4, D24 (round-1 finding I-1, list (c)): URL-to-text extraction (a reader service). `WinterProviderDescriptor.scope` is per PROVIDER and this catalog carries `llm` rows only; a tooling service has no chat surface to bind and must never reach the Agent SDK worker-model picker. Re-filed off \"unknown evidence\" in round 1: this id is not held pending a document — MORE evidence would not admit it, which is what makes it a different exclusion from the ones that are."
     },
     {
       "upstreamId": "kilo-gateway",
@@ -2224,51 +2281,35 @@
     },
     {
       "upstreamId": "laozhang",
-      "reason": "unknown evidence — WS-13b §1 / audit OQ class, CARRIED not excluded on the merits: this upstream entry is built by a HELPER CALL (`buildOpenAiCompatibleRegistryEntry(...)`) or a shared constant, which the literal extractor refuses to evaluate, so the pinned tree yields no endpoint, auth, executor or model list for it — only the product-catalog identity (`LaoZhang AI`, https://api.laozhang.ai). Admitting it would need a reviewed overlay row authored from the VENDOR'S OWN DOCS, and P6.5 fetched none for this id; hand-transcribing the helper's arguments out of the pinned tree is precisely the extraction the literal extractor refuses, so it is not the substitute. WS-13b §1: a row whose evidence is `unknown` does not ship."
+      "reason": "probed 2026-09-06 and NOT admitted — WS-13b §1 / Step 5 (round-1 finding I-1, list (e)): docs reached (`https://docs.laozhang.ai`, HTTP 200) but the reached page is regional-availability prose and states no base URL. Step 5's bar is a confirmed vendor documentation page AND a fixed endpoint; hand-transcribing the helper call's arguments out of the pinned tree is the extraction the literal extractor refuses, so it is not the substitute. Re-admissible through a reviewed overlay row the day the document is found."
     },
     {
       "upstreamId": "leonardo",
       "reason": "endpoint not derivable — WS-13b §2: upstream states `https://cloud.leonardo.ai/api/rest/v1`, which does not end in `/chat/completions`, the path its own `format: \"openai\"` names and the path Winter's adapter for that family APPENDS to `connection.baseUrl`. The API root is therefore not derivable from the pinned tree — upstream's executor is outside the import boundary, so what it does with this URL is unknowable here — and Winter refuses to guess an endpoint rather than ship a row that would 404 or reach the wrong host. Admissible later through a reviewed overlay row authored from the vendor's own docs."
     },
     {
-      "upstreamId": "literouter",
-      "reason": "unknown evidence — WS-13b §1 / audit OQ class, CARRIED not excluded on the merits: this upstream entry is built by a HELPER CALL (`buildOpenAiCompatibleRegistryEntry(...)`) or a shared constant, which the literal extractor refuses to evaluate, so the pinned tree yields no endpoint, auth, executor or model list for it — only the product-catalog identity (`LiteRouter`, https://literouter.com). Admitting it would need a reviewed overlay row authored from the VENDOR'S OWN DOCS, and P6.5 fetched none for this id; hand-transcribing the helper's arguments out of the pinned tree is precisely the extraction the literal extractor refuses, so it is not the substitute. WS-13b §1: a row whose evidence is `unknown` does not ship."
-    },
-    {
-      "upstreamId": "llm-kiwi",
-      "reason": "unknown evidence — WS-13b §1 / audit OQ class, CARRIED not excluded on the merits: this upstream entry is built by a HELPER CALL (`buildOpenAiCompatibleRegistryEntry(...)`) or a shared constant, which the literal extractor refuses to evaluate, so the pinned tree yields no endpoint, auth, executor or model list for it — only the product-catalog identity (`LLM.Kiwi`, https://llm.kiwi). Admitting it would need a reviewed overlay row authored from the VENDOR'S OWN DOCS, and P6.5 fetched none for this id; hand-transcribing the helper's arguments out of the pinned tree is precisely the extraction the literal extractor refuses, so it is not the substitute. WS-13b §1: a row whose evidence is `unknown` does not ship."
-    },
-    {
-      "upstreamId": "llmgateway",
-      "reason": "unknown evidence — WS-13b §1 / audit OQ class, CARRIED not excluded on the merits: this upstream entry is built by a HELPER CALL (`buildOpenAiCompatibleRegistryEntry(...)`) or a shared constant, which the literal extractor refuses to evaluate, so the pinned tree yields no endpoint, auth, executor or model list for it — only the product-catalog identity (`LLM Gateway`, https://llmgateway.io). Admitting it would need a reviewed overlay row authored from the VENDOR'S OWN DOCS, and P6.5 fetched none for this id; hand-transcribing the helper's arguments out of the pinned tree is precisely the extraction the literal extractor refuses, so it is not the substitute. WS-13b §1: a row whose evidence is `unknown` does not ship."
-    },
-    {
-      "upstreamId": "logfare",
-      "reason": "unknown evidence — WS-13b §1 / audit OQ class, CARRIED not excluded on the merits: this upstream entry is built by a HELPER CALL (`buildOpenAiCompatibleRegistryEntry(...)`) or a shared constant, which the literal extractor refuses to evaluate, so the pinned tree yields no endpoint, auth, executor or model list for it — only the product-catalog identity (`Logfare`, https://logfare.ai). Admitting it would need a reviewed overlay row authored from the VENDOR'S OWN DOCS, and P6.5 fetched none for this id; hand-transcribing the helper's arguments out of the pinned tree is precisely the extraction the literal extractor refuses, so it is not the substitute. WS-13b §1: a row whose evidence is `unknown` does not ship."
+      "upstreamId": "llamagate",
+      "reason": "docs do not exist — WS-13b §1 / Step 4 (round-1 finding I-3): the `pinned-upstream` admission citation for this row named a page that is not there. Liveness sweep result: NXDOMAIN on 2026-09-06 (`https://llamagate.ai` does not resolve). A citation is the row's entire evidence, so a citation that resolves to nothing is a row with no evidence, and WS-13b §1 does not ship one. Re-admissible through a reviewed overlay row the day a real vendor doc is found."
     },
     {
       "upstreamId": "magnific",
-      "reason": "unknown evidence — WS-13b §1 / audit OQ class, CARRIED not excluded on the merits: this upstream entry is built by a HELPER CALL (`buildOpenAiCompatibleRegistryEntry(...)`) or a shared constant, which the literal extractor refuses to evaluate, so the pinned tree yields no endpoint, auth, executor or model list for it — only the product-catalog identity (`Magnific`, https://www.magnific.com). Admitting it would need a reviewed overlay row authored from the VENDOR'S OWN DOCS, and P6.5 fetched none for this id; hand-transcribing the helper's arguments out of the pinned tree is precisely the extraction the literal extractor refuses, so it is not the substitute. WS-13b §1: a row whose evidence is `unknown` does not ship."
+      "reason": "out of scope — WS-13 §1/§4, D24 (round-1 finding I-1, list (c)): image upscaling and enhancement. `WinterProviderDescriptor.scope` is per PROVIDER and this catalog carries `llm` rows only; a image service has no chat surface to bind and must never reach the Agent SDK worker-model picker. Re-filed off \"unknown evidence\" in round 1: this id is not held pending a document — MORE evidence would not admit it, which is what makes it a different exclusion from the ones that are."
     },
     {
       "upstreamId": "maritalk",
       "reason": "endpoint not derivable — WS-13b §2: upstream states NO `baseUrl` at all, which does not end in `/chat/completions`, the path its own `format: \"openai\"` names and the path Winter's adapter for that family APPENDS to `connection.baseUrl`. The API root is therefore not derivable from the pinned tree — upstream's executor is outside the import boundary, so what it does with this URL is unknowable here — and Winter refuses to guess an endpoint rather than ship a row that would 404 or reach the wrong host. Admissible later through a reviewed overlay row authored from the vendor's own docs."
     },
     {
-      "upstreamId": "meganova-ai",
-      "reason": "unknown evidence — WS-13b §1 / audit OQ class, CARRIED not excluded on the merits: this upstream entry is built by a HELPER CALL (`buildOpenAiCompatibleRegistryEntry(...)`) or a shared constant, which the literal extractor refuses to evaluate, so the pinned tree yields no endpoint, auth, executor or model list for it — only the product-catalog identity (`MegaNova AI`, https://meganova.ai). Admitting it would need a reviewed overlay row authored from the VENDOR'S OWN DOCS, and P6.5 fetched none for this id; hand-transcribing the helper's arguments out of the pinned tree is precisely the extraction the literal extractor refuses, so it is not the substitute. WS-13b §1: a row whose evidence is `unknown` does not ship."
-    },
-    {
       "upstreamId": "mixedbread",
-      "reason": "unknown evidence — WS-13b §1 / audit OQ class, CARRIED not excluded on the merits: this upstream entry is built by a HELPER CALL (`buildOpenAiCompatibleRegistryEntry(...)`) or a shared constant, which the literal extractor refuses to evaluate, so the pinned tree yields no endpoint, auth, executor or model list for it — only the product-catalog identity (`Mixedbread AI`, https://www.mixedbread.com). Admitting it would need a reviewed overlay row authored from the VENDOR'S OWN DOCS, and P6.5 fetched none for this id; hand-transcribing the helper's arguments out of the pinned tree is precisely the extraction the literal extractor refuses, so it is not the substitute. WS-13b §1: a row whose evidence is `unknown` does not ship."
+      "reason": "out of scope — WS-13 §1/§4, D24 (round-1 finding I-1, list (c)): text embeddings and rerankers. `WinterProviderDescriptor.scope` is per PROVIDER and this catalog carries `llm` rows only; a embedding service has no chat surface to bind and must never reach the Agent SDK worker-model picker. Re-filed off \"unknown evidence\" in round 1: this id is not held pending a document — MORE evidence would not admit it, which is what makes it a different exclusion from the ones that are."
     },
     {
       "upstreamId": "mixlayer",
-      "reason": "unknown evidence — WS-13b §1 / audit OQ class, CARRIED not excluded on the merits: this upstream entry is built by a HELPER CALL (`buildOpenAiCompatibleRegistryEntry(...)`) or a shared constant, which the literal extractor refuses to evaluate, so the pinned tree yields no endpoint, auth, executor or model list for it — only the product-catalog identity (`Mixlayer`, https://www.mixlayer.com). Admitting it would need a reviewed overlay row authored from the VENDOR'S OWN DOCS, and P6.5 fetched none for this id; hand-transcribing the helper's arguments out of the pinned tree is precisely the extraction the literal extractor refuses, so it is not the substitute. WS-13b §1: a row whose evidence is `unknown` does not ship."
+      "reason": "probed and NOT confirmed — WS-13b §1 (round-1 finding I-1, list (d)), probed 2026-09-06: no vendor documentation page with a fixed OpenAI-compatible base was reached. Step 5's bar is a confirmed docs page AND a fixed endpoint; this id cleared neither, and Winter does not author a row from a base it cannot cite. Re-admissible the day one is found."
     },
     {
-      "upstreamId": "mnn-ai",
-      "reason": "unknown evidence — WS-13b §1 / audit OQ class, CARRIED not excluded on the merits: this upstream entry is built by a HELPER CALL (`buildOpenAiCompatibleRegistryEntry(...)`) or a shared constant, which the literal extractor refuses to evaluate, so the pinned tree yields no endpoint, auth, executor or model list for it — only the product-catalog identity (`MNN AI`, https://mnnai.ru). Admitting it would need a reviewed overlay row authored from the VENDOR'S OWN DOCS, and P6.5 fetched none for this id; hand-transcribing the helper's arguments out of the pinned tree is precisely the extraction the literal extractor refuses, so it is not the substitute. WS-13b §1: a row whose evidence is `unknown` does not ship."
+      "upstreamId": "monsterapi",
+      "reason": "docs do not exist — WS-13b §1 / Step 4 (round-1 finding I-3): the `pinned-upstream` admission citation for this row named a page that is not there. Liveness sweep result: NXDOMAIN on 2026-09-06 (`https://monsterapi.ai` does not resolve). A citation is the row's entire evidence, so a citation that resolves to nothing is a row with no evidence, and WS-13b §1 does not ship one. Re-admissible through a reviewed overlay row the day a real vendor doc is found."
     },
     {
       "upstreamId": "moonshot",
@@ -2276,39 +2317,27 @@
     },
     {
       "upstreamId": "muse-code",
-      "reason": "unknown evidence — WS-13b §1 / audit OQ class, CARRIED not excluded on the merits: this upstream entry is built by a HELPER CALL (`buildOpenAiCompatibleRegistryEntry(...)`) or a shared constant, which the literal extractor refuses to evaluate, so the pinned tree yields no endpoint, auth, executor or model list for it — only the product-catalog identity (`Muse Code (Meta)`, https://github.com/meta-llama/llama-stack). Admitting it would need a reviewed overlay row authored from the VENDOR'S OWN DOCS, and P6.5 fetched none for this id; hand-transcribing the helper's arguments out of the pinned tree is precisely the extraction the literal extractor refuses, so it is not the substitute. WS-13b §1: a row whose evidence is `unknown` does not ship."
+      "reason": "probed 2026-09-06 and NOT admitted — WS-13b §1 / Step 5 (round-1 finding I-1, list (e)): TRAP, named in the round-1 findings: NO VENDOR DOC EXISTS for it. Its recorded `website` is a GitHub repository URL and the probe resolved to `docs.github.com`. Upstream also routes it through the Responses API with a proprietary `/v1/muse-code/models` catalogue, so even the dialect is not the shipped one. Step 5's bar is a confirmed vendor documentation page AND a fixed endpoint; hand-transcribing the helper call's arguments out of the pinned tree is the extraction the literal extractor refuses, so it is not the substitute. Re-admissible through a reviewed overlay row the day the document is found."
     },
     {
       "upstreamId": "naga-ac",
       "reason": "unrepresentable upstream vocabulary — WS-13 §13 / WS-13b §2: `authType: \"optional\"` has no Winter auth kind (an \"optional\" key is neither `api-key` nor `local-none`). Allowlisting it would FAIL the extraction run, not produce a row."
     },
     {
-      "upstreamId": "naga-ai",
-      "reason": "unknown evidence — WS-13b §1 / audit OQ class, CARRIED not excluded on the merits: this upstream entry is built by a HELPER CALL (`buildOpenAiCompatibleRegistryEntry(...)`) or a shared constant, which the literal extractor refuses to evaluate, so the pinned tree yields no endpoint, auth, executor or model list for it — only the product-catalog identity (`Naga AI`, https://naga.ac). Admitting it would need a reviewed overlay row authored from the VENDOR'S OWN DOCS, and P6.5 fetched none for this id; hand-transcribing the helper's arguments out of the pinned tree is precisely the extraction the literal extractor refuses, so it is not the substitute. WS-13b §1: a row whose evidence is `unknown` does not ship."
-    },
-    {
       "upstreamId": "nara",
-      "reason": "unknown evidence — WS-13b §1 / audit OQ class, CARRIED not excluded on the merits: this upstream entry is built by a HELPER CALL (`buildOpenAiCompatibleRegistryEntry(...)`) or a shared constant, which the literal extractor refuses to evaluate, so the pinned tree yields no endpoint, auth, executor or model list for it — only the product-catalog identity (`NaraRouter`, https://bynara.id). Admitting it would need a reviewed overlay row authored from the VENDOR'S OWN DOCS, and P6.5 fetched none for this id; hand-transcribing the helper's arguments out of the pinned tree is precisely the extraction the literal extractor refuses, so it is not the substitute. WS-13b §1: a row whose evidence is `unknown` does not ship."
+      "reason": "probed 2026-09-06 and NOT admitted — WS-13b §1 / Step 5 (round-1 finding I-1, list (e)): the site was reached (`https://bynara.id`, HTTP 200) but it is an education-product page with no API documentation; upstream's own `authHint` says the key comes \"via NaraRouter's Telegram channel\", which is not a documented third-party path (WS-13b §1). Step 5's bar is a confirmed vendor documentation page AND a fixed endpoint; hand-transcribing the helper call's arguments out of the pinned tree is the extraction the literal extractor refuses, so it is not the substitute. Re-admissible through a reviewed overlay row the day the document is found."
     },
     {
       "upstreamId": "navy",
-      "reason": "unknown evidence — WS-13b §1 / audit OQ class, CARRIED not excluded on the merits: this upstream entry is built by a HELPER CALL (`buildOpenAiCompatibleRegistryEntry(...)`) or a shared constant, which the literal extractor refuses to evaluate, so the pinned tree yields no endpoint, auth, executor or model list for it — only the product-catalog identity (`NavyAI`, https://api.navy). Admitting it would need a reviewed overlay row authored from the VENDOR'S OWN DOCS, and P6.5 fetched none for this id; hand-transcribing the helper's arguments out of the pinned tree is precisely the extraction the literal extractor refuses, so it is not the substitute. WS-13b §1: a row whose evidence is `unknown` does not ship."
-    },
-    {
-      "upstreamId": "nebius",
-      "reason": "unknown evidence — WS-13b §1 / audit OQ class, CARRIED not excluded on the merits: this upstream entry is built by a HELPER CALL (`buildOpenAiCompatibleRegistryEntry(...)`) or a shared constant, which the literal extractor refuses to evaluate, so the pinned tree yields no endpoint, auth, executor or model list for it — only the product-catalog identity (`Nebius AI`, https://nebius.com). Admitting it would need a reviewed overlay row authored from the VENDOR'S OWN DOCS, and P6.5 fetched none for this id; hand-transcribing the helper's arguments out of the pinned tree is precisely the extraction the literal extractor refuses, so it is not the substitute. WS-13b §1: a row whose evidence is `unknown` does not ship."
+      "reason": "probed 2026-09-06 and NOT admitted — WS-13b §1 / Step 5 (round-1 finding I-1, list (e)): HTTP 403 on `https://api.navy` — no vendor document could be read. Step 5's bar is a confirmed vendor documentation page AND a fixed endpoint; hand-transcribing the helper call's arguments out of the pinned tree is the extraction the literal extractor refuses, so it is not the substitute. Re-admissible through a reviewed overlay row the day the document is found."
     },
     {
       "upstreamId": "nomic",
-      "reason": "unknown evidence — WS-13b §1 / audit OQ class, CARRIED not excluded on the merits: this upstream entry is built by a HELPER CALL (`buildOpenAiCompatibleRegistryEntry(...)`) or a shared constant, which the literal extractor refuses to evaluate, so the pinned tree yields no endpoint, auth, executor or model list for it — only the product-catalog identity (`Nomic`, https://nomic.ai). Admitting it would need a reviewed overlay row authored from the VENDOR'S OWN DOCS, and P6.5 fetched none for this id; hand-transcribing the helper's arguments out of the pinned tree is precisely the extraction the literal extractor refuses, so it is not the substitute. WS-13b §1: a row whose evidence is `unknown` does not ship."
+      "reason": "out of scope — WS-13 §1/§4, D24 (round-1 finding I-1, list (c)): text embeddings. `WinterProviderDescriptor.scope` is per PROVIDER and this catalog carries `llm` rows only; a embedding service has no chat surface to bind and must never reach the Agent SDK worker-model picker. Re-filed off \"unknown evidence\" in round 1: this id is not held pending a document — MORE evidence would not admit it, which is what makes it a different exclusion from the ones that are."
     },
     {
       "upstreamId": "oci",
-      "reason": "unknown evidence — WS-13b §1 / audit OQ class, CARRIED not excluded on the merits: this upstream entry is built by a HELPER CALL (`buildOpenAiCompatibleRegistryEntry(...)`) or a shared constant, which the literal extractor refuses to evaluate, so the pinned tree yields no endpoint, auth, executor or model list for it — only the product-catalog identity (`OCI Generative AI`, https://www.oracle.com/artificial-intelligence/generative-ai). Admitting it would need a reviewed overlay row authored from the VENDOR'S OWN DOCS, and P6.5 fetched none for this id; hand-transcribing the helper's arguments out of the pinned tree is precisely the extraction the literal extractor refuses, so it is not the substitute. WS-13b §1: a row whose evidence is `unknown` does not ship."
-    },
-    {
-      "upstreamId": "ofoxai",
-      "reason": "unknown evidence — WS-13b §1 / audit OQ class, CARRIED not excluded on the merits: this upstream entry is built by a HELPER CALL (`buildOpenAiCompatibleRegistryEntry(...)`) or a shared constant, which the literal extractor refuses to evaluate, so the pinned tree yields no endpoint, auth, executor or model list for it — only the product-catalog identity (`OfoxAI`, https://ofox.ai). Admitting it would need a reviewed overlay row authored from the VENDOR'S OWN DOCS, and P6.5 fetched none for this id; hand-transcribing the helper's arguments out of the pinned tree is precisely the extraction the literal extractor refuses, so it is not the substitute. WS-13b §1: a row whose evidence is `unknown` does not ship."
+      "reason": "endpoint not derivable — WS-13b §2 (round-1 finding I-1, list (b)): OCI Generative AI has a real, documented public API, but its base URL is a PER-TENANT TEMPLATE (`https://inference.generativeai.<region>.oci.oraclecloud.com/openai/v1/` — the operator's own region), not a fixed host. `defaultEndpoints.api` is immutable generated data (R6-11) and a template is not an endpoint, so an overlay row here would be the exact failure this lane's own endpoint rule exists to prevent — a row that validates and cannot serve a turn. Docs: https://www.oracle.com/artificial-intelligence/generative-ai. RULING (round 1): a dedicated host-supplied-endpoint adapter shape, of the kind `azure-openai` already has, is a SPINE item for the fix wave; this id is admissible the day it exists."
     },
     {
       "upstreamId": "opencode",
@@ -2328,11 +2357,11 @@
     },
     {
       "upstreamId": "openference-api",
-      "reason": "unknown evidence — WS-13b §1 / audit OQ class, CARRIED not excluded on the merits: this upstream entry is built by a HELPER CALL (`buildOpenAiCompatibleRegistryEntry(...)`) or a shared constant, which the literal extractor refuses to evaluate, so the pinned tree yields no endpoint, auth, executor or model list for it — only the product-catalog identity (`Openference API`, https://openference.com). Admitting it would need a reviewed overlay row authored from the VENDOR'S OWN DOCS, and P6.5 fetched none for this id; hand-transcribing the helper's arguments out of the pinned tree is precisely the extraction the literal extractor refuses, so it is not the substitute. WS-13b §1: a row whose evidence is `unknown` does not ship."
+      "reason": "probed 2026-09-06 and NOT admitted — WS-13b §1 / Step 5 (round-1 finding I-1, list (e)): TRAP, named in the round-1 findings: NOT A SEPARATE PROVIDER. Its docs (`https://docs.openference.com`) are the SAME documents that admit the shipped overlay `openference` row, on the same base `https://api.openference.com/v1`. Admitting it would be one vendor wearing two ids, and a `set_model` between them would look like a switch while changing nothing. Step 5's bar is a confirmed vendor documentation page AND a fixed endpoint; hand-transcribing the helper call's arguments out of the pinned tree is the extraction the literal extractor refuses, so it is not the substitute. Re-admissible through a reviewed overlay row the day the document is found."
     },
     {
       "upstreamId": "openvecta",
-      "reason": "unknown evidence — WS-13b §1 / audit OQ class, CARRIED not excluded on the merits: this upstream entry is built by a HELPER CALL (`buildOpenAiCompatibleRegistryEntry(...)`) or a shared constant, which the literal extractor refuses to evaluate, so the pinned tree yields no endpoint, auth, executor or model list for it — only the product-catalog identity (`OpenVecta`, https://openvecta.com). Admitting it would need a reviewed overlay row authored from the VENDOR'S OWN DOCS, and P6.5 fetched none for this id; hand-transcribing the helper's arguments out of the pinned tree is precisely the extraction the literal extractor refuses, so it is not the substitute. WS-13b §1: a row whose evidence is `unknown` does not ship."
+      "reason": "probed and NOT confirmed — WS-13b §1 (round-1 finding I-1, list (d)), probed 2026-09-06: no vendor documentation page with a fixed OpenAI-compatible base was reached. Step 5's bar is a confirmed docs page AND a fixed endpoint; this id cleared neither, and Winter does not author a row from a base it cannot cite. Re-admissible the day one is found."
     },
     {
       "upstreamId": "orcarouter",
@@ -2344,7 +2373,7 @@
     },
     {
       "upstreamId": "piapi",
-      "reason": "unknown evidence — WS-13b §1 / audit OQ class, CARRIED not excluded on the merits: this upstream entry is built by a HELPER CALL (`buildOpenAiCompatibleRegistryEntry(...)`) or a shared constant, which the literal extractor refuses to evaluate, so the pinned tree yields no endpoint, auth, executor or model list for it — only the product-catalog identity (`PiAPI`, https://piapi.ai). Admitting it would need a reviewed overlay row authored from the VENDOR'S OWN DOCS, and P6.5 fetched none for this id; hand-transcribing the helper's arguments out of the pinned tree is precisely the extraction the literal extractor refuses, so it is not the substitute. WS-13b §1: a row whose evidence is `unknown` does not ship."
+      "reason": "probed 2026-09-06 and NOT admitted — WS-13b §1 / Step 5 (round-1 finding I-1, list (e)): docs reached (`https://piapi.ai/docs`, HTTP 200) and they identify it as \"AI Model APIs for Image, …\" — a generative-MEDIA aggregator. Out of scope on the same ground as list (c) (WS-13 §1/§4: this catalog carries `llm` rows only), and the probe is recorded so the scope call is checkable rather than a name heuristic. Step 5's bar is a confirmed vendor documentation page AND a fixed endpoint; hand-transcribing the helper call's arguments out of the pinned tree is the extraction the literal extractor refuses, so it is not the substitute. Re-admissible through a reviewed overlay row the day the document is found."
     },
     {
       "upstreamId": "poe",
@@ -2352,15 +2381,15 @@
     },
     {
       "upstreamId": "poixe-ai",
-      "reason": "unknown evidence — WS-13b §1 / audit OQ class, CARRIED not excluded on the merits: this upstream entry is built by a HELPER CALL (`buildOpenAiCompatibleRegistryEntry(...)`) or a shared constant, which the literal extractor refuses to evaluate, so the pinned tree yields no endpoint, auth, executor or model list for it — only the product-catalog identity (`Poixe AI`, https://poixe.com). Admitting it would need a reviewed overlay row authored from the VENDOR'S OWN DOCS, and P6.5 fetched none for this id; hand-transcribing the helper's arguments out of the pinned tree is precisely the extraction the literal extractor refuses, so it is not the substitute. WS-13b §1: a row whose evidence is `unknown` does not ship."
+      "reason": "probed 2026-09-06 and NOT admitted — WS-13b §1 / Step 5 (round-1 finding I-1, list (e)): docs reached (`https://docs.poixe.com`, HTTP 200) but the reached page is an index; the base URL lives behind a further API-reference page this probe did not confirm. Step 5's bar is a confirmed vendor documentation page AND a fixed endpoint; hand-transcribing the helper call's arguments out of the pinned tree is the extraction the literal extractor refuses, so it is not the substitute. Re-admissible through a reviewed overlay row the day the document is found."
     },
     {
       "upstreamId": "pollinations",
       "reason": "unrepresentable upstream vocabulary — WS-13 §13 / WS-13b §2: `authType: \"optional\"` has no Winter auth kind (an \"optional\" key is neither `api-key` nor `local-none`); `executor: \"pollinations\"` is a bespoke OmniRoute execution path Winter does not represent — WS-13 §1's exclusion classes ARE the executors the mapper's closed set omits, and an unknown executor fails the run rather than defaulting. Allowlisting it would FAIL the extraction run, not produce a row."
     },
     {
-      "upstreamId": "poolside",
-      "reason": "unknown evidence — WS-13b §1 / audit OQ class, CARRIED not excluded on the merits: this upstream entry is built by a HELPER CALL (`buildOpenAiCompatibleRegistryEntry(...)`) or a shared constant, which the literal extractor refuses to evaluate, so the pinned tree yields no endpoint, auth, executor or model list for it — only the product-catalog identity (`Poolside`, https://poolside.ai). Admitting it would need a reviewed overlay row authored from the VENDOR'S OWN DOCS, and P6.5 fetched none for this id; hand-transcribing the helper's arguments out of the pinned tree is precisely the extraction the literal extractor refuses, so it is not the substitute. WS-13b §1: a row whose evidence is `unknown` does not ship."
+      "upstreamId": "predibase",
+      "reason": "docs do not exist — WS-13b §1 / Step 4 (round-1 finding I-3): the `pinned-upstream` admission citation for this row named a page that is not there. Liveness sweep result: HTTP 301 to `https://www.rubrik.com/products/rubrik-agent-cloud` on 2026-09-06 — the cited page is permanently redirected to a DIFFERENT COMPANY's product page (an acquisition), so it documents nothing about this provider. A citation is the row's entire evidence, so a citation that resolves to nothing is a row with no evidence, and WS-13b §1 does not ship one. Re-admissible through a reviewed overlay row the day a real vendor doc is found."
     },
     {
       "upstreamId": "qoder",
@@ -2372,55 +2401,39 @@
     },
     {
       "upstreamId": "recraft",
-      "reason": "unknown evidence — WS-13b §1 / audit OQ class, CARRIED not excluded on the merits: this upstream entry is built by a HELPER CALL (`buildOpenAiCompatibleRegistryEntry(...)`) or a shared constant, which the literal extractor refuses to evaluate, so the pinned tree yields no endpoint, auth, executor or model list for it — only the product-catalog identity (`Recraft`, https://recraft.ai). Admitting it would need a reviewed overlay row authored from the VENDOR'S OWN DOCS, and P6.5 fetched none for this id; hand-transcribing the helper's arguments out of the pinned tree is precisely the extraction the literal extractor refuses, so it is not the substitute. WS-13b §1: a row whose evidence is `unknown` does not ship."
+      "reason": "out of scope — WS-13 §1/§4, D24 (round-1 finding I-1, list (c)): image and vector generation. `WinterProviderDescriptor.scope` is per PROVIDER and this catalog carries `llm` rows only; a image service has no chat surface to bind and must never reach the Agent SDK worker-model picker. Re-filed off \"unknown evidence\" in round 1: this id is not held pending a document — MORE evidence would not admit it, which is what makes it a different exclusion from the ones that are."
     },
     {
       "upstreamId": "regolo",
       "reason": "endpoint not derivable — WS-13b §2: upstream states `https://api.regolo.ai`, which does not end in `/chat/completions`, the path its own `format: \"openai\"` names and the path Winter's adapter for that family APPENDS to `connection.baseUrl`. The API root is therefore not derivable from the pinned tree — upstream's executor is outside the import boundary, so what it does with this URL is unknowable here — and Winter refuses to guess an endpoint rather than ship a row that would 404 or reach the wrong host. Admissible later through a reviewed overlay row authored from the vendor's own docs."
     },
     {
-      "upstreamId": "requesty",
-      "reason": "unknown evidence — WS-13b §1 / audit OQ class, CARRIED not excluded on the merits: this upstream entry is built by a HELPER CALL (`buildOpenAiCompatibleRegistryEntry(...)`) or a shared constant, which the literal extractor refuses to evaluate, so the pinned tree yields no endpoint, auth, executor or model list for it — only the product-catalog identity (`Requesty`, https://requesty.ai). Admitting it would need a reviewed overlay row authored from the VENDOR'S OWN DOCS, and P6.5 fetched none for this id; hand-transcribing the helper's arguments out of the pinned tree is precisely the extraction the literal extractor refuses, so it is not the substitute. WS-13b §1: a row whose evidence is `unknown` does not ship."
-    },
-    {
-      "upstreamId": "routeway",
-      "reason": "unknown evidence — WS-13b §1 / audit OQ class, CARRIED not excluded on the merits: this upstream entry is built by a HELPER CALL (`buildOpenAiCompatibleRegistryEntry(...)`) or a shared constant, which the literal extractor refuses to evaluate, so the pinned tree yields no endpoint, auth, executor or model list for it — only the product-catalog identity (`Routeway`, https://routeway.ai). Admitting it would need a reviewed overlay row authored from the VENDOR'S OWN DOCS, and P6.5 fetched none for this id; hand-transcribing the helper's arguments out of the pinned tree is precisely the extraction the literal extractor refuses, so it is not the substitute. WS-13b §1: a row whose evidence is `unknown` does not ship."
-    },
-    {
       "upstreamId": "runwayml",
-      "reason": "unknown evidence — WS-13b §1 / audit OQ class, CARRIED not excluded on the merits: this upstream entry is built by a HELPER CALL (`buildOpenAiCompatibleRegistryEntry(...)`) or a shared constant, which the literal extractor refuses to evaluate, so the pinned tree yields no endpoint, auth, executor or model list for it — only the product-catalog identity (`Runway`, https://docs.dev.runwayml.com). Admitting it would need a reviewed overlay row authored from the VENDOR'S OWN DOCS, and P6.5 fetched none for this id; hand-transcribing the helper's arguments out of the pinned tree is precisely the extraction the literal extractor refuses, so it is not the substitute. WS-13b §1: a row whose evidence is `unknown` does not ship."
+      "reason": "out of scope — WS-13 §1/§4, D24 (round-1 finding I-1, list (c)): video generation. `WinterProviderDescriptor.scope` is per PROVIDER and this catalog carries `llm` rows only; a image service has no chat surface to bind and must never reach the Agent SDK worker-model picker. Re-filed off \"unknown evidence\" in round 1: this id is not held pending a document — MORE evidence would not admit it, which is what makes it a different exclusion from the ones that are."
     },
     {
       "upstreamId": "sap",
-      "reason": "unknown evidence — WS-13b §1 / audit OQ class, CARRIED not excluded on the merits: this upstream entry is built by a HELPER CALL (`buildOpenAiCompatibleRegistryEntry(...)`) or a shared constant, which the literal extractor refuses to evaluate, so the pinned tree yields no endpoint, auth, executor or model list for it — only the product-catalog identity (`SAP Generative AI Hub`, https://help.sap.com/docs/sap-ai-core/sap-ai-core-service-guide/generative-ai-hub-in-sap-ai-core). Admitting it would need a reviewed overlay row authored from the VENDOR'S OWN DOCS, and P6.5 fetched none for this id; hand-transcribing the helper's arguments out of the pinned tree is precisely the extraction the literal extractor refuses, so it is not the substitute. WS-13b §1: a row whose evidence is `unknown` does not ship."
+      "reason": "probed and NOT confirmed — WS-13b §1 (round-1 finding I-1, list (d)), probed 2026-09-06: SAP Generative AI Hub is reached through a customer's own AI Core deployment, not a fixed public host. Step 5's bar is a confirmed docs page AND a fixed endpoint; this id cleared neither, and Winter does not author a row from a base it cannot cite. Re-admissible the day one is found."
     },
     {
       "upstreamId": "sdwebui",
       "reason": "Image-generation system in the `local` category — WS-13 §1 keeps it out of selectable worker models (report §4.2)."
     },
     {
-      "upstreamId": "sealion",
-      "reason": "unknown evidence — WS-13b §1 / audit OQ class, CARRIED not excluded on the merits: this upstream entry is built by a HELPER CALL (`buildOpenAiCompatibleRegistryEntry(...)`) or a shared constant, which the literal extractor refuses to evaluate, so the pinned tree yields no endpoint, auth, executor or model list for it — only the product-catalog identity (`SEA-LION`, https://sea-lion.ai). Admitting it would need a reviewed overlay row authored from the VENDOR'S OWN DOCS, and P6.5 fetched none for this id; hand-transcribing the helper's arguments out of the pinned tree is precisely the extraction the literal extractor refuses, so it is not the substitute. WS-13b §1: a row whose evidence is `unknown` does not ship."
-    },
-    {
       "upstreamId": "segmind",
-      "reason": "unknown evidence — WS-13b §1 / audit OQ class, CARRIED not excluded on the merits: this upstream entry is built by a HELPER CALL (`buildOpenAiCompatibleRegistryEntry(...)`) or a shared constant, which the literal extractor refuses to evaluate, so the pinned tree yields no endpoint, auth, executor or model list for it — only the product-catalog identity (`Segmind`, https://segmind.com). Admitting it would need a reviewed overlay row authored from the VENDOR'S OWN DOCS, and P6.5 fetched none for this id; hand-transcribing the helper's arguments out of the pinned tree is precisely the extraction the literal extractor refuses, so it is not the substitute. WS-13b §1: a row whose evidence is `unknown` does not ship."
-    },
-    {
-      "upstreamId": "siliconflow",
-      "reason": "unknown evidence — WS-13b §1 / audit OQ class, CARRIED not excluded on the merits: this upstream entry is built by a HELPER CALL (`buildOpenAiCompatibleRegistryEntry(...)`) or a shared constant, which the literal extractor refuses to evaluate, so the pinned tree yields no endpoint, auth, executor or model list for it — only the product-catalog identity (`SiliconFlow`, https://cloud.siliconflow.com). Admitting it would need a reviewed overlay row authored from the VENDOR'S OWN DOCS, and P6.5 fetched none for this id; hand-transcribing the helper's arguments out of the pinned tree is precisely the extraction the literal extractor refuses, so it is not the substitute. WS-13b §1: a row whose evidence is `unknown` does not ship."
+      "reason": "out of scope — WS-13 §1/§4, D24 (round-1 finding I-1, list (c)): image/video generative media. `WinterProviderDescriptor.scope` is per PROVIDER and this catalog carries `llm` rows only; a image service has no chat surface to bind and must never reach the Agent SDK worker-model picker. Re-filed off \"unknown evidence\" in round 1: this id is not held pending a document — MORE evidence would not admit it, which is what makes it a different exclusion from the ones that are."
     },
     {
       "upstreamId": "snowflake",
       "reason": "endpoint not derivable — WS-13b §2: upstream states `https://{account}.snowflakecomputing.com/api/v2`, which does not end in `/chat/completions`, the path its own `format: \"openai\"` names and the path Winter's adapter for that family APPENDS to `connection.baseUrl`. The API root is therefore not derivable from the pinned tree — upstream's executor is outside the import boundary, so what it does with this URL is unknowable here — and Winter refuses to guess an endpoint rather than ship a row that would 404 or reach the wrong host. Admissible later through a reviewed overlay row authored from the vendor's own docs."
     },
     {
-      "upstreamId": "speka",
-      "reason": "unknown evidence — WS-13b §1 / audit OQ class, CARRIED not excluded on the merits: this upstream entry is built by a HELPER CALL (`buildOpenAiCompatibleRegistryEntry(...)`) or a shared constant, which the literal extractor refuses to evaluate, so the pinned tree yields no endpoint, auth, executor or model list for it — only the product-catalog identity (`Speka AI`, https://speka.me). Admitting it would need a reviewed overlay row authored from the VENDOR'S OWN DOCS, and P6.5 fetched none for this id; hand-transcribing the helper's arguments out of the pinned tree is precisely the extraction the literal extractor refuses, so it is not the substitute. WS-13b §1: a row whose evidence is `unknown` does not ship."
+      "upstreamId": "stability-ai",
+      "reason": "out of scope — WS-13 §1/§4, D24 (round-1 finding I-1, list (c)): image generation (Stable Diffusion). `WinterProviderDescriptor.scope` is per PROVIDER and this catalog carries `llm` rows only; a image service has no chat surface to bind and must never reach the Agent SDK worker-model picker. Re-filed off \"unknown evidence\" in round 1: this id is not held pending a document — MORE evidence would not admit it, which is what makes it a different exclusion from the ones that are."
     },
     {
-      "upstreamId": "stability-ai",
-      "reason": "unknown evidence — WS-13b §1 / audit OQ class, CARRIED not excluded on the merits: this upstream entry is built by a HELPER CALL (`buildOpenAiCompatibleRegistryEntry(...)`) or a shared constant, which the literal extractor refuses to evaluate, so the pinned tree yields no endpoint, auth, executor or model list for it — only the product-catalog identity (`Stability AI`, https://stability.ai). Admitting it would need a reviewed overlay row authored from the VENDOR'S OWN DOCS, and P6.5 fetched none for this id; hand-transcribing the helper's arguments out of the pinned tree is precisely the extraction the literal extractor refuses, so it is not the substitute. WS-13b §1: a row whose evidence is `unknown` does not ship."
+      "upstreamId": "sumopod",
+      "reason": "docs do not exist — WS-13b §1 / Step 4 (round-1 finding I-3): the `pinned-upstream` admission citation for this row named a page that is not there. Liveness sweep result: HTTP 404 on 2026-09-06 (`https://ai.sumopod.com`). A citation is the row's entire evidence, so a citation that resolves to nothing is a row with no evidence, and WS-13b §1 does not ship one. Re-admissible through a reviewed overlay row the day a real vendor doc is found."
     },
     {
       "upstreamId": "suno",
@@ -2428,7 +2441,7 @@
     },
     {
       "upstreamId": "thebai",
-      "reason": "unknown evidence — WS-13b §1 / audit OQ class, CARRIED not excluded on the merits: this upstream entry is built by a HELPER CALL (`buildOpenAiCompatibleRegistryEntry(...)`) or a shared constant, which the literal extractor refuses to evaluate, so the pinned tree yields no endpoint, auth, executor or model list for it — only the product-catalog identity (`TheB.AI`, https://theb.ai). Admitting it would need a reviewed overlay row authored from the VENDOR'S OWN DOCS, and P6.5 fetched none for this id; hand-transcribing the helper's arguments out of the pinned tree is precisely the extraction the literal extractor refuses, so it is not the substitute. WS-13b §1: a row whose evidence is `unknown` does not ship."
+      "reason": "probed and NOT confirmed — WS-13b §1 (round-1 finding I-1, list (d)), probed 2026-09-06: no vendor documentation page was reached. Step 5's bar is a confirmed docs page AND a fixed endpoint; this id cleared neither, and Winter does not author a row from a base it cannot cite. Re-admissible the day one is found."
     },
     {
       "upstreamId": "theoldllm",
@@ -2436,19 +2449,23 @@
     },
     {
       "upstreamId": "tinyfish",
-      "reason": "unknown evidence — WS-13b §1 / audit OQ class, CARRIED not excluded on the merits: this upstream entry is built by a HELPER CALL (`buildOpenAiCompatibleRegistryEntry(...)`) or a shared constant, which the literal extractor refuses to evaluate, so the pinned tree yields no endpoint, auth, executor or model list for it — only the product-catalog identity (`TinyFish Fetch`, https://docs.tinyfish.ai/fetch-api). Admitting it would need a reviewed overlay row authored from the VENDOR'S OWN DOCS, and P6.5 fetched none for this id; hand-transcribing the helper's arguments out of the pinned tree is precisely the extraction the literal extractor refuses, so it is not the substitute. WS-13b §1: a row whose evidence is `unknown` does not ship."
+      "reason": "out of scope — WS-13 §1/§4, D24 (round-1 finding I-1, list (c)): web data extraction / browsing automation. `WinterProviderDescriptor.scope` is per PROVIDER and this catalog carries `llm` rows only; a tooling service has no chat surface to bind and must never reach the Agent SDK worker-model picker. Re-filed off \"unknown evidence\" in round 1: this id is not held pending a document — MORE evidence would not admit it, which is what makes it a different exclusion from the ones that are."
     },
     {
-      "upstreamId": "together",
-      "reason": "unknown evidence — WS-13b §1 / audit OQ class, CARRIED not excluded on the merits: this upstream entry is built by a HELPER CALL (`buildOpenAiCompatibleRegistryEntry(...)`) or a shared constant, which the literal extractor refuses to evaluate, so the pinned tree yields no endpoint, auth, executor or model list for it — only the product-catalog identity (`Together AI`, https://www.together.ai). Admitting it would need a reviewed overlay row authored from the VENDOR'S OWN DOCS, and P6.5 fetched none for this id; hand-transcribing the helper's arguments out of the pinned tree is precisely the extraction the literal extractor refuses, so it is not the substitute. WS-13b §1: a row whose evidence is `unknown` does not ship."
+      "upstreamId": "token-kiosk",
+      "reason": "docs do not exist — WS-13b §1 / Step 4 (round-1 finding I-3): the `pinned-upstream` admission citation for this row named a page that is not there. Liveness sweep result: HTTP 404 on 2026-09-06 (`https://agent-router.gaib.ai`). A citation is the row's entire evidence, so a citation that resolves to nothing is a row with no evidence, and WS-13b §1 does not ship one. Re-admissible through a reviewed overlay row the day a real vendor doc is found."
     },
     {
       "upstreamId": "tokenreply",
-      "reason": "unknown evidence — WS-13b §1 / audit OQ class, CARRIED not excluded on the merits: this upstream entry is built by a HELPER CALL (`buildOpenAiCompatibleRegistryEntry(...)`) or a shared constant, which the literal extractor refuses to evaluate, so the pinned tree yields no endpoint, auth, executor or model list for it — only the product-catalog identity (`TokenReply`, https://www.tokenreply.com). Admitting it would need a reviewed overlay row authored from the VENDOR'S OWN DOCS, and P6.5 fetched none for this id; hand-transcribing the helper's arguments out of the pinned tree is precisely the extraction the literal extractor refuses, so it is not the substitute. WS-13b §1: a row whose evidence is `unknown` does not ship."
+      "reason": "probed 2026-09-06 and NOT admitted — WS-13b §1 / Step 5 (round-1 finding I-1, list (e)): docs page reached (`https://www.tokenreply.com/docs`, HTTP 200) but it is an 8 KB shell stating no base URL. Step 5's bar is a confirmed vendor documentation page AND a fixed endpoint; hand-transcribing the helper call's arguments out of the pinned tree is the extraction the literal extractor refuses, so it is not the substitute. Re-admissible through a reviewed overlay row the day the document is found."
+    },
+    {
+      "upstreamId": "tokenrouter",
+      "reason": "docs do not exist — WS-13b §1 / Step 4 (round-1 finding I-3): the `pinned-upstream` admission citation for this row named a page that is not there. Liveness sweep result: NXDOMAIN on 2026-09-06 (`https://tokenrouter.com` does not resolve). A citation is the row's entire evidence, so a citation that resolves to nothing is a row with no evidence, and WS-13b §1 does not ship one. Re-admissible through a reviewed overlay row the day a real vendor doc is found."
     },
     {
       "upstreamId": "topaz",
-      "reason": "unknown evidence — WS-13b §1 / audit OQ class, CARRIED not excluded on the merits: this upstream entry is built by a HELPER CALL (`buildOpenAiCompatibleRegistryEntry(...)`) or a shared constant, which the literal extractor refuses to evaluate, so the pinned tree yields no endpoint, auth, executor or model list for it — only the product-catalog identity (`Topaz`, https://topazlabs.com). Admitting it would need a reviewed overlay row authored from the VENDOR'S OWN DOCS, and P6.5 fetched none for this id; hand-transcribing the helper's arguments out of the pinned tree is precisely the extraction the literal extractor refuses, so it is not the substitute. WS-13b §1: a row whose evidence is `unknown` does not ship."
+      "reason": "out of scope — WS-13 §1/§4, D24 (round-1 finding I-1, list (c)): image and video enhancement. `WinterProviderDescriptor.scope` is per PROVIDER and this catalog carries `llm` rows only; a image service has no chat surface to bind and must never reach the Agent SDK worker-model picker. Re-filed off \"unknown evidence\" in round 1: this id is not held pending a document — MORE evidence would not admit it, which is what makes it a different exclusion from the ones that are."
     },
     {
       "upstreamId": "trae",
@@ -2464,7 +2481,7 @@
     },
     {
       "upstreamId": "unorouter",
-      "reason": "unknown evidence — WS-13b §1 / audit OQ class, CARRIED not excluded on the merits: this upstream entry is built by a HELPER CALL (`buildOpenAiCompatibleRegistryEntry(...)`) or a shared constant, which the literal extractor refuses to evaluate, so the pinned tree yields no endpoint, auth, executor or model list for it — only the product-catalog identity (`UnoRouter`, https://unorouter.ai). Admitting it would need a reviewed overlay row authored from the VENDOR'S OWN DOCS, and P6.5 fetched none for this id; hand-transcribing the helper's arguments out of the pinned tree is precisely the extraction the literal extractor refuses, so it is not the substitute. WS-13b §1: a row whose evidence is `unknown` does not ship."
+      "reason": "probed 2026-09-06 and NOT admitted — WS-13b §1 / Step 5 (round-1 finding I-1, list (e)): docs reached (`https://unorouter.ai/docs`, HTTP 200) but the platform guide states no OpenAI-compatible base URL; upstream's own `apiHint` names none either, saying only \"Create an API key at https://unorouter.ai\". Step 5's bar is a confirmed vendor documentation page AND a fixed endpoint; hand-transcribing the helper call's arguments out of the pinned tree is the extraction the literal extractor refuses, so it is not the substitute. Re-admissible through a reviewed overlay row the day the document is found."
     },
     {
       "upstreamId": "veoaifree-web",
@@ -2475,20 +2492,20 @@
       "reason": "endpoint not derivable — WS-13b §2: upstream states `https://us-central1-aiplatform.googleapis.com/v1/projects`, which does not end in `/v1beta/models`, the path its own `format: \"gemini\"` names and the path Winter's adapter for that family APPENDS to `connection.baseUrl`. The API root is therefore not derivable from the pinned tree — upstream's executor is outside the import boundary, so what it does with this URL is unknowable here — and Winter refuses to guess an endpoint rather than ship a row that would 404 or reach the wrong host. Admissible later through a reviewed overlay row authored from the vendor's own docs."
     },
     {
-      "upstreamId": "void-ai",
-      "reason": "unknown evidence — WS-13b §1 / audit OQ class, CARRIED not excluded on the merits: this upstream entry is built by a HELPER CALL (`buildOpenAiCompatibleRegistryEntry(...)`) or a shared constant, which the literal extractor refuses to evaluate, so the pinned tree yields no endpoint, auth, executor or model list for it — only the product-catalog identity (`Void AI`, https://voidai.app). Admitting it would need a reviewed overlay row authored from the VENDOR'S OWN DOCS, and P6.5 fetched none for this id; hand-transcribing the helper's arguments out of the pinned tree is precisely the extraction the literal extractor refuses, so it is not the substitute. WS-13b §1: a row whose evidence is `unknown` does not ship."
-    },
-    {
       "upstreamId": "voyage-ai",
-      "reason": "unknown evidence — WS-13b §1 / audit OQ class, CARRIED not excluded on the merits: this upstream entry is built by a HELPER CALL (`buildOpenAiCompatibleRegistryEntry(...)`) or a shared constant, which the literal extractor refuses to evaluate, so the pinned tree yields no endpoint, auth, executor or model list for it — only the product-catalog identity (`Voyage AI`, https://www.voyageai.com). Admitting it would need a reviewed overlay row authored from the VENDOR'S OWN DOCS, and P6.5 fetched none for this id; hand-transcribing the helper's arguments out of the pinned tree is precisely the extraction the literal extractor refuses, so it is not the substitute. WS-13b §1: a row whose evidence is `unknown` does not ship."
+      "reason": "out of scope — WS-13 §1/§4, D24 (round-1 finding I-1, list (c)): text embeddings and rerankers. `WinterProviderDescriptor.scope` is per PROVIDER and this catalog carries `llm` rows only; a embedding service has no chat surface to bind and must never reach the Agent SDK worker-model picker. Re-filed off \"unknown evidence\" in round 1: this id is not held pending a document — MORE evidence would not admit it, which is what makes it a different exclusion from the ones that are."
     },
     {
       "upstreamId": "watsonx",
-      "reason": "unknown evidence — WS-13b §1 / audit OQ class, CARRIED not excluded on the merits: this upstream entry is built by a HELPER CALL (`buildOpenAiCompatibleRegistryEntry(...)`) or a shared constant, which the literal extractor refuses to evaluate, so the pinned tree yields no endpoint, auth, executor or model list for it — only the product-catalog identity (`IBM watsonx.ai Gateway`, https://www.ibm.com/products/watsonx-ai). Admitting it would need a reviewed overlay row authored from the VENDOR'S OWN DOCS, and P6.5 fetched none for this id; hand-transcribing the helper's arguments out of the pinned tree is precisely the extraction the literal extractor refuses, so it is not the substitute. WS-13b §1: a row whose evidence is `unknown` does not ship."
+      "reason": "probed and NOT confirmed — WS-13b §1 (round-1 finding I-1, list (d)), probed 2026-09-06: IBM documents a watsonx.ai model gateway, but the base is a per-region/self-managed template (`https://<region>.ml.cloud.ibm.com/ml/gateway/v1/`) rather than a fixed host — the same class as list (b). Step 5's bar is a confirmed docs page AND a fixed endpoint; this id cleared neither, and Winter does not author a row from a base it cannot cite. Re-admissible the day one is found."
+    },
+    {
+      "upstreamId": "x5lab",
+      "reason": "docs do not exist — WS-13b §1 / Step 4 (round-1 finding I-3): the `pinned-upstream` admission citation for this row named a page that is not there. Liveness sweep result: HTTP 530 on 2026-09-06, on a HEAD and on a retried GET (`https://x5lab.dev` — Cloudflare origin unreachable). A citation is the row's entire evidence, so a citation that resolves to nothing is a row with no evidence, and WS-13b §1 does not ship one. Re-admissible through a reviewed overlay row the day a real vendor doc is found."
     },
     {
       "upstreamId": "xai",
-      "reason": "unrepresentable upstream vocabulary — WS-13 §13 / WS-13b §2: `executor: \"xai\"` is a bespoke OmniRoute execution path Winter does not represent — WS-13 §1's exclusion classes ARE the executors the mapper's closed set omits, and an unknown executor fails the run rather than defaulting. Allowlisting it would FAIL the extraction run, not produce a row."
+      "reason": "unrepresentable upstream vocabulary — WS-13 §13 / WS-13b §2: `executor: \"xai\"` is a bespoke OmniRoute execution path Winter does not represent — WS-13 §1's exclusion classes ARE the executors the mapper's closed set omits, and an unknown executor fails the run rather than defaulting. Allowlisting it would FAIL the extraction run, not produce a row. The api-key half SHIPS as the reviewed overlay `xai` row (`https://api.x.ai/v1`, token-priced, authored from docs.x.ai/docs/overview), and the subscription half is lane O's Winter-authored `xai-oauth` flow — this id is kept out of the EXTRACTION, not out of the catalog."
     },
     {
       "upstreamId": "xai-oauth",
@@ -2503,10 +2520,6 @@
       "reason": "endpoint not derivable — WS-13b §2: upstream states `https://token-plan-sgp.xiaomimimo.com/v1`, which does not end in `/chat/completions`, the path its own `format: \"openai\"` names and the path Winter's adapter for that family APPENDS to `connection.baseUrl`. The API root is therefore not derivable from the pinned tree — upstream's executor is outside the import boundary, so what it does with this URL is unknowable here — and Winter refuses to guess an endpoint rather than ship a row that would 404 or reach the wrong host. Admissible later through a reviewed overlay row authored from the vendor's own docs."
     },
     {
-      "upstreamId": "yolo-auto",
-      "reason": "unknown evidence — WS-13b §1 / audit OQ class, CARRIED not excluded on the merits: this upstream entry is built by a HELPER CALL (`buildOpenAiCompatibleRegistryEntry(...)`) or a shared constant, which the literal extractor refuses to evaluate, so the pinned tree yields no endpoint, auth, executor or model list for it — only the product-catalog identity (`Yolo-Auto`, https://yolo-auto.com). Admitting it would need a reviewed overlay row authored from the VENDOR'S OWN DOCS, and P6.5 fetched none for this id; hand-transcribing the helper's arguments out of the pinned tree is precisely the extraction the literal extractor refuses, so it is not the substitute. WS-13b §1: a row whose evidence is `unknown` does not ship."
-    },
-    {
       "upstreamId": "zcode",
       "reason": "user ruling 2026-09-06 (WS-13b D22, §5): excluded by name from the keyless/free category. Admission of the rest of that category (aihorde, uncloseai) does not reach these four."
     },
@@ -2517,17 +2530,8 @@
     {
       "upstreamId": "zed-hosted",
       "reason": "WS-13b §1 impersonation-required — audit §5.3, ruled EXCLUDED at WS-13b §8.1: Zed documents no non-Zed client use at all (no base URL, no key, no OAuth — the ABSENCE is the finding), and its ToS §2.2 restricts access to \"the mechanisms designated by Zed\" while §2.4 forbids access to non-public APIs. Not even disabled-behind-a-flag: a flag would ship code whose only purpose is to present a Zed client identity."
-    },
-    {
-      "upstreamId": "zerolimitai",
-      "reason": "unknown evidence — WS-13b §1 / audit OQ class, CARRIED not excluded on the merits: this upstream entry is built by a HELPER CALL (`buildOpenAiCompatibleRegistryEntry(...)`) or a shared constant, which the literal extractor refuses to evaluate, so the pinned tree yields no endpoint, auth, executor or model list for it — only the product-catalog identity (`ZeroLimitAI`, https://www.zerolimitai.com). Admitting it would need a reviewed overlay row authored from the VENDOR'S OWN DOCS, and P6.5 fetched none for this id; hand-transcribing the helper's arguments out of the pinned tree is precisely the extraction the literal extractor refuses, so it is not the substitute. WS-13b §1: a row whose evidence is `unknown` does not ship."
-    },
-    {
-      "upstreamId": "zylo-api",
-      "reason": "unknown evidence — WS-13b §1 / audit OQ class, CARRIED not excluded on the merits: this upstream entry is built by a HELPER CALL (`buildOpenAiCompatibleRegistryEntry(...)`) or a shared constant, which the literal extractor refuses to evaluate, so the pinned tree yields no endpoint, auth, executor or model list for it — only the product-catalog identity (`Zylo API`, https://zyloai.net). Admitting it would need a reviewed overlay row authored from the VENDOR'S OWN DOCS, and P6.5 fetched none for this id; hand-transcribing the helper's arguments out of the pinned tree is precisely the extraction the literal extractor refuses, so it is not the substitute. WS-13b §1: a row whose evidence is `unknown` does not ship."
     }
   ],
-
   "notes": [
     "`codex-oauth` is NOT extracted from upstream — it is a Winter-owned provider carried over per D11 with originator \"winter\" (WS-01 §3), and its descriptor's `upstream.project` is \"winter\".",
     "The twelve local OpenAI-compatible ids (WS-13 §12) are likewise Winter-owned: their inventories are machine-specific and always come from live discovery, so there is no upstream row to extract.",

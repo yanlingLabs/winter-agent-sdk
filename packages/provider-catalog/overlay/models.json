@@ -466,6 +466,51 @@
       "status": "candidate"
     },
     {
+      "key": "arcee-ai/trinity-large-thinking",
+      "providerId": "arcee-ai",
+      "upstreamId": "trinity-large-thinking",
+      "displayName": "trinity-large-thinking",
+      "aliases": [],
+      "$comment": "A SEED row only, named by the vendor's own documentation on 2026-09-06. `modelDiscovery: \"openai-models\"` is the real catalogue for this provider; nothing here is a capability claim beyond what that page stated, and `toolCalling` therefore fails CLOSED (WS-13 §8.1).",
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://docs.arcee.ai/ — the model is listed as a chat model; no vision/audio/video capability is stated",
+        "confidence": "inferred",
+        "observedAt": "2026-09-06T00:00:00Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-06T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "official-doc",
+        "sourceRef": "https://docs.arcee.ai/ — the page names this model id but states no tool-calling capability. ABSENT fails CLOSED: `native` is what makes a model agent-eligible (WS-13 §8.1) and is never inferred from silence",
+        "confidence": "unknown",
+        "observedAt": "2026-09-06T00:00:00Z"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "official-doc",
+        "sourceRef": "https://docs.arcee.ai/ — no tool-calling capability stated; fails closed",
+        "confidence": "unknown",
+        "observedAt": "2026-09-06T00:00:00Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
       "key": "azure-openai/gpt-4.1",
       "providerId": "azure-openai",
       "upstreamId": "gpt-4.1",
@@ -2320,6 +2365,51 @@
       "status": "candidate"
     },
     {
+      "key": "nebius/deepseek-ai/DeepSeek-R1-0528",
+      "providerId": "nebius",
+      "upstreamId": "deepseek-ai/DeepSeek-R1-0528",
+      "displayName": "deepseek-ai/DeepSeek-R1-0528",
+      "aliases": [],
+      "$comment": "A SEED row only, named by the vendor's own documentation on 2026-09-06. `modelDiscovery: \"openai-models\"` is the real catalogue for this provider; nothing here is a capability claim beyond what that page stated, and `toolCalling` therefore fails CLOSED (WS-13 §8.1).",
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://docs.tokenfactory.nebius.com/ — the model is listed as a chat model; no vision/audio/video capability is stated",
+        "confidence": "inferred",
+        "observedAt": "2026-09-06T00:00:00Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-06T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "official-doc",
+        "sourceRef": "https://docs.tokenfactory.nebius.com/ — the page names this model id but states no tool-calling capability. ABSENT fails CLOSED: `native` is what makes a model agent-eligible (WS-13 §8.1) and is never inferred from silence",
+        "confidence": "unknown",
+        "observedAt": "2026-09-06T00:00:00Z"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "official-doc",
+        "sourceRef": "https://docs.tokenfactory.nebius.com/ — no tool-calling capability stated; fails closed",
+        "confidence": "unknown",
+        "observedAt": "2026-09-06T00:00:00Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
       "key": "ollama-local/llama3.1:8b",
       "providerId": "ollama-local",
       "upstreamId": "llama3.1:8b",
@@ -2707,6 +2797,276 @@
         "source": "upstream-static",
         "confidence": "inferred",
         "observedAt": "2026-09-05T00:00:00Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "poolside/poolside/laguna-s-2.1",
+      "providerId": "poolside",
+      "upstreamId": "poolside/laguna-s-2.1",
+      "displayName": "poolside/laguna-s-2.1",
+      "aliases": [],
+      "$comment": "A SEED row only, named by the vendor's own documentation on 2026-09-06. `modelDiscovery: \"openai-models\"` is the real catalogue for this provider; nothing here is a capability claim beyond what that page stated, and `toolCalling` therefore fails CLOSED (WS-13 §8.1).",
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://docs.poolside.ai/api/overview — the model is listed as a chat model; no vision/audio/video capability is stated",
+        "confidence": "inferred",
+        "observedAt": "2026-09-06T00:00:00Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-06T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "official-doc",
+        "sourceRef": "https://docs.poolside.ai/api/overview — the page names this model id but states no tool-calling capability. ABSENT fails CLOSED: `native` is what makes a model agent-eligible (WS-13 §8.1) and is never inferred from silence",
+        "confidence": "unknown",
+        "observedAt": "2026-09-06T00:00:00Z"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "official-doc",
+        "sourceRef": "https://docs.poolside.ai/api/overview — no tool-calling capability stated; fails closed",
+        "confidence": "unknown",
+        "observedAt": "2026-09-06T00:00:00Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "sealion/aisingapore/Qwen-SEA-LION-v4.5-27B-IT",
+      "providerId": "sealion",
+      "upstreamId": "aisingapore/Qwen-SEA-LION-v4.5-27B-IT",
+      "displayName": "aisingapore/Qwen-SEA-LION-v4.5-27B-IT",
+      "aliases": [],
+      "$comment": "A SEED row only, named by the vendor's own documentation on 2026-09-06. `modelDiscovery: \"openai-models\"` is the real catalogue for this provider; nothing here is a capability claim beyond what that page stated, and `toolCalling` therefore fails CLOSED (WS-13 §8.1).",
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://docs.sea-lion.ai/guides/inferencing/api/ — the model is listed as a chat model; no vision/audio/video capability is stated",
+        "confidence": "inferred",
+        "observedAt": "2026-09-06T00:00:00Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-06T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "official-doc",
+        "sourceRef": "https://docs.sea-lion.ai/guides/inferencing/api/ — the page names this model id but states no tool-calling capability. ABSENT fails CLOSED: `native` is what makes a model agent-eligible (WS-13 §8.1) and is never inferred from silence",
+        "confidence": "unknown",
+        "observedAt": "2026-09-06T00:00:00Z"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "official-doc",
+        "sourceRef": "https://docs.sea-lion.ai/guides/inferencing/api/ — no tool-calling capability stated; fails closed",
+        "confidence": "unknown",
+        "observedAt": "2026-09-06T00:00:00Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "siliconflow/Qwen/Qwen3-32B",
+      "providerId": "siliconflow",
+      "upstreamId": "Qwen/Qwen3-32B",
+      "displayName": "Qwen/Qwen3-32B",
+      "aliases": [],
+      "$comment": "A SEED row only, named by the vendor's own documentation on 2026-09-06. `modelDiscovery: \"openai-models\"` is the real catalogue for this provider; nothing here is a capability claim beyond what that page stated, and `toolCalling` therefore fails CLOSED (WS-13 §8.1).",
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://docs.siliconflow.com/en/api-reference/chat-completions/chat-completions — the model is listed as a chat model; no vision/audio/video capability is stated",
+        "confidence": "inferred",
+        "observedAt": "2026-09-06T00:00:00Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-06T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "official-doc",
+        "sourceRef": "https://docs.siliconflow.com/en/api-reference/chat-completions/chat-completions — the page names this model id but states no tool-calling capability. ABSENT fails CLOSED: `native` is what makes a model agent-eligible (WS-13 §8.1) and is never inferred from silence",
+        "confidence": "unknown",
+        "observedAt": "2026-09-06T00:00:00Z"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "official-doc",
+        "sourceRef": "https://docs.siliconflow.com/en/api-reference/chat-completions/chat-completions — no tool-calling capability stated; fails closed",
+        "confidence": "unknown",
+        "observedAt": "2026-09-06T00:00:00Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "siliconflow/deepseek-ai/DeepSeek-V3",
+      "providerId": "siliconflow",
+      "upstreamId": "deepseek-ai/DeepSeek-V3",
+      "displayName": "deepseek-ai/DeepSeek-V3",
+      "aliases": [],
+      "$comment": "A SEED row only, named by the vendor's own documentation on 2026-09-06. `modelDiscovery: \"openai-models\"` is the real catalogue for this provider; nothing here is a capability claim beyond what that page stated, and `toolCalling` therefore fails CLOSED (WS-13 §8.1).",
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://docs.siliconflow.com/en/api-reference/chat-completions/chat-completions — the model is listed as a chat model; no vision/audio/video capability is stated",
+        "confidence": "inferred",
+        "observedAt": "2026-09-06T00:00:00Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-06T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "official-doc",
+        "sourceRef": "https://docs.siliconflow.com/en/api-reference/chat-completions/chat-completions — the page names this model id but states no tool-calling capability. ABSENT fails CLOSED: `native` is what makes a model agent-eligible (WS-13 §8.1) and is never inferred from silence",
+        "confidence": "unknown",
+        "observedAt": "2026-09-06T00:00:00Z"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "official-doc",
+        "sourceRef": "https://docs.siliconflow.com/en/api-reference/chat-completions/chat-completions — no tool-calling capability stated; fails closed",
+        "confidence": "unknown",
+        "observedAt": "2026-09-06T00:00:00Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "together/Qwen/Qwen3.5-9B",
+      "providerId": "together",
+      "upstreamId": "Qwen/Qwen3.5-9B",
+      "displayName": "Qwen/Qwen3.5-9B",
+      "aliases": [],
+      "$comment": "A SEED row only, named by the vendor's own documentation on 2026-09-06. `modelDiscovery: \"openai-models\"` is the real catalogue for this provider; nothing here is a capability claim beyond what that page stated, and `toolCalling` therefore fails CLOSED (WS-13 §8.1).",
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://docs.together.ai/docs/chat-overview — the model is listed as a chat model; no vision/audio/video capability is stated",
+        "confidence": "inferred",
+        "observedAt": "2026-09-06T00:00:00Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-06T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "official-doc",
+        "sourceRef": "https://docs.together.ai/docs/chat-overview — the page names this model id but states no tool-calling capability. ABSENT fails CLOSED: `native` is what makes a model agent-eligible (WS-13 §8.1) and is never inferred from silence",
+        "confidence": "unknown",
+        "observedAt": "2026-09-06T00:00:00Z"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "official-doc",
+        "sourceRef": "https://docs.together.ai/docs/chat-overview — no tool-calling capability stated; fails closed",
+        "confidence": "unknown",
+        "observedAt": "2026-09-06T00:00:00Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "together/meta-llama/Llama-3.3-70B-Instruct-Turbo",
+      "providerId": "together",
+      "upstreamId": "meta-llama/Llama-3.3-70B-Instruct-Turbo",
+      "displayName": "meta-llama/Llama-3.3-70B-Instruct-Turbo",
+      "aliases": [],
+      "$comment": "A SEED row only, named by the vendor's own documentation on 2026-09-06. `modelDiscovery: \"openai-models\"` is the real catalogue for this provider; nothing here is a capability claim beyond what that page stated, and `toolCalling` therefore fails CLOSED (WS-13 §8.1).",
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "https://docs.together.ai/docs/chat-overview — the model is listed as a chat model; no vision/audio/video capability is stated",
+        "confidence": "inferred",
+        "observedAt": "2026-09-06T00:00:00Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-06T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "official-doc",
+        "sourceRef": "https://docs.together.ai/docs/chat-overview — the page names this model id but states no tool-calling capability. ABSENT fails CLOSED: `native` is what makes a model agent-eligible (WS-13 §8.1) and is never inferred from silence",
+        "confidence": "unknown",
+        "observedAt": "2026-09-06T00:00:00Z"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "official-doc",
+        "sourceRef": "https://docs.together.ai/docs/chat-overview — no tool-calling capability stated; fails closed",
+        "confidence": "unknown",
+        "observedAt": "2026-09-06T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "candidate"
