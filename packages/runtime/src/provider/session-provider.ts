@@ -44,6 +44,7 @@ import {
   createCompositeCredentialStore,
   createEndpointResolver,
   createEnvCredentialStore,
+  estimateCostUsd,
   createFileCredentialStore,
   createHistoryRenderer,
   createMemoryCredentialStore,
@@ -59,7 +60,7 @@ import { createProviderContext, redactCredentialRef, resolveSessionProvider, typ
 import { createModelClassifier, selectClassifierRoute, type ClassifierRoute } from "./classifier/model-classifier.ts";
 import type { ClassifierInterface } from "../permissions/auto/engine.ts";
 import { buildContinuationChain, type ContinuationChain, type ProviderStateRecord } from "../store/provider-state.ts";
-import type { ModelSwitchResolution, Provider, ProviderRequest, ProviderTurn, ResolveModelSwitch } from "../engine.ts";
+import type { ModelSwitchResolution, PricedUsage, Provider, ProviderRequest, ProviderTurn, ProviderUsage, ResolveModelSwitch } from "../engine.ts";
 
 /**
  * The pinned `ApiKeySource` vocabulary (`sdk.d.ts:127`), of which the JSDoc marks five members
@@ -201,6 +202,10 @@ export interface SessionProviderWiring {
   resolveModelSwitch: ResolveModelSwitch;
   /** P6 fix wave (Ruling E-3): `fallbackModel`'s candidates as catalog keys, in order, domain-checked at init. Empty for the reserved namespace and for a refused session. */
   fallbackModelKeys: string[];
+  /** P6 fix wave (Ruling E-4, R6-H): prices one generation for the model it ran on, from the catalog's `pricing` evidence. `undefined` for an unpriced row. */
+  priceUsage(modelKey: string, usage: ProviderUsage): PricedUsage | undefined;
+  /** P6 fix wave (Ruling E-5, R6-14): the resolved classifier model's key, for the session pin. Present exactly when `classifier` is. */
+  classifierIdentity?: { modelKey: string };
   /** R6-I: the `supportedModels()` rows for this session. */
   supportedModels(): ModelInfo[];
   /** R6-I / capture (d): the initialize-response account surface. Never `system/init` — the pin has no account field there. */
@@ -487,6 +492,29 @@ export function buildSessionProvider(opts: SessionProviderOptions): SessionProvi
     return resolution;
   };
 
+  // RULING E-4 (R6-H): the price of one generation, from the descriptor's `pricing` evidence and
+  // nothing else. `estimateCostUsd` answers `"unknown"` for an unpriced or inferred row, which is
+  // `undefined` here -- no field is invented for it. `contextWindow`/`maxOutputTokens` come from the
+  // descriptor when known and are otherwise omitted, exactly as the R6-H amendment states.
+  const priceUsage = (modelKey: string, usage: ProviderUsage): PricedUsage | undefined => {
+    const providerId = sessionProviderId();
+    const result = registry.resolve({ model: modelKey, ...(providerId !== undefined ? { provider: { providerId } } : {}) });
+    if (result instanceof WinterProviderResolutionError || result.descriptor === undefined) return undefined;
+    const estimate = estimateCostUsd({ inputTokens: usage.inputTokens, outputTokens: usage.outputTokens, ...(usage.cacheReadTokens !== undefined ? { cacheReadTokens: usage.cacheReadTokens } : {}), ...(usage.cacheWriteTokens !== undefined ? { cacheWriteTokens: usage.cacheWriteTokens } : {}) }, result.descriptor);
+    if (estimate.costBasis !== "list") return undefined;
+    const apiProvider = API_PROVIDER_BY_PROVIDER_ID[result.providerId];
+    const contextWindow = result.descriptor.contextWindow?.value;
+    const maxOutputTokens = result.descriptor.maxOutputTokens?.value;
+    return {
+      costUsd: estimate.costUsd,
+      costBasis: "list",
+      canonicalModel: result.descriptor.key,
+      ...(apiProvider !== undefined ? { provider: apiProvider } : {}),
+      ...(typeof contextWindow === "number" ? { contextWindow } : {}),
+      ...(typeof maxOutputTokens === "number" ? { maxOutputTokens } : {}),
+    };
+  };
+
   const deps: SelectionDeps = {
     registry,
     credentials,
@@ -526,6 +554,7 @@ export function buildSessionProvider(opts: SessionProviderOptions): SessionProvi
       sessionProviderId,
       resolveModelSwitch,
       fallbackModelKeys: [],
+      priceUsage: () => undefined,
       supportedModels: () => [],
       accountInfo: () => ({}),
     };
@@ -550,6 +579,7 @@ export function buildSessionProvider(opts: SessionProviderOptions): SessionProvi
       sessionProviderId,
       resolveModelSwitch,
       fallbackModelKeys: [],
+      priceUsage: () => undefined,
       supportedModels: () => [],
       accountInfo: () => ({}),
     };
@@ -569,10 +599,12 @@ export function buildSessionProvider(opts: SessionProviderOptions): SessionProvi
   const classifierRouteRaw = selectClassifierRoute(config, (modelKey) => descriptorFor(catalog, modelKey));
   let classifierRoute = classifierRouteRaw;
   let classifier: ClassifierInterface | undefined;
+  let classifierIdentity: { modelKey: string } | undefined;
   if (classifierRouteRaw.kind === "configured") {
     try {
       const classifierResolved = registry.resolve({ model: classifierRouteRaw.model });
       if (classifierResolved instanceof WinterProviderResolutionError) throw classifierResolved;
+      classifierIdentity = { modelKey: classifierResolved.modelKey };
       // Ruling E-1 (whole-branch C-1, probe P1b): the route's OWN `authRef` reaches the builder. It
       // was carried onto the route and then dropped here, so a classifier on another provider went
       // out with the SESSION's credential.
@@ -589,6 +621,7 @@ export function buildSessionProvider(opts: SessionProviderOptions): SessionProvi
     }
   } else if (classifierRouteRaw.kind === "worker-eligible") {
     classifier = createModelClassifier({ provider: buildProvider(resolved), model: resolved.providerModelId });
+    classifierIdentity = { modelKey: resolved.modelKey };
   }
 
   // --- the advisor/reviewer backend (P2 carry, disclosed) ------------------------------------------
@@ -623,6 +656,7 @@ export function buildSessionProvider(opts: SessionProviderOptions): SessionProvi
     ...(config.contextWindowTokens === undefined && selection.contextWindow !== undefined ? { contextWindowTokens: selection.contextWindow } : {}),
     classifierRoute,
     ...(classifier !== undefined ? { classifier } : {}),
+    ...(classifier !== undefined && classifierIdentity !== undefined ? { classifierIdentity } : {}),
     ...(advisorProvider !== undefined ? { advisorProvider } : {}),
     buildProvider,
     describeTargetMaterial,
@@ -631,6 +665,7 @@ export function buildSessionProvider(opts: SessionProviderOptions): SessionProvi
     // Ruling E-3: the keys, not the `ResolvedModel`s -- the engine re-resolves through the seam at
     // engagement time, so a candidate is always built fresh under the rule in force then.
     fallbackModelKeys: selection.fallbackModels.map((candidate) => candidate.modelKey),
+    priceUsage,
     supportedModels: () => registry.listModelInfo(resolved.providerId),
     accountInfo: () => {
       const apiProvider = API_PROVIDER_BY_PROVIDER_ID[resolved.providerId];

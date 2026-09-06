@@ -68,7 +68,7 @@ import type { Provider } from "./engine.ts";
 import type { ClassifierInterface } from "./permissions/auto/engine.ts";
 import { WinterProviderResolutionError } from "@yanlinglabs/winter-provider-runtime";
 import { redactCredentialRef } from "./provider/selection.ts";
-import type { ResolveModelSwitch } from "./engine.ts";
+import type { PricedUsage, ProviderUsage, ResolveModelSwitch } from "./engine.ts";
 
 // --- narrowing the six undeclared settings keys ---------------------------------------------------
 //
@@ -372,6 +372,10 @@ export interface ProductionWiring {
     resolveModelSwitch?: ResolveModelSwitch;
     /** P6 fix wave (Ruling E-3): `fallbackModel`'s candidates as catalog keys, present only when configured. */
     fallbackModels?: string[];
+    /** P6 fix wave (Ruling E-4): R6-H's price of one generation, from the session's own wiring. */
+    priceUsage?: (modelKey: string, usage: ProviderUsage) => PricedUsage | undefined;
+    /** P6 fix wave (Ruling E-5): the classifier model's key, for the session pin -- present exactly when `classifier` is. */
+    classifierIdentity?: { modelKey: string };
     /** R6-I: the `list_models` control handler's source. */
     supportedModels: () => unknown[];
     /** The Winter-only `account_info` control handler's source. */
@@ -815,6 +819,10 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
       // wiring the session's own provider came from -- one resolution path, on every leg.
       resolveModelSwitch: providerWiring.resolveModelSwitch,
       ...(providerWiring.fallbackModelKeys.length > 0 ? { fallbackModels: providerWiring.fallbackModelKeys } : {}),
+      // P6 fix wave (Rulings E-4 / E-5): cost from the catalog's own pricing evidence; the classifier
+      // model's key for the R6-14 pin.
+      priceUsage: (modelKey, usage) => providerWiring.priceUsage(modelKey, usage),
+      ...(providerWiring.classifierIdentity !== undefined ? { classifierIdentity: providerWiring.classifierIdentity } : {}),
       ...(providerWiring.providerSupportsToolSearch !== undefined ? { providerSupportsToolSearch: providerWiring.providerSupportsToolSearch } : {}),
       ...(providerWiring.classifier !== undefined ? { classifier: providerWiring.classifier } : {}),
       systemPromptAssembler,

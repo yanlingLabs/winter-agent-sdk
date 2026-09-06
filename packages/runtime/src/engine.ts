@@ -111,7 +111,7 @@ import {
 // reference left in the codebase is test-only). `createInMemoryAutoCounterStore` is the fallback
 // for a non-persistent session (autoStateStore undefined below), mirroring how `approvalStore`
 // being undefined already means "no durable approval machinery this run."
-import { createAutoEngine, NO_OP_AUTO_AUDIT_RECORDER, type ClassifierInterface } from "./permissions/auto/engine.ts";
+import { createAutoEngine, NO_OP_AUTO_AUDIT_RECORDER, type AutoAuditRecorder, type ClassifierInterface } from "./permissions/auto/engine.ts";
 import { createInMemoryAutoCounterStore, computePolicyHash, type AutoCounterStore } from "./permissions/auto/caches.ts";
 // T9's PostToolUse-accumulated classifierContext (WS-07 §10.4/§10.6-8) — reducer.ts's own
 // AttributedContext type, threaded into the auto engine's getClassifierContext closure below.
@@ -607,6 +607,24 @@ export interface ModelSwitchResolution {
   identity: EngineProviderIdentity;
   to: ContinuityEndpoint;
   from?: ContinuityEndpoint;
+}
+
+/**
+ * P6 fix wave (Ruling E-4, R6-H): what the wiring answers when it can PRICE a generation. `undefined`
+ * for an unpriced row -- then no cost field is emitted and `maxBudgetUsd` is inert (disclosed).
+ * `costBasis` is always `"list"` here: `estimateCostUsd` reports a price only for `official-doc`
+ * pricing evidence, and an unpriced or inferred row is exactly the `undefined` case.
+ */
+export interface PricedUsage {
+  costUsd: number;
+  costBasis: "list";
+  /** The catalog key the price was looked up under (`ModelUsage.canonicalModel`). */
+  canonicalModel: string;
+  /** The pinned `AccountInfo.apiProvider` family when the provider has one; omitted otherwise. */
+  provider?: string;
+  /** From the descriptor when known, otherwise OMITTED -- never invented (R6-H). */
+  contextWindow?: number;
+  maxOutputTokens?: number;
 }
 
 /** The seam's typed refusal: R6-K's `provider-mismatch`, `unknown-model`, and every other resolution code -- NEVER a parked switch. */
@@ -1126,6 +1144,23 @@ export interface EngineOptions {
    * on an R6-6 retryable class after `withRetry` gave up -- see the generation catch.
    */
   fallbackModels?: string[];
+  /**
+   * P6 fix wave (Ruling E-4, R6-H): prices ONE generation's usage for the model it ran on. The
+   * wiring implements it over the catalog's `pricing` evidence; absent (a scripted double) or
+   * `undefined` for an unpriced row means no cost is reported and the budget is inert.
+   */
+  priceUsage?: (modelKey: string, usage: ProviderUsage) => PricedUsage | undefined;
+  /**
+   * P6 fix wave (Ruling E-5, R6-14): the classifier's own resolved identity, so the session can PIN it
+   * on the first successful classification. Present only when `classifier` is.
+   */
+  classifierIdentity?: { modelKey: string };
+  /**
+   * P6 fix wave (Ruling E-5): the auto-mode audit recorder. Defaults to the no-op recorder every
+   * session ran with before (audit persistence is WS-15's projector work); a fixture injects one to
+   * observe the pin's `fallback_state` record.
+   */
+  autoAudit?: AutoAuditRecorder;
 }
 
 /**
@@ -1383,6 +1418,9 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
     accountInfo,
     resolveModelSwitch,
     fallbackModels,
+    priceUsage,
+    classifierIdentity,
+    autoAudit,
   } = opts;
 
   // Task 6 (WS-07 §2/§6.4, Ruling 8): permission startup validation — deliberately the very FIRST
@@ -1703,17 +1741,58 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // hookAuditRecorder ALSO simply drops everything when `store.recordHookAudit` is absent. Flagged
   // in this task's report as a deliberate, scoped deviation from full T11 parity (T11's approval
   // journal DOES have a durable sink; this audit trail does not, yet).
+  // P6 fix wave (Ruling E-5, R6-14): THE CLASSIFIER PIN. "The first classification validates and
+  // pins the effective classifier model for the session" (WS-13 §10). The route was wired in T10 and
+  // the pin never written: `classifierPin` was accepted by `setProviderIdentity` and stamped by the
+  // dialect with no producer. This wrapper is the producer -- on the first result that IS a verdict
+  // (never a `no_verdict`, which is a failure to review), the identity is restamped whole with the
+  // pin and the audit stream gets the `fallback_state` record T10 promised, carrying the pinned model,
+  // the live policy version/hash and the measured latency. Once: a pinned session never re-pins.
+  const auditRecorder: AutoAuditRecorder = autoAudit ?? NO_OP_AUTO_AUDIT_RECORDER;
+  const pinningClassifier: ClassifierInterface | undefined =
+    classifier === undefined
+      ? undefined
+      : {
+          async classify(envelope, context) {
+            const startedAtMs = Date.now();
+            const result = await classifier.classify(envelope, context);
+            if (classifierPin === undefined && classifierIdentity !== undefined && result.verdict !== "no_verdict") {
+              classifierPin = classifierIdentity.modelKey;
+              stampIdentity();
+              const state = policyStateStore.getState();
+              try {
+                await auditRecorder.record({
+                  type: "fallback_state",
+                  sessionId: config.sessionId,
+                  at: new Date().toISOString(),
+                  toolName: envelope.toolName,
+                  verdict: result.verdict,
+                  reasonCode: "classifier_pinned",
+                  auditReason: `classifier pinned to ${classifierPin} by this session's first successful classification (R6-14)`,
+                  fallbackActive: false,
+                  policyVersion: state.version,
+                  policyHash: computePolicyHash(state),
+                  latencyMs: Date.now() - startedAtMs,
+                  model: classifierPin,
+                });
+              } catch {
+                /* auxiliary -- an audit sink failing never fails the verdict it accompanies */
+              }
+            }
+            return result;
+          },
+        };
   const realAutoEngine = createAutoEngine({
     sessionId: config.sessionId,
     runtimeKind: WINTER_RUNTIME_KIND,
     counters: autoStateStore ?? createInMemoryAutoCounterStore(),
-    audit: NO_OP_AUTO_AUDIT_RECORDER,
+    audit: auditRecorder,
     getClassifierContext: () => accumulatedClassifierContext,
     // Phase 6 Task 10 (R6-14): the P2 counters go LIVE. Conditionally spread, so a session with a
     // Manual route keeps `createAutoEngine`'s own always-no-verdict default byte-identically --
     // which is the point of the distinction: "no reviewer we have evidence for" and "a reviewer that
     // abstained" are different session states and must stay separable in the audit.
-    ...(classifier !== undefined ? { classifier } : {}),
+    ...(pinningClassifier !== undefined ? { classifier: pinningClassifier } : {}),
   });
   // Task 1 (P3, WS-06 §1.1 ToolExecutionContext.session): the session posture-mutation seam's own
   // live state. `currentCwd` starts at `config.cwd` and `extraBoundedRoots` starts empty -- for
@@ -1804,6 +1883,56 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // handoff reads a source message's `summary` off it; nothing else does, and opaque native state is
   // never read from here (the renderer has its own chain getter).
   const sessionChain: Map<string, ContinuationLink> = new Map();
+  // P6 fix wave (Ruling E-4, R6-H): THE COST LEDGER. `total_cost_usd` accumulates over the whole run
+  // and every result frame repeats the total so far (the pinned lifecycle: a consumer reads the
+  // newest result and never adds them); `modelUsage` is keyed by the RAW model string the session was
+  // generating with, with the catalog key as `canonicalModel`. Nothing is emitted until a generation
+  // has actually been PRICED, so a session on an unpriced row -- and every pre-P6 golden -- carries
+  // no cost field at all rather than an invented zero.
+  interface ModelUsageRow {
+    inputTokens: number;
+    outputTokens: number;
+    cacheReadInputTokens: number;
+    cacheCreationInputTokens: number;
+    webSearchRequests: number;
+    costUSD: number;
+    contextWindow?: number;
+    maxOutputTokens?: number;
+    canonicalModel: string;
+    provider?: string;
+    costBasis: "list";
+  }
+  const costLedger = { priced: false, totalUsd: 0, models: new Map<string, ModelUsageRow>() };
+  const priceGeneration = (usage: ProviderUsage): void => {
+    if (priceUsage === undefined) return;
+    const modelKey = currentModel;
+    const priced = priceUsage(modelKey, usage);
+    if (priced === undefined) return;
+    costLedger.priced = true;
+    costLedger.totalUsd += priced.costUsd;
+    const row = costLedger.models.get(modelKey) ?? {
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadInputTokens: 0,
+      cacheCreationInputTokens: 0,
+      webSearchRequests: 0,
+      costUSD: 0,
+      ...(priced.contextWindow !== undefined ? { contextWindow: priced.contextWindow } : {}),
+      ...(priced.maxOutputTokens !== undefined ? { maxOutputTokens: priced.maxOutputTokens } : {}),
+      canonicalModel: priced.canonicalModel,
+      ...(priced.provider !== undefined ? { provider: priced.provider } : {}),
+      costBasis: "list" as const,
+    };
+    row.inputTokens += usage.inputTokens;
+    row.outputTokens += usage.outputTokens;
+    row.cacheReadInputTokens += usage.cacheReadTokens ?? 0;
+    row.cacheCreationInputTokens += usage.cacheWriteTokens ?? 0;
+    row.costUSD += priced.costUsd;
+    costLedger.models.set(modelKey, row);
+  };
+  /** The cost trio a result frame carries once anything was priced: `total_cost_usd` + `modelUsage` (`usage` stays absent, disclosed). */
+  const costFields = (): Record<string, unknown> => (costLedger.priced ? { total_cost_usd: costLedger.totalUsd, modelUsage: Object.fromEntries(costLedger.models) } : {});
+  const budgetExceeded = (): boolean => config.maxBudgetUsd !== undefined && costLedger.priced && costLedger.totalUsd > config.maxBudgetUsd;
   // Phase 4 Task 3 (MUST 8): the live child roster this run's own spawns append to -- what
   // `MessagingRouterSeam.children()` (messaging/adapter.ts) is defined to read from. No routing
   // logic lives here (WS-10 §15's own split); `onChildRosterReady` (EngineOptions) is this run's own
@@ -4425,6 +4554,15 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
         break roundLoop;
       }
 
+      // P6 fix wave (Ruling E-4, R6-H): `maxBudgetUsd`, checked before EVERY provider call like the
+      // compaction trigger below -- a client-side USD stop. The generation that crossed the ceiling
+      // still delivered its own frames (the cut is never a lost answer); the NEXT request is what does
+      // not go out, and the turn ends on the pinned `error_max_budget_usd` result carrying the cost
+      // that crossed it. Inert until something was priced (an unpriced row never exceeds anything).
+      if (budgetExceeded()) {
+        finalResult = { type: "result", subtype: "error_max_budget_usd", is_error: true };
+        break roundLoop;
+      }
       // Phase 5 Task 3 (R5-4): the AUTO trigger. Checked before EVERY provider call of the turn, not
       // once per turn -- a long tool-using turn is exactly where a context window fills up, and a
       // check that only ran at turn start would let it overflow mid-turn with no recourse.
@@ -4475,7 +4613,10 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
         // whatever the last reporting turn said -- never a fabricated number. Nothing in this phase
         // ACTS on the accountant yet: R5-4's threshold read and the compaction it triggers are Task
         // 3's and Lane K's, which is why the accountant is also an EngineOptions injection point.
-        if (turn.usage !== undefined) contextAccountant.record(turn.usage);
+        if (turn.usage !== undefined) {
+          contextAccountant.record(turn.usage);
+          priceGeneration(turn.usage);
+        }
         // --- Phase 6 Task 3 (R6-C): the pinned REFUSAL frames -----------------------------------
         //
         // Emitted on `stopReason: "refusal"` and NOWHERE else. The distinction the pin draws and
@@ -5152,13 +5293,13 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
       // so the envelope's terminal result is the one place the id can travel. CONDITIONAL on
       // checkpointing being enabled, so every pre-P5 golden trace stays byte-identical. Disclosed as
       // a Winter-defined discovery channel.
-      output.write({ type: "data", message: { ...finalResult, permission_denials: turnPermissionDenials, ...(enableFileCheckpointing ? { user_message_uuid: turnUserMessageUuid } : {}) } });
+      output.write({ type: "data", message: { ...finalResult, permission_denials: turnPermissionDenials, ...(enableFileCheckpointing ? { user_message_uuid: turnUserMessageUuid } : {}), ...costFields() } });
       // B-H1(c) point 2 (the second half): the turn is over and the state machine is back in `idle`.
       // Emitted AFTER the result so an observer that acts on it sees the result first.
       emitNotification("idle", "Waiting for input.");
     } else {
       // Provisional shape pending official capture (standing controller ruling) — no `result` text.
-      output.write({ type: "data", message: { type: "result", subtype: "success", is_error: false, interrupted: true, permission_denials: turnPermissionDenials } });
+      output.write({ type: "data", message: { type: "result", subtype: "success", is_error: false, interrupted: true, permission_denials: turnPermissionDenials, ...costFields() } });
     }
     await flushStore();
   }

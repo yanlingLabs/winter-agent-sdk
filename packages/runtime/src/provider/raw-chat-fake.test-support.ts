@@ -32,6 +32,11 @@ export interface RawChatFakeOptions {
   failModel?: { wireModel: string; status: number; retryAfter?: string };
   /** The text the scripted turn answers with. */
   text?: string;
+  /**
+   * A per-request script: answer with text, or with ONE tool call (fragmented over two chunks, as
+   * every real chat-completions stream fragments arguments). Absent -> `text` for every request.
+   */
+  script?: (request: RawChatRequest) => { text: string } | { toolCall: { id: string; name: string; arguments: string } };
 }
 
 export function evidence<T>(value: T): { value: T; source: "official-doc"; observedAt: string; confidence: "verified" } {
@@ -61,7 +66,19 @@ export async function startRawChatFake(options: RawChatFakeOptions = {}): Promis
       const chunk = (delta: Record<string, unknown>, finish?: string): string =>
         `data: ${JSON.stringify({ id: "c", object: "chat.completion.chunk", model: model ?? "x", choices: [{ index: 0, delta, ...(finish !== undefined ? { finish_reason: finish } : {}) }] })}\n\n`;
       const usage = `data: ${JSON.stringify({ id: "c", object: "chat.completion.chunk", model: model ?? "x", choices: [], usage: { prompt_tokens: 100, completion_tokens: 10, total_tokens: 110 } })}\n\n`;
-      return new Response(chunk({ role: "assistant", content: "" }) + chunk({ content: options.text ?? "hi" }) + chunk({}, "stop") + usage, {
+      const answer = options.script?.(requests[requests.length - 1]!) ?? { text: options.text ?? "hi" };
+      if ("toolCall" in answer) {
+        const { id, name, arguments: args } = answer.toolCall;
+        return new Response(
+          chunk({ role: "assistant", content: "" }) +
+            chunk({ tool_calls: [{ index: 0, id, type: "function", function: { name, arguments: "" } }] }) +
+            chunk({ tool_calls: [{ index: 0, function: { arguments: args } }] }) +
+            chunk({}, "tool_calls") +
+            usage,
+          { headers: { "content-type": "text/event-stream" } },
+        );
+      }
+      return new Response(chunk({ role: "assistant", content: "" }) + chunk({ content: answer.text }) + chunk({}, "stop") + usage, {
         headers: { "content-type": "text/event-stream" },
       });
     },
