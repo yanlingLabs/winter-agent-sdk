@@ -21,6 +21,9 @@ import { winterUserAgent } from "../../../provider-runtime/src/identity.ts";
 import { startOpenAiChatFake } from "../fakes/openai-chat.ts";
 import { chatCorpusScenarios } from "./openai-scenarios.ts";
 import { SCENARIO, bodyOf, turnRequests } from "./openai.ts";
+import { WinterProviderResolutionError } from "@yanlinglabs/winter-provider-runtime";
+import type { RuntimeConfig } from "@yanlinglabs/winter-agent-sdk";
+import { createSelectionRegistry, resolveSessionProvider } from "../../../runtime/src/provider/selection.ts";
 
 const catalog = loadCatalog();
 // Narrowed once, loudly: every assertion below is about THIS row, and `ROW?.x` on a missing row
@@ -98,6 +101,31 @@ describe("winter.xai-oauth on the wire (WS-13b §4)", () => {
     expect(ROW_API).toBe(DERIVED_XAI.apiBaseUrl);
     expect(ROW_API).toBe(XAI_OAUTH.apiBaseUrl);
     expect(ROW_API).not.toContain("api.x.ai");
+  });
+
+  test("R6b-7: the reversion SWITCH works on this row — `providers[\"xai-oauth\"].enabled: false` refuses it at resolution, by name", () => {
+    // T1 pinned the mechanism generically (on `ollama-local`); this pins it on the row the ruling was
+    // WRITTEN for. The audit's condition is "ship it behind a setting that can be turned off without
+    // a release" — that is a claim about THIS provider id, and nothing else asserted it.
+    const registry = createSelectionRegistry(catalog);
+    for (const shipped of createShippedAdapters(catalog)) registry.register(shipped);
+    const base = { registry, credentials: createMemoryCredentialStore(), env: {} };
+    const config: RuntimeConfig = { sessionId: "s", cwd: "/tmp/x", model: "xai-oauth/grok-4.6" };
+
+    // The POSITIVE leg first: without it the refusal below would pass just as happily on a model
+    // that never resolves at all, which is exactly what a broken row looks like from outside.
+    const resolved = resolveSessionProvider(config, base);
+    expect("testProvider" in resolved).toBe(false);
+
+    let err: unknown;
+    try {
+      resolveSessionProvider(config, { ...base, providerSettings: () => ({ "xai-oauth": { enabled: false } }) });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(WinterProviderResolutionError);
+    expect((err as WinterProviderResolutionError).code).toBe("provider-disabled");
+    expect((err as Error).message).toContain("providers.xai-oauth.enabled");
   });
 
   test("the adapter this build ships is registered under the id the row names", () => {
