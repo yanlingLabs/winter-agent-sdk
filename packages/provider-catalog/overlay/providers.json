@@ -75,13 +75,14 @@
     },
     {
       "id": "anthropic",
-      "$comment": "REVIEWED (P6 fix wave, ruling F-4): `liveCatalogAuthority` re-stamped `unknown` -> `authoritative`, and `modelDiscovery` `none` -> `provider-native`. EVIDENCE CLASS, the same one the openai and google rows carry: Anthropic's live Models endpoint enumerates every model the credential can use, so an id absent from it does not exist. The adapter serves that endpoint (`adapters/anthropic/messages.ts` `listModels`, paginated over `/v1/models` by `last_id`/`after_id`), which is why `modelDiscovery: \"none\"` was wrong in the first place -- Lane B's own corpus catalog already declares this provider `provider-native`. WHAT IT CHANGES: `authoritative` is R6-F's precondition read the other way round, so the `allowUnlisted` pass-through CLOSES for this provider (registry.ts step 2 / `resolveWithin`) and an unlisted anthropic id is now a definitive `unknown-model` instead of an id passed through to the wire -- which is the whole-branch review's M-5. The `modelDiscovery` value is production-inert: the one reader (`runtime/src/provider/session-provider.ts`, `=== \"local\"`) treats every non-local value alike. NO registry code changed. `azure-openai` and `codex-oauth` deliberately stay `unknown`: an Azure deployment name is user-chosen and will never be catalogued, so `allowUnlisted` is their normal configuration and the door stays open for them.",
+      "$comment": "REVIEWED (P6 fix wave, ruling F-4): `liveCatalogAuthority` re-stamped `unknown` -> `authoritative`, and `modelDiscovery` `none` -> `provider-native`. EVIDENCE CLASS, the same one the openai and google rows carry: Anthropic's live Models endpoint enumerates every model the credential can use, so an id absent from it does not exist. The adapter serves that endpoint (`adapters/anthropic/messages.ts` `listModels`, paginated over `/v1/models` by `last_id`/`after_id`), which is why `modelDiscovery: \"none\"` was wrong in the first place -- Lane B's own corpus catalog already declares this provider `provider-native`. WHAT IT CHANGES: `authoritative` is R6-F's precondition read the other way round, so the `allowUnlisted` pass-through CLOSES for this provider (registry.ts step 2 / `resolveWithin`) and an unlisted anthropic id is now a definitive `unknown-model` instead of an id passed through to the wire -- which is the whole-branch review's M-5. The `modelDiscovery` value is production-inert: the one reader (`runtime/src/provider/session-provider.ts`, `=== \"local\"`) treats every non-local value alike. NO registry code changed. `azure-openai` and `codex-oauth` deliberately stay `unknown`: an Azure deployment name is user-chosen and will never be catalogued, so `allowUnlisted` is their normal configuration and the door stays open for them. P6.5 LANE A2 (D20): `authKinds` gains `oauth-approved` -- an Anthropic Console OAuth login (PKCE, loopback) is a SECOND way to authenticate this SAME row, not a second provider: a Console token speaks the ordinary Messages dialect to the ordinary endpoint, so the adapter gained an arm rather than a sibling. `pricingBasis` stays `token` BECAUSE THAT IS WHAT THE FLOW IS -- a Console organisation is billed per token exactly as an API key is, so R6-H cost still applies; the login changes who proves the request, never how it is priced. `admission` MOVES to `oauth-documented` / `spec:WS-13b §0 D20`, which is the point of that field on a two-path row: it names the path that NEEDED the ruling, not the easiest one to justify. This row would ship on its api-key path with no ruling at all; what a reviewer must be able to find is the decision that admitted the OAuth path, exactly as `azure-openai` names `cloud-credential` rather than its key. The pricing URL that used to sit here was evidence about PRICING, which is a different question from admission and is already answered by `pricingBasis`. The flow's constants are derived from the pinned public artifact and recorded in `packages/conformance/compat/anthropic/0.3.250/derived-shapes-p6b.md`, which also records what Winter refuses from that artifact's OAuth surface: the consumer subscription authorize host (D13/D14), the two `claude_cli`-scoped endpoints, the vendor's own product beta, and the default scope union carrying its application's entitlements (D21).",
       "displayName": "Anthropic",
       "protocols": [
         "anthropic-messages"
       ],
       "authKinds": [
-        "api-key"
+        "api-key",
+        "oauth-approved"
       ],
       "defaultEndpoints": {
         "api": "https://api.anthropic.com"
@@ -104,8 +105,8 @@
       },
       "pricingBasis": "token",
       "admission": {
-        "basis": "api-key",
-        "citation": "https://claude.com/pricing"
+        "basis": "oauth-documented",
+        "citation": "spec:WS-13b §0 D20"
       },
       "scope": "llm"
     },

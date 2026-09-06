@@ -282,7 +282,7 @@ row for row"*, because a hand-typed count is the line that goes stale first and 
 
 | Class | Rows | What it means |
 | --- | ---: | --- |
-| `not-allowlisted` | 126 | an api-key provider upstream lists that Winter has not curated (WS-13 §1: presence is never inclusion). P6.5 cut this from 225 by admitting 107 and naming the rest INDIVIDUALLY in `blocked` with a ruling each — a generic class row is not an exclusion anyone can review |
+| `not-allowlisted` | 126 | an api-key provider upstream lists that Winter has not curated (WS-13 §1: presence is never inclusion). P6.5 cut this from 225 by admitting 107 through the allowlist and giving **every one of the remaining 126 its own hand-written reason** in `blocked` — a generic class row is not an exclusion anyone can review. That includes the 29 ids whose provider SHIPS as a reviewed overlay row: the class here is still `not-allowlisted` (the mapper stamps it from the id's upstream category, not from why it was kept out), but the REASON on each is the ships-as-an-overlay-row cross-reference `aihorde` and `cline` already carried. **The class name alone never says whether a provider is absent from the catalog** — the reason does |
 | `executable-value` | 116 | functions, arrow functions, `Object.freeze(...)`, `new`, and other calls |
 | `unresolved-reference` | 82 | an identifier whose declaration is outside the allowlist or was itself rejected — including the **three** models whose `unsupportedParams` could not be read (see below) |
 | `dynamic-expression` | 51 | template literals with substitutions, property access, computed keys |
@@ -426,8 +426,8 @@ does not.
 | --- | ---: | --- |
 | **admitted** as reviewed overlay rows | **29** | a vendor documentation page was fetched and read on 2026-09-06 **and** it names a fixed API root |
 | refused — out of **scope** | 14 | image, video, embedding, reranking or web-extraction services. Not held pending a document: more evidence would not admit them |
-| refused — **probed, not confirmed** | 20 | a docs page was reached but states no base URL, or the host answered 403/530, or the endpoint is ambiguous by design |
-| refused — probed and unconfirmed (enterprise) | 9 | per-deployment or per-tenant hosts, or no docs page reached |
+| refused — **docs reached, no fixed endpoint** | 20 | a docs page answered 200 but states no base URL, or the host answered 403/530, or the vendor documents two hosts and no single base |
+| refused — **no public fixed host at all** (enterprise) | 9 | the inference host is per-deployment or per-tenant by design, or no docs page could be reached |
 | refused — endpoint is a **template** | 2 | `azure-ai`, `oci`: `https://<resource>…` / `https://…<region>…` is not an endpoint |
 
 For the 14 admitted from the probe list, **two independent sources agree on the base**: the vendor's

@@ -652,9 +652,20 @@ describe("WS-13b §2: the widened catalog", () => {
       // The four legal forms (types.ts): a vendor URL, `audit:<section>`, `spec:<section>`, or the
       // bare word `local`. `local` is short BECAUSE it is complete -- a local installation has no
       // vendor and no document, and padding it with prose would be inventing evidence.
+      //
+      // THE RULE IS FORM AND A NON-EMPTY BODY, NOT LENGTH. This case previously also required
+      // `length > 20`, a threshold borrowed from the exclusion-ledger test next door and never true
+      // of anything in particular. Merging lane A2 proved it wrong rather than strict: A2's
+      // `anthropic` row cites `spec:WS-13b §0 D20` -- eighteen characters, and a complete, precise
+      // reference to the ruling that admitted its OAuth path. A length floor would have forced a
+      // correct citation to grow prose to satisfy an arbitrary number, which is the opposite of what
+      // this field is for. What actually must hold is that a citation NAMES something: a prefix
+      // alone (`spec:`, `audit:`) is a stub, and that is what is refused.
       const citation = p.admission.citation.trim();
-      expect([p.id, citation === "local" || citation.length > 20]).toEqual([p.id, true]);
-      expect([p.id, /^(https?:\/\/|audit:|spec:|local$|fixture:)/.test(citation)]).toEqual([p.id, true]);
+      const form = /^(?:https?:\/\/(?<url>\S+)|audit:(?<audit>\S+)|spec:(?<spec>\S+)|fixture:(?<fixture>\S+)|local$)/.exec(citation);
+      expect([p.id, form !== null]).toEqual([p.id, true]);
+      const body = form?.groups ?? {};
+      expect([p.id, citation === "local" || Object.values(body).some((v) => (v ?? "").length > 0)]).toEqual([p.id, true]);
       expect([p.id, UNKNOWN_CITATION_RE.test(citation)]).toEqual([p.id, false]);
     }
   });

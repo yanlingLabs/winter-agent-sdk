@@ -32469,7 +32469,7 @@
       "exclusionClass": "not-allowlisted",
       "path": "aion",
       "sourcePath": "src/shared/constants/providers/apikey/index.ts",
-      "reason": "WS-13 §1: the main source pool, curated by LLM relevance and adapter quality — presence upstream is never inclusion"
+      "reason": "the EXTRACTION is refused and the provider SHIPS as a reviewed overlay row — WS-13b §2 / round-1 finding I-1. Its upstream entry is built by a helper CALL the literal extractor will not evaluate, so the pinned tree yields no endpoint, auth or executor for it and allowlisting it would produce a row with no identity. The row that ships (`aion`, https://api.aionlabs.ai/v1) is authored from the VENDOR'S OWN documentation instead: https://www.aionlabs.ai/docs. Named here so this id carries a ruling of its own rather than falling back to the generic `not-allowlisted` class — the same cross-reference `aihorde` and `cline` carry, and the same one pattern."
     },
     {
       "upstreamId": "alibaba",
@@ -32589,7 +32589,7 @@
       "exclusionClass": "not-allowlisted",
       "path": "anyapi",
       "sourcePath": "src/shared/constants/providers/apikey/index.ts",
-      "reason": "WS-13 §1: the main source pool, curated by LLM relevance and adapter quality — presence upstream is never inclusion"
+      "reason": "the EXTRACTION is refused and the provider SHIPS as a reviewed overlay row — WS-13b §2 / round-1 finding I-1. Its upstream entry is built by a helper CALL the literal extractor will not evaluate, so the pinned tree yields no endpoint, auth or executor for it and allowlisting it would produce a row with no identity. The row that ships (`anyapi`, https://api.anyapi.ai/v1) is authored from the VENDOR'S OWN documentation instead: https://docs.anyapi.ai. Named here so this id carries a ruling of its own rather than falling back to the generic `not-allowlisted` class — the same cross-reference `aihorde` and `cline` carry, and the same one pattern."
     },
     {
       "upstreamId": "api-airforce",
@@ -32613,7 +32613,7 @@
       "exclusionClass": "not-allowlisted",
       "path": "arcee-ai",
       "sourcePath": "src/shared/constants/providers/apikey/index.ts",
-      "reason": "WS-13 §1: the main source pool, curated by LLM relevance and adapter quality — presence upstream is never inclusion"
+      "reason": "the EXTRACTION is refused and the provider SHIPS as a reviewed overlay row — WS-13b §2 / round-1 finding I-1. Its upstream entry is built by a helper CALL the literal extractor will not evaluate, so the pinned tree yields no endpoint, auth or executor for it and allowlisting it would produce a row with no identity. The row that ships (`arcee-ai`, https://api.arcee.ai/api/v1) is authored from the VENDOR'S OWN documentation instead: https://docs.arcee.ai/. Named here so this id carries a ruling of its own rather than falling back to the generic `not-allowlisted` class — the same cross-reference `aihorde` and `cline` carry, and the same one pattern."
     },
     {
       "upstreamId": "assemblyai",
@@ -33493,7 +33493,7 @@
       "exclusionClass": "not-allowlisted",
       "path": "digitalocean",
       "sourcePath": "src/shared/constants/providers/apikey/index.ts",
-      "reason": "WS-13 §1: the main source pool, curated by LLM relevance and adapter quality — presence upstream is never inclusion"
+      "reason": "the EXTRACTION is refused and the provider SHIPS as a reviewed overlay row — WS-13b §2 / round-1 finding I-1. Its upstream entry is built by a helper CALL the literal extractor will not evaluate, so the pinned tree yields no endpoint, auth or executor for it and allowlisting it would produce a row with no identity. The row that ships (`digitalocean`, https://inference.do-ai.run/v1) is authored from the VENDOR'S OWN documentation instead: https://docs.digitalocean.com/products/gradient-ai-platform/reference/api/serverless-inference/. Named here so this id carries a ruling of its own rather than falling back to the generic `not-allowlisted` class — the same cross-reference `aihorde` and `cline` carry, and the same one pattern."
     },
     {
       "upstreamId": "dit",
@@ -33549,7 +33549,7 @@
       "exclusionClass": "not-allowlisted",
       "path": "dxnt",
       "sourcePath": "src/shared/constants/providers/apikey/index.ts",
-      "reason": "WS-13 §1: the main source pool, curated by LLM relevance and adapter quality — presence upstream is never inclusion"
+      "reason": "the EXTRACTION is refused and the provider SHIPS as a reviewed overlay row — WS-13b §2 / round-1 finding I-1. Its upstream entry is built by a helper CALL the literal extractor will not evaluate, so the pinned tree yields no endpoint, auth or executor for it and allowlisting it would produce a row with no identity. The row that ships (`dxnt`, https://www.dxnt.com/v1) is authored from the VENDOR'S OWN documentation instead: https://www.dxnt.com/docs. Named here so this id carries a ruling of its own rather than falling back to the generic `not-allowlisted` class — the same cross-reference `aihorde` and `cline` carry, and the same one pattern."
     },
     {
       "upstreamId": "electronhub",
@@ -33565,7 +33565,7 @@
       "exclusionClass": "not-allowlisted",
       "path": "electronhub",
       "sourcePath": "src/shared/constants/providers/apikey/index.ts",
-      "reason": "WS-13 §1: the main source pool, curated by LLM relevance and adapter quality — presence upstream is never inclusion"
+      "reason": "the EXTRACTION is refused and the provider SHIPS as a reviewed overlay row — WS-13b §2 / round-1 finding I-1. Its upstream entry is built by a helper CALL the literal extractor will not evaluate, so the pinned tree yields no endpoint, auth or executor for it and allowlisting it would produce a row with no identity. The row that ships (`electronhub`, https://api.electronhub.ai/v1) is authored from the VENDOR'S OWN documentation instead: https://docs.electronhub.ai/api-reference/chat/completions. Named here so this id carries a ruling of its own rather than falling back to the generic `not-allowlisted` class — the same cross-reference `aihorde` and `cline` carry, and the same one pattern."
     },
     {
       "upstreamId": "elevenlabs",
@@ -33621,7 +33621,7 @@
       "exclusionClass": "not-allowlisted",
       "path": "fastrouter",
       "sourcePath": "src/shared/constants/providers/apikey/index.ts",
-      "reason": "WS-13 §1: the main source pool, curated by LLM relevance and adapter quality — presence upstream is never inclusion"
+      "reason": "the EXTRACTION is refused and the provider SHIPS as a reviewed overlay row — WS-13b §2 / round-1 finding I-1. Its upstream entry is built by a helper CALL the literal extractor will not evaluate, so the pinned tree yields no endpoint, auth or executor for it and allowlisting it would produce a row with no identity. The row that ships (`fastrouter`, https://api.fastrouter.ai/api/v1) is authored from the VENDOR'S OWN documentation instead: https://docs.fastrouter.ai/. Named here so this id carries a ruling of its own rather than falling back to the generic `not-allowlisted` class — the same cross-reference `aihorde` and `cline` carry, and the same one pattern."
     },
     {
       "upstreamId": "featherless-ai",
@@ -33741,7 +33741,7 @@
       "exclusionClass": "not-allowlisted",
       "path": "freeinference",
       "sourcePath": "src/shared/constants/providers/apikey/index.ts",
-      "reason": "WS-13 §1: the main source pool, curated by LLM relevance and adapter quality — presence upstream is never inclusion"
+      "reason": "the EXTRACTION is refused and the provider SHIPS as a reviewed overlay row — WS-13b §2 / round-1 finding I-1. Its upstream entry is built by a helper CALL the literal extractor will not evaluate, so the pinned tree yields no endpoint, auth or executor for it and allowlisting it would produce a row with no identity. The row that ships (`freeinference`, https://freeinference.org/v1) is authored from the VENDOR'S OWN documentation instead: https://freeinference.org. Named here so this id carries a ruling of its own rather than falling back to the generic `not-allowlisted` class — the same cross-reference `aihorde` and `cline` carry, and the same one pattern."
     },
     {
       "upstreamId": "freemodel-dev",
@@ -34269,7 +34269,7 @@
       "exclusionClass": "not-allowlisted",
       "path": "helyxai",
       "sourcePath": "src/shared/constants/providers/apikey/index.ts",
-      "reason": "WS-13 §1: the main source pool, curated by LLM relevance and adapter quality — presence upstream is never inclusion"
+      "reason": "the EXTRACTION is refused and the provider SHIPS as a reviewed overlay row — WS-13b §2 / round-1 finding I-1. Its upstream entry is built by a helper CALL the literal extractor will not evaluate, so the pinned tree yields no endpoint, auth or executor for it and allowlisting it would produce a row with no identity. The row that ships (`helyxai`, https://helyxai.space/v1) is authored from the VENDOR'S OWN documentation instead: https://helyxai.space. Named here so this id carries a ruling of its own rather than falling back to the generic `not-allowlisted` class — the same cross-reference `aihorde` and `cline` carry, and the same one pattern."
     },
     {
       "upstreamId": "heroku",
@@ -34645,7 +34645,7 @@
       "exclusionClass": "not-allowlisted",
       "path": "literouter",
       "sourcePath": "src/shared/constants/providers/apikey/index.ts",
-      "reason": "WS-13 §1: the main source pool, curated by LLM relevance and adapter quality — presence upstream is never inclusion"
+      "reason": "the EXTRACTION is refused and the provider SHIPS as a reviewed overlay row — WS-13b §2 / round-1 finding I-1. Its upstream entry is built by a helper CALL the literal extractor will not evaluate, so the pinned tree yields no endpoint, auth or executor for it and allowlisting it would produce a row with no identity. The row that ships (`literouter`, https://api.literouter.com/v1) is authored from the VENDOR'S OWN documentation instead: https://docs.literouter.com. Named here so this id carries a ruling of its own rather than falling back to the generic `not-allowlisted` class — the same cross-reference `aihorde` and `cline` carry, and the same one pattern."
     },
     {
       "upstreamId": "llama-cpp",
@@ -34693,7 +34693,7 @@
       "exclusionClass": "not-allowlisted",
       "path": "llm-kiwi",
       "sourcePath": "src/shared/constants/providers/apikey/index.ts",
-      "reason": "WS-13 §1: the main source pool, curated by LLM relevance and adapter quality — presence upstream is never inclusion"
+      "reason": "the EXTRACTION is refused and the provider SHIPS as a reviewed overlay row — WS-13b §2 / round-1 finding I-1. Its upstream entry is built by a helper CALL the literal extractor will not evaluate, so the pinned tree yields no endpoint, auth or executor for it and allowlisting it would produce a row with no identity. The row that ships (`llm-kiwi`, https://api.llm.kiwi/v1) is authored from the VENDOR'S OWN documentation instead: https://docs.llm.kiwi/. Named here so this id carries a ruling of its own rather than falling back to the generic `not-allowlisted` class — the same cross-reference `aihorde` and `cline` carry, and the same one pattern."
     },
     {
       "upstreamId": "llm7",
@@ -34725,7 +34725,7 @@
       "exclusionClass": "not-allowlisted",
       "path": "llmgateway",
       "sourcePath": "src/shared/constants/providers/apikey/index.ts",
-      "reason": "WS-13 §1: the main source pool, curated by LLM relevance and adapter quality — presence upstream is never inclusion"
+      "reason": "the EXTRACTION is refused and the provider SHIPS as a reviewed overlay row — WS-13b §2 / round-1 finding I-1. Its upstream entry is built by a helper CALL the literal extractor will not evaluate, so the pinned tree yields no endpoint, auth or executor for it and allowlisting it would produce a row with no identity. The row that ships (`llmgateway`, https://api.llmgateway.io/v1) is authored from the VENDOR'S OWN documentation instead: https://docs.llmgateway.io/. Named here so this id carries a ruling of its own rather than falling back to the generic `not-allowlisted` class — the same cross-reference `aihorde` and `cline` carry, and the same one pattern."
     },
     {
       "upstreamId": "lm-studio",
@@ -34765,7 +34765,7 @@
       "exclusionClass": "not-allowlisted",
       "path": "logfare",
       "sourcePath": "src/shared/constants/providers/apikey/index.ts",
-      "reason": "WS-13 §1: the main source pool, curated by LLM relevance and adapter quality — presence upstream is never inclusion"
+      "reason": "the EXTRACTION is refused and the provider SHIPS as a reviewed overlay row — WS-13b §2 / round-1 finding I-1. Its upstream entry is built by a helper CALL the literal extractor will not evaluate, so the pinned tree yields no endpoint, auth or executor for it and allowlisting it would produce a row with no identity. The row that ships (`logfare`, https://logfare.ai/v1) is authored from the VENDOR'S OWN documentation instead: https://logfare.ai/docs. Named here so this id carries a ruling of its own rather than falling back to the generic `not-allowlisted` class — the same cross-reference `aihorde` and `cline` carry, and the same one pattern."
     },
     {
       "upstreamId": "longcat",
@@ -34821,7 +34821,7 @@
       "exclusionClass": "not-allowlisted",
       "path": "meganova-ai",
       "sourcePath": "src/shared/constants/providers/apikey/index.ts",
-      "reason": "WS-13 §1: the main source pool, curated by LLM relevance and adapter quality — presence upstream is never inclusion"
+      "reason": "the EXTRACTION is refused and the provider SHIPS as a reviewed overlay row — WS-13b §2 / round-1 finding I-1. Its upstream entry is built by a helper CALL the literal extractor will not evaluate, so the pinned tree yields no endpoint, auth or executor for it and allowlisting it would produce a row with no identity. The row that ships (`meganova-ai`, https://api.meganova.ai/v1) is authored from the VENDOR'S OWN documentation instead: https://docs.meganova.ai. Named here so this id carries a ruling of its own rather than falling back to the generic `not-allowlisted` class — the same cross-reference `aihorde` and `cline` carry, and the same one pattern."
     },
     {
       "upstreamId": "meta-llama",
@@ -34957,7 +34957,7 @@
       "exclusionClass": "not-allowlisted",
       "path": "mnn-ai",
       "sourcePath": "src/shared/constants/providers/apikey/index.ts",
-      "reason": "WS-13 §1: the main source pool, curated by LLM relevance and adapter quality — presence upstream is never inclusion"
+      "reason": "the EXTRACTION is refused and the provider SHIPS as a reviewed overlay row — WS-13b §2 / round-1 finding I-1. Its upstream entry is built by a helper CALL the literal extractor will not evaluate, so the pinned tree yields no endpoint, auth or executor for it and allowlisting it would produce a row with no identity. The row that ships (`mnn-ai`, https://api.mnnai.ru/v1) is authored from the VENDOR'S OWN documentation instead: https://mnnai.ru/docs. Named here so this id carries a ruling of its own rather than falling back to the generic `not-allowlisted` class — the same cross-reference `aihorde` and `cline` carry, and the same one pattern."
     },
     {
       "upstreamId": "modal",
@@ -35093,7 +35093,7 @@
       "exclusionClass": "not-allowlisted",
       "path": "naga-ai",
       "sourcePath": "src/shared/constants/providers/apikey/index.ts",
-      "reason": "WS-13 §1: the main source pool, curated by LLM relevance and adapter quality — presence upstream is never inclusion"
+      "reason": "the EXTRACTION is refused and the provider SHIPS as a reviewed overlay row — WS-13b §2 / round-1 finding I-1. Its upstream entry is built by a helper CALL the literal extractor will not evaluate, so the pinned tree yields no endpoint, auth or executor for it and allowlisting it would produce a row with no identity. The row that ships (`naga-ai`, https://api.naga.ac/v1) is authored from the VENDOR'S OWN documentation instead: https://docs.naga.ac/api-reference/overview. Named here so this id carries a ruling of its own rather than falling back to the generic `not-allowlisted` class — the same cross-reference `aihorde` and `cline` carry, and the same one pattern."
     },
     {
       "upstreamId": "nanogpt",
@@ -35165,7 +35165,7 @@
       "exclusionClass": "not-allowlisted",
       "path": "nebius",
       "sourcePath": "src/shared/constants/providers/apikey/index.ts",
-      "reason": "WS-13 §1: the main source pool, curated by LLM relevance and adapter quality — presence upstream is never inclusion"
+      "reason": "the EXTRACTION is refused and the provider SHIPS as a reviewed overlay row — WS-13b §2 / round-1 finding I-1. Its upstream entry is built by a helper CALL the literal extractor will not evaluate, so the pinned tree yields no endpoint, auth or executor for it and allowlisting it would produce a row with no identity. The row that ships (`nebius`, https://api.tokenfactory.nebius.com/v1) is authored from the VENDOR'S OWN documentation instead: https://docs.tokenfactory.nebius.com/. Named here so this id carries a ruling of its own rather than falling back to the generic `not-allowlisted` class — the same cross-reference `aihorde` and `cline` carry, and the same one pattern."
     },
     {
       "upstreamId": "nlpcloud",
@@ -35277,7 +35277,7 @@
       "exclusionClass": "not-allowlisted",
       "path": "ofoxai",
       "sourcePath": "src/shared/constants/providers/apikey/index.ts",
-      "reason": "WS-13 §1: the main source pool, curated by LLM relevance and adapter quality — presence upstream is never inclusion"
+      "reason": "the EXTRACTION is refused and the provider SHIPS as a reviewed overlay row — WS-13b §2 / round-1 finding I-1. Its upstream entry is built by a helper CALL the literal extractor will not evaluate, so the pinned tree yields no endpoint, auth or executor for it and allowlisting it would produce a row with no identity. The row that ships (`ofoxai`, https://api.ofox.ai/v1) is authored from the VENDOR'S OWN documentation instead: https://docs.ofox.ai. Named here so this id carries a ruling of its own rather than falling back to the generic `not-allowlisted` class — the same cross-reference `aihorde` and `cline` carry, and the same one pattern."
     },
     {
       "upstreamId": "ollama-cloud",
@@ -35693,7 +35693,7 @@
       "exclusionClass": "not-allowlisted",
       "path": "poolside",
       "sourcePath": "src/shared/constants/providers/apikey/index.ts",
-      "reason": "WS-13 §1: the main source pool, curated by LLM relevance and adapter quality — presence upstream is never inclusion"
+      "reason": "the EXTRACTION is refused and the provider SHIPS as a reviewed overlay row — WS-13b §2 / round-1 finding I-1. Its upstream entry is built by a helper CALL the literal extractor will not evaluate, so the pinned tree yields no endpoint, auth or executor for it and allowlisting it would produce a row with no identity. The row that ships (`poolside`, https://inference.poolside.ai/v1) is authored from the VENDOR'S OWN documentation instead: https://docs.poolside.ai/api/overview. Named here so this id carries a ruling of its own rather than falling back to the generic `not-allowlisted` class — the same cross-reference `aihorde` and `cline` carry, and the same one pattern."
     },
     {
       "upstreamId": "predibase",
@@ -35861,7 +35861,7 @@
       "exclusionClass": "not-allowlisted",
       "path": "requesty",
       "sourcePath": "src/shared/constants/providers/apikey/index.ts",
-      "reason": "WS-13 §1: the main source pool, curated by LLM relevance and adapter quality — presence upstream is never inclusion"
+      "reason": "the EXTRACTION is refused and the provider SHIPS as a reviewed overlay row — WS-13b §2 / round-1 finding I-1. Its upstream entry is built by a helper CALL the literal extractor will not evaluate, so the pinned tree yields no endpoint, auth or executor for it and allowlisting it would produce a row with no identity. The row that ships (`requesty`, https://router.requesty.ai/v1) is authored from the VENDOR'S OWN documentation instead: https://docs.requesty.ai/quickstart. Named here so this id carries a ruling of its own rather than falling back to the generic `not-allowlisted` class — the same cross-reference `aihorde` and `cline` carry, and the same one pattern."
     },
     {
       "upstreamId": "rev-ai",
@@ -35885,7 +35885,7 @@
       "exclusionClass": "not-allowlisted",
       "path": "routeway",
       "sourcePath": "src/shared/constants/providers/apikey/index.ts",
-      "reason": "WS-13 §1: the main source pool, curated by LLM relevance and adapter quality — presence upstream is never inclusion"
+      "reason": "the EXTRACTION is refused and the provider SHIPS as a reviewed overlay row — WS-13b §2 / round-1 finding I-1. Its upstream entry is built by a helper CALL the literal extractor will not evaluate, so the pinned tree yields no endpoint, auth or executor for it and allowlisting it would produce a row with no identity. The row that ships (`routeway`, https://api.routeway.ai/v1) is authored from the VENDOR'S OWN documentation instead: https://docs.routeway.ai/. Named here so this id carries a ruling of its own rather than falling back to the generic `not-allowlisted` class — the same cross-reference `aihorde` and `cline` carry, and the same one pattern."
     },
     {
       "upstreamId": "runwayml",
@@ -35965,7 +35965,7 @@
       "exclusionClass": "not-allowlisted",
       "path": "sealion",
       "sourcePath": "src/shared/constants/providers/apikey/index.ts",
-      "reason": "WS-13 §1: the main source pool, curated by LLM relevance and adapter quality — presence upstream is never inclusion"
+      "reason": "the EXTRACTION is refused and the provider SHIPS as a reviewed overlay row — WS-13b §2 / round-1 finding I-1. Its upstream entry is built by a helper CALL the literal extractor will not evaluate, so the pinned tree yields no endpoint, auth or executor for it and allowlisting it would produce a row with no identity. The row that ships (`sealion`, https://api.sea-lion.ai/v1) is authored from the VENDOR'S OWN documentation instead: https://docs.sea-lion.ai/guides/inferencing/api/. Named here so this id carries a ruling of its own rather than falling back to the generic `not-allowlisted` class — the same cross-reference `aihorde` and `cline` carry, and the same one pattern."
     },
     {
       "upstreamId": "searchapi-search",
@@ -36021,7 +36021,7 @@
       "exclusionClass": "not-allowlisted",
       "path": "siliconflow",
       "sourcePath": "src/shared/constants/providers/apikey/index.ts",
-      "reason": "WS-13 §1: the main source pool, curated by LLM relevance and adapter quality — presence upstream is never inclusion"
+      "reason": "the EXTRACTION is refused and the provider SHIPS as a reviewed overlay row — WS-13b §2 / round-1 finding I-1. Its upstream entry is built by a helper CALL the literal extractor will not evaluate, so the pinned tree yields no endpoint, auth or executor for it and allowlisting it would produce a row with no identity. The row that ships (`siliconflow`, https://api.siliconflow.com/v1) is authored from the VENDOR'S OWN documentation instead: https://docs.siliconflow.com/en/api-reference/chat-completions/chat-completions. Named here so this id carries a ruling of its own rather than falling back to the generic `not-allowlisted` class — the same cross-reference `aihorde` and `cline` carry, and the same one pattern."
     },
     {
       "upstreamId": "snowflake",
@@ -36077,7 +36077,7 @@
       "exclusionClass": "not-allowlisted",
       "path": "speka",
       "sourcePath": "src/shared/constants/providers/apikey/index.ts",
-      "reason": "WS-13 §1: the main source pool, curated by LLM relevance and adapter quality — presence upstream is never inclusion"
+      "reason": "the EXTRACTION is refused and the provider SHIPS as a reviewed overlay row — WS-13b §2 / round-1 finding I-1. Its upstream entry is built by a helper CALL the literal extractor will not evaluate, so the pinned tree yields no endpoint, auth or executor for it and allowlisting it would produce a row with no identity. The row that ships (`speka`, https://speka.me/v1) is authored from the VENDOR'S OWN documentation instead: https://speka.me/docs. Named here so this id carries a ruling of its own rather than falling back to the generic `not-allowlisted` class — the same cross-reference `aihorde` and `cline` carry, and the same one pattern."
     },
     {
       "upstreamId": "stability-ai",
@@ -36213,7 +36213,7 @@
       "exclusionClass": "not-allowlisted",
       "path": "together",
       "sourcePath": "src/shared/constants/providers/apikey/index.ts",
-      "reason": "WS-13 §1: the main source pool, curated by LLM relevance and adapter quality — presence upstream is never inclusion"
+      "reason": "the EXTRACTION is refused and the provider SHIPS as a reviewed overlay row — WS-13b §2 / round-1 finding I-1. Its upstream entry is built by a helper CALL the literal extractor will not evaluate, so the pinned tree yields no endpoint, auth or executor for it and allowlisting it would produce a row with no identity. The row that ships (`together`, https://api.together.ai/v1) is authored from the VENDOR'S OWN documentation instead: https://docs.together.ai/docs/chat-overview. Named here so this id carries a ruling of its own rather than falling back to the generic `not-allowlisted` class — the same cross-reference `aihorde` and `cline` carry, and the same one pattern."
     },
     {
       "upstreamId": "token-kiosk",
@@ -36597,7 +36597,7 @@
       "exclusionClass": "not-allowlisted",
       "path": "void-ai",
       "sourcePath": "src/shared/constants/providers/apikey/index.ts",
-      "reason": "WS-13 §1: the main source pool, curated by LLM relevance and adapter quality — presence upstream is never inclusion"
+      "reason": "the EXTRACTION is refused and the provider SHIPS as a reviewed overlay row — WS-13b §2 / round-1 finding I-1. Its upstream entry is built by a helper CALL the literal extractor will not evaluate, so the pinned tree yields no endpoint, auth or executor for it and allowlisting it would produce a row with no identity. The row that ships (`void-ai`, https://api.voidai.app/v1) is authored from the VENDOR'S OWN documentation instead: https://docs.voidai.app/. Named here so this id carries a ruling of its own rather than falling back to the generic `not-allowlisted` class — the same cross-reference `aihorde` and `cline` carry, and the same one pattern."
     },
     {
       "upstreamId": "volcengine",
@@ -36869,7 +36869,7 @@
       "exclusionClass": "not-allowlisted",
       "path": "yolo-auto",
       "sourcePath": "src/shared/constants/providers/apikey/index.ts",
-      "reason": "WS-13 §1: the main source pool, curated by LLM relevance and adapter quality — presence upstream is never inclusion"
+      "reason": "the EXTRACTION is refused and the provider SHIPS as a reviewed overlay row — WS-13b §2 / round-1 finding I-1. Its upstream entry is built by a helper CALL the literal extractor will not evaluate, so the pinned tree yields no endpoint, auth or executor for it and allowlisting it would produce a row with no identity. The row that ships (`yolo-auto`, https://yolo-auto.com/v1) is authored from the VENDOR'S OWN documentation instead: https://yolo-auto.com/docs. Named here so this id carries a ruling of its own rather than falling back to the generic `not-allowlisted` class — the same cross-reference `aihorde` and `cline` carry, and the same one pattern."
     },
     {
       "upstreamId": "youcom-search",
@@ -36997,7 +36997,7 @@
       "exclusionClass": "not-allowlisted",
       "path": "zerolimitai",
       "sourcePath": "src/shared/constants/providers/apikey/index.ts",
-      "reason": "WS-13 §1: the main source pool, curated by LLM relevance and adapter quality — presence upstream is never inclusion"
+      "reason": "the EXTRACTION is refused and the provider SHIPS as a reviewed overlay row — WS-13b §2 / round-1 finding I-1. Its upstream entry is built by a helper CALL the literal extractor will not evaluate, so the pinned tree yields no endpoint, auth or executor for it and allowlisting it would produce a row with no identity. The row that ships (`zerolimitai`, https://www.zerolimitai.com/api/v1) is authored from the VENDOR'S OWN documentation instead: https://www.zerolimitai.com. Named here so this id carries a ruling of its own rather than falling back to the generic `not-allowlisted` class — the same cross-reference `aihorde` and `cline` carry, and the same one pattern."
     },
     {
       "upstreamId": "zylo-api",
@@ -37013,7 +37013,7 @@
       "exclusionClass": "not-allowlisted",
       "path": "zylo-api",
       "sourcePath": "src/shared/constants/providers/apikey/index.ts",
-      "reason": "WS-13 §1: the main source pool, curated by LLM relevance and adapter quality — presence upstream is never inclusion"
+      "reason": "the EXTRACTION is refused and the provider SHIPS as a reviewed overlay row — WS-13b §2 / round-1 finding I-1. Its upstream entry is built by a helper CALL the literal extractor will not evaluate, so the pinned tree yields no endpoint, auth or executor for it and allowlisting it would produce a row with no identity. The row that ships (`zylo-api`, https://api.zyloai.net/v1) is authored from the VENDOR'S OWN documentation instead: https://zyloai.net/docs. Named here so this id carries a ruling of its own rather than falling back to the generic `not-allowlisted` class — the same cross-reference `aihorde` and `cline` carry, and the same one pattern."
     }
   ]
 }
