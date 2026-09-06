@@ -51,3 +51,22 @@ export type { CorpusCaseContext, CorpusCaseId, CorpusCaseImpl, CorpusCaseOutcome
 // `corpus/runner.ts` and `fakes/server.ts` remain untouched.
 export { CONTINUITY_CASES, CONTINUITY_CASE_IMPLS, OPAQUE_MARKERS, claudeTurn, createContinuityWorld, formatContinuityReport, openaiTurn, runContinuityCorpus } from "./corpus/continuity.ts";
 export type { ContinuityCaseContext, ContinuityCaseId, ContinuityCaseImpl, ContinuityCaseOutcome, ContinuityCaseSpec, ContinuityReport, ContinuityWorld } from "./corpus/continuity.ts";
+
+// --- Phase 6 Task 8 (Lane D): the classifier safety corpus and the opt-in live gate ---------------
+//
+// Both are DATA plus a runner, for the same reason the adapter corpus is: the offline run (Lane D's
+// runtime-side fixture, against a scripted `Provider` double) and the live run
+// (`scripts/verify-provider-live.ts`, opt-in) must ask the identical questions, or "the corpus
+// passed" means two different things depending on who said it.
+export { CLASSIFIER_SAFETY_CASES, CLASSIFIER_SAFETY_CATEGORIES, describeThrown, formatClassifierSafetyReport, runClassifierSafetyCorpus } from "./corpus/classifier-safety.ts";
+export type {
+  ClassifierSafetyAnswer,
+  ClassifierSafetyCase,
+  ClassifierSafetyCategory,
+  ClassifierSafetyClassify,
+  ClassifierSafetyOutcome,
+  ClassifierSafetyReport,
+  SafetyEnvelope,
+} from "./corpus/classifier-safety.ts";
+export { LIVE_CASES, LiveCaseAssertionError, formatLiveReport, runLiveCases } from "./live/index.ts";
+export type { LiveCaseContext, LiveCaseId, LiveCaseOutcome, LiveCaseSpec, LiveReport, RunLiveCasesOptions } from "./live/index.ts";
