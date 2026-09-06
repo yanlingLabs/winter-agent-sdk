@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { loadCatalog, scanForSecrets, validateCatalog } from "../index.ts";
 import { UNKNOWN_CITATION_RE } from "../validate.ts";
 import type { WinterModelDescriptor, WinterProviderDescriptor } from "../types.ts";
@@ -675,6 +678,38 @@ describe("WS-13b §2: the widened catalog", () => {
     // ...and the repo's own credential-shape detector over the two hand-authored SOURCES, which is
     // the check that does not depend on knowing which literal to look for.
     for (const [i, text] of sources.entries()) expect([i, scanForSecrets(JSON.parse(text) as Record<string, unknown>)]).toEqual([i, []]);
+
+    // ...AND OVER THE SOURCE TREE, which is where the sweep was missing (whole-branch review M-2).
+    // This test's own comment says a test that spells a credential puts it in the repository — and
+    // `scripts/verify-provider-live.ts` spelled it in a runbook comment while
+    // `scripts/verify-provider-live.test.ts` spelled it in an assertion, because the sweep above
+    // covers catalog/overlay/allowlist and nothing else. Two lanes, one rule, one of them outside
+    // the gate that states it.
+    //
+    // AN IN-PROCESS WALK, not a `git grep` subprocess: `bun test` runs under a sandbox that does not
+    // put `git` on the path, and a gate that depends on an external binary fails for a reason that
+    // has nothing to do with what it checks. The scope is the two source roots a credential would
+    // realistically be typed into; the generated JSON under `packages/*/generated/` is deliberately
+    // outside it (it carries `adb-0000000000000000…`, a per-tenant URL PLACEHOLDER inside an
+    // exclusion reason — not a credential, and the sweep above already covers the assembled catalog
+    // with the token-boundary rule that tells the two apart).
+    const repoRoot = fileURLToPath(new URL("../../../../", import.meta.url));
+    const roots = [join(repoRoot, "scripts"), ...readdirSync(join(repoRoot, "packages")).map((pkg) => join(repoRoot, "packages", pkg, "src"))].filter((dir) => existsSync(dir));
+    const sourceFiles: string[] = [];
+    for (const root of roots) {
+      for (const entry of readdirSync(root, { recursive: true, withFileTypes: true })) {
+        if (!entry.isFile() || !/\.(ts|tsx|json|md)$/.test(entry.name)) continue;
+        sourceFiles.push(join(entry.parentPath, entry.name));
+      }
+    }
+    // Non-vacuous: a walk that found nothing would pass silently, and "the glob broke" is exactly
+    // how a sweep stops sweeping.
+    expect(sourceFiles.length).toBeGreaterThan(100);
+    const spelled = sourceFiles.filter((file) => asToken.test(readFileSync(file, "utf8"))).map((file) => file.slice(repoRoot.length));
+    // The UUID-shaped capture fixtures in `scripts/capture-official-golden.ts` are LONGER digit runs
+    // and fall out by the boundary rule rather than by an exception list — so this really is "no
+    // hits", not "no hits we chose to look at".
+    expect(spelled).toEqual([]);
     // ...and the row still records that a documented anonymous default EXISTS, which is the fact a
     // host needs. Without this half the test above would pass just as well on a missing row.
     expect(byId.get("aihorde")?.admission.citation).toMatch(/anonymous/i);

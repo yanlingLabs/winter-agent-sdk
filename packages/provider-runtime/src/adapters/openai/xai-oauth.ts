@@ -131,14 +131,17 @@ function reversionConditionMessage(): string {
  * `expired_token`, …) … naming ONLY the code — never the `error_description`"). It does not put the
  * code in a field, so this reads it back off that documented shape.
  *
- * That makes this a text dependency on a spine file, which is worth naming: `adapters/oauth/**` is
- * on the phase's no-touch list, so adding a `providerCode` there was not this lane's to make. The
- * dependency is not silent, though — the reversion tests drive the REAL helper through a fake that
- * answers `access_denied`, so if that message shape ever changes, they fail rather than quietly
- * misclassifying. A `providerCode` on that throw would be strictly better and is recommended.
+ * THE FIELD FIRST, the text as a fallback. `runDeviceCodeFlow` now sets `providerCode` on BOTH of
+ * its throws (fix-wave carry, Lane O review Important 3) — which is what makes a refusal at the
+ * DEVICE step detectable at all: that throw used to report only an HTTP status, so an unregistered
+ * client the vendor rejects at the door looked like a plain 4xx and never reached the reversion
+ * arm. The regex stays as the fallback for a `ProviderRequestError` raised by an older path, and
+ * because the message shape is the helper's documented contract; the reversion tests drive the REAL
+ * helper through a fake that answers `access_denied`, so both readings are exercised.
  */
 function deviceFlowErrorCode(err: unknown): string | undefined {
   if (!(err instanceof ProviderRequestError)) return undefined;
+  if (err.providerCode !== undefined) return err.providerCode;
   const match = /^the device login failed: ([a-z_]+)$/.exec(err.message);
   return match?.[1];
 }

@@ -14,10 +14,11 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadCatalog } from "@yanlinglabs/winter-provider-catalog";
-import { createMemoryCredentialStore, CredentialResolutionError, normalizeHttpError, winterUserAgent, type CredentialStore } from "@yanlinglabs/winter-provider-runtime";
+import { createEnvCredentialStore, createMemoryCredentialStore, CredentialResolutionError, normalizeHttpError, winterUserAgent, type CredentialStore } from "@yanlinglabs/winter-provider-runtime";
 import { anthropicConsoleOauthFake, errorResponse, startFake, xaiOauthFake } from "winter-provider-conformance";
 import {
   ADAPTERS_MODULE_VAR,
+  bearerStore,
   countByKind,
   CREDENTIAL_REF_SUFFIX,
   collectAdapters,
@@ -268,7 +269,11 @@ describe("WS-13b Important #1: each selector is cross-checked against the row's 
     expect(keyless.optedIn).toBe(false);
     expect(keyless.warnings?.join(" ")).toContain("WINTER_LIVE_AIHORDE_API_KEY");
     // ...and the row IS reachable, by the variable that carries the vendor's own anonymous value.
-    const keyed = planLiveRun({ [OPT_IN_VAR]: "1", WINTER_LIVE_AIHORDE_API_KEY: "0000000000" }, CATALOG);
+    // CONSTRUCTED, not spelled (whole-branch review M-2). X2's own integrity test builds the same
+    // value the same way, on the rule that "a test that spells a credential verbatim puts it in the
+    // repository just as surely as the row would have" — and this file, in `scripts/`, was outside
+    // the sweep that enforces it. The literal sweep now covers `scripts/` too.
+    const keyed = planLiveRun({ [OPT_IN_VAR]: "1", WINTER_LIVE_AIHORDE_API_KEY: "0".repeat(10) }, CATALOG);
     expect(keyed.optedIn && keyed.targets.map((t) => [t.providerId, t.kind])).toEqual([["aihorde", "api-key"]]);
   });
 
@@ -301,6 +306,13 @@ describe("WS-13b Important #1: each selector is cross-checked against the row's 
         oauth: planLiveRun({ [OPT_IN_VAR]: "1", ...SERVICE, ...model, [`${prefix}${CREDENTIAL_REF_SUFFIX}`]: `keychain:${provider.id}:acct` }, CATALOG).optedIn,
         keyless: planLiveRun({ [OPT_IN_VAR]: "1", ...model, [prefix]: "1" }, CATALOG).optedIn,
       };
+      // M-3's selector rides the SAME predicate as `_API_KEY` and must therefore admit exactly the
+      // same rows: it is the same credential in the other header, not a second admission basis. A
+      // bearer target that reached a row `_API_KEY` cannot would be a new path through the gate.
+      const bearerPlan = planLiveRun({ [OPT_IN_VAR]: "1", ...model, [`${prefix}_BEARER`]: "test-key-x" }, CATALOG);
+      if (bearerPlan.optedIn !== admits["api-key"]) violations.push(`${where}: _BEARER and _API_KEY disagree on admission`);
+      if (bearerPlan.optedIn && bearerPlan.targets[0]?.authStyle !== "bearer") violations.push(`${where}: _BEARER admitted without the bearer auth style`);
+      if (bearerPlan.optedIn && bearerPlan.targets[0]?.kind !== "api-key") violations.push(`${where}: _BEARER produced kind ${String(bearerPlan.targets[0]?.kind)}, not api-key`);
       for (const kind of ["api-key", "oauth", "keyless"] as const) if (admits[kind]) admittedCount[kind] += 1;
 
       // (1) A row nothing can select is a row the live gate can never promote out of `candidate`.
@@ -321,6 +333,52 @@ describe("WS-13b Important #1: each selector is cross-checked against the row's 
     // Not a bound to satisfy — a printed fact for the run's report, and proof the sweep saw all three.
     for (const kind of ["api-key", "oauth", "keyless"] as const) expect(admittedCount[kind]).toBeGreaterThan(0);
     console.log(`  live-gate sweep: ${CATALOG.providers.length} rows -- admitted as api-key ${admittedCount["api-key"]}, oauth ${admittedCount.oauth}, keyless ${admittedCount.keyless}`);
+  });
+
+  test("M-3: `WINTER_LIVE_<P>_BEARER` reaches an Anthropic-dialect sibling as an api-key target with the bearer auth style", () => {
+    // The live condition the gate could not vary. `deepseek-anthropic` and its three siblings carry
+    // `authKinds: ["api-key"]`, so `messages.ts` sends `x-api-key` -- but what their citations
+    // establish is that the vendor's own page targets Claude Code, whose auth-token mode sends
+    // `Authorization: Bearer`. Whether these endpoints ALSO accept `x-api-key` is unverified, and a
+    // vendor that accepts only the bearer form produced a 401 that reads "bad key".
+    //
+    // The KIND stays `api-key`, deliberately: the kind is the documented PATH the credential came
+    // down, which is what this gate's evidence is about. Only the presentation differs.
+    const plan = planLiveRun({ [OPT_IN_VAR]: "1", WINTER_LIVE_DEEPSEEK_ANTHROPIC_BEARER: "test-key-x" }, CATALOG);
+    expect(plan.optedIn && plan.targets.map((t) => [t.providerId, t.kind, t.authStyle, t.selectedBy])).toEqual([
+      ["deepseek-anthropic", "api-key", "bearer", "WINTER_LIVE_DEEPSEEK_ANTHROPIC_BEARER"],
+    ]);
+  });
+
+  test("M-3: the bearer form WINS over `_API_KEY` and says so -- an operator sets it after a 401 on the default form", () => {
+    // Preferring the variable that just failed would reproduce the failure and read as "the retry
+    // did nothing", which is the worst outcome for a diagnostic selector.
+    const plan = planLiveRun({ [OPT_IN_VAR]: "1", WINTER_LIVE_DEEPSEEK_ANTHROPIC_API_KEY: "test-key-x", WINTER_LIVE_DEEPSEEK_ANTHROPIC_BEARER: "test-key-x" }, CATALOG);
+    expect(plan.optedIn && plan.targets.map((t) => [t.selectedBy, t.authStyle])).toEqual([["WINTER_LIVE_DEEPSEEK_ANTHROPIC_BEARER", "bearer"]]);
+    expect(plan.warnings?.join(" ")).toContain("the bearer form wins");
+  });
+
+  test("M-3: `bearerStore` re-presents the env store's api-key material as bearer, and changes nothing else", async () => {
+    // The other half of the selector. Without this the plan would say `authStyle: "bearer"` and the
+    // request would still carry `x-api-key`, which is the failure the whole item exists to fix.
+    const ref = { kind: "env", name: "WINTER_LIVE_FIXTURE_BEARER" } as const;
+    const inner = createEnvCredentialStore({ env: { WINTER_LIVE_FIXTURE_BEARER: "test-key-x" } });
+    expect(await inner.get(ref)).toEqual({ kind: "api-key", key: "test-key-x" });
+    expect(await bearerStore(inner).get(ref)).toEqual({ kind: "bearer", token: "test-key-x" });
+    // A missing value stays missing rather than becoming an empty bearer -- an exported-but-empty
+    // variable must still produce the actionable "no credential configured", not an opaque 401.
+    expect(await bearerStore(createEnvCredentialStore({ env: {} })).get(ref)).toBeNull();
+    // Still read-only: the wrapper must not become a write path into the operator's environment.
+    // (`set` is keychain-only BY TYPE, so the ref is cast — the point is that the refusal survives
+    // the wrapper, not that this call is representable.)
+    await expect(bearerStore(inner).set({ kind: "keychain", account: "unused" }, { kind: "api-key", key: "x" })).rejects.toThrow();
+  });
+
+  test("M-3: an OAuth-only row refuses `_BEARER` exactly as it refuses `_API_KEY` -- the selector is not a way around the predicate", () => {
+    const plan = planLiveRun({ [OPT_IN_VAR]: "1", WINTER_LIVE_XAI_OAUTH_BEARER: "test-key-x" }, CATALOG);
+    expect(plan.optedIn).toBe(false);
+    expect(plan.warnings?.join(" ")).toContain("WINTER_LIVE_XAI_OAUTH_BEARER");
+    expect(plan.warnings?.join(" ")).toContain("whose documented path is OAuth and not an API key");
   });
 
   test("a row with NO model row of its own is not silently dropped: it warns, names the `_MODEL` variable, and is reachable once that is set", () => {

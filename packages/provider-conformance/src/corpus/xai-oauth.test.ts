@@ -115,7 +115,7 @@ describe("winter.xai-oauth on the wire (WS-13b §4)", () => {
     expect(ROW_API).not.toContain("api.x.ai");
   });
 
-  test("R6b-7: the reversion SWITCH works on this row — `providers[\"xai-oauth\"].enabled: false` refuses it at resolution, by name", () => {
+  test("R6b-7: the reversion SWITCH works on this row — the per-provider enabled setting refuses it at resolution, by name", () => {
     // T1 pinned the mechanism generically (on `ollama-local`); this pins it on the row the ruling was
     // WRITTEN for. The audit's condition is "ship it behind a setting that can be turned off without
     // a release" — that is a claim about THIS provider id, and nothing else asserted it.
@@ -138,6 +138,20 @@ describe("winter.xai-oauth on the wire (WS-13b §4)", () => {
     expect(err).toBeInstanceOf(WinterProviderResolutionError);
     expect((err as WinterProviderResolutionError).code).toBe("provider-disabled");
     expect((err as Error).message).toContain("providers.xai-oauth.enabled");
+  });
+
+  test("the repository NOTICE pins the SAME commit the derived constants were read at", async () => {
+    // Fix-wave carry (release gates). `NOTICE` is the attribution a release ships and
+    // `DERIVED_XAI_COMMIT` is what the capture actually read; nothing tied the two, so a re-capture
+    // at a newer commit could update the constants and leave the NOTICE attesting to an artifact
+    // Winter no longer derives from — which is the one claim in that file a reader relies on.
+    const notice = await Bun.file(new URL("../../../../NOTICE", import.meta.url)).text();
+    expect(notice).toContain(DERIVED_XAI_COMMIT);
+    // ...and the repository it names, so the commit is not a bare hex string a reader cannot resolve.
+    expect(notice).toContain("xai-org/grok-build");
+    // The row carries it too, which is what lets a reviewer reading the CATALOG alone reach the
+    // artifact. Three statements of one fact, all machine-checked against each other.
+    expect(ROW.admission.citation).toContain(DERIVED_XAI_COMMIT);
   });
 
   test("the adapter this build ships is registered under the id the row names", () => {

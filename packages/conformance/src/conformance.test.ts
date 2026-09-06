@@ -655,7 +655,7 @@ const WIDENING_ROWS: ConformanceRow[] = [
       { file: `${PROVIDER_RUNTIME}/adapters/openai/xai-oauth.test.ts`, testName: "NONE of the vendor's six product-identity headers is sent on the GENERATION path either — including the two the proxy's own client injects" },
       { file: `${PROVIDER_RUNTIME}/adapters/openai/xai-oauth.test.ts`, testName: "the identity field rides the POLLS too, not only the device request — a flow honest exactly once is not honest" },
       { file: `${PROVIDER_RUNTIME}/adapters/openai/xai-oauth.test.ts`, testName: "the subscription endpoint is the proxy the capture found, NOT the metered api-key surface" },
-      { file: `${CORPUS}/xai-oauth.test.ts`, testName: "R6b-7: the reversion SWITCH works on this row" },
+      { file: `${CORPUS}/xai-oauth.test.ts`, testName: "R6b-7: the reversion SWITCH works on this row — the per-provider enabled setting refuses it at resolution, by name" },
       { file: `${LIVE}/summary.test.ts`, testName: "only the allowlisted fields survive -- a marker sitting in the SAME body does not" },
       { file: `${LIVE}/summary.test.ts`, testName: "the allowlist is a CLOSED list -- every field it names is one an auth refusal reports, and nothing else is read" },
       { file: `${LIVE}/summary.test.ts`, testName: "`xai-oauth`: an OAuth entitlement's 401 IS the reversion condition, names its own provider in the remediation" },
