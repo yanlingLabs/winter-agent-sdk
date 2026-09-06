@@ -1,0 +1,65 @@
+{
+  "$comment": "GENERATED — the upstream provider-count denominators recomputed at the pin. WS-13 §3 step 5 requires the extractor to REPORT the 351/352 discrepancy rather than hide it; this file is that report, and PROVENANCE.md quotes its summary.",
+  "catalogueUnion": 352,
+  "byCategory": [
+    {
+      "category": "noauth",
+      "count": 13
+    },
+    {
+      "category": "oauth",
+      "count": 25
+    },
+    {
+      "category": "web-cookie",
+      "count": 35
+    },
+    {
+      "category": "apikey",
+      "count": 233
+    },
+    {
+      "category": "local",
+      "count": 14
+    },
+    {
+      "category": "search",
+      "count": 14
+    },
+    {
+      "category": "audio",
+      "count": 12
+    },
+    {
+      "category": "upstream-proxy",
+      "count": 2
+    },
+    {
+      "category": "cloud-agent",
+      "count": 3
+    },
+    {
+      "category": "system",
+      "count": 1
+    }
+  ],
+  "duplicatedAcrossCategories": [],
+  "categorySum": 352,
+  "registryEntries": 270,
+  "registryEntriesResolved": 222,
+  "catalogueWithoutRegistry": 82,
+  "registryWithoutCatalogue": 0,
+  "claims": [
+    {
+      "sourcePath": "README.md",
+      "claimed": 352,
+      "note": "matches the enumerated product-catalog union at this pin"
+    },
+    {
+      "sourcePath": "docs/reference/PROVIDER_REFERENCE.md",
+      "claimed": 352,
+      "note": "matches the enumerated product-catalog union at this pin"
+    }
+  ],
+  "summary": "Enumerated product-catalog union at the pin: 352 distinct provider ids (per-category sum 352, no id appears in two categories). Backend REGISTRY entries: 270 (222 resolvable by the literal extractor; the remainder are built by a helper CALL, which is never evaluated). 82 catalogued id(s) have no backend registry entry; 0 registry id(s) have no product-catalog row. Upstream's own claims: README.md=352, docs/reference/PROVIDER_REFERENCE.md=352."
+}

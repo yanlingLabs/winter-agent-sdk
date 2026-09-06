@@ -1,4 +1,3063 @@
 {
+  "$comment": "GENERATED — do not edit. Produced by `bun run scripts/provider-source-sync.ts` from the pinned OmniRoute tree (see ../UPSTREAM.json). Every row here is shadowed by an overlay row of the same id/key if one exists (WS-13 §7: the overlay always wins), and every capability carries `upstream-static`/`inferred` evidence because that is all an extraction can honestly claim.",
+  "providers": [
+    {
+      "id": "anthropic",
+      "displayName": "Anthropic",
+      "protocols": [
+        "anthropic-messages"
+      ],
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.anthropic.com/v1/messages"
+      },
+      "modelDiscovery": "none",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.anthropic-messages",
+      "family": "anthropic",
+      "upstream": {
+        "project": "OmniRoute",
+        "commit": "5458026c216f77a3da68ea49152dc33470cfe2cb",
+        "sourcePaths": [
+          "open-sse/config/providers/registry/anthropic/index.ts",
+          "src/shared/constants/providers/apikey/index.ts"
+        ]
+      },
+      "risk": {
+        "class": "approved",
+        "reasons": []
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "bedrock",
+      "displayName": "Amazon Bedrock",
+      "protocols": [
+        "bedrock-converse"
+      ],
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {},
+      "modelDiscovery": "openai-models",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.bedrock-converse",
+      "family": "bedrock",
+      "upstream": {
+        "project": "OmniRoute",
+        "commit": "5458026c216f77a3da68ea49152dc33470cfe2cb",
+        "sourcePaths": [
+          "open-sse/config/providers/registry/bedrock/index.ts",
+          "src/shared/constants/providers/apikey/index.ts"
+        ]
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "native cloud: SigV4 signing + event-stream decoding need their own proof (WS-13 §5)"
+        ]
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "deepseek",
+      "displayName": "DeepSeek",
+      "protocols": [
+        "openai-responses"
+      ],
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.deepseek.com/responses"
+      },
+      "modelDiscovery": "none",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-responses",
+      "family": "openai",
+      "upstream": {
+        "project": "OmniRoute",
+        "commit": "5458026c216f77a3da68ea49152dc33470cfe2cb",
+        "sourcePaths": [
+          "open-sse/config/providers/registry/deepseek/index.ts",
+          "src/shared/constants/providers/apikey/index.ts"
+        ]
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "reasoning continuity is tool-loop fragile (WS-13 §8.2: missing reasoning state mid-tool-loop is a hard error)"
+        ]
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "google",
+      "displayName": "Gemini (Google AI Studio)",
+      "protocols": [
+        "google-generate-content"
+      ],
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://generativelanguage.googleapis.com/v1beta/models"
+      },
+      "modelDiscovery": "none",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.google-generate-content",
+      "family": "google",
+      "upstream": {
+        "project": "OmniRoute",
+        "commit": "5458026c216f77a3da68ea49152dc33470cfe2cb",
+        "sourcePaths": [
+          "open-sse/config/providers/registry/gemini/index.ts",
+          "src/shared/constants/providers/apikey/index.ts"
+        ]
+      },
+      "risk": {
+        "class": "approved",
+        "reasons": []
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "openai",
+      "displayName": "OpenAI",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.openai.com/v1/chat/completions"
+      },
+      "modelDiscovery": "none",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-responses",
+      "family": "openai",
+      "upstream": {
+        "project": "OmniRoute",
+        "commit": "5458026c216f77a3da68ea49152dc33470cfe2cb",
+        "sourcePaths": [
+          "open-sse/config/providers/registry/openai/index.ts",
+          "src/shared/constants/providers/apikey/index.ts"
+        ]
+      },
+      "risk": {
+        "class": "approved",
+        "reasons": []
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "openrouter",
+      "displayName": "OpenRouter",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://openrouter.ai/api/v1/chat/completions"
+      },
+      "modelDiscovery": "openai-models",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "OmniRoute",
+        "commit": "5458026c216f77a3da68ea49152dc33470cfe2cb",
+        "sourcePaths": [
+          "open-sse/config/providers/registry/openrouter/index.ts",
+          "src/shared/constants/providers/apikey/index.ts"
+        ]
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "gateway: capability parity is model-by-model (WS-13 §14.4); per-request provider/data-policy controls must be preserved"
+        ]
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "vertex",
+      "displayName": "Vertex AI",
+      "protocols": [
+        "google-generate-content"
+      ],
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://us-central1-aiplatform.googleapis.com/v1/projects"
+      },
+      "modelDiscovery": "openai-models",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.vertex-gemini",
+      "family": "google",
+      "upstream": {
+        "project": "OmniRoute",
+        "commit": "5458026c216f77a3da68ea49152dc33470cfe2cb",
+        "sourcePaths": [
+          "open-sse/config/providers/registry/vertex/index.ts",
+          "src/shared/constants/providers/apikey/index.ts"
+        ]
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "native cloud: project/location auth and partner-protocol differences need their own proof (WS-13 §5)"
+        ]
+      },
+      "scope": "llm"
+    }
+  ],
+  "models": [
+    {
+      "key": "anthropic/claude-fable-5",
+      "providerId": "anthropic",
+      "upstreamId": "claude-fable-5",
+      "displayName": "Claude Fable 5",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1048576,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-fable-5",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-fable-5",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-fable-5 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-fable-5",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-fable-5",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "unsupportedParameters": [
+        "temperature",
+        "top_p",
+        "top_k"
+      ],
+      "status": "candidate"
+    },
+    {
+      "key": "anthropic/claude-haiku-4.5",
+      "providerId": "anthropic",
+      "upstreamId": "claude-haiku-4.5",
+      "displayName": "Claude Haiku 4.5",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 200000,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-haiku-4.5",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-haiku-4.5",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-haiku-4.5 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-haiku-4.5",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-haiku-4.5",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "anthropic/claude-opus-4.5",
+      "providerId": "anthropic",
+      "upstreamId": "claude-opus-4.5",
+      "displayName": "Claude Opus 4.5",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 200000,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-opus-4.5",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-opus-4.5",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-opus-4.5 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-opus-4.5",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-opus-4.5",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "anthropic/claude-opus-4.6",
+      "providerId": "anthropic",
+      "upstreamId": "claude-opus-4.6",
+      "displayName": "Claude Opus 4.6",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 200000,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-opus-4.6",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-opus-4.6",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-opus-4.6 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-opus-4.6",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-opus-4.6",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "anthropic/claude-opus-4.7",
+      "providerId": "anthropic",
+      "upstreamId": "claude-opus-4.7",
+      "displayName": "Claude Opus 4.7",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 200000,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-opus-4.7",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-opus-4.7",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-opus-4.7 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-opus-4.7",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-opus-4.7",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "unsupportedParameters": [
+        "temperature",
+        "top_p",
+        "top_k"
+      ],
+      "status": "candidate"
+    },
+    {
+      "key": "anthropic/claude-opus-4.8",
+      "providerId": "anthropic",
+      "upstreamId": "claude-opus-4.8",
+      "displayName": "Claude Opus 4.8",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1048576,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-opus-4.8",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-opus-4.8",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-opus-4.8 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-opus-4.8",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-opus-4.8",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "unsupportedParameters": [
+        "temperature",
+        "top_p",
+        "top_k"
+      ],
+      "status": "candidate"
+    },
+    {
+      "key": "anthropic/claude-opus-5",
+      "providerId": "anthropic",
+      "upstreamId": "claude-opus-5",
+      "displayName": "Claude Opus 5",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-opus-5",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "maxOutputTokens": {
+        "value": 128000,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-opus-5",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-opus-5",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-opus-5 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-opus-5",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-opus-5",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "unsupportedParameters": [
+        "temperature",
+        "top_p",
+        "top_k"
+      ],
+      "status": "candidate"
+    },
+    {
+      "key": "anthropic/claude-sonnet-4.5",
+      "providerId": "anthropic",
+      "upstreamId": "claude-sonnet-4.5",
+      "displayName": "Claude Sonnet 4.6",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 200000,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-sonnet-4.5",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-sonnet-4.5",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-sonnet-4.5 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-sonnet-4.5",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-sonnet-4.5",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "anthropic/claude-sonnet-4.6",
+      "providerId": "anthropic",
+      "upstreamId": "claude-sonnet-4.6",
+      "displayName": "Claude Sonnet 4.6",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 200000,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-sonnet-4.6",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-sonnet-4.6",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-sonnet-4.6 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-sonnet-4.6",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-sonnet-4.6",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "anthropic/claude-sonnet-5",
+      "providerId": "anthropic",
+      "upstreamId": "claude-sonnet-5",
+      "displayName": "Claude Sonnet 5",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1048576,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-sonnet-5",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-sonnet-5",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-sonnet-5 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-sonnet-5",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/anthropic/index.ts#claude-sonnet-5",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "unsupportedParameters": [
+        "temperature",
+        "top_p",
+        "top_k"
+      ],
+      "status": "candidate"
+    },
+    {
+      "key": "bedrock/anthropic.claude-haiku-4-5",
+      "providerId": "bedrock",
+      "upstreamId": "anthropic.claude-haiku-4-5",
+      "displayName": "Claude Haiku 4.5 (Bedrock)",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 200000,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/bedrock/index.ts#anthropic.claude-haiku-4-5",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/bedrock/index.ts#anthropic.claude-haiku-4-5",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/bedrock/index.ts#anthropic.claude-haiku-4-5 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/bedrock/index.ts#anthropic.claude-haiku-4-5",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/bedrock/index.ts#anthropic.claude-haiku-4-5",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "bedrock/anthropic.claude-opus-4-6",
+      "providerId": "bedrock",
+      "upstreamId": "anthropic.claude-opus-4-6",
+      "displayName": "Claude Opus 4.6 (Bedrock)",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/bedrock/index.ts#anthropic.claude-opus-4-6",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/bedrock/index.ts#anthropic.claude-opus-4-6",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/bedrock/index.ts#anthropic.claude-opus-4-6 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/bedrock/index.ts#anthropic.claude-opus-4-6",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/bedrock/index.ts#anthropic.claude-opus-4-6",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "bedrock/anthropic.claude-opus-4-7",
+      "providerId": "bedrock",
+      "upstreamId": "anthropic.claude-opus-4-7",
+      "displayName": "Claude Opus 4.7 (Bedrock)",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/bedrock/index.ts#anthropic.claude-opus-4-7",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/bedrock/index.ts#anthropic.claude-opus-4-7",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/bedrock/index.ts#anthropic.claude-opus-4-7 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/bedrock/index.ts#anthropic.claude-opus-4-7",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/bedrock/index.ts#anthropic.claude-opus-4-7",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "bedrock/anthropic.claude-sonnet-4-5",
+      "providerId": "bedrock",
+      "upstreamId": "anthropic.claude-sonnet-4-5",
+      "displayName": "Claude Sonnet 4.5 (Bedrock)",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 200000,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/bedrock/index.ts#anthropic.claude-sonnet-4-5",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/bedrock/index.ts#anthropic.claude-sonnet-4-5",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/bedrock/index.ts#anthropic.claude-sonnet-4-5 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/bedrock/index.ts#anthropic.claude-sonnet-4-5",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/bedrock/index.ts#anthropic.claude-sonnet-4-5",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "bedrock/anthropic.claude-sonnet-4-6",
+      "providerId": "bedrock",
+      "upstreamId": "anthropic.claude-sonnet-4-6",
+      "displayName": "Claude Sonnet 4.6 (Bedrock)",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/bedrock/index.ts#anthropic.claude-sonnet-4-6",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/bedrock/index.ts#anthropic.claude-sonnet-4-6",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/bedrock/index.ts#anthropic.claude-sonnet-4-6 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/bedrock/index.ts#anthropic.claude-sonnet-4-6",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/bedrock/index.ts#anthropic.claude-sonnet-4-6",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "bedrock/openai.gpt-oss-120b-1:0",
+      "providerId": "bedrock",
+      "upstreamId": "openai.gpt-oss-120b-1:0",
+      "displayName": "GPT-OSS 120B (Bedrock)",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 200000,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/bedrock/index.ts#openai.gpt-oss-120b-1:0",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/bedrock/index.ts#openai.gpt-oss-120b-1:0",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/bedrock/index.ts#openai.gpt-oss-120b-1:0 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/bedrock/index.ts#openai.gpt-oss-120b-1:0",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/bedrock/index.ts#openai.gpt-oss-120b-1:0",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "deepseek/deepseek-v4-flash",
+      "providerId": "deepseek",
+      "upstreamId": "deepseek-v4-flash",
+      "displayName": "DeepSeek V4 Flash (0731)",
+      "aliases": [],
+      "endpoints": [
+        "responses"
+      ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/deepseek/index.ts#deepseek-v4-flash",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "maxOutputTokens": {
+        "value": 384000,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/deepseek/index.ts#deepseek-v4-flash",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/deepseek/index.ts#deepseek-v4-flash",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/deepseek/index.ts#deepseek-v4-flash — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/deepseek/index.ts#deepseek-v4-flash",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/deepseek/index.ts#deepseek-v4-flash",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "upstream-static",
+          "sourceRef": "open-sse/config/providers/registry/deepseek/index.ts#deepseek-v4-flash",
+          "observedAt": "2026-09-05T00:00:00Z",
+          "confidence": "inferred"
+        },
+        "efforts": [
+          "none",
+          "low",
+          "high",
+          "max"
+        ],
+        "continuation": "none"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "deepseek/deepseek-v4-pro",
+      "providerId": "deepseek",
+      "upstreamId": "deepseek-v4-pro",
+      "displayName": "DeepSeek V4 Pro (0813)",
+      "aliases": [],
+      "endpoints": [
+        "responses"
+      ],
+      "contextWindow": {
+        "value": 1000000,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/deepseek/index.ts#deepseek-v4-pro",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "maxOutputTokens": {
+        "value": 384000,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/deepseek/index.ts#deepseek-v4-pro",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/deepseek/index.ts#deepseek-v4-pro",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/deepseek/index.ts#deepseek-v4-pro — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/deepseek/index.ts#deepseek-v4-pro",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/deepseek/index.ts#deepseek-v4-pro",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "upstream-static",
+          "sourceRef": "open-sse/config/providers/registry/deepseek/index.ts#deepseek-v4-pro",
+          "observedAt": "2026-09-05T00:00:00Z",
+          "confidence": "inferred"
+        },
+        "efforts": [
+          "none",
+          "low",
+          "high",
+          "max"
+        ],
+        "continuation": "none"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "google/gemini-2.5-flash",
+      "providerId": "google",
+      "upstreamId": "gemini-2.5-flash",
+      "displayName": "Gemini 2.5 Flash",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1048576,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/gemini/index.ts#gemini-2.5-flash",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/gemini/index.ts#gemini-2.5-flash",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/gemini/index.ts#gemini-2.5-flash — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/gemini/index.ts#gemini-2.5-flash",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/gemini/index.ts#gemini-2.5-flash",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "google/gemini-2.5-flash-lite",
+      "providerId": "google",
+      "upstreamId": "gemini-2.5-flash-lite",
+      "displayName": "Gemini 2.5 Flash Lite",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1048576,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/gemini/index.ts#gemini-2.5-flash-lite",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/gemini/index.ts#gemini-2.5-flash-lite",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/gemini/index.ts#gemini-2.5-flash-lite — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/gemini/index.ts#gemini-2.5-flash-lite",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/gemini/index.ts#gemini-2.5-flash-lite",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "google/gemini-2.5-pro",
+      "providerId": "google",
+      "upstreamId": "gemini-2.5-pro",
+      "displayName": "Gemini 2.5 Pro",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1048576,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/gemini/index.ts#gemini-2.5-pro",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/gemini/index.ts#gemini-2.5-pro",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/gemini/index.ts#gemini-2.5-pro — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/gemini/index.ts#gemini-2.5-pro",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/gemini/index.ts#gemini-2.5-pro",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "google/gemini-3-flash-preview",
+      "providerId": "google",
+      "upstreamId": "gemini-3-flash-preview",
+      "displayName": "Gemini 3 Flash Preview",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1048576,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/gemini/index.ts#gemini-3-flash-preview",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/gemini/index.ts#gemini-3-flash-preview",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/gemini/index.ts#gemini-3-flash-preview — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/gemini/index.ts#gemini-3-flash-preview",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/gemini/index.ts#gemini-3-flash-preview",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "google/gemini-3.1-flash-lite",
+      "providerId": "google",
+      "upstreamId": "gemini-3.1-flash-lite",
+      "displayName": "Gemini 3.1 Flash Lite",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1048576,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/gemini/index.ts#gemini-3.1-flash-lite",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/gemini/index.ts#gemini-3.1-flash-lite",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/gemini/index.ts#gemini-3.1-flash-lite — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/gemini/index.ts#gemini-3.1-flash-lite",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/gemini/index.ts#gemini-3.1-flash-lite",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "google/gemini-3.1-pro-preview",
+      "providerId": "google",
+      "upstreamId": "gemini-3.1-pro-preview",
+      "displayName": "Gemini 3.1 Pro Preview",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1048576,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/gemini/index.ts#gemini-3.1-pro-preview",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/gemini/index.ts#gemini-3.1-pro-preview",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/gemini/index.ts#gemini-3.1-pro-preview — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/gemini/index.ts#gemini-3.1-pro-preview",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/gemini/index.ts#gemini-3.1-pro-preview",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "google/gemini-3.7-flash",
+      "providerId": "google",
+      "upstreamId": "gemini-3.7-flash",
+      "displayName": "Gemini 3.7 Flash",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1048576,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/gemini/index.ts#gemini-3.7-flash",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/gemini/index.ts#gemini-3.7-flash",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/gemini/index.ts#gemini-3.7-flash — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/gemini/index.ts#gemini-3.7-flash",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/gemini/index.ts#gemini-3.7-flash",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "openai/gpt-4.1",
+      "providerId": "openai",
+      "upstreamId": "gpt-4.1",
+      "displayName": "GPT-4.1",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1047576,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-4.1",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-4.1",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-4.1 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-4.1",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-4.1",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "openai/gpt-4.1-mini",
+      "providerId": "openai",
+      "upstreamId": "gpt-4.1-mini",
+      "displayName": "GPT-4.1 Mini",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1047576,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-4.1-mini",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-4.1-mini",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-4.1-mini — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-4.1-mini",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-4.1-mini",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "openai/gpt-4.1-nano",
+      "providerId": "openai",
+      "upstreamId": "gpt-4.1-nano",
+      "displayName": "GPT-4.1 Nano",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1047576,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-4.1-nano",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-4.1-nano",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-4.1-nano — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-4.1-nano",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-4.1-nano",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "openai/gpt-4o",
+      "providerId": "openai",
+      "upstreamId": "gpt-4o",
+      "displayName": "GPT-4o",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 128000,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-4o",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-4o",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-4o — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-4o",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-4o",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "openai/gpt-4o-2024-11-20",
+      "providerId": "openai",
+      "upstreamId": "gpt-4o-2024-11-20",
+      "displayName": "GPT-4o (Nov 2024)",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 128000,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-4o-2024-11-20",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-4o-2024-11-20",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-4o-2024-11-20 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-4o-2024-11-20",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-4o-2024-11-20",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "openai/gpt-4o-mini",
+      "providerId": "openai",
+      "upstreamId": "gpt-4o-mini",
+      "displayName": "GPT-4o Mini",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 128000,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-4o-mini",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-4o-mini",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-4o-mini — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-4o-mini",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-4o-mini",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "openai/gpt-5.4",
+      "providerId": "openai",
+      "upstreamId": "gpt-5.4",
+      "displayName": "GPT-5.4",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1050000,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.4",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.4",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.4 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.4",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.4",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "openai/gpt-5.4-mini",
+      "providerId": "openai",
+      "upstreamId": "gpt-5.4-mini",
+      "displayName": "GPT-5.4 Mini",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 400000,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.4-mini",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.4-mini",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.4-mini — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.4-mini",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.4-mini",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "openai/gpt-5.4-nano",
+      "providerId": "openai",
+      "upstreamId": "gpt-5.4-nano",
+      "displayName": "GPT-5.4 Nano",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 400000,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.4-nano",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.4-nano",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.4-nano — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.4-nano",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.4-nano",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "openai/gpt-5.4-pro",
+      "providerId": "openai",
+      "upstreamId": "gpt-5.4-pro",
+      "displayName": "GPT-5.4 Pro",
+      "aliases": [],
+      "endpoints": [
+        "responses"
+      ],
+      "contextWindow": {
+        "value": 1050000,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.4-pro",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.4-pro",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.4-pro — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.4-pro",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.4-pro",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "openai/gpt-5.5",
+      "providerId": "openai",
+      "upstreamId": "gpt-5.5",
+      "displayName": "GPT-5.5",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 1050000,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.5",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.5",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.5 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.5",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.5",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "openai/gpt-5.5-pro",
+      "providerId": "openai",
+      "upstreamId": "gpt-5.5-pro",
+      "displayName": "GPT-5.5 Pro",
+      "aliases": [],
+      "endpoints": [
+        "responses"
+      ],
+      "contextWindow": {
+        "value": 1050000,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.5-pro",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.5-pro",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.5-pro — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.5-pro",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.5-pro",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "openai/gpt-5.6",
+      "providerId": "openai",
+      "upstreamId": "gpt-5.6",
+      "displayName": "GPT-5.6",
+      "aliases": [],
+      "endpoints": [
+        "responses"
+      ],
+      "contextWindow": {
+        "value": 1050000,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "maxInputTokens": {
+        "value": 922000,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "maxOutputTokens": {
+        "value": 128000,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "upstream-static",
+          "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6",
+          "observedAt": "2026-09-05T00:00:00Z",
+          "confidence": "inferred"
+        },
+        "efforts": [],
+        "continuation": "opaque-provider-state"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "openai/gpt-5.6-luna",
+      "providerId": "openai",
+      "upstreamId": "gpt-5.6-luna",
+      "displayName": "GPT-5.6 Luna",
+      "aliases": [],
+      "endpoints": [
+        "responses"
+      ],
+      "contextWindow": {
+        "value": 1050000,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6-luna",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "maxInputTokens": {
+        "value": 922000,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6-luna",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "maxOutputTokens": {
+        "value": 128000,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6-luna",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6-luna",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6-luna — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6-luna",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6-luna",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "upstream-static",
+          "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6-luna",
+          "observedAt": "2026-09-05T00:00:00Z",
+          "confidence": "inferred"
+        },
+        "efforts": [],
+        "continuation": "opaque-provider-state"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "openai/gpt-5.6-sol",
+      "providerId": "openai",
+      "upstreamId": "gpt-5.6-sol",
+      "displayName": "GPT-5.6 Sol",
+      "aliases": [],
+      "endpoints": [
+        "responses"
+      ],
+      "contextWindow": {
+        "value": 1050000,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6-sol",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "maxInputTokens": {
+        "value": 922000,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6-sol",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "maxOutputTokens": {
+        "value": 128000,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6-sol",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6-sol",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6-sol — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6-sol",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6-sol",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "upstream-static",
+          "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6-sol",
+          "observedAt": "2026-09-05T00:00:00Z",
+          "confidence": "inferred"
+        },
+        "efforts": [],
+        "continuation": "opaque-provider-state"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "openai/gpt-5.6-terra",
+      "providerId": "openai",
+      "upstreamId": "gpt-5.6-terra",
+      "displayName": "GPT-5.6 Terra",
+      "aliases": [],
+      "endpoints": [
+        "responses"
+      ],
+      "contextWindow": {
+        "value": 1050000,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6-terra",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "maxInputTokens": {
+        "value": 922000,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6-terra",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "maxOutputTokens": {
+        "value": 128000,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6-terra",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "inputModalities": {
+        "value": [
+          "text",
+          "image"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6-terra",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6-terra — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6-terra",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6-terra",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "upstream-static",
+          "sourceRef": "open-sse/config/providers/registry/openai/index.ts#gpt-5.6-terra",
+          "observedAt": "2026-09-05T00:00:00Z",
+          "confidence": "inferred"
+        },
+        "efforts": [],
+        "continuation": "opaque-provider-state"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "openai/o3",
+      "providerId": "openai",
+      "upstreamId": "o3",
+      "displayName": "O3",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 200000,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#o3",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#o3",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#o3 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#o3",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#o3",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "openai/o3-mini",
+      "providerId": "openai",
+      "upstreamId": "o3-mini",
+      "displayName": "O3 Mini",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 200000,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#o3-mini",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#o3-mini",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#o3-mini — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#o3-mini",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#o3-mini",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "openai/o4-mini",
+      "providerId": "openai",
+      "upstreamId": "o4-mini",
+      "displayName": "O4 Mini",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 200000,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#o4-mini",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#o4-mini",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#o4-mini — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#o4-mini",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openai/index.ts#o4-mini",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "openrouter/openrouter/auto",
+      "providerId": "openrouter",
+      "upstreamId": "openrouter/auto",
+      "displayName": "Auto (Best Available)",
+      "aliases": [
+        "auto"
+      ],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 128000,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openrouter/index.ts#auto",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openrouter/index.ts#auto",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openrouter/index.ts#auto — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openrouter/index.ts#auto",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/openrouter/index.ts#auto",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "vertex/DeepSeek-V4-Flash",
+      "providerId": "vertex",
+      "upstreamId": "DeepSeek-V4-Flash",
+      "displayName": "DeepSeek V4 Flash (Vertex Partner)",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/vertex/index.ts#DeepSeek-V4-Flash",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/vertex/index.ts#DeepSeek-V4-Flash — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/vertex/index.ts#DeepSeek-V4-Flash",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/vertex/index.ts#DeepSeek-V4-Flash",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "vertex/DeepSeek-V4-Pro",
+      "providerId": "vertex",
+      "upstreamId": "DeepSeek-V4-Pro",
+      "displayName": "DeepSeek V4 Pro (Vertex Partner)",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/vertex/index.ts#DeepSeek-V4-Pro",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/vertex/index.ts#DeepSeek-V4-Pro — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/vertex/index.ts#DeepSeek-V4-Pro",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/vertex/index.ts#DeepSeek-V4-Pro",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "vertex/GLM-5.1-FP8",
+      "providerId": "vertex",
+      "upstreamId": "GLM-5.1-FP8",
+      "displayName": "GLM-5.1 (Vertex Partner)",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/vertex/index.ts#GLM-5.1-FP8",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/vertex/index.ts#GLM-5.1-FP8 — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/vertex/index.ts#GLM-5.1-FP8",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/vertex/index.ts#GLM-5.1-FP8",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "vertex/Qwen3.6-35B-A3B",
+      "providerId": "vertex",
+      "upstreamId": "Qwen3.6-35B-A3B",
+      "displayName": "Qwen3.6 35B A3B (Vertex Partner)",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/vertex/index.ts#Qwen3.6-35B-A3B",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/vertex/index.ts#Qwen3.6-35B-A3B — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/vertex/index.ts#Qwen3.6-35B-A3B",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/vertex/index.ts#Qwen3.6-35B-A3B",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "vertex/gemini-3-flash-preview",
+      "providerId": "vertex",
+      "upstreamId": "gemini-3-flash-preview",
+      "displayName": "Gemini 3 Flash Preview (Vertex)",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/vertex/index.ts#gemini-3-flash-preview",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/vertex/index.ts#gemini-3-flash-preview — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/vertex/index.ts#gemini-3-flash-preview",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/vertex/index.ts#gemini-3-flash-preview",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "unsupportedParameters": [],
+      "status": "experimental"
+    },
+    {
+      "key": "vertex/gemini-3.1-flash-lite",
+      "providerId": "vertex",
+      "upstreamId": "gemini-3.1-flash-lite",
+      "displayName": "Gemini 3.1 Flash Lite (Vertex)",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/vertex/index.ts#gemini-3.1-flash-lite",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/vertex/index.ts#gemini-3.1-flash-lite — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/vertex/index.ts#gemini-3.1-flash-lite",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/vertex/index.ts#gemini-3.1-flash-lite",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "unsupportedParameters": [],
+      "status": "experimental"
+    },
+    {
+      "key": "vertex/gemini-3.1-pro-preview",
+      "providerId": "vertex",
+      "upstreamId": "gemini-3.1-pro-preview",
+      "displayName": "Gemini 3.1 Pro Preview (Vertex)",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/vertex/index.ts#gemini-3.1-pro-preview",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/vertex/index.ts#gemini-3.1-pro-preview — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/vertex/index.ts#gemini-3.1-pro-preview",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/vertex/index.ts#gemini-3.1-pro-preview",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "unsupportedParameters": [],
+      "status": "experimental"
+    },
+    {
+      "key": "vertex/gemma-4-31b-it",
+      "providerId": "vertex",
+      "upstreamId": "gemma-4-31b-it",
+      "displayName": "Gemma 4 31B (Vertex)",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/vertex/index.ts#gemma-4-31b-it",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "inferred"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/vertex/index.ts#gemma-4-31b-it — WINTER DEFAULT: upstream declares no output modality for any model; \"text\" is Winter's inference for a chat registry, NOT an upstream statement",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "toolCalling": {
+        "value": "none",
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/vertex/index.ts#gemma-4-31b-it",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "nativeTools": {
+        "value": false,
+        "source": "upstream-static",
+        "sourceRef": "open-sse/config/providers/registry/vertex/index.ts#gemma-4-31b-it",
+        "observedAt": "2026-09-05T00:00:00Z",
+        "confidence": "unknown"
+      },
+      "unsupportedParameters": [],
+      "status": "experimental"
+    }
+  ],
   "rejections": [
     {
       "upstreamId": "",
