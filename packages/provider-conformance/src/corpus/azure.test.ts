@@ -2,7 +2,7 @@
 
 import { describe, expect, test } from "bun:test";
 import { createAzureOpenAIAdapter } from "../../../provider-runtime/src/adapters/openai/azure.ts";
-import { FAST_RETRY, testContext } from "../../../provider-runtime/src/adapters/openai/testing.ts";
+import { FAST_RETRY, descriptor, testContext } from "../../../provider-runtime/src/adapters/openai/testing.ts";
 import { createMemoryCredentialStore } from "../../../provider-runtime/src/credentials/memory.ts";
 import type { CredentialRef, ProviderEvent } from "@yanlinglabs/winter-provider-runtime";
 import { formatCorpusReport, runAdapterCorpus } from "./runner.ts";
@@ -26,6 +26,9 @@ async function withAzureFake<T>(fn: (fake: FakeServer) => Promise<T>): Promise<T
     await fake.close();
   }
 }
+
+/** A row with a verified effort vocabulary but NO `defaultEffort` — the M-9 case. */
+const descriptorWithoutDefaultEffort = descriptor({ efforts: ["low", "medium", "high"] });
 
 const RUNS: CorpusHarness[] = [azureClassicHarness(), azurePreviewHarness()];
 
@@ -87,6 +90,27 @@ describe("azure specifics on the live wire", () => {
       const recorded = fake.requests.at(-1)!;
       expect(recorded.headers.authorization).toBe("Bearer ***");
       expect(recorded.headers["api-key"]).toBeUndefined();
+    });
+  });
+
+  test("F-2 / M-9: `enabled` with no effort and no defaultEffort is REFUSED here too, with NOTHING on the wire", async () => {
+    // Azure DELEGATES to the family's own adapters, so it inherits `resolveReasoning` by
+    // construction — which is exactly the claim worth pinning, because "coverage transfers via the
+    // shared mapper" is an assertion about wiring that only a live request can settle. The turn is
+    // refused before the delegate starts streaming, so the deployment path is never even addressed.
+    await withAzureFake(async (fake) => {
+      const adapter = createAzureOpenAIAdapter({ retry: FAST_RETRY, descriptors: () => descriptorWithoutDefaultEffort });
+      const before = fake.requests.length;
+      const events = await drain(
+        adapter.streamTurn(
+          { model: SCENARIO.happy, messages: [], thinking: { type: "enabled" } },
+          testContext({ providerId: "azure-openai", baseUrl: fake.url, local: true, deployment: AZURE_DEPLOYMENT, apiVersion: AZURE_CLASSIC_API_VERSION }),
+        ),
+      );
+      const error = events.find((e) => e.type === "error");
+      expect(error?.type === "error" ? error.error.code : "").toBe("capability");
+      expect(error?.type === "error" ? error.error.message : "").toContain("declares no defaultEffort");
+      expect(fake.requests).toHaveLength(before);
     });
   });
 

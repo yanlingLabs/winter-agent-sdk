@@ -14,6 +14,7 @@ import { withFake, noRequestContains, requestsTo, sseResponse } from "../fakes/s
 import { anthropicError, anthropicFakeRoutes, anthropicTurnResponse, assertAnthropicRequest, anthropicBody, messageBlocks } from "../fakes/anthropic-messages.ts";
 import { createAnthropicMessagesAdapter, ANTHROPIC_ADAPTER_ID, ANTHROPIC_DEFAULT_BASE_URL, mapAnthropicEffort } from "../../../provider-runtime/src/adapters/anthropic/index.ts";
 import { loadCatalog } from "@yanlinglabs/winter-provider-catalog";
+import { THINKING_ENABLED_NEEDS_BUDGET } from "../../../provider-runtime/src/adapters/refusals.ts";
 import { foldProviderStream } from "../../../runtime/src/provider/bridge.ts";
 import { formatCorpusReport, runAdapterCorpus } from "./runner.ts";
 import { ANTHROPIC_MODELS, ANTHROPIC_TEST_KEY, anthropicCorpusCases, anthropicCorpusRoutes, foldTurn, testAnthropicAdapter, testAnthropicCatalog, testContext } from "./anthropic.ts";
@@ -133,8 +134,13 @@ describe("Anthropic Messages: thinking, effort and the summary request", () => {
     await withFake({ routes: anthropicCorpusRoutes() }, async (fake) => {
       await expect(
         foldTurn(adapter, { model: ANTHROPIC_MODELS.main, messages: [{ role: "user", content: "go" }], thinking: { type: "enabled" } }, testContext(fake.url)),
-      ).rejects.toThrow(/no budgetTokens/);
+      ).rejects.toThrow(THINKING_ENABLED_NEEDS_BUDGET);
       expect(fake.requests).toHaveLength(0);
+      // The SENTENCE is the shared one, not merely a message mentioning `budgetTokens` (fix-wave
+      // F-2 / review M-2): Bedrock refuses the identical Anthropic-dialect object for the identical
+      // model family, and Google refuses the same config for a different reason -- three families
+      // answering one question in three sentences is how a caller learns to read three messages
+      // instead of one. `adapters/refusals.ts` owns the string; this asserts the wiring.
     });
   });
 

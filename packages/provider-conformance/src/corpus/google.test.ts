@@ -7,6 +7,7 @@ import { noRequestContains, requestsTo, withFake } from "../fakes/server.ts";
 import { assertGeminiRequest, geminiBody, geminiContents, geminiFakeRoutes, geminiStreamResponse } from "../fakes/gemini.ts";
 import { createGoogleGenerateContentAdapter, GOOGLE_ADAPTER_ID, GOOGLE_DEFAULT_BASE_URL, mapGoogleEffort, toContents } from "../../../provider-runtime/src/adapters/google/index.ts";
 import { loadCatalog } from "@yanlinglabs/winter-provider-catalog";
+import { THINKING_ENABLED_NEEDS_BUDGET } from "../../../provider-runtime/src/adapters/refusals.ts";
 import { formatCorpusReport, runAdapterCorpus } from "./runner.ts";
 import { GOOGLE_MODELS, GOOGLE_SIGNATURE, GOOGLE_TEST_KEY, foldTurn, googleContext, googleCorpusCases, googleCorpusRoutes, testGoogleAdapter, testGoogleCatalog } from "./google.ts";
 
@@ -361,8 +362,12 @@ describe("Google GenerateContent: the pure mapping", () => {
     await withFake({ routes: googleCorpusRoutes() }, async (fake) => {
       await expect(
         foldTurn(adapter, { model: GOOGLE_MODELS.main, messages: [{ role: "user", content: "a" }], thinking: { type: "enabled" } }, googleContext(fake.url)),
-      ).rejects.toThrow(/no budgetTokens/);
+      ).rejects.toThrow(THINKING_ENABLED_NEEDS_BUDGET);
       expect(fake.requests).toHaveLength(0);
+      // BYTE-IDENTICAL to Anthropic's and Bedrock's (fix-wave F-2 / review M-2). This family used to
+      // say the same thing in its own words -- accurate about `thinkingConfig`'s silent default, and
+      // a fourth sentence for a caller to learn. The family-specific reason lives in the code
+      // comment at the refusal site; the caller reads one sentence on every family.
     });
   });
 

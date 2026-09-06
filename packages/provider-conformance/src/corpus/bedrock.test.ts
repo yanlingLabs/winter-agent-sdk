@@ -3,6 +3,7 @@ import { createRegistry } from "../../../provider-runtime/src/registry.ts";
 import { adapterAsProvider, foldProviderStream } from "../../../runtime/src/provider/bridge.ts";
 import { createBedrockConverseAdapter } from "../../../provider-runtime/src/adapters/bedrock/converse.ts";
 import { signRequest } from "../../../provider-runtime/src/adapters/bedrock/sigv4.ts";
+import { THINKING_ENABLED_NEEDS_BUDGET } from "../../../provider-runtime/src/adapters/refusals.ts";
 import { CORPUS_CASES, formatCorpusReport, runAdapterCorpus } from "./runner.ts";
 import { noRequestContains } from "../fakes/server.ts";
 import { FAKE_ACCESS_KEY_ID, FAKE_SECRET_ACCESS_KEY, bedrockError, eventStreamResponse, startBedrockFake, textTurnFrames } from "../fakes/bedrock.ts";
@@ -298,6 +299,42 @@ describe("R6-L: privileged headers ride a GENERATED endpoint and are dropped for
       for (const name of ["cookie", "proxy-authorization", "x-api-key"]) expect([name, fake.signatures[0]!.signedHeaders.includes(name)]).toEqual([name, false]);
       expect(fake.signatures[0]!.verified).toBe(true);
       for (const marker of ["SMUGGLED-COOKIE", "SMUGGLED-PROXY", "SMUGGLED-KEY", "SMUGGLED-GOOG"]) expect([marker, noRequestContains(fake, marker)]).toEqual([marker, true]);
+    } finally {
+      await fake.close();
+    }
+  });
+});
+
+describe("WS-13 §8.2: `enabled` without a budget is REFUSED, in the family's shared sentence (F-2 / I-4)", () => {
+  test("nothing reaches the wire, and the sentence is Anthropic's own", async () => {
+    // I-4: the WS-13 §8.2 amendment said this adapter re-resolves `enabled` -> `adaptive`. It does
+    // not, and must not: R6-E permits that re-resolution only for models whose EVIDENCE says
+    // adaptive-only, and no catalog field carries that evidence, so it would be a silent
+    // substitution of a config the caller never asked for. It refuses -- in the same sentence Lane B
+    // uses for the identical Anthropic-dialect object on the identical model family.
+    const fake = await startBedrockFake({ scenarios: bedrockScenarios() });
+    try {
+      const harness = createBedrockHarness(fake);
+      // This adapter raises the refusal from the body builder, so the typed error surfaces as a
+      // THROW rather than an `error` event -- which is itself the proof that nothing was streamed.
+      await expect(harness.events({ thinking: { type: "enabled" } })).rejects.toThrow(THINKING_ENABLED_NEEDS_BUDGET);
+      // REQUEST COUNT 0 is the half a message assertion cannot give: refused BEFORE the request,
+      // never sent for the endpoint to 400.
+      expect(fake.requests).toHaveLength(0);
+    } finally {
+      await fake.close();
+    }
+  });
+
+  test("with a budget it IS represented, as `additionalModelRequestFields.thinking`", async () => {
+    const fake = await startBedrockFake({ scenarios: bedrockScenarios() });
+    try {
+      const harness = createBedrockHarness(fake);
+      await foldProviderStream(
+        harness.adapter.streamTurn({ model: BEDROCK_CORPUS_MODEL, messages: [{ role: "user", content: "hi" }], thinking: { type: "enabled", budgetTokens: 4096 } }, harness.ctx),
+      );
+      const body = JSON.parse(fake.requests[0]!.body) as { additionalModelRequestFields?: Record<string, unknown> };
+      expect(body.additionalModelRequestFields?.["thinking"]).toEqual({ type: "enabled", budget_tokens: 4096 });
     } finally {
       await fake.close();
     }

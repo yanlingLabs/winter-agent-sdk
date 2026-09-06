@@ -58,6 +58,7 @@ import type {
   TurnRequest,
 } from "../../types.ts";
 import { CREDENTIAL_HEADER_NAMES, applyPrivilegedHeaders, createEndpointPolicy, type EndpointPolicy } from "../../endpoint-policy.ts";
+import { THINKING_ENABLED_NEEDS_BUDGET } from "../refusals.ts";
 import { ProviderRequestError, boundedFetch } from "../../http.ts";
 import { ProviderStallError, normalizeHttpError, normalizeThrown } from "../../errors.ts";
 import { createRetryPolicy, withRetry, type RetryPolicyOptions } from "../../retry.ts";
@@ -442,7 +443,7 @@ function thinkingFields(thinking: TurnRequest["thinking"], descriptor: WinterMod
     // not ask for. Lane B refuses the identical Anthropic-dialect object for the identical model
     // family, and two adapters answering the same question differently is worse than either answer.
     // The wording is Lane B's, so a caller who moves a session between the two reads one sentence.
-    throw refuse('thinking `{ type: "enabled" }` carries no budgetTokens, which this endpoint requires. Pass `budgetTokens`, or ask for `{ type: "adaptive" }` if the model should decide.');
+    throw refuse(THINKING_ENABLED_NEEDS_BUDGET);
   }
   if (thinking.type === "enabled") return { type: "enabled", budget_tokens: thinking.budgetTokens };
   return { type: "adaptive" };

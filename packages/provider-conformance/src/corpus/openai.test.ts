@@ -242,6 +242,46 @@ describe("live wire details the corpus does not ask about", () => {
     });
   });
 
+  test("F-2 / M-9: `enabled` with no effort rides at the row's defaultEffort, or is REFUSED with NOTHING on the wire", async () => {
+    // The family's own answer to "`enabled` without a budget", asserted on the live wire on both
+    // surfaces. There is no budget field here, so `enabled` means reasoning ON at the row's own
+    // `defaultEffort` — and when the row has none, the caller is TOLD.
+    //
+    // The refused half is the one that shipped wrong: the request went out carrying
+    // `include: ["reasoning.encrypted_content"]` and no `reasoning` object at all, so the model did
+    // not think, the caller was told nothing, and the turn succeeded. That is the silent downgrade
+    // WS-13 §8.2 prohibits, and the pin is REQUEST COUNT 0 — a message assertion alone cannot see it.
+    await withResponsesFake(async (fake) => {
+      const withDefault = createResponsesAdapter({ generatedBaseUrl: fake.url, retry: FAST_RETRY, descriptors: descriptorsFor({ efforts: ["low", "medium", "high"], defaultEffort: "medium" }) });
+      await drain(withDefault.streamTurn({ model: SCENARIO.happy, messages: [], thinking: { type: "enabled" } }, testContext({ stallTimeoutMs: STALL_MS })));
+      const body = JSON.parse(fake.requests.at(-1)!.body) as Record<string, unknown>;
+      expect(body["reasoning"]).toEqual({ effort: "medium" });
+      expect(body["include"]).toEqual(["reasoning.encrypted_content"]);
+
+      const before = fake.requests.length;
+      const noDefault = createResponsesAdapter({ generatedBaseUrl: fake.url, retry: FAST_RETRY, descriptors: descriptorsFor({ efforts: ["low", "medium", "high"] }) });
+      for (const thinking of [{ type: "enabled" as const }, { type: "adaptive" as const }]) {
+        const events = await drain(noDefault.streamTurn({ model: SCENARIO.happy, messages: [], thinking }, testContext({ stallTimeoutMs: STALL_MS })));
+        const error = events.find((e) => e.type === "error");
+        expect(error?.type === "error" ? error.error.code : "").toBe("capability");
+        expect(error?.type === "error" ? error.error.message : "").toContain("declares no defaultEffort");
+      }
+      expect(fake.requests).toHaveLength(before);
+    });
+
+    await withChatFake(async (fake) => {
+      const withDefault = createChatCompletionsAdapter({ generatedBaseUrl: fake.url, retry: FAST_RETRY, descriptors: descriptorsFor({ efforts: ["low", "medium", "high"], defaultEffort: "high" }) });
+      await drain(withDefault.streamTurn({ model: SCENARIO.happy, messages: [], thinking: { type: "enabled" } }, testContext({ stallTimeoutMs: STALL_MS })));
+      expect((JSON.parse(fake.requests.at(-1)!.body) as Record<string, unknown>)["reasoning_effort"]).toBe("high");
+
+      const before = fake.requests.length;
+      const noDefault = createChatCompletionsAdapter({ generatedBaseUrl: fake.url, retry: FAST_RETRY, descriptors: descriptorsFor({ efforts: ["low", "medium", "high"] }) });
+      const events = await drain(noDefault.streamTurn({ model: SCENARIO.happy, messages: [], thinking: { type: "enabled" } }, testContext({ stallTimeoutMs: STALL_MS })));
+      expect(events.find((e) => e.type === "error")?.type).toBe("error");
+      expect(fake.requests).toHaveLength(before);
+    });
+  });
+
   test("F-3: a CREDENTIAL-shaped host header never rides — `cookie` + `x-trace` puts only `x-trace` on the wire", async () => {
     // This family always stripped `CREDENTIAL_HEADER_NAMES` from the profile before calling
     // `hostHeaders`; the strip now lives INSIDE `hostHeaders`, so every family gets it and this file

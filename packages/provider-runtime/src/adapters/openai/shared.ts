@@ -118,6 +118,16 @@ export function badRequestRefusal(reason: string): ProviderRequestError {
   return new ProviderRequestError({ code: "bad_request", message: reason, retryable: false });
 }
 
+/**
+ * This family's twin of `THINKING_ENABLED_NEEDS_BUDGET` (`adapters/refusals.ts`): the same caller
+ * mistake — "reasoning on, but at what?" — asked in this family's own vocabulary, because the way
+ * out is an EFFORT here and a budget there. Same sentence shape, so a caller moving a session
+ * between families recognises the situation without re-reading it.
+ */
+export function THINKING_ENABLED_NEEDS_EFFORT(model: string): string {
+  return `thinking \`{ type: "enabled" }\` carries no effort, and model "${model}" declares no defaultEffort to fall back on. Pass \`effort\`, or select a model whose row records one.`;
+}
+
 // --- endpoint resolution ------------------------------------------------------------------------------
 
 export interface ResolvedEndpoint {
@@ -323,16 +333,27 @@ export interface ReasoningPlan {
 /**
  * Resolves `effort` + `thinking` into what the wire will carry, or throws a typed refusal.
  *
- * The two refusals worth stating, because each has a tempting silent alternative:
+ * THE FAMILY'S RULE IN ONE LINE (WS-13 §8.2, fix-wave ruling F-2): this family has NO budget field,
+ * so `thinking: { type: "enabled" }` means reasoning ON at the row's own `defaultEffort` — the only
+ * effort the catalog verified for that model, never an invented one.
  *
- *   `thinking: {type:"enabled", budgetTokens: N}` is REFUSED on this family. The OpenAI surfaces
- *     have no token-budget knob for reasoning — the verified vocabulary is effort tiers — so
- *     honouring the config would mean dropping the budget and sending an effort the caller never
- *     asked for. That is precisely the silent downgrade WS-13 §8.2 prohibits.
+ * The three refusals worth stating, because each has a tempting silent alternative:
+ *
+ *   `thinking: {type:"enabled", budgetTokens: N}` is REFUSED. The OpenAI surfaces have no
+ *     token-budget knob for reasoning — the verified vocabulary is effort tiers — so honouring the
+ *     config would mean dropping the budget and sending an effort the caller never asked for. That
+ *     is precisely the silent downgrade WS-13 §8.2 prohibits.
  *
  *   `thinking: {type:"enabled"|"adaptive"}` on a model with NO reasoning evidence is REFUSED rather
  *     than ignored, for the same reason: "we quietly did not think" is not an outcome a caller can
  *     see.
+ *
+ *   `thinking: {type:"enabled"|"adaptive"}` with NO effort given and NO `defaultEffort` on the row
+ *     is REFUSED — and this one was the whole-branch review's M-9. It used to resolve to `effort:
+ *     undefined`, which `buildResponsesBody` renders as `include: ["reasoning.encrypted_content"]`
+ *     with NO `reasoning` object at all: a request that asks to keep reasoning state for reasoning
+ *     it never asked the model to do. The turn succeeds, the caller is told nothing, and the answer
+ *     is the no-think one. Same class as the two above, so it gets the same treatment.
  */
 export function resolveReasoning(req: TurnRequest, descriptor: WinterModelDescriptor | undefined): ReasoningPlan {
   const thinking = req.thinking;
@@ -359,6 +380,16 @@ export function resolveReasoning(req: TurnRequest, descriptor: WinterModelDescri
   // own declared default — a value the catalog verified, never an invented one.
   const effort = mapped.value ?? (thinking !== undefined ? reasoningEvidence?.defaultEffort : undefined);
   const reasoningRequested = effort !== undefined || thinking?.type === "adaptive" || thinking?.type === "enabled";
+
+  // ...and with no default to fall back to, the caller is told, rather than served the no-think
+  // body. Both arms are covered: `adaptive` produces the identical request (this family has no
+  // adaptive knob either), so leaving it out would fix half a defect. An UNLISTED model
+  // (`descriptor === undefined`, the `allowUnlisted` gateway case) is the same answer for the same
+  // reason — there is no evidence for any effort — while a caller who names one explicitly is
+  // honoured as before, because a named tier the pin defines needs no row to be meaningful.
+  if (reasoningRequested && effort === undefined) {
+    throw capabilityRefusal(THINKING_ENABLED_NEEDS_EFFORT(descriptor?.key ?? req.model));
+  }
 
   // `reasoning.summary` is asked for ONLY where the descriptor's own evidence says which field and
   // which values the model accepts. Guessing a value is how a request 400s on a model that has the
