@@ -10,8 +10,8 @@
 // catch, so the assertion is built into the server rather than left to each case.
 
 import { jsonResponse, startFake, type FakeRoute, type FakeServer, type RecordedRequest, type ScenarioResponder } from "./server.ts";
-import { chatModelOf } from "./openai-chat.ts";
-import { responsesModelOf } from "./openai-responses.ts";
+import { chatModelOf, toolAdjacencyRefusal } from "./openai-chat.ts";
+import { callPairingRefusal, responsesModelOf } from "./openai-responses.ts";
 
 export const FAKE_AZURE_KEY = "test-key-azure-0000";
 export const FAKE_ENTRA_TOKEN = "test-token-entra-0000";
@@ -42,10 +42,24 @@ function requireApiVersion(recorded: RecordedRequest): Response | undefined {
   return jsonResponse({ error: { code: "MissingApiVersionParameter", message: "The api-version query parameter is required." } }, 400);
 }
 
+/**
+ * Azure enforces the SAME body invariants as the surface it is a variant of, so this fake does too
+ * (Lane A r3 carry): a `tool` message must answer the `tool_calls` message immediately before it,
+ * and a `function_call_output` must follow the `function_call` it answers.
+ *
+ * "Coverage transfers via the shared mappers" is true of the ADAPTER and says nothing about the
+ * FAKE. A fake that accepts anything cannot fail a pin — round 3's broken decoration shape passed
+ * every fixture for exactly that reason — and Azure is the surface a host is most likely to reach
+ * through a profile, so it is the last one that should be the lenient twin.
+ */
+function bodyRefusal(recorded: RecordedRequest): Response | undefined {
+  return toolAdjacencyRefusal(recorded.body) ?? callPairingRefusal(recorded.body);
+}
+
 function dispatch(scenarios: Record<string, ScenarioResponder | Response[]> | undefined, modelOf: (r: RecordedRequest) => string | undefined): (req: Request, recorded: RecordedRequest) => Response | Promise<Response> {
   const attempts = new Map<string, number>();
   return (_req, recorded) => {
-    const refusal = requireApiVersion(recorded);
+    const refusal = requireApiVersion(recorded) ?? bodyRefusal(recorded);
     if (refusal !== undefined) return refusal;
     const model = modelOf(recorded) ?? deploymentOf(recorded);
     const key = model ?? "";

@@ -234,3 +234,18 @@ describe("ChatStreamMapper", () => {
     expect(events.some((e) => e.type === "thinking_exposed_delta" && e.text === "via openrouter")).toBe(true);
   });
 });
+
+describe("Lane A r3 residuals: the two mappers answer the same input the same way", () => {
+  test("a tool-role message with STRING content renders a USER message, not `[]`", () => {
+    // It used to render NOTHING: `asBlocks("just text")` yields a text block, the tool branch emits
+    // only `tool_result` blocks, and the message — decoration included — vanished. Responses turned
+    // the identical input into a user message, so a host-supplied history lost content on one
+    // surface and not the other, silently.
+    expect(mapChatMessages([{ role: "tool", content: "just text", decoration: { text: "note", door: "tag" } }], false)).toEqual([{ role: "user", content: "note\njust text" }]);
+    // Without a decoration, likewise: it cannot be a `tool` message here (no `tool_call_id` to give
+    // it), so it becomes what the other surface already makes it.
+    expect(mapChatMessages([{ role: "tool", content: "just text" }], false)).toEqual([{ role: "user", content: "just text" }]);
+    // A tool message that DOES carry a result is untouched by this arm.
+    expect(mapChatMessages([{ role: "tool", content: [{ type: "tool_result", tool_use_id: "c1", content: "ok" }] }], false)).toEqual([{ role: "tool", tool_call_id: "c1", content: "ok" }]);
+  });
+});

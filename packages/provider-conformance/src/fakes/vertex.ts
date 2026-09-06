@@ -14,7 +14,7 @@
 // so it can go into a service-account JSON exactly as a real one would, and the public half stays a
 // `CryptoKey` that only this fake holds.
 import { errorResponse, jsonResponse, type FakeRoute, type RecordedRequest } from "./server.ts";
-import { geminiError, geminiModelOf, type GeminiFakeOptions } from "./gemini.ts";
+import { findFunctionResponseOrderingViolation, findRoleAlternationViolation, geminiError, geminiModelOf, type GeminiFakeOptions } from "./gemini.ts";
 import { base64UrlEncode } from "../../../provider-runtime/src/adapters/google/index.ts";
 import { verifyRs256Jwt } from "./jwt-verify.ts";
 
@@ -101,6 +101,12 @@ export function vertexTokenUrl(fakeUrl: string): string {
  *
  * The model path is prefix-matched under `/v1/projects/...` because the model id and the method are
  * both IN the path. `assertVertexPath` is what checks it is the exact shape ruling R6-A names.
+ *
+ * IT APPLIES THE GEMINI FAKE'S OWN BODY VALIDATORS (Lane B r4 carry). This route duplicated the
+ * model path and validated NOTHING, so the two merge pins and the round-3 decoration pin on this
+ * transport bit only via direct `roles`/`parts` assertions — a wire shape Vertex would reject was
+ * invisible here while the identical shape 400'd on the Gemini route. The adapters share one wire
+ * mapping; the fakes now share the invariants that mapping has to satisfy.
  */
 export function vertexFakeRoutes(opts: VertexFakeOptions): FakeRoute[] {
   const attempts = new Map<string, number>();
@@ -110,6 +116,14 @@ export function vertexFakeRoutes(opts: VertexFakeOptions): FakeRoute[] {
       path: `/v1/projects/${opts.project}/locations/${opts.location}/publishers/google/models*`,
       method: "POST",
       handler: async (_req, recorded) => {
+        const badEntry = findFunctionResponseOrderingViolation(recorded);
+        if (badEntry !== undefined) {
+          return geminiError(400, "INVALID_ARGUMENT", `contents[${badEntry}]: functionResponse parts must precede any other content in their turn`);
+        }
+        const badRole = findRoleAlternationViolation(recorded);
+        if (badRole !== undefined) {
+          return geminiError(400, "INVALID_ARGUMENT", `contents[${badRole}]: consecutive entries must not share a role — a conversation alternates`);
+        }
         const model = geminiModelOf(recorded) ?? "";
         if (recorded.path.endsWith(":countTokens")) {
           return opts.countTokens?.(recorded) ?? jsonResponse({ totalTokens: 42 });

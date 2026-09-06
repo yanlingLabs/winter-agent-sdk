@@ -519,6 +519,28 @@ describe("live wire details the corpus does not ask about", () => {
     });
   });
 
+  test("the CODEX fake refuses the same broken pairing — it speaks Responses too (Lane A r3 carry)", async () => {
+    // Same guard-on-the-guards as the two above. codex is Responses over a different backend, so
+    // the invariant is identical; a fake that accepted an item between a call and its output would
+    // be the one surface where the round-3 regression could return unseen.
+    await withCodexFake(async (fake) => {
+      const response = await fetch(`${fake.url}/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: SCENARIO.happy,
+          input: [
+            { type: "function_call", call_id: "call_1", name: "Read", arguments: "{}" },
+            { type: "message", role: "user", content: [{ type: "input_text", text: "a note" }] },
+            { type: "function_call_output", call_id: "call_1", output: "ok" },
+          ],
+        }),
+      });
+      expect(response.status).toBe(400);
+      expect(await response.text()).toContain("must follow the 'function_call' it answers");
+    });
+  });
+
   test("codex: the recovery `allowed` event fires after an UNMOCKED window wait (I2)", async () => {
     // The quota clock is REAL here — only the retry backoff is mocked. That is the configuration
     // the previous fixture never had, and under it `state()` reads `ok` by the time the turn

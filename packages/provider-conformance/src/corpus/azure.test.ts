@@ -93,6 +93,44 @@ describe("azure specifics on the live wire", () => {
     });
   });
 
+  test("the Azure fake REFUSES a message inserted between a tool call and its result, on BOTH surfaces (Lane A r3 carry)", async () => {
+    // A guard on the guards. This fake modelled `api-version` and nothing about the body, so round
+    // 3's broken decoration shape would have passed every Azure fixture — the same blindness that
+    // let it pass on OpenAI for two rounds. Coverage transferring through a shared MAPPER says
+    // nothing about what a FAKE will accept.
+    await withAzureFake(async (fake) => {
+      const classic = await fetch(`${fake.url}/openai/deployments/${AZURE_DEPLOYMENT}/chat/completions?api-version=${AZURE_CLASSIC_API_VERSION}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: SCENARIO.happy,
+          messages: [
+            { role: "assistant", content: "", tool_calls: [{ id: "call_1", type: "function", function: { name: "Read", arguments: "{}" } }] },
+            { role: "user", content: "a note" },
+            { role: "tool", tool_call_id: "call_1", content: "ok" },
+          ],
+        }),
+      });
+      expect(classic.status).toBe(400);
+      expect(await classic.text()).toContain("must be a response to a preceeding message with 'tool_calls'");
+
+      const preview = await fetch(`${fake.url}/openai/v1/responses?api-version=preview`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: SCENARIO.happy,
+          input: [
+            { type: "function_call", call_id: "call_1", name: "Read", arguments: "{}" },
+            { type: "message", role: "user", content: [{ type: "input_text", text: "a note" }] },
+            { type: "function_call_output", call_id: "call_1", output: "ok" },
+          ],
+        }),
+      });
+      expect(preview.status).toBe(400);
+      expect(await preview.text()).toContain("must follow the 'function_call' it answers");
+    });
+  });
+
   test("F-2 / M-9: `enabled` with no effort and no defaultEffort is REFUSED here too, with NOTHING on the wire", async () => {
     // Azure DELEGATES to the family's own adapters, so it inherits `resolveReasoning` by
     // construction — which is exactly the claim worth pinning, because "coverage transfers via the
