@@ -24,7 +24,7 @@
 // can see both is closer than this one. `provider-catalog` cannot import the runtime.
 import { describe, expect, test } from "bun:test";
 import { serve } from "bun";
-import { createMemoryCredentialStore } from "@yanlinglabs/winter-provider-runtime";
+import { createMemoryCredentialStore, winterUserAgent } from "@yanlinglabs/winter-provider-runtime";
 import { buildSessionProvider } from "./session-provider.ts";
 import { chatCatalog, chatModel, chatProvider, startRawChatFake } from "./raw-chat-fake.test-support.ts";
 
@@ -89,6 +89,43 @@ describe("WS-13b §2: `defaultEndpoints.api` is the API ROOT, because the adapte
         await wiring.provider.generate({ messages: [{ role: "user", content: "hi" }] } as never).catch(() => {});
       }
       expect(paths).toEqual(["/one/v1/messages", "/api/anthropic/v1/messages"]);
+    } finally {
+      await server.stop(true);
+    }
+  });
+
+  test("...and the COPY costs `anthropic` no header: every protocol header and Winter's own user-agent still arrive", async () => {
+    // The residual `anthropic` inherited by becoming multi-provider in P6.5: `connectionFrom` copies
+    // its catalog endpoint into `connection.baseUrl`, which `resolveEndpoint` evaluates as a USER
+    // endpoint (`generated: false`) -- and R6-L drops privileged headers on those. Measured on the
+    // wire rather than reasoned about, because "no privileged header is dropped" read off the source
+    // would be a claim about the source, and T1's `user-agent` is a header nobody swept for this.
+    const seen: Array<Record<string, string>> = [];
+    const server = serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch(req) {
+        const h: Record<string, string> = {};
+        req.headers.forEach((v, k) => { h[k.toLowerCase()] = v; });
+        seen.push(h);
+        return new Response(JSON.stringify({ type: "error", error: { type: "invalid_request_error", message: "probe" } }), { status: 400, headers: { "content-type": "application/json" } });
+      },
+    });
+    try {
+      const anthropicRow = (id: string, api: string) => ({ ...chatProvider(id, api), protocols: ["anthropic-messages"], adapterId: "winter.anthropic-messages", family: "anthropic" }) as never;
+      const catalog = chatCatalog(
+        // TWO rows, so the copy actually fires -- one row would leave the adapter on its compiled default.
+        [anthropicRow("anthropic", `http://127.0.0.1:${server.port}`), anthropicRow("zai-anthropic", `http://127.0.0.1:${server.port}/api/anthropic`)],
+        [chatModel({ key: "anthropic/m1", providerId: "anthropic", upstreamId: "m1" })],
+      );
+      const wiring = buildSessionProvider({ config: { model: "anthropic/m1" } as never, env: {}, catalog, credentials: createMemoryCredentialStore() });
+      await wiring.provider.generate({ messages: [{ role: "user", content: "hi" }] } as never).catch(() => {});
+      const headers = seen[0] ?? {};
+      // The PROTOCOL headers (R6-L's other half) are unaffected by the endpoint's provenance...
+      expect(Object.keys(headers)).toEqual(expect.arrayContaining(["anthropic-version", "content-type", "accept"]));
+      // ...and so is Winter's own identity, which T1 added and nothing swept for this case.
+      expect(headers["user-agent"]).toBe(winterUserAgent());
+      expect(headers["user-agent"]).not.toMatch(/bun/i);
     } finally {
       await server.stop(true);
     }
