@@ -4636,9 +4636,9 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
         //
         // ONLY the no-fallback arm is emitted here. `model_refusal_fallback` requires the retry to
         // have actually happened on a fallback model (its `fallback_model`/`direction`/
-        // `retracted_message_uuids` describe a swap that occurred), and engaging a fallback is the
-        // switch coordinator's -- T10/Lane C's -- half of R6-C. Emitting the pair's other arm from
-        // here would announce a retry that never took place.
+        // `retracted_message_uuids` describe a swap that occurred), and a fallback engages only in
+        // `engageFallback` (a retryable, uncommitted failure -- R6-C), never on a refusal. Emitting the
+        // pair's other arm from here would announce a retry that never took place.
         if ("stopReason" in turn && turn.stopReason === "refusal" && (config.fallbackModel === undefined || config.fallbackModel.trim().length === 0)) {
           output.write({
             type: "data",

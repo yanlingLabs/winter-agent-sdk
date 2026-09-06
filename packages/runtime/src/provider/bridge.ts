@@ -51,8 +51,8 @@ export { ProviderTurnError, isProviderTurnError } from "../engine.ts";
 /**
  * R6-3 / Lane C: renders the engine's history into what THIS target may actually be sent.
  *
- * Lane C implements the real one (per-message cross-family decoration, the switch coordinator's own
- * loss matrix). T3 ships the IDENTITY renderer below, which is deliberately the most conservative
+ * Lane C implements the real one (per-message cross-family decoration, `classifySwitch`'s loss
+ * matrix at the engine's switch point). T3 ships the IDENTITY renderer below, which is deliberately the most conservative
  * thing that is still correct.
  */
 export interface HistoryRenderer {

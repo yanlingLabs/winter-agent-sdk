@@ -494,7 +494,7 @@ export function toolResultText(content: string | ContentBlockLike[]): string {
  *
  * Without this door at all, Lane C's decorations were built, persisted and then silently dropped at
  * the wire: a cross-family handoff note that never reaches the model is worse than none, because the
- * switch coordinator has already reported the context as carried.
+ * switch's `continuity_warning` has already reported the context as carried.
  *
  * WHERE it goes depends on what the message carries. On an ordinary message it LEADS the content.
  * On a message carrying TOOL RESULTS it PREFIXES the first result's own text (see

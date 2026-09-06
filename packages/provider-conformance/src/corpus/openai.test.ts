@@ -595,7 +595,7 @@ describe("live wire details the corpus does not ask about", () => {
   test("a DECORATION reaches the LIVE wire on both surfaces, VERBATIM — the recorded segment EQUALS Lane C's text (I-3)", async () => {
     // The unit tests pin the mapping; this pins that nothing between the mapper and the socket drops
     // it. Lane C's decorations were inert before this — built, persisted, then silently discarded,
-    // with the switch coordinator already reporting the context as carried.
+    // with the switch's `continuity_warning` already reporting the context as carried.
     //
     // EQUALS, not "contains once". The round-1 tripwire counted occurrences of the marker, which is
     // blind to a WRAPPER: this family shipped every decoration behind a `[winter:context] ` prefix

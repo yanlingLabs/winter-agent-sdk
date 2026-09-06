@@ -641,8 +641,8 @@ describe("R6-C: the pinned refusal frame", () => {
     expect(refusal!.original_model).toBe("sonnet");
     expect(refusal!.request_id).toBeNull();
     expect(refusal!.content).toBe("I can't help with that.");
-    // The pair's OTHER arm describes a retry that actually happened on a fallback model; engaging one
-    // is the switch coordinator's half of R6-C, so this path never announces it.
+    // The pair's OTHER arm describes a retry that actually happened on a fallback model; a refusal is
+    // not a retryable failure, so `engageFallback` never runs here and this path never announces it.
     expect(messages.some((m) => (m as { subtype?: string }).subtype === "model_refusal_fallback")).toBe(false);
   });
 
