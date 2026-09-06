@@ -68,8 +68,8 @@ export type {
   ClassifierSafetyReport,
   SafetyEnvelope,
 } from "./corpus/classifier-safety.ts";
-export { LIVE_CASES, LiveCaseAssertionError, formatLiveReport, runLiveCases } from "./live/index.ts";
-export type { LiveCaseContext, LiveCaseId, LiveCaseOutcome, LiveCaseSpec, LiveReport, RunLiveCasesOptions } from "./live/index.ts";
+export { LIVE_CASES, LiveCaseAssertionError, formatLiveReport, formatLiveRow, liveRowSummary, runLiveCases, runLiveTarget } from "./live/index.ts";
+export type { LiveCaseContext, LiveCaseId, LiveCaseOutcome, LiveCaseSpec, LiveReport, LiveRowSummary, LiveRowSummaryOptions, LiveTargetKindLabel, RunLiveCasesOptions } from "./live/index.ts";
 
 // --- Phase 6 Task 10: the per-family fakes and corpora, as NAMESPACES ----------------------------
 //

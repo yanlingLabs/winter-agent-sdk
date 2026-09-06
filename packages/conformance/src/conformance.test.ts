@@ -47,6 +47,7 @@ interface ConformanceRow {
 const CATALOG = "../../provider-catalog/src";
 const PROVIDER_RUNTIME = "../../provider-runtime/src";
 const CORPUS = "../../provider-conformance/src/corpus";
+const LIVE = "../../provider-conformance/src/live";
 const RUNTIME = "../../runtime/src";
 const SDK = "../../sdk/src";
 const SCRIPTS = "../../../scripts";
@@ -482,7 +483,222 @@ const FIX_WAVE_ROWS: ConformanceRow[] = [
   },
 ];
 
-const ALL_ROWS: ConformanceRow[] = [...CATALOG_ROWS, ...ADAPTER_ROWS, ...INTEGRATION_ROWS, ...FIX_WAVE_ROWS];
+// --- P6.5 (WS-13b): provider widening ------------------------------------------------------------
+//
+// WS-13b amends WS-13 after Phase 6 closed, so its acceptance obligations are a FOURTH group in this
+// same table rather than a table of their own: every guard below (a citation's file is read and the
+// substring genuinely searched for; the self-citation double-occurrence rule; the ≥13-character
+// specificity bound; unique ids) iterates `ALL_ROWS`, and a sibling array would have to duplicate
+// all four or escape them.
+//
+// PARTIAL BY CONSTRUCTION, and the partiality is named rather than hidden. WS-13b §7 owes one row
+// per new provider family behaviour — Console OAuth (Lane A2), the two authored OAuth flows and the
+// reversion condition (Lane O), the Anthropic-dialect siblings and the exclusions ledger (Lane X2).
+// Those lanes merge AFTER this one, and a row may only cite a test that exists: a row citing a test
+// name guessed from a brief is exactly the rot the citation guard exists to prevent. The rows below
+// are the ones whose covering tests are in the tree TODAY (the spine's, and this lane's own); the
+// rest land when their lanes do.
+const WS13B = "WS-13b §7 (widening)";
+
+const WIDENING_ROWS: ConformanceRow[] = [
+  {
+    id: "WS13b-1",
+    spec: WS13B,
+    bullet: "§1/R6b-3: every shipped row carries a `pricingBasis` and an `admission.citation`; a missing citation fails validation and an `unknown` one is refused by the pipeline rather than imported",
+    status: "new",
+    citations: [
+      { file: `${CATALOG}/validate.test.ts`, testName: "every shipped provider row carries pricingBasis and an admission citation" },
+      { file: `${CATALOG}/validate.test.ts`, testName: "a row without an admission citation FAILS validation with code admission-missing" },
+      { file: `${CATALOG}/validate.test.ts`, testName: "a citation naming the audit's `unknown` evidence class is refused with code admission-unknown" },
+      { file: `${CATALOG}/extract/pipeline.test.ts`, testName: "an allowlisted entry citing the audit's `unknown` evidence class is REFUSED (admission-unknown), never imported" },
+      { file: `${CATALOG}/extract/pipeline.test.ts`, testName: "the reviewed pricing basis and admission citation are COPIED onto the generated row, never derived" },
+    ],
+    note: "The rule is evidence, not decoration: 'the decisive document was not found' is a disposition to EXCLUDE, so a row may not ship carrying it.",
+  },
+  {
+    id: "WS13b-2",
+    spec: WS13B,
+    bullet: "§1 honest identity: every adapter family sends Winter's OWN `User-Agent`, never an editor, CLI or first-party product identity — asserted off the live request a fake received, on every family",
+    status: "new",
+    citations: [
+      { file: `${PROVIDER_RUNTIME}/identity.test.ts`, testName: "the user agent names Winter and its version, never an editor or vendor CLI" },
+      { file: `${PROVIDER_RUNTIME}/identity.test.ts`, testName: "it is a single well-formed product token — no vendor originator can be appended to it" },
+      { file: `${CORPUS}/openai.test.ts`, testName: "WS-13b: every request carries Winter's OWN user-agent, on both surfaces" },
+      { file: `${CORPUS}/anthropic.test.ts`, testName: "WS-13b: every request carries Winter's OWN user-agent, never an editor or vendor CLI identity" },
+      { file: `${CORPUS}/google.test.ts`, testName: "WS-13b: every request carries Winter's OWN user-agent, never an editor or vendor CLI identity" },
+      { file: `${CORPUS}/vertex.test.ts`, testName: "the GenerateContent request carries Winter's OWN user-agent" },
+      { file: `${CORPUS}/bedrock.test.ts`, testName: "every request carries Winter's OWN user-agent, and the fake's SigV4 check still passes with it in the signed set" },
+    ],
+    note: "WS-13 §5 reaffirmed, not relaxed: client-identity headers are never imported and Winter adapters author their own. The OAuth helpers' own token/device requests carry it too — WS13b-6's citations, not WS13b-5's.",
+  },
+  {
+    id: "WS13b-3",
+    spec: WS13B,
+    bullet: "§1 pricing basis is data: a `subscription`- or `free`-priced row never feeds R6-H cost (`total_cost_usd`/`modelUsage` omitted), while the SAME row priced per token still does",
+    status: "new",
+    citations: [
+      { file: `${RUNTIME}/provider/session-provider.test.ts`, testName: "a subscription-priced row reports NO cost: a per-token number for a seat is not a smaller error, it is a wrong one" },
+      { file: `${RUNTIME}/provider/session-provider.test.ts`, testName: "a free (local) row reports no cost either" },
+      { file: `${CATALOG}/validate.test.ts`, testName: "a subscription-priced row is legal and keeps its own basis" },
+      // The INVERTED leg, cited in its own right (review round 1, minor 2): without it the row's two
+      // negatives would pass just as happily on a wiring that had never heard of `pricingBasis`.
+      { file: `${RUNTIME}/provider/session-provider.test.ts`, testName: "the SAME row priced per token DOES report a cost — so the negative below is about the basis, not about missing evidence" },
+      { file: `${CATALOG}/extract/catalog-integrity.test.ts`, testName: "a subscription- or free-priced row NEVER carries a token price — the basis and the pricing agree" },
+      { file: `${CORPUS}/xai-oauth.test.ts`, testName: "the catalog row is SUBSCRIPTION-priced, so nothing it returns can feed R6-H cost" },
+    ],
+    note: "The inverted leg is what carries it: the same row priced per token DOES report a cost, so the assertion is about the basis rather than about a row with no pricing evidence.",
+  },
+  {
+    id: "WS13b-4",
+    spec: WS13B,
+    bullet: "§4/R6b-7: a provider disabled by `settings.providers.<id>.enabled` is REFUSED at resolution with code `provider-disabled` — at session start, at `set_model`, and for every `fallbackModel` candidate; R6b-9 makes the switch operator-immune (any tier's `false` wins)",
+    status: "new",
+    citations: [
+      { file: `${RUNTIME}/provider/selection.test.ts`, testName: "a provider disabled in settings is REFUSED at resolution with code provider-disabled — never skipped silently" },
+      { file: `${RUNTIME}/provider/selection.test.ts`, testName: "a fallbackModel on a disabled provider is refused at init, not discovered at failover" },
+      { file: `${RUNTIME}/provider/session-provider.test.ts`, testName: "with the provider disabled, the switch is REFUSED with provider-disabled — never a parked or silent switch" },
+      { file: `${RUNTIME}/production-wiring.test.ts`, testName: "a USER-tier `providers.<id>.enabled: false` REFUSES the session's provider, by name, on the wiring warning channel" },
+      { file: `${SDK}/settings/settings.test.ts`, testName: "R6b-9: a PROJECT tier can never re-enable what the USER tier disabled — the reversion switch is operator-immune" },
+    ],
+    note: "This is the reversion condition's mechanism (§4): if xAI rejects an honest unregistered agent identity, the row is switched off by the operator and no lower tier can put it back.",
+  },
+  {
+    id: "WS13b-5",
+    spec: WS13B,
+    bullet: "§7 the live gate: one opt-in target per documented third-party path (api-key, OAuth via a Keychain ref, keyless), a per-target row carrying identifiers/verdict/latency/identity and never a byte of what a provider returned, and no path from `bun test` to a vendor or to the Keychain",
+    status: "new",
+    citations: [
+      { file: `${SCRIPTS}/verify-provider-live.test.ts`, testName: "an OAuth row is selected by WINTER_LIVE_<P>_CREDENTIAL_REF and never by an API-key variable" },
+      { file: `${SCRIPTS}/verify-provider-live.test.ts`, testName: "a keyless row is selected by WINTER_LIVE_<P>=1 with no key" },
+      { file: `${SCRIPTS}/verify-provider-live.test.ts`, testName: "the keyless selector is `1` exactly, and it never applies to a PRICED row" },
+      { file: `${SCRIPTS}/verify-provider-live.test.ts`, testName: "the spawn helper REFUSES a credential-ref variable -- the OAuth kind can never be driven from `bun test`" },
+      { file: `${SCRIPTS}/verify-provider-live.test.ts`, testName: "a live run whose adapter fails prints identity only -- never the body" },
+      { file: `${LIVE}/summary.test.ts`, testName: "the formatted line carries every field as `key=value`, and NOTHING a provider returned" },
+      { file: `${LIVE}/summary.test.ts`, testName: "`describeThrown` on a CredentialResolutionError renders the class and code, and NOT the redacted ref its message carries" },
+    ],
+    note: "The OAuth kind is proved through the PURE planner and nowhere else: resolving it constructs the production Keychain store, which no test may reach. The spawn helper's refusal is what makes that structural.",
+  },
+  {
+    id: "WS13b-5a",
+    spec: WS13B,
+    bullet:
+      "§7 the live gate against the WIDENED catalog: every selector is cross-checked against the row's OWN `authKinds` (an OAuth-only row is never asked with a key, a keyed row is never asked with nothing, a row with no OAuth path never yields `kind: \"oauth\"`), and all 163 rows are reachable",
+    status: "new",
+    citations: [
+      { file: `${SCRIPTS}/verify-provider-live.test.ts`, testName: "the OAuth arm refuses a row that documents NO OAuth path" },
+      { file: `${SCRIPTS}/verify-provider-live.test.ts`, testName: "the keyless arm refuses a FREE row that documents an api key" },
+      { file: `${SCRIPTS}/verify-provider-live.test.ts`, testName: "the keyless arm's two halves are INDEPENDENT: `xai-oauth` is refused on price, `aihorde` on auth" },
+      { file: `${SCRIPTS}/verify-provider-live.test.ts`, testName: "the WIDENED catalog sweep: every one of its rows is reachable, and no row is admitted by a selector its own authKinds contradict" },
+      { file: `${SCRIPTS}/verify-provider-live.test.ts`, testName: "a row with NO model row of its own is not silently dropped" },
+    ],
+    note: "Review round 1's Important #1. The sweep is stated as six properties about credentials rather than as a table computed from the same predicates the code applies; it found on its first run that 62 of the widened rows were being dropped in silence for having no model row.",
+  },
+  {
+    id: "WS13b-5b",
+    spec: WS13B,
+    bullet:
+      "§7 the credential gets IN and lands where the operator chose, and NEVER in the host's services: `--login <providerId>` drives `startProviderLogin` (loopback and device flows both), `WINTER_LIVE_KEYCHAIN_SERVICE` is REQUIRED for every Keychain path (no production default — unset is a typed refusal before any store is constructed), `keychain:<service>/<account>` addresses one record, and neither door is reachable from `bun test`",
+    status: "new",
+    citations: [
+      { file: `${SCRIPTS}/verify-provider-live.test.ts`, testName: "`anthropic` runs the Console PKCE login against the fake and prints the exact CREDENTIAL_REF to export" },
+      { file: `${SCRIPTS}/verify-provider-live.test.ts`, testName: "`xai-oauth` runs the DEVICE flow: the verification URL and user code arrive on the progress channel, never through openUrl" },
+      { file: `${SCRIPTS}/verify-provider-live.test.ts`, testName: "`keychain:<service>/<account>` carries the service on the ref; `keychain:<account>` leaves it to the store" },
+      { file: `${SCRIPTS}/verify-provider-live.test.ts`, testName: "an account containing a SLASH is not mistaken for a service" },
+      { file: `${SCRIPTS}/verify-provider-live.test.ts`, testName: "the spawn helper REFUSES `--login` too -- it is the second door onto the Keychain" },
+      { file: `${SCRIPTS}/verify-provider-live.test.ts`, testName: "UNSET: the refusal happens BEFORE any store is constructed" },
+      { file: `${SCRIPTS}/verify-provider-live.test.ts`, testName: "SET: the store is built with THAT service, and the api-key and keyless kinds never build one at all" },
+      { file: `${SCRIPTS}/verify-provider-live.test.ts`, testName: "`--login` refuses with no service EVEN when a store is injected" },
+    ],
+    note: "The controller's close-out ruling — a dedicated `com.winter.live.<yyyymmdd>` service, deleted after the run, so `com.winter.core`/`.dev` are never touched — is ENFORCED, not merely enabled: the service has no production default, and a spy factory proves no store is constructed without one.",
+  },
+  {
+    id: "WS13b-6",
+    spec: WS13B,
+    bullet: "§3/§4 shared OAuth machinery: a refresh that persists new material without logging it, refuses before any request when it holds no refresh token, and never lets a partial response clobber a known-good record; an RFC 8628 device flow that carries an honest identity field on EVERY request",
+    status: "new",
+    citations: [
+      { file: `${PROVIDER_RUNTIME}/adapters/oauth/refresh.test.ts`, testName: "exchanges the refresh token, persists the new material, never logs it" },
+      { file: `${PROVIDER_RUNTIME}/adapters/oauth/refresh.test.ts`, testName: "a 4xx is a typed credential error naming the ref, never the token" },
+      { file: `${PROVIDER_RUNTIME}/adapters/oauth/refresh.test.ts`, testName: "a partial refresh response NEVER clobbers a known-good refresh token, id token or account id" },
+      { file: `${PROVIDER_RUNTIME}/adapters/oauth/device-code.test.ts`, testName: "requests a device code, reports the user code, polls until the token arrives, and sends the identity field on EVERY request" },
+      { file: `${PROVIDER_RUNTIME}/adapters/oauth/device-code.test.ts`, testName: "a terminal error from the token endpoint stops the flow instead of polling forever, and never echoes the body" },
+    ],
+    note: "The helpers the §3/§4 flows are built from; the flows themselves are WS13b-7 and WS13b-8.",
+  },
+  {
+    id: "WS13b-7",
+    spec: WS13B,
+    bullet:
+      "§3/D20 Anthropic Console OAuth: a PKCE login against the CONSOLE host with the public product client and an honest Winter identity, one Keychain record per account (`anthropic:<accountId>`, R6-10), the OAuth beta as a PROTOCOL header on the turn, API-key auth still the default, and the consumer-subscription host nowhere in the shipped constants",
+    status: "new",
+    citations: [
+      { file: `${PROVIDER_RUNTIME}/adapters/anthropic/console-oauth.test.ts`, testName: "the PKCE loopback login persists oauth material under `anthropic:<accountId>` and sends an honest identity" },
+      { file: `${PROVIDER_RUNTIME}/adapters/anthropic/console-oauth.test.ts`, testName: "D13/D14: the CONSOLE host is what D20 speaks to — the consumer subscription host appears nowhere in the shipped constants" },
+      { file: `${PROVIDER_RUNTIME}/adapters/anthropic/console-oauth.test.ts`, testName: "D21: the requested scope is the admissible SUBSET — inference and profile, never the vendor application's own entitlements" },
+      { file: `${PROVIDER_RUNTIME}/adapters/anthropic/console-oauth.test.ts`, testName: "a callback whose `state` does not match is REFUSED — a planted callback cannot complete a login this process did not start" },
+      { file: `${CORPUS}/anthropic.test.ts`, testName: "D20: oauth material rides as a Bearer with the OAuth beta as a PROTOCOL header, and a near-expiry token is refreshed BEFORE the turn" },
+      { file: `${CORPUS}/anthropic.test.ts`, testName: "an API-KEY turn carries neither the OAuth beta nor an Authorization header — the arm is chosen by the material, not switched on globally" },
+      { file: `${CORPUS}/anthropic.test.ts`, testName: "WS-13b: an OAuth turn still names Winter and carries NO vendor product identity — not in the user-agent, and not in the beta list" },
+      { file: `${RUNTIME}/provider/credential-api.test.ts`, testName: "`anthropic` runs the Console PKCE login and answers with the ref the record now occupies" },
+    ],
+    note: "The credential is the ORDINARY keychain ref, not a new `CredentialRef` kind — which is why the live gate's `keychain:<account>` locator addresses it with no adaptation (review round 1, minor 8, confirmed against the merged code).",
+  },
+  {
+    id: "WS13b-8",
+    spec: WS13B,
+    bullet:
+      "§4 `xai-oauth`: a Winter-run RFC 8628 device login on xAI's published secret-less client with Winter's own name in the flow's identity field on the device request AND every poll, a subscription row at the proxy the capture derived (never the metered api-key surface), NONE of the vendor's product-identity headers on either the login or the generation path, and the REVERSION CONDITION pinned by a test description on both paths",
+    status: "new",
+    citations: [
+      { file: `${PROVIDER_RUNTIME}/adapters/openai/xai-oauth.test.ts`, testName: "REVERSION CONDITION (WS-13b §4): an honest unregistered agent identity that the vendor rejects is a partner allowlist in fact" },
+      { file: `${PROVIDER_RUNTIME}/adapters/openai/xai-oauth.test.ts`, testName: "a device flow that fails for an ORDINARY reason does NOT claim the reversion condition" },
+      { file: `${PROVIDER_RUNTIME}/adapters/openai/xai-oauth.test.ts`, testName: "NONE of the vendor's six product-identity headers is sent on the GENERATION path either — including the two the proxy's own client injects" },
+      { file: `${PROVIDER_RUNTIME}/adapters/openai/xai-oauth.test.ts`, testName: "the identity field rides the POLLS too, not only the device request — a flow honest exactly once is not honest" },
+      { file: `${PROVIDER_RUNTIME}/adapters/openai/xai-oauth.test.ts`, testName: "the subscription endpoint is the proxy the capture found, NOT the metered api-key surface" },
+      { file: `${CORPUS}/xai-oauth.test.ts`, testName: "R6b-7: the reversion SWITCH works on this row" },
+      { file: `${LIVE}/summary.test.ts`, testName: "only the allowlisted fields survive -- a marker sitting in the SAME body does not" },
+      { file: `${LIVE}/summary.test.ts`, testName: "the allowlist is a CLOSED list -- every field it names is one an auth refusal reports, and nothing else is read" },
+      { file: `${LIVE}/summary.test.ts`, testName: "`xai-oauth`: an OAuth entitlement's 401 IS the reversion condition, names its own provider in the remediation" },
+      { file: `${LIVE}/summary.test.ts`, testName: "`codex-oauth`: the SAME semantics, and the remediation names CODEX" },
+      { file: `${LIVE}/summary.test.ts`, testName: "`clinepass`: an API-KEY row on a subscription plan reads its 401 as a KEY failure" },
+    ],
+    note: "The last five citations are the INFERENCE-PATH half of the condition, which only a live run can answer: a 401/403 on a valid subscription bearer sent with Winter's identity alone. The gate reports the vendor's own auth dimensions through a closed allowlist and NEVER retries with the product header to prove the point (D21). The reversion SEMANTICS are gated on the target's auth path, not its price: four rows are subscription-priced and two of them are ordinary api-key products, whose 401 is a bad key and says nothing about Winter's identity (review round 2, I1).",
+  },
+  {
+    id: "WS13b-9",
+    spec: WS13B,
+    bullet:
+      "§2/R6b-5 dual-dialect siblings: a provider with two documented dialects is two rows, each with its OWN `defaultEndpoints.api`, a dialect-suffixed display name and its own model keys; `winter.anthropic-messages` is multi-provider in fact and each sibling's turn reaches its own endpoint with every protocol header intact",
+    status: "new",
+    citations: [
+      { file: `${CATALOG}/extract/catalog-integrity.test.ts`, testName: "every dialect sibling states its dialect in its display name, and never shares an endpoint with its twin" },
+      { file: `${CATALOG}/extract/catalog-integrity.test.ts`, testName: "`anthropic` is the ONLY `authoritative` row on its adapter — A2's closure does not reach the siblings" },
+      { file: `${RUNTIME}/provider/catalog-endpoint-shape.test.ts`, testName: "R6b-5: `winter.anthropic-messages` is multi-provider IN FACT -- each sibling reaches its OWN endpoint" },
+      { file: `${RUNTIME}/provider/catalog-endpoint-shape.test.ts`, testName: "...and the COPY costs `anthropic` no header: every protocol header and Winter's own user-agent still arrive" },
+      { file: `${CORPUS}/anthropic.test.ts`, testName: "oauth material on a SIBLING provider row rides as a plain Bearer: no Anthropic beta, and NOTHING is sent to Anthropic's token endpoint" },
+      { file: `${RUNTIME}/provider/catalog-endpoint-shape.test.ts`, testName: "EVERY shipped catalog row on a path-appending adapter carries a root, not a protocol path" },
+    ],
+    note: "The last citation is the endpoint-root fix X2 found while widening: a row carrying a full protocol path would have had it DOUBLED by a path-appending adapter, which no fixture at 21 rows could have surfaced.",
+  },
+  {
+    id: "WS13b-10",
+    spec: WS13B,
+    bullet:
+      "§5 every exclusion is LEDGERED with its reason and absent from the catalog — the user's rulings, the impersonation-required rows, the agent transports, the website scrapers and the evidence-pending ids — and PROVENANCE.md's table matches the ledger row for row",
+    status: "new",
+    citations: [
+      { file: `${CATALOG}/extract/catalog-integrity.test.ts`, testName: "every user- and audit-excluded id is ABSENT from the catalog and PRESENT in the ledger with its reason" },
+      { file: `${CATALOG}/extract/catalog-integrity.test.ts`, testName: "PROVENANCE.md's exclusion table matches the ledger, row for row" },
+      { file: `${CATALOG}/extract/catalog-integrity.test.ts`, testName: "the api-key pool is widened: at least 120 apikey-category providers are now rows, and none is a website-scrape transport" },
+      { file: `${CATALOG}/extract/catalog-integrity.test.ts`, testName: "NO row anywhere carries the aihorde anonymous key, or any other credential literal" },
+      { file: `${RUNTIME}/provider/credential-api.test.ts`, testName: "`qoder` is a TYPED refusal, not a crash and not a silent no-op" },
+      { file: `${SCRIPTS}/verify-provider-live.test.ts`, testName: "`qoder` answers with its TYPED refusal rather than opening anything -- the exclusion is the end state, not a stub" },
+    ],
+    note: "`qoder` is EXCLUDED, not owed: the brief's qoder provider row is restated here as an exclusion row. Lane O's capture established against Qoder's own documentation index that it publishes no third-party OAuth grant and no third-party inference endpoint — its documented routes are a PAT and its own Agent SDK, which is the agent-transport class WS-13 §8.2 excludes. There is nothing to sign in to, and the two citations pin that the refusal is typed and reached rather than a stub waiting on a lane.",
+  },
+];
+
+const ALL_ROWS: ConformanceRow[] = [...CATALOG_ROWS, ...ADAPTER_ROWS, ...INTEGRATION_ROWS, ...FIX_WAVE_ROWS, ...WIDENING_ROWS];
 
 describe("WS-13 §13 conformance matrix (Phase 6 Task 10)", () => {
   test("every row is covered, newly tested here, or deferred with a named owning-phase reasoning -- zero unexplained bullets", () => {
@@ -550,7 +766,9 @@ describe("WS-13 §13 conformance matrix (Phase 6 Task 10)", () => {
 
   test("all three §13 acceptance groups are represented -- no numbered obligation group is silently missing", () => {
     const groups = new Set(ALL_ROWS.map((r) => r.spec));
-    expect([...groups].sort()).toEqual(["WS-13 §13 (adapter)", "WS-13 §13 (catalog)", "WS-13 §13 (integration)"]);
+    // P6.5 adds a fourth: WS-13b amends WS-13 rather than replacing it, so its rows live in this
+    // same table and under this same set of guards.
+    expect([...groups].sort()).toEqual(["WS-13 §13 (adapter)", "WS-13 §13 (catalog)", "WS-13 §13 (integration)", WS13B]);
   });
 
   test("CI runs the catalog regeneration check and the OFFLINE source sync (WS13-C1's other half)", () => {
