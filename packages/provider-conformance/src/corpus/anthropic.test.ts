@@ -728,3 +728,44 @@ describe("D20: Anthropic Console OAuth on the wire", () => {
     }
   }, 15_000);
 });
+
+describe("R6b-5: the D20 arm belongs to the anthropic ROW, not to the adapter", () => {
+  // This adapter is multi-provider: a third party speaking the Anthropic Messages dialect ships as
+  // its own `<id>-anthropic` row on the SAME `adapterId`, with its own endpoint. Nothing upstream
+  // checks that a stored credential's KIND matches its row's `authKinds`, so an `oauth` credential
+  // configured against a sibling row reaches this adapter looking exactly like a Console one. If the
+  // D20 behaviours keyed on the material alone, that would post the THIRD PARTY'S REFRESH TOKEN to
+  // `platform.claude.com` under Anthropic's client id, and stamp Anthropic's beta on the third
+  // party's request. Neither is a thing a wrong configuration should be able to cause.
+  test("oauth material on a SIBLING provider row rides as a plain Bearer: no Anthropic beta, and NOTHING is sent to Anthropic's token endpoint", async () => {
+    const oauthFake = await startAnthropicConsoleOauthFake();
+    try {
+      const store = createMemoryCredentialStore();
+      const ref = { kind: "keychain" as const, account: "deepseek-anthropic:acct-test-sibling" };
+      // Near expiry, so a provider-blind implementation WOULD refresh — the condition that makes
+      // this test able to fail.
+      await store.set(ref, { kind: "oauth", accessToken: "test-token-sibling-access", refreshToken: "test-token-sibling-refresh", expiresAt: Date.now() + 1_000 });
+      const adapter = testAnthropicAdapter({ tokenUrl: oauthFake.tokenUrl });
+      await withFake({ routes: anthropicCorpusRoutes() }, async (fake) => {
+        await foldTurn(
+          adapter,
+          { model: ANTHROPIC_MODELS.main, messages: [{ role: "user", content: "hi" }] },
+          testContext(fake.url, { credentials: store, authRef: ref, connection: { providerId: "deepseek-anthropic", baseUrl: fake.url, local: true } }),
+        );
+        // ASSERTED FIRST because it is the worst of the two failures and an earlier assertion would
+        // mask it: the sibling's refresh token never left for Anthropic's token endpoint, and the
+        // record it would have overwritten is untouched.
+        expect(oauthFake.tokenRequests).toHaveLength(0);
+        const stored = await store.get(ref);
+        expect(stored?.kind === "oauth" ? stored.accessToken : "").toBe("test-token-sibling-access");
+        const turn = fake.requests.at(-1)!;
+        // The credential still authenticates the request — this rule is about Anthropic-specific
+        // behaviour, never about refusing to send the credential the host configured.
+        expect(turn.headers["authorization"]).toBe("Bearer ***");
+        expect(turn.headers["anthropic-beta"]).toBeUndefined();
+      });
+    } finally {
+      await oauthFake.close();
+    }
+  }, 15_000);
+});

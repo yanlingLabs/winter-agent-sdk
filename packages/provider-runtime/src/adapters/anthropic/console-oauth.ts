@@ -69,6 +69,20 @@ export const CONSOLE_OAUTH = {
 export const OAUTH_REFRESH_WINDOW_MS = 60_000;
 
 /**
+ * The ONE provider id whose `oauth` credential is an Anthropic Console one.
+ *
+ * NOT A FORMALITY, and the reason it is a named constant rather than a string literal in a
+ * condition: R6b-5 makes this adapter MULTI-PROVIDER — a third party that speaks the Anthropic
+ * Messages dialect ships as its own `<id>-anthropic` row on this same `adapterId`, with its own
+ * `defaultEndpoints.api`. Nothing upstream of the adapter checks that a stored credential's KIND
+ * matches its row's `authKinds`, so without this gate an `oauth` credential stored against a sibling
+ * row would have its REFRESH TOKEN posted to `platform.claude.com` — a third party's credential sent
+ * to Anthropic — and would stamp Anthropic's beta on that third party's request. Both are the same
+ * mistake the `bearer` arm already refuses to make, with a considerably worse failure.
+ */
+export const ANTHROPIC_CONSOLE_PROVIDER_ID = "anthropic";
+
+/**
  * The ONE spelling of an Anthropic OAuth record's name (R6-10).
  *
  * Exported and used by both the login and the adapter, because a host that assembles
@@ -161,9 +175,11 @@ async function fetchAccountId(profileUrl: string, accessToken: string): Promise<
     headers: {
       authorization: `Bearer ${accessToken}`,
       accept: "application/json",
-      // The OAuth beta rides here too: this endpoint is spoken to under an OAuth bearer, which is
-      // exactly the condition the beta gates.
-      "anthropic-beta": CONSOLE_OAUTH.betaHeader,
+      // NO `anthropic-beta` HERE, deliberately. The artifact's own profile fetch sends only an
+      // `Authorization`, a content type and a cache directive (the capture's §2.4) -- adding the
+      // beta because "it is an OAuth request too" would be exactly the remembering this lane's
+      // constants rule exists to prevent. The beta is derived for the API request, and it is sent
+      // there and nowhere else.
       // WS-13b: Winter names itself on every vendor request, this one included.
       "user-agent": winterUserAgent(),
     },

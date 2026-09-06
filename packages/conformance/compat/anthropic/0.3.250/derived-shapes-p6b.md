@@ -150,13 +150,20 @@ await nt.post(Gt().TOKEN_URL,T,{headers:{"Content-Type":"application/json"},time
 // response: {access_token, refresh_token, expires_in, refresh_token_expires_in, scope}
 ```
 
-**Both grants are JSON-bodied**, and the wrapper's own copy additionally sends `anthropic-beta` on
-them (`A@27334` sends `` `${ta},${I0}` ``, `A@29321` sends `ta` alone). Winter's shared helpers send
-neither shape: `refreshOauthMaterial` and `pkce.ts`'s `exchange` post
-`application/x-www-form-urlencoded` — which is what RFC 6749 §4.1.3 requires a token endpoint to
-accept, and is therefore the standards-correct request, but is NOT the request this endpoint is
-observed receiving. **This is the lane's #1 carried risk; see the task report and the live-gate item.**
-The authorization-code grant also carries `state` in the body, which `exchange` does not send.
+**Both grants are JSON-bodied, and NEITHER sends an `anthropic-beta` header.** Stated explicitly
+because the wrapper contains a second, unrelated OAuth implementation that DOES — the bundled
+`@anthropic-ai/sdk`'s own `userOAuthProvider` and `oidcFederationProvider` paths (`A@29321` sends
+`ta`; `A@27334` sends `` `${ta},${I0}` ``, and both identify themselves as
+`anthropic-sdk-typescript/…`). That is a different flow from a different library, and reading its
+headers as this flow's is the easiest mistake this section can cause. **The flow D20 mirrors — the
+CLI's own `Hmn`/`KN` above — sends `Content-Type: application/json` and nothing else.**
+
+So Winter's ONE divergence on the grants is the body encoding: `refreshOauthMaterial` and `pkce.ts`'s
+`exchange` post `application/x-www-form-urlencoded`, which is what RFC 6749 §4.1.3 requires a token
+endpoint to accept and is therefore the standards-correct request, but is not the encoding this
+endpoint is observed receiving. Two smaller differences, both recorded rather than papered over: the
+authorization-code grant carries `state` in the body, which `exchange` does not send, and the refresh
+grant carries `scope`, which Winter DOES send (through the helper's `extraFields`).
 
 ### 2.4 Where the account id comes from — NOT the token response (`B@155589253`)
 
@@ -223,8 +230,11 @@ and provable; `corpus/anthropic.test.ts` asserts no request carries a `claude` s
 
 1. **Whether the token endpoint accepts `application/x-www-form-urlencoded`.** RFC 6749 requires it;
    the artifact is observed sending JSON. Winter's shared helpers send form. Affects BOTH grants.
-2. **Whether the token endpoint requires `anthropic-beta: oauth-2025-04-20` on the grant itself.**
-   The artifact sends it there; `refreshOauthMaterial` has no header parameter and cannot.
+2. **Whether the token endpoint tolerates the ABSENCE of any beta header on a grant.** The flow
+   mirrored here sends none (§2.3), so Winter matches it — but the sibling implementation in the same
+   wrapper does send one, which is enough uncertainty to be worth a live check. Note that
+   `refreshOauthMaterial` has no header parameter, so if one were ever required the fix is a spine
+   change, not a lane one.
 3. **Whether the authorization server grants the `user:inference user:profile` subset** at the
    Console host. The artifact's builder can construct the request; only a real authorization proves
    the server honours it.

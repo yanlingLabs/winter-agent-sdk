@@ -52,7 +52,7 @@ import { THINKING_ENABLED_NEEDS_BUDGET } from "../refusals.ts";
 import { containsImage } from "../content-blocks.ts";
 import { parseSse } from "../../sse.ts";
 import { refreshOauthMaterial } from "../oauth/refresh.ts";
-import { CONSOLE_OAUTH, OAUTH_REFRESH_WINDOW_MS } from "./console-oauth.ts";
+import { ANTHROPIC_CONSOLE_PROVIDER_ID, CONSOLE_OAUTH, OAUTH_REFRESH_WINDOW_MS } from "./console-oauth.ts";
 import type {
   ContentBlockLike,
   CredentialMaterial,
@@ -499,6 +499,14 @@ function resolveEndpoint(ctx: ProviderContext, defaultBaseUrl: string): Endpoint
  * account-scoped header lands in the right place.
  */
 /**
+ * Is this connection the Anthropic Console row, as opposed to a sibling third-party row sharing this
+ * adapter (R6b-5)? The gate on BOTH D20 behaviours — the beta header and the refresh.
+ */
+function isConsoleProvider(ctx: ProviderContext): boolean {
+  return ctx.connection.providerId === ANTHROPIC_CONSOLE_PROVIDER_ID;
+}
+
+/**
  * Reads the credential, RENEWING an `oauth` one that is about to expire (D20).
  *
  * BEFORE THE TURN, NOT AFTER A 401. Codex refreshes reactively because a subscription token can be
@@ -522,6 +530,10 @@ function resolveEndpoint(ctx: ProviderContext, defaultBaseUrl: string): Endpoint
 async function resolveFreshMaterial(ctx: ProviderContext, opts: AnthropicAdapterOptions): Promise<CredentialMaterial | null> {
   const material = await ctx.credentials.get(ctx.authRef);
   if (material === null || material.kind !== "oauth") return material;
+  // THE PROVIDER GATE, before anything else. See `ANTHROPIC_CONSOLE_PROVIDER_ID`: this adapter is
+  // multi-provider (R6b-5), and refreshing a SIBLING row's credential here would post a third
+  // party's refresh token to Anthropic's token endpoint under Anthropic's client id.
+  if (!isConsoleProvider(ctx)) return material;
   if (ctx.authRef.kind !== "keychain") return material;
   if (material.refreshToken === undefined || material.refreshToken.length === 0) return material;
   if (material.expiresAt === undefined) return material;
@@ -531,6 +543,10 @@ async function resolveFreshMaterial(ctx: ProviderContext, opts: AnthropicAdapter
     ref: ctx.authRef,
     tokenUrl: opts.tokenUrl ?? CONSOLE_OAUTH.tokenUrl,
     clientId: CONSOLE_OAUTH.clientId,
+    // The artifact's own refresh grant carries `scope` (the capture's §2.3), and `extraFields` is
+    // the one artifact-observed field the shared helper can already match. Winter sends the scope it
+    // was granted, never the artifact's default list -- which is the inadmissible union.
+    extraFields: { scope: CONSOLE_OAUTH.scope },
   });
 }
 
@@ -542,10 +558,13 @@ async function buildHeaders(ctx: ProviderContext, policy: EndpointPolicy, opts: 
   // (derived-shapes-p6b.md 2.5). It is a PROTOCOL header (R6-L): the endpoint needs it to be spoken
   // to under this auth kind, and it names no account.
   //
-  // KEYED ON `oauth` MATERIAL, not on the adapter or a flag. A `bearer` credential is Winter's
-  // generic "some token" kind -- a gateway or proxy token, which this beta says nothing about -- so
-  // widening the condition would put a vendor beta on requests to hosts that never asked for it.
-  const betas = [...(opts.betas ?? []), ...(material?.kind === "oauth" ? [CONSOLE_OAUTH.betaHeader] : [])].filter((value, index, all) => all.indexOf(value) === index);
+  // KEYED ON `oauth` MATERIAL **AND ON THE PROVIDER**, not on the adapter or a flag. A `bearer`
+  // credential is Winter's generic "some token" kind -- a gateway or proxy token, which this beta
+  // says nothing about. And this adapter is multi-provider (R6b-5): a third party speaking this
+  // dialect ships as its own `<id>-anthropic` row on this same `adapterId`, so keying on the
+  // material alone would stamp Anthropic's beta on that third party's request. Both widenings put a
+  // vendor beta on a host that never asked for it.
+  const betas = [...(opts.betas ?? []), ...(material?.kind === "oauth" && isConsoleProvider(ctx) ? [CONSOLE_OAUTH.betaHeader] : [])].filter((value, index, all) => all.indexOf(value) === index);
   // HOST HEADERS FIRST, so nothing below can be silently overridden: spread LAST, a host header could
   // replace `anthropic-version` or `content-type`, and a wrong API version is a class of failure that
   // surfaces as an unexplained upstream 400 rather than as anything local.
