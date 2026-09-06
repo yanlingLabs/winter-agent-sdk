@@ -149,7 +149,19 @@ export function adapterAsProvider(resolved: ResolvedModel, ctx: ProviderContext,
       // empty map T3 shipped, which is what a non-persistent session genuinely has.
       const rendered = renderer.render(input.messages, opts.chain?.() ?? new Map(), target);
       const request: TurnRequest = {
-        model: input.model ?? resolved.providerModelId,
+        // THE PROVIDER-LOCAL ID, never the catalog KEY.
+        //
+        // The engine puts `currentModel` on every request, and `currentModel` starts at `config.model`
+        // — which for a catalog-resolved session is the QUALIFIED `<providerId>/<model>` key (R6-9's
+        // own selection spelling). Forwarding it verbatim put `anthropic/claude-sonnet-5` in the wire
+        // body of every such session: a model id no provider has ever heard of, on every request, and
+        // invisible to any test that passed `model` explicitly. The equivalence scenarios found it
+        // because a loopback fake records what was actually sent.
+        //
+        // A DIFFERENT id still passes through verbatim, which is what makes `set_model` to another
+        // model on the same provider work — the qualified form is translated, anything else is the
+        // caller's own word.
+        model: input.model === undefined || input.model === resolved.modelKey ? resolved.providerModelId : input.model,
         messages: rendered as ProviderMessageLike[],
         ...(input.system !== undefined ? { system: input.system } : {}),
         ...(input.tools !== undefined ? { tools: input.tools } : {}),
