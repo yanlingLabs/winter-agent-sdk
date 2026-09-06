@@ -12,7 +12,13 @@
 import { test, expect, describe } from "bun:test";
 import { createMemoryCredentialStore, createRegistry, CredentialResolutionError, type CredentialMaterial, type CredentialRef, type CredentialStatus, type CredentialStore, type ProviderAdapter, type ProviderContext } from "@yanlinglabs/winter-provider-runtime";
 import type { WinterCatalog, WinterModelDescriptor, WinterProviderDescriptor } from "@yanlinglabs/winter-provider-catalog";
-import { deleteProviderCredential, providerCredentialRef, storeProviderCredential, validateProviderCredential } from "./credential-api.ts";
+import { deleteProviderCredential, providerCredentialRef, startProviderLogin, storeProviderCredential, validateProviderCredential } from "./credential-api.ts";
+import {
+  FAKE_CONSOLE_ACCOUNT_ID,
+  startAnthropicConsoleOauthFake,
+} from "../../../provider-conformance/src/fakes/anthropic-console-oauth.ts";
+import { FAKE_ACCOUNT_ID as CODEX_FAKE_ACCOUNT_ID, codexTokenRoute } from "../../../provider-conformance/src/fakes/codex-oauth.ts";
+import { startFake } from "../../../provider-conformance/src/fakes/server.ts";
 import { createKeychainCredentialStore, DEFAULT_KEYCHAIN_SERVICE, type SecretsBackend } from "./keychain-store.ts";
 
 const SECRET = "test-key-do-not-use-4d9f2a";
@@ -489,5 +495,68 @@ describe("over the REAL Keychain store shape, with an injected secrets double", 
     }
     expect(message).not.toContain(SECRET);
     expect(message).toContain("keychain(default:anthropic:work)");
+  });
+});
+
+describe("startProviderLogin (WS-13b): the ONE host door onto every OAuth flow", () => {
+  // The union exists in full NOW, ahead of two of its four flows, on purpose: a host that wants to
+  // offer sign-in for all four should compile against one door rather than discover a second one
+  // later, and a case that throws a TYPED refusal is a far better thing to ship than a case that is
+  // absent from the type and fails at the call site as `never`.
+  test("`anthropic` runs the Console PKCE login and answers with the ref the record now occupies", async () => {
+    const fake = await startAnthropicConsoleOauthFake();
+    try {
+      const store = createMemoryCredentialStore();
+      const result = await startProviderLogin("anthropic", store, {
+        openUrl: (url) => fake.completeAuthorization(url),
+        authorizeUrl: fake.authorizeUrl,
+        tokenUrl: fake.tokenUrl,
+        profileUrl: fake.profileUrl,
+        callbackPort: 0,
+      });
+      // The SAME spelling `providerCredentialRef` produces, which is the point of routing through
+      // one door: a host that logs in and a host that looks the credential up agree by construction.
+      expect(result.ref).toEqual(providerCredentialRef({ providerId: "anthropic", accountId: FAKE_CONSOLE_ACCOUNT_ID }));
+      expect(result.accountId).toBe(FAKE_CONSOLE_ACCOUNT_ID);
+      expect(result.expiresAt).toBeGreaterThan(Date.now());
+      expect((await store.get(result.ref))?.kind).toBe("oauth");
+    } finally {
+      await fake.close();
+    }
+  }, 15_000);
+
+  test("`codex-oauth` still routes to its own flow — adding a provider did not move an existing one", async () => {
+    const fake = await startFake({ routes: [codexTokenRoute({})] });
+    try {
+      const store = createMemoryCredentialStore();
+      const result = await startProviderLogin("codex-oauth", store, {
+        openUrl: async (url) => {
+          const authorize = new URL(url);
+          const callback = new URL(authorize.searchParams.get("redirect_uri") ?? "");
+          callback.searchParams.set("state", authorize.searchParams.get("state") ?? "");
+          callback.searchParams.set("code", "test-code-authorization");
+          await fetch(callback.toString()).catch(() => undefined);
+        },
+        authorizeUrl: "https://auth.example.test/oauth/authorize",
+        tokenUrl: `${fake.url}/oauth/token`,
+        callbackPort: 0,
+      });
+      expect(result.ref.account).toBe(`codex-oauth:${CODEX_FAKE_ACCOUNT_ID}`);
+    } finally {
+      await fake.close();
+    }
+  }, 15_000);
+
+  test("`xai-oauth` and `qoder` are a TYPED refusal, not a crash and not a silent no-op", async () => {
+    const store = createMemoryCredentialStore();
+    for (const providerId of ["xai-oauth", "qoder"] as const) {
+      const outcome: unknown = await startProviderLogin(providerId, store, { openUrl: async () => {} }).catch((e: unknown) => e);
+      expect(outcome).toBeInstanceOf(CredentialResolutionError);
+      expect((outcome as CredentialResolutionError).code).toBe("unsupported");
+      expect((outcome as Error).message).toContain(providerId);
+      // Nothing was opened, nothing was stored: a refusal that had already run half a flow would be
+      // worse than one that never started.
+      expect(store.size()).toBe(0);
+    }
   });
 });

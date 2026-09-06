@@ -16,7 +16,8 @@
         "anthropic-messages"
       ],
       "authKinds": [
-        "api-key"
+        "api-key",
+        "oauth-approved"
       ],
       "defaultEndpoints": {
         "api": "https://api.anthropic.com"

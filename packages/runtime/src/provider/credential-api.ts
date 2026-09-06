@@ -25,7 +25,7 @@
 // is the redacted ref, the operation, and the typed code — which is what makes the failure
 // actionable in the first place.
 import type { CredentialMaterial, CredentialStatus, CredentialStore, ProviderContext, ProviderRegistry } from "@yanlinglabs/winter-provider-runtime";
-import { CredentialResolutionError, WinterProviderResolutionError } from "@yanlinglabs/winter-provider-runtime";
+import { CredentialResolutionError, WinterProviderResolutionError, startAnthropicConsoleLogin, startCodexLogin } from "@yanlinglabs/winter-provider-runtime";
 import type { CredentialRef } from "@yanlinglabs/winter-agent-sdk";
 import { keychainAccountName } from "./keychain-store.ts";
 import { redactCredentialRef } from "./selection.ts";
@@ -268,4 +268,71 @@ function statusFromThrow(err: unknown, ref: CredentialRef, providerId: string): 
   }
   const kind = err instanceof Error ? err.name : typeof err;
   return { ok: false, code: "unsupported", message: `provider "${providerId}"'s adapter failed with a ${kind} while validating ${locator}, so the credential is UNVERIFIED rather than known-bad (the underlying message is withheld)` };
+}
+
+// -------------------------------------------------------------------------------------------------
+// WS-13b (P6.5): the OAuth login door
+// -------------------------------------------------------------------------------------------------
+
+/**
+ * The providers whose credential is obtained by a LOGIN rather than by pasting a key.
+ *
+ * DECLARED IN FULL NOW, ahead of two of its four flows. A host offering sign-in should compile
+ * against one door rather than discover a second one when the next flow lands, and a case that
+ * throws a typed refusal is a much better thing to ship than a member missing from the union — which
+ * fails at a caller's call site as an unassignable literal and tells them nothing about why.
+ * `xai-oauth` and `qoder` are wired by their own lane; this file's switch is where they land.
+ */
+export type ProviderLoginId = "anthropic" | "codex-oauth" | "xai-oauth" | "qoder";
+
+export interface StartProviderLoginOptions {
+  /** Opens the browser. HOST-supplied: the SDK never shells out to one, and a login is a host action. */
+  openUrl: (url: string) => Promise<void>;
+  /** Overridden by a fixture; production uses each flow's own derived constants. */
+  authorizeUrl?: string;
+  tokenUrl?: string;
+  /** Anthropic Console only: where the account id is read from. Ignored by flows that do not need one. */
+  profileUrl?: string;
+  callbackPort?: number;
+  timeoutMs?: number;
+  /** The Keychain service the record lands in — `config.keychainService` from the host. */
+  service?: string;
+  /** A login-flow PROGRESS channel (R6-F). Never carries credential material. */
+  onAuthStatus?: (status: { isAuthenticating: boolean; output?: string[]; error?: string }) => void;
+}
+
+export interface ProviderLoginResult {
+  /** The record the credential now occupies — the very thing a host puts in `config.provider.authRef`. */
+  ref: ProviderCredentialRef;
+  accountId: string;
+  /** Epoch milliseconds. */
+  expiresAt: number;
+}
+
+/**
+ * Runs one provider's login and PERSISTS the result, answering with the ref that now addresses it.
+ *
+ * ONE DOOR, for the same reason `storeProviderCredential` is one: every flow writes a record whose
+ * name is `"<providerId>:<accountId>"` (R6-10), and a host that reaches each flow's own function
+ * directly is a host that will eventually spell that name differently from whatever reads it back.
+ * Routing through here means the login and the lookup agree by construction.
+ *
+ * WHAT THIS DOES NOT DO: choose a provider, open a browser itself, or decide that a failed login
+ * should be retried. Each is a host's decision, and the SDK taking any of them would be a library
+ * driving a user interface.
+ */
+export async function startProviderLogin(providerId: ProviderLoginId, store: CredentialStore, options: StartProviderLoginOptions): Promise<ProviderLoginResult> {
+  switch (providerId) {
+    case "anthropic":
+      return await startAnthropicConsoleLogin(store, options);
+    case "codex-oauth":
+      return await startCodexLogin(store, options);
+    case "xai-oauth":
+    case "qoder":
+      // TYPED, and raised BEFORE anything runs: a refusal that had already opened a browser or
+      // half-completed a flow would be worse than one that never started. `unsupported` is the
+      // honest code — the flow is not wired in this build, which is not the same as the user's
+      // credential being bad.
+      throw new CredentialResolutionError("unsupported", `the "${providerId}" login is not wired in this build yet, so there is nothing to sign in to; no browser was opened and no record was written`);
+  }
 }

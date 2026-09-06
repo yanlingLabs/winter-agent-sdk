@@ -7,11 +7,19 @@
 //     WebCrypto/Bun built-ins; `crypto.getRandomValues` + a hand-rolled base64url is the whole of
 //     what `randomBytes(...).toString("base64url")` was doing.
 //
-//   THE CALLBACK PORT IS FIXED, WITH ONE DECLARED FALLBACK. The authorize request's `redirect_uri`
-//     has to match what the OAuth application registered, so an ephemeral port is not a valid
-//     production choice — 1455 with 1457 as the fallback is codex-rs's own allow-list. A test may
-//     pass `callbackPort: 0` to get an ephemeral one, which is exactly what makes this file
+//   THE CALLBACK PORT IS THE CLIENT REGISTRATION'S, NOT THIS FILE'S. The authorize request's
+//     `redirect_uri` has to match what the OAuth application registered, and what that permits
+//     differs per client: codex's registration is the fixed pair 1455/1457 (codex-rs's own
+//     allow-list), so an ephemeral port is not a valid production choice THERE. The Anthropic
+//     Console client registers a loopback URI on ANY port (RFC 8252 §7.3 — its own CLI builds
+//     `http://localhost:${port}/callback` from a runtime variable), so `callbackPort: 0` is that
+//     flow's correct production value. A test passes `0` for either, which is what makes this file
 //     testable without touching a privileged port or a real endpoint.
+//
+//   THE CALLBACK PATH AND THE FLOW LABEL ARE OPTIONS, DEFAULTED TO CODEX'S. Both were literals when
+//     codex was the only caller. They are now `LoginConfig` fields with codex's own values as the
+//     defaults, so nothing about that flow changed and a second flow inherits neither its path nor
+//     its name in an error message.
 //
 //   PROGRESS IS OBSERVABLE. R6-B/R6-F make `auth_status` a LOGIN-FLOW progress channel (never the
 //     credential-failure frame), so the flow reports its steps through `onAuthStatus` and the
@@ -41,6 +49,22 @@ export interface LoginConfig {
   callbackPort: number;
   /** Tried when `callbackPort` is already taken. Omitted for an ephemeral port. */
   fallbackCallbackPort?: number;
+  /**
+   * The loopback callback's PATH, which is part of what a registered `redirect_uri` matches.
+   *
+   * P6.5 lane A2: this was a hard-coded `/auth/callback` when codex was the only flow, and the
+   * Anthropic Console client registers `/callback` instead (derived-shapes-p6b.md §2.2). Optional
+   * and defaulted, so codex's own value is unchanged and no existing caller sees a difference.
+   */
+  callbackPath?: string;
+  /**
+   * Names the flow in this file's user-facing failures ("the … login timed out").
+   *
+   * Defaulted to codex for the same reason: those strings were written when there was one flow, and
+   * an Anthropic user told their sign-in failed because "the codex login timed out" would be reading
+   * a message about a product they are not using.
+   */
+  label?: string;
   scope: string;
   timeoutMs?: number;
   /** Opens the browser. HOST-supplied: the SDK never shells out to a browser itself. */
@@ -112,7 +136,7 @@ export function decodeAccountId(idToken: string): string | undefined {
  * the origin re-validation is exactly what stops a `Location` header from replaying the PKCE
  * verifier to another host.
  */
-async function exchange(tokenUrl: string, params: Record<string, string>): Promise<OAuthTokens> {
+async function exchange(tokenUrl: string, params: Record<string, string>, label = "codex"): Promise<OAuthTokens> {
   const built = createEndpointPolicy(new URL(tokenUrl).origin, { generated: true });
   if (!built.ok) throw new ProviderRequestError({ code: "capability", message: built.reason, retryable: false });
   const response = await boundedFetch(tokenUrl, {
@@ -131,11 +155,11 @@ async function exchange(tokenUrl: string, params: Record<string, string>): Promi
   if (!response.ok) {
     // The body is NOT echoed: a token-endpoint failure body routinely quotes the grant it rejected.
     await response.text().catch(() => "");
-    throw new ProviderRequestError({ code: response.status === 400 || response.status === 401 ? "auth" : "server", message: `codex token exchange failed: HTTP ${response.status}`, status: response.status, retryable: response.status >= 500 });
+    throw new ProviderRequestError({ code: response.status === 400 || response.status === 401 ? "auth" : "server", message: `${label} token exchange failed: HTTP ${response.status}`, status: response.status, retryable: response.status >= 500 });
   }
   const payload = (await response.json()) as { access_token?: unknown; refresh_token?: unknown; id_token?: unknown; expires_in?: unknown };
   if (typeof payload.access_token !== "string" || payload.access_token.length === 0) {
-    throw new ProviderRequestError({ code: "auth", message: "codex token exchange returned no access token", retryable: false });
+    throw new ProviderRequestError({ code: "auth", message: `${label} token exchange returned no access token`, retryable: false });
   }
   const idToken = typeof payload.id_token === "string" ? payload.id_token : undefined;
   const accountId = idToken !== undefined ? decodeAccountId(idToken) : undefined;
@@ -174,6 +198,8 @@ export async function runLoginFlow(cfg: LoginConfig): Promise<OAuthTokens> {
   // Attached immediately so a rejection that fires before the `await` below is still "handled".
   codePromise.catch(() => {});
 
+  const callbackPath = cfg.callbackPath ?? "/auth/callback";
+  const label = cfg.label ?? "codex";
   const ports = cfg.callbackPort === 0 ? [0] : [cfg.callbackPort, ...(cfg.fallbackCallbackPort !== undefined ? [cfg.fallbackCallbackPort] : [])];
   let server: ReturnType<typeof Bun.serve> | undefined;
   let lastError: unknown;
@@ -184,7 +210,7 @@ export async function runLoginFlow(cfg: LoginConfig): Promise<OAuthTokens> {
         hostname: "127.0.0.1",
         fetch(req) {
           const url = new URL(req.url);
-          if (url.pathname !== "/auth/callback") return new Response("not found", { status: 404 });
+          if (url.pathname !== callbackPath) return new Response("not found", { status: 404 });
           if (url.searchParams.get("state") !== state) {
             rejectFlow(new Error("OAuth state mismatch — refusing to complete a login this process did not start"));
             return new Response("state mismatch", { status: 400 });
@@ -205,10 +231,10 @@ export async function runLoginFlow(cfg: LoginConfig): Promise<OAuthTokens> {
   }
   if (server === undefined) {
     const detail = lastError instanceof Error ? lastError.message : String(lastError);
-    throw new ProviderRequestError({ code: "capability", message: `could not open the codex login callback on port ${ports.join(" or ")} — is another login in progress? (${detail})`, retryable: false });
+    throw new ProviderRequestError({ code: "capability", message: `could not open the ${label} login callback on port ${ports.join(" or ")} — is another login in progress? (${detail})`, retryable: false });
   }
 
-  const redirectUri = `http://localhost:${server.port}/auth/callback`;
+  const redirectUri = `http://localhost:${server.port}${callbackPath}`;
   const authUrl = new URL(cfg.authorizeUrl);
   authUrl.search = new URLSearchParams({
     response_type: "code",
@@ -220,13 +246,13 @@ export async function runLoginFlow(cfg: LoginConfig): Promise<OAuthTokens> {
     code_challenge_method: "S256",
   }).toString();
 
-  const timeout = setTimeout(() => rejectFlow(new Error("the codex login timed out")), cfg.timeoutMs ?? 5 * 60_000);
+  const timeout = setTimeout(() => rejectFlow(new Error(`the ${label} login timed out`)), cfg.timeoutMs ?? 5 * 60_000);
   try {
     report("opening the browser for sign-in");
     cfg.openUrl(authUrl.toString()).catch((err: unknown) => rejectFlow(new Error(`could not open the browser: ${err instanceof Error ? err.message : String(err)}`)));
     const code = await codePromise;
     report("exchanging the authorization code");
-    const tokens = await exchange(cfg.tokenUrl, { grant_type: "authorization_code", client_id: cfg.clientId, code, redirect_uri: redirectUri, code_verifier: verifier });
+    const tokens = await exchange(cfg.tokenUrl, { grant_type: "authorization_code", client_id: cfg.clientId, code, redirect_uri: redirectUri, code_verifier: verifier }, label);
     cfg.onAuthStatus?.({ isAuthenticating: false, output: ["signed in"] });
     return tokens;
   } catch (err) {

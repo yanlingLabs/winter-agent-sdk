@@ -51,8 +51,11 @@ import { winterUserAgent } from "../../identity.ts";
 import { THINKING_ENABLED_NEEDS_BUDGET } from "../refusals.ts";
 import { containsImage } from "../content-blocks.ts";
 import { parseSse } from "../../sse.ts";
+import { refreshOauthMaterial } from "../oauth/refresh.ts";
+import { CONSOLE_OAUTH, OAUTH_REFRESH_WINDOW_MS } from "./console-oauth.ts";
 import type {
   ContentBlockLike,
+  CredentialMaterial,
   CredentialRef,
   CredentialStatus,
   DiscoveryContext,
@@ -115,6 +118,13 @@ export interface AnthropicAdapterOptions {
   /** `anthropic-beta` values, joined with commas. A PROTOCOL header (R6-L): every endpoint needs it to be spoken to, and it names no account. */
   betas?: string[];
   defaultMaxOutputTokens?: number;
+  /**
+   * The OAuth token endpoint a near-expiry `oauth` credential is renewed through (D20).
+   *
+   * Injectable for a fixture exactly as codex's is; production uses `CONSOLE_OAUTH.tokenUrl`. It has
+   * no effect on an `api-key` credential, which is every other row this adapter serves.
+   */
+  tokenUrl?: string;
 }
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 60_000;
@@ -488,8 +498,54 @@ function resolveEndpoint(ctx: ProviderContext, defaultBaseUrl: string): Endpoint
  * call site exists so the rule is enforced by code rather than by this comment, and so a later
  * account-scoped header lands in the right place.
  */
-async function buildHeaders(ctx: ProviderContext, policy: EndpointPolicy, opts: AnthropicAdapterOptions, json: boolean): Promise<Record<string, string>> {
+/**
+ * Reads the credential, RENEWING an `oauth` one that is about to expire (D20).
+ *
+ * BEFORE THE TURN, NOT AFTER A 401. Codex refreshes reactively because a subscription token can be
+ * revoked at any moment and only the vendor knows; here the record itself already says when it dies,
+ * and spending a turn to be told what `expiresAt` said is a round trip that buys nothing.
+ *
+ * THREE CONDITIONS, all of them necessary rather than defensive:
+ *   - the ref must be a KEYCHAIN one, because `refreshOauthMaterial` persists what it fetches and
+ *     R6-10 puts one record per provider/account. An inline or env `oauth` material has nowhere to
+ *     write a rotated refresh token back to, and renewing it in memory would drop the new refresh
+ *     token on the floor — strictly worse than letting the existing token run its course.
+ *   - a refresh token must exist. Without one there is nothing to exchange, and the helper's own
+ *     refusal would turn a still-valid access token into a failed turn.
+ *   - `expiresAt` must be known. An absent expiry is not "expired": it is the record saying it does
+ *     not know, and refreshing on every turn is not what "does not know" implies.
+ *
+ * A FAILED REFRESH PROPAGATES. `refreshOauthMaterial` leaves the old material exactly as it was and
+ * throws a typed error naming the ref (never the token), which is a far more actionable thing for a
+ * host to surface than the opaque provider 401 that using a dead token produces a moment later.
+ */
+async function resolveFreshMaterial(ctx: ProviderContext, opts: AnthropicAdapterOptions): Promise<CredentialMaterial | null> {
   const material = await ctx.credentials.get(ctx.authRef);
+  if (material === null || material.kind !== "oauth") return material;
+  if (ctx.authRef.kind !== "keychain") return material;
+  if (material.refreshToken === undefined || material.refreshToken.length === 0) return material;
+  if (material.expiresAt === undefined) return material;
+  if (material.expiresAt - Date.now() >= OAUTH_REFRESH_WINDOW_MS) return material;
+  return await refreshOauthMaterial({
+    store: ctx.credentials,
+    ref: ctx.authRef,
+    tokenUrl: opts.tokenUrl ?? CONSOLE_OAUTH.tokenUrl,
+    clientId: CONSOLE_OAUTH.clientId,
+  });
+}
+
+async function buildHeaders(ctx: ProviderContext, policy: EndpointPolicy, opts: AnthropicAdapterOptions, json: boolean): Promise<Record<string, string>> {
+  const material = await resolveFreshMaterial(ctx, opts);
+  // D20: an OAuth bearer and the `oauth_auth` beta travel together on this family -- the pinned
+  // artifact's own auth builder is a ternary between `{Authorization, anthropic-beta}` and
+  // `{x-api-key}`, and all 13 of its sites that set the beta also set a bearer
+  // (derived-shapes-p6b.md 2.5). It is a PROTOCOL header (R6-L): the endpoint needs it to be spoken
+  // to under this auth kind, and it names no account.
+  //
+  // KEYED ON `oauth` MATERIAL, not on the adapter or a flag. A `bearer` credential is Winter's
+  // generic "some token" kind -- a gateway or proxy token, which this beta says nothing about -- so
+  // widening the condition would put a vendor beta on requests to hosts that never asked for it.
+  const betas = [...(opts.betas ?? []), ...(material?.kind === "oauth" ? [CONSOLE_OAUTH.betaHeader] : [])].filter((value, index, all) => all.indexOf(value) === index);
   // HOST HEADERS FIRST, so nothing below can be silently overridden: spread LAST, a host header could
   // replace `anthropic-version` or `content-type`, and a wrong API version is a class of failure that
   // surfaces as an unexplained upstream 400 rather than as anything local.
@@ -508,7 +564,7 @@ async function buildHeaders(ctx: ProviderContext, policy: EndpointPolicy, opts: 
     ...hostHeaders(policy, ctx.connection.headers),
     "anthropic-version": ANTHROPIC_API_VERSION,
     ...(json ? { "content-type": "application/json" } : {}),
-    ...(opts.betas !== undefined && opts.betas.length > 0 ? { "anthropic-beta": opts.betas.join(",") } : {}),
+    ...(betas.length > 0 ? { "anthropic-beta": betas.join(",") } : {}),
     // This family has no privileged header of its own; the call site exists so the R6-L rule is
     // enforced by code rather than by a comment, and so a later account-scoped header lands here.
     ...applyPrivilegedHeaders(policy, {}),
