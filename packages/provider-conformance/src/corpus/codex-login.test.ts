@@ -75,6 +75,21 @@ describe("startCodexLogin", () => {
       expect(requests[0]!.headers["user-agent"]).toBe(winterUserAgent());
       expect(requests[0]!.headers["user-agent"]).not.toMatch(/bun/i);
 
+      // P6.5 (controller ruling, round 1): THE CODEX TOKEN REQUEST IS BYTE-IDENTICAL to what it was
+      // before lane A2 touched this file. That lane added `bodyEncoding` and an opt-in `state` field
+      // to `LoginConfig` for the Anthropic Console endpoint, and `state` was briefly unconditional --
+      // which silently changed codex's grant. Pinned as the EXACT body rather than as field
+      // assertions: a per-field check cannot see an ADDED field, which is precisely the regression
+      // this exists to catch. The `code_verifier` is random per run, so it is the one part matched
+      // rather than fixed.
+      expect(requests[0]!.headers["content-type"]).toBe("application/x-www-form-urlencoded");
+      expect(requests[0]!.body).toMatch(
+        /^grant_type=authorization_code&client_id=[^&]+&code=test-code-authorization&redirect_uri=http%3A%2F%2Flocalhost%3A\d+%2Fauth%2Fcallback&code_verifier=[A-Za-z0-9_-]+$/,
+      );
+      // Said twice, on purpose: the regex above is anchored, so an appended `state` already fails it
+      // -- but this line is the one a reader greps for when they wonder whether the rule is tested.
+      expect(new URLSearchParams(requests[0]!.body).get("state")).toBeNull();
+
       // The exchange was a PKCE authorization-code grant with the verifier, and the verifier never
       // rode the authorize URL (which is the browser-visible half).
       const form = new URLSearchParams(requests[0]!.body);
