@@ -21,8 +21,8 @@
       "defaultEndpoints": {
         "api": "https://api.anthropic.com"
       },
-      "modelDiscovery": "none",
-      "liveCatalogAuthority": "unknown",
+      "modelDiscovery": "provider-native",
+      "liveCatalogAuthority": "authoritative",
       "adapterId": "winter.anthropic-messages",
       "family": "anthropic",
       "upstream": {
