@@ -337,6 +337,64 @@ describe("Vertex Gemini: the shared wire mapping", () => {
     });
   });
 
+  test("a message rendering to ZERO parts does not split the same-role merge", async () => {
+    // The round-3 assembler created the entry before the block loop, so a message that produced no
+    // parts -- `content: ""`/`[]`, or one carrying only another dialect's thinking, which is dropped
+    // at this boundary -- left an EMPTY entry between two same-role neighbours and broke their
+    // adjacency. The trailing non-empty filter could not save it: by then the split had happened.
+    const adapter = testVertexAdapter();
+    const harness = await createVertexHarness();
+    const empties = [
+      { label: "empty string", content: "" as const },
+      { label: "empty block list", content: [] },
+      { label: "foreign thinking only", content: [{ type: "thinking" as const, thinking: "another dialect's", signature: "sig-x" }] },
+    ];
+    await withFake({ routes: harness.routes }, async (fake) => {
+      harness.bind(fake.url);
+      for (const empty of empties) {
+        const before = requestsTo(fake, vertexGeneratePath(GOOGLE_MODELS.main)).length;
+        await foldProviderStream(
+          adapter.streamTurn(
+            { model: GOOGLE_MODELS.main, messages: [{ role: "user", content: "a" }, { role: "assistant", content: empty.content }, { role: "user", content: "b" }] },
+            vertexContext(harness, fake.url),
+          ),
+        );
+        const generate = requestsTo(fake, vertexGeneratePath(GOOGLE_MODELS.main))[before]!;
+        const contents = geminiContents(generate);
+        expect({ label: empty.label, roles: contents.map((c) => c.role) }).toEqual({ label: empty.label, roles: ["user"] });
+        expect(contents[0]?.parts).toEqual([{ text: "a" }, { text: "b" }]);
+      }
+    });
+  });
+
+  test("a two-tool loop with an EMPTY assistant between the results yields ONE user turn, not two consecutive ones", async () => {
+    const adapter = testVertexAdapter();
+    const harness = await createVertexHarness();
+    await withFake({ routes: harness.routes }, async (fake) => {
+      harness.bind(fake.url);
+      await foldProviderStream(
+        adapter.streamTurn(
+          {
+            model: GOOGLE_MODELS.main,
+            messages: [
+              { role: "assistant", content: [{ type: "tool_use", id: "c1", name: "Read", input: {} }, { type: "tool_use", id: "c2", name: "Write", input: {} }] },
+              { role: "tool", content: [{ type: "tool_result", tool_use_id: "c1", content: "one" }] },
+              { role: "assistant", content: [] },
+              { role: "tool", content: [{ type: "tool_result", tool_use_id: "c2", content: "two" }] },
+            ],
+          },
+          vertexContext(harness, fake.url),
+        ),
+      );
+      const contents = geminiContents(requestsTo(fake, vertexGeneratePath(GOOGLE_MODELS.main))[0]!);
+      expect(contents.map((c) => c.role)).toEqual(["model", "user"]);
+      expect(contents[1]?.parts).toEqual([
+        { functionResponse: { name: "Read", response: { output: "one" } } },
+        { functionResponse: { name: "Write", response: { output: "two" } } },
+      ]);
+    });
+  });
+
   test("`x-goog-user-project` is dropped for a user endpoint (R6-L), and the project still reaches the PATH", async () => {
     const adapter = testVertexAdapter();
     const harness = await createVertexHarness();

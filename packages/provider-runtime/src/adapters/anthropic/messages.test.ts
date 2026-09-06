@@ -82,6 +82,24 @@ describe("toWireMessages", () => {
     ]);
   });
 
+  test("a LATER merged assistant message's leading thinking is hoisted ahead of an earlier message's text", () => {
+    // Recorded because it is a real consequence of assembling per merged ENTRY rather than per
+    // message, and it was uncovered. It is the wire-correct direction: with thinking enabled this
+    // endpoint wants the turn's thinking blocks first, and before the buckets the same input produced
+    // `[text, thinking, text]` -- an ordering the endpoint rejects.
+    expect(
+      toWireMessages([
+        { role: "assistant", content: [{ type: "text", text: "x" }] },
+        { role: "assistant", content: [{ type: "thinking", thinking: "why", signature: "s1" }, { type: "text", text: "y" }] },
+      ]),
+    ).toEqual([
+      {
+        role: "assistant",
+        content: [{ type: "thinking", thinking: "why", signature: "s1" }, { type: "text", text: "x" }, { type: "text", text: "y" }],
+      },
+    ]);
+  });
+
   test("a blocks-valued tool_result nests its inner blocks rather than stringifying them", () => {
     const wire = toWireMessages([
       { role: "tool", content: [{ type: "tool_result", tool_use_id: "c1", content: [{ type: "text", text: "page 1" }, { type: "image", source: { type: "base64", media_type: "image/png", data: "AA==" } }] }] },

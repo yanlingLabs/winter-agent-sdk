@@ -282,9 +282,16 @@ export function toContents(messages: ProviderMessageLike[]): SerializeResult {
     const textItems = items.filter((i) => i.kind === "text");
     let textOrdinal = 0;
 
-    const last = entries[entries.length - 1];
-    const entry = last !== undefined && last.role === role ? last : { role, results: [], decorations: [], rest: [] };
-    if (entry !== last) entries.push(entry);
+    // FILED INTO A DETACHED BUCKET FIRST, and pushed into the merge chain only once it has something
+    // in it. Creating the entry up front looked equivalent and was not: a message that renders to
+    // ZERO parts -- `content: ""`/`[]`, or one carrying only another dialect's thinking, which is
+    // dropped at this boundary -- left an EMPTY entry sitting between two same-role neighbours and
+    // broke their adjacency. `[user "a", assistant(thinking-only), user "b"]` became two `user`
+    // entries, and a two-tool loop with an empty assistant between them became two CONSECUTIVE
+    // `user` entries: the shape this file's own header says the endpoint rejects. The trailing
+    // non-empty filter could not save it, because by then the split had already happened.
+    const previous = entries[entries.length - 1];
+    const entry: GoogleEntryBuckets = previous !== undefined && previous.role === role ? previous : { role, results: [], decorations: [], rest: [] };
 
     // A Winter-authored annotation rides PLAINLY (R6-3 / R6-8), and its text goes on the wire
     // VERBATIM. `decoration.text` is already the FINISHED, DELIMITED string Lane C produced -- the
@@ -357,6 +364,11 @@ export function toContents(messages: ProviderMessageLike[]): SerializeResult {
           );
       }
     }
+
+    // Pushed only now, and only if this message actually contributed something. A message that
+    // produced nothing leaves the chain exactly as it found it, so the next same-role message still
+    // merges with the previous one.
+    if (entry !== previous && entry.results.length + entry.decorations.length + entry.rest.length > 0) entries.push(entry);
   }
 
   // ASSEMBLED PER ENTRY, after every message that merges into it has been filed: the tool responses

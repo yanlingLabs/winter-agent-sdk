@@ -477,6 +477,20 @@ describe("Google GenerateContent: a Lane C decoration is RENDERED, not inert (Mi
     });
   });
 
+  test("the fake REJECTS consecutive same-role entries, so the merge pins can fail", async () => {
+    // The guard-on-the-guard: a fake that accepts any role sequence cannot fail a pin about role
+    // sequence, which is exactly how a split merge shipped once already.
+    await withFake({ routes: googleCorpusRoutes() }, async (fake) => {
+      const res = await fetch(`${fake.url}/v1beta/models/${GOOGLE_MODELS.main}:streamGenerateContent?alt=sse`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-goog-api-key": GOOGLE_TEST_KEY },
+        body: JSON.stringify({ contents: [{ role: "user", parts: [{ text: "a" }] }, { role: "user", parts: [{ text: "b" }] }] }),
+      });
+      expect(res.status).toBe(400);
+      expect(await res.text()).toContain("must not share a role");
+    });
+  });
+
   test("a decoration does not consume the text ordinal a `thoughtSignature` is keyed to", async () => {
     const adapter = testGoogleAdapter();
     await withFake({ routes: googleCorpusRoutes() }, async (fake) => {

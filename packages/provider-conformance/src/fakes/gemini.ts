@@ -193,6 +193,32 @@ export function findFunctionResponseOrderingViolation(recorded: RecordedRequest)
   return undefined;
 }
 
+/**
+ * Role ALTERNATION, enforced so a pin about the merge can fail.
+ *
+ * `contents` is a conversation: two adjacent entries with the same role are not a turn the endpoint
+ * accepts. This lane's own serializer merges adjacent same-role messages precisely because of that —
+ * and then shipped a version where a message rendering to ZERO parts split the merge and produced
+ * two consecutive `user` entries, with nothing on the receiving end to notice. A fake that accepts
+ * any role sequence cannot fail a pin about role sequence.
+ *
+ * Returns the index of the second entry of the first offending pair, or `undefined` when the
+ * conversation alternates.
+ */
+export function findRoleAlternationViolation(recorded: RecordedRequest): number | undefined {
+  let body: { contents?: unknown };
+  try {
+    body = JSON.parse(recorded.body) as { contents?: unknown };
+  } catch {
+    return undefined;
+  }
+  const contents = Array.isArray(body.contents) ? (body.contents as Array<{ role?: unknown }>) : [];
+  for (let i = 1; i < contents.length; i++) {
+    if (contents[i]?.role === contents[i - 1]?.role) return i;
+  }
+  return undefined;
+}
+
 export interface GeminiFakeOptions {
   /** modelId -> the scripted answer for `:streamGenerateContent`. */
   stream: Record<string, ((recorded: RecordedRequest, attempt: number) => Response | Promise<Response>) | Response[]>;
@@ -221,6 +247,10 @@ export function geminiFakeRoutes(opts: GeminiFakeOptions): FakeRoute[] {
         const badEntry = findFunctionResponseOrderingViolation(recorded);
         if (badEntry !== undefined) {
           return geminiError(400, "INVALID_ARGUMENT", `contents[${badEntry}]: functionResponse parts must precede any other content in their turn`);
+        }
+        const badRole = findRoleAlternationViolation(recorded);
+        if (badRole !== undefined) {
+          return geminiError(400, "INVALID_ARGUMENT", `contents[${badRole}]: consecutive entries must not share a role — a conversation alternates`);
         }
         const model = geminiModelOf(recorded) ?? "";
         if (recorded.path.endsWith(":countTokens")) {
