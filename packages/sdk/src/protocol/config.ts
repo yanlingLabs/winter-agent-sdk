@@ -545,9 +545,17 @@ export interface AutoClassifierConfig {
   authRef?: CredentialRef;
 }
 
-/** The advisor/reviewer backend's own model selection (P2 carry, wired in T10). Same selection path. */
+/**
+ * The advisor/reviewer backend's own model selection (P2 carry, wired in T10). Same selection path.
+ *
+ * `authRef` (P6 fix wave, Ruling E-1) mirrors `AutoClassifierConfig.authRef`: the advisor's OWN
+ * credential, for a reviewer on another provider than the session's. A cross-provider advisor never
+ * inherits the session's credential -- without a ref here, and without a keychain record for the
+ * advisor's provider, the advisor's provider refuses with a typed `no-credential-for-provider`.
+ */
 export interface AdvisorConfig {
   model: string;
+  authRef?: CredentialRef;
 }
 
 // --- Phase 6 Task 10 (derived-shapes-p6 item (d)): the two PUBLIC-SURFACE provider shapes ---------

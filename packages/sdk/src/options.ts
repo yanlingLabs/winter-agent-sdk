@@ -515,6 +515,12 @@ export interface Options {
   keychainService?: string;
   /** DISCLOSED WINTER option (R6-14): the permission classifier's own model/credential, resolved through the SAME selection path as the session model. With none configured the worker serves only a `classifierEligible` model, else Manual fallback — never a silent weakening. */
   autoClassifier?: AutoClassifierConfig;
-  /** DISCLOSED WINTER option (P2 carry, wired in T10): the advisor/reviewer backend's model, same selection path. */
+  /**
+   * DISCLOSED WINTER option (P2 carry, wired in T10): the advisor/reviewer backend's model, same
+   * selection path. Its optional `authRef` (fix wave, Ruling E-1) is the advisor's OWN credential:
+   * a target on another provider than the session's never inherits the session's -- it uses the
+   * route's ref, else the target provider's own keychain record (`<providerId>:default`), else a
+   * typed `no-credential-for-provider` refusal at its first generation.
+   */
   advisor?: AdvisorConfig;
 }

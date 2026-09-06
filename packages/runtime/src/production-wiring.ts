@@ -67,6 +67,7 @@ import { buildSessionProvider, type SessionProviderOptions, type SessionProvider
 import type { Provider } from "./engine.ts";
 import type { ClassifierInterface } from "./permissions/auto/engine.ts";
 import { WinterProviderResolutionError } from "@yanlinglabs/winter-provider-runtime";
+import { redactCredentialRef } from "./provider/selection.ts";
 
 // --- narrowing the six undeclared settings keys ---------------------------------------------------
 //
@@ -853,7 +854,7 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
       // `AgentDefinition.model` reaches the same catalog the parent did -- and returns `undefined`
       // when the model resolves to what the parent is already running, so the common case builds no
       // second adapter and every pre-P6 child is byte-identical.
-      resolveChildProvider: (model: string) => {
+      resolveChildProvider: async (model: string) => {
         const registry = providerWiring.registry;
         const parent = providerWiring.resolved;
         if (parent === undefined) return undefined; // a scripted double has no catalog to resolve against
@@ -864,6 +865,30 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
         const resolvedChild = model.includes("/") ? registry.resolve({ model }) : registry.resolve({ model, provider: { providerId: parent.providerId } });
         if (resolvedChild instanceof WinterProviderResolutionError) return undefined;
         if (resolvedChild.modelKey === parent.modelKey) return undefined;
+        // RULING E-1 (whole-branch C-1, probe P1a): a child on ANOTHER provider gets that provider's
+        // OWN material -- never the parent's `authRef`, never the parent's user `baseUrl`. When the
+        // rule lands on the target provider's keychain record, its EXISTENCE is probed here, before
+        // the spawn commits: a child that would only discover the missing key at its first
+        // generation is a child that fails after the parent already delegated to it. The probe reads
+        // presence only; the material itself never leaves the store (R6-10).
+        const material = providerWiring.describeTargetMaterial(resolvedChild);
+        if (material.source === "provider-record") {
+          let present = false;
+          try {
+            present = (await providerWiring.credentials.get(material.authRef)) !== null;
+          } catch {
+            present = false; // a store that cannot answer is a store with no record to offer
+          }
+          if (!present) {
+            return {
+              refused: {
+                providerId: resolvedChild.providerId,
+                modelKey: resolvedChild.modelKey,
+                reason: `no keychain record ${redactCredentialRef(material.authRef)} and no \`authRef\` on the child's own route (a child on another provider never inherits the parent's credential, Ruling E-1)`,
+              },
+            };
+          }
+        }
         return {
           provider: providerWiring.buildProvider(resolvedChild),
           identity: {
@@ -874,7 +899,9 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
             adapterId: resolvedChild.adapterId,
             adapterVersion: resolvedChild.adapter.version,
             catalogVersion: resolvedChild.catalogVersion,
-            ...(providerWiring.identity?.authRefKind !== undefined ? { authRefKind: providerWiring.identity.authRefKind } : {}),
+            // M-7: the CHILD's own material's kind -- the parent's `authRefKind` was stamped here
+            // before, misreporting a cross-provider child's credential as its parent's.
+            authRefKind: material.authRef.kind,
           },
         };
       },

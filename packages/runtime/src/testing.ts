@@ -261,6 +261,8 @@ export function inMemoryProcess(
         provider: wiring.providerWiring.provider,
         config: effectiveConfig,
         env: env ?? {},
+        // Ruling E-1: the in-memory leg's own stderr pipe, exactly where its wiring warnings go.
+        warn: (line) => stderr.write(`${line}\n`),
         // R-2: TWO spreads, not one. This single conditional was the coupling -- see
         // `childWinterHome` above for why the floors now depend on it.
         ...(childStore !== undefined ? { store: childStore } : {}),

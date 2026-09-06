@@ -132,8 +132,36 @@ import type { StructuredOutputSeam } from "../structured/seam.ts";
 import type { SourcedHookEntry } from "../hooks/registry.ts";
 import type { CompactionController } from "../compaction/seam.ts";
 
+/** The identity an R6-17 child's own provider reports. `authRefKind` is the CHILD's material's kind (Ruling E-1), never the parent's. */
+export interface ChildProviderIdentity {
+  providerId: string;
+  modelKey: string;
+  family: string;
+  continuationDomain?: string;
+  adapterId?: string;
+  adapterVersion?: string;
+  catalogVersion?: string;
+  authRefKind?: string;
+}
+
+/**
+ * What `resolveChildProvider` answers. `refused` (Ruling E-1) is the cross-provider child with no
+ * credential of its own: the resolver does NOT hand back the parent's provider dressed as the
+ * child's -- it names the child, the provider and the reason, and the spawn path says so on stderr
+ * AND on a `continuity_warning` frame before falling back to the parent's provider as before.
+ */
+export type ChildProviderResolution =
+  | { provider: Provider; identity: ChildProviderIdentity }
+  | { refused: { providerId: string; modelKey: string; reason: string } };
+
 export interface ChildEngineFactoryDeps {
   provider: Provider;
+  /**
+   * Ruling E-1: the operator's channel for a refused cross-provider child. `main.ts` writes it to
+   * the process's stderr, `testing.ts` to the in-memory leg's own stderr queue -- the same two sinks
+   * every wiring warning already uses. Absent means the stderr half is silent (the frame still goes).
+   */
+  warn?: (line: string) => void;
   /**
    * Phase 6 Task 10 (R6-17): THE CHILD'S OWN PROVIDER.
    *
@@ -151,7 +179,7 @@ export interface ChildEngineFactoryDeps {
    * PARENT's identity would write provider-state records naming a model it never called, and the
    * resume side reads those records to decide what may be replayed natively.
    */
-  resolveChildProvider?: (model: string) => { provider: Provider; identity: { providerId: string; modelKey: string; family: string; continuationDomain?: string; adapterId?: string; adapterVersion?: string; catalogVersion?: string; authRefKind?: string } } | undefined;
+  resolveChildProvider?: (model: string) => ChildProviderResolution | undefined | Promise<ChildProviderResolution | undefined>;
   // Durable storage for child transcripts -- when omitted, children run WITHOUT persistence
   // (matching this codebase's own established `persistSession:false` behavior elsewhere: the engine
   // runs fine with no store, it just does not survive a restart, and `resume()` degrades to
@@ -330,7 +358,39 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
     // Phase 6 Task 10 (R6-17): resolved HERE, once, from the model this child actually settled on --
     // never from `req.model`, which may be an alias, and never inside the runEngine call, where a
     // second resolution could disagree with the one `config.model` was built from.
-    const childProvider = deps.resolveChildProvider?.(resolvedModel.effectiveModel);
+    // ASYNC since the fix wave (Ruling E-1): a child on ANOTHER provider than the parent's has its
+    // own credential probed before the spawn commits to it, and a probe is a store read.
+    const childResolution = await deps.resolveChildProvider?.(resolvedModel.effectiveModel);
+    let childProvider: Extract<ChildProviderResolution, { provider: Provider }> | undefined;
+    if (childResolution !== undefined && "refused" in childResolution) {
+      // RULING E-1: never the parent's provider SILENTLY. The child still runs on it (the pre-P6
+      // behaviour for a model the wiring could not build for), but both the operator and the host
+      // are told, in words that name the child and the provider -- counts and identity only, never
+      // credential material (Global Constraints).
+      const { providerId, modelKey, reason } = childResolution.refused;
+      const line = `child agent "${req.name ?? req.definition?.description ?? "agent"}" (${agentId}) asked for model "${modelKey}" on provider "${providerId}", which this session has no credential for: ${reason}; the child runs against the parent's provider instead`;
+      deps.warn?.(`winter: ${line}`);
+      try {
+        runCtx.forwardChildFrame(
+          {
+            type: "data",
+            message: {
+              type: "system",
+              subtype: "continuity_warning",
+              warning: "child_provider_refused",
+              detail: line,
+              uuid: randomUUID(),
+              session_id: runCtx.parentSessionId,
+            },
+          },
+          { parentToolUseId: req.parentToolUseId, agentId },
+        );
+      } catch {
+        /* a torn-down parent stream must never fail a spawn over a warning */
+      }
+    } else {
+      childProvider = childResolution;
+    }
 
     // --- Tool restriction (WS-10 §2) -------------------------------------------------------------
     // `inherit.tools` is the resolved allowlist (a fork's exact pool, a definition's own

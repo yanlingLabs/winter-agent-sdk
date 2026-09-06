@@ -585,7 +585,15 @@ export interface SDKModelSwitchMessage {
 export interface SDKContinuityWarningMessage {
   type: "system";
   subtype: "continuity_warning";
-  warning: "provider_state_missing" | "provider_state_deleted" | "cross_domain_replay_dropped" | "sidecar_unreadable";
+  /**
+   * Five values (P6 fix wave). `provider_state_missing` / `provider_state_deleted` /
+   * `sidecar_unreadable` are emitted on a RESUME (`store/continuation-attach.ts`);
+   * `cross_domain_replay_dropped` at a MODEL SWITCH whose loss class is `warned-lossy` (Ruling E-2,
+   * `applyPendingModelSwitch`); `child_provider_refused` when an R6-17 child named a model on
+   * ANOTHER provider for which no credential is configured (Ruling E-1) -- the child then runs
+   * against its parent's provider, loudly rather than silently.
+   */
+  warning: "provider_state_missing" | "provider_state_deleted" | "cross_domain_replay_dropped" | "sidecar_unreadable" | "child_provider_refused";
   detail: string;
   anchor_uuid?: string;
   uuid: string;
