@@ -346,7 +346,7 @@ const INTEGRATION_ROWS: ConformanceRow[] = [
     // leave the log — and the old citation — intact.
     citations: [
       { file: `${SCRIPTS}/verify-protocol-compiled.ts`, testName: "the bundled catalog is not the one that was built in" },
-      { file: `${SCRIPTS}/verify-protocol-compiled.ts`, testName: "an unknown model did NOT refuse — a binary with an empty catalog would also refuse the known one" },
+      { file: `${SCRIPTS}/verify-protocol-compiled.ts`, testName: "reported a `winter_provider` identity it cannot have resolved" },
     ],
     note: "A gate rather than a `bun test` case, because the subject IS the compiled binary: a path read that resolves in dev and to nothing inside `$bunfs` is the exact class this leg exists to disprove, and no dev-mode test can see it. Both citations are THROWS -- the catalog-version mismatch and the negative control.",
   },
