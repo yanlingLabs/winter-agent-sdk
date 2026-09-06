@@ -16,6 +16,7 @@ import type { CredentialRef, RuntimeConfig } from "@yanlinglabs/winter-agent-sdk
 import type { WinterCatalog, WinterModelDescriptor, WinterProviderDescriptor } from "@yanlinglabs/winter-provider-catalog";
 import { loadCatalog } from "@yanlinglabs/winter-provider-catalog";
 import { WinterProviderResolutionError, createMemoryCredentialStore, type CredentialMaterial } from "@yanlinglabs/winter-provider-runtime";
+import { ANTHROPIC_DEFAULT_BASE_URL } from "@yanlinglabs/winter-provider-runtime";
 import { startFake, sseResponse, jsonResponse, type FakeServer } from "winter-provider-conformance";
 import { startScenarioFake } from "./scenario-fake.ts";
 import { buildSessionProvider, apiKeySourceFor, connectionForProvider } from "./session-provider.ts";
@@ -314,17 +315,45 @@ describe("T10 wiring: R6-11 / R6-L — privileged headers ride a GENERATED endpo
 describe("T10 wiring: `connectionForProvider` never demotes a reviewed endpoint (Lane A's second-half obligation)", () => {
   const real = loadCatalog();
 
-  test("a single-provider adapter (openai, anthropic) gets NO baseUrl — copying the catalog's endpoint in would make it a user endpoint and silently drop every privileged header", () => {
-    for (const providerId of ["openai", "anthropic", "google", "bedrock"]) {
+  test("a single-provider adapter (openai, google, bedrock) gets NO baseUrl — copying the catalog's endpoint in would make it a user endpoint and silently drop every privileged header", () => {
+    // `anthropic` WAS in this list and is not any more, and the reason is a fact about the catalog
+    // rather than about this rule: P6.5's widening (WS-13b §2, R6b-5) put five providers on
+    // `winter.anthropic-messages`, so it is no longer a single-provider adapter and falls under the
+    // case below. The rule itself is unchanged. The cost of that move is pinned by the next test.
+    for (const providerId of ["openai", "google", "bedrock"]) {
       const provider = real.providers.find((p) => p.id === providerId);
       expect(provider).toBeDefined();
+      expect([providerId, real.providers.filter((p) => p.adapterId === provider!.adapterId).length]).toEqual([providerId, 1]);
       const connection = connectionForProvider(baseConfig({ model: "x" }), real, provider!);
       expect(connection?.baseUrl).toBeUndefined();
     }
   });
 
+  test("`anthropic` became a MULTI-provider row in P6.5, and the copy costs it nothing — but here is exactly what would make it cost something", () => {
+    // Two facts hold this down, and both are checked rather than asserted in prose.
+    //
+    //  1. The copied URL IS the adapter's own compiled default. The mapper's endpoint strip
+    //     (WS-13b §2) turns upstream's `https://api.anthropic.com/v1/messages` into the API root,
+    //     and that root is byte-identical to `ANTHROPIC_DEFAULT_BASE_URL`. So the request goes to
+    //     the same place either way; only the endpoint's PROVENANCE changed.
+    //  2. The Anthropic family builds NO privileged header — `messages.ts` calls
+    //     `applyPrivilegedHeaders(policy, {})` with an empty set, deliberately, so the R6-L rule has
+    //     a call site. An empty set gated to `{}` is still `{}`.
+    //
+    // THE SECOND IS A TRIPWIRE, not a reassurance: the day a privileged header is added to this
+    // family, a copied `connection.baseUrl` is evaluated `generated: false` and that header is
+    // dropped silently. The fix that removes the exposure is a reviewed/generated marker on
+    // `ProviderConnectionConfig` — an `sdk/**` type, and a spine change. Until then, this test is
+    // where that debt is written down.
+    const provider = real.providers.find((p) => p.id === "anthropic")!;
+    expect(real.providers.filter((p) => p.adapterId === provider.adapterId).length).toBeGreaterThan(1);
+    const connection = connectionForProvider(baseConfig({ model: "x" }), real, provider);
+    expect(connection?.baseUrl).toBe(provider.defaultEndpoints["api"] as string);
+    expect(connection?.baseUrl).toBe(ANTHROPIC_DEFAULT_BASE_URL);
+  });
+
   test("a MULTI-provider adapter's rows DO get the catalog endpoint — there is no single vendor default to fall back to", () => {
-    for (const providerId of ["deepseek", "openrouter", "ollama-local"]) {
+    for (const providerId of ["deepseek", "openrouter", "ollama-local", "anthropic", "zai-anthropic"]) {
       const provider = real.providers.find((p) => p.id === providerId);
       expect(provider).toBeDefined();
       const connection = connectionForProvider(baseConfig({ model: "x" }), real, provider!);

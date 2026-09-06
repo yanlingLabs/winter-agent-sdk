@@ -44,12 +44,42 @@ export interface RefreshOauthMaterialInput {
   clientId: string;
   /** Injectable clock, so a fixture can assert the exact `expiresAt` instead of a range. Defaults to `Date.now`. */
   now?: () => number;
-  /** Extra form fields the vendor's flow requires — an honest identity field, for instance. Never a credential. */
+  /** Extra body fields the vendor's flow requires — an honest identity field, for instance. Never a credential. */
   extraFields?: Record<string, string>;
+  /**
+   * The grant's body encoding. Defaults to `"form"`.
+   *
+   * P6.5 ruling R-A2-1, "artifact wins": RFC 6749 §4.1.3 requires a token endpoint to ACCEPT
+   * `application/x-www-form-urlencoded`, and every Winter flow posted that — but the Anthropic
+   * Console endpoint is only ever OBSERVED receiving `application/json`, and an unobserved encoding
+   * that turns out to be rejected breaks that flow completely rather than partially. So the
+   * encoding is a per-flow fact rather than a constant. The default keeps codex byte-identical.
+   */
+  bodyEncoding?: "form" | "json";
 }
 
 /** `expires_in` is optional on the wire; an hour is the conventional default, and it is only ever a refresh-earlier hint. */
 const DEFAULT_EXPIRES_IN_SECONDS = 3600;
+
+/**
+ * Refreshes ALREADY RUNNING for a given record, so concurrent callers share one grant.
+ *
+ * P6.5 ruling R-A2-3, and it is a correctness fix rather than an optimisation. A single turn reaches
+ * `buildHeaders` from three places (`streamTurn`, `countTokens`, `validateCredential`), and any two
+ * of them inside the 60 s freshness window used to fire two independent refreshes with the SAME
+ * refresh token. Against a server that rotates refresh tokens that is not merely wasteful: RFC 9700
+ * §4.14 has an authorization server treat a replayed refresh token as evidence of theft and revoke
+ * the whole token family — so the second call could log the user out. The loser's `store.set` would
+ * also clobber the winner's newer material.
+ *
+ * KEYED ON THE RECORD **AND** THE TOKEN URL: two flows pointed at different endpoints are different
+ * grants even for the same account, and sharing a promise between them would hand one flow the
+ * other's tokens. `\u0000` separates the parts because it cannot occur in either.
+ *
+ * The entry is removed in a `finally`, so a FAILED refresh is never cached — the next caller retries
+ * rather than inheriting a rejection forever.
+ */
+const inFlightRefreshes = new Map<string, Promise<OauthMaterial>>();
 
 /**
  * Exchanges the record's refresh token for a fresh access token, PERSISTS the merged material, and
@@ -61,7 +91,18 @@ const DEFAULT_EXPIRES_IN_SECONDS = 3600;
  * account exists), a non-2xx, an unparseable body, and a 200 that carries no access token. In every
  * failure the OLD material is left exactly as it was.
  */
-export async function refreshOauthMaterial(input: RefreshOauthMaterialInput): Promise<OauthMaterial> {
+export function refreshOauthMaterial(input: RefreshOauthMaterialInput): Promise<OauthMaterial> {
+  const key = `${input.ref.service ?? ""}\u0000${input.ref.account}\u0000${input.tokenUrl}`;
+  const running = inFlightRefreshes.get(key);
+  if (running !== undefined) return running;
+  const pending = performRefresh(input).finally(() => {
+    inFlightRefreshes.delete(key);
+  });
+  inFlightRefreshes.set(key, pending);
+  return pending;
+}
+
+async function performRefresh(input: RefreshOauthMaterialInput): Promise<OauthMaterial> {
   const { store, ref, tokenUrl, clientId } = input;
   const now = input.now ?? Date.now;
   const where = redactRef(ref);
@@ -76,13 +117,15 @@ export async function refreshOauthMaterial(input: RefreshOauthMaterialInput): Pr
   const built = createEndpointPolicy(new URL(tokenUrl).origin, { generated: true });
   if (!built.ok) throw new CredentialResolutionError("io", `oauth refresh for ${where} cannot use its token endpoint: ${built.reason}`);
 
+  const fields = { grant_type: "refresh_token", client_id: clientId, refresh_token: existing.refreshToken, ...(input.extraFields ?? {}) };
+  const asJson = input.bodyEncoding === "json";
   const response = await boundedFetch(tokenUrl, {
     method: "POST",
     // WS-13b: a token endpoint is a vendor request like any other, so Winter names itself here too.
     // Lanes A2/O build their flows on this helper; an identity that stopped at the chat endpoint
     // would leave every OAuth row anonymous on the one request that renews its credential.
-    headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json", "user-agent": winterUserAgent() },
-    body: new URLSearchParams({ grant_type: "refresh_token", client_id: clientId, refresh_token: existing.refreshToken, ...(input.extraFields ?? {}) }).toString(),
+    headers: { "content-type": asJson ? "application/json" : "application/x-www-form-urlencoded", accept: "application/json", "user-agent": winterUserAgent() },
+    body: asJson ? JSON.stringify(fields) : new URLSearchParams(fields).toString(),
     policy: built.policy,
     maxBodyBytes: 512 * 1024,
     timeoutMs: 30_000,

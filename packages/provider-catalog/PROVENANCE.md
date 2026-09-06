@@ -7,8 +7,8 @@ The committed catalog is the merge of two layers, performed by `scripts/provider
 
 | Layer | Source | Owner | Present |
 | --- | --- | --- | --- |
-| upstream | `generated/upstream-layer.json`, extracted from the pinned OmniRoute tree by `scripts/provider-source-sync.ts` | the extractor | **yes** — 7 providers, 54 models |
-| overlay | `overlay/providers.json` + `overlay/models.json`, hand-authored and reviewed | Winter | yes — 21 providers, 13 models |
+| upstream | `generated/upstream-layer.json`, extracted from the pinned OmniRoute tree by `scripts/provider-source-sync.ts` | the extractor | **yes** — 106 providers, 540 models |
+| overlay | `overlay/providers.json` + `overlay/models.json`, hand-authored and reviewed | Winter | yes — 64 providers, 65 models |
 
 **The overlay always wins.** WS-13 §7: live discovery and upstream extraction never silently
 overwrite `official-doc`/`live-probe` overlay entries, so a conflicting upstream row is dropped in
@@ -63,7 +63,7 @@ twin and a test asserts the two agree, so this document cannot drift away from t
 | `provider.displayName` | copied verbatim | the product-catalog row's `name` |
 | `provider.protocols` | mechanically normalized | upstream `format` through a closed map; an unknown format **fails the run** |
 | `provider.authKinds` | mechanically normalized | upstream `authType` through a closed map; an unknown auth value **fails the run** |
-| `provider.defaultEndpoints` | copied verbatim | upstream `baseUrl`/`responsesBaseUrl`/`modelsUrl` exactly as written, including the full chat path. A URL carrying userinfo or a query string is dropped and recorded (R6-11) |
+| `provider.defaultEndpoints` | mechanically normalized | `api` is upstream's `baseUrl` with exactly the path its own `format` names removed (`/chat/completions`, `/responses`, `/v1/messages`, `/v1beta/models`) — the API **root**, and the exact inverse of what every adapter in that family appends to `connection.baseUrl`. Never a trim to an origin. A `default`-executor row whose URL does not end in its format's suffix, or states none, **fails the run**. `bedrock`/`vertex` are exempt and stay verbatim. `responsesBaseUrl`/`modelsUrl` are copied verbatim. A URL carrying userinfo or a query string is dropped and recorded (R6-11) |
 | `provider.modelDiscovery` | mechanically normalized | derived from `modelsUrl`/`passthroughModels`; upstream has no such field |
 | `provider.liveCatalogAuthority` | mechanically normalized | upstream `liveCatalogAuthoritative` when **stated**; unstated becomes `unknown`, never upstream's `true` default |
 | `provider.adapterId` / `provider.family` | local override | the Winter adapter family the protocol routes to; upstream's `executor` never crosses |
@@ -83,6 +83,49 @@ twin and a test asserts the two agree, so this document cannot drift away from t
 | `*.pricing` | official-doc derived | **overlay only**, from the vendors' pricing pages with the URL and observation instant |
 | `*.classifierEligible` | live-probe proven | **never set** by extraction or overlay (R6-14) |
 | `reasoning.continuationDomain` / `summaryRequest` / `readableState` / `completionEvent` / `toolLoopRequirement` | official-doc derived | **overlay only**; continuation domain is never inferred from a shared HTTP shape |
+
+### Two tiers of admission citation
+
+Every provider row carries `admission.citation` — the document that admits it (WS-13b §1, D21;
+R6b-3 makes a row without one a validation failure, and one citing the audit's `unknown` class a
+refusal). The rows do **not** all rest on the same strength of evidence, and conflating the two
+tiers would be the quiet failure this field exists to prevent, so they are labelled:
+
+| Tier | What it is | Which rows |
+| --- | --- | --- |
+| **fetched-document** | a page `docs/research/Provider-third-party-access-audit.md` retrieved and read on 2026-09-06, or a vendor pricing page already reviewed in-repo | the 3 frontier pricing pages, and every P6.5 **overlay** row (the audit's 51 citations) |
+| **pinned-upstream** | the vendor's own site as OmniRoute's product catalog records it at commit `5458026`, blob-pinned in `extraction-manifest.json`, plus the api-key path attested by that id's own pinned `RegistryEntry` (`authType: "apikey"`, its dialect, its base URL) | the 107 P6.5 allowlist admissions, and the 5 P6 rows T1 had left citing `spec:WS-13 §1` |
+
+A pinned-upstream citation is a real, dated, verifiable reference — it names a specific blob at a
+verified commit — but it is **not** a page this repository fetched and read, and it is not the
+vendor's terms of service. Its own text says so, in every row. Two consequences are deliberate:
+
+* every pinned-upstream row carries `risk.class: "review-required"` with that reason spelled out,
+  rather than `approved`. Only `blocked` refuses at resolution (`provider-runtime/src/registry.ts`),
+  so the row is usable — but nothing in the catalogue claims a review that did not happen;
+* the audit's own `unknown` disposition is a **different and stronger** statement, and it excludes:
+  an id whose decisive document was looked for and not found is in `blocked`, not admitted at this
+  tier. `codebuddy-cn` is the worked example.
+
+**A citation is checked for LIVENESS, not just for shape (round-1 finding I-3).** Every
+`pinned-upstream` citation host was swept with a HEAD, a GET where the host refuses HEAD, and one
+retry on 5xx. Eight rows cited something that is not a document and were moved to `blocked` with the
+sweep result on the row: three NXDOMAIN (`llamagate`, `monsterapi`, `tokenrouter`), two HTTP 404
+(`sumopod`, `token-kiosk`), one persistent 530 (`x5lab`), one HTTP 200 whose entire body is the
+string "New API" (`chenzk` — a bare gateway shell), and one permanent redirect to a *different
+company's* product page after an acquisition (`predibase` → `rubrik.com`). Two more were repaired
+rather than dropped: `cerebras` cited a page that 301s to a chat product and now cites its Inference
+API docs, and `zai-anthropic` cited the mainland product site although the lane had fetched z.ai's
+own Claude-client doc. A citation is a row's entire evidence, so a citation that resolves to nothing
+is a row with no evidence.
+
+**What decision (a) asked for and why it could not be met as written.** The P6.5 plan asked lane X2
+to upgrade five `spec:WS-13 §1` citations (`deepseek`, `openrouter`, `azure-openai`, `bedrock`,
+`vertex`) "to vendor URLs from the audit's citations". The audit's 51 citations cover the OAuth,
+keyless and agent-transport ids it audited; **none of the five appears in it**. They were upgraded to
+the pinned-upstream tier instead, which is a real vendor URL and a strict improvement on a `spec:`
+self-reference, and this paragraph is the record that the stronger upgrade was unavailable rather
+than skipped.
 
 ### The two judgement calls worth arguing with
 
@@ -104,11 +147,34 @@ member added for exactly this (`src/types.ts`), so a reader filtering evidence B
 gets a Winter guess wearing an upstream label. The prose stays alongside it, because *why* is not
 something an enum can carry.
 
-One honest wrinkle while this settles: the committed `generated/upstream-layer.json` is rewritten
-only by a NETWORK `provider:sync`, so its rows still read `upstream-static` until that sync runs.
-Both states are pinned — `pipeline.test.ts` asserts `winter-default` on the mapper's live output,
-`catalog-integrity.test.ts` asserts `upstream-static` on today's committed data — so the transition
-is a failing assertion naming one value to flip, not a silent inconsistency.
+**That wrinkle is now closed, and how it stayed open is worth recording.** The committed
+`generated/upstream-layer.json` is rewritten only by a NETWORK `provider:sync`, which is deliberately
+absent from CI (a maintainer action, not a per-push gate). `--offline` re-merges what is on disk and
+`provider:catalog` never re-extracts, so when the mapper changed to stamp `winter-default` the
+committed layer kept saying `upstream-static`, `catalog.json` inherited it through the merge, and
+**neither CI gate could see the gap** — the transition was pinned by a comment rather than by a
+regeneration. P6.5 lane X2's first network run performed the sync: 99 evidence rows across the two
+generated files moved in one commit, and `provider-source-sync --check` reports byte-identical
+regeneration again. The general lesson is the one this document already makes about counts: a
+generated file that only one un-gated command can write will drift, and the drift will look exactly
+like a comment that is still true.
+
+**It came back once, from another lane, and that is the more useful fact.** Lane O branched before
+the fix and authored its two `xai-oauth` model rows on the pre-fix pattern — `upstream-static`, with
+the same now-false justification that `EvidenceSource` has no member for a Winter default. Merging it
+is what surfaced them, because `catalog-integrity.test.ts`'s I3 case asserts the property over the
+MERGED document rather than over one lane's rows. Both were corrected in the merge. The lesson is
+not about `xai-oauth`: a convention repaired in one branch is re-introduced by every branch that
+forked before the repair, so the guard has to live on the merged artifact, and it did.
+
+**The overlay's fifteen model rows were carrying the same false label, and a stale reason for it.**
+Each stamped `outputModalities` as `upstream-static` with a `sourceRef` explaining that
+*"`EvidenceSource` is frozen (src/types.ts) with no `winter-derived` member, so the caveat rides the
+confidence marker and this ref"*. That was true when those rows were written and false by the time
+the member was added — the mapper was updated, the fifteen hand-authored rows were not, and their
+own justification went on citing a constraint that no longer existed. All fifteen now stamp
+`winter-default` with a ref that says what is actually true. Nothing in the merged catalog claims
+upstream stated an output modality any more, from either layer.
 
 **`unsupportedParameters` fails OPEN, and that direction is deliberate.** `toolCalling` fails CLOSED
 because a wrong `native` admits an unproven model to the agent modes; an empty
@@ -127,13 +193,45 @@ guarantee is that it never evaluates anything. The cost is visible and bounded: 
 `o4-mini` lose their upstream `unsupportedParams`, which appear in `generated/rejections.json` under
 `unresolved-reference` for a reviewer to see and the overlay to carry with real evidence.
 
-## Endpoints diverge from upstream on purpose
+## Endpoints diverge from upstream on purpose — and the divergence is now the MAPPER's, not the overlay's
 
-Upstream's `baseUrl` is the full chat path (`https://api.openai.com/v1/chat/completions`); the
-overlay's is the API root (`https://api.openai.com/v1`), because Winter's adapters compose paths
-themselves. The verbatim upstream values are preserved in `generated/upstream-layer.json`, so the
-divergence is visible rather than laundered. It is a **local override**, and the overlay row's
-values are the ones that ship.
+Upstream's `baseUrl` is the full chat path (`https://api.openai.com/v1/chat/completions`). Winter's
+adapters compose paths themselves, so what a descriptor must carry is the API **root**
+(`https://api.openai.com/v1`). Until P6.5 only the OVERLAY said so: the extractor recorded upstream's
+path verbatim and every upstream row was shadowed by a hand-authored overlay row that quietly
+corrected it. The two layers therefore disagreed about the shape of this one field for the whole of
+P6, and nothing failed — because no unshadowed upstream row had ever reached an adapter.
+
+Widening the catalog is precisely what removes those shadows, so the disagreement was about to
+become a hundred-odd rows that 404 at runtime. The mechanism has two links in different packages,
+each reasonable on its own:
+
+1. `runtime/src/provider/session-provider.ts`'s `connectionFrom` copies `defaultEndpoints.api` into
+   `connection.baseUrl` **as soon as more than one provider shares an adapter id**;
+2. the adapter then appends its own protocol path —
+   `adapters/openai/chat-completions.ts`: `` `${endpoint.baseUrl}/chat/completions` ``.
+
+Measured against a loopback fake: a row carrying the full path reaches
+`/v1/chat/completions/chat/completions`.
+
+So the mapper now records the root, by removing **exactly** the path the row's own upstream `format`
+names (`FORMAT_ENDPOINT_SUFFIX` in `src/extract/merge.ts`) — the exact inverse of what the adapter
+appends, and nothing more. A URL is still never trimmed to an ORIGIN; a `default`-executor row whose
+URL does not end in its format's suffix, or states none at all, **fails the run** rather than
+shipping with an absent `api` (an absent one is not inert — `resolveEndpoint` falls back to the
+adapter's own vendor default, so the row would send that provider's credential to another vendor).
+`bedrock`/`vertex` are exempt: single-provider adapters whose `api` is never copied into a
+connection, and whose URLs are region/deployment templates rather than protocol paths.
+
+**The evidence that this is the right transformation, rather than a convenient one:** five
+independent human reviews had already performed this exact strip by hand, in `overlay/providers.json`,
+before any of this code existed — and the rule reproduces all five byte-for-byte. `pipeline.test.ts`
+→ *"THE PROOF THIS IS THE RIGHT TRANSFORM: it reproduces all five hand-authored overlay endpoints"*
+pins that, and `runtime/src/provider/catalog-endpoint-shape.test.ts` measures the adapter's half
+against a fake rather than describing it.
+
+Every strip is a `reviewed-normalization` ledger row naming both strings, so the divergence stays
+visible rather than laundered.
 
 ## The denominator (WS-13 §3 step 5)
 
@@ -150,7 +248,7 @@ Recomputed at every run into `generated/denominator.json`. At this pin:
 | noauth | 13 | blocked |
 | oauth | 25 | blocked |
 | web-cookie | 35 | blocked |
-| apikey | 233 | candidate pool — 8 allowlisted, 225 rejected `not-allowlisted` |
+| apikey | 233 | candidate pool — 107 allowlisted, 126 rejected `not-allowlisted`, 0 named individually in `blocked` |
 | local | 14 | Winter-owned (12 chat backends; `comfyui`/`sdwebui` excluded as image systems) |
 | search | 14 | blocked |
 | audio | 12 | blocked |
@@ -186,27 +284,27 @@ unfalsifiable against its own source.
 
 ## What was excluded, and why
 
-`generated/rejections.json` carries all **690** rows. The counts below are generated from the ledger
+`generated/rejections.json` carries all **722** rows. The counts below are generated from the ledger
 and pinned by `catalog-integrity.test.ts` → *"PROVENANCE.md's exclusion table matches the ledger,
 row for row"*, because a hand-typed count is the line that goes stale first and nobody notices.
 
 | Class | Rows | What it means |
 | --- | ---: | --- |
-| `not-allowlisted` | 225 | an api-key provider upstream lists that Winter has not curated (WS-13 §1: presence is never inclusion) |
+| `not-allowlisted` | 126 | an api-key provider upstream lists that Winter has not curated (WS-13 §1: presence is never inclusion). P6.5 cut this from 225 by admitting 107 through the allowlist and giving **every one of the remaining 126 its own hand-written reason** in `blocked` — a generic class row is not an exclusion anyone can review. That includes the 29 ids whose provider SHIPS as a reviewed overlay row: the class here is still `not-allowlisted` (the mapper stamps it from the id's upstream category, not from why it was kept out), but the REASON on each is the ships-as-an-overlay-row cross-reference `aihorde` and `cline` already carried. **The class name alone never says whether a provider is absent from the catalog** — the reason does |
 | `executable-value` | 116 | functions, arrow functions, `Object.freeze(...)`, `new`, and other calls |
 | `unresolved-reference` | 82 | an identifier whose declaration is outside the allowlist or was itself rejected — including the **three** models whose `unsupportedParams` could not be read (see below) |
 | `dynamic-expression` | 51 | template literals with substitutions, property access, computed keys |
 | `category-web-cookie` | 35 | browser-session transports, excluded categorically |
 | `identity-header` | 30 | vendor client-identity headers — never imported |
 | `category-oauth` | 25 | generic OAuth import is rejected; Winter's OAuth providers are Winter-owned rows |
-| `unsupported-shape` | 22 | opaque runtime config, request defaults, malformed rows |
+| `unsupported-shape` | 47 | opaque runtime config, request defaults, malformed rows, and (P6.5) a `modelsUrl`/`responsesBaseUrl` carrying a query string or userinfo — R6-11 drops it rather than trimming, because a URL minus its query is a different request (`fireworks` is the one at this pin) |
 | `credential-material` | 19 | OAuth client ids/secrets and literal anonymous API keys |
 | `category-local-live-discovery` | 14 | local backends (Winter-owned, live-discovery only) plus the two image systems |
 | `category-search` | 14 | not LLM providers |
 | `category-no-auth` | 13 | reject by default (WS-13 §1) |
 | `category-audio` | 12 | not worker-model providers |
 | `unrepresentable-protocol` | 11 | Vertex's `targetFormat: "claude"` rows — see below |
-| **`reviewed-normalization`** | 8 | **NOT an exclusion.** A row that DID ship, carrying a reviewed, recorded deviation from the pinned tree: the OpenRouter wire id, the Bedrock executor's protocol, the OpenAI and Vertex adapter overrides, the four Vertex partner statuses |
+| **`reviewed-normalization`** | 114 | **NOT an exclusion.** A row that DID ship, carrying a reviewed, recorded deviation from the pinned tree: the OpenRouter wire id, the Bedrock executor's protocol, the OpenAI and Vertex adapter overrides, the four Vertex partner statuses, and **one endpoint strip per admitted row** (WS-13b §2 — see "Endpoints diverge from upstream on purpose"), which is now the bulk of the class |
 | `url-builder` | 4 | executable URL builders (WS-13 §13's security floor names this exactly) |
 | `category-cloud-agent` | 3 | remote agent products |
 | `category-upstream-proxy` | 2 | no proxy-of-proxy layer |
@@ -322,6 +420,84 @@ row is unpriced too, by construction: the extractor cannot emit `pricing` at all
 R6-14 sets it only after the safety corpus passes live. The catalog's answer to "may this model
 serve as the permission classifier?" therefore remains **no** — Manual fallback, the fail-safe
 direction, never a silent weakening.
+
+## The helper-built entries: probed, then admitted or refused individually (round-1 finding I-1)
+
+74 upstream `apikey` ids are built by a **helper call** (`buildOpenAiCompatibleRegistryEntry(...)`)
+or a shared constant, which the literal extractor refuses to evaluate — so the pinned tree yields no
+endpoint, auth, executor or model list for them, only the product-catalog identity. Round 1 ruled
+that carrying all 74 on one generic reason was not good enough: an id is admitted from the **vendor's
+own documentation** where one exists, and refused **individually, with the probe result**, where it
+does not.
+
+| outcome | n | what it means |
+| --- | ---: | --- |
+| **admitted** as reviewed overlay rows | **29** | a vendor documentation page was fetched and read on 2026-09-06 **and** it names a fixed API root |
+| refused — out of **scope** | 14 | image, video, embedding, reranking or web-extraction services. Not held pending a document: more evidence would not admit them |
+| refused — **docs reached, no fixed endpoint** | 20 | a docs page answered 200 but states no base URL, or the host answered 403/530, or the vendor documents two hosts and no single base |
+| refused — **no public fixed host at all** (enterprise) | 9 | the inference host is per-deployment or per-tenant by design, or no docs page could be reached |
+| refused — endpoint is a **template** | 2 | `azure-ai`, `oci`: `https://<resource>…` / `https://…<region>…` is not an endpoint |
+
+For the 14 admitted from the probe list, **two independent sources agree on the base**: the vendor's
+own documentation page, and the base upstream's product catalog states in its `apiHint` at the pin.
+Neither was taken on the other's word, and no row was authored from the pinned tree alone —
+hand-transcribing a helper call's arguments is precisely the extraction the literal extractor
+refuses, so it is not a substitute for the document.
+
+**Three traps, recorded because each looks like an admission until it is read.** `openference-api` is
+not a provider: its documentation *is* the shipped `openference` row's documentation, on the same
+base — one vendor wearing two ids. `hcnsec` and `helixmind` declare `format: "claude"` with a
+`/v1/chat/completions` base, so the entry contradicts its own dialect and neither value can be
+trusted; the vendor's doc is the tie-breaker and neither has a readable one. `muse-code` has no
+vendor doc at all — its recorded `website` is a GitHub repository URL.
+
+**Ruling carried from round 1:** `azure-ai` and `oci` have real documented public APIs and are
+refused only because `defaultEndpoints.api` is immutable generated data (R6-11) and a per-tenant
+template is not an endpoint. A **dedicated host-supplied-endpoint adapter shape**, of the kind
+`azure-openai` already has, is a **spine item for the fix wave**; both ids are admissible the day it
+exists.
+
+## Dialect siblings, and the two keyless rows (P6.5, R6b-5 / WS-13b §8.4)
+
+A provider row carries exactly one `adapterId`, so a vendor that documents **two wire dialects at two
+base URLs** is **two rows** — each with its own endpoint, its own model keys and the dialect in its
+`displayName`. Four pairs ship:
+
+| OpenAI dialect | Anthropic dialect | Anthropic base URL | Where the pair comes from |
+| --- | --- | --- | --- |
+| `deepseek` (extracted) | `deepseek-anthropic` (overlay) | `https://api.deepseek.com/anthropic` | vendor guide, retrieved 2026-09-06 |
+| `zai` (overlay) | `zai-anthropic` (**extracted**) | `https://api.z.ai/api/anthropic` | vendor docs for both halves, retrieved 2026-09-06 |
+| `moonshot` (overlay, token) | `kimi-coding` (overlay, **subscription**) | `https://api.kimi.com/coding` | Kimi Code docs, retrieved 2026-09-06 |
+| `minimax` (extracted) | `minimax-anthropic` (overlay) | `https://api.minimax.io/anthropic` | vendor Anthropic-SDK reference, retrieved 2026-09-06 |
+
+The `zai` pair is the one worth reading twice: **upstream's own `zai` entry is the ANTHROPIC one**
+(`format: "claude"` at `api.z.ai/api/anthropic/v1/messages`, which z.ai's Claude-client doc confirms
+verbatim), so the allowlist admits that id under the `zai-anthropic` **`winterId`** — the same rename
+door `gemini` → `google` already uses — and the OpenAI half is the reviewed overlay row. It is also
+why `displayNameOverride` exists: upstream's product catalog has one name per vendor ("Z.AI"), and two
+rows reading "Z.AI" are two rows a user cannot choose between. The override is a reviewed allowlist
+edit, recorded in the ledger like every other normalization, and it is not a licence to rename
+providers for taste.
+
+**The Anthropic adapter is multi-provider in fact, and that was measured rather than assumed.**
+`runtime/src/provider/catalog-endpoint-shape.test.ts` drives two sibling rows through the real
+catalog-resolved adapter against a loopback fake; each reaches its **own** `<root>/v1/messages`.
+There is no `providerId === "anthropic"` guard anywhere in `adapters/anthropic/messages.ts`.
+
+**Subscription rows are a billing fact, not a label.** `kimi-coding` and `clinepass` carry
+`pricingBasis: "subscription"`, so `priceUsage` returns nothing for them and a session on either
+reports no `total_cost_usd`. `clinepass` shares an endpoint **and a key** with the token-priced
+`cline` row and is still a separate row, because the basis is per row and that is the whole mechanism.
+
+**The two keyless rows carry no credential, and `aihorde` is the reason to say so explicitly.**
+AI Horde documents an anonymous default key. **It is not in this repository** — not in the catalog,
+not in an adapter, not in a fixture. The row records only that a documented anonymous default
+*exists* and cites the page that names it; supplying it (or, better, a registered key, which buys
+queue priority) is the host's act through the ordinary credential path, which is why its `authKinds`
+is `api-key` rather than a keyless kind. `catalog-integrity.test.ts` asserts the literal is absent by
+name. `uncloseai` needs no credential at all and carries `authKinds: ["custom"]`: `local-none` is
+reserved for a **local installation** (the twelve WS-13 §12 rows) and would make `connectionFrom`
+stamp `local: true` on a public https host.
 
 ## Winter-owned rows
 

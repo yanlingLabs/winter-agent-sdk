@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { loadCatalog, scanForSecrets, validateCatalog } from "../index.ts";
-import type { WinterModelDescriptor } from "../types.ts";
+import { UNKNOWN_CITATION_RE } from "../validate.ts";
+import type { WinterModelDescriptor, WinterProviderDescriptor } from "../types.ts";
 import upstreamLayer from "../../generated/upstream-layer.json" with { type: "json" };
 import rejectionsLedger from "../../generated/rejections.json" with { type: "json" };
 import denominator from "../../generated/denominator.json" with { type: "json" };
@@ -204,12 +205,21 @@ describe("standing floors", () => {
   });
 
   test("every extracted capability records itself as `upstream-static`, never as documentation or a probe", () => {
+    // `outputModalities` is DELIBERATELY absent from this list: upstream declares no output modality
+    // for any model, so it is the one field the mapper emits as `winter-default` rather than as
+    // something upstream said. Its own stamp is pinned by the I3 case below, which is stricter than
+    // this loop would be -- source, confidence AND the sourceRef that says WINTER DEFAULT in words.
     for (const model of upstreamLayer.models as unknown as WinterModelDescriptor[]) {
-      for (const evidence of [model.contextWindow, model.inputModalities, model.outputModalities, model.toolCalling, model.nativeTools, model.maxInputTokens, model.maxOutputTokens]) {
+      for (const evidence of [model.contextWindow, model.inputModalities, model.toolCalling, model.nativeTools, model.maxInputTokens, model.maxOutputTokens]) {
         if (evidence === undefined) continue;
         expect(evidence.source).toBe("upstream-static");
         expect(["inferred", "unknown"]).toContain(evidence.confidence);
       }
+    }
+    // ...and the negative half, so removing a field from the list above cannot quietly widen it:
+    // NOTHING in the layer claims documentation or a probe.
+    for (const model of upstreamLayer.models as unknown as WinterModelDescriptor[]) {
+      expect([model.key, ["upstream-static", "winter-default"].includes(model.outputModalities.source)]).toEqual([model.key, true]);
     }
   });
 });
@@ -333,15 +343,15 @@ describe("review round 1 — the three Importants, pinned where they broke", () 
     // Upstream declares NO output modality for any model, so `["text"]` is Winter's inference. It
     // shipped as `upstream-static`/`inferred`, which reads as "upstream said text".
     //
-    // THE COMMITTED DATA STILL SAYS `upstream-static`, AND THAT IS PINNED ON PURPOSE. The mapper now
-    // stamps `winter-default` (see `pipeline.test.ts`, which asserts it on the mapper's live
-    // output), but the committed upstream LAYER is only rewritten by a NETWORK `provider:sync` --
-    // `--offline` re-merges what is on disk and `provider:catalog` never re-extracts. So the field
-    // carries the old label until that sync runs, and this line is what says so out loud rather than
-    // leaving a reader to assume the change reached the data. When the sync lands, this assertion
-    // fails and names the one value to flip.
+    // THE SYNC HAS NOW LANDED (P6.5 lane X2). This assertion previously pinned `upstream-static`
+    // with a note saying the mapper had been changed to stamp `winter-default` but the committed
+    // upstream LAYER still carried the old label, because that file is rewritten ONLY by a NETWORK
+    // `provider:sync` -- `--offline` re-merges what is on disk and `provider:catalog` never
+    // re-extracts, so neither CI gate could see the gap. The note said "when the sync lands, this
+    // assertion fails and names the one value to flip"; lane X2's first network run is that sync,
+    // and this is the flip. 99 evidence rows across both generated files moved in that one commit.
     for (const model of catalog.models) {
-      expect([model.key, model.outputModalities.source]).toEqual([model.key, "upstream-static"]);
+      expect([model.key, model.outputModalities.source]).toEqual([model.key, "winter-default"]);
       expect([model.key, model.outputModalities.confidence]).toEqual([model.key, "unknown"]);
       expect(model.outputModalities.sourceRef).toContain("WINTER DEFAULT");
     }
@@ -453,5 +463,237 @@ describe("notices cover copied files (WS-13 §13)", () => {
   test("...and states that no third-party SOURCE CODE is in this package", async () => {
     const notice = await Bun.file(new URL("../../NOTICE", import.meta.url)).text();
     expect(notice).toContain("NO THIRD-PARTY SOURCE CODE");
+  });
+});
+
+/**
+ * WS-13b §2 (P6.5 lane X2): the endpoint SHAPE, checked on BOTH layers.
+ *
+ * `packages/runtime/src/provider/catalog-endpoint-shape.test.ts` proves what the adapter does with
+ * `defaultEndpoints.api` by measuring it against a loopback fake. This is the catalog-side half, and
+ * it reads the UPSTREAM LAYER as well as the merged catalog for the reason `--offline` already
+ * validates the layer standalone: an overlay row shadows its upstream twin whole, so a defect the
+ * overlay happens to correct sits in the layer unread until the day the shadow comes off — which is
+ * precisely what widening does. That is how this class survived the whole of P6.
+ */
+describe("WS-13b §2: `defaultEndpoints.api` carries the API ROOT on both layers", () => {
+  /** The adapters that append their own protocol path to `connection.baseUrl`. */
+  const APPENDING = new Set(["winter.openai-chat-completions", "winter.openai-responses", "winter.local-openai", "winter.codex-oauth", "winter.anthropic-messages", "winter.azure-openai"]);
+  const PROTOCOL_PATH = /\/chat\/completions$|\/responses$|\/v1\/messages$|\/v1beta\/models$/;
+
+  test.each([
+    ["the MERGED catalog", () => catalog.providers],
+    ["the UPSTREAM LAYER, standalone (a shadowed row is still checked)", () => upstreamLayer.providers],
+  ])("%s: no row on a path-appending adapter states a protocol path", (_label, rows) => {
+    const offenders = rows()
+      .filter((p) => APPENDING.has(p.adapterId))
+      .map((p) => `${p.id} -> ${p.defaultEndpoints["api"] ?? ""}`)
+      .filter((line) => PROTOCOL_PATH.test(line));
+    expect(offenders).toEqual([]);
+  });
+
+  test("...and no row on a path-appending adapter is left with NO endpoint at all", () => {
+    // An absent `api` is not the safe direction: `resolveEndpoint` falls back to the ADAPTER's own
+    // vendor default, so an endpoint-less row on the shared chat adapter sends this provider's
+    // credential to api.openai.com. `bedrock`/`vertex` are single-provider adapters and exempt --
+    // their `api` is never copied into a connection, and Azure's is a deployment template the host
+    // must supply, which is why `winter.azure-openai` is exempt from THIS half only.
+    const missing = catalog.providers
+      .filter((p) => APPENDING.has(p.adapterId) && p.adapterId !== "winter.azure-openai")
+      .filter((p) => (p.defaultEndpoints["api"] ?? "").length === 0)
+      .map((p) => p.id);
+    expect(missing).toEqual([]);
+  });
+
+  test("every endpoint strip the mapper performed is RECORDED in the ledger with both strings", () => {
+    const strips = (rejectionsLedger.rejections as Array<{ exclusionClass: string; path: string; reason: string }>).filter((r) => r.exclusionClass === "reviewed-normalization" && r.path.endsWith(".baseUrl"));
+    expect(strips.length).toBeGreaterThan(0);
+    for (const strip of strips) {
+      expect(strip.reason).toContain("API ROOT");
+      expect(strip.reason).toContain("never trimmed to an origin");
+    }
+  });
+});
+
+/**
+ * WS-13b §2 (P6.5 lane X2): THE WIDENED CATALOG.
+ *
+ * Three obligations, and they are deliberately in one place: that the named rows ship on the dialect
+ * their vendor documents with the pricing basis their vendor charges; that every id a human ruled out
+ * is ABSENT from the catalog and PRESENT in the ledger with a reason someone can read; and that the
+ * pool widened without letting a website-scrape transport in through the side.
+ */
+describe("WS-13b §2: the widened catalog", () => {
+  const byId = new Map(catalog.providers.map((p) => [p.id, p]));
+  const rejections = rejectionsLedger.rejections as Array<{ upstreamId: string; reason: string }>;
+
+  test.each([
+    // The R6b-5 dialect siblings. `zai-anthropic` is EXTRACTED (upstream's own `zai` entry is the
+    // Anthropic one) while `zai` is the reviewed overlay row -- so this table also pins that the two
+    // layers produce one coherent pair rather than two rows that happen to exist.
+    ["deepseek-anthropic", "winter.anthropic-messages", "token"],
+    ["zai", "winter.openai-chat-completions", "token"],
+    ["zai-anthropic", "winter.anthropic-messages", "token"],
+    ["moonshot", "winter.openai-chat-completions", "token"],
+    ["kimi-coding", "winter.anthropic-messages", "subscription"],
+    ["minimax", "winter.openai-chat-completions", "token"],
+    ["minimax-anthropic", "winter.anthropic-messages", "token"],
+    // The api-key rows.
+    ["xai", "winter.openai-chat-completions", "token"],
+    ["cline", "winter.openai-chat-completions", "token"],
+    ["clinepass", "winter.openai-chat-completions", "subscription"],
+    ["kilocode", "winter.openai-chat-completions", "token"],
+    ["openference", "winter.openai-chat-completions", "token"],
+    ["opencode", "winter.openai-chat-completions", "token"],
+    // The keyless rows.
+    ["aihorde", "winter.openai-chat-completions", "free"],
+    ["uncloseai", "winter.openai-chat-completions", "free"],
+  ] as ReadonlyArray<[string, string, WinterProviderDescriptor["pricingBasis"]]>)("%s ships on %s with pricingBasis %s and a citation", (id, adapterId, basis) => {
+    const row = byId.get(id);
+    expect(row?.adapterId).toBe(adapterId);
+    expect(row?.pricingBasis).toBe(basis);
+    // A URL or an `audit:` reference -- the two FETCHED-DOCUMENT tiers. These fifteen rows are the
+    // ones the audit and the vendors' own docs cover, so none of them may fall back to the
+    // pinned-upstream tier the 107 allowlist admissions use (PROVENANCE.md, "Two tiers").
+    expect(row?.admission.citation).toMatch(/^https?:\/\/|^audit:/);
+    expect(catalog.models.some((m) => m.providerId === id && m.status === "candidate")).toBe(true);
+  });
+
+  test("every user- and audit-excluded id is ABSENT from the catalog and PRESENT in the ledger with its reason", () => {
+    const excluded = ["cursor", "antigravity", "agy", "amazon-q", "claude", "kiro", "trae", "zed", "zed-hosted", "duckduckgo-web", "cloudflare-playground", "chipotle", "zcode", "devin-desktop", "raycast", "grok-cli", "codebuddy-cn", "felo-web", "theoldllm", "veoaifree-web", "github", "ghe-copilot", "codex-app-server", "devin-cli", "devin-cli-agentic", "auggie", "gitlab-duo"];
+    for (const id of excluded) {
+      expect([id, byId.has(id)]).toEqual([id, false]);
+      expect([id, rejections.some((r) => r.upstreamId === id && r.reason.length > 20)]).toEqual([id, true]);
+    }
+  });
+
+  test("the api-key pool is widened: at least 120 apikey-category providers are now rows, and none is a website-scrape transport", () => {
+    const apiKeyRows = catalog.providers.filter((p) => p.admission.basis === "api-key");
+    expect(apiKeyRows.length).toBeGreaterThanOrEqual(120);
+    for (const p of apiKeyRows) expect(p.defaultEndpoints["api"]).not.toMatch(/wp-admin|api-proxy|\/threads$/);
+  });
+
+  test("a subscription- or free-priced row NEVER carries a token price — the basis and the pricing agree", () => {
+    // R6-H reads `pricingBasis` to decide whether to price a turn at all (T1's `priceUsage`). A
+    // `subscription` row that also carried per-token pricing would be a contradiction the runtime
+    // resolves silently in whichever direction it happens to read first.
+    for (const provider of catalog.providers) {
+      if (provider.pricingBasis === "token") continue;
+      for (const m of catalog.models.filter((x) => x.providerId === provider.id)) {
+        expect([m.key, provider.pricingBasis, m.pricing]).toEqual([m.key, provider.pricingBasis, undefined]);
+      }
+    }
+  });
+
+  test("NO row anywhere carries the aihorde anonymous key, or any other credential literal", async () => {
+    // Decision (e), and the reason the `aihorde` row cites a document instead of embedding a value:
+    // upstream states the anonymous key as an `anonymousApiKey` literal, the extractor rejects it as
+    // `credential-material`, and nothing in the reviewed overlay may put it back. `scanForSecrets`
+    // over the whole document is the general guard; this is the named one.
+    expect(scanForSecrets(catalog as unknown as Record<string, unknown>)).toEqual([]);
+    // The key is CONSTRUCTED rather than written out (round-1 minor M-2): a test that spells a
+    // credential verbatim puts it in the repository just as surely as the row would have, and
+    // `scanForSecrets` would be right to flag this file next.
+    const anonymousKey = "0".repeat(10);
+    // ...and the sweep runs over the two HAND-AUTHORED SOURCES as well, not only the generated
+    // artifact. The generated file is the one nobody edits; the overlay and the allowlist are where
+    // a future reviewer would actually paste a value, and the merge would carry it through.
+    const sources = await Promise.all([
+      Bun.file(new URL("../../overlay/providers.json", import.meta.url)).text(),
+      Bun.file(new URL("../../overlay/models.json", import.meta.url)).text(),
+      Bun.file(new URL("../../../../third_party/omniroute-provider-source/allowlist.json", import.meta.url)).text(),
+    ]);
+    // MATCHED AS A WHOLE TOKEN, and the reason is an instrument trap this test walked into: a bare
+    // `includes` on ten zeros fires on `https://adb-0000000000000000.0.azuredatabricks.net/…`, the
+    // per-tenant URL PLACEHOLDER in the `databricks` exclusion reason. That is not a credential, and
+    // a check that cannot tell the two apart is a check whose next red is ignored. The boundaries
+    // make a longer digit run a non-match: inside sixteen zeros every ten-zero window is either
+    // preceded or followed by another digit.
+    const asToken = new RegExp(`(?<![A-Za-z0-9_-])${anonymousKey}(?![A-Za-z0-9_-])`);
+    for (const [i, text] of [JSON.stringify(catalog), ...sources].entries()) {
+      expect([i, asToken.test(text)]).toEqual([i, false]);
+      expect([i, text.includes("anonymousApiKey")]).toEqual([i, false]);
+    }
+    // ...and the repo's own credential-shape detector over the two hand-authored SOURCES, which is
+    // the check that does not depend on knowing which literal to look for.
+    for (const [i, text] of sources.entries()) expect([i, scanForSecrets(JSON.parse(text) as Record<string, unknown>)]).toEqual([i, []]);
+    // ...and the row still records that a documented anonymous default EXISTS, which is the fact a
+    // host needs. Without this half the test above would pass just as well on a missing row.
+    expect(byId.get("aihorde")?.admission.citation).toMatch(/anonymous/i);
+  });
+
+  test("every dialect sibling states its dialect in its display name, and never shares an endpoint with its twin", () => {
+    // R6b-5: "sharing `displayName` with a dialect suffix". The endpoint half is the one that bites:
+    // two rows pointing at the same URL would be one provider wearing two ids, and a `set_model`
+    // between them would look like a switch while changing nothing.
+    for (const [primary, sibling] of [["deepseek", "deepseek-anthropic"], ["zai", "zai-anthropic"], ["moonshot", "kimi-coding"], ["minimax", "minimax-anthropic"]] as const) {
+      const a = byId.get(primary);
+      const b = byId.get(sibling);
+      expect([primary, a !== undefined, sibling, b !== undefined]).toEqual([primary, true, sibling, true]);
+      // BOTH HALVES, not just the sibling (round-1 minor M-1). Checking only the `-anthropic` row let
+      // `minimax` ship as upstream's bare "Minimax Coding" beside "MiniMax (Anthropic dialect)" -- the
+      // primary is exactly as ambiguous in a picker as the sibling would be, and R6b-5's rule is about
+      // the PAIR. `deepseek`/`moonshot` name their vendor plainly and their siblings carry the suffix,
+      // which is the same property: a reader can tell the two rows apart by name alone.
+      for (const [id, row] of [[primary, a!], [sibling, b!]] as const) {
+        expect([id, /dialect|Kimi Code|^DeepSeek$|^Moonshot AI \(Kimi platform\)$/.test(row.displayName)]).toEqual([id, true]);
+      }
+      expect([primary, sibling, a!.displayName === b!.displayName]).toEqual([primary, sibling, false]);
+      expect([primary, sibling, a!.defaultEndpoints["api"] === b!.defaultEndpoints["api"]]).toEqual([primary, sibling, false]);
+      expect([sibling, a!.adapterId === b!.adapterId]).toEqual([sibling, false]);
+    }
+  });
+
+  test("`anthropic` is the ONLY `authoritative` row on its adapter — A2's closure does not reach the siblings", async () => {
+    // A CROSS-LANE INTERACTION, pinned because neither lane's own tests would look for it.
+    //
+    // Lane A2 re-stamped `anthropic` `liveCatalogAuthority: "authoritative"` (fix-wave ruling F-4):
+    // Anthropic's live Models endpoint enumerates everything the credential can use, so an id absent
+    // from it does not exist. R6-F reads that the other way round -- `authoritative` CLOSES the
+    // `allowUnlisted` pass-through (`provider-runtime/src/registry.ts` step 2), and an unlisted id
+    // becomes a definitive `unknown-model` instead of reaching the wire.
+    //
+    // This lane then put SEVEN more providers on `winter.anthropic-messages` (WS-13b §2 / R6b-5).
+    // The two changes compose only because `authoritative` is a per-ROW claim about ONE vendor's
+    // catalogue: z.ai's model list is not Anthropic's, and a row that inherited that flag would
+    // start refusing ids its own vendor serves. Every sibling is `unknown`, which is the permissive
+    // direction for `allowUnlisted` and the conservative one for claims (the mapper's own rule: an
+    // unstated authority is never upstream's `true` default).
+    //
+    // The failure this catches is a future edit that stamps `authoritative` adapter-wide, or a
+    // sibling row copy-pasted from `anthropic` with the flag left on.
+    const onAdapter = catalog.providers.filter((p) => p.adapterId === "winter.anthropic-messages");
+    expect(onAdapter.length).toBeGreaterThan(1);
+    expect(onAdapter.filter((p) => p.liveCatalogAuthority === "authoritative").map((p) => p.id)).toEqual(["anthropic"]);
+    for (const p of onAdapter) {
+      if (p.id === "anthropic") continue;
+      expect([p.id, p.liveCatalogAuthority]).toEqual([p.id, "unknown"]);
+    }
+  });
+
+  test("every provider row's admission citation is a real reference, and never the audit's `unknown` class", () => {
+    // R6b-3 as a property of the SHIPPED document rather than of the allowlist the pipeline reads:
+    // the overlay is a second, hand-authored producer, and `validateCatalog` is the only thing
+    // standing between it and a row nobody can check.
+    for (const p of catalog.providers) {
+      // The four legal forms (types.ts): a vendor URL, `audit:<section>`, `spec:<section>`, or the
+      // bare word `local`. `local` is short BECAUSE it is complete -- a local installation has no
+      // vendor and no document, and padding it with prose would be inventing evidence.
+      //
+      // THE RULE IS FORM AND A NON-EMPTY BODY, NOT LENGTH. This case previously also required
+      // `length > 20`, a threshold borrowed from the exclusion-ledger test next door and never true
+      // of anything in particular. Merging lane A2 proved it wrong rather than strict: A2's
+      // `anthropic` row cites `spec:WS-13b §0 D20` -- eighteen characters, and a complete, precise
+      // reference to the ruling that admitted its OAuth path. A length floor would have forced a
+      // correct citation to grow prose to satisfy an arbitrary number, which is the opposite of what
+      // this field is for. What actually must hold is that a citation NAMES something: a prefix
+      // alone (`spec:`, `audit:`) is a stub, and that is what is refused.
+      const citation = p.admission.citation.trim();
+      const form = /^(?:https?:\/\/(?<url>\S+)|audit:(?<audit>\S+)|spec:(?<spec>\S+)|fixture:(?<fixture>\S+)|local$)/.exec(citation);
+      expect([p.id, form !== null]).toEqual([p.id, true]);
+      const body = form?.groups ?? {};
+      expect([p.id, citation === "local" || Object.values(body).some((v) => (v ?? "").length > 0)]).toEqual([p.id, true]);
+      expect([p.id, UNKNOWN_CITATION_RE.test(citation)]).toEqual([p.id, false]);
+    }
   });
 });

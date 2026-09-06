@@ -50,6 +50,17 @@ export interface AllowlistProviderRow {
    */
   initialModelStatus?: "candidate" | "experimental";
   /**
+   * The display name this provider's row must carry, when the product catalog's own `name` would be
+   * AMBIGUOUS rather than merely different.
+   *
+   * R6b-5 puts a vendor's two documented dialects on two rows, and the upstream product catalog has
+   * ONE name for the vendor — so `zai` and `zai-anthropic` both read "Z.AI" in a picker, which is a
+   * row a user cannot choose between. The override is a reviewed allowlist edit like `winterId` and
+   * `adapterIdOverride`, and it is RECORDED in the ledger; it is not a licence to rename providers
+   * for taste.
+   */
+  displayNameOverride?: string;
+  /**
    * The adapter this provider's rows must name, when it is NOT the one its protocol implies.
    *
    * Vertex shares the GenerateContent dialect with the Gemini API, so deriving the adapter from the
@@ -114,6 +125,29 @@ const FORMAT_TO_PROTOCOL: Readonly<Record<string, ProviderProtocol>> = {
   "openai-responses": "openai-responses",
   claude: "anthropic-messages",
   gemini: "google-generate-content",
+};
+
+/**
+ * Upstream `format` -> the path THAT FORMAT'S adapters append to a base URL.
+ *
+ * Removing this suffix from upstream's `baseUrl` is how the mapper reaches the API ROOT a
+ * `defaultEndpoints.api` must carry. See the long note at the `baseUrl` block in
+ * `buildUpstreamLayer` for why a consumed row cannot hold the verbatim path, and why this is the
+ * only transformation permitted (never a trim to an origin).
+ *
+ * Keyed on the upstream FORMAT, not on the Winter protocol or adapter: the suffix is a fact about
+ * the URL as upstream wrote it. `deepseek` is `format: "openai-responses"` at
+ * `https://api.deepseek.com/responses`; `openai` is `format: "openai"` at
+ * `https://api.openai.com/v1/chat/completions` even though its allowlist row overrides the adapter
+ * to Responses. Both strip their own format's suffix and land on the root their adapter expects.
+ *
+ * Exported so a test can assert the strip reproduces the five hand-authored overlay endpoints.
+ */
+export const FORMAT_ENDPOINT_SUFFIX: Readonly<Record<string, string>> = {
+  openai: "/chat/completions",
+  "openai-responses": "/responses",
+  claude: "/v1/messages",
+  gemini: "/v1beta/models",
 };
 
 /** Upstream `authType` -> the Winter auth kind. */
@@ -198,6 +232,11 @@ export const ADAPTER_PROTOCOL: Readonly<Record<string, ProviderProtocol>> = {
   "winter.openai-chat-completions": "openai-chat-completions",
   "winter.local-openai": "openai-chat-completions",
   "winter.codex-oauth": "openai-responses",
+  // `winter.xai-oauth` is the CHAT adapter, at xAI's subscription proxy, on an oauth bearer. The
+  // proxy serves both OpenAI-compatible routes and the vendor's own client prefers Responses on it;
+  // Winter ships Chat, so this relation states Chat. Getting it wrong here would let a
+  // responses-only model row land on a Chat adapter without the integrity test noticing.
+  "winter.xai-oauth": "openai-chat-completions",
   "winter.azure-openai": "azure-openai",
   "winter.anthropic-messages": "anthropic-messages",
   "winter.google-generate-content": "google-generate-content",
@@ -466,28 +505,109 @@ export function buildUpstreamLayer(input: BuildUpstreamLayerInput): UpstreamLaye
     const defaultEndpoints: Record<string, string> = {};
     // R6-11: generated endpoints are IMMUTABLE and must be parseable absolute URLs with no query
     // string. Upstream's `baseUrl` is the full CHAT PATH (".../v1/chat/completions") with its own
-    // `urlSuffix` query in some rows; the suffix was rejected as dynamic and the path is recorded
-    // verbatim, because trimming it to an "origin" would be Winter inventing an endpoint upstream
-    // never stated.
+    // `urlSuffix` query in some rows; the suffix is rejected as dynamic.
+    //
+    // TRIMMING TO AN ORIGIN IS STILL REFUSED — that would be Winter inventing an endpoint upstream
+    // never stated, and the note below said so when only eight rows existed and every one of them
+    // was shadowed by a hand-authored overlay row. What it did not anticipate is the row being
+    // CONSUMED. `session-provider.ts`'s `connectionFrom` copies `defaultEndpoints.api` into
+    // `connection.baseUrl` whenever more than one provider shares an adapter, and every adapter
+    // family then appends its OWN protocol path to it: `${baseUrl}/chat/completions`
+    // (`adapters/openai/chat-completions.ts`), `${base}/v1/messages` (`anthropic/messages.ts`),
+    // `${baseUrl}/responses` (`codex-oauth.ts`), `/${version}/models/<model>:streamGenerateContent`
+    // (`google/generate-content.ts`). Measured against a loopback fake: a row carrying the full
+    // chat path reaches `/v1/chat/completions/chat/completions`. So the verbatim path is not the
+    // conservative choice for a consumed row — it is a silent misroute, and widening the catalog is
+    // exactly what stops these rows being shadowed.
+    //
+    // What is recorded instead is the API ROOT: upstream's own URL with the suffix its `format`
+    // names removed, which is the EXACT INVERSE of what the adapter appends, and nothing more. Five
+    // independent human reviews already performed this transformation by hand in `overlay/
+    // providers.json`, and the strip reproduces all five byte-for-byte (a test pins that).
+    // Keyed on the upstream `format` (what the URL was written for), never on the Winter adapter:
+    // `openai`'s row has `format: "openai"` with an `adapterIdOverride` onto the Responses adapter,
+    // so it strips `/chat/completions` to `https://api.openai.com/v1` and the Responses adapter
+    // appends its own `/responses`.
+    //
+    // A row this cannot be done for FAILS THE RUN rather than shipping with no `api`: an empty
+    // endpoint on a SHARED adapter is not inert — `resolveEndpoint` falls back to the adapter's own
+    // `OPENAI_CHAT_BASE_URL`, so the row would silently send the operator's key to api.openai.com.
+    // Scoped to `executor: "default"` because the native-cloud executors (`bedrock`, `vertex`) are
+    // single-provider adapters whose `api` is never copied into a connection, and whose URLs are
+    // region/deployment templates rather than a protocol path.
+    const strippable = executor === "default";
     if (baseUrl !== undefined) {
       const parsed = safeUrl(baseUrl);
       if (parsed === undefined || parsed.search.length > 0 || parsed.username.length > 0) {
         reject(allowed.upstreamId, "field", "unsupported-shape", `${allowed.upstreamId}.baseUrl`, registryPath, `upstream baseUrl ${JSON.stringify(baseUrl)} is not a credential-free, query-free absolute URL — R6-11 requires generated endpoints to be immutable and reviewable`);
-      } else {
+        if (strippable) {
+          throw new ExtractionRefusal(
+            `endpoint-not-derivable: allowlisted provider "${allowed.upstreamId}" has an unusable upstream baseUrl ${JSON.stringify(baseUrl)}. On a shared adapter an absent \`defaultEndpoints.api\` is NOT inert — the adapter falls back to its own vendor default, so the row would send this provider's credential somewhere else entirely.`,
+          );
+        }
+      } else if (!strippable) {
         defaultEndpoints["api"] = baseUrl;
+      } else {
+        const suffix = FORMAT_ENDPOINT_SUFFIX[format!];
+        if (suffix === undefined || !baseUrl.endsWith(suffix)) {
+          throw new ExtractionRefusal(
+            `endpoint-not-derivable: allowlisted provider "${allowed.upstreamId}" declares baseUrl ${JSON.stringify(baseUrl)}, which does not end in ${JSON.stringify(suffix ?? "(no suffix for this format)")} — the path its own upstream format ${JSON.stringify(format)} names. Winter records the API ROOT (the inverse of what the adapter appends) and refuses to guess one: upstream's executor is outside the import boundary, so what it appends to this URL is unknowable from the pinned tree. Author a reviewed overlay row for "${allowed.winterId}" instead, or move the id to \`blocked\`.`,
+          );
+        }
+        const root = baseUrl.slice(0, -suffix.length);
+        if (safeUrl(root) === undefined) {
+          throw new ExtractionRefusal(`endpoint-not-derivable: allowlisted provider "${allowed.upstreamId}" baseUrl ${JSON.stringify(baseUrl)} does not leave a parseable absolute URL once ${JSON.stringify(suffix)} is removed`);
+        }
+        defaultEndpoints["api"] = root;
+        reject(
+          allowed.upstreamId,
+          "field",
+          "reviewed-normalization",
+          `${allowed.upstreamId}.baseUrl`,
+          registryPath,
+          `upstream states the full ${JSON.stringify(format)} path ${JSON.stringify(baseUrl)}; Winter records the API ROOT ${JSON.stringify(root)} because every adapter in this family APPENDS its own protocol path to \`connection.baseUrl\` (a row carrying the full path reaches ".../chat/completions/chat/completions"). Exactly ${JSON.stringify(suffix)} is removed and nothing else — the URL is never trimmed to an origin.`,
+        );
       }
+    } else if (strippable) {
+      throw new ExtractionRefusal(
+        `endpoint-not-derivable: allowlisted provider "${allowed.upstreamId}" states no \`baseUrl\` at this commit. A row on a SHARED adapter with no \`defaultEndpoints.api\` inherits the adapter's own vendor default rather than failing, so it would send this provider's credential to the wrong vendor. Author a reviewed overlay row for "${allowed.winterId}" instead, or move the id to \`blocked\`.`,
+      );
     }
-    const responsesBaseUrl = str(entry, "responsesBaseUrl");
-    if (responsesBaseUrl !== undefined && safeUrl(responsesBaseUrl) !== undefined) defaultEndpoints["responses"] = responsesBaseUrl;
+    // R6-11 applies to EVERY endpoint key, not just `api`. These two carried only a parse check,
+    // which was enough while the cohort was eight rows and none of them stated a `modelsUrl` with a
+    // query — the widened pool has one (`fireworks`, `?filter=supports_serverless=true`), and the
+    // validator refuses a stored endpoint with parameters in it. Recording the rejection rather than
+    // stripping the query: a `modelsUrl` minus its filter is a DIFFERENT request, and inventing one
+    // is the same class of guess the endpoint rule above refuses. Discovery falls back to the
+    // adapter's own `${base}/models`, which is where an OpenAI-compatible list lives anyway.
+    const endpointOk = (url: string): boolean => {
+      const parsed = safeUrl(url);
+      return parsed !== undefined && parsed.search.length === 0 && parsed.username.length === 0;
+    };
     const modelsUrl = str(entry, "modelsUrl");
-    if (modelsUrl !== undefined && safeUrl(modelsUrl) !== undefined) defaultEndpoints["models"] = modelsUrl;
+    for (const [field, key, value] of [["responsesBaseUrl", "responses", str(entry, "responsesBaseUrl")], ["modelsUrl", "models", modelsUrl]] as const) {
+      if (value === undefined) continue;
+      if (endpointOk(value)) defaultEndpoints[key] = value;
+      else reject(allowed.upstreamId, "field", "unsupported-shape", `${allowed.upstreamId}.${field}`, registryPath, `upstream ${field} ${JSON.stringify(value)} is not a credential-free, query-free absolute URL — R6-11 requires generated endpoints to be immutable and reviewable, so it is dropped rather than trimmed (a URL minus its query is a different request)`);
+    }
 
     const passthrough = bool(entry, "passthroughModels") === true;
     const liveAuthoritative = bool(entry, "liveCatalogAuthoritative");
 
+    const upstreamName = str(catalogued.row as { [key: string]: LiteralValue }, "name") ?? allowed.winterId;
+    if (allowed.displayNameOverride !== undefined && allowed.displayNameOverride !== upstreamName) {
+      reject(
+        allowed.upstreamId,
+        "field",
+        "reviewed-normalization",
+        `${allowed.upstreamId}.name`,
+        catalogued.sourcePath,
+        `upstream's product catalog names this vendor ${JSON.stringify(upstreamName)}, which R6b-5 makes AMBIGUOUS: the vendor documents two dialects, Winter ships them as two rows, and one name cannot tell them apart in a picker. Winter records ${JSON.stringify(allowed.displayNameOverride)} — the same name plus the dialect, which is what R6b-5 asks for.`,
+      );
+    }
     providers.push({
       id: allowed.winterId,
-      displayName: str(catalogued.row as { [key: string]: LiteralValue }, "name") ?? allowed.winterId,
+      displayName: allowed.displayNameOverride ?? upstreamName,
       protocols: [protocol],
       authKinds: [authKind],
       defaultEndpoints,

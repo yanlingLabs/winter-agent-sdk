@@ -25,7 +25,7 @@
 // is the redacted ref, the operation, and the typed code — which is what makes the failure
 // actionable in the first place.
 import type { CredentialMaterial, CredentialStatus, CredentialStore, ProviderContext, ProviderRegistry } from "@yanlinglabs/winter-provider-runtime";
-import { CredentialResolutionError, WinterProviderResolutionError } from "@yanlinglabs/winter-provider-runtime";
+import { CredentialResolutionError, WinterProviderResolutionError, startAnthropicConsoleLogin, startCodexLogin, startXaiLogin } from "@yanlinglabs/winter-provider-runtime";
 import type { CredentialRef } from "@yanlinglabs/winter-agent-sdk";
 import { keychainAccountName } from "./keychain-store.ts";
 import { redactCredentialRef } from "./selection.ts";
@@ -268,4 +268,104 @@ function statusFromThrow(err: unknown, ref: CredentialRef, providerId: string): 
   }
   const kind = err instanceof Error ? err.name : typeof err;
   return { ok: false, code: "unsupported", message: `provider "${providerId}"'s adapter failed with a ${kind} while validating ${locator}, so the credential is UNVERIFIED rather than known-bad (the underlying message is withheld)` };
+}
+
+// -------------------------------------------------------------------------------------------------
+// WS-13b (P6.5): the OAuth login door
+// -------------------------------------------------------------------------------------------------
+
+/**
+ * The providers whose credential is obtained by a LOGIN rather than by pasting a key.
+ *
+ * DECLARED IN FULL NOW, ahead of two of its four flows. A host offering sign-in should compile
+ * against one door rather than discover a second one when the next flow lands, and a case that
+ * throws a typed refusal is a much better thing to ship than a member missing from the union — which
+ * fails at a caller's call site as an unassignable literal and tells them nothing about why.
+ * `xai-oauth` and `qoder` are wired by their own lane; this file's switch is where they land.
+ */
+export type ProviderLoginId = "anthropic" | "codex-oauth" | "xai-oauth" | "qoder";
+
+export interface StartProviderLoginOptions {
+  /**
+   * Opens the browser. HOST-supplied: the SDK never shells out to one, and a login is a host action.
+   *
+   * **A DEVICE-CODE FLOW NEVER CALLS THIS.** That is the whole point of RFC 8628 — the device has no
+   * browser to open, so there is no URL to hand one. Its verification URL and its user code reach the
+   * host through `onAuthStatus.output` instead, and a host that renders a device login by waiting for
+   * `openUrl` will wait forever while the two strings the user actually needs go past on the other
+   * channel. Required rather than optional only because the two flows that exist today are both
+   * loopback ones; a device flow may be handed a function that is never invoked.
+   */
+  openUrl: (url: string) => Promise<void>;
+  /** Overridden by a fixture; production uses each flow's own derived constants. */
+  authorizeUrl?: string;
+  tokenUrl?: string;
+  /** Anthropic Console only: where the account id is read from. Ignored by flows that do not need one. */
+  profileUrl?: string;
+  /**
+   * Device-code flows only (RFC 8628): where the device authorization request is posted.
+   *
+   * Present ahead of its flows for the same reason `ProviderLoginId` carries all four members — and
+   * for one more that is not cosmetic. Without a fixture endpoint here, a test driving a device login
+   * THROUGH THIS DOOR has nowhere to point it and would reach the vendor live, which the phase's
+   * hermeticity rule forbids outright. An option that only appears alongside its implementation is an
+   * option whose first test cannot be written.
+   */
+  deviceCodeUrl?: string;
+  /** Device-code flows only: the poll interval FLOOR in ms. The vendor's own `interval` wins when larger. */
+  pollIntervalMs?: number;
+  callbackPort?: number;
+  timeoutMs?: number;
+  /** The Keychain service the record lands in — `config.keychainService` from the host. */
+  service?: string;
+  /** A login-flow PROGRESS channel (R6-F). Never carries credential material. */
+  onAuthStatus?: (status: { isAuthenticating: boolean; output?: string[]; error?: string }) => void;
+}
+
+export interface ProviderLoginResult {
+  /** The record the credential now occupies — the very thing a host puts in `config.provider.authRef`. */
+  ref: ProviderCredentialRef;
+  accountId: string;
+  /** Epoch milliseconds. */
+  expiresAt: number;
+}
+
+/**
+ * Runs one provider's login and PERSISTS the result, answering with the ref that now addresses it.
+ *
+ * ONE DOOR, for the same reason `storeProviderCredential` is one: every flow writes a record whose
+ * name is `"<providerId>:<accountId>"` (R6-10), and a host that reaches each flow's own function
+ * directly is a host that will eventually spell that name differently from whatever reads it back.
+ * Routing through here means the login and the lookup agree by construction.
+ *
+ * WHAT THIS DOES NOT DO: choose a provider, open a browser itself, or decide that a failed login
+ * should be retried. Each is a host's decision, and the SDK taking any of them would be a library
+ * driving a user interface.
+ */
+export async function startProviderLogin(providerId: ProviderLoginId, store: CredentialStore, options: StartProviderLoginOptions): Promise<ProviderLoginResult> {
+  switch (providerId) {
+    case "anthropic":
+      return await startAnthropicConsoleLogin(store, options);
+    case "codex-oauth":
+      return await startCodexLogin(store, options);
+    case "xai-oauth":
+      // The RFC 8628 device grant, and the one arm here that never touches `options.openUrl` —
+      // there is no browser leg to open. The verification URL and the user code reach the host on
+      // `onAuthStatus.output` instead (see `openUrl`'s own note above).
+      return await startXaiLogin(store, options);
+    case "qoder":
+      // TYPED, and raised BEFORE anything runs: a refusal that had already opened a browser or
+      // half-completed a flow would be worse than one that never started. `unsupported` is the
+      // honest code — the flow is not wired in this build, which is not the same as the user's
+      // credential being bad.
+      //
+      // For `qoder` this is the END STATE, not a stub waiting on a lane. Lane O's capture
+      // (`packages/conformance/compat/qoder/derived-shapes-p6b-qoder.md`) established against
+      // Qoder's own complete documentation index that it publishes no third-party OAuth grant —
+      // the only OAuth it documents is Qoder acting as a client toward MCP servers — and no
+      // third-party inference endpoint either. Its documented programmatic route is a Personal
+      // Access Token, and its documented agent route is its own Agent SDK / Cloud Agents, which is
+      // the agent-transport class WS-13 §8.2 excludes. There is nothing here to sign in to.
+      throw new CredentialResolutionError("unsupported", `the "${providerId}" login is not wired in this build, so there is nothing to sign in to; no browser was opened and no record was written`);
+  }
 }

@@ -44,6 +44,14 @@ export type { QuotaState } from "./quota.ts";
 export { base64Url, buildAuthorizeUrl, decodeAccountId, generatePkce, refreshTokens, runLoginFlow } from "./pkce.ts";
 export type { LoginConfig, OAuthTokens } from "./pkce.ts";
 
+// `xai-oauth` — the chat adapter at xAI's subscription proxy on an oauth bearer, plus Winter's own
+// device login for it. `XAI_CONSENT_DISCLOSURE` is exported because a host has to SHOW it: the
+// vendor's consent page may name its own product, and a user who is not told will read that as
+// impersonation (audit §2.5).
+export { XAI_CONSENT_DISCLOSURE, XAI_OAUTH, XAI_OAUTH_ADAPTER_ID, createXaiOauthAdapter, startXaiLogin, xaiCredentialRef } from "./xai-oauth.ts";
+export type { XaiLoginOptions, XaiLoginResult } from "./xai-oauth.ts";
+export { DERIVED_XAI, DERIVED_XAI_COMMIT, DERIVED_XAI_MODELS } from "./xai-derived-shapes.ts";
+
 export { createLocalOpenAIAdapter } from "./local.ts";
 export type { LocalAdapterOptions } from "./local.ts";
 

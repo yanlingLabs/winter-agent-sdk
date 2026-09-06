@@ -23,7 +23,7 @@ import type { ProviderAdapter } from "../types.ts";
 import { createAnthropicMessagesAdapter } from "./anthropic/index.ts";
 import { createGoogleGenerateContentAdapter, createVertexGeminiAdapter } from "./google/index.ts";
 import { createBedrockConverseAdapter } from "./bedrock/index.ts";
-import { createResponsesAdapter, createChatCompletionsAdapter, createCodexOauthAdapter } from "./openai/index.ts";
+import { createResponsesAdapter, createChatCompletionsAdapter, createCodexOauthAdapter, createXaiOauthAdapter } from "./openai/index.ts";
 import { createAzureOpenAIAdapter } from "./openai/azure.ts";
 import { createLocalOpenAIAdapter } from "./openai/local.ts";
 
@@ -55,6 +55,7 @@ export const SHIPPED_ADAPTER_IDS = [
   "winter.openai-responses",
   "winter.openai-chat-completions",
   "winter.codex-oauth",
+  "winter.xai-oauth",
   "winter.azure-openai",
   "winter.local-openai",
   "winter.anthropic-messages",
@@ -101,6 +102,11 @@ export function createShippedAdapters(catalog: WinterCatalog): ProviderAdapter[]
     createResponsesAdapter({ descriptors: lookup("winter.openai-responses"), ...generated(catalog, "winter.openai-responses") }),
     createChatCompletionsAdapter({ descriptors: lookup("winter.openai-chat-completions"), ...generated(catalog, "winter.openai-chat-completions") }),
     createCodexOauthAdapter({ descriptors: lookup("winter.codex-oauth"), ...generated(catalog, "winter.codex-oauth") }),
+    // `winter.xai-oauth` — the chat adapter at xAI's SUBSCRIPTION proxy. `generated(...)` reads the
+    // endpoint off the catalog row rather than the adapter's own constant, which is what keeps the
+    // reviewed row and the shipped request agreeing; the constant is the fallback for a build with
+    // no row. The row is `pricingBasis: "subscription"`, so nothing it returns feeds R6-H cost.
+    createXaiOauthAdapter({ descriptors: lookup("winter.xai-oauth"), ...generated(catalog, "winter.xai-oauth") }),
     createAzureOpenAIAdapter({ descriptors: lookup("winter.azure-openai"), ...generated(catalog, "winter.azure-openai") }),
     // Registered under the id the catalog's twelve local rows actually point at (see
     // `LocalAdapterOptions.id`'s own header for why that id is overridable at all).
@@ -170,8 +176,17 @@ export {
   deepSeekProfile,
   openRouterProfile,
   startCodexLogin,
+  XAI_CONSENT_DISCLOSURE,
+  XAI_OAUTH,
+  XAI_OAUTH_ADAPTER_ID,
+  createXaiOauthAdapter,
+  startXaiLogin,
+  xaiCredentialRef,
+  DERIVED_XAI,
+  DERIVED_XAI_COMMIT,
+  DERIVED_XAI_MODELS,
 } from "./openai/index.ts";
-export type { CodexAdapterOptions, CodexLoginOptions, CodexLoginResult } from "./openai/index.ts";
+export type { CodexAdapterOptions, CodexLoginOptions, CodexLoginResult, XaiLoginOptions, XaiLoginResult } from "./openai/index.ts";
 export { createAzureOpenAIAdapter } from "./openai/azure.ts";
 export type { AzureAdapterOptions } from "./openai/azure.ts";
 export { createLocalOpenAIAdapter } from "./openai/local.ts";

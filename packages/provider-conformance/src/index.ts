@@ -92,6 +92,7 @@ export * as openaiCorpus from "./corpus/openai.ts";
 export * as openaiScenarios from "./corpus/openai-scenarios.ts";
 export * as vertexCorpus from "./corpus/vertex.ts";
 
+export * as anthropicConsoleOauthFake from "./fakes/anthropic-console-oauth.ts";
 export * as anthropicFake from "./fakes/anthropic-messages.ts";
 export * as azureFake from "./fakes/azure-openai.ts";
 export * as bedrockFake from "./fakes/bedrock.ts";
@@ -101,4 +102,5 @@ export * as openaiChatFake from "./fakes/openai-chat.ts";
 export * as openaiModelsFake from "./fakes/openai-models.ts";
 export * as openaiResponsesFake from "./fakes/openai-responses.ts";
 export * as vertexFake from "./fakes/vertex.ts";
+export * as xaiOauthFake from "./fakes/xai-oauth.ts";
 export { OPAQUE_FIELD_NAMES, redactOpaqueFields } from "./fakes/redact-opaque.ts";

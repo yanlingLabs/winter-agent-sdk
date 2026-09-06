@@ -10,9 +10,17 @@
 // publishes only `.` and its barrel is frozen (R6-12) -- a deep specifier does not resolve. Same for
 // the adapter itself.
 import { describe, expect, test } from "bun:test";
-import { withFake, noRequestContains, requestsTo, sseResponse } from "../fakes/server.ts";
+import { withFake, noRequestContains, requestsTo, sseResponse, type FakeRoute } from "../fakes/server.ts";
+import {
+  FAKE_CONSOLE_ACCESS_TOKEN,
+  FAKE_CONSOLE_ACCOUNT_ID,
+  FAKE_CONSOLE_REFRESHED_ACCESS_TOKEN,
+  FAKE_CONSOLE_REFRESH_TOKEN,
+  startAnthropicConsoleOauthFake,
+} from "../fakes/anthropic-console-oauth.ts";
+import { createMemoryCredentialStore } from "@yanlinglabs/winter-provider-runtime";
 import { anthropicError, anthropicFakeRoutes, anthropicTurnResponse, assertAnthropicRequest, anthropicBody, messageBlocks } from "../fakes/anthropic-messages.ts";
-import { createAnthropicMessagesAdapter, ANTHROPIC_ADAPTER_ID, ANTHROPIC_DEFAULT_BASE_URL, mapAnthropicEffort } from "../../../provider-runtime/src/adapters/anthropic/index.ts";
+import { createAnthropicMessagesAdapter, ANTHROPIC_ADAPTER_ID, ANTHROPIC_DEFAULT_BASE_URL, CONSOLE_OAUTH, anthropicCredentialRef, mapAnthropicEffort } from "../../../provider-runtime/src/adapters/anthropic/index.ts";
 import { loadCatalog } from "@yanlinglabs/winter-provider-catalog";
 import { THINKING_ENABLED_NEEDS_BUDGET } from "../../../provider-runtime/src/adapters/refusals.ts";
 import { foldProviderStream } from "../../../runtime/src/provider/bridge.ts";
@@ -602,4 +610,174 @@ describe("R6-L / F-3: a CREDENTIAL-shaped host header never rides", () => {
       expect(recorded.headers["x-api-key"]).toBeDefined();
     });
   });
+});
+
+describe("D20: Anthropic Console OAuth on the wire", () => {
+  /**
+   * Wraps the corpus routes so the RAW `authorization` value is captured.
+   *
+   * The base fake redacts credential headers as it records them (`Bearer ***`), which is right for
+   * evidence a failing assertion prints and useless for the one thing this block must prove: that
+   * the turn went out under the REFRESHED bearer rather than the stale one it started with. Counting
+   * requests cannot tell those apart — the difference is the value. Same reasoning, and the same
+   * shape, as the codex fake's own `bearers` array.
+   */
+  function capturingRoutes(bearers: string[]): FakeRoute[] {
+    return anthropicCorpusRoutes().map((route) => ({
+      ...route,
+      handler: (req: Request, recorded: Parameters<typeof route.handler>[1]) => {
+        const authorization = req.headers.get("authorization");
+        if (authorization !== null) bearers.push(authorization.replace(/^Bearer /, ""));
+        return route.handler(req, recorded);
+      },
+    }));
+  }
+
+  test("D20: oauth material rides as a Bearer with the OAuth beta as a PROTOCOL header, and a near-expiry token is refreshed BEFORE the turn", async () => {
+    const oauthFake = await startAnthropicConsoleOauthFake();
+    try {
+      const store = createMemoryCredentialStore();
+      const ref = anthropicCredentialRef(FAKE_CONSOLE_ACCOUNT_ID);
+      // Expiring inside the 60 s freshness window, so the adapter must renew it before it speaks.
+      await store.set(ref, { kind: "oauth", accessToken: "test-token-console-stale", refreshToken: FAKE_CONSOLE_REFRESH_TOKEN, accountId: FAKE_CONSOLE_ACCOUNT_ID, expiresAt: Date.now() + 1_000 });
+      const adapter = testAnthropicAdapter({ tokenUrl: oauthFake.tokenUrl });
+      const bearers: string[] = [];
+      await withFake({ routes: capturingRoutes(bearers) }, async (fake) => {
+        await foldTurn(adapter, { model: ANTHROPIC_MODELS.main, messages: [{ role: "user", content: "hi" }] }, testContext(fake.url, { credentials: store, authRef: ref }));
+
+        const turn = fake.requests.at(-1)!;
+        // A Bearer, and NOT an api key: the artifact's own auth builder is a ternary between exactly
+        // these two shapes, and it never sends both (derived-shapes-p6b.md §2.5).
+        expect(turn.headers["authorization"]).toBe("Bearer ***");
+        expect(turn.headers["x-api-key"]).toBeUndefined();
+        // The OAuth beta rides as a PROTOCOL header (R6-L): every endpoint speaking this dialect
+        // under an OAuth bearer needs it, and it names no account.
+        expect(turn.headers["anthropic-beta"]).toContain(CONSOLE_OAUTH.betaHeader);
+
+        // REFRESHED ONCE, BEFORE the generation — not after a 401, which would spend a turn to learn
+        // something the expiry already said.
+        expect(oauthFake.tokenRequests).toHaveLength(1);
+        // R-A2-1: JSON on the refresh grant too, and NO `anthropic-beta` on it -- that header rides
+        // the API request, never the token endpoint (the capture's §2.3 vs §2.5).
+        expect(oauthFake.tokenRequests[0]?.headers["content-type"]).toBe("application/json");
+        expect(oauthFake.tokenRequests[0]?.headers["anthropic-beta"]).toBeUndefined();
+        const grant = JSON.parse(oauthFake.tokenRequests[0]!.body) as Record<string, string>;
+        expect(grant["grant_type"]).toBe("refresh_token");
+        // The artifact's own refresh carries `scope`; Winter sends the scope it was granted.
+        expect(grant["scope"]).toBe(CONSOLE_OAUTH.scope);
+        // And the turn actually USED the new token. Counting the refresh alone would pass on an
+        // adapter that renewed the record and then sent the stale bearer anyway.
+        expect(bearers).toEqual([FAKE_CONSOLE_REFRESHED_ACCESS_TOKEN]);
+        const stored = await store.get(ref);
+        expect(stored?.kind === "oauth" ? stored.accessToken : "").toBe(FAKE_CONSOLE_REFRESHED_ACCESS_TOKEN);
+        // The merge rule: a refresh that does not rotate the refresh token must not erase it.
+        expect(stored?.kind === "oauth" ? stored.refreshToken : "").toBe(FAKE_CONSOLE_REFRESH_TOKEN);
+      });
+    } finally {
+      await oauthFake.close();
+    }
+  }, 15_000);
+
+  test("a token with plenty of life left is NOT refreshed — the freshness window is a window, not a per-turn round trip", async () => {
+    const oauthFake = await startAnthropicConsoleOauthFake();
+    try {
+      const store = createMemoryCredentialStore();
+      const ref = anthropicCredentialRef(FAKE_CONSOLE_ACCOUNT_ID);
+      await store.set(ref, { kind: "oauth", accessToken: FAKE_CONSOLE_ACCESS_TOKEN, refreshToken: FAKE_CONSOLE_REFRESH_TOKEN, accountId: FAKE_CONSOLE_ACCOUNT_ID, expiresAt: Date.now() + 3_600_000 });
+      const adapter = testAnthropicAdapter({ tokenUrl: oauthFake.tokenUrl });
+      const bearers: string[] = [];
+      await withFake({ routes: capturingRoutes(bearers) }, async (fake) => {
+        await foldTurn(adapter, { model: ANTHROPIC_MODELS.main, messages: [{ role: "user", content: "hi" }] }, testContext(fake.url, { credentials: store, authRef: ref }));
+        expect(oauthFake.tokenRequests).toHaveLength(0);
+        expect(bearers).toEqual([FAKE_CONSOLE_ACCESS_TOKEN]);
+        expect(fake.requests.at(-1)!.headers["anthropic-beta"]).toContain(CONSOLE_OAUTH.betaHeader);
+      });
+    } finally {
+      await oauthFake.close();
+    }
+  }, 15_000);
+
+  test("an API-KEY turn carries neither the OAuth beta nor an Authorization header — the arm is chosen by the material, not switched on globally", async () => {
+    const adapter = testAnthropicAdapter();
+    await withFake({ routes: anthropicCorpusRoutes() }, async (fake) => {
+      await foldTurn(adapter, { model: ANTHROPIC_MODELS.main, messages: [{ role: "user", content: "hi" }] }, testContext(fake.url));
+      const turn = fake.requests.at(-1)!;
+      expect(turn.headers["x-api-key"]).toBeDefined();
+      expect(turn.headers["authorization"]).toBeUndefined();
+      expect(turn.headers["anthropic-beta"]).toBeUndefined();
+    });
+  });
+
+  test("WS-13b: an OAuth turn still names Winter and carries NO vendor product identity — not in the user-agent, and not in the beta list", async () => {
+    const oauthFake = await startAnthropicConsoleOauthFake();
+    try {
+      const store = createMemoryCredentialStore();
+      const ref = anthropicCredentialRef(FAKE_CONSOLE_ACCOUNT_ID);
+      await store.set(ref, { kind: "oauth", accessToken: FAKE_CONSOLE_ACCESS_TOKEN, refreshToken: FAKE_CONSOLE_REFRESH_TOKEN, accountId: FAKE_CONSOLE_ACCOUNT_ID, expiresAt: Date.now() + 3_600_000 });
+      const adapter = testAnthropicAdapter({ tokenUrl: oauthFake.tokenUrl });
+      await withFake({ routes: anthropicCorpusRoutes() }, async (fake) => {
+        await foldTurn(adapter, { model: ANTHROPIC_MODELS.main, messages: [{ role: "user", content: "hi" }] }, testContext(fake.url, { credentials: store, authRef: ref }));
+        const turn = fake.requests.at(-1)!;
+        expect(turn.headers["user-agent"]).toBe(winterUserAgent());
+        // The corpus pin the brief asks for. The pinned artifact carries a SECOND beta,
+        // `claude-code-20250219`, which names its own product; Winter sends the `oauth_auth` one and
+        // never that. Checked across every header of every request, not just the two we set, because
+        // the way a product identity arrives is on a header nobody was looking at.
+        for (const recorded of fake.requests) {
+          for (const [name, value] of Object.entries(recorded.headers)) {
+            if (name === "host") continue; // 127.0.0.1:<port>, never a vendor name
+            // BOTH HALVES. The first version of this sweep asserted `[name, value]` against
+            // `[name, matcher]` -- comparing the name to ITSELF, which always passes, so a header
+            // NAMED for the vendor (`x-claude-…`) would have sailed through the one test written to
+            // catch exactly that.
+            expect(name).not.toMatch(/claude/i);
+            expect(value).not.toMatch(/claude/i);
+          }
+        }
+      });
+    } finally {
+      await oauthFake.close();
+    }
+  }, 15_000);
+});
+
+describe("R6b-5: the D20 arm belongs to the anthropic ROW, not to the adapter", () => {
+  // This adapter is multi-provider: a third party speaking the Anthropic Messages dialect ships as
+  // its own `<id>-anthropic` row on the SAME `adapterId`, with its own endpoint. Nothing upstream
+  // checks that a stored credential's KIND matches its row's `authKinds`, so an `oauth` credential
+  // configured against a sibling row reaches this adapter looking exactly like a Console one. If the
+  // D20 behaviours keyed on the material alone, that would post the THIRD PARTY'S REFRESH TOKEN to
+  // `platform.claude.com` under Anthropic's client id, and stamp Anthropic's beta on the third
+  // party's request. Neither is a thing a wrong configuration should be able to cause.
+  test("oauth material on a SIBLING provider row rides as a plain Bearer: no Anthropic beta, and NOTHING is sent to Anthropic's token endpoint", async () => {
+    const oauthFake = await startAnthropicConsoleOauthFake();
+    try {
+      const store = createMemoryCredentialStore();
+      const ref = { kind: "keychain" as const, account: "deepseek-anthropic:acct-test-sibling" };
+      // Near expiry, so a provider-blind implementation WOULD refresh — the condition that makes
+      // this test able to fail.
+      await store.set(ref, { kind: "oauth", accessToken: "test-token-sibling-access", refreshToken: "test-token-sibling-refresh", expiresAt: Date.now() + 1_000 });
+      const adapter = testAnthropicAdapter({ tokenUrl: oauthFake.tokenUrl });
+      await withFake({ routes: anthropicCorpusRoutes() }, async (fake) => {
+        await foldTurn(
+          adapter,
+          { model: ANTHROPIC_MODELS.main, messages: [{ role: "user", content: "hi" }] },
+          testContext(fake.url, { credentials: store, authRef: ref, connection: { providerId: "deepseek-anthropic", baseUrl: fake.url, local: true } }),
+        );
+        // ASSERTED FIRST because it is the worst of the two failures and an earlier assertion would
+        // mask it: the sibling's refresh token never left for Anthropic's token endpoint, and the
+        // record it would have overwritten is untouched.
+        expect(oauthFake.tokenRequests).toHaveLength(0);
+        const stored = await store.get(ref);
+        expect(stored?.kind === "oauth" ? stored.accessToken : "").toBe("test-token-sibling-access");
+        const turn = fake.requests.at(-1)!;
+        // The credential still authenticates the request — this rule is about Anthropic-specific
+        // behaviour, never about refusing to send the credential the host configured.
+        expect(turn.headers["authorization"]).toBe("Bearer ***");
+        expect(turn.headers["anthropic-beta"]).toBeUndefined();
+      });
+    } finally {
+      await oauthFake.close();
+    }
+  }, 15_000);
 });

@@ -62,6 +62,13 @@ export { refreshOauthMaterial } from "./adapters/oauth/refresh.ts";
 export type { KeychainRef, OauthMaterial, RefreshOauthMaterialInput } from "./adapters/oauth/refresh.ts";
 export { runDeviceCodeFlow } from "./adapters/oauth/device-code.ts";
 export type { DeviceCodeConfig } from "./adapters/oauth/device-code.ts";
+
+// WS-13b D20: the Anthropic Console OAuth login, published so `runtime`'s `startProviderLogin` can
+// reach it by package name. Exported from HERE rather than from `adapters/index.ts` — which the
+// star-export below already republishes — because the widening lanes edit that file concurrently and
+// this is the one place the two additions cannot collide.
+export { CONSOLE_OAUTH, OAUTH_REFRESH_WINDOW_MS, anthropicCredentialRef, startAnthropicConsoleLogin } from "./adapters/anthropic/index.ts";
+export type { AnthropicConsoleLoginOptions, AnthropicConsoleLoginResult } from "./adapters/anthropic/index.ts";
 export { parseSse } from "./sse.ts";
 export type { SseEvent, SseOptions } from "./sse.ts";
 export { WinterProviderResolutionError, createRegistry, estimateCostUsd } from "./registry.ts";
