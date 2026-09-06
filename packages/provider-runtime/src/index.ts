@@ -50,6 +50,18 @@ export type { BoundedFetchInit } from "./http.ts";
 // adapters and connect screens must reach the SAME function -- a second literal is how a
 // family ends up presenting as something else.
 export { winterUserAgent } from "./identity.ts";
+
+// WS-13b (P6.5 spine): the two OAuth primitives every Winter-authored flow shares.
+//
+// `refreshOauthMaterial` is the refresh-token grant EXTRACTED from `codex-oauth.ts` -- including its
+// merge rule, which is what stops a partial refresh response from erasing a still-good refresh
+// token. `runDeviceCodeFlow` is RFC 8628, the login shape a vendor's public client supports without
+// a registered `redirect_uri`. Both are exported so the widening lanes build on them rather than on
+// a second copy: the merge rule and the honest-identity field are exactly the details a copy loses.
+export { refreshOauthMaterial } from "./adapters/oauth/refresh.ts";
+export type { KeychainRef, OauthMaterial, RefreshOauthMaterialInput } from "./adapters/oauth/refresh.ts";
+export { runDeviceCodeFlow } from "./adapters/oauth/device-code.ts";
+export type { DeviceCodeConfig } from "./adapters/oauth/device-code.ts";
 export { parseSse } from "./sse.ts";
 export type { SseEvent, SseOptions } from "./sse.ts";
 export { WinterProviderResolutionError, createRegistry, estimateCostUsd } from "./registry.ts";
