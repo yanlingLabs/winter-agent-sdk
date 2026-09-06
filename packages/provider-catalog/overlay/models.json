@@ -3834,6 +3834,242 @@
       },
       "unsupportedParameters": [],
       "status": "candidate"
-    }
+    },
+      {
+        "key": "openai/gpt-6-astra",
+        "providerId": "openai",
+        "upstreamId": "gpt-6-astra",
+        "displayName": "GPT-6 Astra",
+        "aliases": [],
+        "$comment": "Winter-authored 2026-09-06 (user ask: \"add gpt 6 astra to openai/codex oauth models as the strongest model\"). The pinned OmniRoute tree at v3.8.50 predates this model, so no upstream extraction produced the row; every field cites OpenAI's own model page or pricing page, retrieved 2026-09-06. \"Strongest\" has NO field in this schema — the ranking lives in the model-families layer (WS-13c, pending), not here. Pricing is the STANDARD tier at SHORT context; the page also lists a long-context rate (input $20 / cached $2 / cache write $25 / output $75 per 1M), plus batch/flex (half) and fast (double) tiers, none of which the single-tier `ModelPricing` can carry — the estimator therefore UNDER-counts long-context turns on this row.",
+        "endpoints": [
+          "chat",
+          "responses"
+        ],
+        "contextWindow": {
+          "value": 1050000,
+          "source": "official-doc",
+          "sourceRef": "https://developers.openai.com/api/docs/models/gpt-6-astra — \"1,050,000 context window\" (retrieved 2026-09-06)",
+          "confidence": "declared",
+          "observedAt": "2026-09-06T00:00:00Z"
+        },
+        "maxOutputTokens": {
+          "value": 128000,
+          "source": "official-doc",
+          "sourceRef": "https://developers.openai.com/api/docs/models/gpt-6-astra — \"128,000 max output tokens\" (retrieved 2026-09-06)",
+          "confidence": "declared",
+          "observedAt": "2026-09-06T00:00:00Z"
+        },
+        "inputModalities": {
+          "value": [
+            "text",
+            "image"
+          ],
+          "source": "official-doc",
+          "sourceRef": "https://developers.openai.com/api/docs/models/gpt-6-astra — input: text, image (retrieved 2026-09-06)",
+          "confidence": "declared",
+          "observedAt": "2026-09-06T00:00:00Z"
+        },
+        "outputModalities": {
+          "value": [
+            "text"
+          ],
+          "source": "official-doc",
+          "sourceRef": "https://developers.openai.com/api/docs/models/gpt-6-astra — output: text (retrieved 2026-09-06)",
+          "confidence": "declared",
+          "observedAt": "2026-09-06T00:00:00Z"
+        },
+        "toolCalling": {
+          "value": "native",
+          "source": "official-doc",
+          "sourceRef": "https://developers.openai.com/api/docs/models/gpt-6-astra — served on both Chat Completions and Responses, the two surfaces whose native function-calling every GPT-5.x row on this provider already carries; the page's tool statement was not quoted verbatim, hence inferred",
+          "confidence": "inferred",
+          "observedAt": "2026-09-06T00:00:00Z"
+        },
+        "nativeTools": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://developers.openai.com/api/docs/models/gpt-6-astra — same basis as toolCalling",
+          "confidence": "inferred",
+          "observedAt": "2026-09-06T00:00:00Z"
+        },
+        "reasoning": {
+          "supported": {
+            "value": true,
+            "source": "official-doc",
+            "sourceRef": "https://developers.openai.com/api/docs/models/gpt-6-astra — reasoning tokens with effort levels low, medium, high, xhigh and max (retrieved 2026-09-06)",
+            "confidence": "declared",
+            "observedAt": "2026-09-06T00:00:00Z"
+          },
+          "efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ],
+          "defaultEffort": "medium",
+          "continuation": "opaque-provider-state",
+          "readableState": {
+            "value": "summary",
+            "source": "official-doc",
+            "sourceRef": "continuity report §5.1 — the Responses surface returns a readable summary, never the raw chain",
+            "confidence": "declared",
+            "observedAt": "2026-09-06T00:00:00Z"
+          },
+          "summaryRequest": {
+            "value": {
+              "field": "reasoning.summary",
+              "values": [
+                "auto",
+                "concise",
+                "detailed"
+              ]
+            },
+            "source": "official-doc",
+            "sourceRef": "continuity report §5.1 — the Responses surface's summary control and its current values `auto`/`concise`/`detailed`; the deprecated `generate_summary` alias is deliberately not listed.",
+            "confidence": "declared",
+            "observedAt": "2026-09-06T00:00:00Z"
+          },
+          "completionEvent": {
+            "value": "response.completed",
+            "source": "upstream-static",
+            "sourceRef": "Norma packages/core/src/providers/responses-sse.ts — encrypted_content is preserved VERBATIM off the completion event",
+            "confidence": "declared",
+            "observedAt": "2026-09-06T00:00:00Z"
+          },
+          "continuationDomain": {
+            "value": [
+              "openai/gpt-6-astra"
+            ],
+            "source": "official-doc",
+            "sourceRef": "continuity report §5.1/§5.3 for own-state acceptance — the Responses surface replays its own completed `reasoning.encrypted_content` items to the same model.  WS-13 §8.2: \"OpenAI-compatible\" is never the capability test, so this key shares NO domain with any other row.",
+            "confidence": "declared",
+            "observedAt": "2026-09-06T00:00:00Z"
+          }
+        },
+        "pricing": {
+          "value": {
+            "inputPerMTokUsd": 10,
+            "outputPerMTokUsd": 50,
+            "cacheReadPerMTokUsd": 1,
+            "cacheWritePerMTokUsd": 12.5
+          },
+          "source": "official-doc",
+          "sourceRef": "https://developers.openai.com/api/docs/pricing — gpt-6-astra, standard tier, short context: input $10.00, cached input $1.00, cache writes $12.50, output $50.00 per 1M tokens (retrieved 2026-09-06). Long context: $20.00 / $2.00 / $25.00 / $75.00. Unlike GPT-4.1, this model DOES publish a cache-write rate, so the key is set.",
+          "confidence": "declared",
+          "observedAt": "2026-09-06T00:00:00Z"
+        },
+        "unsupportedParameters": [],
+        "status": "candidate"
+      },
+      {
+        "key": "codex-oauth/gpt-6-astra",
+        "providerId": "codex-oauth",
+        "upstreamId": "gpt-6-astra",
+        "displayName": "GPT-6 Astra (Codex)",
+        "aliases": [],
+        "$comment": "Winter-owned (D11), authored 2026-09-06 (user ask: \"add gpt 6 astra to openai/codex oauth models as the strongest model\"). Evidence that the Codex backend serves it: OpenAI's Codex models page (https://developers.openai.com/codex/models (308 → https://learn.chatgpt.com/docs/models), retrieved 2026-09-06) lists `gpt-6-astra` first among the recommended models (\"Availability depends on the rollout, your sign-in method, and your client\"; Astra is named for Pro, Business and Enterprise accounts), and the operator's Codex picker showed it as the current model on 2026-09-06. Like every codex-oauth row it is deliberately UNPRICED — a subscription backend has no per-token list price (`pricingBasis: subscription` on the provider), so `maxBudgetUsd` is inert for it by design. \"Strongest\" has no field in this schema — see the model-families layer (WS-13c, pending). The Codex page also lists an \"Ultra\" effort that runs subagents in the Codex client; it is a client mode, not a wire `reasoning.effort` value, so it is not in `efforts`.",
+        "endpoints": [
+          "responses"
+        ],
+        "contextWindow": {
+          "value": 272000,
+          "source": "upstream-static",
+          "sourceRef": "Norma packages/core/src/providers/codex-config.ts — the backend's own /models payload reported `context_window: 272000` for EVERY slug when last read live (2026-07-31); gpt-6-astra's own figure has not been read from that payload, and the API model page's 1,050,000 is the metered endpoint's limit, not this backend's. The lower value is the safe direction (compaction triggers earlier, never past the ceiling) until a live read replaces it.",
+          "confidence": "inferred",
+          "observedAt": "2026-09-06T00:00:00Z"
+        },
+        "inputModalities": {
+          "value": [
+            "text",
+            "image"
+          ],
+          "source": "official-doc",
+          "sourceRef": "https://developers.openai.com/api/docs/models/gpt-6-astra — input: text, image; the Codex backend serves the same model (retrieved 2026-09-06)",
+          "confidence": "inferred",
+          "observedAt": "2026-09-06T00:00:00Z"
+        },
+        "outputModalities": {
+          "value": [
+            "text"
+          ],
+          "source": "winter-default",
+          "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+          "confidence": "unknown",
+          "observedAt": "2026-09-06T00:00:00Z"
+        },
+        "toolCalling": {
+          "value": "native",
+          "source": "upstream-static",
+          "sourceRef": "Norma codex-config.ts / responses-sse.ts — the codex backend speaks the Responses tool protocol for every slug it serves",
+          "confidence": "inferred",
+          "observedAt": "2026-09-06T00:00:00Z"
+        },
+        "nativeTools": {
+          "value": true,
+          "source": "upstream-static",
+          "sourceRef": "same basis as toolCalling",
+          "confidence": "inferred",
+          "observedAt": "2026-09-06T00:00:00Z"
+        },
+        "reasoning": {
+          "supported": {
+            "value": true,
+            "source": "official-doc",
+            "sourceRef": "https://developers.openai.com/codex/models (308 → https://learn.chatgpt.com/docs/models) — reasoning effort options Low, Medium, High, Extra High, Max (and the client-side Ultra) listed for the recommended models incl. gpt-6-astra (retrieved 2026-09-06)",
+            "confidence": "declared",
+            "observedAt": "2026-09-06T00:00:00Z"
+          },
+          "efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ],
+          "defaultEffort": "medium",
+          "continuation": "opaque-provider-state",
+          "readableState": {
+            "value": "summary",
+            "source": "official-doc",
+            "sourceRef": "continuity report §5.1 — the Responses surface returns a readable summary, never the raw chain",
+            "confidence": "declared",
+            "observedAt": "2026-09-06T00:00:00Z"
+          },
+          "summaryRequest": {
+            "value": {
+              "field": "reasoning.summary",
+              "values": [
+                "auto",
+                "concise",
+                "detailed"
+              ]
+            },
+            "source": "official-doc",
+            "sourceRef": "continuity report §5.1 — the Responses surface's summary control and its current values `auto`/`concise`/`detailed`; the deprecated `generate_summary` alias is deliberately not listed.",
+            "confidence": "declared",
+            "observedAt": "2026-09-06T00:00:00Z"
+          },
+          "completionEvent": {
+            "value": "response.completed",
+            "source": "upstream-static",
+            "sourceRef": "Norma packages/core/src/providers/responses-sse.ts — encrypted_content is preserved VERBATIM off the completion event",
+            "confidence": "declared",
+            "observedAt": "2026-09-06T00:00:00Z"
+          },
+          "continuationDomain": {
+            "value": [
+              "codex-oauth/gpt-6-astra"
+            ],
+            "source": "official-doc",
+            "sourceRef": "continuity report §5.1/§5.3 for own-state acceptance — the Responses surface replays its own completed `reasoning.encrypted_content` items to the same model. §2.5 for the narrowness: two endpoints can both use `/v1/responses` while issuing UNRELATED encrypted payloads, so this backend shares NO domain with `openai/*` despite the shared HTTP shape. WS-13 §8.2: \"OpenAI-compatible\" is never the capability test, so this key shares NO domain with any other row.",
+            "confidence": "declared",
+            "observedAt": "2026-09-06T00:00:00Z"
+          }
+        },
+        "unsupportedParameters": [],
+        "status": "candidate"
+      }
   ]
 }

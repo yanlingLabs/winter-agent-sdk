@@ -93,6 +93,7 @@ describe("pricing (R6-H, R6-9)", () => {
       "anthropic/claude-sonnet-5",
       "google/gemini-2.5-pro",
       "openai/gpt-4.1",
+      "openai/gpt-6-astra",
       "openai/o4-mini",
     ]);
     for (const model of priced) {
@@ -354,9 +355,18 @@ describe("review round 1 — the three Importants, pinned where they broke", () 
     // assertion fails and names the one value to flip"; lane X2's first network run is that sync,
     // and this is the flip. 99 evidence rows across both generated files moved in that one commit.
     for (const model of catalog.models) {
-      expect([model.key, model.outputModalities.source]).toEqual([model.key, "winter-default"]);
-      expect([model.key, model.outputModalities.confidence]).toEqual([model.key, "unknown"]);
-      expect(model.outputModalities.sourceRef).toContain("WINTER DEFAULT");
+      const om = model.outputModalities;
+      if (om.source === "official-doc") {
+        // The one honest alternative to the default: a vendor page that STATES the output modality
+        // (first row: `openai/gpt-6-astra`, whose model page says "output: text"). It must be a
+        // declared claim with a page URL -- never `upstream-static`, which is what this pins against.
+        expect([model.key, om.confidence]).toEqual([model.key, "declared"]);
+        expect(om.sourceRef).toMatch(/^https:\/\//);
+        continue;
+      }
+      expect([model.key, om.source]).toEqual([model.key, "winter-default"]);
+      expect([model.key, om.confidence]).toEqual([model.key, "unknown"]);
+      expect(om.sourceRef).toContain("WINTER DEFAULT");
     }
   });
 
