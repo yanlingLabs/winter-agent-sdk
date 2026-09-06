@@ -89,9 +89,26 @@ async function verifyCatalogInBinary(binPath: string): Promise<void> {
 
     console.log("verify:compiled — probing that an UNKNOWN model is a typed refusal inside the binary (the negative control)...");
     const refused = await runCompiledSession(binPath, { ...base, sessionId: "verify-compiled-unknown", model: "anthropic/no-such-model-t10" }, winterHome);
-    if (refused.exitCode === 0) throw new Error("verify:compiled: an unknown model did NOT refuse — a binary with an empty catalog would also refuse the known one");
-    if (!refused.stderr.includes("is not in provider")) {
-      throw new Error(`verify:compiled: the refusal did not name the catalog miss; stderr was:\n${refused.stderr}`);
+    // THE SHAPE, not the exit code (review round 1, Critical A). A resolution failure no longer stops
+    // the session from starting: it emits `system/init` and lands its first generation on R6-F's
+    // pinned result, so the process exits 0 like any other completed turn. What discriminates a
+    // working catalog from an EMPTY one is therefore not "did it refuse" — an empty catalog refuses
+    // everything — but the pair: the known model resolved and reported `winter_provider` above, and
+    // the unknown one reports NONE and fails with the catalog's own words.
+    const refusedInit = refused.frames.map((f) => (f as { message?: { type?: string; subtype?: string } }).message).find((m) => m?.type === "system" && m?.subtype === "init") as
+      | { winter_provider?: unknown }
+      | undefined;
+    if (refusedInit === undefined) throw new Error("verify:compiled: the unknown-model session emitted no system/init — a resolution failure must still start the session (capture (I))");
+    if (refusedInit.winter_provider !== undefined) throw new Error("verify:compiled: the unknown-model session reported a `winter_provider` identity it cannot have resolved");
+    const refusedResult = refused.frames.map((f) => (f as { message?: { type?: string } }).message).find((m) => m?.type === "result") as
+      | { is_error?: boolean; terminal_reason?: string; api_error_status?: number | null; result?: string }
+      | undefined;
+    if (refusedResult?.is_error !== true || refusedResult.terminal_reason !== "api_error" || refusedResult.api_error_status !== null) {
+      throw new Error(`verify:compiled: the unknown-model session did not land on the pinned failure shape; got ${JSON.stringify(refusedResult)}`);
+    }
+    // The catalog's OWN words, which an empty catalog could not produce for the known model either.
+    if (!String(refusedResult.result ?? "").includes("is not in provider") && !refused.stderr.includes("is not in provider")) {
+      throw new Error(`verify:compiled: the refusal did not name the catalog miss; result was ${JSON.stringify(refusedResult?.result)} and stderr was:\n${refused.stderr}`);
     }
     console.log(`verify:compiled OK — the catalog (${catalog.catalogVersion}: ${catalog.providers.length} providers, ${catalog.models.length} models) resolves inside the compiled binary`);
   } finally {
