@@ -360,6 +360,23 @@
       "pricingBasis": "free",
       "admission": { "basis": "local", "citation": "local" },
       "scope": "llm"
+    },
+    {
+      "id": "xai-oauth",
+      "displayName": "Grok (xAI OAuth)",
+      "$comment": "WINTER-OWNED, and the only row in this catalog admitted on vendor CONDUCT rather than vendor documentation (audit \u00a72.5, D21 prong 2 \u2014 the codex shape). Winter performs its OWN device login against xAI's public, secret-less, Apache-2.0-published OAuth client and sends its own name in the flow's `referrer` field; it never reads the vendor CLI's `~/.grok/auth.json` (that is the excluded `grok-cli` id). SUBSCRIPTION-PRICED: the flow spends a SuperGrok / X Premium entitlement, not the metered API, so it never feeds R6-H cost. The endpoint is the subscription PROXY, not `https://api.x.ai/v1` \u2014 that is the separate token-priced api-key row, and the correction is derived in packages/conformance/compat/xai/grok-build/derived-shapes-p6b-xai.md \u00a74. Ships behind `settings.providers[\"xai-oauth\"].enabled` (default true, restrictive-only across tiers per R6b-9) so the \u00a72.5 reversion condition can be applied without a release.",
+      "protocols": ["openai-chat-completions"],
+      "authKinds": ["oauth-approved"],
+      "defaultEndpoints": { "api": "https://cli-chat-proxy.grok.com/v1" },
+      "modelDiscovery": "none",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.xai-oauth",
+      "family": "openai",
+      "upstream": { "project": "winter", "commit": "", "sourcePaths": [] },
+      "risk": { "class": "approved", "reasons": ["prong 2 (vendor conduct, not vendor documentation): xAI documents API keys only, and the permission for third-party agents on this flow is an announcement plus an Apache-2.0 client release. Audit \u00a72.5 leaves three residuals open \u2014 the docs are silent, and server-side identity validation is untested. REVERSION CONDITION (WS-13b \u00a74): if xAI rejects an honest unregistered agent identity, that is a partner allowlist in fact and this row reverts to impersonation-required.", "the vendor's consent page may name \"Grok Build\" rather than Winter, because the flow uses xAI's shared public client. Not impersonation by Winter, but a user-facing misattribution a host must disclose \u2014 `XAI_CONSENT_DISCLOSURE` is exported for exactly that."] },
+      "pricingBasis": "subscription",
+      "admission": { "basis": "oauth-documented", "citation": "audit:2.5 \u2014 vendor announcement https://x.ai/news/grok-opencode (\"More open-source agents and integrations are coming soon\") + xAI's own public client, Apache-2.0, https://github.com/xai-org/grok-build at commit 72a61251fcffb464bcc687aeb5a998e5a98ec0c9; constants derived in packages/conformance/compat/xai/grok-build/derived-shapes-p6b-xai.md" },
+      "scope": "llm"
     }
   ]
 }
