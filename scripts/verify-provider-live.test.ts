@@ -13,33 +13,31 @@ import { test, expect, describe } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadCatalog, type ProviderAuthKind, type WinterCatalog } from "@yanlinglabs/winter-provider-catalog";
-import { normalizeHttpError, winterUserAgent } from "@yanlinglabs/winter-provider-runtime";
-import { errorResponse, startFake } from "winter-provider-conformance";
-import { ADAPTERS_MODULE_VAR, countByKind, CREDENTIAL_REF_SUFFIX, collectAdapters, liveEnvPrefix, OPT_IN_VAR, planLiveRun, SKIPPED_LINE } from "./verify-provider-live.ts";
+import { loadCatalog } from "@yanlinglabs/winter-provider-catalog";
+import { createMemoryCredentialStore, normalizeHttpError, winterUserAgent } from "@yanlinglabs/winter-provider-runtime";
+import { anthropicConsoleOauthFake, errorResponse, startFake, xaiOauthFake } from "winter-provider-conformance";
+import {
+  ADAPTERS_MODULE_VAR,
+  countByKind,
+  CREDENTIAL_REF_SUFFIX,
+  collectAdapters,
+  KEYCHAIN_SERVICE_VAR,
+  liveEnvPrefix,
+  OPT_IN_VAR,
+  planLiveRun,
+  PROVIDER_LOGIN_IDS,
+  runLogin,
+  SKIPPED_LINE,
+  type LiveTargetKind,
+} from "./verify-provider-live.ts";
 
 const CATALOG = loadCatalog();
 
-/**
- * The shipped catalog plus a synthetic row, so the three TARGET KINDS can be planned before the rows
- * that will exercise them exist.
- *
- * P6.5 lands `xai-oauth`, `qoder`, `aihorde` and `uncloseai` in Lanes X2/O, which merge AFTER this
- * lane. A planner test that waited for them would either not exist or be written against ids the
- * catalog does not have — so the two rows below are built by cloning a real descriptor and
- * overriding only the three fields the planner reads (`id`, `authKinds`, `pricingBasis`). The
- * real-catalog twins further down pin the SAME two behaviours against rows that ship TODAY
- * (`codex-oauth` is OAuth-only; every local row is `free`), so neither kind rests on a fixture alone.
- */
-function catalogPlus(rows: Array<{ id: string; authKinds: ProviderAuthKind[]; pricingBasis: "token" | "subscription" | "free" }>): WinterCatalog {
-  const provider = CATALOG.providers.find((p) => p.id === "openai")!;
-  const model = CATALOG.models.find((m) => m.providerId === "openai")!;
-  return {
-    ...CATALOG,
-    providers: [...CATALOG.providers, ...rows.map((row) => ({ ...provider, ...row }))],
-    models: [...CATALOG.models, ...rows.map((row) => ({ ...model, providerId: row.id, key: `${row.id}/probe-model`, upstreamId: "probe-model" }))],
-  };
-}
+// The round-1 tests planned two of the three kinds against a `catalogPlus()` fixture, because
+// `xai-oauth`, `aihorde` and `uncloseai` did not exist yet. Lanes X2/A2/O have merged, so the
+// fixture is GONE and every case below plans against the shipped 163-row catalog. Its justification
+// expired with the merge, and a fixture row shadowing a real one is how three of these tests broke
+// the moment X2 landed.
 
 /** `process.env` with every live-gate variable removed. Used for BOTH the in-process planner and the spawned child. */
 function strippedEnv(extra: Record<string, string> = {}): Record<string, string> {
@@ -137,11 +135,8 @@ describe("planLiveRun selects exactly what was named", () => {
 // the script with a `_CREDENTIAL_REF` variable, and `run()` below REFUSES to, structurally.
 // -------------------------------------------------------------------------------------------------
 describe("WS-13b: the live gate's three target kinds", () => {
-  const XAI = catalogPlus([{ id: "xai-oauth", authKinds: ["oauth-approved"], pricingBasis: "subscription" }]);
-  const HORDE = catalogPlus([{ id: "aihorde", authKinds: ["custom"], pricingBasis: "free" }]);
-
   test("an OAuth row is selected by WINTER_LIVE_<P>_CREDENTIAL_REF and never by an API-key variable", () => {
-    const plan = planLiveRun({ [OPT_IN_VAR]: "1", WINTER_LIVE_XAI_OAUTH_CREDENTIAL_REF: "keychain:xai-oauth:acct" }, XAI);
+    const plan = planLiveRun({ [OPT_IN_VAR]: "1", WINTER_LIVE_XAI_OAUTH_CREDENTIAL_REF: "keychain:xai-oauth:acct" }, CATALOG);
     expect(plan.optedIn && plan.targets.map((t) => [t.providerId, t.kind])).toEqual([["xai-oauth", "oauth"]]);
     // The credential resolves through a KEYCHAIN ref — R6-10's one record per provider/account — and
     // the target reports the VARIABLE that named it, never the account.
@@ -150,14 +145,18 @@ describe("WS-13b: the live gate's three target kinds", () => {
     // ...and the second half of this test's name, which is the part with teeth: an API-key variable
     // naming an OAuth-only row selects NOTHING. Without it, an operator with a stale key variable
     // would send a bearer this vendor never issued and read the 401 as a Winter bug.
-    const byKey = planLiveRun({ [OPT_IN_VAR]: "1", WINTER_LIVE_XAI_OAUTH_API_KEY: "test-key-x" }, XAI);
+    const byKey = planLiveRun({ [OPT_IN_VAR]: "1", WINTER_LIVE_XAI_OAUTH_API_KEY: "test-key-x" }, CATALOG);
     expect(byKey.optedIn).toBe(false);
     expect(byKey.warnings?.join(" ")).toContain("WINTER_LIVE_XAI_OAUTH_API_KEY");
   });
 
   test("a keyless row is selected by WINTER_LIVE_<P>=1 with no key", () => {
-    const plan = planLiveRun({ [OPT_IN_VAR]: "1", WINTER_LIVE_AIHORDE: "1" }, HORDE);
-    expect(plan.optedIn && plan.targets[0]).toMatchObject({ providerId: "aihorde", kind: "keyless" });
+    // RESTATED ON THE SHIPPED ROW. The brief named `aihorde`; X2 shipped `aihorde` as an `api-key`
+    // row (its documented anonymous access is still a key the operator supplies), and `uncloseai`
+    // — `custom`, `free`, no key at all — is the keyless one. The row's shape decides, not the name
+    // in a brief; the refusal `aihorde` now gets is the test below this one.
+    const plan = planLiveRun({ [OPT_IN_VAR]: "1", WINTER_LIVE_UNCLOSEAI: "1" }, CATALOG);
+    expect(plan.optedIn && plan.targets[0]).toMatchObject({ providerId: "uncloseai", kind: "keyless" });
     // `none` is a real `CredentialRef` arm: every store answers it with null, so "send no credential"
     // is a resolution rather than a missing one.
     expect(plan.optedIn && plan.targets[0]!.authRef).toEqual({ kind: "none" });
@@ -165,7 +164,7 @@ describe("WS-13b: the live gate's three target kinds", () => {
 
   test("the keyless selector is `1` exactly, and it never applies to a PRICED row -- an unauthenticated request to a paid vendor is not a smaller mistake than none", () => {
     for (const value of ["", "0", "true", "yes"]) {
-      expect(planLiveRun({ [OPT_IN_VAR]: "1", WINTER_LIVE_AIHORDE: value }, HORDE).optedIn).toBe(false);
+      expect(planLiveRun({ [OPT_IN_VAR]: "1", WINTER_LIVE_UNCLOSEAI: value }, CATALOG).optedIn).toBe(false);
     }
     // Selection itself does NOT check a row's `authKinds` against its ref (`{kind:"none"}` resolves
     // to null on every store and the adapter simply sends no Authorization header), so this plan-time
@@ -177,27 +176,34 @@ describe("WS-13b: the live gate's three target kinds", () => {
     expect(paid.warnings?.join(" ")).toContain("pricingBasis");
   });
 
-  test("a CREDENTIAL_REF that is not a `keychain:<account>` locator is refused rather than guessed at", () => {
+  test("a CREDENTIAL_REF that is not a `keychain:<account>` locator is refused rather than guessed at, and the warning NAMES the variable", () => {
+    // Round-1 minor 4: this asserted only `optedIn === false`, which a run that had simply not opted
+    // in would satisfy just as well. The warning is what distinguishes "refused" from "never asked".
     for (const value of ["xai-oauth:acct", "env:SOMETHING", "keychain:", "  "]) {
-      const plan = planLiveRun({ [OPT_IN_VAR]: "1", WINTER_LIVE_XAI_OAUTH_CREDENTIAL_REF: value }, XAI);
+      const plan = planLiveRun({ [OPT_IN_VAR]: "1", WINTER_LIVE_XAI_OAUTH_CREDENTIAL_REF: value }, CATALOG);
       expect(plan.optedIn).toBe(false);
+      // A blank value is not a malformed ref — it is no ref at all, and nothing was named.
+      if (value.trim().length > 0) expect(plan.warnings?.join(" ")).toContain("WINTER_LIVE_XAI_OAUTH_CREDENTIAL_REF");
     }
   });
 
   test("naming BOTH a credential ref and an API key for one provider resolves through the ref, and SAYS so -- neither variable's value is printed", () => {
-    const plan = planLiveRun({ [OPT_IN_VAR]: "1", WINTER_LIVE_XAI_OAUTH_CREDENTIAL_REF: "keychain:xai-oauth:acct", WINTER_LIVE_XAI_OAUTH_API_KEY: "test-key-x" }, XAI);
+    // On `anthropic`, which WS-13b §3 gives BOTH auth kinds, so both variables are legitimate and the
+    // precedence rule is the only thing deciding.
+    const plan = planLiveRun({ [OPT_IN_VAR]: "1", WINTER_LIVE_ANTHROPIC_CREDENTIAL_REF: "keychain:anthropic:acct", WINTER_LIVE_ANTHROPIC_API_KEY: "test-key-x" }, CATALOG);
     expect(plan.optedIn && plan.targets.map((t) => t.kind)).toEqual(["oauth"]);
     const warning = (plan.warnings ?? []).join(" ");
-    expect(warning).toContain("WINTER_LIVE_XAI_OAUTH_CREDENTIAL_REF");
-    expect(warning).toContain("WINTER_LIVE_XAI_OAUTH_API_KEY");
+    expect(warning).toContain("WINTER_LIVE_ANTHROPIC_CREDENTIAL_REF");
+    expect(warning).toContain("WINTER_LIVE_ANTHROPIC_API_KEY");
     expect(warning).not.toContain("test-key-x");
-    expect(warning).not.toContain("xai-oauth:acct");
+    expect(warning).not.toContain("anthropic:acct");
   });
 
-  test("a run that names a provider and selects nothing does NOT read as `not opted in` -- the reason carries the warnings", () => {
-    // The failure this exists for: an operator sets one variable, gets the not-opted-in line, and
-    // concludes the opt-in did not take. A refusal that explains itself is the difference.
-    const plan = planLiveRun({ [OPT_IN_VAR]: "1", WINTER_LIVE_XAI_OAUTH_API_KEY: "test-key-x" }, XAI);
+  test("a run that names a provider and selects nothing still reports SKIPPED_LINE, with the explanation on the warnings channel beside it", () => {
+    // Round-1 minor 5: the old name said "the reason carries the warnings", which it does not —
+    // `reason` is the unchanged constant and `warnings` is a sibling field. Both halves matter, so
+    // the name now states both.
+    const plan = planLiveRun({ [OPT_IN_VAR]: "1", WINTER_LIVE_XAI_OAUTH_API_KEY: "test-key-x" }, CATALOG);
     expect(plan.optedIn).toBe(false);
     expect(plan.optedIn === false && plan.reason).toBe(SKIPPED_LINE);
     expect(plan.warnings ?? []).not.toEqual([]);
@@ -207,11 +213,10 @@ describe("WS-13b: the live gate's three target kinds", () => {
   });
 
   test("the three kinds are counted per kind, so a run says what it is about to do before it does it", () => {
-    const catalog = catalogPlus([
-      { id: "xai-oauth", authKinds: ["oauth-approved"], pricingBasis: "subscription" },
-      { id: "aihorde", authKinds: ["custom"], pricingBasis: "free" },
-    ]);
-    const plan = planLiveRun({ [OPT_IN_VAR]: "1", WINTER_LIVE_OPENAI_API_KEY: "test-key-x", WINTER_LIVE_XAI_OAUTH_CREDENTIAL_REF: "keychain:xai-oauth:acct", WINTER_LIVE_AIHORDE: "1" }, catalog);
+    const plan = planLiveRun(
+      { [OPT_IN_VAR]: "1", WINTER_LIVE_OPENAI_API_KEY: "test-key-x", WINTER_LIVE_XAI_OAUTH_CREDENTIAL_REF: "keychain:xai-oauth:acct", WINTER_LIVE_UNCLOSEAI: "1" },
+      CATALOG,
+    );
     expect(plan.optedIn).toBe(true);
     if (!plan.optedIn) return;
     expect(plan.targets.map((t) => t.kind).sort()).toEqual(["api-key", "keyless", "oauth"]);
@@ -219,32 +224,250 @@ describe("WS-13b: the live gate's three target kinds", () => {
   });
 });
 
-describe("WS-13b: the three kinds against the SHIPPED catalog, not a fixture", () => {
-  test("codex-oauth is OAuth-only TODAY: a keychain ref selects it, its API-key variable does not", () => {
-    const byRef = planLiveRun({ [OPT_IN_VAR]: "1", WINTER_LIVE_CODEX_OAUTH_CREDENTIAL_REF: "keychain:codex-oauth:acct" }, CATALOG);
-    expect(byRef.optedIn && byRef.targets.map((t) => [t.providerId, t.kind])).toEqual([["codex-oauth", "oauth"]]);
-    // A DELIBERATE behaviour change from Phase 6: `WINTER_LIVE_CODEX_OAUTH_API_KEY` used to select
-    // this row and send its value as a bearer. codex-oauth issues no API keys, so that target could
-    // only ever 401.
-    expect(planLiveRun({ [OPT_IN_VAR]: "1", WINTER_LIVE_CODEX_OAUTH_API_KEY: "test-key-x" }, CATALOG).optedIn).toBe(false);
+// -------------------------------------------------------------------------------------------------
+// Review round 1, Important #1: ONE PREDICATE PER ARM, against the rows X2/A2/O actually shipped.
+//
+// The round-1 gate cross-checked `authKinds` in the api-key arm only. The widened catalog made both
+// remaining holes real, and both are pinned here against the real row rather than against a fixture
+// that could be written to agree with the code.
+// -------------------------------------------------------------------------------------------------
+describe("WS-13b Important #1: each selector is cross-checked against the row's own authKinds", () => {
+  test("the OAuth arm refuses a row that documents NO OAuth path -- `openai` + a credential ref would have labelled the evidence `oauth`", () => {
+    const plan = planLiveRun({ [OPT_IN_VAR]: "1", WINTER_LIVE_OPENAI_CREDENTIAL_REF: "keychain:openai:acct" }, CATALOG);
+    expect(plan.optedIn).toBe(false);
+    expect(plan.warnings?.join(" ")).toContain("documents no OAuth path");
+    // A REFUSAL, not a relabel: quietly demoting it to `api-key` would produce a target the operator
+    // never asked for and an api-key run they cannot distinguish from one they meant.
+    expect(plan.warnings?.join(" ")).not.toContain("api-key target");
   });
 
-  test("a local row is keyless TODAY: `WINTER_LIVE_OLLAMA_LOCAL=1` needs no dummy key, and the dummy-key path still works", () => {
-    const keyless = planLiveRun({ [OPT_IN_VAR]: "1", WINTER_LIVE_OLLAMA_LOCAL: "1", WINTER_LIVE_OLLAMA_LOCAL_BASE_URL: "http://127.0.0.1:11434/v1" }, CATALOG);
-    expect(keyless.optedIn && keyless.targets.map((t) => [t.providerId, t.kind])).toEqual([["ollama-local", "keyless"]]);
-    expect(keyless.optedIn && keyless.targets[0]!.baseUrl).toBe("http://127.0.0.1:11434/v1");
-    // The old shape is not withdrawn: a local row is `api-key` when a key variable names it, which is
-    // what every existing invocation in this file's usage block does.
+  test("the OAuth arm ADMITS both an OAuth-only row and a dual-auth one -- `xai-oauth`, `codex-oauth` and `anthropic`", () => {
+    for (const id of ["xai-oauth", "codex-oauth", "anthropic"]) {
+      const plan = planLiveRun({ [OPT_IN_VAR]: "1", [`${liveEnvPrefix(id)}${CREDENTIAL_REF_SUFFIX}`]: `keychain:${id}:acct` }, CATALOG);
+      expect(plan.optedIn && plan.targets.map((t) => [t.providerId, t.kind])).toEqual([[id, "oauth"]]);
+    }
+  });
+
+  test("the keyless arm refuses a FREE row that documents an api key -- X2's `aihorde` is free AND keyed, and would have been sent nothing at all", () => {
+    // The exact bug the review found: `pricingBasis === "free"` alone admits `aihorde`, whose
+    // documented anonymous access is a value in an `apikey` header — so a keyless target would have
+    // sent no credential and read the vendor's refusal as a Winter failure.
+    const keyless = planLiveRun({ [OPT_IN_VAR]: "1", WINTER_LIVE_AIHORDE: "1" }, CATALOG);
+    expect(keyless.optedIn).toBe(false);
+    expect(keyless.warnings?.join(" ")).toContain("WINTER_LIVE_AIHORDE_API_KEY");
+    // ...and the row IS reachable, by the variable that carries the vendor's own anonymous value.
+    const keyed = planLiveRun({ [OPT_IN_VAR]: "1", WINTER_LIVE_AIHORDE_API_KEY: "0000000000" }, CATALOG);
+    expect(keyed.optedIn && keyed.targets.map((t) => [t.providerId, t.kind])).toEqual([["aihorde", "api-key"]]);
+  });
+
+  test("the keyless arm's two halves are INDEPENDENT: `xai-oauth` is refused on price, `aihorde` on auth", () => {
+    // Dropping the money half because the auth half exists would admit `WINTER_LIVE_XAI_OAUTH=1` —
+    // subscription-priced, `oauth-approved`, no api-key kind — and fire an unauthenticated request at
+    // a subscription endpoint. Two reasons, reported as two different mistakes.
+    expect(planLiveRun({ [OPT_IN_VAR]: "1", WINTER_LIVE_XAI_OAUTH: "1" }, CATALOG).warnings?.join(" ")).toContain('pricingBasis is "subscription"');
+    expect(planLiveRun({ [OPT_IN_VAR]: "1", WINTER_LIVE_AIHORDE: "1" }, CATALOG).warnings?.join(" ")).toContain("documents an API key");
+  });
+
+  test("the WIDENED catalog sweep: every one of its rows is reachable, and no row is admitted by a selector its own authKinds contradict", () => {
+    // 163 rows, each planned all three ways. Stated as PROPERTIES rather than as a restatement of the
+    // three predicates, because a table computed from the same rules the code applies would agree
+    // with any rule at all. Each property below is a statement about credentials that would still be
+    // true if the predicates were written differently.
+    const violations: string[] = [];
+    const admittedCount: Record<LiveTargetKind, number> = { "api-key": 0, oauth: 0, keyless: 0 };
+    const modelled = new Set(CATALOG.models.map((m) => m.providerId));
+    for (const provider of CATALOG.providers) {
+      const prefix = liveEnvPrefix(provider.id);
+      const where = `${provider.id} (authKinds=${provider.authKinds.join(",")}, ${provider.pricingBasis})`;
+      // 62 of X2's 163 rows carry no model row of their own (the extractor could read the provider
+      // and not its model list), and those are reachable only with a `_MODEL` override. That is a
+      // fact about the CATALOG, tested on its own below; supplying the override here keeps this
+      // sweep about the SELECTOR, which is what it is for.
+      const model = modelled.has(provider.id) ? {} : { [`${prefix}_MODEL`]: "probe-model" };
+      const admits: Record<LiveTargetKind, boolean> = {
+        "api-key": planLiveRun({ [OPT_IN_VAR]: "1", ...model, [`${prefix}_API_KEY`]: "test-key-x" }, CATALOG).optedIn,
+        oauth: planLiveRun({ [OPT_IN_VAR]: "1", ...model, [`${prefix}${CREDENTIAL_REF_SUFFIX}`]: `keychain:${provider.id}:acct` }, CATALOG).optedIn,
+        keyless: planLiveRun({ [OPT_IN_VAR]: "1", ...model, [prefix]: "1" }, CATALOG).optedIn,
+      };
+      for (const kind of ["api-key", "oauth", "keyless"] as const) if (admits[kind]) admittedCount[kind] += 1;
+
+      // (1) A row nothing can select is a row the live gate can never promote out of `candidate`.
+      if (!admits["api-key"] && !admits.oauth && !admits.keyless) violations.push(`${where}: no selector reaches it`);
+      // (2) A credential and NO credential are not both right for one row.
+      if (admits.oauth && admits.keyless) violations.push(`${where}: admitted as both oauth and keyless`);
+      // (3) A row that documents a key is never asked WITHOUT one — X2's `aihorde` is the case.
+      if (provider.authKinds.includes("api-key") && admits.keyless) violations.push(`${where}: documents an api key yet is admitted keyless`);
+      // (4) A row whose only documented path is OAuth issues no keys, so a key target could only 401.
+      if (provider.authKinds.includes("oauth-approved") && !provider.authKinds.includes("api-key") && admits["api-key"]) violations.push(`${where}: OAuth-only yet admitted api-key`);
+      // (5) Money: a row that is not free is never reached without a credential.
+      if (provider.pricingBasis !== "free" && admits.keyless) violations.push(`${where}: priced yet admitted keyless`);
+      // (6) A ref is evidence about an OAuth path; a row with none must not produce `kind: "oauth"`.
+      if (!provider.authKinds.includes("oauth-approved") && admits.oauth) violations.push(`${where}: documents no OAuth path yet is admitted oauth`);
+    }
+    expect(violations).toEqual([]);
+    expect(CATALOG.providers.length).toBeGreaterThan(150);
+    // Not a bound to satisfy — a printed fact for the run's report, and proof the sweep saw all three.
+    for (const kind of ["api-key", "oauth", "keyless"] as const) expect(admittedCount[kind]).toBeGreaterThan(0);
+    console.log(`  live-gate sweep: ${CATALOG.providers.length} rows -- admitted as api-key ${admittedCount["api-key"]}, oauth ${admittedCount.oauth}, keyless ${admittedCount.keyless}`);
+  });
+
+  test("a row with NO model row of its own is not silently dropped: it warns, names the `_MODEL` variable, and is reachable once that is set", () => {
+    // 62 of the 163 widened rows are in this state — the extractor read the provider and not its
+    // model list — and a live gate that dropped them in silence would look identical to one that had
+    // never been given a key. Found by the sweep above; pinned here by name.
+    const modelled = new Set(CATALOG.models.map((m) => m.providerId));
+    const modelless = CATALOG.providers.filter((p) => !modelled.has(p.id));
+    expect(modelless.length).toBeGreaterThan(0);
+    const id = modelless[0]!.id;
+    const prefix = liveEnvPrefix(id);
+    const dropped = planLiveRun({ [OPT_IN_VAR]: "1", [`${prefix}_API_KEY`]: "test-key-x" }, CATALOG);
+    expect(dropped.optedIn).toBe(false);
+    expect(dropped.warnings?.join(" ")).toContain(`${prefix}_MODEL`);
+    const reachable = planLiveRun({ [OPT_IN_VAR]: "1", [`${prefix}_API_KEY`]: "test-key-x", [`${prefix}_MODEL`]: "probe-model" }, CATALOG);
+    expect(reachable.optedIn && reachable.targets.map((t) => [t.providerId, t.model])).toEqual([[id, "probe-model"]]);
+  });
+
+  test("a `free` row that documents NO key is reachable BOTH ways -- keyless is an addition to the dummy-key path, not a replacement", () => {
+    // Property (2) above allows this pair deliberately: `ollama-local` is `local-none` + `free`, so a
+    // keyless target is the honest shape AND the P6 `_API_KEY=anything` invocation still works. The
+    // sweep would hide the fact inside a "no violations" result, so it is stated once, by name.
+    expect(planLiveRun({ [OPT_IN_VAR]: "1", WINTER_LIVE_OLLAMA_LOCAL: "1" }, CATALOG).optedIn).toBe(true);
     expect(planLiveRun({ [OPT_IN_VAR]: "1", WINTER_LIVE_OLLAMA_LOCAL_API_KEY: "unused" }, CATALOG).optedIn).toBe(true);
   });
+});
 
-  test("cloud-credential-chain rows are untouched: bedrock and vertex still select on their API-key variable", () => {
-    // The OAuth-only skip is `authKinds` includes oauth-approved AND excludes api-key. Widening it to
-    // cloud rows would silently withdraw two targets P6's gate already supports.
-    for (const id of ["bedrock", "vertex", "azure-openai"]) {
-      const plan = planLiveRun({ [OPT_IN_VAR]: "1", [`${liveEnvPrefix(id)}_API_KEY`]: "test-key-x" }, CATALOG);
-      expect(plan.optedIn && plan.targets.map((t) => [t.providerId, t.kind])).toEqual([[id, "api-key"]]);
+describe("WS-13b: the keychain SERVICE door (the close-out live run's throwaway service)", () => {
+  test("`keychain:<service>/<account>` carries the service on the ref; `keychain:<account>` leaves it to the store", () => {
+    const withService = planLiveRun({ [OPT_IN_VAR]: "1", WINTER_LIVE_XAI_OAUTH_CREDENTIAL_REF: "keychain:com.winter.live.20260906/xai-oauth:acct" }, CATALOG);
+    expect(withService.optedIn && withService.targets[0]!.authRef).toEqual({ kind: "keychain", account: "xai-oauth:acct", service: "com.winter.live.20260906" });
+    const withoutService = planLiveRun({ [OPT_IN_VAR]: "1", WINTER_LIVE_XAI_OAUTH_CREDENTIAL_REF: "keychain:xai-oauth:acct" }, CATALOG);
+    expect(withoutService.optedIn && withoutService.targets[0]!.authRef).toEqual({ kind: "keychain", account: "xai-oauth:acct" });
+  });
+
+  test("an account containing a SLASH is not mistaken for a service -- account ids are frequently URL-shaped", () => {
+    // The disambiguation rule is decidable rather than heuristic: the text before the first `/` is a
+    // service only when it contains NO colon. An account always contains one (`<providerId>:<id>`,
+    // and R6-10 forbids a colon in the provider id); a reverse-DNS service never does.
+    const plan = planLiveRun({ [OPT_IN_VAR]: "1", WINTER_LIVE_XAI_OAUTH_CREDENTIAL_REF: "keychain:xai-oauth:https://id.example/u/1" }, CATALOG);
+    expect(plan.optedIn && plan.targets[0]!.authRef).toEqual({ kind: "keychain", account: "xai-oauth:https://id.example/u/1" });
+  });
+
+  test("a service form missing either half is refused, not half-parsed", () => {
+    for (const value of ["keychain:com.winter.live/", "keychain:/xai-oauth:acct"]) {
+      expect(planLiveRun({ [OPT_IN_VAR]: "1", WINTER_LIVE_XAI_OAUTH_CREDENTIAL_REF: value }, CATALOG).optedIn).toBe(false);
     }
+  });
+
+  test(`${KEYCHAIN_SERVICE_VAR} is the run-wide default, and a ref that names its own service still wins`, () => {
+    // The env variable is read where the STORE is built, so it cannot be observed from the pure plan;
+    // what the plan pins is the other half of the precedence rule — an explicit ref service survives
+    // planning intact, which is what `keychain-store.ts` then honours over the store's default.
+    const plan = planLiveRun(
+      { [OPT_IN_VAR]: "1", [KEYCHAIN_SERVICE_VAR]: "com.winter.live.20260906", WINTER_LIVE_XAI_OAUTH_CREDENTIAL_REF: "keychain:com.winter.core.dev/xai-oauth:acct" },
+      CATALOG,
+    );
+    expect(plan.optedIn && plan.targets[0]!.authRef).toEqual({ kind: "keychain", account: "xai-oauth:acct", service: "com.winter.core.dev" });
+  });
+});
+
+// -------------------------------------------------------------------------------------------------
+// `--login <providerId>` — how an OAuth credential gets IN.
+//
+// IN-PROCESS against the loopback OAuth fakes with a MEMORY store, which is what keeps it hermetic:
+// no spawn, no Keychain, no vendor. It is the same shape `runtime/src/provider/credential-api.test.ts`
+// uses to drive `startProviderLogin`, deliberately — a second idiom for driving these fakes is a
+// second thing to keep right.
+// -------------------------------------------------------------------------------------------------
+describe("WS-13b: the `--login` door", () => {
+  function collect(): { log: (line: string) => void; lines: string[] } {
+    const lines: string[] = [];
+    return { log: (line) => void lines.push(line), lines };
+  }
+
+  test("`anthropic` runs the Console PKCE login against the fake and prints the exact CREDENTIAL_REF to export", async () => {
+    const fake = await anthropicConsoleOauthFake.startAnthropicConsoleOauthFake();
+    const io = collect();
+    try {
+      const store = createMemoryCredentialStore();
+      const ok = await runLogin(
+        "anthropic",
+        { [OPT_IN_VAR]: "1", [KEYCHAIN_SERVICE_VAR]: "com.winter.live.test" },
+        { openUrl: (url) => fake.completeAuthorization(url), log: io.log, store, overrides: { authorizeUrl: fake.authorizeUrl, tokenUrl: fake.tokenUrl, profileUrl: fake.profileUrl, callbackPort: 0 } },
+      );
+      expect(ok).toBe(true);
+      const printed = io.lines.join("\n");
+      // The line an operator copies. It names the SERVICE the run stored into, which is the whole
+      // point of the door: the close-out run uses a throwaway service, not `com.winter.core`.
+      expect(printed).toContain(`export WINTER_LIVE_ANTHROPIC_CREDENTIAL_REF='keychain:com.winter.live.test/anthropic:${anthropicConsoleOauthFake.FAKE_CONSOLE_ACCOUNT_ID}'`);
+      // ...and it is not passing because nothing happened: the fake WAS reached and the record IS there.
+      expect((await store.get({ kind: "keychain", account: `anthropic:${anthropicConsoleOauthFake.FAKE_CONSOLE_ACCOUNT_ID}`, service: "com.winter.live.test" }))?.kind).toBe("oauth");
+    } finally {
+      await fake.close();
+    }
+  }, 20_000);
+
+  test("`xai-oauth` runs the DEVICE flow: the verification URL and user code arrive on the progress channel, never through openUrl", async () => {
+    const fake = await xaiOauthFake.startXaiOauthFake();
+    const io = collect();
+    let openUrlCalls = 0;
+    try {
+      const store = createMemoryCredentialStore();
+      const ok = await runLogin(
+        "xai-oauth",
+        { [OPT_IN_VAR]: "1" },
+        {
+          openUrl: async () => {
+            openUrlCalls += 1;
+          },
+          log: io.log,
+          store,
+          overrides: { deviceCodeUrl: fake.deviceCodeUrl, tokenUrl: fake.tokenUrl, pollIntervalMs: 1 },
+        },
+      );
+      expect(ok).toBe(true);
+      // RFC 8628 has no browser leg. A host that rendered this login by waiting for `openUrl` would
+      // wait forever while the two strings the user needs went past on the other channel.
+      expect(openUrlCalls).toBe(0);
+      const printed = io.lines.join("\n");
+      // The fake's own user code and verification URL (`xai-oauth.testing.ts`'s device response). It
+      // exports no constant for either, so they are spelled here — and both are asserted, because a
+      // flow that reported only one of them would leave the user unable to complete the login.
+      expect(printed).toContain("WXYZ-1234");
+      expect(printed).toContain("https://example.invalid/activate");
+      expect(printed).toContain("export WINTER_LIVE_XAI_OAUTH_CREDENTIAL_REF='keychain:xai-oauth:");
+    } finally {
+      await fake.close();
+    }
+  }, 20_000);
+
+  test("`qoder` answers with its TYPED refusal rather than opening anything -- the exclusion is the end state, not a stub", async () => {
+    const io = collect();
+    let openUrlCalls = 0;
+    const ok = await runLogin(
+      "qoder",
+      { [OPT_IN_VAR]: "1" },
+      {
+        openUrl: async () => {
+          openUrlCalls += 1;
+        },
+        log: io.log,
+        store: createMemoryCredentialStore(),
+      },
+    );
+    expect(ok).toBe(false);
+    expect(openUrlCalls).toBe(0);
+    expect(io.lines.join("\n")).toContain("not wired in this build");
+  });
+
+  test("a provider with no login flow, and a login without the opt-in, both refuse before anything runs", async () => {
+    const notALogin = collect();
+    expect(await runLogin("openai", { [OPT_IN_VAR]: "1" }, { openUrl: async () => {}, log: notALogin.log, store: createMemoryCredentialStore() })).toBe(false);
+    expect(notALogin.lines.join("\n")).toContain(PROVIDER_LOGIN_IDS.join(", "));
+
+    const notOptedIn = collect();
+    // A login is a vendor network call, so it sits behind the same opt-in as everything else here.
+    expect(await runLogin("anthropic", {}, { openUrl: async () => {}, log: notOptedIn.log, store: createMemoryCredentialStore() })).toBe(false);
+    expect(notOptedIn.lines.join("\n")).toContain("not opted in");
   });
 });
 
@@ -279,13 +502,19 @@ describe("collectAdapters duck-types whatever a lane's barrel exports", () => {
  * adapter"); this makes the third rule structural rather than remembered, because a fixture that
  * pinned both and still named a credential ref would go to the Keychain anyway.
  */
-async function run(extra: Record<string, string>): Promise<{ code: number; stdout: string; stderr: string }> {
+async function run(extra: Record<string, string>, args: readonly string[] = []): Promise<{ code: number; stdout: string; stderr: string }> {
   for (const name of Object.keys(extra)) {
     if (name.endsWith(CREDENTIAL_REF_SUFFIX)) {
       throw new Error(`refusing to spawn the live gate with ${name}: that selector resolves through the production Keychain store, and no test may reach it (the OAuth kind is proved by the PURE planner above, and exercised only by a local operator run)`);
     }
   }
-  const proc = Bun.spawn([process.execPath, "run", join(import.meta.dir, "verify-provider-live.ts")], {
+  // `--login` is the SECOND door onto the Keychain, and a spawned child would build the real store
+  // from `WINTER_LIVE_KEYCHAIN_SERVICE` or the production default. The login tests drive `runLogin`
+  // in-process against the loopback fakes with a memory store instead.
+  if (args.includes("--login")) {
+    throw new Error("refusing to spawn the live gate with --login: it builds the production Keychain store, and no test may reach it (the login door is proved in-process against the OAuth fakes)");
+  }
+  const proc = Bun.spawn([process.execPath, "run", join(import.meta.dir, "verify-provider-live.ts"), ...args], {
     cwd: join(import.meta.dir, ".."),
     env: strippedEnv(extra),
     stdout: "pipe",
@@ -326,6 +555,21 @@ describe("the script itself, spawned", () => {
     await expect(run({ [OPT_IN_VAR]: "1", [`${liveEnvPrefix("xai-oauth")}${CREDENTIAL_REF_SUFFIX}`]: "keychain:xai-oauth:acct" })).rejects.toThrow("production Keychain store");
     // ...and it does not fire on the selectors that are safe.
     await expect(run({ [OPT_IN_VAR]: "1" })).resolves.toMatchObject({ code: 0 });
+  }, 30_000);
+
+  test("the spawn helper REFUSES `--login` too -- it is the second door onto the Keychain", async () => {
+    await expect(run({ [OPT_IN_VAR]: "1" }, ["--login", "anthropic"])).rejects.toThrow("--login");
+  }, 30_000);
+
+  test("opted in with every named provider REFUSED, it exits 1 -- an operator who set a variable did not run an idle gate", async () => {
+    // Round-1 minor 6. `codex-oauth` documents no API key, so this names a provider and selects
+    // nothing; exiting 0 would be the same answer an untouched environment gets, which is the one
+    // reading that is wrong.
+    const result = await run({ [OPT_IN_VAR]: "1", WINTER_LIVE_CODEX_OAUTH_API_KEY: "test-key-x" });
+    expect(result.code).toBe(1);
+    expect(result.stdout.trim()).toBe(SKIPPED_LINE);
+    expect(result.stderr).toContain("WINTER_LIVE_CODEX_OAUTH_API_KEY");
+    expect(result.stderr).not.toContain("test-key-x");
   }, 30_000);
 });
 

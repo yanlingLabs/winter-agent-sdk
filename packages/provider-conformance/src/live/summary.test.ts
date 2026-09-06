@@ -10,6 +10,8 @@
 // into a report or a commit message, which makes "identifiers, a verdict, a duration and Winter's
 // own identity — and nothing else" a property worth pinning rather than trusting to review.
 import { test, expect, describe } from "bun:test";
+import { CredentialResolutionError } from "@yanlinglabs/winter-provider-runtime";
+import { describeThrown } from "../corpus/classifier-safety.ts";
 import { formatLiveRow, liveRowSummary, type LiveReport } from "./index.ts";
 
 /** A finished report, built by hand. The `detail` strings are what a real run's cases produce. */
@@ -83,5 +85,23 @@ describe("WS-13b §7: the per-target live row", () => {
   test("a report with no outcomes at all is a 0ms row rather than a throw -- an adapter that failed to resolve still gets a row", () => {
     const empty = liveRowSummary(report({ outcomes: [], ok: false }), { kind: "oauth", identityHeader: "winter-agent-sdk/0.0.1" });
     expect([empty.latencyMs, empty.toolCallOk, empty.ok]).toEqual([0, false, false]);
+  });
+});
+
+describe("WS-13b: an OAuth target's failure never puts its keychain ACCOUNT on the operator's terminal", () => {
+  test("`describeThrown` on a CredentialResolutionError renders the class and code, and NOT the redacted ref its message carries", () => {
+    // Review round 1, minor 7. `refreshOauthMaterial` and the keychain store both build their errors
+    // with `redactRef(ref)` in the MESSAGE — which reproduces `keychain:<service>/<account>`, and
+    // Global Constraints class an account id with keys and tokens. Nothing in the live gate prints
+    // such a message: `runLiveCases` renders a non-`LiveCaseAssertionError` through `describeThrown`,
+    // which reads FIELDS. That is a property of the renderer rather than of any one call site, so it
+    // is asserted rather than left to the shape of today's callers.
+    const err = new CredentialResolutionError("io", "oauth refresh for keychain:com.winter.live.20260906/xai-oauth:acct-secret-0001 failed with HTTP 500");
+    const rendered = describeThrown(err);
+    expect(rendered).not.toContain("acct-secret-0001");
+    expect(rendered).not.toContain("com.winter.live.20260906");
+    // ...and it is not empty: the class and the normalized code are what a reader needs.
+    expect(rendered).toContain("CredentialResolutionError");
+    expect(rendered).toContain("code=io");
   });
 });
