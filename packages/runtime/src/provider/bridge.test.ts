@@ -390,21 +390,47 @@ describe("adapterAsProvider: what actually reaches the adapter", () => {
     expect(seen!.signal).toBe(controller.signal);
   });
 
-  test("`requestSummary` is asked for ONLY when the model exposes readable reasoning", async () => {
-    // "Never a request for raw reasoning" is the seam's own contract; asking a model that exposes
-    // none is a request the descriptor's evidence says will not be honoured.
+  test("`requestSummary` is asked for ONLY when the DESCRIPTOR says which field asks for one", async () => {
+    // T10 RECONCILIATION (Lane C wiring item 7). This used to key on the ADAPTER's
+    // `capabilities().readableState`, which answers a different question: "a summary is readable" is
+    // not "the descriptor knows how to ask for one". A model with the first and not the second got
+    // `requestSummary: true`, and every adapter then had nothing to do with it -- silently, since
+    // asking for nothing is indistinguishable from not asking. `shouldRequestSummary(descriptor)`
+    // (Lane C's own predicate, keyed on `reasoning.summaryRequest`) is now the single reader.
     let seen: TurnRequest | undefined;
     const adapter = scriptedAdapter((req) => {
       seen = req;
       return scripted([{ type: "done", stopReason: "end_turn" }]);
     });
+
+    // (a) A descriptor with NO reasoning evidence at all: never asked.
     const none = adapterAsProvider(resolvedFor(adapter), fakeCtx(), { adapter });
     await none.generate({ messages: [] });
     expect(seen!.requestSummary).toBeUndefined();
 
-    const summarising = adapterAsProvider(resolvedFor({ ...adapter, capabilities: () => ({ toolCalling: "native", readableState: "summary" }) } as ProviderAdapter), fakeCtx(), {
-      adapter: { ...adapter, capabilities: () => ({ toolCalling: "native", readableState: "summary" }) } as ProviderAdapter,
-    });
+    // (b) `readableState: "summary"` on the ADAPTER but no `summaryRequest` on the DESCRIPTOR: still
+    // never asked. This is the arm the old predicate got wrong.
+    const readableOnly = { ...adapter, capabilities: () => ({ toolCalling: "native" as const, readableState: "summary" as const }) } as ProviderAdapter;
+    const readable = adapterAsProvider(resolvedFor(readableOnly), fakeCtx(), { adapter: readableOnly });
+    await readable.generate({ messages: [] });
+    expect(seen!.requestSummary).toBeUndefined();
+
+    // (c) The descriptor names the field: asked.
+    const resolved = resolvedFor(adapter);
+    const withSummaryRequest: ResolvedModel = {
+      ...resolved,
+      descriptor: {
+        ...(resolved.descriptor as object),
+        reasoning: {
+          supported: { value: true, source: "official-doc", observedAt: "2026-09-06", confidence: "verified" },
+          efforts: [],
+          continuation: "opaque-provider-state",
+          readableState: { value: "summary", source: "official-doc", observedAt: "2026-09-06", confidence: "verified" },
+          summaryRequest: { value: { field: "reasoning.summary", values: ["auto"] }, source: "official-doc", observedAt: "2026-09-06", confidence: "verified" },
+        },
+      } as never,
+    };
+    const summarising = adapterAsProvider(withSummaryRequest, fakeCtx(), { adapter });
     await summarising.generate({ messages: [] });
     expect(seen!.requestSummary).toBe(true);
   });
