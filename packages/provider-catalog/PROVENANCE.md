@@ -8,7 +8,7 @@ The committed catalog is the merge of two layers, performed by `scripts/provider
 | Layer | Source | Owner | Present |
 | --- | --- | --- | --- |
 | upstream | `generated/upstream-layer.json`, extracted from the pinned OmniRoute tree by `scripts/provider-source-sync.ts` | the extractor | **yes** — 106 providers, 540 models |
-| overlay | `overlay/providers.json` + `overlay/models.json`, hand-authored and reviewed | Winter | yes — 63 providers, 63 models |
+| overlay | `overlay/providers.json` + `overlay/models.json`, hand-authored and reviewed | Winter | yes — 64 providers, 65 models |
 
 **The overlay always wins.** WS-13 §7: live discovery and upstream extraction never silently
 overwrite `official-doc`/`live-probe` overlay entries, so a conflicting upstream row is dropped in
@@ -158,6 +158,14 @@ generated files moved in one commit, and `provider-source-sync --check` reports 
 regeneration again. The general lesson is the one this document already makes about counts: a
 generated file that only one un-gated command can write will drift, and the drift will look exactly
 like a comment that is still true.
+
+**It came back once, from another lane, and that is the more useful fact.** Lane O branched before
+the fix and authored its two `xai-oauth` model rows on the pre-fix pattern — `upstream-static`, with
+the same now-false justification that `EvidenceSource` has no member for a Winter default. Merging it
+is what surfaced them, because `catalog-integrity.test.ts`'s I3 case asserts the property over the
+MERGED document rather than over one lane's rows. Both were corrected in the merge. The lesson is
+not about `xai-oauth`: a convention repaired in one branch is re-introduced by every branch that
+forked before the repair, so the guard has to live on the merged artifact, and it did.
 
 **The overlay's fifteen model rows were carrying the same false label, and a stale reason for it.**
 Each stamped `outputModalities` as `upstream-static` with a `sourceRef` explaining that

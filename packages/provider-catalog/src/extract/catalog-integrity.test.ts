@@ -644,6 +644,33 @@ describe("WS-13b §2: the widened catalog", () => {
     }
   });
 
+  test("`anthropic` is the ONLY `authoritative` row on its adapter — A2's closure does not reach the siblings", async () => {
+    // A CROSS-LANE INTERACTION, pinned because neither lane's own tests would look for it.
+    //
+    // Lane A2 re-stamped `anthropic` `liveCatalogAuthority: "authoritative"` (fix-wave ruling F-4):
+    // Anthropic's live Models endpoint enumerates everything the credential can use, so an id absent
+    // from it does not exist. R6-F reads that the other way round -- `authoritative` CLOSES the
+    // `allowUnlisted` pass-through (`provider-runtime/src/registry.ts` step 2), and an unlisted id
+    // becomes a definitive `unknown-model` instead of reaching the wire.
+    //
+    // This lane then put SEVEN more providers on `winter.anthropic-messages` (WS-13b §2 / R6b-5).
+    // The two changes compose only because `authoritative` is a per-ROW claim about ONE vendor's
+    // catalogue: z.ai's model list is not Anthropic's, and a row that inherited that flag would
+    // start refusing ids its own vendor serves. Every sibling is `unknown`, which is the permissive
+    // direction for `allowUnlisted` and the conservative one for claims (the mapper's own rule: an
+    // unstated authority is never upstream's `true` default).
+    //
+    // The failure this catches is a future edit that stamps `authoritative` adapter-wide, or a
+    // sibling row copy-pasted from `anthropic` with the flag left on.
+    const onAdapter = catalog.providers.filter((p) => p.adapterId === "winter.anthropic-messages");
+    expect(onAdapter.length).toBeGreaterThan(1);
+    expect(onAdapter.filter((p) => p.liveCatalogAuthority === "authoritative").map((p) => p.id)).toEqual(["anthropic"]);
+    for (const p of onAdapter) {
+      if (p.id === "anthropic") continue;
+      expect([p.id, p.liveCatalogAuthority]).toEqual([p.id, "unknown"]);
+    }
+  });
+
   test("every provider row's admission citation is a real reference, and never the audit's `unknown` class", () => {
     // R6b-3 as a property of the SHIPPED document rather than of the allowlist the pipeline reads:
     // the overlay is a second, hand-authored producer, and `validateCatalog` is the only thing

@@ -5580,6 +5580,41 @@
       "scope": "llm"
     },
     {
+      "id": "xai-oauth",
+      "displayName": "Grok (xAI OAuth)",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "authKinds": [
+        "oauth-approved"
+      ],
+      "defaultEndpoints": {
+        "api": "https://cli-chat-proxy.grok.com/v1"
+      },
+      "modelDiscovery": "none",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.xai-oauth",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "approved",
+        "reasons": [
+          "prong 2 (vendor conduct, not vendor documentation): xAI documents API keys only, and the permission for third-party agents on this flow is an announcement plus an Apache-2.0 client release. Audit §2.5 leaves three residuals open — the docs are silent, and server-side identity validation is untested. REVERSION CONDITION (WS-13b §4): if xAI rejects an honest unregistered agent identity, that is a partner allowlist in fact and this row reverts to impersonation-required.",
+          "the vendor's consent page may name \"Grok Build\" rather than Winter, because the flow uses xAI's shared public client. Not impersonation by Winter, but a user-facing misattribution a host must disclose — `XAI_CONSENT_DISCLOSURE` is exported for exactly that."
+        ]
+      },
+      "pricingBasis": "subscription",
+      "admission": {
+        "basis": "oauth-documented",
+        "citation": "audit:2.5 — vendor announcement https://x.ai/news/grok-opencode (\"More open-source agents and integrations are coming soon\") + xAI's own public client, Apache-2.0, https://github.com/xai-org/grok-build at commit 72a61251fcffb464bcc687aeb5a998e5a98ec0c9; constants derived in packages/conformance/compat/xai/grok-build/derived-shapes-p6b-xai.md"
+      },
+      "scope": "llm"
+    },
+    {
       "id": "xinference",
       "displayName": "Xinference (local)",
       "protocols": [
@@ -35078,6 +35113,141 @@
         "sourceRef": "open-sse/config/providers/registry/writer/index.ts#palmyra-x5",
         "observedAt": "2026-09-05T00:00:00Z",
         "confidence": "unknown"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "xai-oauth/grok-4.5",
+      "providerId": "xai-oauth",
+      "upstreamId": "grok-4.5",
+      "displayName": "Grok 4.5 (subscription)",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 500000,
+        "source": "official-doc",
+        "sourceRef": "xAI Grok Build's own model catalogue (crates/codegen/xai-grok-models/default_models.json) at the pinned commit 72a61251fcffb464bcc687aeb5a998e5a98ec0c9, captured in packages/conformance/compat/xai/grok-build/derived-shapes-p6b-xai.md §6",
+        "confidence": "declared",
+        "observedAt": "2026-09-06T00:00:00Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "xAI Grok Build's own model catalogue (crates/codegen/xai-grok-models/default_models.json) at the pinned commit 72a61251fcffb464bcc687aeb5a998e5a98ec0c9, captured in packages/conformance/compat/xai/grok-build/derived-shapes-p6b-xai.md §6",
+        "confidence": "declared",
+        "observedAt": "2026-09-06T00:00:00Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: the artifact declares no output modality, so `text` is Winter's inference for a chat registry, NOT a vendor statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-06T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://docs.x.ai/docs/models — xAI documents agentic tool calling on the Grok 4.x line",
+        "confidence": "declared",
+        "observedAt": "2026-09-06T00:00:00Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.x.ai/docs/models",
+        "confidence": "declared",
+        "observedAt": "2026-09-06T00:00:00Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "xAI Grok Build's own model catalogue (crates/codegen/xai-grok-models/default_models.json) at the pinned commit 72a61251fcffb464bcc687aeb5a998e5a98ec0c9, captured in packages/conformance/compat/xai/grok-build/derived-shapes-p6b-xai.md §6",
+          "confidence": "declared",
+          "observedAt": "2026-09-06T00:00:00Z"
+        },
+        "efforts": [
+          "high",
+          "medium",
+          "low"
+        ],
+        "defaultEffort": "high",
+        "continuation": "plaintext"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "xai-oauth/grok-4.6",
+      "providerId": "xai-oauth",
+      "upstreamId": "grok-4.6",
+      "displayName": "Grok 4.6 (subscription)",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "contextWindow": {
+        "value": 500000,
+        "source": "official-doc",
+        "sourceRef": "xAI Grok Build's own model catalogue (crates/codegen/xai-grok-models/default_models.json) at the pinned commit 72a61251fcffb464bcc687aeb5a998e5a98ec0c9, captured in packages/conformance/compat/xai/grok-build/derived-shapes-p6b-xai.md §6",
+        "confidence": "declared",
+        "observedAt": "2026-09-06T00:00:00Z"
+      },
+      "inputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "official-doc",
+        "sourceRef": "xAI Grok Build's own model catalogue (crates/codegen/xai-grok-models/default_models.json) at the pinned commit 72a61251fcffb464bcc687aeb5a998e5a98ec0c9, captured in packages/conformance/compat/xai/grok-build/derived-shapes-p6b-xai.md §6",
+        "confidence": "declared",
+        "observedAt": "2026-09-06T00:00:00Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: the artifact declares no output modality, so `text` is Winter's inference for a chat registry, NOT a vendor statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-06T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "official-doc",
+        "sourceRef": "https://docs.x.ai/docs/models — xAI documents agentic tool calling on the Grok 4.x line",
+        "confidence": "declared",
+        "observedAt": "2026-09-06T00:00:00Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "official-doc",
+        "sourceRef": "https://docs.x.ai/docs/models",
+        "confidence": "declared",
+        "observedAt": "2026-09-06T00:00:00Z"
+      },
+      "reasoning": {
+        "supported": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "xAI Grok Build's own model catalogue (crates/codegen/xai-grok-models/default_models.json) at the pinned commit 72a61251fcffb464bcc687aeb5a998e5a98ec0c9, captured in packages/conformance/compat/xai/grok-build/derived-shapes-p6b-xai.md §6",
+          "confidence": "declared",
+          "observedAt": "2026-09-06T00:00:00Z"
+        },
+        "efforts": [
+          "xhigh",
+          "high",
+          "medium",
+          "low"
+        ],
+        "defaultEffort": "high",
+        "continuation": "plaintext"
       },
       "unsupportedParameters": [],
       "status": "candidate"

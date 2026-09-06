@@ -232,6 +232,11 @@ export const ADAPTER_PROTOCOL: Readonly<Record<string, ProviderProtocol>> = {
   "winter.openai-chat-completions": "openai-chat-completions",
   "winter.local-openai": "openai-chat-completions",
   "winter.codex-oauth": "openai-responses",
+  // `winter.xai-oauth` is the CHAT adapter, at xAI's subscription proxy, on an oauth bearer. The
+  // proxy serves both OpenAI-compatible routes and the vendor's own client prefers Responses on it;
+  // Winter ships Chat, so this relation states Chat. Getting it wrong here would let a
+  // responses-only model row land on a Chat adapter without the integrity test noticing.
+  "winter.xai-oauth": "openai-chat-completions",
   "winter.azure-openai": "azure-openai",
   "winter.anthropic-messages": "anthropic-messages",
   "winter.google-generate-content": "google-generate-content",
