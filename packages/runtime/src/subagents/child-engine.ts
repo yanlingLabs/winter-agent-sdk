@@ -145,14 +145,16 @@ export interface ChildProviderIdentity {
 }
 
 /**
- * What `resolveChildProvider` answers. `refused` (Ruling E-1) is the cross-provider child with no
- * credential of its own: the resolver does NOT hand back the parent's provider dressed as the
- * child's -- it names the child, the provider and the reason, and the spawn path says so on stderr
- * AND on a `continuity_warning` frame before falling back to the parent's provider as before.
+ * What `resolveChildProvider` answers. `refused` (Ruling E-1, R-E3) is the cross-provider child with
+ * no credential of its own: the resolver names the child, the provider and the reason, the spawn
+ * path says so on stderr AND on a `continuity_warning` frame, and the child runs on the
+ * DEFERRED-REFUSAL provider it carries -- its first generation lands on R6-F with NO request. Never
+ * the parent's provider: a foreign model id on the parent's wire is exactly what a refusal exists to
+ * prevent.
  */
 export type ChildProviderResolution =
   | { provider: Provider; identity: ChildProviderIdentity }
-  | { refused: { providerId: string; modelKey: string; reason: string } };
+  | { refused: { providerId: string; modelKey: string; reason: string }; provider: Provider; identity: ChildProviderIdentity };
 
 export interface ChildEngineFactoryDeps {
   provider: Provider;
@@ -361,14 +363,14 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
     // ASYNC since the fix wave (Ruling E-1): a child on ANOTHER provider than the parent's has its
     // own credential probed before the spawn commits to it, and a probe is a store read.
     const childResolution = await deps.resolveChildProvider?.(resolvedModel.effectiveModel);
-    let childProvider: Extract<ChildProviderResolution, { provider: Provider }> | undefined;
+    let childProvider: { provider: Provider; identity: ChildProviderIdentity } | undefined;
     if (childResolution !== undefined && "refused" in childResolution) {
-      // RULING E-1: never the parent's provider SILENTLY. The child still runs on it (the pre-P6
-      // behaviour for a model the wiring could not build for), but both the operator and the host
-      // are told, in words that name the child and the provider -- counts and identity only, never
-      // credential material (Global Constraints).
+      // RULING E-1 / R-E3: never the parent's provider. Both the operator and the host are told, in
+      // words that name the child and the provider -- counts and identity only, never credential
+      // material (Global Constraints) -- and the child runs on the deferred-refusal provider the
+      // resolver handed back: its first generation is R6-F's result, with no request on any wire.
       const { providerId, modelKey, reason } = childResolution.refused;
-      const line = `child agent "${req.name ?? req.definition?.description ?? "agent"}" (${agentId}) asked for model "${modelKey}" on provider "${providerId}", which this session has no credential for: ${reason}; the child runs against the parent's provider instead`;
+      const line = `child agent "${req.name ?? req.definition?.description ?? "agent"}" (${agentId}) asked for model "${modelKey}" on provider "${providerId}", which this session has no credential for: ${reason}; the child's first generation will fail with a typed provider error and no request is made`;
       deps.warn?.(`winter: ${line}`);
       try {
         runCtx.forwardChildFrame(
@@ -388,6 +390,7 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
       } catch {
         /* a torn-down parent stream must never fail a spawn over a warning */
       }
+      childProvider = { provider: childResolution.provider, identity: childResolution.identity };
     } else {
       childProvider = childResolution;
     }

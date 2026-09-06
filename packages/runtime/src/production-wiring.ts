@@ -901,11 +901,27 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
             present = false; // a store that cannot answer is a store with no record to offer
           }
           if (!present) {
+            const reason = `no keychain record ${redactCredentialRef(material.authRef)} and no \`authRef\` on the child's own route (a child on another provider never inherits the parent's credential, Ruling E-1)`;
+            // R-E3 (fix wave round 2): the refused child gets the DEFERRED-REFUSAL provider -- the same
+            // shape an unresolvable session model gets. Its first generation lands on R6-F with NO
+            // request anywhere: never the parent's provider with the foreign key on the parent's wire.
+            const refusal = new WinterProviderResolutionError("no-credential-for-provider", `no credential is configured for provider "${resolvedChild.providerId}": ${reason}`);
             return {
-              refused: {
+              refused: { providerId: resolvedChild.providerId, modelKey: resolvedChild.modelKey, reason },
+              provider: {
+                async generate(): Promise<never> {
+                  throw refusal;
+                },
+              },
+              identity: {
                 providerId: resolvedChild.providerId,
                 modelKey: resolvedChild.modelKey,
-                reason: `no keychain record ${redactCredentialRef(material.authRef)} and no \`authRef\` on the child's own route (a child on another provider never inherits the parent's credential, Ruling E-1)`,
+                family: String(resolvedChild.adapter.family),
+                ...(resolvedChild.continuationDomain !== undefined ? { continuationDomain: resolvedChild.continuationDomain } : {}),
+                adapterId: resolvedChild.adapterId,
+                adapterVersion: resolvedChild.adapter.version,
+                catalogVersion: resolvedChild.catalogVersion,
+                authRefKind: material.authRef.kind,
               },
             };
           }
