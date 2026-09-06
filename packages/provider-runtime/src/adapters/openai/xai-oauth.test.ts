@@ -14,7 +14,7 @@ import { describe, expect, test } from "bun:test";
 import { createMemoryCredentialStore } from "../../credentials/memory.ts";
 import { DERIVED_XAI } from "./xai-derived-shapes.ts";
 import { XAI_CONSENT_DISCLOSURE, XAI_OAUTH, createXaiOauthAdapter, startXaiLogin, xaiCredentialRef } from "./xai-oauth.ts";
-import { startXaiChatFake, startXaiOauthFake } from "./xai-oauth.testing.ts";
+import { REFRESHED_ACCESS_TOKEN, startXaiChatFake, startXaiOauthFake } from "./xai-oauth.testing.ts";
 import { testContext } from "./testing.ts";
 
 describe("xai-oauth (WS-13b §4, prong 2)", () => {
@@ -68,11 +68,14 @@ describe("xai-oauth (WS-13b §4, prong 2)", () => {
     }
   });
 
-  test("the vendor's OWN product-identity headers are never sent (WS-13 §5) — Winter authors its own", async () => {
+  test("NONE of the vendor's six product-identity headers is sent on the LOGIN path (WS-13 §5) — Winter authors its own", async () => {
     const fake = await startXaiOauthFake();
     try {
       await startXaiLogin(createMemoryCredentialStore(), { deviceCodeUrl: fake.deviceCodeUrl, tokenUrl: fake.tokenUrl, pollIntervalMs: 5 });
       expect(fake.requests.length).toBeGreaterThan(0);
+      // The list is the capture's, not a hand-copy — six today, and a seventh added there is
+      // asserted here without touching this file.
+      expect(DERIVED_XAI.vendorOnlyHeaders.length).toBe(6);
       for (const req of fake.requests) {
         for (const banned of DERIVED_XAI.vendorOnlyHeaders) expect(req.headers[banned]).toBeUndefined();
         // The negative that actually bites: the vendor's user-agent shape, and its identity VALUE.
@@ -158,7 +161,7 @@ describe("xai-oauth (WS-13b §4, prong 2)", () => {
       const store = createMemoryCredentialStore([[ref, { kind: "oauth", accessToken: "test-token-xai-access", refreshToken: "test-token-xai-refresh", accountId: "acct-x", expiresAt: Date.now() + 5_000 }]]);
       const chat = await startXaiChatFake();
       try {
-        const adapter = createXaiOauthAdapter({ generatedBaseUrl: chat.url!, tokenUrl: fake.tokenUrl, descriptors: () => undefined });
+        const adapter = createXaiOauthAdapter({ generatedBaseUrl: chat.url, tokenUrl: fake.tokenUrl, descriptors: () => undefined });
         const events: string[] = [];
         for await (const e of adapter.streamTurn({ model: "grok-4.6", messages: [{ role: "user", content: "hi" }] }, { ...testContext({ providerId: "xai-oauth" }), credentials: store, authRef: ref })) events.push(e.type);
         expect(events).not.toContain("error");
@@ -172,13 +175,38 @@ describe("xai-oauth (WS-13b §4, prong 2)", () => {
         const refreshes = fake.requests.filter((r) => new URLSearchParams(r.body).get("grant_type") === "refresh_token");
         expect(refreshes).toHaveLength(1);
         expect(new URLSearchParams(refreshes[0]!.body).get(XAI_OAUTH.identityField)).toBe("winter-agent-sdk");
-        // And the turn that followed carried the NEW token, not the stale one.
-        expect(chat.requests[0]?.headers["authorization"]).toBe("Bearer ***");
+        // And the turn that followed carried the NEW token, not the stale one. Read off the fake's
+        // own comparison: `requests` redacts the value to `Bearer ***`, so the recorded header can
+        // never distinguish a refreshed bearer from a stale one and an assertion on it would pass
+        // either way.
+        expect(chat.sawFreshBearer).toBe(true);
+        expect(REFRESHED_ACCESS_TOKEN).not.toBe("test-token-xai-access");
       } finally {
         await chat.close();
       }
     } finally {
       await fake.close();
+    }
+  });
+
+  test("NONE of the vendor's six product-identity headers is sent on the GENERATION path either — including the two the proxy's own client injects", async () => {
+    // `X-XAI-Token-Auth: xai-grok-cli` and `x-authenticateresponse` are injected by the vendor's
+    // client ONLY for cli-chat-proxy base URLs — which is precisely the endpoint this row uses. They
+    // are the two most likely to be "helpfully" added by someone making a live call work, and
+    // `xai-grok-cli` is a first-party product identity Winter may not send (capture §3.4/§7).
+    const chat = await startXaiChatFake();
+    try {
+      const ref = xaiCredentialRef("acct-x");
+      const store = createMemoryCredentialStore([[ref, { kind: "oauth", accessToken: "test-token-xai-access", refreshToken: "test-token-xai-refresh", accountId: "acct-x", expiresAt: Date.now() + 3_600_000 }]]);
+      const adapter = createXaiOauthAdapter({ generatedBaseUrl: chat.url, descriptors: () => undefined });
+      for await (const _ of adapter.streamTurn({ model: "grok-4.6", messages: [{ role: "user", content: "hi" }] }, { ...testContext({ providerId: "xai-oauth" }), credentials: store, authRef: ref })) void _;
+      expect(chat.requests.length).toBeGreaterThan(0);
+      for (const req of chat.requests) {
+        for (const banned of DERIVED_XAI.vendorOnlyHeaders) expect(req.headers[banned]).toBeUndefined();
+        expect(req.headers["user-agent"]).not.toMatch(/grok/i);
+      }
+    } finally {
+      await chat.close();
     }
   });
 
@@ -189,7 +217,7 @@ describe("xai-oauth (WS-13b §4, prong 2)", () => {
       const store = createMemoryCredentialStore([[ref, { kind: "oauth", accessToken: "test-token-xai-access", refreshToken: "test-token-xai-refresh", accountId: "acct-x", expiresAt: Date.now() + 3_600_000 }]]);
       const chat = await startXaiChatFake();
       try {
-        const adapter = createXaiOauthAdapter({ generatedBaseUrl: chat.url!, tokenUrl: fake.tokenUrl, descriptors: () => undefined });
+        const adapter = createXaiOauthAdapter({ generatedBaseUrl: chat.url, tokenUrl: fake.tokenUrl, descriptors: () => undefined });
         for await (const _ of adapter.streamTurn({ model: "grok-4.6", messages: [{ role: "user", content: "hi" }] }, { ...testContext({ providerId: "xai-oauth" }), credentials: store, authRef: ref })) void _;
         expect(fake.requests).toHaveLength(0);
       } finally {

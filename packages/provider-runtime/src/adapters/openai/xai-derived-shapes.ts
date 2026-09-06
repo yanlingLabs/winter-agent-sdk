@@ -51,13 +51,20 @@ export const DERIVED_XAI = {
    */
   apiBaseUrl: "https://cli-chat-proxy.grok.com/v1",
   /**
-   * capture §3.4 — the vendor client's OWN identity and telemetry headers.
+   * capture §3.4 — the vendor client's OWN identity and telemetry headers, ALL SIX.
    *
-   * Recorded so they can be asserted ABSENT. WS-13 §5: client-identity headers are never imported;
-   * Winter adapters author their own. This list is a denylist for Winter's requests, never a
-   * template for them.
+   * Recorded so they can be asserted ABSENT, on the login path and the generation path alike.
+   * WS-13 §5: client-identity headers are never imported; Winter adapters author their own. This
+   * list is a DENYLIST for Winter's requests, never a template for them.
+   *
+   * The last two are the ones that matter most, and they are not telemetry: the vendor's client
+   * injects `X-XAI-Token-Auth: xai-grok-cli` and `x-authenticateresponse` **only when the base URL
+   * is the cli-chat-proxy** — i.e. exactly the endpoint this row uses — and `xai-grok-cli` is a
+   * first-party product identity Winter may not send. If the proxy REQUIRES it, this row's
+   * inference path is closed to an honest client. See capture §3.4 and the inference-path reversion
+   * condition in §7.
    */
-  vendorOnlyHeaders: ["x-grok-client-version", "x-grok-client-surface"],
+  vendorOnlyHeaders: ["x-grok-client-version", "x-grok-client-surface", "x-grok-client-identifier", "x-grok-client-mode", "x-xai-token-auth", "x-authenticateresponse"],
 } as const;
 
 /**

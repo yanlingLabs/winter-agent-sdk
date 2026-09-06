@@ -25,9 +25,23 @@ export interface XaiRecordedRequest {
 export interface XaiOauthFake {
   deviceCodeUrl: string;
   tokenUrl: string;
-  /** Set by `startXaiChatFake` only — the base URL a `generatedBaseUrl` points at. */
-  url?: string;
   requests: XaiRecordedRequest[];
+  close(): Promise<void>;
+}
+
+export interface XaiChatFake {
+  /** The base URL a `generatedBaseUrl` points at. */
+  url: string;
+  requests: XaiRecordedRequest[];
+  /**
+   * Whether the bearer this fake actually received was the REFRESHED one.
+   *
+   * Observed here rather than asserted from the recorded header, because `requests` redacts an
+   * `authorization` value to `Bearer ***` — which makes "the turn carried the new token" untestable
+   * from the outside. Comparing inside the fake and exposing one boolean keeps the token out of the
+   * transcript while still making the claim falsifiable.
+   */
+  sawFreshBearer: boolean;
   close(): Promise<void>;
 }
 
@@ -52,6 +66,8 @@ export interface XaiOauthFakeOptions {
 }
 
 const ACCOUNT_ID = "acct-x";
+/** What the token endpoint answers a `refresh_token` grant with. Named so the chat fake and the tests agree on it without re-spelling the literal. */
+export const REFRESHED_ACCESS_TOKEN = "test-token-xai-access-refreshed";
 
 /** A JWT-shaped id token whose payload carries the standard OIDC `sub` claim. Unsigned — nothing here verifies a signature, and a real one would put a key in the repository. */
 function fakeIdToken(sub: string = ACCOUNT_ID): string {
@@ -67,8 +83,10 @@ function fakeIdToken(sub: string = ACCOUNT_ID): string {
  * of it are "did a turn happen" and "what did it carry", and the full corpus fake lives on the other
  * side of a dependency direction this package cannot import across.
  */
-export async function startXaiChatFake(): Promise<XaiOauthFake> {
+export async function startXaiChatFake(opts: { freshBearer?: string } = {}): Promise<XaiChatFake> {
   const requests: XaiRecordedRequest[] = [];
+  const fresh = opts.freshBearer ?? REFRESHED_ACCESS_TOKEN;
+  let sawFreshBearer = false;
   const server = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
@@ -79,6 +97,7 @@ export async function startXaiChatFake(): Promise<XaiOauthFake> {
       for (const [name, value] of req.headers) {
         headers[name.toLowerCase()] = /^(authorization|x-api-key|api-key)$/i.test(name) ? `${value.split(" ")[0] ?? ""} ***`.trim() : value;
       }
+      if (req.headers.get("authorization") === `Bearer ${fresh}`) sawFreshBearer = true;
       requests.push({ method: req.method, path: url.pathname, headers, body });
       const frames = [
         `data: ${JSON.stringify({ id: "cmpl-1", choices: [{ index: 0, delta: { content: "ok" } }] })}\n\n`,
@@ -89,10 +108,11 @@ export async function startXaiChatFake(): Promise<XaiOauthFake> {
     },
   });
   return {
-    deviceCodeUrl: `http://127.0.0.1:${server.port}/unused`,
-    tokenUrl: `http://127.0.0.1:${server.port}/unused`,
     url: `http://127.0.0.1:${server.port}`,
     requests,
+    get sawFreshBearer() {
+      return sawFreshBearer;
+    },
     close: async () => {
       await server.stop(true);
     },
@@ -141,7 +161,7 @@ export async function startXaiOauthFake(opts: XaiOauthFakeOptions = {}): Promise
         // credential's life. The identity guard above applies to it too, so a refresh that dropped
         // Winter's name would fail here rather than pass unnoticed.
         if (form.get("grant_type") === "refresh_token") {
-          return Response.json({ access_token: "test-token-xai-access-refreshed", expires_in: 3600, token_type: "Bearer" });
+          return Response.json({ access_token: REFRESHED_ACCESS_TOKEN, expires_in: 3600, token_type: "Bearer" });
         }
         if (opts.rejectIdentity !== undefined && identity === opts.rejectIdentity) {
           return Response.json({ error: "access_denied", error_description: "client not allowed" }, { status: 400 });
