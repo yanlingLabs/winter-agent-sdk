@@ -19,6 +19,7 @@ import { FAST_RETRY, descriptor, testContext } from "../../../provider-runtime/s
 import { createMemoryCredentialStore } from "../../../provider-runtime/src/credentials/memory.ts";
 import { winterUserAgent } from "../../../provider-runtime/src/identity.ts";
 import { startOpenAiChatFake } from "../fakes/openai-chat.ts";
+import { crossVendorViolationsIn } from "./cross-vendor-headers.ts";
 import { chatCorpusScenarios } from "./openai-scenarios.ts";
 import { SCENARIO, bodyOf, turnRequests } from "./openai.ts";
 import { WinterProviderResolutionError } from "@yanlinglabs/winter-provider-runtime";
@@ -71,6 +72,17 @@ describe("winter.xai-oauth on the wire (WS-13b §4)", () => {
       // WS-13 §5, on the generation path as well as the login path.
       for (const banned of DERIVED_XAI.vendorOnlyHeaders) expect(turn.headers[banned]).toBeUndefined();
       expect(turn.headers["user-agent"]).not.toMatch(/grok/i);
+
+      // ...AND THE CROSS-VENDOR SWEEP (fix wave R-FW-1 / review I-1). The denylist above is xAI's
+      // OWN six names, which is why it could not see `chatgpt-account-id: <the xAI OIDC sub>` — a
+      // header named for a DIFFERENT vendor, stamped by the plain chat adapter this row composes for
+      // any oauth material carrying an `accountId`, and passed rather than dropped because this
+      // adapter is single-provider and its endpoint is therefore GENERATED. The sweep is keyed on
+      // the row's own identity, so it sees every other vendor's namespace at once.
+      expect(crossVendorViolationsIn({ providerId: "xai-oauth", adapterId: XAI_OAUTH_ADAPTER_ID }, turns)).toEqual([]);
+      // Named explicitly beside the general rule: this is the exact header the review found, and a
+      // reader of this file should not have to derive it from the prefix table.
+      expect(turn.headers["chatgpt-account-id"]).toBeUndefined();
     } finally {
       await fake.close();
     }

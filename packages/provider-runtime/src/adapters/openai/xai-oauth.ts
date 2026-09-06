@@ -209,7 +209,7 @@ export async function startXaiLogin(store: CredentialStore, options: XaiLoginOpt
 /** How close to expiry the stored token may get before a turn refreshes it. One minute — long enough to cover a slow turn setup, short enough not to churn. */
 const REFRESH_WINDOW_MS = 60_000;
 
-export interface XaiAdapterOptions extends Omit<ChatTurnOptions, "generatedBaseUrl"> {
+export interface XaiAdapterOptions extends Omit<ChatTurnOptions, "generatedBaseUrl" | "organization" | "project"> {
   generatedBaseUrl?: string;
   /** Overridden by a fixture; production uses `XAI_OAUTH.tokenUrl`. */
   tokenUrl?: string;
@@ -254,7 +254,17 @@ async function refreshIfExpiring(ctx: ProviderContext, tokenUrl: string): Promis
  * row its own drifting version of streaming, tool-call mapping and error classification for no gain.
  */
 export function createXaiOauthAdapter(options: XaiAdapterOptions): ProviderAdapter {
-  const base = createChatCompletionsAdapter({ ...options, generatedBaseUrl: options.generatedBaseUrl ?? XAI_OAUTH.apiBaseUrl });
+  // BELT AND BRACES ON THE CROSS-VENDOR HEADER RULE (fix-wave R-FW-1 / whole-branch review I-1).
+  //
+  // The composed adapter's only remaining route to an `openai-*` request header is
+  // `privilegedHeaders(options)`, which reads `organization`/`project` and emits
+  // `OpenAI-Organization`/`OpenAI-Project`. Those are OpenAI's product headers and mean nothing at
+  // xAI's proxy, so this row must not be able to send them however it is constructed. `Omit`ing them
+  // from `XaiAdapterOptions` is the compile-time half; deleting them off the forwarded object is the
+  // runtime half, because a caller reaching this function through a widened structural type (or from
+  // untyped JS) would otherwise still get them through the spread.
+  const { organization: _organization, project: _project, ...forwarded } = options as XaiAdapterOptions & { organization?: string; project?: string };
+  const base = createChatCompletionsAdapter({ ...forwarded, generatedBaseUrl: options.generatedBaseUrl ?? XAI_OAUTH.apiBaseUrl });
   const tokenUrl = options.tokenUrl ?? XAI_OAUTH.tokenUrl;
   return {
     ...base,

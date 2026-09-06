@@ -173,10 +173,24 @@ export function resolveEndpoint(ctx: ProviderContext, options: OpenAiAdapterOpti
 
 export interface ResolvedAuth {
   headers: Record<string, string>;
-  /** PRIVILEGED (R6-L): the ChatGPT account this OAuth material belongs to. Routed through `applyPrivilegedHeaders`, never sent to a user endpoint. */
-  accountId?: string;
   material: CredentialMaterial | null;
 }
+
+// NO `accountId` HERE, AND THAT IS THE FIX FOR I-1 (whole-branch review, fix-wave ruling R-FW-1).
+//
+// This interface used to carry the OAuth material's `accountId` so the two PLAIN adapters
+// (`chat-completions.ts`, `responses.ts`) could stamp `chatgpt-account-id` from it. That header is
+// the CODEX BACKEND'S, and `codex-oauth.ts` authors it from its own `tokens.accountId` — so the two
+// plain branches had no legitimate consumer and sat dormant until `createXaiOauthAdapter` composed
+// the chat adapter, at which point every generation to xAI's subscription proxy carried
+// `chatgpt-account-id: <the xAI OIDC sub>`: another vendor's product header, holding an
+// account-scoped value, on a request Winter makes under its own name.
+//
+// The field is REMOVED rather than gated, because a gate is a branch someone can widen again. With
+// no `accountId` on this type there is no material for a plain OpenAI-family adapter to author that
+// header from at all; the codex adapter reads the credential material directly and is untouched
+// (`corpus/openai.test.ts`, "codex: the `originator` and account id ride the generated backend…"
+// still asserts it there).
 
 /**
  * Resolves `ctx.authRef` into request headers.
@@ -198,7 +212,6 @@ export async function resolveAuth(ctx: ProviderContext, style: AuthStyle): Promi
     case "oauth":
       return {
         headers: { authorization: `Bearer ${material.accessToken}` },
-        ...(material.accountId !== undefined ? { accountId: material.accountId } : {}),
         material,
       };
     default:
