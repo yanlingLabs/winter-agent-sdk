@@ -1760,6 +1760,17 @@ function registerEquivalenceScenarios(legA: LegName, legB: LegName): void {
         }
         // The second request of each leg carries the tool RESULT back -- the round genuinely closed.
         expect(matching.filter((r) => /tool_result|function_call_output|functionResponse|"role":"tool"/.test(r.body)).length).toBe(2);
+        // THE WIRE MODEL ID, on EVERY request (review round 1's recommendation). The catalog KEY used
+        // to go out here -- `anthropic/claude-sonnet-5`, a name no provider has heard of -- and the
+        // goldens are byte-frozen against the fixed version, so without this assertion a regression
+        // would only be caught if it happened to move a golden. `wireModel` is the descriptor's own
+        // `upstreamId`: the part of the key after the provider prefix.
+        // Gemini puts the model in the PATH (`/v1beta/models/<id>:streamGenerateContent`) rather than
+        // in the body, so the assertion is "on the request", not "in the body" -- the same claim
+        // either way, and phrasing it as the body alone would silently pass for that family.
+        const wireModel = model.slice(model.indexOf("/") + 1);
+        expect(matching.every((r) => r.body.includes(`"model":"${wireModel}"`) || r.path.includes(wireModel))).toBe(true);
+        expect(matching.some((r) => r.body.includes(`"model":"${model}"`) || r.path.includes(encodeURIComponent(model)))).toBe(false);
       } finally {
         await fake.close();
       }
@@ -1885,6 +1896,80 @@ function registerEquivalenceScenarios(legA: LegName, legB: LegName): void {
     } finally {
       await fake.close();
     }
+  });
+
+  test("p6-resume-identity (switch half): a DIFFERENT model on resume applies at the first boundary and announces `model_switch`, on every leg", async () => {
+    // The brief's second half, and it is a different claim from the one above: resuming with the SAME
+    // model must keep the identity, and resuming with ANOTHER must (a) actually switch -- the fake
+    // sees the NEW model id on the wire -- and (b) say so on the Winter-only `system/model_switch`
+    // frame, at the first quiescent boundary rather than mid-turn. Without the frame a host has no
+    // way to tell a switched session from one that silently ignored its own configuration.
+    const fake = await startScenarioFake();
+    try {
+      const sessionId = randomUUID();
+      const base: Omit<QueryScenarioOptions, "prompt"> = { provider: fakeProvider(fake), allowedTools: [SCENARIO_TOOL_NAME], registryBackedTools: true };
+      const traces: ScenarioResult[] = [];
+      for (const leg of [legA, legB]) {
+        const id = `${sessionId}-${leg}`;
+        const first = await traceViaQuery(leg, { ...base, model: SCENARIO_MODELS.anthropic, prompt: "first", sessionId: id });
+        expect(first.thrown).toBeUndefined();
+        const switched = await traceViaQuery(leg, { ...base, model: SCENARIO_CHILD_MODEL, prompt: "second", resume: id });
+        expect(switched.thrown).toBeUndefined();
+        traces.push(switched);
+
+        // (a) The resumed session re-resolved the NEW model, and reports it.
+        const init = switched.trace[0]!.payload as { model: string; winter_provider?: Record<string, unknown> };
+        expect(init.model).toBe(SCENARIO_CHILD_MODEL);
+        expect(init.winter_provider?.modelKey).toBe(SCENARIO_CHILD_MODEL);
+
+        // (b) The switch is ANNOUNCED. `system/model_switch` carries the from/to pair and the reason.
+        const switchFrames = switched.trace.filter((e) => e.kind === "system/model_switch");
+        expect(switchFrames.length).toBe(1);
+        const frame = switchFrames[0]!.payload as { reason: string; from_model: string; to_model: string; provider: string };
+        expect(frame.reason).toBe("set_model");
+        expect(frame.from_model).toBe(SCENARIO_MODELS.anthropic);
+        expect(frame.to_model).toBe(SCENARIO_CHILD_MODEL);
+        expect(frame.provider).toBe("anthropic");
+      }
+      // And the two legs agree frame for frame.
+      expect(compareTraces(traces[0]!.trace, traces[1]!.trace)).toEqual([]);
+      // GROUND TRUTH: the resumed turn genuinely went out under the NEW wire id.
+      expect(fake.requests.some((r) => r.body.includes(`"model":"${SCENARIO_CHILD_WIRE_ID}"`))).toBe(true);
+    } finally {
+      await fake.close();
+    }
+  });
+
+  test("p6-resolution-failure: an unresolvable model still emits `system/init`, then R6-F's result shape, then throws — on every leg", async () => {
+    // REVIEW ROUND 1, CRITICAL A. R6-9's refusal is "surfaced in T1's captured failure shape", and
+    // capture (I)'s shape HAS an init frame in it. Refusing at construction produced zero frames and
+    // a `CLIConnectionError`, so a host learned nothing from the stream at all.
+    //
+    // No fake is needed and none is started: the point is that NOTHING is ever sent. A model no
+    // catalog contains cannot produce a request, and the absence of one is part of the claim.
+    const scenario = { prompt: "resolve me", model: "anthropic/definitely-not-a-model-t10", provider: { providerId: "anthropic", authRef: { kind: "inline" as const, value: "test" } } } satisfies QueryScenarioOptions;
+    const a = await traceViaQuery(legA, scenario);
+    const b = await traceViaQuery(legB, scenario);
+    expect(compareTraces(a.trace, b.trace)).toEqual([]);
+
+    // (1) THE SESSION STARTED. An init frame, reporting the model the CALLER passed...
+    expect(a.trace[0]!.kind).toBe("system/init");
+    const init = a.trace[0]!.payload as { model: string; winter_provider?: unknown };
+    expect(init.model).toBe("anthropic/definitely-not-a-model-t10");
+    // ...and NO `winter_provider`, because nothing resolved. Reporting one would be a fabrication.
+    expect(init.winter_provider).toBeUndefined();
+
+    // (2) THE PINNED FAILURE SHAPE (capture (I)): not a new result subtype, and `api_error_status`
+    // is null because no request was ever made.
+    const result = a.trace.find((e) => e.kind === "result")!.payload as { subtype: string; is_error?: boolean; terminal_reason?: string; api_error_status?: number | null };
+    expect(result.subtype).toBe("success");
+    expect(result.is_error).toBe(true);
+    expect(result.terminal_reason).toBe("api_error");
+    expect(result.api_error_status).toBeNull();
+
+    // (3) ...AND `query()` throws after yielding it.
+    expect(a.thrown).toBeInstanceOf(ResultError);
+    expect(b.thrown).toBeInstanceOf(ResultError);
   });
 
   test("p6-child-own-provider (R6-17): a child with its OWN model runs off its OWN provider — the fake saw the CHILD's model id", async () => {

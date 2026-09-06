@@ -3389,6 +3389,37 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
       warn: (message) => output.write({ type: "data", message }),
       newUuid: randomUUID,
     });
+
+    // --- Phase 6 Task 10 review round 1 (D): A RESUME THAT CHANGES THE MODEL IS A SWITCH ----------
+    //
+    // R6-I's boundary rule was implemented for the `set_model` CONTROL REQUEST only, which reads as
+    // complete until you notice the other way a session's model changes: a host resumes a session and
+    // passes a different `Options.model`. The engine starts with `currentModel` already set to the new
+    // value, so from inside one run nothing switched -- and the session silently ran a different model
+    // from the one its transcript was built on, with no frame saying so and nothing in the dialect
+    // record's `providerHistory`.
+    //
+    // HERE is the first quiescent boundary there is: after the resumed history is folded back and
+    // before the first generation. The comparison is against the PERSISTED identity, which is the only
+    // record of what the previous run actually used; a session with none (a fresh one, or a store that
+    // does not keep identities) announces nothing, exactly as before.
+    const persisted = store.loadProviderIdentity !== undefined ? await store.loadProviderIdentity() : undefined;
+    if (persisted !== undefined && currentProviderIdentity !== undefined && persisted.modelKey !== currentProviderIdentity.modelKey) {
+      store.recordProviderSwitch?.({ from: persisted.modelKey, to: currentProviderIdentity.modelKey, reason: "set_model" });
+      output.write({
+        type: "data",
+        message: {
+          type: "system",
+          subtype: "model_switch",
+          reason: "set_model",
+          from_model: persisted.modelKey,
+          to_model: currentProviderIdentity.modelKey,
+          provider: currentProviderIdentity.providerId,
+          uuid: randomUUID(),
+          session_id: config.sessionId,
+        },
+      });
+    }
   }
 
   // M6 (fix wave, P3 close-out): wire the advisor's REAL transcript source, now that `messages`

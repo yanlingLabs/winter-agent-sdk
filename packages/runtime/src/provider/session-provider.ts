@@ -47,7 +47,7 @@ import {
 import { createKeychainCredentialStore } from "./keychain-store.ts";
 import { adapterAsProvider, type HistoryRenderer } from "./bridge.ts";
 import { testProviderForNamespace } from "./mock.ts";
-import { createProviderContext, resolveSessionProvider, type SelectionDeps, type WinterProviderIdentity } from "./selection.ts";
+import { createProviderContext, resolveSessionProvider, type SelectionDeps, type SessionProviderSelection, type WinterProviderIdentity } from "./selection.ts";
 import { createModelClassifier, selectClassifierRoute, type ClassifierRoute } from "./classifier/model-classifier.ts";
 import type { ClassifierInterface } from "../permissions/auto/engine.ts";
 import { buildContinuationChain, type ContinuationChain, type ProviderStateRecord } from "../store/provider-state.ts";
@@ -151,6 +151,14 @@ export interface SessionProviderWiring {
   /** ABSENT for a `winter-test/<name>` session: a scripted double has no catalog identity, and putting a fake row in the init frame would be worse than omitting it. */
   identity?: WinterProviderIdentity;
   resolved?: ResolvedModel;
+  /**
+   * PRESENT when selection REFUSED, in which case this wiring's `provider` is the one that rethrows
+   * the refusal on its first generation (see `buildSessionProvider`'s own header for the ruling).
+   *
+   * Exposed rather than swallowed so an entrypoint can also report the reason on stderr: the frame
+   * stream is the host's channel, stderr is the operator's, and a refusal deserves both.
+   */
+  resolutionError?: WinterProviderResolutionError;
   /** R6-9: the pinned `system/init.apiKeySource`. Always present — the pin makes the field REQUIRED. */
   apiKeySource: ApiKeySource;
   /** P4 carry: `toolCalling === "native"`, from the descriptor's own evidence. Absent when nothing is known. */
@@ -313,7 +321,34 @@ export function buildSessionProvider(opts: SessionProviderOptions): SessionProvi
     testProviders: opts.testProviders ?? testProviderForNamespace,
     buildProvider,
   };
-  const selection = resolveSessionProvider(config, deps);
+
+  let selection: SessionProviderSelection;
+  try {
+    selection = resolveSessionProvider(config, deps);
+  } catch (err) {
+    if (!(err instanceof WinterProviderResolutionError)) throw err;
+    // THE DEFERRED REFUSAL. Everything a session needs to START is present; the one thing it does not
+    // have is a provider, and the ONE thing it will ever do with a provider is generate. So the
+    // refusal is carried on `generate` and nowhere else: no identity (there is none to report), no
+    // model rows, no account, and a Manual classifier route naming the same reason.
+    const refuse = (): Provider => ({
+      async generate(): Promise<ProviderTurn> {
+        throw err;
+      },
+    });
+    return {
+      provider: refuse(),
+      registry,
+      credentials,
+      catalog,
+      resolutionError: err,
+      apiKeySource: apiKeySourceFor(config.provider?.authRef),
+      classifierRoute: { kind: "manual-fallback", reason: `this session's own model could not be resolved (${err.code}), so there is nothing to route a classifier through` },
+      buildProvider: refuse,
+      supportedModels: () => [],
+      accountInfo: () => ({}),
+    };
+  }
 
   // --- the reserved `winter-test/<name>` namespace (R6-13) ----------------------------------------
   //

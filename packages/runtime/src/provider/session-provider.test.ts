@@ -342,42 +342,57 @@ describe("T10 wiring: `connectionForProvider` never demotes a reviewed endpoint 
   });
 });
 
-describe("T10 wiring: R6-9 refuses rather than defaulting", () => {
-  test("a bare model with no provider is a TYPED refusal, not a silent fallback to an echo provider", () => {
+describe("T10 wiring: R6-9 refuses rather than defaulting — and the refusal is DEFERRED to the first generation", () => {
+  // REVIEW ROUND 1, CRITICAL A. R6-9's own sentence is "typed `WinterProviderResolutionError`
+  // surfaced in T1's captured failure shape", and that shape (capture (I)) HAS a `system/init` in
+  // it. So the session constructs, reports no identity, and the refusal arrives on the first
+  // generation — where `isProviderTurnError` already recognises the class by name and lands it on
+  // R6-F's result shape with `api_error_status: null`.
+  //
+  // The negative half is the load-bearing one: a wiring that quietly substituted an echo provider
+  // would ALSO construct, and these tests would pass. So each asserts the refusal is REACHABLE and
+  // carries its own code.
+  async function refusalFrom(config: RuntimeConfig): Promise<{ wiring: ReturnType<typeof buildSessionProvider>; thrown: unknown }> {
+    const wiring = buildSessionProvider({ config, env: {}, catalog: loadCatalog(), credentials: createMemoryCredentialStore() });
     let thrown: unknown;
     try {
-      buildSessionProvider({ config: baseConfig({ model: "some-model" }), env: {}, catalog: loadCatalog(), credentials: createMemoryCredentialStore() });
+      await wiring.provider.generate({ messages: USER_TURN });
     } catch (err) {
       thrown = err;
     }
+    return { wiring, thrown };
+  }
+
+  test("a bare model with no provider CONSTRUCTS, reports no identity, and refuses on the first generation", async () => {
+    const { wiring, thrown } = await refusalFrom(baseConfig({ model: "some-model" }));
+    // It constructed. `system/init` will therefore be emitted, carrying no `winter_provider`.
+    expect(wiring.identity).toBeUndefined();
+    expect(wiring.resolutionError).toBeInstanceOf(WinterProviderResolutionError);
+    expect(wiring.resolutionError?.code).toBe("no-provider-for-bare-model");
+    // And the refusal is the typed error the engine maps onto R6-F's shape — never a silent echo.
     expect(thrown).toBeInstanceOf(WinterProviderResolutionError);
     expect((thrown as WinterProviderResolutionError).code).toBe("no-provider-for-bare-model");
   });
 
-  test("no model at all is the same refusal", () => {
-    let thrown: unknown;
-    try {
-      buildSessionProvider({ config: baseConfig({}), env: {}, catalog: loadCatalog(), credentials: createMemoryCredentialStore() });
-    } catch (err) {
-      thrown = err;
-    }
+  test("no model at all is the same deferred refusal", async () => {
+    const { wiring, thrown } = await refusalFrom(baseConfig({}));
+    expect(wiring.resolutionError).toBeInstanceOf(WinterProviderResolutionError);
     expect(thrown).toBeInstanceOf(WinterProviderResolutionError);
   });
 
-  test("an UNKNOWN model under a real provider is a refusal too — Winter validates ids against the catalog (R6-F's disclosed divergence from echo-and-send)", () => {
-    let thrown: unknown;
-    try {
-      buildSessionProvider({
-        config: baseConfig({ model: "anthropic/not-a-real-model", provider: { providerId: "anthropic", authRef: { kind: "inline", value: "x" } } }),
-        env: {},
-        catalog: loadCatalog(),
-        credentials: createMemoryCredentialStore(),
-      });
-    } catch (err) {
-      thrown = err;
-    }
-    expect(thrown).toBeInstanceOf(WinterProviderResolutionError);
+  test("an UNKNOWN model under a real provider refuses too — Winter validates ids against the catalog (R6-F's disclosed divergence from echo-and-send)", async () => {
+    const { wiring, thrown } = await refusalFrom(
+      baseConfig({ model: "anthropic/not-a-real-model", provider: { providerId: "anthropic", authRef: { kind: "inline", value: "x" } } }),
+    );
+    expect(wiring.resolutionError?.code).toBe("unknown-model");
     expect((thrown as WinterProviderResolutionError).code).toBe("unknown-model");
+  });
+
+  test("a refused session reports NO model rows and NO account — it has nothing to report them from", async () => {
+    const { wiring } = await refusalFrom(baseConfig({ model: "some-model" }));
+    expect(wiring.supportedModels()).toEqual([]);
+    expect(wiring.accountInfo()).toEqual({});
+    expect(wiring.classifierRoute.kind).toBe("manual-fallback");
   });
 });
 
@@ -408,15 +423,16 @@ describe("T10 wiring: R6-13 — the reserved namespace has NO catalog identity",
     expect(catalog.models.filter((m) => m.aliases.some((a) => a.startsWith("winter-test")))).toEqual([]);
   });
 
-  test("an UNREGISTERED reserved name is a typed refusal, never a silent miss", () => {
+  test("an UNREGISTERED reserved name is a typed refusal, never a silent miss", async () => {
+    const wiring = buildSessionProvider({ config: baseConfig({ model: "winter-test/not-a-double" }), env: {}, catalog: loadCatalog(), credentials: createMemoryCredentialStore() });
+    expect(wiring.resolutionError?.code).toBe("unknown-model");
     let thrown: unknown;
     try {
-      buildSessionProvider({ config: baseConfig({ model: "winter-test/not-a-double" }), env: {}, catalog: loadCatalog(), credentials: createMemoryCredentialStore() });
+      await wiring.provider.generate({ messages: USER_TURN });
     } catch (err) {
       thrown = err;
     }
     expect(thrown).toBeInstanceOf(WinterProviderResolutionError);
-    expect((thrown as WinterProviderResolutionError).code).toBe("unknown-model");
   });
 });
 

@@ -1185,6 +1185,11 @@ const SCENARIOS: Scenario[] = [
   { name: "p6-openai-responses-fake", trace: () => traceProviderScenario("p6-openai-responses", SCENARIO_MODELS.openaiResponses), goldenFile: "p6-openai-responses-fake.trace.json" },
   { name: "p6-openai-chat-fake", trace: () => traceProviderScenario("p6-openai-chat", SCENARIO_MODELS.openaiChat), goldenFile: "p6-openai-chat-fake.trace.json" },
   { name: "p6-gemini-fake", trace: () => traceProviderScenario("p6-gemini", SCENARIO_MODELS.gemini), goldenFile: "p6-gemini-fake.trace.json" },
+  // Review round 1 (Critical A): the RESOLUTION-FAILURE shape, byte-frozen. This is the golden that
+  // makes the ruling durable -- an init frame with no `winter_provider`, then R6-F's result with
+  // `api_error_status: null`. A regression back to "refuse at construction" produces zero frames and
+  // cannot match it.
+  { name: "p6-resolution-failure", trace: traceWinterResolutionFailure, goldenFile: "p6-resolution-failure.trace.json" },
 ];
 
 // --- Phase 6 Task 10: the provider-layer goldens -------------------------------------------------
@@ -1227,6 +1232,44 @@ async function traceProviderScenario(name: string, model: string): Promise<Confo
     return normalizeTrace(scrubbed);
   } finally {
     await fake.close();
+    rmSync(winterHome, { recursive: true, force: true });
+  }
+}
+
+/**
+ * The RESOLUTION-FAILURE shape (review round 1, Critical A).
+ *
+ * NO FAKE IS STARTED, and that is part of the claim: a model no catalog contains cannot produce a
+ * request, so there is nothing for a server to receive. What the host gets instead is a session that
+ * started (`system/init`, carrying the model the caller passed and NO `winter_provider`) and a first
+ * generation that lands on R6-F's pinned failure shape with `api_error_status: null`.
+ */
+async function traceWinterResolutionFailure(): Promise<ConformanceTraceEntry[]> {
+  const winterHome = mkdtempSync(join(tmpdir(), "winter-differential-p6-resolution-"));
+  try {
+    const entries: ConformanceTraceEntry[] = [];
+    let seq = 0;
+    try {
+      for await (const msg of query({
+        prompt: "resolve me",
+        options: {
+          model: "anthropic/definitely-not-a-model-t10",
+          cwd: FIXTURE_CWD,
+          provider: { providerId: "anthropic", authRef: { kind: "inline", value: "test" } },
+          spawnClaudeCodeProcess: (opts) => inMemoryProcess(opts.args, undefined, undefined, { ...opts.env, WINTER_HOME: winterHome }),
+        },
+      })) {
+        const kind = msg.type === "system" ? `system/${(msg as { subtype: string }).subtype}` : msg.type;
+        entries.push({ sequence: seq++, direction: "runtime-to-host", kind, payload: msg });
+      }
+    } catch (err) {
+      // `query()` throws AFTER yielding the terminal result -- that is the pinned behaviour, so the
+      // throw is expected and the FRAMES above are the golden. Rethrowing anything else would hide a
+      // real regression behind an expected one.
+      if (!(err instanceof ResultError)) throw err;
+    }
+    return normalizeTrace(scrubWinterHome(entries, winterHome));
+  } finally {
     rmSync(winterHome, { recursive: true, force: true });
   }
 }

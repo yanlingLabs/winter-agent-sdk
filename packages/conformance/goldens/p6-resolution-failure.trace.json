@@ -1,0 +1,68 @@
+[
+  {
+    "sequence": 0,
+    "direction": "runtime-to-host",
+    "kind": "system/init",
+    "payload": {
+      "type": "system",
+      "subtype": "init",
+      "cwd": "/winter-fixture",
+      "model": "anthropic/definitely-not-a-model-t10",
+      "permissionMode": "default",
+      "tools": [
+        "Agent",
+        "AskUserQuestion",
+        "Bash",
+        "CronCreate",
+        "CronDelete",
+        "CronList",
+        "Edit",
+        "EnterPlanMode",
+        "EnterWorktree",
+        "ExitPlanMode",
+        "ExitWorktree",
+        "Glob",
+        "Grep",
+        "ListAgents",
+        "Monitor",
+        "NotebookEdit",
+        "PushNotification",
+        "Read",
+        "ReadNotifications",
+        "ReportFindings",
+        "ScheduleWakeup",
+        "SendMessage",
+        "Skill",
+        "TaskCreate",
+        "TaskGet",
+        "TaskList",
+        "TaskOutput",
+        "TaskStop",
+        "TaskUpdate",
+        "Workflow",
+        "Write"
+      ],
+      "apiKeySource": "none",
+      "slash_commands": [
+        "compact"
+      ],
+      "output_style": "default",
+      "skills": [],
+      "plugins": []
+    }
+  },
+  {
+    "sequence": 1,
+    "direction": "runtime-to-host",
+    "kind": "result",
+    "payload": {
+      "type": "result",
+      "subtype": "success",
+      "is_error": true,
+      "result": "model \"definitely-not-a-model-t10\" is not in provider \"anthropic\"'s catalog — set `provider.allowUnlisted: true` to pass an unlisted id through",
+      "terminal_reason": "api_error",
+      "api_error_status": null,
+      "permission_denials": []
+    }
+  }
+]

@@ -748,20 +748,25 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
   // question (which tier set the mode), not a per-entry one.
   // (17) THE PROVIDER (Phase 6 Task 10, R6-9/R6-13/R6-14/R6-17).
   //
-  // LAST, and deliberately so: it is the one step that can REFUSE. Everything above is a session's
-  // context surface, and every failure in it degrades to a warning; a session that cannot say which
-  // model it runs must not start at all (R6-9: "never a silent default"), so the throw happens after
-  // the cheap work rather than before, keeping a resolution failure's message the only thing an
-  // operator has to read.
+  // A RESOLUTION FAILURE NO LONGER STOPS THE SESSION FROM STARTING (review round 1, Critical A).
+  // R6-9's refusal is "surfaced in T1's captured failure shape", and that shape has a `system/init`
+  // in it: the session constructs, reports no `winter_provider`, and its first generation lands on
+  // R6-F's `is_error` result before `query()` throws. Refusing here produced zero frames and a
+  // `CLIConnectionError` -- strictly less information, on a shape the pin does not have.
   //
-  // The throw propagates through this function to the entrypoint's own top-level catch, which exits
-  // non-zero with the reason on stderr BEFORE any frame is written -- the same lifecycle a failed
-  // `--resume` resolution already has.
+  // The operator still gets the reason on STDERR, through the same `warnings` channel every other
+  // non-fatal wiring problem uses. Two channels, deliberately: the host reads frames, the operator
+  // reads stderr, and a session that cannot name its model owes both an answer.
   const providerWiring = buildSessionProvider({
     config,
     env,
     ...(opts.provider ?? {}),
   });
+  if (providerWiring.resolutionError !== undefined) {
+    warnings.push(
+      `provider selection failed (${providerWiring.resolutionError.code}): ${providerWiring.resolutionError.message} -- this session starts, but its first generation will fail with a provider error`,
+    );
+  }
 
   const settingsRules = buildSettingsRuleSeed(resolved, {
     // NEW-3: the two conditions `PolicyStateStore`'s bypass gate throws on, so the seed never hands
