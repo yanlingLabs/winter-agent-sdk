@@ -1,0 +1,2521 @@
+{
+  "$comment": "GENERATED — do not edit. Every upstream file this extraction materialized, with git's own blob id and a sha256 of the bytes. `copiedFiles` are the ONLY upstream files that exist in this repository (the licence and notice texts, verbatim); `readOnlyFiles` were parsed in a scratch checkout that was deleted before the run ended. No executor, translator, or helper source was copied, so there is no `modifications` story to tell for any of them (report §12).",
+  "upstream": {
+    "repository": "https://github.com/diegosouzapw/OmniRoute",
+    "tag": "v3.8.50",
+    "tagObject": "6f5d4e00e817bc01b2ac16fdd66db3840c296416",
+    "commit": "5458026c216f77a3da68ea49152dc33470cfe2cb",
+    "packageVersion": "3.8.50"
+  },
+  "extractorVersion": "winter.1",
+  "generatedFrom": "scripts/provider-source-sync.ts",
+  "copiedFiles": [
+    {
+      "upstreamPath": "LICENSE",
+      "localPath": "third_party/omniroute-provider-source/LICENSE",
+      "blobId": "b5c9f58d06b1cef61ebf96f580d90c3dba5e1dac",
+      "sha256": "5f3caa52b2c2ce5dfb40c85404a370d23b6dc3e26a1447d17dc7e56f773b91de",
+      "bytes": 1069,
+      "licence": "MIT (OmniRoute root LICENSE)",
+      "modifications": "none"
+    },
+    {
+      "upstreamPath": "THIRD_PARTY_NOTICES.md",
+      "localPath": "third_party/omniroute-provider-source/NOTICE",
+      "blobId": "45fcfed7bdcf63f4bb099f4c10f06a9790f408f1",
+      "sha256": "9c0f3c4ac4440e9ff3f41793d8bf1633ea8a089012072946ec21b6a90885a721",
+      "bytes": 1322,
+      "licence": "MIT (OmniRoute root LICENSE)",
+      "modifications": "none"
+    }
+  ],
+  "readOnlyFiles": [
+    {
+      "path": "README.md",
+      "blobId": "aca28600b8dc4634e650df3fb470efef3f675b83",
+      "sha256": "7bf6286968cba1d7d2970aff2aa7119dc962db772369b89371b9e83ab003d33f",
+      "bytes": 127411,
+      "role": "claim",
+      "admittedBy": "/README.md"
+    },
+    {
+      "path": "docs/reference/PROVIDER_REFERENCE.md",
+      "blobId": "af16ed82385ac3c7d0eeafacc165050d96baec87",
+      "sha256": "6dc84e5b09bd3d83169973075f2922e03bc533e65385c18e0005f412373e94a7",
+      "bytes": 67410,
+      "role": "claim",
+      "admittedBy": "/docs/reference/PROVIDER_REFERENCE.md"
+    },
+    {
+      "path": "open-sse/config/providerPluginManifest.ts",
+      "blobId": "b0925b126fca05e60b9a98004aee4ad640be5315",
+      "sha256": "0d20d2f57167e260612412597bc9c7c9f78f4e0ca6452ddd99a5b5f81201e2b0",
+      "bytes": 6345,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providerPluginManifest.ts"
+    },
+    {
+      "path": "open-sse/config/providerPluginManifestRegistry.ts",
+      "blobId": "37b92ba4fb5e42f58377f11f8f8b04f131dcaddd",
+      "sha256": "125bfaaaba1244519d0278a1f357534461134e29c9af8a6f1301876972a0ac30",
+      "bytes": 1027,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providerPluginManifestRegistry.ts"
+    },
+    {
+      "path": "open-sse/config/providerPluginManifestUrl.ts",
+      "blobId": "c896770f30308c6dd6daf08c2715744f173c83ea",
+      "sha256": "b1707398f77e0557a76b159f6478e5566fe24c09445fdc906b4d11e402732d32",
+      "bytes": 1035,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providerPluginManifestUrl.ts"
+    },
+    {
+      "path": "open-sse/config/providers/alternateFormats.ts",
+      "blobId": "8a7deb782c6ce3af17508ea767692423629694d5",
+      "sha256": "bdfcbbc513e9ade40298a1b60b4fbf2aacc7ef3aedf6bfa5d43fe71bb48f028f",
+      "bytes": 2081,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/index.ts",
+      "blobId": "638df8d492dd70ba83f04d4fc517d4c6b2b29020",
+      "sha256": "abb979a80fc523f3e7bbe3993906602c88ee37c3285abc358fe67e1106cd5ce3",
+      "bytes": 26552,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/adapta-web/index.ts",
+      "blobId": "0b13f6a4b71968282434c531c46065490048ef69",
+      "sha256": "7d12bbbf368b0026a53f05a8db1718b51904110c3234532bfeaa3bbd6c6f4aec",
+      "bytes": 877,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/agentrouter/index.ts",
+      "blobId": "9846e03fe4cc1b6b32a4e219aea3d49742e0de34",
+      "sha256": "2c41810d8304c3c3bfa50f7b0e7217e4f87735ced223b4d8ef226d424f2e032c",
+      "bytes": 1416,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/agnes/index.ts",
+      "blobId": "2843328f00b70ab7ed1db5047a2364b3cb2fad96",
+      "sha256": "cf211c5c53d7fd6a9139adde29fd3675f7d26fe25618264f6f574ac6c40c569c",
+      "bytes": 949,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/agy/index.ts",
+      "blobId": "661f3f8ab7b24510afa0c4f7ae724d14407516e3",
+      "sha256": "4d5bacbb7c22c9a8ecddefbde6b4bbba64cecf61ece93815f7baabcaca632e42",
+      "bytes": 863,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/ai21/index.ts",
+      "blobId": "739f0d321426d10a6dfa02d9117e16a0d2e07104",
+      "sha256": "f2eabdabb434f28726bb5c9f717135f96e4a816c3df21942e7596d4d27e7d48c",
+      "bytes": 388,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/aihorde/imageModels.ts",
+      "blobId": "7b65be02776eae7fdabdc82e476a21da9e401a2a",
+      "sha256": "415462a6cd21c86d20c934e48762cf14cc72db34343ddee8a3cafa7aeb611ea9",
+      "bytes": 1110,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/aihorde/index.ts",
+      "blobId": "31a118827e6178e575d2a03f7425fd5bf8f98cad",
+      "sha256": "767bc3d9d9daa87d5a704e759cf76314d64831ec6392b8fb17cdb340efc6a673",
+      "bytes": 3273,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/aimlapi/index.ts",
+      "blobId": "e84d248a677c97eb13915d90aae8558467307a36",
+      "sha256": "f2bd0bc126b2f272aa962afe2b5a734f9797fb5afdf731b3576339fd6154b64d",
+      "bytes": 858,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/ainative/index.ts",
+      "blobId": "564120f42a18db9bbb0b748a6b30ec6bb207226e",
+      "sha256": "892781eb2ae1dc690ba9f8466cf8761a8cac0b29b3e5d4cc7e1af5781a9835b7",
+      "bytes": 1529,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/aion/index.ts",
+      "blobId": "697f1c40217fba7fd4e9ef5c193f36ac66980da8",
+      "sha256": "b540ab869b9a0edf3350e91ea634210555da0d6622b3fb4ed5f4dbf59b3afca7",
+      "bytes": 1022,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/alibaba/cn/index.ts",
+      "blobId": "5417369319c2d1a83720d50e2ee5a4264a5a6f68",
+      "sha256": "bd472ac752b04fc066ae721d1f39bfa69dc32e56f068adb163a519cd12ecd781",
+      "bytes": 519,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/alibaba/index.ts",
+      "blobId": "3f17f42720f15741f20d51aa5a1987f761122434",
+      "sha256": "275b189f3956880003dd8286d867d00b8c60bd3df6050741fe88a561be0f1d35",
+      "bytes": 1257,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/ant-ling/index.ts",
+      "blobId": "167c2fa7932faef797db40bd7ed580c8eea11de7",
+      "sha256": "3333aa7c6b7692f67d8bb9e03c7276cd300f7f2776f6a4b6ef1fa6764479640c",
+      "bytes": 988,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/anthropic/index.ts",
+      "blobId": "2a3726276d2f6ada72a1cfc45482bb12b6177ae4",
+      "sha256": "bd9c36e60f683f6a7e45c5ef923598e90361f8790db9fe3611479090220b28f2",
+      "bytes": 2067,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/antigravity/index.ts",
+      "blobId": "c3080b0103f356963f5e84ab0049ceee46d5207f",
+      "sha256": "dff8d973ada8cc6f95c9f0add361219d513181e0007fe486d89831eb5fbc519d",
+      "bytes": 894,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/anyapi/index.ts",
+      "blobId": "fcb118a7715c8a37f857b06c84ebcd3942b6b4c0",
+      "sha256": "183c12a35749c27a46a7b34ef2a14b6c0df5f01c27107ad2567d58f22a97dd8d",
+      "bytes": 391,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/api-airforce/index.ts",
+      "blobId": "b7edbbe53e1368fcd8b318398863ea96e79223fe",
+      "sha256": "4a33f53c3e3df7a717bb501ab73aeafe98b522537c7138d7e87d81f9712306a9",
+      "bytes": 1471,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/auggie/index.ts",
+      "blobId": "1415c627a7ab0502c3f1a163ab298840553e0ce4",
+      "sha256": "90e8239b2a7433208a039e5816b22fa49dd3d7dbd4e9ac981c56af3e247dc8f3",
+      "bytes": 3433,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/auriko/index.ts",
+      "blobId": "8e9319c9c5aeebb9adf715d08a1ebf48d8f0ef58",
+      "sha256": "80aa7d714531249e1f7103bddab12f17cf8e903fb6fa0e33cccf5a0849bb3844",
+      "bytes": 391,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/bai/index.ts",
+      "blobId": "574362693ca144b759e6c447187a015ece1e365b",
+      "sha256": "81a47f95141985342e2fa0c36f564e03d8de80e344e70654874e9bac8cf19e91",
+      "bytes": 355,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/baichuan/index.ts",
+      "blobId": "ea2857db3f0da314997631383801197c5862869e",
+      "sha256": "b6ac68180d4d63d616ca47b311ad261f844e5eccc05e09f43ef3f602b7ac2175",
+      "bytes": 856,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/baidu/index.ts",
+      "blobId": "e048c66320433ed149c5e6eb2ccfa87d624b4fb9",
+      "sha256": "ad60e7d54d7f4579628fc964d10233971977b6560a8d15f8b91dc5620cf21fdc",
+      "bytes": 1694,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/bailian-coding-plan/index.ts",
+      "blobId": "11af75db81584d59a807eed556c9e20562fce51e",
+      "sha256": "052682eafdfb639e36b5730211166a494ae6a64fd9f8978b8663c6a1f0aa1abc",
+      "bytes": 2096,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/baseten/index.ts",
+      "blobId": "4a1f3810ccfd8606e2cab1cbd3138ed338cdbb2b",
+      "sha256": "1483a221435291f429863caeea56a2185121f4027b13f0bd534af74e75c2db96",
+      "bytes": 401,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/bazaarlink/index.ts",
+      "blobId": "dd5a3bdec8444c0967f2fd0b26d9c5716cdfb9fa",
+      "sha256": "60d58b681bb5e3983678eec45627a80737f3b13997bc984f64562513660bc591",
+      "bytes": 2185,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/bedrock/index.ts",
+      "blobId": "bb9273fda0da9f33186aa8c725b1a479b327b125",
+      "sha256": "8a3477b49f25696a31ed13129aadd04bfab69317745cf576be58c066d8ff24e0",
+      "bytes": 1238,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/blackbox/index.ts",
+      "blobId": "46f58d35be623fb715abb4dfcd9dcff3d7a198be",
+      "sha256": "d0d7656bd32d02ad7cb2dc7478ce80ee36a526540474e34815e87eb914983726",
+      "bytes": 1417,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/blackbox/web/index.ts",
+      "blobId": "4a8eef4547bd06219035faaf7180d080860fb3b1",
+      "sha256": "576da8028b3f2fc426f9dccab6a1ce2afd23e48a5eaf4bc202e2dc54bafd7176",
+      "bytes": 723,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/bluesminds/index.ts",
+      "blobId": "59b1cf7d2cd1878a4f8786ed725778210d85ab6b",
+      "sha256": "219c2689dd351c5c5da519e106c1452d3126e285918846c1974d18533b13f12f",
+      "bytes": 1676,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/byteplus/index.ts",
+      "blobId": "2acadce50ad265facfb324cd4aa0fa77e6fb2437",
+      "sha256": "1eefa8b6d63e3e924d7f31485be6410134a946c6843b858c0674e8ea68827e17",
+      "bytes": 810,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/bytez/index.ts",
+      "blobId": "80f6d46febb9cf6a69018148d69a5519124be6e7",
+      "sha256": "fa03a37215ca5f4116a2317ba2806882c3527b593d80f2635a844793ace247d6",
+      "bytes": 748,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/cerebras/index.ts",
+      "blobId": "01c337f69137a29d4993793ab96a9469875229d9",
+      "sha256": "056286efa3b0c8e62e35b5f656307d01718d35e4003b52f8c52de1f313ae5667",
+      "bytes": 452,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/charm-hyper/index.ts",
+      "blobId": "dfbf994891ba15a1662c26d2e0748eb7f16c4918",
+      "sha256": "c5e77039c1262fa1097bcb8e04395c3889922b4ed25b025fcb9dafb978ca80b7",
+      "bytes": 440,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/chat-oripe/index.ts",
+      "blobId": "4aac54edebd45c77c32704c1315f6ae351d1d698",
+      "sha256": "e255f5b359518d2f1330ff9b0eedff8feebc7bbdeef0b3c44ac5d9b4d98ccd35",
+      "bytes": 488,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/chatanywhere/index.ts",
+      "blobId": "6c99250b203d447d1c8d8de67b082e5935073d34",
+      "sha256": "baadf83ab79a2d52a80510fafad921cfdda2bc844cafa593df35a7697c0a39b4",
+      "bytes": 504,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/chatgpt-web-codex/index.ts",
+      "blobId": "1c290668f9003820bfd60ea7a8c50b2aa6c6d422",
+      "sha256": "b960c25b9df3caea4b9e6de7695312cb488bafe3c71e0365ec90d8ed286b5502",
+      "bytes": 1010,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/chatgpt-web/index.ts",
+      "blobId": "16c1522e2b6892751ffd0d8c7de6e65e684e5b25",
+      "sha256": "d015f856f28c36b832198da2da59e97070375f27dc6b9cb4ecfabea50651d418",
+      "bytes": 2189,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/cheaperinference/imageModels.ts",
+      "blobId": "8fe3a58e8e62e82911b041528b52e54e764a16ec",
+      "sha256": "04c824237fe979e711b8c2ad4e0df394edc15cae4a1cbfcfcbc46dd104c75665",
+      "bytes": 1680,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/cheaperinference/index.ts",
+      "blobId": "750b52f01bdf104f88e2aad037a5a11e11ff4a14",
+      "sha256": "6859c42fe4471144a69aea7bb2d7e308181667ca04683080f21c2aea4c6df012",
+      "bytes": 6873,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/chenzk/index.ts",
+      "blobId": "ee74a4d46fb634abafc937fd9d601f23b5395dec",
+      "sha256": "8b9b5b261040c089732dcf5c4b4cded709acb2704a6dd295369437949dc454fb",
+      "bytes": 400,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/chipotle/index.ts",
+      "blobId": "848c828818c25d4e1194e0947cd1078ea9d730ca",
+      "sha256": "986de4c8922e3a8494a74227d85dd9cf8425de91b0e796daeb1699f1218ad507",
+      "bytes": 411,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/chutes/index.ts",
+      "blobId": "0b6e3686214e88a3a17af605faff6cf7ae0ad0f5",
+      "sha256": "19327a358a22679f9573ff958afec13d85971799ad143aed24deff278cc3fdbc",
+      "bytes": 350,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/claude/index.ts",
+      "blobId": "481c831c2f1233c74c18189427bb0dbfa8bec05f",
+      "sha256": "45d86cc74e20ac0a521c2e455c5491fe1bae71f6e152c6b1deb0434c40f74d17",
+      "bytes": 3276,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/claude/web/index.ts",
+      "blobId": "c701ff9aa3ff46c0e06531fe9612bec73e28239c",
+      "sha256": "452efad901dbc0e3e68e71d3aec0ef4266bfa2fed0e50ba5dc778ad6280afc15",
+      "bytes": 1137,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/cline/index.ts",
+      "blobId": "aecf811f193b58d0d20ddc5b1286e0c63c53094d",
+      "sha256": "3447f2cffa320e53e7da1ccf29c941d5e3bc31b44e0eb611d06cc3d021effb9f",
+      "bytes": 4264,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/clinepass/index.ts",
+      "blobId": "8a3e319080a9bfb1e01571b9e0ff2432aa4eb63d",
+      "sha256": "3ca16b13a0c3d7070d2f46a54e542fe7ee6323ce635072aaf85484f5e915869f",
+      "bytes": 4574,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/cloudcode-one/index.ts",
+      "blobId": "e9f8bc211d3622c6191faf29ea3dd11dd7f8e2ac",
+      "sha256": "d1f9fbde2cb354acc6042d0f97e193d2e5b55791990d4637be9948f6b9cb216e",
+      "bytes": 764,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/cloudflare-ai/index.ts",
+      "blobId": "5ab3eca4523c3e77de174028446d727846bfc65d",
+      "sha256": "9c8a394327caf9bb1d11c0a9ffc3b514e9eb3b0e448a949e70d8c14c4813cb36",
+      "bytes": 1456,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/cloudflare-playground/index.ts",
+      "blobId": "1c369d69798ab90a5baa9380c9a8e9712a678446",
+      "sha256": "804562dd6afc0adb4795de4560ea53118cca9970946f0948acfd4328e53ff94d",
+      "bytes": 2955,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/clova-studio/index.ts",
+      "blobId": "8344ebe91110bff1c1e7671b230bfa9025a69dcb",
+      "sha256": "8d1b6ae207c70c31bb15a3506f1ca61ca20e12c6a823b7a52815e580c8e07b0e",
+      "bytes": 546,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/codebuddy-cn/index.ts",
+      "blobId": "593041e4046d416392abdf8955ce6f9323ea8d9b",
+      "sha256": "75c12306be53d8238a8ff5bbd93a3f08ccaa8ea621e8d5baf1ad3a076ba912c9",
+      "bytes": 3914,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/codestral/index.ts",
+      "blobId": "ea23a1ccdd3af16a062750d80a33f87355baaaa2",
+      "sha256": "bc939d746f7a052c50fc6a676919bd4d712cb06add74560ee09ab41389f870f0",
+      "bytes": 409,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/codex-app-server/index.ts",
+      "blobId": "06a8589212cec2d397a5d836538a5da4ae871a6c",
+      "sha256": "05e47f1ef404c5af192441513af9aa3f4e1755cbe864a3a7e50a918150e657b3",
+      "bytes": 1625,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/codex/index.ts",
+      "blobId": "6b67797fa3d4e16c30fadb959b7bcf668e17e455",
+      "sha256": "3350aad10484b89b91ff5932166b18fe618e7d34fde05d357cd883b73646053f",
+      "bytes": 5913,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/cohere/index.ts",
+      "blobId": "249a889af259052d27d06fcf9c0ae21805307fbe",
+      "sha256": "c20f5b6cc9fddd0235a7cf6e89ca6997f8f03693fd7c0c89f3511b19c3ccf117",
+      "bytes": 1384,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/command-code/index.ts",
+      "blobId": "f298bcc21fb8292f912af14957e98d4fa1f99371",
+      "sha256": "c767079b7776ce52365a3e61f5dd4cc82e4bc000724c29938cf9e52098d3ca65",
+      "bytes": 5518,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/conol-web/index.ts",
+      "blobId": "046e105b0e66d317d9b8657c9508c2c6b93e58f8",
+      "sha256": "174eba5e007f986f3016313a79f56efd8e8ad37187d0c22fbc4f3b3b47299219",
+      "bytes": 415,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/copilot-m365-web/index.ts",
+      "blobId": "c5baab9166692df4545bffd927cc3367f725d4b2",
+      "sha256": "a4b3fb002495ecb0e50a5e5bf9ab0d48a296b34f07680ec7c5d2444931af8c0a",
+      "bytes": 788,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/copilot-web/index.ts",
+      "blobId": "c09342d58bb1d2111b05a0a3d02cbff3ef7a07db",
+      "sha256": "98cb6206c216e9f5a48039649f0f8f718946d0f0363af1524f78e7643f9e7af1",
+      "bytes": 558,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/coze/index.ts",
+      "blobId": "6fb8cf9231e1e884c4910d1447ee2cdc8de7750f",
+      "sha256": "8804e5bd3cf48af24064c0a7a3aa9baa4aae2379949377cf3de677e008a6229b",
+      "bytes": 355,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/crof/index.ts",
+      "blobId": "7f7855f40a5b8f3d975995bf544684fb2734e6ec",
+      "sha256": "7113251756601f88f9c0726d5242f1ba2f27fa6e082ca1c2bee75db0c07219e4",
+      "bytes": 2762,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/cursor/index.ts",
+      "blobId": "7d54a2252f2a770805790528c3eada48ac8da337",
+      "sha256": "d6ed2a441c76b4d14e5aac9b1d8e02d5587bb50fd44ad7675d024ed35d6cea6b",
+      "bytes": 16202,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/dahl/index.ts",
+      "blobId": "0f6ee655c98caea8541de86db147007e7a751ece",
+      "sha256": "8c198999ef7dbf812fff10b9d8bc643768ce2eb003f3416a07e06e102046aa56",
+      "bytes": 895,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/databricks/index.ts",
+      "blobId": "3382ce72332b743a9b5051cc2ba447773c34c085",
+      "sha256": "fb3ee3ae00aea646f0e085e1a22e3b0cd410667725b2d41a68a64062880bfc32",
+      "bytes": 433,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/deepai/index.ts",
+      "blobId": "966df64a391fce9209eded4c6b8006e17afa6246",
+      "sha256": "6eeeb2b2dcfef6a0424c574c193142808eae095bd6892c5505b9d9beb410ccaf",
+      "bytes": 331,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/deepinfra/index.ts",
+      "blobId": "141efa21a0e341d5fdb137b7e8252d4bb94ef5ce",
+      "sha256": "0568459e6cd7e9a8d3197dadd34497628e9a8b4e3c35378c0f4e44c7553d740e",
+      "bytes": 413,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/deepseek/index.ts",
+      "blobId": "e45f471bb87eaf881c07a72d5786eccd6b4e5037",
+      "sha256": "5fbbde6048170e7a478813859437bd94361772397b62a547e2db942fb8c655be",
+      "bytes": 1105,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/deepseek/web/index.ts",
+      "blobId": "08fc142564cc132848f63a627d45a478dd168f64",
+      "sha256": "6c422b7ca6f9e2094018ea2dd0ab9c8db75619cb288be57903d4ada308ea8670",
+      "bytes": 1842,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/devin-cli-agentic/index.ts",
+      "blobId": "3001936e253bb4efb27a4ada6c6218c4eded3382",
+      "sha256": "f7e7c3a67289ea443b49b4743c51eb0aba75f986fc31b5167cd7cf4cee862151",
+      "bytes": 682,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/devin-cli/index.ts",
+      "blobId": "d7dde480c5ab14bf1efc3123330cb24da7490300",
+      "sha256": "0661b60d52f1bca8a9dbb2352d0b143100d400067fd6ed9f317f5d3b632db333",
+      "bytes": 418,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/devin-desktop/index.ts",
+      "blobId": "146a00150353652e4b73b35eabb7fbd56e5d73fe",
+      "sha256": "5ef8cb84d0ffb91ff5bb74056f604f7e37531f875a7a5cb142ff9ba2775a6fef",
+      "bytes": 424,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/devin/catalog.ts",
+      "blobId": "d1e5c75894bf6336b1e7add81f16099f53a4f4c4",
+      "sha256": "7315dbe98ec960039fc1da4050fb59f384004e625172ca7c485c0377dd7536e8",
+      "bytes": 6712,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/dgrid/index.ts",
+      "blobId": "e759bc13566fd612dedece54ae15b6360af1a157",
+      "sha256": "33c0d2f4789959d489ee6b375939d8c608b07043e11b9e04802b8a0f52c9d78b",
+      "bytes": 457,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/dify/index.ts",
+      "blobId": "80c9c7690fbee0e278f026a7f5eef6ad308c1fc9",
+      "sha256": "f2d6f5f87d4b6175d7d74fd8705ab415392d26be1bf07a61fb3750764c8e7cea",
+      "bytes": 602,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/digitalocean/index.ts",
+      "blobId": "af1186934c14cd507cd36d5974e7afb2ab866cd2",
+      "sha256": "9da055e318f4e3ba482d6b2a59a3ae40c819133e078305de833f7d969dc33a46",
+      "bytes": 421,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/dit/index.ts",
+      "blobId": "64d8d2aab38ff2da072d4f91d65de1ea0ab33e3a",
+      "sha256": "7c1a773226ea85ef00672b0ed3906911163cf3588fcb7cf6ac84b172b1dd90bd",
+      "bytes": 1408,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/doubao/index.ts",
+      "blobId": "f161983a9408f5140f64fa30ea80143b955b5adb",
+      "sha256": "2538168181dfddcf4495cb220be8a0cb8aa95e4dd32ba9839353c8981357fbbe",
+      "bytes": 1317,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/doubao/web/index.ts",
+      "blobId": "e66ff3f45c8336ee020fa7ccddd086923e31415c",
+      "sha256": "2ab2b1a1f677378e69257c67571a64f5dfec22d4ec05cc0803cd36154c1200f1",
+      "bytes": 435,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/duckduckgo-web/index.ts",
+      "blobId": "18e625191643c1964202bb28c0aa37e98dd0a5a1",
+      "sha256": "b27bb4df131fbe4465192dea6172ff38a76e06ebc119586044010b01a5a80208",
+      "bytes": 857,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/dxnt/index.ts",
+      "blobId": "2a70c339c31418780dfb1844712a46519ef6628c",
+      "sha256": "c5a33650899025f072c593e1ae9cd3e6d6a946faf2dfa0c3295e83041334f8d4",
+      "bytes": 611,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/electronhub/index.ts",
+      "blobId": "b1b0cce56fab3e7a2df283d4281b5768e9c7a94e",
+      "sha256": "ec0d084920e185b8981311feebb941d312881a618cb11913455f5a002c2a52d0",
+      "bytes": 416,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/factory/index.ts",
+      "blobId": "1cfd208f22d45ea14565fbb7654f936a7a3497f7",
+      "sha256": "b3d5f98c919594a35215539233048e6835214b03a1740b0c0f20d8743810ba77",
+      "bytes": 1846,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/fastrouter/index.ts",
+      "blobId": "622c6120655e77697bc49d46d9024e878ce75146",
+      "sha256": "e793ce2c0683d66349a4946fdf930485eb6f90f76a254982a9883126077fa2ec",
+      "bytes": 419,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/featherless-ai/index.ts",
+      "blobId": "ea374bf3768f1f9e151a6fa48c660d359a83d7c6",
+      "sha256": "fc04cac5c9fd71fd466fcd9d85effb8fe983409ae7d2c7a3dc6e9dda55009da7",
+      "bytes": 427,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/felo-web/index.ts",
+      "blobId": "58f1605d1d750dff9d6404cd9a362f84550bf93c",
+      "sha256": "637c62032a83664c70fee348e6ba1a03aed87229dd0f263f68c75397bd5d7c46",
+      "bytes": 647,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/fireworks/index.ts",
+      "blobId": "c81541287242027daf23af63c1335aebbcff76f6",
+      "sha256": "9f8d859574eb40aa2fb667f8ba415dc35854481bd68305ca96ed7c1d01273291",
+      "bytes": 1169,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/free-ai/index.ts",
+      "blobId": "a055dab8db90c235d4d065051256c96d953d42fb",
+      "sha256": "d33a5416003b96160c2708fda7b123f99809b2db53d9051746a793ce0bdfcb3b",
+      "bytes": 378,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/freeaiapikey/index.ts",
+      "blobId": "6a4785990d14c9b1f84f52110bfdd45f0d379b15",
+      "sha256": "464ab0658d0f1269ae739a71d4f484d9861ac374e8a325f7a3cf5970ae1581d9",
+      "bytes": 2094,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/freebuff/index.ts",
+      "blobId": "713f46954830d7f5a85060bb45883fcd0344bcf3",
+      "sha256": "14fd5636f88c8ca6fb1e289d5b90cdfd37743fa13a3d6423f8fab763c1f76463",
+      "bytes": 1623,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/freeinference/index.ts",
+      "blobId": "25c02dbaad1e8ef3cfabdc6e2ee89028c32176b9",
+      "sha256": "31d402e9972dfc2cd39a39c291609f0877220adf77e320d09d605071112e9aba",
+      "bytes": 420,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/freemodel-dev/index.ts",
+      "blobId": "80bc995d7fd35a2db273bcce03fcaad3cae5e549",
+      "sha256": "0cf83e0f48052b744153339f3791f1f05d10b7362c1278afa3e2164e4865c69a",
+      "bytes": 629,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/freetheai/index.ts",
+      "blobId": "b0b3911e8943fe3ceb6d87e1fbb9cdcc841cb1ca",
+      "sha256": "c19ae18ef1b515e574af230cd6235a8290b245076c2ae65f289a9aeeb3ece4de",
+      "bytes": 826,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/friendliai/index.ts",
+      "blobId": "d4dd98179f635e2e09a82de30cd6e7b884713429",
+      "sha256": "0fbc7cfe751545ce296fea983df5ab81c5f2ee2fa7aa526f1b740b35203e664b",
+      "bytes": 657,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/g4f-gemini/index.ts",
+      "blobId": "1c977b90b7b8523fae736f063483561707b31443",
+      "sha256": "fd6e1c4fbe1192d619a2da56e28d7e7482a1453d847400017056b4e2786a20d8",
+      "bytes": 802,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/g4f-groq/index.ts",
+      "blobId": "8eee1344dc88a27a836994ab8674004a8188a08e",
+      "sha256": "1918a4edc28fb7b9b687acfc6f365033c72b47f6b4baa31f4df7c6972fbcdc78",
+      "bytes": 790,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/g4f-nvidia/index.ts",
+      "blobId": "a270130d5398a2e5850fbfe6042c21e532034d13",
+      "sha256": "4051e721c81a5e0f9d3fc6980077758e540873aafd5e2b233ebad5d9e520f419",
+      "bytes": 918,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/g4f-ollama/index.ts",
+      "blobId": "588f1d96f72ec1074db16e93d72dc148a63e5f0f",
+      "sha256": "66e11df4c1b6d210d311a0e1447d0922f84be9cb8b11fbe971f7ba5ab3edeeab",
+      "bytes": 731,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/g4f-pollinations/index.ts",
+      "blobId": "9aaeb03d1b78a5424ec60b5378f14baa1e29ff93",
+      "sha256": "1a02d7befa975112c4a0bad1eca96b1cd00b3c464c6eae7416bfc1a81c310865",
+      "bytes": 781,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/galadriel/index.ts",
+      "blobId": "bce19a067bb310b0200203a331e3fe6612fd25ac",
+      "sha256": "94d6a065f9aeb1b1accc46221691a2e47abe122b4f6b9822e41ba0147f699fd8",
+      "bytes": 405,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/gemini/index.ts",
+      "blobId": "468fcd8889031111810d4b71be5286e72625c45e",
+      "sha256": "45e06b4c6450fd9e0a84796b45ed0d766995437c58dfc75379cb601a7adc8e77",
+      "bytes": 1688,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/gemini/web/index.ts",
+      "blobId": "0e9373784d26a29de6d60cda68f3644aafabc390",
+      "sha256": "431d5a1416854a113179c0c4efe2007f6b0a75ce1c1d1148599dcf73732de228",
+      "bytes": 1346,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/ghe-copilot/index.ts",
+      "blobId": "1a68fd914221bfee10b527948593ea075bcfe3ff",
+      "sha256": "ce11d094b34b2a8b66e904a829747d1a663c1c3a27193467c3a63938e44a58f8",
+      "bytes": 5297,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/gigachat/index.ts",
+      "blobId": "c029aef448012187a9a9eed1fa138ecc1acfc85a",
+      "sha256": "3803ecc4025eccaee651f2bf3059a85eeb332c4062ff85e8271e05be73962709",
+      "bytes": 400,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/github/index.ts",
+      "blobId": "d6189fd791106e9e278f380644600854d14976e9",
+      "sha256": "e856ea0453d22d0661f4e73a0bd34fe59a67b562c677c851983aceb4033e1884",
+      "bytes": 7662,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/github/retiredModels.ts",
+      "blobId": "cc412401f9f1e63df282cd570022ebc4c3234013",
+      "sha256": "731c4328d1cc43bfe3874402b8b7959881af0ca666b3e4b5864627967964fbcd",
+      "bytes": 502,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/gitlab-duo/index.ts",
+      "blobId": "6250f6f0e8acf1d3a54b94600dbd679da44a3abd",
+      "sha256": "2554ca2b1e7d04eaaf26a4baa2ab808c287c2174724343950424bb2bfc143759",
+      "bytes": 1278,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/gitlawb/gmi/index.ts",
+      "blobId": "04ea7233cc179fe1b9de68ec59ba4e67d35f9b6c",
+      "sha256": "577981951cc9ea28397b9c389b0832c377edef32bef895654bf81b963de5d5d5",
+      "bytes": 609,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/gitlawb/index.ts",
+      "blobId": "1fac76b4a86efc019e6cc4095cbdd263aee52a58",
+      "sha256": "68db0aaff2f5424af53e1fe89e3b26efc371ce250e4399ee1bdde254b8557b6c",
+      "bytes": 562,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/glm/cn/index.ts",
+      "blobId": "65b17027cdef2dd1e5c69229ea26caf24717ba4a",
+      "sha256": "274851a4ccd835d44f3d2ee86254eeb656e017d560be0208728b54de400d2bf1",
+      "bytes": 559,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/glm/index.ts",
+      "blobId": "a0829f571c814c5467d198f7f40df205fa9bf694",
+      "sha256": "9f791873d641b63961b4b6dcbec6a8be1f68c8810828ec4ab5548e8ee54066b3",
+      "bytes": 510,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/glm/t/index.ts",
+      "blobId": "22ee916a8d4ba13fe6c819283818e3f868696cb0",
+      "sha256": "4758d5ead8d1d073c2fe55e0ca02240c1a6c8b7f73f5b1e64b8dc4ed33ab4d92",
+      "bytes": 523,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/grok-cli/index.ts",
+      "blobId": "e65ced0e76b3004678ad0f9f499aee04ee74bed6",
+      "sha256": "b41f72d9f10b99cb2fd367f4c83fdef8b3e63c231d5f9e6566944587b99aa397",
+      "bytes": 1800,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/grok-web/index.ts",
+      "blobId": "44e84c5f2a05f7ff958468f84bb099e894b5aa8e",
+      "sha256": "f406695462a015f4791b19f44ffd92284bcc1b0278e5780ba3eab27417f7bcd1",
+      "bytes": 619,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/groq/index.ts",
+      "blobId": "07fa17d666bd2ac9dd584a053abf417a7c8ab659",
+      "sha256": "672846e50af08c675a141d33ae9c8c45bff40a6cb17c5d947388ebcd86c74961",
+      "bytes": 902,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/haiper/index.ts",
+      "blobId": "b9813a3458b6f2664f2f2de734e3be7e82726feb",
+      "sha256": "1e53504dbe58223e4df7dfedbde2fa0ac98ae4e37d9e717a7898b583cac30ad4",
+      "bytes": 373,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/hcnsec/index.ts",
+      "blobId": "dba2b690dafb3d6c31c107e1c80d107b9336d73d",
+      "sha256": "2bae03a4b2c069113e6a1a5e644db46369a008c053e0b17e4938df7f390bddbc",
+      "bytes": 2875,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/helixmind/index.ts",
+      "blobId": "c8f4d3a529c26eab5cdf41fcec0297e658ecccae",
+      "sha256": "b8e6d0275d195104d2521df82542dbb5e0c88a40cd21204725804cbeb23c1416",
+      "bytes": 818,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/helyxai/index.ts",
+      "blobId": "e0b3fd1ea0a330ba65be3c75fad6844860e9c4d0",
+      "sha256": "472d888b51b0359934184a6a2d811abc3c8f0fd89c181a2f17903e6c495a2326",
+      "bytes": 394,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/heroku/index.ts",
+      "blobId": "8cde2535e8986f91dabcf9162686077eadc34e34",
+      "sha256": "7a5c21e86a0938c6bde6328adc6838bdcc92fcf7ee2cdaa193f8d798ad62b988",
+      "bytes": 400,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/huggingchat/index.ts",
+      "blobId": "4be26b8d9bbd7af831c639678534df12a1955476",
+      "sha256": "f10a5ef8942d483023126c10b48ce7e53bb05f57505341b44e3c41eeda45660c",
+      "bytes": 3817,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/huggingface/index.ts",
+      "blobId": "dfc94ae9d8a67a094deda2f03f78e889c5804ca3",
+      "sha256": "25c2f1cb0f89c74d32b46bdecfb3b3cfc98f06bd3175589c16effc09668b0b80",
+      "bytes": 756,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/hyperagent/index.ts",
+      "blobId": "b7c1efe62e55d9431d96f89a2065a178ccc29bc8",
+      "sha256": "7a3fd83fc6cd617ef29ec0a0f8682ff6bbb39702bbd4203d22700fbe50b44482",
+      "bytes": 1021,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/hyperbolic/index.ts",
+      "blobId": "4ffc6dd0bdfc2b42f2c9c53083a9ba297e3ebe5f",
+      "sha256": "750e1885fe73ce244f2a5ff9c0ca19026b1e82e5d462e1f3d2ebd7a4e8fa5215",
+      "bytes": 830,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/ideogram/index.ts",
+      "blobId": "07dfe9fb921f907b7648d082631aba5640f65c43",
+      "sha256": "56bfbfed9f60fb91592283d8c76b47607640b27810bd2f230dd69fb8d71084ef",
+      "bytes": 369,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/iflytek/index.ts",
+      "blobId": "747cd57c921f2cd6dc4e103c02dcba900fc4a343",
+      "sha256": "bbd4c2e5065aaa0909a37fbca9bee80cd381c65fb0c42a9a2eb0986e52e7c51f",
+      "bytes": 1171,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/inception/index.ts",
+      "blobId": "9dbdf0e4de3c08509fb49529d459fd113eb55370",
+      "sha256": "0f6ebc0f22979b404919591a6b007e0cc6f4d00b058591d964fd6dd842b3f829",
+      "bytes": 438,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/inference-net/index.ts",
+      "blobId": "656bd1fbb04f57868befc61de5c9383575628cca",
+      "sha256": "3b9ee047499a57b5ebe018bf6a4618a15b99b0a611a5950c101f71ff2523154d",
+      "bytes": 416,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/inner-ai/index.ts",
+      "blobId": "f4d212c8ad51829fbe58a84e2e2e4500629ee068",
+      "sha256": "5c5db5a05e969ea119612059347d1f6f315ac2c0480af36c3cbe63f51a8be60c",
+      "bytes": 1784,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/internlm/index.ts",
+      "blobId": "43b161d1f2258438a67956860e30748b5f3ffb84",
+      "sha256": "529041dc1c9b964e15c998011f9a1b995ac27afdea1cdf0e8495e78afca084e9",
+      "bytes": 671,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/kenari/index.ts",
+      "blobId": "26a85caa7946db65084b6db022f7b1e72c00bb0b",
+      "sha256": "fc13f58914177637cbf9d8ccbc063ac4cdc5c00568dc4afb77207dba74bf44ae",
+      "bytes": 366,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/kie/imageModels.ts",
+      "blobId": "249afd9dac460725dcfdbf17c904c800e141f977",
+      "sha256": "baa2f4303a224013d50f875de47f917a65b73de178123cb3270ac6207efb3086",
+      "bytes": 3171,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/kie/index.ts",
+      "blobId": "f404cb19df0b5a38ac73770542d0af98eafa7603",
+      "sha256": "d0ab82d7e09c79ed71451d8c0c733bfa5f6e79b2b650968565deb91d229f70f9",
+      "bytes": 1000,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/kie/models.ts",
+      "blobId": "5ec815aaf48e8cc077b7eab7454afddc60a0a6c5",
+      "sha256": "4339d1b4ce2b8581837a204bd9c34adad9fea1a8ad8ccf10f1fe625eed769983",
+      "bytes": 2767,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/kilo-gateway/index.ts",
+      "blobId": "67b57f1fa734e789ba46b9c892af7d2bcf31b512",
+      "sha256": "13f4850998feaca7cb3b7644a3e4498614430f5c616603a461081a9871de08e7",
+      "bytes": 1071,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/kilocode/index.ts",
+      "blobId": "567d9f1ce45a94bcb32d79cb34278e4b3cceaa3b",
+      "sha256": "26abaf90276f109a04ac8090de1acc58af27c88832a859515ec5ad7f40a9dcc9",
+      "bytes": 2053,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/kimi/coding-apikey/index.ts",
+      "blobId": "705c70cd2fba8dc57500a67b60dad655eac08c7b",
+      "sha256": "b38d94281d9fca16d47c8537df9f549f3291dfd5cb4899d1e3fca3d8527887c2",
+      "bytes": 269,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/kimi/coding/index.ts",
+      "blobId": "6b2471f4356c10d6d79e6f4b047a278de083dfc0",
+      "sha256": "c4e75ea99f78eef6397fdcd071df48cec16d6a5bc8d3713489b5e0468d202d24",
+      "bytes": 1759,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/kimi/coding/runtime.ts",
+      "blobId": "dfd469658e1a9edd1e37d6927dc2d1fa5cdba764",
+      "sha256": "35144c27ef62cd196f96283457511c5337435c80fbcc1b6b10aa5d353de32e39",
+      "bytes": 2959,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/kimi/index.ts",
+      "blobId": "7b5efe7d3eff34c0ffd21fd637ba30183bcddf8b",
+      "sha256": "b3beba2a294c358a08d93c527f43fa3c5c9cf761c8f75a0c094a860c122d7f8c",
+      "bytes": 523,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/kimi/web/index.ts",
+      "blobId": "ddeea4350baa4666917962585ba62dad9bcd26af",
+      "sha256": "724d862703363e211f9c12581ec3c92918246cc1f59f090c38af4ffd15523239",
+      "bytes": 948,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/kimi/web/runtime.ts",
+      "blobId": "1d8ad0b4560a4d3b902ba1d0a7a5955c97ea77e9",
+      "sha256": "f12d82360c3bbd2bb065de0c47322fc9a607bec320161da2fce371495b2deb98",
+      "bytes": 2316,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/kiro/index.ts",
+      "blobId": "cda51e77c81544bdb56e7f1c0208c11cf6ea4bf2",
+      "sha256": "a6cae6be08a1edb3e0a623f9297f72999a9310d05106ad037d7b371b8357c195",
+      "bytes": 2424,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/lambda-ai/index.ts",
+      "blobId": "e66cf19f044e509891e0efef346ed96a8648beb6",
+      "sha256": "5c13ec8eb24fd4ac01d2b9957d9689dc99395f714636f64bcbe9493e0f22d552",
+      "bytes": 402,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/leonardo/index.ts",
+      "blobId": "6311ece863cb91bf2d8325e952e58c2a9a0ea2d3",
+      "sha256": "6dd11cc11aaa37b3b41ee896f3ab77ecbc4c1682f10b74b408859a895be2f6b2",
+      "bytes": 373,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/liquid/index.ts",
+      "blobId": "2ab17cbdcaa6ad88e0c1a58ee6d89044547d6387",
+      "sha256": "db44181d2d69430d9ab42f511a6e053c83a4062d03f9d91c6e8c93f11394c356",
+      "bytes": 782,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/literouter/index.ts",
+      "blobId": "fd13e540eb1b3e39f68c9310bb2dc799b1549b86",
+      "sha256": "d942ba2eb83a082d7ece05a3e9b5cfa24a5546fe2bb5eaa6321876f1131ca702",
+      "bytes": 413,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/llamagate/index.ts",
+      "blobId": "515a9afd41e4848e6759d01ed0d888bcd3cf17ac",
+      "sha256": "30b5369f8692420c15777bdf41938e7358c853321474af2397c583a50ad54b5b",
+      "bytes": 401,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/llm-kiwi/index.ts",
+      "blobId": "d929afec29eba840e08ff45863998d43c4e04578",
+      "sha256": "0ac17d4ea9f779225b8ef58744a20cea93ec363a1053b0e0d698994938c6be57",
+      "bytes": 466,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/llm7/index.ts",
+      "blobId": "9bd6237dca6074ec48920d3ad11d12bd768f64d1",
+      "sha256": "18731dcd01b5696851ff60b05bd0ea602b24d5d84e29abb891407af003f1e7f5",
+      "bytes": 793,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/llmgateway/index.ts",
+      "blobId": "972a3a893026d41e047f5b1c6d664a7ab4b93496",
+      "sha256": "0d62ab2ef0d157c5dbdc831f12a11e925c3a75b787fb3b9dfa0648c1d9f5bb40",
+      "bytes": 411,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/lmarena/directModels.ts",
+      "blobId": "639cd33a2bfb1d177a692247eb3e82a361043c43",
+      "sha256": "9493629f439ad5d919ca1588e9c24d1d46af6e8eabfaa3f14f4fc06c12c78fc4",
+      "bytes": 20205,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/lmarena/index.ts",
+      "blobId": "ab91a6a9e5f87e91f27493c373091d6cb929a446",
+      "sha256": "349188ff44cbce4d20a08153457f8d8e231796feb55067a3f7314b82f2d871f9",
+      "bytes": 568,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/logfare/index.ts",
+      "blobId": "9b16b5a2f4e09d3d5a6fe9b2bd63057ffdc6d602",
+      "sha256": "9c3594f0d8ff24668b1cbb733c5b47160e207a679bf73d29c25e769e5b999470",
+      "bytes": 1097,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/longcat/index.ts",
+      "blobId": "d53c2a32ef00b788d9e62ca7bc46cdc232208835",
+      "sha256": "e3e762e619247c9cc6233aa0383ed73d53b399f5b057ce9b36a55e133eee7004",
+      "bytes": 874,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/magnific/index.ts",
+      "blobId": "63c83d5b1ca3ec3fb91e475bdc560475e710c2bd",
+      "sha256": "2d47ea330ed13d83d253ae05d93d9bf5ad1aab3ee31438d1377cd583b815817b",
+      "bytes": 1155,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/maritalk/index.ts",
+      "blobId": "c102ec3849a15f7001e3dd93b1e2c3f0b2eca2f7",
+      "sha256": "d20d59ebea6e428387b02946b2c4fd790cc3c425515dfe0f58648667dd09d570",
+      "bytes": 404,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/meganova-ai/index.ts",
+      "blobId": "e5c61d01df96f668cb48f168f406de013e5931f5",
+      "sha256": "e085e69c75d29eb81da56ff6fb71ca4f8c5307760b19211556ab4c491eb63c6d",
+      "bytes": 409,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/meta-llama/index.ts",
+      "blobId": "07363a63ddcd956c3a962eacc5a7347af40b267a",
+      "sha256": "832a1045dbf53722bc69ef0005527a39798b4081e3d3a5e5d304c892d3dae380",
+      "bytes": 410,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/minimax/cn/index.ts",
+      "blobId": "91981768d348df3ddd8c280ab8079531113b5ce8",
+      "sha256": "1020a08e911a474bd78c43fb3c03141f9d8ee7ee06e26cb390eca664799be9e1",
+      "bytes": 907,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/minimax/index.ts",
+      "blobId": "54fc7b3058c57101c74f8fbaf4725014f466d8cb",
+      "sha256": "b4464182b79bf099935280348d7cd03a0e21e42d88890fae7a442d3201e4cf42",
+      "bytes": 813,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/minimax/web/index.ts",
+      "blobId": "6c2addc043b91c83a60365b2713aa02bf5c8730f",
+      "sha256": "16f32dc01d4d6fd221587a7ed4ed674bc5d62daf34bf04e2d6ac8317da187228",
+      "bytes": 955,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/mistral/index.ts",
+      "blobId": "04ec182021215abd7d8725a32808776e3bccba6b",
+      "sha256": "8dfbecf827c2b2928fdbd76d4e41d2b7cf92180f24ae79a031408ce06603e5c6",
+      "bytes": 592,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/mixlayer/index.ts",
+      "blobId": "63f4ab771571f5c41767dfc2d2eb1dca64b148f4",
+      "sha256": "19435daef9c93c8e76f05919d891e16eaf2eddb0666d7b5507d8b1ee5c3705c1",
+      "bytes": 465,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/mlx/index.ts",
+      "blobId": "24d3e8b2324481120021f0eeb7304849c347c89c",
+      "sha256": "dd9aa1df048a1f5c626ee43ee456e7973abf0da86b3094cb06280f2dad463285",
+      "bytes": 3058,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/mnn-ai/index.ts",
+      "blobId": "f1d7e2317fa8355df34900197e7b55c7df35a435",
+      "sha256": "a0acfa3ced1b33b681417c3e9fb576792a95e4a0d4ba3b2e615f47a94434e440",
+      "bytes": 388,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/modal/index.ts",
+      "blobId": "b0d20dd271c597123c647be13b68f2bfcd83b153",
+      "sha256": "6a99fff270b96fbea2bcbef1950fee13161ba63de42685c516ed27ec3355c8c9",
+      "bytes": 354,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/modelscope/index.ts",
+      "blobId": "f82b7cbe7212abfa44f2f9b93e5bbff7980eb55f",
+      "sha256": "332bd0cac6b5f73609e85f1e449475920e94eee2207c2117656250f891eaa67b",
+      "bytes": 1261,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/monsterapi/index.ts",
+      "blobId": "6ca84f86eb991d633a1302632841ecd2f3db0d8b",
+      "sha256": "7c70b44b69f27fe4ba4c41db0b4a4d7d7ebceff8748245679eaa0ce2b0feab8e",
+      "bytes": 654,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/moonshot/index.ts",
+      "blobId": "07459210e7d463924e7d48b0e079adb19dda8b8b",
+      "sha256": "31baed55989ac918811a636c45237b2be66115497e38d8ee1c8f99aace92fae4",
+      "bytes": 2264,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/morph/index.ts",
+      "blobId": "f4466ad33b94049557d7bb865045cb9cbd59e93e",
+      "sha256": "fa1ea79fbe9eec9e0f233eabf21285b502f60c5dde199c162babaedb4e3707a0",
+      "bytes": 389,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/muse-code/index.ts",
+      "blobId": "37db1e988d4402d476f76360d5fe4c6cdc7014bf",
+      "sha256": "da002344e125585d20f1f13424f15a4ca3dff6289f01b801fedd17812d0b4613",
+      "bytes": 3120,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/muse-spark-web/index.ts",
+      "blobId": "03021bdfff2eb70d6f546c65b03e4a0e7b7c130f",
+      "sha256": "7de3128e4066559fc09a00fa82cac8a943ad7ce0de7eeffb1d358ab4c9adda6f",
+      "bytes": 615,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/naga-ac/index.ts",
+      "blobId": "4627c2b92144cdad5fb296939e18af596671556d",
+      "sha256": "039bd4f970419cd329ca043ed5880e66b58cc0f2e0b0deb4d939a43f417089b2",
+      "bytes": 575,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/naga-ai/index.ts",
+      "blobId": "3918bd55859975927e7aad122af6dfd8d7c926db",
+      "sha256": "375adfcc6a6249de188365a1cd6e3d5db21dc5a3ffd4c2efb8c486ede6eec7f7",
+      "bytes": 483,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/nanogpt/index.ts",
+      "blobId": "1c95c8bb52c34fb38f507338f5275d7031bb2d14",
+      "sha256": "c7ed8a91c4bdf31f01a041bca013cd2503829032bb36e56351a1bcc26ea19942",
+      "bytes": 509,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/nara/index.ts",
+      "blobId": "e2f840d4e7d30504870fe5958d7d12c9b098459b",
+      "sha256": "1e2490c4f510aeb14d41abe2b1b10da49027af203e96745e64ca8afeefafad9a",
+      "bytes": 851,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/navy/index.ts",
+      "blobId": "605feb37e949ee2add0d92efa17af0ba611bdae6",
+      "sha256": "e4ed096f222d13e7933aa2d66d27e249da1a9f00e39f4b231bd49aec9bdcbd7a",
+      "bytes": 1717,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/nebius/index.ts",
+      "blobId": "b49bd34e8106e878caaa73a72df397d8260b71a1",
+      "sha256": "3e570f43cb0f5b7eb7e82638dcf84438f6b21c2dc413d6faea91b18c6d1cc844",
+      "bytes": 405,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/nlpcloud/index.ts",
+      "blobId": "ffa059dfd92771253b7e45916fed96b1fa1475fc",
+      "sha256": "410c0fc7d0e51ec1c42caa6aea5a9e41ea4674bdb686497302acb5fdd48ef2b4",
+      "bytes": 694,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/notion-web/index.ts",
+      "blobId": "bfe4ead073ff0528c2057d19f67314e9111529ae",
+      "sha256": "792fe568d38bec9cd295234fc4148cfc4b7c2c1b283f3974aa1989551ae98944",
+      "bytes": 962,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/nous-research/index.ts",
+      "blobId": "aaa61ac5ace4ccf7a067bc65ec44c763997f69bb",
+      "sha256": "85a02848ebe70081351828655a688b0075152ca2bb853f6bb9771a3410afae79",
+      "bytes": 463,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/novita/index.ts",
+      "blobId": "48227c6a143cede1515a0f62a9d4841133838825",
+      "sha256": "bfbfde0c29d012b1130de8047fdc92c39c85a64d98264e6032e8e160e6161639",
+      "bytes": 5964,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/nscale/index.ts",
+      "blobId": "e6af269a126885cbf870d308bb441fafdeff8324",
+      "sha256": "d2aa0a84ed8452921d12ca27687d65442dc4e3b6694d9ba65637bd664b455fb3",
+      "bytes": 401,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/nube/index.ts",
+      "blobId": "f0e25b56b938267977179859bfa4a5c9907e9bc4",
+      "sha256": "3f2781a4de5e67c7433d860c3e655b88bb4304789668842f919f5058a6b20a41",
+      "bytes": 631,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/nvidia/index.ts",
+      "blobId": "3603700d304a2bb49608fc0a91dc452f8b4d14dd",
+      "sha256": "5b3fd7a459373724bd8cacbc5c98d6a98487608b0217be85a3f7566ffc0de6a2",
+      "bytes": 6418,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/ofoxai/index.ts",
+      "blobId": "ada7b5eef2d2be84d42530a9215b9bda7d6b54d8",
+      "sha256": "4c80c3f8460860964f1d2382a837e3f9a620d172b4f3c8c5b2b45004085b6c6f",
+      "bytes": 387,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/ollama-cloud/index.ts",
+      "blobId": "fb68aae61e51e95209e3c08acaa694c2ce615b59",
+      "sha256": "466fef0b9a51b844f27c0119a60a0b4c66d3ff66c720fee6b3a91df3bf4d3da7",
+      "bytes": 2445,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/openadapter/index.ts",
+      "blobId": "6723e5ed710a418a0a48b0c2fa6766b73b6b0423",
+      "sha256": "597f5bc1eab8d537bf8ea721157fab608e1ecf848ed10b4f2a209bf8aa5d5558",
+      "bytes": 1129,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/openai/index.ts",
+      "blobId": "60a276a948b926aef3349c611ac35b4f3a0bf16c",
+      "sha256": "ef6c3703389bc9965b3504bc866f00da90b5ee75bf71e7b654527294cdc31497",
+      "bytes": 2324,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/opencode/go/index.ts",
+      "blobId": "21170b5b1623ce82319b542ea6ce3ad2a4d4c4bc",
+      "sha256": "e8ebf2c97a016f585a0d917c52444a1d2d027a23da87e1fdb377ca94541834d9",
+      "bytes": 8929,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/opencode/index.ts",
+      "blobId": "07f228b77e83c603a3c60a9a6edbad95f44ff1ad",
+      "sha256": "d7de7d4b4f5ee6c2720d121a95350ac3f9b575b69112366e1e3093062e3a6482",
+      "bytes": 2567,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/opencode/zen/index.ts",
+      "blobId": "9fdca2fc0a5c7086d844bdfe07aa6507b1a536f2",
+      "sha256": "82668e2d2200415116599ba859654664bb2ece184bf3258caf4a332d8f326f4f",
+      "bytes": 6550,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/openference-api/index.ts",
+      "blobId": "34a20de30389e9480cf8dab58598e64d8d8019bc",
+      "sha256": "38cb0a57c1967300e44d1a263adf91733b215dcf8550bed14e1fc5102fb72db8",
+      "bytes": 796,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/openference/index.ts",
+      "blobId": "fe5f50025e95672b2c6e46aa4ccd4eec221ae4d2",
+      "sha256": "1741c6695f899e1994db95dc385feb09ff3c7108d60760cf1ec01ff0eeaec22d",
+      "bytes": 931,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/openrouter/index.ts",
+      "blobId": "b8302c95800ccd5bcc9f896be78a67c5cda5f32c",
+      "sha256": "077d7b073ab6f56d3a94261e8501cbb593f7c13684fa806f822a80284b61be72",
+      "bytes": 1412,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/openvecta/index.ts",
+      "blobId": "25753438b54dcbdd5a7f3911bb9d8ac75d8a5dbe",
+      "sha256": "22554a5d4a1184b1087479b00c9bab0a1c4fb2c0249543b4c864e3e7ce2d2b7a",
+      "bytes": 1623,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/orcarouter/index.ts",
+      "blobId": "d8d7d5bb5943fdf5f3138ce859580c4cdd52cc48",
+      "sha256": "67e45159cb47e540efe11cecf8102119e58c78819264324dc62992b45b60da48",
+      "bytes": 2478,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/ovhcloud/index.ts",
+      "blobId": "78782c7e4a0f7f872439622f089d685c87174a9a",
+      "sha256": "78ca5bb8fca09379b41cfb9664cba07f620e165a75af7e49bf92112563a612b5",
+      "bytes": 964,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/perplexity/index.ts",
+      "blobId": "a8857fdcc9caa676c66e7d9f7b84edf5427c7300",
+      "sha256": "9545299ab7365dce2d4361495dcdd91b4fda6ffaf76fd135b3378e3a4892c2ae",
+      "bytes": 658,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/perplexity/web/index.ts",
+      "blobId": "8fb03ac05ba29ada1416496286c07c3a0e8a5db6",
+      "sha256": "139ab467400347e037af576387c534b2f3b08615840a1bd58d406bbcdc29d5ad",
+      "bytes": 1273,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/pioneer/index.ts",
+      "blobId": "c577ff3ff5fd88558a833a778df8795ffaed4f57",
+      "sha256": "0ec3467da19170cb7c69bdcabfbee4b35c4f45e0d6d8f60665aba2ae58aaf09e",
+      "bytes": 1804,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/plamo/index.ts",
+      "blobId": "4a4f6c81ee76f63d320e3b51f88f48cedaaf72c1",
+      "sha256": "a72ecfe5088865f0aaa95883467353bacb6dbf1958168b41b40d40371bf1ffb9",
+      "bytes": 445,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/poe/index.ts",
+      "blobId": "85a84d66dce9eb50f254cc8f7daf4fa74cfd9b6c",
+      "sha256": "99370d91d44057e46fcfd75173b392f2541188ce95dcbb2d151f146f0726000d",
+      "bytes": 3809,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/poixe-ai/index.ts",
+      "blobId": "7507e8580a813283b716b44ce55f4edc59b77ec0",
+      "sha256": "8b7bb40c6f953c7c29c8f14c9a988ab1cabd483efb8603601c1b943f340c00ff",
+      "bytes": 396,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/pollinations/index.ts",
+      "blobId": "6d7e384da598efc1b32bcb8ed0101b4d4c902249",
+      "sha256": "e07c977f40dec676ee13fb35096eb7d82433a909563ee4922a58466e2fa32dda",
+      "bytes": 3083,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/poolside/index.ts",
+      "blobId": "8a72a761a4a47bff515e3822b62d2c2838d68302",
+      "sha256": "66bc091589f80be946a9714918af1c4b8a483f037462d3a8ebe5bb8090a7dec9",
+      "bytes": 1857,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/predibase/index.ts",
+      "blobId": "03d70ca27f99ddf9bb61fa86662292f84d1a7743",
+      "sha256": "a9df378a646d390ecda717d1315cb47ebe0cf11653c21a830f62227cc60f379d",
+      "bytes": 414,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/promptql/index.ts",
+      "blobId": "aa4216455517a93f2147861cdf38eaf3010146bf",
+      "sha256": "41fc64242d7ea6130dc907a01051b7d10a1d22236df7fe9189148c362a3097d5",
+      "bytes": 736,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/publicai/index.ts",
+      "blobId": "e8068082a7dd6639ff336d0427645d935edbf93e",
+      "sha256": "35028439a2ebe3ad4f1e45104f6365237d60b4f8d02beb0076a80d88aab93ea3",
+      "bytes": 400,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/qianfan/index.ts",
+      "blobId": "2fdb7521fafa05c63051827b203c6e409f6c43b6",
+      "sha256": "71ed21228af6afaad4aa24e620f8f6ef107f764268d7d016052970527c696545",
+      "bytes": 587,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/qiniu/index.ts",
+      "blobId": "1bbf5021d8fdea8c73bc2c1bb187cc2a834c9406",
+      "sha256": "9c20d28b93873d954b5e7d621ab9a3f2368b38f9b2695f6f080dd4d32db51a1f",
+      "bytes": 405,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/qoder/index.ts",
+      "blobId": "4e2bf66ed78ef416ea5100dd03ca0e0c899589fd",
+      "sha256": "9d6a2ddfae431963271cd51b373d3308e65fe0206f90838677564e5daa36d3ec",
+      "bytes": 1945,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/qwen-cloud-token-plan/index.ts",
+      "blobId": "591332e983a2d872a35b7ccdfb4f60ef6ae4ca0d",
+      "sha256": "2f771cf3980db8fa722315ab8711e10d2ac314ad2ad3e13932944c7b825dd14c",
+      "bytes": 1780,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/qwen-cloud/index.ts",
+      "blobId": "a72aa3bd4bc7e4f44e54c6702ea9444eb8ece798",
+      "sha256": "8d18eeeade046d96161b719ac64dedf04e62a3d51a519d0a15b823e9fc4939db",
+      "bytes": 1301,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/qwen/web/index.ts",
+      "blobId": "531c4bf1e14d06abbda31cad65a53c38fb37cab0",
+      "sha256": "d4cb6b186876175f0508ba2f3542cbd9bcc5ee80478ed4034ea3c6d95521767d",
+      "bytes": 1678,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/raycast/index.ts",
+      "blobId": "aca286a6d191da30f75c149327a9c60b8b6da44b",
+      "sha256": "4dd61f292896b8b45ed6e71e7aaa1cfa8702376710aa35b1c0d3b57da657d261",
+      "bytes": 2703,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/regolo/index.ts",
+      "blobId": "323d4dfdfdde99140e43a9415875b017fbcb567c",
+      "sha256": "d5b10e83f16468f4d241a4ff9593b55daa6c12e8e9960de1eb87882e371768c3",
+      "bytes": 405,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/reka/index.ts",
+      "blobId": "b394800a092a79131b0ffc0764ad9319db5e09b2",
+      "sha256": "f612de532bd721a4e4b489e0548f5b8ef125846e43f893275433b128c8c9a6ed",
+      "bytes": 611,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/requesty/index.ts",
+      "blobId": "6fc063bce243b74840d219cadd5115192c4647c0",
+      "sha256": "f5a63a0886dd61722790bafd02831bdd1972426583af989a7fa732a0f1143940",
+      "bytes": 407,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/routeway/index.ts",
+      "blobId": "43c426e82eebfe7c425663b5cc945d02a572c3a3",
+      "sha256": "5a1b29586099ac2139ac895158ae93b349c09b4b0ed2270866fce16a6d01ca1e",
+      "bytes": 1713,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/sambanova/index.ts",
+      "blobId": "3440dcd2f124006578a5b189a9a50af0ddf3d697",
+      "sha256": "5e9b09c729cddbffaee375a41ff1160c7ca68abf309ea088e238e1449717b15d",
+      "bytes": 401,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/sarvam/index.ts",
+      "blobId": "2cbc440d409c67d592f70ebdbd26f156a632b8db",
+      "sha256": "4dc3901f58e7e7caedbaa65006c73c97c6c94ddd639aa9f9592902f80223bc88",
+      "bytes": 441,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/scaleway/index.ts",
+      "blobId": "93be3486f16556e6e980a5d54b44ef03dea2ec24",
+      "sha256": "bf39cef1fd8e252850452ed8c18b760f3bcb1637b99969aa8b6055f343a0b40f",
+      "bytes": 837,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/sealion/index.ts",
+      "blobId": "4987c3d9d678a9a6809e654ba722273a7d5a11c8",
+      "sha256": "21fca1226f1a1964f846584e574ac534dcfcbd972dcef623dd5e0f7f1dc99984",
+      "bytes": 1117,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/segmind/imageModels.ts",
+      "blobId": "f1b4b8704321567a710b927183db74310158390b",
+      "sha256": "08e5a43bdc114df3f0eb9abe4a3181310d97f46e050461b7557d2fc78df13796",
+      "bytes": 1332,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/segmind/videoModels.ts",
+      "blobId": "ec04d9a13caec083f47597075bfc6799b4af957e",
+      "sha256": "fd56b47e487fb31b38d79fee86330591c1e6250f475e6998c2a6c8f2a4640f06",
+      "bytes": 811,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/sensenova/index.ts",
+      "blobId": "2e8b5822f920b4d6bb9911f7b9bfa0f58ee3f5d1",
+      "sha256": "43db782dc7960b9f1a998bb57f4104338515f10fbd717efa970b01d0cfcbcc44",
+      "bytes": 1346,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/siliconflow/index.ts",
+      "blobId": "238cf60e972acc7d2d1ae1022dcf672ab0abec74",
+      "sha256": "20780157d169acb0081a79f604bcf4ffc8f4b4808482bb14b02f6bc688bb491a",
+      "bytes": 4790,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/snowflake/index.ts",
+      "blobId": "5086b02df9e855ecab8aa911fc062eaf964309f5",
+      "sha256": "9bf451045f99eac70911d829f6c55adc708caa5309177de7da5bac5816220925",
+      "bytes": 408,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/sparkdesk/index.ts",
+      "blobId": "4df1fa1150204536f464a3285503ecc1f4880c13",
+      "sha256": "13482f13c7b5b6b854eb56c41d0020031d5228930a54d8469910cab9adfaf104",
+      "bytes": 1078,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/speka/index.ts",
+      "blobId": "04f1f17c7eb59150173d31e3fb56e6d68f3d7793",
+      "sha256": "f0e31d0ee27dc5cd414a9136abb2bbe39192850bb1705ef164117419f4a2cdaf",
+      "bytes": 378,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/stability-ai/imageModels.ts",
+      "blobId": "4a5b20623e92dc529f8eb8a0fa87edaac7f7da3c",
+      "sha256": "12b4ec8b0d6bd101c7bf7ce20554ba5ee332c28e8fde3cae6ce7191209ff23b0",
+      "bytes": 2876,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/stepfun/index.ts",
+      "blobId": "e67b48be9f81aeb418b3a8da51befd5a71740b59",
+      "sha256": "b646b2dc2da987f7afbfaa701a8ce909c46bc6574338b4856b34566015bc880e",
+      "bytes": 838,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/sumopod/index.ts",
+      "blobId": "1a5414e87939c3fe0b594f30eb43bdd898ae0b4f",
+      "sha256": "6999da827ca68bb687e85a5afaa2dddc03de38ba87016d1accc3fed464e5e11a",
+      "bytes": 411,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/suno/index.ts",
+      "blobId": "95df586a1c04fda6d49903b119c572dc6465f224",
+      "sha256": "9fd9dcd93bd1d9a2f0937a431f3cf7cbf44e4bc66d12781923dc7b34fb5a3b36",
+      "bytes": 543,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/synthetic/index.ts",
+      "blobId": "cc9ab28e8f843ebaea8b9364bf712cca56472670",
+      "sha256": "281aaa5337bcf690c3d325f65ccc65337b7e5b566adddf23551c7882ac343c00",
+      "bytes": 2200,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/t3-web/index.ts",
+      "blobId": "7b9339365dcd5894cfdb027adafec4639c22c35f",
+      "sha256": "c2730b6edd94efcbdfbd706f697cad8f57cc64b405e372a76cc10456f18d0799",
+      "bytes": 2295,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/tabitoken/index.ts",
+      "blobId": "f95d188c20ecaf55625a1dbbf1951439bd9bc3dc",
+      "sha256": "2d8859afae10ec467f6540f93744431ee173b34a2ece7f9e176713757494b813",
+      "bytes": 2858,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/tencent-aistudio-web/index.ts",
+      "blobId": "8cd3397f5b03fe5950b546074fb351ad08980a97",
+      "sha256": "689ef7ff5024c8d70a4798a80eca4bd4888b8a18f78f152c6bed0ab18119d8f3",
+      "bytes": 675,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/tencent/index.ts",
+      "blobId": "4822a837ce5ab9094c2e9babd8f5372ab7d31a52",
+      "sha256": "bc80401405e396edfea611285fb248b04239f91b758902ac3e099941f8938bdb",
+      "bytes": 1215,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/theoldllm/index.ts",
+      "blobId": "a22d9901ae983f9e52c33f1028cb8b51309199f1",
+      "sha256": "8ddb3651f02c842bcc935cb5de5143472aba84ce7dae5db6f3525111777f37f0",
+      "bytes": 3355,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/tinycms/index.ts",
+      "blobId": "9fdbc71725ab13e5c0c4c790b4c13c18da537108",
+      "sha256": "7a0c92fd925b95489c8c84dccd9f0630331dc8e2f1ef582acf43eb554b9dae1f",
+      "bytes": 1888,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/together/index.ts",
+      "blobId": "c185804b08e41604c715cebcbc9937be4bd3d461",
+      "sha256": "9fc29cde3e85c87c11d4861042094d1c526a8a2504bb7a5a1f6b30062180c4ee",
+      "bytes": 922,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/token-kiosk/index.ts",
+      "blobId": "319747828cfcbbbf6143acc8746e49549e63e300",
+      "sha256": "877f2647effc9df381f59f703269cf7fc1de07966cbf6c733117a14618f00591",
+      "bytes": 973,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/tokenreply/index.ts",
+      "blobId": "835225c4713127a926b237663d9a9ba34c766d2f",
+      "sha256": "e6adc04472b34da347b254c96daf31cbf932140d57558849a2482d624be5f985",
+      "bytes": 413,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/tokenrouter/index.ts",
+      "blobId": "a3c39f26448cb7aee8a7e14afeff56fedbe61bc7",
+      "sha256": "8f8fb9fc29620d883f75e10cb344f7e02cb58f038dc59062ecacaef79979f27d",
+      "bytes": 1791,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/trae/index.ts",
+      "blobId": "44ebd0679021c51dc535db434b4ac0a9d80b2cda",
+      "sha256": "d0dd561330bd499600e5376f327a441a9b438972fc558c742efb60de87a58ef8",
+      "bytes": 841,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/typhoon/index.ts",
+      "blobId": "83aa76d6f42d4539e6d48d54750c3bcb8e4a6e3c",
+      "sha256": "525d69d292821264f9e036bbf9d1b9752160898affa09bcd2ce070b9c5f30c4d",
+      "bytes": 440,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/udio/index.ts",
+      "blobId": "ac7d1dd1a349e8090a92ce96c328c138e9e193f4",
+      "sha256": "19a132887cf5f1cf7152e81db41993c9cb239a111fa992b8f07b15d57f192826",
+      "bytes": 335,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/uncloseai/index.ts",
+      "blobId": "2a7b59f58653009856df8a3428bb5817f588df15",
+      "sha256": "07db26f35709b3430d01552a2afb8fe85a5d83f5f77b03220665cfbd7e2c519c",
+      "bytes": 611,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/unorouter/index.ts",
+      "blobId": "a84c38387d12162059be888b36dac1bc0dc06ec0",
+      "sha256": "68313767306b722191435a6434b9982a00142c2a6c04b9a3701202d09ba1fa2c",
+      "bytes": 408,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/upstage/index.ts",
+      "blobId": "a6ddf216e44796f6c44be9fe4c88f2d258082a2a",
+      "sha256": "e7ddcde8cb4ffd4a94499e3e0d92502d091d85ebffc3fddda78595cbf9d5dbc1",
+      "bytes": 395,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/v0-vercel/index.ts",
+      "blobId": "afc2618781df8f9975e862a1c9a805e77bec1787",
+      "sha256": "ea8d235852e71519380e3d85afc8c05eafbe2d859315a9e7872ec0d6fd051e23",
+      "bytes": 395,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/venice/index.ts",
+      "blobId": "7d2947b8fc53b0c564407338fb73b3ee47080fe9",
+      "sha256": "9735260cbb24df764f6f6be55e229823ef98b25353e7f4d6519b531f0b4c8926",
+      "bytes": 394,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/veoaifree-web/index.ts",
+      "blobId": "961aedec0e7871d6ff28471e1603ecb5667b4c63",
+      "sha256": "328c8451e66221f18b8621725a1d4f02c6fed3eae77f38839c9d1e558b5f4987",
+      "bytes": 442,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/vercel-ai-gateway/index.ts",
+      "blobId": "2171a2d88fda147e8484c7919bebd60f398e2c5a",
+      "sha256": "14175c790cdddc6c30cf6afc4db2351f5cba88c12886415130b9a737a3e793be",
+      "bytes": 430,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/vertex/index.ts",
+      "blobId": "1eac20fc15ef250c148a5a30a7c5a22200dcd9ba",
+      "sha256": "33d92b868239a5c669d72f861126b24595d0b42a826d0a35886e843d143a08a1",
+      "bytes": 2660,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/vertex/partner/index.ts",
+      "blobId": "4cdcd5d0b59cbdd96d0f375e0a214c49fcc1caee",
+      "sha256": "271aca198a6c78890386f81cdf05e78790b278afb9d26e4e34bf1a85893232c4",
+      "bytes": 1523,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/void-ai/index.ts",
+      "blobId": "95a4e8fff900e665f0f225feba61ceca3ff99909",
+      "sha256": "b123f0736646db8b58f10c9ca4a1793b3ff1546c69c55fde1bed80964cea914f",
+      "bytes": 454,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/volcengine/agent-plan/index.ts",
+      "blobId": "6604844efdc69eeb2d0bd0fff367220adde3a409",
+      "sha256": "f0ad92a584a72fff88265ab5d3845c496d1b68426a82e635029818096082aad9",
+      "bytes": 3092,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/volcengine/coding-plan/index.ts",
+      "blobId": "49c2788b7de397f069a1c89e4a747b8dfce420a1",
+      "sha256": "ef4129606cc6da5bda43ca76ce7178267226451e8fa917b130d50fb671a4b03c",
+      "bytes": 2528,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/volcengine/index.ts",
+      "blobId": "db808512598e74628755e8ea78a53282f7393dec",
+      "sha256": "f0e5c837a789b00161c9a02d88d0af8f5d6bbcc8bac114a20ce2eb33700e8fd4",
+      "bytes": 422,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/wafer/index.ts",
+      "blobId": "21be94662599b6c03211edce055f5e1d61584609",
+      "sha256": "86b1b45acc44d19b16a54b4dc5e83d86e22ba83eca522b6e8b0ea9d9cc5da25a",
+      "bytes": 598,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/wandb/index.ts",
+      "blobId": "7237cfdbb48361cbdfd4a321e7a46fd3f4322fa9",
+      "sha256": "1f016229a77e7a92c6af37eb87e218e00ceb1056b0f4bc11d24c0d5cc344cde5",
+      "bytes": 395,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/writer/index.ts",
+      "blobId": "9f0e26290a603814d92a877e9ed113e808fcdc15",
+      "sha256": "3a8662cabed84f4d499d4dfd0d38d4300c38944bbca8b2b66e3b227129ee1287",
+      "bytes": 442,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/x5lab/index.ts",
+      "blobId": "ac5112a3a1c792913e7642a246ffae0e84ab8611",
+      "sha256": "d5f99f9e610541c26c761ed11d15750ef0bd5d97e43c1d7e13c292375b6711f4",
+      "bytes": 403,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/xai/index.ts",
+      "blobId": "dcf9124441235252fce8618b7cb52e2ce9b058ba",
+      "sha256": "50fc2a9a25ece9daff9e870557c47936b164a83b1aa4c66083c8d857d2b1e705",
+      "bytes": 2802,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/xiaomi-mimo-token-plan/index.ts",
+      "blobId": "82e86eadf5402c91ab66e1d6f5ec5c66e3b7b6db",
+      "sha256": "d4961466492e45ab0c00f86ffcfb0a33795812b22cbe868b799bab15dfba9a80",
+      "bytes": 1037,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/xiaomi-mimo/index.ts",
+      "blobId": "dcf8cbd7c5df00e0165235816a6eda1074e4eb76",
+      "sha256": "397aa022d77c3f78ad6587c3130efea369dc294218fc4bf5aefd7cdc0a182522",
+      "bytes": 851,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/yi/index.ts",
+      "blobId": "25acaba96b8c8210f893e2bb24e891618bbf3949",
+      "sha256": "ac23276da2b47b241027ecfd04f5525cb046b4496b297fc0370100aadd1da8ac",
+      "bytes": 329,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/yolo-auto/index.ts",
+      "blobId": "6b90dc1a7521afd1f27f393273982c49faf87482",
+      "sha256": "f860454aa67ec193daf4d2616201922ad5f0d825f78091c149a110c37a99b9c4",
+      "bytes": 687,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/yuanbao-web/index.ts",
+      "blobId": "b4e70a7fcae5a329db2c923ce5b0bcf5d87f2a73",
+      "sha256": "c89d264059110ac3fe7d663275043e27e178c82cc75c18e13f8811ad4078e7cc",
+      "bytes": 1136,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/zai-web/index.ts",
+      "blobId": "98901daab9e3a8d04c47bcddb53480280a96831e",
+      "sha256": "4546f88371aaa6a3f34aa126bba09f5c53b85577690c7d1a42a4d522ba8ea432",
+      "bytes": 1132,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/zai/index.ts",
+      "blobId": "1141ea8dc3997181e24326b46a7e2c2d2f2a1842",
+      "sha256": "f888014a3ab80f7d68e2dd3fe7769b8f918f4e42742da474fb0dab5446258cab",
+      "bytes": 1254,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/zcode/index.ts",
+      "blobId": "65e2e1c3d3d9a0396637ea7173b8d8409bd4d909",
+      "sha256": "0ad42bd662a8e47b0e1bb065a505cb3322ac7075ed6452ec0ad3e10f313d0c15",
+      "bytes": 998,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/zed-hosted/index.ts",
+      "blobId": "a5578e6dba83ea6918e04813b3fb8b16238a22c8",
+      "sha256": "f629991fa613bbccd78697a370501e9cae22f7b238d175d38a4110ab02b5e9a2",
+      "bytes": 1384,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/zenmux-free/index.ts",
+      "blobId": "21ff0139bd2ab0aeebac9ce8293d1799aa8a9e5f",
+      "sha256": "be66da0a161ec0269b23cea79e76ee4c04aaf3f5ad4248f819543d4eab744cde",
+      "bytes": 1729,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/zenmux/index.ts",
+      "blobId": "54a0c78fb2287081b3d70b904cfc81e11346c759",
+      "sha256": "c1ec2335c82a85167901e95f9d8255cdb38f6e2911d4db601768b8dcdef444b4",
+      "bytes": 2223,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/zerolimitai/index.ts",
+      "blobId": "5ad779d6d790ec170513b993a55c4c8369ed8776",
+      "sha256": "b48273cd3ab94bce4d3d31034845ffb988eb11a795dce75d637ae8293008617b",
+      "bytes": 426,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/registry/zylo-api/index.ts",
+      "blobId": "285a16d27dc3f45c81c85cbc7beed5e85b23aea5",
+      "sha256": "1839c34da0109579ba3738988ec362f50cbd25edb5e0d10569fa74a58c378b83",
+      "bytes": 394,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "open-sse/config/providers/shared.ts",
+      "blobId": "16c0c09b41564b6e5f92c348345bd172ca533c48",
+      "sha256": "88b178ec2e47701c460b4d80a351c991e8e4d24faf0c2c41c0bc2871a84f7b11",
+      "bytes": 27433,
+      "role": "extract",
+      "admittedBy": "/open-sse/config/providers/**"
+    },
+    {
+      "path": "package.json",
+      "blobId": "54a0bc149ed6b5bffa31c584f1aecee87c9d24b0",
+      "sha256": "7ae294ce3c9af215fcedf89d81f6ebe2028ac257f4762e0f7e63e855ec446253",
+      "bytes": 32106,
+      "role": "claim",
+      "admittedBy": "/package.json"
+    },
+    {
+      "path": "src/lib/providerModels/modelDiscovery.ts",
+      "blobId": "0b779ac830593c15aae79377a0a40be684232603",
+      "sha256": "d2e4192a5e15cc9b9a001af193f9d07158f4b774bfdef818157b81171e20011e",
+      "bytes": 18012,
+      "role": "extract",
+      "admittedBy": "/src/lib/providerModels/modelDiscovery.ts"
+    },
+    {
+      "path": "src/shared/constants/providers.ts",
+      "blobId": "a9bfee567167f0176bbf8957287001daebf7e5b0",
+      "sha256": "e31e52604c5b62cac6f3b60dae1a009c5d12c378423aea5503b97be22f76c810",
+      "bytes": 16749,
+      "role": "extract",
+      "admittedBy": "/src/shared/constants/providers.ts"
+    },
+    {
+      "path": "src/shared/constants/providers/apikey/enterprise-cloud.ts",
+      "blobId": "66fa154f95987a112cf3c8e95e00c07f7a7be41c",
+      "sha256": "1296165af5162f90586be36670a691e8322070e69f40763e1eedd76a018b8d4d",
+      "bytes": 7596,
+      "role": "extract",
+      "admittedBy": "/src/shared/constants/providers/**"
+    },
+    {
+      "path": "src/shared/constants/providers/apikey/frontier-labs.ts",
+      "blobId": "0257a4561674b2923969c82e5a36fcb2127f24f7",
+      "sha256": "fdb270f4c871fc6e490f0e96f82b5c2675b72b131a1b2bfb7c774f20abb2f97c",
+      "bytes": 9459,
+      "role": "extract",
+      "admittedBy": "/src/shared/constants/providers/**"
+    },
+    {
+      "path": "src/shared/constants/providers/apikey/gateways.ts",
+      "blobId": "f1ba744f6f147d43d01daa86325b9dcbeb47f631",
+      "sha256": "a04beb8880ba162fbb877a4834db96d3d5ca2bca6f0807faa04a5e1d1f271126",
+      "bytes": 46942,
+      "role": "extract",
+      "admittedBy": "/src/shared/constants/providers/**"
+    },
+    {
+      "path": "src/shared/constants/providers/apikey/index.ts",
+      "blobId": "fa8ed1f02a827a1344332a23e9f50ddf4559b331",
+      "sha256": "fcec5510d77321f02961a8a0281d8fde343e83959d39981283e933f269ed23ee",
+      "bytes": 960,
+      "role": "extract",
+      "admittedBy": "/src/shared/constants/providers/**"
+    },
+    {
+      "path": "src/shared/constants/providers/apikey/inference-hosts.ts",
+      "blobId": "470ad9ea574b5dc13710f2666744ecce623acef7",
+      "sha256": "04529cee93d66b1313777c59628e71448d7a5462b8c0c96e0f11df9c80ca8201",
+      "bytes": 10684,
+      "role": "extract",
+      "admittedBy": "/src/shared/constants/providers/**"
+    },
+    {
+      "path": "src/shared/constants/providers/apikey/regional.ts",
+      "blobId": "9c84c7ff6a640ac4cbcdb93f424a242e55dd7029",
+      "sha256": "15007eee5355e9356375c111dba4ae50d9050c334578d2200776e08c75bb3bfd",
+      "bytes": 16868,
+      "role": "extract",
+      "admittedBy": "/src/shared/constants/providers/**"
+    },
+    {
+      "path": "src/shared/constants/providers/apikey/specialty-media.ts",
+      "blobId": "b6924d239e7be193ef3b1654a1677fb7796e3a80",
+      "sha256": "1266c5c0d91a3e483d448f6d50920c8d09e66966b14de916f711dc111d78b155",
+      "bytes": 10692,
+      "role": "extract",
+      "admittedBy": "/src/shared/constants/providers/**"
+    },
+    {
+      "path": "src/shared/constants/providers/audio.ts",
+      "blobId": "dabc87a921c22e484990ad9632a736fe6decb0f1",
+      "sha256": "d895111ca358ada94ae8b2f3eca07fe46e958e8ed7ea14bbce0a26b70f85b1aa",
+      "bytes": 2698,
+      "role": "extract",
+      "admittedBy": "/src/shared/constants/providers/**"
+    },
+    {
+      "path": "src/shared/constants/providers/cloud-agent.ts",
+      "blobId": "72bb6ca96caeae121b996238db8b045ef471672c",
+      "sha256": "7f4d2a5aa644cd657855a79890ec850d1c0cf2b3d2c97b9af8c0c88006c2c31a",
+      "bytes": 964,
+      "role": "extract",
+      "admittedBy": "/src/shared/constants/providers/**"
+    },
+    {
+      "path": "src/shared/constants/providers/local.ts",
+      "blobId": "a3e455d64f79e095bb794ab1edfd279e4c93dd00",
+      "sha256": "f6c7c79093770d2fdfebe950b71bd9e5ad4470dc4d85a087e4b101a43b717b6a",
+      "bytes": 6293,
+      "role": "extract",
+      "admittedBy": "/src/shared/constants/providers/**"
+    },
+    {
+      "path": "src/shared/constants/providers/noauth.ts",
+      "blobId": "dabf42442e27c4969e7268ab42e9f08b55ad6bc7",
+      "sha256": "4e246667e79a24defa370560f29ab95f68d56c44a35ab9a4aab23c7846c889c4",
+      "bytes": 10038,
+      "role": "extract",
+      "admittedBy": "/src/shared/constants/providers/**"
+    },
+    {
+      "path": "src/shared/constants/providers/oauth.ts",
+      "blobId": "ec2faa8a8c77d83f305c2e72265fc6a1f4adf5fb",
+      "sha256": "b61791c2bf213903954b46eaeaa14bd94b43f2d387d44f0ca02ea03a4240ff6a",
+      "bytes": 9932,
+      "role": "extract",
+      "admittedBy": "/src/shared/constants/providers/**"
+    },
+    {
+      "path": "src/shared/constants/providers/search.ts",
+      "blobId": "2858decb5ad1a2e96aee9b41d85feb02402edd5c",
+      "sha256": "e359469e4be0728fdd98eadc9419129eb3c2ef67590d33c6c0442dc2e3cbdb4d",
+      "bytes": 4858,
+      "role": "extract",
+      "admittedBy": "/src/shared/constants/providers/**"
+    },
+    {
+      "path": "src/shared/constants/providers/system.ts",
+      "blobId": "0500dc6cfa9028cbad53dd6785c233bc487e29fc",
+      "sha256": "0362be2c65f672a6acaa6161834ad1bedb1c48ed28227cf937ddfb9f000586b2",
+      "bytes": 470,
+      "role": "extract",
+      "admittedBy": "/src/shared/constants/providers/**"
+    },
+    {
+      "path": "src/shared/constants/providers/upstream-proxy.ts",
+      "blobId": "691b4476245475f85ebb9b5f61f07d4fb55d2ceb",
+      "sha256": "b4b5d9b356afd16fcf6889f426f6a8a0fb125f5e67ada3f9c598641351b316e2",
+      "bytes": 1019,
+      "role": "extract",
+      "admittedBy": "/src/shared/constants/providers/**"
+    },
+    {
+      "path": "src/shared/constants/providers/web-cookie.ts",
+      "blobId": "d458c578da221f4dfd7d5dd5f5fc08c7bb75af16",
+      "sha256": "31999fa1b74328e338f248c78f1f11e69b4c1a9eaaaf7abbd5978469b8260ff5",
+      "bytes": 22026,
+      "role": "extract",
+      "admittedBy": "/src/shared/constants/providers/**"
+    }
+  ],
+  "outOfAllowlistImports": [
+    "open-sse/config/providers/registry/agentrouter/index.ts -> ../../../codexClient.ts",
+    "open-sse/config/providers/registry/aihorde/imageModels.ts -> ../../../dynamicImageModelSources.ts",
+    "open-sse/config/providers/registry/conol-web/index.ts -> ../../../../services/conolModels.ts",
+    "open-sse/config/providers/registry/grok-cli/index.ts -> ../../../grokBuild.ts",
+    "open-sse/config/providers/registry/hyperagent/index.ts -> ../../../../services/hyperagentModels.ts",
+    "open-sse/config/providers/registry/kimi/coding/index.ts -> ../../../../anthropicHeaders.ts",
+    "open-sse/config/providers/registry/notion-web/index.ts -> ../../../../services/notionWebModels.ts",
+    "open-sse/config/providers/registry/poe/index.ts -> ../../../../utils/urlSanitize.ts",
+    "open-sse/config/providers/registry/promptql/index.ts -> ../../../../services/promptqlModels.ts",
+    "open-sse/config/providers/registry/zcode/index.ts -> ../../../glmProvider.ts",
+    "open-sse/config/providers/shared.ts -> ../../services/providerRequestDefaults.ts",
+    "open-sse/config/providers/shared.ts -> ../../utils/publicCreds.ts",
+    "open-sse/config/providers/shared.ts -> ../agyModels.ts",
+    "open-sse/config/providers/shared.ts -> ../anthropicHeaders.ts",
+    "open-sse/config/providers/shared.ts -> ../antigravityModelAliases.ts",
+    "open-sse/config/providers/shared.ts -> ../antigravityUpstream.ts",
+    "open-sse/config/providers/shared.ts -> ../codexClient.ts",
+    "open-sse/config/providers/shared.ts -> ../glmProvider.ts",
+    "open-sse/config/providers/shared.ts -> ../maritalk.ts",
+    "open-sse/config/providers/shared.ts -> ../opencodeZenGoSharedModels.ts",
+    "open-sse/config/providers/shared.ts -> ../providerHeaderProfiles.ts",
+    "open-sse/config/providers/shared.ts -> @/lib/oauth/gitlab",
+    "src/lib/providerModels/modelDiscovery.ts -> @/lib/db/models",
+    "src/lib/providerModels/modelDiscovery.ts -> @/shared/reasoning/effortStandardization",
+    "src/lib/providerModels/modelDiscovery.ts -> @omniroute/open-sse/services/kiroModels.ts",
+    "src/lib/providerModels/modelDiscovery.ts -> @omniroute/open-sse/services/modelLifecycle.ts",
+    "src/lib/providerModels/modelDiscovery.ts -> zod",
+    "src/shared/constants/providers.ts -> ../validation/providerSchema",
+    "src/shared/constants/providers/oauth.ts -> @/shared/constants/gitlabDuoSetupMessage"
+  ]
+}

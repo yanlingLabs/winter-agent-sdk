@@ -1,22 +1,91 @@
 {
-  "$comment": "Extractor INPUT contract (WS-13 §3/§13). Hand-maintained and reviewed: a row's `risk` is what the extractor stamps onto the generated WinterProviderDescriptor, and promoting one to \"approved\" is a deliberate, reviewed edit. Lane X's scripts/provider-source-sync.ts is the consumer; the spine only establishes the file. No upstream source is vendored under this directory — see README.md.",
-  "allowlistVersion": 1,
+  "$comment": "Extractor INPUT contract (WS-13 §3/§13; OmniRoute report §11.2). Hand-maintained and reviewed, in two halves. (1) `paths` is the VERSIONED path allowlist the sparse checkout materializes — the extractor refuses to materialize anything outside it and never widens the boundary on its own. (2) `providers` is the reviewed provider intake list: a row's `risk` is what the extractor stamps onto the generated WinterProviderDescriptor, and promoting one to \"approved\" is a deliberate, reviewed edit. No upstream source is vendored under this directory beyond the upstream LICENSE/NOTICE copies the extraction manifest records — see README.md.",
+  "allowlistVersion": 2,
   "upstreamProject": "OmniRoute",
+
+  "importBoundary": {
+    "$comment": "WS-13 §3 step 2 says an import outside the allowlist \"fails the job for review; the boundary never auto-widens\". Taken as a rule about WIDENING, not about aborting: the literal extractor never follows an import at all, so a value that would have to come from an unmaterialized module is DROPPED with a recorded rejection (`unresolved-reference`), and the offending specifier is listed in the ledger's `outOfAllowlistImports` so drift stays visible. Aborting instead would make the pipeline unrunnable by construction — `open-sse/config/providers/shared.ts` imports a dozen modules outside any reviewable provider-data boundary. The boundary keeps its teeth through `failOnUnresolvedFields`: an allowlisted provider whose IDENTITY-critical field cannot be resolved from materialized files fails the run for review.",
+    "resolveIdentifiersWithin": "materialized-allowlisted-files-only",
+    "failOnUnresolvedFields": ["id", "format", "executor", "authType"]
+  },
+
+  "paths": [
+    { "pattern": "/LICENSE", "role": "notice", "why": "OmniRoute root MIT licence — copied into third_party/ and registered in the extraction manifest (report §12)." },
+    { "pattern": "/THIRD_PARTY_NOTICES.md", "role": "notice", "why": "Upstream's own third-party notices — copied beside the licence so a reader of Winter's NOTICE can reach upstream's provenance record." },
+    { "pattern": "/package.json", "role": "claim", "why": "The upstream package version at the pin. Read for the provenance record only; no descriptor field is derived from it." },
+    { "pattern": "/README.md", "role": "claim", "why": "One of the two upstream provider-COUNT claim sources. Read only to compute the denominator discrepancy WS-13 §3 step 5 requires the extractor to report; never a descriptor input." },
+    { "pattern": "/docs/reference/PROVIDER_REFERENCE.md", "role": "claim", "why": "The generated provider reference — the second count claim source, and the per-category denominator. Report §5 warns its header is not a release authority, so it is read as a CLAIM to be checked against the enumerated tree, never as truth." },
+    { "pattern": "/open-sse/config/providerPluginManifest.ts", "role": "extract", "why": "The upstream-supported JSON-safe projection boundary (report §5) — read for its own reviewed field list." },
+    { "pattern": "/open-sse/config/providerPluginManifestRegistry.ts", "role": "extract", "why": "Companion to the manifest projection." },
+    { "pattern": "/open-sse/config/providerPluginManifestUrl.ts", "role": "extract", "why": "Companion to the manifest projection." },
+    { "pattern": "/open-sse/config/providers/**", "role": "extract", "why": "The backend registry (report §3.2): the execution-shaped provider entries and their static model rows. This is the main descriptor input." },
+    { "pattern": "/src/shared/constants/providers.ts", "role": "extract", "why": "The product-catalog barrel (report §3.1) — category membership and display metadata." },
+    { "pattern": "/src/shared/constants/providers/**", "role": "extract", "why": "The per-category product-catalog literals. These carry the category each upstream id belongs to, which is what WS-13 §1's disposition table keys on." },
+    { "pattern": "/src/lib/providerModels/modelDiscovery.ts", "role": "extract", "why": "The live-discovery normalizer (report §3.3) — read for the discovery response shapes Winter's own bounded discovery must accept." },
+    { "pattern": "/src/lib/db/migrations/*retire*.sql", "role": "extract", "why": "Retirement migrations for GPL-derived and provenance-hold integrations (report §12). ZERO MATCHES AT THIS PIN — see PROVENANCE.md; the pattern stays so a future bump picks them up." },
+    { "pattern": "/src/lib/db/migrations/*provenance*.sql", "role": "extract", "why": "Provenance-hold migrations. Zero matches at this pin, kept for the same reason." }
+  ],
+
   "providers": [
-    { "upstreamId": "openai", "winterId": "openai", "risk": { "class": "approved", "reasons": [] } },
-    { "upstreamId": "anthropic", "winterId": "anthropic", "risk": { "class": "approved", "reasons": [] } },
-    { "upstreamId": "google", "winterId": "google", "risk": { "class": "approved", "reasons": [] } },
-    { "upstreamId": "openrouter", "winterId": "openrouter", "risk": { "class": "review-required", "reasons": ["gateway: capability parity is model-by-model (WS-13 §14.4); per-request provider/data-policy controls must be preserved"] } },
-    { "upstreamId": "deepseek", "winterId": "deepseek", "risk": { "class": "review-required", "reasons": ["reasoning continuity is tool-loop fragile (WS-13 §8.2: missing reasoning state mid-loop is a hard error)"] } },
-    { "upstreamId": "azure-openai", "winterId": "azure-openai", "risk": { "class": "review-required", "reasons": ["native cloud: deployment/api-version identity and Entra auth need their own proof (WS-13 §5)"] } },
-    { "upstreamId": "bedrock", "winterId": "bedrock", "risk": { "class": "review-required", "reasons": ["native cloud: SigV4 signing + event-stream decoding need their own proof (WS-13 §5)"] } },
-    { "upstreamId": "vertex", "winterId": "vertex", "risk": { "class": "review-required", "reasons": ["native cloud: project/location auth and partner-protocol differences need their own proof (WS-13 §5)"] } }
+    { "upstreamId": "openai", "winterId": "openai", "expectedCategory": "apikey", "adapterIdOverride": "winter.openai-responses", "risk": { "class": "approved", "reasons": [] },
+      "$comment": "`adapterIdOverride` because upstream's `format: \"openai\"` names its own DEFAULT execution path (Chat Completions), not the surface Winter drives. Six of upstream's own openai rows carry `targetFormat: \"openai-responses\"` — the *-pro and GPT-5.6 families are responses-ONLY, and upstream says so per model while its provider-level `format` does not — so deriving the adapter from `format` produced responses-only rows under a Chat Completions adapter. The overlay row has said `winter.openai-responses` since the seed, which is exactly what hid it: the merged catalog was consistent while the layer `--offline` validates STANDALONE was not. Found by extending that gate to the standalone layer (review r2 minor 5), which is the same shadow class as the Vertex adapter misroute." },
+    { "upstreamId": "anthropic", "winterId": "anthropic", "expectedCategory": "apikey", "risk": { "class": "approved", "reasons": [] } },
+    { "upstreamId": "gemini", "winterId": "google", "expectedCategory": "apikey", "risk": { "class": "approved", "reasons": [] },
+      "$comment": "The upstream id is `gemini`, not `google` — allowlistVersion 1 named `google` on both sides, which matched no upstream row at v3.8.50 and would have silently produced no google extraction at all. `winterId` stays `google` because WS-13 §12 and every seeded row use it." },
+    { "upstreamId": "openrouter", "winterId": "openrouter", "expectedCategory": "apikey", "risk": { "class": "review-required", "reasons": ["gateway: capability parity is model-by-model (WS-13 §14.4); per-request provider/data-policy controls must be preserved"] } },
+    { "upstreamId": "deepseek", "winterId": "deepseek", "expectedCategory": "apikey", "risk": { "class": "review-required", "reasons": ["reasoning continuity is tool-loop fragile (WS-13 §8.2: missing reasoning state mid-tool-loop is a hard error)"] } },
+    { "upstreamId": "azure-openai", "winterId": "azure-openai", "expectedCategory": "apikey", "risk": { "class": "review-required", "reasons": ["native cloud: deployment/api-version identity and Entra auth need their own proof (WS-13 §5)"] },
+      "$comment": "PRODUCT-CATALOG ONLY at this pin: `azure-openai` has a row in src/shared/constants/providers/apikey/enterprise-cloud.ts but NO backend RegistryEntry, so upstream contributes its identity and nothing executable. Its endpoints and auth are Winter-authored in the overlay; the rejection ledger records the absence." },
+    { "upstreamId": "bedrock", "winterId": "bedrock", "expectedCategory": "apikey", "risk": { "class": "review-required", "reasons": ["native cloud: SigV4 signing + event-stream decoding need their own proof (WS-13 §5)"] } },
+    { "upstreamId": "vertex", "winterId": "vertex", "expectedCategory": "apikey", "initialModelStatus": "experimental", "adapterIdOverride": "winter.vertex-gemini", "risk": { "class": "review-required", "reasons": ["native cloud: project/location auth and partner-protocol differences need their own proof (WS-13 §5)"] },
+      "$comment": "`adapterIdOverride` is Lane B's `VERTEX_ADAPTER_ID`, read from p6/lane-b's adapters/google/vertex.ts. Without it the mapper derives the adapter from the PROTOCOL, and Vertex shares GenerateContent with the Gemini API — so the extracted row named `winter.google-generate-content` and a registry, which resolves BY ID, would have served a Vertex session from the Gemini API adapter: no location-scoped URL, no ADC credential. The overlay row was corrected first; this fixes the layer `--offline` validates STANDALONE, which is exactly the layer whose defects an overlay shadow hides. `initialModelStatus: \"experimental\"` per R6-16 — the native-cloud families enter the catalog as `experimental`, and Lane B's `winter.vertex-gemini` adapter is live. Absent this field a row is `candidate`, which is what every other provider gets: upstream presence promotes nothing." }
   ],
+
+  "modelOverrides": {
+    "$comment": "ONE hand-reviewed per-model override map, applied by the mapper and RECORDED in the ledger as a `reviewed-normalization` — never a heuristic, and never silent. Three narrow things it can say about a single upstream model id: `id` corrects a wire id upstream spells differently from the provider's own documentation; `exclude` keeps a row out of the catalog entirely (WS-13 §4's MUST that non-`llm` rows never reach the worker-model picker — upstream has no per-model scope field, and a NAME heuristic would be worse than none because it would silently drop a future model whose id happens to match); `status` overrides the provider's `initialModelStatus` for one row. Every entry carries a `why` that ends up in the ledger, so a reviewer can diff the catalog against the pinned source and find every place they differ with the justification attached.",
+    "openrouter": {
+      "auto": {
+        "id": "openrouter/auto",
+        "why": "OpenRouter documents its auto-router as the qualified id `openrouter/auto`; the pinned upstream entry lists a bare `{ id: \"auto\" }`. Keeping upstream's spelling put `auto` on the wire from BOTH resolution paths — step 1 (the seeded row's own upstreamId) and the `allowUnlisted` pass-through, which strips a self-prefix. Correcting it here fixes both at once, and the `auto` alias keeps the bare spelling resolvable."
+      }
+    },
+    "gemini": {
+      "gemini-3.1-flash-tts-preview": {
+        "exclude": true,
+        "why": "A TEXT-TO-SPEECH model. WS-13 §4/§1 are a MUST: `tts` rows feed a separate subsystem and must never reach the Agent SDK worker-model picker, and the descriptor schema's `scope` is per PROVIDER — a `gemini` row cannot declare itself `tts` while its provider is `llm`. It also exposed the mapper's `outputModalities` default as a false claim: Winter stamps `[\"text\"]` on every row because upstream declares no output modality at all, which for a TTS model is simply wrong. Excluded here rather than shipped as a resolvable `candidate`."
+      }
+    },
+    "vertex": {
+      "DeepSeek-V4-Pro": { "status": "candidate", "why": "A Vertex MaaS PARTNER model. Upstream lists it under an entry whose `format` is `gemini`, so the mapper inherits the GenerateContent dialect for it — but partner models are not served over GenerateContent, and nothing has proven what they do speak here. `candidate` rather than R6-16's `experimental`, because `experimental` is a claim that a live adapter serves the row; flagged for Lane B/N." },
+      "DeepSeek-V4-Flash": { "status": "candidate", "why": "As `DeepSeek-V4-Pro` — a Vertex MaaS partner model inheriting the Gemini dialect from a silent upstream entry." },
+      "GLM-5.1-FP8": { "status": "candidate", "why": "As `DeepSeek-V4-Pro` — a Vertex MaaS partner model inheriting the Gemini dialect from a silent upstream entry." },
+      "Qwen3.6-35B-A3B": { "status": "candidate", "why": "As `DeepSeek-V4-Pro` — a Vertex MaaS partner model inheriting the Gemini dialect from a silent upstream entry." }
+    }
+  },
+
+  "categoryDispositions": {
+    "$comment": "WS-13 §1's disposition table, as DATA the extractor applies. `candidate-pool` means \"eligible for the `providers` intake list above\" — never \"included\": an api-key row absent from that list is still rejected, with class `not-allowlisted`. Every other category fails closed at import time, whatever the allowlist says (the check runs BOTH ways: an allowlisted id whose upstream category is not `candidate-pool` fails the run, which is the class transition WS-13 §3 step 7 blocks).",
+    "noauth": { "disposition": "blocked", "exclusionClass": "category-no-auth", "reason": "WS-13 §1: reject by default; individually allowlistable only after protocol and terms review" },
+    "oauth": { "disposition": "blocked", "exclusionClass": "category-oauth", "reason": "WS-13 §1/§6: generic OAuth import is rejected; only provider-authorized product flows, which are Winter-owned rows, never extracted ones" },
+    "web-cookie": { "disposition": "blocked", "exclusionClass": "category-web-cookie", "reason": "WS-13 §1: excluded categorically — browser-session transport" },
+    "apikey": { "disposition": "candidate-pool", "exclusionClass": "not-allowlisted", "reason": "WS-13 §1: the main source pool, curated by LLM relevance and adapter quality — presence upstream is never inclusion" },
+    "local": { "disposition": "winter-owned", "exclusionClass": "category-local-live-discovery", "reason": "WS-13 §12: the twelve chat/self-hosted backends are Winter-owned rows on live discovery (machine-specific inventories); image-only systems are excluded from worker models" },
+    "search": { "disposition": "blocked", "exclusionClass": "category-search", "reason": "WS-13 §1: not an LLM provider" },
+    "audio": { "disposition": "blocked", "exclusionClass": "category-audio", "reason": "WS-13 §1: not an Agent SDK worker-model provider" },
+    "upstream-proxy": { "disposition": "blocked", "exclusionClass": "category-upstream-proxy", "reason": "WS-13 §1: no proxy-of-proxy layer" },
+    "cloud-agent": { "disposition": "blocked", "exclusionClass": "category-cloud-agent", "reason": "WS-13 §1: remote agent products, not model providers" },
+    "system": { "disposition": "blocked", "exclusionClass": "category-system", "reason": "WS-13 §1/§9: `auto` is routing policy, which this layer bans outright" }
+  },
+
   "blocked": [
-    { "upstreamId": "*", "reason": "Any upstream row whose transport is a browser session, a private/undocumented API, or a consumer subscription is blocked categorically and is never promotable by this file alone (WS-13 §5/§6)." }
+    { "upstreamId": "comfyui", "reason": "Image-generation system in the `local` category — WS-13 §1 keeps it out of selectable worker models (report §4.2)." },
+    { "upstreamId": "sdwebui", "reason": "Image-generation system in the `local` category — WS-13 §1 keeps it out of selectable worker models (report §4.2)." }
   ],
+
   "notes": [
     "`codex-oauth` is NOT extracted from upstream — it is a Winter-owned provider carried over per D11 with originator \"winter\" (WS-01 §3), and its descriptor's `upstream.project` is \"winter\".",
-    "The twelve local OpenAI-compatible ids (WS-13 §12) are likewise Winter-owned: their inventories are machine-specific and always come from live discovery, so there is no upstream row to extract."
+    "The twelve local OpenAI-compatible ids (WS-13 §12) are likewise Winter-owned: their inventories are machine-specific and always come from live discovery, so there is no upstream row to extract.",
+    "Promoting a provider from `blocked`/`review-required` to `approved`, or adding an id to `providers`, is the reviewed allowlist change WS-13 §13 requires before anything can reach `supported`. The extractor has no other door.",
+    "`blocked` names INDIVIDUAL upstream ids only. It previously carried a `\"*\"` sentinel restating WS-13 §5/§6's categorical exclusions (browser sessions, private APIs, consumer subscriptions); the mapper filtered that row out, so it was documentation wearing the shape of a rule. Those exclusions are ENFORCED by `categoryDispositions` above, which fails the run both ways — an allowlisted id whose category is not the api-key candidate pool aborts extraction — so the sentinel is dropped rather than left looking load-bearing."
   ]
 }

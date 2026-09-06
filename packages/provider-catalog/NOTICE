@@ -1,17 +1,26 @@
 NOTICE — third-party material in @yanlinglabs/winter-provider-catalog
 ====================================================================
 
-NONE. As of this file's writing, this package contains NO third-party source code, and no file in
-it was copied from any upstream project.
+NO THIRD-PARTY SOURCE CODE. As of this file's writing, this package contains no third-party source
+code, and no file in it was copied from any upstream project.
+
+Two upstream files ARE copied into this repository — but into `third_party/`, not here:
+
+  third_party/omniroute-provider-source/LICENSE   <- OmniRoute's root LICENSE (MIT), verbatim
+  third_party/omniroute-provider-source/NOTICE    <- OmniRoute's THIRD_PARTY_NOTICES.md, verbatim
+
+Both are registered with their upstream path, git blob id, sha256 and byte count in
+`third_party/omniroute-provider-source/extraction-manifest.json`, under `copiedFiles`, with
+`modifications: "none"`.
 
 Why the file exists anyway
 --------------------------
 
 WS-13 §5 permits a narrow, deliberate exception: a *pure helper* may be copied from the OmniRoute
 provider corpus with clean per-file provenance. WS-13 §13's acceptance list then requires "notices
-cover copied files". This NOTICE is that register. It is empty on purpose, and an empty register is
-a stronger statement than a missing one: it says the exception has not been used, rather than
-leaving a reader to guess.
+cover copied files". This NOTICE is that register. It is empty of code entries on purpose, and an
+empty register is a stronger statement than a missing one: it says the exception has not been used,
+rather than leaving a reader to guess.
 
 If a future lane copies such a file, it appends an entry here naming the file, the upstream project,
 the exact commit, the upstream path, and the licence — and the copy is not merged without it.
@@ -19,13 +28,32 @@ the exact commit, the upstream path, and the licence — and the copy is not mer
 What IS derived from upstream, and how
 --------------------------------------
 
-Catalog DATA (provider ids, endpoint templates, protocol families, auth kinds, model rows) may be
-extracted from the pinned upstream tree into `generated/`. That is inert data, not code: nothing in
-this package or anywhere in Winter imports, evaluates, or executes an upstream module, and WS-13 §13
-states the rule directly — "no executable upstream URL builders", and "a catalog entry alone never
-causes code download or execution". Adapter behaviour is Winter-authored per protocol family
-(WS-13 §5), proven by the behavioural corpus.
+Catalog DATA (provider ids, endpoint templates, protocol families, auth kinds, model rows) is
+extracted from the pinned upstream tree into `generated/upstream-layer.json` and merged into
+`generated/catalog.json`. That is inert data, not code. Nothing in this package or anywhere in
+Winter imports, evaluates, or executes an upstream module: the extractor
+(`src/extract/literal-extractor.ts`) hands file TEXT to the TypeScript parser and walks object and
+array literals, rejecting every executable value into `generated/rejections.json`. WS-13 §13 states
+the rule directly — "no executable upstream URL builders", and "a catalog entry alone never causes
+code download or execution". Adapter behaviour is Winter-authored per protocol family (WS-13 §5),
+proven by the behavioural corpus.
 
-The committed catalog at the time of writing is a hand-authored SEED (`catalogVersion:
-"0.0.0-seed"`, an empty `upstream` pin) produced from Winter's own specifications. No upstream
-extraction has run.
+The extraction materialized 309 upstream files into a scratch checkout outside this repository and
+deleted it before the run finished. The two files listed above are the only ones that survived.
+
+The pinned source
+-----------------
+
+  repository  https://github.com/diegosouzapw/OmniRoute
+  tag         v3.8.50
+  tag object  6f5d4e00e817bc01b2ac16fdd66db3840c296416   (the ANNOTATED TAG, not a commit)
+  commit      5458026c216f77a3da68ea49152dc33470cfe2cb   (the tag, peeled)
+  licence     MIT, Copyright (c) 2026 diegosouzapw
+
+The MIT licence covers the source it was applied to. It does NOT grant permission to use a
+provider's consumer subscription, to copy user credentials from another product, to reach private or
+reverse-engineered endpoints, or any trademark right in provider names or logos. The provider logo
+tree is deliberately not imported by this work (report §12), and per-file intake review remains
+mandatory even under an MIT root — the audited upstream head carries retirement migrations for
+GPL-derived and provenance-hold integrations, which at this pinned tag have not yet landed
+(see PROVENANCE.md).

@@ -1,8 +1,9 @@
 # `third_party/omniroute-provider-source` — the upstream boundary
 
-This directory is the **boundary marker** for Winter's use of the OmniRoute provider corpus, and it
-is deliberately empty of upstream material. Nothing here is vendored, and nothing in this repository
-imports, executes, or transitively loads upstream provider code.
+This directory is the **boundary marker** for Winter's use of the OmniRoute provider corpus. No
+upstream *source* is vendored here — the only upstream content in this repository is the pair of
+licence/notice texts named under "What lives here", copied verbatim because the licence requires it
+— and nothing in this repository imports, executes, or transitively loads upstream provider code.
 
 ## What the boundary is
 
@@ -22,22 +23,52 @@ WS-13 §1/§3/§13 draw the line:
 
 ## What lives here
 
-`allowlist.json` — the extractor's **input contract**: the upstream provider ids Winter is willing to
-extract at all, plus the risk class each was reviewed into. It is a hand-maintained, reviewed file:
-promoting a provider from `blocked`/`review-required` to `approved` is a deliberate edit with a
-reviewer, exactly the "blocked→supported requires reviewed allowlist change" acceptance test in
-WS-13 §13.
+`allowlist.json` — the extractor's **input contract**, in two halves. `paths` is the **versioned
+path allowlist** the sparse checkout materializes; the extractor refuses to materialize anything
+outside it and never widens the boundary on its own. `providers` is the reviewed intake list: the
+upstream provider ids Winter is willing to extract at all, plus the risk class each was reviewed
+into. Promoting a provider from `blocked`/`review-required` to `approved`, or adding an id, is a
+deliberate edit with a reviewer — exactly the "blocked→supported requires a reviewed allowlist
+change" acceptance test in WS-13 §13. `categoryDispositions` encodes WS-13 §1's table as data, and
+the check runs both ways: an allowlisted id whose upstream category is not the api-key candidate
+pool fails the whole run rather than being imported.
 
-The extractor itself (`scripts/provider-source-sync.ts`) is **Lane X's** deliverable, not the
-spine's. It will fetch the pinned upstream tree into a scratch directory outside the repository,
-read only the rows this allowlist names, emit descriptor JSON, and delete the scratch tree. The
-fetched tree is never committed here — this file plus `allowlist.json` are the whole of the
-directory's committed content, by design.
+`UPSTREAM.json` — the extractor's **input pin** (repository, tag, annotated-tag object, peeled
+commit, and the `observedAt` instant stamped onto every piece of extracted evidence). Distinct from
+`packages/provider-catalog/UPSTREAM.json`, which is the **output** pin the catalog builder stamps
+onto the merged catalog.
+
+`extraction-manifest.json` — **generated**: every upstream file the extraction materialized, with
+git's own blob id, a sha256 of the bytes, and the byte count, split into `copiedFiles` and
+`readOnlyFiles`.
+
+`LICENSE` and `NOTICE` — **the only upstream content committed anywhere in this repository**:
+OmniRoute's root `LICENSE` (MIT) and its `THIRD_PARTY_NOTICES.md`, both verbatim, both registered in
+the manifest above with `modifications: "none"`. The report's §12 requirement is that copied files
+carry clean per-file provenance; these two do, and nothing else was copied. The extractor
+materializes ~309 upstream files into a scratch checkout **outside** this repository and deletes it
+before the run ends — no upstream source tree is ever committed here.
+
+The extractor is `scripts/provider-source-sync.ts` plus
+`packages/provider-catalog/src/extract/**`. It fetches the pinned tag with a shallow, blob-filtered,
+`--no-checkout` clone; verifies that the tag resolves to the recorded tag object AND peels to the
+recorded commit; sparse-checks-out only the allowlisted paths; re-checks every materialized path
+against the allowlist after checkout; hashes each one; parses (never evaluates) the TypeScript; and
+emits descriptor JSON plus the rejection, provenance and denominator ledgers. `git` itself runs with
+`core.hooksPath` pointed at an empty directory and `--template=`, so a hostile repository's hooks
+cannot execute during the clone either.
 
 ## Pin
 
-The upstream pin (tag → commit, extractor version) is recorded in
-`packages/provider-catalog/UPSTREAM.json`, alongside the generated catalog it produced. The seed
-catalog committed by the spine carries an **empty** pin and `catalogVersion: "0.0.0-seed"`: it was
-hand-authored from Winter's own specs, not extracted from upstream, and the empty pin is what says
-so.
+The upstream pin is recorded twice, deliberately: `UPSTREAM.json` here is what the extractor
+FETCHES, and `packages/provider-catalog/UPSTREAM.json` is what the generated catalog CARRIES.
+
+    tag         v3.8.50
+    tag object  6f5d4e00e817bc01b2ac16fdd66db3840c296416   (the ANNOTATED TAG's own object)
+    commit      5458026c216f77a3da68ea49152dc33470cfe2cb   (that tag, peeled)
+
+The two are different objects. The OmniRoute report records `6f5d4e00…` as "resolving to" v3.8.50;
+it is the tag object, and a pin on it alone would not survive a re-tag. The extractor verifies both
+and refuses to run on either mismatch. `catalogVersion` is `v3.8.50+winter.1`, which is how the
+upstream release and the Winter extraction revision stay recoverable from a shipped artifact
+(WS-13 §2).

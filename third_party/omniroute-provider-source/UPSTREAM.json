@@ -1,0 +1,17 @@
+{
+  "$comment": "The extractor's INPUT pin — what `scripts/provider-source-sync.ts` fetches. Distinct from packages/provider-catalog/UPSTREAM.json, which is the OUTPUT pin the catalog builder stamps onto the merged catalog. A version string alone is not a pin (WS-13 §3 step 1): `tag` names the release, `tagObject` is the ANNOTATED TAG's own object id, and `commit` is the tag PEELED to a commit. The extractor verifies all three against the fetched clone and refuses to run on any mismatch — a re-tag therefore cannot silently change what \"the same pin\" means.",
+  "repository": "https://github.com/diegosouzapw/OmniRoute",
+  "tag": "v3.8.50",
+  "tagObject": "6f5d4e00e817bc01b2ac16fdd66db3840c296416",
+  "commit": "5458026c216f77a3da68ea49152dc33470cfe2cb",
+  "packageVersion": "3.8.50",
+  "retrievedAt": "2026-09-05",
+  "observedAt": "2026-09-05T00:00:00Z",
+  "extractorVersion": "winter.1",
+  "overlayVersion": "1",
+  "notes": [
+    "The OmniRoute report records `6f5d4e00…` as the resolution of v3.8.50. That id is the ANNOTATED TAG OBJECT, not a commit: `git rev-parse v3.8.50` returns it while `git rev-parse v3.8.50^{commit}` returns `5458026c…`, and `git clone --branch v3.8.50` warns \"is not a commit\". Winter pins the peeled commit and records both.",
+    "`observedAt` is the instant stamped onto every piece of extracted evidence. It is READ FROM THIS FILE rather than taken from the clock: a wall-clock stamp would make every re-run differ in every evidence object, and WS-13 §13's byte-identical-regeneration test would be unsatisfiable by construction.",
+    "The audited research head `b7a0c541…` (declaring 3.8.51) is EVIDENCE ONLY and is never fetched (WS-13 §3 step 1)."
+  ]
+}
