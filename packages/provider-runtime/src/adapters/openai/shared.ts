@@ -456,12 +456,20 @@ export function toolResultText(content: string | ContentBlockLike[]): string {
  * `thinking-channel` names an in-dialect reasoning slot; no OpenAI-family surface has one a caller
  * may write into, and the nearest thing (`reasoning_content`) is the MODEL's own output channel —
  * putting Winter's prose there would present an annotation as something the model reasoned, which is
- * the impersonation R6-8 exists to forbid. So the annotation is carried plainly and visibly, tagged
- * as what it is, on both doors.
+ * the impersonation R6-8 exists to forbid. So the annotation is carried plainly, on both doors.
  *
- * Without this, Lane C's decorations were built, persisted and then silently dropped at the wire:
- * a cross-family handoff note that never reaches the model is worse than none, because the switch
- * coordinator has already reported the context as carried.
+ * VERBATIM — this layer adds NOTHING, not even a label. The text arrives from Lane C already
+ * finished and already delimited (the `<recovered_reasoning_summary>` tag WS-13 §8.2 names for the
+ * tag door, the bracketed label for the thinking-channel door), and Lane C's §9.6 budget is counted
+ * on exactly these bytes. A wrapper of this layer's own would double-label the second door, would
+ * add a delimiter `neutralizeDelimiters` does not neutralise (so a foreign summary containing the
+ * added closing delimiter would break straight out of it), and would make this family the only one
+ * that alters the string — the whole-branch review's I-3, escalated from Lane B's identical
+ * `<winter-note>` wrapper. The other three families render it byte-for-byte; so does this one.
+ *
+ * Without this door at all, Lane C's decorations were built, persisted and then silently dropped at
+ * the wire: a cross-family handoff note that never reaches the model is worse than none, because the
+ * switch coordinator has already reported the context as carried.
  *
  * WHERE it goes depends on what the message carries. On an ordinary message it LEADS the content.
  * On a message carrying TOOL RESULTS it PREFIXES the first result's own text (see
@@ -473,15 +481,15 @@ export function toolResultText(content: string | ContentBlockLike[]): string {
 export function decorationText(message: ProviderMessageLike): string | undefined {
   const decoration = message.decoration;
   if (decoration === undefined || decoration.text.length === 0) return undefined;
-  return `[winter:context] ${decoration.text}`;
+  return decoration.text;
 }
 
 /**
  * A decoration prefixed onto a tool result's own text.
  *
  * Adjacency between a tool call and its result is a WIRE INVARIANT on every surface in this family,
- * so the annotation rides INSIDE the result it annotates rather than beside it. Same tagged plain
- * text, same position relative to what it describes, and no extra item on the wire at all.
+ * so the annotation rides INSIDE the result it annotates rather than beside it. Same verbatim text,
+ * same position relative to what it describes, and no extra item on the wire at all.
  */
 export function prefixToolResult(decoration: string | undefined, output: string): string {
   return decoration === undefined ? output : output.length > 0 ? `${decoration}\n${output}` : decoration;

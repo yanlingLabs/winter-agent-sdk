@@ -64,11 +64,11 @@ describe("decorations (minor 11)", () => {
   test("a Winter annotation leads its message, on both doors and both roles", () => {
     for (const door of ["tag", "thinking-channel"] as const) {
       expect(mapChatMessages([{ role: "user", content: "the question", decoration: { text: "prior model summarised: X", door } }], false)).toEqual([
-        { role: "user", content: "[winter:context] prior model summarised: X\nthe question" },
+        { role: "user", content: "prior model summarised: X\nthe question" },
       ]);
     }
     expect(mapChatMessages([{ role: "assistant", content: "answer", decoration: { text: "note", door: "tag" } }], false)).toEqual([
-      { role: "assistant", content: "[winter:context] note\nanswer" },
+      { role: "assistant", content: "note\nanswer" },
     ]);
   });
 
@@ -85,7 +85,7 @@ describe("decorations (minor 11)", () => {
       ),
     ).toEqual([
       { role: "assistant", content: "", tool_calls: [{ id: "call_1", type: "function", function: { name: "Read", arguments: "{}" } }] },
-      { role: "tool", tool_call_id: "call_1", content: "[winter:context] note\nthe file body" },
+      { role: "tool", tool_call_id: "call_1", content: "note\nthe file body" },
     ]);
   });
 
@@ -97,7 +97,7 @@ describe("decorations (minor 11)", () => {
         [{ role: "user", content: [{ type: "tool_result", tool_use_id: "call_1", content: "the file body" }], decoration: { text: "note", door: "tag" } }],
         false,
       ),
-    ).toEqual([{ role: "tool", tool_call_id: "call_1", content: "[winter:context] note\nthe file body" }]);
+    ).toEqual([{ role: "tool", tool_call_id: "call_1", content: "note\nthe file body" }]);
   });
 
   test("an annotation on a message carrying an IMAGE rides as its own text part", () => {
@@ -105,7 +105,7 @@ describe("decorations (minor 11)", () => {
       [{ role: "user", content: [{ type: "image", source: { type: "base64", media_type: "image/png", data: "QUJD" } }], decoration: { text: "note", door: "tag" } }],
       false,
     );
-    expect(out[0]).toEqual({ role: "user", content: [{ type: "text", text: "[winter:context] note" }, { type: "image_url", image_url: { url: "data:image/png;base64,QUJD" } }] });
+    expect(out[0]).toEqual({ role: "user", content: [{ type: "text", text: "note" }, { type: "image_url", image_url: { url: "data:image/png;base64,QUJD" } }] });
   });
 });
 

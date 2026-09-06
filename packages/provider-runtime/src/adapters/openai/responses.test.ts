@@ -104,14 +104,14 @@ describe("mapResponsesInput", () => {
         type: "message",
         role: "user",
         content: [
-          { type: "input_text", text: "[winter:context] prior model summarised: X" },
+          { type: "input_text", text: "prior model summarised: X" },
           { type: "input_text", text: "the question" },
         ],
       });
     }
     // An assistant-side annotation uses that role's own part type.
     const assistant = mapResponsesInput([{ role: "assistant", content: "answer", decoration: { text: "note", door: "tag" } }]);
-    expect(assistant[0]).toEqual({ type: "message", role: "assistant", content: [{ type: "output_text", text: "[winter:context] note" }, { type: "output_text", text: "answer" }] });
+    expect(assistant[0]).toEqual({ type: "message", role: "assistant", content: [{ type: "output_text", text: "note" }, { type: "output_text", text: "answer" }] });
   });
 
   test("a decoration on a TOOL message prefixes the output — never an item between a call and its reply (round 3)", () => {
@@ -121,7 +121,7 @@ describe("mapResponsesInput", () => {
     ]);
     expect(out).toEqual([
       { type: "function_call", call_id: "call_1", name: "Read", arguments: "{}" },
-      { type: "function_call_output", call_id: "call_1", output: "[winter:context] note\nthe file body" },
+      { type: "function_call_output", call_id: "call_1", output: "note\nthe file body" },
     ]);
   });
 
@@ -137,7 +137,7 @@ describe("mapResponsesInput", () => {
       },
     ]);
     expect(out).toEqual([
-      { type: "function_call_output", call_id: "call_1", output: "[winter:context] note\nfirst" },
+      { type: "function_call_output", call_id: "call_1", output: "note\nfirst" },
       { type: "function_call_output", call_id: "call_2", output: "second" },
     ]);
   });

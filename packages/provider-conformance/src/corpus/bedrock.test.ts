@@ -186,7 +186,9 @@ describe("T10 review round 1 (#16): Lane C's decoration text reaches the Bedrock
     // Bedrock request needs SigV4 material and a region the shared scenario fake does not serve.
     // Lane N's OWN fake does serve both, so the assertion belongs here — the controller's ruling was
     // about the assertion existing on a real recorded request, not about which fake carries it.
-    const DECORATION = "WINTER-T10-DECORATION-MARKER: recovered reasoning from a prior model";
+    // Lane C's REAL output shape, already delimited: the ruling is that this layer adds nothing to
+    // it, so a fixture whose text carries no delimiters of its own cannot show a re-delimiting.
+    const DECORATION = '<recovered_reasoning_summary provider="openai" model="gpt-5.6-sol">WINTER-T10-DECORATION-MARKER</recovered_reasoning_summary>';
     const fake = await startBedrockFake({ scenarios: bedrockScenarios() });
     try {
       const harness = createBedrockHarness(fake);
@@ -197,9 +199,13 @@ describe("T10 review round 1 (#16): Lane C's decoration text reaches the Bedrock
         ),
       );
       const body = fake.requests[0]!.body;
-      // VERBATIM, and EXACTLY ONCE: a second occurrence would mean the adapter wrapped it again on
-      // top of the renderer's own delimiters, which the controller's ruling forbids.
-      expect(body.split(DECORATION).length - 1).toBe(1);
+      // EQUALS, not "contains once" (whole-branch review I-3). A count is blind to a WRAPPER — the
+      // OpenAI family shipped every decoration behind a `[winter:context] ` prefix for three rounds
+      // under exactly that pin — so the recorded BLOCK must be the decoration text and nothing else.
+      const parsed = JSON.parse(body) as { messages: Array<{ role: string; content: Array<Record<string, unknown>> }> };
+      expect(parsed.messages[0]!.content).toEqual([{ text: "hi" }, { text: DECORATION }]);
+      // And exactly once: no second copy anywhere else in the request either.
+      expect(body.split(JSON.stringify(DECORATION).slice(1, -1)).length - 1).toBe(1);
     } finally {
       await fake.close();
     }

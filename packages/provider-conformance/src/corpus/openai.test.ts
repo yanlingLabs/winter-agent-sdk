@@ -397,7 +397,7 @@ describe("live wire details the corpus does not ask about", () => {
       expect(events.some((e) => e.type === "done")).toBe(true);
       const input = (JSON.parse(fake.requests.at(-1)!.body) as { input: Array<Record<string, unknown>> }).input;
       const output = input.find((item) => item.type === "function_call_output");
-      expect(output?.output).toBe(`${"[winter:context] "}${marker}\nthe file body`);
+      expect(output?.output).toBe(`${marker}\nthe file body`);
       // Nothing was inserted: the output follows its call directly.
       expect(input[input.indexOf(output!) - 1]!.type).toBe("function_call");
     });
@@ -408,7 +408,7 @@ describe("live wire details the corpus does not ask about", () => {
       expect(events.some((e) => e.type === "done")).toBe(true);
       const messages = (JSON.parse(fake.requests.at(-1)!.body) as { messages: Array<Record<string, unknown>> }).messages;
       const toolIndex = messages.findIndex((m) => m.role === "tool");
-      expect(messages[toolIndex]!.content).toBe(`${"[winter:context] "}${marker}\nthe file body`);
+      expect(messages[toolIndex]!.content).toBe(`${marker}\nthe file body`);
       // ADJACENCY: the tool message answers the assistant `tool_calls` message immediately before it.
       expect(messages[toolIndex - 1]!.role).toBe("assistant");
       expect(Array.isArray(messages[toolIndex - 1]!.tool_calls)).toBe(true);
@@ -428,7 +428,7 @@ describe("live wire details the corpus does not ask about", () => {
           model: SCENARIO.happy,
           messages: [
             { role: "assistant", content: "", tool_calls: [{ id: "call_1", type: "function", function: { name: "Read", arguments: "{}" } }] },
-            { role: "user", content: "[winter:context] a note" },
+            { role: "user", content: "a note" },
             { role: "tool", tool_call_id: "call_1", content: "ok" },
           ],
         }),
@@ -445,7 +445,7 @@ describe("live wire details the corpus does not ask about", () => {
           model: SCENARIO.happy,
           input: [
             { type: "function_call", call_id: "call_1", name: "Read", arguments: "{}" },
-            { type: "message", role: "user", content: [{ type: "input_text", text: "[winter:context] a note" }] },
+            { type: "message", role: "user", content: [{ type: "input_text", text: "a note" }] },
             { type: "function_call_output", call_id: "call_1", output: "ok" },
           ],
         }),
@@ -506,27 +506,49 @@ describe("live wire details the corpus does not ask about", () => {
     }
   }, 20_000);
 
-  test("a DECORATION reaches the LIVE wire on both surfaces (minor 11 tripwire)", async () => {
+  test("a DECORATION reaches the LIVE wire on both surfaces, VERBATIM — the recorded segment EQUALS Lane C's text (I-3)", async () => {
     // The unit tests pin the mapping; this pins that nothing between the mapper and the socket drops
     // it. Lane C's decorations were inert before this — built, persisted, then silently discarded,
     // with the switch coordinator already reporting the context as carried.
-    const marker = "DECORATION-REACHED-THE-WIRE";
+    //
+    // EQUALS, not "contains once". The round-1 tripwire counted occurrences of the marker, which is
+    // blind to a WRAPPER: this family shipped every decoration behind a `[winter:context] ` prefix
+    // of its own and the count-based pin stayed green for three rounds (whole-branch review I-3).
+    // The recorded text block/segment must be the decoration text and nothing else, which is what
+    // the other three families' pins already assert.
+    //
+    // Lane C's REAL output is used, not a bare marker: the text arrives already delimited and its
+    // §9.6 budget is counted on exactly these bytes, so a layer that re-delimits it is visible here.
+    const marker = '<recovered_reasoning_summary provider="anthropic" model="claude-opus-5">DECORATION-REACHED-THE-WIRE</recovered_reasoning_summary>';
     await withResponsesFake(async (fake) => {
       const adapter = createResponsesAdapter({ generatedBaseUrl: fake.url, retry: FAST_RETRY, descriptors: () => undefined });
       await drain(adapter.streamTurn({ model: SCENARIO.happy, messages: [{ role: "user", content: "q", decoration: { text: marker, door: "tag" } }] }, testContext({ stallTimeoutMs: STALL_MS })));
-      expect(fake.requests.at(-1)!.body).toContain(marker);
+      const input = (JSON.parse(fake.requests.at(-1)!.body) as { input: Array<Record<string, unknown>> }).input;
+      // The decoration LEADS its message as its own part, byte-for-byte, with the content after it.
+      expect(input).toEqual([
+        {
+          type: "message",
+          role: "user",
+          content: [
+            { type: "input_text", text: marker },
+            { type: "input_text", text: "q" },
+          ],
+        },
+      ]);
     });
     await withChatFake(async (fake) => {
       const adapter = createChatCompletionsAdapter({ generatedBaseUrl: fake.url, retry: FAST_RETRY, descriptors: () => undefined });
       await drain(adapter.streamTurn({ model: SCENARIO.happy, messages: [{ role: "user", content: "q", decoration: { text: marker, door: "thinking-channel" } }] }, testContext({ stallTimeoutMs: STALL_MS })));
-      expect(fake.requests.at(-1)!.body).toContain(marker);
       // Carried PLAINLY, never dressed as the model's own reasoning channel (R6-8). Asserted over
       // every MESSAGE: `reasoning_content` lives on `messages[i]`, never at the top level, so the
       // previous top-level check could not have failed and proved nothing.
       const messages = (JSON.parse(fake.requests.at(-1)!.body) as { messages: Array<Record<string, unknown>> }).messages;
-      expect(messages.length).toBeGreaterThan(0);
       expect(messages.every((m) => !("reasoning_content" in m))).toBe(true);
-      expect(messages.some((m) => typeof m.content === "string" && m.content.includes(marker))).toBe(true);
+      // The chat surface joins a text-only message into ONE string, so the whole content is pinned:
+      // the decoration's own segment is everything before the newline, and a prefix or wrapper of
+      // this layer's own changes it.
+      const user = messages.find((m) => m.role === "user");
+      expect(user?.content).toBe(`${marker}\nq`);
     });
   });
 
