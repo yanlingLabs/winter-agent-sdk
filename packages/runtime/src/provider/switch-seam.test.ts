@@ -21,6 +21,10 @@ import { stubExecutor } from "./mock.ts";
 import { createInMemoryChannel } from "../protocol/channel.ts";
 import type { ProviderStateRecordInput } from "../store/provider-state.ts";
 import { chatCatalog, chatModel, chatProvider, startRawChatFake, type RawChatFake } from "./raw-chat-fake.test-support.ts";
+import { buildProductionWiring } from "../production-wiring.ts";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 // --- the harness ----------------------------------------------------------------------------------
 
@@ -311,6 +315,98 @@ describe("Ruling E-2: `set_model` resolves FIRST and the switch rebuilds provide
       expect(r.wireModels).toEqual(["m1"]);
       expect(switchFrames(r.messages)[0]).toMatchObject({ from_model: "prova/never-existed", to_model: "prova/m1", provider: "prova" });
     });
+  });
+});
+
+describe("Ruling E-2: a `set_model` parked MID-TURN and applied on interrupt", () => {
+  test("the switch applies at the interrupt (an early boundary) with keys and `reason: 'interrupt'`, classified with `midTurnAbort` -- so the warning names the cancelled turn even for a same-domain pair", async () => {
+    // The fake holds every response 400 ms, so the first turn is genuinely in flight when the host
+    // parks a `set_model` and then interrupts. Two models with NO reasoning transport: the transfer
+    // itself is lossless, and what `classifySwitch`'s trigger 7 warns about is the UNFINISHED TURN --
+    // "applies EVEN INSIDE a shared domain". The ruling's "warned-lossy -> emit" therefore puts the
+    // mid-turn-abort loss under `cross_domain_replay_dropped` too; the `detail` names it (disclosed,
+    // WS-03).
+    const fake = await startRawChatFake({ delayMs: 400 });
+    try {
+      const catalog = chatCatalog([chatProvider("prova", fake.url)], [chatModel({ key: "prova/m1", providerId: "prova", upstreamId: "m1" }), chatModel({ key: "prova/m2", providerId: "prova", upstreamId: "m2" })]);
+      const cfg = config();
+      const wiring = buildSessionProvider({ config: cfg, env: {}, catalog, credentials: createMemoryCredentialStore() });
+      const switches: Driven["switches"] = [];
+      const { host, runtime } = createInMemoryChannel();
+      const frames: WinterFrame[] = [];
+      const reader = (async () => {
+        for await (const f of host.input) frames.push(f);
+      })();
+      const identity = wiring.identity!;
+      const done = runEngine({
+        config: cfg,
+        input: runtime.input,
+        output: runtime.output,
+        provider: wiring.provider,
+        tools: stubExecutor,
+        providerIdentity: { providerId: identity.providerId, modelKey: identity.modelKey, family: "openai", adapterId: identity.adapterId, adapterVersion: identity.adapterVersion, catalogVersion: identity.catalogVersion, authRefKind: identity.authRefKind },
+        resolveModelSwitch: wiring.resolveModelSwitch,
+        store: { recordUserEntry() {}, recordAssistantEntry() {}, recordProviderSwitch(entry: { from: string; to: string; reason: string }) { switches.push(entry); } },
+      } as never);
+      const until = async (predicate: () => boolean, what: string): Promise<void> => {
+        const deadline = Date.now() + 15_000;
+        while (!predicate()) {
+          if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
+          await new Promise((r) => setTimeout(r, 5));
+        }
+      };
+      host.output.write({ type: "user", text: "first" });
+      await until(() => fake.requests.length === 1, "the first request to be in flight");
+      host.output.write({ type: "control_request", requestId: "park", subtype: "set_model", payload: { model: "prova/m2" } });
+      await until(() => frames.some((f) => f.type === "control_response" && (f as { requestId: string }).requestId === "park"), "the set_model ack");
+      // Parked, not applied: no switch frame while the turn is running.
+      expect(dataMessages(frames).some((m) => (m as { subtype?: string }).subtype === "model_switch")).toBe(false);
+      host.output.write({ type: "control_request", requestId: "stop", subtype: "interrupt", payload: undefined });
+      await until(() => dataMessages(frames).filter((m) => m.type === "result").length === 1, "the interrupted result");
+      host.output.write({ type: "user", text: "second" });
+      await until(() => dataMessages(frames).filter((m) => m.type === "result").length === 2, "the second result");
+      host.output.write({ type: "control_request", requestId: "end", subtype: "end_input", payload: undefined });
+      await reader;
+      await done;
+      // The switch applied AT the interrupt, with keys, and the second turn went out on m2.
+      expect(switches).toEqual([{ from: "prova/m1", to: "prova/m2", reason: "interrupt" }]);
+      const frame = switchFrames(dataMessages(frames))[0]!;
+      expect(frame).toMatchObject({ reason: "interrupt", from_model: "prova/m1", to_model: "prova/m2", provider: "prova" });
+      expect(fake.requests.map((r) => r.model)).toEqual(["m1", "m2"]);
+      // The warning carries the cancelled-turn loss (trigger 7), named in its detail.
+      const warnings = warningFrames(dataMessages(frames));
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]!.warning).toBe("cross_domain_replay_dropped");
+      expect(String(warnings[0]!.detail)).toContain("cancelled before it finished");
+      const kinds = dataMessages(frames).filter((m) => m.type === "system").map((m) => (m as { subtype: string }).subtype);
+      expect(kinds.indexOf("continuity_warning")).toBeLessThan(kinds.indexOf("model_switch"));
+    } finally {
+      await fake.close();
+    }
+  });
+});
+
+describe("Ruling E-2: the production wiring withholds the seam for the reserved namespace (doc = code)", () => {
+  test("a `winter-test/*` session gets NO `resolveModelSwitch`; a catalog-resolved session and a REFUSED session both get it", async () => {
+    const home = mkdtempSync(join(tmpdir(), "winter-fixe-seam-presence-"));
+    const fake = await startRawChatFake();
+    try {
+      const catalog = twoDomainCatalog(fake.url);
+      const credentials = createMemoryCredentialStore();
+      const double = await buildProductionWiring({ config: { sessionId: "d", cwd: process.cwd(), model: "winter-test/echo", persistSession: false } as RuntimeConfig, env: {}, winterHome: home, provider: { catalog, credentials } });
+      expect(double.engineOptions.resolveModelSwitch).toBeUndefined();
+      double.dispose();
+      const resolved = await buildProductionWiring({ config: config(), env: {}, winterHome: home, provider: { catalog, credentials } });
+      expect(resolved.engineOptions.resolveModelSwitch).toBeDefined();
+      resolved.dispose();
+      const refused = await buildProductionWiring({ config: config({ model: "prova/never-existed" }), env: {}, winterHome: home, provider: { catalog, credentials } });
+      expect(refused.providerWiring.resolutionError).toBeDefined();
+      expect(refused.engineOptions.resolveModelSwitch).toBeDefined();
+      refused.dispose();
+    } finally {
+      await fake.close();
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 });
 

@@ -816,8 +816,12 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
       supportedModels: () => providerWiring.supportedModels(),
       accountInfo: () => providerWiring.accountInfo(),
       // P6 fix wave (Rulings E-2 / E-3): the switch seam and the fallback candidates, from the SAME
-      // wiring the session's own provider came from -- one resolution path, on every leg.
-      resolveModelSwitch: providerWiring.resolveModelSwitch,
+      // wiring the session's own provider came from -- one resolution path, on every leg. WITHHELD
+      // for the reserved `winter-test/<name>` namespace: a scripted double has no catalog to resolve a
+      // target against, so the seam could only ever refuse, and `set_model` on a double keeps its
+      // pre-fix shape (the string is parked and applied verbatim) -- which is what every pre-P6
+      // fixture drives. A refused session DOES get the seam: that is how it recovers.
+      ...(providerWiring.identity !== undefined || providerWiring.resolutionError !== undefined ? { resolveModelSwitch: providerWiring.resolveModelSwitch } : {}),
       ...(providerWiring.fallbackModelKeys.length > 0 ? { fallbackModels: providerWiring.fallbackModelKeys } : {}),
       // P6 fix wave (Rulings E-4 / E-5): cost from the catalog's own pricing evidence; the classifier
       // model's key for the R6-14 pin.

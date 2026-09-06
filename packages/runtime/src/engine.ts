@@ -1133,9 +1133,11 @@ export interface EngineOptions {
    */
   classifier?: ClassifierInterface;
   /**
-   * P6 fix wave (Ruling E-2): the switch seam -- see `ResolveModelSwitch`. Absent for a session on a
-   * scripted double, in which case `set_model` keeps its pre-fix shape: the requested string is
-   * parked verbatim and applied at the boundary with no identity to rebuild (every pre-P6 fixture).
+   * P6 fix wave (Ruling E-2): the switch seam -- see `ResolveModelSwitch`. The production wiring
+   * passes it for every catalog-resolved session AND for a session whose model failed to resolve
+   * (the recovery path), and WITHHOLDS it for the reserved `winter-test/<name>` namespace; absent,
+   * `set_model` keeps its pre-fix shape: the requested string is parked verbatim and applied at the
+   * boundary with no identity to rebuild (every pre-P6 fixture, every scripted double).
    */
   resolveModelSwitch?: ResolveModelSwitch;
   /**

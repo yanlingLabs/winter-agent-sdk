@@ -32,6 +32,8 @@ export interface RawChatFakeOptions {
   failModel?: { wireModel: string; status: number; retryAfter?: string };
   /** The text the scripted turn answers with. */
   text?: string;
+  /** Hold every response this long, so a fixture can act while a turn is genuinely IN FLIGHT (a mid-turn `set_model`, an interrupt). */
+  delayMs?: number;
   /**
    * A per-request script: answer with text, or with ONE tool call (fragmented over two chunks, as
    * every real chat-completions stream fragments arguments). Absent -> `text` for every request.
@@ -57,6 +59,7 @@ export async function startRawChatFake(options: RawChatFakeOptions = {}): Promis
       const body = req.method === "GET" ? "" : await req.text();
       const model = /"model":"([^"]+)"/.exec(body)?.[1];
       requests.push({ path: url.pathname, authorization: req.headers.get("authorization"), headers, body, model });
+      if (options.delayMs !== undefined) await new Promise((resolve) => setTimeout(resolve, options.delayMs));
       if (options.failModel !== undefined && model === options.failModel.wireModel) {
         return new Response(JSON.stringify({ error: { message: "raw chat fake: scripted failure", type: "server_error" } }), {
           status: options.failModel.status,
