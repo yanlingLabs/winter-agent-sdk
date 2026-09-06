@@ -65,6 +65,15 @@ export interface LoginConfig {
    * a message about a product they are not using.
    */
   label?: string;
+  /**
+   * The token exchange's body encoding. Defaults to `"form"`.
+   *
+   * P6.5 ruling R-A2-1 — see `adapters/oauth/refresh.ts` for the whole reasoning. Short version:
+   * RFC 6749 §4.1.3 requires a token endpoint to accept form encoding, but the Anthropic Console
+   * endpoint is only ever OBSERVED receiving JSON, and guessing wrong there breaks the login
+   * outright. The default keeps codex byte-identical.
+   */
+  bodyEncoding?: "form" | "json";
   scope: string;
   timeoutMs?: number;
   /** Opens the browser. HOST-supplied: the SDK never shells out to a browser itself. */
@@ -136,7 +145,7 @@ export function decodeAccountId(idToken: string): string | undefined {
  * the origin re-validation is exactly what stops a `Location` header from replaying the PKCE
  * verifier to another host.
  */
-async function exchange(tokenUrl: string, params: Record<string, string>, label = "codex"): Promise<OAuthTokens> {
+async function exchange(tokenUrl: string, params: Record<string, string>, label = "codex", bodyEncoding: "form" | "json" = "form"): Promise<OAuthTokens> {
   const built = createEndpointPolicy(new URL(tokenUrl).origin, { generated: true });
   if (!built.ok) throw new ProviderRequestError({ code: "capability", message: built.reason, retryable: false });
   const response = await boundedFetch(tokenUrl, {
@@ -146,8 +155,8 @@ async function exchange(tokenUrl: string, params: Record<string, string>, label 
     // completes a login and the legacy refresh path -- so a codex login and a codex refresh present
     // the same identity. Without it the login was the one vendor request in the whole provider layer
     // still going out as Bun's default user-agent.
-    headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json", "user-agent": winterUserAgent() },
-    body: new URLSearchParams(params).toString(),
+    headers: { "content-type": bodyEncoding === "json" ? "application/json" : "application/x-www-form-urlencoded", accept: "application/json", "user-agent": winterUserAgent() },
+    body: bodyEncoding === "json" ? JSON.stringify(params) : new URLSearchParams(params).toString(),
     policy: built.policy,
     maxBodyBytes: 512 * 1024,
     timeoutMs: 30_000,
@@ -252,7 +261,13 @@ export async function runLoginFlow(cfg: LoginConfig): Promise<OAuthTokens> {
     cfg.openUrl(authUrl.toString()).catch((err: unknown) => rejectFlow(new Error(`could not open the browser: ${err instanceof Error ? err.message : String(err)}`)));
     const code = await codePromise;
     report("exchanging the authorization code");
-    const tokens = await exchange(cfg.tokenUrl, { grant_type: "authorization_code", client_id: cfg.clientId, code, redirect_uri: redirectUri, code_verifier: verifier }, label);
+    // `state` RIDES THE EXCHANGE (P6.5 ruling R-A2-1). It is not an RFC 6749 token-request parameter
+    // -- it is the authorize-request nonce echoed back on the redirect, and this flow has already
+    // compared it before accepting the code. The Anthropic Console client sends it on the grant
+    // anyway, and an authorization server ignores a parameter it does not recognise, so sending it
+    // matches the observed request at no cost. It is not a credential: it is a value this process
+    // minted and has already seen come back.
+    const tokens = await exchange(cfg.tokenUrl, { grant_type: "authorization_code", client_id: cfg.clientId, code, redirect_uri: redirectUri, code_verifier: verifier, state }, label, cfg.bodyEncoding ?? "form");
     cfg.onAuthStatus?.({ isAuthenticating: false, output: ["signed in"] });
     return tokens;
   } catch (err) {

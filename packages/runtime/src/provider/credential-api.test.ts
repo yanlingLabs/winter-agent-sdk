@@ -13,12 +13,10 @@ import { test, expect, describe } from "bun:test";
 import { createMemoryCredentialStore, createRegistry, CredentialResolutionError, type CredentialMaterial, type CredentialRef, type CredentialStatus, type CredentialStore, type ProviderAdapter, type ProviderContext } from "@yanlinglabs/winter-provider-runtime";
 import type { WinterCatalog, WinterModelDescriptor, WinterProviderDescriptor } from "@yanlinglabs/winter-provider-catalog";
 import { deleteProviderCredential, providerCredentialRef, startProviderLogin, storeProviderCredential, validateProviderCredential } from "./credential-api.ts";
-import {
-  FAKE_CONSOLE_ACCOUNT_ID,
-  startAnthropicConsoleOauthFake,
-} from "../../../provider-conformance/src/fakes/anthropic-console-oauth.ts";
-import { FAKE_ACCOUNT_ID as CODEX_FAKE_ACCOUNT_ID, codexTokenRoute } from "../../../provider-conformance/src/fakes/codex-oauth.ts";
-import { startFake } from "../../../provider-conformance/src/fakes/server.ts";
+// BY PACKAGE NAME, as every other runtime test reaches this package (`winter-provider-conformance`
+// is a root devDependency). A deep relative path into another workspace's `src/` is the drift its
+// barrel exists to prevent, and it is what this file did first.
+import { anthropicConsoleOauthFake, codexFake, startFake } from "winter-provider-conformance";
 import { createKeychainCredentialStore, DEFAULT_KEYCHAIN_SERVICE, type SecretsBackend } from "./keychain-store.ts";
 
 const SECRET = "test-key-do-not-use-4d9f2a";
@@ -504,7 +502,7 @@ describe("startProviderLogin (WS-13b): the ONE host door onto every OAuth flow",
   // later, and a case that throws a TYPED refusal is a far better thing to ship than a case that is
   // absent from the type and fails at the call site as `never`.
   test("`anthropic` runs the Console PKCE login and answers with the ref the record now occupies", async () => {
-    const fake = await startAnthropicConsoleOauthFake();
+    const fake = await anthropicConsoleOauthFake.startAnthropicConsoleOauthFake();
     try {
       const store = createMemoryCredentialStore();
       const result = await startProviderLogin("anthropic", store, {
@@ -516,8 +514,8 @@ describe("startProviderLogin (WS-13b): the ONE host door onto every OAuth flow",
       });
       // The SAME spelling `providerCredentialRef` produces, which is the point of routing through
       // one door: a host that logs in and a host that looks the credential up agree by construction.
-      expect(result.ref).toEqual(providerCredentialRef({ providerId: "anthropic", accountId: FAKE_CONSOLE_ACCOUNT_ID }));
-      expect(result.accountId).toBe(FAKE_CONSOLE_ACCOUNT_ID);
+      expect(result.ref).toEqual(providerCredentialRef({ providerId: "anthropic", accountId: anthropicConsoleOauthFake.FAKE_CONSOLE_ACCOUNT_ID }));
+      expect(result.accountId).toBe(anthropicConsoleOauthFake.FAKE_CONSOLE_ACCOUNT_ID);
       expect(result.expiresAt).toBeGreaterThan(Date.now());
       expect((await store.get(result.ref))?.kind).toBe("oauth");
     } finally {
@@ -526,7 +524,7 @@ describe("startProviderLogin (WS-13b): the ONE host door onto every OAuth flow",
   }, 15_000);
 
   test("`codex-oauth` still routes to its own flow — adding a provider did not move an existing one", async () => {
-    const fake = await startFake({ routes: [codexTokenRoute({})] });
+    const fake = await startFake({ routes: [codexFake.codexTokenRoute({})] });
     try {
       const store = createMemoryCredentialStore();
       const result = await startProviderLogin("codex-oauth", store, {
@@ -541,7 +539,7 @@ describe("startProviderLogin (WS-13b): the ONE host door onto every OAuth flow",
         tokenUrl: `${fake.url}/oauth/token`,
         callbackPort: 0,
       });
-      expect(result.ref.account).toBe(`codex-oauth:${CODEX_FAKE_ACCOUNT_ID}`);
+      expect(result.ref.account).toBe(`codex-oauth:${codexFake.FAKE_ACCOUNT_ID}`);
     } finally {
       await fake.close();
     }

@@ -92,6 +92,7 @@ export * as openaiCorpus from "./corpus/openai.ts";
 export * as openaiScenarios from "./corpus/openai-scenarios.ts";
 export * as vertexCorpus from "./corpus/vertex.ts";
 
+export * as anthropicConsoleOauthFake from "./fakes/anthropic-console-oauth.ts";
 export * as anthropicFake from "./fakes/anthropic-messages.ts";
 export * as azureFake from "./fakes/azure-openai.ts";
 export * as bedrockFake from "./fakes/bedrock.ts";

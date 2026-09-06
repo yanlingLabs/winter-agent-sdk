@@ -547,6 +547,8 @@ async function resolveFreshMaterial(ctx: ProviderContext, opts: AnthropicAdapter
     // the one artifact-observed field the shared helper can already match. Winter sends the scope it
     // was granted, never the artifact's default list -- which is the inadmissible union.
     extraFields: { scope: CONSOLE_OAUTH.scope },
+    // R-A2-1: this endpoint is only ever observed receiving JSON, on BOTH grants.
+    bodyEncoding: "json",
   });
 }
 
@@ -937,6 +939,16 @@ export function createAnthropicMessagesAdapter(opts: AnthropicAdapterOptions = {
       return parsed.input_tokens;
     },
 
+    /**
+     * NOT PURELY A READ, since D20. `buildHeaders` renews a near-expiry Console `oauth` credential
+     * and WRITES the fresh material back through the store, so validating one can rotate the record
+     * — and a host that calls this to render a settings pane will have refreshed a token by doing so.
+     *
+     * That is the right behaviour rather than an accident: "is this credential good?" answered from
+     * a token that expires in ten seconds is an answer about the past, and the refresh is exactly
+     * what makes the reply true a moment later. Stated here because a side effect a reader has to
+     * infer from a call three frames down is a side effect that surprises someone eventually.
+     */
     async validateCredential(ref: CredentialRef, ctx: ProviderContext): Promise<CredentialStatus> {
       if (ref.kind === "none") return { ok: false, code: "missing", message: "no credential is configured for this connection" };
       let material;

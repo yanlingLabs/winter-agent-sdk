@@ -9,7 +9,15 @@
 //     while the production flow — which has to go and ask — silently failed;
 //   - the account id comes from a SEPARATE authenticated `GET /api/oauth/profile`, as
 //     `account.uuid` (§2.4);
-//   - the authorize request is PKCE/S256 with the callback path `/callback` (§2.2).
+//   - the authorize request is PKCE/S256 with the callback path `/callback` (§2.2);
+//   - BOTH grants are `application/json` (§2.3), which this fake enforces rather than tolerates.
+//
+// THE TOKEN ROUTE FAILS CLOSED ON THE ENCODING, and that is a review finding rather than a
+// nicety. It first read the body with `URLSearchParams`, which does not throw on JSON — it produces
+// one meaningless key, so `grant_type` came back null, the `authorization_code` branch was SKIPPED
+// ENTIRELY, and the fake answered 200 having validated no PKCE at all. A fake that accepts every
+// encoding cannot prove the adapter sends the right one, and silently skipping the one check it
+// exists to perform is worse than not having it.
 //
 // WHY THE VERIFIER IS ACTUALLY CHECKED. A fake that accepts any `code_verifier` cannot tell a
 // PKCE-bound exchange from two unrelated random strings, which is the entire security property of a
@@ -83,10 +91,23 @@ export async function startAnthropicConsoleOauthFake(opts: AnthropicConsoleOauth
             // the caller must not echo it, and why this fake puts a marker in one.
             return jsonResponse({ error: "invalid_grant", error_description: "the fake refused this grant" }, opts.failTokenWith);
           }
-          const form = new URLSearchParams(recorded.body);
-          const grant = form.get("grant_type");
+          // EXACTLY JSON. The content type is checked first so a form-encoded body is refused as
+          // what it is, rather than as "unparseable".
+          const contentType = (recorded.headers["content-type"] ?? "").split(";")[0]!.trim();
+          if (contentType !== "application/json") {
+            return jsonResponse({ error: "invalid_request", error_description: `this endpoint accepts application/json only, not ${JSON.stringify(contentType)}` }, 400);
+          }
+          let body: Record<string, unknown>;
+          try {
+            const parsed: unknown = JSON.parse(recorded.body);
+            if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("not an object");
+            body = parsed as Record<string, unknown>;
+          } catch {
+            return jsonResponse({ error: "invalid_request", error_description: "the grant body is not a JSON object" }, 400);
+          }
+          const grant = body["grant_type"];
           if (grant === "authorization_code") {
-            const verifier = form.get("code_verifier") ?? "";
+            const verifier = typeof body["code_verifier"] === "string" ? body["code_verifier"] : "";
             const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier));
             if (!challenges.has(base64Url(new Uint8Array(digest)))) {
               return jsonResponse({ error: "invalid_grant", error_description: "PKCE verifier does not match any challenge this fake saw" }, 400);

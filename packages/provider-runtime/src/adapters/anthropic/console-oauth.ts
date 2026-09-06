@@ -63,6 +63,15 @@ export const CONSOLE_OAUTH = {
   callbackPath: "/callback",
   /** The `anthropic-beta` value that accompanies an OAuth bearer on every request. */
   betaHeader: "oauth-2025-04-20",
+  /**
+   * The profile-response field that names the credential record, as a dotted path.
+   *
+   * Present so that EVERY field of the capture's derived table has a counterpart here and the
+   * constants test gates all nine — a derived value with no shipped twin is a value nothing stops
+   * from drifting. `fetchAccountId` reads exactly this path; it is stated rather than walked because
+   * one fixed shape does not need a path interpreter.
+   */
+  accountIdPath: "account.uuid",
 } as const;
 
 /** How long before expiry a token is renewed rather than used. One minute of slack over a turn that may take seconds to start. */
@@ -136,6 +145,9 @@ export async function startAnthropicConsoleLogin(store: CredentialStore, options
     callbackPort: options.callbackPort ?? CONSOLE_OAUTH.callbackPort,
     callbackPath: CONSOLE_OAUTH.callbackPath,
     label: "Anthropic Console",
+    // R-A2-1: JSON, because that is the ONLY encoding this endpoint is observed receiving. See the
+    // capture's §2.3 -- the artifact's own authorization-code grant posts `application/json`.
+    bodyEncoding: "json",
     scope: CONSOLE_OAUTH.scope,
     ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
     openUrl: options.openUrl,
@@ -204,6 +216,7 @@ async function fetchAccountId(profileUrl: string, accessToken: string): Promise<
   } catch {
     throw new ProviderRequestError({ code: "server", message: "the Anthropic Console profile lookup returned a body that is not JSON", retryable: false });
   }
+  // Exactly `CONSOLE_OAUTH.accountIdPath` ("account.uuid"), spelled out rather than walked.
   const uuid = payload.account?.uuid;
   return typeof uuid === "string" && uuid.length > 0 ? uuid : undefined;
 }

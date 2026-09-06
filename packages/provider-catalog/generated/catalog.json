@@ -40,8 +40,8 @@
       },
       "pricingBasis": "token",
       "admission": {
-        "basis": "api-key",
-        "citation": "https://claude.com/pricing"
+        "basis": "oauth-documented",
+        "citation": "spec:WS-13b §0 D20"
       },
       "scope": "llm"
     },

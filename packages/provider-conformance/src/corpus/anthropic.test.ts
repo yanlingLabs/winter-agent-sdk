@@ -657,7 +657,14 @@ describe("D20: Anthropic Console OAuth on the wire", () => {
         // REFRESHED ONCE, BEFORE the generation — not after a 401, which would spend a turn to learn
         // something the expiry already said.
         expect(oauthFake.tokenRequests).toHaveLength(1);
-        expect(new URLSearchParams(oauthFake.tokenRequests[0]!.body).get("grant_type")).toBe("refresh_token");
+        // R-A2-1: JSON on the refresh grant too, and NO `anthropic-beta` on it -- that header rides
+        // the API request, never the token endpoint (the capture's §2.3 vs §2.5).
+        expect(oauthFake.tokenRequests[0]?.headers["content-type"]).toBe("application/json");
+        expect(oauthFake.tokenRequests[0]?.headers["anthropic-beta"]).toBeUndefined();
+        const grant = JSON.parse(oauthFake.tokenRequests[0]!.body) as Record<string, string>;
+        expect(grant["grant_type"]).toBe("refresh_token");
+        // The artifact's own refresh carries `scope`; Winter sends the scope it was granted.
+        expect(grant["scope"]).toBe(CONSOLE_OAUTH.scope);
         // And the turn actually USED the new token. Counting the refresh alone would pass on an
         // adapter that renewed the record and then sent the stale bearer anyway.
         expect(bearers).toEqual([FAKE_CONSOLE_REFRESHED_ACCESS_TOKEN]);
@@ -719,7 +726,12 @@ describe("D20: Anthropic Console OAuth on the wire", () => {
         for (const recorded of fake.requests) {
           for (const [name, value] of Object.entries(recorded.headers)) {
             if (name === "host") continue; // 127.0.0.1:<port>, never a vendor name
-            expect([name, value]).toEqual([name, expect.not.stringMatching(/claude/i)]);
+            // BOTH HALVES. The first version of this sweep asserted `[name, value]` against
+            // `[name, matcher]` -- comparing the name to ITSELF, which always passes, so a header
+            // NAMED for the vendor (`x-claude-…`) would have sailed through the one test written to
+            // catch exactly that.
+            expect(name).not.toMatch(/claude/i);
+            expect(value).not.toMatch(/claude/i);
           }
         }
       });

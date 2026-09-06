@@ -116,10 +116,25 @@ describe("D20: Anthropic Console OAuth", () => {
       // the challenge the browser-visible authorize URL carried. Asserting both merely exist proves
       // neither is empty; asserting they HASH is what proves the exchange is bound rather than two
       // unrelated random strings — which is the entire security of a loopback flow.
-      const form = new URLSearchParams(fake.tokenRequests[0]!.body);
-      expect(form.get("grant_type")).toBe("authorization_code");
-      expect(form.get("client_id")).toBe(CONSOLE_OAUTH.clientId);
-      const verifier = form.get("code_verifier") ?? "";
+      // R-A2-1: JSON, which is the only encoding this endpoint is observed receiving. Decoded as
+      // JSON rather than substring-matched -- a form body contains every one of these names too, so
+      // only parsing it proves the encoding. (The fake also REFUSES anything else, so this test
+      // could not reach a 200 on a form body.)
+      expect(fake.tokenRequests[0]?.headers["content-type"]).toBe("application/json");
+      const form = JSON.parse(fake.tokenRequests[0]!.body) as Record<string, string>;
+      expect(form["grant_type"]).toBe("authorization_code");
+      expect(form["client_id"]).toBe(CONSOLE_OAUTH.clientId);
+      // `state` rides the grant as the artifact sends it, and it is the value this process minted.
+      expect(form["state"]).toBe(authorize.searchParams.get("state") ?? "");
+      // NEGATIVE PIN: the grants carry NO `anthropic-beta`. The flow D20 mirrors sends a content
+      // type and nothing else -- the beta on a token endpoint belongs to a DIFFERENT OAuth
+      // implementation bundled in the same wrapper, and reading its headers as this flow's is the
+      // mistake this assertion exists to keep out.
+      expect(fake.tokenRequests[0]?.headers["anthropic-beta"]).toBeUndefined();
+      // Nor does the profile GET carry one: the artifact's own profile fetch sends only an
+      // authorization, a content type and a cache directive.
+      expect(fake.profileRequests[0]?.headers["anthropic-beta"]).toBeUndefined();
+      const verifier = form["code_verifier"] ?? "";
       expect(verifier.length).toBeGreaterThanOrEqual(43);
       const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier));
       expect(base64Url(new Uint8Array(digest))).toBe(authorize.searchParams.get("code_challenge") ?? "");
