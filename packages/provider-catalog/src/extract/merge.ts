@@ -557,10 +557,23 @@ export function buildUpstreamLayer(input: BuildUpstreamLayerInput): UpstreamLaye
         `endpoint-not-derivable: allowlisted provider "${allowed.upstreamId}" states no \`baseUrl\` at this commit. A row on a SHARED adapter with no \`defaultEndpoints.api\` inherits the adapter's own vendor default rather than failing, so it would send this provider's credential to the wrong vendor. Author a reviewed overlay row for "${allowed.winterId}" instead, or move the id to \`blocked\`.`,
       );
     }
-    const responsesBaseUrl = str(entry, "responsesBaseUrl");
-    if (responsesBaseUrl !== undefined && safeUrl(responsesBaseUrl) !== undefined) defaultEndpoints["responses"] = responsesBaseUrl;
+    // R6-11 applies to EVERY endpoint key, not just `api`. These two carried only a parse check,
+    // which was enough while the cohort was eight rows and none of them stated a `modelsUrl` with a
+    // query — the widened pool has one (`fireworks`, `?filter=supports_serverless=true`), and the
+    // validator refuses a stored endpoint with parameters in it. Recording the rejection rather than
+    // stripping the query: a `modelsUrl` minus its filter is a DIFFERENT request, and inventing one
+    // is the same class of guess the endpoint rule above refuses. Discovery falls back to the
+    // adapter's own `${base}/models`, which is where an OpenAI-compatible list lives anyway.
+    const endpointOk = (url: string): boolean => {
+      const parsed = safeUrl(url);
+      return parsed !== undefined && parsed.search.length === 0 && parsed.username.length === 0;
+    };
     const modelsUrl = str(entry, "modelsUrl");
-    if (modelsUrl !== undefined && safeUrl(modelsUrl) !== undefined) defaultEndpoints["models"] = modelsUrl;
+    for (const [field, key, value] of [["responsesBaseUrl", "responses", str(entry, "responsesBaseUrl")], ["modelsUrl", "models", modelsUrl]] as const) {
+      if (value === undefined) continue;
+      if (endpointOk(value)) defaultEndpoints[key] = value;
+      else reject(allowed.upstreamId, "field", "unsupported-shape", `${allowed.upstreamId}.${field}`, registryPath, `upstream ${field} ${JSON.stringify(value)} is not a credential-free, query-free absolute URL — R6-11 requires generated endpoints to be immutable and reviewable, so it is dropped rather than trimmed (a URL minus its query is a different request)`);
+    }
 
     const passthrough = bool(entry, "passthroughModels") === true;
     const liveAuthoritative = bool(entry, "liveCatalogAuthoritative");

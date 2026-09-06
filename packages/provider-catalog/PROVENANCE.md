@@ -7,8 +7,8 @@ The committed catalog is the merge of two layers, performed by `scripts/provider
 
 | Layer | Source | Owner | Present |
 | --- | --- | --- | --- |
-| upstream | `generated/upstream-layer.json`, extracted from the pinned OmniRoute tree by `scripts/provider-source-sync.ts` | the extractor | **yes** — 7 providers, 54 models |
-| overlay | `overlay/providers.json` + `overlay/models.json`, hand-authored and reviewed | Winter | yes — 21 providers, 13 models |
+| upstream | `generated/upstream-layer.json`, extracted from the pinned OmniRoute tree by `scripts/provider-source-sync.ts` | the extractor | **yes** — 114 providers, 550 models |
+| overlay | `overlay/providers.json` + `overlay/models.json`, hand-authored and reviewed | Winter | yes — 21 providers, 15 models |
 
 **The overlay always wins.** WS-13 §7: live discovery and upstream extraction never silently
 overwrite `official-doc`/`live-probe` overlay entries, so a conflicting upstream row is dropped in
@@ -83,6 +83,37 @@ twin and a test asserts the two agree, so this document cannot drift away from t
 | `*.pricing` | official-doc derived | **overlay only**, from the vendors' pricing pages with the URL and observation instant |
 | `*.classifierEligible` | live-probe proven | **never set** by extraction or overlay (R6-14) |
 | `reasoning.continuationDomain` / `summaryRequest` / `readableState` / `completionEvent` / `toolLoopRequirement` | official-doc derived | **overlay only**; continuation domain is never inferred from a shared HTTP shape |
+
+### Two tiers of admission citation
+
+Every provider row carries `admission.citation` — the document that admits it (WS-13b §1, D21;
+R6b-3 makes a row without one a validation failure, and one citing the audit's `unknown` class a
+refusal). The rows do **not** all rest on the same strength of evidence, and conflating the two
+tiers would be the quiet failure this field exists to prevent, so they are labelled:
+
+| Tier | What it is | Which rows |
+| --- | --- | --- |
+| **fetched-document** | a page `docs/research/Provider-third-party-access-audit.md` retrieved and read on 2026-09-06, or a vendor pricing page already reviewed in-repo | the 3 frontier pricing pages, and every P6.5 **overlay** row (the audit's 51 citations) |
+| **pinned-upstream** | the vendor's own site as OmniRoute's product catalog records it at commit `5458026`, blob-pinned in `extraction-manifest.json`, plus the api-key path attested by that id's own pinned `RegistryEntry` (`authType: "apikey"`, its dialect, its base URL) | the 107 P6.5 allowlist admissions, and the 5 P6 rows T1 had left citing `spec:WS-13 §1` |
+
+A pinned-upstream citation is a real, dated, verifiable reference — it names a specific blob at a
+verified commit — but it is **not** a page this repository fetched and read, and it is not the
+vendor's terms of service. Its own text says so, in every row. Two consequences are deliberate:
+
+* every pinned-upstream row carries `risk.class: "review-required"` with that reason spelled out,
+  rather than `approved`. Only `blocked` refuses at resolution (`provider-runtime/src/registry.ts`),
+  so the row is usable — but nothing in the catalogue claims a review that did not happen;
+* the audit's own `unknown` disposition is a **different and stronger** statement, and it excludes:
+  an id whose decisive document was looked for and not found is in `blocked`, not admitted at this
+  tier. `codebuddy-cn` is the worked example.
+
+**What decision (a) asked for and why it could not be met as written.** The P6.5 plan asked lane X2
+to upgrade five `spec:WS-13 §1` citations (`deepseek`, `openrouter`, `azure-openai`, `bedrock`,
+`vertex`) "to vendor URLs from the audit's citations". The audit's 51 citations cover the OAuth,
+keyless and agent-transport ids it audited; **none of the five appears in it**. They were upgraded to
+the pinned-upstream tier instead, which is a real vendor URL and a strict improvement on a `spec:`
+self-reference, and this paragraph is the record that the stronger upgrade was unavailable rather
+than skipped.
 
 ### The two judgement calls worth arguing with
 
@@ -197,7 +228,7 @@ Recomputed at every run into `generated/denominator.json`. At this pin:
 | noauth | 13 | blocked |
 | oauth | 25 | blocked |
 | web-cookie | 35 | blocked |
-| apikey | 233 | candidate pool — 8 allowlisted, 225 rejected `not-allowlisted` |
+| apikey | 233 | candidate pool — 115 allowlisted, 118 rejected `not-allowlisted`, 0 named individually in `blocked` |
 | local | 14 | Winter-owned (12 chat backends; `comfyui`/`sdwebui` excluded as image systems) |
 | search | 14 | blocked |
 | audio | 12 | blocked |
@@ -233,27 +264,27 @@ unfalsifiable against its own source.
 
 ## What was excluded, and why
 
-`generated/rejections.json` carries all **695** rows. The counts below are generated from the ledger
+`generated/rejections.json` carries all **722** rows. The counts below are generated from the ledger
 and pinned by `catalog-integrity.test.ts` → *"PROVENANCE.md's exclusion table matches the ledger,
 row for row"*, because a hand-typed count is the line that goes stale first and nobody notices.
 
 | Class | Rows | What it means |
 | --- | ---: | --- |
-| `not-allowlisted` | 225 | an api-key provider upstream lists that Winter has not curated (WS-13 §1: presence is never inclusion) |
+| `not-allowlisted` | 118 | an api-key provider upstream lists that Winter has not curated (WS-13 §1: presence is never inclusion). P6.5 cut this from 225 by admitting 107 and naming the rest INDIVIDUALLY in `blocked` with a ruling each — a generic class row is not an exclusion anyone can review |
 | `executable-value` | 116 | functions, arrow functions, `Object.freeze(...)`, `new`, and other calls |
 | `unresolved-reference` | 82 | an identifier whose declaration is outside the allowlist or was itself rejected — including the **three** models whose `unsupportedParams` could not be read (see below) |
 | `dynamic-expression` | 51 | template literals with substitutions, property access, computed keys |
 | `category-web-cookie` | 35 | browser-session transports, excluded categorically |
 | `identity-header` | 30 | vendor client-identity headers — never imported |
 | `category-oauth` | 25 | generic OAuth import is rejected; Winter's OAuth providers are Winter-owned rows |
-| `unsupported-shape` | 22 | opaque runtime config, request defaults, malformed rows |
+| `unsupported-shape` | 49 | opaque runtime config, request defaults, malformed rows, and (P6.5) a `modelsUrl`/`responsesBaseUrl` carrying a query string or userinfo — R6-11 drops it rather than trimming, because a URL minus its query is a different request (`fireworks` is the one at this pin) |
 | `credential-material` | 19 | OAuth client ids/secrets and literal anonymous API keys |
 | `category-local-live-discovery` | 14 | local backends (Winter-owned, live-discovery only) plus the two image systems |
 | `category-search` | 14 | not LLM providers |
 | `category-no-auth` | 13 | reject by default (WS-13 §1) |
 | `category-audio` | 12 | not worker-model providers |
 | `unrepresentable-protocol` | 11 | Vertex's `targetFormat: "claude"` rows — see below |
-| **`reviewed-normalization`** | 13 | **NOT an exclusion.** A row that DID ship, carrying a reviewed, recorded deviation from the pinned tree: the OpenRouter wire id, the Bedrock executor's protocol, the OpenAI and Vertex adapter overrides, the four Vertex partner statuses, and the **five endpoint strips** (WS-13b §2 — see "Endpoints diverge from upstream on purpose") |
+| **`reviewed-normalization`** | 120 | **NOT an exclusion.** A row that DID ship, carrying a reviewed, recorded deviation from the pinned tree: the OpenRouter wire id, the Bedrock executor's protocol, the OpenAI and Vertex adapter overrides, the four Vertex partner statuses, and **one endpoint strip per admitted row** (WS-13b §2 — see "Endpoints diverge from upstream on purpose"), which is now the bulk of the class |
 | `url-builder` | 4 | executable URL builders (WS-13 §13's security floor names this exactly) |
 | `category-cloud-agent` | 3 | remote agent products |
 | `category-upstream-proxy` | 2 | no proxy-of-proxy layer |
