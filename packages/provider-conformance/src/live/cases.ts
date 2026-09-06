@@ -2,8 +2,15 @@
 //
 // This is the one place in the repository that talks to a vendor endpoint. It runs from
 // `scripts/verify-provider-live.ts` behind `WINTER_LIVE_PROVIDER_TESTS=1` plus a per-provider
-// `WINTER_LIVE_<PROVIDER>_API_KEY`; without both, the script prints "skipped: not opted in" and
-// exits 0, and CI sets neither.
+// selector — `_API_KEY`, `_CREDENTIAL_REF=keychain:<account>` (an OAuth row) or `=1` (a `free`
+// keyless row), the three documented third-party paths WS-13b §1 admits; without the opt-in AND one
+// of those, the script prints "skipped: not opted in" and exits 0, and CI sets neither.
+//
+// THE CASES BELOW ARE THE SAME FOR ALL THREE KINDS, by design: what a row is asked does not depend
+// on how its credential was named, and the per-target row `live/index.ts` folds them into is what
+// records the kind. So a keyless row and a subscription OAuth row are held to the same three
+// questions the brief names — one generation, one tool call, and `countTokens` where the adapter
+// offers one — plus discovery and the reasoning summary where the descriptor says they apply.
 //
 // It IS also reached under `bun test`, and the honest statement of why that is safe is worth more
 // than the older "no test imports it": `scripts/verify-provider-live.test.ts`'s I1 fixture spawns

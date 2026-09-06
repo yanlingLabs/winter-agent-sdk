@@ -101,6 +101,84 @@ export async function runLiveCases(opts: RunLiveCasesOptions): Promise<LiveRepor
   };
 }
 
+// -------------------------------------------------------------------------------------------------
+// P6.5 Lane L (WS-13b §7): the per-target ROW.
+//
+// `formatLiveReport` above prints one line per CASE, which is what an operator debugging a provider
+// wants. What a widening phase wants is one line per TARGET — a row that says whether this provider
+// answered at all, how long it took, whether it can be driven agentically (the tool round), and under
+// what identity Winter asked. Twenty of those read as a table; twenty five-line blocks do not.
+//
+// The output rule is the same one the cases obey and is the reason this shape is fixed rather than a
+// free-form string: identifiers, a verdict, a duration and Winter's own identity. There is no field
+// here that could carry a byte of what a provider returned.
+// -------------------------------------------------------------------------------------------------
+
+/** How the target's credential was named — WS-13b §1's three documented third-party paths. Mirrors the gate's `LiveTargetKind`. */
+export type LiveTargetKindLabel = "api-key" | "oauth" | "keyless";
+
+export interface LiveRowSummary {
+  providerId: string;
+  /** The CATALOG KEY (`<providerId>/<model>`), never the provider-local id and never a display name. */
+  model: string;
+  kind: LiveTargetKindLabel;
+  /** True when no case FAILED. A skipped case is a recorded capability fact, not a failure. */
+  ok: boolean;
+  /** The summed wall-clock of every case. A live gate's most common real failure is "it answered, eventually". */
+  latencyMs: number;
+  /**
+   * True only when the tool round ran and PASSED.
+   *
+   * A skip therefore reads `false` — deliberately, because the question this column answers is "can
+   * this row be driven agentically?", and "the descriptor says it cannot" is a no. The per-case line
+   * above always says WHICH of the two it was, so the row is a summary and never the whole story.
+   */
+  toolCallOk: boolean;
+  /**
+   * The identity string THIS BUILD sends (`winterUserAgent()`), recorded beside the result so a live
+   * run's output carries the identity claim WS-13b §1 makes.
+   *
+   * It is not a wire observation — this runner never sees an outgoing header. That Winter's own
+   * user-agent is genuinely on every family's requests is pinned by the corpus (`corpus/*.test.ts`,
+   * "every request carries Winter's OWN user-agent"), against the live request a fake received.
+   */
+  identityHeader: string;
+}
+
+export interface LiveRowSummaryOptions {
+  kind: LiveTargetKindLabel;
+  identityHeader: string;
+}
+
+/** Folds a finished `LiveReport` into its one-line row. Pure: no adapter, no endpoint, no clock. */
+export function liveRowSummary(report: LiveReport, opts: LiveRowSummaryOptions): LiveRowSummary {
+  return {
+    providerId: report.providerId,
+    model: report.modelKey,
+    kind: opts.kind,
+    ok: report.ok,
+    latencyMs: report.outcomes.reduce((total, outcome) => total + outcome.ms, 0),
+    toolCallOk: report.outcomes.some((outcome) => outcome.id === "tool-round" && outcome.status === "ok"),
+    identityHeader: opts.identityHeader,
+  };
+}
+
+/** `key=value` pairs, in a fixed order, so a run's rows grep and diff. */
+export function formatLiveRow(row: LiveRowSummary): string {
+  return `  live-row providerId=${row.providerId} model=${row.model} kind=${row.kind} ok=${row.ok} latencyMs=${row.latencyMs} toolCallOk=${row.toolCallOk} identityHeader=${row.identityHeader}`;
+}
+
+/**
+ * The per-target case: run every live leg against one target, and fold the result into its row.
+ *
+ * One call so the gate cannot run the cases and then forget the row, or report a row built from
+ * something other than the run it names.
+ */
+export async function runLiveTarget(opts: RunLiveCasesOptions & LiveRowSummaryOptions): Promise<{ report: LiveReport; row: LiveRowSummary }> {
+  const report = await runLiveCases(opts);
+  return { report, row: liveRowSummary(report, { kind: opts.kind, identityHeader: opts.identityHeader }) };
+}
+
 /** One line per case. Identifiers, counts and durations only — never a byte of what a provider returned. */
 export function formatLiveReport(report: LiveReport): string {
   const byId = new Map(LIVE_CASES.map((c) => [c.id, c]));
