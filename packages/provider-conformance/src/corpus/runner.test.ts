@@ -7,7 +7,8 @@
 //
 // Every fake is closed in a `finally` (via `withFake`), and every one binds 127.0.0.1 port 0.
 import { test, expect, describe } from "bun:test";
-import { describeCaseFailure, describeReasonCode } from "./classifier-safety.ts";
+import { MODEL_REASON_CODE_PREFIX, describeCaseFailure, describeReasonCode } from "./classifier-safety.ts";
+import { CLASSIFIER_NO_VERDICT_REASONS, MODEL_REASON_CODE_PREFIX as RUNTIME_MODEL_REASON_CODE_PREFIX } from "../../../runtime/src/provider/classifier/verdict-schema.ts";
 import {
   errorResponse,
   jsonResponse,
@@ -343,6 +344,17 @@ describe("report rendering keeps PROVIDER text out of an operator's terminal (La
     // A non-Error value still renders as a type rather than as a stringified payload.
     expect(describeCaseFailure({ secret: "PAYLOAD" })).toBe("Error");
     expect(describeCaseFailure("a bare string")).toBe("non-error value of type string");
+  });
+
+  test("the mirrored `model:` namespace equals the one the classifier parse actually stamps", () => {
+    // The mirror rule this package works under (it must not import the runtime) comes with its
+    // second half: the mirror is not trusted. A drifted copy here would stop matching the stamp and
+    // silently un-redact every model-authored reason code — the exact forgery the namespace exists
+    // to prevent — and nothing else would notice.
+    expect(MODEL_REASON_CODE_PREFIX).toBe(RUNTIME_MODEL_REASON_CODE_PREFIX);
+    // ...and the closed vocabulary must never collide with it, or Winter's own codes would be
+    // rendered as model-authored.
+    for (const own of CLASSIFIER_NO_VERDICT_REASONS) expect([own, own.startsWith(RUNTIME_MODEL_REASON_CODE_PREFIX)]).toEqual([own, false]);
   });
 
   test("a MODEL-authored reasonCode renders as its namespace and length, never its content", () => {

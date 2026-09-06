@@ -415,9 +415,6 @@ export function describeThrown(err: unknown): string {
   return parts.join(" ");
 }
 
-/** The `model:` namespace every MODEL-AUTHORED reason code carries out of the classifier parse. */
-const MODEL_REASON_CODE_PREFIX = "model:";
-
 /**
  * A verdict's `reasonCode`, rendered as identity rather than as content.
  *
@@ -425,7 +422,16 @@ const MODEL_REASON_CODE_PREFIX = "model:";
  * verbatim — they are the whole diagnosis. A `model:`-prefixed code is up to 64 characters the model
  * wrote, and this string is printed to a terminal, so what survives is the fact that the model
  * authored it and how much it said.
+ *
+ * The namespace is MIRRORED, not imported — this package must not import the runtime (see the
+ * structural-envelope note at the top of this file, and the dependency direction it states) — so it
+ * follows that same rule's second half: the mirror is not trusted. `runner.test.ts` asserts this
+ * constant equals `MODEL_REASON_CODE_PREFIX` in `classifier/verdict-schema.ts`, because the whole
+ * reason the namespace exists is that a model answering `reasonCode: "timeout"` must not be able to
+ * look like a genuine transport timeout — and a drifted copy here would silently un-redact it.
  */
+export const MODEL_REASON_CODE_PREFIX = "model:";
+
 export function describeReasonCode(reasonCode: string): string {
   if (!reasonCode.startsWith(MODEL_REASON_CODE_PREFIX)) return reasonCode;
   return `${MODEL_REASON_CODE_PREFIX}<model-authored, ${reasonCode.length - MODEL_REASON_CODE_PREFIX.length} chars>`;
