@@ -16,7 +16,7 @@ import { deleteProviderCredential, providerCredentialRef, startProviderLogin, st
 // BY PACKAGE NAME, as every other runtime test reaches this package (`winter-provider-conformance`
 // is a root devDependency). A deep relative path into another workspace's `src/` is the drift its
 // barrel exists to prevent, and it is what this file did first.
-import { anthropicConsoleOauthFake, codexFake, startFake } from "winter-provider-conformance";
+import { anthropicConsoleOauthFake, codexFake, startFake, xaiOauthFake } from "winter-provider-conformance";
 import { createKeychainCredentialStore, DEFAULT_KEYCHAIN_SERVICE, type SecretsBackend } from "./keychain-store.ts";
 
 const SECRET = "test-key-do-not-use-4d9f2a";
@@ -545,16 +545,51 @@ describe("startProviderLogin (WS-13b): the ONE host door onto every OAuth flow",
     }
   }, 15_000);
 
-  test("`xai-oauth` and `qoder` are a TYPED refusal, not a crash and not a silent no-op", async () => {
-    const store = createMemoryCredentialStore();
-    for (const providerId of ["xai-oauth", "qoder"] as const) {
-      const outcome: unknown = await startProviderLogin(providerId, store, { openUrl: async () => {} }).catch((e: unknown) => e);
-      expect(outcome).toBeInstanceOf(CredentialResolutionError);
-      expect((outcome as CredentialResolutionError).code).toBe("unsupported");
-      expect((outcome as Error).message).toContain(providerId);
-      // Nothing was opened, nothing was stored: a refusal that had already run half a flow would be
-      // worse than one that never started.
-      expect(store.size()).toBe(0);
+  test("`xai-oauth` routes to the device flow — THROUGH THIS DOOR, and pointed at a fixture rather than at xAI", async () => {
+    // POINTED AT A FAKE, and that is the point of the test rather than a detail of it. Before this
+    // case was wired, the refusal below covered `xai-oauth` too and needed no endpoint; wiring the
+    // case without also giving the call a `deviceCodeUrl` turns THIS LINE into a live request to
+    // `auth.x.ai` — the review measured exactly that: a real HTTP 200 from the vendor's device
+    // endpoint, then a poll against the production token endpoint until the test's own timeout.
+    // `deviceCodeUrl`/`pollIntervalMs` exist on the options for this reason.
+    //
+    // `openUrl` is supplied and MUST NOT BE CALLED: RFC 8628 has no browser leg, and a device flow
+    // that opened one would be a different flow than the one this row ships.
+    const fake = await xaiOauthFake.startXaiOauthFake();
+    try {
+      const store = createMemoryCredentialStore();
+      let openUrlCalls = 0;
+      const result = await startProviderLogin("xai-oauth", store, {
+        openUrl: async () => {
+          openUrlCalls += 1;
+        },
+        deviceCodeUrl: fake.deviceCodeUrl,
+        tokenUrl: fake.tokenUrl,
+        pollIntervalMs: 5,
+      });
+      expect(result.ref.account).toBe("xai-oauth:acct-x");
+      expect((await store.get(result.ref))?.kind).toBe("oauth");
+      expect(openUrlCalls).toBe(0);
+      // The door did not quietly lose the honest identity on its way through.
+      for (const req of fake.requests) expect(new URLSearchParams(req.body).get("referrer")).toBe("winter-agent-sdk");
+      // Every request went to the fixture; none reached a vendor.
+      expect(fake.requests.length).toBeGreaterThan(0);
+    } finally {
+      await fake.close();
     }
+  }, 15_000);
+
+  test("`qoder` is a TYPED refusal, not a crash and not a silent no-op", async () => {
+    // `qoder` ALONE now. Lane O's capture established that Qoder documents no third-party OAuth
+    // grant and no inference endpoint, so this row is carried rather than shipped — the refusal is
+    // this id's correct end state, not a placeholder waiting on a flow.
+    const store = createMemoryCredentialStore();
+    const outcome: unknown = await startProviderLogin("qoder", store, { openUrl: async () => {} }).catch((e: unknown) => e);
+    expect(outcome).toBeInstanceOf(CredentialResolutionError);
+    expect((outcome as CredentialResolutionError).code).toBe("unsupported");
+    expect((outcome as Error).message).toContain("qoder");
+    // Nothing was opened, nothing was stored: a refusal that had already run half a flow would be
+    // worse than one that never started.
+    expect(store.size()).toBe(0);
   });
 });

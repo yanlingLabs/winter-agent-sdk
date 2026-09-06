@@ -25,7 +25,7 @@
 // is the redacted ref, the operation, and the typed code — which is what makes the failure
 // actionable in the first place.
 import type { CredentialMaterial, CredentialStatus, CredentialStore, ProviderContext, ProviderRegistry } from "@yanlinglabs/winter-provider-runtime";
-import { CredentialResolutionError, WinterProviderResolutionError, startAnthropicConsoleLogin, startCodexLogin } from "@yanlinglabs/winter-provider-runtime";
+import { CredentialResolutionError, WinterProviderResolutionError, startAnthropicConsoleLogin, startCodexLogin, startXaiLogin } from "@yanlinglabs/winter-provider-runtime";
 import type { CredentialRef } from "@yanlinglabs/winter-agent-sdk";
 import { keychainAccountName } from "./keychain-store.ts";
 import { redactCredentialRef } from "./selection.ts";
@@ -349,11 +349,23 @@ export async function startProviderLogin(providerId: ProviderLoginId, store: Cre
     case "codex-oauth":
       return await startCodexLogin(store, options);
     case "xai-oauth":
+      // The RFC 8628 device grant, and the one arm here that never touches `options.openUrl` —
+      // there is no browser leg to open. The verification URL and the user code reach the host on
+      // `onAuthStatus.output` instead (see `openUrl`'s own note above).
+      return await startXaiLogin(store, options);
     case "qoder":
       // TYPED, and raised BEFORE anything runs: a refusal that had already opened a browser or
       // half-completed a flow would be worse than one that never started. `unsupported` is the
       // honest code — the flow is not wired in this build, which is not the same as the user's
       // credential being bad.
+      //
+      // For `qoder` this is the END STATE, not a stub waiting on a lane. Lane O's capture
+      // (`packages/conformance/compat/qoder/derived-shapes-p6b-qoder.md`) established against
+      // Qoder's own complete documentation index that it publishes no third-party OAuth grant —
+      // the only OAuth it documents is Qoder acting as a client toward MCP servers — and no
+      // third-party inference endpoint either. Its documented programmatic route is a Personal
+      // Access Token, and its documented agent route is its own Agent SDK / Cloud Agents, which is
+      // the agent-transport class WS-13 §8.2 excludes. There is nothing here to sign in to.
       throw new CredentialResolutionError("unsupported", `the "${providerId}" login is not wired in this build yet, so there is nothing to sign in to; no browser was opened and no record was written`);
   }
 }
