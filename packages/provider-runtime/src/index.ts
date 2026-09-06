@@ -51,3 +51,17 @@ export { WinterProviderResolutionError, createRegistry, estimateCostUsd } from "
 export type { ModelInfo, ProviderRegistry, RegistryListing, ResolutionErrorCode, ResolveRequest, ResolvedModel, UsageForCost } from "./registry.ts";
 export { createDiscoveryCache, discoverModels } from "./discovery.ts";
 export type { DiscoveryCache } from "./discovery.ts";
+
+// --- Phase 6 Task 10: the two surfaces the lanes built and the barrel could not publish -----------
+//
+// UNFROZEN AT CLOSE, deliberately and only here. R6-12 froze this file for the duration of the
+// parallel lanes so no two of them could edit it at once; the freeze was never a statement that the
+// package's own adapters and continuity module should stay unreachable by package name. Every lane
+// reached them by relative path (`../../../provider-runtime/src/adapters/...`), which works and is
+// exactly the drift the barrel exists to prevent: a path is a private detail, and four packages
+// spelling it out is four places to fix when a file moves.
+//
+// `adapters/index.ts` additionally carries `createShippedAdapters`, the ONE construction site for
+// every adapter this build ships — see its header for why the descriptor lookup lives there.
+export * from "./adapters/index.ts";
+export * from "./continuity/index.ts";
