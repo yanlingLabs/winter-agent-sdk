@@ -23,6 +23,7 @@
 // the CATALOG, but it is only observable where the catalog meets the adapter, and no package that
 // can see both is closer than this one. `provider-catalog` cannot import the runtime.
 import { describe, expect, test } from "bun:test";
+import { serve } from "bun";
 import { createMemoryCredentialStore } from "@yanlinglabs/winter-provider-runtime";
 import { buildSessionProvider } from "./session-provider.ts";
 import { chatCatalog, chatModel, chatProvider, startRawChatFake } from "./raw-chat-fake.test-support.ts";
@@ -53,6 +54,43 @@ describe("WS-13b §2: `defaultEndpoints.api` is the API ROOT, because the adapte
       ]);
     } finally {
       await fake.close();
+    }
+  });
+
+  test("R6b-5: `winter.anthropic-messages` is multi-provider IN FACT -- each sibling reaches its OWN endpoint", async () => {
+    // WS-13b §2 says "the Anthropic adapter becomes multi-provider" and names no owner, so this is
+    // the measurement rather than the assumption. There is no `providerId === "anthropic"` guard in
+    // `adapters/anthropic/messages.ts`; what makes the siblings work is the same `connectionFrom`
+    // copy as above, and the adapter appending `/v1/messages` to whatever base it is handed.
+    //
+    // `zai-anthropic`'s numbers are the real ones: upstream states
+    // `https://api.z.ai/api/anthropic/v1/messages`, the mapper records the root
+    // `https://api.z.ai/api/anthropic`, and the adapter must put the full URL back together.
+    const paths: string[] = [];
+    const server = serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch(req) {
+        paths.push(new URL(req.url).pathname);
+        // The SUBJECT is the URL, so the body may be anything: a 400 is recorded just as well as a
+        // stream, and refusing keeps the fake to four lines.
+        return new Response(JSON.stringify({ type: "error", error: { type: "invalid_request_error", message: "probe" } }), { status: 400, headers: { "content-type": "application/json" } });
+      },
+    });
+    const url = `http://127.0.0.1:${server.port}`;
+    try {
+      const anthropicRow = (id: string, api: string) => ({ ...chatProvider(id, api), protocols: ["anthropic-messages"], adapterId: "winter.anthropic-messages", family: "anthropic" }) as never;
+      const catalog = chatCatalog(
+        [anthropicRow("anthropic", `${url}/one`), anthropicRow("zai-anthropic", `${url}/api/anthropic`)],
+        [chatModel({ key: "anthropic/m1", providerId: "anthropic", upstreamId: "m1" }), chatModel({ key: "zai-anthropic/m2", providerId: "zai-anthropic", upstreamId: "m2" })],
+      );
+      for (const model of ["anthropic/m1", "zai-anthropic/m2"]) {
+        const wiring = buildSessionProvider({ config: { model } as never, env: {}, catalog, credentials: createMemoryCredentialStore() });
+        await wiring.provider.generate({ messages: [{ role: "user", content: "hi" }] } as never).catch(() => {});
+      }
+      expect(paths).toEqual(["/one/v1/messages", "/api/anthropic/v1/messages"]);
+    } finally {
+      await server.stop(true);
     }
   });
 
