@@ -597,7 +597,7 @@ const WIDENING_ROWS: ConformanceRow[] = [
     id: "WS13b-5b",
     spec: WS13B,
     bullet:
-      "§7 the credential gets IN and lands where the operator chose: `--login <providerId>` drives `startProviderLogin` (loopback and device flows both), `WINTER_LIVE_KEYCHAIN_SERVICE` + `keychain:<service>/<account>` point the run at a throwaway Keychain service, and neither door is reachable from `bun test`",
+      "§7 the credential gets IN and lands where the operator chose, and NEVER in the host's services: `--login <providerId>` drives `startProviderLogin` (loopback and device flows both), `WINTER_LIVE_KEYCHAIN_SERVICE` is REQUIRED for every Keychain path (no production default — unset is a typed refusal before any store is constructed), `keychain:<service>/<account>` addresses one record, and neither door is reachable from `bun test`",
     status: "new",
     citations: [
       { file: `${SCRIPTS}/verify-provider-live.test.ts`, testName: "`anthropic` runs the Console PKCE login against the fake and prints the exact CREDENTIAL_REF to export" },
@@ -605,8 +605,11 @@ const WIDENING_ROWS: ConformanceRow[] = [
       { file: `${SCRIPTS}/verify-provider-live.test.ts`, testName: "`keychain:<service>/<account>` carries the service on the ref; `keychain:<account>` leaves it to the store" },
       { file: `${SCRIPTS}/verify-provider-live.test.ts`, testName: "an account containing a SLASH is not mistaken for a service" },
       { file: `${SCRIPTS}/verify-provider-live.test.ts`, testName: "the spawn helper REFUSES `--login` too -- it is the second door onto the Keychain" },
+      { file: `${SCRIPTS}/verify-provider-live.test.ts`, testName: "UNSET: the refusal happens BEFORE any store is constructed" },
+      { file: `${SCRIPTS}/verify-provider-live.test.ts`, testName: "SET: the store is built with THAT service, and the api-key and keyless kinds never build one at all" },
+      { file: `${SCRIPTS}/verify-provider-live.test.ts`, testName: "`--login` refuses with no service EVEN when a store is injected" },
     ],
-    note: "The controller's close-out ruling (a dedicated `com.winter.live.<yyyymmdd>` service, deleted after the run, so `com.winter.core`/`.dev` are never touched) had no mechanism before these two doors.",
+    note: "The controller's close-out ruling — a dedicated `com.winter.live.<yyyymmdd>` service, deleted after the run, so `com.winter.core`/`.dev` are never touched — is ENFORCED, not merely enabled: the service has no production default, and a spy factory proves no store is constructed without one.",
   },
   {
     id: "WS13b-6",

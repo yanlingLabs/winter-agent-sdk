@@ -14,13 +14,14 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadCatalog } from "@yanlinglabs/winter-provider-catalog";
-import { createMemoryCredentialStore, normalizeHttpError, winterUserAgent } from "@yanlinglabs/winter-provider-runtime";
+import { createMemoryCredentialStore, CredentialResolutionError, normalizeHttpError, winterUserAgent, type CredentialStore } from "@yanlinglabs/winter-provider-runtime";
 import { anthropicConsoleOauthFake, errorResponse, startFake, xaiOauthFake } from "winter-provider-conformance";
 import {
   ADAPTERS_MODULE_VAR,
   countByKind,
   CREDENTIAL_REF_SUFFIX,
   collectAdapters,
+  credentialStoreFor,
   KEYCHAIN_SERVICE_VAR,
   liveEnvPrefix,
   OPT_IN_VAR,
@@ -32,6 +33,17 @@ import {
 } from "./verify-provider-live.ts";
 
 const CATALOG = loadCatalog();
+
+/**
+ * The dedicated Keychain service every Keychain-touching case names.
+ *
+ * CONTROLLER RULING (2026-09-06): the live gate has no production default — unset, it refuses every
+ * Keychain path rather than reading or writing `com.winter.core`/`.dev`, which are the host's. So a
+ * case that plans an OAuth target has to say where the run's material lives, exactly as an operator
+ * does, and the refusal itself has its own tests below. The value is a throwaway name that no store
+ * is ever actually built against here.
+ */
+const SERVICE = { [KEYCHAIN_SERVICE_VAR]: "com.winter.live.test" } as const;
 
 // The round-1 tests planned two of the three kinds against a `catalogPlus()` fixture, because
 // `xai-oauth`, `aihorde` and `uncloseai` did not exist yet. Lanes X2/A2/O have merged, so the
@@ -136,7 +148,7 @@ describe("planLiveRun selects exactly what was named", () => {
 // -------------------------------------------------------------------------------------------------
 describe("WS-13b: the live gate's three target kinds", () => {
   test("an OAuth row is selected by WINTER_LIVE_<P>_CREDENTIAL_REF and never by an API-key variable", () => {
-    const plan = planLiveRun({ [OPT_IN_VAR]: "1", WINTER_LIVE_XAI_OAUTH_CREDENTIAL_REF: "keychain:xai-oauth:acct" }, CATALOG);
+    const plan = planLiveRun({ [OPT_IN_VAR]: "1", ...SERVICE, WINTER_LIVE_XAI_OAUTH_CREDENTIAL_REF: "keychain:xai-oauth:acct" }, CATALOG);
     expect(plan.optedIn && plan.targets.map((t) => [t.providerId, t.kind])).toEqual([["xai-oauth", "oauth"]]);
     // The credential resolves through a KEYCHAIN ref — R6-10's one record per provider/account — and
     // the target reports the VARIABLE that named it, never the account.
@@ -180,7 +192,7 @@ describe("WS-13b: the live gate's three target kinds", () => {
     // Round-1 minor 4: this asserted only `optedIn === false`, which a run that had simply not opted
     // in would satisfy just as well. The warning is what distinguishes "refused" from "never asked".
     for (const value of ["xai-oauth:acct", "env:SOMETHING", "keychain:", "  "]) {
-      const plan = planLiveRun({ [OPT_IN_VAR]: "1", WINTER_LIVE_XAI_OAUTH_CREDENTIAL_REF: value }, CATALOG);
+      const plan = planLiveRun({ [OPT_IN_VAR]: "1", ...SERVICE, WINTER_LIVE_XAI_OAUTH_CREDENTIAL_REF: value }, CATALOG);
       expect(plan.optedIn).toBe(false);
       // A blank value is not a malformed ref — it is no ref at all, and nothing was named.
       if (value.trim().length > 0) expect(plan.warnings?.join(" ")).toContain("WINTER_LIVE_XAI_OAUTH_CREDENTIAL_REF");
@@ -190,7 +202,7 @@ describe("WS-13b: the live gate's three target kinds", () => {
   test("naming BOTH a credential ref and an API key for one provider resolves through the ref, and SAYS so -- neither variable's value is printed", () => {
     // On `anthropic`, which WS-13b §3 gives BOTH auth kinds, so both variables are legitimate and the
     // precedence rule is the only thing deciding.
-    const plan = planLiveRun({ [OPT_IN_VAR]: "1", WINTER_LIVE_ANTHROPIC_CREDENTIAL_REF: "keychain:anthropic:acct", WINTER_LIVE_ANTHROPIC_API_KEY: "test-key-x" }, CATALOG);
+    const plan = planLiveRun({ [OPT_IN_VAR]: "1", ...SERVICE, WINTER_LIVE_ANTHROPIC_CREDENTIAL_REF: "keychain:anthropic:acct", WINTER_LIVE_ANTHROPIC_API_KEY: "test-key-x" }, CATALOG);
     expect(plan.optedIn && plan.targets.map((t) => t.kind)).toEqual(["oauth"]);
     const warning = (plan.warnings ?? []).join(" ");
     expect(warning).toContain("WINTER_LIVE_ANTHROPIC_CREDENTIAL_REF");
@@ -214,7 +226,7 @@ describe("WS-13b: the live gate's three target kinds", () => {
 
   test("the three kinds are counted per kind, so a run says what it is about to do before it does it", () => {
     const plan = planLiveRun(
-      { [OPT_IN_VAR]: "1", WINTER_LIVE_OPENAI_API_KEY: "test-key-x", WINTER_LIVE_XAI_OAUTH_CREDENTIAL_REF: "keychain:xai-oauth:acct", WINTER_LIVE_UNCLOSEAI: "1" },
+      { [OPT_IN_VAR]: "1", ...SERVICE, WINTER_LIVE_OPENAI_API_KEY: "test-key-x", WINTER_LIVE_XAI_OAUTH_CREDENTIAL_REF: "keychain:xai-oauth:acct", WINTER_LIVE_UNCLOSEAI: "1" },
       CATALOG,
     );
     expect(plan.optedIn).toBe(true);
@@ -233,7 +245,7 @@ describe("WS-13b: the live gate's three target kinds", () => {
 // -------------------------------------------------------------------------------------------------
 describe("WS-13b Important #1: each selector is cross-checked against the row's own authKinds", () => {
   test("the OAuth arm refuses a row that documents NO OAuth path -- `openai` + a credential ref would have labelled the evidence `oauth`", () => {
-    const plan = planLiveRun({ [OPT_IN_VAR]: "1", WINTER_LIVE_OPENAI_CREDENTIAL_REF: "keychain:openai:acct" }, CATALOG);
+    const plan = planLiveRun({ [OPT_IN_VAR]: "1", ...SERVICE, WINTER_LIVE_OPENAI_CREDENTIAL_REF: "keychain:openai:acct" }, CATALOG);
     expect(plan.optedIn).toBe(false);
     expect(plan.warnings?.join(" ")).toContain("documents no OAuth path");
     // A REFUSAL, not a relabel: quietly demoting it to `api-key` would produce a target the operator
@@ -243,7 +255,7 @@ describe("WS-13b Important #1: each selector is cross-checked against the row's 
 
   test("the OAuth arm ADMITS both an OAuth-only row and a dual-auth one -- `xai-oauth`, `codex-oauth` and `anthropic`", () => {
     for (const id of ["xai-oauth", "codex-oauth", "anthropic"]) {
-      const plan = planLiveRun({ [OPT_IN_VAR]: "1", [`${liveEnvPrefix(id)}${CREDENTIAL_REF_SUFFIX}`]: `keychain:${id}:acct` }, CATALOG);
+      const plan = planLiveRun({ [OPT_IN_VAR]: "1", ...SERVICE, [`${liveEnvPrefix(id)}${CREDENTIAL_REF_SUFFIX}`]: `keychain:${id}:acct` }, CATALOG);
       expect(plan.optedIn && plan.targets.map((t) => [t.providerId, t.kind])).toEqual([[id, "oauth"]]);
     }
   });
@@ -286,7 +298,7 @@ describe("WS-13b Important #1: each selector is cross-checked against the row's 
       const model = modelled.has(provider.id) ? {} : { [`${prefix}_MODEL`]: "probe-model" };
       const admits: Record<LiveTargetKind, boolean> = {
         "api-key": planLiveRun({ [OPT_IN_VAR]: "1", ...model, [`${prefix}_API_KEY`]: "test-key-x" }, CATALOG).optedIn,
-        oauth: planLiveRun({ [OPT_IN_VAR]: "1", ...model, [`${prefix}${CREDENTIAL_REF_SUFFIX}`]: `keychain:${provider.id}:acct` }, CATALOG).optedIn,
+        oauth: planLiveRun({ [OPT_IN_VAR]: "1", ...SERVICE, ...model, [`${prefix}${CREDENTIAL_REF_SUFFIX}`]: `keychain:${provider.id}:acct` }, CATALOG).optedIn,
         keyless: planLiveRun({ [OPT_IN_VAR]: "1", ...model, [prefix]: "1" }, CATALOG).optedIn,
       };
       for (const kind of ["api-key", "oauth", "keyless"] as const) if (admits[kind]) admittedCount[kind] += 1;
@@ -338,9 +350,9 @@ describe("WS-13b Important #1: each selector is cross-checked against the row's 
 
 describe("WS-13b: the keychain SERVICE door (the close-out live run's throwaway service)", () => {
   test("`keychain:<service>/<account>` carries the service on the ref; `keychain:<account>` leaves it to the store", () => {
-    const withService = planLiveRun({ [OPT_IN_VAR]: "1", WINTER_LIVE_XAI_OAUTH_CREDENTIAL_REF: "keychain:com.winter.live.20260906/xai-oauth:acct" }, CATALOG);
+    const withService = planLiveRun({ [OPT_IN_VAR]: "1", ...SERVICE, WINTER_LIVE_XAI_OAUTH_CREDENTIAL_REF: "keychain:com.winter.live.20260906/xai-oauth:acct" }, CATALOG);
     expect(withService.optedIn && withService.targets[0]!.authRef).toEqual({ kind: "keychain", account: "xai-oauth:acct", service: "com.winter.live.20260906" });
-    const withoutService = planLiveRun({ [OPT_IN_VAR]: "1", WINTER_LIVE_XAI_OAUTH_CREDENTIAL_REF: "keychain:xai-oauth:acct" }, CATALOG);
+    const withoutService = planLiveRun({ [OPT_IN_VAR]: "1", ...SERVICE, WINTER_LIVE_XAI_OAUTH_CREDENTIAL_REF: "keychain:xai-oauth:acct" }, CATALOG);
     expect(withoutService.optedIn && withoutService.targets[0]!.authRef).toEqual({ kind: "keychain", account: "xai-oauth:acct" });
   });
 
@@ -348,25 +360,101 @@ describe("WS-13b: the keychain SERVICE door (the close-out live run's throwaway 
     // The disambiguation rule is decidable rather than heuristic: the text before the first `/` is a
     // service only when it contains NO colon. An account always contains one (`<providerId>:<id>`,
     // and R6-10 forbids a colon in the provider id); a reverse-DNS service never does.
-    const plan = planLiveRun({ [OPT_IN_VAR]: "1", WINTER_LIVE_XAI_OAUTH_CREDENTIAL_REF: "keychain:xai-oauth:https://id.example/u/1" }, CATALOG);
+    const plan = planLiveRun({ [OPT_IN_VAR]: "1", ...SERVICE, WINTER_LIVE_XAI_OAUTH_CREDENTIAL_REF: "keychain:xai-oauth:https://id.example/u/1" }, CATALOG);
     expect(plan.optedIn && plan.targets[0]!.authRef).toEqual({ kind: "keychain", account: "xai-oauth:https://id.example/u/1" });
   });
 
   test("a service form missing either half is refused, not half-parsed", () => {
     for (const value of ["keychain:com.winter.live/", "keychain:/xai-oauth:acct"]) {
-      expect(planLiveRun({ [OPT_IN_VAR]: "1", WINTER_LIVE_XAI_OAUTH_CREDENTIAL_REF: value }, CATALOG).optedIn).toBe(false);
+      expect(planLiveRun({ [OPT_IN_VAR]: "1", ...SERVICE, WINTER_LIVE_XAI_OAUTH_CREDENTIAL_REF: value }, CATALOG).optedIn).toBe(false);
     }
   });
 
-  test(`${KEYCHAIN_SERVICE_VAR} is the run-wide default, and a ref that names its own service still wins`, () => {
-    // The env variable is read where the STORE is built, so it cannot be observed from the pure plan;
-    // what the plan pins is the other half of the precedence rule — an explicit ref service survives
-    // planning intact, which is what `keychain-store.ts` then honours over the store's default.
+  test(`${KEYCHAIN_SERVICE_VAR} admits the run to the Keychain, and a ref that names its own service still wins for the record it addresses`, () => {
     const plan = planLiveRun(
-      { [OPT_IN_VAR]: "1", [KEYCHAIN_SERVICE_VAR]: "com.winter.live.20260906", WINTER_LIVE_XAI_OAUTH_CREDENTIAL_REF: "keychain:com.winter.core.dev/xai-oauth:acct" },
+      { [OPT_IN_VAR]: "1", [KEYCHAIN_SERVICE_VAR]: "com.winter.live.20260906", WINTER_LIVE_XAI_OAUTH_CREDENTIAL_REF: "keychain:com.winter.live.other/xai-oauth:acct" },
       CATALOG,
     );
-    expect(plan.optedIn && plan.targets[0]!.authRef).toEqual({ kind: "keychain", account: "xai-oauth:acct", service: "com.winter.core.dev" });
+    expect(plan.optedIn && plan.targets[0]!.authRef).toEqual({ kind: "keychain", account: "xai-oauth:acct", service: "com.winter.live.other" });
+  });
+});
+
+// -------------------------------------------------------------------------------------------------
+// CONTROLLER RULING (2026-09-06): the live gate never reads or writes the HOST's Keychain services.
+//
+// `com.winter.core` and `com.winter.core.dev` hold a user's daily-driver records. This gate's
+// material belongs in a dedicated service created for the run and deleted after it, so
+// `WINTER_LIVE_KEYCHAIN_SERVICE` is REQUIRED rather than defaulted — for an OAuth target's read as
+// much as for a `--login` write. Unset, every Keychain path refuses BEFORE a store is constructed.
+// -------------------------------------------------------------------------------------------------
+describe("WS-13b: no Keychain path at all without a named service", () => {
+  test("UNSET: the refusal happens BEFORE any store is constructed -- the store factory is never called, and the message names the variable and the reason", () => {
+    // A spy factory rather than a negative on behaviour: "no store was built" is the claim, so the
+    // construction itself is what has to be observed. The default parameter is the production
+    // constructor, so a regression that dropped the check would reach the real Keychain here.
+    const built: string[] = [];
+    const spy = (service: string): CredentialStore => {
+      built.push(service);
+      return createMemoryCredentialStore();
+    };
+    expect(() => credentialStoreFor("oauth", {}, spy)).toThrow(CredentialResolutionError);
+    expect(built).toEqual([]);
+    try {
+      credentialStoreFor("oauth", {}, spy);
+    } catch (err) {
+      expect((err as Error).message).toContain(KEYCHAIN_SERVICE_VAR);
+      // The REASON, not only the variable: an operator has to know why the obvious default is refused.
+      expect((err as Error).message).toContain("com.winter.core");
+      expect((err as Error).message).toContain("the host's own records");
+    }
+    // A blank value is not a named service either.
+    expect(() => credentialStoreFor("oauth", { [KEYCHAIN_SERVICE_VAR]: "   " }, spy)).toThrow(CredentialResolutionError);
+    expect(built).toEqual([]);
+  });
+
+  test("SET: the store is built with THAT service, and the api-key and keyless kinds never build one at all", () => {
+    const built: string[] = [];
+    const spy = (service: string): CredentialStore => {
+      built.push(service);
+      return createMemoryCredentialStore();
+    };
+    credentialStoreFor("oauth", { [KEYCHAIN_SERVICE_VAR]: "com.winter.live.20260906" }, spy);
+    expect(built).toEqual(["com.winter.live.20260906"]);
+    // The other two kinds are unaffected by the variable in either direction: they have no Keychain
+    // path to gate, which is what makes "an api-key target cannot reach the Keychain" structural.
+    credentialStoreFor("api-key", {}, spy);
+    credentialStoreFor("keyless", {}, spy);
+    credentialStoreFor("api-key", { [KEYCHAIN_SERVICE_VAR]: "com.winter.live.20260906" }, spy);
+    expect(built).toEqual(["com.winter.live.20260906"]);
+  });
+
+  test("an OAuth target is refused at PLAN time too, so the run says so before it starts rather than part-way through", () => {
+    const plan = planLiveRun({ [OPT_IN_VAR]: "1", WINTER_LIVE_XAI_OAUTH_CREDENTIAL_REF: "keychain:xai-oauth:acct" }, CATALOG);
+    expect(plan.optedIn).toBe(false);
+    expect(plan.warnings?.join(" ")).toContain(KEYCHAIN_SERVICE_VAR);
+    expect(plan.warnings?.join(" ")).toContain("WINTER_LIVE_XAI_OAUTH_CREDENTIAL_REF");
+    // ...and the api-key and keyless kinds are untouched by the rule.
+    expect(planLiveRun({ [OPT_IN_VAR]: "1", WINTER_LIVE_OPENAI_API_KEY: "test-key-x" }, CATALOG).optedIn).toBe(true);
+    expect(planLiveRun({ [OPT_IN_VAR]: "1", WINTER_LIVE_UNCLOSEAI: "1" }, CATALOG).optedIn).toBe(true);
+  });
+
+  test("`--login` refuses with no service EVEN when a store is injected -- the rule is the gate's policy about where its material lives, not a property of the store object", () => {
+    const lines: string[] = [];
+    let openUrlCalls = 0;
+    const io = {
+      openUrl: async () => {
+        openUrlCalls += 1;
+      },
+      log: (line: string) => void lines.push(line),
+      store: createMemoryCredentialStore(),
+    };
+    // A fixture that injected a memory store would otherwise be exempt from the very rule it is meant
+    // to demonstrate, and the production path (no `io.store`) would be the only one carrying it.
+    return runLogin("anthropic", { [OPT_IN_VAR]: "1" }, io).then((ok) => {
+      expect(ok).toBe(false);
+      expect(openUrlCalls).toBe(0);
+      expect(lines.join("\n")).toContain(KEYCHAIN_SERVICE_VAR);
+    });
   });
 });
 
@@ -414,7 +502,7 @@ describe("WS-13b: the `--login` door", () => {
       const store = createMemoryCredentialStore();
       const ok = await runLogin(
         "xai-oauth",
-        { [OPT_IN_VAR]: "1" },
+        { [OPT_IN_VAR]: "1", ...SERVICE },
         {
           openUrl: async () => {
             openUrlCalls += 1;
@@ -434,7 +522,9 @@ describe("WS-13b: the `--login` door", () => {
       // flow that reported only one of them would leave the user unable to complete the login.
       expect(printed).toContain("WXYZ-1234");
       expect(printed).toContain("https://example.invalid/activate");
-      expect(printed).toContain("export WINTER_LIVE_XAI_OAUTH_CREDENTIAL_REF='keychain:xai-oauth:");
+      // SERVICE-QUALIFIED, always: the run named its service, so the ref it hands back names it too.
+      // A bare `keychain:<account>` would resolve against whatever the next run happened to set.
+      expect(printed).toContain("export WINTER_LIVE_XAI_OAUTH_CREDENTIAL_REF='keychain:com.winter.live.test/xai-oauth:");
     } finally {
       await fake.close();
     }
@@ -445,7 +535,7 @@ describe("WS-13b: the `--login` door", () => {
     let openUrlCalls = 0;
     const ok = await runLogin(
       "qoder",
-      { [OPT_IN_VAR]: "1" },
+      { [OPT_IN_VAR]: "1", ...SERVICE },
       {
         openUrl: async () => {
           openUrlCalls += 1;
@@ -461,12 +551,12 @@ describe("WS-13b: the `--login` door", () => {
 
   test("a provider with no login flow, and a login without the opt-in, both refuse before anything runs", async () => {
     const notALogin = collect();
-    expect(await runLogin("openai", { [OPT_IN_VAR]: "1" }, { openUrl: async () => {}, log: notALogin.log, store: createMemoryCredentialStore() })).toBe(false);
+    expect(await runLogin("openai", { [OPT_IN_VAR]: "1", ...SERVICE }, { openUrl: async () => {}, log: notALogin.log, store: createMemoryCredentialStore() })).toBe(false);
     expect(notALogin.lines.join("\n")).toContain(PROVIDER_LOGIN_IDS.join(", "));
 
     const notOptedIn = collect();
     // A login is a vendor network call, so it sits behind the same opt-in as everything else here.
-    expect(await runLogin("anthropic", {}, { openUrl: async () => {}, log: notOptedIn.log, store: createMemoryCredentialStore() })).toBe(false);
+    expect(await runLogin("anthropic", { ...SERVICE }, { openUrl: async () => {}, log: notOptedIn.log, store: createMemoryCredentialStore() })).toBe(false);
     expect(notOptedIn.lines.join("\n")).toContain("not opted in");
   });
 });

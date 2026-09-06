@@ -34,6 +34,12 @@
 // variable outright (and fires that refusal in a test), so the only way to this store is a local
 // operator run.
 //
+// ...AND THAT STORE IS NEVER THE HOST'S. `WINTER_LIVE_KEYCHAIN_SERVICE` is REQUIRED for every
+// Keychain path here — an OAuth target's read and the `--login` write alike. There is no production
+// default: unset, the gate refuses before any store is built, naming the variable and the reason.
+// `com.winter.core` and `com.winter.core.dev` hold a user's daily-driver records, and a gate that
+// wrote beside them by default would be one nobody could run without thinking about it first.
+//
 // NEVER REACHES A VENDOR FROM CI. The workflow sets neither the opt-in variable nor any provider
 // key (`grep -rn WINTER_LIVE .github/` finds nothing), and `verify-provider-live.test.ts` proves the
 // skip path by SPAWNING this script with every `WINTER_LIVE_*` variable stripped from the inherited
@@ -48,8 +54,8 @@
 //
 // Usage:
 //   WINTER_LIVE_PROVIDER_TESTS=1 WINTER_LIVE_OPENAI_API_KEY=sk-... bun run scripts/verify-provider-live.ts
-//   ... WINTER_LIVE_XAI_OAUTH_CREDENTIAL_REF=keychain:xai-oauth:<account>   # an OAuth row, from the Keychain
-//   ... WINTER_LIVE_KEYCHAIN_SERVICE=com.winter.live.20260906               # ...in a throwaway service
+//   ... WINTER_LIVE_KEYCHAIN_SERVICE=com.winter.live.20260906               # REQUIRED for any Keychain path
+//   ... WINTER_LIVE_XAI_OAUTH_CREDENTIAL_REF=keychain:xai-oauth:<account>   # an OAuth row, from that service
 //   ... WINTER_LIVE_UNCLOSEAI=1                          # a keyless row (`free`, and documents no api key)
 //   ... WINTER_LIVE_AIHORDE_API_KEY=0000000000           # a free row that DOES document a key: the vendor's own anonymous value
 //   ... WINTER_LIVE_OPENAI_MODEL=openai/o4-mini          # override the model (a catalog key or a provider-local id)
@@ -177,13 +183,36 @@ function admitsKeyless(provider: WinterProviderDescriptor): boolean {
 }
 
 /**
- * The Keychain service the run resolves refs against, when a ref does not name one itself.
+ * The Keychain service this run uses — REQUIRED for every Keychain path in this file.
  *
- * The close-out live run (T6) uses a DEDICATED temporary service (`com.winter.live.<yyyymmdd>`) that
- * is created for the run and deleted after it, so `com.winter.core` and `com.winter.core.dev` are
- * never touched by this gate. Without this door that ruling has no mechanism.
+ * CONTROLLER RULING (2026-09-06): the live gate never touches `com.winter.core` or
+ * `com.winter.core.dev` by default. The production services are the HOST's — a user's daily-driver
+ * records live there — and this gate's material belongs in a dedicated temporary service that is
+ * created for the run and deleted after it (`com.winter.live.<yyyymmdd>`). So the variable is not a
+ * convenience override with a production default; it is the run's explicit statement of where its
+ * credentials live, and without it there is no Keychain path at all — not a login, not an OAuth
+ * target's read.
+ *
+ * A ref that names its own service (`keychain:<service>/<account>`) still wins for the record it
+ * addresses; the variable being SET is what admits the gate to the Keychain in the first place.
  */
 export const KEYCHAIN_SERVICE_VAR = "WINTER_LIVE_KEYCHAIN_SERVICE";
+
+/** Why a Keychain-touching path refuses when the run has not named its service. Exported so the plan warning and the typed error say the same thing. */
+export const KEYCHAIN_SERVICE_REQUIRED = `${KEYCHAIN_SERVICE_VAR} is not set, and the live gate never reads or writes \`${DEFAULT_KEYCHAIN_SERVICE}\`/\`${DEFAULT_KEYCHAIN_SERVICE}.dev\` by default: those are the host's own records. Set it to a dedicated service for this run (e.g. com.winter.live.<yyyymmdd>) and delete that service afterwards`;
+
+/**
+ * The service this run's Keychain paths use, or a TYPED refusal.
+ *
+ * Called BEFORE any store is constructed, on every path that could reach the Keychain — the oauth
+ * target's store and the `--login` door — so "no store on the production service is ever built" is a
+ * fact about ordering rather than a rule someone has to remember.
+ */
+export function requireLiveKeychainService(env: Record<string, string | undefined>): string {
+  const service = env[KEYCHAIN_SERVICE_VAR]?.trim();
+  if (service === undefined || service.length === 0) throw new CredentialResolutionError("malformed", KEYCHAIN_SERVICE_REQUIRED);
+  return service;
+}
 
 /**
  * `keychain:<account>` or `keychain:<service>/<account>` -> the ref.
@@ -258,6 +287,12 @@ export function planLiveRun(env: Record<string, string | undefined>, catalog: Wi
         warnings.push(`${refEnvName} names ${provider.id}, which documents no OAuth path (${authKinds}); a keychain ref here would label the run's evidence "oauth" for a row that has no such path`);
       } else if (authRef === undefined) {
         warnings.push(`${refEnvName} is not a \`keychain:<account>\` or \`keychain:<service>/<account>\` locator, so ${provider.id} was skipped (the OAuth kind resolves through the Keychain and nothing else)`);
+      } else if (named(env[KEYCHAIN_SERVICE_VAR]) === undefined) {
+        // The rule reaches PLANNING, not only the store: an oauth target that could not be resolved
+        // is better refused with an explanation now than half-way through a run. The store-level
+        // check in `credentialStoreFor` stays as the structural backstop for any caller that skips
+        // the plan.
+        warnings.push(`${refEnvName} names ${provider.id}, but ${KEYCHAIN_SERVICE_REQUIRED}`);
       } else {
         // The ref WINS over a key variable on the same provider, and says so. It is the more specific
         // declaration — it names one Keychain record — and on a dual-auth row (WS-13b §3 gives
@@ -295,7 +330,10 @@ export function planLiveRun(env: Record<string, string | undefined>, catalog: Wi
     if (model === undefined) {
       // Previously a silent `continue`. A provider that was named and then dropped is exactly the
       // case the warnings channel exists for.
-      warnings.push(`${selected.selectedBy} names ${provider.id}, which has no catalog model row; set ${prefix}_MODEL to a provider-local id`);
+      warnings.push(
+        `${selected.selectedBy} names ${provider.id}, which carries NO catalog model row, so the gate has nothing to ask it. ` +
+          `Set ${prefix}_MODEL=<the provider's own model id> to reach it.`,
+      );
       continue;
     }
     const baseUrl = named(env[`${prefix}_BASE_URL`]);
@@ -396,19 +434,23 @@ const LIVE_CLASSIFIER_CONTEXT = { autoConfig: normalizeAutoModeConfig(undefined)
  * ref kinds rather than of what exists on the path. This shape keeps the Keychain constructor inside
  * one branch a reviewer can grep for, which is the whole argument of this file's header.
  */
-function credentialStoreFor(kind: LiveTargetKind, env: Record<string, string | undefined>): CredentialStore {
+export function credentialStoreFor(
+  kind: LiveTargetKind,
+  env: Record<string, string | undefined>,
+  /** Injected by the test that proves this function never builds a store on the production service. Production passes nothing. */
+  keychain: (service: string) => CredentialStore = createKeychainCredentialStore,
+): CredentialStore {
   switch (kind) {
     case "oauth": {
       // The Keychain store, reached from a local operator run and from nowhere else (see the
       // header). Constructed lazily, per target, so a run with no oauth target never touches
       // `Bun.secrets` at all.
       //
-      // Service precedence, and there are three levels rather than two: a REF that names its own
-      // service wins (that is `keychain-store.ts`'s documented behaviour, not something added here),
-      // then `WINTER_LIVE_KEYCHAIN_SERVICE`, then the production default. The middle level is what
-      // lets the close-out live run point the whole gate at a throwaway service.
-      const service = env[KEYCHAIN_SERVICE_VAR]?.trim();
-      return service !== undefined && service.length > 0 ? createKeychainCredentialStore(service) : createKeychainCredentialStore();
+      // THE SERVICE IS RESOLVED FIRST, AND IT CAN REFUSE. There is no production default: the run
+      // must have named its own service (controller ruling, `KEYCHAIN_SERVICE_VAR`). A ref that
+      // names its own service still wins for the record it addresses — that is `keychain-store.ts`'s
+      // documented behaviour — but the store this gate builds is never the host's.
+      return keychain(requireLiveKeychainService(env));
     }
     case "api-key":
       return createEnvCredentialStore({ env: process.env });
@@ -560,10 +602,18 @@ export async function runLogin(providerId: string, env: Record<string, string | 
     io.log(`--login: "${providerId}" has no login flow; one of ${PROVIDER_LOGIN_IDS.join(", ")}`);
     return false;
   }
-  const service = env[KEYCHAIN_SERVICE_VAR]?.trim();
-  const named = service !== undefined && service.length > 0 ? service : undefined;
-  const store = io.store ?? (named !== undefined ? createKeychainCredentialStore(named) : createKeychainCredentialStore());
-  io.log(`--login ${providerId} into keychain service ${named ?? DEFAULT_KEYCHAIN_SERVICE}`);
+  // BEFORE the store, and before `io.store` is consulted: the rule is the gate's policy about where
+  // its material may live, not a property of which store object it happens to hold. A fixture that
+  // injected a memory store would otherwise be exempt from a rule it is meant to demonstrate.
+  let service: string;
+  try {
+    service = requireLiveKeychainService(env);
+  } catch (err) {
+    io.log(`  --login refused: ${err instanceof CredentialResolutionError ? err.message : describeThrown(err)}`);
+    return false;
+  }
+  const store = io.store ?? createKeychainCredentialStore(service);
+  io.log(`--login ${providerId} into keychain service ${service}`);
   try {
     const result = await startProviderLogin(providerId as ProviderLoginId, store, {
       openUrl: io.openUrl,
@@ -573,7 +623,7 @@ export async function runLogin(providerId: string, env: Record<string, string | 
         for (const line of status.output ?? []) io.log(`  ${line}`);
         if (status.error !== undefined) io.log(`  ${status.error}`);
       },
-      ...(named !== undefined ? { service: named } : {}),
+      service,
       ...io.overrides,
     });
     const locator = result.ref.service === undefined ? result.ref.account : `${result.ref.service}/${result.ref.account}`;
