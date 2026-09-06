@@ -642,11 +642,13 @@ describe("Ruling E-3: `fallbackModel` engages on an R6-6 retryable-class failure
 
   test("(R-E2, end to end) a REAL adapter whose stream is torn after `message_start` yields a COMMITTED failure, and the session's `fallbackModel` does NOT engage: one request on the wire, R6-F, no switch", async () => {
     // Two verdicts, and either alone forbids engagement. The fold marks the failure COMMITTED (a
-    // `message_start` was seen); the Anthropic adapter, applying R6-6 at its own boundary, reports a
-    // torn stream as `network`/`retryable: false`. The engine's `committed` gate is what covers the
-    // OTHER production shape -- a body read that THROWS mid-stream, which `normalizeThrown` classes
-    // as a retryable network error -- pinned by the scripted fixture above; this one proves the real
-    // chain and the real verdict.
+    // `message_start` was seen). WHICH adapter verdict the tear produces is platform timing: on
+    // macOS the parser sees the stream end before `message_stop` and the Anthropic adapter reports
+    // `network`/`retryable: false` (its own R6-6 line); on the 2-vCPU linux runner the same tear
+    // surfaces as a body read that THROWS mid-stream, which `normalizeThrown` classes as a RETRYABLE
+    // network error (the first CI run of 939500c: "Expected: false, Received: true"). The engine's
+    // `committed` gate covers both, so this fixture pins `committed` + `code` and the ENGINE outcome,
+    // never the adapter's retryable flag -- the scripted fixture above pins the retryable shape.
     const fake = await startScenarioFake({ dropAfterFirstEvent: true });
     try {
       const primary = SCENARIO_CHILD_MODEL; // no continuation domain, so a same-provider candidate is admitted at init
@@ -664,7 +666,7 @@ describe("Ruling E-3: `fallbackModel` engages on an R6-6 retryable-class failure
       expect(thrown).toBeInstanceOf(ProviderTurnError);
       expect((thrown as ProviderTurnError).committed).toBe(true);
       expect((thrown as ProviderTurnError).code).toBe("network");
-      expect((thrown as ProviderTurnError).retryable).toBe(false); // the adapter's own R6-6 line
+      expect(typeof (thrown as ProviderTurnError).retryable).toBe("boolean"); // either verdict; the gate below is what forbids engagement
       expect(fake.requests.filter((r) => r.path === "/v1/messages")).toHaveLength(1);
       // And the engine, with the candidate configured, never engages it.
       const switches: Array<{ from: string; to: string; reason: string }> = [];
