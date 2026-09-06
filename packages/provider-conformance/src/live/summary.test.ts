@@ -12,6 +12,7 @@
 import { test, expect, describe } from "bun:test";
 import { CredentialResolutionError } from "@yanlinglabs/winter-provider-runtime";
 import { describeThrown } from "../corpus/classifier-safety.ts";
+import { AUTH_DIMENSION_FIELDS, authDimensionsOf, LIVE_CASES } from "./cases.ts";
 import { formatLiveRow, liveRowSummary, type LiveReport } from "./index.ts";
 
 /** A finished report, built by hand. The `detail` strings are what a real run's cases produce. */
@@ -85,6 +86,41 @@ describe("WS-13b §7: the per-target live row", () => {
   test("a report with no outcomes at all is a 0ms row rather than a throw -- an adapter that failed to resolve still gets a row", () => {
     const empty = liveRowSummary(report({ outcomes: [], ok: false }), { kind: "oauth", identityHeader: "winter-agent-sdk/0.0.1" });
     expect([empty.latencyMs, empty.toolCallOk, empty.ok]).toEqual([0, false, false]);
+  });
+});
+
+describe("WS-13b §4: the inference-path reversion condition reports AUTH DIMENSIONS, never the vendor's body", () => {
+  const MARKER = "MARKER-vendor-prose-must-not-survive-7c1e";
+
+  test("only the allowlisted fields survive -- a marker sitting in the SAME body does not", () => {
+    // The property that makes reporting anything at all safe. The body below is the shape xAI's proxy
+    // answers a refused subscription bearer with, plus a marker standing in for every human-readable
+    // sentence a vendor also puts there.
+    const body = `{"error":{"message":"${MARKER}: your request could not be authorized","auth_kind":"bearer","x_xai_token_auth":"none","scope":"grok-cli:access","request_id":"req_abc"}}`;
+    const dimensions = authDimensionsOf(body);
+    expect(dimensions).toEqual(["auth_kind=bearer", "x_xai_token_auth=none", "scope=grok-cli:access"]);
+    expect(dimensions.join(" ")).not.toContain(MARKER);
+    // ...and a field OUTSIDE the allowlist is dropped even though it is structured and harmless-looking.
+    expect(dimensions.join(" ")).not.toContain("req_abc");
+  });
+
+  test("a value that is a SENTENCE contributes nothing -- the bound is a scalar shape, not a length", () => {
+    // Without the scalar bound, `auth_kind` could smuggle a whole message past the allowlist by being
+    // assigned one.
+    expect(authDimensionsOf(`auth_kind: "${MARKER} and then some prose"`)).toEqual([`auth_kind=${MARKER}`]);
+    expect(authDimensionsOf("nothing auth-shaped here at all")).toEqual([]);
+  });
+
+  test("the allowlist is a CLOSED list -- every field it names is one an auth refusal reports, and nothing else is read", () => {
+    expect([...AUTH_DIMENSION_FIELDS]).toEqual(["auth_kind", "x_xai_token_auth", "token_auth", "scope"]);
+    // The one header this whole condition is about is NOT among them, because Winter never sends it
+    // and never reads back a claim that it would have helped (D21).
+    expect(AUTH_DIMENSION_FIELDS.join(" ").toLowerCase()).not.toContain("x-xai-token-auth");
+  });
+
+  test("the case is part of the live run, and its question names the property it tests", () => {
+    const spec = LIVE_CASES.find((c) => c.id === "honest-identity-inference");
+    expect(spec?.question).toContain("no vendor client header");
   });
 });
 

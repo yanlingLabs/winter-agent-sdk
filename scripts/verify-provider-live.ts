@@ -477,6 +477,9 @@ async function runTarget(target: LiveTarget, catalog: WinterCatalog, adapters: r
     ctx,
     model: resolved.providerModelId,
     ...(resolved.descriptor !== undefined ? { descriptor: resolved.descriptor } : {}),
+    // A PROVIDER fact, off the resolved row rather than the model descriptor. It gates the
+    // inference-path reversion case (WS-13b §4), which is about an entitlement.
+    pricingBasis: resolved.provider.pricingBasis,
     kind: target.kind,
     // What THIS BUILD sends. That it is actually on the wire is pinned by the corpus, not observed here.
     identityHeader: winterUserAgent(),

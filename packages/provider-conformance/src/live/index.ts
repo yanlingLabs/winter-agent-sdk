@@ -54,6 +54,8 @@ export interface RunLiveCasesOptions {
   /** The provider-local id that goes on the wire. */
   model: string;
   descriptor?: WinterModelDescriptor;
+  /** The PROVIDER row's pricing basis (WS-13b §1). Gates the inference-path reversion case. */
+  pricingBasis?: "token" | "subscription" | "free";
   signal?: AbortSignal;
   /** Progress, one line per case as it finishes. Identifiers and counts only — the case details already obey that rule. */
   onProgress?: (outcome: LiveCaseOutcome) => void;
@@ -65,6 +67,7 @@ export async function runLiveCases(opts: RunLiveCasesOptions): Promise<LiveRepor
     ctx: opts.ctx,
     model: opts.model,
     ...(opts.descriptor !== undefined ? { descriptor: opts.descriptor } : {}),
+    ...(opts.pricingBasis !== undefined ? { pricingBasis: opts.pricingBasis } : {}),
     ...(opts.signal !== undefined ? { signal: opts.signal } : {}),
   };
   const outcomes: LiveCaseOutcome[] = [];

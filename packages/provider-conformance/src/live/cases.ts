@@ -30,6 +30,7 @@
 // a case quietly declining a question it found hard.
 import type { DiscoveryContext, ProviderAdapter, ProviderContext, ProviderEvent, TurnRequest } from "@yanlinglabs/winter-provider-runtime";
 import type { WinterModelDescriptor } from "@yanlinglabs/winter-provider-catalog";
+import { describeThrown } from "../corpus/classifier-safety.ts";
 
 /**
  * A case's OWN assertion failure — the one error whose `.message` the runner prints (review round 1,
@@ -52,21 +53,66 @@ export class LiveCaseAssertionError extends Error {
   }
 }
 
-export type LiveCaseId = "discovery" | "text-turn" | "tool-round" | "thinking-summary" | "count-tokens";
+export type LiveCaseId = "discovery" | "text-turn" | "tool-round" | "thinking-summary" | "count-tokens" | "honest-identity-inference";
 
 export interface LiveCaseSpec {
   id: LiveCaseId;
   question: string;
 }
 
-/** The five legs the brief names, in the order the script runs them: cheapest and least stateful first. */
+/** The legs the gate runs, in order: cheapest and least stateful first. */
 export const LIVE_CASES: readonly LiveCaseSpec[] = [
   { id: "discovery", question: "does live model discovery answer within its size/time/item bounds, and say whether the page was partial?" },
   { id: "text-turn", question: "does one plain text turn stream to a stop reason, with usage reported?" },
   { id: "tool-round", question: "does one advertised tool come back as a complete call with parseable arguments?" },
   { id: "thinking-summary", question: "does a summary-requesting turn produce a readable reasoning summary where the descriptor says it can?" },
   { id: "count-tokens", question: "does the adapter's own token count answer for a real request, where it offers one?" },
+  { id: "honest-identity-inference", question: "does a subscription entitlement serve a turn to Winter's OWN identity, with no vendor client header sent at all?" },
 ];
+
+/**
+ * The auth-shaped keys a refused inference request's body may be reported by NAME (WS-13b §4).
+ *
+ * AN ALLOWLIST, and it is the whole safety argument for reporting anything at all. A provider's error
+ * body is content and this gate never prints it (`live/index.ts`'s rendering rule) — but when a
+ * subscription bearer is refused, the ONE thing an operator needs is which auth dimension the vendor
+ * says was missing, and that is a handful of named scalar fields. Anything not named here, including
+ * every human-readable message, is dropped.
+ *
+ * `x_xai_token_auth` and `auth_kind` are the two xAI's own proxy reports (Lane O's capture); `scope`
+ * and `token_auth` are the neighbouring spellings the same family uses.
+ */
+export const AUTH_DIMENSION_FIELDS: readonly string[] = ["auth_kind", "x_xai_token_auth", "token_auth", "scope"];
+
+/**
+ * Pulls ONLY the allowlisted auth dimensions out of an error message, as `field=value`.
+ *
+ * Exported for its own unit test, because "a marker elsewhere in the same body never survives" is the
+ * property that makes this safe and it must be falsifiable without a vendor. Values are bounded to a
+ * scalar shape (`[\w.:-]+`), so a field whose value is a sentence contributes nothing.
+ */
+export function authDimensionsOf(message: string): string[] {
+  const found: string[] = [];
+  for (const field of AUTH_DIMENSION_FIELDS) {
+    // The optional quote before the separator matters: a vendor's body is JSON far more often than it
+    // is a query string, and `"auth_kind":"bearer"` must match as readily as `auth_kind=bearer`.
+    const match = new RegExp(`\\b${field}"?\\s*[=:]\\s*"?([\\w.:/-]+)`, "i").exec(message);
+    if (match?.[1] !== undefined) found.push(`${field}=${match[1]}`);
+  }
+  return found;
+}
+
+/** The Winter-authored half of a refused inference report: what the operator must decide, and what Winter will not do to help them decide it. */
+function renderReversion(dimensions: readonly string[]): string {
+  return (
+    ` -- the entitlement REFUSED a turn carrying Winter's own identity and no vendor client header. ` +
+    `Auth dimensions the vendor named: ${dimensions.length === 0 ? "(none in the allowlist)" : dimensions.join(", ")}. ` +
+    `If the bearer is valid and unexpired, this is WS-13b §4's reversion condition on the inference path: an honest unregistered agent identity ` +
+    `the vendor rejects is a partner allowlist in fact, and the row reverts to impersonation-required. ` +
+    `Winter did NOT retry with the product's client header and never will — that would be the impersonation D21 excludes. ` +
+    `Turn the row off without a release by setting providers["xai-oauth"].enabled to false in settings.`
+  );
+}
 
 export interface LiveCaseContext {
   adapter: ProviderAdapter;
@@ -75,6 +121,12 @@ export interface LiveCaseContext {
   model: string;
   /** Absent only for an `allowUnlisted` pass-through, in which case every capability-gated case skips. */
   descriptor?: WinterModelDescriptor;
+  /**
+   * The PROVIDER row's pricing basis (WS-13b §1) — a provider fact, which is why it does not come off
+   * the model descriptor. The inference-path reversion case is about an entitlement, and
+   * `subscription` is what "an entitlement rather than a key" means in catalog terms.
+   */
+  pricingBasis?: "token" | "subscription" | "free";
   signal?: AbortSignal;
 }
 
@@ -103,6 +155,14 @@ interface StreamMeasurement {
   stopReason?: string;
   usage?: { inputTokens: number; outputTokens: number };
   errorCode?: string;
+  errorStatus?: number;
+  /**
+   * The normalized error's MESSAGE, held ONLY so `authDimensionsOf` can be run over it.
+   *
+   * It is response content and no case may render it. Every use of this field in this file goes
+   * through the allowlist; nothing formats it, concatenates it, or passes it to a `LiveCaseResult`.
+   */
+  errorMessage?: string;
   nativeStateItems?: number;
 }
 
@@ -158,9 +218,12 @@ async function drain(stream: AsyncIterable<ProviderEvent>): Promise<StreamMeasur
         out.stopReason = event.stopReason;
         break;
       case "error":
-        // The adapter's normalized CODE, never its message: a provider error message can quote the
-        // request body, and the request body is a Winter-authored probe today but need not stay one.
+        // The adapter's normalized CODE is the only part any case RENDERS: a provider error message
+        // can quote the request body, and the request body is a Winter-authored probe today but need
+        // not stay one. The status and message are carried for the auth-dimension allowlist alone.
         out.errorCode = event.error.code;
+        if (event.error.status !== undefined) out.errorStatus = event.error.status;
+        out.errorMessage = event.error.message;
         break;
       default:
         break;
@@ -234,6 +297,59 @@ export const LIVE_CASE_IMPLS: Record<LiveCaseId, (ctx: LiveCaseContext) => Promi
     return {
       status: "ok",
       detail: `summaryBytes=${measured.summaryBytes}, exposedBytes=${measured.exposedBytes}, textBytes=${measured.textBytes}, nativeStateItems=${measured.nativeStateItems ?? 0}`,
+    };
+  },
+
+  /**
+   * WS-13b §4's REVERSION CONDITION, on the inference path.
+   *
+   * The login-side half of the condition already ships (`xai-oauth.ts`: a device flow refused with
+   * `access_denied` may be the vendor rejecting Winter's honest `referrer`). This is the other half,
+   * and it is the one only a live run can answer: given a VALID subscription bearer, does the
+   * vendor's inference endpoint serve a turn to a client sending Winter's own user-agent and NONE of
+   * the product's client headers?
+   *
+   *   200 + a stop reason -> promotable evidence. The honest identity is sufficient.
+   *   401/403            -> the reversion condition may have fired: an honest unregistered agent
+   *                         identity the vendor rejects is a partner allowlist in fact, and the row
+   *                         reverts to impersonation-required.
+   *
+   * WINTER NEVER SENDS THE VENDOR HEADER, INCLUDING TO PROVE THE POINT (D21). A "retry with
+   * `X-XAI-Token-Auth` and see if it clears" branch would be Winter impersonating a product for the
+   * length of one request, and a gate that did it once would be a gate someone later runs by habit.
+   * What this case does instead is report the AUTH DIMENSIONS the vendor's own refusal names, by
+   * allowlisted field, so a human has the evidence to decide — and the decision, per the ruling, is
+   * a human's.
+   *
+   * Gated on `pricingBasis === "subscription"`, which is what "an entitlement rather than a key"
+   * means in catalog terms; every other row skips with that fact.
+   */
+  async "honest-identity-inference"(ctx: LiveCaseContext): Promise<LiveCaseResult> {
+    if (ctx.descriptor === undefined) return { status: "skipped", detail: "no catalog descriptor (an allowUnlisted pass-through), so the row's pricing basis is unknown" };
+    if (ctx.pricingBasis !== "subscription") {
+      return { status: "skipped", detail: `the row's pricingBasis is "${ctx.pricingBasis ?? "unknown"}"; the inference-path reversion condition is about a subscription entitlement (WS-13b §4)` };
+    }
+    let measured: StreamMeasurement;
+    try {
+      measured = await drain(ctx.adapter.streamTurn(turnRequest(ctx), ctx.ctx));
+    } catch (err) {
+      // An adapter that THREW rather than emitting an error event. Same treatment: identity from the
+      // fields, dimensions from the allowlist, and not one byte of the message itself.
+      const message = err instanceof Error ? err.message : "";
+      throw new LiveCaseAssertionError(`${describeThrown(err)}${renderReversion(authDimensionsOf(message))}`);
+    }
+    if (measured.errorCode !== undefined) {
+      const dimensions = authDimensionsOf(measured.errorMessage ?? "");
+      const identity = `code=${measured.errorCode}${measured.errorStatus === undefined ? "" : ` status=${measured.errorStatus}`}`;
+      if (measured.errorCode !== "auth") throw new LiveCaseAssertionError(`the turn failed for a non-auth reason (${identity}), so it is evidence about the endpoint rather than about Winter's identity`);
+      throw new LiveCaseAssertionError(`${identity}${renderReversion(dimensions)}`);
+    }
+    if (measured.stopReason === undefined) throw new LiveCaseAssertionError("the stream never reported a stop reason, so neither reading of the reversion condition is supported");
+    return {
+      status: "ok",
+      detail:
+        `PROMOTABLE: the entitlement served a turn to Winter's own identity with NO vendor client header sent ` +
+        `(stopReason=${measured.stopReason}, textBytes=${measured.textBytes}). The reversion condition did not fire.`,
     };
   },
 
