@@ -126,7 +126,21 @@
       "subtype": "success",
       "is_error": false,
       "result": "the provider scenario is done",
-      "permission_denials": []
+      "permission_denials": [],
+      "modelUsage": {
+        "anthropic/claude-sonnet-5": {
+          "inputTokens": 14,
+          "outputTokens": 7,
+          "cacheReadInputTokens": 0,
+          "cacheCreationInputTokens": 0,
+          "webSearchRequests": 0,
+          "costUSD": 0.000098,
+          "contextWindow": 1048576,
+          "canonicalModel": "anthropic/claude-sonnet-5",
+          "provider": "firstParty",
+          "costBasis": "list"
+        }
+      }
     }
   }
 ]
