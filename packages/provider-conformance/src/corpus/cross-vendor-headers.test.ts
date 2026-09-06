@@ -63,6 +63,7 @@ const ROWS: readonly SweepRow[] = [
   { id: "minimax-anthropic", why: "R6b-5 dialect sibling", material: "api-key" },
   { id: "kimi-coding", why: "R6b-5 dialect sibling, and the subscription one", material: "api-key" },
   { id: "anthropic", why: "the multi-provider adapter's OWN vendor row, with D20 oauth material: the one row whose `anthropic-beta` is legitimate", material: "oauth" },
+  { id: "openai", why: "the Responses TWIN of the removed `auth.accountId` branch (`responses.ts`): the plain OpenAI row driven with OAUTH material at its GENERATED Responses endpoint — a re-introduction in responses.ts alone passed every shipped suite before this row existed (fix-wave re-review, Minor 1)", material: "oauth" },
   { id: "codex-oauth", why: "POSITIVE CONTROL: `chatgpt-account-id` and `originator` are ITS headers and must survive the sweep", material: "oauth" },
 ];
 
