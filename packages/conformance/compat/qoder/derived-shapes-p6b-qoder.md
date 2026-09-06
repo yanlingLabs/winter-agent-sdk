@@ -82,6 +82,16 @@ groups, billing groups, usage, AI-code metrics, and the Cloud Agents session API
 "send this provider a prompt" endpoint for a third-party client. Qoder's programmatic model access is
 shaped as *run the Qoder agent* (CLI / Agent SDK / Cloud Agents), not as *call this model endpoint*.
 
+**And that shape is itself excluded, independently of the missing endpoint.** Qoder's documented
+third-party route is its **Agent SDK / Cloud Agents** — a harness that plans, calls tools and talks
+to the model on the caller's behalf (`/cli/sdk/overview` describes the SDK as the application-facing
+API over `qodercli`, which "plans the task, communicates with the model, and executes tools"). That
+is the **agent-transport class**, which WS-13 §8.2 excludes from the provider layer: a provider row
+promises Winter's own agent loop reaches a model, and delegating to another vendor's agent runtime is
+a different thing wearing the same name. So even if an inference endpoint were found tomorrow, the
+SDK/Cloud-Agents route would not be the thing that admits a provider row — only a documented model
+endpoint would.
+
 **So WS-13b §2's `https://api.qoder.com/v1` as an OpenAI-dialect provider endpoint is unsupported by
 any Qoder document reachable on 2026-09-06.** It appears to be an inference from the base URL rather
 than a fetched fact. A provider row is a promise that a Winter session can reach a model there;

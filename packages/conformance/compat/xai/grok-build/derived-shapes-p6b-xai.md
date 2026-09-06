@@ -58,7 +58,7 @@ otherwise re-litigate — Winter took the value from the published source, not f
 
 ### 3.1 Device authorization request — `POST {issuer}/oauth2/device/code`
 
-`auth/device_code.rs:125-152`. Body is `application/x-www-form-urlencoded`:
+`auth/device_code.rs:125-152` (headers at `:139` and `:141`). Body is `application/x-www-form-urlencoded`:
 
 | form field | value the vendor's client sends |
 |---|---|
@@ -72,7 +72,7 @@ Response fields the client reads (`device_code.rs:74-122, 178-190`): `device_cod
 
 ### 3.2 Token poll — `POST {issuer}/oauth2/token`
 
-`auth/device_code.rs:197-260`. Body is `application/x-www-form-urlencoded`:
+`auth/device_code.rs:197-260` (token URL built at `:205`; headers at `:225-226`). Body is `application/x-www-form-urlencoded`:
 
 | form field |
 |---|
@@ -97,20 +97,47 @@ one occurrence — pinned by the client's own tests at `protocol.rs:799-806, 846
 Winter uses the **device** grant, not this one: the loopback redirect this path needs must be
 registered on the OAuth application, which a client Winter did not register cannot supply.
 
-### 3.4 Headers the vendor's client sends that **Winter must NOT send**
+### 3.4 Headers the vendor's client sends that **Winter must NOT send** — all six
 
-`device_code.rs:136-142` sets, on both the device request and every poll:
+WS-13 §5: client-identity headers are never imported; Winter adapters author their own. These are
+recorded so they can be asserted ABSENT, and the list is a denylist for Winter's requests rather than
+a template for them.
 
-* `x-grok-client-version: <the client's own version>`
-* `x-grok-client-surface: <which of the vendor's UIs is signing in>`
+| header | value shape | where the vendor's client sets it | sent on |
+|---|---|---|---|
+| `x-grok-client-version` | the client's own version | `auth/device_code.rs:139`, `:225` | login (device + poll), and its other services |
+| `x-grok-client-surface` | which of the vendor's UIs is signing in (`Ui`/`Cli`/`Headless`) | `auth/device_code.rs:141`, `:226`; the enum is documented at `:38` | login (device + poll) |
+| `x-grok-client-identifier` | one of `grok-shell`, `grok-pager`, `grok-desktop`, `grok-extension`, `grok-agent-sdk` | `xai-file-utils/src/storage_client.rs:566-568`; `xai-grok-voice/src/stt/streaming.rs:55,304` | storage / STT and other product services |
+| `x-grok-client-mode` | the process's client mode | `xai-grok-http/src/lib.rs:256` (`CLIENT_MODE_HEADER`), injected at `xai-grok-shell/src/agent/config.rs:5166-5167` | **every** base URL |
+| `X-XAI-Token-Auth` | **`xai-grok-cli`** | `xai-grok-shell/src/agent/config.rs:5158-5160` | **cli-chat-proxy base URLs ONLY** |
+| `x-authenticateresponse` | `authenticate-response` | `xai-grok-shell/src/agent/config.rs:5161-5163` | **cli-chat-proxy base URLs ONLY** |
 
-and `crates/codegen/xai-grok-pager/src/client_identity.rs:8-18` builds a `User-Agent` of the shape
-`grok-shell/<version> (<os>; <arch>)`.
+Also `crates/codegen/xai-grok-pager/src/client_identity.rs:8-18` builds a `User-Agent` of the shape
+`grok-shell/<version> (<os>; <arch>)`. Winter sends `User-Agent: winter-agent-sdk/<version>`
+(`provider-runtime/src/identity.ts`) and none of the six above.
 
-All three are the vendor product's own identity and telemetry. **WS-13 §5: client-identity headers
-are never imported; Winter adapters author their own.** Winter sends
-`User-Agent: winter-agent-sdk/<version>` (`provider-runtime/src/identity.ts`) and neither
-`x-grok-*` header. Recorded here so the omission reads as a decision rather than an oversight.
+**The last two are not telemetry, and they are the ones that matter.** `inject_url_derived_headers`
+(`agent/config.rs:5152-5169`) adds `X-XAI-Token-Auth: xai-grok-cli` and
+`x-authenticateresponse: authenticate-response` **if and only if the base URL is the cli-chat-proxy**
+— which is exactly the endpoint this row uses (§4). The client's own tests pin both directions:
+`config_tests.rs:166-184` asserts both headers present for `PROD_CLI_CHAT_PROXY_BASE_URL`, and
+`config_tests.rs:185-196` asserts both **absent** for `https://api.x.ai/v1`.
+
+`xai-grok-cli` is a FIRST-PARTY PRODUCT IDENTITY. Winter may not send it — that is WS-13 §5 and D21
+in one line, and it is the same rule that excludes every impersonation-required row in the audit. So
+this capture records a second, separate reversion condition:
+
+> **INFERENCE-PATH REVERSION CONDITION (WS-13b §4).** If the subscription proxy REQUIRES
+> `X-XAI-Token-Auth: xai-grok-cli` — i.e. a 4xx on a valid subscription bearer that clears only when
+> that first-party product identity is added — then the inference path is closed to an honest client
+> and `xai-oauth` reverts to `impersonation-required`, exactly as the login-path condition does.
+> Winter will not send the header to make a call work. **Only a live call with a real subscription
+> token can answer this**; Lane L's live case is where it gets answered, and the row's model rows
+> stay `status: "candidate"` until it does.
+
+This is a genuinely different question from the login-path condition in §7: the login can succeed
+honestly and the inference call still be gated. Both must pass before this row is more than a
+candidate.
 
 ### 3.5 `plan` — searched for, and it is not there
 
@@ -144,11 +171,29 @@ independently (§2.5(4): "Session traffic in at least one implementation goes to
 `cli-chat-proxy.grok.com/v1` rather than the metered `api.x.ai/v1`"). `api.x.ai/v1` remains correct
 for the SEPARATE api-key `xai` row (lane X2's), which is token-priced.
 
-**Dialect.** The proxy serves both OpenAI-compatible routes: `/v1/chat/completions`
-(`shell-base/src/util/mod.rs:351,376`) and `/v1/responses` (`error_display.rs:769`); the client's own
-model catalogue selects `api_backend: "responses"` for both models (§6). Winter ships the
-**chat-completions** dialect per the brief, which the proxy demonstrably serves. That the vendor's
-own client prefers Responses on the same host is recorded as a live-gate question, not a defect.
+**Dialect — the chat route is proven LIVE, not inferred from a test fixture.** An earlier draft of
+this document cited `shell-base/src/util/mod.rs:351,376` for `/v1/chat/completions`; those lines are
+the client's own URL-CLASSIFIER TESTS, which prove that the client would recognise such a URL, not
+that the server answers it. The route was therefore probed directly, unauthenticated, on 2026-09-06:
+
+| probe | result |
+|---|---|
+| `POST https://cli-chat-proxy.grok.com/v1/chat/completions`, no credential | **HTTP 401**, `application/json`: `{"error":"Invalid or expired credentials (auth_kind=none, x_xai_token_auth=none, upstream=Unauthenticated, reason=no auth context)"}` |
+| `POST https://cli-chat-proxy.grok.com/v1/winter-control-does-not-exist`, no credential (CONTROL) | **HTTP 404**, nginx HTML |
+
+The control is what makes the first line mean anything: a 401 from a host that 401s everything would
+prove nothing, and the nginx 404 shows the 401 is route-specific. So the chat-completions route
+**exists on the subscription proxy and is bearer-gated**, and Winter's own `User-Agent` was not
+refused at the edge. No credential was sent and none was needed.
+
+**Note the 401 body names `x_xai_token_auth` as its own dimension**, separately from `auth_kind`.
+That is direct evidence the proxy's auth middleware reads the header §3.4 forbids Winter from
+sending. It does **not** show the header is required when a valid bearer IS present — which is
+exactly the inference-path reversion condition, and exactly what a live subscription token would
+settle.
+
+The vendor's own model catalogue selects `api_backend: "responses"` for both models (§6) while Winter
+ships the **chat-completions** dialect per the brief. Recorded as a live-gate question, not a defect.
 
 ---
 
@@ -173,6 +218,25 @@ this rule.
 `referrer=winter-agent-sdk`, never `grok-build`. This is the whole of the codex shape: the vendor's
 public client id, plus an honest statement of who is actually calling. Winter never sends the
 vendor's product name in this field, and never omits the field.
+
+**Two facts in the artifact support this use directly, rather than merely permitting it:**
+
+1. **The vendor documents the field as attribution, not as authentication.** `auth/config.rs:118`
+   describes `referrer` as a client-supplied value "so analytics can attribute OAuth usage". A field
+   whose stated purpose is attributing *which client* is calling is a field a third-party client
+   should fill in with its own name — filling it with `grok-build` would corrupt the very analytics
+   the vendor says it is for.
+2. **The vendor's own client already overrides it per client.** `oidc/protocol.rs:854-893` is a test
+   named for that behaviour, driving the authorize URL with `referrer: Some("grok-desktop")` and
+   asserting the URL carries `referrer=grok-desktop` and **not** `referrer=grok-build`, exactly once.
+   So a value other than `grok-build` on this shared client id is a shape the vendor itself builds,
+   tests and ships — not something Winter invented. `config.rs:118-120` makes it a configurable
+   field on the client config rather than a constant, which is what makes that possible.
+
+Together these are the strongest support in the artifact for the honest-originator use, and they are
+why this is the codex shape rather than an analogy to it. What they do NOT establish is that xAI
+ACCEPTS an unregistered value server-side — that is §7's reversion condition, and no amount of
+reading the client can answer it.
 
 ### 5.3 The scope set is the vendor client's, unchanged (10 scopes)
 
@@ -227,13 +291,47 @@ Carried forward from audit §2.5 so the row's residual risk stays visible:
 1. **xAI documents no third-party permission for this flow.** Every vendor-published artifact is a
    news post or source code. This is prong 2, not prong 1 (audit §2.5 residual 1). Unchanged by this
    capture.
-2. **The identity field is now LOCATED, but its server-side treatment is still unknown.** Audit
-   residual 2 said `referrer` was seen only in a captured authorization URL and not in the
-   device-code path. **This capture closes half of that**: `referrer` IS on the device-code path, at
-   `device_code.rs:145`, as a form field. What remains open is whether xAI *validates* it — testable
-   only against the live endpoint.
-3. **Server-side allowlisting is untested** (audit residual 3, OQ-10(c)). This is precisely what the
-   reversion condition exists for.
+2. **The identity field is LOCATED and probed at the first step; its treatment further in is
+   unknown.** Audit residual 2 said `referrer` was seen only in a captured authorization URL and not
+   in the device-code path. **This capture closes it**: `referrer` IS on the device-code path, at
+   `device_code.rs:145`, as a form field — and §7.1 L1/L2 show the endpoint accepts Winter's value
+   and does not require the field at all. What remains open is the consent screen and the token
+   exchange, which only a real sign-in reaches.
+3. **Server-side allowlisting is only PARTIALLY probed** (audit residual 3, OQ-10(c)). §7.1 L1 shows
+   no allowlist at the device-authorization step. Nothing has probed the token exchange, and nothing
+   at all has probed the INFERENCE path, where §3.4's `X-XAI-Token-Auth` question sits. Two
+   conditions, one partially answered.
+
+### 7.1 Live probes, 2026-09-06 — what has actually been observed
+
+Recorded because "the reversion condition has not fired" is a claim about a live server, and nothing
+in the client can support it. Every probe below is unauthenticated; no credential was sent.
+
+| # | probe | result | who |
+|---|---|---|---|
+| L1 | `POST auth.x.ai/oauth2/device/code` with `client_id`, the ten scopes, and **`referrer=winter-agent-sdk`** | **HTTP 200** — a device code was minted for an honest, unregistered agent identity | review |
+| L2 | the same request with the `referrer` field **omitted entirely** | **HTTP 200** — the field is not required by the endpoint | review |
+| L3 | `GET auth.x.ai/.well-known/openid-configuration` | HTTP 200; `token_endpoint_auth_methods_supported` includes `none` (public client), device grant present, all ten scopes in `scopes_supported` | this capture |
+| L4 | `POST cli-chat-proxy.grok.com/v1/chat/completions`, no credential | HTTP 401 JSON naming `auth_kind=none, x_xai_token_auth=none` | this capture |
+| L5 | `POST cli-chat-proxy.grok.com/v1/<nonexistent>`, no credential (control for L4) | HTTP 404, nginx HTML | this capture |
+
+**What L1 and L2 establish:** the device-authorization step does not reject Winter's identity, so the
+login-path reversion condition has **not** fired at that step. Read together they also settle the
+audit's residual 2 in the other direction: the field is *accepted* but not *required*, which means
+Winter sends it because honesty requires it, not because the protocol does.
+
+**What they do NOT establish, and this matters:**
+
+* A minted device code is not an authorization. The consent screen and the token exchange are both
+  downstream, and an allowlist could still bite at either — L1 says only that the FIRST step is open.
+* Neither probe used a subscription account, so nothing here shows a token would be issued, or that
+  it would carry the subscription entitlement.
+* L4/L5 show the inference route exists and is bearer-gated; they say nothing about whether a valid
+  bearer suffices **without** `X-XAI-Token-Auth` — the §3.4 inference-path condition, still open.
+
+So: two reversion conditions, one partially probed and one entirely unprobed. The row ships enabled
+because nothing observed has fired either, and its models stay `candidate` because nothing observed
+has cleared them.
 
 > **REVERSION CONDITION (WS-13b §4).** If xAI's device or authorize endpoint rejects an honest,
 > unregistered identity — i.e. `referrer=winter-agent-sdk` is refused where `referrer=grok-build`
