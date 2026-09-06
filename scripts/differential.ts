@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { query, encodeFrame, splitFrames, ResultError, type RuntimeConfig, type WinterFrame } from "@yanlinglabs/winter-agent-sdk";
 import { inMemoryProcess } from "winter-agent-runtime/testing";
-import { testProviderByName, scriptedProvider, registerTool, MCP_SDK_TEST_SERVER_NAME, MCP_SDK_TEST_TOOL_NAME, P5_FIXTURE_SKILL_NAME } from "winter-agent-runtime";
+import { testProviderByName, scriptedProvider, registerTool, MCP_SDK_TEST_SERVER_NAME, MCP_SDK_TEST_TOOL_NAME, P5_FIXTURE_SKILL_NAME, SCENARIO_MODELS, SCENARIO_TOOL_NAME, startScenarioFake } from "winter-agent-runtime";
 import { normalizeTrace, compareTraces, type ConformanceTraceEntry } from "winter-conformance/trace";
 
 // A pinned, synthetic cwd (never process.cwd()) so every recorded trace — and the committed golden
@@ -1179,7 +1179,57 @@ const SCENARIOS: Scenario[] = [
   { name: "structured-output-round", trace: traceWinterStructuredOutputRound, goldenFile: "structured-output-round.trace.json" },
   { name: "structured-exhaustion-round", trace: traceWinterStructuredExhaustionRound, goldenFile: "structured-exhaustion-round.trace.json" },
   { name: "skill-invocation-round", trace: traceWinterSkillInvocationRound, goldenFile: "skill-invocation-round.trace.json" },
+  // Phase 6 Task 10: one golden per shipped protocol FAMILY, each a real adapter driven against the
+  // shared loopback fake. Four families, four wire mappings, four frozen frame streams.
+  { name: "p6-anthropic-fake", trace: () => traceProviderScenario("p6-anthropic", SCENARIO_MODELS.anthropic), goldenFile: "p6-anthropic-fake.trace.json" },
+  { name: "p6-openai-responses-fake", trace: () => traceProviderScenario("p6-openai-responses", SCENARIO_MODELS.openaiResponses), goldenFile: "p6-openai-responses-fake.trace.json" },
+  { name: "p6-openai-chat-fake", trace: () => traceProviderScenario("p6-openai-chat", SCENARIO_MODELS.openaiChat), goldenFile: "p6-openai-chat-fake.trace.json" },
+  { name: "p6-gemini-fake", trace: () => traceProviderScenario("p6-gemini", SCENARIO_MODELS.gemini), goldenFile: "p6-gemini-fake.trace.json" },
 ];
+
+// --- Phase 6 Task 10: the provider-layer goldens -------------------------------------------------
+//
+// The BYTE-FROZEN half of the equivalence scenarios. `transport-equivalence.test.ts` proves the same
+// choreographies are identical ACROSS transports; these freeze what one of them actually looks like,
+// which is the only thing that catches a change every leg makes together.
+//
+// DETERMINISTIC DESPITE A LIVE SERVER, and that is worth stating because it is not obvious: the fake
+// binds an EPHEMERAL port, but nothing about the port reaches the frame stream — the base URL is
+// configuration, not output. What does reach it is the init frame's `model` (the caller's own string),
+// the `winter_provider` identity block (catalog data), the assistant blocks and the tool result — all
+// fixed. The tool's own pattern matches nothing in any checkout, so its result is the empty string on
+// every machine.
+async function traceProviderScenario(name: string, model: string): Promise<ConformanceTraceEntry[]> {
+  const winterHome = mkdtempSync(join(tmpdir(), `winter-differential-${name}-`));
+  const fake = await startScenarioFake();
+  try {
+    const entries: ConformanceTraceEntry[] = [];
+    let seq = 0;
+    for await (const msg of query({
+      prompt: "run the provider scenario",
+      options: {
+        model,
+        cwd: FIXTURE_CWD,
+        // A USER endpoint (R6-11), declared local because plain http to a loopback address is
+        // otherwise refused. `inline` because a golden may never touch a real credential store.
+        provider: { providerId: model.slice(0, model.indexOf("/")), authRef: { kind: "inline", value: "test" }, connection: { baseUrl: fake.url, local: true } },
+        allowedTools: [SCENARIO_TOOL_NAME],
+        // `undefined` tools -> the REAL registry-backed executor, which is what every spawned leg
+        // uses. `stubExecutor` here would freeze an echo instead of the tool the scenario ran.
+        spawnClaudeCodeProcess: (opts) => inMemoryProcess(opts.args, undefined, undefined, { ...opts.env, WINTER_HOME: winterHome }),
+      },
+    })) {
+      const kind = msg.type === "system" ? `system/${(msg as { subtype: string }).subtype}` : msg.type;
+      entries.push({ sequence: seq++, direction: "runtime-to-host", kind, payload: msg });
+    }
+    // Gemini mints its own call ids (its wire carries none), so they are per-run by construction.
+    const scrubbed = JSON.parse(JSON.stringify(scrubWinterHome(entries, winterHome)).replace(/google-call-[0-9a-f]+-\d+/g, "google-call-SCRUBBED")) as ConformanceTraceEntry[];
+    return normalizeTrace(scrubbed);
+  } finally {
+    await fake.close();
+    rmSync(winterHome, { recursive: true, force: true });
+  }
+}
 
 // Sign-off 3 directive (whole-branch review): `--update` turns this script from a comparator into
 // checked-in golden-regeneration tooling — the project had none (T11 review F5 closed the loop: an

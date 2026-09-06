@@ -1,0 +1,132 @@
+[
+  {
+    "sequence": 0,
+    "direction": "runtime-to-host",
+    "kind": "system/init",
+    "payload": {
+      "type": "system",
+      "subtype": "init",
+      "cwd": "/winter-fixture",
+      "model": "anthropic/claude-sonnet-5",
+      "permissionMode": "default",
+      "tools": [
+        "Agent",
+        "AskUserQuestion",
+        "Bash",
+        "CronCreate",
+        "CronDelete",
+        "CronList",
+        "Edit",
+        "EnterPlanMode",
+        "EnterWorktree",
+        "ExitPlanMode",
+        "ExitWorktree",
+        "Glob",
+        "Grep",
+        "ListAgents",
+        "Monitor",
+        "NotebookEdit",
+        "PushNotification",
+        "Read",
+        "ReadNotifications",
+        "ReportFindings",
+        "ScheduleWakeup",
+        "SendMessage",
+        "Skill",
+        "TaskCreate",
+        "TaskGet",
+        "TaskList",
+        "TaskOutput",
+        "TaskStop",
+        "TaskUpdate",
+        "Workflow",
+        "Write"
+      ],
+      "apiKeySource": "none",
+      "winter_provider": {
+        "providerId": "anthropic",
+        "modelKey": "anthropic/claude-sonnet-5",
+        "adapterId": "winter.anthropic-messages",
+        "adapterVersion": "1",
+        "catalogVersion": "v3.8.50+winter.1",
+        "continuationDomain": "anthropic/claude-sonnet-5",
+        "authRefKind": "inline"
+      },
+      "slash_commands": [
+        "compact"
+      ],
+      "output_style": "default",
+      "skills": [],
+      "plugins": []
+    }
+  },
+  {
+    "sequence": 1,
+    "direction": "runtime-to-host",
+    "kind": "assistant",
+    "payload": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "type": "text",
+            "text": "checking the tree"
+          },
+          {
+            "type": "tool_use",
+            "id": "toolu_p6",
+            "name": "Glob",
+            "input": {
+              "pattern": "*.winter-t10-no-such-file"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "sequence": 2,
+    "direction": "runtime-to-host",
+    "kind": "user",
+    "payload": {
+      "type": "user",
+      "message": {
+        "content": [
+          {
+            "type": "tool_result",
+            "tool_use_id": "toolu_p6",
+            "content": "Error: path not found: /winter-fixture"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "sequence": 3,
+    "direction": "runtime-to-host",
+    "kind": "assistant",
+    "payload": {
+      "type": "assistant",
+      "message": {
+        "content": [
+          {
+            "type": "text",
+            "text": "the provider scenario is done"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "sequence": 4,
+    "direction": "runtime-to-host",
+    "kind": "result",
+    "payload": {
+      "type": "result",
+      "subtype": "success",
+      "is_error": false,
+      "result": "the provider scenario is done",
+      "permission_denials": []
+    }
+  }
+]
