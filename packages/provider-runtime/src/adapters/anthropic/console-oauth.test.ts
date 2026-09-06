@@ -29,15 +29,52 @@ import { base64Url } from "../openai/pkce.ts";
 
 describe("D20: Anthropic Console OAuth", () => {
   test("the constants are the artifact's, not typed from memory", () => {
-    expect(CONSOLE_OAUTH.clientId).toBe(DERIVED.consoleOauth.clientId);
-    expect(CONSOLE_OAUTH.authorizeUrl).toBe(DERIVED.consoleOauth.authorizeUrl);
-    expect(CONSOLE_OAUTH.tokenUrl).toBe(DERIVED.consoleOauth.tokenUrl);
-    expect(CONSOLE_OAUTH.profileUrl).toBe(DERIVED.consoleOauth.profileUrl);
-    expect(CONSOLE_OAUTH.scope).toBe(DERIVED.consoleOauth.scope);
-    expect(CONSOLE_OAUTH.callbackPort).toBe(DERIVED.consoleOauth.callbackPort);
-    expect(CONSOLE_OAUTH.callbackPath).toBe(DERIVED.consoleOauth.callbackPath);
-    expect(CONSOLE_OAUTH.betaHeader).toBe(DERIVED.consoleOauth.betaHeader);
+    // EXHAUSTIVE, not field-by-field. A list of `expect(a.x).toBe(b.x)` lines gates the fields
+    // somebody remembered to list, which is how `accountIdPath` shipped derived-but-ungated in round
+    // 1 — the very drift these constants exist to prevent, in the test written to prevent it.
+    // Comparing the whole object gates every field, including one added later to only one side.
+    expect({ ...CONSOLE_OAUTH }).toEqual({ ...DERIVED.consoleOauth });
+    // And the key set is pinned, so an addition is a deliberate edit HERE rather than a silent one.
+    expect(Object.keys(CONSOLE_OAUTH).sort()).toEqual([
+      "accountIdPath",
+      "authorizeUrl",
+      "betaHeader",
+      "callbackPath",
+      "callbackPort",
+      "clientId",
+      "profileUrl",
+      "scope",
+      "tokenUrl",
+    ]);
   });
+
+  test("R-A2-1: the token endpoint fake accepts EXACTLY JSON — a form-encoded grant is refused, not silently accepted", async () => {
+    const fake = await startAnthropicConsoleOauthFake();
+    try {
+      // Driven directly rather than through the login, because the point is what the FAKE does: its
+      // first version read the body with `URLSearchParams`, which does not throw on JSON. That
+      // produced one meaningless key, `grant_type` came back null, the PKCE branch was skipped
+      // whole, and it answered 200 having validated nothing. A fake that accepts both encodings
+      // cannot prove the adapter sends the observed one.
+      const asForm = await fetch(fake.tokenUrl, {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ grant_type: "refresh_token", refresh_token: "x", client_id: "y" }).toString(),
+      });
+      expect(asForm.status).toBe(400);
+      const asJson = await fetch(fake.tokenUrl, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ grant_type: "refresh_token", refresh_token: "x", client_id: "y" }),
+      });
+      expect(asJson.status).toBe(200);
+      // A JSON content type over a body that is not a JSON object fails closed too.
+      const asGarbage = await fetch(fake.tokenUrl, { method: "POST", headers: { "content-type": "application/json" }, body: "not json" });
+      expect(asGarbage.status).toBe(400);
+    } finally {
+      await fake.close();
+    }
+  }, 15_000);
 
   test("D13/D14: the CONSOLE host is what D20 speaks to — the consumer subscription host appears nowhere in the shipped constants", () => {
     // The pinned artifact carries BOTH authorize hosts (derived-shapes-p6b.md §2). Only the Console
