@@ -47,6 +47,7 @@ interface ConformanceRow {
 const CATALOG = "../../provider-catalog/src";
 const PROVIDER_RUNTIME = "../../provider-runtime/src";
 const CORPUS = "../../provider-conformance/src/corpus";
+const LIVE = "../../provider-conformance/src/live";
 const RUNTIME = "../../runtime/src";
 const SDK = "../../sdk/src";
 const SCRIPTS = "../../../scripts";
@@ -482,7 +483,112 @@ const FIX_WAVE_ROWS: ConformanceRow[] = [
   },
 ];
 
-const ALL_ROWS: ConformanceRow[] = [...CATALOG_ROWS, ...ADAPTER_ROWS, ...INTEGRATION_ROWS, ...FIX_WAVE_ROWS];
+// --- P6.5 (WS-13b): provider widening ------------------------------------------------------------
+//
+// WS-13b amends WS-13 after Phase 6 closed, so its acceptance obligations are a FOURTH group in this
+// same table rather than a table of their own: every guard below (a citation's file is read and the
+// substring genuinely searched for; the self-citation double-occurrence rule; the ≥13-character
+// specificity bound; unique ids) iterates `ALL_ROWS`, and a sibling array would have to duplicate
+// all four or escape them.
+//
+// PARTIAL BY CONSTRUCTION, and the partiality is named rather than hidden. WS-13b §7 owes one row
+// per new provider family behaviour — Console OAuth (Lane A2), the two authored OAuth flows and the
+// reversion condition (Lane O), the Anthropic-dialect siblings and the exclusions ledger (Lane X2).
+// Those lanes merge AFTER this one, and a row may only cite a test that exists: a row citing a test
+// name guessed from a brief is exactly the rot the citation guard exists to prevent. The rows below
+// are the ones whose covering tests are in the tree TODAY (the spine's, and this lane's own); the
+// rest land when their lanes do.
+const WS13B = "WS-13b §7 (widening)";
+
+const WIDENING_ROWS: ConformanceRow[] = [
+  {
+    id: "WS13b-1",
+    spec: WS13B,
+    bullet: "§1/R6b-3: every shipped row carries a `pricingBasis` and an `admission.citation`; a missing citation fails validation and an `unknown` one is refused by the pipeline rather than imported",
+    status: "new",
+    citations: [
+      { file: `${CATALOG}/validate.test.ts`, testName: "every shipped provider row carries pricingBasis and an admission citation" },
+      { file: `${CATALOG}/validate.test.ts`, testName: "a row without an admission citation FAILS validation with code admission-missing" },
+      { file: `${CATALOG}/validate.test.ts`, testName: "a citation naming the audit's `unknown` evidence class is refused with code admission-unknown" },
+      { file: `${CATALOG}/extract/pipeline.test.ts`, testName: "an allowlisted entry citing the audit's `unknown` evidence class is REFUSED (admission-unknown), never imported" },
+      { file: `${CATALOG}/extract/pipeline.test.ts`, testName: "the reviewed pricing basis and admission citation are COPIED onto the generated row, never derived" },
+    ],
+    note: "The rule is evidence, not decoration: 'the decisive document was not found' is a disposition to EXCLUDE, so a row may not ship carrying it.",
+  },
+  {
+    id: "WS13b-2",
+    spec: WS13B,
+    bullet: "§1 honest identity: every adapter family sends Winter's OWN `User-Agent`, never an editor, CLI or first-party product identity — asserted off the live request a fake received, on every family",
+    status: "new",
+    citations: [
+      { file: `${PROVIDER_RUNTIME}/identity.test.ts`, testName: "the user agent names Winter and its version, never an editor or vendor CLI" },
+      { file: `${PROVIDER_RUNTIME}/identity.test.ts`, testName: "it is a single well-formed product token — no vendor originator can be appended to it" },
+      { file: `${CORPUS}/openai.test.ts`, testName: "WS-13b: every request carries Winter's OWN user-agent, on both surfaces" },
+      { file: `${CORPUS}/anthropic.test.ts`, testName: "WS-13b: every request carries Winter's OWN user-agent, never an editor or vendor CLI identity" },
+      { file: `${CORPUS}/google.test.ts`, testName: "WS-13b: every request carries Winter's OWN user-agent, never an editor or vendor CLI identity" },
+      { file: `${CORPUS}/vertex.test.ts`, testName: "the GenerateContent request carries Winter's OWN user-agent" },
+      { file: `${CORPUS}/bedrock.test.ts`, testName: "every request carries Winter's OWN user-agent, and the fake's SigV4 check still passes with it in the signed set" },
+    ],
+    note: "WS-13 §5 reaffirmed, not relaxed: client-identity headers are never imported and Winter adapters author their own. The OAuth helpers' own token/device requests carry it too (WS13b-5's citations).",
+  },
+  {
+    id: "WS13b-3",
+    spec: WS13B,
+    bullet: "§1 pricing basis is data: a `subscription`- or `free`-priced row never feeds R6-H cost (`total_cost_usd`/`modelUsage` omitted), while the SAME row priced per token still does",
+    status: "new",
+    citations: [
+      { file: `${RUNTIME}/provider/session-provider.test.ts`, testName: "a subscription-priced row reports NO cost: a per-token number for a seat is not a smaller error, it is a wrong one" },
+      { file: `${RUNTIME}/provider/session-provider.test.ts`, testName: "a free (local) row reports no cost either" },
+      { file: `${CATALOG}/validate.test.ts`, testName: "a subscription-priced row is legal and keeps its own basis" },
+    ],
+    note: "The inverted leg is what carries it: the same row priced per token DOES report a cost, so the assertion is about the basis rather than about a row with no pricing evidence.",
+  },
+  {
+    id: "WS13b-4",
+    spec: WS13B,
+    bullet: "§4/R6b-7: a provider disabled by `settings.providers.<id>.enabled` is REFUSED at resolution with code `provider-disabled` — at session start, at `set_model`, and for every `fallbackModel` candidate; R6b-9 makes the switch operator-immune (any tier's `false` wins)",
+    status: "new",
+    citations: [
+      { file: `${RUNTIME}/provider/selection.test.ts`, testName: "a provider disabled in settings is REFUSED at resolution with code provider-disabled — never skipped silently" },
+      { file: `${RUNTIME}/provider/selection.test.ts`, testName: "a fallbackModel on a disabled provider is refused at init, not discovered at failover" },
+      { file: `${RUNTIME}/provider/session-provider.test.ts`, testName: "with the provider disabled, the switch is REFUSED with provider-disabled — never a parked or silent switch" },
+      { file: `${RUNTIME}/production-wiring.test.ts`, testName: "a USER-tier `providers.<id>.enabled: false` REFUSES the session's provider, by name, on the wiring warning channel" },
+      { file: `${SDK}/settings/settings.test.ts`, testName: "R6b-9: a PROJECT tier can never re-enable what the USER tier disabled — the reversion switch is operator-immune" },
+    ],
+    note: "This is the reversion condition's mechanism (§4): if xAI rejects an honest unregistered agent identity, the row is switched off by the operator and no lower tier can put it back.",
+  },
+  {
+    id: "WS13b-5",
+    spec: WS13B,
+    bullet: "§7 the live gate: one opt-in target per documented third-party path (api-key, OAuth via a Keychain ref, keyless), a per-target row carrying identifiers/verdict/latency/identity and never a byte of what a provider returned, and no path from `bun test` to a vendor or to the Keychain",
+    status: "new",
+    citations: [
+      { file: `${SCRIPTS}/verify-provider-live.test.ts`, testName: "an OAuth row is selected by WINTER_LIVE_<P>_CREDENTIAL_REF and never by an API-key variable" },
+      { file: `${SCRIPTS}/verify-provider-live.test.ts`, testName: "a keyless row is selected by WINTER_LIVE_<P>=1 with no key" },
+      { file: `${SCRIPTS}/verify-provider-live.test.ts`, testName: "the keyless selector is `1` exactly, and it never applies to a PRICED row" },
+      { file: `${SCRIPTS}/verify-provider-live.test.ts`, testName: "the spawn helper REFUSES a credential-ref variable -- the OAuth kind can never be driven from `bun test`" },
+      { file: `${SCRIPTS}/verify-provider-live.test.ts`, testName: "a live run whose adapter fails prints identity only -- never the body" },
+      { file: `${LIVE}/summary.test.ts`, testName: "the formatted line carries every field as `key=value`, and NOTHING a provider returned" },
+    ],
+    note: "The OAuth kind is proved through the PURE planner and nowhere else: resolving it constructs the production Keychain store, which no test may reach. The spawn helper's refusal is what makes that structural.",
+  },
+  {
+    id: "WS13b-6",
+    spec: WS13B,
+    bullet: "§3/§4 shared OAuth machinery: a refresh that persists new material without logging it, refuses before any request when it holds no refresh token, and never lets a partial response clobber a known-good record; an RFC 8628 device flow that carries an honest identity field on EVERY request",
+    status: "new",
+    citations: [
+      { file: `${PROVIDER_RUNTIME}/adapters/oauth/refresh.test.ts`, testName: "exchanges the refresh token, persists the new material, never logs it" },
+      { file: `${PROVIDER_RUNTIME}/adapters/oauth/refresh.test.ts`, testName: "a 4xx is a typed credential error naming the ref, never the token" },
+      { file: `${PROVIDER_RUNTIME}/adapters/oauth/refresh.test.ts`, testName: "a partial refresh response NEVER clobbers a known-good refresh token, id token or account id" },
+      { file: `${PROVIDER_RUNTIME}/adapters/oauth/device-code.test.ts`, testName: "requests a device code, reports the user code, polls until the token arrives, and sends the identity field on EVERY request" },
+      { file: `${PROVIDER_RUNTIME}/adapters/oauth/device-code.test.ts`, testName: "a terminal error from the token endpoint stops the flow instead of polling forever, and never echoes the body" },
+    ],
+    note: "The helpers the §3/§4 flows are built from. The flows themselves (Console OAuth, xai-oauth, qoder) are Lanes A2/O and get their own rows when those lanes land.",
+  },
+];
+
+const ALL_ROWS: ConformanceRow[] = [...CATALOG_ROWS, ...ADAPTER_ROWS, ...INTEGRATION_ROWS, ...FIX_WAVE_ROWS, ...WIDENING_ROWS];
 
 describe("WS-13 §13 conformance matrix (Phase 6 Task 10)", () => {
   test("every row is covered, newly tested here, or deferred with a named owning-phase reasoning -- zero unexplained bullets", () => {
@@ -550,7 +656,9 @@ describe("WS-13 §13 conformance matrix (Phase 6 Task 10)", () => {
 
   test("all three §13 acceptance groups are represented -- no numbered obligation group is silently missing", () => {
     const groups = new Set(ALL_ROWS.map((r) => r.spec));
-    expect([...groups].sort()).toEqual(["WS-13 §13 (adapter)", "WS-13 §13 (catalog)", "WS-13 §13 (integration)"]);
+    // P6.5 adds a fourth: WS-13b amends WS-13 rather than replacing it, so its rows live in this
+    // same table and under this same set of guards.
+    expect([...groups].sort()).toEqual(["WS-13 §13 (adapter)", "WS-13 §13 (catalog)", "WS-13 §13 (integration)", WS13B]);
   });
 
   test("CI runs the catalog regeneration check and the OFFLINE source sync (WS13-C1's other half)", () => {
