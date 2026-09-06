@@ -14,6 +14,7 @@
 
 import type {
   CapabilityEvidence,
+  CatalogValidationError,
   CatalogValidationResult,
   EvidenceConfidence,
   EvidenceSource,
@@ -51,6 +52,8 @@ const CATALOG_AUTHORITY = ["authoritative", "partial", "unknown"] as const;
 const RISK_CLASSES = ["approved", "review-required", "blocked"] as const;
 const PROVIDER_SCOPES = ["llm", "stt", "tts", "embedding", "image", "video", "search"] as const;
 const UPSTREAM_PROJECTS = ["OmniRoute", "winter"] as const;
+const PRICING_BASES = ["token", "subscription", "free"] as const;
+const ADMISSION_BASES = ["api-key", "oauth-documented", "keyless-documented", "local", "cloud-credential"] as const;
 const CONTINUATIONS = ["none", "plaintext", "opaque-provider-state", "server-response-handle"] as const;
 const READABLE_STATES = ["none", "summary", "full-exposed"] as const;
 const REPLAY_SCOPES = ["current-tool-loop", "current-turn", "selected-turns", "all-turns"] as const;
@@ -78,6 +81,8 @@ export const CATALOG_VOCABULARIES = {
   riskClasses: RISK_CLASSES,
   providerScopes: PROVIDER_SCOPES,
   upstreamProjects: UPSTREAM_PROJECTS,
+  pricingBases: PRICING_BASES,
+  admissionBases: ADMISSION_BASES,
   continuations: CONTINUATIONS,
   readableStates: READABLE_STATES,
   replayScopes: REPLAY_SCOPES,
@@ -154,9 +159,14 @@ function isRecord(v: unknown): v is Record<string, unknown> {
 }
 
 class Errors {
-  readonly list: string[] = [];
-  add(path: string, message: string): void {
-    this.list.push(`${path}: ${message}`);
+  readonly list: CatalogValidationError[] = [];
+  /**
+   * `code` defaults to the generic `invalid` on purpose. A machine code is only worth having where
+   * something ELSE keys on it (R6b-3's admission gate), and retro-coding sixty shape checks would
+   * mint sixty codes nothing reads — each of which then becomes a contract a later edit can break.
+   */
+  add(path: string, message: string, code = "invalid"): void {
+    this.list.push({ code, path, message: `${path}: ${message}` });
   }
   /** Requires a non-empty string. Returns undefined (and records) when absent or wrong-typed, so callers can keep going. */
   str(obj: Record<string, unknown>, key: string, path: string): string | undefined {
@@ -223,6 +233,15 @@ function describe(v: unknown): string {
   if (typeof v === "object") return "an object";
   return JSON.stringify(v) ?? String(v);
 }
+
+/**
+ * A citation that names the audit's `unknown` evidence class rather than a document.
+ *
+ * Anchored, and case-insensitive on the class name only: `audit:unknown`, `audit:unknown-pending`,
+ * or the bare word. It deliberately does NOT match a URL that merely contains "unknown" somewhere in
+ * its path — the rule is about a row that admits it has no decisive document, not about spelling.
+ */
+export const UNKNOWN_CITATION_RE = /^(?:audit:)?unknown(?:$|[:/\-\s])/i;
 
 /** ISO-8601 instant, the only `observedAt` spelling the catalog admits (a date-only string is a rejection: evidence needs an instant, not a day). */
 const ISO_INSTANT_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/;
@@ -355,6 +374,30 @@ function checkProvider(errs: Errors, v: unknown, path: string): void {
       errs.add(`${path}.upstream.sourcePaths`, `expected an array of strings, got ${describe(upstream["sourcePaths"])}`);
     }
   }
+  // --- WS-13b §1 (D21 / R6b-3): the row's own evidence -------------------------------------------
+  //
+  // `pricingBasis` carries its OWN code because R6-H's cost path keys on it: a row that lost the
+  // field would otherwise be priced per token by whatever `pricing` evidence its models happen to
+  // carry, which for a seat is a confidently wrong number.
+  if (v["pricingBasis"] === undefined) errs.add(`${path}.pricingBasis`, "required — WS-13b §1: every row records how the vendor charges for the credential Winter uses, because `subscription`/`free` rows must never feed R6-H token cost", "pricing-basis-missing");
+  else errs.enum(v, "pricingBasis", path, PRICING_BASES);
+
+  const admission = v["admission"];
+  if (!isRecord(admission)) {
+    errs.add(`${path}.admission`, `required — WS-13b §1 (D21): a row ships only through a DOCUMENTED third-party path, and the citation that admits it travels on the row. Got ${describe(admission)}`, "admission-missing");
+  } else {
+    errs.enum(admission, "basis", `${path}.admission`, ADMISSION_BASES);
+    const citation = admission["citation"];
+    if (typeof citation !== "string" || citation.trim().length === 0) {
+      errs.add(`${path}.admission.citation`, `expected a non-empty citation (a vendor URL, \`audit:<section>\`, \`spec:<section>\`, or \`local\`), got ${describe(citation)}`, "admission-missing");
+    } else if (UNKNOWN_CITATION_RE.test(citation.trim())) {
+      // R6b-3's second half. The audit's `unknown` class means "the decisive document was not
+      // found", whose disposition is EXCLUDE — so this is not weak evidence to flag, it is a row
+      // that may not ship at all, and the refusal has to be here rather than in a reviewer's head.
+      errs.add(`${path}.admission.citation`, `cites the audit's \`unknown\` evidence class (${JSON.stringify(citation)}) — WS-13b §1: "a row whose evidence is \`unknown\` does not ship". Find the document or drop the row`, "admission-unknown");
+    }
+  }
+
   const risk = v["risk"];
   if (!isRecord(risk)) errs.add(`${path}.risk`, `expected {class, reasons}, got ${describe(risk)}`);
   else {
@@ -434,7 +477,7 @@ function checkModel(errs: Errors, v: unknown, path: string): void {
  */
 export function validateCatalog(json: unknown): CatalogValidationResult {
   const errs = new Errors();
-  if (!isRecord(json)) return { ok: false, errors: [`<root>: expected a catalog object, got ${describe(json)}`] };
+  if (!isRecord(json)) return { ok: false, errors: [{ code: "invalid", path: "<root>", message: `<root>: expected a catalog object, got ${describe(json)}` }] };
 
   if (json["schemaVersion"] !== 1) errs.add("schemaVersion", `expected the literal 1, got ${describe(json["schemaVersion"])}`);
   errs.str(json, "catalogVersion", "<root>");
@@ -507,7 +550,13 @@ export function validateCatalog(json: unknown): CatalogValidationResult {
     }
   }
 
-  errs.list.push(...scanForSecrets(json));
+  // `scanForSecrets` keeps its `string[]` signature (Lane X's generator runs it standalone over the
+  // RAW extraction, where there is no `Errors` to hand it); its findings are already `${path}: ${…}`,
+  // so the path is split back off rather than re-derived.
+  for (const finding of scanForSecrets(json)) {
+    const split = finding.indexOf(": ");
+    errs.list.push({ code: "secret", path: split > 0 ? finding.slice(0, split) : "<root>", message: finding });
+  }
 
   if (errs.list.length > 0) return { ok: false, errors: errs.list };
   return { ok: true, catalog: json as unknown as WinterCatalog };

@@ -133,7 +133,56 @@ export interface Settings {
    * of a contract that already has one.
    */
   mcpServers?: Record<string, unknown>;
+  /**
+   * WINTER-DEFINED (WS-13b R6b-7, disclosed): per-provider enablement, keyed by catalog provider id.
+   *
+   * Its whole reason for existing is the reversion condition. `xai-oauth` ships on prong 2 of the
+   * admission rule -- a vendor's public product client used with an honest Winter identity -- and
+   * WS-13b §4 requires that a vendor rejecting that identity can be answered WITHOUT a release. A
+   * setting is that answer; a compile-time constant is not.
+   *
+   * ABSENT MEANS ENABLED. Silence is not a disablement, so an unlisted provider resolves normally
+   * and only an explicit `enabled: false` refuses.
+   *
+   * RESTRICTIVE-ONLY ACROSS TIERS (RULING R6b-9), enforced by `restrictProviderEnables` in
+   * `resolve.ts` rather than by the ordinary merge: the effective value is `false` if ANY tier says
+   * `false`, and a lower tier's `true` never re-enables what a higher one disabled. Without that,
+   * a cloned repository's `.winter/settings.json` could put back a provider its operator withdrew —
+   * and this key IS the reversion switch (R6b-7 / WS-13b §4), so a switch a repository can flip back
+   * would not be one.
+   *
+   * NOT an OVERLAY_NEVER_KEY, deliberately: a never-key drops the project tier's value entirely,
+   * which would also drop a project's legitimate `false`. Disabling is a tightening every tier may
+   * make; only the enabling direction is restricted — the same asymmetry `permissions.deny` and
+   * `permissions.allow` already carry.
+   */
+  providers?: Record<string, { enabled?: boolean }>;
   [key: string]: unknown;
+}
+
+/**
+ * Narrows `Settings.providers` into the shape selection consumes: every declared id present, with an
+ * explicit boolean.
+ *
+ * ONE narrowing, at one place (the rider-26 pattern the six P5 keys established), so a typo'd key or
+ * a JSON file saying `"enabled": "false"` is handled here rather than at each reader with a cast.
+ *
+ * Total by construction: a settings file is JSON and may say anything. A non-object entry, an empty
+ * provider id and a non-boolean `enabled` are all DROPPED rather than coerced -- coercing `"false"`
+ * to `false` would disable a provider on the strength of a typo, and coercing it to `true` would
+ * pretend the user said something they did not. Only a literal `false` disables.
+ */
+export function providerSettingsFrom(settings: Settings | undefined): Record<string, { enabled: boolean }> {
+  const raw = settings?.["providers"];
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const out: Record<string, { enabled: boolean }> = {};
+  for (const [id, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (id.length === 0) continue;
+    if (value === null || typeof value !== "object" || Array.isArray(value)) continue;
+    const enabled = (value as { enabled?: unknown }).enabled;
+    out[id] = { enabled: enabled === false ? false : true };
+  }
+  return out;
 }
 
 // --- Resolution results ---------------------------------------------------------------------------

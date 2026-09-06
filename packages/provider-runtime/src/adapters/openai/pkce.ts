@@ -22,6 +22,7 @@
 
 import { ProviderRequestError, boundedFetch } from "../../http.ts";
 import { createEndpointPolicy } from "../../endpoint-policy.ts";
+import { winterUserAgent } from "../../identity.ts";
 
 export interface OAuthTokens {
   accessToken: string;
@@ -116,7 +117,12 @@ async function exchange(tokenUrl: string, params: Record<string, string>): Promi
   if (!built.ok) throw new ProviderRequestError({ code: "capability", message: built.reason, retryable: false });
   const response = await boundedFetch(tokenUrl, {
     method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" },
+    // WS-13b: a token endpoint is a vendor request like any other, so Winter names itself here too.
+    // This covers BOTH grants that flow through `exchange` -- the authorization-code exchange that
+    // completes a login and the legacy refresh path -- so a codex login and a codex refresh present
+    // the same identity. Without it the login was the one vendor request in the whole provider layer
+    // still going out as Bun's default user-agent.
+    headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json", "user-agent": winterUserAgent() },
     body: new URLSearchParams(params).toString(),
     policy: built.policy,
     maxBodyBytes: 512 * 1024,

@@ -29,7 +29,12 @@
         "class": "approved",
         "reasons": []
       },
-      "scope": "llm"
+      "scope": "llm",
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://claude.com/pricing"
+      }
     },
     {
       "id": "bedrock",
@@ -59,7 +64,12 @@
           "native cloud: SigV4 signing + event-stream decoding need their own proof (WS-13 §5)"
         ]
       },
-      "scope": "llm"
+      "scope": "llm",
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "cloud-credential",
+        "citation": "spec:WS-13 §1 — reviewed native-cloud allowlist row; the credential is the operator's own AWS account (SigV4)"
+      }
     },
     {
       "id": "deepseek",
@@ -91,7 +101,12 @@
           "reasoning continuity is tool-loop fragile (WS-13 §8.2: missing reasoning state mid-tool-loop is a hard error)"
         ]
       },
-      "scope": "llm"
+      "scope": "llm",
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "spec:WS-13 §1 — reviewed api-key allowlist row (categoryDispositions.apikey); no vendor pricing page is captured in-repo"
+      }
     },
     {
       "id": "google",
@@ -121,7 +136,12 @@
         "class": "approved",
         "reasons": []
       },
-      "scope": "llm"
+      "scope": "llm",
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://ai.google.dev/gemini-api/docs/pricing"
+      }
     },
     {
       "id": "openai",
@@ -151,7 +171,12 @@
         "class": "approved",
         "reasons": []
       },
-      "scope": "llm"
+      "scope": "llm",
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://developers.openai.com/api/docs/pricing"
+      }
     },
     {
       "id": "openrouter",
@@ -183,7 +208,12 @@
           "gateway: capability parity is model-by-model (WS-13 §14.4); per-request provider/data-policy controls must be preserved"
         ]
       },
-      "scope": "llm"
+      "scope": "llm",
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "spec:WS-13 §1 — reviewed api-key allowlist row (categoryDispositions.apikey); no vendor pricing page is captured in-repo"
+      }
     },
     {
       "id": "vertex",
@@ -215,7 +245,12 @@
           "native cloud: project/location auth and partner-protocol differences need their own proof (WS-13 §5)"
         ]
       },
-      "scope": "llm"
+      "scope": "llm",
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "cloud-credential",
+        "citation": "spec:WS-13 §1 — reviewed native-cloud allowlist row; the credential is the operator's own GCP project (ADC)"
+      }
     }
   ],
   "models": [

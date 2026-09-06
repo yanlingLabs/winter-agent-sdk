@@ -53,7 +53,7 @@ export function loadCatalog(): WinterCatalog {
   const result = validateCatalog(catalogJson);
   if (!result.ok) {
     throw new Error(
-      `winter-provider-catalog: the bundled catalog.json is invalid (${result.errors.length} error(s)) — this is a build defect, not a runtime condition:\n  ${result.errors.join("\n  ")}`,
+      `winter-provider-catalog: the bundled catalog.json is invalid (${result.errors.length} error(s)) — this is a build defect, not a runtime condition:\n  ${result.errors.map((e) => e.message).join("\n  ")}`,
     );
   }
   cached = result.catalog;

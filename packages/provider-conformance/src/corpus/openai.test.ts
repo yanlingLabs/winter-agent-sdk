@@ -27,6 +27,7 @@ import { openAiModelsRoutes } from "../fakes/openai-models.ts";
 import { noRequestContains } from "../fakes/server.ts";
 import type { FakeServer } from "../fakes/server.ts";
 import { adapterAsProvider } from "../../../runtime/src/provider/bridge.ts";
+import { winterUserAgent } from "../../../provider-runtime/src/identity.ts";
 
 /** A short stall budget: the stall case must fail fast, and every other scenario's frames are well inside it. */
 const STALL_MS = 200;
@@ -306,6 +307,25 @@ describe("live wire details the corpus does not ask about", () => {
     });
   });
 
+  test("WS-13b: every request carries Winter's OWN user-agent, on both surfaces", async () => {
+    // Winter's identity, on the wire, read off the fake's recorded request -- not off the adapter's
+    // intent. The negative half is the load-bearing one: Bun's fetch sends `Bun/<version>` when
+    // nothing sets the header, so an adapter that simply forgot would still have SOME user-agent
+    // and a presence-only assertion would pass.
+    await withResponsesFake(async (fake) => {
+      const adapter = createResponsesAdapter({ generatedBaseUrl: fake.url, retry: FAST_RETRY, descriptors: () => undefined });
+      await drain(adapter.streamTurn({ model: SCENARIO.happy, messages: [] }, testContext({ stallTimeoutMs: STALL_MS })));
+      expect(fake.requests.length).toBeGreaterThan(0);
+      for (const recorded of fake.requests) expect(recorded.headers["user-agent"]).toBe(winterUserAgent());
+    });
+    await withChatFake(async (fake) => {
+      const adapter = createChatCompletionsAdapter({ generatedBaseUrl: fake.url, retry: FAST_RETRY, descriptors: () => undefined });
+      await drain(adapter.streamTurn({ model: SCENARIO.happy, messages: [] }, testContext({ stallTimeoutMs: STALL_MS })));
+      expect(fake.requests.length).toBeGreaterThan(0);
+      for (const recorded of fake.requests) expect(recorded.headers["user-agent"]).toBe(winterUserAgent());
+    });
+  });
+
   test("a retry observation is yielded BEFORE the request it precedes reaches the fake", async () => {
     // The ordering `pumpEvents` exists for, asserted against the fake's own request log rather than
     // against the adapter's intent: a post-hoc flush would put the event after BOTH requests.
@@ -333,6 +353,10 @@ describe("live wire details the corpus does not ask about", () => {
       expect(turns[0]?.headers.originator).toBe("winter");
       expect(turns[0]?.headers["chatgpt-account-id"]).toBe(FAKE_ACCOUNT_ID);
       expect(turns[0]?.headers["openai-beta"]).toBe("responses=experimental");
+      // WS-13b: `originator: winter` is the codex backend's OWN identity field; the user-agent is
+      // the transport-level one, and BOTH have to name Winter. Pinned on the codex fake specifically
+      // because this is the adapter with a second identity channel to get wrong.
+      expect(turns[0]?.headers["user-agent"]).toBe(winterUserAgent());
       // The proof that this was a REFRESH and not a plain retry: the second request carried a
       // DIFFERENT bearer. A request count alone cannot tell the two apart.
       expect(fake.bearers[0]).not.toBe(fake.bearers[1]);

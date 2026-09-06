@@ -9,9 +9,22 @@ import { createGoogleGenerateContentAdapter, GOOGLE_ADAPTER_ID, GOOGLE_DEFAULT_B
 import { loadCatalog } from "@yanlinglabs/winter-provider-catalog";
 import { THINKING_ENABLED_NEEDS_BUDGET } from "../../../provider-runtime/src/adapters/refusals.ts";
 import { formatCorpusReport, runAdapterCorpus } from "./runner.ts";
+import { winterUserAgent } from "../../../provider-runtime/src/identity.ts";
 import { GOOGLE_MODELS, GOOGLE_SIGNATURE, GOOGLE_TEST_KEY, foldTurn, googleContext, googleCorpusCases, googleCorpusRoutes, testGoogleAdapter, testGoogleCatalog } from "./google.ts";
 
 describe("Google GenerateContent: the live request", () => {
+  test("WS-13b: every request carries Winter's OWN user-agent, never an editor or vendor CLI identity", async () => {
+    // Winter's identity, read off the LIVE request. The negative half carries the weight: Bun's
+    // fetch supplies `Bun/<version>` when nothing sets the header, so an adapter that simply forgot
+    // would still have A user-agent and a presence-only assertion would pass.
+    const adapter = testGoogleAdapter();
+    await withFake({ routes: googleCorpusRoutes() }, async (fake) => {
+      await foldTurn(adapter, { model: GOOGLE_MODELS.main, messages: [{ role: "user", content: "hi" }] }, googleContext(fake.url));
+      expect(fake.requests.length).toBeGreaterThan(0);
+      for (const recorded of fake.requests) expect(recorded.headers["user-agent"]).toBe(winterUserAgent());
+    });
+  });
+
   test("puts the model and the method in the PATH, selects SSE with `?alt=sse`, and authenticates with x-goog-api-key", async () => {
     const adapter = testGoogleAdapter();
     await withFake({ routes: googleCorpusRoutes() }, async (fake) => {

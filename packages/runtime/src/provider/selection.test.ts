@@ -309,3 +309,49 @@ describe("M1: createProviderContext is the stall timeout's production caller", (
     expect(() => ctx.log({ kind: "request", providerId: "openai", bytes: 10 })).not.toThrow();
   });
 });
+
+// --- WS-13b R6b-7: the per-provider enable setting ------------------------------------------------
+//
+// A provider a user has turned off is REFUSED at resolution, with its own code. Never "skipped" --
+// a skip is a substitution by another name, and WS-13 §9 forbids the session quietly running on
+// something other than what it was asked for.
+//
+// `providerSettings` is a GETTER, not a value, and that is the hot-reload seam: production-wiring
+// hands down a closure over the live resolved settings, so the value read here is whatever the
+// cascade says AT THIS MOMENT -- at session start, and again at every `set_model`.
+describe("WS-13b R6b-7: settings.providers.<id>.enabled", () => {
+  test("a provider disabled in settings is REFUSED at resolution with code provider-disabled — never skipped silently", () => {
+    const err = capture(() => resolveSessionProvider(config({ model: "openai/o-test" }), deps({ providerSettings: () => ({ openai: { enabled: false } }) })));
+    expect(err).toBeInstanceOf(WinterProviderResolutionError);
+    expect(err.code).toBe("provider-disabled");
+    expect(err.message).toContain("providers.openai.enabled");
+  });
+
+  test("a provider ABSENT from the map resolves normally — the default is enabled, and silence is not a disablement", () => {
+    const out = selected(resolveSessionProvider(config({ model: "openai/o-test" }), deps({ providerSettings: () => ({ "xai-oauth": { enabled: false } }) })));
+    expect(out.identity.providerId).toBe("openai");
+  });
+
+  test("the getter is read AT RESOLUTION, so a later flip needs no rebuild of the deps object", () => {
+    let enabled = true;
+    const d = deps({ providerSettings: () => ({ openai: { enabled } }) });
+    expect(selected(resolveSessionProvider(config({ model: "openai/o-test" }), d)).identity.providerId).toBe("openai");
+    enabled = false;
+    expect(capture(() => resolveSessionProvider(config({ model: "openai/o-test" }), d)).code).toBe("provider-disabled");
+  });
+
+  // A fallback candidate goes through the SAME door: `resolveFallbackModels` calls `resolveOne`,
+  // so a disabled provider cannot arrive through a fallback list either.
+  test("a fallbackModel on a disabled provider is refused at init, not discovered at failover", () => {
+    const err = capture(() =>
+      resolveSessionProvider(config({ model: "anthropic/claude-test", provider: { providerId: "anthropic" }, fallbackModel: "anthropic/claude-test" }), deps({ providerSettings: () => ({ anthropic: { enabled: false } }) })),
+    );
+    expect(err.code).toBe("provider-disabled");
+  });
+
+  test("the reserved winter-test namespace is NOT gated by it — a scripted double has no catalog provider to disable", () => {
+    const double: Provider = { async generate() { throw new Error("unused"); } };
+    const out = resolveSessionProvider(config({ model: `${WINTER_TEST_NAMESPACE}/double` }), deps({ testProviders: () => double, providerSettings: () => ({ openai: { enabled: false } }) }));
+    expect("testProvider" in out).toBe(true);
+  });
+});

@@ -177,6 +177,10 @@ export const CORPUS_PROVIDER: WinterCatalog["providers"][number] = {
   upstream: { project: "OmniRoute", commit: "", sourcePaths: [] },
   risk: { class: "review-required", reasons: [] },
   scope: "llm",
+  // WS-13b §1: both fields are REQUIRED on every provider row, so a fixture states its
+  // own basis rather than inheriting one — a row-shape change fails HERE, at the fixture.
+  pricingBasis: "token",
+  admission: { basis: "cloud-credential", citation: "fixture:bedrock-corpus" },
 };
 
 /** A minimal catalog carrying the Bedrock provider and the corpus model — the input `identity-across-resume` resolves against. */

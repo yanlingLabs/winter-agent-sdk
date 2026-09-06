@@ -625,3 +625,112 @@ describe("NEW-3: a user-tier bypass defaultMode degrades with a warning instead 
     }
   });
 });
+
+// --- WS-13b R6b-7 / R6b-9: settings.json -> the session's provider selection ----------------------
+//
+// THE JOIN THIS FILE EXISTS FOR. `selection.test.ts` and `session-provider.test.ts` both inject
+// `providerSettings` directly, so between them they prove the REFUSAL and nothing about how the
+// value gets there. The chain with no other coverage is
+// `settings.json -> resolveSettingsDetailed -> providerSettingsFrom -> SelectionDeps`, and every
+// link is a place a rename or a dropped spread is silent: the session would simply keep working,
+// with the operator's reversion switch inert.
+//
+// The model is a LOCAL provider row pointed at a dead loopback port, so the enabled leg fails on a
+// refused TCP connection rather than reaching any vendor. Nothing here touches the network.
+describe("WS-13b R6b-7: the settings file reaches provider selection", () => {
+  const DEAD_LOOPBACK = "http://127.0.0.1:1/v1";
+  const localSession = (sessionId: string): RuntimeConfig =>
+    ({
+      sessionId,
+      cwd,
+      model: "ollama-local/llama3.1:8b",
+      winterHome: home,
+      settingSources: ["user", "project"],
+      provider: { providerId: "ollama-local", connection: { baseUrl: DEAD_LOOPBACK, local: true } },
+    }) as RuntimeConfig;
+
+  /**
+   * `runOne`, plus the STDERR pipe — which is where `buildProductionWiring`'s warnings go
+   * (main.ts:222, testing.ts:259).
+   *
+   * NO USER TURN, unlike `runOne`. The wiring warning is written before `runEngine` is ever called,
+   * so a turn adds nothing to what is under test — and on the ENABLED leg it would add the one thing
+   * this file must not have: a live generation. The provider resolves there, so a turn would drive
+   * the real local-openai adapter through its full retry ladder against the dead port, which is both
+   * slow (it timed out at 5 s) and a network call in a unit test. Session start alone is the subject.
+   */
+  async function runOneWithStderr(config: RuntimeConfig): Promise<{ msgs: SdkMessage[]; stderr: string }> {
+    const proc = inMemoryProcess(["--run", "--config-json", JSON.stringify(config)], undefined, undefined, { WINTER_HOME: home });
+    proc.stdin.write(encodeFrame({ type: "control_request", requestId: "e", subtype: "end_input", payload: undefined }));
+    // Both pipes drained CONCURRENTLY: stderr is unbounded-ish and a sequential drain would deadlock
+    // on whichever the process fills first.
+    let stderr = "";
+    const stderrDone = (async () => {
+      for await (const chunk of proc.stderr ?? []) stderr += chunk;
+    })();
+    const msgs: SdkMessage[] = [];
+    let carry = "";
+    for await (const chunk of proc.stdout) {
+      const split = splitFrames(chunk, carry);
+      carry = split.carry;
+      for (const frame of split.frames as WinterFrame[]) {
+        if (frame.type === "data") msgs.push((frame as { message: SdkMessage }).message);
+      }
+    }
+    await proc.exited;
+    await stderrDone;
+    return { msgs, stderr };
+  }
+
+  test("a USER-tier `providers.<id>.enabled: false` REFUSES the session's provider, by name, on the wiring warning channel", async () => {
+    writeSettings(home, { providers: { "ollama-local": { enabled: false } } });
+    const { msgs, stderr } = await runOneWithStderr(localSession("prov-disabled-1"));
+    // The session still STARTS (R6-9 as T10's review settled it: resolution failure is a deferred
+    // refusal, not a construction throw), so `system/init` is the proof the run got that far.
+    // TWO independent proofs, because either alone is weak. (1) The session still STARTS -- R6-9 as
+    // T10's review settled it: a resolution failure is a DEFERRED refusal, not a construction throw
+    // -- and a refused session reports NO `winter_provider` on its init frame. (2) The operator's
+    // channel names the code and the exact settings key to edit.
+    expect(initFrame(msgs).winter_provider).toBeUndefined();
+    expect(stderr).toContain("provider selection failed (provider-disabled)");
+    expect(stderr).toContain("providers.ollama-local.enabled");
+  });
+
+  test("...and the SAME tree with the flag flipped back does NOT refuse — so the assertion above is about the setting, not about the model being unreachable", async () => {
+    // The discriminating half. Without it, a green assertion above could equally mean "this model
+    // never resolves" — which is exactly what a broken `providerSettingsFrom` join would look like
+    // from the outside.
+    writeSettings(home, { providers: { "ollama-local": { enabled: true } } });
+    const { msgs, stderr } = await runOneWithStderr(localSession("prov-disabled-2"));
+    // POSITIVE, not merely "no complaint": the init frame carries the resolved identity, so this
+    // model demonstrably resolves on this tree and the refusal above can only have come from the
+    // setting. A stderr negative alone would pass just as happily on a model that never resolves.
+    expect(initFrame(msgs).winter_provider).toMatchObject({ providerId: "ollama-local", modelKey: "ollama-local/llama3.1:8b" });
+    expect(stderr).not.toContain("provider selection failed");
+  });
+
+  test("no `providers` block at all behaves like the enabled case — silence is not a disablement, end to end", async () => {
+    writeSettings(home, { outputStyle: "explanatory" });
+    const { msgs, stderr } = await runOneWithStderr(localSession("prov-disabled-3"));
+    expect(initFrame(msgs).winter_provider).toMatchObject({ providerId: "ollama-local" });
+    expect(stderr).not.toContain("provider selection failed");
+  });
+
+  test("R6b-9 end to end: a PROJECT tier cannot re-enable what the USER tier disabled", async () => {
+    // The reversion switch, at the wire. A cloned repository carrying `enabled: true` must not put
+    // back a provider the operator withdrew — the ruling's whole point, proved through the real
+    // cascade rather than against `providerSettingsFrom` in isolation.
+    writeSettings(home, { providers: { "ollama-local": { enabled: false } } });
+    writeSettings(join(cwd, ".winter"), { providers: { "ollama-local": { enabled: true } } });
+    const { msgs, stderr } = await runOneWithStderr(localSession("prov-disabled-4"));
+    expect(initFrame(msgs).winter_provider).toBeUndefined();
+    expect(stderr).toContain("provider selection failed (provider-disabled)");
+  });
+
+  test("...while a PROJECT tier CAN disable on its own — the restriction is on the enabling direction only", async () => {
+    writeSettings(join(cwd, ".winter"), { providers: { "ollama-local": { enabled: false } } });
+    const { msgs, stderr } = await runOneWithStderr(localSession("prov-disabled-5"));
+    expect(initFrame(msgs).winter_provider).toBeUndefined();
+    expect(stderr).toContain("provider selection failed (provider-disabled)");
+  });
+});

@@ -29,6 +29,7 @@ import type { CredentialMaterial, CredentialRef, CredentialStatus, CredentialSto
 import { parseRetryAfterMs } from "../../errors.ts";
 import { CODEX, CODEX_MODELS, codexCredentialAccount } from "./codex-config.ts";
 import { refreshTokens, runLoginFlow, type OAuthTokens } from "./pkce.ts";
+import { refreshOauthMaterial } from "../oauth/refresh.ts";
 import { QuotaManager, quotaEvent } from "./quota.ts";
 import { buildResponsesBody, privilegedHeaders, streamResponsesTurn, type ResponsesTurnPlan } from "./responses.ts";
 import {
@@ -206,18 +207,28 @@ async function* codexTurn(req: TurnRequest, ctx: ProviderContext, options: Codex
         if (status !== 401 || tokens.refreshToken === undefined) return undefined;
         queue.push({ type: "auth_status", isAuthenticating: true, output: ["refreshing the codex token"] });
         try {
-          const fresh = await refreshTokens(options.tokenUrl ?? CODEX.tokenUrl, CODEX.clientId, tokens.refreshToken);
-          // A refresh grant usually returns no id token and may not rotate the refresh token, so a
-          // missing field must NEVER clobber a known-good one (the port's own finding).
-          tokens = {
-            ...tokens,
-            accessToken: fresh.accessToken,
-            expiresAt: fresh.expiresAt,
-            ...(fresh.refreshToken !== undefined ? { refreshToken: fresh.refreshToken } : {}),
-            ...(fresh.idToken !== undefined ? { idToken: fresh.idToken } : {}),
-            ...(fresh.accountId !== undefined ? { accountId: fresh.accountId } : {}),
-          };
-          if (ctx.authRef.kind === "keychain") await ctx.credentials.set(ctx.authRef, tokens);
+          const tokenUrl = options.tokenUrl ?? CODEX.tokenUrl;
+          if (ctx.authRef.kind === "keychain") {
+            // P6.5: the exchange, the MERGE and the write-back now live in the shared helper
+            // (`adapters/oauth/refresh.ts`). The merge rule below is this file's own finding --
+            // "a refresh grant usually returns no id token and may not rotate the refresh token, so
+            // a missing field must NEVER clobber a known-good one" -- MOVED there rather than
+            // copied, so the three OAuth rows P6.5 adds inherit it instead of rediscovering it.
+            tokens = await refreshOauthMaterial({ store: ctx.credentials, ref: ctx.authRef, tokenUrl, clientId: CODEX.clientId });
+          } else {
+            // A host store answering `oauth` for a NON-keychain ref has nowhere durable to write
+            // (R6-10 puts tokens in one Keychain record per provider/account), so this refresh stays
+            // in memory for the life of the turn -- unchanged from before the extraction.
+            const fresh = await refreshTokens(tokenUrl, CODEX.clientId, tokens.refreshToken);
+            tokens = {
+              ...tokens,
+              accessToken: fresh.accessToken,
+              expiresAt: fresh.expiresAt,
+              ...(fresh.refreshToken !== undefined ? { refreshToken: fresh.refreshToken } : {}),
+              ...(fresh.idToken !== undefined ? { idToken: fresh.idToken } : {}),
+              ...(fresh.accountId !== undefined ? { accountId: fresh.accountId } : {}),
+            };
+          }
           queue.push({ type: "auth_status", isAuthenticating: false, output: ["codex token refreshed"] });
           return codexHeaders(endpoint.policy, tokens, ctx, options);
         } catch (err) {

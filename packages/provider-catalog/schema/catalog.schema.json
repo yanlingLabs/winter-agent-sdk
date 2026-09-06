@@ -76,7 +76,7 @@
     "WinterProviderDescriptor": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "displayName", "protocols", "authKinds", "defaultEndpoints", "modelDiscovery", "liveCatalogAuthority", "adapterId", "family", "upstream", "risk", "scope"],
+      "required": ["id", "displayName", "protocols", "authKinds", "defaultEndpoints", "modelDiscovery", "liveCatalogAuthority", "adapterId", "family", "upstream", "risk", "scope", "pricingBasis", "admission"],
       "properties": {
         "id": { "type": "string", "minLength": 1 },
         "displayName": { "type": "string", "minLength": 1 },
@@ -111,7 +111,21 @@
           "required": ["class", "reasons"],
           "properties": { "class": { "enum": ["approved", "review-required", "blocked"] }, "reasons": { "type": "array", "items": { "type": "string" } } }
         },
-        "scope": { "enum": ["llm", "stt", "tts", "embedding", "image", "video", "search"] }
+        "scope": { "enum": ["llm", "stt", "tts", "embedding", "image", "video", "search"] },
+        "pricingBasis": {
+          "enum": ["token", "subscription", "free"],
+          "description": "WS-13b §1: how the vendor charges for the credential Winter uses. `subscription`/`free` rows never feed R6-H token cost."
+        },
+        "admission": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["basis", "citation"],
+          "description": "WS-13b §1 (D21): the documented third-party path this row ships through. `citation` is a vendor URL, `audit:<section>`, `spec:<section>` or `local`; the in-repo validator additionally REFUSES a citation naming the audit's `unknown` evidence class (R6b-3).",
+          "properties": {
+            "basis": { "enum": ["api-key", "oauth-documented", "keyless-documented", "local", "cloud-credential"] },
+            "citation": { "type": "string", "minLength": 1 }
+          }
+        }
       }
     },
     "WinterModelDescriptor": {

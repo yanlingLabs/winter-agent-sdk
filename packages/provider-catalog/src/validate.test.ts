@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { CATALOG_VOCABULARIES, loadCatalog, scanForSecrets, validateCatalog } from "./index.ts";
 import catalogSchema from "../schema/catalog.schema.json" with { type: "json" };
-import type { WinterCatalog, WinterModelDescriptor, WinterProviderDescriptor } from "./types.ts";
+import type { CatalogValidationError, WinterCatalog, WinterModelDescriptor, WinterProviderDescriptor } from "./types.ts";
 
 // A minimal, VALID catalog every negative case mutates one field of. Building the negatives by
 // mutation (rather than by hand-writing each broken document) is what keeps a test from passing
@@ -20,6 +20,10 @@ function baseProvider(over: Partial<WinterProviderDescriptor> = {}): WinterProvi
     upstream: { project: "winter", commit: "", sourcePaths: [] },
     risk: { class: "approved", reasons: [] },
     scope: "llm",
+    // WS-13b §1 (P6.5 spine): both fields are REQUIRED on every row, so the shared valid fixture
+    // carries them — a negative case deletes or corrupts one, exactly like every other field here.
+    pricingBasis: "token",
+    admission: { basis: "api-key", citation: "https://vendor.example/pricing" },
     ...over,
   };
 }
@@ -54,12 +58,12 @@ function baseCatalog(over: Partial<WinterCatalog> = {}): WinterCatalog {
 }
 
 /** Asserts the catalog is rejected AND that at least one message mentions `needle` — a rejection for the wrong reason is not a pass. */
-function expectRejected(catalog: unknown, needle: string): string[] {
+function expectRejected(catalog: unknown, needle: string): CatalogValidationError[] {
   const result = validateCatalog(catalog);
   expect(result.ok).toBe(false);
   if (result.ok) throw new Error("unreachable");
-  const hit = result.errors.some((e) => e.includes(needle));
-  if (!hit) throw new Error(`expected an error mentioning ${JSON.stringify(needle)}; got:\n  ${result.errors.join("\n  ")}`);
+  const hit = result.errors.some((e) => e.message.includes(needle));
+  if (!hit) throw new Error(`expected an error mentioning ${JSON.stringify(needle)}; got:\n  ${result.errors.map((e) => e.message).join("\n  ")}`);
   return result.errors;
 }
 
@@ -67,7 +71,7 @@ describe("validateCatalog — the happy path", () => {
   test("accepts a minimal valid catalog and hands back the narrowed value", () => {
     const result = validateCatalog(baseCatalog());
     expect(result.ok).toBe(true);
-    if (!result.ok) throw new Error(result.errors.join("\n"));
+    if (!result.ok) throw new Error(result.errors.map((e) => e.message).join("\n"));
     expect(result.catalog.providers[0]!.id).toBe("acme");
   });
 
@@ -230,7 +234,7 @@ describe("scanForSecrets — descriptors never contain secrets (WS-13 §6, R6-10
       const catalog = baseCatalog();
       (catalog.providers[0] as unknown as Record<string, unknown>)[key] = "anything-at-all";
       const errors = expectRejected(catalog, "credential-shaped FIELD");
-      expect(errors.some((e) => e.includes(key))).toBe(true);
+      expect(errors.some((e) => e.message.includes(key))).toBe(true);
     }
   });
 
@@ -393,6 +397,8 @@ describe("JSON Schema / validator enum parity (Minor 9)", () => {
     ["readableStates", "$defs.evidenceReadableState.properties.value"],
     ["replayScopes", "$defs.evidenceReplayScope.properties.value"],
     ["toolLoopRequirements", "$defs.evidenceToolLoopRequirement.properties.value"],
+    ["pricingBases", "$defs.WinterProviderDescriptor.properties.pricingBasis"],
+    ["admissionBases", "$defs.WinterProviderDescriptor.properties.admission.properties.basis"],
   ];
 
   test("every vocabulary the validator enforces is the SAME SET the schema declares", () => {
@@ -406,5 +412,79 @@ describe("JSON Schema / validator enum parity (Minor 9)", () => {
   test("every vocabulary is covered — a new one cannot be added without a parity case", () => {
     const covered: string[] = cases.map(([name]) => name).sort();
     expect(covered).toEqual(Object.keys(CATALOG_VOCABULARIES).sort());
+  });
+});
+
+// --- WS-13b §1 (D21): rows are EVIDENCE ------------------------------------------------------------
+//
+// P6.5 spine. Two fields no P6 row carried: `pricingBasis` (what the vendor charges for the
+// credential Winter uses -- a `subscription`/`free` row must never feed R6-H token cost) and
+// `admission` (the documented third-party path this row ships through, WITH the citation that
+// admits it). R6b-3 makes the citation load-bearing: a row without one does not ship.
+describe("WS-13b §1: rows are evidence", () => {
+  const shipped = loadCatalog();
+
+  test("every shipped provider row carries pricingBasis and an admission citation", () => {
+    for (const p of shipped.providers) {
+      expect(["token", "subscription", "free"]).toContain(p.pricingBasis);
+      expect(p.admission.citation.length).toBeGreaterThan(0);
+      expect(["api-key", "oauth-documented", "keyless-documented", "local", "cloud-credential"]).toContain(p.admission.basis);
+    }
+  });
+
+  test("a row without an admission citation FAILS validation with code admission-missing", () => {
+    const broken = structuredClone(shipped) as unknown as { providers: Array<{ admission: { citation: string } }> };
+    broken.providers[0]!.admission.citation = "";
+    const result = validateCatalog(broken);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("unreachable");
+    expect(result.errors.map((e) => e.code)).toContain("admission-missing");
+  });
+
+  test("a row with NO admission object at all fails the same way", () => {
+    const broken = structuredClone(shipped) as unknown as { providers: Array<Record<string, unknown>> };
+    delete broken.providers[0]!["admission"];
+    const result = validateCatalog(broken);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("unreachable");
+    expect(result.errors.map((e) => e.code)).toContain("admission-missing");
+  });
+
+  test("a row with no pricingBasis fails with code pricing-basis-missing", () => {
+    const broken = structuredClone(shipped) as unknown as { providers: Array<Record<string, unknown>> };
+    delete broken.providers[0]!["pricingBasis"];
+    const result = validateCatalog(broken);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("unreachable");
+    expect(result.errors.map((e) => e.code)).toContain("pricing-basis-missing");
+  });
+
+  test("an unknown pricingBasis is a rejection, not a passthrough", () => {
+    const broken = structuredClone(shipped) as unknown as { providers: Array<Record<string, unknown>> };
+    broken.providers[0]!["pricingBasis"] = "free-trial";
+    expectRejected(broken, "pricingBasis");
+  });
+
+  test("an unknown admission basis is a rejection", () => {
+    const broken = structuredClone(shipped) as unknown as { providers: Array<{ admission: { basis: string } }> };
+    broken.providers[0]!.admission.basis = "vibes";
+    expectRejected(broken, "admission.basis");
+  });
+
+  // R6b-3's second half: `unknown` is the audit's own class for "the decisive document was not
+  // found". A row citing it is not a row with weak evidence — it is a row the rule says does not
+  // ship, so the citation string itself is refused rather than merely noted.
+  test("a citation naming the audit's `unknown` evidence class is refused with code admission-unknown", () => {
+    const broken = structuredClone(shipped) as unknown as { providers: Array<{ admission: { citation: string } }> };
+    broken.providers[0]!.admission.citation = "audit:unknown";
+    const result = validateCatalog(broken);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("unreachable");
+    expect(result.errors.map((e) => e.code)).toContain("admission-unknown");
+  });
+
+  test("a subscription-priced row is legal and keeps its own basis", () => {
+    const catalog = baseCatalog({ providers: [baseProvider({ pricingBasis: "subscription", admission: { basis: "oauth-documented", citation: "audit:5.1" } })] });
+    expect(validateCatalog(catalog).ok).toBe(true);
   });
 });

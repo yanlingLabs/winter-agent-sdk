@@ -38,6 +38,7 @@
 
 import type { WinterModelDescriptor } from "@yanlinglabs/winter-provider-catalog";
 import { hostHeaders } from "../privileged-headers.ts";
+import { winterUserAgent } from "../../identity.ts";
 import { applyPrivilegedHeaders, createEndpointPolicy, type EndpointPolicy } from "../../endpoint-policy.ts";
 import { ProviderRequestError, boundedFetch } from "../../http.ts";
 import { normalizeHttpError, normalizeThrown } from "../../errors.ts";
@@ -242,7 +243,13 @@ export function buildHeaders(plan: HeaderPlan): Record<string, string> {
   // The separate credential pre-strip that used to run here is GONE (fix-wave F-3): `hostHeaders`
   // now drops `CREDENTIAL_HEADER_NAMES` itself, on a generated endpoint as well, so every family
   // gets what this family had and this file no longer keeps a second copy of the rule.
-  const out: Record<string, string> = {};
+  // WS-13b HONEST IDENTITY. FIRST, so a host's own `ConnectionProfile.headers` is spread over it --
+  // a host speaking about its own proxy is the one sanctioned override, and `hostHeaders` is its
+  // door. CAVEAT, true of every header in this builder and not of this one specially: the override
+  // is exact-key. A profile spelling `User-Agent` produces a SECOND key, and `Headers` joins the two
+  // spellings into one comma-separated value rather than replacing. Header-case normalisation
+  // belongs to R6-L's enforcement point, not here.
+  const out: Record<string, string> = { "user-agent": winterUserAgent() };
   Object.assign(out, hostHeaders(plan.policy, plan.userSupplied));
   Object.assign(out, applyPrivilegedHeaders(plan.policy, plan.privileged ?? {}));
   Object.assign(out, plan.protocol);

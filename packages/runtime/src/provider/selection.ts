@@ -80,6 +80,19 @@ export interface SelectionDeps {
   testProviders?: (name: string) => Provider | undefined;
   /** How a resolved model becomes a `Provider`. Injected so this module never imports the bridge's own construction path in a test. */
   buildProvider?: (resolved: ResolvedModel) => Provider;
+  /**
+   * WS-13b R6b-7: the resolved `settings.providers` map, as a GETTER.
+   *
+   * A getter and not a value, and that is the whole hot-reload seam. WS-11 §5's "no setting may
+   * require a restart" is a product rule above the SDK boundary -- this package starts no watchers
+   * (production-wiring's own header says so) -- so what it owes instead is a read that happens AT
+   * RESOLUTION TIME rather than a snapshot taken when the deps object was built. A host that
+   * re-resolves its settings sees the new value at the session's next resolution and at every
+   * `set_model`, with nothing rebuilt.
+   *
+   * Absent, or an id absent from the map, means ENABLED. Silence is never a disablement.
+   */
+  providerSettings?: () => Record<string, { enabled: boolean }> | undefined;
 }
 
 /**
@@ -196,6 +209,17 @@ function resolveOne(model: string, config: RuntimeConfig, deps: SelectionDeps): 
       : {}),
   });
   if (result instanceof WinterProviderResolutionError) throw result;
+  // WS-13b R6b-7. AFTER the row resolves (so the message can name the real provider id) and BEFORE
+  // the caller can do anything with it. Inside `resolveOne` rather than at its two call sites,
+  // because a fallback candidate is the other way a provider reaches a session -- a gate on the
+  // session model alone would let a disabled provider in through `fallbackModel`.
+  const disabled = deps.providerSettings?.()?.[result.providerId]?.enabled === false;
+  if (disabled) {
+    throw new WinterProviderResolutionError(
+      "provider-disabled",
+      `provider "${result.providerId}" is disabled in settings (providers.${result.providerId}.enabled). Re-enable it, or choose a model on another provider; nothing is substituted for it.`,
+    );
+  }
   return result;
 }
 

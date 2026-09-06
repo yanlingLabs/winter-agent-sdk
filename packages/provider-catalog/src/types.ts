@@ -157,6 +157,32 @@ export interface WinterProviderDescriptor {
   risk: { class: "approved" | "review-required" | "blocked"; reasons: string[] };
   /** WS-13 §4: only `llm` rows feed the Agent SDK's model selection; the other scopes feed separate subsystems and must never reach the worker-model picker. */
   scope: "llm" | "stt" | "tts" | "embedding" | "image" | "video" | "search";
+  /**
+   * WS-13b §1: how the vendor charges for the credential Winter actually uses.
+   *
+   * DATA, not a derived guess, and it is the whole reason the field exists: R6-H prices a turn from
+   * the model row's `pricing` evidence, and a subscription-priced backend (the ChatGPT Codex
+   * entitlement, a "coding plan") has list prices published for its API twin that do NOT describe
+   * what this credential is billed. `subscription`/`free` rows never feed `total_cost_usd`/
+   * `modelUsage` — a per-token number for a seat is not a smaller error than no number, it is a
+   * wrong one that reads as authoritative.
+   */
+  pricingBasis: "token" | "subscription" | "free";
+  /**
+   * WS-13b §1 (D21): the documented third-party path this row ships through, and the citation that
+   * admits it.
+   *
+   * R6b-3 makes the citation load-bearing rather than decorative: `validateCatalog` refuses a row
+   * whose `citation` is absent or empty (`admission-missing`), and refuses one that cites the
+   * audit's own `unknown` evidence class (`admission-unknown`) — "the decisive document was not
+   * found" is a disposition to EXCLUDE, so a row may not ship carrying it.
+   *
+   * `citation` forms, in order of strength: a URL to the vendor document; `audit:<section>` for the
+   * third-party-access audit's evidence table; `spec:<section>` for a Winter spec ruling that admits
+   * a class of rows (WS-13 §1's disposition table admits the reviewed api-key/cloud allowlist rows);
+   * `local` for a `local-none` row, whose "vendor" is the operator's own machine.
+   */
+  admission: { basis: "api-key" | "oauth-documented" | "keyless-documented" | "local" | "cloud-credential"; citation: string };
 }
 
 export interface WinterCatalog {
@@ -168,5 +194,26 @@ export interface WinterCatalog {
   models: WinterModelDescriptor[];
 }
 
+/**
+ * One validation failure.
+ *
+ * `message` is the whole human sentence, `path`-prefixed — byte-identical to the strings this
+ * result used to be an array of, so every existing consumer (`loadCatalog`'s throw, the two
+ * scripts' stderr, the tests' `includes` helper) reads the same text it always did.
+ *
+ * `code` is P6.5's addition and the reason the shape changed at all: R6b-3 is a rule a GATE has to
+ * key on ("a row without an admission citation fails validation"), and keying a gate on prose is
+ * how a reworded message silently disarms it. Codes are opt-in — every pre-existing check reports
+ * the generic `invalid`, and only the rules something else keys on carry a specific one. Widening
+ * that is a later, deliberate edit, not a prerequisite for this one.
+ */
+export interface CatalogValidationError {
+  code: string;
+  /** JSON-pointer-ish location of the offending value, e.g. `providers[3].admission.citation`. */
+  path: string;
+  /** `${path}: ${reason}` — the complete sentence. */
+  message: string;
+}
+
 /** The result of `validateCatalog`. A failure carries EVERY error found, not just the first — a generator run wants the whole list. */
-export type CatalogValidationResult = { ok: true; catalog: WinterCatalog } | { ok: false; errors: string[] };
+export type CatalogValidationResult = { ok: true; catalog: WinterCatalog } | { ok: false; errors: CatalogValidationError[] };
