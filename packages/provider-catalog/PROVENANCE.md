@@ -8,7 +8,7 @@ The committed catalog is the merge of two layers, performed by `scripts/provider
 | Layer | Source | Owner | Present |
 | --- | --- | --- | --- |
 | upstream | `generated/upstream-layer.json`, extracted from the pinned OmniRoute tree by `scripts/provider-source-sync.ts` | the extractor | **yes** — 114 providers, 550 models |
-| overlay | `overlay/providers.json` + `overlay/models.json`, hand-authored and reviewed | Winter | yes — 21 providers, 15 models |
+| overlay | `overlay/providers.json` + `overlay/models.json`, hand-authored and reviewed | Winter | yes — 34 providers, 55 models |
 
 **The overlay always wins.** WS-13 §7: live discovery and upstream extraction never silently
 overwrite `official-doc`/`live-probe` overlay entries, so a conflicting upstream row is dropped in
@@ -264,7 +264,7 @@ unfalsifiable against its own source.
 
 ## What was excluded, and why
 
-`generated/rejections.json` carries all **722** rows. The counts below are generated from the ledger
+`generated/rejections.json` carries all **723** rows. The counts below are generated from the ledger
 and pinned by `catalog-integrity.test.ts` → *"PROVENANCE.md's exclusion table matches the ledger,
 row for row"*, because a hand-typed count is the line that goes stale first and nobody notices.
 
@@ -284,7 +284,7 @@ row for row"*, because a hand-typed count is the line that goes stale first and 
 | `category-no-auth` | 13 | reject by default (WS-13 §1) |
 | `category-audio` | 12 | not worker-model providers |
 | `unrepresentable-protocol` | 11 | Vertex's `targetFormat: "claude"` rows — see below |
-| **`reviewed-normalization`** | 120 | **NOT an exclusion.** A row that DID ship, carrying a reviewed, recorded deviation from the pinned tree: the OpenRouter wire id, the Bedrock executor's protocol, the OpenAI and Vertex adapter overrides, the four Vertex partner statuses, and **one endpoint strip per admitted row** (WS-13b §2 — see "Endpoints diverge from upstream on purpose"), which is now the bulk of the class |
+| **`reviewed-normalization`** | 121 | **NOT an exclusion.** A row that DID ship, carrying a reviewed, recorded deviation from the pinned tree: the OpenRouter wire id, the Bedrock executor's protocol, the OpenAI and Vertex adapter overrides, the four Vertex partner statuses, and **one endpoint strip per admitted row** (WS-13b §2 — see "Endpoints diverge from upstream on purpose"), which is now the bulk of the class |
 | `url-builder` | 4 | executable URL builders (WS-13 §13's security floor names this exactly) |
 | `category-cloud-agent` | 3 | remote agent products |
 | `category-upstream-proxy` | 2 | no proxy-of-proxy layer |
@@ -400,6 +400,48 @@ row is unpriced too, by construction: the extractor cannot emit `pricing` at all
 R6-14 sets it only after the safety corpus passes live. The catalog's answer to "may this model
 serve as the permission classifier?" therefore remains **no** — Manual fallback, the fail-safe
 direction, never a silent weakening.
+
+## Dialect siblings, and the two keyless rows (P6.5, R6b-5 / WS-13b §8.4)
+
+A provider row carries exactly one `adapterId`, so a vendor that documents **two wire dialects at two
+base URLs** is **two rows** — each with its own endpoint, its own model keys and the dialect in its
+`displayName`. Four pairs ship:
+
+| OpenAI dialect | Anthropic dialect | Anthropic base URL | Where the pair comes from |
+| --- | --- | --- | --- |
+| `deepseek` (extracted) | `deepseek-anthropic` (overlay) | `https://api.deepseek.com/anthropic` | vendor guide, retrieved 2026-09-06 |
+| `zai` (overlay) | `zai-anthropic` (**extracted**) | `https://api.z.ai/api/anthropic` | vendor docs for both halves, retrieved 2026-09-06 |
+| `moonshot` (overlay, token) | `kimi-coding` (overlay, **subscription**) | `https://api.kimi.com/coding` | Kimi Code docs, retrieved 2026-09-06 |
+| `minimax` (extracted) | `minimax-anthropic` (overlay) | `https://api.minimax.io/anthropic` | vendor Anthropic-SDK reference, retrieved 2026-09-06 |
+
+The `zai` pair is the one worth reading twice: **upstream's own `zai` entry is the ANTHROPIC one**
+(`format: "claude"` at `api.z.ai/api/anthropic/v1/messages`, which z.ai's Claude-client doc confirms
+verbatim), so the allowlist admits that id under the `zai-anthropic` **`winterId`** — the same rename
+door `gemini` → `google` already uses — and the OpenAI half is the reviewed overlay row. It is also
+why `displayNameOverride` exists: upstream's product catalog has one name per vendor ("Z.AI"), and two
+rows reading "Z.AI" are two rows a user cannot choose between. The override is a reviewed allowlist
+edit, recorded in the ledger like every other normalization, and it is not a licence to rename
+providers for taste.
+
+**The Anthropic adapter is multi-provider in fact, and that was measured rather than assumed.**
+`runtime/src/provider/catalog-endpoint-shape.test.ts` drives two sibling rows through the real
+catalog-resolved adapter against a loopback fake; each reaches its **own** `<root>/v1/messages`.
+There is no `providerId === "anthropic"` guard anywhere in `adapters/anthropic/messages.ts`.
+
+**Subscription rows are a billing fact, not a label.** `kimi-coding` and `clinepass` carry
+`pricingBasis: "subscription"`, so `priceUsage` returns nothing for them and a session on either
+reports no `total_cost_usd`. `clinepass` shares an endpoint **and a key** with the token-priced
+`cline` row and is still a separate row, because the basis is per row and that is the whole mechanism.
+
+**The two keyless rows carry no credential, and `aihorde` is the reason to say so explicitly.**
+AI Horde documents an anonymous default key. **It is not in this repository** — not in the catalog,
+not in an adapter, not in a fixture. The row records only that a documented anonymous default
+*exists* and cites the page that names it; supplying it (or, better, a registered key, which buys
+queue priority) is the host's act through the ordinary credential path, which is why its `authKinds`
+is `api-key` rather than a keyless kind. `catalog-integrity.test.ts` asserts the literal is absent by
+name. `uncloseai` needs no credential at all and carries `authKinds: ["custom"]`: `local-none` is
+reserved for a **local installation** (the twelve WS-13 §12 rows) and would make `connectionFrom`
+stamp `local: true` on a public https host.
 
 ## Winter-owned rows
 

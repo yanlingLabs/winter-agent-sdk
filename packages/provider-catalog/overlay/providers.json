@@ -2,363 +2,1180 @@
   "$comment": "HAND-AUTHORED overlay layer — the Winter-reviewed provider rows. WS-13 §7: overlay evidence is never silently overwritten by upstream extraction or live discovery, so this file is the durable half of the catalog and `generated/catalog.json` is the merge product. A re-sync NEVER writes this file (scripts/provider-source-sync.ts has no code path that opens it for writing, and a test asserts a re-run leaves it byte-identical). The eight OmniRoute-derived rows now carry the REAL pinned commit and the repository-relative paths their upstream counterparts were read from — WS-13 §13's \"per-row source paths + commit\". `azure-openai` names only a product-catalog path: at v3.8.50 it has NO backend RegistryEntry, so upstream contributes its identity and nothing executable (see generated/rejections.json, class `no-registry-entry`), and its endpoints and auth are Winter-authored here. `codex-oauth` and the twelve local ids keep `project: \"winter\"` with an EMPTY commit, which is the honest marker for a row no extraction produced. Endpoints stay Winter-authored base URLs rather than upstream's full chat paths (upstream's `baseUrl` for openai is `.../v1/chat/completions`); the extracted verbatim values live in generated/upstream-layer.json, and PROVENANCE.md records the divergence as a local override.",
   "providers": [
     {
-      "id": "openai",
-      "displayName": "OpenAI",
-      "protocols": ["openai-responses", "openai-chat-completions"],
-      "authKinds": ["api-key"],
-      "defaultEndpoints": { "api": "https://api.openai.com/v1" },
+      "id": "aihorde",
+      "displayName": "AI Horde",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "$comment": "WS-13b §8.4 / audit §5.1: a KEYLESS row. THE ANONYMOUS KEY IS NOT EMBEDDED ANYWHERE — not here, not in an adapter, not in a fixture. The catalog records only that a documented anonymous default EXISTS and cites the document that names it; supplying it (or, preferably, a registered key, which buys queue priority) is the HOST's act through the ordinary credential path, which is why `authKinds` is `api-key` rather than a keyless kind. WS-13 §6 is categorical that descriptors never contain secrets, and `scanForSecrets` fails the build on the shape regardless. The adapter must send `Client-Agent: winter-agent-sdk/<version>:<contact>` — the vendor's own honest-identity field — which is lane L's to assert on a recorded request; nothing in this row can enforce it. Latency is MINUTES (a shared volunteer queue), throughput depends on how many workers are online rather than on a quota, and audit §5.1 notes workers are community-shared: exclude from any sensitive-content floor.",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://oai.aihorde.net/v1"
+      },
       "modelDiscovery": "openai-models",
-      "liveCatalogAuthority": "authoritative",
-      "adapterId": "winter.openai-responses",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
       "family": "openai",
-      "upstream": { "project": "OmniRoute", "commit": "5458026c216f77a3da68ea49152dc33470cfe2cb", "sourcePaths": ["open-sse/config/providers/registry/openai/index.ts", "src/shared/constants/providers/apikey/index.ts"] },
-      "risk": { "class": "approved", "reasons": [] },
-      "pricingBasis": "token",
-      "admission": { "basis": "api-key", "citation": "https://developers.openai.com/api/docs/pricing" },
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "community-shared volunteer workers see prompt content: audit §5.1 says to exclude this provider from any sensitive-content floor, and nothing in the catalog can enforce that",
+          "no tool calling at all — the workers run raw text-completion backends, and upstream sets a provider-wide `unsupportedParams` of tools/tool_choice/parallel_tool_calls",
+          "latency is minutes rather than seconds and throughput is not a quota; a host that treats it like a metered API will misjudge both"
+        ]
+      },
+      "pricingBasis": "free",
+      "admission": {
+        "basis": "keyless-documented",
+        "citation": "audit:§2.2 `aihorde` / §5.1 — AI Horde's published Swagger (aihorde.net/api/swagger.json) and site (aihorde.net), retrieved 2026-09-06: security scheme is an `apikey` header (\"The API Key corresponding to a registered user\"), and the site documents connecting ANONYMOUSLY with a published default key at reduced priority. Free and crowdsourced: \"volunteers share spare computer power\". Endpoints accept an optional `Client-Agent` header — an honest client-identity field."
+      },
       "scope": "llm"
     },
     {
       "id": "anthropic",
       "$comment": "REVIEWED (P6 fix wave, ruling F-4): `liveCatalogAuthority` re-stamped `unknown` -> `authoritative`, and `modelDiscovery` `none` -> `provider-native`. EVIDENCE CLASS, the same one the openai and google rows carry: Anthropic's live Models endpoint enumerates every model the credential can use, so an id absent from it does not exist. The adapter serves that endpoint (`adapters/anthropic/messages.ts` `listModels`, paginated over `/v1/models` by `last_id`/`after_id`), which is why `modelDiscovery: \"none\"` was wrong in the first place -- Lane B's own corpus catalog already declares this provider `provider-native`. WHAT IT CHANGES: `authoritative` is R6-F's precondition read the other way round, so the `allowUnlisted` pass-through CLOSES for this provider (registry.ts step 2 / `resolveWithin`) and an unlisted anthropic id is now a definitive `unknown-model` instead of an id passed through to the wire -- which is the whole-branch review's M-5. The `modelDiscovery` value is production-inert: the one reader (`runtime/src/provider/session-provider.ts`, `=== \"local\"`) treats every non-local value alike. NO registry code changed. `azure-openai` and `codex-oauth` deliberately stay `unknown`: an Azure deployment name is user-chosen and will never be catalogued, so `allowUnlisted` is their normal configuration and the door stays open for them.",
       "displayName": "Anthropic",
-      "protocols": ["anthropic-messages"],
-      "authKinds": ["api-key"],
-      "defaultEndpoints": { "api": "https://api.anthropic.com" },
+      "protocols": [
+        "anthropic-messages"
+      ],
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.anthropic.com"
+      },
       "modelDiscovery": "provider-native",
       "liveCatalogAuthority": "authoritative",
       "adapterId": "winter.anthropic-messages",
       "family": "anthropic",
-      "upstream": { "project": "OmniRoute", "commit": "5458026c216f77a3da68ea49152dc33470cfe2cb", "sourcePaths": ["open-sse/config/providers/registry/anthropic/index.ts", "src/shared/constants/providers/apikey/index.ts"] },
-      "risk": { "class": "approved", "reasons": [] },
-      "pricingBasis": "token",
-      "admission": { "basis": "api-key", "citation": "https://claude.com/pricing" },
-      "scope": "llm"
-    },
-    {
-      "id": "google",
-      "displayName": "Google Gemini API",
-      "protocols": ["google-generate-content"],
-      "authKinds": ["api-key"],
-      "defaultEndpoints": { "api": "https://generativelanguage.googleapis.com" },
-      "modelDiscovery": "provider-native",
-      "liveCatalogAuthority": "authoritative",
-      "adapterId": "winter.google-generate-content",
-      "family": "google",
-      "upstream": { "project": "OmniRoute", "commit": "5458026c216f77a3da68ea49152dc33470cfe2cb", "sourcePaths": ["open-sse/config/providers/registry/gemini/index.ts", "src/shared/constants/providers/apikey/index.ts"] },
-      "risk": { "class": "approved", "reasons": [] },
-      "pricingBasis": "token",
-      "admission": { "basis": "api-key", "citation": "https://ai.google.dev/gemini-api/docs/pricing" },
-      "scope": "llm"
-    },
-    {
-      "id": "openrouter",
-      "displayName": "OpenRouter",
-      "protocols": ["openai-chat-completions", "openai-responses"],
-      "authKinds": ["api-key"],
-      "defaultEndpoints": { "api": "https://openrouter.ai/api/v1" },
-      "modelDiscovery": "openai-models",
-      "liveCatalogAuthority": "partial",
-      "adapterId": "winter.openai-chat-completions",
-      "family": "openai",
-      "upstream": { "project": "OmniRoute", "commit": "5458026c216f77a3da68ea49152dc33470cfe2cb", "sourcePaths": ["open-sse/config/providers/registry/openrouter/index.ts", "src/shared/constants/providers/apikey/index.ts"] },
-      "risk": {
-        "class": "review-required",
-        "reasons": ["gateway: capability parity is model-by-model (WS-13 §14.4), and per-request provider/data-policy controls must be preserved before any row here is promoted past `candidate`"]
+      "upstream": {
+        "project": "OmniRoute",
+        "commit": "5458026c216f77a3da68ea49152dc33470cfe2cb",
+        "sourcePaths": [
+          "open-sse/config/providers/registry/anthropic/index.ts",
+          "src/shared/constants/providers/apikey/index.ts"
+        ]
       },
-      "$comment": "liveCatalogAuthority is \"partial\", not \"authoritative\": a gateway routes hundreds of models that change constantly, and which of them a given key can actually reach depends on upstream routing and data-policy settings the list does not express. R6-F's own wording anticipates this (\"local/gateway providers with a non-authoritative live catalog\"). Marking it authoritative made an absent id a definitive fact, which closed the `allowUnlisted` door on exactly the provider whose real ids are other vendors' qualified ids.",
-      "pricingBasis": "token",
-      "admission": { "basis": "api-key", "citation": "spec:WS-13 §1 — reviewed api-key allowlist row (categoryDispositions.apikey); no vendor pricing page is captured in-repo" },
-      "scope": "llm"
-    },
-    {
-      "id": "deepseek",
-      "displayName": "DeepSeek",
-      "protocols": ["openai-chat-completions", "openai-responses"],
-      "$comment": "`openai-responses` was ADDED by Lane X, and it is a correction rather than an expansion. Upstream's deepseek entry at v3.8.50 is `format: \"openai-responses\"` with `baseUrl: \"https://api.deepseek.com/responses\"`, so every extracted deepseek model row lands `endpoints: [\"responses\"]`; beneath a provider declaring only Chat Completions, those rows were a responses-only model pointed at a Chat Completions adapter — a contradiction the frozen validator cannot see, because it checks one row at a time while the merge is row-level. `scripts/provider-source-sync.ts --offline` now fails on exactly that shape. `adapterId` deliberately stays `winter.openai-chat-completions`: WS-13 §8.2 warns that DeepSeek's Responses-compatible endpoint accepts `reasoning.summary` without generating one and supports neither `include` nor `previous_response_id`, so \"OpenAI-compatible\" is not the capability test and which surface Lane A drives is its proof to make, not this file's. Listing more protocols than the assigned adapter speaks is the existing shape here (`openai` and `openrouter` both do).",
-      "authKinds": ["api-key"],
-      "defaultEndpoints": { "api": "https://api.deepseek.com" },
-      "modelDiscovery": "openai-models",
-      "liveCatalogAuthority": "partial",
-      "adapterId": "winter.openai-chat-completions",
-      "family": "openai",
-      "upstream": { "project": "OmniRoute", "commit": "5458026c216f77a3da68ea49152dc33470cfe2cb", "sourcePaths": ["open-sse/config/providers/registry/deepseek/index.ts", "src/shared/constants/providers/apikey/index.ts"] },
-      "risk": {
-        "class": "review-required",
-        "reasons": ["reasoning continuity is tool-loop fragile: WS-13 §8.2 records a hard 400 when reasoning state is missing mid-tool-loop, so the tool-loop corpus must pass before promotion"]
-      },
-      "pricingBasis": "token",
-      "admission": { "basis": "api-key", "citation": "spec:WS-13 §1 — reviewed api-key allowlist row (categoryDispositions.apikey); no vendor pricing page is captured in-repo" },
-      "scope": "llm"
-    },
-    {
-      "id": "codex-oauth",
-      "displayName": "Codex (OAuth)",
-      "protocols": ["openai-responses"],
-      "authKinds": ["oauth-approved"],
-      "defaultEndpoints": { "api": "https://chatgpt.com/backend-api/codex" },
-      "modelDiscovery": "none",
-      "liveCatalogAuthority": "unknown",
-      "adapterId": "winter.codex-oauth",
-      "family": "openai",
-      "upstream": { "project": "winter", "commit": "", "sourcePaths": [] },
       "risk": {
         "class": "approved",
-        "reasons": ["carried over per D11 with `originator: \"winter\"` — deliberately non-first-party (WS-01 §3); that identification must never be reverted to a first-party value"]
+        "reasons": []
       },
-      "pricingBasis": "subscription",
-      "admission": { "basis": "oauth-documented", "citation": "audit:recorded-ruling-codex" },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://claude.com/pricing"
+      },
       "scope": "llm"
     },
     {
       "id": "azure-openai",
       "displayName": "Azure OpenAI",
-      "protocols": ["azure-openai", "openai-responses"],
-      "authKinds": ["api-key", "cloud-credential-chain"],
+      "protocols": [
+        "azure-openai",
+        "openai-responses"
+      ],
+      "authKinds": [
+        "api-key",
+        "cloud-credential-chain"
+      ],
       "defaultEndpoints": {},
       "modelDiscovery": "none",
       "liveCatalogAuthority": "unknown",
       "adapterId": "winter.azure-openai",
       "family": "openai",
-      "upstream": { "project": "OmniRoute", "commit": "5458026c216f77a3da68ea49152dc33470cfe2cb", "sourcePaths": ["src/shared/constants/providers/apikey/index.ts"] },
+      "upstream": {
+        "project": "OmniRoute",
+        "commit": "5458026c216f77a3da68ea49152dc33470cfe2cb",
+        "sourcePaths": [
+          "src/shared/constants/providers/apikey/index.ts"
+        ]
+      },
       "risk": {
         "class": "review-required",
-        "reasons": ["native cloud (R6-16): deployment-path/api-version identity and Entra-vs-key auth each need their own request-serialization proof before promotion"]
+        "reasons": [
+          "native cloud (R6-16): deployment-path/api-version identity and Entra-vs-key auth each need their own request-serialization proof before promotion"
+        ]
       },
       "pricingBasis": "token",
-      "admission": { "basis": "cloud-credential", "citation": "spec:WS-13 §1 — reviewed native-cloud allowlist row; the credential is the operator's own Azure subscription" },
+      "admission": {
+        "basis": "cloud-credential",
+        "citation": "https://azure.microsoft.com/products/ai-services/openai-service — the vendor's own product page as OmniRoute's product catalog records it at 5458026. The credential is the OPERATOR'S OWN Azure subscription key against their own resource endpoint, which is why the basis is cloud-credential rather than api-key. EVIDENCE TIER: pinned-upstream — see PROVENANCE.md \"Two tiers of admission citation\"."
+      },
       "scope": "llm"
     },
     {
       "id": "bedrock",
       "displayName": "AWS Bedrock",
-      "protocols": ["bedrock-converse"],
-      "authKinds": ["cloud-credential-chain"],
+      "protocols": [
+        "bedrock-converse"
+      ],
+      "authKinds": [
+        "cloud-credential-chain"
+      ],
       "defaultEndpoints": {},
       "modelDiscovery": "provider-native",
       "liveCatalogAuthority": "partial",
       "adapterId": "winter.bedrock-converse",
       "family": "bedrock",
-      "upstream": { "project": "OmniRoute", "commit": "5458026c216f77a3da68ea49152dc33470cfe2cb", "sourcePaths": ["open-sse/config/providers/registry/bedrock/index.ts", "src/shared/constants/providers/apikey/index.ts"] },
+      "upstream": {
+        "project": "OmniRoute",
+        "commit": "5458026c216f77a3da68ea49152dc33470cfe2cb",
+        "sourcePaths": [
+          "open-sse/config/providers/registry/bedrock/index.ts",
+          "src/shared/constants/providers/apikey/index.ts"
+        ]
+      },
       "risk": {
         "class": "review-required",
-        "reasons": ["native cloud (R6-16): hand-rolled SigV4 and AWS event-stream decoding need their own signing/streaming proof; credentials are env + shared-credentials-file only this phase (no IMDS/STS)"]
+        "reasons": [
+          "native cloud (R6-16): hand-rolled SigV4 and AWS event-stream decoding need their own signing/streaming proof; credentials are env + shared-credentials-file only this phase (no IMDS/STS)"
+        ]
       },
       "pricingBasis": "token",
-      "admission": { "basis": "cloud-credential", "citation": "spec:WS-13 §1 — reviewed native-cloud allowlist row; the credential is the operator's own AWS account (SigV4)" },
+      "admission": {
+        "basis": "cloud-credential",
+        "citation": "https://aws.amazon.com/bedrock — the vendor's own product page as OmniRoute's product catalog records it at 5458026. The credential is the OPERATOR'S OWN AWS account, signed with SigV4, which is why the basis is cloud-credential rather than api-key. EVIDENCE TIER: pinned-upstream — see PROVENANCE.md \"Two tiers of admission citation\"."
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "cline",
+      "displayName": "Cline",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "$comment": "A WINTER-OWNED row (`upstream.project: \"winter\"`, empty commit): it is not extracted, so nothing here came from the pinned tree's executable half. The endpoint and dialect are the VENDOR'S OWN documented values, fetched and read on 2026-09-06 — the `fetched-document` citation tier (PROVENANCE.md). audit §5.2 (docs/research/Provider-third-party-access-audit.md, all citations retrieved 2026-09-06): the vendor's OAuth half is a first-party product sign-in with no third-party client registration documented, so it is DROPPED; the documented third-party route is the API key the user mints in their own account, and that is what this row carries. The upstream id sits in a category whose disposition is `blocked`, so the reviewed overlay is the only door (WS-13 §3 step 7 refuses the class transition outright).",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.cline.bot/api/v1"
+      },
+      "modelDiscovery": "openai-models",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "audit OQ-7: Cline's ToS forbids using the Service \"in competition with us, to develop competing products or services\", and whether that clause reaches a general-purpose agent host consuming the documented public API is unresolved — a vendor clarification, not a document search, settles it",
+          "no live gate case has run"
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "audit:§2.1 `cline` / §5.2 — Cline's public API reference (docs.cline.bot/api/overview, retrieved 2026-09-06): OpenAI-compatible Chat Completions at `https://api.cline.bot/api/v1/chat/completions`, `Authorization: Bearer YOUR_API_KEY`, keys from Settings -> API Keys in app.cline.bot; Cline-provider billing is pay-as-you-go credits."
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "clinepass",
+      "displayName": "ClinePass",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "$comment": "A WINTER-OWNED row (`upstream.project: \"winter\"`, empty commit): it is not extracted, so nothing here came from the pinned tree's executable half. The endpoint and dialect are the VENDOR'S OWN documented values, fetched and read on 2026-09-06 — the `fetched-document` citation tier (PROVENANCE.md). audit §5.2 (docs/research/Provider-third-party-access-audit.md, all citations retrieved 2026-09-06): the vendor's OAuth half is a first-party product sign-in with no third-party client registration documented, so it is DROPPED; the documented third-party route is the API key the user mints in their own account, and that is what this row carries. The upstream id sits in a category whose disposition is `blocked`, so the reviewed overlay is the only door (WS-13 §3 step 7 refuses the class transition outright). SUBSCRIPTION-priced (WS-13b §1, audit §5.6(3)): it shares an endpoint and a key with the token-priced `cline` row but not a billing model, so it is a SEPARATE row — one `pricingBasis` per row is the whole mechanism by which `priceUsage` stays silent here and speaks for `cline`.",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.cline.bot/api/v1"
+      },
+      "modelDiscovery": "openai-models",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "audit OQ-7: the same Cline competing-products clause applies",
+          "subscription-priced: throughput is a plan entitlement Winter does not model, and no live gate case has run"
+        ]
+      },
+      "pricingBasis": "subscription",
+      "admission": {
+        "basis": "api-key",
+        "citation": "audit:§2.1 `clinepass` / §5.2 — ClinePass docs (docs.cline.bot/getting-started/clinepass, retrieved 2026-09-06), which permit third-party use in terms: \"You can use ClinePass models from your own scripts, apps, or automation\". Same base and same API keys as `cline`; \"ClinePass is a flat monthly subscription\" ($9.99/mo), NOT token-priced."
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "codex-oauth",
+      "displayName": "Codex (OAuth)",
+      "protocols": [
+        "openai-responses"
+      ],
+      "authKinds": [
+        "oauth-approved"
+      ],
+      "defaultEndpoints": {
+        "api": "https://chatgpt.com/backend-api/codex"
+      },
+      "modelDiscovery": "none",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.codex-oauth",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "approved",
+        "reasons": [
+          "carried over per D11 with `originator: \"winter\"` — deliberately non-first-party (WS-01 §3); that identification must never be reverted to a first-party value"
+        ]
+      },
+      "pricingBasis": "subscription",
+      "admission": {
+        "basis": "oauth-documented",
+        "citation": "audit:recorded-ruling-codex"
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "deepseek",
+      "displayName": "DeepSeek",
+      "protocols": [
+        "openai-chat-completions",
+        "openai-responses"
+      ],
+      "$comment": "`openai-responses` was ADDED by Lane X, and it is a correction rather than an expansion. Upstream's deepseek entry at v3.8.50 is `format: \"openai-responses\"` with `baseUrl: \"https://api.deepseek.com/responses\"`, so every extracted deepseek model row lands `endpoints: [\"responses\"]`; beneath a provider declaring only Chat Completions, those rows were a responses-only model pointed at a Chat Completions adapter — a contradiction the frozen validator cannot see, because it checks one row at a time while the merge is row-level. `scripts/provider-source-sync.ts --offline` now fails on exactly that shape. `adapterId` deliberately stays `winter.openai-chat-completions`: WS-13 §8.2 warns that DeepSeek's Responses-compatible endpoint accepts `reasoning.summary` without generating one and supports neither `include` nor `previous_response_id`, so \"OpenAI-compatible\" is not the capability test and which surface Lane A drives is its proof to make, not this file's. Listing more protocols than the assigned adapter speaks is the existing shape here (`openai` and `openrouter` both do).",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.deepseek.com"
+      },
+      "modelDiscovery": "openai-models",
+      "liveCatalogAuthority": "partial",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "OmniRoute",
+        "commit": "5458026c216f77a3da68ea49152dc33470cfe2cb",
+        "sourcePaths": [
+          "open-sse/config/providers/registry/deepseek/index.ts",
+          "src/shared/constants/providers/apikey/index.ts"
+        ]
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "reasoning continuity is tool-loop fragile: WS-13 §8.2 records a hard 400 when reasoning state is missing mid-tool-loop, so the tool-loop corpus must pass before promotion"
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://platform.deepseek.com — the vendor's own developer platform as OmniRoute's product catalog records it at 5458026; the api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Responses at https://api.deepseek.com. EVIDENCE TIER: pinned-upstream — see PROVENANCE.md \"Two tiers of admission citation\". The audit covers the OAuth/keyless ids and carries no citation for this one."
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "deepseek-anthropic",
+      "displayName": "DeepSeek (Anthropic dialect)",
+      "protocols": [
+        "anthropic-messages"
+      ],
+      "$comment": "R6b-5 (WS-13b §2): a DIALECT SIBLING. The vendor documents two wire dialects at two different base URLs, and a provider row carries exactly one `adapterId`, so two dialects are two rows — each with its own `defaultEndpoints.api`, its own model keys, and the dialect in its `displayName`. `winter.anthropic-messages` is multi-provider in fact, measured rather than assumed: `runtime/src/provider/catalog-endpoint-shape.test.ts` drives two sibling rows against a loopback fake and each reaches ITS OWN `<root>/v1/messages`. A WINTER-OWNED row (`upstream.project: \"winter\"`, empty commit): it is not extracted, so nothing here came from the pinned tree's executable half. The endpoint and dialect are the VENDOR'S OWN documented values, fetched and read on 2026-09-06 — the `fetched-document` citation tier (PROVENANCE.md). The Anthropic half of DeepSeek; the OpenAI half is the extracted `deepseek` row. The model rows are duplicated from that row's upstream facts with their own `deepseek-anthropic/*` keys, per R6b-5.",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.deepseek.com/anthropic"
+      },
+      "modelDiscovery": "openai-models",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.anthropic-messages",
+      "family": "anthropic",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "reasoning continuity is tool-loop fragile: WS-13 §8.2 records a hard 400 when reasoning state is missing mid-tool-loop, and the Anthropic dialect's own continuity contract for this vendor is unproven — the tool-loop corpus must pass before promotion",
+          "admission is fetched-document but the DIALECT'S behaviour is untested: no live gate case has run against this endpoint"
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://api-docs.deepseek.com/guides/anthropic_api — DeepSeek's own guide, retrieved 2026-09-06: \"our API has added support for the Anthropic API format, with the base_url being https://api.deepseek.com/anthropic\", and `export ANTHROPIC_BASE_URL=https://api.deepseek.com/anthropic`. Same user-minted API key as the `deepseek` row."
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "docker-model-runner",
+      "displayName": "Docker Model Runner (local)",
+      "$comment": "All twelve local rows now name `winter.local-openai` — the DEFAULT id Lane A's `createLocalOpenAIAdapter` exports — where they previously named `winter.openai-chat-completions`. That was not merely a mismatch: a registry resolves an adapter BY ID, so registering the local adapter under the chat-completions id (which is what Lane A's wiring line had to do to match this file) SHADOWED the real Chat Completions adapter for openai, openrouter and deepseek. Lane A can now drop the `id:` override from `createLocalOpenAIAdapter({ descriptors })`.",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "authKinds": [
+        "local-none"
+      ],
+      "defaultEndpoints": {
+        "api": "http://127.0.0.1:12434/engines/v1"
+      },
+      "modelDiscovery": "local",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.local-openai",
+      "family": "local-openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "approved",
+        "reasons": []
+      },
+      "pricingBasis": "free",
+      "admission": {
+        "basis": "local",
+        "citation": "local"
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "google",
+      "displayName": "Google Gemini API",
+      "protocols": [
+        "google-generate-content"
+      ],
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://generativelanguage.googleapis.com"
+      },
+      "modelDiscovery": "provider-native",
+      "liveCatalogAuthority": "authoritative",
+      "adapterId": "winter.google-generate-content",
+      "family": "google",
+      "upstream": {
+        "project": "OmniRoute",
+        "commit": "5458026c216f77a3da68ea49152dc33470cfe2cb",
+        "sourcePaths": [
+          "open-sse/config/providers/registry/gemini/index.ts",
+          "src/shared/constants/providers/apikey/index.ts"
+        ]
+      },
+      "risk": {
+        "class": "approved",
+        "reasons": []
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://ai.google.dev/gemini-api/docs/pricing"
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "kilocode",
+      "displayName": "Kilo Code (AI Gateway)",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "$comment": "A WINTER-OWNED row (`upstream.project: \"winter\"`, empty commit): it is not extracted, so nothing here came from the pinned tree's executable half. The endpoint and dialect are the VENDOR'S OWN documented values, fetched and read on 2026-09-06 — the `fetched-document` citation tier (PROVENANCE.md). audit §5.2 (docs/research/Provider-third-party-access-audit.md, all citations retrieved 2026-09-06): the vendor's OAuth half is a first-party product sign-in with no third-party client registration documented, so it is DROPPED; the documented third-party route is the API key the user mints in their own account, and that is what this row carries. The upstream id sits in a category whose disposition is `blocked`, so the reviewed overlay is the only door (WS-13 §3 step 7 refuses the class transition outright). The base is the VENDOR'S documented gateway root, which differs from upstream's `https://api.kilo.ai/api/openrouter/...` path — the fetched document wins over the pinned tree where they disagree, and the disagreement is recorded here rather than resolved silently.",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.kilo.ai/api/gateway"
+      },
+      "modelDiscovery": "openai-models",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "the fetched vendor base URL DISAGREES with the pinned upstream entry (`/api/gateway` vs `/api/openrouter`); the document is the stronger evidence but the live gate is what settles it",
+          "vendor ToS forbids sending HIPAA/PCI-DSS/GLBA-regulated data, which is a deployment constraint a host must surface (audit §2.1)"
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "audit:§2.1 `kilocode` / §5.2 — Kilo Gateway authentication docs (kilo.ai/docs/gateway/authentication, retrieved 2026-09-06): OpenAI-compatible API at base `https://api.kilo.ai/api/gateway`, \"Bearer token passed in the Authorization header\", organization tokens via `X-KiloCode-OrganizationId`, per-token pricing with free credits."
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "kimi-coding",
+      "displayName": "Kimi Code (Anthropic dialect)",
+      "protocols": [
+        "anthropic-messages"
+      ],
+      "$comment": "R6b-5 (WS-13b §2): a DIALECT SIBLING. The vendor documents two wire dialects at two different base URLs, and a provider row carries exactly one `adapterId`, so two dialects are two rows — each with its own `defaultEndpoints.api`, its own model keys, and the dialect in its `displayName`. `winter.anthropic-messages` is multi-provider in fact, measured rather than assumed: `runtime/src/provider/catalog-endpoint-shape.test.ts` drives two sibling rows against a loopback fake and each reaches ITS OWN `<root>/v1/messages`. A WINTER-OWNED row (`upstream.project: \"winter\"`, empty commit): it is not extracted, so nothing here came from the pinned tree's executable half. The endpoint and dialect are the VENDOR'S OWN documented values, fetched and read on 2026-09-06 — the `fetched-document` citation tier (PROVENANCE.md). SUBSCRIPTION-priced (WS-13b §1): `priceUsage` returns nothing for this row, so a Kimi Code session never reports `total_cost_usd` — a membership seat has no per-token price and reporting one would be a fabricated number. The OAuth half of this id is DROPPED per audit §5.2 (no third-party OAuth is documented); the key row is what ships. Endpoint is the ROOT: the adapter appends `/v1/messages`, reproducing the documented `https://api.kimi.com/coding/v1/messages`.",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.kimi.com/coding"
+      },
+      "modelDiscovery": "openai-models",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.anthropic-messages",
+      "family": "anthropic",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "subscription-priced with vendor rate limiting: throughput is a seat entitlement, not a quota Winter can model, and no live gate case has run",
+          "the audit found no clause restricting the coding-plan key to Moonshot's own clients and the docs name third-party clients affirmatively, but no terms page was read for this plan (audit §2.1)"
+        ]
+      },
+      "pricingBasis": "subscription",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://www.kimi.com/code/docs/en/ — Kimi Code's own docs, retrieved 2026-09-06: Anthropic-compatible base `https://api.kimi.com/coding/`, OpenAI-compatible `https://api.kimi.com/coding/v1`; \"Kimi members can create and manage API Keys in the Kimi Code Console\"; billing is a membership subscription (monthly/annual) with rate limiting, expressly contrasted with the platform's pay-as-you-go; the docs NAME Claude Code, OpenCode and Codex as clients. Audit §4/§5.2."
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "lemonade",
+      "displayName": "Lemonade Server (local)",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "authKinds": [
+        "local-none"
+      ],
+      "defaultEndpoints": {
+        "api": "http://127.0.0.1:8000/api/v1"
+      },
+      "modelDiscovery": "local",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.local-openai",
+      "family": "local-openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "approved",
+        "reasons": []
+      },
+      "pricingBasis": "free",
+      "admission": {
+        "basis": "local",
+        "citation": "local"
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "llama-cpp",
+      "displayName": "llama.cpp server (local)",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "authKinds": [
+        "local-none"
+      ],
+      "defaultEndpoints": {
+        "api": "http://127.0.0.1:8080/v1"
+      },
+      "modelDiscovery": "local",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.local-openai",
+      "family": "local-openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "approved",
+        "reasons": []
+      },
+      "pricingBasis": "free",
+      "admission": {
+        "basis": "local",
+        "citation": "local"
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "llamafile",
+      "displayName": "llamafile (local)",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "authKinds": [
+        "local-none"
+      ],
+      "defaultEndpoints": {
+        "api": "http://127.0.0.1:8080/v1"
+      },
+      "modelDiscovery": "local",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.local-openai",
+      "family": "local-openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "approved",
+        "reasons": []
+      },
+      "pricingBasis": "free",
+      "admission": {
+        "basis": "local",
+        "citation": "local"
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "lm-studio",
+      "displayName": "LM Studio (local)",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "authKinds": [
+        "local-none"
+      ],
+      "defaultEndpoints": {
+        "api": "http://127.0.0.1:1234/v1"
+      },
+      "modelDiscovery": "local",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.local-openai",
+      "family": "local-openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "approved",
+        "reasons": []
+      },
+      "pricingBasis": "free",
+      "admission": {
+        "basis": "local",
+        "citation": "local"
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "minimax-anthropic",
+      "displayName": "MiniMax (Anthropic dialect)",
+      "protocols": [
+        "anthropic-messages"
+      ],
+      "$comment": "R6b-5 (WS-13b §2): a DIALECT SIBLING. The vendor documents two wire dialects at two different base URLs, and a provider row carries exactly one `adapterId`, so two dialects are two rows — each with its own `defaultEndpoints.api`, its own model keys, and the dialect in its `displayName`. `winter.anthropic-messages` is multi-provider in fact, measured rather than assumed: `runtime/src/provider/catalog-endpoint-shape.test.ts` drives two sibling rows against a loopback fake and each reaches ITS OWN `<root>/v1/messages`. A WINTER-OWNED row (`upstream.project: \"winter\"`, empty commit): it is not extracted, so nothing here came from the pinned tree's executable half. The endpoint and dialect are the VENDOR'S OWN documented values, fetched and read on 2026-09-06 — the `fetched-document` citation tier (PROVENANCE.md). The Anthropic half of MiniMax; the OpenAI half is the extracted `minimax` row (`https://api.minimax.io/v1`). The vendor's page states this dialect serves a SUBSET of its models, and the five rows below are the intersection of that list with what the pinned tree catalogues — Winter carries no model it cannot source from a document or the pin.",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.minimax.io/anthropic"
+      },
+      "modelDiscovery": "openai-models",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.anthropic-messages",
+      "family": "anthropic",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "admission is fetched-document, but no live gate case has run against this endpoint; the vendor documents a narrower model list for this dialect than for its OpenAI one"
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://platform.minimax.io/docs/api-reference/text-anthropic-api — MiniMax's own Anthropic-SDK reference, retrieved 2026-09-06: base URL `https://api.minimax.io/anthropic`, used through `client.messages.create()`, so the Messages route is `/anthropic/v1/messages`. Same user-minted key as the `minimax` row."
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "mlx-gemma",
+      "displayName": "MLX (Gemma) server (local)",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "authKinds": [
+        "local-none"
+      ],
+      "defaultEndpoints": {
+        "api": "http://127.0.0.1:8080/v1"
+      },
+      "modelDiscovery": "local",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.local-openai",
+      "family": "local-openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "approved",
+        "reasons": []
+      },
+      "pricingBasis": "free",
+      "admission": {
+        "basis": "local",
+        "citation": "local"
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "mlx-qwen",
+      "displayName": "MLX (Qwen) server (local)",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "authKinds": [
+        "local-none"
+      ],
+      "defaultEndpoints": {
+        "api": "http://127.0.0.1:8080/v1"
+      },
+      "modelDiscovery": "local",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.local-openai",
+      "family": "local-openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "approved",
+        "reasons": []
+      },
+      "pricingBasis": "free",
+      "admission": {
+        "basis": "local",
+        "citation": "local"
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "moonshot",
+      "displayName": "Moonshot AI (Kimi platform)",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "$comment": "A WINTER-OWNED row (`upstream.project: \"winter\"`, empty commit): it is not extracted, so nothing here came from the pinned tree's executable half. The endpoint and dialect are the VENDOR'S OWN documented values, fetched and read on 2026-09-06 — the `fetched-document` citation tier (PROVENANCE.md). Upstream's `moonshot` entry states this same base URL but drives it through a bespoke `moonshot` executor, which Winter does not represent — an unknown executor FAILS the extraction run rather than defaulting, so the id is in `blocked` and the row is authored here. This is the TOKEN-PRICED platform API; `kimi-coding` is the separate SUBSCRIPTION plan, and audit §5.6(3) is explicit that conflating the two silently misreports cost.",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.moonshot.ai/v1"
+      },
+      "modelDiscovery": "openai-models",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "upstream drives this vendor through a bespoke executor Winter does not represent, so no extracted row cross-checks these values; no live gate case has run"
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "audit:§4 / §2.1 `kimi-coding` — docs/research/Provider-third-party-access-audit.md, retrieved 2026-09-06: \"the token-priced platform API (https://api.moonshot.ai/v1, MOONSHOT_API_KEY, OpenAI- and Anthropic-format compatible) remains an ordinary api-key provider\", citing platform.kimi.ai/docs/overview."
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "ollama-local",
+      "displayName": "Ollama (local)",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "authKinds": [
+        "local-none"
+      ],
+      "defaultEndpoints": {
+        "api": "http://127.0.0.1:11434/v1"
+      },
+      "modelDiscovery": "local",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.local-openai",
+      "family": "local-openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "approved",
+        "reasons": []
+      },
+      "pricingBasis": "free",
+      "admission": {
+        "basis": "local",
+        "citation": "local"
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "oobabooga",
+      "displayName": "Text generation web UI (local)",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "authKinds": [
+        "local-none"
+      ],
+      "defaultEndpoints": {
+        "api": "http://127.0.0.1:5000/v1"
+      },
+      "modelDiscovery": "local",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.local-openai",
+      "family": "local-openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "approved",
+        "reasons": []
+      },
+      "pricingBasis": "free",
+      "admission": {
+        "basis": "local",
+        "citation": "local"
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "openai",
+      "displayName": "OpenAI",
+      "protocols": [
+        "openai-responses",
+        "openai-chat-completions"
+      ],
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.openai.com/v1"
+      },
+      "modelDiscovery": "openai-models",
+      "liveCatalogAuthority": "authoritative",
+      "adapterId": "winter.openai-responses",
+      "family": "openai",
+      "upstream": {
+        "project": "OmniRoute",
+        "commit": "5458026c216f77a3da68ea49152dc33470cfe2cb",
+        "sourcePaths": [
+          "open-sse/config/providers/registry/openai/index.ts",
+          "src/shared/constants/providers/apikey/index.ts"
+        ]
+      },
+      "risk": {
+        "class": "approved",
+        "reasons": []
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://developers.openai.com/api/docs/pricing"
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "opencode",
+      "displayName": "OpenCode Zen",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "$comment": "A WINTER-OWNED row (`upstream.project: \"winter\"`, empty commit): it is not extracted, so nothing here came from the pinned tree's executable half. The endpoint and dialect are the VENDOR'S OWN documented values, fetched and read on 2026-09-06 — the `fetched-document` citation tier (PROVENANCE.md). audit §5.2 (docs/research/Provider-third-party-access-audit.md, all citations retrieved 2026-09-06): the vendor's OAuth half is a first-party product sign-in with no third-party client registration documented, so it is DROPPED; the documented third-party route is the API key the user mints in their own account, and that is what this row carries. The upstream id sits in a category whose disposition is `blocked`, so the reviewed overlay is the only door (WS-13 §3 step 7 refuses the class transition outright). Upstream splits this vendor across `opencode`/`opencode-zen`/`opencode-go`, all on a bespoke `opencode` executor Winter does not represent; all three are in `blocked` pointing here. Zen serves `/responses` as well, but this row binds Chat Completions only: audit OQ-6 records that no Zen ToS or AUP was located and no statement that keys may be used from arbitrary third-party tools, so the narrower binding is the honest one until the live gate says otherwise.",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://opencode.ai/zen/v1"
+      },
+      "modelDiscovery": "openai-models",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "audit OQ-6: no Zen terms of service or acceptable-use page was located, and no vendor statement that Zen keys may be used from clients other than the `opencode` CLI — the docs show standard AI-SDK usage, which implies it, but implication is not documentation",
+          "free-tier models carry a data-collection caveat (\"During its free period, collected data may be used to improve the model\"; NVIDIA-backed free endpoints log usage under NVIDIA's own trial terms) that a host must surface"
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "audit:§2.2 `opencode` / §5.2 — OpenCode Zen docs (opencode.ai/docs/zen/, retrieved 2026-09-06): base `https://opencode.ai/zen/v1/` with `/responses`, `/messages`, `/chat/completions` and `/models/[model-id]`; key issued on signing up for Zen; pay-as-you-go per 1M tokens, several models temporarily free."
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "openference",
+      "displayName": "Openference",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "$comment": "A WINTER-OWNED row (`upstream.project: \"winter\"`, empty commit): it is not extracted, so nothing here came from the pinned tree's executable half. The endpoint and dialect are the VENDOR'S OWN documented values, fetched and read on 2026-09-06 — the `fetched-document` citation tier (PROVENANCE.md). audit §5.2 (docs/research/Provider-third-party-access-audit.md, all citations retrieved 2026-09-06): the vendor's OAuth half is a first-party product sign-in with no third-party client registration documented, so it is DROPPED; the documented third-party route is the API key the user mints in their own account, and that is what this row carries. The upstream id sits in a category whose disposition is `blocked`, so the reviewed overlay is the only door (WS-13 §3 step 7 refuses the class transition outright). The vendor names client-identity spoofing as a violation in terms — \"Do not spoof your User-Agent to bypass the check\" — which is the rule WS-13b §1 already imposes on Winter from the other direction. Winter sends `winter-agent-sdk/<version>` here as it does everywhere (`identity.ts`), so the honest-identity requirement and the vendor's own are the same requirement.",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.openference.com/v1"
+      },
+      "modelDiscovery": "openai-models",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "audit §2.1: \"Requests identified as autonomous or automated from Free accounts may require a paid plan\" — a free-tier account may not be usable for agent traffic at all, and a host must say so on the setup screen",
+          "audit OQ-4: openference.com/terms-of-service renders client-side and returned no text on 2026-09-06, so the quotes above come from the docs FAQ, which cites the ToS but is not the ToS"
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "audit:§2.1 `openference` / §5.2 — Openference's own docs (docs.openference.com/introduction + /faq, retrieved 2026-09-06): curated OpenAI-compatible gateway at `https://api.openference.com/v1`, key from the dashboard, and the docs instruct the reader to \"Point any supported coding tool… to https://api.openference.com/v1\", naming Cursor, Claude Code, Cline, Codex, OpenCode and Pi."
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "openrouter",
+      "displayName": "OpenRouter",
+      "protocols": [
+        "openai-chat-completions",
+        "openai-responses"
+      ],
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://openrouter.ai/api/v1"
+      },
+      "modelDiscovery": "openai-models",
+      "liveCatalogAuthority": "partial",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "OmniRoute",
+        "commit": "5458026c216f77a3da68ea49152dc33470cfe2cb",
+        "sourcePaths": [
+          "open-sse/config/providers/registry/openrouter/index.ts",
+          "src/shared/constants/providers/apikey/index.ts"
+        ]
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "gateway: capability parity is model-by-model (WS-13 §14.4), and per-request provider/data-policy controls must be preserved before any row here is promoted past `candidate`"
+        ]
+      },
+      "$comment": "liveCatalogAuthority is \"partial\", not \"authoritative\": a gateway routes hundreds of models that change constantly, and which of them a given key can actually reach depends on upstream routing and data-policy settings the list does not express. R6-F's own wording anticipates this (\"local/gateway providers with a non-authoritative live catalog\"). Marking it authoritative made an absent id a definitive fact, which closed the `allowUnlisted` door on exactly the provider whose real ids are other vendors' qualified ids.",
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://openrouter.ai — the vendor's own site as OmniRoute's product catalog records it at 5458026; the api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://openrouter.ai/api/v1. EVIDENCE TIER: pinned-upstream — see PROVENANCE.md \"Two tiers of admission citation\". The audit (docs/research/Provider-third-party-access-audit.md) covers the OAuth/keyless ids and carries NO citation for this one, so its 51 references cannot upgrade this row."
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "triton",
+      "displayName": "NVIDIA Triton Inference Server (local)",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "authKinds": [
+        "local-none"
+      ],
+      "defaultEndpoints": {
+        "api": "http://127.0.0.1:9000/v1"
+      },
+      "modelDiscovery": "local",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.local-openai",
+      "family": "local-openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "approved",
+        "reasons": []
+      },
+      "pricingBasis": "free",
+      "admission": {
+        "basis": "local",
+        "citation": "local"
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "uncloseai",
+      "displayName": "uncloseai",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "$comment": "WS-13b §8.4 / audit §5.1: a KEYLESS row, and the only one whose vendor requires no credential at all. `authKinds: [\"custom\"]` is the honest encoding: `local-none` is reserved for a LOCAL installation (the twelve WS-13 §12 rows), and this is a public REMOTE endpoint — labelling it `local-none` would tell `connectionFrom` to stamp `local: true` and hand a non-loopback https host the local-endpoint policy. `custom` says \"this provider's credential rule is its own\", which is exactly the state: no key needed, an optional one accepted. One of the three documented hosts is bound; the others are a host's `connection.baseUrl` to choose.",
+      "authKinds": [
+        "custom"
+      ],
+      "defaultEndpoints": {
+        "api": "https://hermes.ai.unturf.com/v1"
+      },
+      "modelDiscovery": "openai-models",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "hobby-grade: audit §5.1 records no availability guarantee, and the ToU's one real constraint is not degrading service — a host must rate-limit conservatively",
+          "the ToU prohibits developing \"competing machine learning services without attribution\", which is a term a host embedding this provider should read before shipping"
+        ]
+      },
+      "pricingBasis": "free",
+      "admission": {
+        "basis": "keyless-documented",
+        "citation": "audit:§2.2 `uncloseai` / §5.1 — uncloseai.com and its terms of use (uncloseai.com/terms-of-use.html), retrieved 2026-09-06: OpenAI-compatible endpoints at `hermes.ai.unturf.com/v1`, `qwen.ai.unturf.com/v1`, `speech.ai.unturf.com/v1`; the service states it does NOT require a valid API key and is \"completely public domain\"; third-party clients are explicitly encouraged (\"open source client implementations in 42+ programming languages\")."
+      },
       "scope": "llm"
     },
     {
       "id": "vertex",
       "displayName": "Google Vertex AI",
-      "protocols": ["google-generate-content"],
-      "authKinds": ["cloud-credential-chain"],
+      "protocols": [
+        "google-generate-content"
+      ],
+      "authKinds": [
+        "cloud-credential-chain"
+      ],
       "defaultEndpoints": {},
       "modelDiscovery": "provider-native",
       "liveCatalogAuthority": "partial",
       "adapterId": "winter.vertex-gemini",
       "$comment": "`adapterId` is Lane B's `VERTEX_ADAPTER_ID`, read from p6/lane-b's adapters/google/vertex.ts. It was `winter.google-generate-content` — the plain Gemini adapter's id — which the registry resolves BY ID, so a Vertex session would have been served by the Gemini API adapter: no location-scoped URL, no ADC credential, and the Gemini API endpoint on the wire. `family` stays `google` deliberately: Vertex is a TRANSPORT over the same GenerateContent wire mapping (ruling R6-A), not a second dialect.",
       "family": "google",
-      "upstream": { "project": "OmniRoute", "commit": "5458026c216f77a3da68ea49152dc33470cfe2cb", "sourcePaths": ["open-sse/config/providers/registry/vertex/index.ts", "src/shared/constants/providers/apikey/index.ts"] },
+      "upstream": {
+        "project": "OmniRoute",
+        "commit": "5458026c216f77a3da68ea49152dc33470cfe2cb",
+        "sourcePaths": [
+          "open-sse/config/providers/registry/vertex/index.ts",
+          "src/shared/constants/providers/apikey/index.ts"
+        ]
+      },
       "risk": {
         "class": "review-required",
-        "reasons": ["native cloud (R6-16): project/location endpoints and ADC (service-account RS256 JWT exchange or an explicit access-token ref) need their own auth proof"]
+        "reasons": [
+          "native cloud (R6-16): project/location endpoints and ADC (service-account RS256 JWT exchange or an explicit access-token ref) need their own auth proof"
+        ]
       },
       "pricingBasis": "token",
-      "admission": { "basis": "cloud-credential", "citation": "spec:WS-13 §1 — reviewed native-cloud allowlist row; the credential is the operator's own GCP project (ADC)" },
-      "scope": "llm"
-    },
-
-    {
-      "id": "docker-model-runner",
-      "displayName": "Docker Model Runner (local)",
-      "$comment": "All twelve local rows now name `winter.local-openai` — the DEFAULT id Lane A's `createLocalOpenAIAdapter` exports — where they previously named `winter.openai-chat-completions`. That was not merely a mismatch: a registry resolves an adapter BY ID, so registering the local adapter under the chat-completions id (which is what Lane A's wiring line had to do to match this file) SHADOWED the real Chat Completions adapter for openai, openrouter and deepseek. Lane A can now drop the `id:` override from `createLocalOpenAIAdapter({ descriptors })`.",
-      "protocols": ["openai-chat-completions"],
-      "authKinds": ["local-none"],
-      "defaultEndpoints": { "api": "http://127.0.0.1:12434/engines/v1" },
-      "modelDiscovery": "local",
-      "liveCatalogAuthority": "unknown",
-      "adapterId": "winter.local-openai",
-      "family": "local-openai",
-      "upstream": { "project": "winter", "commit": "", "sourcePaths": [] },
-      "risk": { "class": "approved", "reasons": [] },
-      "pricingBasis": "free",
-      "admission": { "basis": "local", "citation": "local" },
-      "scope": "llm"
-    },
-    {
-      "id": "lemonade",
-      "displayName": "Lemonade Server (local)",
-      "protocols": ["openai-chat-completions"],
-      "authKinds": ["local-none"],
-      "defaultEndpoints": { "api": "http://127.0.0.1:8000/api/v1" },
-      "modelDiscovery": "local",
-      "liveCatalogAuthority": "unknown",
-      "adapterId": "winter.local-openai",
-      "family": "local-openai",
-      "upstream": { "project": "winter", "commit": "", "sourcePaths": [] },
-      "risk": { "class": "approved", "reasons": [] },
-      "pricingBasis": "free",
-      "admission": { "basis": "local", "citation": "local" },
-      "scope": "llm"
-    },
-    {
-      "id": "llama-cpp",
-      "displayName": "llama.cpp server (local)",
-      "protocols": ["openai-chat-completions"],
-      "authKinds": ["local-none"],
-      "defaultEndpoints": { "api": "http://127.0.0.1:8080/v1" },
-      "modelDiscovery": "local",
-      "liveCatalogAuthority": "unknown",
-      "adapterId": "winter.local-openai",
-      "family": "local-openai",
-      "upstream": { "project": "winter", "commit": "", "sourcePaths": [] },
-      "risk": { "class": "approved", "reasons": [] },
-      "pricingBasis": "free",
-      "admission": { "basis": "local", "citation": "local" },
-      "scope": "llm"
-    },
-    {
-      "id": "llamafile",
-      "displayName": "llamafile (local)",
-      "protocols": ["openai-chat-completions"],
-      "authKinds": ["local-none"],
-      "defaultEndpoints": { "api": "http://127.0.0.1:8080/v1" },
-      "modelDiscovery": "local",
-      "liveCatalogAuthority": "unknown",
-      "adapterId": "winter.local-openai",
-      "family": "local-openai",
-      "upstream": { "project": "winter", "commit": "", "sourcePaths": [] },
-      "risk": { "class": "approved", "reasons": [] },
-      "pricingBasis": "free",
-      "admission": { "basis": "local", "citation": "local" },
-      "scope": "llm"
-    },
-    {
-      "id": "lm-studio",
-      "displayName": "LM Studio (local)",
-      "protocols": ["openai-chat-completions"],
-      "authKinds": ["local-none"],
-      "defaultEndpoints": { "api": "http://127.0.0.1:1234/v1" },
-      "modelDiscovery": "local",
-      "liveCatalogAuthority": "unknown",
-      "adapterId": "winter.local-openai",
-      "family": "local-openai",
-      "upstream": { "project": "winter", "commit": "", "sourcePaths": [] },
-      "risk": { "class": "approved", "reasons": [] },
-      "pricingBasis": "free",
-      "admission": { "basis": "local", "citation": "local" },
-      "scope": "llm"
-    },
-    {
-      "id": "mlx-gemma",
-      "displayName": "MLX (Gemma) server (local)",
-      "protocols": ["openai-chat-completions"],
-      "authKinds": ["local-none"],
-      "defaultEndpoints": { "api": "http://127.0.0.1:8080/v1" },
-      "modelDiscovery": "local",
-      "liveCatalogAuthority": "unknown",
-      "adapterId": "winter.local-openai",
-      "family": "local-openai",
-      "upstream": { "project": "winter", "commit": "", "sourcePaths": [] },
-      "risk": { "class": "approved", "reasons": [] },
-      "pricingBasis": "free",
-      "admission": { "basis": "local", "citation": "local" },
-      "scope": "llm"
-    },
-    {
-      "id": "mlx-qwen",
-      "displayName": "MLX (Qwen) server (local)",
-      "protocols": ["openai-chat-completions"],
-      "authKinds": ["local-none"],
-      "defaultEndpoints": { "api": "http://127.0.0.1:8080/v1" },
-      "modelDiscovery": "local",
-      "liveCatalogAuthority": "unknown",
-      "adapterId": "winter.local-openai",
-      "family": "local-openai",
-      "upstream": { "project": "winter", "commit": "", "sourcePaths": [] },
-      "risk": { "class": "approved", "reasons": [] },
-      "pricingBasis": "free",
-      "admission": { "basis": "local", "citation": "local" },
-      "scope": "llm"
-    },
-    {
-      "id": "ollama-local",
-      "displayName": "Ollama (local)",
-      "protocols": ["openai-chat-completions"],
-      "authKinds": ["local-none"],
-      "defaultEndpoints": { "api": "http://127.0.0.1:11434/v1" },
-      "modelDiscovery": "local",
-      "liveCatalogAuthority": "unknown",
-      "adapterId": "winter.local-openai",
-      "family": "local-openai",
-      "upstream": { "project": "winter", "commit": "", "sourcePaths": [] },
-      "risk": { "class": "approved", "reasons": [] },
-      "pricingBasis": "free",
-      "admission": { "basis": "local", "citation": "local" },
-      "scope": "llm"
-    },
-    {
-      "id": "oobabooga",
-      "displayName": "Text generation web UI (local)",
-      "protocols": ["openai-chat-completions"],
-      "authKinds": ["local-none"],
-      "defaultEndpoints": { "api": "http://127.0.0.1:5000/v1" },
-      "modelDiscovery": "local",
-      "liveCatalogAuthority": "unknown",
-      "adapterId": "winter.local-openai",
-      "family": "local-openai",
-      "upstream": { "project": "winter", "commit": "", "sourcePaths": [] },
-      "risk": { "class": "approved", "reasons": [] },
-      "pricingBasis": "free",
-      "admission": { "basis": "local", "citation": "local" },
-      "scope": "llm"
-    },
-    {
-      "id": "triton",
-      "displayName": "NVIDIA Triton Inference Server (local)",
-      "protocols": ["openai-chat-completions"],
-      "authKinds": ["local-none"],
-      "defaultEndpoints": { "api": "http://127.0.0.1:9000/v1" },
-      "modelDiscovery": "local",
-      "liveCatalogAuthority": "unknown",
-      "adapterId": "winter.local-openai",
-      "family": "local-openai",
-      "upstream": { "project": "winter", "commit": "", "sourcePaths": [] },
-      "risk": { "class": "approved", "reasons": [] },
-      "pricingBasis": "free",
-      "admission": { "basis": "local", "citation": "local" },
+      "admission": {
+        "basis": "cloud-credential",
+        "citation": "https://cloud.google.com/vertex-ai — the vendor's own product page as OmniRoute's product catalog records it at 5458026. The credential is the OPERATOR'S OWN GCP project via Application Default Credentials, which is why the basis is cloud-credential rather than api-key. EVIDENCE TIER: pinned-upstream — see PROVENANCE.md \"Two tiers of admission citation\"."
+      },
       "scope": "llm"
     },
     {
       "id": "vllm",
       "displayName": "vLLM (local)",
-      "protocols": ["openai-chat-completions"],
-      "authKinds": ["local-none"],
-      "defaultEndpoints": { "api": "http://127.0.0.1:8000/v1" },
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "authKinds": [
+        "local-none"
+      ],
+      "defaultEndpoints": {
+        "api": "http://127.0.0.1:8000/v1"
+      },
       "modelDiscovery": "local",
       "liveCatalogAuthority": "unknown",
       "adapterId": "winter.local-openai",
       "family": "local-openai",
-      "upstream": { "project": "winter", "commit": "", "sourcePaths": [] },
-      "risk": { "class": "approved", "reasons": [] },
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "approved",
+        "reasons": []
+      },
       "pricingBasis": "free",
-      "admission": { "basis": "local", "citation": "local" },
+      "admission": {
+        "basis": "local",
+        "citation": "local"
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "xai",
+      "displayName": "xAI (Grok)",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "$comment": "A WINTER-OWNED row (`upstream.project: \"winter\"`, empty commit): it is not extracted, so nothing here came from the pinned tree's executable half. The endpoint and dialect are the VENDOR'S OWN documented values, fetched and read on 2026-09-06 — the `fetched-document` citation tier (PROVENANCE.md). WS-13b §2: xAI ships as its documented api-key row AND (lane O) as the `xai-oauth` SUBSCRIPTION row — two different commercial relationships, and R6-H must not read one as the other. Upstream's `xai` entry states this same base but drives it through a bespoke `xai` executor Winter does not represent, so the id is in `blocked` and this row is authored from the vendor's own docs. The two `targetFormat: \"openai-responses\"` models upstream lists (`grok-4.6`, `grok-4.20-multi-agent-0309`) are DELIBERATELY ABSENT: a responses-only row under a Chat Completions adapter is the contradiction `provider-source-sync --offline` fails on, and declaring `endpoints: [\"chat\",\"responses\"]` for them would be a guess about a surface nothing here has proven.",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.x.ai/v1"
+      },
+      "modelDiscovery": "openai-models",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "upstream drives this vendor through a bespoke executor Winter does not represent, so no extracted row cross-checks these values; no live gate case has run",
+          "audit OQ-2: x.ai/legal/* returned HTTP 403 on 2026-09-06, so the acceptable-use and terms pages were never rendered — the api-key admission does not depend on them, but no terms clause has been read"
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://docs.x.ai/docs/overview — xAI's own developer overview, retrieved 2026-09-06: `\"base_url\": \"https://api.x.ai/v1\"` with `Authorization: Bearer $XAI_API_KEY`, driven through the OpenAI client. Audit §2.1/§2.5 records the same base and that this key path is token-priced, distinct from the subscription OAuth flow."
+      },
       "scope": "llm"
     },
     {
       "id": "xinference",
       "displayName": "Xinference (local)",
-      "protocols": ["openai-chat-completions"],
-      "authKinds": ["local-none"],
-      "defaultEndpoints": { "api": "http://127.0.0.1:9997/v1" },
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "authKinds": [
+        "local-none"
+      ],
+      "defaultEndpoints": {
+        "api": "http://127.0.0.1:9997/v1"
+      },
       "modelDiscovery": "local",
       "liveCatalogAuthority": "unknown",
       "adapterId": "winter.local-openai",
       "family": "local-openai",
-      "upstream": { "project": "winter", "commit": "", "sourcePaths": [] },
-      "risk": { "class": "approved", "reasons": [] },
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "approved",
+        "reasons": []
+      },
       "pricingBasis": "free",
-      "admission": { "basis": "local", "citation": "local" },
+      "admission": {
+        "basis": "local",
+        "citation": "local"
+      },
+      "scope": "llm"
+    },
+    {
+      "id": "zai",
+      "displayName": "Z.AI GLM Coding (OpenAI dialect)",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "$comment": "R6b-5 (WS-13b §2): a DIALECT SIBLING. The vendor documents two wire dialects at two different base URLs, and a provider row carries exactly one `adapterId`, so two dialects are two rows — each with its own `defaultEndpoints.api`, its own model keys, and the dialect in its `displayName`. `winter.anthropic-messages` is multi-provider in fact, measured rather than assumed: `runtime/src/provider/catalog-endpoint-shape.test.ts` drives two sibling rows against a loopback fake and each reaches ITS OWN `<root>/v1/messages`. A WINTER-OWNED row (`upstream.project: \"winter\"`, empty commit): it is not extracted, so nothing here came from the pinned tree's executable half. The endpoint and dialect are the VENDOR'S OWN documented values, fetched and read on 2026-09-06 — the `fetched-document` citation tier (PROVENANCE.md). The OPENAI half of z.ai's GLM Coding Plan. Its Anthropic sibling is the EXTRACTED `zai-anthropic` row — upstream's own `zai` entry is `format: \"claude\"` at `https://api.z.ai/api/anthropic/v1/messages`, which z.ai's Claude-client doc confirms verbatim, so the allowlist admits that id under the sibling id rather than under `zai` (the `gemini` -> `google` precedent). Upstream's `glm`/`glm-cn`/`glmt` ids reach this same endpoint through a bespoke `glm` executor Winter does not represent; they are in `blocked` pointing here.",
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {
+        "api": "https://api.z.ai/api/coding/paas/v4"
+      },
+      "modelDiscovery": "openai-models",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "admission is fetched-document, but no live gate case has run against this endpoint; the model roster is the sibling's and is unverified on this dialect"
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://docs.z.ai/devpack/tool/others — z.ai's own GLM Coding Plan docs, retrieved 2026-09-06: the \"Coding Endpoint\" table lists `https://api.z.ai/api/coding/paas/v4` under \"OpenAI Chat Completions\", and the Cline configuration example repeats it."
+      },
       "scope": "llm"
     }
   ]

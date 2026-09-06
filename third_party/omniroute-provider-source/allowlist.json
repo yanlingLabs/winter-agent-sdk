@@ -1827,6 +1827,7 @@
     {
       "upstreamId": "zai",
       "winterId": "zai-anthropic",
+      "displayNameOverride": "Z.AI GLM Coding (Anthropic dialect)",
       "expectedCategory": "apikey",
       "pricingBasis": "token",
       "admission": {

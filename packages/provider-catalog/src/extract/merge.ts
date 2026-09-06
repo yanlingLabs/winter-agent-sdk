@@ -50,6 +50,17 @@ export interface AllowlistProviderRow {
    */
   initialModelStatus?: "candidate" | "experimental";
   /**
+   * The display name this provider's row must carry, when the product catalog's own `name` would be
+   * AMBIGUOUS rather than merely different.
+   *
+   * R6b-5 puts a vendor's two documented dialects on two rows, and the upstream product catalog has
+   * ONE name for the vendor — so `zai` and `zai-anthropic` both read "Z.AI" in a picker, which is a
+   * row a user cannot choose between. The override is a reviewed allowlist edit like `winterId` and
+   * `adapterIdOverride`, and it is RECORDED in the ledger; it is not a licence to rename providers
+   * for taste.
+   */
+  displayNameOverride?: string;
+  /**
    * The adapter this provider's rows must name, when it is NOT the one its protocol implies.
    *
    * Vertex shares the GenerateContent dialect with the Gemini API, so deriving the adapter from the
@@ -578,9 +589,20 @@ export function buildUpstreamLayer(input: BuildUpstreamLayerInput): UpstreamLaye
     const passthrough = bool(entry, "passthroughModels") === true;
     const liveAuthoritative = bool(entry, "liveCatalogAuthoritative");
 
+    const upstreamName = str(catalogued.row as { [key: string]: LiteralValue }, "name") ?? allowed.winterId;
+    if (allowed.displayNameOverride !== undefined && allowed.displayNameOverride !== upstreamName) {
+      reject(
+        allowed.upstreamId,
+        "field",
+        "reviewed-normalization",
+        `${allowed.upstreamId}.name`,
+        catalogued.sourcePath,
+        `upstream's product catalog names this vendor ${JSON.stringify(upstreamName)}, which R6b-5 makes AMBIGUOUS: the vendor documents two dialects, Winter ships them as two rows, and one name cannot tell them apart in a picker. Winter records ${JSON.stringify(allowed.displayNameOverride)} — the same name plus the dialect, which is what R6b-5 asks for.`,
+      );
+    }
     providers.push({
       id: allowed.winterId,
-      displayName: str(catalogued.row as { [key: string]: LiteralValue }, "name") ?? allowed.winterId,
+      displayName: allowed.displayNameOverride ?? upstreamName,
       protocols: [protocol],
       authKinds: [authKind],
       defaultEndpoints,

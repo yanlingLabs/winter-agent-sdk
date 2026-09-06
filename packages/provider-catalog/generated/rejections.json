@@ -5673,6 +5673,14 @@
       "reason": "upstream states the full \"claude\" path \"https://api.z.ai/api/anthropic/v1/messages\"; Winter records the API ROOT \"https://api.z.ai/api/anthropic\" because every adapter in this family APPENDS its own protocol path to `connection.baseUrl` (a row carrying the full path reaches \".../chat/completions/chat/completions\"). Exactly \"/v1/messages\" is removed and nothing else — the URL is never trimmed to an origin."
     },
     {
+      "upstreamId": "zai",
+      "scope": "field",
+      "exclusionClass": "reviewed-normalization",
+      "path": "zai.name",
+      "sourcePath": "src/shared/constants/providers/apikey/index.ts",
+      "reason": "upstream's product catalog names this vendor \"Z.AI\", which R6b-5 makes AMBIGUOUS: the vendor documents two dialects, Winter ships them as two rows, and one name cannot tell them apart in a picker. Winter records \"Z.AI GLM Coding (Anthropic dialect)\" — the same name plus the dialect, which is what R6b-5 asks for."
+    },
+    {
       "upstreamId": "zai-web",
       "scope": "provider",
       "exclusionClass": "category-web-cookie",

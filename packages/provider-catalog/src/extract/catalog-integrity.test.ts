@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { loadCatalog, scanForSecrets, validateCatalog } from "../index.ts";
-import type { WinterModelDescriptor } from "../types.ts";
+import { UNKNOWN_CITATION_RE } from "../validate.ts";
+import type { WinterModelDescriptor, WinterProviderDescriptor } from "../types.ts";
 import upstreamLayer from "../../generated/upstream-layer.json" with { type: "json" };
 import rejectionsLedger from "../../generated/rejections.json" with { type: "json" };
 import denominator from "../../generated/denominator.json" with { type: "json" };
@@ -510,6 +511,120 @@ describe("WS-13b §2: `defaultEndpoints.api` carries the API ROOT on both layers
     for (const strip of strips) {
       expect(strip.reason).toContain("API ROOT");
       expect(strip.reason).toContain("never trimmed to an origin");
+    }
+  });
+});
+
+/**
+ * WS-13b §2 (P6.5 lane X2): THE WIDENED CATALOG.
+ *
+ * Three obligations, and they are deliberately in one place: that the named rows ship on the dialect
+ * their vendor documents with the pricing basis their vendor charges; that every id a human ruled out
+ * is ABSENT from the catalog and PRESENT in the ledger with a reason someone can read; and that the
+ * pool widened without letting a website-scrape transport in through the side.
+ */
+describe("WS-13b §2: the widened catalog", () => {
+  const byId = new Map(catalog.providers.map((p) => [p.id, p]));
+  const rejections = rejectionsLedger.rejections as Array<{ upstreamId: string; reason: string }>;
+
+  test.each([
+    // The R6b-5 dialect siblings. `zai-anthropic` is EXTRACTED (upstream's own `zai` entry is the
+    // Anthropic one) while `zai` is the reviewed overlay row -- so this table also pins that the two
+    // layers produce one coherent pair rather than two rows that happen to exist.
+    ["deepseek-anthropic", "winter.anthropic-messages", "token"],
+    ["zai", "winter.openai-chat-completions", "token"],
+    ["zai-anthropic", "winter.anthropic-messages", "token"],
+    ["moonshot", "winter.openai-chat-completions", "token"],
+    ["kimi-coding", "winter.anthropic-messages", "subscription"],
+    ["minimax", "winter.openai-chat-completions", "token"],
+    ["minimax-anthropic", "winter.anthropic-messages", "token"],
+    // The api-key rows.
+    ["xai", "winter.openai-chat-completions", "token"],
+    ["cline", "winter.openai-chat-completions", "token"],
+    ["clinepass", "winter.openai-chat-completions", "subscription"],
+    ["kilocode", "winter.openai-chat-completions", "token"],
+    ["openference", "winter.openai-chat-completions", "token"],
+    ["opencode", "winter.openai-chat-completions", "token"],
+    // The keyless rows.
+    ["aihorde", "winter.openai-chat-completions", "free"],
+    ["uncloseai", "winter.openai-chat-completions", "free"],
+  ] as ReadonlyArray<[string, string, WinterProviderDescriptor["pricingBasis"]]>)("%s ships on %s with pricingBasis %s and a citation", (id, adapterId, basis) => {
+    const row = byId.get(id);
+    expect(row?.adapterId).toBe(adapterId);
+    expect(row?.pricingBasis).toBe(basis);
+    // A URL or an `audit:` reference -- the two FETCHED-DOCUMENT tiers. These fifteen rows are the
+    // ones the audit and the vendors' own docs cover, so none of them may fall back to the
+    // pinned-upstream tier the 107 allowlist admissions use (PROVENANCE.md, "Two tiers").
+    expect(row?.admission.citation).toMatch(/^https?:\/\/|^audit:/);
+    expect(catalog.models.some((m) => m.providerId === id && m.status === "candidate")).toBe(true);
+  });
+
+  test("every user- and audit-excluded id is ABSENT from the catalog and PRESENT in the ledger with its reason", () => {
+    const excluded = ["cursor", "antigravity", "agy", "amazon-q", "claude", "kiro", "trae", "zed", "zed-hosted", "duckduckgo-web", "cloudflare-playground", "chipotle", "zcode", "devin-desktop", "raycast", "grok-cli", "codebuddy-cn", "felo-web", "theoldllm", "veoaifree-web", "github", "ghe-copilot", "codex-app-server", "devin-cli", "devin-cli-agentic", "auggie", "gitlab-duo"];
+    for (const id of excluded) {
+      expect([id, byId.has(id)]).toEqual([id, false]);
+      expect([id, rejections.some((r) => r.upstreamId === id && r.reason.length > 20)]).toEqual([id, true]);
+    }
+  });
+
+  test("the api-key pool is widened: at least 120 apikey-category providers are now rows, and none is a website-scrape transport", () => {
+    const apiKeyRows = catalog.providers.filter((p) => p.admission.basis === "api-key");
+    expect(apiKeyRows.length).toBeGreaterThanOrEqual(120);
+    for (const p of apiKeyRows) expect(p.defaultEndpoints["api"]).not.toMatch(/wp-admin|api-proxy|\/threads$/);
+  });
+
+  test("a subscription- or free-priced row NEVER carries a token price — the basis and the pricing agree", () => {
+    // R6-H reads `pricingBasis` to decide whether to price a turn at all (T1's `priceUsage`). A
+    // `subscription` row that also carried per-token pricing would be a contradiction the runtime
+    // resolves silently in whichever direction it happens to read first.
+    for (const provider of catalog.providers) {
+      if (provider.pricingBasis === "token") continue;
+      for (const m of catalog.models.filter((x) => x.providerId === provider.id)) {
+        expect([m.key, provider.pricingBasis, m.pricing]).toEqual([m.key, provider.pricingBasis, undefined]);
+      }
+    }
+  });
+
+  test("NO row anywhere carries the aihorde anonymous key, or any other credential literal", () => {
+    // Decision (e), and the reason the `aihorde` row cites a document instead of embedding a value:
+    // upstream states the anonymous key as an `anonymousApiKey` literal, the extractor rejects it as
+    // `credential-material`, and nothing in the reviewed overlay may put it back. `scanForSecrets`
+    // over the whole document is the general guard; this is the named one.
+    expect(scanForSecrets(catalog as unknown as Record<string, unknown>)).toEqual([]);
+    const text = JSON.stringify(catalog);
+    expect(text).not.toContain("0000000000");
+    expect(text).not.toContain("anonymousApiKey");
+    // ...and the row still records that a documented anonymous default EXISTS, which is the fact a
+    // host needs. Without this half the test above would pass just as well on a missing row.
+    expect(byId.get("aihorde")?.admission.citation).toMatch(/anonymous/i);
+  });
+
+  test("every dialect sibling states its dialect in its display name, and never shares an endpoint with its twin", () => {
+    // R6b-5: "sharing `displayName` with a dialect suffix". The endpoint half is the one that bites:
+    // two rows pointing at the same URL would be one provider wearing two ids, and a `set_model`
+    // between them would look like a switch while changing nothing.
+    for (const [primary, sibling] of [["deepseek", "deepseek-anthropic"], ["zai", "zai-anthropic"], ["moonshot", "kimi-coding"], ["minimax", "minimax-anthropic"]] as const) {
+      const a = byId.get(primary);
+      const b = byId.get(sibling);
+      expect([primary, a !== undefined, sibling, b !== undefined]).toEqual([primary, true, sibling, true]);
+      expect([sibling, /dialect|Kimi Code/.test(b!.displayName)]).toEqual([sibling, true]);
+      expect([primary, sibling, a!.defaultEndpoints["api"] === b!.defaultEndpoints["api"]]).toEqual([primary, sibling, false]);
+      expect([sibling, a!.adapterId === b!.adapterId]).toEqual([sibling, false]);
+    }
+  });
+
+  test("every provider row's admission citation is a real reference, and never the audit's `unknown` class", () => {
+    // R6b-3 as a property of the SHIPPED document rather than of the allowlist the pipeline reads:
+    // the overlay is a second, hand-authored producer, and `validateCatalog` is the only thing
+    // standing between it and a row nobody can check.
+    for (const p of catalog.providers) {
+      // The four legal forms (types.ts): a vendor URL, `audit:<section>`, `spec:<section>`, or the
+      // bare word `local`. `local` is short BECAUSE it is complete -- a local installation has no
+      // vendor and no document, and padding it with prose would be inventing evidence.
+      const citation = p.admission.citation.trim();
+      expect([p.id, citation === "local" || citation.length > 20]).toEqual([p.id, true]);
+      expect([p.id, /^(https?:\/\/|audit:|spec:|local$|fixture:)/.test(citation)]).toEqual([p.id, true]);
+      expect([p.id, UNKNOWN_CITATION_RE.test(citation)]).toEqual([p.id, false]);
     }
   });
 });
