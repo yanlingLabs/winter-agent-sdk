@@ -585,15 +585,38 @@ describe("WS-13b §2: the widened catalog", () => {
     }
   });
 
-  test("NO row anywhere carries the aihorde anonymous key, or any other credential literal", () => {
+  test("NO row anywhere carries the aihorde anonymous key, or any other credential literal", async () => {
     // Decision (e), and the reason the `aihorde` row cites a document instead of embedding a value:
     // upstream states the anonymous key as an `anonymousApiKey` literal, the extractor rejects it as
     // `credential-material`, and nothing in the reviewed overlay may put it back. `scanForSecrets`
     // over the whole document is the general guard; this is the named one.
     expect(scanForSecrets(catalog as unknown as Record<string, unknown>)).toEqual([]);
-    const text = JSON.stringify(catalog);
-    expect(text).not.toContain("0000000000");
-    expect(text).not.toContain("anonymousApiKey");
+    // The key is CONSTRUCTED rather than written out (round-1 minor M-2): a test that spells a
+    // credential verbatim puts it in the repository just as surely as the row would have, and
+    // `scanForSecrets` would be right to flag this file next.
+    const anonymousKey = "0".repeat(10);
+    // ...and the sweep runs over the two HAND-AUTHORED SOURCES as well, not only the generated
+    // artifact. The generated file is the one nobody edits; the overlay and the allowlist are where
+    // a future reviewer would actually paste a value, and the merge would carry it through.
+    const sources = await Promise.all([
+      Bun.file(new URL("../../overlay/providers.json", import.meta.url)).text(),
+      Bun.file(new URL("../../overlay/models.json", import.meta.url)).text(),
+      Bun.file(new URL("../../../../third_party/omniroute-provider-source/allowlist.json", import.meta.url)).text(),
+    ]);
+    // MATCHED AS A WHOLE TOKEN, and the reason is an instrument trap this test walked into: a bare
+    // `includes` on ten zeros fires on `https://adb-0000000000000000.0.azuredatabricks.net/…`, the
+    // per-tenant URL PLACEHOLDER in the `databricks` exclusion reason. That is not a credential, and
+    // a check that cannot tell the two apart is a check whose next red is ignored. The boundaries
+    // make a longer digit run a non-match: inside sixteen zeros every ten-zero window is either
+    // preceded or followed by another digit.
+    const asToken = new RegExp(`(?<![A-Za-z0-9_-])${anonymousKey}(?![A-Za-z0-9_-])`);
+    for (const [i, text] of [JSON.stringify(catalog), ...sources].entries()) {
+      expect([i, asToken.test(text)]).toEqual([i, false]);
+      expect([i, text.includes("anonymousApiKey")]).toEqual([i, false]);
+    }
+    // ...and the repo's own credential-shape detector over the two hand-authored SOURCES, which is
+    // the check that does not depend on knowing which literal to look for.
+    for (const [i, text] of sources.entries()) expect([i, scanForSecrets(JSON.parse(text) as Record<string, unknown>)]).toEqual([i, []]);
     // ...and the row still records that a documented anonymous default EXISTS, which is the fact a
     // host needs. Without this half the test above would pass just as well on a missing row.
     expect(byId.get("aihorde")?.admission.citation).toMatch(/anonymous/i);
@@ -607,7 +630,15 @@ describe("WS-13b §2: the widened catalog", () => {
       const a = byId.get(primary);
       const b = byId.get(sibling);
       expect([primary, a !== undefined, sibling, b !== undefined]).toEqual([primary, true, sibling, true]);
-      expect([sibling, /dialect|Kimi Code/.test(b!.displayName)]).toEqual([sibling, true]);
+      // BOTH HALVES, not just the sibling (round-1 minor M-1). Checking only the `-anthropic` row let
+      // `minimax` ship as upstream's bare "Minimax Coding" beside "MiniMax (Anthropic dialect)" -- the
+      // primary is exactly as ambiguous in a picker as the sibling would be, and R6b-5's rule is about
+      // the PAIR. `deepseek`/`moonshot` name their vendor plainly and their siblings carry the suffix,
+      // which is the same property: a reader can tell the two rows apart by name alone.
+      for (const [id, row] of [[primary, a!], [sibling, b!]] as const) {
+        expect([id, /dialect|Kimi Code|^DeepSeek$|^Moonshot AI \(Kimi platform\)$/.test(row.displayName)]).toEqual([id, true]);
+      }
+      expect([primary, sibling, a!.displayName === b!.displayName]).toEqual([primary, sibling, false]);
       expect([primary, sibling, a!.defaultEndpoints["api"] === b!.defaultEndpoints["api"]]).toEqual([primary, sibling, false]);
       expect([sibling, a!.adapterId === b!.adapterId]).toEqual([sibling, false]);
     }
