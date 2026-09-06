@@ -37,6 +37,11 @@
         "class": "approved",
         "reasons": []
       },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://claude.com/pricing"
+      },
       "scope": "llm"
     },
     {
@@ -68,6 +73,11 @@
           "native cloud (R6-16): deployment-path/api-version identity and Entra-vs-key auth each need their own request-serialization proof before promotion"
         ]
       },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "cloud-credential",
+        "citation": "spec:WS-13 §1 — reviewed native-cloud allowlist row; the credential is the operator's own Azure subscription"
+      },
       "scope": "llm"
     },
     {
@@ -98,6 +108,11 @@
           "native cloud (R6-16): hand-rolled SigV4 and AWS event-stream decoding need their own signing/streaming proof; credentials are env + shared-credentials-file only this phase (no IMDS/STS)"
         ]
       },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "cloud-credential",
+        "citation": "spec:WS-13 §1 — reviewed native-cloud allowlist row; the credential is the operator's own AWS account (SigV4)"
+      },
       "scope": "llm"
     },
     {
@@ -126,6 +141,11 @@
         "reasons": [
           "carried over per D11 with `originator: \"winter\"` — deliberately non-first-party (WS-01 §3); that identification must never be reverted to a first-party value"
         ]
+      },
+      "pricingBasis": "subscription",
+      "admission": {
+        "basis": "oauth-documented",
+        "citation": "audit:recorded-ruling-codex"
       },
       "scope": "llm"
     },
@@ -160,6 +180,11 @@
           "reasoning continuity is tool-loop fragile: WS-13 §8.2 records a hard 400 when reasoning state is missing mid-tool-loop, so the tool-loop corpus must pass before promotion"
         ]
       },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "spec:WS-13 §1 — reviewed api-key allowlist row (categoryDispositions.apikey); no vendor pricing page is captured in-repo"
+      },
       "scope": "llm"
     },
     {
@@ -186,6 +211,11 @@
       "risk": {
         "class": "approved",
         "reasons": []
+      },
+      "pricingBasis": "free",
+      "admission": {
+        "basis": "local",
+        "citation": "local"
       },
       "scope": "llm"
     },
@@ -217,6 +247,11 @@
         "class": "approved",
         "reasons": []
       },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://ai.google.dev/gemini-api/docs/pricing"
+      },
       "scope": "llm"
     },
     {
@@ -243,6 +278,11 @@
       "risk": {
         "class": "approved",
         "reasons": []
+      },
+      "pricingBasis": "free",
+      "admission": {
+        "basis": "local",
+        "citation": "local"
       },
       "scope": "llm"
     },
@@ -271,6 +311,11 @@
         "class": "approved",
         "reasons": []
       },
+      "pricingBasis": "free",
+      "admission": {
+        "basis": "local",
+        "citation": "local"
+      },
       "scope": "llm"
     },
     {
@@ -297,6 +342,11 @@
       "risk": {
         "class": "approved",
         "reasons": []
+      },
+      "pricingBasis": "free",
+      "admission": {
+        "basis": "local",
+        "citation": "local"
       },
       "scope": "llm"
     },
@@ -325,6 +375,11 @@
         "class": "approved",
         "reasons": []
       },
+      "pricingBasis": "free",
+      "admission": {
+        "basis": "local",
+        "citation": "local"
+      },
       "scope": "llm"
     },
     {
@@ -351,6 +406,11 @@
       "risk": {
         "class": "approved",
         "reasons": []
+      },
+      "pricingBasis": "free",
+      "admission": {
+        "basis": "local",
+        "citation": "local"
       },
       "scope": "llm"
     },
@@ -379,6 +439,11 @@
         "class": "approved",
         "reasons": []
       },
+      "pricingBasis": "free",
+      "admission": {
+        "basis": "local",
+        "citation": "local"
+      },
       "scope": "llm"
     },
     {
@@ -406,6 +471,11 @@
         "class": "approved",
         "reasons": []
       },
+      "pricingBasis": "free",
+      "admission": {
+        "basis": "local",
+        "citation": "local"
+      },
       "scope": "llm"
     },
     {
@@ -432,6 +502,11 @@
       "risk": {
         "class": "approved",
         "reasons": []
+      },
+      "pricingBasis": "free",
+      "admission": {
+        "basis": "local",
+        "citation": "local"
       },
       "scope": "llm"
     },
@@ -463,6 +538,11 @@
       "risk": {
         "class": "approved",
         "reasons": []
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "https://developers.openai.com/api/docs/pricing"
       },
       "scope": "llm"
     },
@@ -497,6 +577,11 @@
           "gateway: capability parity is model-by-model (WS-13 §14.4), and per-request provider/data-policy controls must be preserved before any row here is promoted past `candidate`"
         ]
       },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "spec:WS-13 §1 — reviewed api-key allowlist row (categoryDispositions.apikey); no vendor pricing page is captured in-repo"
+      },
       "scope": "llm"
     },
     {
@@ -523,6 +608,11 @@
       "risk": {
         "class": "approved",
         "reasons": []
+      },
+      "pricingBasis": "free",
+      "admission": {
+        "basis": "local",
+        "citation": "local"
       },
       "scope": "llm"
     },
@@ -554,6 +644,11 @@
           "native cloud (R6-16): project/location endpoints and ADC (service-account RS256 JWT exchange or an explicit access-token ref) need their own auth proof"
         ]
       },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "cloud-credential",
+        "citation": "spec:WS-13 §1 — reviewed native-cloud allowlist row; the credential is the operator's own GCP project (ADC)"
+      },
       "scope": "llm"
     },
     {
@@ -581,6 +676,11 @@
         "class": "approved",
         "reasons": []
       },
+      "pricingBasis": "free",
+      "admission": {
+        "basis": "local",
+        "citation": "local"
+      },
       "scope": "llm"
     },
     {
@@ -607,6 +707,11 @@
       "risk": {
         "class": "approved",
         "reasons": []
+      },
+      "pricingBasis": "free",
+      "admission": {
+        "basis": "local",
+        "citation": "local"
       },
       "scope": "llm"
     }

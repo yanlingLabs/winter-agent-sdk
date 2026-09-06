@@ -32,6 +32,9 @@ import type {
   WinterProviderDescriptor,
 } from "../types.ts";
 import type { ExclusionClass, LiteralValue, Rejection } from "./literal-extractor.ts";
+// The `unknown`-citation rule has ONE definition, in the validator. Two copies of "which
+// citations are refused" is how an extraction gate and a document gate start disagreeing.
+import { UNKNOWN_CITATION_RE } from "../validate.ts";
 
 // --- the allowlist file's shape (the extractor's input contract) --------------------------------
 
@@ -56,6 +59,18 @@ export interface AllowlistProviderRow {
    */
   adapterIdOverride?: string;
   risk: { class: "approved" | "review-required" | "blocked"; reasons: string[] };
+  /**
+   * WS-13b §1: how the vendor charges for the credential Winter uses. COPIED VERBATIM onto the
+   * generated row — the extractor never derives it, because nothing in the pinned upstream tree
+   * states it and a derivation would be Winter guessing at a billing fact.
+   */
+  pricingBasis: "token" | "subscription" | "free";
+  /**
+   * WS-13b §1 (D21): the documented third-party path this row ships through, with its citation.
+   * Also copied verbatim, and REQUIRED: an allowlist entry missing it fails the run rather than
+   * producing a row whose admission nobody can check (see `admissionOf` below).
+   */
+  admission: { basis: "api-key" | "oauth-documented" | "keyless-documented" | "local" | "cloud-credential"; citation: string };
 }
 
 /** A hand-reviewed, per-model deviation from what the pinned upstream tree says. Always recorded. */
@@ -303,6 +318,33 @@ export function buildUpstreamLayer(input: BuildUpstreamLayerInput): UpstreamLaye
     rejections.push({ upstreamId, scope, exclusionClass, path, sourcePath, reason });
   };
 
+  // --- (0) WS-13b §1 (D21 / R6b-3): every allowlisted entry carries its own ADMISSION EVIDENCE ----
+  //
+  // Checked BEFORE anything is classified, and by REFUSING the run rather than by dropping the row.
+  // Dropping would be the wrong shape for the same reason an allowlist entry matching nothing is:
+  // the reviewer wrote the entry, so a silently absent row is a silently empty extraction. Two
+  // failures, one door:
+  //
+  //   `admission-missing` — the entry states no pricing basis, or no admission basis/citation.
+  //   `admission-unknown` — it CITES the audit's `unknown` evidence class ("the decisive document
+  //     was not found"), whose disposition is EXCLUDE. That is a row that may not ship, not a row
+  //     with a weak note attached, so the pipeline refuses instead of importing it.
+  //
+  // `validateCatalog` enforces the same two rules on the finished document; this is the earlier of
+  // the two gates, and it names the ALLOWLIST ENTRY, which is the file a reviewer would go and fix.
+  for (const row of allowlist.providers) {
+    if (row.pricingBasis === undefined) {
+      throw new ExtractionRefusal(`admission-missing: allowlisted provider "${row.upstreamId}" declares no \`pricingBasis\` (WS-13b §1). A row whose billing basis is unstated would be priced per token by R6-H whatever the credential actually is.`);
+    }
+    const citation = typeof row.admission?.citation === "string" ? row.admission.citation.trim() : "";
+    if (row.admission?.basis === undefined || citation.length === 0) {
+      throw new ExtractionRefusal(`admission-missing: allowlisted provider "${row.upstreamId}" declares no \`admission\` basis + citation (WS-13b §1, D21). Every row names the documented third-party path it ships through and the document that admits it.`);
+    }
+    if (UNKNOWN_CITATION_RE.test(citation)) {
+      throw new ExtractionRefusal(`admission-unknown: allowlisted provider "${row.upstreamId}" cites the audit's \`unknown\` evidence class (${JSON.stringify(row.admission.citation)}). WS-13b §1: a row whose evidence is \`unknown\` does not ship — find the document or remove the entry.`);
+    }
+  }
+
   // --- (1)+(2) classify, and refuse a class transition the allowlist has no right to make --------
   for (const [upstreamId, row] of allowlist.providers.map((p) => [p.upstreamId, p] as const)) {
     const catalogued = categories.get(upstreamId);
@@ -461,6 +503,10 @@ export function buildUpstreamLayer(input: BuildUpstreamLayerInput): UpstreamLaye
       upstream: { project: "OmniRoute", commit, sourcePaths },
       risk: allowed.risk,
       scope: "llm",
+      // WS-13b §1: the reviewed allowlist entry's own evidence, copied onto the row. `admissionOf`
+      // has already refused the run if either is missing or names the audit's `unknown` class.
+      pricingBasis: allowed.pricingBasis,
+      admission: allowed.admission,
     });
 
     // --- models ---------------------------------------------------------------------------------

@@ -119,7 +119,7 @@ async function main(argv: string[]): Promise<number> {
   const result = validateCatalog(catalog);
   if (!result.ok) {
     console.error(`provider:catalog — the merged catalog is INVALID (${result.errors.length} error(s)):`);
-    for (const e of result.errors) console.error(`  - ${e}`);
+    for (const e of result.errors) console.error(`  - [${e.code}] ${e.message}`);
     return 1;
   }
 

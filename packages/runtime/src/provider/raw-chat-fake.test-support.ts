@@ -110,6 +110,10 @@ export function chatProvider(id: string, api: string): WinterProviderDescriptor 
     upstream: { project: "winter", commit: "", sourcePaths: [] },
     risk: { class: "approved", reasons: [] },
     scope: "llm",
+    // WS-13b §1: both fields are REQUIRED on every provider row, so a fixture states its
+    // own basis rather than inheriting one — a row-shape change fails HERE, at the fixture.
+    pricingBasis: "token",
+    admission: { basis: "api-key", citation: "fixture:raw-chat-fake" },
   };
 }
 

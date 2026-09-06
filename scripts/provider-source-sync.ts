@@ -387,7 +387,7 @@ function runOffline(write = false): number {
   const result = validateCatalog(standalone);
   if (!result.ok) {
     console.error(`provider-source-sync --offline: the UPSTREAM LAYER is invalid on its own (${result.errors.length} error(s)) — it would be hidden by its overlay shadows in the merged catalog:`);
-    for (const error of result.errors) console.error(`  - ${error}`);
+    for (const error of result.errors) console.error(`  - [${error.code}] ${error.message}`);
     return 1;
   }
 
