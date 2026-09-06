@@ -187,6 +187,9 @@ export {
   OVERLAY_NEVER_KEYS,
   ESCALATING_PERMISSION_MODES,
   PROJECT_PERMISSIVE_KEYS,
+  // WS-13b R6b-7: the ONE narrowing of `Settings.providers`. Exported so a host that resolves
+  // settings itself gets the same total reading production-wiring uses, rather than a second one.
+  providerSettingsFrom,
 } from "./settings/types.ts";
 export type {
   SettingSource,

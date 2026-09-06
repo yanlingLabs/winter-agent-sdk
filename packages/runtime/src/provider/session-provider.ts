@@ -149,6 +149,15 @@ export interface SessionProviderOptions {
    * the hazard the Global Constraints forbid. `env.HOME` is the caller's usual answer.
    */
   home?: string;
+  /**
+   * WS-13b R6b-7: the resolved `settings.providers` map, as a GETTER (see `SelectionDeps`' own
+   * field for why a getter is the hot-reload seam).
+   *
+   * Threaded into selection AND read again at the `set_model` seam: R6-K put resolution under the
+   * session provider precisely so a switch cannot walk around a rule the session start applied, and
+   * a disable that held only at start would be exactly such a walk-around.
+   */
+  providerSettings?: () => Record<string, { enabled: boolean }> | undefined;
 }
 
 export interface SessionProviderWiring {
@@ -488,6 +497,11 @@ export function buildSessionProvider(opts: SessionProviderOptions): SessionProvi
         : {}),
     });
     if (result instanceof WinterProviderResolutionError) return { refused: true, code: result.code, message: result.message };
+    // WS-13b R6b-7: the SECOND door into a provider. Read through the getter, so a settings change
+    // between the session's start and this switch is honoured with no restart and nothing rebuilt.
+    if (opts.providerSettings?.()?.[result.providerId]?.enabled === false) {
+      return { refused: true, code: "provider-disabled", message: `provider "${result.providerId}" is disabled in settings (providers.${result.providerId}.enabled); the model was not switched` };
+    }
     const material = describeTargetMaterial(result);
     const family = String(result.adapter.family);
     const resolution: ModelSwitchResolution = {
@@ -516,6 +530,11 @@ export function buildSessionProvider(opts: SessionProviderOptions): SessionProvi
     const providerId = sessionProviderId();
     const result = registry.resolve({ model: modelKey, ...(providerId !== undefined ? { provider: { providerId } } : {}) });
     if (result instanceof WinterProviderResolutionError || result.descriptor === undefined) return undefined;
+    // WS-13b §1: R6-H prices a turn from the model row's `pricing` evidence -- which, for a
+    // subscription or free backend, describes the vendor's API TWIN and not the credential this
+    // session is actually billed on. A per-token number for a seat is not a smaller error than no
+    // number; it is a wrong one that reads as authoritative, so the row's own basis governs.
+    if (result.provider.pricingBasis !== "token") return undefined;
     const estimate = estimateCostUsd({ inputTokens: usage.inputTokens, outputTokens: usage.outputTokens, ...(usage.cacheReadTokens !== undefined ? { cacheReadTokens: usage.cacheReadTokens } : {}), ...(usage.cacheWriteTokens !== undefined ? { cacheWriteTokens: usage.cacheWriteTokens } : {}) }, result.descriptor);
     if (estimate.costBasis !== "list") return undefined;
     const apiProvider = API_PROVIDER_BY_PROVIDER_ID[result.providerId];
@@ -537,6 +556,7 @@ export function buildSessionProvider(opts: SessionProviderOptions): SessionProvi
     env,
     testProviders: opts.testProviders ?? testProviderForNamespace,
     buildProvider,
+    ...(opts.providerSettings !== undefined ? { providerSettings: opts.providerSettings } : {}),
   };
 
   let selection: SessionProviderSelection;

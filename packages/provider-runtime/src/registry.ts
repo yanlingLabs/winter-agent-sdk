@@ -40,6 +40,14 @@ export type ResolutionErrorCode =
   | "no-provider-for-bare-model"
   /** RULING R6-K: the model id is qualified for one provider while the session is configured for another. Never resolved either way — see `resolve`'s own header. */
   | "provider-mismatch"
+  /**
+   * WS-13b R6b-7: the row resolved, but the user has turned this provider OFF
+   * (`settings.providers.<id>.enabled === false`). A REFUSAL rather than a skip, on purpose: a skip
+   * is a substitution by another name, and WS-13 §9 forbids a session quietly running on something
+   * other than what it was asked for. Produced by the runtime's `selection.ts`, which is where the
+   * settings cascade is visible -- the registry itself has no settings and never will.
+   */
+  | "provider-disabled"
   | "capability"
   /**
    * P6 fix wave, Ruling E-1: a provider built for a target on ANOTHER provider than the session's has

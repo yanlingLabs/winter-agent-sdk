@@ -133,7 +133,48 @@ export interface Settings {
    * of a contract that already has one.
    */
   mcpServers?: Record<string, unknown>;
+  /**
+   * WINTER-DEFINED (WS-13b R6b-7, disclosed): per-provider enablement, keyed by catalog provider id.
+   *
+   * Its whole reason for existing is the reversion condition. `xai-oauth` ships on prong 2 of the
+   * admission rule -- a vendor's public product client used with an honest Winter identity -- and
+   * WS-13b §4 requires that a vendor rejecting that identity can be answered WITHOUT a release. A
+   * setting is that answer; a compile-time constant is not.
+   *
+   * ABSENT MEANS ENABLED. Silence is not a disablement, so an unlisted provider resolves normally
+   * and only an explicit `enabled: false` refuses. Restrictive-only in effect, so it is not an
+   * OVERLAY_NEVER_KEY: a repository may turn a provider OFF for its own checkout, which is a
+   * tightening every tier is allowed to make.
+   *
+   * NOT an overlay-never key and NOT trust-gated for the same reason `disableAutoMode` is not.
+   */
+  providers?: Record<string, { enabled?: boolean }>;
   [key: string]: unknown;
+}
+
+/**
+ * Narrows `Settings.providers` into the shape selection consumes: every declared id present, with an
+ * explicit boolean.
+ *
+ * ONE narrowing, at one place (the rider-26 pattern the six P5 keys established), so a typo'd key or
+ * a JSON file saying `"enabled": "false"` is handled here rather than at each reader with a cast.
+ *
+ * Total by construction: a settings file is JSON and may say anything. A non-object entry, an empty
+ * provider id and a non-boolean `enabled` are all DROPPED rather than coerced -- coercing `"false"`
+ * to `false` would disable a provider on the strength of a typo, and coercing it to `true` would
+ * pretend the user said something they did not. Only a literal `false` disables.
+ */
+export function providerSettingsFrom(settings: Settings | undefined): Record<string, { enabled: boolean }> {
+  const raw = settings?.["providers"];
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const out: Record<string, { enabled: boolean }> = {};
+  for (const [id, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (id.length === 0) continue;
+    if (value === null || typeof value !== "object" || Array.isArray(value)) continue;
+    const enabled = (value as { enabled?: unknown }).enabled;
+    out[id] = { enabled: enabled === false ? false : true };
+  }
+  return out;
 }
 
 // --- Resolution results ---------------------------------------------------------------------------

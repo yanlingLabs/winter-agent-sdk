@@ -17,6 +17,8 @@ export {
   OVERLAY_NEVER_KEYS,
   ESCALATING_PERMISSION_MODES,
   PROJECT_PERMISSIVE_KEYS,
+  // WS-13b R6b-7: lanes import the seam from HERE, so the narrowing travels with the rest of it.
+  providerSettingsFrom,
 } from "@yanlinglabs/winter-agent-sdk";
 export type {
   SettingSource,

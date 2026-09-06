@@ -857,3 +857,70 @@ describe("T10 wiring: hermetic credentials", () => {
     }
   });
 });
+
+// --- WS-13b §1: the pricing basis is DATA, and R6-H reads it -------------------------------------
+//
+// The discriminating fixture matters here. `codex-oauth`'s shipped models carry no `pricing`
+// evidence, so a test that priced one and expected `undefined` would pass on a wiring that had never
+// heard of `pricingBasis` at all -- green for the wrong reason. Both rows below therefore carry
+// REAL list pricing, and the ONLY difference between the two assertions is the basis.
+describe("WS-13b: a subscription-priced row never feeds R6-H cost", () => {
+  const priced = (basis: WinterProviderDescriptor["pricingBasis"]): ReturnType<typeof buildSessionProvider> => {
+    const provider: WinterProviderDescriptor = { ...testProvider({ id: "seat", adapterId: "winter.openai-responses", family: "openai", api: "https://seat.example" }), pricingBasis: basis };
+    const model: WinterModelDescriptor = {
+      ...testModel({ key: "seat/seat-model", providerId: "seat", upstreamId: "seat-model" }),
+      pricing: evidence({ inputPerMTokUsd: 1_000, outputPerMTokUsd: 2_000 }),
+    };
+    return buildSessionProvider({
+      config: baseConfig({ model: "seat/seat-model", provider: { providerId: "seat", authRef: { kind: "inline", value: "test" } } }),
+      env: {},
+      catalog: catalogWith([provider], [model]),
+      credentials: createMemoryCredentialStore(),
+    });
+  };
+
+  test("the SAME row priced per token DOES report a cost — so the negative below is about the basis, not about missing evidence", () => {
+    const out = priced("token").priceUsage("seat/seat-model", { inputTokens: 1_000_000, outputTokens: 1_000_000 });
+    expect(out).toMatchObject({ costBasis: "list", costUsd: 3_000 });
+  });
+
+  test("a subscription-priced row reports NO cost: a per-token number for a seat is not a smaller error, it is a wrong one", () => {
+    expect(priced("subscription").priceUsage("seat/seat-model", { inputTokens: 1_000_000, outputTokens: 1_000_000 })).toBeUndefined();
+  });
+
+  test("a free (local) row reports no cost either", () => {
+    expect(priced("free").priceUsage("seat/seat-model", { inputTokens: 1_000_000, outputTokens: 1_000_000 })).toBeUndefined();
+  });
+});
+
+// --- WS-13b R6b-7: `set_model` goes through the same gate ----------------------------------------
+//
+// The switch seam is the OTHER door into a provider, and R6-K put resolution under it deliberately.
+// A disable that held at session start and not at `set_model` would be a setting a session could
+// walk around by switching models.
+describe("WS-13b R6b-7: a disabled provider is refused at the set_model seam too", () => {
+  const wiringWith = (providerSettings?: () => Record<string, { enabled: boolean }>): ReturnType<typeof buildSessionProvider> =>
+    buildSessionProvider({
+      config: baseConfig({ model: "gate/gate-model", provider: { providerId: "gate", authRef: { kind: "inline", value: "test" } } }),
+      env: {},
+      catalog: catalogWith(
+        [testProvider({ id: "gate", adapterId: "winter.openai-responses", family: "openai", api: "https://gate.example" })],
+        [testModel({ key: "gate/gate-model", providerId: "gate", upstreamId: "gate-model" }), testModel({ key: "gate/gate-other", providerId: "gate", upstreamId: "gate-other" })],
+      ),
+      credentials: createMemoryCredentialStore(),
+      ...(providerSettings !== undefined ? { providerSettings } : {}),
+    });
+
+  test("with the provider enabled, the switch resolves", () => {
+    const out = wiringWith().resolveModelSwitch("gate/gate-other", undefined);
+    expect("refused" in out).toBe(false);
+  });
+
+  test("with the provider disabled, the switch is REFUSED with provider-disabled — never a parked or silent switch", () => {
+    let enabled = true;
+    const wiring = wiringWith(() => ({ gate: { enabled } }));
+    enabled = false;
+    const out = wiring.resolveModelSwitch("gate/gate-other", undefined);
+    expect(out).toMatchObject({ refused: true, code: "provider-disabled" });
+  });
+});

@@ -23,7 +23,7 @@
 // invisibly.
 import type { InitPluginInfo, RuntimeConfig, Settings, SettingSource } from "@yanlinglabs/winter-agent-sdk";
 import { OVERLAY_NEVER_KEYS, resolveWinterHome } from "@yanlinglabs/winter-agent-sdk";
-import { resolveSettingsDetailed, filterEscalatingDefaultMode } from "./settings/resolve.ts";
+import { resolveSettingsDetailed, filterEscalatingDefaultMode, providerSettingsFrom } from "./settings/resolve.ts";
 import { sourceRule, rawToRuleValue, type SourcedRuleEntry } from "./permissions/ruleset.ts";
 import type { RuleSource } from "@yanlinglabs/winter-agent-sdk";
 import type { DetailedResolvedSettings } from "./settings/resolve.ts";
@@ -770,6 +770,12 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
   const providerWiring = buildSessionProvider({
     config,
     env,
+    // WS-13b R6b-7: the per-provider enable setting, threaded as a GETTER over the SAME live
+    // `settingsGetter` every other consumer reads. That is what makes it hot-reloadable within this
+    // module's own contract (see this file's header): nothing here watches a file, but a host that
+    // re-resolves and hands down a new view is seen at the session's next resolution and at every
+    // `set_model`, with no restart and nothing rebuilt.
+    providerSettings: () => providerSettingsFrom(settingsGetter()),
     ...(opts.provider ?? {}),
   });
   if (providerWiring.resolutionError !== undefined) {
