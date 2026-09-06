@@ -55,7 +55,7 @@ async function runBypass(turns: ProviderTurn[]): Promise<{ denials: unknown[] }>
   const config: RuntimeConfig = {
     sessionId: `i1-${Math.random().toString(36).slice(2, 10)}`,
     cwd,
-    model: "sonnet",
+    model: "winter-test/echo",
     winterHome: home,
     settingSources: [],
     permissionMode: "bypassPermissions",

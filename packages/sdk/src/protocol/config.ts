@@ -549,3 +549,51 @@ export interface AutoClassifierConfig {
 export interface AdvisorConfig {
   model: string;
 }
+
+// --- Phase 6 Task 10 (derived-shapes-p6 item (d)): the two PUBLIC-SURFACE provider shapes ---------
+//
+// Declared HERE for the same structural reason `CredentialRef` is: `Query.supportedModels()` and
+// `Query.accountInfo()` are on the sdk's public surface, the sdk package is dependency-free and
+// fence-resident, and `provider-runtime` is Bun-only. `provider-runtime`'s `registry.ts` re-exports
+// these, so there is exactly ONE declaration and a consumer importing from either package gets the
+// identical type — a second copy of a pinned wire shape is how the two halves of a round trip start
+// disagreeing about an optional field.
+
+/**
+ * The pinned `ModelInfo` (`sdk.d.ts:1261-1300`): three required fields, six optional.
+ *
+ * `description` being REQUIRED is the notable one — a catalog row generated from an upstream
+ * extraction with no description cannot satisfy this shape without inventing text. The four
+ * `supports*` booleans are the pin's ENTIRE capability vocabulary for a model, and each is OMITTED
+ * when unknown rather than reported `false` (R6-I): absent means unknown, and capture (J) observed
+ * the omission varying per capability within one response.
+ */
+export interface ModelInfo {
+  value: string;
+  resolvedModel?: string;
+  displayName: string;
+  description: string;
+  supportsEffort?: boolean;
+  supportedEffortLevels?: Array<"low" | "medium" | "high" | "xhigh" | "max">;
+  supportsAdaptiveThinking?: boolean;
+  supportsFastMode?: boolean;
+  supportsAutoMode?: boolean;
+}
+
+/**
+ * The pinned `AccountInfo` (`sdk.d.ts:23-33`). EVERY field optional; an empty object is valid, and
+ * capture (J) observed exactly three keys present under API-key auth.
+ *
+ * `apiKeySource` here is a BARE STRING while `system/init.apiKeySource` is the closed `ApiKeySource`
+ * union — the same concept typed twice, differently, in one pinned declaration. Reproduced rather
+ * than reconciled: a Winter consumer that narrowed this one would be narrowing something the pin
+ * left open.
+ */
+export interface AccountInfo {
+  email?: string;
+  organization?: string;
+  subscriptionType?: string;
+  tokenSource?: string;
+  apiKeySource?: string;
+  apiProvider?: "firstParty" | "bedrock" | "vertex" | "foundry" | "anthropicAws" | "anthropicGoogleCloud" | "mantle" | "gateway";
+}

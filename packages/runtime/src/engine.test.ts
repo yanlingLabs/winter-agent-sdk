@@ -59,7 +59,7 @@ function dataMessages(frames: WinterFrame[]): SdkMessage[] {
 }
 
 const baseConfig = (overrides: Partial<RuntimeConfig> = {}): RuntimeConfig => ({
-  sessionId: "s", cwd: "/tmp/x", model: "sonnet", ...overrides,
+  sessionId: "s", cwd: "/tmp/x", model: "winter-test/echo", ...overrides,
 });
 
 // M6 (fix wave, P3 close-out): RULING R3-2's own "T8 wires the REAL source" instruction --
@@ -1314,7 +1314,7 @@ test("Task 6: a denied tool call produces a synthetic tool_result with denied:tr
     // UNMATCHED call now denies absent a real host too) — this test's own point is that call1's
     // EXPLICIT disallow-rule denial does not stop the round from reaching call2, which this fixture
     // change preserves exactly as originally intended.
-    const config: RuntimeConfig = { sessionId, cwd, model: "sonnet", disallowedTools: ["test_tool"], allowedTools: ["other_tool"] };
+    const config: RuntimeConfig = { sessionId, cwd, model: "winter-test/echo", disallowedTools: ["test_tool"], allowedTools: ["other_tool"] };
     // Fix round 1, item 3 (LOW — history-leg direct capture): the established P1-G/P1-H-pattern
     // capturing provider, in place of scriptedProvider's plain queue, so the SECOND generate()
     // call's `messages` snapshot (the engine's own internal history accumulator) can be inspected
@@ -1396,7 +1396,7 @@ test("Task 8: a real canUseTool allow with updatedPermissions applies LIVE (a se
   try {
     const sessionId = randomUUID();
     const cwd = "/winter-fixture-permissions-journal";
-    const config: RuntimeConfig = { sessionId, cwd, model: "sonnet" }; // zero rules: BOTH calls start unmatched
+    const config: RuntimeConfig = { sessionId, cwd, model: "winter-test/echo" }; // zero rules: BOTH calls start unmatched
     const provider = scriptedProvider([
       { kind: "tool_use", calls: [{ id: "call1", name: "mystery_tool", input: {} }] },
       { kind: "tool_use", calls: [{ id: "call2", name: "mystery_tool", input: {} }] },
@@ -1979,7 +1979,7 @@ test("Task 11: a deferred call's approval, consumed 'allowed' on a LATER run, ex
   };
 
   // --- Run 1: defers the call, exits with the record "pending" -----------------------------------
-  const config1: RuntimeConfig = { sessionId, cwd, model: "sonnet", winterHome: home, hooks: { PreToolUse: [{ hookCount: 1, source: "sdk" }] } };
+  const config1: RuntimeConfig = { sessionId, cwd, model: "winter-test/echo", winterHome: home, hooks: { PreToolUse: [{ hookCount: 1, source: "sdk" }] } };
   const provider1 = scriptedProvider([
     { kind: "tool_use", calls: [{ id: "call1", name: "slow_task", input: { payload: "x" } }] },
     { kind: "text", text: "waiting for approval" },
@@ -2017,7 +2017,7 @@ test("Task 11: a deferred call's approval, consumed 'allowed' on a LATER run, ex
   expect(respondResult.applied).toBe(true);
 
   // --- Run 2 (first resume): the allowed record is revalidated and executed exactly once ----------
-  const config2: RuntimeConfig = { sessionId, resume: sessionId, cwd, model: "sonnet", winterHome: home };
+  const config2: RuntimeConfig = { sessionId, resume: sessionId, cwd, model: "winter-test/echo", winterHome: home };
   const proc2 = inMemoryProcess(["--config-json", JSON.stringify(config2)], echoProvider, countingExecutor);
   proc2.stdin.write(encodeFrame({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined }));
   await drainProcess(proc2);
@@ -2036,7 +2036,7 @@ test("Task 11: a deferred call's approval, consumed 'allowed' on a LATER run, ex
       return { kind: "text", text: "ok" };
     },
   };
-  const config3: RuntimeConfig = { sessionId, resume: sessionId, cwd, model: "sonnet", winterHome: home };
+  const config3: RuntimeConfig = { sessionId, resume: sessionId, cwd, model: "winter-test/echo", winterHome: home };
   const proc3 = inMemoryProcess(["--config-json", JSON.stringify(config3)], capturingProvider, countingExecutor);
   proc3.stdin.write(encodeFrame({ type: "user", text: "how did it go?" }));
   proc3.stdin.write(encodeFrame({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined }));
@@ -2067,7 +2067,7 @@ test("Task 11: a policyMode mismatch on resume expires the pending approval inst
     },
   };
 
-  const config1: RuntimeConfig = { sessionId, cwd, model: "sonnet", winterHome: home, hooks: { PreToolUse: [{ hookCount: 1, source: "sdk" }] } };
+  const config1: RuntimeConfig = { sessionId, cwd, model: "winter-test/echo", winterHome: home, hooks: { PreToolUse: [{ hookCount: 1, source: "sdk" }] } };
   const provider1 = scriptedProvider([{ kind: "tool_use", calls: [{ id: "call1", name: "slow_task", input: {} }] }, { kind: "text", text: "waiting" }]);
   const proc1 = inMemoryProcess(["--config-json", JSON.stringify(config1)], provider1, countingExecutor);
   const nextFrame1 = frameReader(proc1);
@@ -2098,7 +2098,7 @@ test("Task 11: a policyMode mismatch on resume expires the pending approval inst
       return { kind: "text", text: "ok" };
     },
   };
-  const config2: RuntimeConfig = { sessionId, resume: sessionId, cwd, model: "sonnet", winterHome: home, permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true };
+  const config2: RuntimeConfig = { sessionId, resume: sessionId, cwd, model: "winter-test/echo", winterHome: home, permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true };
   const proc2 = inMemoryProcess(["--config-json", JSON.stringify(config2)], capturingProvider, countingExecutor);
   proc2.stdin.write(encodeFrame({ type: "user", text: "resuming" }));
   proc2.stdin.write(encodeFrame({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined }));
@@ -2136,7 +2136,7 @@ test("Fix round 1, Ruling P2-K: a symlink retargeted DURING the defer window is 
     },
   };
 
-  const config1: RuntimeConfig = { sessionId, cwd: workDir, model: "sonnet", winterHome: home, hooks: { PreToolUse: [{ hookCount: 1, source: "sdk" }] } };
+  const config1: RuntimeConfig = { sessionId, cwd: workDir, model: "winter-test/echo", winterHome: home, hooks: { PreToolUse: [{ hookCount: 1, source: "sdk" }] } };
   const provider1 = scriptedProvider([
     { kind: "tool_use", calls: [{ id: "call1", name: "Edit", input: { file_path: "link/target.txt", old_string: "original", new_string: "changed" } }] },
     { kind: "text", text: "waiting" },
@@ -2176,7 +2176,7 @@ test("Fix round 1, Ruling P2-K: a symlink retargeted DURING the defer window is 
       return { kind: "text", text: "ok" };
     },
   };
-  const config2: RuntimeConfig = { sessionId, resume: sessionId, cwd: workDir, model: "sonnet", winterHome: home };
+  const config2: RuntimeConfig = { sessionId, resume: sessionId, cwd: workDir, model: "winter-test/echo", winterHome: home };
   const proc2 = inMemoryProcess(["--config-json", JSON.stringify(config2)], capturingProvider, countingExecutor);
   proc2.stdin.write(encodeFrame({ type: "user", text: "how did it go?" }));
   proc2.stdin.write(encodeFrame({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined }));

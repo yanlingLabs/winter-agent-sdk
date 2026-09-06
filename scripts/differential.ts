@@ -20,7 +20,17 @@ import { normalizeTrace, compareTraces, type ConformanceTraceEntry } from "winte
 // which is what keeps the determinism guarantee intact: a path that does not exist has no contents
 // to vary by machine. It is no longer an untouched string, and a future reader must not assume it.
 const FIXTURE_CWD = "/winter-fixture";
-const FIXTURE_MODEL = "sonnet";
+// Phase 6 Task 10 (R6-9/R6-13): the fixture model moved INTO the reserved namespace.
+//
+// Production selection is catalog-first now and refuses a model it cannot resolve -- the pinned
+// `"sonnet"` alias resolves to the `anthropic` provider only when a credential ref for it is
+// configured, and no test has (or may have) one. `winter-test/<name>` is the ONE door to an
+// in-process scripted double, and `WINTER_TEST_PROVIDER` remains the harness's alias for it,
+// honoured because `config.model` is already in that namespace.
+//
+// `system/init.model` reports WHAT THE CALLER PASSED (R6-9), so this value is visible in every
+// golden -- which is why the goldens move in the same commit as this line and in no other.
+const FIXTURE_MODEL = "winter-test/echo";
 
 // --- Phase 5 Task 8: the injected-context scrub ---------------------------------------------------
 //
@@ -81,7 +91,7 @@ export async function traceWinterPlainQuery(): Promise<ConformanceTraceEntry[]> 
     for await (const msg of query({
       prompt: "hi",
       options: {
-        model: "sonnet",
+        model: FIXTURE_MODEL,
         cwd: "/winter-fixture",
         spawnClaudeCodeProcess: (opts) => inMemoryProcess(opts.args, undefined, undefined, { ...opts.env, WINTER_HOME: winterHome }),
       },

@@ -366,6 +366,10 @@ export interface ProductionWiring {
     apiKeySource: string;
     providerSupportsToolSearch?: boolean;
     classifier?: ClassifierInterface;
+    /** R6-I: the `list_models` control handler's source. */
+    supportedModels: () => unknown[];
+    /** The Winter-only `account_info` control handler's source. */
+    accountInfo: () => unknown;
     systemPromptAssembler: SystemPromptAssembler;
     commandResolver: FilesystemCommandResolver;
     compactionController: CompactionController;
@@ -794,6 +798,8 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
           }
         : {}),
       apiKeySource: providerWiring.apiKeySource,
+      supportedModels: () => providerWiring.supportedModels(),
+      accountInfo: () => providerWiring.accountInfo(),
       ...(providerWiring.providerSupportsToolSearch !== undefined ? { providerSupportsToolSearch: providerWiring.providerSupportsToolSearch } : {}),
       ...(providerWiring.classifier !== undefined ? { classifier: providerWiring.classifier } : {}),
       systemPromptAssembler,

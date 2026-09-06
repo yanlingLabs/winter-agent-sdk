@@ -89,7 +89,17 @@ afterAll(() => {
 // within a single test run — not with a byte-fixed golden across machines/time — so process.cwd()
 // (always real) is the right fixture here, not a synthetic constant.
 const FIXTURE_CWD = process.cwd();
-const FIXTURE_MODEL = "sonnet";
+// Phase 6 Task 10 (R6-9/R6-13): the fixture model moved INTO the reserved namespace.
+//
+// Production selection is catalog-first now and refuses a model it cannot resolve -- the pinned
+// `"sonnet"` alias resolves to the `anthropic` provider only when a credential ref for it is
+// configured, and no test has (or may have) one. `winter-test/<name>` is the ONE door to an
+// in-process scripted double, and `WINTER_TEST_PROVIDER` remains the harness's alias for it,
+// honoured because `config.model` is already in that namespace.
+//
+// `system/init.model` reports WHAT THE CALLER PASSED (R6-9), so this value is visible in every
+// golden -- which is why the goldens move in the same commit as this line and in no other.
+const FIXTURE_MODEL = "winter-test/echo";
 
 // Absolute path to the real winter entrypoint. There is no package export for a non-data file like
 // an entrypoint script (nor should there be one — this is test-only wiring, never a runtime

@@ -119,7 +119,7 @@ function writeSettings(dir: string, settings: Record<string, unknown>): void {
 const base = (overrides: Partial<RuntimeConfig> = {}): RuntimeConfig => ({
   sessionId: `c1-${Math.random().toString(36).slice(2, 10)}`,
   cwd,
-  model: "sonnet",
+  model: "winter-test/echo",
   winterHome: home,
   // `sandbox: {enabled:false}` so the fixture runs identically on a host without /usr/bin/sandbox-exec.
   // The subject is the permission decision, which happens well before any sandbox.

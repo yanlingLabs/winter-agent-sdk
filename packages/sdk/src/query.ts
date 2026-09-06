@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { SdkMessage as RuntimeSdkMessage, WinterFrame, InitFrame, ControlRequestFrame, ControlResponseFrame } from "./protocol/frames.ts";
 import { PROTOCOL_VERSION } from "./protocol/frames.ts";
 import { splitFrames, encodeFrame, ProtocolError } from "./protocol/codec.ts";
-import type { RuntimeConfig, RuntimeHooksConfig, RuntimeHookMatcherGroup, McpServerConfigForProcessTransport, RewindFilesResult } from "./protocol/config.ts";
+import type { AccountInfo, ModelInfo, RuntimeConfig, RuntimeHooksConfig, RuntimeHookMatcherGroup, McpServerConfigForProcessTransport, RewindFilesResult } from "./protocol/config.ts";
 import { isWinterMcpServerInstance, type Options, type McpServerConfig } from "./options.ts";
 import type {
   PermissionMode,
@@ -54,6 +54,25 @@ export interface QueryInternal {
 export interface Query extends AsyncGenerator<SdkMessage> {
   interrupt(): Promise<void>;
   setModel(model?: string): Promise<void>;
+  /**
+   * Phase 6 Task 10 (derived-shapes-p6 item (d), `sdk.d.ts:2566`): the models this session may select.
+   *
+   * A BARE ARRAY — no envelope, no default marker, no "current model" field; the current model is read
+   * from `system/init.model` instead, and no pinned `Query` method returns it. Served from the
+   * worker's own registry (capture (J): the pinned runtime issues no `/v1/models` request for this),
+   * so the answer is a table lookup rather than a network round trip.
+   */
+  supportedModels(): Promise<ModelInfo[]>;
+  /**
+   * `AccountInfo` for this session (`sdk.d.ts:2632`). Every field is optional and an empty object is a
+   * valid answer — capture (J) observed exactly three keys present under API-key auth.
+   *
+   * DISCLOSED DIVERGENCE IN THE TRANSPORT, not in the shape: the pin carries `AccountInfo` on the
+   * `initialize`/`reinitialize` response, a surface Winter's protocol does not have, so this rides its
+   * own Winter-only `account_info` control subtype. The public method and its return shape are the
+   * pin's.
+   */
+  accountInfo(): Promise<AccountInfo>;
   /**
    * Phase 5 Task 3 (R5-11, derived-shapes-p5 item (e)): restore every tracked file to its state at
    * `userMessageId`. Requires `enableFileCheckpointing`; without it the result is
@@ -914,9 +933,30 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
   gen.interrupt = async () => {
     await sendControlRequest("interrupt", { scope: "turn" });
   };
-  // Still a stub: no engine-side `set_model` control-request handler exists yet (a future task adds
-  // it — the correlation plumbing this stub would need now exists, unlike at P1).
-  gen.setModel = async () => {};
+  // Phase 6 Task 10 (R6-I): REAL, replacing the P2 stub. The engine has carried a `set_model` handler
+  // since T3; this is the wrapper half.
+  //
+  // THE PAYLOAD IS THE PIN'S OBJECT SHAPE (`{ model?: string | null }`, `sdk.d.ts:4181-4188`), not the
+  // bare value `set_permission_mode` uses — the two control requests genuinely differ there, and the
+  // engine's handler reads `payload.model` with a bare-value fallback for exactly that reason. An
+  // OMITTED argument stays omitted rather than becoming an explicit `null`: all three spellings reset,
+  // so they are equivalent to the runtime, but sending a key the caller did not supply would put a
+  // value on the wire that no host wrote.
+  gen.setModel = async (model?: string) => {
+    await sendControlRequest("set_model", model !== undefined ? { model } : {});
+  };
+  // Phase 6 Task 10: the pinned payload-free `list_models` (`sdk.d.ts:3855`) and Winter's own
+  // `account_info`. A malformed/absent runtime payload degrades to an empty answer rather than a
+  // throw, matching `rewindFiles`' own posture: both pinned methods return data, so a host that got a
+  // rejected promise could not tell "nothing to report" from a transport fault.
+  gen.supportedModels = async (): Promise<ModelInfo[]> => {
+    const payload = await sendControlRequest("list_models", undefined);
+    return Array.isArray(payload) ? (payload as ModelInfo[]) : [];
+  };
+  gen.accountInfo = async (): Promise<AccountInfo> => {
+    const payload = await sendControlRequest("account_info", undefined);
+    return typeof payload === "object" && payload !== null && !Array.isArray(payload) ? (payload as AccountInfo) : {};
+  };
   gen.setPermissionMode = async (mode: PermissionMode) => {
     await sendControlRequest("set_permission_mode", mode); // WS-04 §3.1: bare PermissionMode value
   };

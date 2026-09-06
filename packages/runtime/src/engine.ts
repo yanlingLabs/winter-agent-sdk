@@ -1028,6 +1028,30 @@ export interface EngineOptions {
    */
   apiKeySource?: string;
   /**
+   * Phase 6 Task 10 (R6-I): the session's model catalogue and account surface, as the control
+   * handlers below answer them.
+   *
+   * BOTH ARE FUNCTIONS, not values, and both come from the WIRING rather than being computed here:
+   * the engine has no registry and no credential model, and giving it one would be a second
+   * resolution path that could disagree with the session's own.
+   *
+   * `supportedModels` answers the pinned payload-free `list_models` control request
+   * (`sdk.d.ts:3855`), whose own JSDoc frames it as "ask the worker" — a table inside the binary, per
+   * capture (J), never a `/v1/models` fetch. Absent -> the handler answers an empty array, which is
+   * the honest answer for a session running a scripted double.
+   */
+  supportedModels?: () => unknown[];
+  /**
+   * `account_info` is a WINTER-ONLY control subtype, disclosed.
+   *
+   * The pin carries `AccountInfo` on the `initialize`/`reinitialize` RESPONSE (`sdk.d.ts:3804`), and
+   * derived-shapes-p6 item (d) is explicit that `system/init` must NOT grow an `account` field for
+   * parity. Winter's protocol has no `initialize` control request to hang it on, so the surface it
+   * does expose (`Query.accountInfo()`) needs a subtype of its own rather than a field on a frame the
+   * pin does not put it on.
+   */
+  accountInfo?: () => unknown;
+  /**
    * Phase 6 Task 10 (R6-14): the session's REAL classifier, or absent for a Manual fallback.
    *
    * P2 shipped `createAutoEngine`'s own `alwaysNoVerdictClassifier` default and said the real
@@ -1289,6 +1313,8 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
     providerIdentity,
     apiKeySource,
     classifier,
+    supportedModels,
+    accountInfo,
   } = opts;
 
   // Task 6 (WS-07 §2/§6.4, Ruling 8): permission startup validation — deliberately the very FIRST
@@ -3182,6 +3208,22 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
             // so the switch takes effect immediately rather than waiting for a next envelope that may
             // never come. `interruptCurrentTurn.current` is non-null exactly while a turn is running.
             if (interruptCurrentTurn.current === null) applyPendingModelSwitch("set_model");
+            continue;
+          }
+          // --- Phase 6 Task 10 (R6-I): `list_models` and `account_info` ---------------------------
+          //
+          // `list_models` is PAYLOAD-FREE on the pin and is answered from the session's own registry
+          // — capture (J) established that the pinned runtime serves this from a table inside the
+          // binary and issues no `/v1/models` request at all, so a handler that reached for live
+          // discovery here would be a behavioural divergence, not an improvement.
+          if (cf.subtype === "list_models") {
+            output.write({ type: "control_response", requestId: cf.requestId, ok: true, payload: supportedModels?.() ?? [] });
+            continue;
+          }
+          // Winter-only, disclosed — see `EngineOptions.accountInfo` for why the pin's own surface
+          // (the initialize response) has no counterpart here.
+          if (cf.subtype === "account_info") {
+            output.write({ type: "control_response", requestId: cf.requestId, ok: true, payload: accountInfo?.() ?? {} });
             continue;
           }
           if (cf.subtype === "set_permission_mode") {
