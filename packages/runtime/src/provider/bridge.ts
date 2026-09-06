@@ -95,6 +95,22 @@ export interface AdapterProviderOptions {
   renderer?: HistoryRenderer;
   /** Overrides the adapter on `resolved`. The one caller is a test that wants a scripted adapter against a real `ResolvedModel`. */
   adapter?: ProviderAdapter;
+  /**
+   * Phase 6 Task 10 (Lane C wiring item 2): THE RESUMED CONTINUATION CHAIN.
+   *
+   * A GETTER, because the chain is re-attached asynchronously at the start of a run
+   * (`attachContinuationChain`) — long after this provider is constructed — so a captured value would
+   * always be the empty map this option replaces.
+   *
+   * What it buys: `createHistoryRenderer` reads a message's `origin` off the message itself when the
+   * engine already annotated it, and otherwise off `chain.get(message.uuid)`. The second path is the
+   * one that matters for a RESUMED history whose `summary` records (R6-8's foreign reasoning, which
+   * may never enter the transcript) live only in the sidecar: without the chain those messages render
+   * with no decoration at all, which looks exactly like a session that had nothing to say.
+   *
+   * Absent -> an empty chain, which is what T3 shipped and what a non-persistent session genuinely has.
+   */
+  chain?: () => ContinuationChain;
 }
 
 /**
@@ -127,10 +143,11 @@ export function adapterAsProvider(resolved: ResolvedModel, ctx: ProviderContext,
 
   return {
     async generate(input: ProviderRequest): Promise<FoldedProviderTurn> {
-      // The chain is the RENDERER's input, and at this seam the engine's own messages already carry
-      // their annotations -- so an empty chain is the honest value here rather than a re-derivation.
-      // Lane C's renderer reads a real one; the identity renderer ignores it entirely.
-      const rendered = renderer.render(input.messages, new Map(), target);
+      // The chain is the RENDERER's input. The engine's own messages already carry their annotations
+      // for everything THIS run produced; `opts.chain` is what supplies the RESUMED half (T10's
+      // wiring passes the sidecar-derived chain, see `AdapterProviderOptions.chain`). Absent -> the
+      // empty map T3 shipped, which is what a non-persistent session genuinely has.
+      const rendered = renderer.render(input.messages, opts.chain?.() ?? new Map(), target);
       const request: TurnRequest = {
         model: input.model ?? resolved.providerModelId,
         messages: rendered as ProviderMessageLike[],

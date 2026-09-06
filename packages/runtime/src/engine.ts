@@ -108,7 +108,7 @@ import {
 // reference left in the codebase is test-only). `createInMemoryAutoCounterStore` is the fallback
 // for a non-persistent session (autoStateStore undefined below), mirroring how `approvalStore`
 // being undefined already means "no durable approval machinery this run."
-import { createAutoEngine, NO_OP_AUTO_AUDIT_RECORDER } from "./permissions/auto/engine.ts";
+import { createAutoEngine, NO_OP_AUTO_AUDIT_RECORDER, type ClassifierInterface } from "./permissions/auto/engine.ts";
 import { createInMemoryAutoCounterStore, computePolicyHash, type AutoCounterStore } from "./permissions/auto/caches.ts";
 // T9's PostToolUse-accumulated classifierContext (WS-07 §10.4/§10.6-8) — reducer.ts's own
 // AttributedContext type, threaded into the auto engine's getClassifierContext closure below.
@@ -1014,6 +1014,28 @@ export interface EngineOptions {
     catalogVersion?: string;
     authRefKind?: string;
   };
+  /**
+   * Phase 6 Task 10: the pinned `system/init.apiKeySource` (`sdk.d.ts:4860`, REQUIRED).
+   *
+   * An ENGINE OPTION rather than something derived here, for the same reason `providerIdentity` is:
+   * the mapping from Winter's own `CredentialRef` kinds onto the pin's four-member vocabulary is the
+   * WIRING's decision (`provider/session-provider.ts`'s `apiKeySourceFor`, which documents why every
+   * non-`ANTHROPIC_API_KEY` shape reports `'none'`), and the engine must stay driveable by a plain
+   * double that has no credential model at all.
+   *
+   * Absent -> `"none"`, which is the honest value for a session with no credential ref and is what
+   * every pre-P6 golden's init frame is regenerated against.
+   */
+  apiKeySource?: string;
+  /**
+   * Phase 6 Task 10 (R6-14): the session's REAL classifier, or absent for a Manual fallback.
+   *
+   * P2 shipped `createAutoEngine`'s own `alwaysNoVerdictClassifier` default and said the real
+   * model-routed classifier was P6's job. This is that wire. ABSENCE IS MEANINGFUL and is not the
+   * same as a classifier that abstains: R6-14's Manual fallback is a session that was never given a
+   * reviewer it had evidence for, and `selectClassifierRoute` records WHY.
+   */
+  classifier?: ClassifierInterface;
 }
 
 /**
@@ -1265,6 +1287,8 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
     settingsRules,
     maxProviderMessageBytes,
     providerIdentity,
+    apiKeySource,
+    classifier,
   } = opts;
 
   // Task 6 (WS-07 §2/§6.4, Ruling 8): permission startup validation — deliberately the very FIRST
@@ -1591,6 +1615,11 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
     counters: autoStateStore ?? createInMemoryAutoCounterStore(),
     audit: NO_OP_AUTO_AUDIT_RECORDER,
     getClassifierContext: () => accumulatedClassifierContext,
+    // Phase 6 Task 10 (R6-14): the P2 counters go LIVE. Conditionally spread, so a session with a
+    // Manual route keeps `createAutoEngine`'s own always-no-verdict default byte-identically --
+    // which is the point of the distinction: "no reviewer we have evidence for" and "a reviewer that
+    // abstained" are different session states and must stay separable in the audit.
+    ...(classifier !== undefined ? { classifier } : {}),
   });
   // Task 1 (P3, WS-06 §1.1 ToolExecutionContext.session): the session posture-mutation seam's own
   // live state. `currentCwd` starts at `config.cwd` and `extraBoundedRoots` starts empty -- for
@@ -2960,6 +2989,27 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
       model: config.model,
       permissionMode: policyStateStore.getState().mode,
       tools: advertisedToolNames,
+      // Phase 6 Task 10 (derived-shapes-p6 item (d)): the pinned REQUIRED `apiKeySource`
+      // (`sdk.d.ts:4860`). Winter emitted no such field before this phase, which was a real parity
+      // gap rather than a deliberate omission -- a consumer switching on it read `undefined`.
+      apiKeySource: apiKeySource ?? "none",
+      // R6-9: the RESOLVED identity rides a Winter-only init EXTENSION, never `model` -- which stays
+      // the pinned bare string the caller passed, because the goldens byte-compare it. Absent for a
+      // session with no resolved identity (a scripted double, every pre-P6 session), so nothing
+      // fabricates a provider row.
+      ...(providerIdentity !== undefined
+        ? {
+            winter_provider: {
+              providerId: providerIdentity.providerId,
+              modelKey: providerIdentity.modelKey,
+              ...(providerIdentity.adapterId !== undefined ? { adapterId: providerIdentity.adapterId } : {}),
+              ...(providerIdentity.adapterVersion !== undefined ? { adapterVersion: providerIdentity.adapterVersion } : {}),
+              ...(providerIdentity.catalogVersion !== undefined ? { catalogVersion: providerIdentity.catalogVersion } : {}),
+              ...(providerIdentity.continuationDomain !== undefined ? { continuationDomain: providerIdentity.continuationDomain } : {}),
+              ...(providerIdentity.authRefKind !== undefined ? { authRefKind: providerIdentity.authRefKind } : {}),
+            },
+          }
+        : {}),
       ...initLoadedSurface,
       ...(mcpServersWire !== undefined ? { mcp_servers: mcpServersWire } : {}),
     },

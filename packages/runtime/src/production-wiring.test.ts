@@ -65,7 +65,7 @@ function initFrame(msgs: SdkMessage[]): Record<string, unknown> {
 describe("T8 settings provenance: the resolved tier a session actually runs under", () => {
   test("a USER-tier settings file's outputStyle reaches system/init.output_style", async () => {
     writeSettings(home, { outputStyle: "explanatory" });
-    const msgs = await runOne({ sessionId: "prov-1", cwd, model: "sonnet", winterHome: home, settingSources: ["user"] }, { WINTER_HOME: home });
+    const msgs = await runOne({ sessionId: "prov-1", cwd, model: "winter-test/echo", winterHome: home, settingSources: ["user"] }, { WINTER_HOME: home });
     expect(initFrame(msgs).output_style).toBe("explanatory");
   });
 
@@ -73,13 +73,13 @@ describe("T8 settings provenance: the resolved tier a session actually runs unde
     // The discriminating half of the pair above. Without it, a green assertion could equally mean
     // "the file was read" or "the default happened to match".
     writeSettings(home, { outputStyle: "explanatory" });
-    const msgs = await runOne({ sessionId: "prov-2", cwd, model: "sonnet", winterHome: home, settingSources: [] }, { WINTER_HOME: home });
+    const msgs = await runOne({ sessionId: "prov-2", cwd, model: "winter-test/echo", winterHome: home, settingSources: [] }, { WINTER_HOME: home });
     expect(initFrame(msgs).output_style).toBe("default");
   });
 
   test("an explicit `config.outputStyle` BEATS the settings file -- the chain is config > settings > default", async () => {
     writeSettings(home, { outputStyle: "explanatory" });
-    const msgs = await runOne({ sessionId: "prov-3", cwd, model: "sonnet", winterHome: home, settingSources: ["user"], outputStyle: "learning" }, { WINTER_HOME: home });
+    const msgs = await runOne({ sessionId: "prov-3", cwd, model: "winter-test/echo", winterHome: home, settingSources: ["user"], outputStyle: "learning" }, { WINTER_HOME: home });
     expect(initFrame(msgs).output_style).toBe("learning");
   });
 
@@ -90,7 +90,7 @@ describe("T8 settings provenance: the resolved tier a session actually runs unde
     // echoes back -- the same channel every other P5 golden reads it through.
     const stolen = join(cwd, "repo-chosen-memory");
     writeSettings(join(cwd, ".winter"), { autoMemoryDirectory: stolen });
-    const project = await runOne({ sessionId: "prov-4", cwd, model: "sonnet", winterHome: home, settingSources: ["project"] }, { WINTER_HOME: home });
+    const project = await runOne({ sessionId: "prov-4", cwd, model: "winter-test/echo", winterHome: home, settingSources: ["project"] }, { WINTER_HOME: home });
     const projectText = JSON.stringify(project);
     expect(projectText).not.toContain(stolen);
 
@@ -98,7 +98,7 @@ describe("T8 settings provenance: the resolved tier a session actually runs unde
     // statement about the TIER rather than about the key being unimplemented.
     const mine = join(home, "user-chosen-memory");
     writeSettings(home, { autoMemoryDirectory: mine });
-    const user = await runOne({ sessionId: "prov-5", cwd, model: "sonnet", winterHome: home, settingSources: ["user"] }, { WINTER_HOME: home });
+    const user = await runOne({ sessionId: "prov-5", cwd, model: "winter-test/echo", winterHome: home, settingSources: ["user"] }, { WINTER_HOME: home });
     expect(JSON.stringify(user)).toContain(mine);
   });
 
@@ -107,7 +107,7 @@ describe("T8 settings provenance: the resolved tier a session actually runs unde
     writeFileSync(join(home, "skills", "prov-skill", "SKILL.md"), "---\nname: prov-skill\ndescription: a provenance probe\n---\nBODY\n");
     mkdirSync(join(home, "commands"), { recursive: true });
     writeFileSync(join(home, "commands", "prov-cmd.md"), "---\ndescription: a provenance probe command\n---\nDO THE THING\n");
-    const msgs = await runOne({ sessionId: "prov-6", cwd, model: "sonnet", winterHome: home, settingSources: ["user"] }, { WINTER_HOME: home });
+    const msgs = await runOne({ sessionId: "prov-6", cwd, model: "winter-test/echo", winterHome: home, settingSources: ["user"] }, { WINTER_HOME: home });
     const init = initFrame(msgs);
     expect(init.skills).toEqual(["prov-skill"]);
     // Built-ins FIRST (the engine claims `/compact` before any resolver is consulted), then the
@@ -120,7 +120,7 @@ describe("T8 settings provenance: the resolved tier a session actually runs unde
     writeFileSync(join(home, "skills", "prov-skill", "SKILL.md"), "---\nname: prov-skill\ndescription: a provenance probe\n---\nBODY\n");
     mkdirSync(join(home, "commands"), { recursive: true });
     writeFileSync(join(home, "commands", "prov-cmd.md"), "---\ndescription: a probe\n---\nDO IT\n");
-    const msgs = await runOne({ sessionId: "prov-7", cwd, model: "sonnet", winterHome: home, settingSources: [] }, { WINTER_HOME: home });
+    const msgs = await runOne({ sessionId: "prov-7", cwd, model: "winter-test/echo", winterHome: home, settingSources: [] }, { WINTER_HOME: home });
     const init = initFrame(msgs);
     expect(init.skills).toEqual([]);
     expect(init.slash_commands).toEqual(["compact"]); // the built-in is code, never a filesystem tier
@@ -132,7 +132,7 @@ describe("T8 production wiring: the guards it carries", () => {
     mkdirSync(join(home, "skills", "prov-skill"), { recursive: true });
     writeFileSync(join(home, "skills", "prov-skill", "SKILL.md"), "---\nname: prov-skill\ndescription: a probe\n---\nBODY\n");
     const wiring = await buildProductionWiring({
-      config: { sessionId: "s", cwd, model: "sonnet", winterHome: home, settingSources: ["user"], skills: [] },
+      config: { sessionId: "s", cwd, model: "winter-test/echo", winterHome: home, settingSources: ["user"], skills: [] },
       env: {},
       winterHome: home,
     });
@@ -148,7 +148,7 @@ describe("T8 production wiring: the guards it carries", () => {
     mkdirSync(join(home, "skills", "prov-skill"), { recursive: true });
     writeFileSync(join(home, "skills", "prov-skill", "SKILL.md"), "---\nname: prov-skill\ndescription: a probe\n---\nBODY\n");
     const wiring = await buildProductionWiring({
-      config: { sessionId: "s", cwd, model: "sonnet", winterHome: home, settingSources: ["user"] },
+      config: { sessionId: "s", cwd, model: "winter-test/echo", winterHome: home, settingSources: ["user"] },
       env: {},
       winterHome: home,
     });
@@ -162,7 +162,7 @@ describe("T8 production wiring: the guards it carries", () => {
 
   test("an unknown name in `skills` is a WARNING, not a throw -- and the name never reaches the frame", async () => {
     const wiring = await buildProductionWiring({
-      config: { sessionId: "s", cwd, model: "sonnet", winterHome: home, settingSources: ["user"], skills: ["does-not-exist"] },
+      config: { sessionId: "s", cwd, model: "winter-test/echo", winterHome: home, settingSources: ["user"], skills: ["does-not-exist"] },
       env: {},
       winterHome: home,
     });
@@ -175,7 +175,7 @@ describe("T8 production wiring: the guards it carries", () => {
   });
 
   test("`withAutoSkillPermissions` adds the BARE rule for the default, one per name for a list, and nothing when unset", () => {
-    const base: RuntimeConfig = { sessionId: "s", cwd, model: "sonnet" };
+    const base: RuntimeConfig = { sessionId: "s", cwd, model: "winter-test/echo" };
     expect(withAutoSkillPermissions(base).allowedTools).toBeUndefined();
     expect(withAutoSkillPermissions({ ...base, skills: "all" }).allowedTools).toEqual(["Skill"]);
     expect(withAutoSkillPermissions({ ...base, skills: ["a", "b"] }).allowedTools).toEqual(["Skill(a)", "Skill(b)"]);
@@ -275,7 +275,7 @@ describe("wiring warnings are prose an operator can act on", () => {
     mkdirSync(join(cwd, ".winter"), { recursive: true });
     writeFileSync(join(cwd, ".winter", "mcp.json"), "{ this is not json");
     const wiring = await buildProductionWiring({
-      config: { sessionId: "s-mcp-warn", cwd, model: "m" } as unknown as RuntimeConfig,
+      config: { sessionId: "s-mcp-warn", cwd, model: "winter-test/echo" } as unknown as RuntimeConfig,
       env: {},
       winterHome: home,
     });
@@ -296,7 +296,7 @@ describe("wiring warnings are prose an operator can act on", () => {
   test("item 3: a wiring warning reaches the IN-MEMORY leg's stderr, as it does a spawned child's", async () => {
     mkdirSync(join(cwd, ".winter"), { recursive: true });
     writeFileSync(join(cwd, ".winter", "mcp.json"), "{ this is not json");
-    const config = { sessionId: "s-stderr", cwd, model: "m", persistSession: false } as unknown as RuntimeConfig;
+    const config = { sessionId: "s-stderr", cwd, model: "winter-test/echo", persistSession: false } as unknown as RuntimeConfig;
     const proc = inMemoryProcess(["--config-json", JSON.stringify(config)], undefined, undefined, { WINTER_HOME: home });
     // The handle has always DECLARED `stderr?: AsyncIterable<string>` (SpawnedRuntimeProcess); this
     // leg simply never populated it, which is what made every wiring warning invisible here.
@@ -316,7 +316,7 @@ describe("wiring warnings are prose an operator can act on", () => {
     // has not landed yet: a wiring built over an index WITHOUT the method must not throw, and must
     // not invent warnings. When `errors()` lands, the `skill: ` prefix below is what carries it.
     const wiring = await buildProductionWiring({
-      config: { sessionId: "s-skill-warn", cwd, model: "m" } as unknown as RuntimeConfig,
+      config: { sessionId: "s-skill-warn", cwd, model: "winter-test/echo" } as unknown as RuntimeConfig,
       env: {},
       winterHome: home,
     });
@@ -372,7 +372,7 @@ describe("the in-memory leg's own hermetic root", () => {
     withPrivateTmpdir(async (privateRoot) => {
       // NEITHER `config.winterHome` NOR `env.WINTER_HOME` -- the only path that mkdtemps at all, and
       // the default every `scripts/differential.ts` run and most tests take.
-      const config = { sessionId: "s-one-root", cwd, model: "m" } as unknown as RuntimeConfig;
+      const config = { sessionId: "s-one-root", cwd, model: "winter-test/echo" } as unknown as RuntimeConfig;
       const proc = inMemoryProcess(["--config-json", JSON.stringify(config)]);
       proc.stdin.end();
       for await (const _ of proc.stdout) void _;
@@ -386,7 +386,7 @@ describe("the in-memory leg's own hermetic root", () => {
 
   test("`persistSession: false` still mints NOTHING -- the memo is lazy, not eager", async () =>
     withPrivateTmpdir(async (privateRoot) => {
-      const config = { sessionId: "s-no-root", cwd, model: "m", persistSession: false } as unknown as RuntimeConfig;
+      const config = { sessionId: "s-no-root", cwd, model: "winter-test/echo", persistSession: false } as unknown as RuntimeConfig;
       const proc = inMemoryProcess(["--config-json", JSON.stringify(config)]);
       proc.stdin.end();
       for await (const _ of proc.stdout) void _;
@@ -414,7 +414,7 @@ describe("P5-G: a refused project-tier prompt replacement is reported", () => {
     const wiring = await buildProductionWiring({
       // The style is SELECTED by the host (`Options.outputStyle`), which is the only door left open
       // since m1 made a project `settings.json` unable to select at all.
-      config: { sessionId: "s-p5g", cwd, model: "m", outputStyle: "repo-style" } as unknown as RuntimeConfig,
+      config: { sessionId: "s-p5g", cwd, model: "winter-test/echo", outputStyle: "repo-style" } as unknown as RuntimeConfig,
       env: {},
       winterHome: home,
     });
@@ -433,7 +433,7 @@ describe("P5-G: a refused project-tier prompt replacement is reported", () => {
   test("a caller-supplied `systemPrompt` suppresses styles entirely, so there is nothing to report", async () => {
     writeProjectStyle(cwd, "repo-style", false);
     const wiring = await buildProductionWiring({
-      config: { sessionId: "s-p5g-authored", cwd, model: "m", outputStyle: "repo-style", systemPrompt: "CALLER PROMPT ONLY" } as unknown as RuntimeConfig,
+      config: { sessionId: "s-p5g-authored", cwd, model: "winter-test/echo", outputStyle: "repo-style", systemPrompt: "CALLER PROMPT ONLY" } as unknown as RuntimeConfig,
       env: {},
       winterHome: home,
     });
@@ -449,7 +449,7 @@ describe("P5-G: a refused project-tier prompt replacement is reported", () => {
   test("the SAME configuration WITHOUT a caller prompt still reports -- the discriminating half", async () => {
     writeProjectStyle(cwd, "repo-style", false);
     const wiring = await buildProductionWiring({
-      config: { sessionId: "s-p5g-authored-2", cwd, model: "m", outputStyle: "repo-style" } as unknown as RuntimeConfig,
+      config: { sessionId: "s-p5g-authored-2", cwd, model: "winter-test/echo", outputStyle: "repo-style" } as unknown as RuntimeConfig,
       env: {},
       winterHome: home,
     });
@@ -463,7 +463,7 @@ describe("P5-G: a refused project-tier prompt replacement is reported", () => {
   test("a project style that never asked to replace is NOT reported", async () => {
     writeProjectStyle(cwd, "polite", true);
     const wiring = await buildProductionWiring({
-      config: { sessionId: "s-p5g-quiet", cwd, model: "m", outputStyle: "polite" } as unknown as RuntimeConfig,
+      config: { sessionId: "s-p5g-quiet", cwd, model: "winter-test/echo", outputStyle: "polite" } as unknown as RuntimeConfig,
       env: {},
       winterHome: home,
     });
@@ -477,7 +477,7 @@ describe("P5-G: a refused project-tier prompt replacement is reported", () => {
   test("a TRUSTED workspace's replacement is honoured, so there is nothing to report", async () => {
     writeProjectStyle(cwd, "repo-style", false);
     const wiring = await buildProductionWiring({
-      config: { sessionId: "s-p5g-trusted", cwd, model: "m", outputStyle: "repo-style", trustedWorkspace: true } as unknown as RuntimeConfig,
+      config: { sessionId: "s-p5g-trusted", cwd, model: "winter-test/echo", outputStyle: "repo-style", trustedWorkspace: true } as unknown as RuntimeConfig,
       env: {},
       winterHome: home,
     });
@@ -498,7 +498,7 @@ describe("NEW-1: a settings tier's own `error` becomes a wiring warning", () => 
     // nothing at all; after A-2 it reported into a channel nothing read.
     writeSettings(home, { permissions: { deny: "Bash" } });
     const wiring = await buildProductionWiring({
-      config: { sessionId: "s-new1", cwd, model: "m" } as unknown as RuntimeConfig,
+      config: { sessionId: "s-new1", cwd, model: "winter-test/echo" } as unknown as RuntimeConfig,
       env: {},
       winterHome: home,
     });
@@ -517,7 +517,7 @@ describe("NEW-1: a settings tier's own `error` becomes a wiring warning", () => 
     // `stderr mentions plansDirectory=false` -- the refusal worked and said so to nobody.
     writeSettings(join(cwd, ".winter"), { plansDirectory: "/etc" });
     const wiring = await buildProductionWiring({
-      config: { sessionId: "s-new1-plans", cwd, model: "m" } as unknown as RuntimeConfig,
+      config: { sessionId: "s-new1-plans", cwd, model: "winter-test/echo" } as unknown as RuntimeConfig,
       env: {},
       winterHome: home,
     });
@@ -534,7 +534,7 @@ describe("NEW-1: a settings tier's own `error` becomes a wiring warning", () => 
   test("a clean settings tree produces NO `settings (` warning -- the discriminating half", async () => {
     writeSettings(home, { permissions: { deny: ["Bash"] } });
     const wiring = await buildProductionWiring({
-      config: { sessionId: "s-new1-clean", cwd, model: "m" } as unknown as RuntimeConfig,
+      config: { sessionId: "s-new1-clean", cwd, model: "winter-test/echo" } as unknown as RuntimeConfig,
       env: {},
       winterHome: home,
     });
@@ -551,7 +551,7 @@ describe("NEW-1: a settings tier's own `error` becomes a wiring warning", () => 
 // ---------------------------------------------------------------------------------------------
 describe("NEW-3: a user-tier bypass defaultMode degrades with a warning instead of aborting", () => {
   async function runOnce(config: Record<string, unknown>): Promise<{ frames: WinterFrame[]; code: number | null }> {
-    const proc = inMemoryProcess(["--config-json", JSON.stringify({ sessionId: "s-new3", cwd, model: "m", persistSession: false, ...config })], undefined, undefined, { WINTER_HOME: home });
+    const proc = inMemoryProcess(["--config-json", JSON.stringify({ sessionId: "s-new3", cwd, model: "winter-test/echo", persistSession: false, ...config })], undefined, undefined, { WINTER_HOME: home });
     proc.stdin.write(encodeFrame({ type: "user", text: "go" } as WinterFrame));
     proc.stdin.write(encodeFrame({ type: "control_request", requestId: "e", subtype: "end_input", payload: undefined } as WinterFrame));
     const frames: WinterFrame[] = [];
@@ -586,7 +586,7 @@ describe("NEW-3: a user-tier bypass defaultMode degrades with a warning instead 
 
   test("the wiring names the reason, and says nothing when there is nothing to say", async () => {
     writeSettings(home, { permissions: { defaultMode: "bypassPermissions" } });
-    const blocked = await buildProductionWiring({ config: { sessionId: "s-new3-w", cwd, model: "m" } as unknown as RuntimeConfig, env: {}, winterHome: home });
+    const blocked = await buildProductionWiring({ config: { sessionId: "s-new3-w", cwd, model: "winter-test/echo" } as unknown as RuntimeConfig, env: {}, winterHome: home });
     try {
       const w = blocked.warnings.find((x) => x.includes("defaultMode"));
       expect(w).toBeDefined();
@@ -600,7 +600,7 @@ describe("NEW-3: a user-tier bypass defaultMode degrades with a warning instead 
       blocked.dispose();
     }
 
-    const allowed = await buildProductionWiring({ config: { sessionId: "s-new3-w2", cwd, model: "m", allowDangerouslySkipPermissions: true } as unknown as RuntimeConfig, env: {}, winterHome: home });
+    const allowed = await buildProductionWiring({ config: { sessionId: "s-new3-w2", cwd, model: "winter-test/echo", allowDangerouslySkipPermissions: true } as unknown as RuntimeConfig, env: {}, winterHome: home });
     try {
       expect(allowed.warnings.filter((x) => x.includes("defaultMode"))).toEqual([]);
       expect(allowed.engineOptions.settingsRules?.defaultMode).toBe("bypassPermissions");
@@ -612,7 +612,7 @@ describe("NEW-3: a user-tier bypass defaultMode degrades with a warning instead 
   test("a MANAGED veto also degrades it, and says which reason applied", async () => {
     writeSettings(home, { permissions: { defaultMode: "bypassPermissions" } });
     const wiring = await buildProductionWiring({
-      config: { sessionId: "s-new3-veto", cwd, model: "m", allowDangerouslySkipPermissions: true, managedSettings: { permissions: { disableBypassPermissionsMode: true } } } as unknown as RuntimeConfig,
+      config: { sessionId: "s-new3-veto", cwd, model: "winter-test/echo", allowDangerouslySkipPermissions: true, managedSettings: { permissions: { disableBypassPermissionsMode: true } } } as unknown as RuntimeConfig,
       env: {},
       winterHome: home,
     });

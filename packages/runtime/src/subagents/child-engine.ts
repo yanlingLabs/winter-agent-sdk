@@ -134,6 +134,24 @@ import type { CompactionController } from "../compaction/seam.ts";
 
 export interface ChildEngineFactoryDeps {
   provider: Provider;
+  /**
+   * Phase 6 Task 10 (R6-17): THE CHILD'S OWN PROVIDER.
+   *
+   * `AgentDefinition.model` is a real per-child model selection, and until this seam existed a child
+   * that named one ran off `deps.provider` -- the PARENT's already-resolved adapter, pinned to the
+   * parent's model id and, for a qualified `<providerId>/<model>` key, to the parent's PROVIDER. The
+   * child's model then travelled only as `ProviderRequest.model`, so a cross-provider child sent one
+   * vendor's model id to another vendor's endpoint.
+   *
+   * Returns `undefined` when the model resolves to the same thing the parent is already running (or
+   * cannot be resolved at all), in which case the parent's provider is used unchanged -- which is
+   * every pre-P6 child and every session whose provider is the reserved test double.
+   *
+   * The IDENTITY comes back with it deliberately: a child running its own provider that reported its
+   * PARENT's identity would write provider-state records naming a model it never called, and the
+   * resume side reads those records to decide what may be replayed natively.
+   */
+  resolveChildProvider?: (model: string) => { provider: Provider; identity: { providerId: string; modelKey: string; family: string; continuationDomain?: string; adapterId?: string; adapterVersion?: string; catalogVersion?: string; authRefKind?: string } } | undefined;
   // Durable storage for child transcripts -- when omitted, children run WITHOUT persistence
   // (matching this codebase's own established `persistSession:false` behavior elsewhere: the engine
   // runs fine with no store, it just does not survive a restart, and `resume()` degrades to
@@ -309,6 +327,10 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
     const resolvedModel = resolveModelAlias(inherit.model, deps.modelCatalog); // may throw UnresolvableModelAliasError
     const resolvedEffort = resolveEffort(inherit.effort);
     const modelEffort = recordModelEffort({ ...(requestedModel !== undefined ? { requestedModel } : {}), resolved: resolvedModel, effort: resolvedEffort });
+    // Phase 6 Task 10 (R6-17): resolved HERE, once, from the model this child actually settled on --
+    // never from `req.model`, which may be an alias, and never inside the runEngine call, where a
+    // second resolution could disagree with the one `config.model` was built from.
+    const childProvider = deps.resolveChildProvider?.(resolvedModel.effectiveModel);
 
     // --- Tool restriction (WS-10 §2) -------------------------------------------------------------
     // `inherit.tools` is the resolved allowlist (a fork's exact pool, a definition's own
@@ -661,10 +683,13 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
         // provider-state records even when its parent has an identity, so its own sidecar would be
         // empty and its resume would degrade every message. Conditionally spread, so a child of a
         // parent with no resolved identity is byte-identical to a pre-P6 child.
-        ...(inherit.provider !== undefined ? { providerIdentity: inherit.provider } : {}),
+        // Phase 6 Task 10 (R6-17): the child's OWN provider WINS over the inherited identity when the
+        // child named its own model and that model resolves to something the parent is not running.
+        // `childProvider` is resolved once, above, from `resolvedModel.effectiveModel`.
+        ...(childProvider !== undefined ? { providerIdentity: childProvider.identity } : inherit.provider !== undefined ? { providerIdentity: inherit.provider } : {}),
         input: channel.runtime.input,
         output: channel.runtime.output,
-        provider: deps.provider,
+        provider: childProvider?.provider ?? deps.provider,
         // Phase 5 Task 3 (R5-3): P4-J RETIRED. The child's persona now travels on the engine's real
         // system-prompt channel (`ProviderRequest.system`) instead of being concatenated into the
         // first user turn -- see the resolution site below for the full note. Conditionally spread so

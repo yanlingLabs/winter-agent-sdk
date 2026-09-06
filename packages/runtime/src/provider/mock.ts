@@ -200,6 +200,29 @@ export function isTestProviderName(v: string): v is TestProviderName {
   return TEST_PROVIDER_NAMES.has(v);
 }
 
+/**
+ * The name the reserved `winter-test/<name>` namespace uses for the plain echo double.
+ *
+ * A REAL NAME rather than "the default", because after Task 10 there IS no default: production
+ * selection is catalog-first and a session that names no resolvable model refuses to start (R6-9).
+ * A harness that wants the echo provider asks for it by name, exactly like every other scripted
+ * double, and the reserved namespace is the only door either of them comes through (R6-13).
+ */
+export const ECHO_TEST_PROVIDER_NAME = "echo";
+
+/**
+ * The `winter-test/<name>` namespace's resolver — the ONE production door to an in-process double.
+ *
+ * `selection.ts` calls this through `SelectionDeps.testProviders` after checking the namespace, so
+ * this function never has to know about the namespace prefix or about `WINTER_TEST_PROVIDER`; it
+ * answers one question ("is there a scripted double called this?") and answers `undefined` when
+ * there is not, which selection turns into a typed refusal rather than a silent miss.
+ */
+export function testProviderForNamespace(name: string): Provider | undefined {
+  if (name === ECHO_TEST_PROVIDER_NAME) return echoProvider;
+  return isTestProviderName(name) ? testProviderByName(name) : undefined;
+}
+
 // Phase 5 Task 2 (R5-3): the seventeen env-selectable modes are instrumented at the ONE hand-out
 // point, so no mode's own body had to change and no mode can be added later that forgets to.
 export function testProviderByName(name: TestProviderName): Provider {

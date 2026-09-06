@@ -13,6 +13,7 @@ import { registerDefaultChildEngineFactory } from "./subagents/register-default-
 // Phase 5 Task 8: see main.ts's own identical import comment. The IDENTICAL call, so the in-memory
 // leg and a real spawned/compiled `winter` cannot diverge on which P5 seams a session has.
 import { buildProductionWiring, withAutoSkillPermissions } from "./production-wiring.ts";
+import { loadResumedChain } from "./provider/session-provider.ts";
 import { restoreChildRoster } from "./subagents/restore.ts";
 import { WinterCompatibilitySessionStore, compatibilityKeys } from "@yanlinglabs/winter-agent-sdk";
 // Task 1 (P3, WS-06 §1): test-tool registration goes through the registry. The equivalence corpus
@@ -226,7 +227,29 @@ export function inMemoryProcess(
       // own hermetic `resolveInMemoryWinterHome` root -- which must NEVER reach the real
       // `process.env` fallback (that function's own header), so a differential/equivalence run can
       // not read a developer's real skills, commands, plugins or settings.
-      const wiring = await buildProductionWiring({ config: effectiveConfig, env: env ?? {}, winterHome: winterHomeOnce(), ...(store !== undefined ? { persistence: store } : {}) });
+      // Phase 6 Task 10: the in-memory leg's provider inputs.
+      //
+      // `testProviders: () => provider` is the WHOLE of this leg's provider policy, and it is the
+      // reserved namespace's door (R6-13) rather than a bypass of it: selection still runs, still
+      // refuses a model it cannot resolve, and still reaches the catalog for everything outside
+      // `winter-test/<name>` -- which is what makes this leg's provider behaviour the SAME code as a
+      // spawned child's. The caller's own scripted double answers for whichever reserved name the
+      // session asked for, because a JS function is precisely what a spawned process cannot be handed
+      // and is the only thing this leg has that the other two do not.
+      const providerChain = await loadResumedChain(store, initialMessages);
+      const wiring = await buildProductionWiring({
+        config: effectiveConfig,
+        env: env ?? {},
+        winterHome: winterHomeOnce(),
+        ...(store !== undefined ? { persistence: store } : {}),
+        provider: {
+          testProviders: () => provider,
+          chain: () => providerChain,
+          // NEVER the real `$HOME`: this leg runs inside a test process, and the `file` credential
+          // store's default `~/.aws/credentials` location must not resolve to a developer's own.
+          home: (env ?? {})["HOME"] ?? winterHomeOnce(),
+        },
+      });
       // Lane Y addendum, item 3 (the B-low half): the SAME warnings main.ts emits, on the same
       // prefix, down this leg's own stderr pipe. It dropped every one of them on the floor before,
       // so a malformed `.winter/mcp.json`, a plugin that would not load or a broken skill was
@@ -235,7 +258,7 @@ export function inMemoryProcess(
       // (WS-04 §2/§6).
       for (const warning of wiring.warnings) stderr.write(`winter: ${warning}\n`);
       registerDefaultChildEngineFactory({
-        provider,
+        provider: wiring.providerWiring.provider,
         config: effectiveConfig,
         env: env ?? {},
         // R-2: TWO spreads, not one. This single conditional was the coupling -- see
@@ -257,11 +280,11 @@ export function inMemoryProcess(
           : undefined;
       try {
       const code = await runEngine({
-        config: withAutoSkillPermissions(effectiveConfig),
+        config: withAutoSkillPermissions(wiring.config),
         ...wiring.engineOptions,
         input,
         output,
-        provider,
+        provider: wiring.providerWiring.provider,
         ...(tools !== undefined ? { tools } : {}),
         ...(store !== undefined ? { store } : {}),
         ...(initialMessages.length > 0 ? { initialMessages } : {}),
