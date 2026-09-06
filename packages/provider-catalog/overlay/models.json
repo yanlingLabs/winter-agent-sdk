@@ -471,6 +471,50 @@
       "nativeTools": { "value": true, "source": "upstream-static", "confidence": "inferred", "observedAt": "2026-09-05T00:00:00Z" },
       "unsupportedParameters": [],
       "status": "candidate"
+    },
+    {
+      "key": "xai-oauth/grok-4.6",
+      "providerId": "xai-oauth",
+      "upstreamId": "grok-4.6",
+      "displayName": "Grok 4.6 (subscription)",
+      "aliases": [],
+      "$comment": "The vendor client's DEFAULT model, and the one it also uses for web search, image description and session summaries. DELIBERATELY UNPRICED, and that is the point of the row: this model is reached on a SuperGrok / X Premium subscription, so there is no per-token list price to attach and `pricingBasis: \"subscription\"` on the provider keeps it out of R6-H cost. xAI's published per-token prices belong to the separate metered api-key `xai` row. `status: candidate` \u2014 only the live gate promotes.",
+      "endpoints": ["chat"],
+      "contextWindow": { "value": 500000, "source": "official-doc", "sourceRef": "xAI Grok Build's own model catalogue (crates/codegen/xai-grok-models/default_models.json) at the pinned commit 72a61251fcffb464bcc687aeb5a998e5a98ec0c9, captured in packages/conformance/compat/xai/grok-build/derived-shapes-p6b-xai.md \u00a76", "confidence": "declared", "observedAt": "2026-09-06T00:00:00Z" },
+      "inputModalities": { "value": ["text"], "source": "official-doc", "sourceRef": "xAI Grok Build's own model catalogue (crates/codegen/xai-grok-models/default_models.json) at the pinned commit 72a61251fcffb464bcc687aeb5a998e5a98ec0c9, captured in packages/conformance/compat/xai/grok-build/derived-shapes-p6b-xai.md \u00a76", "confidence": "declared", "observedAt": "2026-09-06T00:00:00Z" },
+      "outputModalities": { "value": ["text"], "source": "upstream-static", "sourceRef": "WINTER DEFAULT: the artifact declares no output modality, so `text` is Winter's inference for a chat registry, not a vendor statement. `EvidenceSource` is frozen (src/types.ts) with no `winter-derived` member, so the caveat rides the confidence marker and this ref \u2014 see PROVENANCE.md.", "confidence": "unknown", "observedAt": "2026-09-06T00:00:00Z" },
+      "toolCalling": { "value": "native", "source": "official-doc", "sourceRef": "https://docs.x.ai/docs/models \u2014 xAI documents agentic tool calling on the Grok 4.x line", "confidence": "declared", "observedAt": "2026-09-06T00:00:00Z" },
+      "nativeTools": { "value": true, "source": "official-doc", "sourceRef": "https://docs.x.ai/docs/models", "confidence": "declared", "observedAt": "2026-09-06T00:00:00Z" },
+      "reasoning": {
+        "supported": { "value": true, "source": "official-doc", "sourceRef": "xAI Grok Build's own model catalogue (crates/codegen/xai-grok-models/default_models.json) at the pinned commit 72a61251fcffb464bcc687aeb5a998e5a98ec0c9, captured in packages/conformance/compat/xai/grok-build/derived-shapes-p6b-xai.md \u00a76", "confidence": "declared", "observedAt": "2026-09-06T00:00:00Z" },
+        "efforts": ["xhigh", "high", "medium", "low"],
+        "defaultEffort": "high",
+        "continuation": "plaintext"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
+    },
+    {
+      "key": "xai-oauth/grok-4.5",
+      "providerId": "xai-oauth",
+      "upstreamId": "grok-4.5",
+      "displayName": "Grok 4.5 (subscription)",
+      "aliases": [],
+      "$comment": "The second model the vendor's subscription client offers. DELIBERATELY UNPRICED, and that is the point of the row: this model is reached on a SuperGrok / X Premium subscription, so there is no per-token list price to attach and `pricingBasis: \"subscription\"` on the provider keeps it out of R6-H cost. xAI's published per-token prices belong to the separate metered api-key `xai` row. `status: candidate` \u2014 only the live gate promotes.",
+      "endpoints": ["chat"],
+      "contextWindow": { "value": 500000, "source": "official-doc", "sourceRef": "xAI Grok Build's own model catalogue (crates/codegen/xai-grok-models/default_models.json) at the pinned commit 72a61251fcffb464bcc687aeb5a998e5a98ec0c9, captured in packages/conformance/compat/xai/grok-build/derived-shapes-p6b-xai.md \u00a76", "confidence": "declared", "observedAt": "2026-09-06T00:00:00Z" },
+      "inputModalities": { "value": ["text"], "source": "official-doc", "sourceRef": "xAI Grok Build's own model catalogue (crates/codegen/xai-grok-models/default_models.json) at the pinned commit 72a61251fcffb464bcc687aeb5a998e5a98ec0c9, captured in packages/conformance/compat/xai/grok-build/derived-shapes-p6b-xai.md \u00a76", "confidence": "declared", "observedAt": "2026-09-06T00:00:00Z" },
+      "outputModalities": { "value": ["text"], "source": "upstream-static", "sourceRef": "WINTER DEFAULT: the artifact declares no output modality, so `text` is Winter's inference for a chat registry, not a vendor statement. `EvidenceSource` is frozen (src/types.ts) with no `winter-derived` member, so the caveat rides the confidence marker and this ref \u2014 see PROVENANCE.md.", "confidence": "unknown", "observedAt": "2026-09-06T00:00:00Z" },
+      "toolCalling": { "value": "native", "source": "official-doc", "sourceRef": "https://docs.x.ai/docs/models \u2014 xAI documents agentic tool calling on the Grok 4.x line", "confidence": "declared", "observedAt": "2026-09-06T00:00:00Z" },
+      "nativeTools": { "value": true, "source": "official-doc", "sourceRef": "https://docs.x.ai/docs/models", "confidence": "declared", "observedAt": "2026-09-06T00:00:00Z" },
+      "reasoning": {
+        "supported": { "value": true, "source": "official-doc", "sourceRef": "xAI Grok Build's own model catalogue (crates/codegen/xai-grok-models/default_models.json) at the pinned commit 72a61251fcffb464bcc687aeb5a998e5a98ec0c9, captured in packages/conformance/compat/xai/grok-build/derived-shapes-p6b-xai.md \u00a76", "confidence": "declared", "observedAt": "2026-09-06T00:00:00Z" },
+        "efforts": ["high", "medium", "low"],
+        "defaultEffort": "high",
+        "continuation": "plaintext"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate"
     }
   ]
 }

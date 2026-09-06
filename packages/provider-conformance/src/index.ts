@@ -102,4 +102,5 @@ export * as openaiChatFake from "./fakes/openai-chat.ts";
 export * as openaiModelsFake from "./fakes/openai-models.ts";
 export * as openaiResponsesFake from "./fakes/openai-responses.ts";
 export * as vertexFake from "./fakes/vertex.ts";
+export * as xaiOauthFake from "./fakes/xai-oauth.ts";
 export { OPAQUE_FIELD_NAMES, redactOpaqueFields } from "./fakes/redact-opaque.ts";
