@@ -21,6 +21,9 @@ import { startScenarioFake } from "./scenario-fake.ts";
 import { buildSessionProvider, apiKeySourceFor, connectionForProvider } from "./session-provider.ts";
 import { echoProvider } from "./mock.ts";
 import type { ProviderMessage } from "../engine.ts";
+import { runEngine } from "../engine.ts";
+import { createInMemoryChannel } from "../protocol/channel.ts";
+import type { ProviderStateRecordInput } from "../store/provider-state.ts";
 
 // --- fixtures -------------------------------------------------------------------------------------
 
@@ -627,6 +630,170 @@ describe("T10 wiring: Lane C's decoration text reaches the WIRE, in every shippe
       }
     });
   }
+});
+
+describe("T10 r1 (B): the host's OWN connection headers, filtered by one rule for every family", () => {
+  test("a NON-identity host header rides a user endpoint; an identity one does NOT — the OpenAI family goes through `hostHeaders()` like Anthropic and Google", async () => {
+    await withResponsesFake(async (fake) => {
+      const catalog = catalogWith(
+        [testProvider({ id: "t10openai", adapterId: "winter.openai-responses", family: "openai", api: fake.url })],
+        [testModel({ key: "t10openai/t10-model", providerId: "t10openai", upstreamId: "t10-model" })],
+      );
+      // A USER endpoint (`connection.baseUrl` set), carrying three host headers: one ordinary, one
+      // identity name that is ALSO credential-shaped, and one identity name that is NOT — the last is
+      // the case the credential list alone could never catch.
+      const wiring = buildSessionProvider({
+        config: baseConfig({
+          model: "t10openai/t10-model",
+          provider: {
+            providerId: "t10openai",
+            authRef: { kind: "inline", value: "test" },
+            connection: { baseUrl: fake.url, local: true, headers: { "x-trace": "keepme", "openai-organization": "org-LEAKED", "x-goog-quota-project": "proj-LEAKED" } },
+          },
+        }),
+        env: {},
+        catalog,
+        credentials: createMemoryCredentialStore(),
+      });
+      await wiring.provider.generate({ messages: USER_TURN, model: "t10-model" });
+      const request = fake.requests[0]!;
+      // The host's own business rides: a proxy token's sibling, a tracing header, a user-agent.
+      expect(request.headers["x-trace"]).toBe("keepme");
+      // Identity names do not. `openai-organization` was already dropped by the credential list;
+      // `x-goog-quota-project` is on the PRIVILEGED list and NOT the credential one, so before this
+      // round it rode a user endpoint straight through.
+      expect(request.headers["openai-organization"]).toBeUndefined();
+      expect(request.headers["x-goog-quota-project"]).toBeUndefined();
+    });
+  });
+
+  test("on a GENERATED endpoint every host header rides — a reviewed endpoint vouches for the identity headers minted for it", async () => {
+    await withResponsesFake(async (fake) => {
+      const catalog = catalogWith(
+        [testProvider({ id: "t10openai", adapterId: "winter.openai-responses", family: "openai", api: fake.url })],
+        [testModel({ key: "t10openai/t10-model", providerId: "t10openai", upstreamId: "t10-model" })],
+      );
+      const wiring = buildSessionProvider({
+        config: baseConfig({
+          model: "t10openai/t10-model",
+          // NO `connection.baseUrl`: the adapter speaks to the catalog's own endpoint.
+          provider: { providerId: "t10openai", authRef: { kind: "inline", value: "test" }, connection: { headers: { "x-goog-quota-project": "proj-ok", "x-trace": "keepme" } } },
+        }),
+        env: {},
+        catalog,
+        credentials: createMemoryCredentialStore(),
+      });
+      await wiring.provider.generate({ messages: USER_TURN, model: "t10-model" });
+      expect(fake.requests[0]?.headers["x-goog-quota-project"]).toBe("proj-ok");
+      expect(fake.requests[0]?.headers["x-trace"]).toBe("keepme");
+    });
+  });
+});
+
+describe("T10 r1 (C): `ReasoningCapabilities.completionEvent` is honoured by the Responses family", () => {
+  test("a descriptor that DECLARES its own completion event terminates the stream on it, and the default still terminates on `response.completed`", async () => {
+    // The fake answers a stream whose terminator is the DECLARED event and never sends
+    // `response.completed`. A hard-coded terminator cannot finish that stream; the descriptor-driven
+    // one does. `responsesCompletionEvent`'s fallback is asserted by every other test in this file,
+    // all of which use rows that declare nothing.
+    const DECLARED = "response.winter_t10_done";
+    const fake = await startFake({
+      routes: [
+        {
+          path: "/responses",
+          method: "POST",
+          handler: () =>
+            sseResponse(
+              [
+                { type: "response.created", response: { id: "r", model: "m", output: [] } },
+                { type: "response.output_text.delta", item_id: "i", output_index: 0, content_index: 0, delta: "declared-terminator" },
+                { type: DECLARED, response: { id: "r", model: "m", status: "completed", usage: { input_tokens: 1, output_tokens: 1 }, output: [] } },
+              ].map((payload) => ({ data: JSON.stringify(payload) })),
+            ),
+        },
+      ],
+    });
+    try {
+      const row = testModel({ key: "t10openai/declared", providerId: "t10openai", upstreamId: "declared" });
+      const withEvent = {
+        ...row,
+        reasoning: {
+          supported: evidence(true),
+          efforts: [],
+          continuation: "opaque-provider-state",
+          readableState: evidence("summary"),
+          completionEvent: evidence(DECLARED),
+        },
+      } as WinterModelDescriptor;
+      const catalog = catalogWith([testProvider({ id: "t10openai", adapterId: "winter.openai-responses", family: "openai", api: fake.url })], [withEvent]);
+      const wiring = buildSessionProvider({
+        config: baseConfig({ model: "t10openai/declared", provider: { providerId: "t10openai", authRef: { kind: "inline", value: "test" } } }),
+        env: {},
+        catalog,
+        credentials: createMemoryCredentialStore(),
+      });
+      const turn = await wiring.provider.generate({ messages: USER_TURN, model: "declared" });
+      expect(turn.kind).toBe("text");
+      expect(turn.kind === "text" ? turn.text : "").toBe("declared-terminator");
+    } finally {
+      await fake.close();
+    }
+  });
+});
+
+describe("T10 r1 (F): the EXPOSED-reasoning sidecar write path, end to end through runEngine", () => {
+  // Lane C wiring item 8 landed without a tripwire. `bridge.test.ts` proves the FOLD carries
+  // `thinking.exposed`; nothing proved the engine then WRITES it, and that is the half that was
+  // missing — `turnProvenance` recorded `summary` only, so a family whose reasoning channel IS the
+  // model's own output produced no sidecar record at all and Lane C's whole no-warning class for
+  // those families was unreachable.
+  //
+  // REVERT-VERIFIED: deleting the `exposed` arm from `turnProvenance` (engine.ts) turns the first
+  // assertion below RED — the records array then holds `origin` alone.
+  async function recordsFor(thinking: { summary?: string; exposed?: string }): Promise<ProviderStateRecordInput[]> {
+    const records: ProviderStateRecordInput[] = [];
+    const { host, runtime } = createInMemoryChannel();
+    const done = runEngine({
+      config: { sessionId: "t10-exposed", cwd: process.cwd(), model: "winter-test/echo" } as RuntimeConfig,
+      input: runtime.input,
+      output: runtime.output,
+      provider: { async generate() { return { kind: "text", text: "answered", thinking } as never; } },
+      // The identity is what makes the sidecar path live at all (R6-7): with none, the engine writes
+      // no records and behaves exactly as it did before this phase.
+      providerIdentity: { providerId: "t10", modelKey: "t10/m", family: "openai" },
+      store: {
+        recordUserEntry() {},
+        recordAssistantEntry() {},
+        recordProviderState(record) {
+          records.push(record);
+        },
+      },
+    });
+    host.output.write({ type: "user", text: "go" });
+    host.output.write({ type: "control_request", requestId: "r1", subtype: "end_input", payload: undefined });
+    for await (const _f of host.input) {
+      /* drain to completion */
+    }
+    await done;
+    return records;
+  }
+
+  test("an EXPOSED-only turn writes the sidecar `summary` record — the field the write path used to stop short of", async () => {
+    const records = await recordsFor({ exposed: "the model's own visible reasoning" });
+    expect(records.map((r) => r.kind)).toEqual(["origin", "summary"]);
+    expect((records[1]!.payload as { text: string }).text).toBe("the model's own visible reasoning");
+  });
+
+  test("a provider-authored `summary` still WINS over `exposed` — R6-8 permits that shape to travel, the raw text is the fallback", async () => {
+    const records = await recordsFor({ summary: "the provider's summary", exposed: "the raw reasoning" });
+    expect(records.map((r) => r.kind)).toEqual(["origin", "summary"]);
+    expect((records[1]!.payload as { text: string }).text).toBe("the provider's summary");
+  });
+
+  test("a turn with NEITHER writes only the mandatory `origin` record — the negative control", async () => {
+    const records = await recordsFor({});
+    expect(records.map((r) => r.kind)).toEqual(["origin"]);
+  });
 });
 
 describe("T10 wiring: hermetic credentials", () => {
