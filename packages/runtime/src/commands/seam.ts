@@ -1,5 +1,5 @@
 // Phase 5 Task 3 (spine): SLASH-COMMAND RESOLUTION -- R5-14. Lane S (task 5) implements the
-// filesystem half (`.winter/commands/<name>.md`, `.winter/skills/<name>/SKILL.md`, plugin-supplied
+// filesystem half (a project `commands/<name>.md`, a project `skills/<name>/SKILL.md`, plugin-supplied
 // commands); the ENGINE owns the built-ins and owns the ordering between the two.
 //
 // The contract in one line: a user envelope is resolved to a CommandResolution BEFORE the model sees

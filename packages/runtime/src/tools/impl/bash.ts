@@ -33,7 +33,7 @@ import {
   isSandboxAvailable,
   type RunCommandResult,
 } from "../../sandbox/spawn.ts";
-import { SandboxConfigError, canonicalizePath, resolveNetworkPosture } from "../../sandbox/profile.ts";
+import { SandboxConfigError, canonicalizePath, resolveNetworkPosture, type SandboxBrand } from "../../sandbox/profile.ts";
 import { startTracking, setTaskStatus, getTask, listRunningTasks, toBackgroundTasksChangedEntry } from "./background-task-runtime.ts";
 
 // ---------------------------------------------------------------------------------------------
@@ -167,8 +167,10 @@ function buildRunCommandOptions(
   denyWritePaths?: string[];
   denyReadPaths?: string[];
   home: string;
-  /** Phase 5 fix wave, I1: the resolved `~/.winter` root, distinct from the OS home above. */
+  /** Phase 5 fix wave, I1: the resolved winter root, distinct from the OS home above. */
   winterHome?: string;
+  /** P7a (D19): the session's brand -- the dot-dir names the seatbelt fences. */
+  brand?: SandboxBrand;
   dangerouslyDisableSandbox?: boolean;
   /**
    * Phase 6 Task 3 (R6-6, P4 carry): the engine's per-turn abort.
@@ -189,6 +191,7 @@ function buildRunCommandOptions(
     ...computeDenyPaths(ctx),
     home: ctx.home,
     ...(ctx.winterHome !== undefined ? { winterHome: ctx.winterHome } : {}),
+    ...(ctx.brand !== undefined ? { brand: ctx.brand } : {}),
     ...(input.dangerouslyDisableSandbox !== undefined ? { dangerouslyDisableSandbox: input.dangerouslyDisableSandbox } : {}),
     ...(ctx.signal !== undefined ? { signal: ctx.signal } : {}),
   };

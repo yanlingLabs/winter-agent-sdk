@@ -136,7 +136,7 @@ export function autoSkillPermissionEntries(skills: SkillsOption | undefined): st
  * The plugin half uses `pluginNameError`, THE SAME JAIL `SkillIndex.build` admits plugin names by --
  * not a stricter one. Two jails that disagree produce a skill the index advertises and the executor
  * refuses: `PLUGIN_NAME_PATTERN` admits any leading-dot name, so a plugin named `.acme` indexes
- * `.acme:ship`, and a check that special-cased only `.winter` would reject it at invocation.
+ * `.acme:ship`, and a check that special-cased only the project dot-dir would reject it at invocation.
  */
 export function isLegalSkillIdentity(name: string): boolean {
   const colon = name.indexOf(":");

@@ -20,7 +20,7 @@
 // THE ONE THING TO UNDERSTAND ABOUT THIS FILE: it is a MESSAGE PUMP, not a workflow engine. It reads
 // one init line, hands the script to `script-api.ts`, and turns that script's capability requests
 // into bridge frames. Every decision with consequences -- may this agent spawn, is the budget spent,
-// what does `.winter/workflows/<name>.js` contain -- is made by the PARENT, because this process is
+// what does a project `workflows/<name>.js` contain -- is made by the PARENT, because this process is
 // the untrusted one.
 import { runWorkflowScript, type AgentBridgeResult, type WorkflowResolveResult } from "./script-api.ts";
 import { encodeNdjson, splitNdjson, type BridgeRequest, type BridgeResponse, type WorkerInit, type WorkflowRef } from "./bridge.ts";

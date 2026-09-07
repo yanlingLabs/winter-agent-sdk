@@ -29,6 +29,8 @@ import { refreshOauthMaterial } from "../oauth/refresh.ts";
 import type { OAuthTokens } from "./pkce.ts";
 import { createChatCompletionsAdapter, type ChatTurnOptions } from "./chat-completions.ts";
 import { capabilityRefusal, errorEvent } from "./shared.ts";
+import { activeWinterIdentity } from "../../identity.ts";
+import { WINTER_BRAND } from "@yanlinglabs/winter-agent-sdk";
 
 /** The registered adapter id. One provider, so it is a constant rather than an option. */
 export const XAI_OAUTH_ADAPTER_ID = "winter.xai-oauth";
@@ -48,14 +50,17 @@ export const XAI_OAUTH = {
   /** The form field this flow carries a client identity in. */
   identityField: "referrer",
   /**
-   * WINTER'S OWN NAME, and the whole of what makes this row admissible rather than impersonation.
+   * DOCUMENTATION ONLY as of P7a (fix r1, Minor-3): the DEFAULT profile's token, kept so this row
+   * still SHOWS what it sends. Nothing reads it — all three wire sites below read
+   * `activeWinterIdentity().product`, which is the running brand's own name.
    *
-   * The bare product name, not `winterUserAgent()`'s versioned token: this is an originator field
-   * that a vendor's analytics buckets, the same shape as codex's `originator: "winter"`. It is never
-   * the vendor's value, and it is never omitted — see the reversion condition below for what it
-   * means if that turns out not to be allowed.
+   * What it documents is the whole of what makes this row admissible rather than impersonation: the
+   * bare product name (not `winterUserAgent()`'s versioned token) in an originator field a vendor's
+   * analytics buckets, the same shape as codex's own `originator`. It is never the vendor's value,
+   * and it is never omitted — see the reversion condition below for what it means if that turns out
+   * not to be allowed. A future edit here changes NOTHING on the wire; change the brand profile.
    */
-  identityValue: "winter-agent-sdk",
+  identityValue: WINTER_BRAND.packageName,
   deviceCodeUrl: "https://auth.x.ai/oauth2/device/code",
   tokenUrl: "https://auth.x.ai/oauth2/token",
   /**
@@ -116,7 +121,7 @@ export interface XaiLoginResult {
 function reversionConditionMessage(): string {
   return (
     `the xAI device login was refused with access_denied. ` +
-    `Either the person signing in declined the consent screen, or xAI rejected this client's identity (${XAI_OAUTH.identityField}=${XAI_OAUTH.identityValue}). ` +
+    `Either the person signing in declined the consent screen, or xAI rejected this client's identity (${XAI_OAUTH.identityField}=${activeWinterIdentity().product}). ` +
     `If it is the second, that is the reversion condition (WS-13b §4): an honest unregistered agent identity that the vendor rejects is a partner allowlist in fact, ` +
     `and xai-oauth reverts to impersonation-required. Winter will not retry by omitting or falsifying its identity. ` +
     `Turn the row off without a release by setting providers["xai-oauth"].enabled to false in settings.`
@@ -188,7 +193,7 @@ export async function startXaiLogin(store: CredentialStore, options: XaiLoginOpt
       deviceCodeUrl: options.deviceCodeUrl ?? XAI_OAUTH.deviceCodeUrl,
       tokenUrl: options.tokenUrl ?? XAI_OAUTH.tokenUrl,
       scope: XAI_OAUTH.scope,
-      identity: { field: XAI_OAUTH.identityField, value: XAI_OAUTH.identityValue },
+      identity: { field: XAI_OAUTH.identityField, value: activeWinterIdentity().product },
       ...(options.pollIntervalMs !== undefined ? { pollIntervalMs: options.pollIntervalMs } : {}),
       ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
       ...(options.onAuthStatus !== undefined ? { onAuthStatus: options.onAuthStatus } : {}),
@@ -243,7 +248,7 @@ async function refreshIfExpiring(ctx: ProviderContext, tokenUrl: string): Promis
     ref: ctx.authRef,
     tokenUrl,
     clientId: XAI_OAUTH.clientId,
-    extraFields: { [XAI_OAUTH.identityField]: XAI_OAUTH.identityValue },
+    extraFields: { [XAI_OAUTH.identityField]: activeWinterIdentity().product },
   });
 }
 

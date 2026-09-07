@@ -21,7 +21,7 @@ export const SKILL_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
 /**
  * A PLUGIN name may additionally carry the leading dot the canonical project plugin has
- * (`.winter`, WS-01 §2.4 / WS-11 §4) -- so the qualified form `.winter:<skill>` is expressible.
+ * (the project dot-dir, WS-01 §2.4 / WS-11 §4) -- so the qualified form `<projectDir>:<skill>` is expressible.
  * Otherwise the same jail: no path separators, no `..`, no whitespace.
  */
 export const PLUGIN_NAME_PATTERN = /^\.?[a-z0-9][a-z0-9-]{0,63}$/;

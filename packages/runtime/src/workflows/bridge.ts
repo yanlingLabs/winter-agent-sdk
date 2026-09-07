@@ -10,7 +10,7 @@
 // control flow into the daemon, which is the process that is NOT allowed to run script logic.
 //
 // WIDENINGS over Norma's original, each traceable to WS-11 §1.6:
-//   - `workflow` (the one-level nesting op): the WORKER cannot resolve `.winter/workflows/<name>.js`
+//   - `workflow` (the one-level nesting op): the WORKER cannot resolve a project `workflows/<name>.js`
 //     -- it has no filesystem reads worth trusting and no notion of the session's project root -- so
 //     resolution is a parent round trip that answers with the child's SOURCE.
 //   - `budget` rides on every response, so a script's `budget.remaining()` is truthful without a

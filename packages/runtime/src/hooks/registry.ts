@@ -108,7 +108,7 @@ function matcherApplies(matcher: string | undefined, toolName: string | undefine
 // at matching, none at invocation — the entire §2 trust obligation rode on a P5 loader that phase
 // ruling 1 describes as a pure FEEDER ("does not reshape" what it feeds), and from-config.ts's own
 // header used to steer that future loader AWAY from adding one ("no changes needed here"). This is
-// the untrusted-clone self-grant shape one level up from rules: a checked-in `.winter/settings.json`
+// the untrusted-clone self-grant shape one level up from rules: a checked-in project `settings.json`
 // PreToolUse hook in an untrusted clone would otherwise be host-machine code execution PLUS a
 // permission-gating participant, fed by a loader with no gate to hit.
 //

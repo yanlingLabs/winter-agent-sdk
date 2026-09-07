@@ -1,3 +1,4 @@
+import { WINTER_BRAND, envName, type BrandProfile } from "@yanlinglabs/winter-agent-sdk";
 // WS-10 §5: foreground/background policy. `run_in_background` (AgentInput) is an INVOCATION
 // REQUEST, never the whole rule. Resolution order, verbatim:
 //
@@ -53,13 +54,15 @@ export interface ResolveForegroundBackgroundInput {
   // whose own control flow could genuinely differ.
   resultNeededImmediately?: boolean;
   env?: Record<string, string | undefined>;
+  /** P7a (D19): the session's brand -- the background kill switch's env NAME. Omitted = `WINTER_BRAND`. */
+  brand?: Pick<BrandProfile, "envPrefix">;
 }
 
 function isTruthyEnv(v: string | undefined): boolean {
   return v === "1" || v === "true";
 }
 
-// RULING R4-7: `.winter/agents/*.md` loads only in a TRUSTED workspace (a checked-in definition is
+// RULING R4-7: a project `agents/*.md` loads only in a TRUSTED workspace (a checked-in definition is
 // code execution + a permission participant, WS-10 §2/§17). No settings-file/trust-store loader
 // exists anywhere in this codebase yet to derive a real signal from -- engine.ts's own
 // `trustedWorkspace` (Finding 4, P2 fix-wave) is hardcoded `false` process-wide for the identical
@@ -73,7 +76,7 @@ function isTruthyEnv(v: string | undefined): boolean {
 // shared by the permission evaluator's `EvaluationContext.trustedWorkspace` and the hook registry's
 // own trust gate). They used to be two independent hardcoded `false`s answering the SAME question --
 // correct-safe, but when P5 lands a real settings/trust-store signal, wiring one and leaving the
-// other gives a session where a checked-in `.winter/agents/*.md` loads while project-scoped
+// other gives a session where a checked-in project agent definition loads while project-scoped
 // permission rules stay gated, or the reverse.
 //
 // CLOSED in the fix wave's follow-up round (item 6, whole-branch M11): this function no longer
@@ -94,8 +97,9 @@ export function resolveForegroundBackground(input: ResolveForegroundBackgroundIn
   // Stage 1 (agent-team constraints): documented no-op -- see header.
 
   // Stage 2: hard kill switch.
-  if (isTruthyEnv(env["WINTER_DISABLE_BACKGROUND_TASKS"])) {
-    return { background: false, reason: "WINTER_DISABLE_BACKGROUND_TASKS" };
+  const killSwitch = envName(input.brand ?? WINTER_BRAND, "DISABLE_BACKGROUND_TASKS");
+  if (isTruthyEnv(env[killSwitch])) {
+    return { background: false, reason: killSwitch };
   }
 
   // WS-10 §5's own standalone bullet: a definition FORCES background once past the kill switch.

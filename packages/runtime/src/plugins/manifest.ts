@@ -1,9 +1,11 @@
 // Phase 5 Lane S (WS-11 §4): the plugin MANIFEST.
 //
-// TWO MANIFEST DIRECTORY SPELLINGS, both honoured, `.winter-plugin` preferred.
+// TWO MANIFEST DIRECTORY SPELLINGS, both honoured, the brand's own preferred.
 //
-//   `.winter-plugin/plugin.json`  -- Winter-native, WS-01 §2.5's rewrite of the pinned spelling.
-//   `.claude-plugin/plugin.json`  -- the PINNED branch's own. Honoured deliberately, not by accident:
+//   `<brand.pluginManifestDir>/plugin.json`  -- native, WS-01 §2.5's rewrite of the pinned spelling.
+//   `.claude-plugin/plugin.json`  -- the PINNED branch's own. A Claude-MIRRORING literal (WS-01 §5):
+//                                    it is the directory the OFFICIAL runtime reads, so it stays
+//                                    fixed under every brand. Honoured deliberately, not by accident:
 //                                    Winter is a DROP-IN for `@anthropic-ai/claude-agent-sdk`, and a
 //                                    host that swaps the package while still passing
 //                                    `plugins: [{type:"local", path: "./some-existing-plugin"}]`
@@ -15,13 +17,23 @@
 // posture the settings loader takes toward unknown keys -- accept, preserve, do not invent.
 import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { WINTER_BRAND, type BrandProfile } from "@yanlinglabs/winter-agent-sdk";
 
-export const WINTER_PLUGIN_MANIFEST_DIR = ".winter-plugin";
+/** Winter's OWN manifest dir, derived rather than spelled. A session's is `brand.pluginManifestDir`. */
+export const WINTER_PLUGIN_MANIFEST_DIR = WINTER_BRAND.pluginManifestDir;
 export const CLAUDE_PLUGIN_MANIFEST_DIR = ".claude-plugin";
 export const PLUGIN_MANIFEST_FILE = "plugin.json";
 
-/** Preference order. `.winter-plugin` first, so a plugin shipping both is read as Winter-native. */
-export const PLUGIN_MANIFEST_DIRS: readonly string[] = [WINTER_PLUGIN_MANIFEST_DIR, CLAUDE_PLUGIN_MANIFEST_DIR] as const;
+/**
+ * Preference order for a given brand: the brand's own dir first, so a plugin shipping both is read
+ * as native. `.claude-plugin` is never rebranded -- it is the official runtime's own name (WS-01 §5).
+ */
+export function pluginManifestDirs(brand?: Pick<BrandProfile, "pluginManifestDir">): readonly string[] {
+  return [(brand ?? WINTER_BRAND).pluginManifestDir, CLAUDE_PLUGIN_MANIFEST_DIR];
+}
+
+/** The default profile's pair, for every caller that has not threaded a brand. */
+export const PLUGIN_MANIFEST_DIRS: readonly string[] = pluginManifestDirs();
 
 /**
  * Open-keyed for the same reason `Settings` is: a manifest key Winter does not know about is
@@ -61,8 +73,8 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
  * unparseable or is not a JSON object returns `error` instead: loading it as though it were absent
  * would silently rename the plugin and drop everything it declared.
  */
-export function readPluginManifest(root: string): ReadPluginManifestResult {
-  for (const dir of PLUGIN_MANIFEST_DIRS) {
+export function readPluginManifest(root: string, brand?: Pick<BrandProfile, "pluginManifestDir">): ReadPluginManifestResult {
+  for (const dir of pluginManifestDirs(brand)) {
     const path = join(root, dir, PLUGIN_MANIFEST_FILE);
     let raw: string;
     try {

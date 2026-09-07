@@ -265,7 +265,7 @@ function resolveSource(input: WorkflowInput, ctx: ToolExecutionContext): { ok: t
   }
   if (typeof input.script === "string" && input.script !== "") return { ok: true, source: input.script };
   if (typeof input.name === "string" && input.name !== "") {
-    const resolved = resolveWorkflowByName(input.name, { cwd: ctx.cwd, trustedWorkspace: ctx.trustedWorkspace === true });
+    const resolved = resolveWorkflowByName(input.name, { cwd: ctx.cwd, trustedWorkspace: ctx.trustedWorkspace === true, ...(ctx.brand !== undefined ? { brand: ctx.brand } : {}) });
     return resolved.ok ? { ok: true, source: resolved.source } : { ok: false, error: resolved.error };
   }
   return { ok: false, error: "Workflow requires at least one of `script`, `name` or `scriptPath` (`resumeFromRunId` may be used on its own to resume a stopped run)" };

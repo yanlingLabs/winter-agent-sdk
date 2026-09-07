@@ -5,7 +5,7 @@
 // aggregate and the four small pure functions that project it onto each consumer's own input shape.
 // Nothing here reads the filesystem (loader.ts does that) and nothing here connects anything: the
 // MCP servers are RAW configs handed onward to Lane A's `resolveMcpServerSources`, exactly as that
-// function's own header requires ("WHERE `.winter/mcp.json`/settings actually get read from disk...
+// function's own header requires ("WHERE the project `mcp.json`/settings actually get read from disk...
 // are integration concerns for whoever assembles `McpServerSource[]`").
 import type { InitPluginInfo } from "@yanlinglabs/winter-agent-sdk";
 import type { PluginCommandContribution } from "../commands/resolver.ts";

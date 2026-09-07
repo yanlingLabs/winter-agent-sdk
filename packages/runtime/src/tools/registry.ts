@@ -34,7 +34,8 @@
 // "correctly-absent (v1)"). Per-tool ground truth (§2/§3) is treated as authoritative over §1.1's
 // introductory type sketch; `ToolDisposition` below widens to 5 members rather than silently
 // mis-filing those two tools under an existing value.
-import type { PermissionMode, BackgroundTaskMessage } from "@yanlinglabs/winter-agent-sdk";
+import type { PermissionMode, BackgroundTaskMessage, BrandProfile } from "@yanlinglabs/winter-agent-sdk";
+import { WINTER_BRAND } from "@yanlinglabs/winter-agent-sdk";
 import { parseRule } from "../permissions/grammar.ts";
 // Fix round 1, RULING P3-B: probeReadWouldPrompt's boolean widened to this named 3-state result --
 // imported (type-only, erased at build time; no runtime cycle since evaluator.ts never imports this
@@ -201,16 +202,26 @@ export interface ToolExecutionContext {
   cwd: string;
   home: string;
   /**
-   * Phase 5 fix wave, I1: the RESOLVED `~/.winter` root for this session (`WINTER_HOME` when set),
+   * Phase 5 fix wave, I1: the RESOLVED winter root for this session (`<PREFIX>HOME` when set),
    * DISTINCT from `home` above, which is the OS home directory.
    *
    * The two are not interchangeable and confusing them is a shipped-bug class in this codebase --
    * see `SkillIndexOptions.winterHome`'s own header. A tool that needs to name Winter's own storage
    * (the agents user tier, a seatbelt deny, the checkpoint store) reads THIS; a tool that needs the
    * user's home for a `~`-anchored path reads `home`. Absent for a hand-built context, in which case
-   * every consumer falls back to `<home>/.winter/...` -- the pre-fix behaviour.
+   * every consumer falls back to `<home>/<brand.homeDirName>/...` -- the pre-fix behaviour.
    */
   winterHome?: string;
+  /**
+   * P7a (D19): the session's RESOLVED brand profile, threaded from `RuntimeConfig.brand`.
+   *
+   * Every tool that names a Winter-owned surface from inside its own executor -- the project
+   * dot-dir a workflow/worktree/cron file lives under, an env variable, the instructions file --
+   * reads it from HERE rather than spelling one. OPTIONAL for the same reason as
+   * `insideSubagent`/`trustedWorkspace` (~25 hand-built test contexts with no shared builder);
+   * ABSENT READS AS `WINTER_BRAND`, which is byte-identical to the behaviour before this field.
+   */
+  brand?: BrandProfile;
   sessionId: string;
   readState: SessionReadState;
   // Phase 3 Task 2 (WS-06 §3.5): narrowed from Task 1's placeholder `unknown` now that the real,
@@ -281,7 +292,7 @@ export interface ToolExecutionContext {
   // ONCE by engine.ts and threaded here so no consumer re-derives one. Two independent hardcoded
   // `false`s used to answer this same question -- engine.ts's own `const trustedWorkspace` (feeding
   // the permission evaluator's `EvaluationContext.trustedWorkspace` and the hook registry's trust
-  // gate) and `subagents/policy.ts`'s `resolveWorkspaceTrust()` (feeding `.winter/agents/*.md`
+  // gate) and `subagents/policy.ts`'s `resolveWorkspaceTrust()` (feeding project agent definitions
   // loading, RULING R4-7). Both were correct-safe, but when P5 lands a real settings/trust signal,
   // wiring one and missing the other gives a session where a checked-in agent definition loads while
   // project-scoped permission rules stay gated, or the reverse. There is now ONE producer.
@@ -315,7 +326,7 @@ export interface ToolExecutionContext {
   // (`Options.agents` -> `RuntimeConfig.agents`), surfaced to a tool executor so
   // `tools/impl/agent.ts` can pass them to `loadAgentDefinitions`'s own already-implemented
   // `programmatic` parameter. Before this field existed, only FILESYSTEM-defined agents
-  // (`~/.winter/agents/*.md`, and `.winter/agents/*.md` in a trusted workspace) were resolvable via
+  // (user-tier agent definitions, and project-tier ones in a trusted workspace) were resolvable via
   // `subagent_type` in production, silently ignoring every programmatically-supplied definition --
   // a real gap WS-10 §2's own "programmatic definitions and filesystem-defined agents MUST coexist"
   // forbids. Typed structurally (never importing subagents/definitions.ts's own type here) to keep
@@ -672,22 +683,75 @@ function buildMcpToolDescriptor(server: string, tool: McpToolDefinition, opts: {
   };
 }
 
-// Fix round 1, RULING P4-B (MAJOR item 2): "winter" is RESERVED as a live-MCP server identity,
+// Fix round 1, RULING P4-B (MAJOR item 2): the standing server's own name is RESERVED as a live-MCP server identity,
 // independent of whatever happens to be statically registered under it at any given moment. The
 // standing server (mcp/winter-server.ts) is registry-native -- it builds its own real
 // @modelcontextprotocol/sdk McpServer object and is NEVER installed through this function -- so a
-// call like registerMcpServerTools("winter", [{name: "browser", ...}]) must be refused even for a
+// call like registerMcpServerTools(<that name>, [{name: "browser", ...}]) must be refused even for a
 // tool name that has never been seen before and so would not trip the ordinary per-name collision
 // check below (that check only catches a name that already happens to be registered; a brand-new
 // name under the reserved server would sail straight through it and silently create a SECOND,
-// disconnected "winter" identity in the shared registry). Exact-match only, not case-insensitive --
-// mirrors mcp/env.ts's own documented exact-match-only posture; "Winter"/"WINTER" are deliberately
+// disconnected standing-server identity in the shared registry). Exact-match only, not case-insensitive --
+// mirrors mcp/env.ts's own documented exact-match-only posture; case variants are deliberately
 // NOT reserved (registry.test.ts pins this both ways). Not imported from mcp/winter-server.ts's own
 // WINTER_SERVER_NAME constant: that module already imports FROM this file (it reads the advisor
 // descriptor via getRegisteredTool), so a runtime import in the other direction would be a real
 // import cycle, not merely a type-only one -- registry.test.ts instead imports WINTER_SERVER_NAME
 // directly and asserts it against this literal, which is the drift tripwire without the cycle.
-const RESERVED_MCP_SERVER_NAMES = new Set<string>(["winter"]);
+const RESERVED_MCP_SERVER_NAMES = new Set<string>([WINTER_BRAND.mcpServerName]);
+
+// --- P7a (D19): the standing server's identity under a host's own brand ----------------------------
+//
+// THE PROBLEM. The standing server's canonical twins (its `send_message`/`list_agents` entries,
+// descriptors/winter-*.ts) are registered AT MODULE LOAD, into this process-global index, long
+// before any session's `--config-json` -- and therefore its brand -- exists. Deriving their names
+// from `WINTER_BRAND` alone would satisfy the sweep gate and still leave a reuser advertising
+// somebody else's server name; worse, it would leave the alias TABLE pointing at the reuser's
+// spelling while the only registered tool carries Winter's, so `SendMessage`'s canonical target
+// would resolve to nothing. The two halves have to move together.
+//
+// THE SHAPE. A per-session RENAME, disposed on teardown -- the same lifecycle
+// `registerHostGeneratedTool` and `registerMcpServerTools`/`unregisterMcpServerTools` already have,
+// and for the identical reason: a per-session fact has to reach a process-wide index somehow, and
+// "register, then withdraw" is how this file has always done it. `production-wiring.ts` calls it
+// once and adds the disposer to its own `dispose()`.
+//
+// A NO-OP UNDER `WINTER_BRAND`, by construction: `from === to` for every entry, so an unbranded
+// session never touches the registry at all and every existing test is byte-identical.
+//
+// THE ONE-LIVE-BRAND ASSUMPTION, disclosed: two CONCURRENT sessions under DIFFERENT brands in one
+// process would fight over these names, exactly as two concurrent sessions already fight over a
+// live MCP server's names. That is the same "one-live-engine assumption" `subagents/limits.ts` and
+// `tools/background-tasks.ts` record; a genuinely multi-tenant host is a WS-15 concern.
+export function rebrandStandingServerTools(renames: ReadonlyArray<{ from: string; to: string }>, serverName: string): () => void {
+  const applied: Array<{ from: string; to: string; entry: RegisteredTool }> = [];
+  for (const { from, to } of renames) {
+    if (from === to) continue;
+    const entry = registry.get(from);
+    // A name already taken under the new spelling is left ALONE rather than overwritten: the
+    // collision belongs to whoever claimed it, and silently replacing a registered tool is the one
+    // thing `registerTool` refuses to do.
+    if (entry === undefined || registry.has(to)) continue;
+    const renamed: RegisteredTool = { ...entry, descriptor: { ...entry.descriptor, canonicalName: to, advertisedName: to } };
+    registry.set(to, renamed);
+    registry.delete(from);
+    applied.push({ from, to, entry });
+  }
+  const reservedHere = !RESERVED_MCP_SERVER_NAMES.has(serverName);
+  if (reservedHere) RESERVED_MCP_SERVER_NAMES.add(serverName);
+  let disposed = false;
+  return () => {
+    if (disposed) return;
+    disposed = true;
+    for (const { from, to, entry } of applied) {
+      // Identity-checked, the `registerHostGeneratedTool` precedent: only withdraw a name this
+      // call actually installed and that nothing has replaced since.
+      if (registry.get(to)?.descriptor.canonicalName === to) registry.delete(to);
+      if (!registry.has(from)) registry.set(from, entry);
+    }
+    if (reservedHere) RESERVED_MCP_SERVER_NAMES.delete(serverName);
+  };
+}
 
 // P4 fix wave, KNOWN (1) -- SAME-BATCH duplicate names, ruled DEDUPE-FIRST-WINS (never throw).
 //
@@ -1258,8 +1322,10 @@ function foldResult(result: ToolResultPayload): EngineToolResult {
 export interface RegistryToolExecutorDeps {
   sessionId: string;
   home: string;
-  /** Phase 5 fix wave, I1: the resolved `~/.winter` root -- see `ToolExecutionContext.winterHome`. */
+  /** Phase 5 fix wave, I1: the resolved winter root -- see `ToolExecutionContext.winterHome`. */
   winterHome?: string;
+  /** P7a (D19): the session's resolved brand -- see `ToolExecutionContext.brand`. */
+  brand?: BrandProfile;
   // A getter, not a snapshot: the session posture-mutation seam (`session.setCwd`) mutates the
   // SAME live value this reads, so a tool call made after a worktree switch sees the new cwd.
   getCwd: () => string;
@@ -1345,6 +1411,7 @@ export function buildRegistryToolExecutor(deps: RegistryToolExecutorDeps): Engin
         home: deps.home,
         // I1: forwarded so a tool naming Winter's own storage uses the RESOLVED root, not the OS home.
         ...(deps.winterHome !== undefined ? { winterHome: deps.winterHome } : {}),
+        ...(deps.brand !== undefined ? { brand: deps.brand } : {}),
         sessionId: deps.sessionId,
         readState: deps.readState,
         emitFrame: deps.emitFrame,

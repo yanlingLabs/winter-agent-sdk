@@ -1,3 +1,4 @@
+import type { BrandProfile } from "@yanlinglabs/winter-agent-sdk";
 // Phase 5 Lane W (task 4): the SESSION-SCOPED registration seam the Workflow tool reads.
 //
 // WHY THIS EXISTS. `WorkflowRunHost` (workflows/seam.ts, frozen) bundles four things a run needs:
@@ -36,8 +37,10 @@ export interface WorkflowSessionRuntime {
    * registration is FIRST-WINS: see `registerWorkflowSession`.
    */
   sessionId?: string;
-  /** The `.winter` directory this session persists under -- `resolveWinterHome()`'s value, whose `projects/` child holds the session area. */
+  /** The winter root this session persists under -- `resolveWinterHome()`'s value, whose `projects/` child holds the session area. */
   winterHome: string;
+  /** P7a (D19): the session's brand -- the project dot-dir a `workflow(name)` resolves under, and the worker seatbelt's fences. */
+  brand?: BrandProfile;
   /** `compatibilityKeys(cwd).transcriptProjectKey`, after `resolveProjectDirName` -- the SAME key the transcript store uses, never a second derivation. */
   projectKey: string;
   /** The session's own temp directory (paths/temp.ts) -- where per-run journals live (store.ts's `workflowRunsDir`). */

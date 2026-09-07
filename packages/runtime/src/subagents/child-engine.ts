@@ -98,7 +98,7 @@
 // never points the model at a file that cannot exist.
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import type { RuntimeConfig, WinterFrame, SessionStore, ControlResponseFrame, RuntimeHooksConfig, SandboxSettingsConfig, PermissionMode } from "@yanlinglabs/winter-agent-sdk";
+import type { RuntimeConfig, WinterFrame, SessionStore, ControlResponseFrame, RuntimeHooksConfig, SandboxSettingsConfig, PermissionMode, BrandProfile } from "@yanlinglabs/winter-agent-sdk";
 import { compatibilityKeys } from "@yanlinglabs/winter-agent-sdk";
 import { runEngine, createContextAccountant, type ContextAccountant, type EngineSettingsRuleSeed, type Provider, type ProviderMessage } from "../engine.ts";
 import { createInMemoryChannel } from "../protocol/channel.ts";
@@ -247,6 +247,16 @@ export interface ChildEngineFactoryDeps {
   // that deliberately LOOSENED its own sandbox (e.g. a configured network exclusion) has that
   // loosening reach its descendants too, rather than every child silently reverting to the default.
   parentSandbox?: SandboxSettingsConfig;
+  /**
+   * P7a (D19): the PARENT session's resolved brand profile, mirrored down like every other
+   * `parent*` field here.
+   *
+   * A child is a session of the SAME product as its parent -- its worktree lives under the parent's
+   * project dot-dir, its spawn limits read the parent's env prefix, and its own `RuntimeConfig`
+   * must carry the profile onward so ITS children (and its assembler, and its tool executors) stay
+   * branded. Omitted = `WINTER_BRAND`, which is byte-identical to the behaviour before this field.
+   */
+  parentBrand?: BrandProfile;
   // Fix round 1 (finding Q1, forward-compat): WS-07 §11's own "resume applies the stricter of
   // recorded vs. current parent policy" is structurally unreachable in production today --
   // `resolveChildResumeMode` (permissions/auto/inheritance.ts) has ZERO call sites anywhere in this
@@ -366,7 +376,7 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
   // a rejected spawn should be cheap and side-effect-free.
   // Phase 4 fix wave (I1): keyed by the SPAWNER's own agent key -- see limits.ts's own header for
   // why `parentSessionId` alone would now read depth 0 at every nesting level.
-  checkAndRegisterSpawn({ parentKey: runCtx.parentAgentId ?? runCtx.parentSessionId, childKey: agentId, env });
+  checkAndRegisterSpawn({ parentKey: runCtx.parentAgentId ?? runCtx.parentSessionId, childKey: agentId, env, ...(deps.parentBrand !== undefined ? { brand: deps.parentBrand } : {}) });
   let spawnRegistered = true;
 
   try {
@@ -532,7 +542,7 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
     const hasChildScopedMcpServers = Object.keys(childScopedMcpServers).length > 0;
 
     // --- Isolation (WS-10 §8) --------------------------------------------------------------------
-    const workspaceResult = await createWorkspace({ parentCwd: inherit.sessionRoot, ...(req.isolation !== undefined ? { isolation: req.isolation } : {}), agentId });
+    const workspaceResult = await createWorkspace({ parentCwd: inherit.sessionRoot, ...(req.isolation !== undefined ? { isolation: req.isolation } : {}), agentId, ...(deps.parentBrand !== undefined ? { brand: deps.parentBrand } : {}) });
     if (!workspaceResult.ok) {
       throw new Error(`winter: Agent spawn failed -- ${workspaceResult.error}`);
     }
@@ -606,7 +616,7 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
       let lastAssistantText = "";
       let generationSettled = false;
 
-      const watchdog = createStallWatchdog(resolveStallTimeoutMs(env), (err) => {
+      const watchdog = createStallWatchdog(resolveStallTimeoutMs(env, deps.parentBrand), (err) => {
         settle("failed", err.message); // settle() itself now owns calling abortGeneration()
       });
 
@@ -950,6 +960,10 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
       // MCP bridge tools resolved nothing (I2). `agentId` below is what distinguishes this child.
       sessionId: runCtx.parentSessionId,
       cwd: workspace.root,
+      // P7a (D19): a child runs under its PARENT's product. Without this the child's own config has
+      // no `brand`, so its assembler, its tool contexts and any grandchild it spawns would all fall
+      // back to Winter's names inside a reuser's session.
+      ...(deps.parentBrand !== undefined ? { brand: deps.parentBrand } : {}),
       model: resolvedModel.effectiveModel,
       permissionMode: inherit.policy.effectiveMode,
       allowDangerouslySkipPermissions: inherit.policy.effectiveMode === "bypassPermissions",

@@ -1,5 +1,5 @@
 // Phase 5 Lane C (task 6) -- output styles (WS-11 §6.5). A PRODUCT EXTENSION carried over from
-// Norma, not a pinned surface: `.winter/output-styles/<name>.md` plus built-ins, selected by name
+// Norma, not a pinned surface: `<projectDir>/output-styles/<name>.md` plus built-ins, selected by name
 // through `Settings.outputStyle` / `RuntimeConfig.outputStyle`.
 //
 // THE INVARIANT THAT GOVERNS THE WHOLE MODULE: with no style set, the assembled prompt is
@@ -20,14 +20,14 @@
 //      are code, not a filesystem tier, so `settingSources: []` still resolves them.
 //
 //   2. A PROJECT-TIER STYLE MAY ADD TO THE PROMPT BUT NOT DELETE IT. `keep-coding-instructions:
-//      false` REPLACES the authored prompt. Reached from a checked-in `.winter/output-styles/*.md`
+//      false` REPLACES the authored prompt. Reached from a checked-in project-tier output style
 //      in a repository the user merely opened, that is a prompt takeover from untrusted content --
 //      a strictly larger power than WINTER.md has (WINTER.md cannot reach `system` at all), and
 //      closer to the "permission participant" class R4-7 keeps trust-gated than to the instruction
 //      class P5-A only source-gates. So a project-tier replacement is DOWNGRADED to an append
 //      unless the host has declared the workspace trusted (`RuntimeConfig.trustedWorkspace`, the
 //      only source of a true value per P5-A). The style still applies; it just cannot delete
-//      Winter's own text. A USER-tier style replaces with no trust check -- `~/.winter` is the
+//      Winter's own text. A USER-tier style replaces with no trust check -- the winter home is the
 //      user's own file and gating it would gate the user against themselves.
 //
 //      DISCLOSED as a Lane C decision, raised for the controller in the task-6 report: neither
@@ -35,7 +35,7 @@
 //      (trust-gate project styles entirely, or honour the replacement) are both defensible.
 import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import type { SettingSource } from "@yanlinglabs/winter-agent-sdk";
+import { WINTER_BRAND, type BrandProfile, type SettingSource } from "@yanlinglabs/winter-agent-sdk";
 import { capBytes, neutralizeReminderTags } from "./injection.ts";
 
 export const DEFAULT_OUTPUT_STYLE_NAME = "default";
@@ -88,7 +88,7 @@ export const BUILTIN_OUTPUT_STYLE_NAMES: readonly string[] = BUILTIN_OUTPUT_STYL
 
 /**
  * A bare slug. Checked BEFORE any path is built, because the name flows from a settings file --
- * including a project's checked-in `.winter/settings.json` -- straight into a `join`. Dots are
+ * including a project's checked-in project-tier `settings.json` -- straight into a `join`. Dots are
  * excluded too, so a bare `.` or `..` stem is rejected outright rather than relying on the `.md`
  * suffix to accidentally defuse it.
  */
@@ -133,8 +133,10 @@ function parseStyleFile(path: string, fallbackName: string, source: "project" | 
 
 export interface OutputStyleLookup {
   cwd: string;
-  /** The `~/.winter` root. */
+  /** The resolved winter home (`~/<brand.homeDirName>` by default). */
   home: string;
+  /** P7a (D19): the session's brand -- the project dot-dir the project tier is read from. Omitted = `WINTER_BRAND`. */
+  brand?: Pick<BrandProfile, "projectDirName">;
   /** Omitted means all three tiers (the pinned default). */
   settingSources?: readonly SettingSource[];
   /** RULING P5-A's host-declared trust bit. Only `true` lets a PROJECT-tier style replace the prompt. */
@@ -150,7 +152,7 @@ export function resolveOutputStyle(name: string, lookup: OutputStyleLookup): Res
   const sources = lookup.settingSources ?? (["user", "project", "local"] as const);
 
   if (sources.includes("project")) {
-    const found = parseStyleFile(join(lookup.cwd, ".winter", "output-styles", `${name}.md`), name, "project");
+    const found = parseStyleFile(join(lookup.cwd, (lookup.brand ?? WINTER_BRAND).projectDirName, "output-styles", `${name}.md`), name, "project");
     if (found !== null) {
       if (!found.keepBasePrompt && lookup.trustedWorkspace !== true) {
         return { ...found, keepBasePrompt: true, replacementDowngraded: true };

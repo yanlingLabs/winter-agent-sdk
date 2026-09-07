@@ -37,7 +37,7 @@ export interface ProviderCredentialLocator {
   providerId: string;
   /** WHICH account on that provider. R6-10: one record per provider/account, never a shared global slot — two accounts on one provider, or two providers at once, need two records. */
   accountId: string;
-  /** Overrides the store's configured service. Omitted means the store's own default (`config.keychainService ?? "com.winter.core"`). */
+  /** Overrides the store's configured service. Omitted means the store's own default (the session's `brand.keychainService`, else `DEFAULT_KEYCHAIN_SERVICE`). */
   service?: string;
 }
 

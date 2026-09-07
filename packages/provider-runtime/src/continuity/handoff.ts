@@ -1,3 +1,4 @@
+import { WINTER_BRAND } from "@yanlinglabs/winter-agent-sdk";
 // Phase 6 Lane C: the PORTABLE HANDOFF -- report §9.3, built at the switch boundary and nowhere else.
 //
 // WHAT IT CONTAINS: task-continuation material only. Source identity; the source's reasoning summary
@@ -33,8 +34,16 @@ import type { ContentBlockLike, ProviderMessageLike } from "../types.ts";
 /** The delimiter of the handoff block. Its own tag, distinct from a reasoning decoration's: the two carry different classes of content and a reader must not have to guess which. */
 export const PRIOR_MODEL_HANDOFF_TAG = "prior_model_handoff";
 
-/** Instruction-file basenames a tool fact is never allowed to carry (§2.8). Matched case-insensitively on the basename. */
-export const INSTRUCTION_FILE_BASENAMES: readonly string[] = ["WINTER.md", "MEMORY.md", "CLAUDE.md", "AGENTS.md"];
+/**
+ * Instruction-file basenames a tool fact is never allowed to carry (§2.8). Matched case-insensitively
+ * on the basename.
+ *
+ * P7a (D19): the first entry is `brand.instructionsFile`. This is a SAFETY list, so a branded session
+ * gets its own name ADDED to this set rather than swapped into it (`PortableHandoffOptions.
+ * instructionsFile`) -- a repository can perfectly well contain Winter's own instructions file and a
+ * reuser's beside it, and neither belongs in a handoff.
+ */
+export const INSTRUCTION_FILE_BASENAMES: readonly string[] = [WINTER_BRAND.instructionsFile, "MEMORY.md", "CLAUDE.md", "AGENTS.md"];
 
 export interface HandoffToolFact {
   name: string;
@@ -90,6 +99,8 @@ export interface PortableHandoffOptions {
   maxValueChars?: number;
   /** Path fragments whose tool facts are dropped -- pass the session's memory directory here (§2.8). Instruction-file basenames are refused unconditionally. */
   excludedPathFragments?: readonly string[];
+  /** P7a (D19): the running brand's `instructionsFile`, ADDED to `INSTRUCTION_FILE_BASENAMES` (never swapped for it). */
+  instructionsFile?: string;
   /** Whether the source's exposed reasoning may be forwarded at all (§12.4: only when policy permits). A summary is unaffected. */
   allowExposedForwarding?: boolean;
 }
@@ -111,7 +122,11 @@ export function buildPortableHandoff(
   options: PortableHandoffOptions = {},
 ): PortableHandoff {
   const maxValueChars = options.maxValueChars ?? 400;
-  const excluded = [...INSTRUCTION_FILE_BASENAMES.map((b) => b.toLowerCase()), ...(options.excludedPathFragments ?? []).map((p) => p.toLowerCase())];
+  const excluded = [
+    ...INSTRUCTION_FILE_BASENAMES.map((b) => b.toLowerCase()),
+    ...(options.instructionsFile !== undefined ? [options.instructionsFile.toLowerCase()] : []),
+    ...(options.excludedPathFragments ?? []).map((p) => p.toLowerCase()),
+  ];
   let truncated = false;
   let reasoningTruncated = false;
   const bound = (text: string): string => {

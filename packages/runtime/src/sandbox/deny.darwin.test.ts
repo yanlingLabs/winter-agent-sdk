@@ -35,6 +35,25 @@ async function run(command: string, cwd: string, writableRoots?: string[], home?
   });
 }
 
+/**
+ * P7a fix r1 (Important-1): a run whose seatbelt is built under a HOST'S OWN brand.
+ *
+ * `brand` reaches `buildSeatbeltProfile` through `runCommand`, exactly as a real session's does
+ * (`ToolExecutionContext.brand` -> `buildRunCommandOptions` -> here), so this drives the production
+ * seam rather than the profile builder in isolation.
+ */
+async function runBranded(command: string, cwd: string, writableRoots: string[], brand: { homeDirName: string; projectDirName: string }) {
+  return runCommand({
+    command,
+    cwd,
+    env: { ...process.env, TMPDIR: cwd },
+    timeoutMs: 8000,
+    settings: {},
+    writableRoots,
+    brand,
+  });
+}
+
 // C1 (fix wave, P3 close-out): the real sandbox-exec proof that `filesystem.{denyWrite,denyRead,
 // allowWrite}` actually reach the generated profile end-to-end -- `buildSeatbeltProfile` itself
 // already had a real denyWrite/denyRead layer (profile.ts:228-236); this suite is what proves
@@ -226,6 +245,54 @@ describe("sandbox deny suite (real sandbox-exec, WS-12 §5.2 carried corpus)", (
         expect(res.exitCode).not.toBe(0);
       });
     }
+
+    // --- P7a fix r1 (Important-1): the any-depth regexes follow the BRAND ------------------------
+    //
+    // The per-root LITERAL denies already derived from `brand.projectDirName`; these three regexes
+    // did not, so under a rebrand `echo x > <root>/<nested>/.acme/settings.json` from Bash was
+    // PERMITTED while the same write under `.winter` -- a directory the reuser's product never reads
+    // -- stayed denied. WS-12 §5.2 makes the seatbelt the only enforcement point left for a
+    // bash-invoked write to the control plane, so this is the fence itself, proved against a real
+    // `sandbox-exec` rather than against the profile text.
+    for (const file of FILES) {
+      t(`denies ${file} at NESTED depth under a BRANDED dot-dir (.acme), which the hard-coded regex missed entirely`, async () => {
+        const cwd = proj();
+        const parent = proj();
+        const dir = join(parent, "sub", ".acme");
+        const target = join(dir, file);
+        mkdirSync(dir, { recursive: true });
+        const res = await runBranded(`echo x > ${target}`, cwd, [parent], { homeDirName: ".acme", projectDirName: ".acme" });
+        expect(existsSync(target)).toBe(false);
+        expect(res.exitCode).not.toBe(0);
+      });
+    }
+
+    t("a CASE-VARIANT branded spelling is denied too -- the derived class is per-character, not a literal", async () => {
+      const cwd = proj();
+      const parent = proj();
+      const dir = join(parent, "sub", ".ACME");
+      const target = join(dir, "Settings.JSON");
+      mkdirSync(dir, { recursive: true });
+      const res = await runBranded(`echo x > ${target}`, cwd, [parent], { homeDirName: ".acme", projectDirName: ".acme" });
+      expect(existsSync(target)).toBe(false);
+      expect(res.exitCode).not.toBe(0);
+    });
+
+    t("under the ACME brand a nested `.winter/settings.json` is NOT denied -- the fence follows the session's product, it does not accumulate", async () => {
+      // The honest consequence of the derivation, stated rather than left to be discovered: a
+      // reuser's fence guards the reuser's control plane. Winter's own dot-dir is somebody else's
+      // directory to that session, exactly as WS-12 §2's model reads one level down. This arm is
+      // also the profile-VALIDITY check for the branded profile: a malformed derived regex would
+      // deny everything, and this write would fail for the wrong reason.
+      const cwd = proj();
+      const parent = proj();
+      const dir = join(parent, "sub", ".winter");
+      const target = join(dir, "settings.json");
+      mkdirSync(dir, { recursive: true });
+      const res = await runBranded(`echo x > ${target}`, cwd, [parent], { homeDirName: ".acme", projectDirName: ".acme" });
+      expect(res.exitCode).toBe(0);
+      expect(existsSync(target)).toBe(true);
+    });
 
     t("the carve-out stays filename-specific -- sibling files and the MEMDIR remain writable (profile-validity check: a malformed regex would deny everything)", async () => {
       const cwd = proj();

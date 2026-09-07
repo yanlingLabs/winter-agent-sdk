@@ -1,4 +1,4 @@
-// Controller Ruling P1-N (WS-05 §3.2): WINTER_PROJECT_DIR_NAME overrides ONLY the persistent
+// Controller Ruling P1-N (WS-05 §3.2): `<PREFIX>PROJECT_DIR_NAME` overrides ONLY the persistent
 // transcript-project directory name — the <projectKey> segment of a SessionStore consumer's
 // `<home>/projects/<projectKey>/...` — under the same segment-validation rules paths/temp.ts's
 // sessionTempDir applies to ITS own segments (assertSafeSegment's alphabet: non-empty
@@ -12,7 +12,7 @@
 // session so a LATER resume re-applies the SAME name even if the env var has since changed, or is
 // unset, is explicitly Task 9's obligation, not this helper's — see task-7-report.md's seam note.
 // home.ts moved to the sdk package (Task 10, WS-05 §6); temp.ts stays runtime-private.
-import { isUnset } from "@yanlinglabs/winter-agent-sdk";
+import { isUnset, WINTER_BRAND, envName, type BrandProfile } from "@yanlinglabs/winter-agent-sdk";
 import { WinterPathsError } from "./temp.ts";
 
 // Re-declared rather than imported from temp.ts: assertSafeSegment there is private (this task's
@@ -22,14 +22,20 @@ import { WinterPathsError } from "./temp.ts";
 // regex has no coupling to temp.ts's internals to keep in sync with beyond the alphabet itself.
 const SAFE_DIR_NAME = /^[A-Za-z0-9-]+$/;
 
-// WINTER_PROJECT_DIR_NAME || defaultProjectKey. `env` is injectable so tests never read the real
+// `<PREFIX>PROJECT_DIR_NAME` || defaultProjectKey. `env` is injectable so tests never read the real
 // process environment (mirrors resolveWinterHome/resolveTempBase's own pattern in this module).
-export function resolveProjectDirName(defaultProjectKey: string, env?: Record<string, string | undefined>): string {
-  const override = (env ?? process.env).WINTER_PROJECT_DIR_NAME;
+//
+// P7a (D19): the env NAME is derived from the session's brand and read INSIDE this function, never
+// spelled and never at module load — the brand arrives with `--config-json`. It also reaches the
+// REFUSAL MESSAGE: a reuser whose prefix is `ACME_`, told to fix `<PREFIX>PROJECT_DIR_NAME` under
+// Winter's spelling, has been handed the name of a variable that does not exist in their product.
+export function resolveProjectDirName(defaultProjectKey: string, env?: Record<string, string | undefined>, brand?: Pick<BrandProfile, "envPrefix">): string {
+  const varName = envName(brand ?? WINTER_BRAND, "PROJECT_DIR_NAME");
+  const override = (env ?? process.env)[varName];
   if (isUnset(override)) return defaultProjectKey;
   if (!SAFE_DIR_NAME.test(override as string)) {
     throw new WinterPathsError(
-      `invalid WINTER_PROJECT_DIR_NAME ${JSON.stringify(override)}: expected non-empty [A-Za-z0-9-]+ (no path separators or traversal)`,
+      `invalid ${varName} ${JSON.stringify(override)}: expected non-empty [A-Za-z0-9-]+ (no path separators or traversal)`,
     );
   }
   return override as string;

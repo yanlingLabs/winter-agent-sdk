@@ -8,6 +8,16 @@
 // be compound) -- the WHOLE-call extraction (which tool field is "the path", whether a Bash call
 // even IS a removal at all) is the evaluator.ts seam's own job (its header comment explains why).
 import { resolve } from "node:path";
+import { WINTER_BRAND, type BrandProfile } from "@yanlinglabs/winter-agent-sdk";
+
+/**
+ * P7a (D19): the three brand fields the protected-path floor needs.
+ *
+ * A `Pick`, and OPTIONAL at every entry point, for the same reason as everywhere else in this
+ * sweep: ~30 hand-built contexts in this package's tests call these primitives directly, and
+ * `WINTER_BRAND` as the default keeps every one of them byte-identical.
+ */
+export type ProtectedBrand = Pick<BrandProfile, "homeDirName" | "projectDirName" | "instructionsFile">;
 import { splitCompound, stripWrappers } from "./grammar.ts";
 import { tokenizeWords, nonFlagOperands } from "./edit-recognition.ts";
 
@@ -18,8 +28,9 @@ import { tokenizeWords, nonFlagOperands } from "./edit-recognition.ts";
 // WS-07 §6.7, verbatim directory list, PLUS the agent dot-dir. `.config/git` is a two-SEGMENT
 // path (not a directory literally named ".config" -- that name is far too common across unrelated
 // tools to protect wholesale) and is matched as a consecutive pair below, not via this flat set.
-// `.winter` carries its own worktree-area exception (WS-07 §6.7: "except its worktree area" --
-// `.winter/worktrees/`, WS-01 §2.4) and so is also handled specially below rather than via this set.
+// The BRAND's own dot-dir carries a worktree-area exception (WS-07 §6.7: "except its worktree area"
+// -- `<projectDir>/worktrees/`, WS-01 §2.4) and so is handled specially below rather than via this
+// set: it is not a fixed literal, it is `brand.projectDirName`/`brand.homeDirName`.
 export const PROTECTED_DIRECTORY_NAMES: ReadonlySet<string> = new Set([
   ".git",
   ".vscode",
@@ -66,10 +77,12 @@ export const PROTECTED_FILE_BASENAMES: ReadonlySet<string> = new Set([
   "pyproject.toml",
   "go.mod",
   // MCP project config: the UPSTREAM literal `.mcp.json` (defense in depth for an upstream-shaped
-  // repo); Winter-native `.winter/mcp.json` is already covered by the `.winter` directory rule.
+  // repo); the native `<projectDir>/mcp.json` is already covered by the dot-dir rule below.
   ".mcp.json",
-  // Winter's own root instructions/config file (WS-01 §2.4: WINTER.md is Winter's CLAUDE.md)
-  "WINTER.md",
+  // P7a (D19): the brand's own root instructions file (WS-01 §2.4: the `CLAUDE.md` convention with
+  // the session's token) is added PER CALL from the profile -- see `isProtectedWrite`. Winter's own
+  // value is seeded here so every caller that threads no brand keeps exactly today's set.
+  WINTER_BRAND.instructionsFile,
 ]);
 
 // --- RULING P5-B: the model-writable workflow-script carve-out ------------------------------------
@@ -97,20 +110,20 @@ const WORKFLOW_SCRIPTS_SEGMENTS = ["workflows", "scripts"] as const;
  * module resolves no environment of its own, matching `isProtectedWrite`'s existing `ctx.home`
  * contract.
  */
-export function isWorkflowScriptCarveOut(absPath: string, home: string, resolvedWinterHome?: string): boolean {
+export function isWorkflowScriptCarveOut(absPath: string, home: string, resolvedWinterHome?: string, brand?: ProtectedBrand): boolean {
   // Phase 5 fix wave, I1: the carve-out must name the directory a script is ACTUALLY persisted to.
   // `workflows/store.ts` writes under `<winterHome>/projects/...`; this function compared against
-  // `<osHome>/.winter/projects/...`. Under a `WINTER_HOME` pointing elsewhere the two disagreed, and
+  // `<osHome>/<homeDirName>/projects/...`. Under a `<PREFIX>HOME` pointing elsewhere the two disagreed, and
   // the edit-then-rerun loop WS-11 §1.3 documents worked only because nothing denied the real
   // location either -- which the companion floor in `buildBaselineDenyRules` now does, so the
   // carve-out has to follow or the loop breaks as collateral damage.
   if (resolvedWinterHome !== undefined && matchesCarveOut(pathSegments(absPath), [...pathSegments(resolve(resolvedWinterHome)), WINTER_PROJECTS_SEGMENT])) return true;
   const homeSegments = pathSegments(resolve(home));
   const segments = pathSegments(absPath);
-  // Must start with <home>/.winter/projects/<key>/<uuid>/workflows/scripts/ and have at least one
+  // Must start with <home>/<homeDirName>/projects/<key>/<uuid>/workflows/scripts/ and have at least one
   // more segment after it (the script file itself) -- the DIRECTORY is not itself writable, only its
   // contents, so a `Write` targeting the directory path is still denied.
-  return matchesCarveOut(segments, [...homeSegments, ".winter", WINTER_PROJECTS_SEGMENT]);
+  return matchesCarveOut(segments, [...homeSegments, (brand ?? WINTER_BRAND).homeDirName, WINTER_PROJECTS_SEGMENT]);
 }
 
 /**
@@ -138,12 +151,16 @@ function pathSegments(absPath: string): string[] {
   return absPath.split("/").filter((s) => s.length > 0);
 }
 
-function isInsideProtectedDirectory(absPath: string): boolean {
+function isInsideProtectedDirectory(absPath: string, brand: ProtectedBrand): boolean {
   const segments = pathSegments(absPath);
+  // Both dot-dirs, because they are independently configurable: `homeDirName` names the winter root
+  // and `projectDirName` the per-repository one, and Winter's own profile happens to make them the
+  // same string. A reuser who splits them must have BOTH protected.
+  const ownDirs = new Set([brand.projectDirName, brand.homeDirName]);
   for (let i = 0; i < segments.length; i++) {
     const seg = segments[i]!;
     if (seg === ".config" && segments[i + 1] === "git") return true;
-    if (seg === ".winter") {
+    if (ownDirs.has(seg)) {
       if (segments[i + 1] === "worktrees") continue; // worktree-area exception -- keep scanning deeper segments normally (a worktree's OWN .git is still protected, see the test corpus)
       return true;
     }
@@ -163,14 +180,18 @@ function basenameOf(absPath: string): string {
 // write-shaped -- an Edit/Write's own file_path, or a path recognizeEditOperation extracted from a
 // Bash call). A plain Read of a protected path is correctly UNAFFECTED by this primitive because
 // the seam never calls it for a Read at all, not because of anything checked in here.
-export function isProtectedWrite(path: string, ctx: { cwd: string; home: string; winterHome?: string }): boolean {
+export function isProtectedWrite(path: string, ctx: { cwd: string; home: string; winterHome?: string; brand?: ProtectedBrand }): boolean {
+  const brand = ctx.brand ?? WINTER_BRAND;
   const absPath = resolve(ctx.cwd, path);
-  // RULING P5-B: checked FIRST, because the carve-out lives INSIDE `.winter`, which
+  // RULING P5-B: checked FIRST, because the carve-out lives INSIDE the brand's own dot-dir, which
   // `isInsideProtectedDirectory` would otherwise reject unconditionally. Same shape as the
-  // pre-existing `.winter/worktrees` exception one function down, and for the same reason: a subtree
+  // pre-existing worktree-area exception one function down, and for the same reason: a subtree
   // the agent is meant to work in cannot also be protected from it.
-  if (isWorkflowScriptCarveOut(absPath, ctx.home, ctx.winterHome)) return false;
-  return isInsideProtectedDirectory(absPath) || PROTECTED_FILE_BASENAMES.has(basenameOf(absPath));
+  if (isWorkflowScriptCarveOut(absPath, ctx.home, ctx.winterHome, brand)) return false;
+  const basename = basenameOf(absPath);
+  // The instructions file is brand-derived, so it is matched from the PROFILE as well as from the
+  // seeded default set -- a reuser's ACME.md must be as protected as Winter's own file is.
+  return isInsideProtectedDirectory(absPath, brand) || PROTECTED_FILE_BASENAMES.has(basename) || basename === brand.instructionsFile;
 }
 
 // ---------------------------------------------------------------------------------------------

@@ -44,6 +44,7 @@
 // deliberately simpler tokenizer (no paren-depth tracking; this module never needs to find compound
 // operators, only whitespace-delimited operands within an ALREADY-split-and-stripped subcommand).
 import { join } from "node:path";
+import { WINTER_BRAND, type BrandProfile } from "@yanlinglabs/winter-agent-sdk";
 import { splitCompound, stripWrappers, extractRedirectTargets } from "./grammar.ts";
 
 export type RecognizedEditKind = "edit" | "bashFsOp" | "other";
@@ -262,14 +263,14 @@ export function shellCommandOf(call: { toolName: string; input: Record<string, u
 
 export function recognizeEditOperation(
   call: { toolName: string; input: Record<string, unknown> },
-  opts?: { sessionRoot?: string },
+  opts?: { sessionRoot?: string; brand?: Pick<BrandProfile, "projectDirName"> },
 ): RecognizedEditOperation | null {
   if (call.toolName === "Edit" || call.toolName === "Write" || call.toolName === "NotebookEdit") {
     const path = call.input[fileRulePathField(call.toolName)];
     return typeof path === "string" ? { kind: "edit", paths: [path] } : null;
   }
   // RULING P3-K (fix wave, P3 close-out): CronCreate(durable: true) is write-shaped -- its target is
-  // a FIXED, non-model-controllable path (`<sessionRoot>/.winter/scheduled_tasks.json`, cron.ts's
+  // a FIXED, non-model-controllable path (`<sessionRoot>/<projectDir>/scheduled_tasks.json`, cron.ts's
   // own `durableFilePath`), so it is recognized as a single-path "edit"-kind write for acceptEdits/
   // protected/plan-write purposes, on par with Edit/Write. Requires `opts.sessionRoot` (the
   // evaluator's own EvaluationContext.sessionRoot, threaded in by every evaluator.ts call site) --
@@ -279,7 +280,7 @@ export function recognizeEditOperation(
   // "silent-allow" cell, evaluator.ts's `evaluateModeStage`).
   if (call.toolName === "CronCreate") {
     if (call.input["durable"] !== true || opts?.sessionRoot === undefined) return null;
-    return { kind: "edit", paths: [join(opts.sessionRoot, ".winter", "scheduled_tasks.json")] };
+    return { kind: "edit", paths: [join(opts.sessionRoot, (opts.brand ?? WINTER_BRAND).projectDirName, "scheduled_tasks.json")] };
   }
 
   const command = shellCommandOf(call);

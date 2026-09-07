@@ -21,7 +21,7 @@
 // qualified name (`acme:review`, `.winter:review`) contains a colon, and no amount of left-to-right
 // parsing can tell that colon from an argument separator without knowing the real names. Matching
 // the LONGEST identity first means `.winter:review:src` reads as name `.winter:review` + argument
-// `src`, never as name `.winter` + argument `review:src`.
+// `src`, never as name `<projectDir>` + argument `review:src`.
 //
 // T8 OWES THE ROUTING (NEEDS_CONTEXT in the report): the evaluator must call this for `Skill` calls
 // instead of falling through to `matchesRule`. Until it does, a hand-written `Skill(...)` rule is

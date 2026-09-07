@@ -18,25 +18,29 @@
 // `Options.plugins`, a decision made outside the repository (the same reasoning
 // subagents/definitions.ts records for `pluginAgents`), and builtins ship with the runtime.
 import { basename, dirname, join } from "node:path";
-import type { SettingSource } from "@yanlinglabs/winter-agent-sdk";
+import { WINTER_BRAND, type BrandProfile, type SettingSource } from "@yanlinglabs/winter-agent-sdk";
 import { DEFAULT_SKILL_BODY_BYTES, capBytes, skillNameError, pluginNameError } from "./frontmatter.ts";
 import { SELF_SUBDIR, projectSkillRoots, readSkillMetadata, scanSkillRoot, scanUserSkillRoot, type DiscoveredSkill, type SkillScanError, type SkillTier } from "./loader.ts";
 import { isStrictPluginOnly, type StrictPluginOnlyCustomization } from "../settings/loaders/strict-plugin-only.ts";
 
 /**
- * WS-01 §2.4 / WS-11 §4: `.winter` IS the canonical plugin name for the project dot-directory. The
- * official branch loads `<project>/.winter` as a local plugin, so ITS skills are `.winter:<skill>`;
- * Winter-native discovery reads the same tree directly as the `project` tier.
+ * WS-01 §2.4 / WS-11 §4: the PROJECT DOT-DIRECTORY (`brand.projectDirName`) is the canonical plugin
+ * name for itself. The official branch loads `<project>/<projectDir>` as a local plugin, so ITS
+ * skills are `<projectDir>:<skill>`; native discovery reads the same tree directly as the `project`
+ * tier.
  *
  * DISCLOSED JUDGMENT CALL (report): a project skill is therefore given TWO names -- its bare name
- * (its primary identity, what the listing shows and what `/name` uses) and `.winter:<name>` as an
- * ALIAS. Both resolve through `get()`/`load()` and both are matched by a permission rule
+ * (its primary identity, what the listing shows and what `/name` uses) and `<projectDir>:<name>` as
+ * an ALIAS. Both resolve through `get()`/`load()` and both are matched by a permission rule
  * (permission-rules.ts), which is what WS-11 §4's "permission rules match identically across
  * branches" requires operationally. The alternative readings each break something: bare-only makes
- * a `Skill(.winter:review)` rule written against the official branch inert here, and
- * qualified-only makes `/review` and `Skill("review")` stop working for every project skill.
+ * a qualified rule written against the official branch inert here, and qualified-only makes
+ * `/review` and `Skill("review")` stop working for every project skill.
+ *
+ * P7a (D19): Winter's OWN value, derived rather than spelled. A session's is
+ * `SkillIndexOptions.brand.projectDirName`.
  */
-export const PROJECT_PLUGIN_NAME = ".winter";
+export const PROJECT_PLUGIN_NAME = WINTER_BRAND.projectDirName;
 
 export interface SkillMeta {
   name: string;
@@ -58,15 +62,16 @@ export interface PluginSkillContribution {
 export interface SkillIndexOptions {
   cwd: string;
   /**
-   * The RESOLVED `~/.winter` root -- i.e. what `resolveWinterHome(env)` / `resolveProductionWinterHome`
-   * return, which is `WINTER_HOME` when set and `<os home>/.winter` otherwise.
+   * The RESOLVED winter root -- i.e. what `resolveWinterHome(env, brand)` /
+   * `resolveProductionWinterHome` return, which is `<PREFIX>HOME` when set and
+   * `<os home>/<brand.homeDirName>` otherwise.
    *
    * NAMED `winterHome`, NOT `home`, DELIBERATELY. Two conventions exist side by side in this
    * codebase and they are not interchangeable: `ResolveSettingsDetailedOptions.winterHome` is the
-   * `.winter` root itself, while `LoadAgentDefinitionsOptions.home` is the OS home directory and
-   * appends `.winter` internally. Only the first can honour `WINTER_HOME` -- an override may point
-   * anywhere and need not be named `.winter` at all -- and WS-01 §2.5 makes `WINTER_HOME` the
-   * user tier's address. A field called `home` here would be handed
+   * resolved root itself, while `LoadAgentDefinitionsOptions.home` is the OS home directory and
+   * appends the dot-dir internally. Only the first can honour `<PREFIX>HOME` -- an override may
+   * point anywhere and need not be named after the brand at all -- and WS-01 §2.5 makes
+   * `<PREFIX>HOME` the user tier's address. A field called `home` here would be handed
    * `resolveProductionWinterHome(...)` by a caller reading the settings convention and
    * `ctx.home`/`homedir()` by one reading the agents convention; one of the two silently finds an
    * empty user tier. The name is the only thing that stops that.
@@ -74,6 +79,8 @@ export interface SkillIndexOptions {
    * ALWAYS explicit -- this module never reads `process.env` (a shared-process `bun test` would race).
    */
   winterHome: string;
+  /** P7a (D19): the session's brand -- the project dot-dir and its qualified-skill prefix. Omitted = `WINTER_BRAND`. */
+  brand?: Pick<BrandProfile, "projectDirName"> | undefined;
   /** Omitted = all three tiers; `[]` = filesystem discovery disabled. */
   settingSources?: SettingSource[] | undefined;
   plugins?: readonly PluginSkillContribution[] | undefined;
@@ -107,7 +114,7 @@ function sourcesAllow(settingSources: SettingSource[] | undefined, tier: Setting
 
 /**
  * Discovery order IS precedence order (first occurrence of a name wins), matching Norma's
- * `SkillStore.discover`: project (nearest .winter first) > user > self > plugin > builtin. A builtin
+ * `SkillStore.discover`: project (nearest project dot-dir first) > user > self > plugin > builtin. A builtin
  * is therefore shadowable by any other tier, which is the point of shipping one.
  */
 function discover(opts: SkillIndexOptions): { all: DiscoveredSkill[]; errors: SkillScanError[] } {
@@ -119,7 +126,7 @@ function discover(opts: SkillIndexOptions): { all: DiscoveredSkill[]; errors: Sk
   };
   const pluginOnly = isStrictPluginOnly(opts.strictPluginOnlyCustomization, "skills");
   if (!pluginOnly && sourcesAllow(opts.settingSources, "project")) {
-    for (const root of projectSkillRoots(opts.cwd)) take(scanSkillRoot(root, "project"));
+    for (const root of projectSkillRoots(opts.cwd, opts.brand)) take(scanSkillRoot(root, "project"));
   }
   if (!pluginOnly && sourcesAllow(opts.settingSources, "user")) {
     const userRoot = join(opts.winterHome, "skills");
@@ -178,7 +185,8 @@ export class SkillIndex {
         continue;
       }
       if (byName.has(found.name)) continue; // first occurrence wins
-      const aliases = found.source === "project" ? [`${PROJECT_PLUGIN_NAME}:${found.name}`] : [];
+      const projectPluginName = (opts.brand ?? WINTER_BRAND).projectDirName;
+      const aliases = found.source === "project" ? [`${projectPluginName}:${found.name}`] : [];
       const meta: SkillMeta = {
         name: found.name,
         description: found.description,
@@ -190,7 +198,7 @@ export class SkillIndex {
       };
       entries.push(meta);
       byName.set(meta.name, meta);
-      // An alias never DISPLACES a real name: if `.winter:review` is already a plugin skill's own
+      // An alias never DISPLACES a real name: if `<projectDir>:review` is already a plugin skill's own
       // primary name, the project skill keeps its bare identity and simply has no alias slot.
       for (const alias of aliases) if (!byName.has(alias)) byName.set(alias, meta);
     }

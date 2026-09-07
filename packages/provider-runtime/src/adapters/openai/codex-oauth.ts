@@ -33,6 +33,7 @@ import { refreshOauthMaterial } from "../oauth/refresh.ts";
 import { QuotaManager, quotaEvent } from "./quota.ts";
 import { buildResponsesBody, privilegedHeaders, streamResponsesTurn, type ResponsesTurnPlan } from "./responses.ts";
 import { identityFor } from "./shared.ts";
+import { activeWinterIdentity } from "../../identity.ts";
 import {
   EventQueue,
   assertRepresentableTools,
@@ -299,7 +300,9 @@ function codexHeaders(policy: ResponsesTurnPlan["endpoint"]["policy"], tokens: E
   return buildHeaders({
     policy,
     protocol: { "content-type": "application/json", accept: "text/event-stream", "OpenAI-Beta": CODEX.headers["OpenAI-Beta"]!, authorization: `Bearer ${tokens.accessToken}` },
-    privileged: { ...privilegedHeaders(options), originator: CODEX.headers.originator!, ...(tokens.accountId !== undefined ? { "chatgpt-account-id": tokens.accountId } : {}) },
+    // P7a (D19): the RUNNING product's originator, not the frozen table's — `CODEX.headers.originator`
+    // is the default profile's value, evaluated at module load before any brand exists.
+    privileged: { ...privilegedHeaders(options), originator: activeWinterIdentity().codexOriginator, ...(tokens.accountId !== undefined ? { "chatgpt-account-id": tokens.accountId } : {}) },
     identity: identityFor(options, ctx),
     userSupplied: ctx.connection.headers,
   });

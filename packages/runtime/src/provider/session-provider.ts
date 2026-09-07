@@ -342,7 +342,7 @@ export function createProductionCredentialStore(config: RuntimeConfig, env: Reco
   //
   // Adapted at the composition site rather than fixed in either file: each is correct in isolation,
   // and this is the one place that has to pick a reading.
-  const keychain = createKeychainCredentialStore(config.keychainService);
+  const keychain = createKeychainCredentialStore(resolveSessionKeychainService(config));
   return createCompositeCredentialStore([
     {
       ...keychain,
@@ -473,8 +473,33 @@ function descriptorFor(catalog: WinterCatalog, modelKey: string): WinterModelDes
  * `winter_provider`), and the first generation lands on R6-F's pinned result shape before `query()`
  * throws. `resolutionError` carries the reason so an entrypoint can also report it on stderr.
  */
+/**
+ * P7a (D19 / R-7a-8) -- THE KEYCHAIN BLOCK'S SINGLE SOURCE.
+ *
+ * A FUNCTION, and exported, because the answer is needed in two places -- the credential store this
+ * session opens (`buildCredentialStore`) and the `service` a cross-provider record's `authRef`
+ * carries (`describeTargetMaterial`) -- and the two naming different services would write a
+ * credential where nothing will look for it.
+ *
+ * `brand.keychainService` is the source. `config.keychainService` is the DEPRECATED standalone
+ * alias, and the wrapper emits it only when the session actually chose a service (branded, or the
+ * option set) -- so a branded host that set `brand.keychainService` and nothing else leaves the
+ * top-level key ABSENT, and a reader of that key alone silently opened WINTER's own service for a
+ * reuser whose whole profile said otherwise. The two surfaces AGREE by construction whenever both
+ * are present (`query()` folds the deprecated option INTO the profile before resolving), so
+ * preferring the profile can never contradict a host that used the old field.
+ *
+ * `undefined` means "the session chose none" -- `createKeychainCredentialStore`'s own default
+ * applies, and the `authRef` carries no `service` key at all (which is what keeps an unbranded
+ * session's `authRef` byte-identical to before P7a).
+ */
+export function resolveSessionKeychainService(config: RuntimeConfig): string | undefined {
+  return config.brand?.keychainService ?? config.keychainService;
+}
+
 export function buildSessionProvider(opts: SessionProviderOptions): SessionProviderWiring {
   const { config, env } = opts;
+  const sessionKeychainService = resolveSessionKeychainService(config);
   const catalog = opts.catalog ?? loadCatalog();
   const credentials = opts.credentials ?? createProductionCredentialStore(config, env, opts.home ?? env["HOME"] ?? "");
   const registry = createRegistry(catalog);
@@ -553,7 +578,14 @@ export function buildSessionProvider(opts: SessionProviderOptions): SessionProvi
       return { authRef: config.provider?.authRef ?? { kind: "none" }, ...(connection !== undefined ? { connection } : {}), source: "session", crossProvider };
     }
     return {
-      authRef: providerCredentialRef({ providerId: resolved.providerId, accountId: DEFAULT_PROVIDER_ACCOUNT_ID, ...(config.keychainService !== undefined ? { service: config.keychainService } : {}) }),
+      // P7a (D19 / R-7a-8) -- KEYCHAIN BLOCK, second half. The SAME single source the store above
+      // reads: a cross-provider record and the store that opens it must never name different
+      // services, or the credential is written where nothing will look for it.
+      authRef: providerCredentialRef({
+        providerId: resolved.providerId,
+        accountId: DEFAULT_PROVIDER_ACCOUNT_ID,
+        ...(sessionKeychainService !== undefined ? { service: sessionKeychainService } : {}),
+      }),
       ...(connection !== undefined ? { connection } : {}),
       source: "provider-record",
       crossProvider,
