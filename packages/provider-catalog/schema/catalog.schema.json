@@ -1,13 +1,13 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://winter.yanling.dev/schema/provider-catalog/v1.json",
+  "$id": "https://winter.yanling.dev/schema/provider-catalog/v2.json",
   "title": "WinterCatalog",
   "description": "WS-13 §4's inert provider catalog. This schema is the CROSS-LANGUAGE contract (Lane X's generator, the Swift decoder, any external consumer); `packages/provider-catalog/src/validate.ts` is the in-repo gate and enforces four structural invariants JSON Schema cannot express on its own — global uniqueness of provider ids and model keys, per-provider uniqueness of `upstreamId ∪ aliases`, that every model's providerId names a provider present in the same document, and the secrets floor. Both must pass; neither substitutes for the other.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "catalogVersion", "upstream", "providers", "models"],
+  "required": ["schemaVersion", "catalogVersion", "upstream", "providers", "models", "families"],
   "properties": {
-    "schemaVersion": { "const": 1 },
+    "schemaVersion": { "const": 2, "description": "2 since WS-13c: every model row carries `modelFamily`/`canonicalModelId` and the document carries `families`." },
     "catalogVersion": { "type": "string", "minLength": 1, "description": "\"0.0.0-seed\" marks the hand-authored seed; otherwise \"<upstream tag>+<extractorVersion>\"." },
     "upstream": {
       "type": "object",
@@ -23,7 +23,8 @@
       }
     },
     "providers": { "type": "array", "items": { "$ref": "#/$defs/WinterProviderDescriptor" } },
-    "models": { "type": "array", "items": { "$ref": "#/$defs/WinterModelDescriptor" } }
+    "models": { "type": "array", "items": { "$ref": "#/$defs/WinterModelDescriptor" } },
+    "families": { "type": "array", "items": { "$ref": "#/$defs/ModelFamilyDescriptor" }, "description": "WS-13c §1: the vendor lineups, generated from overlay/families.json and sorted by `id`. MAY be empty (a layer validated standalone has none); the `claude` reservation is enforced only when a family with that id is present." }
   },
   "$defs": {
     "EvidenceSource": { "enum": ["official-doc", "live-discovery", "live-probe", "upstream-static", "user-override", "local-override", "winter-default"] },
@@ -138,11 +139,13 @@
     "WinterModelDescriptor": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["key", "providerId", "upstreamId", "displayName", "aliases", "endpoints", "inputModalities", "outputModalities", "toolCalling", "nativeTools", "unsupportedParameters", "status"],
+      "required": ["key", "providerId", "upstreamId", "modelFamily", "canonicalModelId", "displayName", "aliases", "endpoints", "inputModalities", "outputModalities", "toolCalling", "nativeTools", "unsupportedParameters", "status"],
       "properties": {
         "key": { "type": "string", "minLength": 1, "description": "\"<providerId>/<upstreamId>\" (WS-13 §8.3). Split on the FIRST slash: an OpenRouter upstreamId is itself slash-bearing." },
         "providerId": { "type": "string", "minLength": 1 },
         "upstreamId": { "type": "string", "minLength": 1 },
+        "modelFamily": { "type": "string", "minLength": 1, "description": "WS-13c §1: the family id this model belongs to, or \"other\". DERIVED at build by `stampFamilyFields`; an overlay row MAY set it as an override." },
+        "canonicalModelId": { "type": "string", "minLength": 1, "description": "WS-13c §1: the vendor's model identity with the provider's spelling removed. DERIVED at build; an overlay row MAY set it as an override." },
         "displayName": { "type": "string", "minLength": 1 },
         "aliases": { "type": "array", "items": { "type": "string", "minLength": 1 } },
         "endpoints": { "type": "array", "minItems": 1, "items": { "enum": ["chat", "responses", "embeddings", "image", "audio", "video"] } },
@@ -177,6 +180,49 @@
         },
         "unsupportedParameters": { "type": "array", "items": { "type": "string", "minLength": 1 } },
         "status": { "enum": ["candidate", "experimental", "supported", "deprecated", "blocked"] }
+      }
+    },
+    "FamilySlot": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "WS-13c §2: one ranked option in a family's lineup. Position in the array is the option ORDER, not a strength claim — `description` and `reason` carry the meaning.",
+      "required": ["name", "canonicalModelId", "description", "reason", "basis", "citation", "status"],
+      "properties": {
+        "name": { "type": "string", "pattern": "^[a-z0-9][a-z0-9.-]{0,31}$", "description": "The facing enum token. `fable`/`opus`/`sonnet`/`haiku` are RESERVED to the `claude` family (D25)." },
+        "canonicalModelId": { "type": "string", "minLength": 1, "description": "Must resolve to at least one model row whose `status` is neither `blocked` nor `deprecated`." },
+        "provider": { "type": "string", "minLength": 1, "description": "Pins a serving provider id (WS-13c §4 step 4); it must survive the credential/enablement filter or the slot is unservable." },
+        "description": { "type": "string", "minLength": 1, "description": "No currency amounts — pricing lives on model rows with its own evidence." },
+        "reason": { "type": "string", "minLength": 1 },
+        "basis": { "enum": ["user-ruling", "vendor-doc", "winter-curated"] },
+        "citation": { "type": "string", "minLength": 1 },
+        "status": { "enum": ["candidate", "supported"] }
+      }
+    },
+    "ModelFamilyDescriptor": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "WS-13c §1: a vendor lineup, independent of the provider that serves it. `matchers` are anchored RegExp SOURCES over `canonicalModelId`, first match wins, authored DISJOINT so the pipeline's sort-by-id can never change a row's stamp.",
+      "required": ["id", "displayName", "vendor", "vendorProviders", "matchers", "slots", "status", "citation"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,31}$" },
+        "displayName": { "type": "string", "minLength": 1 },
+        "vendor": { "type": "string", "minLength": 1 },
+        "vendorProviders": { "type": "array", "items": { "type": "string", "minLength": 1 }, "description": "ORDERED (WS-13c §4 step 3-i): a configured subscription row precedes a token row of the same vendor." },
+        "matchers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["pattern", "note"],
+            "properties": {
+              "pattern": { "type": "string", "minLength": 1 },
+              "note": { "type": "string" }
+            }
+          }
+        },
+        "slots": { "type": "array", "maxItems": 4, "items": { "$ref": "#/$defs/FamilySlot" }, "description": "0-4, unique names. A family with zero slots is legal — it is listed under \"more options\" only." },
+        "status": { "enum": ["candidate", "supported"] },
+        "citation": { "type": "string", "minLength": 1 }
       }
     }
   }

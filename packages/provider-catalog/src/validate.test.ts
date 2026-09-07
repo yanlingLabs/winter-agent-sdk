@@ -442,6 +442,9 @@ describe("JSON Schema / validator enum parity (Minor 9)", () => {
     ["pricingBases", "$defs.WinterProviderDescriptor.properties.pricingBasis"],
     ["admissionBases", "$defs.WinterProviderDescriptor.properties.admission.properties.basis"],
     ["admissionTiers", "$defs.WinterProviderDescriptor.properties.admission.properties.tier"],
+    // WS-13c §2's two slot vocabularies, on the same footing as every other closed set here.
+    ["slotBases", "$defs.FamilySlot.properties.basis"],
+    ["slotStatuses", "$defs.FamilySlot.properties.status"],
   ];
 
   test("every vocabulary the validator enforces is the SAME SET the schema declares", () => {
@@ -577,5 +580,63 @@ describe("WS-13b §1: rows are evidence", () => {
     // validator that rejected every `identityHeaders` value, which is a different bug.
     const catalog = baseCatalog({ providers: [baseProvider({ identityHeaders: { "Client-Agent": "winter-agent-sdk:<version>:https://github.com/yanlingLabs/winter-agent-sdk" } })] });
     expect(validateCatalog(catalog).ok).toBe(true);
+  });
+});
+
+// --- WS-13c §1 (R13c-3): the family layer's own integrity, enforced by the validator ---------------
+//
+// Every rule below is one the CATALOG must satisfy and that nothing else can catch: the JSON Schema
+// is never executed in this repo, and a reviewer reading `overlay/families.json` cannot see that a
+// slot points at a model row nobody ships. The Claude reservation in particular is D25's "no false
+// information" rule made mechanical — an OpenAI session must never be offered `fable`.
+describe("WS-13c families (schemaVersion 2)", () => {
+  test("a catalog without `families` fails with code families-missing", () => {
+    const c = validCatalog(); delete (c as { families?: unknown }).families;
+    const r = validateCatalog(c); expect(r.ok).toBe(false);
+    expect(!r.ok && r.errors.some((e) => e.code === "families-missing")).toBe(true);
+  });
+  test("the claude family must carry exactly fable, opus, sonnet, haiku in that order", () => {
+    const c = validCatalog(); c.families.find((f) => f.id === "claude")!.slots.reverse();
+    const r = validateCatalog(c); expect(!r.ok && r.errors.some((e) => e.code === "claude-slots-pinned")).toBe(true);
+  });
+  test("a reserved Claude name on another family is refused", () => {
+    const c = validCatalog(); c.families.find((f) => f.id === "gpt")!.slots[0]!.name = "opus";
+    const r = validateCatalog(c); expect(!r.ok && r.errors.some((e) => e.code === "slot-name-reserved")).toBe(true);
+  });
+  test("a slot whose canonical model has no row is refused", () => {
+    const c = validCatalog(); c.families.find((f) => f.id === "gpt")!.slots[0]!.canonicalModelId = "gpt-9-nowhere";
+    const r = validateCatalog(c); expect(!r.ok && r.errors.some((e) => e.code === "slot-model-missing")).toBe(true);
+  });
+  test("five slots, duplicate names, a bad token, a currency amount, a bad family id", () => {
+    const c = validCatalog(); const gpt = c.families.find((f) => f.id === "gpt")!;
+    gpt.slots = [...gpt.slots, ...gpt.slots, gpt.slots[0]!]; // 5 with duplicates
+    let r = validateCatalog(c); expect(!r.ok && r.errors.some((e) => e.code === "slots-too-many")).toBe(true);
+    expect(!r.ok && r.errors.some((e) => e.code === "slot-name-duplicate")).toBe(true);
+    const d = validCatalog(); d.families.find((f) => f.id === "gpt")!.slots[0]!.name = "Astra"; r = validateCatalog(d); expect(!r.ok && r.errors.some((e) => e.code === "slot-name-invalid")).toBe(true);
+    const e = validCatalog(); e.families.find((f) => f.id === "gpt")!.slots[0]!.description = "costs $10 per 1M"; r = validateCatalog(e); expect(!r.ok && r.errors.some((e2) => e2.code === "slot-description-currency")).toBe(true);
+    const g = validCatalog(); g.families.find((f) => f.id === "gpt")!.id = "GPT"; r = validateCatalog(g); expect(!r.ok && r.errors.some((e2) => e2.code === "invalid" && e2.path.endsWith(".id"))).toBe(true);
+    const h = validCatalog(); h.families.push({ ...h.families[1]!, slots: [] }); r = validateCatalog(h); expect(!r.ok && r.errors.some((e2) => e2.code === "family-id-duplicate")).toBe(true);
+  });
+  test("every model row carries modelFamily and canonicalModelId, and modelFamily names a family or other", () => {
+    const c = validCatalog(); (c.models[0] as { modelFamily: string }).modelFamily = "nope";
+    const r = validateCatalog(c); expect(!r.ok && r.errors.some((e) => e.code === "model-family-unknown")).toBe(true);
+    const d = validCatalog(); delete (d.models[0] as { canonicalModelId?: string }).canonicalModelId;
+    expect(validateCatalog(d).ok).toBe(false);
+    const errs = validateCatalog(d); expect(!errs.ok && errs.errors.some((e) => e.code === "model-canonical-missing")).toBe(true);
+  });
+  test("a slot `provider` that serves no row with that canonical id is refused", () => {
+    const c = validCatalog(); c.families.find((f) => f.id === "gpt")!.slots[0]!.provider = "nobody";
+    const r = validateCatalog(c); expect(!r.ok && r.errors.some((e) => e.code === "slot-provider-unserving")).toBe(true);
+  });
+  test("schemaVersion 1 is refused outright — the family fields are not optional", () => {
+    const c = validCatalog() as unknown as { schemaVersion: number };
+    c.schemaVersion = 1;
+    const r = validateCatalog(c); expect(!r.ok && r.errors.some((e) => e.code === "schema-version")).toBe(true);
+  });
+  test("a family with NO claude entry validates — the reservation is conditional, not a presence rule", () => {
+    // The upstream layer's own standalone check and every pre-WS-13c fixture carry `families: []`.
+    // Requiring `claude` would have made the validator refuse the very documents this repo already
+    // hands it, so the pin is "IF a claude family exists, its slots are exactly the four, in order".
+    expect(validateCatalog(baseCatalog()).ok).toBe(true);
   });
 });
