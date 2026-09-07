@@ -1663,6 +1663,7 @@
       "key": "kimi-coding/k3",
       "providerId": "kimi-coding",
       "upstreamId": "k3",
+      "canonicalModelId": "kimi-k3",
       "displayName": "Kimi K3 (Kimi Code)",
       "aliases": [],
       "$comment": "The coding plan's own model ids, which DIFFER from the platform's (`kimi-for-coding`, not `kimi-k2.7-code`) — which is exactly why the two rows are separate providers rather than one with two endpoints. `supportsVision` is deliberately unset upstream on this static fallback catalog, so `inputModalities` stays text-only rather than borrowing the platform row's flag.",

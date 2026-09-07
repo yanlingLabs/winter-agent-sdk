@@ -28,7 +28,7 @@ import { scanForSecrets, validateCatalog } from "../packages/provider-catalog/sr
 import type { WinterModelDescriptor, WinterProviderDescriptor } from "../packages/provider-catalog/src/types.ts";
 import { fetchUpstream, type AllowlistPath, type MaterializedFile, type UpstreamPin } from "../packages/provider-catalog/src/extract/fetch.ts";
 import { extractAll, type LiteralValue, type Rejection } from "../packages/provider-catalog/src/extract/literal-extractor.ts";
-import { ADAPTER_PROTOCOL, buildUpstreamLayer, ExtractionRefusal, mergeLayers, OVERLAY_FILES, type Allowlist, type UpstreamLayer } from "../packages/provider-catalog/src/extract/merge.ts";
+import { ADAPTER_PROTOCOL, buildUpstreamLayer, ExtractionRefusal, mergeLayers, OVERLAY_FILES, type Allowlist, type UnstampedModelDescriptor, type UpstreamLayer } from "../packages/provider-catalog/src/extract/merge.ts";
 import { buildExtractionManifest, computeDenominator, type DenominatorReport } from "../packages/provider-catalog/src/extract/ledgers.ts";
 
 const REPO = new URL("../", import.meta.url);
@@ -274,7 +274,10 @@ function writeOutputs(outcome: ExtractionOutcome, target: { thirdParty: string; 
  *
  * Exported so the offline gate and its tests read one rule.
  */
-export function findEndpointContradictions(catalog: { providers: WinterProviderDescriptor[]; models: WinterModelDescriptor[] }): string[] {
+// `models` is the UNSTAMPED row shape (WS-13c): this gate reads `key`/`providerId`/`endpoints`
+// only, and it runs over the upstream LAYER — whose rows carry no family fields — as well as over
+// the merged catalog, whose rows do. A full `WinterModelDescriptor[]` is assignable to it.
+export function findEndpointContradictions(catalog: { providers: readonly WinterProviderDescriptor[]; models: readonly UnstampedModelDescriptor[] }): string[] {
   const byId = new Map(catalog.providers.map((p) => [p.id, p]));
   const out: string[] = [];
   for (const model of catalog.models) {
@@ -381,7 +384,9 @@ function runOffline(write = false): number {
     console.error(`provider-source-sync --offline: ${relative(fileURLToPath(REPO), UPSTREAM_LAYER)} is missing — run \`bun run scripts/provider-source-sync.ts\` (network) to produce it`);
     return 1;
   }
-  const layer = readJson<{ providers?: WinterProviderDescriptor[]; models?: WinterModelDescriptor[] }>(UPSTREAM_LAYER);
+  // WS-13c: the committed layer's rows carry NO `modelFamily`/`canonicalModelId` — the stamp is a
+  // merge-time step, and a layer that pre-filled them would freeze its own guess as an override.
+  const layer = readJson<{ providers?: WinterProviderDescriptor[]; models?: UnstampedModelDescriptor[] }>(UPSTREAM_LAYER);
   const pin = readJson<{ upstream: { tag: string; tagObject: string; commit: string; extractorVersion: string; overlayVersion: string } }>(OUTPUT_PIN).upstream;
   const standalone = mergeLayers({ providers: layer.providers ?? [], models: layer.models ?? [] }, { providers: [], models: [] }, pin);
   const result = validateCatalog(standalone);

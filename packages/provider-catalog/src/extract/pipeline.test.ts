@@ -763,3 +763,48 @@ describe("WS-13b §2: the API root, and the refusals that keep it honest", () =>
     }
   });
 });
+
+// --- WS-13c: ONE stamper, TWO assemblers ---------------------------------------------------------
+//
+// `scripts/provider-catalog.ts`'s `buildCatalog` writes the committed catalog; `mergeLayers` (above)
+// mirrors its semantics so this package can validate a layer before the script runs. That mirroring
+// is the standing risk merge.ts's own header names — "two serializers would be two chances to
+// drift" — and WS-13c doubles the surface by adding a derived stamp and a third overlay to both.
+//
+// So the check is not "both call `stampFamilyFields`" (a reader can see that). It is that the two,
+// fed the REAL committed layers, produce byte-identical documents. A stamp applied in one and not
+// the other, a families array sorted in one and not the other, or a merge order that diverged would
+// all fail here rather than at the day someone removes an overlay shadow.
+describe("WS-13c: the two assemblers agree byte-for-byte on the real layers", () => {
+  test("`buildCatalog()` and `mergeLayers(...)` produce the identical catalog", async () => {
+    const { buildCatalog, stripComments } = await import("../../../../scripts/provider-catalog.ts");
+    const read = async (name: string): Promise<Record<string, unknown>> =>
+      stripComments((await Bun.file(new URL(name, import.meta.url)).json()) as Record<string, unknown>);
+
+    const overlayProviders = (await read("../../overlay/providers.json"))["providers"] as never[];
+    const overlayModels = (await read("../../overlay/models.json"))["models"] as never[];
+    const overlayFamilies = (await read("../../overlay/families.json"))["families"] as never[];
+    const layer = await read("../../generated/upstream-layer.json");
+    const pin = (await read("../../UPSTREAM.json"))["upstream"] as never;
+
+    const viaMerge = mergeLayers(
+      { providers: (layer["providers"] ?? []) as never[], models: (layer["models"] ?? []) as never[] },
+      { providers: overlayProviders, models: overlayModels },
+      pin,
+      overlayFamilies,
+    );
+    expect(JSON.stringify(viaMerge)).toBe(JSON.stringify(buildCatalog().catalog));
+    // ...and the thing that makes the comparison worth making: the stamp actually ran.
+    expect(viaMerge.families.length).toBeGreaterThanOrEqual(15);
+    expect(viaMerge.models.every((m) => m.canonicalModelId.length > 0 && m.modelFamily.length > 0)).toBe(true);
+  });
+
+  test("with NO families every row stamps `other` — the standalone gate's shape, and a legal catalog", () => {
+    const upstream = buildUpstreamLayer(buildInput(allowlistWith([ACME_ROW])));
+    const merged = mergeLayers(upstream, { providers: [], models: [] }, { tag: "v9", tagObject: "t", commit: COMMIT, extractorVersion: "e", overlayVersion: "o" });
+    expect(merged.schemaVersion).toBe(2);
+    expect(merged.families).toEqual([]);
+    for (const model of merged.models) expect([model.key, model.modelFamily]).toEqual([model.key, "other"]);
+    expect(validateCatalog(merged).ok).toBe(true);
+  });
+});
