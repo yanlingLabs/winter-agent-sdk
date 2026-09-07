@@ -121,3 +121,52 @@ describe("settings.providers.<id>.enabled (WS-13b R6b-7)", () => {
     expect((await resolve())["qoder"]).toEqual({ enabled: true });
   });
 });
+
+// ================================================================================================
+// P7a spine, Step 3 (D19): THE WHOLE CASCADE UNDER A REUSER'S BRAND.
+//
+// The unit tests in paths.test.ts prove `resolveWinterHome` derives one env name. This proves the
+// thing that actually matters: that `resolveSettingsDetailed` — the function every session's policy
+// comes out of — reads the reuser's OWN project directory and the reuser's OWN home env var, and
+// that Winter's names do nothing for it. A brand threaded into `settingsPathFor` but not into
+// `resolveSettingsDetailed`'s own path options would pass every other test in this repository.
+// ================================================================================================
+describe("P7a (D19): the settings cascade under a non-Winter brand", () => {
+  const ACME = { envPrefix: "ACME_", homeDirName: ".acme", projectDirName: ".acme" } as const;
+
+  test("the PROJECT tier is read from <cwd>/.acme/, not <cwd>/.winter/", async () => {
+    mkdirSync(join(cwd, ".acme"), { recursive: true });
+    writeFileSync(join(cwd, ".acme", "settings.json"), JSON.stringify({ providers: { deepseek: { enabled: false } } }));
+    // The Winter-named directory holds the OPPOSITE answer, so a resolver that ignored the brand
+    // would not merely miss the acme file — it would report the winter one, visibly.
+    writeProject({ providers: { deepseek: { enabled: true } } });
+    const detailed = await resolveSettingsDetailed({ cwd, winterHome: home, env: {}, brand: ACME });
+    expect(providerSettingsFrom(detailed.effective)["deepseek"]?.enabled).toBe(false);
+    expect(detailed.sources.map((s) => s.source)).toContain("project");
+  });
+
+  test("the LOCAL tier follows the brand too, and still outranks the project tier", async () => {
+    mkdirSync(join(cwd, ".acme"), { recursive: true });
+    writeFileSync(join(cwd, ".acme", "settings.json"), JSON.stringify({ providers: { qoder: { enabled: true } } }));
+    writeFileSync(join(cwd, ".acme", "settings.local.json"), JSON.stringify({ providers: { qoder: { enabled: false } } }));
+    const detailed = await resolveSettingsDetailed({ cwd, winterHome: home, env: {}, brand: ACME });
+    expect(providerSettingsFrom(detailed.effective)["qoder"]?.enabled).toBe(false);
+  });
+
+  test("the USER tier resolves through ACME_HOME — and WINTER_HOME is not a fallback for it", async () => {
+    // No explicit `winterHome`: the whole point is that the env NAME is derived. The winter-named
+    // variable points somewhere with a contradicting file; if it were honoured, it would win here.
+    const acmeHome = mkdtempSync(join(tmpdir(), "winter-p7a-acme-home-"));
+    cleanup.push(acmeHome);
+    writeFileSync(join(acmeHome, "settings.json"), JSON.stringify({ providers: { openai: { enabled: false } } }));
+    writeUser({ providers: { openai: { enabled: true } } });
+    const detailed = await resolveSettingsDetailed({ cwd, env: { ACME_HOME: acmeHome, WINTER_HOME: home }, brand: ACME });
+    expect(providerSettingsFrom(detailed.effective)["openai"]?.enabled).toBe(false);
+  });
+
+  test("with NO brand supplied, every path is exactly Winter's — the default is byte-identical to before P7a", async () => {
+    writeProject({ providers: { deepseek: { enabled: false } } });
+    const detailed = await resolveSettingsDetailed({ cwd, winterHome: home, env: {} });
+    expect(providerSettingsFrom(detailed.effective)["deepseek"]?.enabled).toBe(false);
+  });
+});

@@ -28,7 +28,7 @@ import pkg from "../package.json";
  * field carries Winter's name too; it never carries somebody else's.
  */
 export function winterUserAgent(): string {
-  return `winter-agent-sdk/${pkg.version}`;
+  return `${DEFAULT_PRODUCT}/${pkg.version}`;
 }
 
 // --- the per-row second identity field (WS-13b §7/§8.4, fix-wave R-FW-2) ---------------------------
@@ -55,6 +55,44 @@ export type IdentityHeaderLookup = (providerId: string) => Record<string, string
 
 /** The token a row's value carries in place of this build's version, so a release cannot leave a stale number on the wire. */
 const VERSION_PLACEHOLDER = "<version>";
+/**
+ * P7a (D19): the token a row's value carries in place of the running brand's PRODUCT NAME.
+ *
+ * A row that hard-codes `winter-agent-sdk` is honest for Winter and a lie for a reuser — it would
+ * put Winter's identity on a request the reuser's product made, in the one field whose entire
+ * purpose is honest identity. `<product>` is what makes a catalog row truthful under every brand.
+ */
+const PRODUCT_PLACEHOLDER = "<product>";
+
+/**
+ * The DEFAULT product token when no brand has been threaded to this module.
+ *
+ * Lane A replaces this constant's use with `RuntimeConfig.brand.packageName` — that is the whole
+ * remaining half of the identity sweep. Until then every substitution resolves to Winter's own
+ * name, which is exactly today's behaviour, so the placeholder is inert rather than wrong.
+ */
+const DEFAULT_PRODUCT = "winter-agent-sdk";
+
+/** What a row's identity-header value is rendered against: this build's version and this run's product. */
+export interface IdentityRenderContext {
+  version: string;
+  product: string;
+}
+
+/**
+ * Substitutes BOTH placeholders in one row's declared identity headers.
+ *
+ * The seam Lane A needs, extracted from `winterIdentityHeaders` so the brand can be threaded in one
+ * place: everything about WHICH headers a row declares stays in the lookup, and everything about
+ * WHAT the tokens resolve to arrives here as data. A caller with no brand still gets today's answer.
+ */
+export function renderIdentityHeaders(declared: Record<string, string>, ctx: IdentityRenderContext): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [name, value] of Object.entries(declared)) {
+    out[name] = value.split(PRODUCT_PLACEHOLDER).join(ctx.product).split(VERSION_PLACEHOLDER).join(ctx.version);
+  }
+  return out;
+}
 
 /** Indexes a catalog's `identityHeaders` by provider id. Rows without any are simply absent. */
 export function identityHeaderLookup(catalog: WinterCatalog): IdentityHeaderLookup {
@@ -66,7 +104,7 @@ export function identityHeaderLookup(catalog: WinterCatalog): IdentityHeaderLook
 }
 
 /**
- * The identity headers for one row, with `<version>` substituted — or `{}`.
+ * The identity headers for one row, with `<product>` and `<version>` substituted — or `{}`.
  *
  * `{}` for a row with none, for an adapter constructed without a lookup (every unit fixture), and
  * for an unknown id. An absent second identity field is the normal case: only a vendor that NAMES
@@ -75,7 +113,5 @@ export function identityHeaderLookup(catalog: WinterCatalog): IdentityHeaderLook
 export function winterIdentityHeaders(lookup: IdentityHeaderLookup | undefined, providerId: string): Record<string, string> {
   const declared = lookup?.(providerId);
   if (declared === undefined) return {};
-  const out: Record<string, string> = {};
-  for (const [name, value] of Object.entries(declared)) out[name] = value.split(VERSION_PLACEHOLDER).join(pkg.version);
-  return out;
+  return renderIdentityHeaders(declared, { version: pkg.version, product: DEFAULT_PRODUCT });
 }

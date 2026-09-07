@@ -9,5 +9,9 @@
   "exports": {
     ".": "./src/index.ts",
     "./families": "./src/families.ts"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com",
+    "access": "restricted"
   }
 }

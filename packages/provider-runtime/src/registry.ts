@@ -75,7 +75,20 @@ export type ResolutionErrorCode =
    * vendor the model meant, and a model copying a name it saw in older context is exactly the case
    * acceptance (b) makes work when the name IS unique.
    */
-  | "ambiguous-slot-name";
+  | "ambiguous-slot-name"
+  /**
+   * P7a carry (Lane D): the row is a PER-TENANT provider (`requiresUserEndpoint`) and this session
+   * supplied no endpoint of its own, so there is nothing to send the request to.
+   *
+   * A REFUSAL, and it has to be one: such a row ships with no usable `defaultEndpoints.api` at all,
+   * so the alternatives are a request to a literal `<resource>` placeholder host (a confusing DNS
+   * failure) or a silent fall back to some other provider, which WS-13 §9 forbids. The message
+   * carries the row's `endpointTemplate` so the host can tell the user exactly what to paste.
+   *
+   * DECLARED AT P7a'S SPINE so producer and consumer can land in either order; nothing raises it
+   * until Lane D's `connectionForProvider` does.
+   */
+  | "endpoint-required";
 
 export class WinterProviderResolutionError extends Error {
   readonly code: ResolutionErrorCode;

@@ -551,9 +551,10 @@ export function unregisterToolForTest(canonicalName: string): void {
 // tool lists (WS-09 §2.1's seven-state model; report §57/§64: "the tool registry MUST support live
 // mutation... without a session restart"). They own a SEPARATE bookkeeping index (below) so a
 // same-server re-registration can be told apart from a name that pre-exists via some OTHER
-// mechanism entirely (a P3 static stub, most notably `mcp__winter__advisor` -- see winter-server.ts,
-// which deliberately builds a real MCP `McpServer` object instead of calling registerMcpServerTools,
-// specifically to avoid this exact collision).
+// mechanism entirely (a static WS-06 descriptor stub). The historical instance was the advisor's
+// server-qualified twin, which P7a/D29 retired in favour of the bare native name -- see
+// mcp/winter-server.ts, which builds a real `McpServer` object directly rather than calling
+// registerMcpServerTools, and which therefore cannot collide with a static stub at all.
 //
 // Set-replace, not per-tool upsert: EVERY call to registerMcpServerTools(server, tools, opts)
 // replaces server's ENTIRE owned name set with exactly `tools` -- a name this server owned before

@@ -282,11 +282,15 @@ export interface WinterProviderDescriptor {
    *     invent a header name, and it may certainly not name a vendor's product-identity field —
    *     that is the exact thing WS-13 §5 and D21 forbid, and a free-text name field would be a hole
    *     straight through both.
-   *   - the VALUE must begin `winter-agent-sdk`. Winter names ITSELF in every identity field; a
-   *     value naming an editor, a CLI or a first-party product is not a configuration mistake to
+   *   - the VALUE must begin with the PRODUCT TOKEN — either the `<product>` placeholder (preferred
+   *     since P7a) or the literal Winter package name. Winter names ITSELF in every identity field;
+   *     a value naming an editor, a CLI or a first-party product is not a configuration mistake to
    *     fix later, it is impersonation.
-   *   - `<version>` in the value is substituted by the adapter with this build's own version, so a
-   *     release cannot leave a stale number on the wire.
+   *   - TWO PLACEHOLDERS are substituted by the adapter at request time (provider-runtime's
+   *     `renderIdentityHeaders`): `<version>` with this build's own version, so a release cannot
+   *     leave a stale number on the wire, and `<product>` (P7a, D19) with the running brand's
+   *     `packageName`, so a REUSER's identity header names the reuser rather than Winter. A row that
+   *     hard-codes the Winter token still validates and still works; it simply cannot be rebranded.
    *
    * NOT routed through `applyPrivilegedHeaders`. This is Winter's own identity, the same class as
    * the `User-Agent` beside it — it discloses nothing about the operator, and gating it on a
@@ -296,6 +300,28 @@ export interface WinterProviderDescriptor {
    * fixture and never in production.
    */
   identityHeaders?: Record<string, string>;
+  /**
+   * P7a carry (Lane D): a PER-TENANT provider whose API endpoint is the customer's own resource, so
+   * the row ships with NO usable `defaultEndpoints.api` at all (`azure-ai`, `oci`).
+   *
+   * `true` is the only value: absence means "the row's endpoint is usable as shipped", and a `false`
+   * would be a claim no row needs to make. A session selecting such a row without supplying an
+   * endpoint is a typed `endpoint-required` refusal — never a request sent to a placeholder host.
+   *
+   * DECLARED AT P7a'S SPINE, RULED ON BY LANE D: the validator ACCEPTS this field (shape only) so
+   * both halves can land independently; the rules that bind it to `defaultEndpoints`, and the rows
+   * that set it, are Lane D's.
+   */
+  requiresUserEndpoint?: true;
+  /**
+   * DOCUMENTATION ONLY, never sent: the shape a user's own endpoint takes for a
+   * `requiresUserEndpoint` row, e.g. `"https://<resource>.services.ai.azure.com/models"`.
+   *
+   * It exists so a host can TELL the user what to paste. Nothing resolves it, nothing substitutes
+   * into it, and no request is ever built from it — a template that reached the wire would be a
+   * request to a literal `<resource>` host.
+   */
+  endpointTemplate?: string;
 }
 
 /**

@@ -88,8 +88,21 @@ const FAMILY_STATUSES: readonly ModelFamilyDescriptor["status"][] = ["candidate"
  */
 export const WINTER_IDENTITY_HEADER_NAMES: readonly string[] = ["Client-Agent"];
 
-/** Every identity value names Winter. `identity.ts` substitutes `<version>` at request time. */
+/** Every identity value names the PRODUCT. `identity.ts` substitutes the placeholders at request time. */
 export const WINTER_IDENTITY_VALUE_PREFIX = "winter-agent-sdk";
+
+/**
+ * The two tokens an `identityHeaders` VALUE may carry, substituted by the adapter at request time
+ * (provider-runtime's `renderIdentityHeaders`).
+ *
+ * `<version>` predates P7a. `<product>` is D19's: the product token is `brand.packageName` now, so a
+ * row that hard-codes Winter's own name is honest for Winter and a LIE for a reuser — it would put
+ * Winter's identity on a request the reuser's product made. A row written with `<product>` is
+ * truthful under every brand, which is why it is the preferred spelling and why the value check
+ * below accepts it as a prefix in its own right.
+ */
+export const IDENTITY_PRODUCT_PLACEHOLDER = "<product>";
+export const IDENTITY_VERSION_PLACEHOLDER = "<version>";
 const CONTINUATIONS = ["none", "plaintext", "opaque-provider-state", "server-response-handle"] as const;
 const READABLE_STATES = ["none", "summary", "full-exposed"] as const;
 const REPLAY_SCOPES = ["current-tool-loop", "current-turn", "selected-turns", "all-turns"] as const;
@@ -382,6 +395,31 @@ function checkProvider(errs: Errors, v: unknown, path: string): void {
   errs.enum(v, "modelDiscovery", path, MODEL_DISCOVERY);
   errs.enum(v, "liveCatalogAuthority", path, CATALOG_AUTHORITY);
   errs.enum(v, "scope", path, PROVIDER_SCOPES);
+
+  // --- P7a spine: the per-tenant carry fields, ACCEPTED but not yet RULED ON --------------------
+  //
+  // Shape checks only, deliberately. The rules that give these fields meaning — that a
+  // `requiresUserEndpoint` row must NOT ship a usable `defaultEndpoints.api`, and what an
+  // `endpointTemplate` must look like — are Lane D's, landing with the two rows (`azure-ai`, `oci`)
+  // that set them. The spine declares the vocabulary so the type, the validator and the rows can
+  // land in either order; what it does NOT do is let a typo through silently in the meantime, which
+  // is why `requiresUserEndpoint: false` (a claim no row needs to make) is refused here rather than
+  // quietly ignored.
+  //
+  // CARRY FOR LANE D: `schema/catalog.schema.json`'s `WinterProviderDescriptor` is
+  // `additionalProperties: false` and does NOT yet list these two keys. Nothing in this repo
+  // executes that schema and no shipped row sets either field, so the artifact stays valid today —
+  // but the schema MUST gain both keys in the same commit as the first row that uses one, or the
+  // cross-language contract refuses the shipped catalog.
+  const requiresUserEndpoint = v["requiresUserEndpoint"];
+  if (requiresUserEndpoint !== undefined && requiresUserEndpoint !== true) {
+    errs.add(`${path}.requiresUserEndpoint`, `expected \`true\` or absence (absence means the row's endpoint is usable as shipped), got ${describe(requiresUserEndpoint)}`);
+  }
+  const endpointTemplate = v["endpointTemplate"];
+  if (endpointTemplate !== undefined && (typeof endpointTemplate !== "string" || endpointTemplate.length === 0)) {
+    errs.add(`${path}.endpointTemplate`, `expected a non-empty documentation string, got ${describe(endpointTemplate)}`);
+  }
+
   const endpoints = v["defaultEndpoints"];
   if (!isRecord(endpoints)) errs.add(`${path}.defaultEndpoints`, `expected an object of endpoint URLs, got ${describe(endpoints)}`);
   else {
@@ -468,10 +506,15 @@ function checkProvider(errs: Errors, v: unknown, path: string): void {
             "identity-header-invalid",
           );
         }
-        if (typeof value !== "string" || !value.startsWith(WINTER_IDENTITY_VALUE_PREFIX)) {
+        // TWO ACCEPTED PREFIXES, and the placeholder is the preferred one (P7a, D19): a value
+        // starting `<product>` names whatever brand is running, which is truthful for Winter AND
+        // for a reuser; the literal Winter token stays accepted for rows written before the
+        // profile existed. Anything else still fails — the rule this enforces is not "spell it our
+        // way", it is "an identity field must name the client that is actually speaking".
+        if (typeof value !== "string" || !(value.startsWith(IDENTITY_PRODUCT_PLACEHOLDER) || value.startsWith(WINTER_IDENTITY_VALUE_PREFIX))) {
           errs.add(
             `${path}.identityHeaders.${name}`,
-            `expected a value naming Winter (starting ${JSON.stringify(WINTER_IDENTITY_VALUE_PREFIX)}; \`<version>\` is substituted by the adapter), got ${describe(value)} — an identity field that names anything else is not a configuration error, it is impersonation`,
+            `expected a value naming the product (starting ${JSON.stringify(IDENTITY_PRODUCT_PLACEHOLDER)} — preferred — or ${JSON.stringify(WINTER_IDENTITY_VALUE_PREFIX)}; both \`<product>\` and \`<version>\` are substituted by the adapter), got ${describe(value)} — an identity field that names anything else is not a configuration error, it is impersonation`,
             "identity-header-invalid",
           );
         }

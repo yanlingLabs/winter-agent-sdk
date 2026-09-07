@@ -104,7 +104,8 @@ const OTHER_WS06_NAMES = [
   "ProposeSkills",
   "ProposeGoal",
   "StructuredOutput",
-  "mcp__winter__advisor",
+  // P7a (D29): the advisor is a BARE NATIVE name now, not a server-qualified one.
+  "advisor",
 ] as const;
 
 describe("stub-complete index (hard requirement 1)", () => {
@@ -727,9 +728,10 @@ describe("registerMcpServerTools / unregisterMcpServerTools (Phase 4 Task 2, WS-
 
   test("colliding with a name registered by a non-live-MCP mechanism throws rather than overwriting", () => {
     // A static stub (registerTool, not registerMcpServerTools) sitting under the EXACT canonical
-    // name a live registration would compute -- mirrors the real mcp__winter__advisor collision
-    // this section's own header warns about (winter-server.ts avoids it by never calling
-    // registerMcpServerTools for advisor at all; this proves the guard fires if something ever did).
+    // name a live registration would compute -- the collision shape this section's own header warns
+    // about. (Historically the concrete instance was the advisor's server-qualified twin; D29 retired
+    // that name, and winter-server.ts registers nothing at all now -- so this synthetic pair is what
+    // keeps the guard itself proven.)
     const collideServer = "t2collideserver";
     const toolName = "collidetool";
     const canonicalName = `mcp__${collideServer}__${toolName}`;
@@ -1191,7 +1193,7 @@ describe("deriveRuntimeCapabilities / resolveSessionCapabilities (Phase 4 Task 8
     }
     // NOT advertised, for two independent reasons this same cfg proves:
     expect(names.has("ToolSearch")).toBe(false); // rider 4's activation gate: deferral is off here
-    expect(names.has("mcp__winter__advisor")).toBe(false); // winter.reviewer-model is NOT derived
+    expect(names.has("advisor")).toBe(false); // winter.reviewer-model is NOT derived
   });
 });
 

@@ -20,6 +20,12 @@ import type {
 } from "./protocol/config.ts";
 import type { SettingSource } from "./settings/types.ts";
 import type { SessionStore } from "./store/session-store.ts";
+// P7a (D19): the brand profile. `Options.brand` is a PARTIAL of it; the two exported defaults below
+// (`DEFAULT_PLANS_DIRECTORY`, `DEFAULT_KEYCHAIN_SERVICE`) DERIVE from `WINTER_BRAND` rather than
+// re-spelling the project dir / keychain service -- brand.ts is the one module allowed to carry those
+// literals, and the sweep gate (packages/runtime/src/brand-gate.test.ts) enforces it.
+import { WINTER_BRAND, type BrandProfile } from "./brand.ts";
+export type { BrandProfile, BrandValidation } from "./brand.ts";
 export type { SdkPluginConfig, SystemPromptOption, OutputFormat, JsonSchemaOutputFormat, SkillsOption } from "./protocol/config.ts";
 // Phase 6 Task 2: the provider-layer option shapes re-exported from the same module a host imports
 // `Options` from — one import site for "the Options-facing provider surface" (the same convention
@@ -46,7 +52,11 @@ export const SYSTEM_PROMPT_DYNAMIC_BOUNDARY = "__SYSTEM_PROMPT_DYNAMIC_BOUNDARY_
 // carries when no output style is configured.
 export const DEFAULT_CONTEXT_WINDOW_TOKENS = 200000;
 export const DEFAULT_COMPACTION_THRESHOLD = 0.92;
-export const DEFAULT_PLANS_DIRECTORY = ".winter/plans";
+// P7a (D19): DERIVED, not spelled -- from `WINTER_BRAND.projectDirName`, so this constant's
+// VALUE is byte-identical to the literal it replaces -- but a host running under its own brand gets
+// `<their dir>/plans` from `resolveBrand`, and this module-level constant stays the Winter default
+// for the un-branded path (a session's real value comes from its own resolved profile).
+export const DEFAULT_PLANS_DIRECTORY = `${WINTER_BRAND.projectDirName}/plans`;
 export const DEFAULT_OUTPUT_STYLE = "default";
 
 // --- Phase 6 Task 2 (WS-13, rulings R6-6/R6-10): two more of the same kind ------------------------
@@ -57,10 +67,13 @@ export const DEFAULT_OUTPUT_STYLE = "default";
 //
 // `providerStallTimeoutMs` is a DISCLOSED WINTER option with no pinned counterpart: R6-6 makes a
 // stream with no bytes for this long a typed `ProviderStallError` rather than an indefinite hang.
-// `keychainService` mirrors WS-01 §3's service naming; the dev profile's `com.winter.core.dev` is
+// `keychainService` mirrors WS-01 §3's service naming; the dev profile's own `.dev`-suffixed service is
 // selected by the host passing it explicitly, never inferred here.
 export const DEFAULT_PROVIDER_STALL_TIMEOUT_MS = 120000;
-export const DEFAULT_KEYCHAIN_SERVICE = "com.winter.core";
+// P7a (D19): DERIVED from the brand profile (WINTER_BRAND.keychainService). A host that supplies a
+// `brand` gets ITS service through `RuntimeConfig.brand.keychainService`; this constant remains what
+// the runtime falls back to when neither the deprecated option nor a brand reached it.
+export const DEFAULT_KEYCHAIN_SERVICE = WINTER_BRAND.keychainService;
 
 // --- Phase 4 Task 2 (WS-09 derived-shapes item (a)): the HOST-facing MCP config union -------------
 //
@@ -208,7 +221,7 @@ export interface Options {
   //
   // Pinned coupling worth knowing (`sdk.d.ts:2050`, recorded as OQ-P5-1 for Lane C): on the pinned
   // branch, project-context files load ONLY when `'project'` is selected — so context discovery is
-  // source-gated there, which R5-9's unconditional `WINTER.md` injection does not mirror.
+  // source-gated there, which R5-9's unconditional project-instructions injection does not mirror.
   settingSources?: SettingSource[];
   /**
    * Phase 5 fix wave, C1: the MANAGED policy tiers, threaded to the runtime's own settings
@@ -328,14 +341,14 @@ export interface Options {
   // (Lane A), not resolved here.
   strictMcpConfig?: boolean;
   // WS-09 §10: redirects a model-emitted BUILT-IN tool name to another implementation before
-  // name-based `tool_use` lookup (e.g. `SendMessage -> mcp__winter__send_message`) — single-hop,
+  // name-based `tool_use` lookup (e.g. SendMessage -> the standing server's send_message handler) — single-hop,
   // never a security boundary (`disallowedTools` remains the enforcement floor). [WS-14] is the
   // primary consumer on the official branch; the Winter branch applies it at the registry's own
   // name-lookup boundary (a later task's own wiring, not this field's own concern).
   toolAliases?: Record<string, string>;
   // WS-10 §1–§2: named subagent definitions a host supplies programmatically, keyed by
   // `subagent_type`. Merges with (and, per WS-10 §1's own precedence, is overridden by) filesystem
-  // `.winter/agents/*.md`/`~/.winter/agents/*.md` definitions — Lane C (Task 6) owns that resolution;
+  // project- and user-tier `agents/*.md` definitions — Lane C (Task 6) owns that resolution;
   // this field only carries the programmatic half across the wire.
   agents?: Record<string, AgentDefinition>;
   // WS-10 §4: by default only `tool_use`/`tool_result` blocks from a subagent are forwarded to the
@@ -388,7 +401,7 @@ export interface Options {
   // `string[]` is the block-array form split by SYSTEM_PROMPT_DYNAMIC_BOUNDARY (above); the preset
   // object selects the authored preset and appends. `excludeDynamicSections` lives INSIDE the preset
   // object (`2163`) and is doc-asserted inert for a string prompt (`2124`) — there is deliberately no
-  // sibling option of that name, which is where R5-9 originally put it. Winter's own `"winter_code"`
+  // sibling option of that name, which is where R5-9 originally put it. Winter's own preset name
   // preset spelling is Lane C's alias to resolve, not a widening made here: this union carries the
   // pinned one-member literal verbatim.
   systemPrompt?: SystemPromptOption;
@@ -533,6 +546,32 @@ export interface Options {
    * a target on another provider than the session's never inherits the session's -- it uses the
    * route's ref, else the target provider's own keychain record (`<providerId>:default`), else a
    * typed `no-credential-for-provider` refusal at its first generation.
+   *
+   * The MODEL may also come from `settings.advisor.model` (D30, hot); `Options.advisor.model` wins.
    */
   advisor?: AdvisorConfig;
+  /**
+   * DISCLOSED WINTER option (P7a, D19): THE BRAND PROFILE — every Winter-owned name this session
+   * runs under, as a partial that folds onto Winter's own defaults (brand.ts's `WINTER_BRAND`).
+   *
+   * This is what makes the SDK genuinely reusable rather than merely open: a host consuming Winter
+   * alone (D19's tier 1) gets its OWN home dir, project dir, instructions file, env prefix, keychain
+   * service, MCP server name and codex originator, resolved once here and carried to the runtime on
+   * `RuntimeConfig.brand` so a spawned or compiled child derives the same names the wrapper did.
+   *
+   * VALIDATED AT `query()` (brand.ts's grammar rules), and a refusal is a typed `InvalidBrandError`
+   * thrown synchronously at construction, like the other option-combination rejections above --
+   * never a silently-substituted default, because a session that quietly ran under the wrong home
+   * dir or the wrong keychain service is the worst possible outcome of a typo here.
+   *
+   * `keychainService` above is the DEPRECATED standalone alias for `brand.keychainService`: when
+   * both are set the standalone one WINS (it predates the profile and existing hosts pass it), and
+   * `query()` warns when the two are set to DIFFERENT values so the losing one is never silent.
+   *
+   * Claude-mirroring literals are NOT in the profile and cannot be rebranded (WS-01 §5): the
+   * official runtime's `CLAUDE_CONFIG_DIR`/`CLAUDE_CODE_TMPDIR`/`preset: "claude_code"`/
+   * `.claude-plugin` are its names, not ours. Neither are this repository's own test-harness env
+   * names.
+   */
+  brand?: Partial<BrandProfile>;
 }

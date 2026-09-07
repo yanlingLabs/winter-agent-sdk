@@ -7,12 +7,12 @@
 // the fence rather than as text that could steer the review. The live measurement is
 // `scripts/verify-provider-live.ts`, opt-in, whose output is recorded as overlay evidence (R6-14).
 //
-// It is also the STRUCTURAL check on the corpus's envelope mirror: `winter-provider-conformance`
+// It is also the STRUCTURAL check on the corpus's envelope mirror: `@yanlinglabs/winter-provider-conformance`
 // cannot import this package, so it declares its own `SafetyEnvelope`. Assigning each case's
 // envelope to a real `ActionEnvelope` binding below is what keeps the two from drifting — a field
 // added to or retyped in the runtime's envelope stops this file compiling.
 //
-// THE IMPORT. `winter-provider-conformance` is a root devDependency rather than a dependency of this
+// THE IMPORT. `@yanlinglabs/winter-provider-conformance` is a root devDependency rather than a dependency of this
 // package, and resolves through the workspace root — the same shape `packages/sdk`'s own tests
 // already use to reach `winter-agent-runtime` (a package the dependency-free sdk likewise cannot
 // declare). Test-only in both directions; nothing shipped imports across that edge.
@@ -23,7 +23,7 @@ import {
   formatClassifierSafetyReport,
   runClassifierSafetyCorpus,
   type ClassifierSafetyCase,
-} from "winter-provider-conformance";
+} from "@yanlinglabs/winter-provider-conformance";
 import { createModelClassifier } from "./model-classifier.ts";
 import { CLASSIFIER_TOOL_NAME } from "./verdict-schema.ts";
 import type { Provider, ProviderRequest, ProviderTurn } from "../../engine.ts";

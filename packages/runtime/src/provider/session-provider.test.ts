@@ -18,7 +18,7 @@ import { familyIdOf, stampFamilyFields } from "@yanlinglabs/winter-provider-cata
 import { loadCatalog } from "@yanlinglabs/winter-provider-catalog";
 import { WinterProviderResolutionError, createMemoryCredentialStore, type CredentialMaterial } from "@yanlinglabs/winter-provider-runtime";
 import { ANTHROPIC_DEFAULT_BASE_URL } from "@yanlinglabs/winter-provider-runtime";
-import { startFake, sseResponse, jsonResponse, type FakeServer } from "winter-provider-conformance";
+import { startFake, sseResponse, jsonResponse, type FakeServer } from "@yanlinglabs/winter-provider-conformance";
 import { startScenarioFake } from "./scenario-fake.ts";
 import { buildSessionProvider, apiKeySourceFor, connectionForProvider } from "./session-provider.ts";
 import { computeActiveSlotSet, resolveSlotToProvider, type CredentialPresence } from "./slots.ts";

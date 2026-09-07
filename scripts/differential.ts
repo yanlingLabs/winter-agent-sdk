@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { query, encodeFrame, splitFrames, ResultError, type RuntimeConfig, type WinterFrame } from "@yanlinglabs/winter-agent-sdk";
 import { inMemoryProcess } from "winter-agent-runtime/testing";
 import { testProviderByName, scriptedProvider, registerTool, MCP_SDK_TEST_SERVER_NAME, MCP_SDK_TEST_TOOL_NAME, P5_FIXTURE_SKILL_NAME, SCENARIO_MODELS, SCENARIO_TOOL_NAME, startScenarioFake } from "winter-agent-runtime";
-import { normalizeTrace, compareTraces, type ConformanceTraceEntry } from "winter-conformance/trace";
+import { normalizeTrace, compareTraces, type ConformanceTraceEntry } from "@yanlinglabs/winter-conformance/trace";
 
 // A pinned, synthetic cwd (never process.cwd()) so every recorded trace — and the committed golden
 // compared against it — is byte-identical across machines and CI runners, whose checkout paths

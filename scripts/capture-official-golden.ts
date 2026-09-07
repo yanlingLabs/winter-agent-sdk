@@ -57,7 +57,7 @@ import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fetchAndVerifyUpstream } from "./fetch-upstream.ts";
-import { normalizeTrace, type ConformanceTraceEntry } from "winter-conformance/trace";
+import { normalizeTrace, type ConformanceTraceEntry } from "@yanlinglabs/winter-conformance/trace";
 
 type OfficialQueryFn = (args: { prompt: unknown; options: Record<string, unknown> }) => AsyncIterable<{ type: string; subtype?: string }>;
 type OfficialSdk = { query: OfficialQueryFn };

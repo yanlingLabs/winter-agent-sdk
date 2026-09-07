@@ -77,7 +77,7 @@ import {
   startScenarioFake,
   type ScenarioFake,
 } from "winter-agent-runtime";
-import { normalizeTrace, compareTraces, type ConformanceTraceEntry } from "winter-conformance/trace";
+import { normalizeTrace, compareTraces, type ConformanceTraceEntry } from "@yanlinglabs/winter-conformance/trace";
 
 // Task 8: every engine run in this file persists by default (RuntimeConfig.persistSession defaults
 // ON) — a SHARED per-file temp WINTER_HOME keeps every leg (inMemory/child/compiled) off the real

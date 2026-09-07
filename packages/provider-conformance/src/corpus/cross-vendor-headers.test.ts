@@ -208,20 +208,24 @@ describe("WS-13b §7/§8.4: every row that DECLARES an identity header actually 
     expect(declaring.map((p) => p.id)).toEqual(["aihorde"]);
   });
 
-  test.each(declaring.map((p) => [p.id] as const))("%s sends its declared identity header, with `<version>` substituted", async (id) => {
+  test.each(declaring.map((p) => [p.id] as const))("%s sends its declared identity header, with `<product>` and `<version>` substituted", async (id) => {
     const provider = CATALOG.providers.find((p) => p.id === id)!;
     // `authKinds` decides the material, so a keyless-documented row is driven exactly as the live
     // gate drives it rather than however this file finds convenient.
     const { requests } = await driveRow({ id, why: "declares identityHeaders", material: provider.authKinds.includes("oauth-approved") ? "oauth" : "api-key" });
     expect(requests).toHaveLength(1);
-    const version = winterUserAgent().split("/")[1]!;
+    // BOTH halves are read off the User-Agent this build actually sends, so the expectation cannot
+    // drift from the product: `<product>/<version>` is that header's whole shape.
+    const [product, version] = [winterUserAgent().split("/")[0]!, winterUserAgent().split("/")[1]!];
     for (const [name, declared] of Object.entries(provider.identityHeaders ?? {})) {
-      const expected = declared.split("<version>").join(version);
+      const expected = declared.split("<product>").join(product).split("<version>").join(version);
       // Header names arrive lowercased on the recorder, as they do on the wire.
       expect([id, name, requests[0]?.headers[name.toLowerCase()]]).toEqual([id, name, expected]);
-      // The substitution actually happened: a value still carrying the placeholder would be a
-      // literal `<version>` on the wire, which reads as a bug report to whoever receives it.
+      // The substitution actually happened: a value still carrying either placeholder would be a
+      // literal `<product>`/`<version>` on the wire, which reads as a bug report to whoever
+      // receives it.
       expect(requests[0]?.headers[name.toLowerCase()]).not.toContain("<version>");
+      expect(requests[0]?.headers[name.toLowerCase()]).not.toContain("<product>");
     }
   }, 15_000);
 

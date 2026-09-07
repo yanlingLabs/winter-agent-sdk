@@ -1,30 +1,39 @@
 // Phase 5 Task 2: per-tier settings FILE location + loading. See ./types.ts's header for why this
 // module lives in packages/sdk rather than packages/runtime.
 //
-// Paths are WS-01 §2.2/§2.4's, verbatim:
-//   user    -> <WINTER_HOME || ~/.winter>/settings.json
-//   project -> <cwd>/.winter/settings.json          (repo-committed)
-//   local   -> <cwd>/.winter/settings.local.json    (gitignored, personal)
+// Paths are WS-01 §2.2/§2.4's, with every brand-owned segment DERIVED from the profile (P7a, D19):
+//   user    -> <home>/settings.json                        (home = resolveWinterHome, brand-aware)
+//   project -> <cwd>/<projectDirName>/settings.json        (repo-committed)
+//   local   -> <cwd>/<projectDirName>/settings.local.json  (gitignored, personal)
+// Under Winter's own profile those are the unchanged `~/.winter`, `<cwd>/.winter/settings.json` and
+// `<cwd>/.winter/settings.local.json`.
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { resolveWinterHome } from "../paths/home.ts";
+import { WINTER_BRAND, type BrandProfile } from "../brand.ts";
+import { resolveWinterHome, type HomeBrand } from "../paths/home.ts";
 import type { Settings, SettingSource } from "./types.ts";
 
 export interface SettingsPathOptions {
   cwd: string;
-  /** Explicit `~/.winter` root; when omitted it is resolved from `env` (WINTER_HOME || ~/.winter). */
+  /** Explicit resolved home root; when omitted it is resolved from `env` and `brand`. */
   winterHome?: string;
   env?: Record<string, string | undefined>;
+  /**
+   * P7a (D19): the session's resolved brand profile. Omitted means Winter's own
+   * (`WINTER_BRAND`), so every caller predating the profile keeps exactly today's paths.
+   */
+  brand?: HomeBrand & Pick<BrandProfile, "projectDirName">;
 }
 
 export function settingsPathFor(source: SettingSource, opts: SettingsPathOptions): string {
+  const brand = opts.brand ?? WINTER_BRAND;
   switch (source) {
     case "user":
-      return join(opts.winterHome ?? resolveWinterHome(opts.env), "settings.json");
+      return join(opts.winterHome ?? resolveWinterHome(opts.env, brand), "settings.json");
     case "project":
-      return join(opts.cwd, ".winter", "settings.json");
+      return join(opts.cwd, brand.projectDirName, "settings.json");
     case "local":
-      return join(opts.cwd, ".winter", "settings.local.json");
+      return join(opts.cwd, brand.projectDirName, "settings.local.json");
   }
 }
 

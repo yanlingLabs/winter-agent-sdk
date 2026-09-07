@@ -50,6 +50,11 @@ export type { BoundedFetchInit } from "./http.ts";
 // adapters and connect screens must reach the SAME function -- a second literal is how a
 // family ends up presenting as something else.
 export { winterUserAgent } from "./identity.ts";
+// P7a (D19): the placeholder-substitution seam. `renderIdentityHeaders` is where a row's declared
+// identity value becomes a wire value, and it is the one place a brand's `packageName` has to reach
+// for a reuser's identity headers to name the reuser (Lane A threads it).
+export { renderIdentityHeaders } from "./identity.ts";
+export type { IdentityRenderContext } from "./identity.ts";
 
 // WS-13b (P6.5 spine): the two OAuth primitives every Winter-authored flow shares.
 //
