@@ -17,6 +17,7 @@
     "verify:compiled": "bun run scripts/verify-protocol-compiled.ts",
     "verify:workflow": "bun run scripts/verify-workflow.ts",
     "release:pack": "bun run scripts/release-pack.ts",
+    "verify:published-install": "bun run scripts/verify-published-install.ts",
     "typecheck": "tsc --noEmit -p tsconfig.typecheck.json && tsc --noEmit -p tsconfig.sdk-fence.json",
     "test": "bun test"
   },

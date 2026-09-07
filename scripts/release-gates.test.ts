@@ -145,10 +145,17 @@ describe("ci.yml's pack-smoke job (WS-02 §9 item 3)", () => {
 });
 
 describe("WINTER_PACKAGES_TOKEN (scripts/verify-published-install.ts's gate) is EXPLICITLY ABSENT from every workflow", () => {
-  test("no workflow file names the variable -- the cross-repo acceptance step never runs in CI", () => {
+  test("no workflow file's ACTUAL command/expression text ever references the variable -- comments stripped, exactly like the publish-command check above, since ci.yml's own comment documents the absence BY NAME (checked separately below)", () => {
     for (const file of workflowFiles()) {
       const content = readFileSync(join(WORKFLOWS_DIR, file), "utf8");
-      expect(content).not.toContain("WINTER_PACKAGES_TOKEN");
+      const liveText = content.split("\n").map(stripComment).join("\n");
+      expect(liveText).not.toContain("WINTER_PACKAGES_TOKEN");
     }
+  });
+
+  test("the absence is documented in ci.yml rather than left to be re-derived, so the next reader knows it is a decision", () => {
+    expect(CI_YML).toContain("verify-published-install.ts");
+    expect(CI_YML).toContain("WINTER_PACKAGES_TOKEN");
+    expect(CI_YML.toLowerCase()).toContain("deliberately absent");
   });
 });

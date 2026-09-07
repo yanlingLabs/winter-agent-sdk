@@ -51,6 +51,13 @@ jobs:
     # release-pack.ts packs -- runs on every push (unlike release.yml, which fires only on a `v*` tag
     # or workflow_dispatch and actually publishes; this job never does, so there is no reason to gate
     # it behind a release trigger).
+    #
+    # `scripts/verify-published-install.ts` (the opt-in cross-repo acceptance step, gated on
+    # WINTER_PACKAGES_TOKEN) is deliberately absent from every job in this file: it needs a real
+    # GitHub Packages read token this workflow never holds, and it installs from the REAL registry
+    # rather than a local tarball, which only makes sense after an actual publish has happened. It is
+    # a local operator step, never a CI step; release-gates.test.ts pins that the variable name never
+    # appears anywhere in .github/workflows/.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
