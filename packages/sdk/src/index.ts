@@ -184,6 +184,9 @@ export {
   applyWorkspaceTrust,
 } from "./settings/resolve.ts";
 export { settingsPathFor, loadSettingsFile } from "./settings/sources.ts";
+// WS-13c §5: the custom-slot validator (Lane B fills the body; the runtime's wiring imports it from here).
+export { validateModelSlots } from "./settings/model-slots.ts";
+export type { ModelSlotsLookup, ModelSlotsValidation } from "./settings/model-slots.ts";
 export type { SettingsPathOptions, LoadedSettingsFile } from "./settings/sources.ts";
 export {
   SETTING_SOURCES,
