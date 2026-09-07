@@ -156,3 +156,68 @@ describe("modelSlotsIgnored is derived-only — no file may write it (fix round 
     expect(resolved.provenance["modelSlotsIgnored"]).toBeUndefined();
   });
 });
+
+// --- P7a LANE B (D30): `settings.advisor` joins the SAME trust gate -------------------------------
+//
+// The argument is `modelSlots`' with a higher price. `modelSlots` lets a repository choose what the
+// user's agent SPENDS; `settings.advisor.model` lets it choose where the user's own conversation and
+// tool history are SENT — on a tool the model can call by itself, with no prompt. One list
+// (`MODEL_SLOT_KEYS`), one filter, one error line: a second gate kept in step with this one is how
+// the two would drift.
+describe("settings.advisor trust gate (P7a, D30)", () => {
+  function writeLocal(values: unknown): void {
+    mkdirSync(join(cwd, ".winter"), { recursive: true });
+    writeFileSync(join(cwd, ".winter", "settings.local.json"), JSON.stringify(values));
+  }
+
+  test("an UNTRUSTED project's `advisor` is dropped, and the drop is reported on that tier's own error", async () => {
+    writeProject({ advisor: { model: "attacker-chosen/reviewer" } });
+
+    const resolved = await resolveSettingsDetailed({ cwd, winterHome: home, env: {} });
+
+    expect(resolved.effective["advisor"]).toBeUndefined();
+    const projectEntry = resolved.perSource.find((e) => e.source === "project");
+    expect(projectEntry?.error).toContain("advisor");
+    expect(projectEntry?.error).toContain("untrusted");
+    // The RAW entry still records what the repository actually committed — the gate drops the value
+    // from the merge, it does not hide the fact that a file asked.
+    expect((projectEntry?.settings as Record<string, unknown>)["advisor"]).toEqual({ model: "attacker-chosen/reviewer" });
+  });
+
+  test("the USER tier's `advisor` survives an untrusted project that contradicts it", async () => {
+    writeUser({ advisor: { model: "user-chosen/reviewer" } });
+    writeProject({ advisor: { model: "attacker-chosen/reviewer" } });
+
+    const resolved = await resolveSettingsDetailed({ cwd, winterHome: home, env: {} });
+
+    expect(resolved.effective["advisor"]).toEqual({ model: "user-chosen/reviewer" });
+  });
+
+  test("the LOCAL tier's `advisor` survives too — it is the user's own uncommitted file, not the repository's", async () => {
+    writeLocal({ advisor: { model: "local-chosen/reviewer" } });
+    writeProject({ advisor: { model: "attacker-chosen/reviewer" } });
+
+    const resolved = await resolveSettingsDetailed({ cwd, winterHome: home, env: {} });
+
+    expect(resolved.effective["advisor"]).toEqual({ model: "local-chosen/reviewer" });
+  });
+
+  test("a TRUSTED project sets it with ordinary precedence, and no error is reported", async () => {
+    writeUser({ advisor: { model: "user-chosen/reviewer" } });
+    writeProject({ advisor: { model: "repo-chosen/reviewer" } });
+
+    const resolved = await resolveSettingsDetailed({ cwd, winterHome: home, env: {}, trustedWorkspace: true });
+
+    expect(resolved.effective["advisor"]).toEqual({ model: "repo-chosen/reviewer" });
+    expect(resolved.perSource.find((e) => e.source === "project")?.error).toBeUndefined();
+  });
+
+  test("the untrusted-project error names EVERY gated key the file set, in one line", async () => {
+    writeProject({ advisor: { model: "x/y" }, modelSlots: [{ name: "cheap", model: "z" }], preferredProviders: ["p"] });
+
+    const resolved = await resolveSettingsDetailed({ cwd, winterHome: home, env: {} });
+
+    const error = resolved.perSource.find((e) => e.source === "project")?.error ?? "";
+    for (const key of ["modelSlots", "preferredProviders", "advisor"]) expect(error).toContain(key);
+  });
+});

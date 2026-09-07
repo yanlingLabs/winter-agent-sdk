@@ -1167,3 +1167,184 @@ describe("WS-13c: set_model by slot name", () => {
     expect("refused" in wiring.resolveModelSwitch("claude-opus-5", undefined)).toBe(false);
   });
 });
+
+// ================================================================================================
+// P7a LANE B (D29/D30, WS-06 §4): THE ADVISOR'S REVIEWER, at the wiring seam.
+//
+// `advisor-route.test.ts` pins the ROUTE (precedence, per-family defaults, the two refusals) as a
+// pure function. This block pins the half a pure function cannot: that the route is actually wired
+// into `buildSessionProvider`, that the setting arrives through a LIVE getter, that a refusal builds
+// no provider at all, and that R6-G's pin holds across calls.
+// ================================================================================================
+describe("P7a: the advisor's reviewer (D29/D30)", () => {
+  const advisorFamily = (id: string, vendorProviders: string[], slots: Array<[string, string]>): ModelFamilyDescriptor => ({
+    id,
+    displayName: id,
+    vendor: id,
+    vendorProviders,
+    matchers: [{ pattern: id === "claude" ? "^claude-" : id === "gpt" ? "^gpt-" : `^${id}-`, note: "" }],
+    status: "candidate",
+    citation: "fixture:session-provider",
+    slots: slots.map(([name, canonicalModelId]) => ({ name, canonicalModelId, description: `d-${name}`, reason: `r-${name}`, basis: "winter-curated" as const, citation: "c", status: "candidate" as const })),
+  });
+  const FAMILIES: ModelFamilyDescriptor[] = [
+    advisorFamily("claude", ["anthropic"], [["fable", "claude-fable-5.1"], ["opus", "claude-opus-5"], ["sonnet", "claude-sonnet-5"], ["haiku", "claude-haiku-4.5"]]),
+    advisorFamily("gpt", ["codex-oauth", "openai"], [["astra", "gpt-6-astra"], ["luna", "gpt-5.6-luna"]]),
+    // A family with NO slots: D30's "the session's own model" clause, at the wiring.
+    { id: "kimi", displayName: "kimi", vendor: "kimi", vendorProviders: ["moonshot"], matchers: [{ pattern: "^kimi-", note: "" }], status: "candidate", citation: "c", slots: [] },
+  ];
+  const inFamilies = (row: WinterModelDescriptor): WinterModelDescriptor => ({ ...row, modelFamily: familyIdOf(row.canonicalModelId, FAMILIES) });
+
+  /** `authKinds` is what the claude gate reads, so the vendor row carries its real shipped pair (D20). */
+  const anthropicRow = { ...testProvider({ id: "anthropic", adapterId: "winter.openai-responses", family: "openai", api: "https://anthropic.example" }), authKinds: ["api-key", "oauth-approved"] as const };
+  const CATALOG = catalogWith(
+    [
+      { ...anthropicRow, authKinds: [...anthropicRow.authKinds] },
+      testProvider({ id: "openai", adapterId: "winter.openai-responses", family: "openai", api: "https://openai.example" }),
+      { ...testProvider({ id: "codex-oauth", adapterId: "winter.openai-responses", family: "openai", api: "https://codex.example" }), pricingBasis: "subscription" as const },
+      testProvider({ id: "moonshot", adapterId: "winter.openai-responses", family: "openai", api: "https://moonshot.example" }),
+      // The non-Winter credential kind (D13/D14): no API key, no Console OAuth, no cloud chain.
+      { ...testProvider({ id: "subscription-only", adapterId: "winter.openai-responses", family: "openai", api: "https://subscription.example" }), authKinds: ["custom"] as WinterProviderDescriptor["authKinds"] },
+    ],
+    [
+      inFamilies(testModel({ key: "anthropic/claude-fable-5-1", providerId: "anthropic", upstreamId: "claude-fable-5-1" })),
+      inFamilies(testModel({ key: "anthropic/claude-sonnet-5", providerId: "anthropic", upstreamId: "claude-sonnet-5" })),
+      inFamilies(testModel({ key: "openai/gpt-6-astra", providerId: "openai", upstreamId: "gpt-6-astra" })),
+      inFamilies(testModel({ key: "codex-oauth/gpt-6-astra", providerId: "codex-oauth", upstreamId: "gpt-6-astra" })),
+      inFamilies(testModel({ key: "openai/gpt-5.6-luna", providerId: "openai", upstreamId: "gpt-5.6-luna" })),
+      inFamilies(testModel({ key: "moonshot/kimi-k3", providerId: "moonshot", upstreamId: "kimi-k3" })),
+      inFamilies(testModel({ key: "subscription-only/claude-fable-5-1", providerId: "subscription-only", upstreamId: "claude-fable-5-1" })),
+    ],
+    FAMILIES,
+  );
+
+  /** The PRODUCTION §4 resolver over this fixture, exactly as `production-wiring.ts` builds it. */
+  const resolveSlot = (hasCredential: (providerId: string) => CredentialPresence, catalog: WinterCatalog = CATALOG) => (requested: string, currentModelKey: string | undefined) =>
+    resolveSlotToProvider({
+      catalog,
+      active: computeActiveSlotSet({ catalog, currentModelKey, customSlots: undefined }),
+      requested,
+      hasCredential,
+      providerEnabled: () => true,
+      preferredProviders: [],
+    });
+
+  interface WiringInit {
+    model: string;
+    providerId: string;
+    hasCredential?: (providerId: string) => CredentialPresence;
+    advisorModelSetting?: () => string | undefined;
+    advisor?: RuntimeConfig["advisor"];
+    catalog?: WinterCatalog;
+  }
+  const wiringFor = (init: WiringInit): ReturnType<typeof buildSessionProvider> =>
+    buildSessionProvider({
+      config: baseConfig({ model: init.model, provider: { providerId: init.providerId, authRef: { kind: "inline", value: "test" } }, ...(init.advisor !== undefined ? { advisor: init.advisor } : {}) }),
+      env: {},
+      catalog: init.catalog ?? CATALOG,
+      credentials: createMemoryCredentialStore(),
+      resolveSlot: resolveSlot(init.hasCredential ?? (() => "present"), init.catalog ?? CATALOG),
+      ...(init.advisorModelSetting !== undefined ? { advisorModelSetting: init.advisorModelSetting } : {}),
+    });
+
+  test("a gpt session with NO setting reviews with astra -- openai/gpt-6-astra when only the API key is configured", () => {
+    const wiring = wiringFor({ model: "openai/gpt-5.6-luna", providerId: "openai", hasCredential: (p) => (p === "openai" ? "present" : "absent") });
+    expect(wiring.resolveReviewer?.()?.model).toBe("openai/gpt-6-astra");
+  });
+
+  test("...and codex-oauth/gpt-6-astra when the subscription credential IS present (§4 step 3-i)", () => {
+    const wiring = wiringFor({ model: "openai/gpt-5.6-luna", providerId: "openai", hasCredential: () => "present" });
+    expect(wiring.resolveReviewer?.()?.model).toBe("codex-oauth/gpt-6-astra");
+  });
+
+  test("a claude session reviews with anthropic/claude-fable-5-1 through the vendor row's api-key/Console-OAuth pair", () => {
+    const wiring = wiringFor({ model: "anthropic/claude-sonnet-5", providerId: "anthropic" });
+    expect(wiring.resolveReviewer?.()?.model).toBe("anthropic/claude-fable-5-1");
+  });
+
+  test("a claude reviewer served ONLY by a non-Winter credential kind resolves to NOTHING -- and no provider was ever built to make a request with", async () => {
+    const onlyCustom: WinterCatalog = { ...CATALOG, models: CATALOG.models.filter((m) => m.key !== "anthropic/claude-fable-5-1") };
+    const wiring = wiringFor({ model: "anthropic/claude-sonnet-5", providerId: "anthropic", catalog: onlyCustom });
+    expect(wiring.resolveReviewer?.()).toBeUndefined();
+    // The refusal is STRUCTURAL: `resolveReviewer` answers `undefined`, so the advisor tool has no
+    // provider object at all. There is nothing to call `generate` on, which is what "no request"
+    // means here -- not a discipline observed at the call site.
+    expect(await Promise.resolve(wiring.resolveReviewer?.()?.provider)).toBeUndefined();
+  });
+
+  test("a claude session with NO anthropic credential resolves to nothing rather than substituting another vendor's row", () => {
+    const wiring = wiringFor({ model: "anthropic/claude-sonnet-5", providerId: "anthropic", hasCredential: (p) => (p === "anthropic" ? "absent" : "present") });
+    // `subscription-only` DOES serve claude-fable-5.1 and would be reachable if the gate leaked,
+    // so this is a real negative rather than an empty-candidate accident.
+    expect(CATALOG.models.some((m) => m.canonicalModelId === "claude-fable-5.1" && m.providerId === "subscription-only")).toBe(true);
+    expect(wiring.resolveReviewer?.()).toBeUndefined();
+  });
+
+  test("`settings.advisor.model` beats the family default, and `Options.advisor.model` beats the setting", () => {
+    const bySetting = wiringFor({ model: "openai/gpt-5.6-luna", providerId: "openai", advisorModelSetting: () => "luna" });
+    expect(bySetting.resolveReviewer?.()?.model).toBe("openai/gpt-5.6-luna");
+    const byOption = wiringFor({ model: "openai/gpt-5.6-luna", providerId: "openai", advisorModelSetting: () => "luna", advisor: { model: "openai/gpt-6-astra" } });
+    expect(byOption.resolveReviewer?.()?.model).toBe("openai/gpt-6-astra");
+  });
+
+  test("HOT: a `settings.advisor.model` change is seen at the next call, with nothing rebuilt and no restart", () => {
+    let setting: string | undefined;
+    const wiring = wiringFor({ model: "openai/gpt-5.6-luna", providerId: "openai", advisorModelSetting: () => setting });
+    // Unset -> the family default.
+    expect(wiring.resolveReviewer?.()?.model).toBe("codex-oauth/gpt-6-astra");
+    setting = "luna";
+    expect(wiring.resolveReviewer?.()?.model).toBe("openai/gpt-5.6-luna");
+    // ...and back. A getter read ONCE at construction would have frozen the first answer.
+    setting = undefined;
+    expect(wiring.resolveReviewer?.()?.model).toBe("codex-oauth/gpt-6-astra");
+  });
+
+  test("R6-G: PINNED AT FIRST USE -- the same inputs return the same provider object, a changed input re-pins", () => {
+    let setting: string | undefined = "luna";
+    const wiring = wiringFor({ model: "openai/gpt-5.6-luna", providerId: "openai", advisorModelSetting: () => setting });
+    const first = wiring.resolveReviewer?.();
+    expect(wiring.resolveReviewer?.()).toBe(first);
+    setting = "astra";
+    expect(wiring.resolveReviewer?.()).not.toBe(first);
+  });
+
+  test("the reviewer follows the LIVE model key: a session that switched family reviews with the new family's default", () => {
+    const wiring = wiringFor({ model: "anthropic/claude-sonnet-5", providerId: "anthropic" });
+    expect(wiring.resolveReviewer?.()?.model).toBe("anthropic/claude-fable-5-1");
+    // The engine passes `currentProviderIdentity?.modelKey ?? currentModel` after a `set_model`.
+    expect(wiring.resolveReviewer?.("openai/gpt-5.6-luna")?.model).toBe("codex-oauth/gpt-6-astra");
+  });
+
+  test("a family with NO slots reviews with the session's own model (D30's last clause)", () => {
+    const wiring = wiringFor({ model: "moonshot/kimi-k3", providerId: "moonshot" });
+    expect(wiring.resolveReviewer?.()?.model).toBe("moonshot/kimi-k3");
+  });
+
+  test("the reserved winter-test namespace and a REFUSED session withhold the seam entirely", () => {
+    const scripted = buildSessionProvider({ config: baseConfig({ model: "winter-test/echo" }), env: {}, catalog: CATALOG, credentials: createMemoryCredentialStore() });
+    expect(scripted.resolveReviewer).toBeUndefined();
+    const refused = buildSessionProvider({ config: baseConfig({ model: "openai/no-such-model-anywhere", provider: { providerId: "openai" } }), env: {}, catalog: CATALOG, credentials: createMemoryCredentialStore() });
+    expect(refused.resolutionError).toBeDefined();
+    expect(refused.resolveReviewer).toBeUndefined();
+  });
+
+  test("R6-G: the reviewer's provider never streams -- a `sink` on its request is dropped, not forwarded", async () => {
+    await withResponsesFake(async (fake) => {
+      const catalog = catalogWith(
+        [testProvider({ id: "t10openai", adapterId: "winter.openai-responses", family: "openai", api: fake.url })],
+        [testModel({ key: "t10openai/t10-model", providerId: "t10openai", upstreamId: "t10-model" }), testModel({ key: "t10openai/t10-advisor", providerId: "t10openai", upstreamId: "t10-advisor" })],
+      );
+      const wiring = buildSessionProvider({
+        config: baseConfig({ model: "t10openai/t10-model", advisor: { model: "t10openai/t10-advisor" }, provider: { providerId: "t10openai", authRef: { kind: "inline", value: "test" } } }),
+        env: {},
+        catalog,
+        credentials: createMemoryCredentialStore(),
+      });
+      const seen: unknown[] = [];
+      const sink = { onStreamEvent: (e: unknown) => void seen.push(e), onRetry: (e: unknown) => void seen.push(e), onRateLimit: (e: unknown) => void seen.push(e) } as unknown as NonNullable<Parameters<typeof wiring.provider.generate>[0]["sink"]>;
+      await wiring.resolveReviewer!()!.provider.generate({ messages: USER_TURN, model: "t10-advisor", sink });
+      expect(seen).toEqual([]);
+      expect(fake.requests.length).toBe(1);
+    });
+  });
+});
