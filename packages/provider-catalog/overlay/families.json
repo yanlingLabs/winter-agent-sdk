@@ -120,11 +120,11 @@
         },
         {
           "name": "flash",
-          "canonicalModelId": "gemini-3.7-flash",
+          "canonicalModelId": "gemini-3.8-flash",
           "description": "Google's strongest current model by its own documentation; fast agentic coding.",
           "reason": "Second: strength.",
           "basis": "vendor-doc",
-          "citation": "spec:WS-13c §9 — vendor-doc basis; the vendor model page citation lands with the owed `google/gemini-3.8-flash` row (P6.6 Task 1b), which this slot then points at",
+          "citation": "spec:WS-13c §9 — vendor-doc basis; VERIFIED on https://ai.google.dev/gemini-api/docs/models (retrieved 2026-09-07), which lists `gemini-3.8-flash` as \"New Stable\" and \"Our most intelligent Flash model\" ahead of `gemini-3.7-flash` — repointed from `gemini-3.7-flash` to the owed `google/gemini-3.8-flash` row (P6.6 Task 1b)",
           "status": "candidate"
         },
         {

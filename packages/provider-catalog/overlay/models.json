@@ -4203,6 +4203,52 @@
         },
         "unsupportedParameters": [],
         "status": "candidate"
+      },
+      {
+        "key": "google/gemini-3.8-flash",
+        "providerId": "google",
+        "upstreamId": "gemini-3.8-flash",
+        "displayName": "Gemini 3.8 Flash",
+        "aliases": [],
+        "$comment": "P6.6 Task 1b (WS-13c owed row): the `gemini` family's `flash` slot pointed at `gemini-3.7-flash` until this row was verified. FOUND on https://ai.google.dev/gemini-api/docs/models (retrieved 2026-09-07): the models table lists `gemini-3.8-flash` as \"New Stable\" ahead of `gemini-3.7-flash` (\"previous-generation Flash model\"), described as \"Our most intelligent Flash model, engineered for long-horizon software engineering, autonomous agents, and complex enterprise workflows\" — the vendor-doc basis the family slot's citation already named. The page is an INDEX: it gives the id, a one-line description and a status badge, then links out to a per-model page (/gemini-api/docs/models/gemini-3.8-flash) for token limits, modality tables and pricing; that per-model page is outside this task's allowed page set (only the exact URL above), so `contextWindow`/`maxOutputTokens`/`pricing` are NOT set here rather than guessed — same discipline as leaving a field off when the allowed page is silent. `inputModalities`/`outputModalities`/`toolCalling`/`nativeTools` are carried forward from the immediately-prior `google/gemini-3.7-flash` row's own catalogued facts (same Flash lineup, same provider; this page's own copy — \"autonomous agents\" — presumes the same agentic tool-calling surface), marked `confidence: \"inferred\"` because this exact page names no per-model modality/tool table. Vertex AI is NOT mentioned anywhere on this page (checked directly), so no `vertex/gemini-3.8-flash` sibling is authored — that would need evidence outside this task's allowed page set.",
+        "endpoints": [
+          "chat"
+        ],
+        "inputModalities": {
+          "value": [
+            "text",
+            "image"
+          ],
+          "source": "upstream-static",
+          "sourceRef": "google/gemini-3.7-flash's own catalogued inputModalities (open-sse/config/providers/registry/gemini/index.ts#gemini-3.7-flash), carried forward for the immediately-next Flash release; https://ai.google.dev/gemini-api/docs/models names no per-model modality table (retrieved 2026-09-07)",
+          "confidence": "inferred",
+          "observedAt": "2026-09-07T00:00:00Z"
+        },
+        "outputModalities": {
+          "value": [
+            "text"
+          ],
+          "source": "winter-default",
+          "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+          "confidence": "unknown",
+          "observedAt": "2026-09-07T00:00:00Z"
+        },
+        "toolCalling": {
+          "value": "native",
+          "source": "upstream-static",
+          "sourceRef": "google/gemini-3.7-flash's own catalogued toolCalling (open-sse/config/providers/registry/gemini/index.ts#gemini-3.7-flash), carried forward; https://ai.google.dev/gemini-api/docs/models describes gemini-3.8-flash as engineered for \"autonomous agents\" but does not itself state a toolCalling flag (retrieved 2026-09-07)",
+          "confidence": "inferred",
+          "observedAt": "2026-09-07T00:00:00Z"
+        },
+        "nativeTools": {
+          "value": true,
+          "source": "upstream-static",
+          "sourceRef": "same basis as toolCalling",
+          "confidence": "inferred",
+          "observedAt": "2026-09-07T00:00:00Z"
+        },
+        "unsupportedParameters": [],
+        "status": "candidate"
       }
   ]
 }
