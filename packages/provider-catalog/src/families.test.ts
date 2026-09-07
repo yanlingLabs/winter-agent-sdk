@@ -28,7 +28,25 @@ describe("canonicalModelIdOf — the provider's spelling removed, the vendor ide
     ["zai-glm-4.7", "glm-4.7"],
     ["gpt-5.6-sol", "gpt-5.6-sol"],
     ["qwen/qwen3.6-27b", "qwen3.6-27b"],
+    // R-6c-14 (fix r1, review I-2): the spellings a review measured on the shipped catalog as
+    // reaching the right FAMILY with an id no slot could ever equal, plus the gateway forms that
+    // were landing in `other` for the same reason.
+    ["deepseek/deepseek-v4-pro", "deepseek-v4-pro"], // novita re-namespaces DeepSeek's own ids
+    ["qwen3.6:27b", "qwen3.6-27b"], // uncloseai, Ollama's size-tag spelling
+    ["openai.gpt-oss-120b-1:0", "gpt-oss-120b"], // bedrock: a NON-`v` version suffix
+    ["hf:openai/gpt-oss-120b", "gpt-oss-120b"], // a namespace wrapped around another namespace
+    ["cline-pass/glm-5.2", "glm-5.2"],
+    ["moonshot/kimi-k2.6", "kimi-k2.6"],
   ])("%s -> %s", (input, expected) => expect(canonicalModelIdOf(input)).toBe(expected));
+
+  // The deliberate NON-changes, pinned so a later widening cannot quietly take them: R-6c-14 rewrites
+  // the size tag's SEPARATOR and nothing else. Alibaba's own ids are `qwen3.6` with no hyphen, so
+  // inserting one into `gemma4`/`llama3.1` would split a lineup that ships both spellings into two
+  // models. These rows stay in `other`, which is the honest answer.
+  test.each([
+    ["gemma4:31b", "gemma4-31b"],
+    ["llama3.1:8b", "llama3.1-8b"],
+  ])("%s -> %s (separator only — no hyphen invented into the lineup name)", (input, expected) => expect(canonicalModelIdOf(input)).toBe(expected));
 });
 
 describe("familyIdOf — first matcher wins, gpt-oss before gpt, other when nothing matches", () => {

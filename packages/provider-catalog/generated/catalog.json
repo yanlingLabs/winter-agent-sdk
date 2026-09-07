@@ -6480,7 +6480,7 @@
         "parallel_tool_calls"
       ],
       "status": "candidate",
-      "canonicalModelId": "aphrodite/thedrummer/cydonia-24b-v4.3",
+      "canonicalModelId": "thedrummer/cydonia-24b-v4.3",
       "modelFamily": "other"
     },
     {
@@ -6537,7 +6537,7 @@
         "parallel_tool_calls"
       ],
       "status": "candidate",
-      "canonicalModelId": "aphrodite/thedrummer/skyfall-31b-v4.2",
+      "canonicalModelId": "thedrummer/skyfall-31b-v4.2",
       "modelFamily": "other"
     },
     {
@@ -9151,7 +9151,7 @@
       },
       "unsupportedParameters": [],
       "status": "candidate",
-      "canonicalModelId": "deepseek/deepseek-v3",
+      "canonicalModelId": "deepseek-v3",
       "modelFamily": "deepseek"
     },
     {
@@ -9271,8 +9271,8 @@
       },
       "unsupportedParameters": [],
       "status": "candidate",
-      "canonicalModelId": "moonshot/kimi-k2.6",
-      "modelFamily": "other"
+      "canonicalModelId": "kimi-k2.6",
+      "modelFamily": "kimi"
     },
     {
       "key": "api-airforce/qwen/qwen3-32b",
@@ -12534,8 +12534,8 @@
       },
       "unsupportedParameters": [],
       "status": "candidate",
-      "canonicalModelId": "openai.gpt-oss-120b-1:0",
-      "modelFamily": "other"
+      "canonicalModelId": "gpt-oss-120b",
+      "modelFamily": "gpt-oss"
     },
     {
       "key": "blackbox/claude-fable-5",
@@ -14869,8 +14869,8 @@
       },
       "unsupportedParameters": [],
       "status": "candidate",
-      "canonicalModelId": "cline-pass/glm-5.2",
-      "modelFamily": "other"
+      "canonicalModelId": "glm-5.2",
+      "modelFamily": "glm"
     },
     {
       "key": "clinepass/cline-pass/minimax-m3",
@@ -14926,8 +14926,8 @@
       },
       "unsupportedParameters": [],
       "status": "candidate",
-      "canonicalModelId": "cline-pass/minimax-m3",
-      "modelFamily": "other"
+      "canonicalModelId": "minimax-m3",
+      "modelFamily": "minimax"
     },
     {
       "key": "clova-studio/HCX-005",
@@ -23906,7 +23906,7 @@
       },
       "unsupportedParameters": [],
       "status": "candidate",
-      "canonicalModelId": "deepseek/deepseek-v3.2",
+      "canonicalModelId": "deepseek-v3.2",
       "modelFamily": "deepseek"
     },
     {
@@ -23977,7 +23977,7 @@
       },
       "unsupportedParameters": [],
       "status": "candidate",
-      "canonicalModelId": "deepseek/deepseek-v4-flash",
+      "canonicalModelId": "deepseek-v4-flash",
       "modelFamily": "deepseek"
     },
     {
@@ -24048,7 +24048,7 @@
       },
       "unsupportedParameters": [],
       "status": "candidate",
-      "canonicalModelId": "deepseek/deepseek-v4-pro",
+      "canonicalModelId": "deepseek-v4-pro",
       "modelFamily": "deepseek"
     },
     {
@@ -27683,7 +27683,7 @@
       },
       "unsupportedParameters": [],
       "status": "candidate",
-      "canonicalModelId": "gemma4:31b",
+      "canonicalModelId": "gemma4-31b",
       "modelFamily": "other"
     },
     {
@@ -27870,8 +27870,8 @@
       },
       "unsupportedParameters": [],
       "status": "candidate",
-      "canonicalModelId": "gpt-oss:120b",
-      "modelFamily": "other"
+      "canonicalModelId": "gpt-oss-120b",
+      "modelFamily": "gpt-oss"
     },
     {
       "key": "ollama-cloud/gpt-oss:20b",
@@ -27931,8 +27931,8 @@
       },
       "unsupportedParameters": [],
       "status": "candidate",
-      "canonicalModelId": "gpt-oss:20b",
-      "modelFamily": "other"
+      "canonicalModelId": "gpt-oss-20b",
+      "modelFamily": "gpt-oss"
     },
     {
       "key": "ollama-cloud/kimi-k2.6",
@@ -28254,7 +28254,7 @@
       },
       "unsupportedParameters": [],
       "status": "candidate",
-      "canonicalModelId": "qwen3.5:397b",
+      "canonicalModelId": "qwen3.5-397b",
       "modelFamily": "qwen"
     },
     {
@@ -28297,7 +28297,7 @@
       },
       "unsupportedParameters": [],
       "status": "candidate",
-      "canonicalModelId": "llama3.1:8b",
+      "canonicalModelId": "llama3.1-8b",
       "modelFamily": "other"
     },
     {
@@ -33360,7 +33360,7 @@
       },
       "unsupportedParameters": [],
       "status": "candidate",
-      "canonicalModelId": "hf:minimaxai/minimax-m3",
+      "canonicalModelId": "minimaxai/minimax-m3",
       "modelFamily": "other"
     },
     {
@@ -33434,8 +33434,8 @@
       },
       "unsupportedParameters": [],
       "status": "candidate",
-      "canonicalModelId": "hf:qwen/qwen3.6-27b",
-      "modelFamily": "other"
+      "canonicalModelId": "qwen3.6-27b",
+      "modelFamily": "qwen"
     },
     {
       "key": "synthetic/hf:moonshotai/Kimi-K2.7-Code",
@@ -33508,8 +33508,8 @@
       },
       "unsupportedParameters": [],
       "status": "candidate",
-      "canonicalModelId": "hf:moonshotai/kimi-k2.7-code",
-      "modelFamily": "other"
+      "canonicalModelId": "kimi-k2.7-code",
+      "modelFamily": "kimi"
     },
     {
       "key": "synthetic/hf:nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4",
@@ -33581,7 +33581,7 @@
       },
       "unsupportedParameters": [],
       "status": "candidate",
-      "canonicalModelId": "hf:nvidia/nvidia-nemotron-3-super-120b-a12b-nvfp4",
+      "canonicalModelId": "nvidia-nemotron-3-super-120b-a12b-nvfp4",
       "modelFamily": "other"
     },
     {
@@ -33654,8 +33654,8 @@
       },
       "unsupportedParameters": [],
       "status": "candidate",
-      "canonicalModelId": "hf:openai/gpt-oss-120b",
-      "modelFamily": "other"
+      "canonicalModelId": "gpt-oss-120b",
+      "modelFamily": "gpt-oss"
     },
     {
       "key": "synthetic/hf:zai-org/GLM-4.7-Flash",
@@ -33727,8 +33727,8 @@
       },
       "unsupportedParameters": [],
       "status": "candidate",
-      "canonicalModelId": "hf:zai-org/glm-4.7-flash",
-      "modelFamily": "other"
+      "canonicalModelId": "glm-4.7-flash",
+      "modelFamily": "glm"
     },
     {
       "key": "synthetic/hf:zai-org/GLM-5.2",
@@ -33800,8 +33800,8 @@
       },
       "unsupportedParameters": [],
       "status": "candidate",
-      "canonicalModelId": "hf:zai-org/glm-5.2",
-      "modelFamily": "other"
+      "canonicalModelId": "glm-5.2",
+      "modelFamily": "glm"
     },
     {
       "key": "tabitoken/claude-opus-4-8",
@@ -34511,7 +34511,7 @@
       },
       "unsupportedParameters": [],
       "status": "candidate",
-      "canonicalModelId": "gemma4:31b",
+      "canonicalModelId": "gemma4-31b",
       "modelFamily": "other"
     },
     {
@@ -34557,7 +34557,7 @@
       },
       "unsupportedParameters": [],
       "status": "candidate",
-      "canonicalModelId": "qwen3.6:27b",
+      "canonicalModelId": "qwen3.6-27b",
       "modelFamily": "qwen"
     },
     {
@@ -37857,7 +37857,7 @@
       },
       "unsupportedParameters": [],
       "status": "candidate",
-      "canonicalModelId": "deepseek/deepseek-chat",
+      "canonicalModelId": "deepseek-chat",
       "modelFamily": "deepseek"
     },
     {

@@ -15,16 +15,36 @@ export const CLAUDE_RESERVED_SLOT_NAMES: readonly string[] = ["fable", "opus", "
 /** "$10", "10 USD", "€2", "£1", "10 dollars" — pricing lives on rows, never in a slot description. */
 export const CURRENCY_RE = /(?:[$€£]\s?\d)|(?:\d\s?(?:usd|dollars?)\b)/i;
 
-const NAMESPACE_PREFIXES = ["models/", "anthropic/", "openai/", "google/", "deepseek-ai/", "meta-llama/", "meta/", "qwen/", "x-ai/", "xai/", "moonshotai/", "zai-org/", "z-ai/", "minimax/", "mistralai/", "nvidia/"] as const;
-const BEDROCK_PREFIXES = ["us.", "eu.", "apac.", "global.", "anthropic."] as const;
+/**
+ * Vendor/host namespaces a provider puts in front of the model id (WS-13c §1, amended by R-6c-14).
+ *
+ * The five added in fix round 1 are the ones a review measured against the shipped 600 rows:
+ * `deepseek/` (Novita re-namespaces DeepSeek's own ids, so `novita/deepseek/deepseek-v4-pro` did not
+ * reach the `deepseek/pro` slot — a row the provider demonstrably serves), `moonshot/`,
+ * `cline-pass/`, `hf:` (Hugging Face-style ids, which are a namespace ON TOP of another one) and
+ * `aphrodite/`. §1's list is the reviewed authority, so widening it is a spec amendment, not a
+ * tidy-up — and it changes generated data, which is why it lands here rather than in a lane.
+ */
+const NAMESPACE_PREFIXES = ["models/", "anthropic/", "openai/", "google/", "deepseek/", "deepseek-ai/", "meta-llama/", "meta/", "qwen/", "x-ai/", "xai/", "moonshot/", "moonshotai/", "zai-org/", "z-ai/", "minimax/", "mistralai/", "nvidia/", "cline-pass/", "hf:", "aphrodite/"] as const;
+/** Bedrock region and vendor prefixes. `openai.` joins them for `bedrock/openai.gpt-oss-120b-1:0` (R-6c-14). */
+const BEDROCK_PREFIXES = ["us.", "eu.", "apac.", "global.", "anthropic.", "openai."] as const;
 
 /** The vendor's model identity with the provider's spelling removed (WS-13c §1, R13c-2). Deterministic; a per-row overlay `canonicalModelId` overrides it. */
 export function canonicalModelIdOf(upstreamId: string): string {
   let id = upstreamId.trim().toLowerCase();
   const account = /^accounts\/[^/]+\/models\/(.+)$/.exec(id);
   if (account !== null) id = account[1]!;
-  for (const prefix of NAMESPACE_PREFIXES) {
-    if (id.startsWith(prefix)) { id = id.slice(prefix.length); break; }
+  // REPEATS rather than stopping at the first hit, like the Bedrock loop below. A single pass was
+  // enough while every namespace was one segment; `hf:` is a namespace wrapped AROUND another one
+  // (`hf:openai/gpt-oss-120b`, `hf:zai-org/glm-4.7-flash`), so one strip would leave the vendor's own
+  // namespace in place and the id still unreachable by its slot. Terminates: every prefix is
+  // non-empty, so each iteration strictly shortens `id`.
+  let namespaced = true;
+  while (namespaced) {
+    namespaced = false;
+    for (const prefix of NAMESPACE_PREFIXES) {
+      if (id.startsWith(prefix)) { id = id.slice(prefix.length); namespaced = true; break; }
+    }
   }
   let stripped = true;
   while (stripped) {
@@ -33,10 +53,16 @@ export function canonicalModelIdOf(upstreamId: string): string {
       if (id.startsWith(prefix)) { id = id.slice(prefix.length); stripped = true; }
     }
   }
-  id = id.replace(/-v\d+:\d+$/, "");
+  // `-v1:0` AND the bare `-1:0` Bedrock writes on non-Anthropic rows (`openai.gpt-oss-120b-1:0`).
+  id = id.replace(/-(?:v)?\d+:\d+$/, "");
   if (id.startsWith("zai-glm")) id = id.slice("zai-".length);
   // "claude-haiku-4-5-20251001" -> "claude-haiku-4.5-20251001": single-digit groups joined by "-" are one dotted version.
   id = id.replace(/-(\d)-(\d)(?=-|$)/g, "-$1.$2");
+  // Ollama's size tag: "qwen3.6:27b" -> "qwen3.6-27b", "gpt-oss:120b" -> "gpt-oss-120b". ONLY the
+  // separator is rewritten — no hyphen is inserted into `gemma4`/`llama3.1`, because Alibaba's own
+  // ids really are `qwen3.6` with no hyphen, and inventing one would make a lineup that ships both
+  // spellings look like two models. Those rows stay in `other`, honestly.
+  id = id.replace(/:(\d+[bB])$/, "-$1");
   return id;
 }
 
