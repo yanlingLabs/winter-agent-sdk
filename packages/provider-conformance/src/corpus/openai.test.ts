@@ -6,15 +6,9 @@
 // directory or the Keychain.
 
 import { describe, expect, test } from "bun:test";
-import { createResponsesAdapter } from "../../../provider-runtime/src/adapters/openai/responses.ts";
-import { createChatCompletionsAdapter } from "../../../provider-runtime/src/adapters/openai/chat-completions.ts";
-import { createCodexOauthAdapter } from "../../../provider-runtime/src/adapters/openai/codex-oauth.ts";
-import { QuotaManager } from "../../../provider-runtime/src/adapters/openai/quota.ts";
-import { createLocalOpenAIAdapter } from "../../../provider-runtime/src/adapters/openai/local.ts";
-import { FAST_RETRY, descriptor, testContext, testDiscoveryContext, type DescriptorOverrides } from "../../../provider-runtime/src/adapters/openai/testing.ts";
-import { discoverModels } from "@yanlinglabs/winter-provider-runtime";
+import { createResponsesAdapter, createChatCompletionsAdapter, createCodexOauthAdapter, createLocalOpenAIAdapter, discoverModels, createMemoryCredentialStore, winterUserAgent } from "@yanlinglabs/winter-provider-runtime";
 import type { CredentialRef, ProviderAdapter, ProviderEvent, TurnRequest } from "@yanlinglabs/winter-provider-runtime";
-import { createMemoryCredentialStore } from "../../../provider-runtime/src/credentials/memory.ts";
+import { QuotaManager, FAST_RETRY, descriptor, testContext, testDiscoveryContext, type DescriptorOverrides } from "@yanlinglabs/winter-provider-runtime/testing";
 import { formatCorpusReport, runAdapterCorpus } from "./runner.ts";
 import { FOREIGN_MARKER, OPAQUE_MARKER, SCENARIO, openAiCorpusCases, type CorpusHarness, type HarnessOverrides } from "./openai.ts";
 import { chatCorpusScenarios, responsesCorpusScenarios } from "./openai-scenarios.ts";
@@ -26,8 +20,10 @@ import { responsesStream } from "../fakes/openai-responses.ts";
 import { openAiModelsRoutes } from "../fakes/openai-models.ts";
 import { noRequestContains } from "../fakes/server.ts";
 import type { FakeServer } from "../fakes/server.ts";
+// `adapterAsProvider` stays relative (review r1 Critical-2): `winter-agent-runtime` is
+// `"private": true`, never published -- irrelevant here since `.test.ts` files never ship as
+// reachable code.
 import { adapterAsProvider } from "../../../runtime/src/provider/bridge.ts";
-import { winterUserAgent } from "../../../provider-runtime/src/identity.ts";
 
 /** A short stall budget: the stall case must fail fast, and every other scenario's frames are well inside it. */
 const STALL_MS = 200;

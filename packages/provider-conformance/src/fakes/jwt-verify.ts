@@ -8,8 +8,9 @@
 // is a test.
 //
 // The ALGORITHM PARAMETERS are imported from the signer rather than restated, so the two halves of
-// the round trip cannot drift apart.
-import { RS256 } from "../../../provider-runtime/src/adapters/google/jwt-rs256.ts";
+// the round trip cannot drift apart. review r1 (Critical-2): via the package specifier's `/testing`
+// subpath, not a relative path escaping this package.
+import { RS256 } from "@yanlinglabs/winter-provider-runtime/testing";
 
 export function base64UrlDecodeText(value: string): string {
   const padded = value.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - (value.length % 4)) % 4);

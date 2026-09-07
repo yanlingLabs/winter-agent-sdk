@@ -11,14 +11,24 @@
 //   - The normalized stream is consumed by the REAL consumer (`foldProviderStream`), so a case
 //     proves the adapter against what will actually fold it in production.
 //
-// The relative imports into `provider-runtime` and `runtime` are deliberate: this package's
-// dependencies expose only their frozen barrels (`exports: { ".": ... }`), and neither barrel can
-// gain an entry for a lane's adapter without editing a frozen file.
+// review r1 (Critical-2): `createAnthropicMessagesAdapter` now comes through
+// `@yanlinglabs/winter-provider-runtime`'s own public barrel, like every other adapter constructor
+// this file uses -- the relative-path reach-through was never necessary for it. `foldProviderStream`
+// stays a relative import into `packages/runtime` on purpose, not by omission: `bridge.ts`'s own
+// header explains why the fold can only ever live in the runtime engine package (a one-way
+// runtime -> provider-runtime dependency, never the reverse), and `winter-agent-runtime` is
+// `"private": true` -- never published, so no package-specifier form of this import could ever be
+// installed by an external consumer regardless of how it is spelled. This is exactly why this
+// file's own `anthropicCorpus` namespace is NO LONGER re-exported from `../index.ts`'s top-level
+// barrel (review r1 Critical Finding 2's actual fix): nothing outside this package's own `.test.ts`
+// files ever imported it by package name, so removing it from the PUBLISHED surface is a no-op for
+// every real consumer and the only way to make `@yanlinglabs/winter-provider-conformance` (bare)
+// actually install. This file is unchanged in every other respect and keeps working exactly as
+// before for `anthropic.test.ts`'s own direct, same-directory relative import.
 import type { ReasoningCapabilities, WinterCatalog, WinterModelDescriptor } from "@yanlinglabs/winter-provider-catalog";
 import { stampFamilyFields } from "@yanlinglabs/winter-provider-catalog";
-import { createRegistry, createMemoryCredentialStore, discoverModels } from "@yanlinglabs/winter-provider-runtime";
+import { createRegistry, createMemoryCredentialStore, discoverModels, createAnthropicMessagesAdapter } from "@yanlinglabs/winter-provider-runtime";
 import type { ProviderAdapter, ProviderContext, ProviderEvent, TurnRequest } from "@yanlinglabs/winter-provider-runtime";
-import { createAnthropicMessagesAdapter } from "../../../provider-runtime/src/adapters/anthropic/index.ts";
 import { foldProviderStream, type FoldedProviderTurn } from "../../../runtime/src/provider/bridge.ts";
 import { anthropicError, anthropicFakeRoutes, anthropicSseFrames, anthropicTurnResponse, assertAnthropicRequest, anthropicBody, messageBlocks, flattenBlockTypes } from "../fakes/anthropic-messages.ts";
 import { jsonResponse, sseResponse, stalledResponse, requestsTo, type FakeRoute, type FakeServer } from "../fakes/server.ts";

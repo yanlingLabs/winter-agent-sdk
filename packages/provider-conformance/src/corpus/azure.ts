@@ -10,9 +10,8 @@
 // fake refuses a request without `api-version` the way Azure does, so an adapter that dropped it on
 // (say) only its retried request would fail loudly rather than pass twenty-two cases.
 
-import { createAzureOpenAIAdapter, AZURE_PREVIEW_API_VERSION } from "../../../provider-runtime/src/adapters/openai/azure.ts";
-import { FAST_RETRY, descriptor, testContext, testDiscoveryContext, type DescriptorOverrides } from "../../../provider-runtime/src/adapters/openai/testing.ts";
-import { discoverModels } from "@yanlinglabs/winter-provider-runtime";
+import { FAST_RETRY, descriptor, testContext, testDiscoveryContext, type DescriptorOverrides, AZURE_PREVIEW_API_VERSION } from "@yanlinglabs/winter-provider-runtime/testing";
+import { discoverModels, createAzureOpenAIAdapter } from "@yanlinglabs/winter-provider-runtime";
 import type { ProviderAdapter } from "@yanlinglabs/winter-provider-runtime";
 import { apiVersionOf, deploymentOf } from "../fakes/azure-openai.ts";
 import type { RecordedRequest } from "../fakes/server.ts";

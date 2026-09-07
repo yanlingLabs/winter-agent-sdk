@@ -15,13 +15,16 @@
 //
 //   2. THE CONSUMER IS THE REAL FOLD. `foldProviderStream` is imported from the runtime's own
 //      `bridge.ts` rather than re-implemented, because a re-implementation would agree with this
-//      lane and disagree with production. It is reached by relative path: `provider-runtime`'s
-//      barrel is frozen and exports no adapters, and this package is test-only, so the import
-//      crosses a package boundary deliberately and in the direction the dependency already runs.
+//      lane and disagree with production. It stays a relative import (review r1 Critical-2):
+//      `winter-agent-runtime` is `"private": true`, never published, so no package-specifier
+//      spelling could ever be resolved by an external installer -- which is why this file's
+//      `openaiCorpus` namespace is NO LONGER re-exported from `../index.ts` (see
+//      `corpus/anthropic.ts`'s header for the full reasoning). `DescriptorOverrides` now comes
+//      through `@yanlinglabs/winter-provider-runtime/testing`, the one new subpath review r1 grants.
 
 import { foldProviderStream } from "../../../runtime/src/provider/bridge.ts";
 import type { DiscoveryCache, ModelCatalogResult, ProviderEvent, TurnRequest } from "@yanlinglabs/winter-provider-runtime";
-import type { DescriptorOverrides } from "../../../provider-runtime/src/adapters/openai/testing.ts";
+import type { DescriptorOverrides } from "@yanlinglabs/winter-provider-runtime/testing";
 import type { CorpusCaseId, CorpusCaseImpl } from "./runner.ts";
 import type { FakeServer, RecordedRequest } from "../fakes/server.ts";
 import { startFake } from "../fakes/server.ts";

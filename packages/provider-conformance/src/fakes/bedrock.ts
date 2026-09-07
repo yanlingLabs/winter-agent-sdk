@@ -28,13 +28,15 @@
 // `ValidationException`s. Without them, the adapter's merging and empty-block dropping would be
 // asserted against a server that accepts anything.
 
+// review r1 (Critical-2): both come through the new `@yanlinglabs/winter-provider-runtime/testing`
+// subpath now, not a relative path escaping this package.
 import {
   concatFrames,
   converseStreamEvent,
   converseStreamException,
   verifySigV4,
-} from "../../../provider-runtime/src/adapters/bedrock/testing.ts";
-import { parseAuthorization } from "../../../provider-runtime/src/adapters/bedrock/sigv4.ts";
+  parseAuthorization,
+} from "@yanlinglabs/winter-provider-runtime/testing";
 import { jsonResponse, scenarioTable, startFake, type FakeServer, type RecordedRequest, type ScenarioResponder } from "./server.ts";
 
 /** AWS's own published example credentials. They authenticate nothing; the fake knows the secret so it can recompute. */

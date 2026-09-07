@@ -1,10 +1,9 @@
 // Azure OpenAI's corpus run — both surfaces, asked the family's own questions verbatim.
 
 import { describe, expect, test } from "bun:test";
-import { createAzureOpenAIAdapter } from "../../../provider-runtime/src/adapters/openai/azure.ts";
-import { FAST_RETRY, descriptor, testContext } from "../../../provider-runtime/src/adapters/openai/testing.ts";
-import { createMemoryCredentialStore } from "../../../provider-runtime/src/credentials/memory.ts";
+import { createAzureOpenAIAdapter, createMemoryCredentialStore } from "@yanlinglabs/winter-provider-runtime";
 import type { CredentialRef, ProviderEvent } from "@yanlinglabs/winter-provider-runtime";
+import { FAST_RETRY, descriptor, testContext } from "@yanlinglabs/winter-provider-runtime/testing";
 import { formatCorpusReport, runAdapterCorpus } from "./runner.ts";
 import { SCENARIO, openAiCorpusCases, type CorpusHarness } from "./openai.ts";
 import { chatCorpusScenarios, responsesCorpusScenarios } from "./openai-scenarios.ts";

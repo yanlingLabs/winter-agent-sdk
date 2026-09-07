@@ -10,12 +10,9 @@
 // a machine where one is in use.
 
 import { describe, expect, test } from "bun:test";
-import { startCodexLogin } from "../../../provider-runtime/src/adapters/openai/codex-oauth.ts";
-import { CODEX } from "../../../provider-runtime/src/adapters/openai/codex-config.ts";
-import { base64Url } from "../../../provider-runtime/src/adapters/openai/pkce.ts";
-import { createMemoryCredentialStore } from "../../../provider-runtime/src/credentials/memory.ts";
+import { startCodexLogin, createMemoryCredentialStore, winterUserAgent } from "@yanlinglabs/winter-provider-runtime";
+import { CODEX, base64Url } from "@yanlinglabs/winter-provider-runtime/testing";
 import { startFake, type RecordedRequest } from "../fakes/server.ts";
-import { winterUserAgent } from "../../../provider-runtime/src/identity.ts";
 import { FAKE_ACCOUNT_ID, FAKE_ACCESS_TOKEN, FAKE_REFRESH_TOKEN, codexTokenRoute } from "../fakes/codex-oauth.ts";
 import type { CodexTokenEndpointOptions } from "../fakes/codex-oauth.ts";
 

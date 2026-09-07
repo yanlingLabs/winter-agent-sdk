@@ -8,23 +8,37 @@
 // before`, which is the only form of that claim an adapter cannot satisfy by sending the request and
 // ignoring the answer.
 //
-// TWO CROSS-PACKAGE RELATIVE IMPORTS, disclosed. `provider-runtime`'s barrel is FROZEN and exports
-// no adapters, and its package `exports` map blocks a deep subpath import; the runtime's
-// `foldProviderStream` is likewise not reachable as a package specifier from here. Both are imported
-// by relative path, exactly as Lane A did and for the same reason — the alternative was editing a
-// frozen file. Using the REAL fold rather than a re-implementation is the point: a lane that folded
-// its own events would be testing its own opinion of what the engine does with them.
-
+// ONE CROSS-PACKAGE RELATIVE IMPORT REMAINS, disclosed (review r1 Critical-2 narrowed this from
+// two): the runtime's `foldProviderStream`/`adapterAsProvider` are not reachable as a package
+// specifier from here and never can be -- `winter-agent-runtime` is `"private": true`, never
+// published, so no consumer outside this monorepo could ever resolve it regardless of spelling.
+// Using the REAL fold rather than a re-implementation is the point: a lane that folded its own
+// events would be testing its own opinion of what the engine does with them. This is exactly why
+// this file's `bedrockCorpus` namespace is NO LONGER re-exported from `../index.ts`'s top-level
+// barrel: nothing outside this package's own `.test.ts` files ever imported it by package name, so
+// dropping it from the PUBLISHED surface is a no-op for every real consumer and the only way to make
+// `@yanlinglabs/winter-provider-conformance` (bare) actually install (review r1 Critical Finding 2).
+//
+// Everything else below now comes through `@yanlinglabs/winter-provider-runtime`'s own public barrel
+// (main entry) or its `/testing` subpath (`encodeEventStreamMessage`, test-only) -- the frozen-file
+// reach-through this header used to describe no longer applies to any of them.
 import { adapterAsProvider, foldProviderStream } from "../../../runtime/src/provider/bridge.ts";
-import { createRegistry } from "../../../provider-runtime/src/registry.ts";
-import { createBedrockConverseAdapter, type BedrockAdapterOptions } from "../../../provider-runtime/src/adapters/bedrock/converse.ts";
-import { createMemoryCredentialStore } from "../../../provider-runtime/src/credentials/memory.ts";
-import { discoverModels } from "../../../provider-runtime/src/discovery.ts";
-import type { DiscoveryContext, ProviderContext, ProviderEvent, ProviderMessageLike, TurnRequest } from "../../../provider-runtime/src/types.ts";
-import type { ResolvedModel } from "../../../provider-runtime/src/registry.ts";
+import {
+  createRegistry,
+  createBedrockConverseAdapter,
+  type BedrockAdapterOptions,
+  createMemoryCredentialStore,
+  discoverModels,
+  type DiscoveryContext,
+  type ProviderContext,
+  type ProviderEvent,
+  type ProviderMessageLike,
+  type TurnRequest,
+  type ResolvedModel,
+} from "@yanlinglabs/winter-provider-runtime";
 import type { WinterCatalog, WinterModelDescriptor } from "@yanlinglabs/winter-provider-catalog";
 import { stampFamilyFields } from "@yanlinglabs/winter-provider-catalog";
-import { encodeEventStreamMessage } from "../../../provider-runtime/src/adapters/bedrock/testing.ts";
+import { encodeEventStreamMessage } from "@yanlinglabs/winter-provider-runtime/testing";
 import { FAKE_ACCESS_KEY_ID, FAKE_REGION, FAKE_SECRET_ACCESS_KEY, bedrockError, converseStreamEvent, converseStreamException, eventStreamResponse, textTurnFrames } from "../fakes/bedrock.ts";
 import { jsonResponse, type FakeServer, type ScenarioResponder } from "../fakes/server.ts";
 import type { CorpusCaseId, CorpusCaseImpl } from "./runner.ts";

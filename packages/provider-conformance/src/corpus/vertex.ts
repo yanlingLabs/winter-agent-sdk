@@ -13,9 +13,9 @@
 // INJECTED reader that never touches a real filesystem.
 import type { ReasoningCapabilities, WinterCatalog, WinterModelDescriptor } from "@yanlinglabs/winter-provider-catalog";
 import { stampFamilyFields } from "@yanlinglabs/winter-provider-catalog";
-import { createFileCredentialStore, createMemoryCredentialStore } from "@yanlinglabs/winter-provider-runtime";
+import { createFileCredentialStore, createMemoryCredentialStore, createVertexGeminiAdapter } from "@yanlinglabs/winter-provider-runtime";
 import type { CredentialStore, ProviderAdapter, ProviderContext } from "@yanlinglabs/winter-provider-runtime";
-import { createVertexGeminiAdapter, vertexModelPath } from "../../../provider-runtime/src/adapters/google/index.ts";
+import { vertexModelPath } from "@yanlinglabs/winter-provider-runtime/testing";
 import { assertVertexRequest, generateTestKeyPair, vertexFakeRoutes, vertexTokenUrl, type VerifiedAssertion, type VertexFakeOptions } from "../fakes/vertex.ts";
 import { jsonResponse, type FakeRoute } from "../fakes/server.ts";
 import { GOOGLE_MODELS, googleFamilyCorpusCases, googleScenarioStream } from "./google.ts";
