@@ -76,6 +76,10 @@ importers:
         version: 8.20.0
 
   packages/sdk:
+    dependencies:
+      '@yanlinglabs/winter-provider-catalog':
+        specifier: workspace:*
+        version: link:../provider-catalog
     devDependencies:
       '@types/node':
         specifier: ^26.4.0
