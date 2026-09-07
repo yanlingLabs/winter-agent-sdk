@@ -277,7 +277,7 @@ export const agentExecutor: ToolExecutor = {
     }
 
     // WS-10 §2: subagent_type selects an AgentDefinition. Both sources now resolve -- filesystem
-    // (`~/.winter/agents/*.md` always, `.winter/agents/*.md` only in a trusted workspace, RULING
+    // (the user tier always, a project `agents/*.md` only in a trusted workspace, RULING
     // R4-7 / resolveWorkspaceTrust()) AND the session's own PROGRAMMATIC `Options.agents` map,
     // which reaches this executor via `ctx.agents` (Phase 4 Task 8 closed Lane C's Disclosed Gap #3
     // by adding that field to ToolExecutionContext and threading `config.agents` onto it in

@@ -1,5 +1,5 @@
 // WS-06 §3.4 "CronCreate" -- implement-now, captured, verbatim schema. `durable: true` persists to
-// `.winter/scheduled_tasks.json` (Winter path; WS-01 map) -- the daemon RoutineStore is a host
+// `<projectDir>/scheduled_tasks.json` (WS-01 map) -- the daemon RoutineStore is a host
 // subsystem ([WS-15]), the model-facing surface is this tool trio.
 import { stub, ALWAYS_AVAILABLE } from "./_shared.ts";
 

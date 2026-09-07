@@ -35,6 +35,7 @@
 // introductory type sketch; `ToolDisposition` below widens to 5 members rather than silently
 // mis-filing those two tools under an existing value.
 import type { PermissionMode, BackgroundTaskMessage, BrandProfile } from "@yanlinglabs/winter-agent-sdk";
+import { WINTER_BRAND } from "@yanlinglabs/winter-agent-sdk";
 import { parseRule } from "../permissions/grammar.ts";
 // Fix round 1, RULING P3-B: probeReadWouldPrompt's boolean widened to this named 3-state result --
 // imported (type-only, erased at build time; no runtime cycle since evaluator.ts never imports this
@@ -682,22 +683,75 @@ function buildMcpToolDescriptor(server: string, tool: McpToolDefinition, opts: {
   };
 }
 
-// Fix round 1, RULING P4-B (MAJOR item 2): "winter" is RESERVED as a live-MCP server identity,
+// Fix round 1, RULING P4-B (MAJOR item 2): the standing server's own name is RESERVED as a live-MCP server identity,
 // independent of whatever happens to be statically registered under it at any given moment. The
 // standing server (mcp/winter-server.ts) is registry-native -- it builds its own real
 // @modelcontextprotocol/sdk McpServer object and is NEVER installed through this function -- so a
-// call like registerMcpServerTools("winter", [{name: "browser", ...}]) must be refused even for a
+// call like registerMcpServerTools(<that name>, [{name: "browser", ...}]) must be refused even for a
 // tool name that has never been seen before and so would not trip the ordinary per-name collision
 // check below (that check only catches a name that already happens to be registered; a brand-new
 // name under the reserved server would sail straight through it and silently create a SECOND,
-// disconnected "winter" identity in the shared registry). Exact-match only, not case-insensitive --
-// mirrors mcp/env.ts's own documented exact-match-only posture; "Winter"/"WINTER" are deliberately
+// disconnected standing-server identity in the shared registry). Exact-match only, not case-insensitive --
+// mirrors mcp/env.ts's own documented exact-match-only posture; case variants are deliberately
 // NOT reserved (registry.test.ts pins this both ways). Not imported from mcp/winter-server.ts's own
 // WINTER_SERVER_NAME constant: that module already imports FROM this file (it reads the advisor
 // descriptor via getRegisteredTool), so a runtime import in the other direction would be a real
 // import cycle, not merely a type-only one -- registry.test.ts instead imports WINTER_SERVER_NAME
 // directly and asserts it against this literal, which is the drift tripwire without the cycle.
-const RESERVED_MCP_SERVER_NAMES = new Set<string>(["winter"]);
+const RESERVED_MCP_SERVER_NAMES = new Set<string>([WINTER_BRAND.mcpServerName]);
+
+// --- P7a (D19): the standing server's identity under a host's own brand ----------------------------
+//
+// THE PROBLEM. The standing server's canonical twins (its `send_message`/`list_agents` entries,
+// descriptors/winter-*.ts) are registered AT MODULE LOAD, into this process-global index, long
+// before any session's `--config-json` -- and therefore its brand -- exists. Deriving their names
+// from `WINTER_BRAND` alone would satisfy the sweep gate and still leave a reuser advertising
+// somebody else's server name; worse, it would leave the alias TABLE pointing at the reuser's
+// spelling while the only registered tool carries Winter's, so `SendMessage`'s canonical target
+// would resolve to nothing. The two halves have to move together.
+//
+// THE SHAPE. A per-session RENAME, disposed on teardown -- the same lifecycle
+// `registerHostGeneratedTool` and `registerMcpServerTools`/`unregisterMcpServerTools` already have,
+// and for the identical reason: a per-session fact has to reach a process-wide index somehow, and
+// "register, then withdraw" is how this file has always done it. `production-wiring.ts` calls it
+// once and adds the disposer to its own `dispose()`.
+//
+// A NO-OP UNDER `WINTER_BRAND`, by construction: `from === to` for every entry, so an unbranded
+// session never touches the registry at all and every existing test is byte-identical.
+//
+// THE ONE-LIVE-BRAND ASSUMPTION, disclosed: two CONCURRENT sessions under DIFFERENT brands in one
+// process would fight over these names, exactly as two concurrent sessions already fight over a
+// live MCP server's names. That is the same "one-live-engine assumption" `subagents/limits.ts` and
+// `tools/background-tasks.ts` record; a genuinely multi-tenant host is a WS-15 concern.
+export function rebrandStandingServerTools(renames: ReadonlyArray<{ from: string; to: string }>, serverName: string): () => void {
+  const applied: Array<{ from: string; to: string; entry: RegisteredTool }> = [];
+  for (const { from, to } of renames) {
+    if (from === to) continue;
+    const entry = registry.get(from);
+    // A name already taken under the new spelling is left ALONE rather than overwritten: the
+    // collision belongs to whoever claimed it, and silently replacing a registered tool is the one
+    // thing `registerTool` refuses to do.
+    if (entry === undefined || registry.has(to)) continue;
+    const renamed: RegisteredTool = { ...entry, descriptor: { ...entry.descriptor, canonicalName: to, advertisedName: to } };
+    registry.set(to, renamed);
+    registry.delete(from);
+    applied.push({ from, to, entry });
+  }
+  const reservedHere = !RESERVED_MCP_SERVER_NAMES.has(serverName);
+  if (reservedHere) RESERVED_MCP_SERVER_NAMES.add(serverName);
+  let disposed = false;
+  return () => {
+    if (disposed) return;
+    disposed = true;
+    for (const { from, to, entry } of applied) {
+      // Identity-checked, the `registerHostGeneratedTool` precedent: only withdraw a name this
+      // call actually installed and that nothing has replaced since.
+      if (registry.get(to)?.descriptor.canonicalName === to) registry.delete(to);
+      if (!registry.has(from)) registry.set(from, entry);
+    }
+    if (reservedHere) RESERVED_MCP_SERVER_NAMES.delete(serverName);
+  };
+}
 
 // P4 fix wave, KNOWN (1) -- SAME-BATCH duplicate names, ruled DEDUPE-FIRST-WINS (never throw).
 //

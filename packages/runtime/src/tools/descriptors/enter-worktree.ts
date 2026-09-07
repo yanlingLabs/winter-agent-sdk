@@ -1,7 +1,7 @@
 // WS-06 §3.3 "EnterWorktree" -- implement-now, captured, verbatim schema. Dual class in prose
 // ("mode/edit") -- PRIMARY class picked here is "mode" (it changes session cwd + filesystem
 // boundary, a posture change; the Manual-mode "permission required: Yes" column applies to it as a
-// mode-class action). `name` creates under `.winter/worktrees` (WS-01 §2.4).
+// mode-class action). `name` creates under the project dot-dir's `worktrees/` (WS-01 §2.4).
 import { stub, ALWAYS_AVAILABLE } from "./_shared.ts";
 
 stub({

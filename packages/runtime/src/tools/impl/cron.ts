@@ -8,7 +8,7 @@
 // `durable: false` (default) jobs live ONLY in a process-wide, module-level in-memory Map -- they do
 // not survive a process restart, by design (matches "durable: true persists..."'s own implication
 // that the default does NOT). `durable: true` jobs live ONLY in the project's own
-// `.winter/scheduled_tasks.json` file (WS-01 §2.4 project dot-dir convention; "project dir" resolved
+// `<projectDir>/scheduled_tasks.json` file (WS-01 §2.4 project dot-dir convention; "project dir" resolved
 // as `ctx.session.getSessionRoot()` (RULING P3-L/M3, fix wave -- was `ctx.cwd` before this fix,
 // which drifted with every `cd`: `CronCreate({durable:true})` in the main worktree, followed by
 // EnterWorktree or an in-session `cd`, made the project's durable jobs silently vanish from CronList
@@ -47,7 +47,7 @@
 //      describer is a large, unbounded surface for a field with no pinned test oracle. Anything the
 //      formatter does not recognize falls back to echoing the raw cron expression itself (honest,
 //      never wrong, just unembellished).
-//   4. Malformed pre-existing `.winter/scheduled_tasks.json` (bad JSON, or valid JSON that is not
+//   4. A malformed pre-existing durable store (bad JSON, or valid JSON that is not
 //      the `{jobs: CronJobRecord[]}` envelope this module itself writes) is a hard, legible error on
 //      every durable-touching call (create/delete/list) -- this module NEVER overwrites a file it
 //      could not first parse successfully; a caller sees a specific "why" and the file is left byte-
@@ -60,6 +60,10 @@
 import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, constants as fsConstants, writeSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
+import { WINTER_BRAND, type BrandProfile } from "@yanlinglabs/winter-agent-sdk";
+
+/** P7a (D19): the one brand field the durable store needs -- the project dot-dir it lives under. */
+type CronBrand = Pick<BrandProfile, "projectDirName">;
 import { replaceExecutor, type ToolExecutionContext, type ToolExecutor, type ToolResultPayload } from "../registry.ts";
 // Self-sufficiency (Lane A precedent, read.ts): see task-graph.ts's identical comment.
 import "../descriptors/index.ts";
@@ -204,14 +208,14 @@ export function resetInMemoryCronStoreForTest(): void {
   inMemoryJobs.clear();
 }
 
-// --- Durable store: `<projectDir>/.winter/scheduled_tasks.json`, re-read fresh every call ----------
+// --- Durable store: `<sessionRoot>/<brand.projectDirName>/scheduled_tasks.json`, re-read fresh every call ---
 
 interface DurableFile {
   jobs: CronJobRecord[];
 }
 
-function durableFilePath(projectDir: string): string {
-  return join(projectDir, ".winter", "scheduled_tasks.json");
+function durableFilePath(projectDir: string, brand?: CronBrand): string {
+  return join(projectDir, (brand ?? WINTER_BRAND).projectDirName, "scheduled_tasks.json");
 }
 
 function isCronJobRecord(v: unknown): v is CronJobRecord {
@@ -227,10 +231,10 @@ function isCronJobRecord(v: unknown): v is CronJobRecord {
 }
 
 // Never clobbers: throws (never silently starts fresh, never overwrites) the moment the file exists
-// but cannot be parsed as this module's own envelope shape. Absence of the file (or of the .winter
-// directory itself) is NOT an error -- it means "no durable jobs have ever been created here."
-function readDurableJobs(projectDir: string): CronJobRecord[] {
-  const path = durableFilePath(projectDir);
+// but cannot be parsed as this module's own envelope shape. Absence of the file (or of the project
+// dot-directory itself) is NOT an error -- it means "no durable jobs have ever been created here."
+function readDurableJobs(projectDir: string, brand?: CronBrand): CronJobRecord[] {
+  const path = durableFilePath(projectDir, brand);
   if (!existsSync(path)) return [];
   let raw: string;
   try {
@@ -259,8 +263,8 @@ function readDurableJobs(projectDir: string): CronJobRecord[] {
 // owner-only by default). Mirrors the established permissions/auto/caches.ts writeAtomic precedent
 // in this codebase (pid+counter temp name, O_CREAT|O_EXCL|O_NOFOLLOW, fsync, rename).
 let tempCounter = 0;
-function writeDurableJobsAtomic(projectDir: string, jobs: CronJobRecord[]): void {
-  const path = durableFilePath(projectDir);
+function writeDurableJobsAtomic(projectDir: string, jobs: CronJobRecord[], brand?: CronBrand): void {
+  const path = durableFilePath(projectDir, brand);
   const dir = dirname(path);
   mkdirSync(dir, { recursive: true }); // "create parents"
   const tmpPath = join(dir, `.scheduled_tasks.${process.pid}-${++tempCounter}.tmp`);
@@ -328,12 +332,12 @@ async function executeCreate(rawInput: unknown, ctx: ToolExecutionContext): Prom
   if (input.durable) {
     let existing: CronJobRecord[];
     try {
-      existing = readDurableJobs(ctx.session.getSessionRoot());
+      existing = readDurableJobs(ctx.session.getSessionRoot(), ctx.brand);
     } catch (e) {
       return errorResult((e as Error).message);
     }
     try {
-      writeDurableJobsAtomic(ctx.session.getSessionRoot(), [...existing, record]);
+      writeDurableJobsAtomic(ctx.session.getSessionRoot(), [...existing, record], ctx.brand);
     } catch (e) {
       return errorResult(`could not persist the durable job: ${(e as Error).message}`);
     }
@@ -369,7 +373,7 @@ async function executeDelete(rawInput: unknown, ctx: ToolExecutionContext): Prom
 
   let existing: CronJobRecord[];
   try {
-    existing = readDurableJobs(ctx.session.getSessionRoot());
+    existing = readDurableJobs(ctx.session.getSessionRoot(), ctx.brand);
   } catch (e) {
     return errorResult((e as Error).message);
   }
@@ -381,7 +385,7 @@ async function executeDelete(rawInput: unknown, ctx: ToolExecutionContext): Prom
     return { output: JSON.stringify({ id: input.id }) };
   }
   try {
-    writeDurableJobsAtomic(ctx.session.getSessionRoot(), remaining);
+    writeDurableJobsAtomic(ctx.session.getSessionRoot(), remaining, ctx.brand);
   } catch (e) {
     return errorResult(`could not persist the deletion: ${(e as Error).message}`);
   }
@@ -393,7 +397,7 @@ async function executeDelete(rawInput: unknown, ctx: ToolExecutionContext): Prom
 async function executeList(_rawInput: unknown, ctx: ToolExecutionContext): Promise<ToolResultPayload> {
   let durableJobs: CronJobRecord[];
   try {
-    durableJobs = readDurableJobs(ctx.session.getSessionRoot());
+    durableJobs = readDurableJobs(ctx.session.getSessionRoot(), ctx.brand);
   } catch (e) {
     return errorResult((e as Error).message);
   }

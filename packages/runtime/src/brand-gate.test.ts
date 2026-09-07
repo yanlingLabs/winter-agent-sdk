@@ -403,17 +403,6 @@ const BASELINE_ALLOWLIST: readonly string[] = [
   "packages/runtime/src/provider/credential-api.ts",  // comment-only
   "packages/runtime/src/provider/keychain-store.ts",  // comment-only
   "packages/runtime/src/testing.ts",
-  "packages/runtime/src/tools/descriptors/cron-create.ts",  // comment-only
-  "packages/runtime/src/tools/descriptors/enter-worktree.ts",  // comment-only
-  "packages/runtime/src/tools/descriptors/winter-list-agents.ts",
-  "packages/runtime/src/tools/descriptors/winter-send-message.ts",
-  "packages/runtime/src/tools/descriptors/workflow.ts",  // comment-only
-  "packages/runtime/src/tools/impl/agent.ts",  // comment-only
-  "packages/runtime/src/tools/impl/cron.ts",
-  "packages/runtime/src/tools/impl/enter-worktree.ts",
-  "packages/runtime/src/tools/impl/list-agents.ts",
-  "packages/runtime/src/tools/impl/send-message.ts",
-  "packages/runtime/src/toolsearch/aliases.ts",
   "packages/runtime/src/workflows/store.ts",
   // --- scripts (Lane A) -------------------------------------------------------------------------
   "scripts/differential.ts",  // comment-only

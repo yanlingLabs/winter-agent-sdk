@@ -8,11 +8,12 @@ import "../descriptors/list-agents.ts";
 import "../descriptors/winter-list-agents.ts"; // rider 15: the canonical alias-target descriptor this file also installs an executor for.
 import { replaceExecutor, type ToolExecutionContext, type ToolExecutor, type ToolResultPayload } from "../registry.ts";
 import { getMessagingRuntime, listAgents } from "../../messaging/router.ts";
+import { WINTER_BRAND, mcpToolName } from "@yanlinglabs/winter-agent-sdk";
 
 export const LIST_AGENTS_TOOL_NAME = "ListAgents";
 
 // NEEDS_CONTEXT: see send-message.ts's own identical note -- the same canonical-MCP-alias /
-// deferred-at-the-source obligation applies verbatim to this tool's own `mcp__winter__list_agents`
+// deferred-at-the-source obligation applies verbatim to this tool's own canonical standing-server
 // duplicate (WS-10 §15/WS-14), which likewise has no descriptor anywhere in this repo yet and is
 // outside this lane's file permissions to create.
 
@@ -31,5 +32,5 @@ replaceExecutor(LIST_AGENTS_TOOL_NAME, listAgentsExecutor);
 
 // Phase 4 Task 8 (rider 15): the canonical standing-Winter-server name, over the SAME executor
 // object -- see send-message.ts's own identical block for the full rationale.
-export const WINTER_CANONICAL_LIST_AGENTS_TOOL_NAME = "mcp__winter__list_agents";
+export const WINTER_CANONICAL_LIST_AGENTS_TOOL_NAME = mcpToolName(WINTER_BRAND, "list_agents");
 replaceExecutor(WINTER_CANONICAL_LIST_AGENTS_TOOL_NAME, listAgentsExecutor);

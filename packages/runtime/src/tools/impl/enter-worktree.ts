@@ -1,6 +1,6 @@
 // Task 7 (LANE E, WS-06 §3.3 "EnterWorktree"): `{name?: string; path?: string}` mutually exclusive
 // (task-7 brief: "spec says name creates, path switches; neither given = error"). `name` creates a
-// git worktree under `<cwd>/.winter/worktrees/<name>` (WS-01 §2.4's `.winter/worktrees` convention);
+// git worktree under `<cwd>/<projectDir>/worktrees/<name>` (WS-01 §2.4's worktrees convention);
 // `path` switches to an ALREADY-REGISTERED worktree of the same repository. Both cases mutate the
 // session's own posture through `ctx.session.setCwd` + `ctx.session.addBoundedRoot` -- never
 // engine.ts directly (R3-5; the `session` seam is engine.ts's own wiring, registry.ts's own
@@ -12,6 +12,7 @@
 // files are Lane E's own, so this is an intra-lane import, not a cross-lane dependency R3-5 forbids).
 import { mkdirSync, realpathSync } from "node:fs";
 import { join } from "node:path";
+import { WINTER_BRAND } from "@yanlinglabs/winter-agent-sdk";
 import { replaceExecutor, type ToolExecutionContext, type ToolExecutor, type ToolResultPayload } from "../registry.ts";
 import "../descriptors/enter-worktree.ts"; // self-sufficiency: guarantees the "EnterWorktree" stub is registered before replaceExecutor runs below.
 
@@ -122,7 +123,7 @@ export const enterWorktreeExecutor: ToolExecutor = {
     // straight to the evaluator's bounded-roots input (engine.ts's `extraBoundedRoots`), so a
     // traversal name ("../../etc" or an absolute-looking segment) would otherwise let this tool
     // expand the session's OWN filesystem permission fence to an arbitrary location instead of a
-    // path safely confined under `.winter/worktrees`.
+    // path safely confined under the project dot-dir's `worktrees/`.
     if (name !== undefined && !isSingleSegmentName(name)) {
       return { output: `Error: EnterWorktree "name" must be a single path segment (no "/", not "." or ".."); got ${JSON.stringify(name)}.`, isError: true };
     }
@@ -133,7 +134,7 @@ export const enterWorktreeExecutor: ToolExecutor = {
     }
 
     if (name !== undefined) {
-      const worktreesDir = join(ctx.cwd, ".winter", "worktrees");
+      const worktreesDir = join(ctx.cwd, (ctx.brand ?? WINTER_BRAND).projectDirName, "worktrees");
       const target = join(worktreesDir, name);
       mkdirSync(worktreesDir, { recursive: true });
 

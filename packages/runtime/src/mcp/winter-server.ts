@@ -25,18 +25,25 @@
 // but is not yet reachable from any entry point `bun build --compile` follows.
 //
 // Collision note (see registry.ts's own "Phase 4 Task 2: live MCP server registration" header):
-// `winter` is a RESERVED server name (registry.ts's own RESERVED_MCP_SERVER_NAMES), so ANY
-// `registerMcpServerTools("winter", ...)` call throws unconditionally, for any tool name. Building a
-// real McpServer object directly, as this file does, is how WS-09 §1.3's obligation is met without
-// going through that live-registration mechanism at all. Resolving the two mechanisms deliberately
-// (rather than by surprise) means removing `winter` from that reserved set, not working around it.
+// The standing server's name is RESERVED (registry.ts's own RESERVED_MCP_SERVER_NAMES, which a
+// branded session extends through `rebrandStandingServerTools`), so ANY `registerMcpServerTools`
+// call under it throws unconditionally, for any tool name. Building a real McpServer object
+// directly, as this file does, is how WS-09 §1.3's obligation is met without going through that
+// live-registration mechanism at all. Resolving the two mechanisms deliberately (rather than by
+// surprise) means removing the name from that reserved set, not working around it.
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { WINTER_BRAND, type BrandProfile } from "@yanlinglabs/winter-agent-sdk";
 
-export const WINTER_SERVER_NAME = "winter";
+/** Winter's OWN standing-server name, derived rather than spelled (P7a, D19). */
+export const WINTER_SERVER_NAME = WINTER_BRAND.mcpServerName;
 
 // Re-callable by design (no module-load singleton, no cached instance) -- a later phase that wants a
 // fresh server per session, or that extends this factory with real tools, can call it as many times
 // as it needs.
-export function createWinterServer(): McpServer {
-  return new McpServer({ name: WINTER_SERVER_NAME, version: "0.0.1" });
+//
+// P7a (D19): the server's NAME is `brand.mcpServerName`, which is the same segment
+// `mcpToolName(brand, ...)` puts in every `mcp__<server>__<tool>` this server would advertise.
+// Omitted = `WINTER_BRAND`.
+export function createWinterServer(brand?: Pick<BrandProfile, "mcpServerName">): McpServer {
+  return new McpServer({ name: (brand ?? WINTER_BRAND).mcpServerName, version: "0.0.1" });
 }
