@@ -14,9 +14,25 @@
 // filesystem. `@yanlinglabs/winter-provider-catalog` is fence-resident (tsconfig.sdk-fence.json
 // includes its `src/**/*.ts` alongside the sdk's own), so the THREE PURE, DATA-FREE helpers this
 // module imports from it (`SLOT_NAME_RE`, `CLAUDE_RESERVED_SLOT_NAMES`, `CURRENCY_RE` — a regex and
-// two constants, no `WinterCatalog` instance) stay inside the fence. What this module still never
-// imports is the CATALOG ITSELF: the session's view of which rows exist is a runtime fact, not a
-// bundled one, so `rowsForCanonicalId`/`keyToCanonicalId` arrive injected as `ModelSlotsLookup`.
+// two constants, no `WinterCatalog` instance) stay inside the fence.
+//
+// CORRECTED (P6.6 Lane B, fix round 1, review Important-2): an earlier version of this comment
+// claimed this module "never imports the CATALOG ITSELF". That is false on the path that matters.
+// `@yanlinglabs/winter-provider-catalog`'s `package.json` `exports` map has only one entry (`"."` ->
+// `src/index.ts`; Bun enforces the map, so no subpath import can reach `families.ts` alone), and
+// `src/index.ts` unconditionally does `import catalogJson from "../generated/catalog.json" with {
+// type: "json" }` at the top level -- a 1.4 MB static import with no guard. So importing the three
+// named helpers from the PACKAGE NAME, as this file does, loads the entire bundled catalog into the
+// process on every UNBUNDLED path (`bun test`, dev mode, any source consumer of the sdk) -- measured
+// at ~12 MB RSS for this file alone. `bun build --compile` tree-shakes the unused catalog value back
+// out (the compiled artifact pays nothing extra), so this is a real cost only off that one path, not
+// a correctness bug -- but it is a cost, and the previous wording denied it existed. What this
+// module genuinely never does is USE the loaded catalog value: the session's view of which rows
+// exist is a runtime fact, not a bundled one, so `rowsForCanonicalId`/`keyToCanonicalId` still arrive
+// injected as `ModelSlotsLookup` rather than being read off the bundled `WinterCatalog`. A data-free
+// import would need a `"./families"` subpath export added to `packages/provider-catalog/package.json`
+// (or a cross-package relative import, precedented only in a test harness elsewhere in this repo) --
+// both are spine-owned edits, out of this lane's file list; flagged for the controller instead.
 import { CLAUDE_RESERVED_SLOT_NAMES, CURRENCY_RE, SLOT_NAME_RE } from "@yanlinglabs/winter-provider-catalog";
 import type { ModelSlotSetting } from "../protocol/config.ts";
 
