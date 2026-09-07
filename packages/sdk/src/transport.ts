@@ -55,6 +55,9 @@ export function resolveRuntimeExecutable(opts: { pathToClaudeCodeExecutable?: st
   }
   const pkg = require(pkgJsonPath) as { bin?: string | Record<string, string> };
   const binField = pkg.bin;
+  // `winter` is the platform package's own `bin` KEY (WS-02 §4), a property of the artifact this
+  // wrapper resolves — never the host's `brand.processLabel` (review r1, Minor-1). See query.ts's
+  // own note at the `pathToClaudeCodeExecutable` fallback for why the two are different things.
   const relativeBin = typeof binField === "string" ? binField : binField?.winter;
   if (!relativeBin) {
     throw new WinterSDKError(

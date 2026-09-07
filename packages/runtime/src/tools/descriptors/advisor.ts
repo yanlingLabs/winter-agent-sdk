@@ -18,6 +18,15 @@
 // class of egress as the worker model's own requests). The class is about what the call DOES, not
 // about where the descriptor came from.
 //
+// ONE RECORDED SIDE EFFECT OF THAT `source` VALUE (review r1, Minor-5): registry.ts's
+// `resolveDeferral` short-circuits `source: "builtin"` to `"eager"` UNCONDITIONALLY, before it looks
+// at `alwaysLoad` or `deferred` ("core built-ins... never deferred through the public surface",
+// WS-09 §8). The advisor is therefore structurally non-deferrable now, and adding `deferred: true`
+// here later would be a SILENT NO-OP. Its advertised verdict is unchanged by the rename — it
+// declared no `deferred` and resolved to `"eager"` before too — but WS-06 §4's contract row still
+// calls it "deferred-eligible", so a later phase that wants the advisor in the Tool Search pool must
+// change this `source` value, not add a flag.
+//
 // Input `{}` -- the runtime forwards the session's own conversation/tool history; no model-supplied
 // parameters. Availability stays gated on `winter.reviewer-model` (a reviewer must be resolvable in
 // the session's provider catalog).
