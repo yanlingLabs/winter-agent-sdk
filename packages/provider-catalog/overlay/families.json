@@ -318,7 +318,7 @@
           "description": "the stronger Grok, for reasoning-heavy work.",
           "reason": "First: strength.",
           "basis": "user-ruling",
-          "citation": "spec:WS-13c §0 D-Grok (user: \"grok 4.6 and grok build 01 as like stronger/implementer\") via §9; served today by `xai-oauth`, with the owed `xai/grok-4.6` row still to be verified (P6.6 Task 1b). NOT pinned to a provider — §4's ordering decides.",
+          "citation": "spec:WS-13c §0 D-Grok (user: \"grok 4.6 and grok build 01 as like stronger/implementer\") via §9; served by `xai-oauth` from the start, and now also by the token-priced `xai` provider — VERIFIED on https://docs.x.ai/docs/models (retrieved 2026-09-07), which lists `grok-4.6` in its plain Text API pricing table (P6.6 Task 1b's owed `xai/grok-4.6` row). The canonicalModelId does not change — both rows already shared `grok-4.6` — so this is a servability widening, not a repoint. NOT pinned to a provider — §4's ordering decides.",
           "status": "candidate"
         },
         {

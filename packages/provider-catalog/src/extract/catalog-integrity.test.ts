@@ -96,6 +96,7 @@ describe("pricing (R6-H, R6-9)", () => {
       "openai/gpt-4.1",
       "openai/gpt-6-astra",
       "openai/o4-mini",
+      "xai/grok-4.6",
     ]);
     for (const model of priced) {
       const pricing = model.pricing!;

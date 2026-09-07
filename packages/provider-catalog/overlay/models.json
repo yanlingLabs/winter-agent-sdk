@@ -4295,6 +4295,85 @@
         },
         "unsupportedParameters": [],
         "status": "candidate"
+      },
+      {
+        "key": "xai/grok-4.6",
+        "providerId": "xai",
+        "upstreamId": "grok-4.6",
+        "displayName": "Grok 4.6",
+        "aliases": [],
+        "$comment": "P6.6 Task 1b (WS-13c owed row): the `grok` family's `grok-4.6` slot already resolves canonicalModelId `grok-4.6` through the existing `xai-oauth/grok-4.6` (subscription) row; this row makes the SAME canonical model servable on the plain token-priced `xai` provider too, so families.json needs no canonicalModelId change here — only the slot's citation prose is updated to record that the owed row is now verified. FOUND on https://docs.x.ai/docs/models (retrieved 2026-09-07): the Text API pricing table lists `grok-4.6` at $2.00/$6.00 per 1M input/output tokens (<200k prompt tokens) and $4.00/$12.00 (>=200k), a 500k context window, beside \"For everything else, including code, use Grok 4.6. It is the most intelligent and fastest model we've built.\" No subscription/OAuth gating language sets `grok-4.6` apart from the other rows in the same plain pricing table (grok-4.5, grok-4.3, grok-4.20-*, grok-build-0.1 — the last of which the `xai` provider already carries as `xai/grok-build-0.1`), so this is the plain API-key surface, distinct from the `xai-oauth` sibling's Grok Build subscription entitlement. `toolCalling`/`nativeTools`/`inputModalities` mirror `xai-oauth/grok-4.6`'s own already-admitted evidence (xAI Grok Build's own model catalogue at the pinned commit) since both rows describe the identical vendor model and `docs.x.ai/docs/models` does not itself enumerate a modality table or effort vocabulary; `contextWindow` and `pricing` are independently confirmed on this task's own fetch of the same allowed page, so they carry a fresh `sourceRef` rather than inheriting the sibling's.",
+        "endpoints": [
+          "chat"
+        ],
+        "contextWindow": {
+          "value": 500000,
+          "source": "official-doc",
+          "sourceRef": "https://docs.x.ai/docs/models — grok-4.6 lists a 500k context window in the Text API models/pricing table (retrieved 2026-09-07); matches xai-oauth/grok-4.6's own independently-sourced figure",
+          "confidence": "declared",
+          "observedAt": "2026-09-07T00:00:00Z"
+        },
+        "inputModalities": {
+          "value": [
+            "text"
+          ],
+          "source": "official-doc",
+          "sourceRef": "xAI Grok Build's own model catalogue (crates/codegen/xai-grok-models/default_models.json) at the pinned commit 72a61251fcffb464bcc687aeb5a998e5a98ec0c9, captured in packages/conformance/compat/xai/grok-build/derived-shapes-p6b-xai.md §6 — same basis as the xai-oauth/grok-4.6 sibling row (identical vendor model); https://docs.x.ai/docs/models does not itself break out modalities per model (retrieved 2026-09-07)",
+          "confidence": "declared",
+          "observedAt": "2026-09-07T00:00:00Z"
+        },
+        "outputModalities": {
+          "value": [
+            "text"
+          ],
+          "source": "winter-default",
+          "sourceRef": "WINTER DEFAULT: the artifact declares no output modality, so `text` is Winter's inference for a chat registry, NOT a vendor statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+          "confidence": "unknown",
+          "observedAt": "2026-09-07T00:00:00Z"
+        },
+        "toolCalling": {
+          "value": "native",
+          "source": "official-doc",
+          "sourceRef": "https://docs.x.ai/docs/models — xAI documents agentic tool calling on the Grok 4.x line (retrieved 2026-09-07)",
+          "confidence": "declared",
+          "observedAt": "2026-09-07T00:00:00Z"
+        },
+        "nativeTools": {
+          "value": true,
+          "source": "official-doc",
+          "sourceRef": "https://docs.x.ai/docs/models",
+          "confidence": "declared",
+          "observedAt": "2026-09-07T00:00:00Z"
+        },
+        "reasoning": {
+          "supported": {
+            "value": true,
+            "source": "official-doc",
+            "sourceRef": "xAI Grok Build's own model catalogue (crates/codegen/xai-grok-models/default_models.json) at the pinned commit 72a61251fcffb464bcc687aeb5a998e5a98ec0c9, captured in packages/conformance/compat/xai/grok-build/derived-shapes-p6b-xai.md §6 — same basis as the xai-oauth/grok-4.6 sibling row; https://docs.x.ai/docs/models mentions no effort-level vocabulary for grok-4.6 (retrieved 2026-09-07)",
+            "confidence": "declared",
+            "observedAt": "2026-09-07T00:00:00Z"
+          },
+          "efforts": [
+            "xhigh",
+            "high",
+            "medium",
+            "low"
+          ],
+          "defaultEffort": "high",
+          "continuation": "plaintext"
+        },
+        "pricing": {
+          "value": {
+            "inputPerMTokUsd": 2,
+            "outputPerMTokUsd": 6
+          },
+          "source": "official-doc",
+          "sourceRef": "https://docs.x.ai/docs/models — Text API pricing table, grok-4.6 (<200k prompt tokens): $2.00 input / $6.00 output per 1M tokens (retrieved 2026-09-07). The table also lists a >=200k tier at $4.00/$12.00; `ModelPricing` carries one rate per direction, so the STANDARD (<200k) tier is recorded and the estimator UNDER-counts long-context turns on this row — same disclosed gap as openai/gpt-6-astra's long-context tier.",
+          "confidence": "declared",
+          "observedAt": "2026-09-07T00:00:00Z"
+        },
+        "unsupportedParameters": [],
+        "status": "candidate"
       }
   ]
 }
