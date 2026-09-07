@@ -2,7 +2,7 @@ import { test, expect } from "bun:test";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { verifyDigest, verifySha512Integrity, ChecksumMismatchError, resolveCacheDir } from "./fetch-upstream.ts";
+import { verifyDigest, verifySha512Integrity, ChecksumMismatchError, resolveCacheDir } from "./fetch.ts";
 
 test("verifyDigest passes on a matching sha256", () => {
   const bytes = new TextEncoder().encode("hello");
