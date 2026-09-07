@@ -400,19 +400,10 @@ const BASELINE_ALLOWLIST: readonly string[] = [
   // --- packages/runtime (Lane A unless another lane's ownership row names the file) -------------
   "packages/runtime/src/commands/resolver.ts",  // comment-only
   "packages/runtime/src/commands/seam.ts",  // comment-only
-  "packages/runtime/src/context/memory.ts",  // comment-only
-  "packages/runtime/src/context/minimal-prompt.ts",  // comment-only
-  "packages/runtime/src/context/output-styles.ts",
-  "packages/runtime/src/context/plan-mode.ts",  // comment-only
-  "packages/runtime/src/context/seam.ts",  // comment-only
-  "packages/runtime/src/context/winter-code-preset.ts",
-  "packages/runtime/src/context/winter-md.ts",
   "packages/runtime/src/engine.ts",
   "packages/runtime/src/hooks/registry.ts",  // comment-only
   "packages/runtime/src/main.ts",  // comment-only
   "packages/runtime/src/mcp/lifecycle.ts",  // comment-only
-  "packages/runtime/src/paths/project-dir-name.ts",
-  "packages/runtime/src/paths/temp.ts",
   "packages/runtime/src/permissions/edit-recognition.ts",
   "packages/runtime/src/permissions/evaluator.ts",  // comment-only
   "packages/runtime/src/permissions/protected.ts",

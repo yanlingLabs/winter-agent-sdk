@@ -30,7 +30,7 @@
 // doc names WINTER.md and the memory index as exactly what R5-9's "always injected as
 // user-context" means operationally.
 import type { RuntimeConfig, Settings, SystemPromptPreset } from "@yanlinglabs/winter-agent-sdk";
-import { DEFAULT_OUTPUT_STYLE, DEFAULT_PLANS_DIRECTORY, resolveWinterHome, SYSTEM_PROMPT_DYNAMIC_BOUNDARY } from "@yanlinglabs/winter-agent-sdk";
+import { DEFAULT_OUTPUT_STYLE, WINTER_BRAND, resolveWinterHome, SYSTEM_PROMPT_DYNAMIC_BOUNDARY } from "@yanlinglabs/winter-agent-sdk";
 import type { AssembledPrompt, SkillListing, SystemPromptAssembler, SystemPromptInput } from "./seam.ts";
 import { renderDynamicSections } from "./dynamic-sections.ts";
 import { MINIMAL_PROMPT, MINIMAL_PROMPT_VERSION } from "./minimal-prompt.ts";
@@ -43,9 +43,9 @@ import { renderPlanModeBlock } from "./plan-mode.ts";
 
 export interface SystemPromptAssemblerDeps {
   /**
-   * The `~/.winter` root. Omitted resolves from `SystemPromptInput.env` (so WINTER_HOME is honoured
-   * per session, not per process). Tests pass an mkdtemp directory here rather than touching a real
-   * home.
+   * The resolved winter home. Omitted resolves from `SystemPromptInput.env` (so `<PREFIX>HOME` is
+   * honoured per session, not per process). Tests pass an mkdtemp directory here rather than
+   * touching a real home.
    */
   home?: string;
   /**
@@ -153,8 +153,12 @@ export function createSystemPromptAssembler(deps: SystemPromptAssemblerDeps = {}
   return {
     assemble(input: SystemPromptInput): AssembledPrompt {
       const settings = deps.settings?.();
-      const home = deps.home ?? resolveWinterHome(input.env);
       const config = input.config;
+      // P7a (D19): the session's own profile, off the config it is already reading. `WINTER_BRAND`
+      // is the fallback for the configs this repository hand-builds in tests -- a live session's
+      // config always carries the resolved profile (`query()` never omits it).
+      const brand = config.brand ?? WINTER_BRAND;
+      const home = deps.home ?? resolveWinterHome(input.env, brand);
       const settingSources = config.settingSources;
       const region = resolveRegion(config.systemPrompt);
 
@@ -194,6 +198,7 @@ export function createSystemPromptAssembler(deps: SystemPromptAssemblerDeps = {}
         style = resolveOutputStyle(styleName, {
           cwd: input.cwd,
           home,
+          brand,
           ...(settingSources !== undefined ? { settingSources } : {}),
           ...(config.trustedWorkspace !== undefined ? { trustedWorkspace: config.trustedWorkspace } : {}),
         });
@@ -209,7 +214,10 @@ export function createSystemPromptAssembler(deps: SystemPromptAssemblerDeps = {}
         ...region.callerDynamicBlocks,
         replaceRegion ? undefined : styleBody,
         input.agentPrompt,
-        input.planMode ? renderPlanModeBlock({ plansDirectory: config.plansDirectory ?? settings?.plansDirectory ?? DEFAULT_PLANS_DIRECTORY, ...(input.hostPlanBody !== undefined ? { hostPlanBody: input.hostPlanBody } : {}) }) : undefined,
+        // P7a (D19): the plans-directory default follows the session's OWN project dot-dir, not the
+        // module-level `DEFAULT_PLANS_DIRECTORY` (which is Winter's). Byte-identical under
+        // `WINTER_BRAND`; a reuser gets `<their dir>/plans` instead of being sent into Winter's own.
+        input.planMode ? renderPlanModeBlock({ plansDirectory: config.plansDirectory ?? settings?.plansDirectory ?? `${brand.projectDirName}/plans`, ...(input.hostPlanBody !== undefined ? { hostPlanBody: input.hostPlanBody } : {}) }) : undefined,
         input.skillListing !== undefined && input.skillListing.length > 0 ? renderSkillListing(input.skillListing) : undefined,
         region.excludeDynamicSections ? undefined : dynamic,
       ];
@@ -225,7 +233,7 @@ export function createSystemPromptAssembler(deps: SystemPromptAssemblerDeps = {}
       // and the environment has to precede the instructions that depend on it.
       const userContextBlocks: string[] = [];
       if (region.excludeDynamicSections) userContextBlocks.push(dynamic);
-      for (const block of discoverWinterMd({ cwd: input.cwd, home, ...(settingSources !== undefined ? { settingSources } : {}) })) userContextBlocks.push(block.text);
+      for (const block of discoverWinterMd({ cwd: input.cwd, home, brand, ...(settingSources !== undefined ? { settingSources } : {}) })) userContextBlocks.push(block.text);
       if (memoryDir !== undefined) userContextBlocks.push(renderMemoryBlock(memoryDir));
 
       // Phase 5 Task 8 (rider 22, RULING P5-G): the downgrade is OBSERVABLE ON THE ASSEMBLED RESULT,

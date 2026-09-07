@@ -2,7 +2,7 @@
 // (WS-11 §3, WS-05 §11).
 //
 // WHERE THIS SITS RELATIVE TO THE PRESET. WS-11 §3 says index discipline is "part of the authored
-// prompt guidance (§6.2)", and the `winter_code` preset does carry an auto-memory section -- but
+// prompt guidance (§6.2)", and the authored product preset does carry an auto-memory section -- but
 // that section is deliberately PATH-FREE and posture-only, because the preset is the cacheable
 // half of the prompt and a machine-specific path in it defeats that. The concrete half lives here:
 // the directory, the caps as actual numbers, and the write/index protocol. Neither restates the

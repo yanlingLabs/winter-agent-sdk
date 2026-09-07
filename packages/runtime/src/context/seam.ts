@@ -2,7 +2,7 @@
 // engine consumes it, and nothing else in the runtime may grow a second producer of a system prompt.
 //
 // WHY A SEAM AND NOT A FUNCTION. Lane C builds the whole context surface (minimal prompt, the
-// `winter_code` preset, dynamic sections, WINTER.md discovery, memory index, output styles,
+// the authored product preset, dynamic sections, instructions-file discovery, memory index, output styles,
 // plan-mode body) in an isolated worktree that may not touch `engine.ts` (R5-12). This file is the
 // contract both sides compile against: the engine calls `assemble()` once per user envelope and puts
 // the result on the LIVE provider request; Lane C decides everything about what that result contains.
@@ -39,7 +39,7 @@ export type SkillListing = Array<{ name: string; description: string; source: "p
  *
  * DIVERGENCE FROM THE BRIEF'S SPELLING, disclosed: the task-3 brief writes `outputStyle?: OutputStyle`
  * without defining `OutputStyle`, and the obvious richer reading (a resolved `{name, body}` object)
- * would put style RESOLUTION in the engine. It belongs to Lane C -- `.winter/output-styles/*.md`
+ * would put style RESOLUTION in the engine. It belongs to Lane C -- project-tier output styles
  * discovery plus Winter's built-ins is that lane's own deliverable (task-6 brief), and the engine has
  * no business reading those files. So the seam carries the name and Lane C resolves the body, and the
  * brief's type name is kept so a lane brief citing it still lands somewhere.

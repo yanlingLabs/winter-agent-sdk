@@ -1,22 +1,26 @@
-// Phase 5 Lane C (task 6) -- WINTER.md discovery (WS-11 §6.4, Ruling R5-9, Ruling P5-A).
+// Phase 5 Lane C (task 6) -- instructions-file discovery (WS-11 §6.4, Ruling R5-9, Ruling P5-A).
 //
-// WINTER.md is INJECTED CONTEXT, never system text. The distinction is the whole point of §6.4:
+// P7a (D19): the basename is `brand.instructionsFile` -- Claude's `CLAUDE.md` convention with the
+// session's own token. Winter's default is the value in `WINTER_BRAND`; a reuser's is theirs, and
+// this module never spells either.
+//
+// The instructions file is INJECTED CONTEXT, never system text. The distinction is the whole point of §6.4:
 // system text is the cacheable, session-stable prefix, while a project's instructions are file
 // content that changes with the repository and must sit where the conversation can see it, be
 // compacted like conversation, and be re-attached rather than baked in. So everything here
 // produces `AssembledPrompt.userContextBlocks` entries and nothing here can reach `system` --
-// which is also why the seam's own doc names WINTER.md and the memory index as what "always
+// which is also why the seam's own doc names the instructions file and the memory index as what "always
 // injected as user-context" means operationally.
 //
 // TWO GIT ROOTS, AND THEY ARE NOT THE SAME ROOT. memory-key.ts scopes memory by
 // `--git-common-dir`, deliberately, so linked worktrees SHARE one memory directory. The
 // instruction walk must NOT use that root: for a linked worktree the common root is the MAIN
 // checkout, which is not an ancestor of the worktree at all -- a walk bounded by it would never
-// terminate at the worktree and would climb to the filesystem root, reading whatever WINTER.md
+// terminate at the worktree and would climb to the filesystem root, reading whatever instructions file
 // happened to sit above it. The instruction boundary is `--show-toplevel`: the checkout the cwd
 // actually lives in. Both behaviours are fixtured against one real `git worktree add`.
 //
-// THE SOURCE GATE IS P5-A's, NOT A TRUST GATE. Project skills, commands and WINTER.md are gated on
+// THE SOURCE GATE IS P5-A's, NOT A TRUST GATE. Project skills, commands and the instructions file are gated on
 // `project ∈ settingSources` -- they are instructions, not permission participants (project AGENT
 // definitions stay trust-gated, R4-7, because a definition carries tool grants). `settingSources`
 // omitted means all three tiers, which is the pinned CLI default; `[]` is the hermetic-host mode
@@ -24,10 +28,16 @@
 import { execFileSync } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import type { SettingSource } from "@yanlinglabs/winter-agent-sdk";
+import { WINTER_BRAND, type BrandProfile, type SettingSource } from "@yanlinglabs/winter-agent-sdk";
 import { readCapped, systemReminder } from "./injection.ts";
 
-export const WINTER_MD_BASENAME = "WINTER.md";
+/**
+ * Winter's OWN instructions basename, derived from the default profile rather than spelled.
+ *
+ * Kept as a named export because it is what every caller that has not threaded a brand still means.
+ * A session's actual basename is `input.brand.instructionsFile` inside `discoverWinterMd` below.
+ */
+export const WINTER_MD_BASENAME = WINTER_BRAND.instructionsFile;
 
 /**
  * Per-file byte ceiling. WINTER-DEFINED (the specs cap the memory index, not this): a block
@@ -132,34 +142,37 @@ export interface WinterMdInput {
   home: string;
   /** Omitted means the pinned default: all three tiers. `[]` reads nothing. */
   settingSources?: readonly SettingSource[];
+  /** P7a (D19): the session's brand. Omitted = `WINTER_BRAND`, i.e. today's `WINTER_MD_BASENAME`. */
+  brand?: Pick<BrandProfile, "instructionsFile">;
 }
 
 /**
- * The WINTER.md blocks for a session, in the PINNED ORDER: the user-level file first, then every
+ * The instructions blocks for a session, in the PINNED ORDER: the user-level file first, then every
  * project file from the repository root down to the cwd.
  *
- * User-first is deliberate. The user's own `~/.winter/WINTER.md` is standing preference; a
+ * User-first is deliberate. The user's own file under the winter home is standing preference; a
  * project's file is specific to the work in front of the model. Reading the specific thing last
  * matches the outermost-first rule the project walk already follows, so one rule covers the whole
  * ordering rather than two that could drift.
  */
 export function discoverWinterMd(input: WinterMdInput): WinterMdBlock[] {
   const sources = input.settingSources ?? (["user", "project", "local"] as const);
+  const basename = (input.brand ?? WINTER_BRAND).instructionsFile;
   const blocks: WinterMdBlock[] = [];
 
   if (sources.includes("user")) {
-    const path = join(input.home, WINTER_MD_BASENAME);
+    const path = join(input.home, basename);
     const body = readCapped(path, WINTER_MD_MAX_BYTES);
     if (body !== null) {
       blocks.push({ path, scope: "user", text: systemReminder(`User instructions, auto-loaded from ${path}. These are standing preferences, not something the user typed this turn.`, body) });
     }
   }
 
-  // `local` is deliberately NOT a second WINTER.md tier: WS-01 §2.4 gives the project exactly one
+  // `local` is deliberately NOT a second instructions tier: WS-01 §2.4 gives the project exactly one
   // instructions file, and `settings.local.json` is the local tier's whole surface.
   if (sources.includes("project")) {
     for (const dir of instructionDirectories(input.cwd)) {
-      const path = join(dir, WINTER_MD_BASENAME);
+      const path = join(dir, basename);
       const body = readCapped(path, WINTER_MD_MAX_BYTES);
       if (body !== null) {
         blocks.push({ path, scope: "project", text: systemReminder(`Project instructions, auto-loaded from ${path}. These are checked in with the repository, not something the user typed this turn.`, body) });
