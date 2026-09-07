@@ -5,6 +5,16 @@
 // out to `scripts/`, and any other consumer of the pinned-upstream mechanics (WS-02 §6) can import it
 // from the published package instead of a repo-relative script path. The RUN_OFFICIAL_CAPTURE=1 gate
 // and the checksum pins below are byte-for-byte unchanged by the move.
+//
+// review r1 Critical Finding 1: `CHECKSUMS` used to be read at MODULE TOP LEVEL, which means merely
+// IMPORTING this file (or the barrels that re-export it -- `./index.ts`, `../index.ts`, the bare
+// `@yanlinglabs/winter-conformance` package) did file I/O against `compat/anthropic/0.3.250/
+// checksums.json`. `compat/` is deliberately excluded from this package's `files` allowlist
+// (R-7a-12) -- it never ships -- so a real install threw `ENOENT` the instant anything imported the
+// barrel, reproduced against a real packed tarball. `getChecksums()` below makes the read LAZY
+// (memoized, called only from inside `fetchAndVerifyUpstream()`) so importing this module -- or
+// anything that re-exports it -- performs NO I/O; only *calling* `fetchAndVerifyUpstream()` does,
+// and only a repository checkout (never an installed package) can satisfy it.
 import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -17,11 +27,50 @@ export class ChecksumMismatchError extends Error {
   }
 }
 
+/** Thrown by `getChecksums()` when `compat/anthropic/0.3.250/checksums.json` is absent -- i.e. this module is running from an INSTALLED package rather than a repository checkout. Never a raw ENOENT. */
+export class OfficialCompatUnavailableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "OfficialCompatUnavailableError";
+  }
+}
+
+interface UpstreamChecksums {
+  tarballUrl: string;
+  wrapperTarballSha256: string;
+  wrapperTarballIntegrity: string;
+}
+
 // Relative to THIS file (packages/conformance/src/official/fetch.ts): ../../ is the package root
-// (packages/conformance/), where compat/anthropic/0.3.250/checksums.json already lives.
-const CHECKSUMS = JSON.parse(
-  readFileSync(new URL("../../compat/anthropic/0.3.250/checksums.json", import.meta.url), "utf8"),
-) as { tarballUrl: string; wrapperTarballSha256: string; wrapperTarballIntegrity: string };
+// (packages/conformance/), where compat/anthropic/0.3.250/checksums.json lives IN THE REPOSITORY --
+// never inside an installed `node_modules/@yanlinglabs/winter-conformance` (R-7a-12 excludes
+// `compat/` from `files` on purpose).
+const CHECKSUMS_URL = new URL("../../compat/anthropic/0.3.250/checksums.json", import.meta.url);
+let cachedChecksums: UpstreamChecksums | undefined;
+
+/**
+ * Lazily reads and memoizes the pinned-upstream checksums. Called ONLY from inside
+ * `fetchAndVerifyUpstream()` -- never at module load -- so importing this file (directly or through
+ * a barrel) never touches the filesystem. When `compat/` is absent (an installed package, per
+ * R-7a-12), throws a typed, worded `OfficialCompatUnavailableError` instead of letting a raw `ENOENT`
+ * surface with no explanation of why.
+ */
+export function getChecksums(): UpstreamChecksums {
+  if (cachedChecksums !== undefined) return cachedChecksums;
+  let raw: string;
+  try {
+    raw = readFileSync(CHECKSUMS_URL, "utf8");
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException)?.code === "ENOENT") {
+      throw new OfficialCompatUnavailableError(
+        "official upstream fetch needs the repository checkout; the published package does not ship compat/",
+      );
+    }
+    throw e; // an unexpected read error (permissions, etc.) is never masked as "not shipped"
+  }
+  cachedChecksums = JSON.parse(raw) as UpstreamChecksums;
+  return cachedChecksums;
+}
 
 export function verifyDigest(bytes: Uint8Array, expected: string): void {
   const actual = createHash("sha256").update(bytes).digest("hex");
@@ -62,15 +111,16 @@ export function resolveCacheDir(cacheDir?: string): { dir: string; ownedDir: boo
 export async function fetchAndVerifyUpstream(
   opts: { cacheDir?: string } = {},
 ): Promise<{ tarballPath: string; sha256: string; ownedDir: boolean }> {
-  const res = await fetch(CHECKSUMS.tarballUrl);
+  const checksums = getChecksums(); // lazy: throws OfficialCompatUnavailableError if compat/ is absent (an installed package)
+  const res = await fetch(checksums.tarballUrl);
   if (!res.ok) throw new Error(`upstream fetch failed: ${res.status} ${res.statusText}`);
   const bytes = new Uint8Array(await res.arrayBuffer());
-  verifyDigest(bytes, CHECKSUMS.wrapperTarballSha256);                     // fails closed on registry tamper/re-pin (WS-02 §6.1)
-  verifySha512Integrity(bytes, CHECKSUMS.wrapperTarballIntegrity);         // second, independently-sourced hash — see above
+  verifyDigest(bytes, checksums.wrapperTarballSha256);                     // fails closed on registry tamper/re-pin (WS-02 §6.1)
+  verifySha512Integrity(bytes, checksums.wrapperTarballIntegrity);         // second, independently-sourced hash — see above
   const { dir, ownedDir } = resolveCacheDir(opts.cacheDir);
   const tarballPath = join(dir, "claude-agent-sdk-0.3.250.tgz");
   writeFileSync(tarballPath, bytes);
-  return { tarballPath, sha256: CHECKSUMS.wrapperTarballSha256, ownedDir };
+  return { tarballPath, sha256: checksums.wrapperTarballSha256, ownedDir };
 }
 
 // No `if (import.meta.main)` CLI entry here on purpose: this module is a pure library now (P7a Lane

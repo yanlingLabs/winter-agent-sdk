@@ -22,9 +22,17 @@
 // dedicated `./trace` subpath remains the one this package's own pack-smoke CI gate proves importable
 // under both Node 18 and Bun (WS-02 §9 Step 3); this top-level barrel and `./official` are Bun-first,
 // matching the rest of this repo's pinned-upstream tooling.
+//
+// IMPORTING THIS BARREL PERFORMS NO I/O EITHER (review r1 Critical Finding 1, fixed): `fetch.ts`'s
+// pinned checksums used to be read from `compat/anthropic/0.3.250/checksums.json` at MODULE LOAD --
+// harmless when this code lived in a never-packaged script, but `compat/` is deliberately excluded
+// from this package's own `files` allowlist (R-7a-12), so a real install threw `ENOENT` the instant
+// anything imported this barrel or `./official`. The read is now lazy (`getChecksums()`, called only
+// from inside `fetchAndVerifyUpstream()`) and throws a typed `OfficialCompatUnavailableError` when
+// `compat/` is absent, rather than either eagerly failing at import time or leaking a raw ENOENT.
 export { compareTraces, normalizeTrace } from "./trace.ts";
 export type { ConformanceTraceEntry } from "./trace.ts";
 
 export { goldenPath, listGoldens, loadGolden } from "./goldens.ts";
 
-export { ChecksumMismatchError, fetchAndVerifyUpstream, resolveCacheDir, runCapture, verifyDigest, verifySha512Integrity } from "./official/index.ts";
+export { ChecksumMismatchError, OfficialCompatUnavailableError, fetchAndVerifyUpstream, getChecksums, resolveCacheDir, runCapture, verifyDigest, verifySha512Integrity } from "./official/index.ts";

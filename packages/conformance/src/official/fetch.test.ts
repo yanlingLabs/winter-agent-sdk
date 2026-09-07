@@ -2,7 +2,23 @@ import { test, expect } from "bun:test";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { verifyDigest, verifySha512Integrity, ChecksumMismatchError, resolveCacheDir } from "./fetch.ts";
+import { verifyDigest, verifySha512Integrity, ChecksumMismatchError, resolveCacheDir, getChecksums } from "./fetch.ts";
+
+// review r1 Critical Finding 1: getChecksums() reads compat/anthropic/0.3.250/checksums.json
+// LAZILY and MEMOIZED -- never at module load (proved for real by the full pack -> npm install
+// --offline -> `bun -e 'import(...)'` cycle in scripts/smoke-installed.test.ts, which runs this
+// exact package from an INSTALLED tarball where compat/ genuinely does not exist). Here, from
+// inside the monorepo checkout where compat/ DOES exist, this proves the memoization and the
+// parsed shape -- the OfficialCompatUnavailableError path itself needs compat/ to be genuinely
+// absent, which only an installed package can be.
+test("getChecksums reads the real committed checksums.json and memoizes the result", () => {
+  const first = getChecksums();
+  expect(first.tarballUrl).toContain("claude-agent-sdk");
+  expect(first.wrapperTarballSha256).toMatch(/^[0-9a-f]{64}$/);
+  expect(first.wrapperTarballIntegrity).toMatch(/^sha512-/);
+  const second = getChecksums();
+  expect(second).toBe(first); // same object -- memoized, not re-read
+});
 
 test("verifyDigest passes on a matching sha256", () => {
   const bytes = new TextEncoder().encode("hello");
@@ -33,8 +49,8 @@ test("verifySha512Integrity throws ChecksumMismatchError on mismatch", () => {
 // fetch, so it must never be deleted by a caller's cleanup keyed off `ownedDir` — only fresh
 // mkdtemps the fetch itself created are. Exercised directly against resolveCacheDir (no network):
 // fetchAndVerifyUpstream's own guard test would otherwise require stubbing global fetch against
-// the module-level CHECKSUMS pin, which a hand-crafted response can never satisfy (verifyDigest
-// would reject anything but the real upstream bytes) — and this repo's hard rule is no committed
+// getChecksums()'s real pin, which a hand-crafted response can never satisfy (verifyDigest would
+// reject anything but the real upstream bytes) — and this repo's hard rule is no committed
 // Anthropic artifact, so a fixture tarball to satisfy that check is not an option either.
 test("resolveCacheDir: a caller-supplied cacheDir is reported as NOT owned, and survives an ownedDir-gated cleanup", () => {
   const custom = mkdtempSync(join(tmpdir(), "winter-fetch-upstream-guard-"));

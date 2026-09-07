@@ -25,12 +25,23 @@ describe("the conformance package barrel (P7a Lane C, WS-02 §9 Step 2)", () => 
 
   test("re-exports the official (pinned-upstream) mechanics, identical to the ./official subpath", () => {
     expect(typeof barrel.fetchAndVerifyUpstream).toBe("function");
+    expect(typeof barrel.getChecksums).toBe("function");
     expect(typeof barrel.resolveCacheDir).toBe("function");
     expect(typeof barrel.verifyDigest).toBe("function");
     expect(typeof barrel.verifySha512Integrity).toBe("function");
     expect(typeof barrel.runCapture).toBe("function");
     expect(typeof barrel.ChecksumMismatchError).toBe("function");
+    expect(typeof barrel.OfficialCompatUnavailableError).toBe("function");
     expect(barrel.fetchAndVerifyUpstream).toBe(officialSubpath.fetchAndVerifyUpstream);
     expect(barrel.runCapture).toBe(officialSubpath.runCapture);
+  });
+
+  test("importing the barrel performs no I/O (review r1 Critical Finding 1): getChecksums works lazily, reading the real committed checksums.json only when CALLED", () => {
+    // If import itself had touched the filesystem eagerly, this call would be redundant; it isn't --
+    // getChecksums() is only ever invoked here, never at module load, and this is where the
+    // committed compat/anthropic/0.3.250/checksums.json is first actually read in this test file.
+    const checksums = barrel.getChecksums();
+    expect(checksums.tarballUrl).toContain("claude-agent-sdk");
+    expect(checksums.wrapperTarballSha256).toMatch(/^[0-9a-f]{64}$/);
   });
 });

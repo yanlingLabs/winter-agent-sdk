@@ -9,5 +9,5 @@
 //                  re-check the env gate — that gate is a CLI-boundary concern, not a property of
 //                  the capture itself (mirrors WS-17's own "gate at the door, not in the room"
 //                  convention for the opt-in live provider gate).
-export { ChecksumMismatchError, fetchAndVerifyUpstream, resolveCacheDir, verifyDigest, verifySha512Integrity } from "./fetch.ts";
+export { ChecksumMismatchError, OfficialCompatUnavailableError, fetchAndVerifyUpstream, getChecksums, resolveCacheDir, verifyDigest, verifySha512Integrity } from "./fetch.ts";
 export { runCapture } from "./capture.ts";
