@@ -32,6 +32,10 @@ import { runEngine } from "../engine.ts";
 import { scriptedProvider, stubExecutor } from "../provider/mock.ts";
 import "./descriptors/index.ts";
 import { getRegisteredTool, listRegisteredTools, buildAdvertisedSet, registerTool, unregisterToolForTest, resolveSessionCapabilities, type ToolDescriptor } from "./registry.ts";
+// P7a (D29): the advisor's name is read from its own module, never re-spelled here — the retired
+// server-qualified form is reconstructed from WINTER_SERVER_NAME purely to assert its ABSENCE.
+import { ADVISOR_TOOL_NAME } from "./impl/advisor.ts";
+import { WINTER_SERVER_NAME } from "../mcp/winter-server.ts";
 
 // --- shared local test helpers (file-private, mirroring permissions/conformance.test.ts's own
 // "self-sufficient, not cross-file-shared" judgment call) -------------------------------------------
@@ -77,7 +81,7 @@ function fixtureDescriptor(canonicalName: string, overrides?: Partial<ToolDescri
 // four (capabilities, toolSearchEnabled, insideSubagent, familyMetadata) as RuntimeConfig/Options
 // fields and wired engine.ts's own buildAdvertisedSet call site to thread all of them through -- see
 // this row's own note in the matrix for the engine-level proof of those four (capabilities via
-// mcp__winter__advisor, familyMetadata via the hiddenWhenFamilyTaskNative set) and I4's own
+// the advisor, familyMetadata via the hiddenWhenFamilyTaskNative set) and I4's own
 // WaitForMcpServers coverage for toolSearchEnabled reaching the real call. `features`/
 // `toolSearchEnabled`/`insideSubagent` still have no CATALOG-DERIVED resolution story populating a
 // real value at runtime (a provider-catalog/session-context producer is a later phase's own job) --
@@ -326,37 +330,41 @@ test("WS-06 §6 obligation 4: buildAdvertisedSet's own length is derived live fr
 });
 
 // ================================================================================================
-// New coverage: WS-06 §6 obligation 5 -- mcp__winter__* descriptor identity.
+// New coverage: WS-06 §6 obligation 5 -- the advisor's descriptor identity.
 // ================================================================================================
 //
-// "Every Winter plugin tool" reduces to exactly one real instance today (verified: a grep of every
-// descriptors/*.ts file for "mcp__winter__" finds only advisor.ts) -- this is not glossing over a
-// larger set, it is the complete set as it exists at this phase. "Both branches advertise
-// byte-identical descriptors" (WS-06 §4, report §122/D7): Winter has no second, separate
-// official-branch copy of its own plugin tool to diff against (advisor is Winter-only, absent from
-// the real upstream entirely) -- the testable, Winter-internal analogue of that interchangeability
-// requirement is that the ONE canonical registration is never conditionally reshaped by context: it
-// carries the pinned mcp__ name (never a bare advisor name, which the spec explicitly rules out), and
-// the exact same descriptor is what every mode's advertised set sees, given its one capability gate.
-test("WS-06 §6 obligation 5: mcp__winter__advisor keeps the pinned mcp__ name and an identical descriptor across every permission mode", async () => {
-  const descriptor = getRegisteredTool("mcp__winter__advisor")?.descriptor;
+// UPDATED AT P7a (D29). This row used to assert the OPPOSITE of what it asserts now: that the
+// advisor carried a server-qualified name and that the bare `advisor` was unregistered. The user
+// directive reversed the naming argument (descriptors/advisor.ts's own header carries the full
+// reasoning: the official branch shows the model a bare, parameterless `advisor` that a host cannot
+// intercept, so the bare name is what makes the two branches MATCH). The obligation itself is
+// unchanged -- "both branches advertise byte-identical descriptors" -- and its testable,
+// Winter-internal analogue is unchanged too: the ONE canonical registration is never conditionally
+// reshaped by context. It carries the bare native name, and the exact same descriptor is what every
+// mode's advertised set sees, given its one capability gate.
+test("WS-06 §6 obligation 5 (D29): advisor is a bare NATIVE name with an identical descriptor across every permission mode", async () => {
+  const descriptor = getRegisteredTool(ADVISOR_TOOL_NAME)?.descriptor;
   expect(descriptor).toBeDefined();
-  expect(descriptor!.canonicalName).toBe("mcp__winter__advisor");
-  expect(descriptor!.advertisedName).toBe("mcp__winter__advisor");
-  expect(getRegisteredTool("advisor")).toBeUndefined(); // the bare name WS-06 §4 explicitly rules out
+  expect(descriptor!.canonicalName).toBe("advisor");
+  expect(descriptor!.advertisedName).toBe("advisor");
+  expect(descriptor!.source).toBe("builtin");
+  // The retired name is GONE, not merely unadvertised: nothing answers under it at all.
+  expect(getRegisteredTool(`mcp__${WINTER_SERVER_NAME}__advisor`)).toBeUndefined();
+  // The schema is still the pinned empty one -- the rename changed the identity, never the shape.
+  expect(descriptor!.inputSchema).toEqual({ type: "object", properties: {} });
 
   // advisor's own availability gates it behind capabilityRequirements: ["winter.reviewer-model"]
   // (advisor.ts) -- supplied here on every call so the loop proves "identical ACROSS MODES", not
   // "visible with no capability supplied" (a separate, correctly-enforced axis, not this row's claim).
   const MODES = ["default", "acceptEdits", "bypassPermissions", "dontAsk", "plan", "auto"] as const;
   for (const mode of MODES) {
-    const advertised = buildAdvertisedSet({ mode, capabilities: ["winter.reviewer-model"] }).find((d) => d.canonicalName === "mcp__winter__advisor");
-    expect(advertised, `mode=${mode}: mcp__winter__advisor must be advertised identically`).toEqual(descriptor);
+    const advertised = buildAdvertisedSet({ mode, capabilities: ["winter.reviewer-model"] }).find((d) => d.canonicalName === ADVISOR_TOOL_NAME);
+    expect(advertised, `mode=${mode}: advisor must be advertised identically`).toEqual(descriptor);
   }
 
   // GAP CLOSED (Part B item 1, fix wave, P3 close-out): this used to be an "honest gap" proof that
   // RuntimeConfig had no field threading `capabilities` to the real runEngine(...) call site at all,
-  // so mcp__winter__advisor could never reach the real engine wire regardless of what a host wanted.
+  // so the advisor could never reach the real engine wire regardless of what a host wanted.
   // RuntimeConfig.capabilities (protocol/config.ts) now exists and engine.ts's own buildAdvertisedSet
   // call site threads it through -- this proves the OTHER direction: a host that supplies the
   // capability on RuntimeConfig now genuinely sees the tool on the real wire, not just the pure
@@ -376,7 +384,7 @@ test("WS-06 §6 obligation 5: mcp__winter__advisor keeps the pinned mcp__ name a
   for await (const f of host.input) frames.push(f);
   await done;
   const initFrame = frames.find((f) => f.type === "init") as { tools: string[] } | undefined;
-  expect(initFrame!.tools).toContain("mcp__winter__advisor");
+  expect(initFrame!.tools).toContain(ADVISOR_TOOL_NAME);
 
   // Positive control: WITHOUT the capability supplied, the real engine wire still correctly excludes
   // it (the gate itself was always enforced -- only the WIRING to reach it was missing before this fix).
@@ -389,7 +397,7 @@ test("WS-06 §6 obligation 5: mcp__winter__advisor keeps the pinned mcp__ name a
   for await (const f of host2.input) frames2.push(f);
   await done2;
   const initFrame2 = frames2.find((f) => f.type === "init") as { tools: string[] } | undefined;
-  expect(initFrame2!.tools).not.toContain("mcp__winter__advisor");
+  expect(initFrame2!.tools).not.toContain(ADVISOR_TOOL_NAME);
 });
 
 // Part B item 1 (fix wave, P3 close-out): the engine-level proof for the OTHER three axes
@@ -460,7 +468,7 @@ const WS06_06: ConformanceRow[] = [
       { file: "./conformance.test.ts", testName: "system/init.tools reflects the real buildAdvertisedSet wiring (mode + disallowedTools) on BOTH init frame shapes" },
       // Part B item 1 (fix wave, P3 close-out): the capabilities/familyMetadata axes join mode/
       // disallowedTools on the real engine wire (see WS06-01b's own updated note for the closed gap).
-      { file: "./conformance.test.ts", testName: "mcp__winter__advisor keeps the pinned mcp__ name and an identical descriptor across every permission mode" },
+      { file: "./conformance.test.ts", testName: "advisor is a bare NATIVE name with an identical descriptor across every permission mode" },
       { file: "./conformance.test.ts", testName: "Part B item 1: familyMetadata now reaches the real engine wire" },
     ],
   },
@@ -476,7 +484,7 @@ const WS06_06: ConformanceRow[] = [
       { file: "./registry.test.ts", testName: "AskUserQuestion is unavailable inside a subagent" },
     ],
     note:
-      "Every AdvertisedSetInputs axis is exhaustively unit-tested at the pure-function level. GAP CLOSED (Part B item 1, fix wave, P3 close-out): RuntimeConfig.capabilities/toolSearchEnabled/insideSubagent/familyMetadata (protocol/config.ts) now exist and engine.ts's own buildAdvertisedSet call site threads all four through, alongside mode/disallowedTools -- see WS06-01a's own two new citations for the engine-level proof (capabilities via mcp__winter__advisor, familyMetadata via the hiddenWhenFamilyTaskNative set). `features`/`toolSearchEnabled`/`insideSubagent` still have no CATALOG-DERIVED resolution story populating a real value at runtime (a provider-catalog/session-context producer is a later phase's own job, same as before) -- the WIRE FIELD and the plumbing into buildAdvertisedSet are what this fix closes, not the population story.",
+      "Every AdvertisedSetInputs axis is exhaustively unit-tested at the pure-function level. GAP CLOSED (Part B item 1, fix wave, P3 close-out): RuntimeConfig.capabilities/toolSearchEnabled/insideSubagent/familyMetadata (protocol/config.ts) now exist and engine.ts's own buildAdvertisedSet call site threads all four through, alongside mode/disallowedTools -- see WS06-01a's own two new citations for the engine-level proof (capabilities via the advisor, familyMetadata via the hiddenWhenFamilyTaskNative set). `features`/`toolSearchEnabled`/`insideSubagent` still have no CATALOG-DERIVED resolution story populating a real value at runtime (a provider-catalog/session-context producer is a later phase's own job, same as before) -- the WIRE FIELD and the plumbing into buildAdvertisedSet are what this fix closes, not the population story.",
   },
   {
     id: "WS06-02",
@@ -536,16 +544,16 @@ const WS06_06: ConformanceRow[] = [
   {
     id: "WS06-05",
     spec: "WS-06 §6 obligation 5",
-    bullet: "mcp__winter__* descriptor-identity fixtures: both branches advertise byte-identical descriptors for every Winter plugin tool and mcp__winter__advisor",
+    bullet: "descriptor-identity fixtures: both branches advertise byte-identical descriptors for every Winter-owned tool, the advisor included",
     status: "new",
     citations: [
       {
         file: "./conformance.test.ts",
-        testName: "mcp__winter__advisor keeps the pinned mcp__ name and an identical descriptor across every permission mode",
+        testName: "advisor is a bare NATIVE name with an identical descriptor across every permission mode",
       },
     ],
     note:
-      "The cited test also proves an honest, separate gap rather than glossing over it: mcp__winter__advisor's own capabilityRequirements ([\"winter.reviewer-model\"]) means it is currently NEVER advertised at the real engine wire, because RuntimeConfig has no field threading `capabilities` to the real runEngine(...) call at all -- the concrete instance, for this one tool, of the same capabilities/family/feature-flag RuntimeConfig-threading gap WS06-01b's own note already names.",
+      "P7a (D29) RENAMED the subject of this row: the advisor is a bare native name now, not a server-qualified one, and the cited test asserts the new identity plus the absence of the retired name. The row's own substance is unchanged -- ONE canonical registration, never reshaped by context. The gap this note used to record (RuntimeConfig had no field threading `capabilities` to the real runEngine call, so the advisor could never reach the engine wire) is CLOSED: RuntimeConfig.capabilities exists and the cited test proves both directions on the real wire.",
   },
 ];
 

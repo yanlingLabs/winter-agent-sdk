@@ -1,15 +1,32 @@
-// WS-06 §4 "advisor" (Winter-only) -- implement-now. Canonical name MUST be `mcp__winter__advisor`
-// (bare `advisor` is rejected by policy, report §122) -- registers with MCP identity per R3-2
-// (source "mcp", rule-addressable) even though the in-process Winter MCP server itself is P4/WS-09
-// work; the descriptor + a directly-wired executor against the P1 provider seam land here per the
-// ruling, availability-gated on reviewer-model resolvability (R3-2/R3-3). Input `{}` -- the runtime
-// forwards the session's own conversation/tool history; no model-supplied parameters.
+// WS-06 §4 "advisor" (Winter-only) -- implement-now, and since P7a a NATIVE tool named `advisor`.
+//
+// D29 (user directive 2026-09-08) OVERRIDES §4's original naming argument. §4 reasoned from the
+// interchangeability rule (report §122, D7): a bare `advisor` could exist only on the Winter branch,
+// so it registered under an `mcp__`-prefixed name on the standing Winter server, to keep both
+// branches identical to the model. The directive settles it the other way, and the empirical shape
+// is what makes that the better answer: on the OFFICIAL branch the model already sees Anthropic's
+// own API-side advisor server tool, which is ALSO called `advisor` and is ALSO parameterless — and a
+// host cannot intercept it (`toolAliases` never sees a server tool's `tool_use`). So the bare name
+// is what makes the two branches MATCH; the server-qualified name is what made them differ. Same
+// name, same empty schema, different backing: Anthropic's reviewer there, the user-picked Winter
+// reviewer here.
+//
+// `source: "builtin"` follows the name: this is no longer a tool that pretends to arrive from a
+// server. It is rule-addressable as `advisor` (deny/ask rules apply normally), and `permissionClass`
+// stays `"mcp"` deliberately — WS-06 §4's permission semantics are unchanged by the rename (default
+// no-prompt: it sends conversation content to a provider in the session's OWN trust domain, the same
+// class of egress as the worker model's own requests). The class is about what the call DOES, not
+// about where the descriptor came from.
+//
+// Input `{}` -- the runtime forwards the session's own conversation/tool history; no model-supplied
+// parameters. Availability stays gated on `winter.reviewer-model` (a reviewer must be resolvable in
+// the session's provider catalog).
 import { stub } from "./_shared.ts";
 
 stub({
-  canonicalName: "mcp__winter__advisor",
-  advertisedName: "mcp__winter__advisor",
-  source: "mcp",
+  canonicalName: "advisor",
+  advertisedName: "advisor",
+  source: "builtin",
   // N2 (fix wave, nit, P3 close-out): the schema previously declared `additionalProperties: false`
   // here, but no executor in this codebase validates input against a JSON Schema at all
   // (registry.ts's own JSONSchema type is explicitly "self-describing... not a validator") -- the

@@ -3036,7 +3036,7 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // story for any of these (the provider catalog's family metadata [WS-13]; MCP-server-derived
   // capability tokens [WS-09]) is still a LATER phase's own job -- this is only the wire-to-
   // buildAdvertisedSet plumbing a host can already use directly (e.g. supplying
-  // `capabilities: ["winter.reviewer-model"]` today makes `mcp__winter__advisor` advertisable, per
+  // `capabilities: ["winter.reviewer-model"]` today makes the `advisor` tool advertisable, per
   // I4's own capability-token precedent). `disallowedTools` threads the run's own deny-grammar
   // config straight through, matching what the permissions engine already sees from the same
   // `config` object -- RuntimeConfig carries no separate "requested tool config" allowlist distinct

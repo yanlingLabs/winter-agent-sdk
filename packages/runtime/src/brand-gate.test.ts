@@ -281,7 +281,9 @@ function sweep(): BrandOffence[] {
  * in parallel and a one-per-line sorted list is the shape that merges without conflicts.
  *
  * Deleting an entry is how a lane declares a file swept. Deleting one WITHOUT sweeping the file
- * fails the first test; sweeping a file WITHOUT deleting its entry fails the second.
+ * fails the first test; sweeping a file WITHOUT deleting its entry fails the second. The spine has
+ * already deleted three of its own (the advisor descriptor, its executor, and the standing Winter
+ * server) in Step 5's commit — which is what the mechanism looks like working.
  */
 const BASELINE_ALLOWLIST: readonly string[] = [
   // --- packages/provider-runtime (Lane A: identity.ts's body, the codex originator, the keychain service) 
@@ -303,7 +305,6 @@ const BASELINE_ALLOWLIST: readonly string[] = [
   "packages/runtime/src/hooks/registry.ts",
   "packages/runtime/src/main.ts",
   "packages/runtime/src/mcp/lifecycle.ts",
-  "packages/runtime/src/mcp/winter-server.ts",
   "packages/runtime/src/permissions/edit-recognition.ts",
   "packages/runtime/src/permissions/evaluator.ts",
   "packages/runtime/src/permissions/protected.ts",
@@ -324,13 +325,11 @@ const BASELINE_ALLOWLIST: readonly string[] = [
   "packages/runtime/src/subagents/policy.ts",
   "packages/runtime/src/subagents/workspace.ts",
   "packages/runtime/src/testing.ts",
-  "packages/runtime/src/tools/descriptors/advisor.ts",
   "packages/runtime/src/tools/descriptors/cron-create.ts",
   "packages/runtime/src/tools/descriptors/enter-worktree.ts",
   "packages/runtime/src/tools/descriptors/winter-list-agents.ts",
   "packages/runtime/src/tools/descriptors/winter-send-message.ts",
   "packages/runtime/src/tools/descriptors/workflow.ts",
-  "packages/runtime/src/tools/impl/advisor.ts",
   "packages/runtime/src/tools/impl/agent.ts",
   "packages/runtime/src/tools/impl/cron.ts",
   "packages/runtime/src/tools/impl/enter-worktree.ts",

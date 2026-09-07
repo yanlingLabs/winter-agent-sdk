@@ -34,10 +34,12 @@
 // the original split existed to protect) AND this entry is hidden whenever its native is denied or
 // excluded. See `resolvePermissionIdentity`/`hideAliasExcludedTwins` in toolsearch/aliases.ts.
 //
-// `source: "mcp"` matches the `mcp__winter__advisor` precedent exactly (descriptors/advisor.ts): a
-// standing-server tool is registered with MCP identity so it is rule-addressable under its canonical
-// name, even though the in-process server object itself (mcp/winter-server.ts) registers separately.
-// It also matters mechanically: `resolveDeferral` short-circuits `source: "builtin"` to "eager"
+// `source: "mcp"` is this entry's own identity, not a borrowed precedent: a server-qualified twin is
+// registered with MCP identity so it is rule-addressable under its canonical name, even though the
+// in-process server object itself (mcp/winter-server.ts) registers separately. (The advisor USED to
+// be the sibling instance of this shape; P7a/D29 gave it a bare native name and `source: "builtin"`,
+// so this twin no longer has a companion.) It also matters mechanically: `resolveDeferral`
+// short-circuits `source: "builtin"` to "eager"
 // unconditionally ("core built-ins... never deferred through the public surface"), so a builtin-
 // sourced canonical entry could never be deferred at all.
 import { stub } from "./_shared.ts";

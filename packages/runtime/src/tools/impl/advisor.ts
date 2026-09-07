@@ -1,8 +1,9 @@
-// Task 7 (LANE E, WS-06 §4 "advisor"): the Winter-only capability registered as `mcp__winter__advisor`
-// (never a bare `advisor` -- report §122; descriptors/advisor.ts already pins the MCP identity,
-// output schema, and the `winter.reviewer-model` capability gate). RULING R3-2 (docs/superpowers/
-// plans/2026-09-03-winter-phase-03-tools-sandbox.md): MCP server registration itself is P4/WS-09
-// work, but P3 delivers "a directly-wired executor against the P1 provider seam" here, now.
+// Task 7 (LANE E, WS-06 §4 "advisor"): the Winter-only capability, registered since P7a under the
+// BARE NATIVE NAME `advisor` (D29 -- descriptors/advisor.ts's own header carries the full reasoning
+// and pins the identity, output schema and the `winter.reviewer-model` capability gate). RULING R3-2
+// (docs/superpowers/plans/2026-09-03-winter-phase-03-tools-sandbox.md): P3 delivered "a directly-
+// wired executor against the P1 provider seam" here, and the rename did not touch the executor at
+// all -- only the name it registers under.
 //
 // THE INJECTABLE SEAMS (task-7 brief: "Assemble transcript context from an injectable
 // TranscriptSource... constructor-injected seam you define in advisor.ts; tests use fakes; the REAL
@@ -18,11 +19,16 @@
 // call `createAdvisorExecutor` again, from wherever the engine's real turn history and resolved
 // provider catalog actually live, and `replaceExecutor` a second time (registry.ts's replaceExecutor
 // has no once-only guard, precisely so a later phase can upgrade a lane's own default this way).
-import "../descriptors/advisor.ts"; // self-sufficiency: guarantees the "mcp__winter__advisor" stub is registered before replaceExecutor runs below.
+import "../descriptors/advisor.ts"; // self-sufficiency: guarantees the "advisor" stub is registered before replaceExecutor runs below.
 import type { Provider, ProviderMessage } from "../../engine.ts";
 import { replaceExecutor, type ToolExecutionContext, type ToolExecutor, type ToolResultPayload } from "../registry.ts";
 
-export const ADVISOR_TOOL_NAME = "mcp__winter__advisor";
+/**
+ * D29: the canonical name IS the advertised name, and it is bare. Every consumer (engine.ts's
+ * re-registration, the registry lookup, the conformance fixtures) reads it from here rather than
+ * re-spelling it, so the rename was one edit rather than a sweep with a survivor.
+ */
+export const ADVISOR_TOOL_NAME = "advisor";
 
 // One raw entry of whatever this session's real transcript is eventually shaped like -- deliberately
 // narrower/speech-shaped (who said what) than engine.ts's own ProviderMessage (which additionally

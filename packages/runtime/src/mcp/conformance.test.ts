@@ -506,11 +506,12 @@ const ITEM_11: ConformanceRow[] = [
   {
     id: "WS09-11a",
     spec: "WS-09 §11.11",
-    bullet: "descriptor identity for the standing set, including mcp__winter__advisor",
+    bullet: "descriptor identity for the standing set (P7a/D29: the advisor left the standing server for a bare native name, so the standing set is EMPTY today and both halves are asserted)",
     status: "covered",
     citations: [
-      { file: "../tools/conformance.test.ts", testName: "mcp__winter__advisor keeps the pinned mcp__ name and an identical descriptor across every permission mode" },
-      { file: "./winter-server.test.ts", testName: "the server's own advisor tool is byte-identical to the regis" },
+      { file: "../tools/conformance.test.ts", testName: "advisor is a bare NATIVE name with an identical descriptor across every permission mode" },
+      { file: "./winter-server.test.ts", testName: "a real MCP client sees NO tools" },
+      { file: "./winter-server.test.ts", testName: "the advisor lives in the REGISTRY under its bare native name, not on this server" },
     ],
   },
   {

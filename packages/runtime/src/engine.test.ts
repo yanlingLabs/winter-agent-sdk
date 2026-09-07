@@ -3460,8 +3460,8 @@ describe("Phase 4 Task 8: init.tools reflects derived capabilities, the activati
     }
     // A token that is NOT derived stays host-supplied-only -- proves the union is additive, not a
     // blanket "advertise everything".
-    expect(tools).not.toContain("mcp__winter__advisor");
-    expect(await initTools({ capabilities: ["winter.reviewer-model"] })).toContain("mcp__winter__advisor");
+    expect(tools).not.toContain(ADVISOR_TOOL_NAME);
+    expect(await initTools({ capabilities: ["winter.reviewer-model"] })).toContain(ADVISOR_TOOL_NAME);
   });
 
   // The session-scoped half of the derivation, on the real wire. Capture evidence
