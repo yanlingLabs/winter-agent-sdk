@@ -55,7 +55,27 @@ export type ResolutionErrorCode =
    * the target provider. The session's credential is NEVER substituted (`session-provider.ts`
    * `describeTargetMaterial`); this code is what the deferred refusal carries instead.
    */
-  | "no-credential-for-provider";
+  | "no-credential-for-provider"
+  /**
+   * WS-13c §4 step 5: a slot name resolved to a canonical model, and NOTHING can serve it — every
+   * candidate row is blocked/deprecated, its provider has no credential, its provider is disabled,
+   * or the slot's pinned provider is absent.
+   *
+   * A REFUSAL that names what would have served it, never a substitution and never another family
+   * (WS-13 §9). The Agent tool's `model` enum advertises a lineup, not an entitlement: a session may
+   * legitimately be offered `astra` and hold no OpenAI credential, and answering that by quietly
+   * running `sonnet` is the exact "false information" D25 forbids.
+   */
+  | "slot-unservable"
+  /**
+   * WS-13c §3 acceptance (c): a slot name that is NOT in the session's active set and exists in two
+   * or more families — `pro` and `flash` live in `gemini`, `deepseek` and `glm`.
+   *
+   * Typed rather than resolved by a tie-break, because either choice would be a guess about which
+   * vendor the model meant, and a model copying a name it saw in older context is exactly the case
+   * acceptance (b) makes work when the name IS unique.
+   */
+  | "ambiguous-slot-name";
 
 export class WinterProviderResolutionError extends Error {
   readonly code: ResolutionErrorCode;

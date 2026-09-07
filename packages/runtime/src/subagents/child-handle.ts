@@ -11,7 +11,7 @@
 // the parent's real host connection (`transformChildFrame` below), since Lane C's own child-engine.ts
 // builds a child by calling `runEngine()` again with a synthetic input/output pair, and needs
 // something to bridge that pair to the ACTUAL host connection this run owns.
-import type { ControlResponseFrame, McpServerConfigForProcessTransport, OutputFormat, PermissionMode, RuntimeAgentDefinition, WinterFrame } from "@yanlinglabs/winter-agent-sdk";
+import type { ActiveSlotSet, ControlResponseFrame, McpServerConfigForProcessTransport, OutputFormat, PermissionMode, RuntimeAgentDefinition, WinterFrame } from "@yanlinglabs/winter-agent-sdk";
 import type { McpServerStateSource } from "../mcp/state.ts"; // type-only -- see this file's own header; no runtime cycle
 import type { McpControlSeam } from "../mcp/control-seam.ts"; // type-only
 import type { ChildPolicyResult } from "../permissions/auto/inheritance.ts";
@@ -154,6 +154,23 @@ export interface ChildInheritance {
    */
   effectiveEffort?: "low" | "medium" | "high" | "xhigh" | "max" | number;
   effectiveThinking?: { type: "disabled" } | { type: "enabled"; budgetTokens?: number; display?: "summarized" | "omitted" } | { type: "adaptive"; display?: "summarized" | "omitted" };
+  /**
+   * WS-13c §3 (recorded on the child, extending WS-10 §3.4): the SLOT the parent's `AgentInput.model`
+   * named, and where that slot came from.
+   *
+   * `model` above is the bare string as sent; this says what it MEANT — `{ family: "gpt", name:
+   * "astra", source: "family-default" }`. Without it a child's record cannot distinguish a slot the
+   * session advertised from a unique foreign name the model copied out of older context (§3
+   * acceptance (b)), which is exactly the case §8's cross-family resume has to reason about.
+   *
+   * `source` is the FULL four-member `ActiveSlotSet["source"]` union, not a narrowed copy: this is
+   * assigned straight from `SlotProviderResolution`, and a three-member twin here would make
+   * `claude-pinned` unrepresentable on the very record that documents a cross-family spawn.
+   *
+   * Absent when the parent resolved no slot (every pre-P6.6 session, every test double, and every
+   * child whose model came from `AgentDefinition.model` host-side rather than from the tool).
+   */
+  slot?: { family: string; name: string; source: ActiveSlotSet["source"] };
 }
 
 // engine.ts's own spawn seam: Lane C supplies the implementation via a registered factory (below);
