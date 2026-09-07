@@ -19549,6 +19549,53 @@
       "modelFamily": "gemini"
     },
     {
+      "key": "google/gemini-3.5-flash-lite",
+      "providerId": "google",
+      "upstreamId": "gemini-3.5-flash-lite",
+      "displayName": "Gemini 3.5 Flash-Lite",
+      "aliases": [],
+      "endpoints": [
+        "chat"
+      ],
+      "inputModalities": {
+        "value": [
+          "text",
+          "image"
+        ],
+        "source": "upstream-static",
+        "sourceRef": "google/gemini-3.1-flash-lite's own catalogued inputModalities (open-sse/config/providers/registry/gemini/index.ts#gemini-3.1-flash-lite), carried forward for the newer Flash-Lite release; https://ai.google.dev/gemini-api/docs/models names no per-model modality table (retrieved 2026-09-07)",
+        "confidence": "inferred",
+        "observedAt": "2026-09-07T00:00:00Z"
+      },
+      "outputModalities": {
+        "value": [
+          "text"
+        ],
+        "source": "winter-default",
+        "sourceRef": "WINTER DEFAULT: upstream declares no output modality for ANY model, so `text` is Winter's inference for a chat registry, NOT an upstream statement. Stamped `source: winter-default` — the `EvidenceSource` member added for exactly this — so a reader filtering evidence BY SOURCE does not get a Winter guess wearing an upstream label. See PROVENANCE.md.",
+        "confidence": "unknown",
+        "observedAt": "2026-09-07T00:00:00Z"
+      },
+      "toolCalling": {
+        "value": "native",
+        "source": "upstream-static",
+        "sourceRef": "google/gemini-3.1-flash-lite's own catalogued toolCalling (open-sse/config/providers/registry/gemini/index.ts#gemini-3.1-flash-lite), carried forward; https://ai.google.dev/gemini-api/docs/models does not itself state a toolCalling flag for gemini-3.5-flash-lite (retrieved 2026-09-07)",
+        "confidence": "inferred",
+        "observedAt": "2026-09-07T00:00:00Z"
+      },
+      "nativeTools": {
+        "value": true,
+        "source": "upstream-static",
+        "sourceRef": "same basis as toolCalling",
+        "confidence": "inferred",
+        "observedAt": "2026-09-07T00:00:00Z"
+      },
+      "unsupportedParameters": [],
+      "status": "candidate",
+      "canonicalModelId": "gemini-3.5-flash-lite",
+      "modelFamily": "gemini"
+    },
+    {
       "key": "google/gemini-3.7-flash",
       "providerId": "google",
       "upstreamId": "gemini-3.7-flash",
@@ -38535,11 +38582,11 @@
         },
         {
           "name": "lite",
-          "canonicalModelId": "gemini-3.1-flash-lite",
+          "canonicalModelId": "gemini-3.5-flash-lite",
           "description": "the cheap implementer.",
           "reason": "Third: cost.",
           "basis": "winter-curated",
-          "citation": "spec:WS-13c §9 (user-ruling FRAMING — user: \"lite as the cheap implementer\", §0 2026-09-06 — winter-curated text; R-6c-11 applied mechanically, fix r1 I-1)",
+          "citation": "spec:WS-13c §9 (user-ruling FRAMING — user: \"lite as the cheap implementer\", §0 2026-09-06 — winter-curated text; R-6c-11 applied mechanically, fix r1 I-1); VERIFIED on https://ai.google.dev/gemini-api/docs/models (retrieved 2026-09-07) per the spine review's addendum (controller item 2) — `gemini-3.5-flash-lite` is a newer Stable Flash-Lite release than `gemini-3.1-flash-lite`, so the slot is repointed to the owed `google/gemini-3.5-flash-lite` row (P6.6 Task 1b); `gemini-3.1-flash-lite` stays in the catalog unchanged",
           "status": "candidate"
         }
       ],

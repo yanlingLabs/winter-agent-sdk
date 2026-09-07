@@ -129,11 +129,11 @@
         },
         {
           "name": "lite",
-          "canonicalModelId": "gemini-3.1-flash-lite",
+          "canonicalModelId": "gemini-3.5-flash-lite",
           "description": "the cheap implementer.",
           "reason": "Third: cost.",
           "basis": "winter-curated",
-          "citation": "spec:WS-13c §9 (user-ruling FRAMING — user: \"lite as the cheap implementer\", §0 2026-09-06 — winter-curated text; R-6c-11 applied mechanically, fix r1 I-1)",
+          "citation": "spec:WS-13c §9 (user-ruling FRAMING — user: \"lite as the cheap implementer\", §0 2026-09-06 — winter-curated text; R-6c-11 applied mechanically, fix r1 I-1); VERIFIED on https://ai.google.dev/gemini-api/docs/models (retrieved 2026-09-07) per the spine review's addendum (controller item 2) — `gemini-3.5-flash-lite` is a newer Stable Flash-Lite release than `gemini-3.1-flash-lite`, so the slot is repointed to the owed `google/gemini-3.5-flash-lite` row (P6.6 Task 1b); `gemini-3.1-flash-lite` stays in the catalog unchanged",
           "status": "candidate"
         }
       ],
