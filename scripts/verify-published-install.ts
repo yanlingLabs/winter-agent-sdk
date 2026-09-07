@@ -29,6 +29,16 @@ export function currentPublishedVersion(): string {
   return toSemver(readFileSync(new URL("../VERSION", import.meta.url), "utf8").trim());
 }
 
+/**
+ * review r1 Minor-5: names the runtime `process.execPath` ACTUALLY spawns, rather than assuming
+ * "node". Under `bun run scripts/verify-published-install.ts` (the only way this script runs; there
+ * is no separate Node entry point for it) `process.execPath` is the Bun binary, so a hard-coded
+ * "failed under node" message was always inaccurate -- it never once exercised Node.
+ */
+export function runtimeLabel(): string {
+  return typeof process.versions.bun === "string" ? `Bun ${process.versions.bun}` : process.execPath;
+}
+
 function decode(bytes: Uint8Array): string {
   return new TextDecoder().decode(bytes);
 }
@@ -56,13 +66,14 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
       throw new Error(`pnpm add ${spec} failed (exit ${add.exitCode}):\n${decode(add.stdout)}${decode(add.stderr)}`);
     }
 
+    const runtime = runtimeLabel();
     const probeScript = `import(${JSON.stringify("@yanlinglabs/winter-conformance/trace")}).then((m) => { if (typeof m.normalizeTrace !== "function") throw new Error("normalizeTrace missing from the installed package"); console.log("import ok"); });`;
     const run = Bun.spawnSync([process.execPath, "-e", probeScript], { cwd: probeDir, stdout: "pipe", stderr: "pipe" });
     if (run.exitCode !== 0) {
-      throw new Error(`import("@yanlinglabs/winter-conformance/trace") failed under node (exit ${run.exitCode}):\n${decode(run.stdout)}${decode(run.stderr)}`);
+      throw new Error(`import("@yanlinglabs/winter-conformance/trace") failed under ${runtime} (exit ${run.exitCode}):\n${decode(run.stdout)}${decode(run.stderr)}`);
     }
 
-    console.log(`verify:published-install OK -- ${spec} installs from GitHub Packages into a throwaway checkout and ./trace imports cleanly`);
+    console.log(`verify:published-install OK -- ${spec} installs from GitHub Packages into a throwaway checkout and ./trace imports cleanly under ${runtime}`);
   } finally {
     rmSync(probeDir, { recursive: true, force: true });
   }

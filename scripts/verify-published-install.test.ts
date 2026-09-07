@@ -7,7 +7,7 @@
 import { test, expect, describe } from "bun:test";
 import { join } from "node:path";
 import { readFileSync } from "node:fs";
-import { OPT_IN_VAR, SKIPPED_LINE, currentPublishedVersion } from "./verify-published-install.ts";
+import { OPT_IN_VAR, SKIPPED_LINE, currentPublishedVersion, runtimeLabel } from "./verify-published-install.ts";
 
 /** `process.env` with the opt-in variable removed, so a developer's own exported token (if any) can never leak into this test's spawned child. */
 function strippedEnv(extra: Record<string, string> = {}): Record<string, string> {
@@ -33,6 +33,19 @@ async function run(extra: Record<string, string> = {}): Promise<{ code: number; 
     proc.kill();
   }
 }
+
+describe("runtimeLabel (review r1 Minor-5)", () => {
+  test("under `bun test`, names Bun -- never hard-codes \"node\"", () => {
+    // This suite itself runs under `bun test`, so `process.versions.bun` is genuinely set here --
+    // the same condition that holds for every real invocation (`bun run
+    // scripts/verify-published-install.ts` is this script's only entry point; there is no `node`
+    // path to it), which is exactly the case the old hard-coded "failed under node" message got wrong.
+    expect(typeof process.versions.bun).toBe("string");
+    const label = runtimeLabel();
+    expect(label).toStartWith("Bun ");
+    expect(label.toLowerCase()).not.toContain("node");
+  });
+});
 
 describe("currentPublishedVersion", () => {
   test("reads the committed VERSION file and returns a valid, leading-zero-free semver", () => {
