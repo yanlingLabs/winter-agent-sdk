@@ -143,6 +143,88 @@ function withoutOverlayNeverKeys(values: Settings): Settings {
 }
 
 /**
+ * P6.6 Lane B (WS-13c §5, D27, RULING R13c-7): `modelSlots`/`preferredProviders`, honoured from the
+ * PROJECT tier only when the workspace is trusted.
+ *
+ * A sibling of `OVERLAY_NEVER_KEYS`/`withoutOverlayNeverKeys` in SHAPE (named, dropped from the
+ * project tier's contribution before the merge, reported on that tier's `error`) but NOT a member of
+ * that list: an overlay-never key is dropped from every project unconditionally, while these two are
+ * dropped ONLY when `trustedWorkspace !== true` -- a trusted project sets them with perfectly
+ * ordinary precedence, same as any other project-tier key. That escape hatch is the reason this is a
+ * separate pair of functions rather than a two-line addition to `OVERLAY_NEVER_KEYS`.
+ *
+ * Why this key needs a trust gate at all (R13c-7): `modelSlots` picks WHICH MODEL runs under a facing
+ * name the Agent tool and the model switcher show verbatim. A cloned repository's committed
+ * `.winter/settings.json` mapping `cheap` to a model the repo's author prefers is choosing what the
+ * user's agent spends and which vendor sees the traffic -- the same self-grant shape RULING P5-A
+ * closes for permissions, arriving through a settings key instead of a permission rule.
+ */
+const MODEL_SLOT_KEYS: readonly string[] = ["modelSlots", "preferredProviders"] as const;
+
+function describeUntrustedModelSlotKeys(values: Settings): string | undefined {
+  const present = MODEL_SLOT_KEYS.filter((key) => (values as Record<string, unknown>)[key] !== undefined);
+  if (present.length === 0) return undefined;
+  return `${present.map((k) => `"${k}"`).join(", ")} ${present.length === 1 ? "is" : "are"} ignored from the project tier (untrusted workspace, WS-13c R13c-7): a repository may not choose which models the agent uses; declare the workspace trusted, or set ${present.length === 1 ? "it" : "them"} in your user settings`;
+}
+
+function withoutUntrustedModelSlotKeys(values: Settings): Settings {
+  const out: Record<string, unknown> = { ...values };
+  for (const key of MODEL_SLOT_KEYS) delete out[key];
+  return out as Settings;
+}
+
+/**
+ * The project tier's contribution to the merge: `withoutOverlayNeverKeys` always, plus
+ * `withoutUntrustedModelSlotKeys` unless the caller declared the workspace trusted. Composing both
+ * filters in one place keeps the main merge loop and `overlayFilteredTiers` (below) from drifting
+ * into two different ideas of "the project tier's contribution".
+ */
+function projectTierContribution(values: Settings, trustedWorkspace: boolean): Settings {
+  const withoutNever = withoutOverlayNeverKeys(values);
+  return trustedWorkspace ? withoutNever : withoutUntrustedModelSlotKeys(withoutNever);
+}
+
+/**
+ * P6.6 Lane B, fix round 1 (review Important-1): `modelSlotsIgnored` is a DERIVED-ONLY key --
+ * context.md's pinned block is explicit: "written by resolve.ts / the runtime, never by a file".
+ *
+ * Before this fix, no filter named it: `OVERLAY_NEVER_KEYS` doesn't cover it, and `MODEL_SLOT_KEYS`
+ * only covers the two SETTINGS a user configures, not the provenance key resolve.ts derives from
+ * them. So `deepMergeInto` copied a file-supplied `modelSlotsIgnored` straight into `effective` --
+ * an UNTRUSTED PROJECT tier could write an arbitrary string (not even a member of the declared
+ * union) into a key D25's "no false information" rule governs, with no error line, and `provenance`
+ * would name the file as though resolve.ts's own derivation (below) had never run.
+ *
+ * Stripped from EVERY tier's contribution -- not project-only, like `withoutUntrustedModelSlotKeys`
+ * -- because the contract is "never by A FILE", not "never by an untrusted one": a user-tier or
+ * local-tier `modelSlotsIgnored` is exactly as illegitimate as a project-tier one. Applying this
+ * unconditionally, ahead of (and independent of) the project-only filtering, also means the
+ * post-merge derivation below is now unambiguously the key's ONLY writer, and no tier's raw file
+ * value ever reaches the `Object.keys(contribution)` provenance loop for it --
+ * `provenance.modelSlotsIgnored` is therefore now ALWAYS absent (review Minor-3), which is what
+ * makes "absent" an honest signal rather than a coincidence of no file having tried.
+ */
+const DERIVED_ONLY_KEYS: readonly string[] = ["modelSlotsIgnored"] as const;
+
+function withoutDerivedOnlyKeys(values: Settings): Settings {
+  const out: Record<string, unknown> = { ...values };
+  for (const key of DERIVED_ONLY_KEYS) delete out[key];
+  return out as Settings;
+}
+
+/**
+ * One tier's contribution to the merge, in full: project-tier filtering (never-keys, and the
+ * untrusted model-slot-keys strip) when `isProject`, composed with the universal derived-only-keys
+ * strip that applies to every tier regardless of source. The single entry point for "what does this
+ * tier actually contribute", used at both places a tier's `.values` flows into the merge (the main
+ * `effective`/`provenance` loop and `overlayFilteredTiers`) so the two can never drift apart.
+ */
+function tierContribution(values: Settings, isProject: boolean, trustedWorkspace: boolean): Settings {
+  const projectFiltered = isProject ? projectTierContribution(values, trustedWorkspace) : values;
+  return withoutDerivedOnlyKeys(projectFiltered);
+}
+
+/**
  * The four `permissions` arrays that are RULE SETS rather than "the winning tier's value", and the
  * one place the ordinary replace-by-higher-tier merge would be actively unsafe.
  *
@@ -246,8 +328,16 @@ const SOURCE_ORDER_LOWEST_FIRST: readonly SettingSource[] = ["user", "project", 
  * Precedence, highest first (R5-8): managed (server, then programmatic) > flag (inline/sdk) >
  * local > project > user. `local` above `project` is the pinned ordering capture (1) proves
  * behaviourally (cell J vs I: only a rule in the LOCAL file silences a prompt).
+ *
+ * `trustedWorkspace` lives on the pinned `ResolveSettingsDetailedOptions` itself (R-6c-16, folded by
+ * the controller after Lane B merged; the lane had widened it by intersection because `types.ts` was
+ * the spine's frozen surface during the phase). `WorkspaceTrustFilterOptions` below carries the
+ * identical field for `applyWorkspaceTrust`. Absent = untrusted (fail-safe); production-wiring
+ * threads the host's RULING P5-A bit.
  */
-export async function resolveSettingsDetailed(opts: ResolveSettingsDetailedOptions = {}): Promise<DetailedResolvedSettings> {
+export async function resolveSettingsDetailed(
+  opts: ResolveSettingsDetailedOptions = {},
+): Promise<DetailedResolvedSettings> {
   const cwd = opts.cwd ?? process.cwd();
   const selected: readonly SettingSource[] = opts.settingSources ?? SETTING_SOURCES;
   const pathOpts = {
@@ -285,7 +375,11 @@ export async function resolveSettingsDetailed(opts: ResolveSettingsDetailedOptio
     const plansError = plansCheck.ok ? undefined : plansCheck.reason;
     // m1: same channel, same reason -- a project-tier key that was dropped rather than applied.
     const neverKeyError = source === "project" ? describeOverlayNeverKeys(file.values) : undefined;
-    const mergedError = [file.error, valueError, plansError, neverKeyError].filter((e): e is string => e !== undefined).join("; ");
+    // P6.6 Lane B (R13c-7): same channel again, for the trust-gated pair -- reported only when the
+    // gate actually applies (untrusted), so a trusted project's ordinary `modelSlots` never carries
+    // a spurious error line.
+    const untrustedModelSlotsError = source === "project" && opts.trustedWorkspace !== true ? describeUntrustedModelSlotKeys(file.values) : undefined;
+    const mergedError = [file.error, valueError, plansError, neverKeyError, untrustedModelSlotsError].filter((e): e is string => e !== undefined).join("; ");
     lowestFirst.push({
       source,
       path,
@@ -312,10 +406,11 @@ export async function resolveSettingsDetailed(opts: ResolveSettingsDetailedOptio
     lowestFirst.push({ source: "managed", policyOrigin: "remote", settings: opts.serverManagedSettings, values: opts.serverManagedSettings, loaded: true });
   }
 
+  const trustedWorkspace = opts.trustedWorkspace === true;
   const effective: Record<string, unknown> = {};
   const provenance: Record<string, ProvenanceEntry> = {};
   for (const entry of lowestFirst) {
-    const contribution = entry.source === "project" ? withoutOverlayNeverKeys(entry.values) : entry.values;
+    const contribution = tierContribution(entry.values, entry.source === "project", trustedWorkspace);
     deepMergeInto(effective, contribution as Record<string, unknown>);
     for (const key of Object.keys(contribution)) {
       if ((contribution as Record<string, unknown>)[key] === undefined) continue;
@@ -330,11 +425,35 @@ export async function resolveSettingsDetailed(opts: ResolveSettingsDetailedOptio
   // The one exception to the replace-by-higher-tier merge above. Runs on the OVERLAY-FILTERED view
   // for the same reason the merge does -- a project tier's own contribution is filtered identically
   // in both places, so a never-key can never sneak back in through the union.
-  const overlayFilteredTiers = lowestFirst.map((entry) => ({ values: entry.source === "project" ? withoutOverlayNeverKeys(entry.values) : entry.values }));
+  const overlayFilteredTiers = lowestFirst.map((entry) => ({ values: tierContribution(entry.values, entry.source === "project", trustedWorkspace) }));
   unionPermissionRuleArrays(effective, overlayFilteredTiers);
   // RULING R6b-9, the SECOND exception to replace-by-higher-tier. Same overlay-filtered view, same
   // reason: a tier's contribution is read here exactly as it was merged above.
   restrictProviderEnables(effective, overlayFilteredTiers);
+
+  // P6.6 Lane B (R13c-7): `modelSlotsIgnored` provenance -- set iff the PROJECT tier actually had
+  // either key AND no HIGHER-precedence tier (local/flag/managed; NOT user, which is lower than
+  // project in `SOURCE_ORDER_LOWEST_FIRST`) already provided `modelSlots` of its own. That second
+  // half matters: if a higher tier supplies `modelSlots`, `effective.modelSlots` already correctly
+  // reflects THAT tier regardless of trust, and flagging "untrusted-project" here would blame the
+  // wrong reason for a value that was always going to be overridden by ordinary precedence. Provenance
+  // for the dropped keys themselves is not recorded (`projectTierContribution` removes them before
+  // they ever reach the `Object.keys(contribution)` loop above, so they never entered).
+  if (!trustedWorkspace) {
+    const projectIndex = lowestFirst.findIndex((e) => e.source === "project");
+    if (projectIndex !== -1) {
+      const projectValues = lowestFirst[projectIndex]!.values as Record<string, unknown>;
+      const projectHadEither = MODEL_SLOT_KEYS.some((key) => projectValues[key] !== undefined);
+      if (projectHadEither) {
+        const higherProvidedModelSlots = lowestFirst.slice(projectIndex + 1).some((e) => (e.values as Record<string, unknown>)["modelSlots"] !== undefined);
+        // Review Minor-3: deliberately no `provenance["modelSlotsIgnored"]` entry here. `ProvenanceEntry.source`
+        // is a `ResolvedSettingSource` (a TIER), and this value has no tier -- it is derived, by
+        // `DERIVED_ONLY_KEYS` construction (above) the ONLY place that ever sets it now that every
+        // tier's own attempt is stripped before the merge. Absent is the honest answer, not a gap.
+        if (!higherProvidedModelSlots) effective["modelSlotsIgnored"] = "untrusted-project";
+      }
+    }
+  }
 
   const perSource = [...lowestFirst].reverse();
   return {

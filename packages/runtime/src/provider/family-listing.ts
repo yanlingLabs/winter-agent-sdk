@@ -39,6 +39,20 @@ export function buildModelFamilyListing(input: FamilyListingInput): ModelFamilyL
   const { catalog, active, servable, resolveSlot } = input;
 
   const providerById = new Map<string, WinterProviderDescriptor>(catalog.providers.map((p) => [p.id, p]));
+
+  // Every provider row carries `pricingBasis` and every model row names an existing provider (catalog
+
+  // integrity); a miss here is a corrupted catalog, never a "token" default (Lane C review, Minor 1).
+
+  const pricingBasisOf = (providerId: string): string => {
+
+    const provider = providerById.get(providerId);
+
+    if (provider === undefined) throw new Error(`family listing: model row names provider "${providerId}" which the catalog does not carry`);
+
+    return provider.pricingBasis;
+
+  };
   const familyById = new Map<string, ModelFamilyDescriptor>(catalog.families.map((f) => [f.id, f]));
 
   // familyId -> canonicalModelId -> surviving rows, in `catalog.models` order. A family with zero
@@ -82,7 +96,7 @@ export function buildModelFamilyListing(input: FamilyListingInput): ModelFamilyL
         key: row.key,
         providerId: row.providerId,
         status: row.status,
-        pricingBasis: providerById.get(row.providerId)?.pricingBasis ?? "token",
+        pricingBasis: pricingBasisOf(row.providerId),
         servable: servable(row.providerId),
       })),
     }));
