@@ -14,7 +14,7 @@ import { normalizeTrace, compareTraces, type ConformanceTraceEntry } from "@yanl
 //
 // CORRECTED BY Phase 5 Task 8: this comment used to add "the in-memory runtime never touches the
 // filesystem with it", and that is no longer true. `production-wiring.ts` runs on every leg now and
-// parent-walks this cwd for skills, command files, `WINTER.md` and `.winter/mcp.json`, and
+// parent-walks this cwd for skills, command files, the instructions file and the project mcp config, and
 // `context/memory-key.ts` spawns `git --git-common-dir` in it. All of that TOLERATES a nonexistent
 // directory -- verified by probing each builder against this exact path before the wiring landed --
 // which is what keeps the determinism guarantee intact: a path that does not exist has no contents
@@ -1105,7 +1105,7 @@ export async function traceWinterSkillInvocationRound(): Promise<ConformanceTrac
   const winterHome = mkdtempSync(join(tmpdir(), "winter-differential-skill-"));
   try {
     // The USER tier of this scenario's own home. A project-tier skill would need FIXTURE_CWD to hold
-    // a `.winter/` tree, and FIXTURE_CWD is a synthetic path that deliberately does not exist.
+    // a project dot-dir tree, and FIXTURE_CWD is a synthetic path that deliberately does not exist.
     const skillDir = join(winterHome, "skills", P5_FIXTURE_SKILL_NAME);
     mkdirSync(skillDir, { recursive: true });
     writeFileSync(join(skillDir, "SKILL.md"), `---\nname: ${P5_FIXTURE_SKILL_NAME}\ndescription: the T8 cross-leg skill probe\n---\nP5 SKILL BODY MARKER\n`);

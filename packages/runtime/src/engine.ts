@@ -1347,8 +1347,8 @@ export function buildBaselineDenyRules(resolvedWinterHome?: string, brand?: Pick
     }
   }
   // P7a (D19): the DEFAULT-HOME anchor is `~/<brand.homeDirName>`, not a literal. Byte-identical
-  // under `WINTER_BRAND` (`homeDirName` IS `.winter`, and the rule-string tests pin exactly these
-  // strings), and correct for a reuser: a floor naming somebody else's product directory protects
+  // under `WINTER_BRAND` (its `homeDirName` is the very segment these strings carried, and the
+  // rule-string tests pin them), and correct for a reuser: a floor naming somebody else's product directory protects
   // nothing, while the reuser's own transcripts, backups and run socket would sit unfenced. The
   // resolved-root branch above still emits its twin whenever `<PREFIX>HOME` points somewhere else,
   // and it emits nothing when the two coincide (the dedupe below drops the duplicate).

@@ -37,8 +37,9 @@
 // ...AND THAT STORE IS NEVER THE HOST'S. `WINTER_LIVE_KEYCHAIN_SERVICE` is REQUIRED for every
 // Keychain path here — an OAuth target's read and the `--login` write alike. There is no production
 // default: unset, the gate refuses before any store is built, naming the variable and the reason.
-// `com.winter.core` and `com.winter.core.dev` hold a user's daily-driver records, and a gate that
-// wrote beside them by default would be one nobody could run without thinking about it first.
+// The product's own keychain services (`DEFAULT_KEYCHAIN_SERVICE` and its `.dev` sibling) hold a
+// user's daily-driver records, and a gate that wrote beside them by default would be one nobody
+// could run without thinking about it first.
 //
 // NEVER REACHES A VENDOR FROM CI. The workflow sets neither the opt-in variable nor any provider
 // key (`grep -rn WINTER_LIVE .github/` finds nothing), and `verify-provider-live.test.ts` proves the
@@ -54,7 +55,7 @@
 //
 // Usage:
 //   WINTER_LIVE_PROVIDER_TESTS=1 WINTER_LIVE_OPENAI_API_KEY=sk-... bun run scripts/verify-provider-live.ts
-//   ... WINTER_LIVE_KEYCHAIN_SERVICE=com.winter.live.20260906               # REQUIRED for any Keychain path
+//   ... WINTER_LIVE_KEYCHAIN_SERVICE=com.example.live.20260906              # REQUIRED for any Keychain path
 //   ... WINTER_LIVE_XAI_OAUTH_CREDENTIAL_REF=keychain:xai-oauth:<account>   # an OAuth row, from that service
 //   ... WINTER_LIVE_UNCLOSEAI=1                          # a keyless row (`free`, and documents no api key)
 //   ... WINTER_LIVE_DEEPSEEK_ANTHROPIC_BEARER=sk-...   # the SAME api key as `Authorization: Bearer`
@@ -78,6 +79,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadCatalog, type WinterCatalog, type WinterProviderDescriptor } from "@yanlinglabs/winter-provider-catalog";
 import { createEnvCredentialStore, CredentialResolutionError, winterUserAgent, type CredentialStore, type ProviderAdapter } from "@yanlinglabs/winter-provider-runtime";
+import { WINTER_BRAND, envName } from "@yanlinglabs/winter-agent-sdk";
 import { describeThrown, formatClassifierSafetyReport, formatLiveRow, formatLiveReport, runClassifierSafetyCorpus, runLiveTarget, type LiveTargetKindLabel } from "@yanlinglabs/winter-provider-conformance";
 import { adapterAsProvider } from "../packages/runtime/src/provider/bridge.ts";
 import { createProviderContext, createSelectionRegistry, resolveSessionProvider } from "../packages/runtime/src/provider/selection.ts";
@@ -205,10 +207,11 @@ function admitsKeyless(provider: WinterProviderDescriptor): boolean {
 /**
  * The Keychain service this run uses — REQUIRED for every Keychain path in this file.
  *
- * CONTROLLER RULING (2026-09-06): the live gate never touches `com.winter.core` or
- * `com.winter.core.dev` by default. The production services are the HOST's — a user's daily-driver
- * records live there — and this gate's material belongs in a dedicated temporary service that is
- * created for the run and deleted after it (`com.winter.live.<yyyymmdd>`). So the variable is not a
+ * CONTROLLER RULING (2026-09-06): the live gate never touches the product's own keychain service
+ * (`DEFAULT_KEYCHAIN_SERVICE`) or its `.dev` sibling by default. The production services are the
+ * HOST's — a user's daily-driver records live there — and this gate's material belongs in a
+ * dedicated temporary service created for the run and deleted after it
+ * (`com.example.live.<yyyymmdd>`). So the variable is not a
  * convenience override with a production default; it is the run's explicit statement of where its
  * credentials live, and without it there is no Keychain path at all — not a login, not an OAuth
  * target's read.
@@ -219,7 +222,7 @@ function admitsKeyless(provider: WinterProviderDescriptor): boolean {
 export const KEYCHAIN_SERVICE_VAR = "WINTER_LIVE_KEYCHAIN_SERVICE";
 
 /** Why a Keychain-touching path refuses when the run has not named its service. Exported so the plan warning and the typed error say the same thing. */
-export const KEYCHAIN_SERVICE_REQUIRED = `${KEYCHAIN_SERVICE_VAR} is not set, and the live gate never reads or writes \`${DEFAULT_KEYCHAIN_SERVICE}\`/\`${DEFAULT_KEYCHAIN_SERVICE}.dev\` by default: those are the host's own records. Set it to a dedicated service for this run (e.g. com.winter.live.<yyyymmdd>) and delete that service afterwards`;
+export const KEYCHAIN_SERVICE_REQUIRED = `${KEYCHAIN_SERVICE_VAR} is not set, and the live gate never reads or writes \`${DEFAULT_KEYCHAIN_SERVICE}\`/\`${DEFAULT_KEYCHAIN_SERVICE}.dev\` by default: those are the host's own records. Set it to a dedicated service for this run (e.g. com.example.live.<yyyymmdd>) and delete that service afterwards`;
 
 /**
  * The service this run's Keychain paths use, or a TYPED refusal.
@@ -241,12 +244,12 @@ export function requireLiveKeychainService(env: Record<string, string | undefine
  * before the FIRST `/` contains no colon it is a SERVICE; otherwise the whole remainder is the
  * account. It works because the two shapes are structurally different — a Keychain account is
  * `<providerId>:<accountId>` and R6-10 forbids a colon in the provider id, so an account ALWAYS
- * contains one; a service is a reverse-DNS name (`com.winter.core`) and never does. An account may
+ * contains one; a service is a reverse-DNS name (`com.example.core`) and never does. An account may
  * legitimately contain a slash (account ids are frequently URL-shaped, which `credential-api.ts`'s
  * own locator rules permit), and that case is exactly what the colon test keeps correct:
  *
  *   keychain:anthropic:acct-1                        -> account `anthropic:acct-1`, default service
- *   keychain:com.winter.live.20260906/anthropic:a1   -> account `anthropic:a1`, service `com.winter.live.20260906`
+ *   keychain:com.example.live.2026/anthropic:a1     -> account `anthropic:a1`, service `com.example.live.2026`
  *   keychain:anthropic:https://id.example/u/1        -> account `anthropic:https://id.example/u/1`, default service
  *
  * The account is NOT trimmed of its own inner text and is never rendered by this script's output;
@@ -615,8 +618,9 @@ async function runTarget(target: LiveTarget, catalog: WinterCatalog, adapters: r
 // Without this door the oauth target kind is unreachable in practice. `WINTER_LIVE_<P>_CREDENTIAL_REF`
 // names a Keychain record, and nothing in this repository could put one there under a service the
 // operator chose — `startProviderLogin` is a library function with no command-line surface, and the
-// close-out live run's ruling (a throwaway `com.winter.live.<yyyymmdd>` service, never
-// `com.winter.core`) exists precisely so the run does not touch the operator's real records.
+// close-out live run's ruling (a throwaway `com.example.live.<yyyymmdd>` service, never the
+// product's own `DEFAULT_KEYCHAIN_SERVICE`) exists precisely so the run does not touch the
+// operator's real records.
 //
 // IT IS A VENDOR NETWORK CALL, so it sits behind the same `WINTER_LIVE_PROVIDER_TESTS=1` opt-in as
 // everything else here, and `verify-provider-live.test.ts`'s spawn helper refuses `--login` for the
@@ -736,17 +740,21 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
   }
 
   const home = mkdtempSync(join(tmpdir(), "winter-live-"));
-  // Set BEFORE anything that reads it. Nothing in this script reads WINTER_HOME today, and that is
-  // exactly why it is set here rather than trusted to stay true: a later addition that does read it
-  // must land in the temp home, not the developer's.
-  const priorHome = process.env["WINTER_HOME"];
-  process.env["WINTER_HOME"] = home;
+  // Set BEFORE anything that reads it. Nothing in this script reads the product home variable today,
+  // and that is exactly why it is set here rather than trusted to stay true: a later addition that
+  // does read it must land in the temp home, not the developer's.
+  //
+  // P7a (D19): the NAME is derived, never spelled. This script drives the WINTER product, so it
+  // names Winter's own profile explicitly rather than assuming the prefix.
+  const homeVar = envName(WINTER_BRAND, "HOME");
+  const priorHome = process.env[homeVar];
+  process.env[homeVar] = home;
   let ok = true;
   const failedByKind: Record<LiveTargetKind, number> = { "api-key": 0, oauth: 0, keyless: 0 };
   try {
     const catalog = loadCatalog();
     const { adapters, note } = await loadAdapters(process.env);
-    console.log(`verify:provider-live -- catalog ${catalog.catalogVersion}, WINTER_HOME=${home}`);
+    console.log(`verify:provider-live -- catalog ${catalog.catalogVersion}, ${homeVar}=${home}`);
     console.log(`  ${note}`);
     // What this run is ABOUT to do, per kind, before it does any of it.
     console.log(`  ${plan.targets.length} target(s): ${formatKindCounts(countByKind(plan.targets))}`);
@@ -757,8 +765,8 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
     }
     console.log(`  verdict: ${plan.targets.length} target(s) run -- ${formatKindCounts(countByKind(plan.targets))}; failed: ${formatKindCounts(failedByKind)}`);
   } finally {
-    if (priorHome === undefined) delete process.env["WINTER_HOME"];
-    else process.env["WINTER_HOME"] = priorHome;
+    if (priorHome === undefined) delete process.env[homeVar];
+    else process.env[homeVar] = priorHome;
     rmSync(home, { recursive: true, force: true });
   }
 

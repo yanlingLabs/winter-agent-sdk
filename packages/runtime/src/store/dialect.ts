@@ -22,6 +22,7 @@ import {
   WinterCompatibilitySessionStore,
   DIALECT_RECORD_ENTRY_TYPE,
   resolveWinterHome,
+  WINTER_BRAND,
   compatibilityKeys,
   forkSessionByKey,
   WinterStoreLeaseError,
@@ -1043,7 +1044,7 @@ export async function resolveEngineSession(opts: {
   // Ruling P1-N (1): resolve the persistent projectKey (WINTER_PROJECT_DIR_NAME override applied,
   // if any) up front — every branch below (fresh session AND continue's single-directory scope)
   // uses this SAME resolved value, never the raw default.
-  const cwdKey = resolveProjectDirName(defaultProjectKey, opts.env);
+  const cwdKey = resolveProjectDirName(defaultProjectKey, opts.env, config.brand ?? WINTER_BRAND);
 
   const wantsContinue = config.continue === true;
   const wantsResume = config.resume !== undefined;
@@ -1213,5 +1214,7 @@ export async function resolveEngineSession(opts: {
 // otherwise the real environment's WINTER_HOME (or ~/.winter) via resolveWinterHome, imported here
 // so main.ts doesn't need its own separate import of it just for this one call.
 export function resolveProductionWinterHome(config: RuntimeConfig, env: Record<string, string | undefined>): string {
-  return config.winterHome ?? resolveWinterHome(env);
+  // P7a (D19): the session's own profile decides both `<PREFIX>HOME` and the default dir name.
+  // Absent only for a config no `query()` produced -- Winter's own names are the reading then.
+  return config.winterHome ?? resolveWinterHome(env, config.brand ?? WINTER_BRAND);
 }

@@ -42,9 +42,9 @@ export interface ResolveWorkflowByNameOptions {
   /**
    * TRUST-GATED, deliberately, and this is a disclosed judgment call (see the lane report).
    *
-   * A `.winter/workflows/*.js` file is EXECUTABLE CODE a project supplies and the model runs -- the
-   * same category as `.winter/agents/*.md`, which RULING R4-7 keeps trust-gated, and not the
-   * category of skills/commands/WINTER.md, which P5-T1 capture (b) makes merely SOURCE-gated. Norma
+   * A project `workflows/*.js` file is EXECUTABLE CODE a project supplies and the model runs -- the
+   * same category as a project `agents/*.md`, which RULING R4-7 keeps trust-gated, and not the
+   * category of skills/commands/instructions, which P5-T1 capture (b) makes merely SOURCE-gated. Norma
    * trust-gated its own project workflow directory for the same reason. The consequence is real and
    * worth stating: in an untrusted workspace `name` resolves nothing, so a freshly-cloned repo's
    * workflows do not run until the workspace is trusted. `script`/`scriptPath` are unaffected.

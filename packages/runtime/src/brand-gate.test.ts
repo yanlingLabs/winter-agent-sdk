@@ -394,11 +394,7 @@ const BASELINE_ALLOWLIST: readonly string[] = [
   "packages/provider-catalog/src/validate.ts",
   // --- packages/provider-runtime (Lane A: identity.ts's body, the codex originator, the keychain service) 
   // --- packages/runtime (Lane A unless another lane's ownership row names the file) -------------
-  "packages/runtime/src/engine.ts",
-  "packages/runtime/src/workflows/store.ts",
   // --- scripts (Lane A) -------------------------------------------------------------------------
-  "scripts/differential.ts",  // comment-only
-  "scripts/verify-provider-live.ts",
 ];
 
 describe("P7a (D19): the brand sweep gate", () => {
