@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { SdkMessage as RuntimeSdkMessage, WinterFrame, InitFrame, ControlRequestFrame, ControlResponseFrame } from "./protocol/frames.ts";
 import { PROTOCOL_VERSION } from "./protocol/frames.ts";
 import { splitFrames, encodeFrame, ProtocolError } from "./protocol/codec.ts";
-import type { AccountInfo, ModelInfo, RuntimeConfig, RuntimeHooksConfig, RuntimeHookMatcherGroup, McpServerConfigForProcessTransport, RewindFilesResult } from "./protocol/config.ts";
+import type { AccountInfo, ModelInfo, ModelFamilyListing, RuntimeConfig, RuntimeHooksConfig, RuntimeHookMatcherGroup, McpServerConfigForProcessTransport, RewindFilesResult } from "./protocol/config.ts";
 import { isWinterMcpServerInstance, type Options, type McpServerConfig } from "./options.ts";
 import type {
   PermissionMode,
@@ -63,6 +63,17 @@ export interface Query extends AsyncGenerator<SdkMessage> {
    * so the answer is a table lookup rather than a network round trip.
    */
   supportedModels(): Promise<ModelInfo[]>;
+  /**
+   * WS-13c §7 (P6.6 Lane C) — WINTER-ONLY, no pinned counterpart: the active slot set this session is
+   * currently offering, plus every model family behind "more options". A model switcher shows
+   * `active.slots` first and renders `families[].models` any way it likes (§7's own last sentence).
+   *
+   * Rides its own `list_model_families` control subtype, same shape as `supportedModels`/`accountInfo`
+   * above. A malformed or absent runtime payload degrades to `{ active: undefined, families: [] }`
+   * rather than a throw — this method answers with data, so a rejected promise could not tell "no
+   * families configured" from a transport fault.
+   */
+  listModelFamilies(): Promise<ModelFamilyListing>;
   /**
    * `AccountInfo` for this session (`sdk.d.ts:2632`). Every field is optional and an empty object is a
    * valid answer — capture (J) observed exactly three keys present under API-key auth.
@@ -358,6 +369,15 @@ function makeHookHandler(hooks: Partial<Record<HookEvent, HookCallbackMatcher[]>
     }
     return { ok: true, payload: output };
   };
+}
+
+// WS-13c §7 (P6.6 Lane C): the minimal structural guard for `list_model_families`' control-response
+// payload — deliberately as shallow as `rewindFiles`' own `canRewind` check above (a `boolean` typeof
+// probe, not a deep shape validation): `families` being an array is the one thing this method's
+// callers actually branch on (`ModelFamilyListing.families.find(...)`/`.map(...)`), so it is the one
+// thing worth checking before trusting a `payload as ModelFamilyListing` cast.
+function isModelFamilyListing(payload: unknown): payload is ModelFamilyListing {
+  return typeof payload === "object" && payload !== null && Array.isArray((payload as { families?: unknown }).families);
 }
 
 export function query(args: { prompt: string | AsyncIterable<string>; options: Options }): Query {
@@ -952,6 +972,15 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
   gen.supportedModels = async (): Promise<ModelInfo[]> => {
     const payload = await sendControlRequest("list_models", undefined);
     return Array.isArray(payload) ? (payload as ModelInfo[]) : [];
+  };
+  // WS-13c §7 (P6.6 Lane C): Winter-only, no pinned counterpart. The engine's own control handler
+  // (`engine.ts`'s `list_model_families` subtype) already answers with the runtime's
+  // `EngineOptions.listModelFamilies?.()` result or the same empty shape below when that option is
+  // unset — this guard is this WRAPPER's independent defense against a malformed or foreign payload
+  // reaching a host that then calls `.families.find(...)` on it and crashes.
+  gen.listModelFamilies = async (): Promise<ModelFamilyListing> => {
+    const payload = await sendControlRequest("list_model_families", undefined);
+    return isModelFamilyListing(payload) ? payload : { active: undefined, families: [] };
   };
   gen.accountInfo = async (): Promise<AccountInfo> => {
     const payload = await sendControlRequest("account_info", undefined);
