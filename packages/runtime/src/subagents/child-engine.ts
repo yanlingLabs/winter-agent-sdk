@@ -118,7 +118,7 @@ import type {
 import type { GlobalAgentMessage, DeliveryOutcome } from "../messaging/adapter.ts";
 import { checkAndRegisterSpawn, releaseSpawn } from "./limits.ts";
 import { createStallWatchdog, resolveStallTimeoutMs } from "./watchdog.ts";
-import { resolveModelAlias, describeRequestedModel, resolveEffort, recordModelEffort, type ModelCatalog } from "./resolution.ts";
+import { resolveModelAlias, describeRequestedModel, resolveEffort, recordModelEffort, type ModelCatalog, type RecordedModelEffort } from "./resolution.ts";
 import { resolveForkInitialMessages } from "./fork.ts";
 import { createWorkspace, cleanupWorkspace } from "./workspace.ts";
 import { validateAgentDefinition } from "./definitions.ts";
@@ -164,6 +164,19 @@ export interface ChildEngineFactoryDeps {
    * every wiring warning already uses. Absent means the stderr half is silent (the frame still goes).
    */
   warn?: (line: string) => void;
+  /**
+   * P6.6 (WS-13c §8, Lane D Task 5): an override for the PARENT's identity at spawn, for a caller
+   * that builds a `ChildEngineRunContext`/`ChildInheritance` by hand with no live engine behind it
+   * (a test double, chiefly).
+   *
+   * Production should not need to set this: `ChildInheritance.provider` (R6-17, `inherit.provider`
+   * below) is `buildChildInheritance`'s own read of the parent's LIVE `currentProviderIdentity`
+   * (engine.ts), taken fresh at the moment of THIS spawn -- it already reflects any `set_model` that
+   * landed before this child existed, with no new wiring required. This field wins over it ONLY when
+   * supplied, which today is nothing in `main.ts`/`testing.ts`/`production-wiring.ts` -- see this
+   * lane's own report on whether wiring it there is still worth doing.
+   */
+  parentIdentity?: ChildProviderIdentity;
   /**
    * Phase 6 Task 10 (R6-17): THE CHILD'S OWN PROVIDER.
    *
@@ -356,14 +369,35 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
     const requestedModel = describeRequestedModel(req);
     const resolvedModel = resolveModelAlias(inherit.model, deps.modelCatalog); // may throw UnresolvableModelAliasError
     const resolvedEffort = resolveEffort(inherit.effort);
-    const modelEffort = recordModelEffort({ ...(requestedModel !== undefined ? { requestedModel } : {}), resolved: resolvedModel, effort: resolvedEffort });
     // Phase 6 Task 10 (R6-17): resolved HERE, once, from the model this child actually settled on --
     // never from `req.model`, which may be an alias, and never inside the runEngine call, where a
     // second resolution could disagree with the one `config.model` was built from.
     // ASYNC since the fix wave (Ruling E-1): a child on ANOTHER provider than the parent's has its
     // own credential probed before the spawn commits to it, and a probe is a store read.
     const childResolution = await deps.resolveChildProvider?.(resolvedModel.effectiveModel);
-    let childProvider: { provider: Provider; identity: ChildProviderIdentity } | undefined;
+    // P6.6 (WS-13c §8): the parent's identity AT THIS SPAWN -- see `ChildEngineFactoryDeps.
+    // parentIdentity`'s own doc for why `inherit.provider` (an existing field, not a new accessor)
+    // is the production source. Captured ONCE, here, and reused verbatim by `resume()` below --
+    // WS-13c §8 compares against what was true when this child was BORN, never against whatever the
+    // parent is doing by the time it resumes.
+    const parentIdentityAtSpawn: ChildProviderIdentity | undefined = deps.parentIdentity ?? inherit.provider;
+    // P6.6 (WS-13c §8, Lane D Task 5 -- the investigation this lane's own report opens with):
+    // `childProvider` is now ALWAYS materialised, never left `undefined`. Before this fix, a
+    // "same-provider" child (the final `else` branch below) recorded NO identity of its own at all,
+    // and `startGeneration` fell through to a bare `childProvider?.provider ?? deps.provider` on
+    // EVERY generation -- spawn and every future resume alike -- by a fresh, un-memoized property
+    // read of `deps`. Nothing pinned a resumed child to what was true when IT was spawned: `deps`
+    // (and `deps.provider`) are a plain, caller-held, mutable reference this closure keeps reading
+    // by property access forever, so a LATER reassignment of that one property (a test simulating a
+    // parent's family switch; a future production change that makes it track the session's live
+    // model) would move an already-spawned child's resume() silently. Freezing `{provider, identity}`
+    // into this OBJECT now is what makes `resume()` immune to that: the object keeps its OWN
+    // reference regardless of what `deps.provider` is reassigned to afterward (proven in this lane's
+    // own cross-family-resume.test.ts's same-provider case). `.identity` stays `undefined` -- never
+    // a fabricated `{providerId: "", ...}` sentinel -- when neither `deps.parentIdentity` nor
+    // `inherit.provider` exists, so a pre-R6-17 caller or a bare test double still records no
+    // `effectiveProvider` at all: byte-identical to every child spawned before this change.
+    let childProvider: { provider: Provider; identity: ChildProviderIdentity | undefined };
     if (childResolution !== undefined && "refused" in childResolution) {
       // RULING E-1 / R-E3: never the parent's provider. Both the operator and the host are told, in
       // words that name the child and the provider -- counts and identity only, never credential
@@ -391,9 +425,25 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
         /* a torn-down parent stream must never fail a spawn over a warning */
       }
       childProvider = { provider: childResolution.provider, identity: childResolution.identity };
-    } else {
+    } else if (childResolution !== undefined) {
       childProvider = childResolution;
+    } else {
+      // Same-provider (or no resolver configured): materialise rather than leave undefined -- see
+      // the header comment above `let childProvider` for why this is the fix.
+      childProvider = { provider: deps.provider, identity: parentIdentityAtSpawn };
     }
+    const modelEffort = recordModelEffort({
+      ...(requestedModel !== undefined ? { requestedModel } : {}),
+      resolved: resolvedModel,
+      effort: resolvedEffort,
+      // WS-13c §3/§8: recorded ONLY when there is a real identity to report (never the absence of
+      // one) -- see `RecordedModelEffort.effectiveProvider`'s own doc: this is what resume() reads
+      // back as the child's OWN authoritative provider, independent of the parent's current one.
+      ...(childProvider.identity !== undefined ? { effectiveProvider: childProvider.identity.providerId } : {}),
+      // WS-13c §3: the slot the request named, when it named one (Lane A stamps `inherit.slot`; this
+      // is the one call site that turns it into a durable record).
+      ...(inherit.slot !== undefined ? { slot: inherit.slot } : {}),
+    });
 
     // --- Tool restriction (WS-10 §2) -------------------------------------------------------------
     // `inherit.tools` is the resolved allowlist (a fork's exact pool, a definition's own
@@ -486,7 +536,15 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
           ? `${deps.winterHome}/projects/${projectKey}/${runCtx.parentSessionId}/${childTranscriptSubpath(agentId)}.jsonl`
           : `${projectKey}/${runCtx.parentSessionId}/${childTranscriptSubpath(agentId)}.jsonl`; // a store exists but this factory has no winterHome to resolve an absolute path -- a relative store key, not directly readable by path, but still a meaningful identifier for a caller holding the same store object
 
-    const record: ChildSessionRecord = {
+    // WS-13c §8: widened LOCALLY to the real shape `modelEffort` already is -- `ChildSessionRecord`
+    // (child-handle.ts, spine-frozen) still declares `model` as the pre-P6.6 inline shape
+    // (`{requestedModel?; effectiveModel; requestedEffort?; effectiveEffort}`), never re-pointed at
+    // `RecordedModelEffort` when the spine added `effectiveProvider`/`slot` to THAT type. A plain
+    // `ChildSessionRecord` annotation here would make `record.model.effectiveProvider` a compile
+    // error despite the value genuinely carrying it (this lane's own report flags the mismatch for
+    // the controller to align at merge). The intersection is still a `ChildSessionRecord`
+    // structurally -- `ChildHandle.record` below needs no cast.
+    const record: ChildSessionRecord & { model: RecordedModelEffort } = {
       id: agentId,
       parentSessionId: runCtx.parentSessionId,
       parentToolUseId: req.parentToolUseId,
@@ -749,10 +807,29 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
         // Phase 6 Task 10 (R6-17): the child's OWN provider WINS over the inherited identity when the
         // child named its own model and that model resolves to something the parent is not running.
         // `childProvider` is resolved once, above, from `resolvedModel.effectiveModel`.
-        ...(childProvider !== undefined ? { providerIdentity: childProvider.identity } : inherit.provider !== undefined ? { providerIdentity: inherit.provider } : {}),
+        //
+        // P6.6 (WS-13c §8): `childProvider.identity` alone now covers both the cross-provider AND
+        // the same-provider case -- it is materialised from `parentIdentityAtSpawn`, which already
+        // prefers `deps.parentIdentity` over `inherit.provider`, so the second half of this ternary
+        // is UNREACHABLE now (`childProvider.identity === undefined` only happens when
+        // `parentIdentityAtSpawn` itself was `undefined`, which requires `inherit.provider` to have
+        // ALSO been `undefined`). Kept verbatim, not simplified away, because
+        // `provider/seam-contracts-p6.test.ts`'s own "R6-17 contract" describe block asserts this
+        // EXACT substring against this file's source text as a deliberate placeholder pin ("a
+        // structural check here is what keeps the thread from being quietly deleted in the
+        // meantime" -- that file's own comment); that test is outside this lane's file list
+        // (provider/, not subagents/) and this lane's own report flags it as now stale (T10's real
+        // end-to-end proof, `provider/cross-provider-credential.test.ts`, already exists) rather
+        // than editing a neighbouring file's pinned assertion from here.
+        ...(childProvider.identity !== undefined ? { providerIdentity: childProvider.identity } : inherit.provider !== undefined ? { providerIdentity: inherit.provider } : {}),
         input: channel.runtime.input,
         output: channel.runtime.output,
-        provider: childProvider?.provider ?? deps.provider,
+        // Every generation this handle ever runs -- spawn AND every resume -- reads `.provider` off
+        // this SAME, now-always-materialised object (never a fresh `?? deps.provider` fallback):
+        // that is the whole WS-13c §8 fix. `resume()` may reassign the closure variable `childProvider`
+        // itself (never this expression) after a fresh, successful re-resolution against the child's
+        // OWN recorded model -- see `resume()` below.
+        provider: childProvider.provider,
         // Phase 5 Task 3 (R5-3): P4-J RETIRED. The child's persona now travels on the engine's real
         // system-prompt channel (`ProviderRequest.system`) instead of being concatenated into the
         // first user turn -- see the resolution site below for the full note. Conditionally spread so
@@ -982,6 +1059,61 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
             retryable: false,
             reason: `child ${agentId}'s isolated worktree (${workspace.root}) was already auto-cleaned -- resume is unavailable for this child`,
           };
+        }
+
+        // WS-13c §8 (Lane D Task 5): "a resumed or followed-up child re-resolves under ITS recorded
+        // provider and model, never the parent's current family." Re-resolves against
+        // `record.model.effectiveModel` -- the CHILD's own recorded model, set once at spawn and
+        // never the parent's live model -- before anything stateful (checkAndRegisterSpawn, the
+        // transcript read) runs, so a refusal here is cheap and side-effect-free exactly like a
+        // rejected spawn (this file's own spawn-time header comment).
+        //
+        // Three outcomes `again` can carry:
+        //  - a REFUSAL: the resolver actively probed this child's own target and found no
+        //    credential for it (Ruling E-1) -- authoritative on its own, refused regardless of what
+        //    the parent is doing, since a refusal only ever names a model genuinely different from
+        //    whatever the parent is running (see `resolveChildProvider`'s own contract).
+        //  - `undefined` with the recorded provider id UNCHANGED from `parentIdentityAtSpawn`: the
+        //    harmless case the resolver's own doc describes ("resolves to what the parent is already
+        //    running") -- true of every same-provider child by construction, so this falls through
+        //    to the frozen `childProvider.provider` unchanged, exactly as before this fix.
+        //  - `undefined` with the recorded provider id DIFFERENT from `parentIdentityAtSpawn`: a
+        //    child that used to resolve onto its OWN provider no longer does, and nothing here can
+        //    tell whether that is a genuine credential loss or a coincidental re-convergence -- WS-13c
+        //    §8's "never a substitution" makes refusal the only safe reading.
+        //  - a fresh, successful resolution: re-resolved cleanly under the child's own recorded
+        //    model; the closure's own `childProvider` is refreshed so `startGeneration` below (and
+        //    any LATER resume) reads the fresh adapter, and the sidecar is updated to match.
+        const again = await deps.resolveChildProvider?.(record.model.effectiveModel);
+        if (again !== undefined && "refused" in again) {
+          const { providerId, modelKey, reason } = again.refused;
+          return {
+            status: "unavailable",
+            messageId: msg.messageId,
+            retryable: false,
+            reason: `child-provider-unavailable: ${providerId} no longer serves ${modelKey} (${reason})`,
+          };
+        }
+        if (again === undefined) {
+          const recordedProviderId = record.model.effectiveProvider;
+          if (recordedProviderId !== undefined && recordedProviderId !== parentIdentityAtSpawn?.providerId) {
+            return {
+              status: "unavailable",
+              messageId: msg.messageId,
+              retryable: false,
+              reason: `child-provider-unavailable: ${recordedProviderId} no longer serves ${record.model.effectiveModel} (the model no longer resolves against this session's own provider)`,
+            };
+          }
+          // Else: no recorded identity to contradict, or it still agrees with the parent's identity
+          // at this child's own spawn -- proceed on the already-frozen `childProvider.provider`.
+        } else {
+          childProvider = { provider: again.provider, identity: again.identity };
+          record.model = { ...record.model, effectiveProvider: again.identity.providerId };
+          // Fix round 2's own precedent (below, for `record.permission`): a mutation the sidecar must
+          // reflect durably is written HERE, synchronously with the mutation, never deferred to the
+          // next settle() -- a crash in that window must not leave the durable record on stale
+          // provider information.
+          void writer?.writeMetadata({ ...record });
         }
 
         // A resume is itself a fresh spawn for accounting purposes -- the previous generation
