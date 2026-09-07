@@ -24,9 +24,9 @@ export type HomeBrand = Pick<BrandProfile, "envPrefix" | "homeDirName">;
  * exactly today's behaviour (`WINTER_HOME` || `~/.winter`) until it threads a profile through.
  *
  * THE ENV NAME IS DERIVED, NEVER SPELLED, and it is read INSIDE this function — never at module
- * load. The brand arrives with `--config-json`, so a module-level `process.env.WINTER_HOME` would
- * bake in the wrong prefix for a reuser and could never be corrected; the sweep gate
- * (packages/runtime/src/brand-gate.test.ts, rule 9) is what keeps it that way.
+ * load. The brand arrives with `--config-json`, so a module-level read of a literal `<PREFIX>HOME`
+ * would bake in the wrong prefix for a reuser and could never be corrected; the sweep gate
+ * (packages/runtime/src/brand-gate.test.ts, rules 9 and 10) is what keeps it that way.
  *
  * PRECEDENCE (WS-01 §2.2, and the same rule the current daemon has always had): an explicit
  * `<PREFIX>HOME` wins over EVERYTHING, including the dev profile. `<PREFIX>PROFILE=dev` selects
