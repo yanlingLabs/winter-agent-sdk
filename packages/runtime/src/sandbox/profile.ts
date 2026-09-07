@@ -155,13 +155,55 @@ const CONTROL_PLANE_FILES = ["permissions.local.json", "settings.json", "setting
 // macOS volume is case-insensitive, so `.WINTER/Settings.json` reaches the same file a case-exact
 // regex would miss. Three SEPARATE regexes, never merged by alternation (WS-12 §5.2: "never merged
 // by alternation -- only the per-character-class form is verified").
-const WINTER_CF = "[Ww][Ii][Nn][Tt][Ee][Rr]";
+
+/**
+ * P7a fix r1 (Important-1): render ONE brand token as a case-insensitive, regex-escaped SBPL literal.
+ *
+ * The three any-depth control-plane regexes below used to hard-code `[Ww][Ii][Nn][Tt][Ee][Rr]` while
+ * the per-root LITERAL denies beside them already derived from `brand.projectDirName`. WS-12 §5.2
+ * names those regexes as the closure for the nested-store hole -- a broad writable parent makes
+ * `<parent>/proj/<dot-dir>/settings.json` writable with no literal deny for it -- and §5.2 also
+ * records that the seatbelt is the ONLY enforcement point left for a bash-invoked write to the
+ * permission control plane. Hard-coded, they fenced a directory a reuser's product never reads while
+ * leaving the reuser's own control plane open to `echo x > <root>/<nested>/.acme/settings.json`.
+ *
+ * ESCAPE FIRST, FOLD SECOND, per character: a letter becomes `[Xx]`, and everything else is escaped
+ * exactly as `sbplRegexLiteral` escapes it (the brand grammar admits `-` and, for a dot-dir, the
+ * leading `.` -- which MUST be escaped or it matches any character). `caseFoldSegment(".winter")` is
+ * `\.[Ww][Ii][Nn][Tt][Ee][Rr]`, byte for byte what the constant it replaces spelled, so the rendered
+ * profile is unchanged under `WINTER_BRAND` (a test diffs the whole profile text).
+ *
+ * Exported so the deny suite can assert the rendering directly rather than by reading the profile.
+ */
+export function caseFoldSegment(segment: string): string {
+  let out = "";
+  for (const ch of segment) {
+    if (/[A-Za-z]/.test(ch)) out += `[${ch.toUpperCase()}${ch.toLowerCase()}]`;
+    else out += sbplRegexLiteral(ch);
+  }
+  return out;
+}
+
 const PERMISSIONS_CF = "[Pp][Ee][Rr][Mm][Ii][Ss][Ss][Ii][Oo][Nn][Ss]";
 const SETTINGS_CF = "[Ss][Ee][Tt][Tt][Ii][Nn][Gg][Ss]";
 const LOCAL_CF = "[Ll][Oo][Cc][Aa][Ll]";
 const JSON_CF = "[Jj][Ss][Oo][Nn]";
 
-const RULES_FILE_REGEX = String.raw`/\.${WINTER_CF}/${PERMISSIONS_CF}\.${LOCAL_CF}\.${JSON_CF}$`;
+/**
+ * The three control-plane regexes for ONE dot-dir name (P7a fix r1). A function, not a constant,
+ * because the segment is `brand.projectDirName` / `brand.homeDirName` and both arrive per session.
+ *
+ * STILL THREE SEPARATE REGEXES, never merged by alternation -- WS-12 §5.2 is categorical about that
+ * and only the per-character-class form is verified against real `sandbox-exec`.
+ */
+function controlPlaneRegexes(dotDir: string): { rules: string; settings: string; settingsLocal: string } {
+  const dir = caseFoldSegment(dotDir);
+  return {
+    rules: String.raw`/${dir}/${PERMISSIONS_CF}\.${LOCAL_CF}\.${JSON_CF}$`,
+    settings: String.raw`/${dir}/${SETTINGS_CF}\.${JSON_CF}$`,
+    settingsLocal: String.raw`/${dir}/${SETTINGS_CF}\.${LOCAL_CF}\.${JSON_CF}$`,
+  };
+}
 // Phase 6 Task 3 (R6-7's P4-M MUST): the provider-state sidecar filename, case-folded per character
 // for exactly the reason above -- SBPL ignores `(?i)` and the default macOS volume is
 // case-insensitive, so `Sess-1.Provider-State.JSONL` reaches the same file a case-exact regex misses.
@@ -178,8 +220,6 @@ const PROJECTS_CF = "[Pp][Rr][Oo][Jj][Ee][Cc][Tt][Ss]";
 // the run-dir and backups denies in this file, which anchor on the resolved path verbatim.
 const providerStateReadDenyRegex = (winterRootRegexSafe: string): string =>
   String.raw`^${winterRootRegexSafe}/${PROJECTS_CF}/.*\.${PROVIDER_CF}-${STATE_CF}\.${JSONL_CF}$`;
-const SETTINGS_FILE_REGEX = String.raw`/\.${WINTER_CF}/${SETTINGS_CF}\.${JSON_CF}$`;
-const SETTINGS_LOCAL_FILE_REGEX = String.raw`/\.${WINTER_CF}/${SETTINGS_CF}\.${LOCAL_CF}\.${JSON_CF}$`;
 
 // ---------------------------------------------------------------------------------------------
 // buildSeatbeltProfile
@@ -272,9 +312,18 @@ export function buildSeatbeltProfile(input: SeatbeltProfileInput): string {
   const denyRulesFileRules = roots
     .flatMap((r) => CONTROL_PLANE_FILES.map((f) => `(deny file-write* (literal "${sbplString(canon(join(r, brand.projectDirName, f)))}"))`))
     .join("\n");
-  const denyRulesFileRegex = `(deny file-write* (regex #"${RULES_FILE_REGEX}"))`;
-  const denySettingsFileRegex = `(deny file-write* (regex #"${SETTINGS_FILE_REGEX}"))`;
-  const denySettingsLocalFileRegex = `(deny file-write* (regex #"${SETTINGS_LOCAL_FILE_REGEX}"))`;
+  // P7a fix r1 (Important-1): the any-depth companions to the per-root literals above, now derived.
+  //
+  // BOTH dot-dir names, deduped, and for the same reason `isInsideProtectedDirectory` checks both
+  // (permissions/protected.ts): `homeDirName` and `projectDirName` are independently configurable
+  // and a control-plane file exists under each -- the user tier's `settings.json` under the winter
+  // root, the project tier's under the repository's dot-dir. Winter's own profile makes them the
+  // same string, so exactly one set is emitted and the default profile is byte-identical.
+  const controlPlaneDirs = [...new Set([brand.projectDirName, brand.homeDirName])];
+  const controlPlane = controlPlaneDirs.map(controlPlaneRegexes);
+  const denyRulesFileRegex = controlPlane.map((r) => `(deny file-write* (regex #"${r.rules}"))`).join("\n");
+  const denySettingsFileRegex = controlPlane.map((r) => `(deny file-write* (regex #"${r.settings}"))`).join("\n");
+  const denySettingsLocalFileRegex = controlPlane.map((r) => `(deny file-write* (regex #"${r.settingsLocal}"))`).join("\n");
 
   // WS-12 §5.3 (new at cutover): user-configured filesystem.denyWrite/denyRead, rendered as
   // (subpath ...) denies -- UNLIKE the control-plane carve-outs above (filename-literal/regex
