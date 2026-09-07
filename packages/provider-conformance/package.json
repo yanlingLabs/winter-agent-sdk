@@ -1,11 +1,17 @@
 {
-  "name": "winter-provider-conformance",
+  "name": "@yanlinglabs/winter-provider-conformance",
   "version": "0.0.1",
-  "private": true,
   "type": "module",
   "main": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts"
+  },
+  "files": [
+    "src"
+  ],
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com",
+    "access": "restricted"
   },
   "dependencies": {
     "@yanlinglabs/winter-provider-catalog": "workspace:*",

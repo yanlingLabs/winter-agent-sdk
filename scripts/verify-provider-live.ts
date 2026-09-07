@@ -78,7 +78,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadCatalog, type WinterCatalog, type WinterProviderDescriptor } from "@yanlinglabs/winter-provider-catalog";
 import { createEnvCredentialStore, CredentialResolutionError, winterUserAgent, type CredentialStore, type ProviderAdapter } from "@yanlinglabs/winter-provider-runtime";
-import { describeThrown, formatClassifierSafetyReport, formatLiveRow, formatLiveReport, runClassifierSafetyCorpus, runLiveTarget, type LiveTargetKindLabel } from "winter-provider-conformance";
+import { describeThrown, formatClassifierSafetyReport, formatLiveRow, formatLiveReport, runClassifierSafetyCorpus, runLiveTarget, type LiveTargetKindLabel } from "@yanlinglabs/winter-provider-conformance";
 import { adapterAsProvider } from "../packages/runtime/src/provider/bridge.ts";
 import { createProviderContext, createSelectionRegistry, resolveSessionProvider } from "../packages/runtime/src/provider/selection.ts";
 import { createKeychainCredentialStore, DEFAULT_KEYCHAIN_SERVICE } from "../packages/runtime/src/provider/keychain-store.ts";

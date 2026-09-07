@@ -14,10 +14,10 @@ import { createMemoryCredentialStore, createRegistry, CredentialResolutionError,
 import type { WinterCatalog, WinterModelDescriptor, WinterProviderDescriptor } from "@yanlinglabs/winter-provider-catalog";
 import { stampFamilyFields } from "@yanlinglabs/winter-provider-catalog";
 import { deleteProviderCredential, providerCredentialRef, startProviderLogin, storeProviderCredential, validateProviderCredential } from "./credential-api.ts";
-// BY PACKAGE NAME, as every other runtime test reaches this package (`winter-provider-conformance`
+// BY PACKAGE NAME, as every other runtime test reaches this package (`@yanlinglabs/winter-provider-conformance`
 // is a root devDependency). A deep relative path into another workspace's `src/` is the drift its
 // barrel exists to prevent, and it is what this file did first.
-import { anthropicConsoleOauthFake, codexFake, startFake, xaiOauthFake } from "winter-provider-conformance";
+import { anthropicConsoleOauthFake, codexFake, startFake, xaiOauthFake } from "@yanlinglabs/winter-provider-conformance";
 import { createKeychainCredentialStore, DEFAULT_KEYCHAIN_SERVICE, type SecretsBackend } from "./keychain-store.ts";
 
 const SECRET = "test-key-do-not-use-4d9f2a";

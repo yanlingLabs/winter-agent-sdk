@@ -24,9 +24,9 @@
     "typescript": "^5.6.0",
     "@yanlinglabs/winter-agent-sdk": "workspace:*",
     "winter-agent-runtime": "workspace:*",
-    "winter-conformance": "workspace:*",
+    "@yanlinglabs/winter-conformance": "workspace:*",
     "@yanlinglabs/winter-provider-catalog": "workspace:*",
     "@yanlinglabs/winter-provider-runtime": "workspace:*",
-    "winter-provider-conformance": "workspace:*"
+    "@yanlinglabs/winter-provider-conformance": "workspace:*"
   }
 }

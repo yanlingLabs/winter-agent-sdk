@@ -1,4 +1,4 @@
-// `winter-provider-conformance` — the behavioural corpus every adapter must pass.
+// `@yanlinglabs/winter-provider-conformance` — the behavioural corpus every adapter must pass.
 //
 // WS-13 §13 makes a corpus pass, not an adapter's existence, the thing that promotes a catalog row
 // from `candidate` to `supported`: request serialization and headers, streaming order, single /
@@ -21,7 +21,7 @@
 // adapter believed it sent.
 
 /** The package's own identity, so a scenario report can name what produced it. */
-export const PROVIDER_CONFORMANCE_PACKAGE = "winter-provider-conformance";
+export const PROVIDER_CONFORMANCE_PACKAGE = "@yanlinglabs/winter-provider-conformance";
 
 // --- Phase 6 Task 3: the spine's two frozen files, re-exported ------------------------------------
 //

@@ -1,9 +1,17 @@
 {
-  "name": "winter-conformance",
+  "name": "@yanlinglabs/winter-conformance",
   "version": "0.0.1",
-  "private": true,
   "type": "module",
   "exports": {
+    ".": "./src/index.ts",
     "./trace": "./src/trace.ts"
+  },
+  "files": [
+    "src",
+    "goldens"
+  ],
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com",
+    "access": "restricted"
   }
 }

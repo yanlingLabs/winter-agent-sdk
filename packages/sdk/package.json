@@ -9,6 +9,10 @@
   "exports": {
     ".": "./src/index.ts"
   },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com",
+    "access": "restricted"
+  },
   "dependencies": {
     "@yanlinglabs/winter-provider-catalog": "workspace:*"
   },
@@ -17,7 +21,7 @@
   },
   "devDependencies": {
     "winter-agent-runtime": "workspace:*",
-    "winter-conformance": "workspace:*",
+    "@yanlinglabs/winter-conformance": "workspace:*",
     "@types/node": "^26.4.0"
   }
 }

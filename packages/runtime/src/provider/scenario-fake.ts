@@ -1,6 +1,6 @@
 // Phase 6 Task 10: ONE loopback fake, four provider families, three transport legs.
 //
-// WHY IT LIVES HERE AND NOT IN `winter-provider-conformance`. The two consumers are
+// WHY IT LIVES HERE AND NOT IN `@yanlinglabs/winter-provider-conformance`. The two consumers are
 // `packages/sdk/src/transport-equivalence.test.ts` and `scripts/differential.ts`, and neither
 // package depends on the conformance package (adding the dependency would move the lockfile, which
 // is a gate, and would put a Bun-only package on the sdk's own dependency graph). Both ALREADY

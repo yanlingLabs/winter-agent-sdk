@@ -15,7 +15,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadCatalog } from "@yanlinglabs/winter-provider-catalog";
 import { createEnvCredentialStore, createMemoryCredentialStore, CredentialResolutionError, normalizeHttpError, winterUserAgent, type CredentialStore } from "@yanlinglabs/winter-provider-runtime";
-import { anthropicConsoleOauthFake, errorResponse, startFake, xaiOauthFake } from "winter-provider-conformance";
+import { anthropicConsoleOauthFake, errorResponse, startFake, xaiOauthFake } from "@yanlinglabs/winter-provider-conformance";
 import {
   ADAPTERS_MODULE_VAR,
   bearerStore,
