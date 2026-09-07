@@ -185,6 +185,46 @@ function projectTierContribution(values: Settings, trustedWorkspace: boolean): S
 }
 
 /**
+ * P6.6 Lane B, fix round 1 (review Important-1): `modelSlotsIgnored` is a DERIVED-ONLY key --
+ * context.md's pinned block is explicit: "written by resolve.ts / the runtime, never by a file".
+ *
+ * Before this fix, no filter named it: `OVERLAY_NEVER_KEYS` doesn't cover it, and `MODEL_SLOT_KEYS`
+ * only covers the two SETTINGS a user configures, not the provenance key resolve.ts derives from
+ * them. So `deepMergeInto` copied a file-supplied `modelSlotsIgnored` straight into `effective` --
+ * an UNTRUSTED PROJECT tier could write an arbitrary string (not even a member of the declared
+ * union) into a key D25's "no false information" rule governs, with no error line, and `provenance`
+ * would name the file as though resolve.ts's own derivation (below) had never run.
+ *
+ * Stripped from EVERY tier's contribution -- not project-only, like `withoutUntrustedModelSlotKeys`
+ * -- because the contract is "never by A FILE", not "never by an untrusted one": a user-tier or
+ * local-tier `modelSlotsIgnored` is exactly as illegitimate as a project-tier one. Applying this
+ * unconditionally, ahead of (and independent of) the project-only filtering, also means the
+ * post-merge derivation below is now unambiguously the key's ONLY writer, and no tier's raw file
+ * value ever reaches the `Object.keys(contribution)` provenance loop for it --
+ * `provenance.modelSlotsIgnored` is therefore now ALWAYS absent (review Minor-3), which is what
+ * makes "absent" an honest signal rather than a coincidence of no file having tried.
+ */
+const DERIVED_ONLY_KEYS: readonly string[] = ["modelSlotsIgnored"] as const;
+
+function withoutDerivedOnlyKeys(values: Settings): Settings {
+  const out: Record<string, unknown> = { ...values };
+  for (const key of DERIVED_ONLY_KEYS) delete out[key];
+  return out as Settings;
+}
+
+/**
+ * One tier's contribution to the merge, in full: project-tier filtering (never-keys, and the
+ * untrusted model-slot-keys strip) when `isProject`, composed with the universal derived-only-keys
+ * strip that applies to every tier regardless of source. The single entry point for "what does this
+ * tier actually contribute", used at both places a tier's `.values` flows into the merge (the main
+ * `effective`/`provenance` loop and `overlayFilteredTiers`) so the two can never drift apart.
+ */
+function tierContribution(values: Settings, isProject: boolean, trustedWorkspace: boolean): Settings {
+  const projectFiltered = isProject ? projectTierContribution(values, trustedWorkspace) : values;
+  return withoutDerivedOnlyKeys(projectFiltered);
+}
+
+/**
  * The four `permissions` arrays that are RULE SETS rather than "the winning tier's value", and the
  * one place the ordinary replace-by-higher-tier merge would be actively unsafe.
  *
@@ -372,7 +412,7 @@ export async function resolveSettingsDetailed(
   const effective: Record<string, unknown> = {};
   const provenance: Record<string, ProvenanceEntry> = {};
   for (const entry of lowestFirst) {
-    const contribution = entry.source === "project" ? projectTierContribution(entry.values, trustedWorkspace) : entry.values;
+    const contribution = tierContribution(entry.values, entry.source === "project", trustedWorkspace);
     deepMergeInto(effective, contribution as Record<string, unknown>);
     for (const key of Object.keys(contribution)) {
       if ((contribution as Record<string, unknown>)[key] === undefined) continue;
@@ -387,7 +427,7 @@ export async function resolveSettingsDetailed(
   // The one exception to the replace-by-higher-tier merge above. Runs on the OVERLAY-FILTERED view
   // for the same reason the merge does -- a project tier's own contribution is filtered identically
   // in both places, so a never-key can never sneak back in through the union.
-  const overlayFilteredTiers = lowestFirst.map((entry) => ({ values: entry.source === "project" ? projectTierContribution(entry.values, trustedWorkspace) : entry.values }));
+  const overlayFilteredTiers = lowestFirst.map((entry) => ({ values: tierContribution(entry.values, entry.source === "project", trustedWorkspace) }));
   unionPermissionRuleArrays(effective, overlayFilteredTiers);
   // RULING R6b-9, the SECOND exception to replace-by-higher-tier. Same overlay-filtered view, same
   // reason: a tier's contribution is read here exactly as it was merged above.
@@ -408,6 +448,10 @@ export async function resolveSettingsDetailed(
       const projectHadEither = MODEL_SLOT_KEYS.some((key) => projectValues[key] !== undefined);
       if (projectHadEither) {
         const higherProvidedModelSlots = lowestFirst.slice(projectIndex + 1).some((e) => (e.values as Record<string, unknown>)["modelSlots"] !== undefined);
+        // Review Minor-3: deliberately no `provenance["modelSlotsIgnored"]` entry here. `ProvenanceEntry.source`
+        // is a `ResolvedSettingSource` (a TIER), and this value has no tier -- it is derived, by
+        // `DERIVED_ONLY_KEYS` construction (above) the ONLY place that ever sets it now that every
+        // tier's own attempt is stripped before the merge. Absent is the honest answer, not a gap.
         if (!higherProvidedModelSlots) effective["modelSlotsIgnored"] = "untrusted-project";
       }
     }
