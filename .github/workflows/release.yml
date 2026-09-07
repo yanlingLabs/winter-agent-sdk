@@ -46,12 +46,15 @@ jobs:
       - run: bun run verify:workflow
       - run: bun run scripts/compile-official-fixture.ts
 
-      # --- Step 1's pack + tarball identity/name scan: the last gate before anything is published.
-      # A hit here (a forbidden directory, a credentials-shaped file, an identity mismatch) fails
-      # this step and the workflow stops -- `pnpm publish` below never runs. ---
-      - run: bun run release:pack
-
-      # --- R-7a-16 (fix round 1): the install-from-tarball smoke, BLOCKING here on purpose --
+      # --- Step 1's pack + tarball identity/name scan, PLUS (review r1, Important-4) the
+      # install-from-tarball smoke covering every publishable package's full exports map, both
+      # BLOCKING here on purpose -- the last gates before anything is published. A hit in the scan
+      # (a forbidden directory, a credentials-shaped file, an identity mismatch) or an import failure
+      # under EITHER runtime fails these steps and the workflow stops -- `pnpm publish` below never
+      # runs. `scripts/smoke-installed.ts` (shared with ci.yml's `pack-smoke`/`pack-smoke-node18`)
+      # does the pack + the one offline `npm install` of every tarball + the import checks in one
+      # call per runtime.
+      #
       # WS-02 §9 item 3 ("a dry-run pack + install-from-tarball smoke test (Node 18 and Bun) gates
       # every publish") is a PUBLISH gate first and a per-push CI convenience second. ci.yml's own
       # Node 18 leg (`pack-smoke-node18`) is ADVISORY (continue-on-error) because a hard-red job on
@@ -61,24 +64,8 @@ jobs:
       # deliberate workflow_dispatch, and "the packages ship raw TypeScript Node cannot import" is
       # exactly the condition under which a publish MUST fail -- so both legs below are BLOCKING,
       # with no `continue-on-error` on the job or on either step. ---
-      - name: install every packed tarball into one throwaway project (outside the workspace, --offline)
-        run: |
-          set -e
-          probe=$(mktemp -d)
-          cd "$probe"
-          npm init -y >/dev/null
-          npm install --offline "$GITHUB_WORKSPACE"/dist/packages/*.tgz
-          echo "PROBE_DIR=$probe" >> "$GITHUB_ENV"
-      - name: import under Node 18 (BLOCKING -- a publish must fail until the compiled emit exists)
-        working-directory: ${{ env.PROBE_DIR }}
-        run: |
-          node -e 'import("@yanlinglabs/winter-agent-sdk").then(() => console.log("node: winter-agent-sdk import OK"))'
-          node -e 'import("@yanlinglabs/winter-conformance/trace").then((m) => { if (typeof m.normalizeTrace !== "function") throw new Error("normalizeTrace missing from the installed package"); console.log("node: winter-conformance/trace import OK"); })'
-      - name: import under Bun (same installed tree, BLOCKING)
-        working-directory: ${{ env.PROBE_DIR }}
-        run: |
-          bun -e 'import("@yanlinglabs/winter-agent-sdk").then(() => console.log("bun: winter-agent-sdk import OK"))'
-          bun -e 'import("@yanlinglabs/winter-conformance/trace").then((m) => { if (typeof m.normalizeTrace !== "function") throw new Error("normalizeTrace missing from the installed package"); console.log("bun: winter-conformance/trace import OK"); })'
+      - run: bun run scripts/smoke-installed.ts --runtime=node   # BLOCKING -- a publish must fail until the compiled emit exists
+      - run: bun run scripts/smoke-installed.ts --runtime=bun    # BLOCKING
 
       # version:bump / version:sync are DELIBERATELY not run here. WS-02 §9 item 2 says "every
       # publish is preceded by version:bump + version:sync", but that is the OPERATOR'S own action

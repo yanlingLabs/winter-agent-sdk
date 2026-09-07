@@ -54,6 +54,17 @@ jobs:
     # Bun-first requirement. The Node 18 leg lives in the separate `pack-smoke-node18` job below,
     # ADVISORY per R-7a-16 (fix round 1) -- see that job's own header for why the split exists.
     #
+    # review r1 (Important-4): both this job and `pack-smoke-node18` call the ONE shared
+    # `scripts/smoke-installed.ts` rather than duplicating the pack/install/import steps inline. It
+    # packs fresh (running the tarball scan), does ONE `npm install --offline` of every tarball into
+    # a throwaway project outside the repo (`npm` alone correctly cross-resolves each package's
+    # inter-dependency against the other tarballs on the same command line -- `bun install` does not,
+    # confirmed empirically while first building this job), then imports EVERY publishable package's
+    # bare entry AND every declared `exports` subpath -- derived at run time from each package's own
+    # manifest, so a new subpath can never be silently left unchecked (this is the exact gap that let
+    # review r1's two Critical findings ship undetected: the pre-fix version of this job checked only
+    # 2 of 5 packages' entry points).
+    #
     # `scripts/verify-published-install.ts` (the opt-in cross-repo acceptance step, gated on
     # WINTER_PACKAGES_TOKEN) is deliberately absent from every job in this file: it needs a real
     # GitHub Packages read token this workflow never holds, and it installs from the REAL registry
@@ -67,30 +78,7 @@ jobs:
       - uses: pnpm/action-setup@v4
         with: { version: 10 }
       - run: pnpm install
-      - run: bun run release:pack             # Step 1: pack + tarball scan -> dist/packages/*.tgz + checksums.json
-      - name: install every packed tarball into one throwaway project (outside the workspace, --offline)
-        # ONE install: `npm install <tarball...>` correctly resolves each package's inter-dependency
-        # (e.g. winter-agent-sdk -> winter-provider-catalog) against the OTHER tarballs passed on the
-        # same command line, entirely offline. `bun install` does NOT do the same cross-resolution
-        # for a plain semver dependency edge declared inside another package's own manifest
-        # (empirically verified while writing this job: `bun add file:winter-agent-sdk-...tgz` after
-        # `winter-provider-catalog` was already installed still tried `registry.npmjs.org` for
-        # provider-catalog and 404'd -- neither multiple CLI args nor an explicit `overrides` map
-        # changed that). So the install itself uses the runner's own npm (this job asserts nothing
-        # about WHICH Node version does the installing -- only that Bun can read what npm installed);
-        # the resulting `node_modules` is then read by Bun below.
-        run: |
-          set -e
-          probe=$(mktemp -d)
-          cd "$probe"
-          npm init -y >/dev/null
-          npm install --offline "$GITHUB_WORKSPACE"/dist/packages/*.tgz
-          echo "PROBE_DIR=$probe" >> "$GITHUB_ENV"
-      - name: import under Bun (WS-02 §5's Bun-first requirement -- BLOCKING)
-        working-directory: ${{ env.PROBE_DIR }}
-        run: |
-          bun -e 'import("@yanlinglabs/winter-agent-sdk").then(() => console.log("bun: winter-agent-sdk import OK"))'
-          bun -e 'import("@yanlinglabs/winter-conformance/trace").then((m) => { if (typeof m.normalizeTrace !== "function") throw new Error("normalizeTrace missing from the installed package"); console.log("bun: winter-conformance/trace import OK"); })'
+      - run: bun run scripts/smoke-installed.ts --runtime=bun   # WS-02 §5's Bun-first requirement -- BLOCKING
 
   pack-smoke-node18:
     # R-7a-16 (fix round 1): ADVISORY, not blocking -- `continue-on-error: true` on the whole job.
@@ -111,9 +99,10 @@ jobs:
     # the compiled emit lands, this job starts reporting green on its own; nothing here has to be
     # remembered or removed for that to become visible.
     #
-    # release.yml's OWN Node 18 smoke (a separate pair of steps in the `publish` job) stays BLOCKING,
-    # with no `continue-on-error` anywhere in that job: publishing is exactly where WS-02 §9 item 3
-    # ("gates every publish") must hold, and a publish must fail until the emit exists.
+    # release.yml's OWN Node 18 smoke (a separate step in the `publish` job, also calling
+    # scripts/smoke-installed.ts) stays BLOCKING, with no `continue-on-error` anywhere in that job:
+    # publishing is exactly where WS-02 §9 item 3 ("gates every publish") must hold, and a publish
+    # must fail until the emit exists.
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
@@ -124,20 +113,8 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: 18 }
       - run: pnpm install
-      - run: bun run release:pack
-      - name: install every packed tarball into one throwaway project (outside the workspace, --offline)
-        run: |
-          set -e
-          probe=$(mktemp -d)
-          cd "$probe"
-          npm init -y >/dev/null
-          npm install --offline "$GITHUB_WORKSPACE"/dist/packages/*.tgz
-          echo "PROBE_DIR=$probe" >> "$GITHUB_ENV"
       - name: "pack-smoke-node18 (advisory until the compiled emit lands — R-7a-16)"
-        working-directory: ${{ env.PROBE_DIR }}
-        run: |
-          node -e 'import("@yanlinglabs/winter-agent-sdk").then(() => console.log("node: winter-agent-sdk import OK"))'
-          node -e 'import("@yanlinglabs/winter-conformance/trace").then((m) => { if (typeof m.normalizeTrace !== "function") throw new Error("normalizeTrace missing from the installed package"); console.log("node: winter-conformance/trace import OK"); })'
+        run: bun run scripts/smoke-installed.ts --runtime=node
 
   official-fixture-compile:
     # Task 11 (WS-03 §14 dual-compile, official half): a SEPARATE job (not a step on `build`) so its

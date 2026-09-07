@@ -16,9 +16,11 @@
 //      file's own header (and ci.yml's `pack-smoke` job comments) legitimately use the English word
 //      "publish" to explain what does and does not do it; a naive `.includes("publish")` would trip
 //      on prose describing the constraint, not on anything that could actually publish.
-//   3. ci.yml's `pack-smoke` job (WS-02 §9 item 3) exists, runs on every push (ci.yml's own top-level
-//      trigger, not gated behind a release tag), packs before it installs anything, and installs
-//      with BOTH Node 18 and Bun.
+//   3. ci.yml's `pack-smoke` + `pack-smoke-node18` jobs (WS-02 §9 item 3) exist, run on every push
+//      (ci.yml's own top-level trigger, not gated behind a release tag), and together cover both
+//      Node 18 and Bun via the one shared `scripts/smoke-installed.ts` (fix round 2, review r1
+//      Important-4) -- which packs, scans, installs once offline, and imports every publishable
+//      package's full exports map internally.
 //
 // Absence is the one that genuinely needs a test, for the same reason ci-gates.test.ts's own header
 // gives: a workflow that never publishes and one that was never SUPPOSED to look identical in a
@@ -75,14 +77,14 @@ describe("release.yml's trigger is pinned to v* tags and workflow_dispatch only"
     expect(RELEASE_YML).toContain("NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}");
   });
 
-  test("release-pack (the tarball scan) runs as a gate BEFORE the publish step", () => {
+  test("scripts/smoke-installed.ts (which packs + scans internally) runs as a gate BEFORE the publish step", () => {
     const doc = Bun.YAML.parse(RELEASE_YML) as { jobs: Record<string, { steps: Array<{ run?: string }> }> };
     const steps = Object.values(doc.jobs)[0]!.steps;
     const runLines = steps.map((s) => s.run).filter((r): r is string => typeof r === "string");
-    const packIndex = runLines.findIndex((r) => r.includes("release:pack"));
+    const smokeIndex = runLines.findIndex((r) => r.includes("smoke-installed.ts"));
     const publishIndex = runLines.findIndex((r) => /\b(pnpm|npm)\s+publish\b/.test(r));
-    expect(packIndex).toBeGreaterThanOrEqual(0);
-    expect(publishIndex).toBeGreaterThan(packIndex);
+    expect(smokeIndex).toBeGreaterThanOrEqual(0);
+    expect(publishIndex).toBeGreaterThan(smokeIndex);
   });
 });
 
@@ -145,40 +147,22 @@ describe("ci.yml's pack-smoke jobs (WS-02 §9 item 3; the Node18/Bun split is R-
     for (const step of job.steps) expect(step["continue-on-error"]).toBeUndefined();
   });
 
-  test("EACH job runs release:pack strictly before it tries to install any tarball", () => {
-    const doc = Bun.YAML.parse(CI_YML) as WorkflowDoc;
-    for (const jobId of ["pack-smoke", "pack-smoke-node18"] as const) {
-      const runValues = doc.jobs[jobId]!.steps.map((s) => s.run).filter((r): r is string => typeof r === "string");
-      const packIndex = runValues.findIndex((r) => r.includes("release:pack"));
-      // Word-boundary-anchored: "pnpm install" (an EARLIER step) contains "npm install" as a bare
-      // substring ("pnpm" = "p" + "npm") -- a plain `.includes("npm install")` matches THAT step
-      // first and reports the wrong index (caught by this test itself while writing it).
-      const installIndex = runValues.findIndex((r) => /(^|\s)npm install\b/.test(r));
-      expect(packIndex).toBeGreaterThanOrEqual(0);
-      expect(installIndex).toBeGreaterThan(packIndex);
-    }
-  });
-
-  test("pack-smoke-node18 pins Node 18 explicitly and runs `node -e`; pack-smoke has NO setup-node and runs `bun -e`", () => {
+  // review r1 (Important-4): both jobs now call the ONE shared scripts/smoke-installed.ts, which
+  // packs, scans, installs (one offline npm install), and imports EVERY publishable package's full
+  // exports map internally -- deriveImportTargets()'s own test (scripts/smoke-installed.test.ts)
+  // proves that coverage property; these YAML-level tests only need to prove each job invokes the
+  // right script with the right --runtime flag, since the coverage itself is no longer expressible
+  // as grep-able inline `node -e`/`bun -e` text.
+  test("pack-smoke-node18 pins Node 18 explicitly and calls smoke-installed.ts --runtime=node; pack-smoke has NO setup-node and calls it --runtime=bun", () => {
     const doc = Bun.YAML.parse(CI_YML) as WorkflowDoc;
     const node18Job = doc.jobs["pack-smoke-node18"]!;
     const setupNode = node18Job.steps.find((s) => s.uses?.startsWith("actions/setup-node"));
     expect(setupNode?.with).toEqual({ "node-version": 18 });
-    expect(node18Job.steps.some((s) => s.run?.includes("node -e"))).toBe(true);
+    expect(node18Job.steps.some((s) => s.run?.includes("smoke-installed.ts") && s.run?.includes("--runtime=node"))).toBe(true);
 
     const bunJob = doc.jobs["pack-smoke"]!;
     expect(bunJob.steps.some((s) => s.uses?.startsWith("actions/setup-node"))).toBe(false);
-    expect(bunJob.steps.some((s) => s.run?.includes("bun -e"))).toBe(true);
-  });
-
-  test("both required imports (sdk bare, conformance/trace subpath) are checked in EACH job", () => {
-    const doc = Bun.YAML.parse(CI_YML) as WorkflowDoc;
-    const node18Step = doc.jobs["pack-smoke-node18"]!.steps.find((s) => s.run?.includes("node -e"));
-    const bunStep = doc.jobs["pack-smoke"]!.steps.find((s) => s.run?.includes("bun -e"));
-    expect(node18Step?.run).toContain("@yanlinglabs/winter-agent-sdk");
-    expect(node18Step?.run).toContain("@yanlinglabs/winter-conformance/trace");
-    expect(bunStep?.run).toContain("@yanlinglabs/winter-agent-sdk");
-    expect(bunStep?.run).toContain("@yanlinglabs/winter-conformance/trace");
+    expect(bunJob.steps.some((s) => s.run?.includes("smoke-installed.ts") && s.run?.includes("--runtime=bun"))).toBe(true);
   });
 
   test("the advisory job's own step name documents WHY, by name, citing R-7a-16", () => {
@@ -199,14 +183,14 @@ describe("release.yml's own Node 18 smoke (R-7a-16): stays BLOCKING, unlike ci.y
     for (const step of Object.values(doc.jobs)[0]!.steps) expect(step["continue-on-error"]).toBeUndefined();
   });
 
-  test("it runs a Node 18 install-and-import smoke, pinned via actions/setup-node, strictly before publish", () => {
+  test("it runs a Node 18 smoke via scripts/smoke-installed.ts, pinned via actions/setup-node, strictly before publish", () => {
     const doc = Bun.YAML.parse(RELEASE_YML) as WorkflowDoc;
     const steps = Object.values(doc.jobs)[0]!.steps;
     const setupNode = steps.find((s) => s.uses?.startsWith("actions/setup-node"));
     expect(setupNode?.with).toEqual({ "node-version": 18 });
 
     const runValues = steps.map((s) => s.run).filter((r): r is string => typeof r === "string");
-    const nodeSmokeIndex = runValues.findIndex((r) => r.includes("node -e") && r.includes("@yanlinglabs/winter-agent-sdk"));
+    const nodeSmokeIndex = runValues.findIndex((r) => r.includes("smoke-installed.ts") && r.includes("--runtime=node"));
     const publishIndex = runValues.findIndex((r) => /\b(pnpm|npm)\s+publish\b/.test(r));
     expect(nodeSmokeIndex).toBeGreaterThanOrEqual(0);
     expect(publishIndex).toBeGreaterThan(nodeSmokeIndex);
@@ -216,7 +200,7 @@ describe("release.yml's own Node 18 smoke (R-7a-16): stays BLOCKING, unlike ci.y
     const doc = Bun.YAML.parse(RELEASE_YML) as WorkflowDoc;
     const steps = Object.values(doc.jobs)[0]!.steps;
     const runValues = steps.map((s) => s.run).filter((r): r is string => typeof r === "string");
-    const bunSmokeIndex = runValues.findIndex((r) => r.includes("bun -e") && r.includes("@yanlinglabs/winter-agent-sdk"));
+    const bunSmokeIndex = runValues.findIndex((r) => r.includes("smoke-installed.ts") && r.includes("--runtime=bun"));
     const publishIndex = runValues.findIndex((r) => /\b(pnpm|npm)\s+publish\b/.test(r));
     expect(bunSmokeIndex).toBeGreaterThanOrEqual(0);
     expect(publishIndex).toBeGreaterThan(bunSmokeIndex);
