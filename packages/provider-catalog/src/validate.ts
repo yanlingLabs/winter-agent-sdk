@@ -21,6 +21,7 @@ import type {
   ModelStatus,
   ProviderAuthKind,
   ProviderProtocol,
+  ModelFamilyDescriptor,
   ReasoningCapabilities,
   SlotBasis,
   SlotStatus,
@@ -64,6 +65,18 @@ const ADMISSION_TIERS = ["fetched-document", "pinned-upstream", "spec-ruling", "
 /** WS-13c §2: where a slot's ranking and text came from, and how far it has been reviewed. */
 const SLOT_BASES: readonly SlotBasis[] = ["user-ruling", "vendor-doc", "winter-curated"];
 const SLOT_STATUSES: readonly SlotStatus[] = ["candidate", "supported"];
+/**
+ * WS-13c §1: a FAMILY's own promotion state.
+ *
+ * Structurally the same two members as `SLOT_STATUSES`, and a separate vocabulary on purpose (fix
+ * round 1, M-2): it was hard-coded inline in `checkFamily`, so the JSON Schema's
+ * `ModelFamilyDescriptor.properties.status.enum` was a second, unpinned copy. Being in
+ * `CATALOG_VOCABULARIES` is what makes the "every vocabulary is covered" parity test demand a case
+ * for it — the two can no longer drift in silence, and if the family and slot vocabularies ever
+ * diverge (a family reaching `supported` on different evidence than a slot, say) the split is
+ * already there.
+ */
+const FAMILY_STATUSES: readonly ModelFamilyDescriptor["status"][] = ["candidate", "supported"];
 
 /**
  * The header NAMES a reviewed row may put in `identityHeaders` (fix-wave R-FW-2).
@@ -109,6 +122,7 @@ export const CATALOG_VOCABULARIES = {
   admissionTiers: ADMISSION_TIERS,
   slotBases: SLOT_BASES,
   slotStatuses: SLOT_STATUSES,
+  familyStatuses: FAMILY_STATUSES,
   continuations: CONTINUATIONS,
   readableStates: READABLE_STATES,
   replayScopes: REPLAY_SCOPES,
@@ -501,7 +515,7 @@ function checkFamily(errs: Errors, v: unknown, path: string): void {
   errs.str(v, "vendor", path);
   errs.str(v, "citation", path);
   errs.strArray(v, "vendorProviders", path);
-  errs.enum(v, "status", path, ["candidate", "supported"] as const);
+  errs.enum(v, "status", path, FAMILY_STATUSES);
 
   const matchers = v["matchers"];
   if (!Array.isArray(matchers)) {

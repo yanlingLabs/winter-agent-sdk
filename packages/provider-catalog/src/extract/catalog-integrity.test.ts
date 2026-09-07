@@ -886,7 +886,11 @@ describe("WS-13c: model families and slots", () => {
     for (const model of catalog.models) {
       expect([model.key, familyIdOf(model.canonicalModelId, catalog.families)]).toEqual([model.key, model.modelFamily]);
       const hits = catalog.families.filter((f) => f.matchers.some((m) => new RegExp(m.pattern).test(model.canonicalModelId)));
-      expect([model.key, hits.map((f) => f.id)]).toEqual([model.key, hits.length > 1 ? [] : hits.map((f) => f.id)]);
+      // Asserted as "at most one", not by comparing `hits` to a value derived from `hits` — the
+      // earlier spelling failed correctly but READ as a tautology, and a future editor "simplifying"
+      // it would have deleted the disjointness proof without the suite noticing (fix r1, M-1). The
+      // failure still names the row AND the families that collided.
+      expect([model.key, hits.length > 1 ? hits.map((f) => f.id) : null]).toEqual([model.key, null]);
     }
     // ...proved a second way, against a REVERSED families array: same answer for every row.
     const reversed = [...catalog.families].reverse();

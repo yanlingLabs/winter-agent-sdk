@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { CATALOG_VOCABULARIES, CLAUDE_RESERVED_SLOT_NAMES, loadCatalog, rowsForCanonicalId, scanForSecrets, stampFamilyFields, validateCatalog } from "./index.ts";
+import { CATALOG_VOCABULARIES, CLAUDE_RESERVED_SLOT_NAMES, loadCatalog, rowsForCanonicalId, scanForSecrets, SLOT_NAME_RE, stampFamilyFields, validateCatalog } from "./index.ts";
 import catalogSchema from "../schema/catalog.schema.json" with { type: "json" };
 import type { CatalogValidationError, FamilySlot, ModelFamilyDescriptor, WinterCatalog, WinterModelDescriptor, WinterProviderDescriptor } from "./types.ts";
 
@@ -445,6 +445,7 @@ describe("JSON Schema / validator enum parity (Minor 9)", () => {
     // WS-13c §2's two slot vocabularies, on the same footing as every other closed set here.
     ["slotBases", "$defs.FamilySlot.properties.basis"],
     ["slotStatuses", "$defs.FamilySlot.properties.status"],
+    ["familyStatuses", "$defs.ModelFamilyDescriptor.properties.status"],
   ];
 
   test("every vocabulary the validator enforces is the SAME SET the schema declares", () => {
@@ -458,6 +459,15 @@ describe("JSON Schema / validator enum parity (Minor 9)", () => {
   test("every vocabulary is covered — a new one cannot be added without a parity case", () => {
     const covered: string[] = cases.map(([name]) => name).sort();
     expect(covered).toEqual(Object.keys(CATALOG_VOCABULARIES).sort());
+  });
+
+  // Enums are not the only cross-language surface WS-13c added. `FamilySlot.name` is the one place
+  // the schema restates a GRAMMAR the validator owns, and it was a hand-copied string: a widened
+  // `SLOT_NAME_RE` would have left the schema refusing names the validator accepts, discovered by
+  // whoever is furthest from the change (fix r1, M-2).
+  test("the schema's slot-name pattern IS `SLOT_NAME_RE`, not a hand-copy of it", () => {
+    const pattern = (schema as { $defs: { FamilySlot: { properties: { name: { pattern?: string } } } } }).$defs.FamilySlot.properties.name.pattern;
+    expect(pattern).toBe(SLOT_NAME_RE.source);
   });
 });
 
