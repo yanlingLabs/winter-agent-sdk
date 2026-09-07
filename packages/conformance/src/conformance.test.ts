@@ -784,6 +784,7 @@ const MODEL_FAMILIES_ROWS: ConformanceRow[] = [
       { file: `${SDK}/settings/resolve.test.ts`, testName: "trustedWorkspace: true — the project tier wins with ordinary precedence, and nothing is recorded as ignored" },
       { file: `${RUNTIME}/production-wiring.test.ts`, testName: "a claude session ignores custom slots and RECORDS the ignore through the warnings channel" },
       { file: `${RUNTIME}/production-wiring.test.ts`, testName: "a NON-claude session honours the same custom set, and no ignore is recorded" },
+      { file: `${RUNTIME}/production-wiring.test.ts`, testName: "an INVALID custom set is ignored whole AND recorded through the warnings channel, quoting the failing entry" },
       { file: `${SDK}/settings/model-slots.test.ts`, testName: "a bad SECOND entry refuses the set whole — the valid first entry is not returned partially" },
     ],
     note: "\"invalid set ignored whole\" is proven at the validator (the fifth citation, and `model-slots.test.ts`'s WHOLE-SET describe more broadly): a malformed entry drops the ENTIRE set, never a partially-filtered one. No WIRING-level test feeds `buildProductionWiring` an invalid `modelSlots` and asserts the session falls back to `family-default`, or that anything ever actually records `modelSlotsIgnored: \"invalid\"` — `production-wiring.ts`'s own comment assigns that provenance to \"the settings cascade\", and `resolve.ts` does not derive it either (`resolve.test.ts` proves only that the key can never be SPOOFED from a file, not that it is ever genuinely produced). Flagged here rather than papered over with an invented citation.",
@@ -808,6 +809,7 @@ const MODEL_FAMILIES_ROWS: ConformanceRow[] = [
     status: "new",
     citations: [
       { file: `${RUNTIME}/subagents/cross-family-resume.test.ts`, testName: "WS13c-SM1: a claude-slot child resumed after the parent moved to claude keeps its own provider and model" },
+      { file: `${RUNTIME}/subagents/cross-family-resume.test.ts`, testName: "WS13c-SM1 (P-D sub-case): the parent switching onto the child's OWN model key resumes the child on its own provider, never a refusal" },
       { file: `${RUNTIME}/subagents/cross-family-resume.test.ts`, testName: "Fix round 1 (coordinator follow-up): recordModelEffort stamps BOTH effectiveProvider and slot from the child's own materialised identity, and omits both keys entirely when absent" },
     ],
   },
@@ -816,7 +818,10 @@ const MODEL_FAMILIES_ROWS: ConformanceRow[] = [
     spec: WS13C,
     bullet: "the mirror (parent on `claude`, child on `luna`, parent switches to `gpt`)",
     status: "new",
-    citations: [{ file: `${RUNTIME}/subagents/cross-family-resume.test.ts`, testName: "WS13c-SM2: the mirror -- a luna child resumed after the parent moved from claude to gpt" }],
+    citations: [
+      { file: `${RUNTIME}/subagents/cross-family-resume.test.ts`, testName: "WS13c-SM2: the mirror -- a luna child resumed after the parent moved from claude to gpt" },
+      { file: `${RUNTIME}/subagents/cross-family-resume.test.ts`, testName: "WS13c-SM2 (P-D sub-case mirror): a claude parent switching onto its luna child's own key resumes that child on openai" },
+    ],
   },
   {
     id: "WS13c-SM3",
