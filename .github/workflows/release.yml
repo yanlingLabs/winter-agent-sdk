@@ -1,0 +1,60 @@
+name: release
+# P7a Lane C, Step 3 (WS-02 §9 item 2; Phase 7a amendment: "the publish job fires ONLY on `v*` tags
+# or workflow_dispatch -- never on phase-* tags", "a CI assertion pins the on: block"). NOTHING in
+# this repository's history has ever run this workflow to completion, and nothing in this PLAN does
+# either (Global Constraints: "No task in this plan publishes anything: the first publish is the
+# user's decision"). `release-gates.test.ts` parses this exact file and asserts the trigger set
+# below is EXACTLY `v*` + `workflow_dispatch` -- no `phase-*` tag, no `push: branches`, and that no
+# OTHER workflow in this repository contains the word "publish".
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch: {}
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    # R-7-1: GitHub Packages, scope @yanlinglabs. `contents: read` is the default job permission
+    # this repeats explicitly; `packages: write` is the one elevated grant a publish needs and the
+    # only reason this job's token differs from every other job in this repository's CI.
+    permissions:
+      packages: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - uses: pnpm/action-setup@v4
+        with: { version: 10 }
+      - run: pnpm install
+
+      # --- the gates: the exact verification sequence ci.yml's `build` and `official-fixture-compile`
+      # jobs already run on every push, repeated here so a tag pushed out of step with CI history (or
+      # a workflow_dispatch on an arbitrary ref) is never published unverified. Keep this list in
+      # sync with ci.yml by hand -- there is no reusable-workflow indirection here, matching this
+      # repository's own existing convention of two independent jobs in ci.yml each repeating their
+      # own checkout/setup steps rather than sharing them. ---
+      - run: bun test
+      - run: bun run typecheck
+      - run: bun run conformance:fetch
+      - run: bun run conformance:snapshot -- --check
+      - run: bunx tsc --noEmit -p packages/conformance/tsconfig.winter.json
+      - run: bun run provider:catalog -- --check
+      - run: bun run provider:sync -- --offline
+      - run: bun run differential
+      - run: bun run verify:compiled
+      - run: bun run verify:workflow
+      - run: bun run scripts/compile-official-fixture.ts
+
+      # --- Step 1's pack + tarball identity/name scan: the last gate before anything is published.
+      # A hit here (a forbidden directory, a credentials-shaped file, an identity mismatch) fails
+      # this step and the workflow stops -- `pnpm publish` below never runs. ---
+      - run: bun run release:pack
+
+      # version:bump / version:sync are DELIBERATELY not run here. WS-02 §9 item 2 says "every
+      # publish is preceded by version:bump + version:sync", but that is the OPERATOR'S own action
+      # before tagging (bump -> commit -> tag vX.Y.Z -> push) -- a workflow that bumped and committed
+      # a new version on every tag push would create a commit the pushed tag does not point at, and
+      # would need write access back to a branch the tag need not even track. The published version
+      # is exactly what VERSION already says at the tagged commit.
+      - run: pnpm publish -r --no-git-checks
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

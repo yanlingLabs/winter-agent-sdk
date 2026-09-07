@@ -46,6 +46,62 @@ jobs:
                                                       # `launch()` still refuses outright in production when the
                                                       # sandbox is required and unavailable.
 
+  pack-smoke:
+    # P7a Lane C, Step 3 (WS-02 §9 item 3): proves a consumer can actually INSTALL and IMPORT what
+    # release-pack.ts packs -- runs on every push (unlike release.yml, which fires only on a `v*` tag
+    # or workflow_dispatch and actually publishes; this job never does, so there is no reason to gate
+    # it behind a release trigger).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - uses: pnpm/action-setup@v4
+        with: { version: 10 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 18 }
+      - run: pnpm install
+      - run: bun run release:pack             # Step 1: pack + tarball scan -> dist/packages/*.tgz + checksums.json
+      - name: install every packed tarball into one throwaway project (outside the workspace, --offline)
+        # ONE install, not two: `npm install <tarball...>` correctly resolves each package's
+        # inter-dependency (e.g. winter-agent-sdk -> winter-provider-catalog) against the OTHER
+        # tarballs passed on the same command line, entirely offline. `bun install` does NOT do the
+        # same cross-resolution for a plain semver dependency edge declared inside another package's
+        # own manifest (empirically verified while writing this job: `bun add
+        # file:winter-agent-sdk-...tgz` after `winter-provider-catalog` was already installed still
+        # tried `registry.npmjs.org` for provider-catalog and 404'd -- neither multiple CLI args nor
+        # an explicit `overrides` map changed that). So the install itself uses npm; the resulting
+        # `node_modules` is then read by BOTH runtimes below, which is the real interoperability
+        # property WS-02 §5 cares about ("what npm installs, Bun can also import").
+        run: |
+          set -e
+          probe=$(mktemp -d)
+          cd "$probe"
+          npm init -y >/dev/null
+          npm install --offline "$GITHUB_WORKSPACE"/dist/packages/*.tgz
+          echo "PROBE_DIR=$probe" >> "$GITHUB_ENV"
+      - name: import under Node 18
+        # KNOWN RED at the time this job was added: `packages/sdk` (and provider-catalog,
+        # provider-runtime, this package) ship `main`/`exports` pointing directly at `./src/index.ts`
+        # -- raw TypeScript source, not compiled JS. Node 18 has no TypeScript support at all, and
+        # even a modern Node with `--experimental-strip-types` refuses to strip types for a file
+        # under `node_modules` (`ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING`, verified empirically
+        # against this exact install). That is a pre-existing gap in how the wrapper/catalog/runtime
+        # packages are built for publishing -- NOT something this pack/scan/smoke pipeline can fix:
+        # `packages/sdk/package.json`'s `main`/`exports`/`files` are spine-owned (context.md's file-
+        # ownership map), and fixing it means giving those packages a real build step (tsc emit to a
+        # `dist/` the manifest points at instead), which is outside the publish PIPELINE this task
+        # builds. Left as a hard-failing step on purpose (WS-02 §9 Step 3 asks for exactly this
+        # check) rather than softened, so the gate keeps telling the truth once that build step lands.
+        working-directory: ${{ env.PROBE_DIR }}
+        run: |
+          node -e 'import("@yanlinglabs/winter-agent-sdk").then(() => console.log("node: winter-agent-sdk import OK"))'
+          node -e 'import("@yanlinglabs/winter-conformance/trace").then((m) => { if (typeof m.normalizeTrace !== "function") throw new Error("normalizeTrace missing from the installed package"); console.log("node: winter-conformance/trace import OK"); })'
+      - name: import under Bun (same installed tree)
+        working-directory: ${{ env.PROBE_DIR }}
+        run: |
+          bun -e 'import("@yanlinglabs/winter-agent-sdk").then(() => console.log("bun: winter-agent-sdk import OK"))'
+          bun -e 'import("@yanlinglabs/winter-conformance/trace").then((m) => { if (typeof m.normalizeTrace !== "function") throw new Error("normalizeTrace missing from the installed package"); console.log("bun: winter-conformance/trace import OK"); })'
+
   official-fixture-compile:
     # Task 11 (WS-03 §14 dual-compile, official half): a SEPARATE job (not a step on `build`) so its
     # ephemeral ~200MB official-package install (native optionalDependency included — accepted here,
