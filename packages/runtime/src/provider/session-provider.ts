@@ -287,19 +287,7 @@ export function createProductionCredentialStore(config: RuntimeConfig, env: Reco
   //
   // Adapted at the composition site rather than fixed in either file: each is correct in isolation,
   // and this is the one place that has to pick a reading.
-  // P7a (D19 / R-7a-8) -- KEYCHAIN BLOCK. `config.brand.keychainService` is the SINGLE SOURCE.
-  //
-  // `config.keychainService` is the DEPRECATED standalone alias, and the wrapper only emits it when
-  // the session actually chose a service (branded, or the option set) -- so a branded host that set
-  // `brand.keychainService` and nothing else leaves the top-level key ABSENT. Reading that key alone
-  // therefore opened WINTER'S OWN service for a reuser whose whole profile said otherwise, silently,
-  // and every record they wrote would have landed in Winter's own service.
-  //
-  // The two surfaces AGREE by construction whenever both are present (`query()` folds the deprecated
-  // option INTO the profile before resolving), so preferring the profile can never contradict a host
-  // that used the old field.
-  const keychainService = config.brand?.keychainService ?? config.keychainService;
-  const keychain = createKeychainCredentialStore(keychainService);
+  const keychain = createKeychainCredentialStore(resolveSessionKeychainService(config));
   return createCompositeCredentialStore([
     {
       ...keychain,
@@ -384,14 +372,33 @@ function descriptorFor(catalog: WinterCatalog, modelKey: string): WinterModelDes
  * `winter_provider`), and the first generation lands on R6-F's pinned result shape before `query()`
  * throws. `resolutionError` carries the reason so an entrypoint can also report it on stderr.
  */
+/**
+ * P7a (D19 / R-7a-8) -- THE KEYCHAIN BLOCK'S SINGLE SOURCE.
+ *
+ * A FUNCTION, and exported, because the answer is needed in two places -- the credential store this
+ * session opens (`buildCredentialStore`) and the `service` a cross-provider record's `authRef`
+ * carries (`describeTargetMaterial`) -- and the two naming different services would write a
+ * credential where nothing will look for it.
+ *
+ * `brand.keychainService` is the source. `config.keychainService` is the DEPRECATED standalone
+ * alias, and the wrapper emits it only when the session actually chose a service (branded, or the
+ * option set) -- so a branded host that set `brand.keychainService` and nothing else leaves the
+ * top-level key ABSENT, and a reader of that key alone silently opened WINTER's own service for a
+ * reuser whose whole profile said otherwise. The two surfaces AGREE by construction whenever both
+ * are present (`query()` folds the deprecated option INTO the profile before resolving), so
+ * preferring the profile can never contradict a host that used the old field.
+ *
+ * `undefined` means "the session chose none" -- `createKeychainCredentialStore`'s own default
+ * applies, and the `authRef` carries no `service` key at all (which is what keeps an unbranded
+ * session's `authRef` byte-identical to before P7a).
+ */
+export function resolveSessionKeychainService(config: RuntimeConfig): string | undefined {
+  return config.brand?.keychainService ?? config.keychainService;
+}
+
 export function buildSessionProvider(opts: SessionProviderOptions): SessionProviderWiring {
   const { config, env } = opts;
-  // P7a (D19 / R-7a-8) -- KEYCHAIN BLOCK. The ONE reading of "which keychain service is this
-  // session's", used by the cross-provider `authRef` below and by `createKeychainCredentialStore`
-  // in `buildCredentialStore` above. `brand.keychainService` is the single source; the deprecated
-  // top-level key is a fallback for a pre-P7a wire message, and the wrapper folds the two so they
-  // can never disagree when both are present.
-  const sessionKeychainService = config.brand?.keychainService ?? config.keychainService;
+  const sessionKeychainService = resolveSessionKeychainService(config);
   const catalog = opts.catalog ?? loadCatalog();
   const credentials = opts.credentials ?? createProductionCredentialStore(config, env, opts.home ?? env["HOME"] ?? "");
   const registry = createRegistry(catalog);
