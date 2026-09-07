@@ -16,6 +16,14 @@
 // Node-only: this module is inside tsconfig.sdk-fence.json's fence (packages/sdk/src production
 // code type-checks with `types: ["node"]` and NO Bun ambient globals) -- `node:fs/promises` and
 // `node:path` only, never `Bun.file`/`Bun.env`.
+import type { BrandProfile } from "../brand.ts";
+
+/**
+ * P7a (D19): the brand fields the settings cascade needs — the project dot-dir it looks in, and the
+ * env prefix + home dir the user tier resolves through. A `Pick`, not the whole profile, so a
+ * caller can thread three fields rather than construct one.
+ */
+export type SettingsBrand = Pick<BrandProfile, "envPrefix" | "homeDirName" | "projectDirName">;
 
 // --- The pinned tier vocabularies -----------------------------------------------------------------
 //
@@ -152,7 +160,7 @@ export interface Settings {
    * RESTRICTIVE-ONLY ACROSS TIERS (RULING R6b-9), enforced by `restrictProviderEnables` in
    * `resolve.ts` rather than by the ordinary merge: the effective value is `false` if ANY tier says
    * `false`, and a lower tier's `true` never re-enables what a higher one disabled. Without that,
-   * a cloned repository's `.winter/settings.json` could put back a provider its operator withdrew —
+   * a cloned repository's PROJECT settings file could put back a provider its operator withdrew —
    * and this key IS the reversion switch (R6b-7 / WS-13b §4), so a switch a repository can flip back
    * would not be one.
    *
@@ -294,10 +302,16 @@ export interface DetailedResolvedSettings extends ResolvedSettings {
 export interface ResolveSettingsDetailedOptions extends ResolveSettingsOptions {
   /** RULING P5-A's host-declared workspace-trust bit, threaded by production-wiring. Absent = untrusted (fail-safe): the project tier's `modelSlots`/`preferredProviders` are dropped (WS-13c §5, R-6c-16). */
   trustedWorkspace?: boolean;
-  /** Explicit `~/.winter` root. Tests MUST pass this rather than mutating process.env (a shared-process `bun test` run would race). */
+  /** Explicit resolved home root. Tests MUST pass this rather than mutating process.env (a shared-process `bun test` run would race). */
   winterHome?: string;
-  /** Injectable environment for WINTER_HOME resolution; defaults to `process.env`. */
+  /** Injectable environment for home resolution; defaults to `process.env`. */
   env?: Record<string, string | undefined>;
+  /**
+   * P7a (D19): the session's resolved brand profile, which decides the PROJECT tier's directory
+   * (`<cwd>/<projectDirName>/settings.json`) and the env name the user tier's home is read from.
+   * Absent means Winter's own profile — every caller predating it keeps today's paths exactly.
+   */
+  brand?: SettingsBrand;
   /** The `'flag'` tier -- R5-8's "inline/sdk" position. Unreachable from the pinned options object, which has no inline input. */
   inline?: Settings;
 }
@@ -314,7 +328,7 @@ export interface ResolveSettingsDetailedOptions extends ResolveSettingsOptions {
  * repo-committed file setting it can only ever tighten, which every tier is allowed to do.
  *
  * `outputStyle` JOINED IN THE PHASE 5 FIX WAVE (whole-branch m1). RULING P5-G gates a project-tier
- * style FILE to append-only -- a checked-in `.winter/output-styles/*.md` may add to the prompt but
+ * style FILE to append-only -- a checked-in project-tier output-style file may add to the prompt but
  * never replace it. It says nothing about SELECTION, and selection is the other half of the same
  * power: a project `settings.json` naming one of the USER's own styles -- one the user wrote with
  * `keep-coding-instructions: false` -- would replace the authored prompt on the strength of a

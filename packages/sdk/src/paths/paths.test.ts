@@ -10,6 +10,8 @@ import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 
 import { resolveWinterHome } from "./home.ts";
+// P7a spine, Step 3 (D19): the brand profile the home resolver derives its env name and dir from.
+import { resolveBrand, type BrandProfile } from "../brand.ts";
 import { transcriptProjectKey } from "./project-key.ts";
 import { compatibilityKeys } from "./keys.ts";
 
@@ -45,6 +47,36 @@ describe("resolveWinterHome", () => {
   // guarantee this test itself can enforce.
   test("the zero-arg branch falls through to the real process.env (flake-aware — assumes WINTER_HOME is unset here, matching resolveTempBase's identical precedent)", () => {
     expect(resolveWinterHome().endsWith("/.winter")).toBe(true);
+  });
+
+  // --- P7a spine, Step 3 (D19): the same function under a REUSER's brand ---------------------------
+  //
+  // The env name is DERIVED from `envPrefix`, so the whole point is that a host running as "Acme"
+  // reads ACME_HOME and lands in ~/.acme — and that Winter's own names do NOTHING for it. A brand
+  // module nobody threaded would still pass every test above; only this block would fail.
+  test("a branded profile reads ITS OWN <PREFIX>HOME and defaults to ~/<homeDirName>", () => {
+    const acme = (resolveBrand({ envPrefix: "ACME_", homeDirName: ".acme" }) as { ok: true; brand: BrandProfile }).brand;
+    expect(resolveWinterHome({ ACME_HOME: "/custom/acme" }, acme)).toBe("/custom/acme");
+    expect(resolveWinterHome({}, acme).endsWith("/.acme")).toBe(true);
+  });
+
+  test("a branded profile IGNORES Winter's own env name — the prefix is not a fallback", () => {
+    // Principle 4's shape, one level down: Winter does not honour CLAUDE_* as a fallback, and a
+    // reuser's runtime must not honour WINTER_* either, or two products on one machine cross-wire.
+    const acme = (resolveBrand({ envPrefix: "ACME_", homeDirName: ".acme" }) as { ok: true; brand: BrandProfile }).brand;
+    expect(resolveWinterHome({ WINTER_HOME: "/winters/home" }, acme).endsWith("/.acme")).toBe(true);
+  });
+
+  test("<PREFIX>PROFILE=dev selects ~/<homeDirName>-dev, and an explicit home still wins over it", () => {
+    expect(resolveWinterHome({ WINTER_PROFILE: "dev" }).endsWith("/.winter-dev")).toBe(true);
+    expect(resolveWinterHome({ WINTER_PROFILE: "dev", WINTER_HOME: "/explicit" })).toBe("/explicit");
+    const acme = (resolveBrand({ envPrefix: "ACME_", homeDirName: ".acme" }) as { ok: true; brand: BrandProfile }).brand;
+    expect(resolveWinterHome({ ACME_PROFILE: "dev" }, acme).endsWith("/.acme-dev")).toBe(true);
+  });
+
+  test("an unrecognised profile is the DEFAULT home, never an invented ~/<dir>-<value>", () => {
+    expect(resolveWinterHome({ WINTER_PROFILE: "staging" }).endsWith("/.winter")).toBe(true);
+    expect(resolveWinterHome({ WINTER_PROFILE: "" }).endsWith("/.winter")).toBe(true);
   });
 });
 

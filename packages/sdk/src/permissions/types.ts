@@ -210,7 +210,7 @@ export type HookEventName = HookEvent; // WS-08 §10 / task-brief spelling — i
 // §3.2's prose source list): no "cliArg"/"session" members — unlike permission rules, WS-08 has no
 // canUseTool-style live "PermissionUpdate" analogue that lets a running session register a NEW hook
 // (unauthorized ADDITIONAL sources, not modeled). "managed"/"user"/"project"/"local" are the
-// filesystem-settings family (WS-08 §2's table, `.winter/hooks` / `~/.winter/hooks`, project-sourced
+// filesystem-settings family (WS-08 §2's table, project- and user-tier `hooks`, project-sourced
 // entries trust-gated exactly like project rules per WS-07 §3.2 — ruling 1: absorbed by P5's
 // settings loader, typed and inert until then); "sdk" is the `Options.hooks` family. Merge order
 // (WS-08 §2, verbatim): managed -> user -> project -> local -> sdk, registration order within one

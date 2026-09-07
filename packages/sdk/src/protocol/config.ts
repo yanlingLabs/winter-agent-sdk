@@ -43,7 +43,7 @@ export interface SdkPluginConfig {
  * `sdk.d.ts:2159-2164` verbatim (R5-9 as amended after Task 1). THREE arms: a replacement string, a
  * block array split by `SYSTEM_PROMPT_DYNAMIC_BOUNDARY` (options.ts), or the preset object — whose
  * `excludeDynamicSections` is NESTED (`2163`) and doc-asserted inert for a string prompt (`2124`).
- * `preset: 'claude_code'` is the pinned closed literal; Winter's `"winter_code"` native spelling is
+ * `preset: 'claude_code'` is the pinned closed literal; Winter's own native preset spelling (BrandProfile.presetName) is
  * an ALIAS Lane C resolves, deliberately not a widening of this union (a caller passing it to the
  * pinned SDK would not typecheck, and this type exists to stay drop-in).
  */
@@ -510,7 +510,7 @@ export type ThinkingConfig =
  * config alike carry references; the store resolves one at the last responsible moment.
  *
  * - `keychain` — one record per provider/account, `account = "<providerId>:<accountId>"`, service
- *   from `Options.keychainService ?? "com.winter.core"`. Retires Norma's single fixed secret name.
+ *   from `Options.keychainService ?? WINTER_BRAND.keychainService`. Retires the single fixed secret name.
  * - `env` — a host NAMES the variable explicitly. Ambient keys are NEVER scanned implicitly: an
  *   `ANTHROPIC_API_KEY` sitting in the environment does not become a credential by existing.
  * - `file` — a shared-credentials file, a GCP service-account JSON, or a raw single-value file.
