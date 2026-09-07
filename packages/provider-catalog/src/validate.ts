@@ -136,6 +136,13 @@ export const CATALOG_VOCABULARIES = {
   slotBases: SLOT_BASES,
   slotStatuses: SLOT_STATUSES,
   familyStatuses: FAMILY_STATUSES,
+  // P7a (Lane D): the identity-header NAME allowlist belongs here for the same reason every other
+  // set does. It is a closed vocabulary the schema restates (`identityHeaders.propertyNames.enum`)
+  // and nothing was checking the two against each other -- so widening the validator's list to admit
+  // a second vendor's documented identity field would have left the cross-language contract refusing
+  // the row, discovered by whoever is furthest from the change. Being a member here is what makes
+  // the "every vocabulary is covered" test DEMAND a parity case for it.
+  identityHeaderNames: WINTER_IDENTITY_HEADER_NAMES,
   continuations: CONTINUATIONS,
   readableStates: READABLE_STATES,
   replayScopes: REPLAY_SCOPES,

@@ -139,7 +139,7 @@
         },
         "identityHeaders": {
           "type": "object",
-          "description": "WS-13b §7/§8.4 (fix-wave R-FW-2): the SECOND identity field this vendor names, if it names one (AI Horde's `Client-Agent`). Winter-authored only: the in-repo validator restricts the NAMES to an allowlist and requires every value to name Winter (`winter-agent-sdk…`; `<version>` is substituted by the adapter). Sent beside the unconditional `User-Agent` and NOT gated on a generated endpoint — it is Winter's own identity, not the operator's.",
+          "description": "WS-13b §7/§8.4 (fix-wave R-FW-2): the SECOND identity field this vendor names, if it names one (AI Horde's `Client-Agent`). Winter-authored only: the in-repo validator restricts the NAMES to an allowlist and requires every value to name the PRODUCT, either as the `<product>` placeholder (preferred — it is truthful under any brand) or as the literal `winter-agent-sdk…`; both `<product>` and `<version>` are substituted by the adapter at request time. Sent beside the unconditional `User-Agent` and NOT gated on a generated endpoint — it is Winter's own identity, not the operator's.",
           "propertyNames": { "enum": ["Client-Agent"] },
           "additionalProperties": { "type": "string", "minLength": 1 }
         }

@@ -519,6 +519,13 @@ describe("JSON Schema / validator enum parity (Minor 9)", () => {
     ["slotBases", "$defs.FamilySlot.properties.basis"],
     ["slotStatuses", "$defs.FamilySlot.properties.status"],
     ["familyStatuses", "$defs.ModelFamilyDescriptor.properties.status"],
+    // P7a (Lane D): the identity-header NAME allowlist. Not an `enum` on a value but on
+    // `propertyNames`, which is the same closed-set claim in JSON Schema's own vocabulary for keys --
+    // and it was the one closed set in this file with no parity case at all. WS-13 §5 / D21 make it
+    // load-bearing: the names are what stop a row putting a VENDOR's product-identity header on the
+    // wire, so the schema admitting a name the validator refuses (or the reverse) is a row that
+    // passes one gate and fails the other.
+    ["identityHeaderNames", "$defs.WinterProviderDescriptor.properties.identityHeaders.propertyNames"],
   ];
 
   test("every vocabulary the validator enforces is the SAME SET the schema declares", () => {
