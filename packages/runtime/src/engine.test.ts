@@ -3998,7 +3998,10 @@ describe("WS-13c: the Agent tool per family", () => {
     expect(seenKeys).toEqual(["winter-test/echo", "anthropic/claude-opus-5"]);
   });
 
-  test("WS13c-3: a settingsVersion bump re-renders the enum with no restart and no model change", async () => {
+  // R-6c-28: what this pins is the ENGINE half — a changed `settingsVersion()` re-renders at the next
+  // quiescent boundary. Whether the number can move in production is the cascade's question, not the
+  // engine's (nothing in this SDK re-resolves settings mid-session yet; see `EngineOptions.activeSlotSet`).
+  test("WS13c-3: a changed settingsVersion re-renders the enum at the next turn, with no restart and no model change", async () => {
     let version = 1;
     const perGeneration = await specsPerGeneration(
       { settingsVersion: () => version, activeSlotSet: () => (version === 1 ? GPT_SET : CLAUDE_SET) },
@@ -4013,6 +4016,36 @@ describe("WS-13c: the Agent tool per family", () => {
     expect(perGeneration).toHaveLength(2);
     expect(agentEnumOf(perGeneration[0]!)).toEqual(["astra", "sol", "terra", "luna"]);
     expect(agentEnumOf(perGeneration[1]!)).toEqual([...CLAUDE_RESERVED_SLOT_NAMES]);
+  });
+
+  // R-6c-21 (I-2): the `list_model_families` HANDLER must pass the live key, not just the wiring's
+  // producer accept one. Asserted on the CONTROL RESPONSE, after a cross-family `set_model`.
+  test("WS13c-7: `list_model_families` reports the family the session is CURRENTLY on, not the one it started on", async () => {
+    const { host, runtime } = createInMemoryChannel();
+    const done = runEngine({
+      config: baseConfig(),
+      input: runtime.input,
+      output: runtime.output,
+      provider: scriptedProvider([]),
+      tools: stubExecutor,
+      listModelFamilies: (currentModelKey?: string) => ({
+        active: currentModelKey !== undefined && currentModelKey.startsWith("anthropic/") ? CLAUDE_SET : OWN_MODEL_SET,
+        families: [],
+      }),
+    });
+    // NO user turn between them: an IDLE session is itself a quiescent boundary, so the `set_model`
+    // takes effect before the next control frame is answered (`applyPendingModelSwitch` on the idle
+    // path). That is the shortest sequence that puts a real switch between the two listings.
+    host.output.write({ type: "control_request", requestId: "fam-before", subtype: "list_model_families", payload: undefined });
+    host.output.write({ type: "control_request", requestId: "m1", subtype: "set_model", payload: { model: "anthropic/claude-opus-5" } });
+    host.output.write({ type: "control_request", requestId: "fam-after", subtype: "list_model_families", payload: undefined });
+    host.output.write({ type: "control_request", requestId: "end", subtype: "end_input", payload: undefined });
+    const frames = await drain(host.input);
+    await done;
+    const payloadOf = (id: string): { active?: { family?: string } } =>
+      (frames.find((f) => f.type === "control_response" && (f as ControlResponseFrame).requestId === id) as unknown as { payload: { active?: { family?: string } } }).payload;
+    expect(payloadOf("fam-before").active?.family).toBe("other");
+    expect(payloadOf("fam-after").active?.family).toBe("claude");
   });
 
   test("the render is memoised: an unchanged model and settings version do not recompute it", async () => {
@@ -4232,6 +4265,35 @@ describe("WS-13c: a child spawned by slot name", () => {
     expect(calls[0]!.inherit.model).toBe("claude-haiku-4-5-20251001");
     expect(calls[0]!.inherit.slot).toBeUndefined();
     expect(toolResult).not.toContain("unknown");
+  });
+
+  // M-2: the case guard (a) UNIQUELY protects. `config.model` is itself a slot name -- the pinned
+  // Claude-SDK `model: "opus"` shorthand R6-K supports -- so guard (b) does not fire (`viaSlotName`
+  // is true) and every default child would be re-provisioned onto `anthropic/claude-opus-5`, on
+  // another provider, without the parent ever asking for a different model.
+  test("M-2: a `config.model` that IS a slot name is still inherited verbatim by a default child", async () => {
+    const slotNamedParent = (requested: string): SlotProviderResolution => ({
+      ok: true,
+      modelKey: "anthropic/claude-opus-5",
+      providerId: "anthropic",
+      canonicalModelId: "claude-opus-5",
+      slot: { family: "claude", name: requested, source: "family-default" },
+      viaSlotName: true,
+    });
+    const { calls } = await spawnWith({}, { resolveSlot: slotNamedParent, config: baseConfig({ model: "opus", permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true }) });
+    expect(calls[0]!.inherit.model).toBe("opus");
+    expect(calls[0]!.inherit.slot).toBeUndefined();
+    // ...and the SAME name asked for EXPLICITLY by a child on a different parent still resolves, so
+    // the guard is about inheritance, not about the string.
+    const explicit = await spawnWith({ model: "opus" }, { resolveSlot: slotNamedParent });
+    expect(explicit.calls[0]!.inherit.model).toBe("anthropic/claude-opus-5");
+  });
+
+  // M-3: `WINTER_SUBAGENT_MODEL` goes through the SAME resolver as every other source.
+  test("M-3: WINTER_SUBAGENT_MODEL is resolved through the slot resolver like any other requested model", async () => {
+    const { calls } = await spawnWith({}, { resolveSlot: slotResolver(() => true), env: { WINTER_SUBAGENT_MODEL: "opus" } });
+    expect(calls[0]!.inherit.model).toBe("anthropic/claude-opus-5");
+    expect(calls[0]!.inherit.slot).toEqual({ family: "claude", name: "opus", source: "family-default" });
   });
 
   test("with NO resolveSlot wired the pre-P6.6 chain is byte-identical: the string goes on the child unresolved", async () => {

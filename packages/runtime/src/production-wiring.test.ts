@@ -753,6 +753,14 @@ describe("WS-13c: the wiring's model-family surface", () => {
   // slot resolution in a test with the default store would read the developer's real Keychain, which
   // this file's own header forbids. An empty in-memory store is the hermetic equivalent.
   const hermetic = { credentials: createMemoryCredentialStore() };
+  // M-4: the injection above is LOAD-BEARING, not decoration, and this asserts it rather than
+  // trusting the comment. `createProductionCredentialStore`'s first member is the Keychain and
+  // `keychain-store.ts` resolves `Bun.secrets` lazily at CALL time, so a wiring built without an
+  // injected store that then resolves a slot would read the developer's real Keychain.
+  test("every wiring in this block injects its own credential store — the default one reaches the Keychain", () => {
+    expect(typeof hermetic.credentials.get).toBe("function");
+    expect(hermetic.credentials.size()).toBe(0);
+  });
   const localSession = (sessionId: string): RuntimeConfig =>
     ({
       sessionId,
@@ -808,7 +816,9 @@ describe("WS-13c: the wiring's model-family surface", () => {
       expect(opus.ok && opus.canonicalModelId).toBe("claude-opus-5");
       // §4 step 3-i: the family's own vendor provider leads.
       expect(opus.ok && opus.providerId).toBe("anthropic");
-      expect(opus.ok && opus.slot).toEqual({ family: "claude", name: "opus", source: "own-model" });
+      // M-1: an UNADVERTISED foreign name records the source of the slot that resolved -- the claude
+      // family's curated table -- not the source of this session's own (own-model) set.
+      expect(opus.ok && opus.slot).toEqual({ family: "claude", name: "opus", source: "family-default" });
     } finally {
       wiring.dispose();
     }
@@ -973,12 +983,59 @@ describe("WS-13c: the wiring's model-family surface", () => {
     }
   });
 
-  test("settingsVersion is stable while the resolved settings view is", async () => {
+  // R-6c-27, at the wiring: the shipped default that used to hand an openai-API-key-only user a
+  // subscription row nothing could serve. `codex-oauth` leads the gpt family's vendor group, but on a
+  // cold session nobody has probed it — `unknown` must not outrank the provider the session IS on.
+  const gptSession = (sessionId: string): RuntimeConfig =>
+    ({
+      sessionId,
+      cwd,
+      model: "openai/gpt-6-astra",
+      winterHome: home,
+      settingSources: ["user"],
+      provider: { providerId: "openai", authRef: { kind: "inline", value: "fixture" } },
+    }) as unknown as RuntimeConfig;
+
+  test("R-6c-27: an openai-API-key-only session resolves `astra` to openai on the FIRST call, not to a cold subscription row", async () => {
+    const wiring = await buildProductionWiring({ config: gptSession("s-slots-tri"), env: {}, winterHome: home, provider: hermetic });
+    try {
+      expect(wiring.engineOptions.activeSlotSet!(undefined)).toMatchObject({ family: "gpt", source: "family-default" });
+      expect(wiring.engineOptions.resolveSlot!("astra", undefined)).toMatchObject({ ok: true, providerId: "openai", modelKey: "openai/gpt-6-astra" });
+    } finally {
+      wiring.dispose();
+    }
+  });
+
+  test("R-6c-27: a cold listing reports `servable: false` for a provider nobody has probed, and true for the session's own", async () => {
+    const wiring = await buildProductionWiring({ config: gptSession("s-slots-servable"), env: {}, winterHome: home, provider: hermetic });
+    try {
+      const rows = wiring.engineOptions
+        .listModelFamilies!()
+        .families.flatMap((f) => f.models.flatMap((m) => m.rows));
+      expect(rows.length).toBeGreaterThan(100);
+      // Honest by default: `unknown` is not `servable`. Before this, a cold first paint claimed every
+      // row in the catalog was servable with an empty credential store.
+      expect(rows.some((r) => r.providerId === "codex-oauth" && r.servable)).toBe(false);
+      expect(rows.filter((r) => r.servable).every((r) => r.providerId === "openai")).toBe(true);
+      expect(rows.some((r) => r.providerId === "openai" && r.servable)).toBe(true);
+    } finally {
+      wiring.dispose();
+    }
+  });
+
+  // R-6c-28: the honest scope of the seam. The version tracks the RESOLVED VIEW's identity, and this
+  // module resolves once — so in production today it never moves, and a `settings.json` edit is
+  // invisible to a running session. That missing half is the cascade's (P8 host integration, the
+  // R6b-7 precedent); the engine half is complete and tested in `engine.test.ts`.
+  test("settingsVersion tracks the resolved view's identity — and nothing re-resolves it mid-session yet", async () => {
     const wiring = await buildProductionWiring({ config: localSession("s-slots-version"), env: {}, winterHome: home, provider: hermetic });
     try {
       const settingsVersion = wiring.engineOptions.settingsVersion!;
       expect(settingsVersion()).toBe(settingsVersion());
       expect(settingsVersion()).toBeGreaterThan(0);
+      // Rewriting the file does NOT move it: no watcher and no re-resolution exist in this SDK.
+      writeSettings(join(home), { modelSlots: [{ name: "master", model: "gpt-6-astra" }] });
+      expect(settingsVersion()).toBe(1);
     } finally {
       wiring.dispose();
     }

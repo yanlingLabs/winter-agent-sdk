@@ -21,7 +21,7 @@ import { ANTHROPIC_DEFAULT_BASE_URL } from "@yanlinglabs/winter-provider-runtime
 import { startFake, sseResponse, jsonResponse, type FakeServer } from "winter-provider-conformance";
 import { startScenarioFake } from "./scenario-fake.ts";
 import { buildSessionProvider, apiKeySourceFor, connectionForProvider } from "./session-provider.ts";
-import { computeActiveSlotSet, resolveSlotToProvider } from "./slots.ts";
+import { computeActiveSlotSet, resolveSlotToProvider, type CredentialPresence } from "./slots.ts";
 import { echoProvider } from "./mock.ts";
 import type { ProviderMessage } from "../engine.ts";
 import { runEngine } from "../engine.ts";
@@ -987,7 +987,9 @@ describe("WS-13c: set_model by slot name", () => {
       ["sonnet", "claude-sonnet-5"],
       ["haiku", "claude-haiku-4.5"],
     ]),
-    slotFamily("gpt", ["codex-oauth", "openai"], [["luna", "gpt-5.6-luna"]]),
+    // `sol` is served by OPENAI ALONE, so a `set_model("sol")` lands the session on openai while
+    // codex-oauth still holds a credential -- which is what makes the R-6c-24 test below discriminating.
+    slotFamily("gpt", ["codex-oauth", "openai"], [["sol", "gpt-5.6-sol"], ["luna", "gpt-5.6-luna"]]),
     // Two families holding `flash` is what makes an ambiguity real rather than asserted.
     slotFamily("gemini", ["google"], [["flash", "gemini-3.7-flash"]]),
     slotFamily("deepseek", ["deepseek"], [["flash", "deepseek-v4-flash"]]),
@@ -1007,14 +1009,16 @@ describe("WS-13c: set_model by slot name", () => {
     ],
     [
       inFamilies(testModel({ key: "anthropic/claude-opus-5", providerId: "anthropic", upstreamId: "claude-opus-5" })),
-      inFamilies(testModel({ key: "openai/gpt-5.6-luna", providerId: "openai", upstreamId: "gpt-5.6-luna" })),
+      // Priced, so `priceUsage` after a cross-provider switch has a real number to report or lose.
+      inFamilies({ ...testModel({ key: "openai/gpt-5.6-luna", providerId: "openai", upstreamId: "gpt-5.6-luna" }), pricing: evidence({ inputPerMTokUsd: 3, outputPerMTokUsd: 15 }) }),
       inFamilies(testModel({ key: "codex-oauth/gpt-5.6-luna", providerId: "codex-oauth", upstreamId: "gpt-5.6-luna" })),
+      inFamilies(testModel({ key: "openai/gpt-5.6-sol", providerId: "openai", upstreamId: "gpt-5.6-sol" })),
     ],
     FAMILIES,
   );
 
   /** The PRODUCTION resolver over this fixture, with only the credential/enable view injected. */
-  const resolveSlot = (hasCredential: (providerId: string) => boolean) => (requested: string, currentModelKey: string | undefined) =>
+  const resolveSlot = (hasCredential: (providerId: string) => CredentialPresence) => (requested: string, currentModelKey: string | undefined) =>
     resolveSlotToProvider({
       catalog: CATALOG,
       active: computeActiveSlotSet({ catalog: CATALOG, currentModelKey, customSlots: undefined }),
@@ -1024,7 +1028,7 @@ describe("WS-13c: set_model by slot name", () => {
       preferredProviders: [],
     });
 
-  const wiringFor = (model: string, providerId: string, hasCredential: (p: string) => boolean = () => true): ReturnType<typeof buildSessionProvider> =>
+  const wiringFor = (model: string, providerId: string, hasCredential: (p: string) => CredentialPresence = () => "present"): ReturnType<typeof buildSessionProvider> =>
     buildSessionProvider({
       config: baseConfig({ model, provider: { providerId, authRef: { kind: "inline", value: "test" } } }),
       env: {},
@@ -1039,7 +1043,7 @@ describe("WS-13c: set_model by slot name", () => {
     expect(claudeSession.resolveModelSwitch("luna", undefined)).toMatchObject({ identity: { providerId: "codex-oauth", modelKey: "codex-oauth/gpt-5.6-luna" } });
     // ...and with no codex credential it is the token row, still across providers and still not a
     // `provider-mismatch` -- which is what a session-provider-qualified resolve would have produced.
-    const noCodex = wiringFor("anthropic/claude-opus-5", "anthropic", (p) => p !== "codex-oauth");
+    const noCodex = wiringFor("anthropic/claude-opus-5", "anthropic", (p) => (p !== "codex-oauth" ? "present" : "absent"));
     expect(noCodex.resolveModelSwitch("luna", undefined)).toMatchObject({ identity: { providerId: "openai", modelKey: "openai/gpt-5.6-luna" } });
   });
 
@@ -1051,7 +1055,7 @@ describe("WS-13c: set_model by slot name", () => {
   });
 
   test("a slot nothing configured can serve is a slot-unservable refusal, never a switch onto something else", () => {
-    const out = wiringFor("anthropic/claude-opus-5", "anthropic", (p) => p !== "openai" && p !== "codex-oauth").resolveModelSwitch("luna", undefined);
+    const out = wiringFor("anthropic/claude-opus-5", "anthropic", (p) => (p !== "openai" && p !== "codex-oauth" ? "present" : "absent")).resolveModelSwitch("luna", undefined);
     expect(out).toMatchObject({ refused: true, code: "slot-unservable" });
     expect("refused" in out && out.message).toContain("openai/gpt-5.6-luna");
   });
@@ -1089,6 +1093,58 @@ describe("WS-13c: set_model by slot name", () => {
     // The subscription row leads the vendor group -- this IS §4's ordering, reached because the
     // session's own provider had nothing by that name.
     expect(!("refused" in out) && out.identity.providerId).toBe("codex-oauth");
+  });
+
+  // ============================================================================================
+  // I-1 / R-6c-24: `sessionProviderId()` is a SESSION-START snapshot, and the R6-K precedence this
+  // task added rested on it. `from` is `currentOrigin()` -- the engine's LIVE identity -- so the
+  // bare-name path asks the provider the session is actually on. The split is deliberate and the
+  // two traps below are why: a QUALIFIED key must keep asking the config-material provider.
+  // ============================================================================================
+  test("R-6c-24: after a cross-provider slot switch, a BARE canonical id resolves under the LIVE provider, not the one the session started on", () => {
+    const wiring = wiringFor("anthropic/claude-opus-5", "anthropic");
+    // Step 1: the slot switch itself -- `sol` is served by openai alone, so the session is now
+    // running on openai WHILE codex-oauth still holds a credential.
+    const step1 = wiring.resolveModelSwitch("sol", undefined);
+    expect(!("refused" in step1) && step1.identity.modelKey).toBe("openai/gpt-5.6-sol");
+    // Step 2: a bare canonical id from the LIVE endpoint. Without the fix this misses under the
+    // start provider (`anthropic`) and falls to §4, which moves the session to the subscription row --
+    // another provider, another credential, another bill, silently.
+    const live = { providerId: "openai", modelKey: "openai/gpt-5.6-sol", family: "openai" };
+    const step2 = wiring.resolveModelSwitch("gpt-5.6-luna", live);
+    expect(!("refused" in step2) && step2.identity).toMatchObject({ providerId: "openai", modelKey: "openai/gpt-5.6-luna" });
+    // The control: a session that STARTED on openai has always answered this way.
+    expect(!("refused" in wiringFor("openai/gpt-5.6-luna", "openai").resolveModelSwitch("gpt-5.6-luna", undefined))).toBe(true);
+  });
+
+  test("R-6c-24 trap 1: a QUALIFIED key still resolves under the CONFIG-material provider — switching back is not a mismatch", () => {
+    // After anthropic -> luna the session runs on openai, but `config.provider.authRef` and the
+    // user's connection are still anthropic's. Reading `from` for a qualified key would make a
+    // switch BACK to the session's own provider a `provider-mismatch`.
+    const live = { providerId: "openai", modelKey: "openai/gpt-5.6-luna", family: "openai" };
+    const out = wiringFor("anthropic/claude-opus-5", "anthropic").resolveModelSwitch("anthropic/claude-opus-5", live);
+    expect("refused" in out).toBe(false);
+    expect(!("refused" in out) && out.identity.providerId).toBe("anthropic");
+  });
+
+  test("R-6c-24 trap 2: the resume comparison's PERSISTED `from` beside a qualified key is not a mismatch either", () => {
+    // engine.ts's resume path calls `resolveModelSwitch(currentIdentity.modelKey, { providerId: persisted.providerId, … })`
+    // -- a live-vs-persisted COMPARISON, not a switch. Both arguments are qualified; reading `from`
+    // for the provider would turn every cross-provider resume comparison into a refusal.
+    const persisted = { providerId: "codex-oauth", modelKey: "codex-oauth/gpt-5.6-luna", family: "openai" };
+    const out = wiringFor("anthropic/claude-opus-5", "anthropic").resolveModelSwitch("anthropic/claude-opus-5", persisted);
+    expect("refused" in out).toBe(false);
+  });
+
+  test("R-6c-24: a turn after a cross-provider switch is still PRICED — the live key self-qualifies", () => {
+    // The engine prices the LIVE, qualified key (`currentProviderIdentity.modelKey`). Paired with the
+    // session-START provider it resolved to a `provider-mismatch` and every turn after a
+    // cross-provider switch reported NO COST AT ALL.
+    const wiring = wiringFor("anthropic/claude-opus-5", "anthropic");
+    expect(!("refused" in wiring.resolveModelSwitch("sol", undefined))).toBe(true);
+    const priced = wiring.priceUsage("openai/gpt-5.6-luna", { inputTokens: 1_000_000, outputTokens: 1_000_000 });
+    expect(priced).toMatchObject({ costBasis: "list", canonicalModel: "openai/gpt-5.6-luna" });
+    expect(priced?.costUsd).toBe(18);
   });
 
   test("with NO resolveSlot wired, a bare name is exactly what it was before P6.6", () => {

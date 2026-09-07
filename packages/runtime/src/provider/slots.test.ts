@@ -7,9 +7,9 @@
 // `stampFamilyFields` the build pipeline uses, so `modelFamily`/`canonicalModelId` in this file
 // cannot drift from what a real catalog carries.
 import { describe, expect, test } from "bun:test";
-import { stampFamilyFields } from "@yanlinglabs/winter-provider-catalog";
+import { SLOT_NAME_RE, stampFamilyFields } from "@yanlinglabs/winter-provider-catalog";
 import type { ModelFamilyDescriptor, WinterCatalog, WinterModelDescriptor, WinterProviderDescriptor } from "@yanlinglabs/winter-provider-catalog";
-import { computeActiveSlotSet, renderAgentModelSchema, resolveSlotToProvider } from "./slots.ts";
+import { computeActiveSlotSet, renderAgentModelSchema, resolveSlotToProvider, type CredentialPresence } from "./slots.ts";
 
 // --- the fixture --------------------------------------------------------------------------------
 
@@ -221,6 +221,50 @@ describe("computeActiveSlotSet", () => {
     expect(none).toMatchObject({ family: "other", source: "own-model", slots: [] });
   });
 
+  // I-3 / R-6c-26: an UNCATALOGUED session (an `allowUnlisted` / custom-base-URL model, which WS-13
+  // supports on purpose) used to advertise exactly one option that could never be taken -- its
+  // canonical id has no rows, so the single slot always refused `slot-unservable` -- and the emitted
+  // name could contain a `/` or a `:tag`, breaking the pinned slot grammar.
+  describe("an uncatalogued own-model session", () => {
+    test("names the slot legally and points it at the session's own row", () => {
+      const a = computeActiveSlotSet({ catalog, currentModelKey: "zenmux/weird-model-9", customSlots: undefined });
+      expect(a).toMatchObject({ family: "other", source: "own-model" });
+      expect(a.slots[0]!.name).toBe("weird-model-9");
+      expect(SLOT_NAME_RE.test(a.slots[0]!.name)).toBe(true);
+      expect(a.slots[0]!.resolvesTo).toEqual({ providerId: "zenmux", key: "zenmux/weird-model-9" });
+    });
+
+    test("a gateway-nested id keeps a legal name — every path segment before the last is stripped", () => {
+      const a = computeActiveSlotSet({ catalog, currentModelKey: "openrouter/some-vendor/unlisted-thing", customSlots: undefined });
+      expect(a.slots[0]!.name).toBe("unlisted-thing");
+      expect(SLOT_NAME_RE.test(a.slots[0]!.name)).toBe(true);
+      expect(a.slots[0]!.resolvesTo).toEqual({ providerId: "openrouter", key: "openrouter/some-vendor/unlisted-thing" });
+    });
+
+    test("a non-size ollama tag is stripped rather than emitted into the enum", () => {
+      const a = computeActiveSlotSet({ catalog, currentModelKey: "zenmux/llama3.1:latest", customSlots: undefined });
+      expect(a.slots[0]!.name).toBe("llama3.1");
+      expect(SLOT_NAME_RE.test(a.slots[0]!.name)).toBe(true);
+    });
+
+    test("a name that cannot be made legal yields an EMPTY set — the engine then keeps the static default", () => {
+      const a = computeActiveSlotSet({ catalog, currentModelKey: "zenmux/_", customSlots: undefined });
+      expect(a).toMatchObject({ family: "other", source: "own-model", slots: [] });
+    });
+
+    test("the single option RESOLVES, unfiltered, to the session's own key — never a permanent slot-unservable", () => {
+      const active = computeActiveSlotSet({ catalog, currentModelKey: "zenmux/weird-model-9", customSlots: undefined });
+      const r = resolveSlotToProvider({ catalog, active, requested: "weird-model-9", hasCredential: () => "absent", providerEnabled: () => false, preferredProviders: [] });
+      expect(r).toMatchObject({ ok: true, modelKey: "zenmux/weird-model-9", providerId: "zenmux", viaSlotName: true });
+    });
+
+    test("a CATALOGUED own-model session is unchanged: no resolvesTo, and §4 chooses the row", () => {
+      const active = computeActiveSlotSet({ catalog, currentModelKey: "doubao/doubao-seed-2.0", customSlots: undefined });
+      expect(active.slots[0]!.resolvesTo).toBeUndefined();
+      expect(resolveSlotToProvider({ catalog, active, requested: "doubao-seed-2.0", hasCredential: () => "present", providerEnabled: () => true, preferredProviders: [] })).toMatchObject({ ok: true, providerId: "doubao" });
+    });
+  });
+
   test("an empty custom set is not a custom set", () => {
     expect(computeActiveSlotSet({ catalog, currentModelKey: "openai/gpt-6-astra", customSlots: [] }).source).toBe("family-default");
   });
@@ -251,20 +295,38 @@ describe("resolveSlotToProvider (WS-13c §4)", () => {
 
   test("vendor row first, subscription before token, then preferred, then the rest", () => {
     const active = gptSession();
-    const r = resolveSlotToProvider({ ...base, active, requested: "astra", hasCredential: (p) => p === "openrouter" || p === "openai" || p === "codex-oauth" });
+    const r = resolveSlotToProvider({ ...base, active, requested: "astra", hasCredential: (p) => (p === "openrouter" || p === "openai" || p === "codex-oauth" ? "present" : "absent") });
     expect(r).toMatchObject({ ok: true, providerId: "codex-oauth", modelKey: "codex-oauth/gpt-6-astra" });
-    const r2 = resolveSlotToProvider({ ...base, active, requested: "astra", hasCredential: (p) => p === "openrouter" || p === "openai" });
+    const r2 = resolveSlotToProvider({ ...base, active, requested: "astra", hasCredential: (p) => (p === "openrouter" || p === "openai" ? "present" : "absent") });
     expect(r2).toMatchObject({ ok: true, providerId: "openai" });
-    const r3 = resolveSlotToProvider({ ...base, active, requested: "astra", hasCredential: (p) => p === "openrouter" });
+    const r3 = resolveSlotToProvider({ ...base, active, requested: "astra", hasCredential: (p) => (p === "openrouter" ? "present" : "absent") });
     expect(r3).toMatchObject({ ok: true, providerId: "openrouter" });
     expect(r.ok && r.slot).toEqual({ family: "gpt", name: "astra", source: "family-default" });
+  });
+
+  // R-6c-27: the shipped default that used to produce a false success. An openai-API-key-only user on
+  // a gpt session asks for `astra`; codex-oauth leads the vendor group by §4 step 3-i, but nobody has
+  // probed it. `unknown` must not outrank a credential we can actually see.
+  test("an UNKNOWN credential never outranks a KNOWN one inside the same tier", () => {
+    const active = gptSession();
+    const onlyOpenai = (p: string): CredentialPresence => (p === "openai" ? "present" : "unknown");
+    expect(resolveSlotToProvider({ ...base, active, requested: "astra", hasCredential: onlyOpenai })).toMatchObject({ ok: true, providerId: "openai", modelKey: "openai/gpt-6-astra" });
+    // ...and once codex-oauth IS known present, the subscription-first rule takes over again.
+    expect(resolveSlotToProvider({ ...base, active, requested: "astra", hasCredential: () => "present" })).toMatchObject({ ok: true, providerId: "codex-oauth" });
+    // An `unknown` row is still a candidate -- it is ordered last in its tier, never filtered out,
+    // and it is never reported as "no credential configured".
+    const allUnknown = resolveSlotToProvider({ ...base, active, requested: "astra", hasCredential: () => "unknown" });
+    expect(allUnknown).toMatchObject({ ok: true, providerId: "codex-oauth" });
+    const absent = resolveSlotToProvider({ ...base, active, requested: "astra", hasCredential: (p) => (p === "openai" ? "unknown" : "absent") });
+    expect(absent).toMatchObject({ ok: true, providerId: "openai" });
+    expect(absent.ok === false && absent.wouldServe).toBe(false);
   });
 
   test("preferredProviders reorders the non-vendor tail", () => {
     // A gemini session with no Google credential: both survivors are aggregators, so the ONLY thing
     // that can order them is step 3-ii and then the admission tier.
     const active = computeActiveSlotSet({ catalog, currentModelKey: "google/gemini-3.7-flash", customSlots: undefined });
-    const hasCredential = (p: string): boolean => p !== "google";
+    const hasCredential = (p: string): CredentialPresence => (p !== "google" ? "present" : "absent");
     const byTier = resolveSlotToProvider({ ...base, active, requested: "flash", hasCredential });
     expect(byTier).toMatchObject({ ok: true, providerId: "openrouter" }); // fetched-document beats pinned-upstream
     const byPreference = resolveSlotToProvider({ ...base, preferredProviders: ["zenmux"], active, requested: "flash", hasCredential });
@@ -277,7 +339,7 @@ describe("resolveSlotToProvider (WS-13c §4)", () => {
       ...base,
       active,
       requested: "astra",
-      hasCredential: () => true,
+      hasCredential: () => "present",
       providerEnabled: (p) => p !== "openai" && p !== "codex-oauth" && p !== "openrouter",
     });
     expect(r).toMatchObject({ ok: false, code: "slot-unservable" });
@@ -287,38 +349,49 @@ describe("resolveSlotToProvider (WS-13c §4)", () => {
   });
 
   test("no credential is named as such, and never confused with a disabled provider", () => {
-    const r = resolveSlotToProvider({ ...base, active: gptSession(), requested: "astra", hasCredential: () => false });
+    const r = resolveSlotToProvider({ ...base, active: gptSession(), requested: "astra", hasCredential: () => "absent" });
     expect(r).toMatchObject({ ok: false, code: "slot-unservable" });
     expect(!r.ok && r.wouldServe.map((w) => w.why)).toEqual(["no credential configured", "no credential configured", "no credential configured"]);
   });
 
   test("a slot whose rows cannot serve a chat turn is unservable with an empty wouldServe", () => {
-    const r = resolveSlotToProvider({ ...base, active: gptSession(), requested: "terra", hasCredential: () => true });
+    const r = resolveSlotToProvider({ ...base, active: gptSession(), requested: "terra", hasCredential: () => "present" });
     expect(r).toMatchObject({ ok: false, code: "slot-unservable", wouldServe: [] });
     expect(!r.ok && r.message).toContain("gpt-5.6-terra");
   });
 
   test("a unique foreign name resolves; an ambiguous one refuses with both candidates; the Claude names always go to claude", () => {
     const active = gptSession();
-    expect(resolveSlotToProvider({ ...base, active, requested: "opus", hasCredential: () => true })).toMatchObject({ ok: true, providerId: "anthropic" });
-    const ambiguous = resolveSlotToProvider({ ...base, active, requested: "flash", hasCredential: () => true });
+    const foreign = resolveSlotToProvider({ ...base, active, requested: "opus", hasCredential: () => "present" });
+    expect(foreign).toMatchObject({ ok: true, providerId: "anthropic" });
+    // M-1: an UNADVERTISED foreign name records the source of the slot that resolved (`family-default`),
+    // not of the set that happened to be active -- the record is a statement about where the slot came
+    // from, and a claude-pinned session resolving `luna` did not get it from the pinned set.
+    expect(foreign.ok && foreign.slot).toEqual({ family: "claude", name: "opus", source: "family-default" });
+    const claudePinned = computeActiveSlotSet({ catalog, currentModelKey: "anthropic/claude-opus-5", customSlots: undefined });
+    const fromPinned = resolveSlotToProvider({ ...base, active: claudePinned, requested: "luna", hasCredential: () => "present" });
+    expect(fromPinned.ok && fromPinned.slot).toEqual({ family: "gpt", name: "luna", source: "family-default" });
+    // ...while an ADVERTISED name keeps the active set's own source.
+    const advertised = resolveSlotToProvider({ ...base, active: claudePinned, requested: "opus", hasCredential: () => "present" });
+    expect(advertised.ok && advertised.slot).toEqual({ family: "claude", name: "opus", source: "claude-pinned" });
+    const ambiguous = resolveSlotToProvider({ ...base, active, requested: "flash", hasCredential: () => "present" });
     expect(ambiguous).toMatchObject({ ok: false, code: "ambiguous-slot-name" });
     expect(!ambiguous.ok && ambiguous.message).toContain("gemini/flash");
     expect(!ambiguous.ok && ambiguous.message).toContain("deepseek/flash");
   });
 
   test("an unknown name is a typed unknown-slot refusal, never a substitution", () => {
-    const r = resolveSlotToProvider({ ...base, active: gptSession(), requested: "turbo", hasCredential: () => true });
+    const r = resolveSlotToProvider({ ...base, active: gptSession(), requested: "turbo", hasCredential: () => "present" });
     expect(r).toMatchObject({ ok: false, code: "unknown-slot", wouldServe: [] });
   });
 
   test("a custom slot's pinned provider is honoured or unservable", () => {
     const customSlots = [{ name: "master", model: "gpt-6-astra", provider: "openrouter" }];
     const active = computeActiveSlotSet({ catalog, currentModelKey: "openai/gpt-6-astra", customSlots });
-    const ok = resolveSlotToProvider({ ...base, active, customSlots, requested: "master", hasCredential: () => true });
+    const ok = resolveSlotToProvider({ ...base, active, customSlots, requested: "master", hasCredential: () => "present" });
     expect(ok).toMatchObject({ ok: true, providerId: "openrouter", modelKey: "openrouter/openai/gpt-6-astra" });
     expect(ok.ok && ok.slot).toEqual({ family: "gpt", name: "master", source: "custom" });
-    const refused = resolveSlotToProvider({ ...base, active, customSlots, requested: "master", hasCredential: (p) => p !== "openrouter" });
+    const refused = resolveSlotToProvider({ ...base, active, customSlots, requested: "master", hasCredential: (p) => (p !== "openrouter" ? "present" : "absent") });
     expect(refused).toMatchObject({ ok: false, code: "slot-unservable" });
     // The two OTHER rows must be named as "pinned elsewhere", never silently substituted.
     expect(!refused.ok && refused.wouldServe.map((w) => w.why)).toContain('pinned provider is "openrouter"');
@@ -326,18 +399,18 @@ describe("resolveSlotToProvider (WS-13c §4)", () => {
 
   test("the own-model slot resolves by its own name", () => {
     const active = computeActiveSlotSet({ catalog, currentModelKey: "doubao/doubao-seed-2.0", customSlots: undefined });
-    const r = resolveSlotToProvider({ ...base, active, requested: "doubao-seed-2.0", hasCredential: () => true });
+    const r = resolveSlotToProvider({ ...base, active, requested: "doubao-seed-2.0", hasCredential: () => "present" });
     expect(r).toMatchObject({ ok: true, providerId: "doubao", modelKey: "doubao/doubao-seed-2.0" });
     expect(r.ok && r.slot).toEqual({ family: "other", name: "doubao-seed-2.0", source: "own-model" });
   });
 
   test("a full catalog key or canonical id passes through unchanged", () => {
     const active = gptSession();
-    const byKey = resolveSlotToProvider({ ...base, active, requested: "openai/gpt-6-astra", hasCredential: () => true });
+    const byKey = resolveSlotToProvider({ ...base, active, requested: "openai/gpt-6-astra", hasCredential: () => "present" });
     expect(byKey).toMatchObject({ ok: true, modelKey: "openai/gpt-6-astra", providerId: "openai", viaSlotName: false });
-    const byCanonical = resolveSlotToProvider({ ...base, active, requested: "gpt-6-astra", hasCredential: () => true });
+    const byCanonical = resolveSlotToProvider({ ...base, active, requested: "gpt-6-astra", hasCredential: () => "present" });
     expect(byCanonical).toMatchObject({ ok: true, modelKey: "codex-oauth/gpt-6-astra", viaSlotName: false });
-    const bySlot = resolveSlotToProvider({ ...base, active, requested: "astra", hasCredential: () => true });
+    const bySlot = resolveSlotToProvider({ ...base, active, requested: "astra", hasCredential: () => "present" });
     expect(bySlot).toMatchObject({ viaSlotName: true });
   });
 
@@ -349,14 +422,14 @@ describe("resolveSlotToProvider (WS-13c §4)", () => {
       ...base,
       active: gptSession(),
       requested: "openrouter/some-vendor/never-seeded",
-      hasCredential: () => false,
+      hasCredential: () => "absent",
       providerEnabled: () => false,
     });
     expect(r).toMatchObject({ ok: true, modelKey: "openrouter/some-vendor/never-seeded", providerId: "openrouter", viaSlotName: false });
   });
 
   test("the reserved winter-test namespace passes through like any other qualified key", () => {
-    const r = resolveSlotToProvider({ ...base, active: gptSession(), requested: "winter-test/echo", hasCredential: () => false, providerEnabled: () => false });
+    const r = resolveSlotToProvider({ ...base, active: gptSession(), requested: "winter-test/echo", hasCredential: () => "absent", providerEnabled: () => false });
     expect(r).toMatchObject({ ok: true, modelKey: "winter-test/echo", viaSlotName: false });
   });
 });

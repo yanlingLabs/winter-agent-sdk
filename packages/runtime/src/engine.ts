@@ -1135,6 +1135,11 @@ export interface EngineOptions {
    * WS-13c §7 (P6.6): the session's MODEL FAMILY listing — the active slot set plus every family
    * behind "more options".
    *
+   * TAKES THE LIVE MODEL KEY (R-6c-21), for the same reason `activeSlotSet` does: the wiring's own
+   * view of the session's model is the START model, so a listing computed without the key reports
+   * the family a session has already switched away from. Optional, so a producer that ignores it
+   * still satisfies the type.
+   *
    * A function from the WIRING for the same reason `supportedModels` is: the listing needs the
    * catalog, the session's effective model AND the credential/enablement view, none of which the
    * engine has. Absent -> the handler answers `{ active: undefined, families: [] }`, the honest
@@ -1144,7 +1149,7 @@ export interface EngineOptions {
    * Winter-only and disclosed: `Query.supportedModels()` keeps its pinned `ModelInfo[]` shape
    * unchanged, and this is a separate surface rather than a widening of it.
    */
-  listModelFamilies?: () => ModelFamilyListing;
+  listModelFamilies?: (currentModelKey?: string) => ModelFamilyListing;
   /**
    * WS-13c §3 (P6.6): the session's ACTIVE SLOT SET, for the model key given.
    *
@@ -1156,7 +1161,14 @@ export interface EngineOptions {
    * `currentProviderIdentity?.modelKey ?? currentModel` and memoises on `(that key, settingsVersion())`,
    * so all three re-render points (session start, a `set_model` that lands, a `modelSlots` change)
    * are one comparison made at the next `providerToolSpecs()` — which happens per turn, and a turn
-   * boundary IS the quiescent boundary R13c-4 names. No watcher, no restart.
+   * boundary IS the quiescent boundary R13c-4 names.
+   *
+   * WHAT THIS DOES AND DOES NOT GUARANTEE (R-6c-28). The ENGINE half needs no watcher and no restart:
+   * whenever `settingsVersion()` changes, the next turn re-renders. What no part of this SDK does yet
+   * is RE-RESOLVE the settings cascade mid-session — `production-wiring.ts` resolves once and hands
+   * down a live getter, exactly as R6b-7's `providerSettings` has since WS-13b — so today the version
+   * only moves when a HOST hands down a new resolved view. Until P8's host integration does that, a
+   * `modelSlots` edit to a file is not seen by a running session. Plumbed, not yet reachable.
    *
    * ABSENT -> the Agent descriptor keeps its STATIC pinned enum and its description's marker block is
    * stripped, which is what every scripted double and every pre-P6.6 fixture sees.
@@ -1175,8 +1187,9 @@ export interface EngineOptions {
   resolveSlot?: (requested: string, currentModelKey: string | undefined) => SlotProviderResolution;
   /**
    * WS-13c §5 (P6.6): a monotonically increasing number the WIRING bumps whenever the resolved
-   * settings view changes, so a `modelSlots`/`preferredProviders` edit re-renders the Agent tool at
-   * the next quiescent boundary with no restart (the hot-reload rule).
+   * settings view changes, so a `modelSlots`/`preferredProviders` change re-renders the Agent tool at
+   * the next quiescent boundary. See `activeSlotSet` for what "the resolved view changes" requires
+   * today (a host handing one down) and what it does not (a watcher in this SDK).
    *
    * A NUMBER rather than the settings object, deliberately: the memo compares it, and comparing a
    * settings OBJECT by identity would re-render on every re-resolve that changed nothing while
@@ -3623,7 +3636,15 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
           }
           // WS-13c §7: Winter-only, payload-free. The producer is wired by production-wiring.ts (Lane A) from Lane C's builder.
           if (cf.subtype === "list_model_families") {
-            output.write({ type: "control_response", requestId: cf.requestId, ok: true, payload: listModelFamilies?.() ?? { active: undefined, families: [] } });
+            // R-6c-21: the LIVE model key, exactly as `providerToolSpecs()` reads it. Called bare, the
+            // producer fell back to the session's START model, so §7's switcher listed the family the
+            // session had already left -- the same "false information" D25 forbids on the enum.
+            output.write({
+              type: "control_response",
+              requestId: cf.requestId,
+              ok: true,
+              payload: listModelFamilies?.(currentProviderIdentity?.modelKey ?? currentModel) ?? { active: undefined, families: [] },
+            });
             continue;
           }
           // Winter-only, disclosed — see `EngineOptions.accountInfo` for why the pin's own surface

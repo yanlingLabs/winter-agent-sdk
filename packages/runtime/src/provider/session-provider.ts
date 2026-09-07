@@ -428,6 +428,16 @@ export function buildSessionProvider(opts: SessionProviderOptions): SessionProvi
    * vendor A's key on the wire to vendor B's endpoint -- and this function is the closed door.
    */
   const describeTargetMaterial = (resolved: ResolvedModel, buildOpts: BuildProviderOptions = {}): TargetMaterial => {
+    // DELIBERATELY KEYED TO THE CONFIG-MATERIAL PROVIDER, NOT THE LIVE ONE (R-6c-24). `sessionProvider`
+    // is assigned at selection and never follows a `set_model`, and that is CORRECT here: this
+    // function answers "whose credential and connection may this target use", and
+    // `config.provider.authRef` / the user's `connection` were configured for the provider the
+    // session STARTED on. Making it follow the installed switch would reintroduce Ruling E-1's
+    // probe-P1 bug -- after anthropic -> a `luna` slot switch, an OpenAI row would compare equal,
+    // take `source: "session"`, and put anthropic's inline key and base URL on the wire to OpenAI.
+    // The live provider matters at the SWITCH SEAM (which id a bare name is looked up under) and in
+    // pricing; both read it from `from`/the qualified key instead. Do not "fix" this to match them.
+    //
     // `resolving`: the session's own model, never cross-provider (see the state's own comment).
     // `unknown`: FAIL CLOSED -- cross-provider, so the target gets its own record or a typed refusal.
     // `{ known }`: the ordinary comparison.
@@ -545,7 +555,19 @@ export function buildSessionProvider(opts: SessionProviderOptions): SessionProvi
     if (slot !== undefined && slot.ok && slot.viaSlotName) {
       result = resolveUnder(slot.modelKey, slot.providerId);
     } else {
-      const own = resolveUnder(model, sessionProviderId());
+      // R-6c-24, and the split is the whole point. A BARE name is looked up under the provider the
+      // session is LIVE on (`from` is `currentOrigin()`, built from `currentProviderIdentity`), because
+      // `sessionProviderId()` is a session-START snapshot that `installIdentity` never updates: after
+      // a cross-provider slot switch it made the session's own current model's bare id miss, fall to
+      // §4, and move the session again -- another provider, another credential, another bill.
+      //
+      // A QUALIFIED key keeps asking `sessionProviderId()`, and that is not an oversight: R6-K's
+      // `provider-mismatch` is a statement about the CONFIG-MATERIAL provider (see
+      // `describeTargetMaterial`). Reading `from` there would refuse two legitimate callers -- a
+      // switch BACK to the session's own provider after a slot switch, and the engine's resume
+      // comparison, which passes a PERSISTED `from` beside a qualified key precisely to compare them.
+      const lookupProviderId = model.includes("/") ? sessionProviderId() : (from?.providerId ?? sessionProviderId());
+      const own = resolveUnder(model, lookupProviderId);
       result = own instanceof WinterProviderResolutionError && slot?.ok === true ? resolveUnder(slot.modelKey, slot.providerId) : own;
     }
     if (result instanceof WinterProviderResolutionError) return { refused: true, code: result.code, message: result.message };
@@ -579,7 +601,12 @@ export function buildSessionProvider(opts: SessionProviderOptions): SessionProvi
   // `undefined` here -- no field is invented for it. `contextWindow`/`maxOutputTokens` come from the
   // descriptor when known and are otherwise omitted, exactly as the R6-H amendment states.
   const priceUsage = (modelKey: string, usage: ProviderUsage): PricedUsage | undefined => {
-    const providerId = sessionProviderId();
+    // R-6c-24: a `/`-BEARING KEY IS RESOLVED WITHOUT A PROVIDER ID -- it self-qualifies. The engine
+    // always prices the live, qualified key (`currentProviderIdentity.modelKey`), and pairing that
+    // with the session-START `sessionProviderId()` made every turn after a cross-provider switch
+    // resolve to nothing and report NO COST AT ALL. A bare key still needs the session's provider to
+    // mean anything, so it keeps it.
+    const providerId = modelKey.includes("/") ? undefined : sessionProviderId();
     const result = registry.resolve({ model: modelKey, ...(providerId !== undefined ? { provider: { providerId } } : {}) });
     if (result instanceof WinterProviderResolutionError || result.descriptor === undefined) return undefined;
     // WS-13b §1: R6-H prices a turn from the model row's `pricing` evidence -- which, for a

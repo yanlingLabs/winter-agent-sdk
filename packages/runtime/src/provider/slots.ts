@@ -10,7 +10,7 @@
 // worse, into a quiet resolution onto a model nobody asked for) is the exact behaviour the whole
 // spec family forbids.
 import type { FamilySlot, ModelFamilyDescriptor, WinterCatalog, WinterModelDescriptor } from "@yanlinglabs/winter-provider-catalog";
-import { CLAUDE_FAMILY_ID, OTHER_FAMILY_ID, canonicalModelIdOf, familyOfModelKey, resolveSlotName, rowsForCanonicalId } from "@yanlinglabs/winter-provider-catalog";
+import { CLAUDE_FAMILY_ID, OTHER_FAMILY_ID, SLOT_NAME_RE, canonicalModelIdOf, familyOfModelKey, resolveSlotName, rowsForCanonicalId } from "@yanlinglabs/winter-provider-catalog";
 import type { ActiveSlotSet, ModelSlotSetting, SlotView } from "@yanlinglabs/winter-agent-sdk";
 
 /**
@@ -113,15 +113,32 @@ export function computeActiveSlotSet(input: ActiveSlotSetInput): ActiveSlotSet {
     // descriptor's static default rather than advertising an enum with nothing in it.
     return { family: family?.id ?? OTHER_FAMILY_ID, source: "own-model", slots: [] };
   }
+  const name = ownModelSlotName(canonicalModelId);
+  if (name === undefined) {
+    // No legal token can be derived. An EMPTY set rather than an illegal one: the engine keeps the
+    // Agent descriptor's static default and strips the marker block, which is a truthful "this
+    // session has no curated options" — an enum entry the grammar forbids would not be.
+    return { family: family?.id ?? OTHER_FAMILY_ID, source: "own-model", slots: [] };
+  }
+  // R-6c-26: an UNCATALOGUED model (an `allowUnlisted` / custom-base-URL session, which WS-13
+  // supports on purpose) has no rows for its canonical id, so §4's candidate search finds nothing and
+  // the ONE option this session advertises would refuse `slot-unservable` every single time. The
+  // spine's `SlotView.resolvesTo` is exactly the field for "this slot already knows what it is": the
+  // session's own key, on the session's own provider. `resolveSlotToProvider` honours it verbatim,
+  // unfiltered, for the same reason a full catalog key passes through unfiltered — the registry and
+  // the child's own provider resolution already judge it, and judging it twice, differently, is how
+  // an advertised option becomes untakeable.
+  const ownProviderId = row === undefined && currentModelKey !== undefined ? providerPrefixOf(currentModelKey) : undefined;
   return {
     family: family?.id ?? OTHER_FAMILY_ID,
     source: "own-model",
     slots: [
       {
-        name: canonicalModelId.slice(0, 32),
+        name,
         canonicalModelId,
         description: row?.displayName ?? canonicalModelId,
         reason: "the session's own model (no curated slots for this family)",
+        ...(ownProviderId !== undefined && currentModelKey !== undefined ? { resolvesTo: { providerId: ownProviderId, key: currentModelKey } } : {}),
       },
     ],
   };
@@ -131,6 +148,34 @@ export function computeActiveSlotSet(input: ActiveSlotSetInput): ActiveSlotSet {
 function stripProviderPrefix(modelKey: string): string {
   const slash = modelKey.indexOf("/");
   return slash > 0 ? modelKey.slice(slash + 1) : modelKey;
+}
+
+/** The provider half of a catalog key, or `undefined` for a bare id (which names no provider). */
+function providerPrefixOf(modelKey: string): string | undefined {
+  const slash = modelKey.indexOf("/");
+  return slash > 0 ? modelKey.slice(0, slash) : undefined;
+}
+
+/**
+ * A canonical id turned into a LEGAL slot token, or `undefined` when it cannot be (R-6c-26).
+ *
+ * The own-model slot is the one place a slot name is DERIVED rather than authored, so it is the one
+ * place the pinned grammar (`SLOT_NAME_RE`) can be broken: a gateway-nested id keeps a `/`
+ * (`openrouter/some-vendor/unlisted-thing` -> `some-vendor/unlisted-thing`) and a non-size Ollama tag
+ * keeps a `:` (`llama3.1:latest`) — both of which the normaliser deliberately leaves alone, because
+ * they are part of the model's real identity. They are not part of an ENUM TOKEN, though: the token
+ * is what a model types into `AgentInput.model`, and the catalog's own integrity rule is that every
+ * slot name matches the grammar.
+ *
+ * Every path segment before the last is dropped and everything from the first `:` is cut; the
+ * canonical id itself is untouched (it stays the model's identity on the `SlotView`). `undefined`
+ * when nothing legal survives — the caller then advertises NO slot rather than an illegal one.
+ */
+function ownModelSlotName(canonicalModelId: string): string | undefined {
+  const lastSegment = canonicalModelId.slice(canonicalModelId.lastIndexOf("/") + 1);
+  const colon = lastSegment.indexOf(":");
+  const name = (colon >= 0 ? lastSegment.slice(0, colon) : lastSegment).toLowerCase().slice(0, 32);
+  return SLOT_NAME_RE.test(name) ? name : undefined;
 }
 
 /**
@@ -147,11 +192,27 @@ export function renderAgentModelSchema(active: ActiveSlotSet): { enum: string[];
   };
 }
 
+/**
+ * WS-13c §4 step 2, as three states rather than two (R-6c-27).
+ *
+ * `CredentialStore.get` is asynchronous (a Keychain read) while this whole resolver is synchronous,
+ * so a caller genuinely cannot always answer. Collapsing that to `true` made a COLD subscription row
+ * win §4 step 3-i over a WARM token row the user actually has — an openai-API-key-only session's
+ * first `Agent(model: "astra")` chose `codex-oauth`, and `set_model` reported success and only failed
+ * at the next generation. Collapsing it to `false` is worse: it writes "no credential configured"
+ * into a `wouldServe` line about a provider that may well be configured, which is a false statement
+ * about the user's setup rather than a missing one.
+ *
+ * So: `absent` filters the row out and names the reason; `unknown` keeps it, but orders it AFTER
+ * every `present` row in the same §4 tier.
+ */
+export type CredentialPresence = "present" | "absent" | "unknown";
+
 export interface SlotProviderResolutionInput {
   catalog: WinterCatalog;
   active: ActiveSlotSet;
   requested: string;
-  hasCredential: (providerId: string) => boolean;
+  hasCredential: (providerId: string) => CredentialPresence;
   providerEnabled: (providerId: string) => boolean;
   preferredProviders: readonly string[];
   /**
@@ -195,6 +256,7 @@ interface OrderInput {
   catalog: WinterCatalog;
   vendorProviders: readonly string[];
   preferredProviders: readonly string[];
+  hasCredential: (providerId: string) => CredentialPresence;
 }
 
 /**
@@ -206,25 +268,30 @@ interface OrderInput {
  * same provider, which `rowsForCanonicalId` cannot produce twice for one canonical id.
  */
 function orderCandidates(rows: readonly WinterModelDescriptor[], order: OrderInput): WinterModelDescriptor[] {
-  const { catalog, vendorProviders, preferredProviders } = order;
-  const rank = (row: WinterModelDescriptor): [number, number, number, string] => {
+  const { catalog, vendorProviders, preferredProviders, hasCredential } = order;
+  // R-6c-27: WITHIN a tier, a row whose credential is KNOWN PRESENT outranks one whose credential is
+  // merely not known to be absent. That is what stops a cold subscription row taking the vendor
+  // group's first place from a token row the user actually configured -- the ordering never has to
+  // guess, it just prefers the thing it can see.
+  const presenceRank = (row: WinterModelDescriptor): number => (hasCredential(row.providerId) === "present" ? 0 : 1);
+  const rank = (row: WinterModelDescriptor): [number, number, number, number, string] => {
     const vendorIdx = vendorProviders.indexOf(row.providerId);
     if (vendorIdx >= 0) {
       // The subscription/token split is computed from the PROVIDER ROW's own `pricingBasis` rather
       // than trusted to the overlay's authoring order: the ruling ("a paid subscription's marginal
       // cost is zero") is about what the credential is billed, which is data.
       const basis = catalog.providers.find((p) => p.id === row.providerId)?.pricingBasis;
-      return [0, basis === "subscription" ? 0 : 1, vendorIdx, row.providerId];
+      return [0, presenceRank(row), basis === "subscription" ? 0 : 1, vendorIdx, row.providerId];
     }
     const preferredIdx = preferredProviders.indexOf(row.providerId);
-    if (preferredIdx >= 0) return [1, 0, preferredIdx, row.providerId];
+    if (preferredIdx >= 0) return [1, presenceRank(row), 0, preferredIdx, row.providerId];
     const tier = catalog.providers.find((p) => p.id === row.providerId)?.admission.tier;
-    return [2, 0, tier !== undefined ? (TIER_RANK[tier] ?? TIER_RANK["pinned-upstream"]!) : TIER_RANK["pinned-upstream"]!, row.providerId];
+    return [2, presenceRank(row), 0, tier !== undefined ? (TIER_RANK[tier] ?? TIER_RANK["pinned-upstream"]!) : TIER_RANK["pinned-upstream"]!, row.providerId];
   };
   return [...rows].sort((a, b) => {
-    const [a0, a1, a2, a3] = rank(a);
-    const [b0, b1, b2, b3] = rank(b);
-    return a0 - b0 || a1 - b1 || a2 - b2 || a3.localeCompare(b3);
+    const [a0, a1, a2, a3, a4] = rank(a);
+    const [b0, b1, b2, b3, b4] = rank(b);
+    return a0 - b0 || a1 - b1 || a2 - b2 || a3 - b3 || a4.localeCompare(b4);
   });
 }
 
@@ -250,7 +317,10 @@ function resolveCanonical(input: CanonicalResolutionInput): SlotProviderResoluti
       wouldServe.push({ key: row.key, providerId: row.providerId, why: `pinned provider is "${pinnedProvider}"` });
       continue;
     }
-    if (!hasCredential(row.providerId)) {
+    // ONLY a known `absent` filters a row out. `unknown` survives and is ordered last within its tier
+    // (see `orderCandidates`) -- reporting "no credential configured" for a provider nobody has looked
+    // at yet would be a false claim about the user's configuration.
+    if (hasCredential(row.providerId) === "absent") {
       wouldServe.push({ key: row.key, providerId: row.providerId, why: "no credential configured" });
       continue;
     }
@@ -260,7 +330,7 @@ function resolveCanonical(input: CanonicalResolutionInput): SlotProviderResoluti
     }
     survivors.push(row);
   }
-  const chosen = orderCandidates(survivors, { catalog, vendorProviders, preferredProviders })[0];
+  const chosen = orderCandidates(survivors, { catalog, vendorProviders, preferredProviders, hasCredential })[0];
   if (chosen === undefined) {
     // The EXPLICIT empty-candidates branch (spine addendum): a validated catalog does not guarantee
     // a slot still has a servable row at resolution time, and "no configured provider serves it" with
@@ -297,6 +367,19 @@ export function resolveSlotToProvider(input: SlotProviderResolutionInput): SlotP
   //     slot that happens to share it (the user's set IS the active set, §5).
   if (active.source === "custom" || active.source === "own-model") {
     const view = active.slots.find((s) => s.name === requested);
+    if (view !== undefined && view.resolvesTo !== undefined) {
+      // R-6c-26: the slot already knows what it is (the own-model set of an uncatalogued session).
+      // PASS THROUGH UNFILTERED, on the same regression-floor reasoning as the qualified-key door
+      // below: this key names the session's own provider, which is by definition configured.
+      return {
+        ok: true,
+        modelKey: view.resolvesTo.key,
+        providerId: view.resolvesTo.providerId,
+        canonicalModelId: view.canonicalModelId,
+        slot: { family: active.family, name: requested, source: active.source },
+        viaSlotName: true,
+      };
+    }
     if (view !== undefined) {
       const pinnedProvider = active.source === "custom" ? input.customSlots?.find((c) => c.name === requested)?.provider : undefined;
       return resolveCanonical({
@@ -349,7 +432,15 @@ export function resolveSlotToProvider(input: SlotProviderResolutionInput): SlotP
       canonicalModelId: named.slot.canonicalModelId,
       vendorProviders: vendorProvidersFor(catalog, named.family.id, named.slot.canonicalModelId),
       pinnedProvider: named.slot.provider,
-      slot: { family: named.family.id, name: named.slot.name, source: active.source },
+      slot: {
+        family: named.family.id,
+        name: named.slot.name,
+        // M-1: the source of the slot that RESOLVED, not of the set that happened to be active. An
+        // UNADVERTISED foreign name (§3 acceptance (b)/(d)) came out of a family's curated table, so
+        // it is `family-default` however the session's own set was built -- labelling `luna` from a
+        // Claude session `claude-pinned` writes a false statement into a persisted child record.
+        source: named.advertised ? active.source : "family-default",
+      },
       viaSlotName: true,
     });
   }

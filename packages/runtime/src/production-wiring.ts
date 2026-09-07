@@ -71,7 +71,7 @@ import { redactCredentialRef } from "./provider/selection.ts";
 // WS-13c (P6.6): the family layer. `slots.ts` is Lane A's resolver, `family-listing.ts` Lane C's
 // listing builder, `validateModelSlots` Lane B's whole-set validator -- one wiring composes all
 // three, so the Agent tool, `set_model` and the listing can never disagree about a slot.
-import { computeActiveSlotSet, resolveSlotToProvider, type SlotProviderResolution } from "./provider/slots.ts";
+import { computeActiveSlotSet, resolveSlotToProvider, type CredentialPresence, type SlotProviderResolution } from "./provider/slots.ts";
 import { buildModelFamilyListing } from "./provider/family-listing.ts";
 import { validateModelSlots, type ModelSlotsLookup } from "@yanlinglabs/winter-agent-sdk";
 import type { ActiveSlotSet, ModelFamilyListing, ModelSlotSetting } from "@yanlinglabs/winter-agent-sdk";
@@ -836,7 +836,11 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
   //
   // Everything below is a GETTER over `settingsGetter()` and the session's live model key, for the
   // same reason the provider-enable view above is: `modelSlots` and `preferredProviders` take effect
-  // at the next quiescent boundary through the existing cascade, with no restart and nothing rebuilt.
+  // at the next quiescent boundary through the existing cascade, with nothing rebuilt and no restart
+  // of the SESSION. R-6c-28: that is the seam, not yet the end-to-end behaviour -- this module
+  // resolves settings ONCE and nothing in this SDK re-resolves them mid-session (the identical R6b-7
+  // limitation `providerSettings` has carried since WS-13b), so the version only moves when a HOST
+  // hands down a new resolved view. Closing it is P8 host integration, and it is named debt.
 
   const slotCatalog = providerWiring.catalog;
 
@@ -855,24 +859,27 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
    *
    * A SYNCHRONOUS ANSWER OVER AN ASYNCHRONOUS FACT, and the shape is forced: `CredentialStore.get`
    * is async (a Keychain read), while `SlotProviderResolutionInput.hasCredential` and
-   * `ResolveModelSwitch` are both synchronous. So this is a cache with three honest states:
+   * `ResolveModelSwitch` are both synchronous. TRI-STATE rather than boolean (R-6c-27), because the
+   * honest third answer is "nobody has looked yet":
    *
-   *   - the SESSION's own provider -> `true` with no lookup at all. `describeTargetMaterial` answers
-   *     `source: "session"` for it, so the session's own material is the credential by construction.
-   *   - a provider this session has already probed -> the probe's answer.
-   *   - a provider it has NOT probed -> `true`, OPTIMISTICALLY, and a probe is scheduled so the next
-   *     resolution is exact. `false` would be the worse default: it would put "no credential
-   *     configured" into a `wouldServe` line about a provider the user may well have configured,
-   *     which is a false statement about their setup rather than a missing one. And an optimistic
-   *     `true` never becomes a substitution -- the credential is verified again downstream, where
-   *     `resolveChildProvider` refuses the spawn with `no-credential-for-provider` and
-   *     `buildProvider` refuses the first generation, both naming the provider.
+   *   - the SESSION's own provider -> `"present"` with no lookup at all. `describeTargetMaterial`
+   *     answers `source: "session"` for it, so the session's own material is the credential by
+   *     construction.
+   *   - a provider this session has already probed -> `"present"` / `"absent"`.
+   *   - a provider it has NOT probed -> `"unknown"`, and a probe is scheduled so the next resolution
+   *     is exact. `"absent"` would be a false claim about the user's configuration; the earlier
+   *     optimistic `true` was not a substitution (the credential is verified again downstream) but it
+   *     let a COLD subscription row take §4 step 3-i's first place from a WARM token row -- an
+   *     openai-API-key-only session's first `Agent(model: "astra")` chose `codex-oauth`, and
+   *     `set_model` reported success and failed only at the next generation. `unknown` orders after
+   *     `present` inside the same tier, which removes exactly that false success.
    *
-   * NO PREWARM AT SESSION START, deliberately: warming the ~12 providers that can serve one active
-   * set would put a dozen Keychain reads on every session's startup path (and into every test that
-   * builds a real wiring). The cache instead fills from the probes this session was going to make
-   * anyway -- `resolveChildProvider`'s own, plus one background read per cold provider the moment a
-   * slot resolution first asks about it.
+   * THE PREWARM IS BOUNDED TO THE ACTIVE FAMILY'S `vendorProviders` (<=3 ids), and it is scheduled at
+   * the FIRST slot resolution rather than at session start: warming everything that could serve one
+   * active set would be a dozen Keychain reads on every startup path -- and into every test that
+   * builds a real wiring -- while warming nothing left the vendor group cold exactly where §4 leans
+   * on it hardest. The cache otherwise fills from probes this session was going to make anyway
+   * (`resolveChildProvider`'s own) plus one background read per cold provider a resolution asks about.
    */
   const CREDENTIAL_PRESENCE_TTL_MS = 5_000;
   const credentialPresence = new Map<string, { present: boolean; at: number }>();
@@ -897,20 +904,45 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
   const recordCredentialPresence = (providerId: string, present: boolean): void => {
     credentialPresence.set(providerId, { present, at: Date.now() });
   };
+  // M-4: a probe that lands after `dispose()` must change nothing. It cannot be CANCELLED (the store
+  // API has no abort), so the session is marked disposed and every in-flight answer is discarded --
+  // which is what stops a probe scheduled by the last slot resolution writing into a cache whose
+  // session is gone, and (in a test) touching a credential store after the test that owned it ended.
+  let credentialProbesDisposed = false;
   const refreshCredentialPresence = (providerId: string): void => {
-    if (credentialProbesInFlight.has(providerId)) return;
+    if (credentialProbesDisposed || credentialProbesInFlight.has(providerId)) return;
     credentialProbesInFlight.add(providerId);
     void probeCredentialPresence(providerId)
-      .then((present) => recordCredentialPresence(providerId, present))
+      .then((present) => {
+        if (!credentialProbesDisposed) recordCredentialPresence(providerId, present);
+      })
       .catch(() => undefined) // a failed probe leaves the cache exactly as it was
       .finally(() => credentialProbesInFlight.delete(providerId));
   };
-  const credentialPresent = (providerId: string): boolean => {
+  const credentialPresent = (providerId: string): CredentialPresence => {
+    // The SESSION's own provider is `present` SYNCHRONOUSLY and without a probe: its material is
+    // `config.provider.authRef` (or a keyless `local-none` row), which is configured by construction.
+    // Waiting for a probe to say so would leave the one provider this session certainly has in
+    // `unknown` on the first resolution -- exactly where §4's vendor group needs it most.
+    if (providerId === providerWiring.sessionProviderId()) return "present";
     const cached = credentialPresence.get(providerId);
-    // The TTL is what keeps "no setting needs a restart" true for credentials too: a key stored
-    // mid-session is visible at the next resolution rather than at the next process.
+    // The TTL is what keeps a mid-session credential change visible: a key stored while the session
+    // runs is seen at the next resolution rather than at the next process.
     if (cached === undefined || Date.now() - cached.at > CREDENTIAL_PRESENCE_TTL_MS) refreshCredentialPresence(providerId);
-    return cached?.present ?? true;
+    return cached === undefined ? "unknown" : cached.present ? "present" : "absent";
+  };
+  /**
+   * R-6c-27: the ACTIVE family's own `vendorProviders`, probed once, the first time this session
+   * resolves a slot or paints a listing. Bounded to <=3 ids by the overlay's own shape, coalesced by
+   * `refreshCredentialPresence`, and never awaited -- the very first answer may still be `unknown`,
+   * and the tier ordering already handles that honestly.
+   */
+  let vendorPrewarmDone = false;
+  const prewarmActiveVendorProviders = (currentModelKey: string | undefined): void => {
+    if (vendorPrewarmDone) return;
+    vendorPrewarmDone = true;
+    const familyId = computeActiveSlotSet({ catalog: slotCatalog, currentModelKey: currentModelKey ?? providerWiring.resolved?.modelKey ?? config.model, customSlots: undefined }).family;
+    for (const id of slotCatalog.families.find((f) => f.id === familyId)?.vendorProviders ?? []) refreshCredentialPresence(id);
   };
   const providerEnabled = (providerId: string): boolean => providerSettingsFrom(settingsGetter())[providerId]?.enabled !== false;
   const preferredProviders = (): string[] => {
@@ -972,6 +1004,7 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
   };
 
   const resolveSlot = (requested: string, currentModelKey: string | undefined): SlotProviderResolution => {
+    prewarmActiveVendorProviders(currentModelKey);
     const custom = customSlots();
     return resolveSlotToProvider({
       catalog: slotCatalog,
@@ -992,6 +1025,12 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
    * (see the file header), so a host that re-resolves hands down a NEW object and the version bumps
    * at the engine's next turn boundary. A session whose settings never change keeps one version and
    * the Agent tool's render is computed once.
+   *
+   * R-6c-28, stated plainly so nobody reads more into this than it does: NOTHING IN THIS SDK
+   * RE-RESOLVES `resolveSettingsDetailed` after the session starts, so in production today this
+   * returns 1 for the life of a session and an edit to `settings.json` is invisible until the next
+   * one. The engine half is correct and complete; the missing half is a settings view that can
+   * change, which is the cascade's (P8 host integration, R6b-7's precedent).
    */
   let settingsIdentity: Settings | undefined = settingsGetter();
   let settingsVersionCounter = 1;
@@ -1067,11 +1106,18 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
             // owed and recorded in this task's report: widen the option to
             // `(currentModelKey?: string) => ModelFamilyListing` and call it with
             // `currentProviderIdentity?.modelKey ?? currentModel`. This side is already correct.
-            listModelFamilies: (currentModelKey?: string): ModelFamilyListing =>
-              buildModelFamilyListing({
+            listModelFamilies: (currentModelKey?: string): ModelFamilyListing => {
+              prewarmActiveVendorProviders(currentModelKey);
+              return buildModelFamilyListing({
                 catalog: slotCatalog,
                 active: activeSlotSet(currentModelKey),
-                servable: (providerId) => credentialPresent(providerId) && providerEnabled(providerId),
+                // R-6c-27: `"present"` ONLY. §7 defines `servable` as "a credential is configured and
+                // the provider is enabled", so `unknown` is `false` -- honest by default. A cold
+                // session's first paint used to report `servable: true` for every row in the catalog,
+                // which states something nobody knows; the probe this call schedules makes the next
+                // paint accurate. The tri-state itself belongs in `ModelFamilyListing`'s row shape,
+                // which is a P7 carry (the spine's public type is not widened here).
+                servable: (providerId) => credentialPresent(providerId) === "present" && providerEnabled(providerId),
                 // THE SAME §4 ORDERING the resolver uses, expressed as a one-slot custom set rather
                 // than re-derived: a listing that showed a different first row than a `set_model`
                 // would actually reach is a listing that lies about what clicking it does.
@@ -1087,7 +1133,8 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
                   });
                   return result.ok ? { providerId: result.providerId, key: result.modelKey } : undefined;
                 },
-              }),
+              });
+            },
           }
         : {}),
       // P6 fix wave (Rulings E-2 / E-3): the switch seam and the fallback candidates, from the SAME
@@ -1229,6 +1276,9 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
     },
     warnings,
     dispose(): void {
+      // M-4: stop scheduling credential probes and ignore whatever is still in flight -- see
+      // `refreshCredentialPresence`.
+      credentialProbesDisposed = true;
       clearSkillSessionRuntime(skillRuntimeKey);
       clearPluginAgents(config.sessionId);
     },
