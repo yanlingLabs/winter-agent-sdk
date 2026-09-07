@@ -123,11 +123,16 @@ const catalog: WinterCatalog = {
 
 describe("buildModelFamilyListing", () => {
   test("families carry their slots and every model grouped by canonical id with per-row servable states", () => {
-    // P7a: `servable` is the TRI-STATE `ModelRowServable`, not a boolean. This seam's own predicate
-    // is still two-valued, so it renders exactly two of the three states and never `"unknown"` --
-    // asserted here as the LITERAL strings, because `"absent"` is truthy and a test written against
-    // truthiness would pass against a listing that had silently stopped distinguishing them.
-    const listing = buildModelFamilyListing({ catalog, active: undefined, servable: (p) => p === "openai" });
+    // P7a (Lane D): `servable` is the TRI-STATE `ModelRowServable` and this seam now PASSES IT
+    // THROUGH rather than rendering a boolean into two of the three states. All three reach the
+    // listing, and they are asserted as LITERAL strings -- `"absent"` and `"unknown"` are both
+    // truthy, so a test written against truthiness would pass against a listing that had stopped
+    // distinguishing them at all.
+    const listing = buildModelFamilyListing({
+      catalog,
+      active: undefined,
+      servable: (p) => (p === "openai" ? "present" : p === "codex-oauth" ? "absent" : "unknown"),
+    });
     const gpt = listing.families.find((f) => f.id === "gpt")!;
     expect(gpt.slots.map((s) => s.name)).toEqual(["astra", "sol", "terra", "luna"]);
     const astra = gpt.models.find((m) => m.canonicalModelId === "gpt-6-astra")!;
@@ -135,14 +140,23 @@ describe("buildModelFamilyListing", () => {
       expect.arrayContaining([
         ["openai", "present"],
         ["codex-oauth", "absent"],
-        ["openrouter", "absent"],
+        ["openrouter", "unknown"],
       ]),
     );
-    expect(astra.rows.some((r) => r.servable === "unknown")).toBe(false);
+  });
+
+  test("P7a: the third state is not synthesised here -- every row reports exactly what the predicate said", () => {
+    // The spine's shim mapped a boolean into two states and could never emit `"unknown"`; a fix that
+    // "added" the third state in this file rather than in the predicate would be inventing one out
+    // of the same two bits. So: a predicate that answers `"unknown"` for everything must produce a
+    // listing where nothing is anything else.
+    const listing = buildModelFamilyListing({ catalog, active: undefined, servable: () => "unknown" });
+    const states = new Set(listing.families.flatMap((f) => f.models.flatMap((m) => m.rows.map((r) => r.servable))));
+    expect([...states]).toEqual(["unknown"]);
   });
 
   test("blocked and deprecated rows are omitted; families are sorted by id; other is last", () => {
-    const listing = buildModelFamilyListing({ catalog, active: undefined, servable: () => true });
+    const listing = buildModelFamilyListing({ catalog, active: undefined, servable: () => "present" });
     expect(listing.families.map((f) => f.id)).toEqual(["gpt", "qwen", "other"]);
 
     const gpt = listing.families.find((f) => f.id === "gpt")!;
@@ -164,7 +178,7 @@ describe("buildModelFamilyListing", () => {
     const resolveSlot = (canonicalModelId: string): { providerId: string; key: string } | undefined =>
       canonicalModelId === "gpt-6-astra" ? { providerId: "openai", key: "openai/gpt-6-astra" } : undefined;
 
-    const listing = buildModelFamilyListing({ catalog, active, servable: () => true, resolveSlot });
+    const listing = buildModelFamilyListing({ catalog, active, servable: () => "present", resolveSlot });
 
     expect(listing.active).toBe(active); // verbatim passthrough, not a re-derivation
 
@@ -179,7 +193,7 @@ describe("buildModelFamilyListing", () => {
   });
 
   test("pricingBasis on each row joins to the serving provider's own pricingBasis, and a canonical model's displayName is its first row's", () => {
-    const listing = buildModelFamilyListing({ catalog, active: undefined, servable: () => true });
+    const listing = buildModelFamilyListing({ catalog, active: undefined, servable: () => "present" });
     const gpt = listing.families.find((f) => f.id === "gpt")!;
     const astra = gpt.models.find((m) => m.canonicalModelId === "gpt-6-astra")!;
     expect(astra.displayName).toBe("GPT-6 Astra (OpenAI)"); // the first row pushed for this canonical id

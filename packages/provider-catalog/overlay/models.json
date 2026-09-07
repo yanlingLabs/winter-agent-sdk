@@ -4194,12 +4194,13 @@
           "value": {
             "inputPerMTokUsd": 10,
             "outputPerMTokUsd": 50,
-            "cacheReadPerMTokUsd": 0.25
+            "cacheReadPerMTokUsd": 0.25,
+            "cacheWritePerMTokUsd": 12.5
           },
           "source": "official-doc",
-          "sourceRef": "https://platform.claude.com/docs/en/docs/about-claude/models — comparison table: \"$10 / input MTok, $50 / output MTok\" for Claude Fable 5.1; cache read = 2.5% of the base input price per the page's own footnote (\"prompt cache reads cost 10% of the base input price (2.5% on Claude Fable 5.1 and Claude Mythos 5.1)\") = $0.25/MTok (retrieved 2026-09-07). Cache-write, batch and long-context rates live on the separate Pricing page (platform.claude.com/docs/en/about-claude/pricing), which is outside this task's allowed page set, so they are NOT set here rather than guessed.",
+          "sourceRef": "https://docs.anthropic.com/en/docs/about-claude/pricing (301 → https://platform.claude.com/docs/en/about-claude/pricing; both retrieved 2026-09-08) — the vendor's own Model pricing table, row \"Claude Fable 5.1\": \"Base input tokens $10 / MTok | 5m cache writes $12.50 / MTok | 1h cache writes $20 / MTok | Cache hits and refreshes $0.25 / MTok | Output tokens $50 / MTok\", with the page's own footnote \"Cache hits and refreshes on Claude Fable 5.1 and Claude Mythos 5.1 are priced at 0.025x the base input price. All other models use the standard 0.1x multiplier.\" P7a upgrade: this row previously cited the MODELS page, which states input/output and the cache-read multiplier but no cache-write rate (P6.6 could not reach the pricing page). `cacheWritePerMTokUsd` records the 5-MINUTE write ($12.50), matching every other Anthropic row here; the 1-hour write ($20) has no field of its own and is under-reported, exactly as `ModelPricing`'s one-rate-per-direction shape requires — a disclosed schema gap, not a claim the 1h rate does not exist. Batch (-50%), fast-mode and `inference_geo: \"us\"` (1.1x) modifiers are likewise unrepresentable and are NOT folded into these numbers.",
           "confidence": "declared",
-          "observedAt": "2026-09-07T00:00:00Z"
+          "observedAt": "2026-09-08T00:00:00Z"
         },
         "unsupportedParameters": [],
         "status": "candidate"
@@ -4254,6 +4255,17 @@
           "confidence": "inferred",
           "observedAt": "2026-09-07T00:00:00Z"
         },
+        "pricing": {
+          "value": {
+            "inputPerMTokUsd": 0.75,
+            "outputPerMTokUsd": 3.75,
+            "cacheReadPerMTokUsd": 0.075
+          },
+          "source": "official-doc",
+          "sourceRef": "https://ai.google.dev/gemini-api/docs/pricing (retrieved 2026-09-08) — Gemini 3.8 Flash, Standard paid tier, per 1M tokens: input \"$0.75 through December 31, 2026. $1.50 starting January 1, 2027\", output \"$3.75 through December 31, 2026. $7.50 starting January 1, 2027\", context caching \"$0.075 through December 31, 2026. $0.15 starting January 1, 2027\". TIERED IN TIME, which `ModelPricing` cannot express: the CURRENT (through 2026-12-31) rate is recorded, so from 2027-01-01 this row UNDER-reports by exactly 2x on every field until it is re-fetched — a disclosed schema gap (PROVENANCE.md), stated here so it travels with the data rather than living in a changelog. The Batch (50%), Flex and Priority tiers are separate rate cards and are not folded in. `cacheReadPerMTokUsd` carries the page's \"context caching\" rate, the same reading `google/gemini-2.5-pro` uses; the page publishes no cache-WRITE rate, so that key is absent. P7a: this row shipped unpriced from P6.6, whose allowed page set did not include this one.",
+          "confidence": "declared",
+          "observedAt": "2026-09-08T00:00:00Z"
+        },
         "unsupportedParameters": [],
         "status": "candidate"
       },
@@ -4306,6 +4318,17 @@
           "sourceRef": "same basis as toolCalling",
           "confidence": "inferred",
           "observedAt": "2026-09-07T00:00:00Z"
+        },
+        "pricing": {
+          "value": {
+            "inputPerMTokUsd": 0.3,
+            "outputPerMTokUsd": 2.5,
+            "cacheReadPerMTokUsd": 0.03
+          },
+          "source": "official-doc",
+          "sourceRef": "https://ai.google.dev/gemini-api/docs/pricing (retrieved 2026-09-08) — Gemini 3.5 Flash-Lite, Standard paid tier, per 1M tokens: input \"$0.30 (text / image / video / audio)\", output \"$2.50\", context caching \"$0.03\". Unlike its 3.8 Flash sibling this row carries NO scheduled increase on the page. The Batch (input $0.15, output $1.25) and Flex tiers are separate rate cards and are not folded in. `cacheReadPerMTokUsd` carries the page's \"context caching\" rate, the same reading `google/gemini-2.5-pro` uses; the page publishes no cache-WRITE rate, so that key is absent. P7a: this row shipped unpriced from P6.6, whose allowed page set did not include this one.",
+          "confidence": "declared",
+          "observedAt": "2026-09-08T00:00:00Z"
         },
         "unsupportedParameters": [],
         "status": "candidate"

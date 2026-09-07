@@ -45,7 +45,7 @@ import { loadCatalog } from "@yanlinglabs/winter-provider-catalog";
 import { boundedFetch, ProviderRequestError } from "../../http.ts";
 import { normalizeHttpError, normalizeThrown } from "../../errors.ts";
 import { createRetryPolicy, withRetry, type RetryPolicyOptions } from "../../retry.ts";
-import { applyPrivilegedHeaders, createEndpointPolicy, type EndpointPolicy } from "../../endpoint-policy.ts";
+import { applyPrivilegedHeaders, connectionEndpointOptions, createEndpointPolicy, type EndpointPolicy } from "../../endpoint-policy.ts";
 import { hostHeaders } from "../privileged-headers.ts";
 import { identityHeaderLookup, winterIdentityHeaders, winterUserAgent, type IdentityHeaderLookup } from "../../identity.ts";
 import { THINKING_ENABLED_NEEDS_BUDGET } from "../refusals.ts";
@@ -476,14 +476,21 @@ interface Endpoint {
 /**
  * The connection's endpoint policy.
  *
- * A user `baseUrl` is evaluated as a USER endpoint (`generated: false`), which is what makes
- * `applyPrivilegedHeaders` drop this family's privileged header for it (R6-L). The compiled default
- * is `generated: true` -- it is the reviewed, immutable descriptor endpoint.
+ * A profile `baseUrl` is evaluated by its ORIGIN, not by its mere presence (P7a): a host- or
+ * user-supplied one is a USER endpoint, which is what makes `applyPrivilegedHeaders` drop this
+ * family's privileged header for it (R6-L), while a reviewed endpoint the runtime COPIED in
+ * (`endpointOrigin: "reviewed"`) stays generated and keeps it. This family has FOUR such rows -- the
+ * Anthropic-dialect siblings -- and before the marker existed every one of them was silently read as
+ * a user endpoint (WS-13b §10's M-1 partial). The compiled default is `generated: true` either way:
+ * it is the reviewed, immutable descriptor endpoint.
  */
 function resolveEndpoint(ctx: ProviderContext, defaultBaseUrl: string): Endpoint {
   const userBase = ctx.connection.baseUrl;
   const base = (userBase ?? defaultBaseUrl).replace(/\/+$/, "");
-  const built = createEndpointPolicy(base, userBase !== undefined ? { generated: false, ...(ctx.connection.local === true ? { local: true } : {}) } : { generated: true });
+  // P7a: a profile `baseUrl` is evaluated by its ORIGIN (`connectionEndpointOptions`), so the four
+  // Anthropic-dialect sibling rows -- whose reviewed endpoint the runtime copies into the profile
+  // because this adapter serves several providers -- stay on the privileged-header path.
+  const built = createEndpointPolicy(base, userBase !== undefined ? connectionEndpointOptions(ctx.connection) : { generated: true });
   if (!built.ok) throw capabilityRefusal(built.reason);
   return { base, policy: built.policy };
 }

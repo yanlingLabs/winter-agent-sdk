@@ -136,6 +136,13 @@ export const CATALOG_VOCABULARIES = {
   slotBases: SLOT_BASES,
   slotStatuses: SLOT_STATUSES,
   familyStatuses: FAMILY_STATUSES,
+  // P7a (Lane D): the identity-header NAME allowlist belongs here for the same reason every other
+  // set does. It is a closed vocabulary the schema restates (`identityHeaders.propertyNames.enum`)
+  // and nothing was checking the two against each other -- so widening the validator's list to admit
+  // a second vendor's documented identity field would have left the cross-language contract refusing
+  // the row, discovered by whoever is furthest from the change. Being a member here is what makes
+  // the "every vocabulary is covered" test DEMAND a parity case for it.
+  identityHeaderNames: WINTER_IDENTITY_HEADER_NAMES,
   continuations: CONTINUATIONS,
   readableStates: READABLE_STATES,
   replayScopes: REPLAY_SCOPES,
@@ -396,21 +403,14 @@ function checkProvider(errs: Errors, v: unknown, path: string): void {
   errs.enum(v, "liveCatalogAuthority", path, CATALOG_AUTHORITY);
   errs.enum(v, "scope", path, PROVIDER_SCOPES);
 
-  // --- P7a spine: the per-tenant carry fields, ACCEPTED but not yet RULED ON --------------------
+  // --- P7a (Lane D): the PER-TENANT rows — WS-13b §2/§10's user-entered endpoint field -----------
   //
-  // Shape checks only, deliberately. The rules that give these fields meaning — that a
-  // `requiresUserEndpoint` row must NOT ship a usable `defaultEndpoints.api`, and what an
-  // `endpointTemplate` must look like — are Lane D's, landing with the two rows (`azure-ai`, `oci`)
-  // that set them. The spine declares the vocabulary so the type, the validator and the rows can
-  // land in either order; what it does NOT do is let a typo through silently in the meantime, which
-  // is why `requiresUserEndpoint: false` (a claim no row needs to make) is refused here rather than
-  // quietly ignored.
+  // The spine declared the vocabulary and checked the two fields' SHAPE; these are the rules that
+  // give them meaning, landing with the two rows that set them (`azure-ai`, `oci`).
   //
-  // CARRY FOR LANE D: `schema/catalog.schema.json`'s `WinterProviderDescriptor` is
-  // `additionalProperties: false` and does NOT yet list these two keys. Nothing in this repo
-  // executes that schema and no shipped row sets either field, so the artifact stays valid today —
-  // but the schema MUST gain both keys in the same commit as the first row that uses one, or the
-  // cross-language contract refuses the shipped catalog.
+  // `requiresUserEndpoint: false` is refused rather than ignored (the spine's rule, kept): absence
+  // already means "the row's endpoint is usable as shipped", so a row spelling the negative is
+  // making a claim the vocabulary has no room for — most likely a typo for the positive.
   const requiresUserEndpoint = v["requiresUserEndpoint"];
   if (requiresUserEndpoint !== undefined && requiresUserEndpoint !== true) {
     errs.add(`${path}.requiresUserEndpoint`, `expected \`true\` or absence (absence means the row's endpoint is usable as shipped), got ${describe(requiresUserEndpoint)}`);
@@ -419,8 +419,45 @@ function checkProvider(errs: Errors, v: unknown, path: string): void {
   if (endpointTemplate !== undefined && (typeof endpointTemplate !== "string" || endpointTemplate.length === 0)) {
     errs.add(`${path}.endpointTemplate`, `expected a non-empty documentation string, got ${describe(endpointTemplate)}`);
   }
-
   const endpoints = v["defaultEndpoints"];
+  if (requiresUserEndpoint === true) {
+    // (a) THE TEMPLATE IS REQUIRED. It is the only thing the runtime's `endpoint-required` refusal
+    // has to show a user — "this provider needs an endpoint" without the shape it must take is a
+    // refusal nobody can act on.
+    if (endpointTemplate === undefined) {
+      errs.add(
+        `${path}.endpointTemplate`,
+        "required on a `requiresUserEndpoint` row — WS-13b §2/§10: the row ships no endpoint, so the DOCUMENTED SHAPE is the only thing the runtime's `endpoint-required` refusal can name. It is documentation and is never sent",
+        "endpoint-template-missing",
+      );
+    }
+    // (b) NO USABLE `api` ENDPOINT — presence, not shape.
+    //
+    // The rule is about what the row SHIPS, not about how convincing the string is. A sentinel that
+    // wears its brackets (`https://<resource>.services.ai.azure.com/…`) is already refused two ways
+    // over — `new URL` throws on it, and every consumer of `defaultEndpoints.api` treats the key's
+    // presence as "there is an endpoint here". What a shape rule would NOT catch is the dangerous
+    // one: a plausible placeholder (`https://tenant.example/v1`) that parses, validates, and is
+    // copied into a connection profile by `connectionFrom` for a multi-provider adapter — the row
+    // then resolves, generates, and reaches somebody else's host. So ANY `api` key is the refusal.
+    if (isRecord(endpoints) && endpoints["api"] !== undefined) {
+      errs.add(
+        `${path}.defaultEndpoints.api`,
+        `a \`requiresUserEndpoint\` row must ship NO \`api\` endpoint at all (got ${describe(endpoints["api"])}) — WS-13b §2: the base URL is per-tenant, and a sentinel standing in for one is not "no endpoint", it is an endpoint the runtime will copy into a connection profile and call. Put the shape in \`endpointTemplate\` instead`,
+        "endpoint-sentinel",
+      );
+    }
+  } else if (endpointTemplate !== undefined) {
+    // (c) THE INVERSE. A template on a row that ships a usable endpoint is a row contradicting
+    // itself: either the endpoint is real (and the template is a lie about needing one) or it is a
+    // sentinel (and the row is (b) wearing a disguise). Neither is shippable.
+    errs.add(
+      `${path}.endpointTemplate`,
+      "is only meaningful on a `requiresUserEndpoint` row — a row that ships a usable endpoint has nothing for a host to fill in. Set `requiresUserEndpoint: true` and drop `defaultEndpoints.api`, or drop the template",
+      "endpoint-template-orphan",
+    );
+  }
+
   if (!isRecord(endpoints)) errs.add(`${path}.defaultEndpoints`, `expected an object of endpoint URLs, got ${describe(endpoints)}`);
   else {
     for (const [k, url] of Object.entries(endpoints)) {

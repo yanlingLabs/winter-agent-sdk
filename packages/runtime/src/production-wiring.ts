@@ -1157,13 +1157,19 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
               return buildModelFamilyListing({
                 catalog: slotCatalog,
                 active: activeSlotSet(currentModelKey),
-                // R-6c-27: `"present"` ONLY. §7 defines `servable` as "a credential is configured and
-                // the provider is enabled", so `unknown` is `false` -- honest by default. A cold
-                // session's first paint used to report `servable: true` for every row in the catalog,
-                // which states something nobody knows; the probe this call schedules makes the next
-                // paint accurate. The tri-state itself belongs in `ModelFamilyListing`'s row shape,
-                // which is a P7 carry (the spine's public type is not widened here).
-                servable: (providerId) => credentialPresent(providerId) === "present" && providerEnabled(providerId),
+                // P7a (Lane D), completing R-6c-27: the row shape is a TRI-STATE now, so the
+                // wiring's own tri-state credential view reaches the host UNFLATTENED. What R-6c-27
+                // could only express as "`unknown` is not servable" is now sayable: a cold first
+                // paint reports `"unknown"` for every provider nobody has probed, the probe this
+                // call schedules answers, and the next paint reports `"present"`/`"absent"`.
+                //
+                // A DISABLED provider is `"absent"`, never `"unknown"`: `providers.<id>.enabled ===
+                // false` is a decision the user has already made and this session can read
+                // synchronously. There is nothing to find out, so reporting "we have not looked yet"
+                // would be the one collapse that is a lie in BOTH directions -- it hides a setting
+                // the user set, and it invites a host to show a spinner for an answer that will
+                // never change.
+                servable: (providerId) => (providerEnabled(providerId) ? credentialPresent(providerId) : "absent"),
                 // THE SAME §4 ORDERING the resolver uses, expressed as a one-slot custom set rather
                 // than re-derived: a listing that showed a different first row than a `set_model`
                 // would actually reach is a listing that lies about what clicking it does.

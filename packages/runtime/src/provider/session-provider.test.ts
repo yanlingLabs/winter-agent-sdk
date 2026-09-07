@@ -351,16 +351,26 @@ describe("T10 wiring: `connectionForProvider` never demotes a reviewed endpoint 
     //     `applyPrivilegedHeaders(policy, {})` with an empty set, deliberately, so the R6-L rule has
     //     a call site. An empty set gated to `{}` is still `{}`.
     //
-    // THE SECOND IS A TRIPWIRE, not a reassurance: the day a privileged header is added to this
-    // family, a copied `connection.baseUrl` is evaluated `generated: false` and that header is
-    // dropped silently. The fix that removes the exposure is a reviewed/generated marker on
-    // `ProviderConnectionConfig` — an `sdk/**` type, and a spine change. Until then, this test is
-    // where that debt is written down.
+    // THE SECOND WAS A TRIPWIRE, and the debt it recorded is now DISCHARGED (P7a, Lane D).
+    //
+    // What this comment used to say: "the day a privileged header is added to this family, a copied
+    // `connection.baseUrl` is evaluated `generated: false` and that header is dropped silently. The
+    // fix that removes the exposure is a reviewed/generated marker on `ProviderConnectionConfig` —
+    // an `sdk/**` type, and a spine change. Until then, this test is where that debt is written
+    // down." That marker exists: `ProviderConnectionConfig.endpointOrigin`. The copy below is
+    // stamped `"reviewed"`, every adapter reads it through `connectionEndpointOptions`, and a
+    // privileged header added to this family from now on WOULD ride the copied endpoint — which is
+    // what WS-13b §10 always intended (its M-1 partial). Only a host- or user-supplied `baseUrl` is
+    // `"user"`, and the runtime stamps that unconditionally, so a host cannot vouch for its own URL.
+    //
+    // Asserted here rather than left as prose, because a discharged debt whose discharge nothing
+    // checks is the same stale-pin problem in a nicer costume.
     const provider = real.providers.find((p) => p.id === "anthropic")!;
     expect(real.providers.filter((p) => p.adapterId === provider.adapterId).length).toBeGreaterThan(1);
     const connection = connectionForProvider(baseConfig({ model: "x" }), real, provider);
     expect(connection?.baseUrl).toBe(provider.defaultEndpoints["api"] as string);
     expect(connection?.baseUrl).toBe(ANTHROPIC_DEFAULT_BASE_URL);
+    expect(connection?.endpointOrigin).toBe("reviewed");
   });
 
   test("a MULTI-provider adapter's rows DO get the catalog endpoint — there is no single vendor default to fall back to", () => {
@@ -376,6 +386,12 @@ describe("T10 wiring: `connectionForProvider` never demotes a reviewed endpoint 
     const provider = real.providers.find((p) => p.id === "ollama-local");
     const connection = connectionForProvider(baseConfig({ model: "x" }), real, provider!);
     expect(connection?.local).toBe(true);
+    // P7a: and it is stamped `"reviewed"` like every other copied endpoint. The two stamps answer
+    // DIFFERENT questions -- `local` is about the ADDRESS (may plain http reach it), `endpointOrigin`
+    // about the PROVENANCE (may the privileged set ride it) -- and the local cohort is where the
+    // second one's change is most visible: a host's profile `user-agent` no longer reaches these
+    // twelve rows' `127.0.0.1` endpoints.
+    expect(connection?.endpointOrigin).toBe("reviewed");
   });
 
   test("the OPERATOR's own baseUrl always wins, verbatim", () => {

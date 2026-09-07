@@ -500,6 +500,43 @@
       "scope": "llm"
     },
     {
+      "id": "azure-ai",
+      "displayName": "Azure AI Foundry",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {},
+      "requiresUserEndpoint": true,
+      "endpointTemplate": "https://<resource>.services.ai.azure.com/openai/v1",
+      "modelDiscovery": "none",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "admission is a SPEC RULING, not a fetched document: the vendor page named in the citation has not been read for content by this repository, so the endpoint template and the api-key path are carried from this id's own P6.5 ledger entry rather than re-confirmed. Promotion needs the fetched page AND a live-gate pass",
+          "the endpoint is the OPERATOR'S OWN and is never reviewed by Winter — it is evaluated as a user endpoint, so no privileged header rides it and no descriptor vouches for where it points",
+          "no model row and no live gate case: nothing here has been driven against a real tenant, and the OpenAI-compatible dialect at this base is the vendor's documented claim rather than an observed one"
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "spec:WS-13b §10 — user ruling, 2026-09-06: \"`azure-ai` and `oci` are per-tenant endpoints → Winter exposes a USER-ENTERED ENDPOINT FIELD for them (a settings/credential-time value, the row stays on the shared adapter)\". The credential is the operator's own key against their own Azure AI Foundry resource, a user-minted key against a public documented API, which triggers none of WS-13b §1's exclusions. Vendor documentation: https://learn.microsoft.com/azure/ai-foundry. EVIDENCE TIER: spec-ruling — the ruling admits the PATH; the endpoint template is transcribed verbatim from this id's own P6.5 allowlist ledger entry (2026-09-06), and THIS repository has not fetched the vendor page for content. Upgrading to `fetched-document` is a reviewed commit that reads the page.",
+        "tier": "spec-ruling"
+      },
+      "scope": "llm"
+    },
+    {
       "id": "azure-openai",
       "displayName": "Azure OpenAI",
       "protocols": [
@@ -3846,6 +3883,43 @@
         "citation": "https://build.nvidia.com — the vendor's own site as OmniRoute's product catalog records it at 5458026 (src/shared/constants/providers/apikey/*.ts, blob-pinned in extraction-manifest.json). The api-key path is attested by the pinned RegistryEntry: authType \"apikey\", OpenAI Chat Completions at https://integrate.api.nvidia.com/v1. EVIDENCE TIER: pinned-upstream, NOT a page this lane fetched and read — see PROVENANCE.md \"Two tiers of admission citation\".",
         "tier": "pinned-upstream"
       }
+    },
+    {
+      "id": "oci",
+      "displayName": "OCI Generative AI",
+      "protocols": [
+        "openai-chat-completions"
+      ],
+      "authKinds": [
+        "api-key"
+      ],
+      "defaultEndpoints": {},
+      "requiresUserEndpoint": true,
+      "endpointTemplate": "https://inference.generativeai.<region>.oci.oraclecloud.com/openai/v1",
+      "modelDiscovery": "none",
+      "liveCatalogAuthority": "unknown",
+      "adapterId": "winter.openai-chat-completions",
+      "family": "openai",
+      "upstream": {
+        "project": "winter",
+        "commit": "",
+        "sourcePaths": []
+      },
+      "risk": {
+        "class": "review-required",
+        "reasons": [
+          "admission is a SPEC RULING, not a fetched document: the vendor page named in the citation has not been read for content by this repository, so the endpoint template and the api-key path are carried from this id's own P6.5 ledger entry rather than re-confirmed. Promotion needs the fetched page AND a live-gate pass",
+          "the endpoint is the OPERATOR'S OWN and is never reviewed by Winter — it is evaluated as a user endpoint, so no privileged header rides it and no descriptor vouches for where it points",
+          "no model row and no live gate case: nothing here has been driven against a real tenant, and the OpenAI-compatible dialect at this base is the vendor's documented claim rather than an observed one"
+        ]
+      },
+      "pricingBasis": "token",
+      "admission": {
+        "basis": "api-key",
+        "citation": "spec:WS-13b §10 — user ruling, 2026-09-06: \"`azure-ai` and `oci` are per-tenant endpoints → Winter exposes a USER-ENTERED ENDPOINT FIELD for them (a settings/credential-time value, the row stays on the shared adapter)\". The credential is the operator's own key against their own OCI tenancy, a user-minted key against a public documented API, which triggers none of WS-13b §1's exclusions. Vendor documentation: https://www.oracle.com/artificial-intelligence/generative-ai. EVIDENCE TIER: spec-ruling — the ruling admits the PATH; the endpoint template is transcribed verbatim from this id's own P6.5 allowlist ledger entry (2026-09-06), and THIS repository has not fetched the vendor page for content. Upgrading to `fetched-document` is a reviewed commit that reads the page.",
+        "tier": "spec-ruling"
+      },
+      "scope": "llm"
     },
     {
       "id": "ofoxai",
@@ -8420,12 +8494,13 @@
         "value": {
           "inputPerMTokUsd": 10,
           "outputPerMTokUsd": 50,
-          "cacheReadPerMTokUsd": 0.25
+          "cacheReadPerMTokUsd": 0.25,
+          "cacheWritePerMTokUsd": 12.5
         },
         "source": "official-doc",
-        "sourceRef": "https://platform.claude.com/docs/en/docs/about-claude/models — comparison table: \"$10 / input MTok, $50 / output MTok\" for Claude Fable 5.1; cache read = 2.5% of the base input price per the page's own footnote (\"prompt cache reads cost 10% of the base input price (2.5% on Claude Fable 5.1 and Claude Mythos 5.1)\") = $0.25/MTok (retrieved 2026-09-07). Cache-write, batch and long-context rates live on the separate Pricing page (platform.claude.com/docs/en/about-claude/pricing), which is outside this task's allowed page set, so they are NOT set here rather than guessed.",
+        "sourceRef": "https://docs.anthropic.com/en/docs/about-claude/pricing (301 → https://platform.claude.com/docs/en/about-claude/pricing; both retrieved 2026-09-08) — the vendor's own Model pricing table, row \"Claude Fable 5.1\": \"Base input tokens $10 / MTok | 5m cache writes $12.50 / MTok | 1h cache writes $20 / MTok | Cache hits and refreshes $0.25 / MTok | Output tokens $50 / MTok\", with the page's own footnote \"Cache hits and refreshes on Claude Fable 5.1 and Claude Mythos 5.1 are priced at 0.025x the base input price. All other models use the standard 0.1x multiplier.\" P7a upgrade: this row previously cited the MODELS page, which states input/output and the cache-read multiplier but no cache-write rate (P6.6 could not reach the pricing page). `cacheWritePerMTokUsd` records the 5-MINUTE write ($12.50), matching every other Anthropic row here; the 1-hour write ($20) has no field of its own and is under-reported, exactly as `ModelPricing`'s one-rate-per-direction shape requires — a disclosed schema gap, not a claim the 1h rate does not exist. Batch (-50%), fast-mode and `inference_geo: \"us\"` (1.1x) modifiers are likewise unrepresentable and are NOT folded into these numbers.",
         "confidence": "declared",
-        "observedAt": "2026-09-07T00:00:00Z"
+        "observedAt": "2026-09-08T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",
@@ -19597,6 +19672,17 @@
         "confidence": "inferred",
         "observedAt": "2026-09-07T00:00:00Z"
       },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 0.3,
+          "outputPerMTokUsd": 2.5,
+          "cacheReadPerMTokUsd": 0.03
+        },
+        "source": "official-doc",
+        "sourceRef": "https://ai.google.dev/gemini-api/docs/pricing (retrieved 2026-09-08) — Gemini 3.5 Flash-Lite, Standard paid tier, per 1M tokens: input \"$0.30 (text / image / video / audio)\", output \"$2.50\", context caching \"$0.03\". Unlike its 3.8 Flash sibling this row carries NO scheduled increase on the page. The Batch (input $0.15, output $1.25) and Flex tiers are separate rate cards and are not folded in. `cacheReadPerMTokUsd` carries the page's \"context caching\" rate, the same reading `google/gemini-2.5-pro` uses; the page publishes no cache-WRITE rate, so that key is absent. P7a: this row shipped unpriced from P6.6, whose allowed page set did not include this one.",
+        "confidence": "declared",
+        "observedAt": "2026-09-08T00:00:00Z"
+      },
       "unsupportedParameters": [],
       "status": "candidate",
       "canonicalModelId": "gemini-3.5-flash-lite",
@@ -19704,6 +19790,17 @@
         "sourceRef": "same basis as toolCalling",
         "confidence": "inferred",
         "observedAt": "2026-09-07T00:00:00Z"
+      },
+      "pricing": {
+        "value": {
+          "inputPerMTokUsd": 0.75,
+          "outputPerMTokUsd": 3.75,
+          "cacheReadPerMTokUsd": 0.075
+        },
+        "source": "official-doc",
+        "sourceRef": "https://ai.google.dev/gemini-api/docs/pricing (retrieved 2026-09-08) — Gemini 3.8 Flash, Standard paid tier, per 1M tokens: input \"$0.75 through December 31, 2026. $1.50 starting January 1, 2027\", output \"$3.75 through December 31, 2026. $7.50 starting January 1, 2027\", context caching \"$0.075 through December 31, 2026. $0.15 starting January 1, 2027\". TIERED IN TIME, which `ModelPricing` cannot express: the CURRENT (through 2026-12-31) rate is recorded, so from 2027-01-01 this row UNDER-reports by exactly 2x on every field until it is re-fetched — a disclosed schema gap (PROVENANCE.md), stated here so it travels with the data rather than living in a changelog. The Batch (50%), Flex and Priority tiers are separate rate cards and are not folded in. `cacheReadPerMTokUsd` carries the page's \"context caching\" rate, the same reading `google/gemini-2.5-pro` uses; the page publishes no cache-WRITE rate, so that key is absent. P7a: this row shipped unpriced from P6.6, whose allowed page set did not include this one.",
+        "confidence": "declared",
+        "observedAt": "2026-09-08T00:00:00Z"
       },
       "unsupportedParameters": [],
       "status": "candidate",

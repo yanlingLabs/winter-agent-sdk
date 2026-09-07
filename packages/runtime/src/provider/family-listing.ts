@@ -17,8 +17,21 @@ import type { ActiveSlotSet, ModelFamilyListing, ModelRowServable, SlotView } fr
 export interface FamilyListingInput {
   catalog: WinterCatalog;
   active: ActiveSlotSet | undefined;
-  /** WS-13c §7: a credential is configured AND the provider is not disabled (§4 step 2). */
-  servable: (providerId: string) => boolean;
+  /**
+   * WS-13c §7 as amended by P7a: a TRI-STATE, not a boolean.
+   *
+   * `"present"` a credential is configured and the provider is not disabled (§4 step 2).
+   * `"absent"`  a probe answered, and there is none — or the provider is disabled.
+   * `"unknown"` nobody has probed this provider yet.
+   *
+   * The third state is the honest first paint. `hasCredential` has been tri-state at the wiring
+   * since R-6c-27, and this seam was the last place it was flattened: a boolean has to collapse
+   * `unknown` onto one of the other two, and BOTH collapses are false statements to a model
+   * switcher — `false` greys out a row the user can perfectly well use, and `true` (the shape the
+   * cold paint originally shipped) claims every row in a 604-model catalog is available against an
+   * empty credential store.
+   */
+  servable: (providerId: string) => ModelRowServable;
   /** Fills `SlotView.resolvesTo` — absent when nothing this session has can serve the slot. */
   resolveSlot?: (canonicalModelId: string, provider?: string) => { providerId: string; key: string } | undefined;
 }
@@ -97,13 +110,12 @@ export function buildModelFamilyListing(input: FamilyListingInput): ModelFamilyL
         providerId: row.providerId,
         status: row.status,
         pricingBasis: pricingBasisOf(row.providerId),
-        // P7a spine: the row type is a TRI-STATE now (`ModelRowServable`). This mapping is a
-        // FAITHFUL RENDERING of what this seam currently knows and nothing more -- the `servable`
-        // predicate is still a boolean, so it can only ever say "present" or "absent", and this
-        // listing never emits `"unknown"`. Lane D replaces the predicate with the three-valued
-        // credential view; changing THIS line without changing the predicate would only invent a
-        // third state out of the same two bits.
-        servable: (servable(row.providerId) ? "present" : "absent") satisfies ModelRowServable as ModelRowServable,
+        // P7a (Lane D): PASSED THROUGH, not mapped. The spine's shim turned a boolean into two of
+        // the three states here; the predicate is three-valued now, so this listing has nothing left
+        // to decide and the third state reaches the host intact. Any collapsing that still needs to
+        // happen is the HOST's — it is the only party that knows how it wants to render "we have not
+        // looked yet".
+        servable: servable(row.providerId),
       })),
     }));
     return {

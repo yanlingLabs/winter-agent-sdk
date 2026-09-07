@@ -36,6 +36,19 @@ export interface ConnectionProfile {
   deployment?: string;
   apiVersion?: string;
   local?: boolean;
+  /**
+   * P7a: WHERE `baseUrl` came from — the sdk's `ProviderConnectionConfig.endpointOrigin`, carried
+   * across the wire and into every adapter through `createProviderContext`.
+   *
+   * `"reviewed"` the catalog's own endpoint, copied into the profile by the runtime for an adapter
+   * that serves several providers and so has no vendor default to fall back on.
+   * `"user"`     a host- or user-entered endpoint. ABSENT means the same thing (see
+   *              `connectionEndpointOptions` in endpoint-policy.ts for why unknown must read as
+   *              user, and why only the runtime's copy path may stamp `"reviewed"`).
+   *
+   * Read in exactly one place — `connectionEndpointOptions` — so no adapter re-derives the rule.
+   */
+  endpointOrigin?: "reviewed" | "user";
 }
 
 /**

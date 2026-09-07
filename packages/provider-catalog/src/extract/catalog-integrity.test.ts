@@ -93,6 +93,11 @@ describe("pricing (R6-H, R6-9)", () => {
       "anthropic/claude-opus-5",
       "anthropic/claude-sonnet-5",
       "google/gemini-2.5-pro",
+      // P7a (Lane D): the two Gemini rows P6.6 Task 1b authored but could not price -- its allowed
+      // page set named the MODELS index, which links out to per-model pages and states no rates.
+      // Both now cite `ai.google.dev/gemini-api/docs/pricing` directly.
+      "google/gemini-3.5-flash-lite",
+      "google/gemini-3.8-flash",
       "openai/gpt-4.1",
       // P6.6 fix wave (whole-branch Minor-4): the three `gpt` family SLOT rows. They were unpriced,
       // so a session on `sol`/`terra`/`luna` -- three of the four options the Agent tool advertises to
@@ -124,6 +129,35 @@ describe("pricing (R6-H, R6-9)", () => {
     for (const key of ["openrouter/openai/gpt-4.1", "azure-openai/gpt-4.1", "vertex/gemini-2.5-pro", "codex-oauth/gpt-5.6-sol"]) {
       expect(catalog.models.find((m) => m.key === key)?.pricing).toBeUndefined();
     }
+  });
+
+  test("P7a: the TIME-tiered Gemini row discloses its scheduled increase on the row itself", () => {
+    // The same disclosure obligation as the 200k-token tier below, in the other dimension.
+    // `gemini-3.8-flash`'s page states one price "through December 31, 2026" and a doubled one
+    // "starting January 1, 2027"; `ModelPricing` holds one rate per direction, so the row records
+    // the current one and MUST say so -- otherwise the day it silently starts under-reporting by 2x
+    // is a day nothing in the repository marks.
+    const flash = catalog.models.find((m) => m.key === "google/gemini-3.8-flash")!;
+    expect(flash.pricing?.value.inputPerMTokUsd).toBe(0.75);
+    expect(flash.pricing?.value.outputPerMTokUsd).toBe(3.75);
+    expect(flash.pricing?.sourceRef).toContain("January 1, 2027");
+    expect(flash.pricing?.sourceRef).toContain("UNDER-reports");
+    // Its `-lite` sibling has NO scheduled increase on the same page, and says that too -- so the
+    // disclosure is a statement about each row's own evidence, not boilerplate on every Gemini row.
+    const lite = catalog.models.find((m) => m.key === "google/gemini-3.5-flash-lite")!;
+    expect(lite.pricing?.value.inputPerMTokUsd).toBe(0.3);
+    expect(lite.pricing?.sourceRef).toContain("NO scheduled increase");
+  });
+
+  test("P7a: Claude Fable 5.1 carries the 5-MINUTE cache-write rate, and says the 1-hour one is unrepresentable", () => {
+    // P6.6 could reach only the models page, which states no cache-write rate at all. The pricing
+    // page states two (5m $12.50, 1h $20) and `ModelPricing` has ONE key -- so the row records the
+    // 5m rate every other Anthropic row here uses and discloses the omission rather than picking
+    // silently.
+    const fable = catalog.models.find((m) => m.key === "anthropic/claude-fable-5-1")!;
+    expect(fable.pricing?.value.cacheWritePerMTokUsd).toBe(12.5);
+    expect(fable.pricing?.value.cacheReadPerMTokUsd).toBe(0.25); // the documented 0.025x exception, not the usual 0.1x
+    expect(fable.pricing?.sourceRef).toContain("1-hour write ($20)");
   });
 
   test("Gemini's TIERED price is disclosed in the row itself, not only in a document", () => {
@@ -525,11 +559,52 @@ describe("WS-13b §2: `defaultEndpoints.api` carries the API ROOT on both layers
     // credential to api.openai.com. `bedrock`/`vertex` are single-provider adapters and exempt --
     // their `api` is never copied into a connection, and Azure's is a deployment template the host
     // must supply, which is why `winter.azure-openai` is exempt from THIS half only.
+    //
+    // P7a: `requiresUserEndpoint` rows are exempt BY DECLARATION rather than by id. That is the
+    // whole difference the field buys -- an endpoint-less row used to be indistinguishable from a
+    // row that lost its endpoint, and the fallback-to-api.openai.com failure above is exactly what
+    // "indistinguishable" cost. Such a row cannot reach the adapter's vendor default at all: the
+    // runtime refuses with `endpoint-required` before a provider is built (see the companion
+    // assertion below).
     const missing = catalog.providers
-      .filter((p) => APPENDING.has(p.adapterId) && p.adapterId !== "winter.azure-openai")
+      .filter((p) => APPENDING.has(p.adapterId) && p.adapterId !== "winter.azure-openai" && p.requiresUserEndpoint !== true)
       .filter((p) => (p.defaultEndpoints["api"] ?? "").length === 0)
       .map((p) => p.id);
     expect(missing).toEqual([]);
+  });
+
+  // --- P7a (WS-13b §2/§10): the per-tenant rows ---------------------------------------------------
+  //
+  // The validator enforces the per-ROW rules (template required, no `api` endpoint, no orphan
+  // template). What it cannot see is whether the SHIPPED catalog's per-tenant set is the reviewed
+  // one, and whether those rows sit where the runtime's user-endpoint path can actually reach them.
+  test("the shipped per-tenant set is exactly the two reviewed rows, and each ships a template and no endpoint", () => {
+    const perTenant = catalog.providers.filter((p) => p.requiresUserEndpoint === true);
+    expect(perTenant.map((p) => p.id).sort()).toEqual(["azure-ai", "oci"]);
+    for (const row of perTenant) {
+      // Restated on the SHIPPED document rather than left to the validator: a regeneration that
+      // dropped the field would leave a row with a template and a live endpoint, which the validator
+      // would then reject -- but only if someone ran it, and this is the file that reads the artifact.
+      expect([row.id, row.endpointTemplate?.length ?? 0]).not.toEqual([row.id, 0]);
+      expect([row.id, row.defaultEndpoints["api"]]).toEqual([row.id, undefined]);
+      // `<...>` in the template is the operator's blank. A template with nothing to fill in is a
+      // fixed endpoint wearing the wrong field.
+      expect([row.id, /<[a-z-]+>/.test(row.endpointTemplate ?? "")]).toEqual([row.id, true]);
+    }
+  });
+
+  test("no per-tenant row can reach a GENERATED endpoint: its adapter serves several providers, so nothing vouches for a URL it never named", () => {
+    // The rule this pins is WS-13 §5 / R6-L one level up from the policy. `applyPrivilegedHeaders`
+    // keys on `policy.generated`, and a generated policy is built from an endpoint the CATALOG
+    // reviewed. A per-tenant row reviews none -- so if such a row sat alone on an adapter,
+    // `generatedBaseUrlForAdapter` would hand that adapter a compiled-in vendor default, and the
+    // operator's own tenant URL would be replaced by somebody else's reviewed host (or, worse, the
+    // row's own absence of one would fall back to it). Sharing the adapter is what makes the
+    // fallback structurally unreachable.
+    for (const row of catalog.providers.filter((p) => p.requiresUserEndpoint === true)) {
+      const siblings = catalog.providers.filter((p) => p.adapterId === row.adapterId);
+      expect([row.id, siblings.length > 1]).toEqual([row.id, true]);
+    }
   });
 
   test("every endpoint strip the mapper performed is RECORDED in the ledger with both strings", () => {
@@ -661,7 +736,10 @@ describe("WS-13b §2: the widened catalog", () => {
   test("the api-key pool is widened: at least 120 apikey-category providers are now rows, and none is a website-scrape transport", () => {
     const apiKeyRows = catalog.providers.filter((p) => p.admission.basis === "api-key");
     expect(apiKeyRows.length).toBeGreaterThanOrEqual(120);
-    for (const p of apiKeyRows) expect(p.defaultEndpoints["api"]).not.toMatch(/wp-admin|api-proxy|\/threads$/);
+    // `?? ""` rather than skipping the row: a per-tenant row (P7a) ships no `api` at all, and an
+    // empty string is the honest thing to run the scrape-transport check against -- it passes, and
+    // it keeps the loop total instead of silently narrowing the cohort it sweeps.
+    for (const p of apiKeyRows) expect(p.defaultEndpoints["api"] ?? "").not.toMatch(/wp-admin|api-proxy|\/threads$/);
   });
 
   test("a subscription- or free-priced row NEVER carries a token price — the basis and the pricing agree", () => {

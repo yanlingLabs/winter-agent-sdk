@@ -82,8 +82,9 @@ function registerSpawnProbe(): void {
 // A blocking tool the CHILD's own scripted provider calls -- its executor awaits a promise the
 // TEST controls (`release()`), giving deterministic control over "the child is genuinely still
 // mid-turn" without racing real timers.
-function registerBlockingTool(name: string): { release: () => void } {
+function registerBlockingTool(name: string): { release: () => void; entered: () => boolean } {
   let releaseFn: (() => void) | undefined;
+  let wasEntered = false;
   const gate = new Promise<void>((resolve) => {
     releaseFn = resolve;
   });
@@ -93,9 +94,19 @@ function registerBlockingTool(name: string): { release: () => void } {
       description: "test: blocks until released", exposure: "eager", permissionClass: "read",
       availability: {}, capabilityRequirements: [], disposition: "implement-now",
     },
-    executor: { async execute() { await gate; return { output: "released" }; } },
+    // `entered` is P7a's addition and it is the whole difference between a test that WAITS FOR THE
+    // MECHANISM and one that reads a scheduling accident: without it, "the generation is blocked in
+    // this tool" is indistinguishable from "the generation has not started yet", and both look like
+    // `status() === "running"`.
+    executor: {
+      async execute() {
+        wasEntered = true;
+        await gate;
+        return { output: "released" };
+      },
+    },
   });
-  return { release: () => releaseFn?.() };
+  return { release: () => releaseFn?.(), entered: () => wasEntered };
 }
 
 // A fixture tool that spawns a child and returns the handle's own steer/resume/stop OUTCOME
@@ -1032,14 +1043,45 @@ describe("child-engine.ts: fix round 1 (controller review) -- Q1 forward-compat:
   test("fix round 2 (nit): the tightened policy is persisted to the durable sidecar IMMEDIATELY on resume(), never deferred to the next settle()", async () => {
     registerSpawnAndRegister();
     cleanupToolNames.push(SPAWN_AND_REGISTER);
-    const BLOCK_TOOL = "t6_q1_persist_block";
-    cleanupToolNames.push(BLOCK_TOOL);
-    const gate = registerBlockingTool(BLOCK_TOOL);
     const winterHome = mkdtempSync(join(tmpdir(), "winter-lane-c-q1-persist-"));
+    // THE CHILD'S OWN PROVIDER BLOCKS ON ITS SECOND GENERATION, and that is P7a's fix.
+    //
+    // This test used to register a SECOND child-engine factory (with a `resumeProvider` whose first
+    // turn called a blocking TOOL) after the child had already spawned. That call is INERT for a
+    // live handle -- `engine.ts`'s `spawnChild` reads `getChildEngineFactory()` exactly once, at
+    // spawn, and `ChildHandle.resume` never consults it again -- so the resumed generation ran on
+    // the spawn-time `echoProvider`, settled on its own, and the blocking tool was never invoked at
+    // all. `status() === "running"` then passed on an ASYNC-SCHEDULING ACCIDENT (`record.status =
+    // "running"` is a synchronous write inside `resume()`, observed before the fire-and-forget
+    // generation had run a single round), and the sidecar read RACED a terminal write from the
+    // settling generation -- destroying the test's own stated isolation (P6.6 Lane D report §1.4 /
+    // review m3: "green for the wrong reason").
+    //
+    // The block is now in the SPAWN-TIME provider, where it is actually reachable, and it is the
+    // PROVIDER rather than a tool: a tool call in the resumed generation's `plan` mode raises a
+    // permission request that nothing in this test answers, so the generation would hang before
+    // reaching the tool -- indistinguishable, from outside, from the accident this fix removes.
+    // Blocking inside `generate()` needs no permission and no advertised tool, and it is a STRICTER
+    // isolation than the original intent: the resumed generation cannot settle at all.
+    let releaseSecondGeneration: (() => void) | undefined;
+    const secondGenerationBlocked = new Promise<void>((resolve) => {
+      releaseSecondGeneration = resolve;
+    });
+    let generations = 0;
+    let secondGenerationEntered = false;
+    const childProvider: Provider = {
+      async generate() {
+        generations += 1;
+        if (generations === 1) return { kind: "text", text: "first turn done" };
+        secondGenerationEntered = true;
+        await secondGenerationBlocked;
+        return { kind: "text", text: "second turn done" };
+      },
+    };
     try {
       const store = new WinterCompatibilitySessionStore({ winterHome });
       // "auto" recorded at spawn; the parent's current policy has since tightened to "plan".
-      registerChildEngineFactory(createChildEngineFactory({ provider: echoProvider, store, getParentPolicy: () => ({ mode: "plan", version: 5, hash: "h5" }) }));
+      registerChildEngineFactory(createChildEngineFactory({ provider: childProvider, store, getParentPolicy: () => ({ mode: "plan", version: 5, hash: "h5" }) }));
       const req: SpawnChildRequest = { parentToolUseId: "call-1", prompt: "first turn", runInBackground: false };
       const { host, runtime } = createInMemoryChannel();
       const provider = scriptedProvider([{ kind: "tool_use", calls: [{ id: "call-1", name: SPAWN_AND_REGISTER, input: req }] }, { kind: "text", text: "done" }]);
@@ -1051,20 +1093,21 @@ describe("child-engine.ts: fix round 1 (controller review) -- Q1 forward-compat:
       await waitUntil(() => liveHandles.size === 1);
       const handle = [...liveHandles.values()][0]!;
       await waitUntil(() => handle.status() === "completed");
-
-      // The RESUMED generation's own provider immediately calls a tool that blocks forever (until
-      // `gate.release()`) -- this generation deliberately never reaches its own settle() within this
-      // test, so any sidecar update observed below can ONLY have come from resume() itself, not from
-      // a terminal write the next settlement would also have produced.
-      const resumeProvider = scriptedProvider([{ kind: "tool_use", calls: [{ id: "blk1", name: BLOCK_TOOL, input: {} }] }]);
-      registerChildEngineFactory(createChildEngineFactory({ provider: resumeProvider, store, getParentPolicy: () => ({ mode: "plan", version: 5, hash: "h5" }) }));
+      expect(generations).toBe(1); // the spawn generation, and only it
 
       const outcome = await handle.resume(fakeGlobalMessage("second turn"));
       expect(outcome.status).toBe("resumed_and_delivered");
+      // AWAIT THE MECHANISM, not a tick. This flag flips INSIDE the resumed generation's own
+      // `generate()`, so the wait returns only once that generation has genuinely started and is
+      // parked on a promise nothing resolves yet. Without it, "blocked mid-generation" and "has not
+      // started at all" are the same observation -- which is exactly what the old test could not
+      // tell apart.
+      await waitUntil(() => secondGenerationEntered);
+      expect(generations).toBe(2);
       // The in-memory record already reflects it (proven by the sibling test above) -- this test's
       // own point is the DURABLE sidecar, read back independently through the store, not through
       // `handle.record` at all.
-      expect(handle.status()).toBe("running"); // genuinely still running -- BLOCK_TOOL never released yet
+      expect(handle.status()).toBe("running"); // genuinely still running -- parked inside generate()
 
       // Matches child-engine.ts's own key construction exactly: projectKey derived from the
       // PARENT's own cwd (baseConfig()'s own literal default, unoverridden in this test), sessionId
@@ -1077,11 +1120,12 @@ describe("child-engine.ts: fix round 1 (controller review) -- Q1 forward-compat:
       expect(metadata?.permission?.parentPolicyVersion).toBe(5);
       expect(metadata?.permission?.parentPolicyHash).toBe("h5");
 
-      gate.release();
+      releaseSecondGeneration?.();
       await waitUntil(() => handle.status() !== "running");
       await drainPromise;
       await done;
     } finally {
+      releaseSecondGeneration?.(); // never leave a parked generation behind, even on a failed assertion
       rmSync(winterHome, { recursive: true, force: true });
     }
   });
