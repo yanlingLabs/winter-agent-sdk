@@ -15,7 +15,11 @@ stub({
       path: { type: "string" },
     },
   },
-  description: "name creates a temporary git worktree under .winter/worktrees; path switches to a registered worktree under path rules. Changes session cwd + filesystem boundary.",
+  // P7a fix r1 (Minor-1): a MODEL-FACING description is a static string on a module-load
+  // descriptor, so it cannot carry a session's dot-dir. Worded generically rather than left naming
+  // a directory a reuser's product does not have -- the executor derives the real path from
+  // `ctx.brand.projectDirName`.
+  description: "name creates a temporary git worktree under the project's worktrees directory; path switches to a registered worktree under path rules. Changes session cwd + filesystem boundary.",
   exposure: "eager",
   permissionClass: "mode",
   availability: ALWAYS_AVAILABLE,

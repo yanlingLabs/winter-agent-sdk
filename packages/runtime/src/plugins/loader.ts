@@ -278,7 +278,7 @@ export function loadPlugins(plugins: readonly SdkPluginConfig[] | undefined, opt
 
     // P7a fix r1 (Important-3): the ONE production reader of a plugin manifest. `readPluginManifest`
     // and `pluginManifestDirs` derived from the profile, but nothing ever handed them one, so a
-    // reuser's `.acme-plugin/plugin.json` was never discovered -- only `.winter-plugin` and the
+    // reuser's `.acme-plugin/plugin.json` was never discovered -- only Winter's own spelling and the
     // Claude-mirroring `.claude-plugin`. A derivation nothing threads is exactly what the sweep gate
     // cannot see.
     const manifestResult = readPluginManifest(root, opts?.brand);

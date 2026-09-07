@@ -4558,7 +4558,10 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
    */
   function announceLossyTransfer(from: ContinuityEndpoint, to: ContinuityEndpoint, reason: "set_model" | "interrupt" | "fallback"): void {
     const lastSource = [...messages].reverse().find((m) => m.role === "assistant" && m.origin?.modelKey === from.modelKey && m.uuid !== undefined);
-    const handoff = buildPortableHandoff(messages, sessionChain, from);
+    // P7a fix r1 (Minor-2): the session's OWN instructions basename, ADDED to the §2.8 exclusion
+    // list. The declared option had no producer, so a reuser's `ACME.md` could reach a handoff's
+    // tool facts while the four names on that list -- Winter's own included -- were blocked.
+    const handoff = buildPortableHandoff(messages, sessionChain, from, { instructionsFile: sessionBrand.instructionsFile });
     const summaryAvailable = lastSource?.uuid !== undefined && sessionChain.get(lastSource.uuid)?.summary !== undefined;
     const classification = classifySwitch(from, to, {
       summaryAvailable,

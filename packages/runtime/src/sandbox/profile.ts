@@ -169,9 +169,9 @@ const CONTROL_PLANE_FILES = ["permissions.local.json", "settings.json", "setting
  *
  * ESCAPE FIRST, FOLD SECOND, per character: a letter becomes `[Xx]`, and everything else is escaped
  * exactly as `sbplRegexLiteral` escapes it (the brand grammar admits `-` and, for a dot-dir, the
- * leading `.` -- which MUST be escaped or it matches any character). `caseFoldSegment(".winter")` is
- * `\.[Ww][Ii][Nn][Tt][Ee][Rr]`, byte for byte what the constant it replaces spelled, so the rendered
- * profile is unchanged under `WINTER_BRAND` (a test diffs the whole profile text).
+ * leading `.` -- which MUST be escaped or it matches any character). Applied to Winter's own dot-dir
+ * it renders `\.[Ww][Ii][Nn][Tt][Ee][Rr]`, byte for byte what the constant it replaces spelled, so
+ * the rendered profile is unchanged under `WINTER_BRAND` (a test diffs the whole profile text).
  *
  * Exported so the deny suite can assert the rendering directly rather than by reading the profile.
  */

@@ -55,7 +55,7 @@
 //
 // Usage:
 //   WINTER_LIVE_PROVIDER_TESTS=1 WINTER_LIVE_OPENAI_API_KEY=sk-... bun run scripts/verify-provider-live.ts
-//   ... WINTER_LIVE_KEYCHAIN_SERVICE=com.example.live.20260906              # REQUIRED for any Keychain path
+//   ... WINTER_LIVE_KEYCHAIN_SERVICE=<product>.live.20260906                # REQUIRED for any Keychain path
 //   ... WINTER_LIVE_XAI_OAUTH_CREDENTIAL_REF=keychain:xai-oauth:<account>   # an OAuth row, from that service
 //   ... WINTER_LIVE_UNCLOSEAI=1                          # a keyless row (`free`, and documents no api key)
 //   ... WINTER_LIVE_DEEPSEEK_ANTHROPIC_BEARER=sk-...   # the SAME api key as `Authorization: Bearer`
@@ -221,8 +221,20 @@ function admitsKeyless(provider: WinterProviderDescriptor): boolean {
  */
 export const KEYCHAIN_SERVICE_VAR = "WINTER_LIVE_KEYCHAIN_SERVICE";
 
+/**
+ * The CONCRETE throwaway service this gate suggests, DERIVED from the product's own service rather
+ * than spelled (P7a fix r1, Minor-6).
+ *
+ * The sweep replaced the operator hint's `<product>.live.<yyyymmdd>` with a generic `com.example.…`
+ * — vaguer advice in the one sentence an operator actually acts on, in a script that is Winter's own
+ * harness and knows exactly which service it is steering them away from. Dropping the last
+ * reverse-DNS segment off `DEFAULT_KEYCHAIN_SERVICE` gives the concrete name back with no literal in
+ * source, so the sweep gate stays green and the hint stays actionable.
+ */
+const SUGGESTED_LIVE_SERVICE = `${DEFAULT_KEYCHAIN_SERVICE.replace(/\.[^.]+$/, "")}.live.<yyyymmdd>`;
+
 /** Why a Keychain-touching path refuses when the run has not named its service. Exported so the plan warning and the typed error say the same thing. */
-export const KEYCHAIN_SERVICE_REQUIRED = `${KEYCHAIN_SERVICE_VAR} is not set, and the live gate never reads or writes \`${DEFAULT_KEYCHAIN_SERVICE}\`/\`${DEFAULT_KEYCHAIN_SERVICE}.dev\` by default: those are the host's own records. Set it to a dedicated service for this run (e.g. com.example.live.<yyyymmdd>) and delete that service afterwards`;
+export const KEYCHAIN_SERVICE_REQUIRED = `${KEYCHAIN_SERVICE_VAR} is not set, and the live gate never reads or writes \`${DEFAULT_KEYCHAIN_SERVICE}\`/\`${DEFAULT_KEYCHAIN_SERVICE}.dev\` by default: those are the host's own records. Set it to a dedicated service for this run (e.g. ${SUGGESTED_LIVE_SERVICE}) and delete that service afterwards`;
 
 /**
  * The service this run's Keychain paths use, or a TYPED refusal.

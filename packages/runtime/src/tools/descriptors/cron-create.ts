@@ -13,7 +13,9 @@ stub({
       cron: { type: "string", description: "five-field local-time cron expression" },
       prompt: { type: "string" },
       recurring: { type: "boolean", description: "default true; false = fire once, self-delete" },
-      durable: { type: "boolean", description: "default false; persists to .winter/scheduled_tasks.json" },
+      // P7a fix r1 (Minor-1): generic rather than naming Winter's own dot-dir -- this schema is
+      // built at module load and the real path derives from `ctx.brand.projectDirName`.
+      durable: { type: "boolean", description: "default false; persists to scheduled_tasks.json in the project dot-directory" },
     },
     required: ["cron", "prompt"],
   },

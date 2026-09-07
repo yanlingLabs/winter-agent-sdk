@@ -14,7 +14,7 @@
 // child-engine.ts's own header still discloses the remaining subsystem-level seams.
 import { randomUUID } from "node:crypto";
 import { writeFileSync, appendFileSync } from "node:fs";
-import type { RuntimeAgentDefinition } from "@yanlinglabs/winter-agent-sdk";
+import { WINTER_BRAND, type RuntimeAgentDefinition } from "@yanlinglabs/winter-agent-sdk";
 import { replaceExecutor, type ToolExecutionContext, type ToolExecutor, type ToolResultPayload } from "../registry.ts";
 import { AGENT_TOOL_CANONICAL_NAME } from "../../provider/slots.ts";
 import "../descriptors/agent.ts"; // self-sufficiency: guarantees the "Agent" stub is registered before replaceExecutor runs below.
@@ -295,14 +295,19 @@ export const agentExecutor: ToolExecutor = {
       // the session-keyed registry `production-wiring.ts` populates. NOT folded into `ctx.agents` --
       // that field is the PROGRAMMATIC tier, and a plugin agent must sit at the BOTTOM of
       // `loadAgentDefinitions`' precedence (programmatic > project > user > plugin), never above a
-      // user's own `~/.winter/agents/<name>.md`. See subagents/plugin-agents.ts for why the key is
+      // user's own user-tier `agents/<name>.md`. See subagents/plugin-agents.ts for why the key is
       // the session id rather than the agent id.
       const pluginAgents = getPluginAgents(ctx.sessionId);
+      // P7a fix r1 (Minor-1): the session's own profile, for BOTH the directories this reads and
+      // the message it may print. `engine.ts`'s own `resolveAgentType` already threads one; this
+      // second call site did not, so a branded session's Agent tool looked in `<home>/.winter/agents`.
+      const agentsBrand = ctx.brand ?? WINTER_BRAND;
       const definitions = loadAgentDefinitions({
         cwd: ctx.cwd,
         home: ctx.home,
+        brand: agentsBrand,
         // Phase 5 fix wave, KNOWN-6: the RESOLVED winter root, so a session run under a custom
-        // `WINTER_HOME` finds its user agent definitions in the SAME root its skills and commands
+        // `<PREFIX>HOME` finds its user agent definitions in the SAME root its skills and commands
         // came from. `ctx.winterHome` is threaded by `buildDefaultToolExecutor`.
         ...(ctx.winterHome !== undefined ? { winterHome: ctx.winterHome } : {}),
         trustedWorkspace,
@@ -312,7 +317,10 @@ export const agentExecutor: ToolExecutor = {
       const found = definitions.get(subagentType);
       if (found === undefined) {
         return {
-          output: `Error: unknown subagent_type "${subagentType}" -- no AgentDefinition by that name was found (checked ~/.winter/agents/*.md${trustedWorkspace ? " and .winter/agents/*.md" : ""}${ctx.agents !== undefined ? " and this session's programmatic agents" : ""}).`,
+          // P7a fix r1 (Minor-1): the MODEL-FACING text derives too. `loadAgentDefinitions` above
+          // already reads the branded directories; a message naming `~/.winter/agents` sent the
+          // model to look in a directory this product does not have.
+          output: `Error: unknown subagent_type "${subagentType}" -- no AgentDefinition by that name was found (checked ~/${agentsBrand.homeDirName}/agents/*.md${trustedWorkspace ? ` and ${agentsBrand.projectDirName}/agents/*.md` : ""}${ctx.agents !== undefined ? " and this session's programmatic agents" : ""}).`,
           isError: true,
         };
       }

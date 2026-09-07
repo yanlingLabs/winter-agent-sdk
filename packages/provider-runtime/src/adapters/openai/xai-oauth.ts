@@ -50,15 +50,15 @@ export const XAI_OAUTH = {
   /** The form field this flow carries a client identity in. */
   identityField: "referrer",
   /**
-   * WINTER'S OWN NAME, and the whole of what makes this row admissible rather than impersonation.
+   * DOCUMENTATION ONLY as of P7a (fix r1, Minor-3): the DEFAULT profile's token, kept so this row
+   * still SHOWS what it sends. Nothing reads it — all three wire sites below read
+   * `activeWinterIdentity().product`, which is the running brand's own name.
    *
-   * The bare product name, not `winterUserAgent()`'s versioned token: this is an originator field
-   * that a vendor's analytics buckets, the same shape as codex's own `originator`. It is never
-   * the vendor's value, and it is never omitted — see the reversion condition below for what it
-   * means if that turns out not to be allowed.
-   *
-   * P7a (D19): the DEFAULT profile's token; the three wire sites below read
-   * `activeWinterIdentity().product`, so a branded session presents its own.
+   * What it documents is the whole of what makes this row admissible rather than impersonation: the
+   * bare product name (not `winterUserAgent()`'s versioned token) in an originator field a vendor's
+   * analytics buckets, the same shape as codex's own `originator`. It is never the vendor's value,
+   * and it is never omitted — see the reversion condition below for what it means if that turns out
+   * not to be allowed. A future edit here changes NOTHING on the wire; change the brand profile.
    */
   identityValue: WINTER_BRAND.packageName,
   deviceCodeUrl: "https://auth.x.ai/oauth2/device/code",

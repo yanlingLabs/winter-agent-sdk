@@ -217,7 +217,15 @@ export function createSystemPromptAssembler(deps: SystemPromptAssemblerDeps = {}
         // P7a (D19): the plans-directory default follows the session's OWN project dot-dir, not the
         // module-level `DEFAULT_PLANS_DIRECTORY` (which is Winter's). Byte-identical under
         // `WINTER_BRAND`; a reuser gets `<their dir>/plans` instead of being sent into Winter's own.
-        input.planMode ? renderPlanModeBlock({ plansDirectory: config.plansDirectory ?? settings?.plansDirectory ?? `${brand.projectDirName}/plans`, ...(input.hostPlanBody !== undefined ? { hostPlanBody: input.hostPlanBody } : {}) }) : undefined,
+        input.planMode
+          ? renderPlanModeBlock({
+              plansDirectory: config.plansDirectory ?? settings?.plansDirectory ?? `${brand.projectDirName}/plans`,
+              // P7a fix r1 (Minor-1): and the REFUSAL fallback follows the brand too, or a malformed
+              // project setting sends the model to Winter's own directory.
+              plansDirectoryFallback: `${brand.projectDirName}/plans`,
+              ...(input.hostPlanBody !== undefined ? { hostPlanBody: input.hostPlanBody } : {}),
+            })
+          : undefined,
         input.skillListing !== undefined && input.skillListing.length > 0 ? renderSkillListing(input.skillListing) : undefined,
         region.excludeDynamicSections ? undefined : dynamic,
       ];

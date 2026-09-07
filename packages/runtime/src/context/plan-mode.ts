@@ -50,6 +50,16 @@ export interface PlanModeInput {
   plansDirectory: string;
   /** The host's replacement for the middle section (`planModeInstructions` on the wire). Whitespace-only counts as absent. */
   hostPlanBody?: string;
+  /**
+   * P7a fix r1 (Minor-1): what a REFUSED `plansDirectory` falls back to.
+   *
+   * `renderablePlansDirectory` refuses a value that fails RULING P5-L's alphabet and substitutes
+   * this. It used to be `DEFAULT_PLANS_DIRECTORY` — Winter's own `<dot-dir>/plans` — under every
+   * brand, so the one path that reaches the model when a project's setting is malformed named a
+   * directory a reuser's product does not have. The caller (`context/assembler.ts`) already derives
+   * the NORMAL value from the session's profile; this is the same string.
+   */
+  plansDirectoryFallback?: string;
 }
 
 // --- RULING P5-L: the plans directory is rendered bounded and escaped, or not at all ---------------
@@ -107,6 +117,6 @@ export function renderPlanModeBlock(input: PlanModeInput): string {
     PLAN_MODE_ENFORCEMENT,
     body,
     PLAN_MODE_PROTOCOL,
-    `If the user asks for the plan as a file, write it under ${renderablePlansDirectory(input.plansDirectory, DEFAULT_PLANS_DIRECTORY)}.`,
+    `If the user asks for the plan as a file, write it under ${renderablePlansDirectory(input.plansDirectory, input.plansDirectoryFallback ?? DEFAULT_PLANS_DIRECTORY)}.`,
   ].join("\n\n");
 }
