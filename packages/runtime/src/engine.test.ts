@@ -4217,6 +4217,23 @@ describe("WS-13c: a child spawned by slot name", () => {
     expect(calls[0]!.inherit.slot).toBeUndefined();
   });
 
+  // THE SECOND R6-17 GUARD, and the subtler one. `rowsForCanonicalId` matches `canonicalModelId` ONLY,
+  // while `registry.resolve` also matches a row's `key`, its `upstreamId` and every entry in
+  // `row.aliases`. So a real, resolvable id the slot layer simply cannot see -- Anthropic's own dated
+  // spelling `claude-haiku-4-5-20251001`, whose catalog row normalises to the DOTTED
+  // `claude-haiku-4.5-20251001`, or any alias -- comes back `unknown-slot`. Throwing there would
+  // refuse a spawn that worked before P6.6. WS-13c §3(e) says an unknown name is "the EXISTING
+  // unresolvable-alias error", and the existing one is raised downstream, after the registry has had
+  // its say -- not pre-empted by a canonical-id lookup.
+  test("an `unknown-slot` answer passes the requested string through -- the registry stays the authority on aliases and upstream ids", async () => {
+    const unknownResolver = (): SlotProviderResolution => ({ ok: false, code: "unknown-slot", message: "not a slot", wouldServe: [] });
+    const { calls, toolResult } = await spawnWith({ model: "claude-haiku-4-5-20251001" }, { resolveSlot: unknownResolver });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.inherit.model).toBe("claude-haiku-4-5-20251001");
+    expect(calls[0]!.inherit.slot).toBeUndefined();
+    expect(toolResult).not.toContain("unknown");
+  });
+
   test("with NO resolveSlot wired the pre-P6.6 chain is byte-identical: the string goes on the child unresolved", async () => {
     const { calls } = await spawnWith({ model: "opus" }, {});
     expect(calls[0]!.inherit.model).toBe("opus");

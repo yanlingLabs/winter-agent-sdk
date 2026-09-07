@@ -2392,10 +2392,17 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
     //     downstream. A qualified key still passes through -- the resolver returns it verbatim.
     if (resolution.ok && !resolution.viaSlotName && !requested.includes("/")) return { model: requested };
     if (!resolution.ok) {
-      // `unknown-slot` is WS-01 §6's unresolvable-alias case under a new name; the registry's own
-      // vocabulary already has a member for it, and inventing a second spelling would split one
-      // failure across two codes a host has to know about.
-      throw new WinterProviderResolutionError(resolution.code === "unknown-slot" ? "unknown-model" : resolution.code, resolution.message);
+      // (c) `unknown-slot` IS NOT AN ERROR HERE — it is "the slot layer has nothing to say", and the
+      //     registry is still the authority. `rowsForCanonicalId` matches `canonicalModelId` only,
+      //     while `registry.resolve` also matches a row's `key`, its `upstreamId` and every entry in
+      //     `row.aliases` — so a real, resolvable id the slot layer cannot see (Anthropic's own dated
+      //     `claude-haiku-4-5-20251001`, whose row normalises to the dotted form; any alias) would be
+      //     refused for a spawn that worked before P6.6. WS-13c §3(e) says an unknown name is "the
+      //     EXISTING unresolvable-alias error" (WS-01 §6) — and the existing one is raised downstream,
+      //     after the registry has had its say, not pre-empted by a canonical-id lookup. This mirrors
+      //     `set_model`'s own precedence exactly (`session-provider.ts`).
+      if (resolution.code === "unknown-slot") return { model: requested };
+      throw new WinterProviderResolutionError(resolution.code, resolution.message);
     }
     // `slot` is recorded ONLY when the request actually named a slot. A full catalog key or a
     // canonical id passes through the resolver too (an `AgentDefinition.model`, `WINTER_SUBAGENT_MODEL`,
