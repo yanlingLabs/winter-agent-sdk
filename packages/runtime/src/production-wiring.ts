@@ -824,6 +824,11 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
     // initialised long before anything calls it (nothing in `buildSessionProvider`'s construction
     // touches this field; it is read only inside `resolveModelSwitch`).
     resolveSlot: (requested, currentModelKey) => resolveSlot(requested, currentModelKey),
+    // P7a LANE B (D30): `settings.advisor.model`, over the SAME live `settingsGetter` every other
+    // settings consumer in this module reads -- so the advisor's model is hot on exactly the terms
+    // `providerSettings` and `modelSlots` already are (R-6c-28's limitation included: this SDK
+    // resolves settings once and the version moves when a HOST hands down a new view).
+    advisorModelSetting: () => settingsGetter()?.advisor?.model,
     ...(opts.provider ?? {}),
   });
   if (providerWiring.resolutionError !== undefined) {
@@ -1176,6 +1181,11 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
       // model's key for the R6-14 pin.
       priceUsage: (modelKey, usage) => providerWiring.priceUsage(modelKey, usage),
       ...(providerWiring.classifierIdentity !== undefined ? { classifierIdentity: providerWiring.classifierIdentity } : {}),
+      // P7a LANE B (D29/D30): the advisor's reviewer route. WITHHELD on the two arms that withhold
+      // it themselves (the reserved `winter-test/<name>` namespace, a session whose own model failed
+      // to resolve) -- absent means "there is nothing to ask", and the engine then neither advertises
+      // the advisor nor re-wires its executor.
+      ...(providerWiring.resolveReviewer !== undefined ? { resolveReviewer: providerWiring.resolveReviewer } : {}),
       ...(providerWiring.providerSupportsToolSearch !== undefined ? { providerSupportsToolSearch: providerWiring.providerSupportsToolSearch } : {}),
       ...(providerWiring.classifier !== undefined ? { classifier: providerWiring.classifier } : {}),
       systemPromptAssembler,

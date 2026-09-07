@@ -61,7 +61,8 @@ import { createModelClassifier, selectClassifierRoute, type ClassifierRoute } fr
 import type { ClassifierInterface } from "../permissions/auto/engine.ts";
 import { buildContinuationChain, type ContinuationChain, type ProviderStateRecord } from "../store/provider-state.ts";
 import type { ModelSwitchResolution, PricedUsage, Provider, ProviderRequest, ProviderTurn, ProviderUsage, ResolveModelSwitch } from "../engine.ts";
-import type { SlotProviderResolution } from "./slots.ts";
+import { computeActiveSlotSet, resolveSlotToProvider, type SlotProviderResolution } from "./slots.ts";
+import { resolveAdvisorRoute } from "./advisor-route.ts";
 
 /**
  * The pinned `ApiKeySource` vocabulary (`sdk.d.ts:127`), of which the JSDoc marks five members
@@ -171,6 +172,19 @@ export interface SessionProviderOptions {
    * fixture, and the reserved `winter-test/<name>` namespace, for which the wiring withholds it).
    */
   resolveSlot?: (requested: string, currentModelKey: string | undefined) => SlotProviderResolution;
+  /**
+   * P7a LANE B (D30): `settings.advisor.model`, as a GETTER over the same live settings view
+   * `providerSettings` reads.
+   *
+   * A GETTER for the reason every other settings seam in this file is one: the value is HOT (a
+   * Global Constraint of this phase -- "takes effect at the next quiescent boundary through the live
+   * settings getter, no restart"), and a string captured at construction could only ever be the
+   * value the session started with.
+   *
+   * ABSENT -> no setting is in play and the precedence falls to `Options.advisor.model` and then to
+   * D30's per-family default, which is exactly what a host that resolves no settings should get.
+   */
+  advisorModelSetting?: () => string | undefined;
 }
 
 export interface SessionProviderWiring {
@@ -200,8 +214,30 @@ export interface SessionProviderWiring {
   classifierRoute: ClassifierRoute;
   /** ABSENT unless the route produced a real one — `createAutoEngine`'s own default (always `no_verdict`) is what a manual fallback means. */
   classifier?: ClassifierInterface;
-  /** The advisor/reviewer backend (P2 carry, `config.advisor.model`). Absent when unconfigured. */
-  advisorProvider?: Provider;
+  /**
+   * P7a LANE B (D29/D30) — THE ADVISOR'S REVIEWER, resolved on demand.
+   *
+   * REPLACES the P2-carry `advisorProvider`, which was a single provider built once from
+   * `config.advisor.model` and nothing else. Three things forced a function:
+   *
+   *   - the reviewer's model can come from `settings.advisor.model`, which is HOT (a Global
+   *     Constraint of this phase): a value captured at session start could never see an edit;
+   *   - its DEFAULT depends on the session's family (D30), and the session's family changes with
+   *     `set_model` -- so the answer depends on the LIVE model key, which is the argument;
+   *   - the advisor tool's own contract is "a reviewer is resolvable RIGHT NOW" (its
+   *     `winter.reviewer-model` capability gate), which is a question, not a stored object.
+   *
+   * PINNED AT FIRST USE (WS-13 R6-G): the built provider is memoised on the inputs that chose it
+   * (the option, the live setting, the session's model key), so repeated calls within one settings
+   * version return the SAME provider instance -- and a settings edit re-pins at the next call, which
+   * is the next quiescent boundary. No cache is shared with the classifier (R6-G's own rule); this
+   * memo holds one entry and its key is the route's own inputs.
+   *
+   * ABSENT for a session with no catalog identity (the reserved `winter-test/<name>` namespace and a
+   * session whose own model failed to resolve): there is no family to default from and no row to
+   * resolve against, and a fabricated answer would be worse than the honest "no reviewer".
+   */
+  resolveReviewer?: (currentModelKey?: string) => { provider: Provider; model: string } | undefined;
   /**
    * Builds a `Provider` for any resolved model against THAT TARGET's material (Ruling E-1), the
    * session's renderer and the session's chain.
@@ -747,19 +783,92 @@ export function buildSessionProvider(opts: SessionProviderOptions): SessionProvi
     classifierIdentity = { modelKey: resolved.modelKey };
   }
 
-  // --- the advisor/reviewer backend (P2 carry, disclosed) ------------------------------------------
+  // --- P7a LANE B (D29/D30): THE ADVISOR'S REVIEWER ------------------------------------------------
   //
-  // Same selection path, same degradation posture: an unresolvable advisor model leaves the tool
-  // without a backend rather than taking the session down.
-  let advisorProvider: Provider | undefined;
-  const advisorModel = config.advisor?.model;
-  if (advisorModel !== undefined && advisorModel.trim().length > 0) {
-    const advisorResolved = registry.resolve({ model: advisorModel });
-    // Ruling E-1: the advisor's own `authRef` (mirroring the classifier's), never the session's.
-    if (!(advisorResolved instanceof WinterProviderResolutionError)) {
-      advisorProvider = buildProvider(advisorResolved, config.advisor?.authRef !== undefined ? { authRef: config.advisor.authRef } : {});
+  // R6-G's "pinned at first use", as one memo entry. NOT shared with anything: the classifier has no
+  // cache here at all, and WS-06 §4's closing line ("the advisor and the auto-mode classifier are
+  // separate routes and MUST NOT share a verdict cache") is structural rather than observed -- this
+  // binding is local to this wiring and nothing else can reach it.
+  let reviewerPin: { key: string; reviewer: { provider: Provider; model: string } | undefined } | undefined;
+
+  /**
+   * The slot layer, for the advisor's own candidate.
+   *
+   * PRODUCTION ALWAYS SUPPLIES ONE (`production-wiring.ts` passes `resolveSlot`, which carries the
+   * live credential view, `providers.<id>.enabled` and `preferredProviders`). The fallback below
+   * exists for a caller that builds a wiring DIRECTLY -- every pre-P6.6 fixture, and any host that
+   * wires a provider without the settings cascade -- and it is deliberately the SAME function rather
+   * than a second door into the catalog: `resolveSlotToProvider`'s qualified-key branch is the
+   * regression floor `config.advisor.model` has always depended on, and re-implementing it here is
+   * how the two would drift.
+   *
+   * What the fallback cannot know, it says honestly: no custom slots (there is no settings view),
+   * every provider enabled (nothing has said otherwise), and credential presence `"unknown"` for
+   * every provider but the session's own -- which is `"present"` by construction, exactly as
+   * production's own `credentialPresent` answers it.
+   */
+  const advisorSlotResolve = (requested: string, sessionModelKey: string | undefined): SlotProviderResolution => {
+    if (opts.resolveSlot !== undefined) return opts.resolveSlot(requested, sessionModelKey);
+    return resolveSlotToProvider({
+      catalog,
+      active: computeActiveSlotSet({ catalog, currentModelKey: sessionModelKey, customSlots: undefined }),
+      requested,
+      hasCredential: (providerId) => (providerId === sessionProviderId() ? "present" : "unknown"),
+      providerEnabled: () => true,
+      preferredProviders: [],
+    });
+  };
+
+  // WAS: one `registry.resolve({ model: config.advisor.model })` at session start, and nothing else
+  // -- no setting, no per-family default, no §4 ordering, and a silent `undefined` on a failure. The
+  // route now goes through `resolveAdvisorRoute` (D30's precedence and defaults) and then through
+  // the SAME slot resolver `set_model` and every child spawn use, so an advisor can never reach a
+  // provider a model switch would have refused.
+  //
+  // Same degradation posture as before, and it is WS-06 §4's own rule: a reviewer that cannot be
+  // resolved leaves the TOOL without a backend ("Reviewer unavailable -> ordinary tool error; never
+  // blocks the turn"), never the session without a start.
+  const resolveReviewer = (currentModelKey?: string): { provider: Provider; model: string } | undefined => {
+    const sessionModelKey = currentModelKey ?? resolved.modelKey;
+    const optionModel = config.advisor?.model;
+    const settingModel = opts.advisorModelSetting?.();
+    // R6-G's "pinned at first use", and the hot-reload rule, in one comparison: the memo key is
+    // every input that could change the ANSWER, so a repeated call inside one settings version
+    // returns the same provider object and a changed setting (or a `set_model` across families)
+    // re-resolves at the next call -- which is the next quiescent boundary, never a restart.
+    const key = `${optionModel ?? ""} ${settingModel ?? ""} ${sessionModelKey}`;
+    if (reviewerPin !== undefined && reviewerPin.key === key) return reviewerPin.reviewer;
+    const route = resolveAdvisorRoute({
+      catalog,
+      sessionModelKey,
+      ...(optionModel !== undefined ? { optionModel } : {}),
+      ...(settingModel !== undefined ? { settingModel } : {}),
+      resolveSlot: (requested) => advisorSlotResolve(requested, sessionModelKey),
+    });
+    let reviewer: { provider: Provider; model: string } | undefined;
+    if (route.ok) {
+      // The route chose a ROW; `registry.resolve` is still what turns that key into a `ResolvedModel`
+      // (the adapter, the provider model id, the continuation domain). It is given the route's OWN
+      // provider id rather than the session's, for the same reason the slot branch of
+      // `resolveModelSwitch` is: the provider decision has already been made under §4's ordering, and
+      // asking again under the session's id would be R6-K's `provider-mismatch` for a contradiction
+      // nobody stated.
+      const resolvedReviewer = resolveUnder(route.modelKey, route.providerId);
+      if (!(resolvedReviewer instanceof WinterProviderResolutionError)) {
+        // Ruling E-1 step (1): the advisor's OWN `authRef`, never the session's. Passed whenever the
+        // host set one -- step (1) is unconditional in the rule; it MATTERS when the reviewer's
+        // provider differs from the session's, which is the case where step (2) would otherwise hand
+        // vendor A's credential to vendor B.
+        const built = buildProvider(resolvedReviewer, config.advisor?.authRef !== undefined ? { authRef: config.advisor.authRef } : {});
+        // R6-G: an auxiliary generation never emits `stream_event`s. The advisor's executor already
+        // builds its request without a sink; this is the belt to that suspender, and it is the
+        // reason `withoutStreaming` exists (its own header names this backend as its consumer).
+        reviewer = { provider: withoutStreaming(built), model: resolvedReviewer.modelKey };
+      }
     }
-  }
+    reviewerPin = { key, reviewer };
+    return reviewer;
+  };
 
   return {
     provider: selection.provider,
@@ -780,7 +889,11 @@ export function buildSessionProvider(opts: SessionProviderOptions): SessionProvi
     classifierRoute,
     ...(classifier !== undefined ? { classifier } : {}),
     ...(classifier !== undefined && classifierIdentity !== undefined ? { classifierIdentity } : {}),
-    ...(advisorProvider !== undefined ? { advisorProvider } : {}),
+    // P7a LANE B: always present on this arm -- the session HAS a catalog identity here, so "is a
+    // reviewer resolvable" is a real question with a real answer. The two arms above (a refused
+    // session, the reserved test namespace) withhold it, which is what makes its absence mean
+    // "there is nothing to ask" rather than "the answer was no".
+    resolveReviewer,
     buildProvider,
     describeTargetMaterial,
     sessionProviderId,

@@ -568,11 +568,18 @@ describe("T10 wiring: the advisor backend (P2 carry, `config.advisor.model`)", (
         catalog,
         credentials: createMemoryCredentialStore(),
       });
-      expect(wiring.advisorProvider).toBeDefined();
+      // P7a LANE B: the field became `resolveReviewer` (a function, because the model can now come
+      // from a HOT setting and from a per-family default that follows `set_model`). The claim is
+      // unchanged.
+      const reviewer = wiring.resolveReviewer?.();
+      expect(reviewer).toBeDefined();
+      expect(reviewer!.model).toBe("t10openai/t10-advisor");
       // AND IT IS A DIFFERENT PROVIDER OBJECT from the session's. Sharing one would mean the advisor
       // silently ran on the session's model, which is the whole thing `config.advisor.model` exists
       // to prevent.
-      expect(wiring.advisorProvider).not.toBe(wiring.provider);
+      expect(reviewer!.provider).not.toBe(wiring.provider);
+      // R6-G's "pinned at first use": a second call inside one settings version is the SAME object.
+      expect(wiring.resolveReviewer!()).toBe(reviewer);
     });
   });
 });
