@@ -42,7 +42,7 @@ import {
 import type { ContinuityEndpoint, MessageOrigin, ProviderNativeState, TurnRequest } from "@yanlinglabs/winter-provider-runtime";
 // P6 fix wave (Ruling E-2): the two PURE continuity functions the switch point calls. Value imports
 // from the provider-runtime barrel, one direction (runtime -> provider-runtime), same as every adapter.
-import { buildPortableHandoff, classifySwitch } from "@yanlinglabs/winter-provider-runtime";
+import { WinterProviderResolutionError, buildPortableHandoff, classifySwitch } from "@yanlinglabs/winter-provider-runtime";
 export type { MessageOrigin, ProviderNativeState };
 // R6-7: the sidecar record types the persistence seam carries. `store/provider-state.ts` imports
 // NOTHING from this file (its own types come from provider-runtime), so this is not the circular
@@ -2358,7 +2358,40 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
   // registered ChildEngineDeps.spawn(). A fork copies live state (messages, by value); a
   // definition-backed (or bare) child gets the definition's own restrictions where declared, falling
   // back to this session's own current pool otherwise.
+  /**
+   * WS-13c §3/§4: the child's requested model, run through the slot resolver.
+   *
+   * THE REFUSAL IS THROWN, not swallowed and not substituted. `spawnChild` already funnels every
+   * throw into `tools/impl/agent.ts`'s one legible tool error (the unresolvable-alias path), so a
+   * `slot-unservable`/`ambiguous-slot-name` reaches the MODEL as a typed error naming what would
+   * have served it -- which is the whole point of §4 step 5. Falling back to the parent's model
+   * would be exactly the silent substitution WS-13 §9 forbids.
+   *
+   * NO RESOLVER WIRED -> the pre-P6.6 chain verbatim: the requested string goes on the child
+   * unresolved, which is what every scripted double and every pre-P6.6 fixture drives.
+   */
+  function resolveChildSlot(req: SpawnChildRequest): Pick<ChildInheritance, "model" | "slot"> {
+    const requested = resolveChildModel(req);
+    const resolution = resolveSlot?.(requested, currentProviderIdentity?.modelKey ?? currentModel);
+    if (resolution === undefined) return { model: requested };
+    if (!resolution.ok) {
+      // `unknown-slot` is WS-01 §6's unresolvable-alias case under a new name; the registry's own
+      // vocabulary already has a member for it, and inventing a second spelling would split one
+      // failure across two codes a host has to know about.
+      throw new WinterProviderResolutionError(resolution.code === "unknown-slot" ? "unknown-model" : resolution.code, resolution.message);
+    }
+    // `slot` is recorded ONLY when the request actually named a slot. A full catalog key or a
+    // canonical id passes through the resolver too (an `AgentDefinition.model`, `WINTER_SUBAGENT_MODEL`,
+    // or the inherited `config.model`), and stamping the active family's name on those would make
+    // every pre-P6.6 spawn claim a slot nobody asked for -- §3 says "the slot the request named, IF
+    // it named one".
+    return { model: resolution.modelKey, ...(resolution.viaSlotName ? { slot: resolution.slot } : {}) };
+  }
+
   function buildChildInheritance(req: SpawnChildRequest): ChildInheritance {
+    // FIRST, before any policy/tool work: a refused slot must be a cheap, side-effect-free rejection,
+    // matching this spec family's own posture (WS-10 §6, child-engine.ts's depth/concurrency check).
+    const childSlot = resolveChildSlot(req);
     const parentState = policyStateStore.getState();
     const requestedMode = req.definition?.permissionMode;
     const validMode = requestedMode !== undefined && isPermissionMode(requestedMode) ? requestedMode : undefined;
@@ -2402,7 +2435,10 @@ export async function runEngine(opts: EngineOptions): Promise<number> {
       // An intersection is also the only reading consistent with WS-10 §2 ("AgentDefinition.tools
       // RESTRICTS availability"): a restriction that can widen is not a restriction.
       tools: req.definition?.tools !== undefined ? req.definition.tools.filter((name) => currentAdvertisedCanonicalNames.includes(name)) : [...currentAdvertisedCanonicalNames],
-      model: resolveChildModel(req),
+      // WS-13c §3/§4 (P6.6): a SLOT NAME (`AgentInput.model`) becomes the catalog key that serves it,
+      // and the slot it named rides along on `slot`. Everything else -- a full key, a canonical id,
+      // `WINTER_SUBAGENT_MODEL`, the inherited `config.model` -- passes through exactly as before.
+      ...childSlot,
       // WS-10 §3.2: AgentInput/SpawnChildRequest carry no effort field at all; definition effort
       // overrides the session's own. No session-level effort CONCEPT is surfaced on RuntimeConfig
       // anywhere in this codebase yet (a genuine WS-13/provider-layer gap, disclosed rather than

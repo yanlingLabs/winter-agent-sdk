@@ -19,6 +19,7 @@ import { runEngine, providerMessageContentToText, type Provider, type ProviderMe
 // WS-13c §3 (P6.6): the pinned Claude names and the public active-set shape the Agent tool renders from.
 import { CLAUDE_RESERVED_SLOT_NAMES } from "@yanlinglabs/winter-provider-catalog";
 import type { ActiveSlotSet } from "@yanlinglabs/winter-agent-sdk";
+import type { SlotProviderResolution } from "./provider/slots.ts";
 import { getRegisteredTool, registerMcpServerTools, unregisterMcpServerTools, replaceExecutor, registerTool, unregisterToolForTest } from "./tools/registry.ts";
 import { ADVISOR_TOOL_NAME } from "./tools/impl/advisor.ts";
 import "./tools/impl/index.ts"; // guarantees advisor.ts's own module-load default is registered before the M6 tests below run
@@ -4029,5 +4030,165 @@ describe("WS-13c: the Agent tool per family", () => {
       ],
     );
     expect(calls).toBe(1);
+  });
+});
+
+// ================================================================================================
+// WS-13c §3/§4 (P6.6 Lane A): a CHILD's requested model goes through the slot resolver -- a slot
+// name becomes the catalog key that serves it, and a refusal is the tool's own typed error.
+// ================================================================================================
+describe("WS-13c: a child spawned by slot name", () => {
+  // The resolver fake is the real `resolveSlotToProvider` over the same fixture rows Lane A's unit
+  // tests use, with the credential view injected -- so the engine is proved against the production
+  // shape of the answer, not a hand-written one.
+  function slotResolver(hasCredential: (providerId: string) => boolean): (requested: string, key: string | undefined) => SlotProviderResolution {
+    const active: ActiveSlotSet = {
+      family: "gpt",
+      source: "family-default",
+      slots: [{ name: "astra", canonicalModelId: "gpt-6-astra", description: "d", reason: "r" }],
+    };
+    return (requested: string): SlotProviderResolution => {
+      if (requested === "opus") {
+        if (!hasCredential("anthropic")) {
+          return {
+            ok: false,
+            code: "slot-unservable",
+            message: "no configured provider serves claude-opus-5: anthropic/claude-opus-5 (anthropic) — no credential configured",
+            wouldServe: [{ key: "anthropic/claude-opus-5", providerId: "anthropic", why: "no credential configured" }],
+          };
+        }
+        return { ok: true, modelKey: "anthropic/claude-opus-5", providerId: "anthropic", canonicalModelId: "claude-opus-5", slot: { family: "claude", name: "opus", source: "family-default" }, viaSlotName: true };
+      }
+      if (requested === "flash") {
+        return { ok: false, code: "ambiguous-slot-name", message: '"flash" is a slot in gemini/flash, deepseek/flash; the active family is gpt', wouldServe: [] };
+      }
+      if (requested === "astra") {
+        return { ok: true, modelKey: "openai/gpt-6-astra", providerId: "openai", canonicalModelId: "gpt-6-astra", slot: { family: "gpt", name: "astra", source: "family-default" }, viaSlotName: true };
+      }
+      // Everything else is the pass-through the real resolver performs for a full key.
+      return { ok: true, modelKey: requested, providerId: requested.split("/")[0] ?? "", canonicalModelId: requested, slot: { family: active.family, name: requested, source: active.source }, viaSlotName: false };
+    };
+  }
+
+  async function spawnWith(input: Record<string, unknown>, opts: Record<string, unknown>): Promise<{ calls: Array<{ req: SpawnChildRequest; inherit: ChildInheritance }>; toolResult: string | undefined; isError: boolean | undefined }> {
+    resetChildEngineFactoryForTest();
+    registerSpawnProbeTool();
+    const { calls } = installCapturingFactory();
+    try {
+      const { host, runtime } = createInMemoryChannel();
+      const provider = scriptedProvider([
+        { kind: "tool_use", calls: [{ id: "slot-spawn", name: SPAWN_PROBE_TOOL_NAME, input: { parentToolUseId: "slot-spawn", prompt: "go", runInBackground: false, ...input } }] },
+        { kind: "text", text: "done" },
+      ]);
+      const config = baseConfig({ permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true });
+      const done = runEngine({ config, input: runtime.input, output: runtime.output, provider, ...opts });
+      host.output.write({ type: "user", text: "go" });
+      host.output.write({ type: "control_request", requestId: "end-slot", subtype: "end_input", payload: undefined });
+      const frames = await drain(host.input);
+      await done;
+      const msgs = dataMessages(frames);
+      const toolResultMsg = msgs.find((m) => m.type === "user") as unknown as { message: { content: Array<{ tool_use_id: string; content: string; error?: boolean }> } } | undefined;
+      const block = toolResultMsg?.message.content.find((b) => b.tool_use_id === "slot-spawn");
+      return { calls, toolResult: block?.content, isError: block?.error };
+    } finally {
+      unregisterToolForTest(SPAWN_PROBE_TOOL_NAME);
+      resetChildEngineFactoryForTest();
+    }
+  }
+
+  test("WS13c-4/5: a slot name becomes the catalog key that serves it, and the child records the slot it named", async () => {
+    const { calls } = await spawnWith({ model: "opus" }, { resolveSlot: slotResolver(() => true) });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.inherit.model).toBe("anthropic/claude-opus-5");
+    expect(calls[0]!.inherit.slot).toEqual({ family: "claude", name: "opus", source: "family-default" });
+    // The RAW request keeps the slot name -- `requestedModel` on the child's record is the string as sent.
+    expect(calls[0]!.req.model).toBe("opus");
+  });
+
+  /**
+   * The REAL `Agent` executor, driven end to end -- the refusal text a model actually reads.
+   *
+   * Its own capturing factory, because `agentExecutor` AWAITS a foreground child's `result()`:
+   * `installCapturingFactory`'s handle never settles, so a shared one would hang this leg.
+   */
+  async function agentToolResult(input: Record<string, unknown>, opts: Record<string, unknown>): Promise<{ calls: Array<{ req: SpawnChildRequest; inherit: ChildInheritance }>; toolResult: string | undefined; isError: boolean | undefined }> {
+    resetChildEngineFactoryForTest();
+    const calls: Array<{ req: SpawnChildRequest; inherit: ChildInheritance }> = [];
+    registerChildEngineFactory(() => ({
+      async spawn(req: SpawnChildRequest, inherit: ChildInheritance) {
+        calls.push({ req, inherit });
+        const handle = createFakeChildHandle();
+        handle.simulateCompletion("child done");
+        return handle;
+      },
+    }));
+    try {
+      const { host, runtime } = createInMemoryChannel();
+      const provider = scriptedProvider([
+        { kind: "tool_use", calls: [{ id: "agent-slot", name: "Agent", input: { description: "d", prompt: "go", ...input } }] },
+        { kind: "text", text: "done" },
+      ]);
+      const config = baseConfig({ permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true });
+      const done = runEngine({ config, input: runtime.input, output: runtime.output, provider, ...opts });
+      host.output.write({ type: "user", text: "go" });
+      host.output.write({ type: "control_request", requestId: "end-agent", subtype: "end_input", payload: undefined });
+      const frames = await drain(host.input);
+      await done;
+      const msgs = dataMessages(frames);
+      const toolResultMsg = msgs.find((m) => m.type === "user") as unknown as { message: { content: Array<{ tool_use_id: string; content: string; error?: boolean }> } } | undefined;
+      const block = toolResultMsg?.message.content.find((b) => b.tool_use_id === "agent-slot");
+      return { calls, toolResult: block?.content, isError: block?.error };
+    } finally {
+      resetChildEngineFactoryForTest();
+    }
+  }
+
+  test("WS13c-5: an unservable slot is the Agent tool's own typed error, naming the code and what would have served it", async () => {
+    const { calls, toolResult } = await agentToolResult({ model: "opus" }, { resolveSlot: slotResolver(() => false) });
+    expect(calls).toHaveLength(0); // rejected BEFORE any spawn work
+    expect(toolResult).toContain("Error: subagent spawn failed");
+    expect(toolResult).toContain("slot-unservable");
+    expect(toolResult).toContain("anthropic/claude-opus-5");
+    expect(toolResult).toContain("no credential configured");
+  });
+
+  test("WS13c-4: an ambiguous foreign name refuses with its own code, never a substitution", async () => {
+    const { calls, toolResult } = await agentToolResult({ model: "flash" }, { resolveSlot: slotResolver(() => true) });
+    expect(calls).toHaveLength(0);
+    expect(toolResult).toContain("ambiguous-slot-name");
+    expect(toolResult).toContain("gemini/flash");
+    // NOT a substitution onto the parent's own model: nothing was spawned at all.
+    expect(toolResult).not.toContain("async_launched");
+  });
+
+  test("WS13c-4/5: through the real Agent tool, a servable slot spawns on the key that serves it", async () => {
+    const { calls } = await agentToolResult({ model: "opus" }, { resolveSlot: slotResolver(() => true) });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.inherit.model).toBe("anthropic/claude-opus-5");
+    expect(calls[0]!.inherit.slot).toEqual({ family: "claude", name: "opus", source: "family-default" });
+  });
+
+  test("a full key passes through unchanged and stamps NO slot on the child", async () => {
+    const { calls } = await spawnWith({ model: "openrouter/some/unlisted" }, { resolveSlot: slotResolver(() => true) });
+    expect(calls[0]!.inherit.model).toBe("openrouter/some/unlisted");
+    expect(calls[0]!.inherit.slot).toBeUndefined();
+  });
+
+  test("the inherited parent model (no `model` on the request) passes through and stamps no slot", async () => {
+    const { calls } = await spawnWith({}, { resolveSlot: slotResolver(() => true) });
+    expect(calls[0]!.inherit.model).toBe("winter-test/echo");
+    expect(calls[0]!.inherit.slot).toBeUndefined();
+  });
+
+  test("an AgentDefinition's own model goes through the SAME resolver", async () => {
+    const { calls } = await spawnWith({ definition: { description: "d", prompt: "p", model: "astra" } }, { resolveSlot: slotResolver(() => true) });
+    expect(calls[0]!.inherit.model).toBe("openai/gpt-6-astra");
+    expect(calls[0]!.inherit.slot).toEqual({ family: "gpt", name: "astra", source: "family-default" });
+  });
+
+  test("with NO resolveSlot wired the pre-P6.6 chain is byte-identical: the string goes on the child unresolved", async () => {
+    const { calls } = await spawnWith({ model: "opus" }, {});
+    expect(calls[0]!.inherit.model).toBe("opus");
+    expect(calls[0]!.inherit.slot).toBeUndefined();
   });
 });

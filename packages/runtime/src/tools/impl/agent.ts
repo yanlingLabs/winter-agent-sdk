@@ -356,11 +356,19 @@ export const agentExecutor: ToolExecutor = {
       handle = await ctx.session.spawnChild(req);
     } catch (err) {
       // Catches every synchronous/asynchronous failure spawnChild can produce: depth/concurrency
-      // limits (limits.ts), an unresolvable model alias (resolution.ts), a workspace-creation
-      // failure (workspace.ts, e.g. isolation:"worktree" outside a git repo), or "no child engine
-      // factory is registered" (Disclosed Gap #1, child-engine.ts's own header) -- one legible tool
-      // error, never an uncaught throw out of this executor.
-      return { output: `Error: subagent spawn failed -- ${err instanceof Error ? err.message : String(err)}`, isError: true };
+      // limits (limits.ts), an unresolvable model alias (resolution.ts), a slot that nothing this
+      // session has can serve (WS-13c §4 step 5), a workspace-creation failure (workspace.ts, e.g.
+      // isolation:"worktree" outside a git repo), or "no child engine factory is registered"
+      // (Disclosed Gap #1, child-engine.ts's own header) -- one legible tool error, never an
+      // uncaught throw out of this executor.
+      //
+      // WS-13c §3/§4 (P6.6): the CODE joins the text when the error carries one. A typed refusal
+      // whose code is dropped reads to the model as an unexplained failure, and `slot-unservable`
+      // (nothing serves it) versus `ambiguous-slot-name` (two families use that name) are two
+      // different things for the model to do next -- pick another slot, or name the family's own.
+      const code = typeof (err as { code?: unknown } | null)?.code === "string" ? (err as { code: string }).code : undefined;
+      const message = err instanceof Error ? err.message : String(err);
+      return { output: `Error: subagent spawn failed -- ${code !== undefined ? `${code}: ` : ""}${message}`, isError: true };
     }
 
     if (!fgbg.background) {
