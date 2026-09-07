@@ -19560,7 +19560,7 @@
       "contextWindow": {
         "value": 1048576,
         "source": "upstream-static",
-        "sourceRef": "ADDED (P6.6 Task 1b fix r1, I-4): carried forward from google/gemini-3.1-flash-lite's own catalogued contextWindow (open-sse/config/providers/registry/gemini/index.ts#gemini-3.1-flash-lite), the row this slot replaces. https://ai.google.dev/gemini-api/docs/models publishes no per-model token limits, only links to a per-model detail page outside this task's allowed page set. Without this field the runtime falls back to a 200000-token default (packages/runtime/src/engine.ts), which would silently shrink the `lite` slot's compaction boundary from ~1M tokens.",
+        "sourceRef": "ADDED (P6.6 Task 1b fix r1/r1b, I-4): carried forward from google/gemini-3.1-flash-lite's own catalogued contextWindow (open-sse/config/providers/registry/gemini/index.ts#gemini-3.1-flash-lite), the immediately-prior Flash-Lite release. https://ai.google.dev/gemini-api/docs/models publishes no per-model token limits, only links to a per-model detail page outside this task's allowed page set — which is why the `lite` slot itself does NOT resolve to this row (see the row's `$comment`); this inferred value is recorded so the row is not blank, and so a future repoint need not re-derive it.",
         "confidence": "inferred",
         "observedAt": "2026-09-07T00:00:00Z"
       },
@@ -19668,7 +19668,7 @@
       "contextWindow": {
         "value": 1048576,
         "source": "upstream-static",
-        "sourceRef": "ADDED (P6.6 Task 1b fix r1, I-4): carried forward from google/gemini-3.7-flash's own catalogued contextWindow (open-sse/config/providers/registry/gemini/index.ts#gemini-3.7-flash), the row this slot replaces. https://ai.google.dev/gemini-api/docs/models publishes no per-model token limits, only links to a per-model detail page outside this task's allowed page set. Without this field the runtime falls back to a 200000-token default (packages/runtime/src/engine.ts), which would silently shrink the `flash` slot's compaction boundary from ~1M tokens.",
+        "sourceRef": "ADDED (P6.6 Task 1b fix r1/r1b, I-4): carried forward from google/gemini-3.7-flash's own catalogued contextWindow (open-sse/config/providers/registry/gemini/index.ts#gemini-3.7-flash), the immediately-prior Flash release. https://ai.google.dev/gemini-api/docs/models publishes no per-model token limits, only links to a per-model detail page outside this task's allowed page set — which is why the `flash` slot itself does NOT resolve to this row (see the row's `$comment`); this inferred value is recorded so the row is not blank, and so a future repoint need not re-derive it.",
         "confidence": "inferred",
         "observedAt": "2026-09-07T00:00:00Z"
       },
@@ -38675,20 +38675,20 @@
         },
         {
           "name": "flash",
-          "canonicalModelId": "gemini-3.8-flash",
+          "canonicalModelId": "gemini-3.7-flash",
           "description": "Google's strongest current model by its own documentation; fast agentic coding.",
           "reason": "Second: strength.",
           "basis": "vendor-doc",
-          "citation": "spec:WS-13c §9 — vendor-doc basis; VERIFIED on https://ai.google.dev/gemini-api/docs/models (retrieved 2026-09-07), which lists `gemini-3.8-flash` as \"New Stable\" and \"Our most intelligent Flash model\" ahead of `gemini-3.7-flash` — repointed from `gemini-3.7-flash` to the owed `google/gemini-3.8-flash` row (P6.6 Task 1b)",
+          "citation": "spec:WS-13c §9 — vendor-doc basis; the id IS verified on https://ai.google.dev/gemini-api/docs/models (retrieved 2026-09-07), which lists `gemini-3.8-flash` as \"New Stable\" and \"Our most intelligent Flash model\" ahead of `gemini-3.7-flash`, and the owed `google/gemini-3.8-flash` row is authored — but per task-1b review r1's I-4 and the controller's binding ruling, the page states NO per-model context-window number (it is an index that links to a page outside this task's allowed set), so the slot stays on `gemini-3.7-flash` rather than repoint to a row whose context window would have to be inferred. `google/gemini-3.8-flash` remains in the catalog, servable outside this slot, with an inferred `contextWindow` disclosed on the row itself; repointing here is a one-line change if a future ruling accepts that inference for the slot",
           "status": "candidate"
         },
         {
           "name": "lite",
-          "canonicalModelId": "gemini-3.5-flash-lite",
+          "canonicalModelId": "gemini-3.1-flash-lite",
           "description": "the cheap implementer.",
           "reason": "Third: cost.",
           "basis": "winter-curated",
-          "citation": "spec:WS-13c §9 (user-ruling FRAMING — user: \"lite as the cheap implementer\", §0 2026-09-06 — winter-curated text; R-6c-11 applied mechanically, fix r1 I-1); VERIFIED on https://ai.google.dev/gemini-api/docs/models (retrieved 2026-09-07) per the spine review's addendum (controller item 2) — softened per task-1b review r1 M-3: the page states no release dates or supersession; `gemini-3.5-flash-lite` sits ahead of `gemini-3.1-flash-lite` in the page's own newest-first listing order and carries the higher minor version number, both Stable, and its blurb (\"fastest, most cost-effective\") fits this slot's \"cheap implementer\" framing at least as well as the row it replaces — on that page-order-and-version-number basis the slot is repointed to the owed `google/gemini-3.5-flash-lite` row (P6.6 Task 1b); `gemini-3.1-flash-lite` stays in the catalog unchanged",
+          "citation": "spec:WS-13c §9 (user-ruling FRAMING — user: \"lite as the cheap implementer\", §0 2026-09-06 — winter-curated text; R-6c-11 applied mechanically, fix r1 I-1); a newer id IS found and verified on https://ai.google.dev/gemini-api/docs/models (retrieved 2026-09-07) per the spine review's addendum (controller item 2) — `gemini-3.5-flash-lite` sits ahead of `gemini-3.1-flash-lite` in the page's own newest-first listing order and carries the higher minor version number, both Stable (page states no release dates or supersession; softened per task-1b review r1 M-3) — and the owed `google/gemini-3.5-flash-lite` row is authored, but per review r1's I-4 and the controller's binding ruling the page states NO per-model context-window number for it, so the slot stays on `gemini-3.1-flash-lite` rather than repoint to a row whose context window would have to be inferred. `google/gemini-3.5-flash-lite` remains in the catalog, servable outside this slot, with an inferred `contextWindow` disclosed on the row itself; repointing here is a one-line change if a future ruling accepts that inference for the slot",
           "status": "candidate"
         }
       ],
