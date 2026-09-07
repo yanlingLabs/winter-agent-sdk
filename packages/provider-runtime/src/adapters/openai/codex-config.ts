@@ -9,7 +9,8 @@
 // `originator` IS DELIBERATELY NOT A FIRST-PARTY VALUE, AND MUST NEVER BE MADE ONE.
 //
 // codex-rs sends its own first-party originator, which earns first-party treatment from the
-// ChatGPT backend. Winter sends `"winter"` instead: it is an independent client and says so
+// ChatGPT backend. Winter sends its OWN token instead (`brand.codexOriginator`, whose validator
+// refuses every first-party value by name): it is an independent client and says so
 // honestly rather than impersonating OpenAI's own CLI to obtain that treatment. The tradeoff is
 // accepted and stated — OpenAI's backend can distinguish (and, if it ever chooses, cleanly gate)
 // Winter traffic, and the BYO-API-key path through `openai-responses@1` is the sanctioned fallback
@@ -18,7 +19,14 @@
 // This is a HARD RULE (WS-01 §3, carried from Norma's own): do NOT revert it to a first-party
 // value to chase fingerprint parity. `codex-oauth.test.ts` asserts the value, so a change here
 // fails a test that explains itself.
+//
+// P7a (D19): the table below carries the DEFAULT profile's value, because it is a frozen constant
+// evaluated at module load. What actually goes on the wire is `activeWinterIdentity().codexOriginator`
+// (identity.ts), which a branded session sets — so a reuser presents THEIR non-first-party token,
+// never Winter's.
 // ============================================================================================
+
+import { WINTER_BRAND } from "@yanlinglabs/winter-agent-sdk";
 
 export const CODEX = {
   /** OAuth application id — shared by all Codex CLI clients. */
@@ -45,13 +53,13 @@ export const CODEX = {
   headers: {
     /** PROTOCOL: the Responses surface on this backend requires it. */
     "OpenAI-Beta": "responses=experimental",
-    /** PRIVILEGED (R6-L). See this file's header for why the value is `"winter"` and must stay that way. */
-    originator: "winter",
+    /** PRIVILEGED (R6-L). See this file's header for why this is never a first-party value. */
+    originator: WINTER_BRAND.codexOriginator,
   } as Record<string, string>,
 } as const;
 
-/** The `originator` value, exported so a fixture asserts on it by name rather than by string literal. */
-export const CODEX_ORIGINATOR = "winter";
+/** The DEFAULT `originator` value, exported so a fixture asserts on it by name rather than by string literal. */
+export const CODEX_ORIGINATOR = WINTER_BRAND.codexOriginator;
 
 /**
  * The date `CODEX_MODELS` was last checked against the live `/models` catalogue, carried from the

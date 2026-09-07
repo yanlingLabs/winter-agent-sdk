@@ -393,10 +393,6 @@ const BASELINE_ALLOWLIST: readonly string[] = [
   // --- packages/provider-catalog (Lane D owns validate.ts's rules) ------------------------------
   "packages/provider-catalog/src/validate.ts",
   // --- packages/provider-runtime (Lane A: identity.ts's body, the codex originator, the keychain service) 
-  "packages/provider-runtime/src/adapters/openai/codex-config.ts",
-  "packages/provider-runtime/src/adapters/openai/xai-oauth.ts",
-  "packages/provider-runtime/src/continuity/handoff.ts",
-  "packages/provider-runtime/src/identity.ts",
   // --- packages/runtime (Lane A unless another lane's ownership row names the file) -------------
   "packages/runtime/src/engine.ts",
   "packages/runtime/src/production-wiring.ts",  // comment-only

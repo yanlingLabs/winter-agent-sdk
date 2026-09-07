@@ -54,6 +54,13 @@ export { winterUserAgent } from "./identity.ts";
 // identity value becomes a wire value, and it is the one place a brand's `packageName` has to reach
 // for a reuser's identity headers to name the reuser (Lane A threads it).
 export { renderIdentityHeaders } from "./identity.ts";
+// P7a (D19): the running product's identity. `setWinterIdentity` is what a branded session calls
+// once at wiring time (and disposes at teardown) so every `User-Agent`, every `<product>`
+// substitution and the codex `originator` name the reuser's product rather than Winter's;
+// `activeWinterIdentity` is what the two originator sites read. See identity.ts's own header for
+// why this is process-level state and not a threaded parameter.
+export { setWinterIdentity, activeWinterIdentity } from "./identity.ts";
+export type { WinterIdentity } from "./identity.ts";
 export type { IdentityRenderContext } from "./identity.ts";
 
 // WS-13b (P6.5 spine): the two OAuth primitives every Winter-authored flow shares.

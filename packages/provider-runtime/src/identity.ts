@@ -18,23 +18,82 @@
 // import into the same binary, so this path is proven rather than assumed.
 
 import type { WinterCatalog } from "@yanlinglabs/winter-provider-catalog";
+import { WINTER_BRAND } from "@yanlinglabs/winter-agent-sdk";
 import pkg from "../package.json";
 
+// --- P7a (D19): the RUNNING product's identity ------------------------------------------------------
+//
+// `Options.brand` exists so a reuser ships a product of their own. The one thing that must follow it
+// onto the wire is IDENTITY: a request the reuser's product made, carrying Winter's own token in its
+// `User-Agent` and Winter's own value in the codex `originator`, is a false statement about who is calling —
+// the exact failure this module's own header says the rule exists to prevent, only pointed the other
+// way.
+//
+// A PROCESS-LEVEL VALUE WITH A SETTER, and that shape is forced rather than chosen. `winterUserAgent()`
+// is called from ten call sites — OAuth device-code and refresh helpers, PKCE, Vertex, and five
+// adapter header builders — most of which hold no session object at all, and the two `originator`
+// sites read a frozen constant table. Threading a profile to each would put a brand parameter on
+// every OAuth helper in the package for one string. So the runtime sets it ONCE per session, beside
+// the standing-server rename it already does (`rebrandStandingServerTools`), and disposes it with
+// the session.
+//
+// THE ONE-LIVE-BRAND ASSUMPTION, disclosed: two CONCURRENT sessions under DIFFERENT brands in one
+// process would share this value. That is the same assumption `subagents/limits.ts` and
+// `tools/background-tasks.ts` already record for their own process-level state; a genuinely
+// multi-tenant host is a WS-15 concern. It is NOT configurable by the model or by a host header —
+// only by the validated brand profile, whose `codexOriginator` is refused if it names a first party.
+
+/** The two identity tokens a running product puts on the wire. */
+export interface WinterIdentity {
+  /** The product token in `User-Agent` and in a row's `<product>` placeholder — `brand.packageName`. */
+  product: string;
+  /** The codex backend's `originator` — `brand.codexOriginator`, validated never to be first-party. */
+  codexOriginator: string;
+}
+
+const DEFAULT_IDENTITY: Readonly<WinterIdentity> = Object.freeze({ product: WINTER_BRAND.packageName, codexOriginator: WINTER_BRAND.codexOriginator });
+
+let activeIdentity: Readonly<WinterIdentity> = DEFAULT_IDENTITY;
+
+/** What this process is currently presenting as. Winter's own values until a branded session sets it. */
+export function activeWinterIdentity(): Readonly<WinterIdentity> {
+  return activeIdentity;
+}
+
 /**
- * `winter-agent-sdk/<version>` — the `User-Agent` every adapter family sends.
+ * Install a session's identity; the returned disposer restores what was there before.
+ *
+ * Restore-what-was-there rather than restore-to-default, so nested/overlapping sessions unwind in
+ * the order they were installed. A disposer whose value has since been replaced is a no-op, the
+ * same identity check `registerHostGeneratedTool` uses for the identical reason.
+ */
+export function setWinterIdentity(next: WinterIdentity): () => void {
+  const previous = activeIdentity;
+  const installed: Readonly<WinterIdentity> = Object.freeze({ ...next });
+  activeIdentity = installed;
+  let disposed = false;
+  return () => {
+    if (disposed || activeIdentity !== installed) return;
+    disposed = true;
+    activeIdentity = previous;
+  };
+}
+
+/**
+ * `<product>/<version>` — the `User-Agent` every adapter family sends.
  *
  * Never an editor, a vendor CLI or a first-party product identity (WS-13 §5, D21). Where a vendor
  * names a second identity field (aihorde's `Client-Agent`, the codex backend's `originator`), that
- * field carries Winter's name too; it never carries somebody else's.
+ * field carries the running product's name too; it never carries somebody else's.
  */
 export function winterUserAgent(): string {
-  return `${DEFAULT_PRODUCT}/${pkg.version}`;
+  return `${activeIdentity.product}/${pkg.version}`;
 }
 
 // --- the per-row second identity field (WS-13b §7/§8.4, fix-wave R-FW-2) ---------------------------
 //
 // THE OBLIGATION THAT FELL BETWEEN TWO LANES. Spec §2 asks for an adapter that sends
-// `Client-Agent: winter-agent-sdk/<version>:<contact>`; §8.4 asks for `aihorde` and `uncloseai` to
+// `Client-Agent: <product>/<version>:<contact>`; §8.4 asks for `aihorde` and `uncloseai` to
 // ship "with a truthful `Client-Agent`"; the audit calls it "the rule's honest-identity requirement
 // made concrete". What shipped was a row whose citation NAMES the header and no code that sends it —
 // the row author handed it to "the adapter owner", whose brief was the live gate.
@@ -58,20 +117,11 @@ const VERSION_PLACEHOLDER = "<version>";
 /**
  * P7a (D19): the token a row's value carries in place of the running brand's PRODUCT NAME.
  *
- * A row that hard-codes `winter-agent-sdk` is honest for Winter and a lie for a reuser — it would
- * put Winter's identity on a request the reuser's product made, in the one field whose entire
+ * A row that hard-codes a product token is honest for that product and a lie for a reuser — it would
+ * put one product's identity on a request another one made, in the one field whose entire
  * purpose is honest identity. `<product>` is what makes a catalog row truthful under every brand.
  */
 const PRODUCT_PLACEHOLDER = "<product>";
-
-/**
- * The DEFAULT product token when no brand has been threaded to this module.
- *
- * Lane A replaces this constant's use with `RuntimeConfig.brand.packageName` — that is the whole
- * remaining half of the identity sweep. Until then every substitution resolves to Winter's own
- * name, which is exactly today's behaviour, so the placeholder is inert rather than wrong.
- */
-const DEFAULT_PRODUCT = "winter-agent-sdk";
 
 /** What a row's identity-header value is rendered against: this build's version and this run's product. */
 export interface IdentityRenderContext {
@@ -113,5 +163,5 @@ export function identityHeaderLookup(catalog: WinterCatalog): IdentityHeaderLook
 export function winterIdentityHeaders(lookup: IdentityHeaderLookup | undefined, providerId: string): Record<string, string> {
   const declared = lookup?.(providerId);
   if (declared === undefined) return {};
-  return renderIdentityHeaders(declared, { version: pkg.version, product: DEFAULT_PRODUCT });
+  return renderIdentityHeaders(declared, { version: pkg.version, product: activeIdentity.product });
 }
