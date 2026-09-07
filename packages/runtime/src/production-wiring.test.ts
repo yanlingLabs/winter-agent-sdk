@@ -734,3 +734,146 @@ describe("WS-13b R6b-7: the settings file reaches provider selection", () => {
     expect(stderr).toContain("provider selection failed (provider-disabled)");
   });
 });
+
+// ================================================================================================
+// WS-13c (P6.6 Lane A): the model-family surface the wiring composes -- the Agent tool's active set,
+// the slot resolver, the settings tripwire the render memoises on, and the "more options" listing.
+//
+// The session's model is a LOCAL provider row (`ollama-local`, keyless, `local-none`): nothing here
+// touches the Keychain, the network, or a real `~/.winter`.
+// ================================================================================================
+describe("WS-13c: the wiring's model-family surface", () => {
+  const localSession = (sessionId: string): RuntimeConfig =>
+    ({
+      sessionId,
+      cwd,
+      model: "ollama-local/llama3.1:8b",
+      winterHome: home,
+      settingSources: ["user"],
+      provider: { providerId: "ollama-local", connection: { baseUrl: "http://127.0.0.1:1/v1", local: true } },
+    }) as RuntimeConfig;
+
+  test("the reserved winter-test namespace gets NO slot surface at all -- byte-identical to pre-P6.6", async () => {
+    const wiring = await buildProductionWiring({
+      config: { sessionId: "s-slots-double", cwd, model: "winter-test/echo", winterHome: home, settingSources: ["user"] } as RuntimeConfig,
+      env: {},
+      winterHome: home,
+    });
+    try {
+      expect(wiring.engineOptions.activeSlotSet).toBeUndefined();
+      expect(wiring.engineOptions.resolveSlot).toBeUndefined();
+      expect(wiring.engineOptions.settingsVersion).toBeUndefined();
+      expect(wiring.engineOptions.listModelFamilies).toBeUndefined();
+    } finally {
+      wiring.dispose();
+    }
+  });
+
+  test("a catalog-resolved session gets the whole surface, and the active set follows the model key it is asked with", async () => {
+    const wiring = await buildProductionWiring({ config: localSession("s-slots-local"), env: {}, winterHome: home });
+    try {
+      const activeSlotSet = wiring.engineOptions.activeSlotSet!;
+      // No family claims a bare `llama3.1-8b` (the normaliser deliberately invents no hyphen), so the
+      // session's own model IS the single option -- WS-13c §3's minimum of one.
+      const own = activeSlotSet(undefined);
+      expect(own).toMatchObject({ family: "other", source: "own-model" });
+      expect(own.slots.map((s) => s.name)).toEqual(["llama3.1-8b"]);
+      // The SAME getter, asked with a claude key, answers the pinned four -- which is what makes a
+      // `set_model` across families re-render rather than keep the family the session started on.
+      const pinned = activeSlotSet("anthropic/claude-opus-5");
+      expect(pinned).toMatchObject({ family: "claude", source: "claude-pinned" });
+      expect(pinned.slots.map((s) => s.name)).toEqual(["fable", "opus", "sonnet", "haiku"]);
+    } finally {
+      wiring.dispose();
+    }
+  });
+
+  test("the resolver reaches the real catalog: `opus` from a non-claude session resolves into the claude family's vendor row", async () => {
+    const wiring = await buildProductionWiring({ config: localSession("s-slots-resolve"), env: {}, winterHome: home });
+    try {
+      const resolveSlot = wiring.engineOptions.resolveSlot!;
+      const opus = resolveSlot("opus", undefined);
+      expect(opus.ok).toBe(true);
+      expect(opus.ok && opus.canonicalModelId).toBe("claude-opus-5");
+      // §4 step 3-i: the family's own vendor provider leads.
+      expect(opus.ok && opus.providerId).toBe("anthropic");
+      expect(opus.ok && opus.slot).toEqual({ family: "claude", name: "opus", source: "own-model" });
+    } finally {
+      wiring.dispose();
+    }
+  });
+
+  test("a disabled provider is skipped and named -- the settings cascade reaches the slot resolver", async () => {
+    writeSettings(join(home), { providers: { anthropic: { enabled: false } } });
+    const wiring = await buildProductionWiring({ config: localSession("s-slots-disabled"), env: {}, winterHome: home });
+    try {
+      const opus = wiring.engineOptions.resolveSlot!("opus", undefined);
+      // Other providers serve `claude-opus-5` too, so this is not unservable -- it is a DIFFERENT
+      // provider, and the point is that `anthropic` is no longer the one chosen.
+      expect(opus.ok && opus.providerId).not.toBe("anthropic");
+    } finally {
+      wiring.dispose();
+    }
+  });
+
+  test("preferredProviders reorders the non-vendor tail, live from settings", async () => {
+    // Asserted RELATIVELY rather than against a hardcoded provider id: which aggregator the
+    // admission-tier tie-break picks is catalog data another task may repoint, but "a preferred
+    // provider outranks whatever the tier order would have chosen" is the rule.
+    writeSettings(join(home), { providers: { anthropic: { enabled: false } } });
+    const unpreferred = await buildProductionWiring({ config: localSession("s-slots-unpreferred"), env: {}, winterHome: home });
+    let byTier: string | undefined;
+    try {
+      const r = unpreferred.engineOptions.resolveSlot!("opus", undefined);
+      byTier = r.ok ? r.providerId : undefined;
+      expect(byTier).toBeDefined();
+      expect(byTier).not.toBe("anthropic"); // the vendor row is disabled
+    } finally {
+      unpreferred.dispose();
+    }
+    // Any OTHER provider that serves the same canonical model, promoted by preference alone.
+    const other = "tabitoken";
+    expect(other).not.toBe(byTier);
+    writeSettings(join(home), { providers: { anthropic: { enabled: false } }, preferredProviders: [other] });
+    const preferred = await buildProductionWiring({ config: localSession("s-slots-preferred"), env: {}, winterHome: home });
+    try {
+      expect(preferred.engineOptions.resolveSlot!("opus", undefined)).toMatchObject({ ok: true, providerId: other });
+    } finally {
+      preferred.dispose();
+    }
+  });
+
+  test("an unknown name is a typed refusal, never a substitution onto the session's own model", async () => {
+    const wiring = await buildProductionWiring({ config: localSession("s-slots-unknown"), env: {}, winterHome: home });
+    try {
+      expect(wiring.engineOptions.resolveSlot!("definitely-not-a-slot", undefined)).toMatchObject({ ok: false, code: "unknown-slot" });
+      // `flash` is held by gemini, deepseek and glm in the shipped overlay.
+      expect(wiring.engineOptions.resolveSlot!("flash", undefined)).toMatchObject({ ok: false, code: "ambiguous-slot-name" });
+    } finally {
+      wiring.dispose();
+    }
+  });
+
+  test("`list_model_families` answers with the session's OWN active set", async () => {
+    const wiring = await buildProductionWiring({ config: localSession("s-slots-listing"), env: {}, winterHome: home });
+    try {
+      // Lane C owns `families`; what Lane A's wiring is accountable for is that the ACTIVE set the
+      // listing carries is this session's, computed from the same getter the Agent tool renders from.
+      const listing = wiring.engineOptions.listModelFamilies!();
+      expect(listing.active).toEqual(wiring.engineOptions.activeSlotSet!(undefined));
+    } finally {
+      wiring.dispose();
+    }
+  });
+
+  test("settingsVersion is stable while the resolved settings view is", async () => {
+    const wiring = await buildProductionWiring({ config: localSession("s-slots-version"), env: {}, winterHome: home });
+    try {
+      const settingsVersion = wiring.engineOptions.settingsVersion!;
+      expect(settingsVersion()).toBe(settingsVersion());
+      expect(settingsVersion()).toBeGreaterThan(0);
+    } finally {
+      wiring.dispose();
+    }
+  });
+});
