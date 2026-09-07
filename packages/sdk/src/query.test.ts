@@ -1905,8 +1905,8 @@ test("P7a: the DEPRECATED keychainService option wins over brand.keychainService
       /* drain */
     }
     const config = capture.get();
-    // BOTH surfaces agree — the fold is what makes that true, so a runtime reading either one gets
-    // the same service.
+    // BOTH surfaces agree — the fold happens BEFORE resolution (fix r1, Important-2), so there is
+    // one validated value and the wire emit reads it from the resolved profile.
     expect(config["keychainService"]).toBe("com.acme.core.dev");
     expect((config["brand"] as Record<string, unknown>)["keychainService"]).toBe("com.acme.core.dev");
     expect(warned.some((w) => w.includes("keychainService") && w.includes("com.acme.core.dev") && w.includes("com.acme.core"))).toBe(true);
@@ -1935,16 +1935,84 @@ test("P7a: setting BOTH keychain services to the SAME value warns about nothing"
   }
 });
 
-test("P7a: brand.keychainService ALONE reaches the profile, and leaves the deprecated wire key absent", async () => {
+test("P7a fix r1 (Important-1): the two keychain surfaces AGREE whenever the wire key is present", async () => {
+  // THE BUG THIS REPLACES. This test used to assert that `brand.keychainService` alone left the
+  // top-level wire key ABSENT -- which pinned the defect: every runtime consumer reads the top-level
+  // key (session-provider's store construction and its `authRef` spread), so a host that chose its
+  // service through the profile had its credentials resolve under Winter's default anyway, silently,
+  // for the headline use case of the whole option.
+  //
+  // Three surfaces, one value. Asserted for both ways of choosing a service, because a fix that
+  // emitted from `options.keychainService` rather than from the resolved profile would still pass
+  // the deprecated-option case alone.
+  for (const [label, options] of [
+    ["through the profile", { brand: { keychainService: "com.acme.core" } }],
+    ["through the deprecated option", { keychainService: "com.acme.core" }],
+    ["through both, agreeing", { keychainService: "com.acme.core", brand: { keychainService: "com.acme.core" } }],
+  ] as const) {
+    const capture = captureConfigJson();
+    for await (const _msg of query({ prompt: "ping", options: { ...options, spawnClaudeCodeProcess: capture.hook } })) {
+      /* drain */
+    }
+    const config = capture.get();
+    expect([label, config["keychainService"]]).toEqual([label, "com.acme.core"]);
+    expect([label, (config["brand"] as Record<string, unknown>)["keychainService"]]).toEqual([label, "com.acme.core"]);
+  }
+});
+
+test("P7a fix r1 (Important-1): a session that chose NO service is byte-identical — the wire key stays absent", async () => {
+  // The other half of the conditional, and the reason it is a conditional at all: emitting
+  // `brand.keychainService` unconditionally would put `com.winter.core` on every session's wire,
+  // break the pinned omitted-keys contract, and widen every credential `authRef` with a `service`
+  // field that reaches persisted records.
   const capture = captureConfigJson();
-  for await (const _msg of query({ prompt: "ping", options: { brand: { keychainService: "com.acme.core" }, spawnClaudeCodeProcess: capture.hook } })) {
+  for await (const _msg of query({ prompt: "ping", options: { spawnClaudeCodeProcess: capture.hook } })) {
     /* drain */
   }
   const config = capture.get();
-  expect((config["brand"] as Record<string, unknown>)["keychainService"]).toBe("com.acme.core");
-  // The deprecated key stays an "unset option = absent wire key" field: a host that has moved to
-  // the profile does not start emitting the old one.
   expect("keychainService" in config).toBe(false);
+  // The profile still carries Winter's default, so a runtime reading the single source is correct
+  // either way -- absence on the wire means "nobody chose", never "no service".
+  expect((config["brand"] as Record<string, unknown>)["keychainService"]).toBe("com.winter.core");
+});
+
+test("P7a fix r1 (Important-1): a brand that sets a NON-keychain field still leaves the wire key absent", async () => {
+  // The condition keys on the VALUE, not on "a brand was supplied" -- a host branding its home dir
+  // and nothing else has chosen no service, and must not start emitting one.
+  const capture = captureConfigJson();
+  for await (const _msg of query({ prompt: "ping", options: { brand: { homeDirName: ".acme" }, spawnClaudeCodeProcess: capture.hook } })) {
+    /* drain */
+  }
+  expect("keychainService" in capture.get()).toBe(false);
+});
+
+test("P7a fix r1 (Important-2): an invalid deprecated keychainService is refused as invalid_brand and never reaches the wire", () => {
+  // The alias used to be assigned onto the profile AFTER resolveBrand, so it skipped the profile's
+  // own grammar entirely and `RuntimeConfig.brand` could carry a value that did not satisfy the
+  // invariant `BrandProfile` advertises -- the one assumption every downstream reader makes about it.
+  let threw: unknown;
+  let spawned = false;
+  try {
+    query({
+      prompt: "ping",
+      options: {
+        keychainService: "NOT A VALID Service!!! ***",
+        spawnClaudeCodeProcess: () => {
+          spawned = true;
+          return inMemoryProcess([]);
+        },
+      },
+    });
+  } catch (err) {
+    threw = err;
+  }
+  expect(threw).toBeInstanceOf(InvalidBrandError);
+  expect((threw as InvalidBrandError).reason).toContain("keychainService");
+  expect(spawned).toBe(false);
+});
+
+test("P7a fix r1 (Important-2): an invalid brand.keychainService is refused the same way — one gate, both surfaces", () => {
+  expect(() => query({ prompt: "ping", options: { brand: { keychainService: "Com.Acme.Core" }, spawnClaudeCodeProcess: () => inMemoryProcess([]) } })).toThrow(InvalidBrandError);
 });
 
 test("P7a: query() cannot be made to mutate WINTER_BRAND through the profile it hands the wire", async () => {

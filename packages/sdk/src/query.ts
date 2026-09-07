@@ -18,7 +18,7 @@ import type {
 } from "./permissions/types.ts";
 import { resolveRuntimeExecutable, defaultSpawn, type SpawnRuntimeOptions, type SpawnedRuntimeProcess } from "./transport.ts";
 import { ResultError, CLIConnectionError, ProtocolDecodeError, ProcessError, AbortError, WinterRpcError, InvalidBrandError } from "./errors.ts";
-import { resolveBrand } from "./brand.ts";
+import { resolveBrand, WINTER_BRAND } from "./brand.ts";
 
 // The runtime's SdkMessage is deliberately open (a trailing `{ type: string; [k: string]: unknown }`
 // catch-all for lossless pass-through of unknown message kinds, Task 5). The SDK's public surface
@@ -437,21 +437,27 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
   // derives its home dir, env names, keychain service, preset name and MCP server name from the
   // same object the wrapper used. A host that passes no `brand` gets `WINTER_BRAND` — identical to
   // every session before this option existed.
-  const brandResolution = resolveBrand(options.brand);
-  if (!brandResolution.ok) throw new InvalidBrandError(brandResolution.reason);
-  const brand = brandResolution.brand;
   // The DEPRECATED standalone alias wins (it predates the profile, and existing hosts pass it), and
   // the losing value is never silent: a host that sets BOTH to different services is told which one
   // is on the wire. Setting both to the SAME value is not a mistake and warns about nothing.
-  if (options.keychainService !== undefined) {
-    if (options.brand?.keychainService !== undefined && options.brand.keychainService !== options.keychainService) {
-      console.error(
-        `winter: both 'keychainService' (${options.keychainService}) and 'brand.keychainService' (${options.brand.keychainService}) are set and differ — ` +
-          `the deprecated 'keychainService' option wins. Set only 'brand.keychainService'.`,
-      );
-    }
-    brand.keychainService = options.keychainService;
+  if (options.keychainService !== undefined && options.brand?.keychainService !== undefined && options.brand.keychainService !== options.keychainService) {
+    console.error(
+      `winter: both 'keychainService' (${options.keychainService}) and 'brand.keychainService' (${options.brand.keychainService}) are set and differ — ` +
+        `the deprecated 'keychainService' option wins. Set only 'brand.keychainService'.`,
+    );
   }
+  // THE FOLD HAPPENS BEFORE RESOLUTION, not after (review r1, Important-2). Assigning the deprecated
+  // alias onto the profile AFTERWARDS let it skip `KEYCHAIN_SERVICE_RE` entirely, so
+  // `query({ keychainService: "NOT A VALID Service!!!" })` put that string on the wire inside
+  // `RuntimeConfig.brand` — a profile that did not satisfy the invariant `BrandProfile` advertises,
+  // which is exactly the assumption every downstream reader makes about it. Folding into the PARTIAL
+  // means there is one validation gate and everything goes through it.
+  const brandResolution = resolveBrand({
+    ...options.brand,
+    ...(options.keychainService !== undefined ? { keychainService: options.keychainService } : {}),
+  });
+  if (!brandResolution.ok) throw new InvalidBrandError(brandResolution.reason);
+  const brand = brandResolution.brand;
 
   // Task 10: computed once, ahead of `config`, so it can be conditionally spread into it below.
   const runtimeHooksConfig = buildRuntimeHooksConfig(options.hooks);
@@ -547,7 +553,22 @@ export function query(args: { prompt: string | AsyncIterable<string>; options: O
     ...(options.includePartialMessages !== undefined ? { includePartialMessages: options.includePartialMessages } : {}),
     ...(options.maxBudgetUsd !== undefined ? { maxBudgetUsd: options.maxBudgetUsd } : {}),
     ...(options.providerStallTimeoutMs !== undefined ? { providerStallTimeoutMs: options.providerStallTimeoutMs } : {}),
-    ...(options.keychainService !== undefined ? { keychainService: options.keychainService } : {}),
+    // P7a fix r1 (Important-1): emitted from the RESOLVED PROFILE, not from the deprecated option.
+    //
+    // Every runtime consumer of the keychain service still reads this top-level key
+    // (`provider/session-provider.ts`'s store construction and its `authRef` spread), so a host that
+    // chose its service through `brand.keychainService` alone had it land on the wire inside `brand`
+    // and its credentials resolved under Winter's default anyway — silently, for the headline use
+    // case of the whole option.
+    //
+    // CONDITIONAL, deliberately, and NOT `keychainService: brand.keychainService` unconditionally.
+    // Two things break under the unconditional form, both real: the pinned "unset provider-layer
+    // options are OMITTED entirely" wire test, and — worse — `session-provider.ts` spreads `service`
+    // into the credential `authRef` only when the key is present, so every unbranded session's
+    // `authRef` would silently grow a `service` field that reaches persisted credential records.
+    // The condition below is byte-identical to before whenever NOBODY chose a service, and emits
+    // exactly when somebody did (through either surface).
+    ...(brand.keychainService !== WINTER_BRAND.keychainService || options.keychainService !== undefined ? { keychainService: brand.keychainService } : {}),
     ...(options.autoClassifier !== undefined ? { autoClassifier: options.autoClassifier } : {}),
     ...(options.advisor !== undefined ? { advisor: options.advisor } : {}),
     // P7a (D19): UNCONDITIONAL, unlike every conditional spread above it. `brand` is not an
