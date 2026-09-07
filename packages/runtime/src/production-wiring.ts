@@ -1127,12 +1127,12 @@ export async function buildProductionWiring(opts: ProductionWiringOptions): Prom
             resolveSlot,
             settingsVersion,
             // TAKES THE MODEL KEY (assignable to the spine's `() => ModelFamilyListing`, so no
-            // spine type changes). The spine's handler calls it with no argument today, which means
-            // a listing served after a cross-family `set_model` reports the START model's active set
-            // -- §7's switcher would list the family the session has left. The one-line spine fix is
-            // owed and recorded in this task's report: widen the option to
-            // `(currentModelKey?: string) => ModelFamilyListing` and call it with
-            // `currentProviderIdentity?.modelKey ?? currentModel`. This side is already correct.
+            // spine type changes). The engine's own handler passes the session's LIVE key
+            // (`listModelFamilies?.(currentProviderIdentity?.modelKey ?? currentModel)`, engine.ts),
+            // so a listing served after a cross-family `set_model` reports the family the session is
+            // actually on rather than the one it started on. The argument stays OPTIONAL: a host
+            // holding the spine's narrower `() => ModelFamilyListing` type still calls it with none,
+            // and falls back to the wiring's own last-known key below.
             listModelFamilies: (currentModelKey?: string): ModelFamilyListing => {
               prewarmActiveVendorProviders(currentModelKey);
               return buildModelFamilyListing({
