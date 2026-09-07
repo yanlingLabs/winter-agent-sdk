@@ -37198,15 +37198,15 @@
       "toolCalling": {
         "value": "native",
         "source": "official-doc",
-        "sourceRef": "https://docs.x.ai/docs/models — xAI documents agentic tool calling on the Grok 4.x line (retrieved 2026-09-07)",
-        "confidence": "declared",
+        "sourceRef": "Inherited from xai-oauth/grok-4.6's own admission for the identical vendor model (that row cites https://docs.x.ai/docs/models for this claim). This task's own read of that exact page (2026-09-07), asked directly whether it documents tool/function calling for the Grok 4.x line, did NOT find such a statement — the page mentions only server-side search tools (Web Search / X Search), not general tool calling. Carried forward rather than dropped (every modern Grok API in practice supports function calling, and the sibling row already ships this claim for the same model), but downgraded to `confidence: \"inferred\"` since this task could not independently confirm it; the citation gap is on the pre-existing sibling row, not manufactured fresh here — flagged in the P6.6 report.",
+        "confidence": "inferred",
         "observedAt": "2026-09-07T00:00:00Z"
       },
       "nativeTools": {
         "value": true,
         "source": "official-doc",
-        "sourceRef": "https://docs.x.ai/docs/models",
-        "confidence": "declared",
+        "sourceRef": "same basis and same caveat as toolCalling",
+        "confidence": "inferred",
         "observedAt": "2026-09-07T00:00:00Z"
       },
       "reasoning": {

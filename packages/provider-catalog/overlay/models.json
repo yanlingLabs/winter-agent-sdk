@@ -4302,7 +4302,7 @@
         "upstreamId": "grok-4.6",
         "displayName": "Grok 4.6",
         "aliases": [],
-        "$comment": "P6.6 Task 1b (WS-13c owed row): the `grok` family's `grok-4.6` slot already resolves canonicalModelId `grok-4.6` through the existing `xai-oauth/grok-4.6` (subscription) row; this row makes the SAME canonical model servable on the plain token-priced `xai` provider too, so families.json needs no canonicalModelId change here — only the slot's citation prose is updated to record that the owed row is now verified. FOUND on https://docs.x.ai/docs/models (retrieved 2026-09-07): the Text API pricing table lists `grok-4.6` at $2.00/$6.00 per 1M input/output tokens (<200k prompt tokens) and $4.00/$12.00 (>=200k), a 500k context window, beside \"For everything else, including code, use Grok 4.6. It is the most intelligent and fastest model we've built.\" No subscription/OAuth gating language sets `grok-4.6` apart from the other rows in the same plain pricing table (grok-4.5, grok-4.3, grok-4.20-*, grok-build-0.1 — the last of which the `xai` provider already carries as `xai/grok-build-0.1`), so this is the plain API-key surface, distinct from the `xai-oauth` sibling's Grok Build subscription entitlement. `toolCalling`/`nativeTools`/`inputModalities` mirror `xai-oauth/grok-4.6`'s own already-admitted evidence (xAI Grok Build's own model catalogue at the pinned commit) since both rows describe the identical vendor model and `docs.x.ai/docs/models` does not itself enumerate a modality table or effort vocabulary; `contextWindow` and `pricing` are independently confirmed on this task's own fetch of the same allowed page, so they carry a fresh `sourceRef` rather than inheriting the sibling's.",
+        "$comment": "P6.6 Task 1b (WS-13c owed row): the `grok` family's `grok-4.6` slot already resolves canonicalModelId `grok-4.6` through the existing `xai-oauth/grok-4.6` (subscription) row; this row makes the SAME canonical model servable on the plain token-priced `xai` provider too, so families.json needs no canonicalModelId change here — only the slot's citation prose is updated to record that the owed row is now verified. FOUND on https://docs.x.ai/docs/models (retrieved 2026-09-07): the Text API pricing table lists `grok-4.6` at $2.00/$6.00 per 1M input/output tokens (<200k prompt tokens) and $4.00/$12.00 (>=200k), a 500k context window, beside \"For everything else, including code, use Grok 4.6. It is the most intelligent and fastest model we've built.\" No subscription/OAuth gating language sets `grok-4.6` apart from the other rows in the same plain pricing table (grok-4.5, grok-4.3, grok-4.20-*, grok-build-0.1 — the last of which the `xai` provider already carries as `xai/grok-build-0.1`), so this is the plain API-key surface, distinct from the `xai-oauth` sibling's Grok Build subscription entitlement. `inputModalities`/`reasoning.supported` mirror `xai-oauth/grok-4.6`'s own already-admitted evidence (xAI Grok Build's own model catalogue at the pinned commit, `derived-shapes-p6b-xai.md` §6) since both rows describe the identical vendor model. `toolCalling`/`nativeTools` are also inherited from that sibling row, but with a DOWNGRADE this task found necessary: the sibling cites `https://docs.x.ai/docs/models` itself for tool-calling, and this task's own direct re-check of that exact page (asked specifically whether it documents tool/function calling for Grok 4.x) found NO such statement — the page mentions only server-side search tools (Web Search/X Search). Rather than silently repeat a claim this task could not confirm, the value is carried forward (every modern Grok API in practice supports function calling) but `confidence` is set to `\"inferred\"`, not the sibling's `\"declared\"`; see the field's own `sourceRef` and the P6.6 report. `contextWindow` and `pricing` are independently confirmed on this task's own fetch of the same allowed page, so they carry a fresh `sourceRef` rather than inheriting the sibling's.",
         "endpoints": [
           "chat"
         ],
@@ -4334,15 +4334,15 @@
         "toolCalling": {
           "value": "native",
           "source": "official-doc",
-          "sourceRef": "https://docs.x.ai/docs/models — xAI documents agentic tool calling on the Grok 4.x line (retrieved 2026-09-07)",
-          "confidence": "declared",
+          "sourceRef": "Inherited from xai-oauth/grok-4.6's own admission for the identical vendor model (that row cites https://docs.x.ai/docs/models for this claim). This task's own read of that exact page (2026-09-07), asked directly whether it documents tool/function calling for the Grok 4.x line, did NOT find such a statement — the page mentions only server-side search tools (Web Search / X Search), not general tool calling. Carried forward rather than dropped (every modern Grok API in practice supports function calling, and the sibling row already ships this claim for the same model), but downgraded to `confidence: \"inferred\"` since this task could not independently confirm it; the citation gap is on the pre-existing sibling row, not manufactured fresh here — flagged in the P6.6 report.",
+          "confidence": "inferred",
           "observedAt": "2026-09-07T00:00:00Z"
         },
         "nativeTools": {
           "value": true,
           "source": "official-doc",
-          "sourceRef": "https://docs.x.ai/docs/models",
-          "confidence": "declared",
+          "sourceRef": "same basis and same caveat as toolCalling",
+          "confidence": "inferred",
           "observedAt": "2026-09-07T00:00:00Z"
         },
         "reasoning": {
