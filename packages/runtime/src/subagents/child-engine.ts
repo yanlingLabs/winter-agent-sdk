@@ -824,20 +824,20 @@ async function spawnChildEngine(req: SpawnChildRequest, inherit: ChildInheritanc
         // child named its own model and that model resolves to something the parent is not running.
         // `childProvider` is resolved once, above, from `resolvedModel.effectiveModel`.
         //
-        // P6.6 (WS-13c §8): `childProvider.identity` alone now covers both the cross-provider AND
-        // the same-provider case -- it is materialised from `parentIdentityAtSpawn`, which (Fix
-        // round 1, I2) IS `inherit.provider` now, nothing else. So the second half of this ternary
-        // is UNREACHABLE (`childProvider.identity === undefined` only happens when `inherit.provider`
-        // was itself `undefined` -- the exact condition the second half re-checks). Kept verbatim,
-        // not simplified away, because
-        // `provider/seam-contracts-p6.test.ts`'s own "R6-17 contract" describe block asserts this
-        // EXACT substring against this file's source text as a deliberate placeholder pin ("a
-        // structural check here is what keeps the thread from being quietly deleted in the
-        // meantime" -- that file's own comment); that test is outside this lane's file list
-        // (provider/, not subagents/) and this lane's own report flags it as now stale (T10's real
-        // end-to-end proof, `provider/cross-provider-credential.test.ts`, already exists) rather
-        // than editing a neighbouring file's pinned assertion from here.
-        ...(childProvider.identity !== undefined ? { providerIdentity: childProvider.identity } : inherit.provider !== undefined ? { providerIdentity: inherit.provider } : {}),
+        // P6.6 (WS-13c §8): `childProvider.identity` alone covers both the cross-provider AND the
+        // same-provider case -- it is materialised from `parentIdentityAtSpawn`, which (P6.6 fix
+        // round 1, I2) IS `inherit.provider` now, and nothing else.
+        //
+        // P7a (Lane D): the `: inherit.provider !== undefined ? …` fallback that used to sit here
+        // is GONE. It was provably unreachable -- `childProvider.identity === undefined` happens
+        // only when `inherit.provider` is itself `undefined`, the exact condition the fallback
+        // re-tested -- and it survived P6.6 only because `provider/seam-contracts-p6.test.ts` pinned
+        // that substring against this file's SOURCE TEXT. That pin's own comment called itself a
+        // placeholder "until" the end-to-end proof landed; the proof exists, so the pin is retired
+        // and the branch with it. The seam is now asserted by BEHAVIOUR (a child spawned under a
+        // parent with an identity writes provider-state records into its own sidecar), which is
+        // what a source-text check could never actually check.
+        ...(childProvider.identity !== undefined ? { providerIdentity: childProvider.identity } : {}),
         input: channel.runtime.input,
         output: channel.runtime.output,
         // Every generation this handle ever runs -- spawn AND every resume -- reads `.provider` off

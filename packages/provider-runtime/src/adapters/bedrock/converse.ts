@@ -57,7 +57,7 @@ import type {
   ProviderMessageLike,
   TurnRequest,
 } from "../../types.ts";
-import { CREDENTIAL_HEADER_NAMES, applyPrivilegedHeaders, createEndpointPolicy, type EndpointPolicy } from "../../endpoint-policy.ts";
+import { CREDENTIAL_HEADER_NAMES, applyPrivilegedHeaders, connectionEndpointOptions, createEndpointPolicy, type EndpointPolicy } from "../../endpoint-policy.ts";
 import { THINKING_ENABLED_NEEDS_BUDGET } from "../refusals.ts";
 import { ProviderRequestError, boundedFetch } from "../../http.ts";
 import { ProviderStallError, normalizeHttpError, normalizeThrown } from "../../errors.ts";
@@ -172,7 +172,11 @@ export interface BedrockAdapterOptions {
 /** The two planes Bedrock speaks on. They are DIFFERENT ORIGINS in production, so each needs its own policy. */
 function runtimeBase(ctx: ProviderContext, region: string, vendorBaseUrl?: string): { url: string; generated: boolean } {
   const baseUrl = ctx.connection.baseUrl;
-  if (baseUrl !== undefined && baseUrl.length > 0) return { url: baseUrl.replace(/\/+$/, ""), generated: false };
+  // P7a: read the PROFILE's origin rather than assuming a present `baseUrl` is a user endpoint.
+  // Inert for this family today -- `winter.bedrock-converse` serves one provider, so the runtime
+  // never copies a reviewed endpoint into its profile and the answer is always `false` -- and
+  // routed through the shared helper anyway, so the rule has ONE reading across every family.
+  if (baseUrl !== undefined && baseUrl.length > 0) return { url: baseUrl.replace(/\/+$/, ""), generated: connectionEndpointOptions(ctx.connection).generated };
   if (vendorBaseUrl !== undefined && vendorBaseUrl.length > 0) return { url: vendorBaseUrl.replace(/\/+$/, ""), generated: true };
   return { url: `https://bedrock-runtime.${region}.amazonaws.com`, generated: true };
 }
@@ -182,7 +186,7 @@ function controlBase(ctx: ProviderContext, region: string, vendorBaseUrl?: strin
   // A host that overrode the base URL overrode BOTH planes: it is pointing the adapter at one server
   // (a fake, a proxy, a gateway), and silently reaching past it to the real AWS control plane would
   // be a request the host never authorised.
-  if (baseUrl !== undefined && baseUrl.length > 0) return { url: baseUrl.replace(/\/+$/, ""), generated: false };
+  if (baseUrl !== undefined && baseUrl.length > 0) return { url: baseUrl.replace(/\/+$/, ""), generated: connectionEndpointOptions(ctx.connection).generated };
   if (vendorBaseUrl !== undefined && vendorBaseUrl.length > 0) return { url: vendorBaseUrl.replace(/\/+$/, ""), generated: true };
   return { url: `https://bedrock.${region}.amazonaws.com`, generated: true };
 }

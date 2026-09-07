@@ -39,7 +39,7 @@
 import type { WinterModelDescriptor } from "@yanlinglabs/winter-provider-catalog";
 import { hostHeaders } from "../privileged-headers.ts";
 import { winterIdentityHeaders, winterUserAgent, type IdentityHeaderLookup } from "../../identity.ts";
-import { applyPrivilegedHeaders, createEndpointPolicy, type EndpointPolicy } from "../../endpoint-policy.ts";
+import { applyPrivilegedHeaders, connectionEndpointOptions, createEndpointPolicy, type EndpointPolicy } from "../../endpoint-policy.ts";
 import { ProviderRequestError, boundedFetch } from "../../http.ts";
 import { normalizeHttpError, normalizeThrown } from "../../errors.ts";
 import { createRetryPolicy, withRetry, type RetryPolicy, type RetryPolicyOptions } from "../../retry.ts";
@@ -154,20 +154,27 @@ function trimSlash(url: string): string {
 }
 
 /**
- * Chooses between the adapter's generated endpoint and the profile's user endpoint, and builds the
+ * Chooses between the adapter's generated endpoint and the profile's base URL, and builds the
  * policy `boundedFetch` enforces.
  *
- * A user `baseUrl` is evaluated with `generated: false` and the profile's own `local` declaration —
- * which is what lets a loopback Ollama be reached over plain http while an undeclared private
- * address is still refused (`evaluateEndpoint`'s own rule, not a second copy of it here).
+ * A profile `baseUrl` is evaluated by its ORIGIN, not by its mere presence (P7a): a reviewed
+ * endpoint the runtime COPIED in (`endpointOrigin: "reviewed"` — every row on an adapter that
+ * serves several providers) stays generated, and only a host- or user-supplied one is a USER
+ * endpoint. `connectionEndpointOptions` is the single reading of that field, and it carries the
+ * profile's own `local` declaration through — which is what lets a loopback Ollama be reached over
+ * plain http while an undeclared private address is still refused (`evaluateEndpoint`'s own rule,
+ * not a second copy of it here).
  */
 export function resolveEndpoint(ctx: ProviderContext, options: OpenAiAdapterOptions, fallbackGeneratedBaseUrl?: string): ResolvedEndpoint {
   const userBase = ctx.connection.baseUrl;
   const generatedBase = options.generatedBaseUrl ?? fallbackGeneratedBaseUrl;
   if (userBase !== undefined && userBase.length > 0) {
-    const built = createEndpointPolicy(userBase, { generated: false, ...(ctx.connection.local === true ? { local: true } : {}) });
+    // P7a: `generated` is the PROFILE's answer now, not this line's assumption -- a reviewed
+    // endpoint the runtime copied in stays generated, a host-entered one is a user endpoint.
+    const opts = connectionEndpointOptions(ctx.connection);
+    const built = createEndpointPolicy(userBase, opts);
     if (!built.ok) throw capabilityRefusal(built.reason);
-    return { baseUrl: trimSlash(userBase), policy: built.policy, generated: false };
+    return { baseUrl: trimSlash(userBase), policy: built.policy, generated: opts.generated };
   }
   if (generatedBase === undefined) {
     throw capabilityRefusal(

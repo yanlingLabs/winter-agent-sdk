@@ -27,7 +27,7 @@
 //      RESOLVES is never reported as verified.
 import type { ProviderAdapter, ProviderContext } from "../../types.ts";
 import { ProviderRequestError } from "../../http.ts";
-import { applyPrivilegedHeaders, createEndpointPolicy } from "../../endpoint-policy.ts";
+import { applyPrivilegedHeaders, connectionEndpointOptions, createEndpointPolicy } from "../../endpoint-policy.ts";
 import { hostHeaders } from "../privileged-headers.ts";
 import { winterUserAgent } from "../../identity.ts";
 import { createGoogleFamilyAdapter, type GoogleAdapterOptions, type GoogleTransport } from "./generate-content.ts";
@@ -107,7 +107,8 @@ export function vertexTransport(opts: VertexAdapterOptions = {}): GoogleTranspor
       const userBase = ctx.connection.baseUrl;
       if (userBase !== undefined) {
         const base = userBase.replace(/\/+$/, "");
-        const built = createEndpointPolicy(base, { generated: false, ...(ctx.connection.local === true ? { local: true } : {}) });
+        // P7a: the profile's own `endpointOrigin` decides (`connectionEndpointOptions`).
+        const built = createEndpointPolicy(base, connectionEndpointOptions(ctx.connection));
         if (!built.ok) throw refusal(built.reason);
         return { base, policy: built.policy };
       }

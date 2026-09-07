@@ -33,6 +33,33 @@ export interface EndpointEvaluationOptions {
 }
 
 /**
+ * P7a (WS-13b §10, the M-1 partial): HOW a `ConnectionProfile.baseUrl` is evaluated.
+ *
+ * THE PROBLEM THIS CLOSES. Two populations arrive in the same field as byte-identical strings:
+ * the catalog's own reviewed endpoint, COPIED into the profile by the runtime because a
+ * multi-provider adapter has no single vendor default to fall back on; and a host- or user-entered
+ * URL. Unable to tell them apart, every `resolveEndpoint` in this package read a present `baseUrl`
+ * as `generated: false` — so 156 of the catalog's rows silently left the privileged-header path in
+ * production, while adapter fixtures (which pass a generated base URL directly, never through a
+ * profile) went on passing. `endpointOrigin` is the profile's own answer, and this function is the
+ * one place it is read.
+ *
+ * ABSENT IS `"user"`, and that is the whole safety argument: a profile with no marker is one nobody
+ * has vouched for, and the conservative reading of "unknown provenance" is the one that attaches no
+ * organisation, project or account header. A producer that forgets the marker under-privileges a
+ * request; a default of `"reviewed"` would put the operator's account topology on an unreviewed
+ * host. Only the runtime's own copy-from-the-catalog path may stamp `"reviewed"` — a HOST writing
+ * it is asserting a provenance it does not have, which is why the runtime stamps `"user"`
+ * unconditionally over whatever a profile arrived with (`connectionFrom`, session-provider.ts).
+ */
+export function connectionEndpointOptions(connection: { local?: boolean; endpointOrigin?: "reviewed" | "user" }): EndpointEvaluationOptions {
+  return {
+    generated: connection.endpointOrigin === "reviewed",
+    ...(connection.local === true ? { local: true } : {}),
+  };
+}
+
+/**
  * Headers that carry (or can carry) a credential and must never survive an origin change, and must
  * never be attached to a user endpoint that inherited them from a generated one.
  *

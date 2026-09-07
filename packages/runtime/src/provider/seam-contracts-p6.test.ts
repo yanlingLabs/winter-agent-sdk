@@ -14,7 +14,7 @@
 //      assignable to provider-runtime's `ContentBlockLike`/`ProviderMessageLike` in BOTH directions
 //      for every shared variant, because the bridge converts between them on every generation.
 import { test, expect, describe } from "bun:test";
-import { mkdtempSync, rmSync, readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ContentBlockLike, MessageOrigin, ProviderMessageLike, ProviderNativeState } from "@yanlinglabs/winter-provider-runtime";
@@ -25,6 +25,11 @@ import { assistantEntry } from "../store/dialect.ts";
 import { rebuildProviderMessages, toDialectEntries } from "../store/resume.ts";
 import { assembleReviewerMessages } from "../tools/impl/advisor.ts";
 import { appendProviderState, buildContinuationChain, providerStateSidecarPath, readProviderState, type ProviderStateRecord } from "../store/provider-state.ts";
+// P7a (Lane D): the R6-17 seam is asserted by BEHAVIOUR now (see its describe block), which spawns a
+// real child through the real factory and reads the frames its engine emits.
+import { createChildEngineFactory } from "../subagents/child-engine.ts";
+import type { ChildEngineRunContext, ChildInheritance } from "../subagents/child-handle.ts";
+import { echoProvider } from "./mock.ts";
 
 // The three variants R6-3 adds, plus a text-with-calls turn -- one fixture value every consumer test
 // below reuses, so a consumer that grows a new drop is caught by every one of them at once.
@@ -406,16 +411,86 @@ describe("R6-6 contract: cancellation reaches BOTH sides", () => {
 });
 
 describe("R6-17 contract: the parent's identity reaches the CHILD's engine, not merely its inheritance", () => {
-  test("`child-engine.ts` threads `inherit.provider` onto the child's own runEngine call", async () => {
-    // The P5 factory-seam lesson, applied to its own successor: a field declared upstream proves
-    // NOTHING across the seam. `ChildInheritance.provider` existing does not make a child write
-    // provider-state records -- the child engine has to read it and pass it on, and until it does the
-    // child's sidecar is empty and its resume degrades every message.
-    //
-    // Asserted on the SOURCE because the end-to-end proof ("the child RAN off its own provider") is
-    // T10's, and a structural check here is what keeps the thread from being quietly deleted in the
-    // meantime. It is deliberately specific: a rename on either side fails it.
-    const source = await Bun.file(join(import.meta.dir, "..", "subagents", "child-engine.ts")).text();
-    expect(source).toContain("inherit.provider !== undefined ? { providerIdentity: inherit.provider }");
+  // The P5 factory-seam lesson, applied to its own successor: a field declared upstream proves
+  // NOTHING across the seam. `ChildInheritance.provider` existing does not make the child's ENGINE
+  // know its provider -- the child engine has to read it and pass it on.
+  //
+  // P7a (Lane D). This used to be a SOURCE-TEXT pin: `expect(source).toContain("inherit.provider
+  // !== undefined ? { providerIdentity: inherit.provider }")`. Its own comment called itself a
+  // placeholder "until" the real end-to-end proof landed -- and by P6.6 the substring it pinned had
+  // become UNREACHABLE code kept alive only to satisfy this assertion (P6.6 Lane D review, m1), so
+  // the test was preserving dead code and proving nothing about the seam. Both are gone.
+  //
+  // THE OBSERVABLE IS THE CHILD'S OWN `system/init` FRAME. `winter_provider` is emitted by
+  // `runEngine` and ONLY when `EngineOptions.providerIdentity` is set (engine.ts's init block
+  // spreads it conditionally, so "no identity" means the key is absent, never a fabricated row) --
+  // which is exactly "the identity crossed the seam", stated as behaviour. A rename on either side
+  // still fails this, which was the old pin's stated virtue, now for a real reason.
+  const parentIdentity = {
+    providerId: "seamprov",
+    modelKey: "seamprov/seam-model",
+    family: "openai",
+  } as const;
+
+  /** Spawns one child to completion and hands back every frame its engine forwarded. */
+  async function childFrames(withProvider: boolean): Promise<Array<Record<string, unknown>>> {
+    const root = mkdtempSync(join(tmpdir(), "winter-p7a-r617-"));
+    try {
+      const sessionRoot = join(root, "work");
+      mkdirSync(sessionRoot, { recursive: true });
+      const inherit: ChildInheritance = {
+        policy: { effectiveMode: "default", parentPolicyVersion: 1, parentPolicyHash: "h" },
+        tools: [],
+        model: parentIdentity.modelKey,
+        effort: "medium",
+        thinking: undefined,
+        systemPrompt: "",
+        sessionRoot,
+        // Spread CONDITIONALLY rather than set to `undefined`: under `exactOptionalPropertyTypes`
+        // the two differ, and an explicit `undefined` is a shape production never produces.
+        ...(withProvider ? { provider: parentIdentity } : {}),
+      };
+      const frames: Array<Record<string, unknown>> = [];
+      // The minimum `ChildEngineRunContext`: only `parentSessionId` and `forwardChildFrame` are
+      // required. No store, because the child's provider-state SIDECAR is not the observable --
+      // `child-engine.ts` builds its child writer without a `winterHome`, so a child's sidecar sink
+      // is never constructed and its chain is in-memory for the run (noted in this lane's report).
+      const factory = createChildEngineFactory({ provider: echoProvider });
+      const handle = await factory({
+        parentSessionId: "seam-parent",
+        forwardChildFrame(frame) {
+          frames.push(frame as unknown as Record<string, unknown>);
+        },
+      }).spawn({ parentToolUseId: "call-seam", prompt: "one turn", runInBackground: false }, inherit);
+      const deadline = Date.now() + 10_000;
+      while (handle.status() === "running" && Date.now() < deadline) await Bun.sleep(1);
+      expect(handle.status()).toBe("completed");
+      return frames;
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }
+
+  /** The `winter_provider` block off the child's own `system/init`, or `undefined` when it carries none. */
+  function initProvider(frames: Array<Record<string, unknown>>): Record<string, unknown> | undefined {
+    for (const frame of frames) {
+      const message = (frame as { message?: { type?: string; subtype?: string; winter_provider?: Record<string, unknown> } }).message;
+      if (message?.type === "system" && message.subtype === "init") return message.winter_provider;
+    }
+    return undefined;
+  }
+
+  test("a child spawned under a parent WITH an identity reports that provider on its OWN system/init", async () => {
+    const frames = await childFrames(true);
+    expect(initProvider(frames)).toEqual({ providerId: parentIdentity.providerId, modelKey: parentIdentity.modelKey });
+  });
+
+  test("...and a child of a parent with NO identity reports none -- absent, never a fabricated row", async () => {
+    // The negative half, and the reason the positive one is not vacuous: a child that stamped a
+    // provider block unconditionally (from its own `config.model`, say) would satisfy the first test
+    // while carrying nothing of the parent's identity across the seam.
+    const frames = await childFrames(false);
+    expect(frames.length).toBeGreaterThan(0); // the child DID run -- an empty frame list would pass the assertion below for the wrong reason
+    expect(initProvider(frames)).toBeUndefined();
   });
 });

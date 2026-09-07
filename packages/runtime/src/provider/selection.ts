@@ -355,6 +355,10 @@ export function createProviderContext(
     ...(connectionConfig?.deployment !== undefined ? { deployment: connectionConfig.deployment } : {}),
     ...(connectionConfig?.apiVersion !== undefined ? { apiVersion: connectionConfig.apiVersion } : {}),
     ...(connectionConfig?.local !== undefined ? { local: connectionConfig.local } : {}),
+    // P7a: the endpoint's PROVENANCE travels with the endpoint. Every adapter reads it through
+    // `connectionEndpointOptions`, and absence means "user" -- so a profile that lost the marker
+    // under-privileges its request rather than over-privileging it.
+    ...(connectionConfig?.endpointOrigin !== undefined ? { endpointOrigin: connectionConfig.endpointOrigin } : {}),
   };
   return {
     connection,

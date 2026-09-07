@@ -44,7 +44,7 @@ import { loadCatalog } from "@yanlinglabs/winter-provider-catalog";
 import { boundedFetch, ProviderRequestError } from "../../http.ts";
 import { normalizeHttpError, normalizeThrown } from "../../errors.ts";
 import { createRetryPolicy, withRetry, type RetryPolicyOptions } from "../../retry.ts";
-import { applyPrivilegedHeaders, createEndpointPolicy, type EndpointPolicy } from "../../endpoint-policy.ts";
+import { applyPrivilegedHeaders, connectionEndpointOptions, createEndpointPolicy, type EndpointPolicy } from "../../endpoint-policy.ts";
 import { hostHeaders } from "../privileged-headers.ts";
 import { identityHeaderLookup, winterIdentityHeaders, winterUserAgent, type IdentityHeaderLookup } from "../../identity.ts";
 import { THINKING_ENABLED_NEEDS_BUDGET } from "../refusals.ts";
@@ -928,7 +928,8 @@ export function geminiTransport(): GoogleTransport {
     endpoint(ctx) {
       const userBase = ctx.connection.baseUrl;
       const base = (userBase ?? GOOGLE_DEFAULT_BASE_URL).replace(/\/+$/, "");
-      const built = createEndpointPolicy(base, userBase !== undefined ? { generated: false, ...(ctx.connection.local === true ? { local: true } : {}) } : { generated: true });
+      // P7a: the profile's own `endpointOrigin` decides, not the mere presence of a `baseUrl`.
+      const built = createEndpointPolicy(base, userBase !== undefined ? connectionEndpointOptions(ctx.connection) : { generated: true });
       if (!built.ok) throw capabilityRefusal(built.reason);
       return { base, policy: built.policy };
     },

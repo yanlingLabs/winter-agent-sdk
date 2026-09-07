@@ -1120,23 +1120,73 @@ describe("WS-13c: the wiring's model-family surface", () => {
     }
   });
 
-  test("R-6c-27: a cold listing reports `servable: false` for a provider nobody has probed, and true for the session's own", async () => {
+  test("R-6c-27 (P7a): a cold listing reports `servable` as `unknown` for a provider nobody has probed, and `present` for the session's own", async () => {
     const wiring = await buildProductionWiring({ config: gptSession("s-slots-servable"), env: {}, winterHome: home, provider: hermetic });
     try {
       const rows = wiring.engineOptions
         .listModelFamilies!()
         .families.flatMap((f) => f.models.flatMap((m) => m.rows));
       expect(rows.length).toBeGreaterThan(100);
-      // Honest by default: `unknown` is not `servable`. Before this, a cold first paint claimed every
-      // row in the catalog was servable with an empty credential store.
-      // P7a: `servable` is the tri-state `ModelRowServable`. Compared against the LITERAL "present"
-      // rather than for truthiness -- `"absent"` is a truthy string, so the pre-P7a truthiness form
-      // would now pass for every row and assert nothing at all.
+      // THE FIRST PAINT'S HONEST ANSWER. R-6c-27 could only say "`unknown` is not servable" because
+      // the row shape was a boolean; P7a's tri-state lets it say what it actually knows. Both
+      // collapses a boolean forced were false statements: `true` (the shape this originally shipped)
+      // claimed every row in a 604-model catalog was servable against an EMPTY credential store, and
+      // `false` greys out rows the user can perfectly well use.
+      //
+      // Asserted as LITERAL strings throughout: `"absent"` and `"unknown"` are both truthy, so a
+      // truthiness form would pass for every row and assert nothing at all.
+      expect(rows.some((r) => r.providerId === "codex-oauth" && r.servable === "unknown")).toBe(true);
       expect(rows.some((r) => r.providerId === "codex-oauth" && r.servable === "present")).toBe(false);
+      // The session's OWN provider is `"present"` synchronously and with no probe -- its material is
+      // `config.provider.authRef`, configured by construction.
       expect(rows.filter((r) => r.servable === "present").every((r) => r.providerId === "openai")).toBe(true);
       expect(rows.some((r) => r.providerId === "openai" && r.servable === "present")).toBe(true);
+      // NOTHING is `"absent"` on the cold paint: an absence is a probe RESULT, and no probe has
+      // answered yet. This is the assertion that fails if the tri-state is quietly re-flattened --
+      // the pre-P7a predicate reported `"absent"` for every one of these rows.
+      expect(rows.some((r) => r.servable === "absent")).toBe(false);
     } finally {
       wiring.dispose();
+    }
+  });
+
+  test("P7a: ...and after the probe the same rows report `absent` -- `unknown` is a state the listing LEAVES", async () => {
+    const wiring = await buildProductionWiring({ config: gptSession("s-slots-servable-warm"), env: {}, winterHome: home, provider: hermetic });
+    try {
+      // The first call schedules the probes (`prewarmActiveVendorProviders` for the active family's
+      // vendor group, plus one per provider asked about). They are background reads of the injected
+      // EMPTY store, so they settle within a few microtask turns -- polled rather than slept on, so
+      // this test does not encode a timing guess.
+      const codexState = (): string | undefined =>
+        wiring.engineOptions
+          .listModelFamilies!()
+          .families.flatMap((f) => f.models.flatMap((m) => m.rows))
+          .find((r) => r.providerId === "codex-oauth")?.servable;
+      expect(codexState()).toBe("unknown");
+      for (let i = 0; i < 200 && codexState() === "unknown"; i++) await Bun.sleep(1);
+      // The probe answered against an empty credential store: there is genuinely no record, and the
+      // listing now says so instead of saying it has not looked.
+      expect(codexState()).toBe("absent");
+    } finally {
+      wiring.dispose();
+    }
+  });
+
+  test("P7a: a DISABLED provider is `absent`, never `unknown` -- the user already decided and nothing is pending", async () => {
+    // The one collapse that would be wrong in both directions: `providers.<id>.enabled === false` is
+    // read synchronously from settings, so reporting "we have not looked yet" would hide a setting
+    // the user set AND invite a host to spin waiting for an answer that will never come.
+    writeSettings(join(home), { providers: { "codex-oauth": { enabled: false } } });
+    const wiring = await buildProductionWiring({ config: gptSession("s-slots-servable-off"), env: {}, winterHome: home, provider: hermetic });
+    try {
+      const rows = wiring.engineOptions
+        .listModelFamilies!()
+        .families.flatMap((f) => f.models.flatMap((m) => m.rows));
+      expect(rows.some((r) => r.providerId === "codex-oauth")).toBe(true);
+      expect(rows.filter((r) => r.providerId === "codex-oauth").every((r) => r.servable === "absent")).toBe(true);
+    } finally {
+      wiring.dispose();
+      writeSettings(join(home), {});
     }
   });
 

@@ -96,6 +96,27 @@ tiers would be the quiet failure this field exists to prevent, so they are label
 | **fetched-document** | a page `docs/research/Provider-third-party-access-audit.md` retrieved and read on 2026-09-06, or a vendor pricing page already reviewed in-repo | the 3 frontier pricing pages, and every P6.5 **overlay** row (the audit's 51 citations) |
 | **pinned-upstream** | the vendor's own site as OmniRoute's product catalog records it at commit `5458026`, blob-pinned in `extraction-manifest.json`, plus the api-key path attested by that id's own pinned `RegistryEntry` (`authType: "apikey"`, its dialect, its base URL) | the 107 P6.5 allowlist admissions, and the 5 P6 rows T1 had left citing `spec:WS-13 §1` |
 
+The two tiers above are the two that carry the argument. The full vocabulary has five, and the
+CENSUS below is **generated from the shipped catalog** rather than counted by hand — a hand-counted
+total in a document that describes a data field is a second, unpinned copy of that field, and it is
+the copy a reader trusts. `bun run scripts/provenance-tiers.ts --check` fails when the two disagree.
+
+<!-- BEGIN GENERATED: admission-tier census (bun run scripts/provenance-tiers.ts) -->
+
+Generated from `generated/catalog.json` (`v3.8.50+winter.1`, 165 provider rows). Do not edit by hand.
+
+| Tier | Rows | What it means |
+| --- | ---: | --- |
+| **fetched-document** | 39 | a vendor page this repository retrieved and read, on a recorded date |
+| **pinned-upstream** | 101 | the vendor's own site as the pinned upstream product catalog records it, plus that id's own pinned entry — a real, dated reference, but NOT a page read here |
+| **spec-ruling** | 3 | a ruling in an approved spec (or a user ruling recorded in one) admits the PATH; the row's own details are carried from a reviewed ledger entry — `anthropic`, `azure-ai`, `oci` |
+| **local** | 12 | a local installation on the operator's own machine — there is no third party to be admitted by — `docker-model-runner`, `lemonade`, `llama-cpp`, `llamafile`, `lm-studio`, `mlx-gemma`, `mlx-qwen`, `ollama-local`, `oobabooga`, `triton`, `vllm`, `xinference` |
+| **audit** | 10 | the in-repo third-party-access audit's own findings, which cite the documents it read — `aihorde`, `cline`, `clinepass`, `codex-oauth`, `kilocode`, `moonshot`, `opencode`, `openference`, `uncloseai`, `xai-oauth` |
+
+**Promotion is two-key** (WS-13b §1, fix-wave R-FW-3): a row leaves `pinned-upstream` only when a fetched vendor document AND a live-gate pass both exist, and no `approved` row or `supported` model may sit on that tier while it does not.
+
+<!-- END GENERATED: admission-tier census -->
+
 A pinned-upstream citation is a real, dated, verifiable reference — it names a specific blob at a
 verified commit — but it is **not** a page this repository fetched and read, and it is not the
 vendor's terms of service. Its own text says so, in every row. Two consequences are deliberate:
@@ -391,26 +412,48 @@ reviewed allowlist change" a property of the pipeline instead of a promise.
 
 ## Pricing
 
-`overlay/models.json` carries list prices for six cohort rows, each with the vendor's own pricing
-page as `sourceRef` and the observation instant:
+`overlay/models.json` carries list prices for the cohort rows below, each with the vendor's own
+pricing page as `sourceRef` and the observation instant. The set is pinned by name in
+`src/extract/catalog-integrity.test.ts`, so a row gaining or losing a price is a deliberate edit:
 
 | Model | Input | Output | Cache read | Cache write | Source |
 | --- | ---: | ---: | ---: | ---: | --- |
-| `openai/gpt-4.1` | 2.00 | 8.00 | 0.50 | — | developers.openai.com/api/docs/pricing |
-| `openai/o4-mini` | 1.10 | 4.40 | 0.275 | — | developers.openai.com/api/docs/pricing |
+| `anthropic/claude-fable-5-1` | 10 | 50 | 0.25 | 12.50 | docs.anthropic.com/en/docs/about-claude/pricing |
+| `anthropic/claude-haiku-4-5-20251001` | 1.00 | 5.00 | 0.10 | 1.25 | claude.com/pricing |
 | `anthropic/claude-opus-5` | 5.00 | 25.00 | 0.50 | 6.25 | claude.com/pricing |
 | `anthropic/claude-sonnet-5` | 2.00 | 10.00 | 0.20 | 2.50 | claude.com/pricing |
-| `anthropic/claude-haiku-4-5-20251001` | 1.00 | 5.00 | 0.10 | 1.25 | claude.com/pricing |
 | `google/gemini-2.5-pro` | 1.25 | 10.00 | 0.125 | — | ai.google.dev/gemini-api/docs/pricing |
+| `google/gemini-3.5-flash-lite` | 0.30 | 2.50 | 0.03 | — | ai.google.dev/gemini-api/docs/pricing |
+| `google/gemini-3.8-flash` | 0.75 | 3.75 | 0.075 | — | ai.google.dev/gemini-api/docs/pricing |
+| `openai/gpt-4.1` | 2.00 | 8.00 | 0.50 | — | developers.openai.com/api/docs/pricing |
+| `openai/gpt-5.6-luna` | 0.20 | 1.20 | 0.02 | — | developers.openai.com/api/docs/pricing |
+| `openai/gpt-5.6-sol` | 4.00 | 20.00 | 0.40 | — | developers.openai.com/api/docs/pricing |
+| `openai/gpt-5.6-terra` | 2.00 | 12.00 | 0.20 | — | developers.openai.com/api/docs/pricing |
+| `openai/gpt-6-astra` | 10.00 | 50.00 | 1.00 | 12.50 | developers.openai.com/api/docs/pricing |
+| `openai/o4-mini` | 1.10 | 4.40 | 0.275 | — | developers.openai.com/api/docs/pricing |
+| `xai/grok-4.6` | 2.00 | 6.00 | 0.50 | — | docs.x.ai/docs/models |
 
-USD per million tokens. This closes the seed's disclosed gap: `estimateCostUsd` now returns
-`costBasis: "list"` for these six, and `maxBudgetUsd` is live for them.
+USD per million tokens. This closes the seed's disclosed gap: `estimateCostUsd` returns
+`costBasis: "list"` for these rows, and `maxBudgetUsd` is live for them.
 
-**Two disclosed limits.** (1) Gemini's price is **tiered** — prompts over 200k tokens bill at
-$2.50/$15.00/$0.25 — and `ModelPricing` has one rate per direction, so the standard tier is recorded
-and cost is **under-reported for prompts above 200k**. That is a schema gap, stated in the row's own
-`sourceRef` so it travels with the data. (2) Gateway (`openrouter/*`), Azure-deployment, Bedrock and
-Vertex rows are deliberately unpriced: their prices are the reseller's, not the vendor list, and
+**`ModelPricing` holds one rate per direction, and four disclosed limits follow from that.**
+
+1. **Gemini 2.5 Pro is tiered by PROMPT SIZE** — prompts over 200k tokens bill at $2.50/$15.00/$0.25
+   — so the standard tier is recorded and cost is **under-reported for prompts above 200k**.
+2. **Gemini 3.8 Flash is tiered in TIME** (P7a). Its page states $0.75/$3.75/$0.075 "through
+   December 31, 2026" and exactly double from January 1, 2027. The current rate is recorded, so from
+   that date the row under-reports by 2x until it is re-fetched. Its `-lite` sibling carries no such
+   schedule, and its row says so — the disclosure is each row's own evidence, never boilerplate.
+3. **Claude Fable 5.1 has two cache-write durations** (P7a): $12.50/MTok for the 5-minute write and
+   $20/MTok for the 1-hour one. The 5m rate is recorded, matching every other Anthropic row here;
+   the 1h rate has no field. Its cache READ is the vendor's documented 0.025x exception ($0.25/MTok,
+   not the usual 0.1x), which is why that number looks out of line with its siblings.
+4. **Batch (-50%), fast-mode, Flex/Priority and data-residency (1.1x) modifiers are never folded in.**
+   They are separate rate cards, and a blended number would be a price no invoice ever shows.
+
+Every one of these is stated in the offending row's own `sourceRef`, so the caveat travels with the
+data rather than living only here. **Gateway (`openrouter/*`), Azure-deployment, Bedrock and Vertex
+rows are deliberately unpriced**: their prices are the reseller's, not the vendor list, and
 attributing a vendor price to them would put a number on the wrong billing boundary — the exact
 confusion WS-13 §8.3 keeps `openai/gpt-x` and `gateway/gpt-x` apart to avoid. Every upstream-derived
 row is unpriced too, by construction: the extractor cannot emit `pricing` at all.
@@ -433,10 +476,10 @@ does not.
 | outcome | n | what it means |
 | --- | ---: | --- |
 | **admitted** as reviewed overlay rows | **29** | a vendor documentation page was fetched and read on 2026-09-06 **and** it names a fixed API root |
+| **admitted** as reviewed **per-tenant** rows (P7a) | **2** | `azure-ai`, `oci`: the endpoint is a per-tenant template, so the row ships **none** and the host supplies one (below) |
 | refused — out of **scope** | 14 | image, video, embedding, reranking or web-extraction services. Not held pending a document: more evidence would not admit them |
 | refused — **docs reached, no fixed endpoint** | 20 | a docs page answered 200 but states no base URL, or the host answered 403/530, or the vendor documents two hosts and no single base |
 | refused — **no public fixed host at all** (enterprise) | 9 | the inference host is per-deployment or per-tenant by design, or no docs page could be reached |
-| refused — endpoint is a **template** | 2 | `azure-ai`, `oci`: `https://<resource>…` / `https://…<region>…` is not an endpoint |
 
 For the 14 admitted from the probe list, **two independent sources agree on the base**: the vendor's
 own documentation page, and the base upstream's product catalog states in its `apiHint` at the pin.
@@ -451,11 +494,37 @@ base — one vendor wearing two ids. `hcnsec` and `helixmind` declare `format: "
 trusted; the vendor's doc is the tie-breaker and neither has a readable one. `muse-code` has no
 vendor doc at all — its recorded `website` is a GitHub repository URL.
 
-**Ruling carried from round 1:** `azure-ai` and `oci` have real documented public APIs and are
-refused only because `defaultEndpoints.api` is immutable generated data (R6-11) and a per-tenant
-template is not an endpoint. A **dedicated host-supplied-endpoint adapter shape**, of the kind
-`azure-openai` already has, is a **spine item for the fix wave**; both ids are admissible the day it
-exists.
+## The per-tenant rows: a row that ships NO endpoint (P7a, WS-13b §2/§10)
+
+`azure-ai` and `oci` have real documented public APIs and were refused through P6.5 for one reason:
+`defaultEndpoints.api` is immutable generated data (R6-11) and a per-tenant template
+(`https://<resource>.services.ai.azure.com/openai/v1`,
+`https://inference.generativeai.<region>.oci.oraclecloud.com/openai/v1`) is not an endpoint. The
+round-1 ruling deferred them to "a dedicated host-supplied-endpoint adapter shape". **The user's
+ruling of 2026-09-06 replaced that with a user-entered endpoint field**, and P7a ships it:
+
+| field | what it means |
+| --- | --- |
+| `requiresUserEndpoint: true` | the row ships **no** `api` endpoint at all. The validator refuses one — presence, not shape: a plausible placeholder parses, validates, and would be copied into a connection profile and called |
+| `endpointTemplate` | the documented shape, e.g. `https://<resource>.services.ai.azure.com/openai/v1`. **Never sent, never parsed as a URL** — it is documentation, and the only thing the runtime's typed `endpoint-required` refusal has to show a user |
+
+At runtime the host's `connection.baseUrl` is **required** and is evaluated as a **USER** endpoint
+(`endpointOrigin: "user"`), so no privileged header ever rides it (WS-13 §5 / R6-L). Absent, the
+session refuses before a request exists rather than falling back to the shared adapter's vendor
+default — which, for a row on `winter.openai-chat-completions`, would have meant this provider's
+credential on the wire to `api.openai.com`.
+
+**Neither row is authored from a fetched page.** Both cite `tier: "spec-ruling"` — the user ruling
+admits the *path*, and the template is transcribed verbatim from the id's own P6.5 ledger entry.
+This repository has not read `learn.microsoft.com/azure/ai-foundry` or
+`oracle.com/artificial-intelligence/generative-ai` for content. Promotion is two-key as everywhere
+else: the fetched page (upgrading the citation to `fetched-document`) **and** a live-gate pass
+against a real tenant.
+
+**No model rows, and `modelDiscovery: "none"`.** A per-tenant surface serves whatever deployments the
+operator created; no document read here enumerates them, and seeding rows would be a claim about
+somebody else's tenant. A host reaches models with `allowUnlisted` — both rows are
+`liveCatalogAuthority: "unknown"`, which is the door R6-F opens.
 
 ## Dialect siblings, and the two keyless rows (P6.5, R6b-5 / WS-13b §8.4)
 
